@@ -63,7 +63,8 @@ jobs:
       run: npm test
       
   build_console:
-    if: true  # the job can be disabled from here
+    # MICK: this job is disabled as console mode is no longer supported
+    if: false  # the job can be disabled from here
     strategy:
       matrix:   # run a separate jub for all combinations of the following variables
         # it should typically be enough to run the console tests on macOS
