@@ -1,4 +1,4 @@
-# Sitrec
+# Sitrec2
 
 ![sitrec](https://github.com/mickwest/sitrec/actions/workflows/ci.yml/badge.svg?event=push)
 
