@@ -120,14 +120,14 @@ class QuadTreeMapTexture extends QuadTreeMap {
 
     // interpolate the elevation at a lat/lon
     // does not handle interpolating between tiles (i.e. crossing tile boundaries)
-    getElevationInterpolated(lat, lon) {
+    getElevationInterpolated(lat, lon, desiredZoom = null) {
 
         if (!this.elevationMap) {
             console.warn("No elevation map available for interpolation");
             return 0; // default to sea level if no elevation map
         }
 
-        return this.elevationMap.getElevationInterpolated(lat, lon);
+        return this.elevationMap.getElevationInterpolated(lat, lon, desiredZoom);
     }
 
 

@@ -108,6 +108,12 @@ export class CNodeTerrainUI extends CNode {
                     },
                     maxZoom: 14,
                 },
+                ElevationBitmap: {
+                    name: "Elevation Bitmap",
+                    mapURL: (z, x, y) => {
+                        return `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`
+                    },
+                },
 
                 Debug: {
                     name: "Debug Info",
@@ -630,6 +636,8 @@ export class CNodeTerrain extends CNode {
             }
         }
 
+        // get the map type from the config, or use the default
+        // or use mapbox if beigther set (unlikely)
         local.mapType = v.mapType ?? configParams.defaultMapType ?? "mapbox";
 
         // always create a terrainUI, just with limited options for the legacy sitches
@@ -941,18 +949,75 @@ export class CNodeTerrain extends CNode {
         // if the corresponding tile is active, then recalculate the curve map
         // we can then return, as an active has no children
         const terrainTile = terrainMap.tileCache[key];
-        if (terrainTile !== undefined && terrainTile.active) {
-            terrainTile.recalculateCurve()
+        this.applyElevationToTile(terrainTile, terrainMap)
+        if (this.dynamic) {
+            this.applyElevationToParents(terrainTile, terrainMap);
         }
 
+    }
 
-        // if the have the tile, then we need to recalculate the curve map for all the active children
-        // we caculate the children of the tile from z,x,y
-        if (terrainTile !== undefined) {
+    applyElevationToParents(tile, terrainMap) {
+        // if the tile is undefined, then we can't apply elevation to it
+        if (tile === undefined) {
+            return;
+        }
+
+        // caclulate the parent tile from tile.x, tile.y, tile.z
+        // if the tile is at the root, then it has no parent
+        if (tile.z === 0) {
+            return; // no parent for root tile
+        }
+
+        const parentX = Math.floor(tile.x / 2);
+        const parentY = Math.floor(tile.y / 2);
+        const parentZ = tile.z - 1;
+        const parentKey = `${parentZ}/${parentX}/${parentY}`;
+        const parentTile = terrainMap.tileCache[parentKey];
 
 
+
+        // apply elevation to the parent tile
+        parentTile.recalculateCurve();
+
+        // and recursively apply to the parent's parent
+        this.applyElevationToParents(parentTile, terrainMap);
+    }
+
+
+//    WHY NO terrainMap ??? NOT laoded?
+
+    applyElevationToTile(tile, terrainMap) {
+
+        assert (terrainMap !== undefined, "CNodeTerrain: terrainMap is undefined, cannot apply elevation to tile");
+
+
+        if (terrainMap.tileCache === undefined) {
+            console.warn("CNodeTerrain: tileMap is undefined, cannot apply elevation to tile")
+            return;
+        }
+
+        // now if I just turn the camera and a node is not active, then it will not have a tile
+
+        if (tile !== undefined) {
+
+            // any tile that has a mesh, we need to recalculate the curve map (i.e. the elevation of the mesh
+            if (tile.mesh) {
+                tile.recalculateCurve()
+            }
+
+            assert(terrainMap.tileCache !== undefined, "CNodeTerrain: tileCache is undefined, cannot apply elevation to tile");
+
+            // we need to recalculate the curve map for all the active children
+            // this is recursive, so we can just call this function on the children
+            // undefined children will be ignored
+            // since we don't dispose the higher level elevation tiles, this should generally only be one deep
+            this.applyElevationToTile(terrainMap.tileCache[`${tile.z + 1}/${tile.x * 2}/${tile.y * 2}`],      terrainMap);
+            this.applyElevationToTile(terrainMap.tileCache[`${tile.z + 1}/${tile.x * 2}/${tile.y * 2 + 1}`],  terrainMap);
+            this.applyElevationToTile(terrainMap.tileCache[`${tile.z + 1}/${tile.x * 2 + 1}/${tile.y * 2}`],  terrainMap);
+            this.applyElevationToTile(terrainMap.tileCache[`${tile.z + 1}/${tile.x * 2 + 1}/${tile.y * 2 + 1}`], terrainMap);
         }
     }
+
 
     // when an elevation tile is loaded, we need to recalculate the terrain elevation
     // for the correspoinding region

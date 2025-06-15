@@ -281,7 +281,7 @@ export class QuadTreeTile {
             const lon = this.map.options.mapProjection.getLeftLongitude(xWorld, zoomTile);
 
             // get the elevation, independent of the display map coordinate system
-            let elevation = this.map.getElevationInterpolated(lat, lon);
+            let elevation = this.map.getElevationInterpolated(lat, lon, zoomTile);
 
             // clamp to sea level to avoid z-fighting with ocean tiles
             if (elevation < 0) elevation = 0;
@@ -317,14 +317,14 @@ export class QuadTreeTile {
     // this is used to build the QuadTextureMaterial
     // and all we do is get the four URLs of the children's textures
     // and then combine them in
-    children() {
-        return [
-            new QuadTreeTile(this.map, this.z + 1, this.x * 2, this.y * 2),
-            new QuadTreeTile(this.map, this.z + 1, this.x * 2, this.y * 2 + 1),
-            new QuadTreeTile(this.map, this.z + 1, this.x * 2 + 1, this.y * 2),
-            new QuadTreeTile(this.map, this.z + 1, this.x * 2 + 1, this.y * 2 + 1),
-        ]
-    }
+    // children() {
+    //     return [
+    //         new QuadTreeTile(this.map, this.z + 1, this.x * 2, this.y * 2),
+    //         new QuadTreeTile(this.map, this.z + 1, this.x * 2, this.y * 2 + 1),
+    //         new QuadTreeTile(this.map, this.z + 1, this.x * 2 + 1, this.y * 2),
+    //         new QuadTreeTile(this.map, this.z + 1, this.x * 2 + 1, this.y * 2 + 1),
+    //     ]
+    // }
 
     // QuadTextureMaterial uses four textures from the children tiles
     // (which are not actually loaded, but we have the URLs)

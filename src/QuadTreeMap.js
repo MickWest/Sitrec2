@@ -2,7 +2,6 @@ import {wgs84} from "./LLA-ECEF-ENU";
 import {NodeMan} from "./Globals";
 import {Matrix4} from "three/src/math/Matrix4";
 import {Frustum} from "three/src/math/Frustum";
-import {QuadTreeTile} from "./QuadTreeTile";
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
