@@ -3,11 +3,11 @@ import {GlobalScene} from "./LocalFrame";
 import {wgs84} from "./LLA-ECEF-ENU";
 import {radians} from "./utils";
 import {Globals, NodeMan, Sit} from "./Globals";
-import {sharedUniforms} from "./js/map33/material/QuadTextureMaterial";
 import {renderOne} from "./par";
 
 import {SITREC_APP} from "./configUtils";
 import {Texture} from "three/src/textures/Texture";
+import {sharedUniforms} from "./js/map33/material/SharedUniforms";
 
 export function createSphere(radius, radius1, segments) {
     const sphere = new Mesh(

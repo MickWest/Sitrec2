@@ -29,7 +29,6 @@ import {
 } from "three";
 import {DebugArrowAB, forceFilterChange, scaleArrows} from "../threeExt";
 import {CNodeViewCanvas} from "./CNodeViewCanvas";
-import {sharedUniforms} from "../js/map33/material/QuadTextureMaterial";
 import {wgs84} from "../LLA-ECEF-ENU";
 import {getCameraNode} from "./CNodeCamera";
 import {CNodeEffect} from "./CNodeEffect";
@@ -40,6 +39,7 @@ import {ShaderPass} from "three/addons/postprocessing/ShaderPass.js";
 import {isLocal, SITREC_APP} from "../configUtils.js"
 import {VRButton} from 'three/addons/webxr/VRButton.js';
 import {mouseInViewOnly} from "../ViewUtils";
+import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 
 
 function linearToSrgb(color) {

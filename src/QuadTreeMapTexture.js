@@ -92,7 +92,7 @@ class QuadTreeMapTexture extends QuadTreeMap {
 
 
     clean() {
-        console.log("map33 clean()");
+        console.log("QuadTreeMap clean()");
 
         // abort the pending loading of tiles
         this.controller.abort();

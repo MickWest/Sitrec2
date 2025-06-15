@@ -3,9 +3,9 @@ import {CNode3DGroup} from "./CNode3DGroup";
 import {guiMenus} from "../Globals";
 import * as LAYER from "../LayerMasks";
 import {radians} from "../utils";
-import {sharedUniforms} from "../js/map33/material/QuadTextureMaterial";
 
 import {SITREC_APP} from "../configUtils";
+import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 
 export class CNodeSpriteGroup extends CNode3DGroup {
 

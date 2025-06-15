@@ -47,7 +47,6 @@ import * as LAYER from "../LayerMasks";
 import {par} from "../par";
 
 import SpriteText from '../js/three-spritetext';
-import {sharedUniforms} from "../js/map33/material/QuadTextureMaterial";
 import {CNodeDisplayGlobeCircle} from "./CNodeDisplayGlobeCircle";
 import {assert} from "../assert.js";
 import {intersectSphere2, V3} from "../threeUtils";
@@ -70,6 +69,7 @@ import {CNodeViewUI} from "./CNodeViewUI";
 //import { eci_to_geodetic } from '../../pkg/eci_convert.js';
 // npm install satellite.js --save-dev
 import * as satellite from 'satellite.js';
+import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 
 // installed with
 // npm install astronomy-engine --save-dev

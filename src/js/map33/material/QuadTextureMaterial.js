@@ -1,26 +1,8 @@
-import {
-  ShaderMaterial,
-  TextureLoader,
-  UniformsLib,
-} from "three";
+import {CanvasTexture, Color, MeshStandardMaterial, TextureLoader,} from "three";
 //import vertexShader from './quadtexture_vert.glsl'
 //import fragmentShader from './quadtexture_frag.glsl'
-import vertexShader from './micktexture_vert.glsl'
-import fragmentShader from './micktexture_frag.glsl'
-import {CanvasTexture, Color, MeshBasicMaterial, MeshStandardMaterial, SRGBColorSpace} from "three";
 
 const loader = new TextureLoader()
-
-// shared uniforms for near/far clip planes
-export const sharedUniforms = {
-  nearPlane: { value: 0.1 },
-  farPlane: { value: 1000 },
-  cameraFocalLength: { value: 300 },
-  useDayNight: { value: true },
-  sunGlobalTotal: { value: 1.0 },
-  sunAmbientIntensity: { value: 0.5 },
-  // ... other shared uniforms
-};
 
 
 // Queue to hold pending requests
