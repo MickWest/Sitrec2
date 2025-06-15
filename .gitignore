@@ -1,0 +1,16 @@
+**/.DS_Store
+node_modules/
+config/config.js
+config/config-install.js
+.vscode/
+config/shared.env
+sitrec-videos
+sitrec-cache
+sitrec-upload
+sitrecServer/vendor
+config/config.php
+debug/
+__image_snapshots__/
+tests/__image_snapshots__/
+/pkg/
+/rust/target/

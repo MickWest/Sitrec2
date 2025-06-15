@@ -1,0 +1,94 @@
+# the workflow syntax is described at:
+# https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions
+
+name: CI
+
+on:   # when this workflow should be triggered
+  push:
+  pull_request:
+  workflow_dispatch:    # allows triggering a more exhaustive battery of tests manually
+
+defaults:
+  run:
+    shell: bash    # scripts should use bash on all OS-es 
+
+jobs:
+  build_web:
+    if: true  # the job can be disabled from here
+    strategy:
+      matrix:   # run a separate jub for all combinations of the following variables
+        node-version: [22.4]
+        # it should typically be enough to build the web app on macOS
+        # but allow building it on three platforms if the workflow is triggered manually
+        os: ${{ fromJSON(github.event_name != 'workflow_dispatch' && '["macos-latest"]' ||
+          '["ubuntu-latest","windows-latest","macos-latest"]') }}
+      fail-fast: false   # don't stop all of the jobs when one of them fails
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        # webpack.common.js uses 'git describe --tags --abbrev=0' to get the latest tag
+        # but checkout only does a shallow clone by default and the tags are not available
+        # fetch-tags: true is supposed to fetch the tags without a full clone, but doesn't work ?
+        fetch-depth: 0    # do a full clone instead. for now it doesn't seem to be any slower
+    - name: use node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        # cache the downloaded node version and the package dependencies
+        # it doesn't seem to make it faster for now, disabled
+        #cache: npm
+        #cache-dependency-path: package-lock.json
+    - name: config script setup
+      run: |
+        cp config/config.js.example config/config.js
+        cp config/config-install.js.example config/config-install.js
+        cp config/shared.env.example config/shared.env
+        cp config/config.php.example config/config.php
+        mkdir ../dev ../prod
+        # webpack's schema requires absolute paths for the output paths
+        # macOS uses BSD sed instead of GNU sed on linux/windows. this works for both:
+        sed -i'.bak' -e "s#dev_path:.*#dev_path: '$(realpath ../dev)',#" config/config-install.js
+        sed -i'.bak' -e "s#prod_path:.*#prod_path: '$(realpath ../prod)',#" config/config-install.js
+        cat config/config-install.js
+    - name: install deps
+      # could use npm ci instead, but this is more consistent with the build instructions in the README
+      run: npm install
+    - name: build dev
+      run: npm run build
+      if: github.event_name != 'push'
+    - name: build prod
+      run: npm run deploy
+    - name: run tests
+      run: npm test
+      
+  build_console:
+    if: true  # the job can be disabled from here
+    strategy:
+      matrix:   # run a separate jub for all combinations of the following variables
+        # it should typically be enough to run the console tests on macOS
+        # but allow them to run on three platforms if the workflow is triggered manually
+        os: ${{ fromJSON(github.event_name != 'workflow_dispatch' && '["macos-latest"]' ||
+          '["ubuntu-latest","windows-latest","macos-latest"]') }}
+      fail-fast: false   # don't stop all of the jobs when one of them fails
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: install bun
+      uses: oven-sh/setup-bun@v1
+    - name: install deps
+      run: bun install --production # a bit faster than npm i/ci, except on windows
+      # (Mick) changed back to npm ci, bun install has issues with frozen lockfile errors
+      # run: npm ci --production
+    - name: config script setup
+      run: |
+        cp config/config.js.example config/config.js
+        # custom console tools will often be run from outside the source tree
+        # so by default the config assumes that sitrec's root is "./sitrec/"
+        mv ./test/console/*.js ../
+        # note: by default, without remapping imports, bun uses the three.js version from package-lock.json 
+    - name: run console test
+      run: cd ../ && for i in ./*.js; do bun $i; done
+    - name: run tests
+      # jsdom does not work with bun, so skip tests whose name contains 'jsdom'
+      run: cd tests && bun test -t "^((?!jsdom).)*$"

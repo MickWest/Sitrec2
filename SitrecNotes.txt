@@ -1,0 +1,68 @@
+First edit:
+config/config.js.example
+and
+config/config-install.js.example
+(rename to remove .example, edit paths)
+
+cd sitrec_source
+
+install all the mode packages with
+npm install
+
+build with:
+npm run build
+
+This just runs the script in package.json, but in the node environment. Webpack is part of node.
+so needs to be in that environment (i.e. NOT brew install webpack).
+Also some packages used by the Sitrec client are from node.
+
+See webpack.common.js for details of what is copied over
+
+
+npm run deploy
+
+will build an optimized version into the deploy folder, which can then be copied into the web root.
+
+------------------------------------------------------------------------
+For file uploading, currently we ust use the POST method, which
+require a change to the default PH install to allow larger files
+(Paths here are Mick's, included as examples)
+
+php.ini in:
+/opt/homebrew/etc/php/8.2/php.ini
+
+upload_max_filesize = 100M
+post_max_size = 100M
+
+restart it with:
+brew services restart php
+
+nginx.conf in
+/usr/local/etc/nginx/nginx.conf
+
+http {
+    ...
+    client_max_body_size 100M;
+}
+
+Wasm (e.g. for Rust) mime type support
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+
+    types {
+        application/wasm wasm;
+    }
+
+# and add wasm  in any static location, like
+location ~* \.(js|css|wasm|png|jpg|jpeg|gif|ico|woff|woff2|ttf|svg|eot|otf|map)$ {
+
+
+}
+
+
+restart:
+sudo nginx -s reload
+
+/////////////////////////////////
