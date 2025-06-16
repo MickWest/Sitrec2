@@ -176,19 +176,7 @@ export class CNodeTerrainUI extends CNode {
 
             // elevation map has changed, so kill the old one
             this.log("Elevation type changed to " + v + " so unloading the elevation map")
-            this.terrainNode.elevationMap.clean()
-            this.terrainNode.elevationMap = undefined;
-
-
-            // bit brute force, but just unload and reload the terrain
-            this.terrainNode.unloadMap(local.mapType);
-
-            // for now, just reload the terrain
-            // which will reload the elevation map (as it's null)
-            // TODO: split loading of elevation and terrain maps
-            //  this.setMapType(local.mapType).then(() => {
-            this.terrainNode.loadMap(local.mapType)
-            //   })
+            this.terrainNode.reloadMap(local.mapType)
         })
 
 
@@ -249,6 +237,11 @@ export class CNodeTerrainUI extends CNode {
             // adds a button to refresh the terrain
             this.gui.add(this, "doRefresh").name("Refresh")
                 .tooltip("Refresh the terrain with the current settings. Use for network glitches that might have caused a failed load")
+
+
+            this.gui.add(this.terrainNode, "dynamic").name("Dynamic Subdivision").onChange(v => {
+                this.terrainNode.reloadMap(local.mapType)
+            });
 
             // a toggle to show or hide the debug elevation grid
 
@@ -783,6 +776,15 @@ export class CNodeTerrain extends CNode {
         // this.maps[mapID].group = undefined;
     }
 
+
+    reloadMap(mapID) {
+        // clear elevation and texture maps
+        // and reload the map
+        this.elevationMap.clean()
+        this.elevationMap = undefined;
+        this.unloadMap(mapID);
+        this.loadMap(mapID)
+    }
 
     loadMapElevation(id, deferLoad) {
 
