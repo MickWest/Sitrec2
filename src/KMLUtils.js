@@ -232,6 +232,9 @@ export function getKMLTrackWhenCoord(kml, trackIndex, when, coord, info) {
     tracks.forEach(track => {
         assert(track !== undefined, "Missing track in KML")
         assert(track["gx:Track"] !== undefined, "No gx:Track in KML");
+        assert(track["gx:Track"].when !== undefined, "No gx:Track.when in KML");
+        assert(track["gx:Track"]["gx:coord"] !== undefined, "No gx:Track.gx:coord in KML");
+
         const gxTrack = track["gx:Track"];
         var whenArray;
         var coordArray;

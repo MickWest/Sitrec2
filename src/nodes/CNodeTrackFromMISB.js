@@ -28,6 +28,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
 
         this.input("misb")
 
+        this.frameRelativeTime = v.frameRelativeTime ?? false; // if true, the start time is fixed to the first time calculated
 
         this.cacheValues();
 
@@ -207,7 +208,20 @@ export class CNodeTrackFromMISB extends CNodeTrack {
 
     recalculate() {
        // var startTime = this.in.startTime.getStartTimeString()
-        var msStart = this.in.startTime.getStartTimeValue()
+        let msStart = this.in.startTime.getStartTimeValue()
+
+        if (this.frameRelativeTime) {
+            // tracks that have a fixed start time used the first time they were calculated
+            // this ensure they don't move around if the start time changes
+            if (this.fixedStartTime !== undefined) {
+                // if we have a fixed start time, use that instead
+                msStart = this.fixedStartTime;
+            } else {
+                this.fixedStartTime = msStart; // cache it for later use
+            }
+        }
+
+
 
         const misb = this.in.misb;
         misb.selectSourceColumns(this._columns);

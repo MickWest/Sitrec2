@@ -757,6 +757,18 @@ sitch = {
         left: 0.25, top:0, width: .15, height:-1,
     },
 
+    speedGraphForCamera: { kind: "speedGraph",
+        visible: false,
+        label: "Camera Speed",
+        track: "cameraTrackSwitchSmooth",
+        min:0, max:1000,
+        left: 0.25, top:0, width: .15, height:-1,
+        dynamicY: true,
+
+        // need to specify wind here
+
+    },
+
     include_Compasses: true,
 
     // note differnt way of doing an overlay, for more flexibility

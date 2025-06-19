@@ -131,6 +131,11 @@ export function makeTrackFromDataFile(sourceFile, dataID, trackID, columns, trac
         assert(0, "Unknown file type: " + fileInfo.filename)
     }
 
+    let frameRelativeTime = false;
+    if (fileInfo.dataType === "CUSTOM_FLL") {
+        frameRelativeTime = true;
+    }
+
     // if there's no data, then return, which will just skip this track
     // als skip track with just on point
     if (!misb) {
@@ -181,6 +186,8 @@ export function makeTrackFromDataFile(sourceFile, dataID, trackID, columns, trac
         columns: columns,
         exportable: true,
         pruneIfUnused: true,
+        frameRelativeTime: frameRelativeTime,
+
     })
 
 
