@@ -183,8 +183,9 @@ export class CNodeControllerCustomAzEl extends CNodeControllerAzElZoom {
         this.recalculate();
     }
 
-    setElFile(elFile) {
+    setElFile(elFile, elCol) {
         this.elFile = elFile;
+        this.elCol = elCol;
     }
 
     recalculate() {
@@ -194,6 +195,13 @@ export class CNodeControllerCustomAzEl extends CNodeControllerAzElZoom {
             this.azArrayRaw = ExpandKeyframes(this.azFile, this.frames, 0, this.azCol);
             this.azArray = RollingAverage(this.azArrayRaw, 200);
         }
+
+        if (this.elFile !== undefined) {
+            assert(this.frames = Sit.frames, "CNodeControllerCustomAzEl: frames not set right");
+            this.elArrayRaw = ExpandKeyframes(this.elFile, this.frames, 0, this.elCol);
+            this.elArray = RollingAverage(this.elArrayRaw, 200);
+        }
+
     }
 
     apply(f, objectNode ) {
@@ -206,6 +214,10 @@ export class CNodeControllerCustomAzEl extends CNodeControllerAzElZoom {
 
         if (this.azArray) {
             this.az = this.azArray[f];
+        }
+
+        if (this.elArray) {
+            this.el = this.elArray[f];
         }
 
         super.apply(f, objectNode);

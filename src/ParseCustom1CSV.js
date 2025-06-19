@@ -111,6 +111,9 @@ export function parseCustomFLLCSV(csv) {
 
     const rows = csv.length;
     let MISBArray = new Array(rows - 1);
+
+    const altCol = findColumn(csv, "Alt");
+
     for (let i = 1; i < rows; i++) {
         MISBArray[i - 1] = new Array(MISBFields).fill(null);
 
@@ -123,6 +126,12 @@ export function parseCustomFLLCSV(csv) {
 
         MISBArray[i - 1][MISB.SensorLatitude] = Number(csv[i][1])
         MISBArray[i - 1][MISB.SensorLongitude] = Number(csv[i][2])
+
+        if (altCol !== -1) {
+            const altitude = f2m(Number(csv[i][altCol]));
+            MISBArray[i - 1][MISB.SensorTrueAltitude] = isNaN(altitude) ? null : altitude;
+        }
+
     }
 
     return MISBArray;

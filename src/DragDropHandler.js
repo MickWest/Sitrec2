@@ -392,7 +392,7 @@ class CDragDropHandler {
 
             // bit of patch, if the type has not been set
             // check if it contains az, el, zoom columns
-            if ( fileManagerEntry.dataType === "AZIMUTH" || fileManagerEntry.dataType === "Unknown" || fileManagerEntry.dataType === undefined) {
+            if ( fileManagerEntry.dataType === "AZIMUTH" || fileManagerEntry.dataType === "ELEVATION" || fileManagerEntry.dataType === "Unknown" || fileManagerEntry.dataType === undefined) {
                 const azCol = findColumn(parsedFile, "Az", true);
                 const elCol = findColumn(parsedFile, "El", true);
                 const zoomCol = findColumn(parsedFile, "Zoom", true);
@@ -419,12 +419,18 @@ class CDragDropHandler {
                     }
 
 
-                    // it's a CSV with az and el
+                    // it's a CSV with az and/or el
                     // so we want to send it to the customAzElController node
 
                     const azElController = NodeMan.get("customAzElController", false)
                     if (azElController) {
-                        azElController.setAzFile(parsedFile, azCol);
+                        if (azCol !== -1) {
+                            azElController.setAzFile(parsedFile, azCol);
+                        }
+
+                        if (elCol !== -1) {
+                            azElController.setElFile(parsedFile, elCol);
+                        }
                         azElController.recalculate();
                     }
                     // handled the AZ and EL CSV file, so

@@ -1250,6 +1250,11 @@ export function detectCSVType(csv) {
         return "AZIMUTH"
     }
 
+    if ((csv[0][0].toLowerCase() === "frame" || csv[0][0].toLowerCase() === "time")
+        && csv[0][1].toLowerCase() === "el") {
+        return "ELEVATION"
+    }
+
     // only give an error warning for custom, as some sitches have custom code to use
     // specific columns of CSV files.
     if (Sit.isCustom) {
