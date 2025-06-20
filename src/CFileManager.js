@@ -886,6 +886,7 @@ export class CFileManager extends CManager {
                 this.add(id, parsedAsset.parsed, original); // Add the loaded and parsed asset to the manager
                 this.list[id].dynamicLink = dynamicLink;
                 this.list[id].staticURL = null; // indicates it has not been rehosted
+                this.list[id].dataType = parsedAsset.dataType; // Store the data type of the asset
                 if (isHttpOrHttps(filename) && !dynamicLink) {
                     // if it's a URL, and it's not a dynamic link, then we can store the URL as the static URL
                     // indicating we don't want to rehost this later.
