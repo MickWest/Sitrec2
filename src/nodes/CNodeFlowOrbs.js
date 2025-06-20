@@ -282,12 +282,7 @@ export class CNodeFlowOrbs extends CNodeSpriteGroup {
     {
         // recreate the positions array
         this.positions = new Float32Array(this.nSprites * 3);
-        // and set the positions
-        for (let i = 0; i < this.nSprites; i++) {
-            this.positions[i * 3] = this.orbs[i].position.x;
-            this.positions[i * 3 + 1] = this.orbs[i].position.y;
-            this.positions[i * 3 + 2] = this.orbs[i].position.z;
-        }
+        this.updatePositions();
 
         // and sizes
         this.sizes = new Float32Array(this.nSprites);
@@ -326,6 +321,34 @@ export class CNodeFlowOrbs extends CNodeSpriteGroup {
         this.group.add(this.sprites);
     }
 
+
+    updatePositions() {
+        // find the center of the orbs
+        const center = new Vector3();
+        for (let i = 0; i < this.nSprites; i++) {
+            center.add(this.orbs[i].position);
+        }
+        center.divideScalar(this.nSprites);
+
+        // set the group position to the center of the orbs
+        // while we could leave it at (0,0,0), the resulting larget numbers can cause z-fighting
+        this.group.position.copy(center);
+
+        // and set the positions
+        for (let i = 0; i < this.nSprites; i++) {
+            this.positions[i * 3] = this.orbs[i].position.x - center.x;
+            this.positions[i * 3 + 1] = this.orbs[i].position.y - center.y;
+            this.positions[i * 3 + 2] = this.orbs[i].position.z - center.z;
+        }
+
+        // need bounding box and sphere for view culling
+        this.geometry.computeBoundingBox();
+        this.geometry.computeBoundingSphere();
+
+        // and flag the geometry as changed
+        this.geometry.attributes.position.needsUpdate = true;
+
+    }
 
     updateColorsAttribute() {
         for (let i = 0; i < this.nSprites; i++) {
@@ -541,23 +564,22 @@ export class CNodeFlowOrbs extends CNodeSpriteGroup {
             this.updateColors();
         }
 
-        // now set all the positions in the geometry
-        for (let i = 0; i < this.nSprites; i++) {
-            const orb = this.orbs[i];
-            this.positions[i * 3] = orb.position.x;
-            this.positions[i * 3 + 1] = orb.position.y;
-            this.positions[i * 3 + 2] = orb.position.z;
-        }
 
-        // need bounding box and sphere for view culling
-        this.geometry.computeBoundingBox();
-        this.geometry.computeBoundingSphere();
+        this.updatePositions();
 
-        // and flag the geometry as changed
-        this.geometry.attributes.position.needsUpdate = true;
+
+
 
 
         this.rebuildWindArrows();
 
     }
+
+    recalculate() {
+        this.initializeSprites();
+        this.rebuildSprites();
+        this.rebuildWindArrows();
+        this.updateColors();
+    }
+
 }

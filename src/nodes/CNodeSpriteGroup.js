@@ -1,6 +1,6 @@
 import {BufferAttribute, BufferGeometry, Color, Points, PointsMaterial, ShaderMaterial, TextureLoader} from "three";
 import {CNode3DGroup} from "./CNode3DGroup";
-import {guiMenus} from "../Globals";
+import {guiMenus, NodeMan} from "../Globals";
 import * as LAYER from "../LayerMasks";
 import {radians} from "../utils";
 
@@ -15,7 +15,8 @@ constructor(v) {
     this.size = v.size ?? 2;
     this.mainSizeMultiplier = 1;
 
-    this.texture = new TextureLoader().load(SITREC_APP+'data/images/WhiteDiskWithAlpha128px.png');
+//    this.texture = new TextureLoader().load(SITREC_APP+'data/images/WhiteDiskWithAlpha128px.png');
+    this.texture = new TextureLoader().load(SITREC_APP+'data/images/FX_CloudAlpha03.png');
 
     // Define the vertex and fragment shaders
     // note "projectionMatrix" is the camera's projection matrix supplied as a uniform by three.js
@@ -24,6 +25,7 @@ constructor(v) {
     // uniforms passed in from the material
         uniform float cameraFocalLength;
         uniform float magnify;
+        uniform float localSun;
     
     // per-vertex attributes in addition to the standard position supplied by three.js
         attribute float size;
@@ -36,6 +38,7 @@ constructor(v) {
     
         void main() {
             vColor = color;
+            vColor.rgb *= localSun; // Scale color by the local sun intensity
             vPosition = modelViewMatrix * vec4(position, 1.0);
             gl_PointSize = magnify * size * (cameraFocalLength / -vPosition.z); // Adjust 300.0 as needed
             gl_Position = projectionMatrix * vPosition;
@@ -48,6 +51,7 @@ constructor(v) {
         uniform sampler2D pointTexture;
         uniform float nearPlane; // these are set in sharedUniforms
         uniform float farPlane;
+        uniform float sunGlobalTotal;
 
     // varying values passed from the vertex shader
         varying vec3 vColor;
@@ -58,6 +62,9 @@ constructor(v) {
         void main() {
             gl_FragColor = vec4(vColor, 1.0) * texture2D(pointTexture, gl_PointCoord);
             if (gl_FragColor.a < 0.5) discard;
+            
+;
+            
             
             // Logarithmic depth calculation
             // requires the near and far planes to be set in the material (shared uniforms)
@@ -73,6 +80,7 @@ constructor(v) {
         uniforms: {
             pointTexture: {value: this.texture},
             magnify: {value: 1.0}, // this varies based on the viewport
+            localSun: {value: 1.0}, // this is set in preRender
             ...sharedUniforms,
         },
         vertexShader: vertexShader,
@@ -141,16 +149,29 @@ constructor(v) {
         }
         this.geometry.attributes.size.needsUpdate = true;
     }).elastic(10, 1000) // elastic is the range of max values for the slider
-        .tooltip("Diameter in meters.");
+        .tooltip("Diameter in meters.").listen();
 
 
-    this.gui.add(this, "mainSizeMultiplier", 1, 100).name("View Size Multiplier").tooltip("Adjusts the size of the flow orbs in the main view, but does not change the size in other views.");
+    this.gui.add(this, "mainSizeMultiplier", 1, 100).name("View Size Multiplier").tooltip("Adjusts the size of the flow orbs in the main view, but does not change the size in other views.").listen();
 
     this.simpleSerials.push("size", "mainSizeMultiplier");
 }
 
 
     preRender(view) {
+
+
+   // get brightness uniform from calculateSunAt
+
+        const lightingNode = NodeMan.get("lighting");
+        if (lightingNode.noMainLighting && view.id === "mainView") {
+            this.material.uniforms.localSun.value = 1.0;
+        } else {
+
+            const sunNode = NodeMan.get("theSun");
+            const localSun = sunNode.calculateSunAt(this.group.position).sunTotal;
+            this.material.uniforms.localSun.value = localSun;
+        }
 
         if (view.id === "mainView") {
             // Adjust magnification based on user input

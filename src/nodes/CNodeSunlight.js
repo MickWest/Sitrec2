@@ -15,6 +15,9 @@ export class CNodeSunlight extends CNode {
         this.sunIntensity = 3.0;
         this.ambientIntensity = 1.2;
 
+        // temp value
+        this.sunScattering = 0.1;
+
         this.darkeningAngle = 10.0;
     }
 
@@ -51,22 +54,25 @@ export class CNodeSunlight extends CNode {
             // ambient light is scattered light plus the fixed ambient light
             result.ambientIntensity = (this.sunIntensity * scaleScattering + this.ambientIntensity) * Math.PI;
         }
-        //
-        // infoDiv.innerHTML+= `<br><br>Sunlight: ${result.sunIntensity.toFixed(2)} Ambient: ${result.ambientIntensity.toFixed(2)}`
-        // infoDiv.innerHTML+=`<br>Angle: ${angle.toFixed(2)}`
-        // infoDiv.innerHTML+=`<br>Sun Scattering: ${this.sunScattering.toFixed(2)}`
-        // infoDiv.innerHTML+=`<br>Scale: ${scale.toFixed(2)}`
-        // infoDiv.innerHTML+=`<br>ScaleScattering: ${scaleScattering.toFixed(2)}`
-        // infoDiv.innerHTML+=`<br>Darkening: ${this.darkeningAngle.toFixed(2)}`
-        // infoDiv.innerHTML+=`<br>Position: ${position.x.toFixed(2)} ${position.y.toFixed(2)} ${position.z.toFixed(2)}`
-        // infoDiv.innerHTML+=`<br>SunPos: ${sunPos.x.toFixed(2)} ${sunPos.y.toFixed(2)} ${sunPos.z.toFixed(2)}`
-        // infoDiv.innerHTML+=`<br>Dir: ${dir.x.toFixed(2)} ${dir.y.toFixed(2)} ${dir.z.toFixed(2)}`
-        // infoDiv.innerHTML+=`<br>Up: ${up.x.toFixed(2)} ${up.y.toFixed(2)} ${up.z.toFixed(2)}`
-        //
 
         // calculate the total light in the sky
         // just a ballpark for how visible the stars should be.
         result.sunTotal = result.sunIntensity + result.ambientIntensity;
+
+        infoDiv.innerHTML= `<br><br>Sunlight: ${result.sunIntensity.toFixed(2)} Ambient: ${result.ambientIntensity.toFixed(2)}`
+        infoDiv.innerHTML+=`<br>SunTotal: ${result.sunTotal.toFixed(2)}`
+        infoDiv.innerHTML+=`<br>Angle: ${angle.toFixed(2)}`
+        infoDiv.innerHTML+=`<br>Sun Scattering: ${this.sunScattering.toFixed(2)}`
+        infoDiv.innerHTML+=`<br>Scale: ${scale.toFixed(2)}`
+        infoDiv.innerHTML+=`<br>ScaleScattering: ${scaleScattering.toFixed(2)}`
+        infoDiv.innerHTML+=`<br>Darkening: ${this.darkeningAngle.toFixed(2)}`
+        infoDiv.innerHTML+=`<br>Position: ${position.x.toFixed(2)} ${position.y.toFixed(2)} ${position.z.toFixed(2)}`
+        infoDiv.innerHTML+=`<br>SunPos: ${sunPos.x.toFixed(2)} ${sunPos.y.toFixed(2)} ${sunPos.z.toFixed(2)}`
+        infoDiv.innerHTML+=`<br>Dir: ${dir.x.toFixed(2)} ${dir.y.toFixed(2)} ${dir.z.toFixed(2)}`
+        infoDiv.innerHTML+=`<br>Up: ${up.x.toFixed(2)} ${up.y.toFixed(2)} ${up.z.toFixed(2)}`
+
+
+      //  console.log(result.sunTotal);
 
 
         return result;
@@ -108,7 +114,7 @@ export class CNodeSunlight extends CNode {
     update(f) {
         if (Globals.sunLight) {
             //
-            try {
+          //  try {
                 const date = GlobalDateTimeNode.dateNow;
 
                 let camera;
@@ -131,10 +137,10 @@ export class CNodeSunlight extends CNode {
                 Globals.sunTotal = sun.sunTotal
 
 
-            } catch (e) {
-                console.error("Sunlight error", e)
-                debugger;
-            }
+            // } catch (e) {
+            //     console.error("Sunlight error", e)
+            //     debugger;
+            // }
         }
 
     }
