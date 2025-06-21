@@ -3,7 +3,7 @@ import {CNodeGraphSeries} from "./nodes/CNodeGraphSeries";
 import {CNodeMunge, makeMunge} from "./nodes/CNodeMunge";
 import {NodeMan, Sit, Units} from "./Globals";
 import {acos, degrees, m2f, metersFromMiles, NMFromMeters} from "./utils";
-import {pointAltitude} from "./SphericalMath";
+import {getLocalUpVector, pointAltitude} from "./SphericalMath";
 import {CNodeTrackScreenAngle} from "./nodes/CNodeJetTrack";
 import {assert} from "./assert.js";
 import {getGlareAngleFromFrame} from "./JetUtils";
@@ -230,7 +230,9 @@ export function AddSpeedGraph(source, caption, minY = 0, maxY = 1000, left = 0.6
                         let move = this.in.source.p(f)
                         move.sub(this.in.source.p(f - 1))
                         move.sub(this.in.wind.p(f))
-                        move.y = 0;
+                        const up = getLocalUpVector(this.in.source.p(f))
+                        // project move onto the ground plane
+                        move.projectOnPlane(up);
                         return (move.length() * this.in.source.fps * Units.m2Speed)
                     }
                 }),
@@ -250,7 +252,10 @@ export function AddSpeedGraph(source, caption, minY = 0, maxY = 1000, left = 0.6
                         if (f === 0) f = 1;
                         let move = this.in.source.p(f)
                         move.sub(this.in.source.p(f - 1))
-                        move.y = 0;
+                        const up = getLocalUpVector(this.in.source.p(f))
+                        // project move onto the ground plane
+                        move.projectOnPlane(up);
+
                         return (move.length() * this.in.source.fps * Units.m2Speed)
                     }
                 }),
@@ -258,6 +263,7 @@ export function AddSpeedGraph(source, caption, minY = 0, maxY = 1000, left = 0.6
                 color: "green",
             }),
 
+            // black = object obsolute 3D speed
             compare: new CNodeGraphSeries({
                 id: "graphObjectSpeed"+source,
                 // Munge node to convert a traverse track to speed
@@ -272,7 +278,7 @@ export function AddSpeedGraph(source, caption, minY = 0, maxY = 1000, left = 0.6
                     }
                 }),
                 name: "Object Speed",
-                color: "#008000",
+                color: "black",
             }),
 
             // RED = vertical speed
@@ -286,7 +292,12 @@ export function AddSpeedGraph(source, caption, minY = 0, maxY = 1000, left = 0.6
                         if (f === 0) f = 1;
                         let move = this.in.source.p(f)
                         move.sub(this.in.source.p(f - 1))
-                        return (move.y * this.in.source.fps * Units.m2Speed)
+
+                        const up = getLocalUpVector(this.in.source.p(f))
+                        // project move onto the ground plane
+                        move.projectOnVector(up);
+
+                        return (move.length() * this.in.source.fps * Units.m2Speed)
                     }
                 }),
                 name: "Vertical Speed",
@@ -349,7 +360,9 @@ export function AddSpeedGraph(source, caption, minY = 0, maxY = 1000, left = 0.6
                             if (f === 0) f = 1;
                             let move = this.in.source.p(f)
                             move.sub(this.in.source.p(f - 1))
-                            move.y = 0;
+                            const up = getLocalUpVector(this.in.source.p(f))
+                            // project move onto the ground plane
+                            move.projectOnPlane(up);
                             return (move.length() * this.in.source.fps * Units.m2Speed)
                         }
                     }),
