@@ -364,15 +364,8 @@ export class CNodeLabeledArrow extends CNodeLabel3D {
     }
 
     recalculate(f) {
-        this.start = this.in.start.p(f);
-        this.length = this.in.length.v(f);
-        this.direction = this.in.direction.p(f);
 
-        // normalize the direction
-        this.direction.normalize();
-
-        this.end = this.start.clone().add(this.direction.clone().multiplyScalar(this.length));
-        this.position.copy(this.end);
+        this.calculateVectors(f)
 
         const color = this.in.color.v(f)
         // add an arrow from A to C and B to D
@@ -383,10 +376,28 @@ export class CNodeLabeledArrow extends CNodeLabel3D {
 
     }
 
+    calculateVectors(f) {
+        this.start = this.in.start.p(f);
+        this.length = this.in.length.v(f);
+        this.direction = this.in.direction.p(f);
+
+        // normalize the direction
+        this.direction.normalize();
+
+        this.end = this.start.clone().add(this.direction.clone().multiplyScalar(this.length));
+        this.position.copy(this.end);
+    }
+
+    // update the arrow with a new direction
+    // which will override the current direction
     updateDirection(dir) {
+        this.calculateVectors(par.frame);
+
         this.direction.copy(dir);
         this.update(0);
     }
+
+
 
     // scale things based on the camera's position
     preRender(view) {

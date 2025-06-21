@@ -235,6 +235,7 @@ export class CNodeFlowOrbs extends CNodeSpriteGroup {
 
     initializeSprites() {
         const lookVector = new Vector3();
+        assert(this.camera, "Camera is not set for CNodeFlowOrbs");
         this.camera.getWorldDirection(lookVector);
 
 
