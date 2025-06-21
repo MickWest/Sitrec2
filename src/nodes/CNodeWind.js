@@ -82,6 +82,7 @@ export class CNodeWind extends CNode {
     }
 
     setPosition(pos) {
+        assert(!isNaN(pos.x) && !isNaN(pos.y) && !isNaN(pos.z), "Setting Wind position has NaNs");
         this.position = pos.clone();
     }
 

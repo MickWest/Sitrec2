@@ -341,6 +341,14 @@ export function smoothDerivative(data, window, iterations) {
 // CHECK FIRST that it's accurate
 // MAYBE JUST SMOOTH?
 export function ExpandKeyframes(input, outLen, indexCol = 0, dataCol = 1, stepped = false, string = false, degrees = false, frameOffset = 0) {
+
+    // if the first cell is "frame" then copy the array and remove the first cell
+    if (typeof input[0][indexCol] === 'string' && input[0][indexCol].toLowerCase() === "frame") {
+        console.warn("ExpandKeyframes: input[0][indexCol] is 'frame', removing it from the input array")
+        input = input.slice(1);
+    }
+
+
     if (string) stepped = true; // can't interpolate strings
     var out = new Array()
     var aFrame = parseInt(input[0][indexCol]) + frameOffset
@@ -349,6 +357,7 @@ export function ExpandKeyframes(input, outLen, indexCol = 0, dataCol = 1, steppe
         aValue = input[0][dataCol]
     else {
         aValue = parseFloat(input[0][dataCol])
+        assert(!isNaN(aValue), "ExpandKeyframes: aValue is NaN for input[0]["+dataCol+"]="+input[0][dataCol])
         // if the frist frame number is not 0, then we need to fill in the gap
         if (aFrame > 0) {
             // interpolate a new frame 0
