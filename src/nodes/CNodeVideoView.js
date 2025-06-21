@@ -63,6 +63,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.videoData = new CVideoWebCodecDataRaw({id: this.id + "_data", file: fileName, videoSpeed: this.videoSpeed},
             this.loadedCallback.bind(this), this.errorCallback.bind(this))
 
+        // loaded from a URL, so we can set the staticURL
+        this.staticURL = this.fileName;
+
         this.positioned = false;
         par.frame = 0;
         par.paused = false; // unpause, otherwise we see nothing.
@@ -196,6 +199,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             this.videoData.dispose();
             this.videoData = null;
         }
+        this.staticURL = undefined; // clear the static URL, so we will rehost any dropped file
     }
 
 

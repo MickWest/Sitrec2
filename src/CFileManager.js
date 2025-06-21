@@ -1134,13 +1134,15 @@ export class CFileManager extends CManager {
                     const videoDroppedData = videoNode.videoData.videoDroppedData;
 
                     if (videoDroppedData !== undefined) {
-                        // do we also needs something similar for URLs?
+                        // if the videoNode has a staticURL, then we don't need to rehost it
 
-                        // // start rehosting
-                        rehostPromises.push(this.rehoster.rehostFile(rehostFilename, videoDroppedData).then((staticURL) => {
-                            console.log("VIDEO REHOSTED AS PROMISED: " + staticURL)
-                            videoNode.staticURL = staticURL;
-                        }))
+                        if (videoNode.staticURL === undefined || videoNode.staticURL === null) {
+                            // // start rehosting
+                            rehostPromises.push(this.rehoster.rehostFile(rehostFilename, videoDroppedData).then((staticURL) => {
+                                console.log("VIDEO REHOSTED AS PROMISED: " + staticURL)
+                                videoNode.staticURL = staticURL;
+                            }))
+                        }
                     }
                 }
             }
