@@ -465,6 +465,7 @@ sitch = {
         kind: "TrackToTrack",
         sourceTrack: "cameraTrackSwitchSmooth",
         targetTrack: "targetTrackSwitchSmooth",
+        roll: "ptzAngles",
     },
 
 

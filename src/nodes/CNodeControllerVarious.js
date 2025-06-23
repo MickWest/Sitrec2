@@ -19,6 +19,7 @@ export class CNodeControllerTrackToTrack extends CNodeController {
         super(v);
         this.input("sourceTrack")
         this.input("targetTrack")
+        this.optionalInputs(["roll"])
     }
 
     apply(f, objectNode) {
@@ -28,6 +29,15 @@ export class CNodeControllerTrackToTrack extends CNodeController {
         camera.up = objectNode.getUpVector(camera.position)
         camera.position.copy(camPos);
         camera.lookAt(targetPos)
+
+        // apply roll controller if specified
+        if (this.in.roll !== undefined) {
+            // note this is assuming it's a node with a roll member, like a PTZ controller
+            var roll = this.in.roll.roll;
+            assert(!Number.isNaN(roll), "CNodeControllerTrackToTrack: roll is NaN, id=" + this.id + " f=" + f);
+            camera.rotateZ(radians(roll));
+        }
+
         objectNode.syncUIPosition(); //
     }
 }
