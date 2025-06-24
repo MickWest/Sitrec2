@@ -347,12 +347,24 @@ export class CNodeView3D extends CNodeViewCanvas {
 
                 //if (this.effectsEnabled) {
                 if (this.in.canvasWidth !== undefined) {
-                    Globals.renderTargetAntiAliased.setSize(this.in.canvasWidth.v0, this.in.canvasHeight.v0);
+
+                    let width, height;
+                    const long = this.in.canvasWidth.v0;
+                    if (this.widthPx > this.heightPx) {
+                        width = long;
+                        height = Math.floor(long * this.heightPx / this.widthPx);
+                    } else {
+                        height = long;
+                        width = Math.floor(long * this.widthPx / this.heightPx);
+                    }
+
+
+                    Globals.renderTargetAntiAliased.setSize(width, height);
                     if (this.effectsEnabled) {
                         // often don't have effects on the main view
                         // so we don't need to create/resize these render targets
-                        Globals.renderTargetA.setSize(this.in.canvasWidth.v0, this.in.canvasHeight.v0);
-                        Globals.renderTargetB.setSize(this.in.canvasWidth.v0, this.in.canvasHeight.v0);
+                        Globals.renderTargetA.setSize(width, height);
+                        Globals.renderTargetB.setSize(width, height);
                     }
                 } else {
                     Globals.renderTargetAntiAliased.setSize(this.widthPx, this.heightPx);

@@ -1394,26 +1394,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         // what's this doing here? nneds to be called per camera, but not in a satellite specific function
         this.starMaterial.uniforms.cameraFOV.value = camera.fov;
-        let aspect = 1; // PATCH FOR NOW, REMOVE LATER
-
-        // patch for views that have effects enabled
-        // which means they use render targets
-        // and the aspect ratio is not the same as the canvas
-        // this is a bit of a hack, but it works for now
-        // if (view.effectsEnabled) {
-        //   //  aspect = view.canvas.width / view.canvas.height;
-        //
-        //     const screenAspect = window.innerWidth / window.innerHeight;
-        //
-        //     const viewAspect = view.widthPx / view.heightPx;
-        //
-        //     // WHY is this not just viewAspect?
-        //     aspect =  viewAspect / screenAspect;
-        //
-        // }
-
-
-        this.starMaterial.uniforms.aspectRatio.value = aspect
 
         let starScale = Sit.starScale/window.devicePixelRatio;
 
@@ -1984,41 +1964,21 @@ void main() {
 
 
         const customFragmentShader = `// Fragment Shader
-varying vec3 vColor;
-
-uniform sampler2D starTexture;
-uniform float aspectRatio; // Aspect ratio of the viewport
-
-// void main() {
-//     // Basic circular billboard
-//    // vec2 uv = gl_PointCoord.xy * 2.0 - 1.0;
-//     vec2 uv = (gl_PointCoord.xy - 0.5) * vec2(1.0, aspectRatio) * 2.0;
-//    
-//     float alpha = 1.0 - dot(uv, uv);
-//   //  if (alpha < 0.0) discard; // Gives a circular shape
-//
-//     // Apply texture
-//     vec4 textureColor = texture2D(starTexture, gl_PointCoord);
-//     gl_FragColor = vec4(vColor, 1.0) * textureColor * alpha;
-// }
-
-        void main() {
-            // Correct gl_PointCoord for aspect ratio distortion
-            vec2 uv = (gl_PointCoord.xy - 0.5) * vec2(aspectRatio,1) * 2.0;
-
-            float alpha = 1.0 - dot(uv, uv);
-            if (alpha < 0.0) discard;  // Gives a circular shape
-
-            // Rescale uv back to [0,1] range for texture sampling
-            vec2 texUV = uv * 0.5 + 0.5;
-
-            // Apply texture
-            vec4 textureColor = texture2D(starTexture, texUV);
-            gl_FragColor = vec4(vColor, 1.0) * textureColor * alpha;
-        }       
-        
-    `
-        ; // Your fragment shader code
+            varying vec3 vColor;
+            
+            uniform sampler2D starTexture;
+            
+            void main() {
+               // Basic circular billboard
+               vec2 uv = gl_PointCoord.xy * 2.0 - 1.0;
+            
+                float alpha = 1.0 - dot(uv, uv);
+                if (alpha < 0.0) discard; // Gives a circular shape
+            
+                // Apply texture
+                vec4 textureColor = texture2D(starTexture, gl_PointCoord);
+                gl_FragColor = vec4(vColor, 1.0) * textureColor * alpha;
+            }`;
 
 // Material with shaders
         this.starMaterial = new ShaderMaterial({
@@ -2030,7 +1990,6 @@ uniform float aspectRatio; // Aspect ratio of the viewport
                 maxSize: { value: 20.0 },
                 starTexture: { value: new TextureLoader().load(SITREC_APP+'data/images/nightsky/MickStar.png') },
                 cameraFOV: { value: 30},
-                aspectRatio: { value: 1.0 }, // This should be updated per viewport
                 starScale: { value: Sit.starScale/window.devicePixelRatio}
             },
             transparent: true,
