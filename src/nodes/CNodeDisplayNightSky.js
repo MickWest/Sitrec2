@@ -1675,21 +1675,20 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         let nInput = 0;
         while (offset < -starn * nbent - 28) {
-            //const xno = view.getFloat32(offset, littleEndian);
             const xno = view.getInt32(offset, littleEndian);  // HIP number
             offset += 4
             const sra0 = view.getFloat64(offset, littleEndian);
             offset += 8
             const sdec0 = view.getFloat64(offset, littleEndian);
             offset += 8
-            const is = utf8decoder.decode(new Uint8Array([view.getUint8(offset), view.getUint8(offset + 1)]));
-            offset += 2
+            // const is = utf8decoder.decode(new Uint8Array([view.getUint8(offset), view.getUint8(offset + 1)]));
+            // offset += 2
             let mag = view.getInt16(offset, littleEndian) / 100;
             offset += 2
-            const xrpm = view.getFloat32(offset, littleEndian);
-            offset += 4
-            const xdpm = view.getFloat32(offset, littleEndian);
-            offset += 4
+            // const xrpm = view.getFloat32(offset, littleEndian);
+            // offset += 4
+            // const xdpm = view.getFloat32(offset, littleEndian);
+            // offset += 4
 
 
             // LATER we need to accept the full range of magnitudes
