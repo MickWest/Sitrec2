@@ -141,6 +141,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.BSC_RA = [];
         this.BSC_DEC = [];
         this.BSC_MAG = [];
+        this.BSC_HIP = [];
         this.BSC_NAME = [];
         this.commonNames = {};
 
@@ -1393,6 +1394,22 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         // what's this doing here? nneds to be called per camera, but not in a satellite specific function
         this.starMaterial.uniforms.cameraFOV.value = camera.fov;
+        let aspect = 1;
+
+        if (view.id === "lookView") {
+          //  aspect = view.canvas.width / view.canvas.height;
+
+            const screenAspect = window.innerWidth / window.innerHeight;
+
+            const viewAspect = view.widthPx / view.heightPx;
+
+            // WHY is this not just viewAspect?
+            aspect =  viewAspect / screenAspect;
+
+        }
+
+
+        this.starMaterial.uniforms.aspectRatio.value = aspect
 
         let starScale = Sit.starScale/window.devicePixelRatio;
 
@@ -1674,7 +1691,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         let nInput = 0;
         while (offset < -starn * nbent - 28) {
-            const xno = view.getFloat32(offset, littleEndian);
+            //const xno = view.getFloat32(offset, littleEndian);
+            const xno = view.getInt32(offset, littleEndian);  // HIP number
             offset += 4
             const sra0 = view.getFloat64(offset, littleEndian);
             offset += 8
@@ -1689,8 +1707,15 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             const xdpm = view.getFloat32(offset, littleEndian);
             offset += 4
 
+
+            // LATER we need to accept the full range of magnitudes
+            // but historically we stopped at 8
+            // the problem is that we use the range to calcualte the on-screen size
+            // so we need to scale the stars to fit the screen with the full range of -2 to 15
+           // if (mag > 8) mag = 8;
+
             // assert mag is within expected range for stars, and not NaN
-            assert(!isNaN(mag) &&  mag >= -2 && mag <= 8, "mag out of range: "+mag +" at nInput = "+nInput)
+            assert(!isNaN(mag) &&  mag >= -2 && mag <= 15, "mag out of range: "+mag +" at nInput = "+nInput)
 
             if (sra0 === 0 && sdec0 === 0) {
                 // ra and dec of zero indicates a placeholder entry, and is skipped
@@ -1707,14 +1732,24 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
             this.BSC_RA[this.BSC_NumStars] = sra0;
             this.BSC_DEC[this.BSC_NumStars] = sdec0;
+            // this.BSC_RA[this.BSC_NumStars] = sra0 * Math.PI / 180;
+            // this.BSC_DEC[this.BSC_NumStars] = sdec0 * Math.PI / 180;
+
             this.BSC_MAG[this.BSC_NumStars] = mag;
+
+            this.BSC_HIP[this.BSC_NumStars] = xno;
+
             this.BSC_NumStars++;
 
 
 
 
+            // note the star names depend on the OLD BSC
+
             nInput++;
         }
+
+        console.log("Loaded "+this.BSC_NumStars+" stars, max mag = "+this.BSC_MaxMag)
     }
 
 // Okab              HR 7235      zet   ζ     Aql A    19054+1352  2.99  V  93747 177724 286.352533  13.863477 2018-06-01
@@ -1724,23 +1759,49 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 // load the IAU CSN (Common Star Names)
 // extract those with a HR designation, which is the index into the BSC
 // stor them in an array indexed on that
+//     loadCommonStarNames() {
+//         const lines = FileManager.get("IAUCSN").split('\n');
+//         for (const line of lines) {
+//             if (line[0] == '#') {
+//                 // console.log("Skipping "+line)
+//             } else {
+//                 const name = line.substring(0, 18).trim()
+//                 const designation = line.substring(36, 49).trim()
+//                 if (designation.startsWith("HR")) {
+//                     const hr = parseInt(designation.substring(3))
+//                     this.commonNames[hr] = name;
+//                     // console.log("Found HR "+hr+" "+name)
+//                 }
+//
+//             }
+//         }
+//     }
+
+    // new one as we are using HIP numbers
     loadCommonStarNames() {
         const lines = FileManager.get("IAUCSN").split('\n');
         for (const line of lines) {
-            if (line[0] == '#') {
-                // console.log("Skipping "+line)
-            } else {
-                const name = line.substring(0, 18).trim()
-                const designation = line.substring(36, 49).trim()
-                if (designation.startsWith("HR")) {
-                    const hr = parseInt(designation.substring(3))
-                    this.commonNames[hr] = name;
-                    // console.log("Found HR "+hr+" "+name)
-                }
+            if (line[0] == '#' || line[0] == '$' || line.trim() === '') continue;
 
+            const name = line.substring(0, 18).trim();
+            let hipStr = line.substring(89, 96).trim();  // column 10 (0-based, fixed width file)
+
+            if (hipStr !== "_") {
+                const hip = parseInt(hipStr);
+               // this.commonNames[hip-1] = name;
+              // need to find the hip number in the BSC_HIP array
+                // and use the index of that to store the name in this.commonNames
+                const index = this.BSC_HIP.indexOf(hip);
+                if (index !== -1) {
+                    console.log(`Found HIP ${hip} at index ${index}, name: ${name}`);
+                    // index+1 is to maintain compatibility with the BSC based indexing
+                    // as the BSC_HIP starts at 1, not 0
+                    this.commonNames[index+1] = name;
+                }
             }
         }
     }
+
 
 
 // // The text file version with names
@@ -1848,8 +1909,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
     addStars(scene) {
 
-        this.loadCommonStarNames();
         this.loadStarData();
+        this.loadCommonStarNames();
         //  loadStarDataWithNames();
 
         // Setup the sprite material
@@ -1876,7 +1937,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             positions[i * 3 + 2] = equatorial.z;
 
             const mag = this.BSC_MAG[i]; // Magnitude
-            let scale = Math.pow((this.BSC_MaxMag + 0.5 - mag) * 0.1, 3);
+            let scale = Math.pow((this.BSC_MaxMag + 0.5 - mag) * 0.1, 3) * 0.125;
          //   scale *= Sit.starScale ?? 1;
 
             // Store magnitude in W component
@@ -1922,17 +1983,43 @@ void main() {
 varying vec3 vColor;
 
 uniform sampler2D starTexture;
+uniform float aspectRatio; // Aspect ratio of the viewport
 
-void main() {
-    // Basic circular billboard
-    vec2 uv = gl_PointCoord.xy * 2.0 - 1.0;
-    float alpha = 1.0 - dot(uv, uv);
-  //  if (alpha < 0.0) discard; // Gives a circular shape
+// void main() {
+//     // Basic circular billboard
+//    // vec2 uv = gl_PointCoord.xy * 2.0 - 1.0;
+//     vec2 uv = (gl_PointCoord.xy - 0.5) * vec2(1.0, aspectRatio) * 2.0;
+//    
+//     float alpha = 1.0 - dot(uv, uv);
+//   //  if (alpha < 0.0) discard; // Gives a circular shape
+//
+//     // Apply texture
+//     vec4 textureColor = texture2D(starTexture, gl_PointCoord);
+//     gl_FragColor = vec4(vColor, 1.0) * textureColor * alpha;
+// }
 
-    // Apply texture
-    vec4 textureColor = texture2D(starTexture, gl_PointCoord);
-    gl_FragColor = vec4(vColor, 1.0) * textureColor * alpha;
-}`; // Your fragment shader code
+
+// THIS SEEMS NOT TO BE CHANGING THE ASPECT RATIO PER VIEWPORT
+// BUT IT IS CORRECTING THE ASPECT RATIO DISTORTION, JUST WITH WRONG NUBMERS
+// SEEMS LIKE SAME PER viewport, so not changing per viewport
+
+        void main() {
+            // Correct gl_PointCoord for aspect ratio distortion
+            vec2 uv = (gl_PointCoord.xy - 0.5) * vec2(aspectRatio,1) * 2.0;
+
+            float alpha = 1.0 - dot(uv, uv);
+            if (alpha < 0.0) discard;  // Gives a circular shape
+
+            // Rescale uv back to [0,1] range for texture sampling
+            vec2 texUV = uv * 0.5 + 0.5;
+
+            // Apply texture
+            vec4 textureColor = texture2D(starTexture, texUV);
+            gl_FragColor = vec4(vColor, 1.0) * textureColor * alpha;
+        }       
+        
+    `
+        ; // Your fragment shader code
 
 // Material with shaders
         this.starMaterial = new ShaderMaterial({
@@ -1944,6 +2031,7 @@ void main() {
                 maxSize: { value: 20.0 },
                 starTexture: { value: new TextureLoader().load(SITREC_APP+'data/images/nightsky/MickStar.png') },
                 cameraFOV: { value: 30},
+                aspectRatio: { value: 1.0 }, // This should be updated per viewport
                 starScale: { value: Sit.starScale/window.devicePixelRatio}
             },
             transparent: true,

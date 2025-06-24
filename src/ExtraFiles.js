@@ -3,7 +3,8 @@
 // NightSkyFiles - loaded when Sit.nightSky is true
 export const NightSkyFiles = {
     IAUCSN: "nightsky/IAU-CSN.txt",
-    BSC5: "nightsky/BSC5.bin",
+//    BSC5: "nightsky/BSC5.bin",
+    BSC5: "nightsky/sitrec_bsc_lite.bin",
     constellationsLines: "nightsky/constellations.lines.json",  // https://github.com/ofrohn/d3-celestial/tree/master/data
     constellations: "nightsky/constellations.json",
 

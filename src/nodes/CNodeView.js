@@ -423,8 +423,19 @@ class CNodeView extends CNode {
             if (this.in.canvasWidth) {
                 // if it's a fixed size canvas, ensure it's the right size
                 // and the renderer knows about it
-                let width = this.in.canvasWidth.v0;
-                let height = this.in.canvasHeight.v0;
+                // let width = Math.floor(this.in.canvasWidth.v0);
+                // let height = Math.floor(this.in.canvasHeight.v0);
+
+                let long = Math.floor(this.in.canvasWidth.v0);
+
+                if (this.widthPx > this.heightPx) {
+                    var width = long;
+                    var height = Math.floor(long * this.heightPx / this.widthPx);
+                } else {
+                    var height = long;
+                    var width = Math.floor(long * this.widthPx / this.heightPx);
+                }
+
                 if (this.canvas.width !== width
                     || this.canvas.height !== height) {
                     this.renderer.setSize(width, height, false);
