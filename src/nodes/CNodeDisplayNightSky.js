@@ -1394,19 +1394,23 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         // what's this doing here? nneds to be called per camera, but not in a satellite specific function
         this.starMaterial.uniforms.cameraFOV.value = camera.fov;
-        let aspect = 1;
+        let aspect = 1; // PATCH FOR NOW, REMOVE LATER
 
-        if (view.id === "lookView") {
-          //  aspect = view.canvas.width / view.canvas.height;
-
-            const screenAspect = window.innerWidth / window.innerHeight;
-
-            const viewAspect = view.widthPx / view.heightPx;
-
-            // WHY is this not just viewAspect?
-            aspect =  viewAspect / screenAspect;
-
-        }
+        // patch for views that have effects enabled
+        // which means they use render targets
+        // and the aspect ratio is not the same as the canvas
+        // this is a bit of a hack, but it works for now
+        // if (view.effectsEnabled) {
+        //   //  aspect = view.canvas.width / view.canvas.height;
+        //
+        //     const screenAspect = window.innerWidth / window.innerHeight;
+        //
+        //     const viewAspect = view.widthPx / view.heightPx;
+        //
+        //     // WHY is this not just viewAspect?
+        //     aspect =  viewAspect / screenAspect;
+        //
+        // }
 
 
         this.starMaterial.uniforms.aspectRatio.value = aspect
@@ -1793,7 +1797,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 // and use the index of that to store the name in this.commonNames
                 const index = this.BSC_HIP.indexOf(hip);
                 if (index !== -1) {
-                    console.log(`Found HIP ${hip} at index ${index}, name: ${name}`);
+//                    console.log(`Found HIP ${hip} at index ${index}, name: ${name}`);
                     // index+1 is to maintain compatibility with the BSC based indexing
                     // as the BSC_HIP starts at 1, not 0
                     this.commonNames[index+1] = name;
@@ -1997,11 +2001,6 @@ uniform float aspectRatio; // Aspect ratio of the viewport
 //     vec4 textureColor = texture2D(starTexture, gl_PointCoord);
 //     gl_FragColor = vec4(vColor, 1.0) * textureColor * alpha;
 // }
-
-
-// THIS SEEMS NOT TO BE CHANGING THE ASPECT RATIO PER VIEWPORT
-// BUT IT IS CORRECTING THE ASPECT RATIO DISTORTION, JUST WITH WRONG NUBMERS
-// SEEMS LIKE SAME PER viewport, so not changing per viewport
 
         void main() {
             // Correct gl_PointCoord for aspect ratio distortion
