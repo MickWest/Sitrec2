@@ -84,7 +84,7 @@ export class CNodeSunlight extends CNode {
             return 0;
         }
         const sun = this.calculateSunAt(position, date)
-        let sunTotal = sun.sunTotal / Math.PI;
+        let sunTotal = sun.sunIntensity / Math.PI;
 
         // attentuate by the square of the altitiude
         const alt = pointAltitude(position);

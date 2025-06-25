@@ -1952,7 +1952,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 positions.push(equatorial.x, equatorial.y, equatorial.z);
 
                 // Flux calculation
-                const flux = Math.cbrt(100000000 * Math.pow(10, -0.4 * (mag - magRef))) / 8;
+                const flux = Math.cbrt(100000000 * Math.pow(10, -0.4 * (mag - magRef))) / 16;
                 fluxes.push(flux);
             }
         }
@@ -2611,7 +2611,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         sprite.position.set(equatorial.x, equatorial.y, equatorial.z);
         var scale = 10 * Math.pow(10, -0.4 * (mag - -5));
         if (scale > 1) scale= 1;
-        if (planet === "Sun" || planet === "Moon") scale = 5;
+        if (planet === "Sun") scale = 5;
+        if (planet === "Moon") scale = 1.9;
+
         sprite.scale.set(scale, scale, 1);
 
 
