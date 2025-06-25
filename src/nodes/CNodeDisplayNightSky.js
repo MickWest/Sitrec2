@@ -1867,173 +1867,103 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     }
 
 
-//     addStars(scene) {
-//
-//         assert(Sit.lat !== undefined, "addStars needs Sit.lat")
-//         assert(Sit.lon !== undefined, "addStars needs Sit.lon")
-//
-//         this.loadCommonStarNames();
-//         this.loadStarData();
-//         //  loadStarDataWithNames();
-//
-//         // Setup the sprite material
-//         const spriteMap = new TextureLoader().load('MickStar.png'); // Load a star texture
-//         const spriteMaterial = new SpriteMaterial({map: spriteMap, color: 0xffffff});
-//
-// // Create stars
-//         const numStars = this.BSC_NumStars;
-//         const sphereRadius = 100; // 100m radius
-//
-//         for (let i = 0; i < numStars; i++) {
-//             const sprite = new Sprite(spriteMaterial);
-//
-//             // Assuming RA is in radians [0, 2π] and Dec is in radians [-π/2, π/2]
-//             const ra = this.BSC_RA[i];   // Right Ascension
-//             const dec = this.BSC_DEC[i]; // Declination
-//             const mag = this.BSC_MAG[i]; // Magnitude
-//             const equatorial = raDec2Celestial(ra, dec, sphereRadius)
-//
-//             // Set the position and scale of the sprite
-//             sprite.position.set(equatorial.x, equatorial.y, equatorial.z);
-//
-//             let scale = Math.pow((this.BSC_MaxMag + 0.5 - mag) * 0.1, 2);
-//
-//             scale *= Sit.starScale ?? 1;
-//
-//             sprite.scale.set(scale, scale, 1); // Random scale between 0.5 and 1.5
-//             // Add sprite to scene
-//             scene.add(sprite);
-//         }
-//
-//     }
-
     addStars(scene) {
-
         this.loadStarData();
         this.loadCommonStarNames();
-        //  loadStarDataWithNames();
-// Custom shaders
+
+        // Custom shaders with flux-based scaling
         const customVertexShader = `
-        // Vertex Shader
-varying vec3 vColor;
+        varying vec3 vColor;
+        varying float vFlux;
 
-uniform float maxMagnitude;
-uniform float minSize;
-uniform float maxSize;
-uniform float cameraFOV; // Uniform for camera's field of view
-uniform float starScale;
+        uniform float cameraFOV;
+        uniform float starScale;
 
-attribute float magnitude;
+        attribute float flux;
 
-void main() {
-    vColor = vec3(1.0); // White color, modify as needed
+        void main() {
+            vColor = vec3(1.0);
+            vFlux = flux;
 
-    // Adjust size based on magnitude
-//    float size = mix(maxSize, minSize, (magnitude / maxMagnitude));
-    float size = mix(minSize, maxSize, magnitude);
-    
-    // Adjust size based on camera FOV
-    size *= 3.0 * (30.0 / cameraFOV) * starScale;
-   
-    
-    // Billboard transformation (make the sprite always face the camera)
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_Position = projectionMatrix * mvPosition;
-    gl_PointSize = size; // * (300.0 / -mvPosition.z); // Adjust size based on distance
-}`;
+            // Size proportional to flux
+            float size = flux * starScale * (30.0 / cameraFOV);
 
+            //size = 10.0;
 
-        const customFragmentShader = `// Fragment Shader
-            varying vec3 vColor;
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            gl_Position = projectionMatrix * mvPosition;
+            gl_PointSize = size;
+        }
+    `;
+
+        const customFragmentShader = `
+        varying vec3 vColor;
+        varying float vFlux;
+        uniform sampler2D starTexture;
+
+        void main() {
+            vec2 uv = gl_PointCoord.xy * 2.0 - 1.0;
+            float alpha = 1.0 - dot(uv, uv);
+            if (alpha < 0.0) discard;
             
-            uniform sampler2D starTexture;
-            
-            void main() {
-               // Basic circular billboard
-               vec2 uv = gl_PointCoord.xy * 2.0 - 1.0;
-            
-                float alpha = 1.0 - dot(uv, uv);
-                if (alpha < 0.0) discard; // Gives a circular shape
-            
-                // Apply texture
-                vec4 textureColor = texture2D(starTexture, gl_PointCoord);
-                gl_FragColor = vec4(vColor, 1.0) * textureColor * alpha;
-            }`;
+            vec4 textureColor = texture2D(starTexture, gl_PointCoord);
+            //float finalAlpha = alpha * sqrt(vFlux); // Gamma correction for perceptual brightness
+//            gl_FragColor = vec4(vColor, alpha) * textureColor;
+            gl_FragColor = textureColor;
+        }`;
 
-// Material with shaders
         this.starMaterial = new ShaderMaterial({
             vertexShader: customVertexShader,
             fragmentShader: customFragmentShader,
             uniforms: {
-                maxMagnitude: { value: this.BSC_MaxMag },
-                minSize: { value: 1.0 },
-                maxSize: { value: 20.0 },
                 starTexture: { value: new TextureLoader().load(SITREC_APP+'data/images/nightsky/MickStar.png') },
-                cameraFOV: { value: 30},
-                starScale: { value: Sit.starScale/window.devicePixelRatio}
+                cameraFOV: { value: 30 },
+                starScale: { value: Sit.starScale / window.devicePixelRatio }
             },
             transparent: true,
             depthTest: true,
         });
+
         this.createStarSprites(scene);
-
     }
-
 
     createStarSprites(scene) {
         const numStars = this.BSC_NumStars;
-        const sphereRadius = 100; // 100m radius
+        const sphereRadius = 100;
 
-        // dispose the old star sprites if they exist
         if (this.starSprites) {
             scene.remove(this.starSprites);
             this.starSprites.geometry.dispose();
             this.starSprites = null;
         }
 
-        // Define geometry
         this.starGeometry = new BufferGeometry();
 
-        // Allocate arrays for positions and magnitudes
-        // Maximum number of stars is numStars, but we will resize them later
-        // as we might not use all of them (culling by magnitude)
-        let positions = new Float32Array(numStars * 3); // x, y, z for each star
-        let magnitudes = new Float32Array(numStars); // magnitude for each star
+        let positions = [];
+        let fluxes = [];
 
-        let n = 0;
+        const magRef = -1.5;  // Reference magnitude for normalization
+        //const magLimit = 6.5; // Absolute limiting magnitude (faintest star we bother with)
+
         for (let i = 0; i < numStars; i++) {
-            if (this.BSC_MAG[i] < Sit.starLimit) {
-                // Convert RA, Dec to 3D position
+            const mag = this.BSC_MAG[i];
+            if (mag <= Sit.starLimit) {
                 const equatorial = raDec2Celestial(this.BSC_RA[i], this.BSC_DEC[i], sphereRadius);
+                positions.push(equatorial.x, equatorial.y, equatorial.z);
 
-                // Store position
-                positions[n * 3] = equatorial.x;
-                positions[n * 3 + 1] = equatorial.y;
-                positions[n * 3 + 2] = equatorial.z;
-
-                const mag = this.BSC_MAG[i]; // Magnitude
-                let scale = Math.pow((this.BSC_MaxMag + 0.5 - mag) * 0.1, 3) * 0.125;
-                magnitudes[n] = scale
-                n++;
+                // Flux calculation
+                const flux = Math.cbrt(100000000 * Math.pow(10, -0.4 * (mag - magRef))) / 8;
+                fluxes.push(flux);
             }
         }
 
-        // Resize arrays to the actual number of stars
-        positions = positions.slice(0, n * 3);
-        magnitudes = magnitudes.slice(0, n);
+        this.starGeometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
+        this.starGeometry.setAttribute('flux', new BufferAttribute(new Float32Array(fluxes), 1));
 
-
-// Attach data to geometry
-        this.starGeometry.setAttribute('position', new BufferAttribute(positions, 3));
-        this.starGeometry.setAttribute('magnitude', new BufferAttribute(magnitudes, 1));
-
-
-// Create point cloud
         this.starSprites = new Points(this.starGeometry, this.starMaterial);
-
-// Add to scene
         scene.add(this.starSprites);
     }
+
 
     addConstellationNames(scene) {
         const constellations = FileManager.get("constellations");
