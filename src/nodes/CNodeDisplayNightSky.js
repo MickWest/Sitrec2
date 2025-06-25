@@ -255,17 +255,34 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         this.flareBandGroup.visible = this.showFlareBand;
 
+        // NOTE: older vars set from Sit
+        // they will get saves as all of Sit is saved
+        // the addSimpleSerial calls were doing nothing
+
         guiMenus.view.add(Sit,"starScale",0,3,0.01).name("Star Brightness").listen()
             .tooltip("Scale factor for the brightness of the stars. 1 is normal, 0 is invisible, 2 is twice as bright, etc.")
-        this.addSimpleSerial("starScale")
+       // this.addSimpleSerial("starScale")
+
+        if (Sit.starLimit === undefined)
+            Sit.starLimit = 15; // default to 0 if not set
+
+
+        guiMenus.view.add(Sit,"starLimit",-2,15,0.01).name("Star Limit").listen()
+            .tooltip("Brightness limit for stars to be displayed")
+            .onChange(() => {
+                par.renderOne = true;
+                this.createStarSprites(this.celestialSphere);
+            })
+
+       // this.addSimpleSerial("starLimit")
 
         satGUI.add(Sit,"satScale",0,6,0.01).name("Sat Brightness").listen()
             .tooltip("Scale factor for the brightness of the satellites. 1 is normal, 0 is invisible, 2 is twice as bright, etc.")
-        this.addSimpleSerial("satScale");
+       // this.addSimpleSerial("satScale");
 
         satGUI.add(Sit,"satCutOff",0,0.5,0.001).name("Sat Cut-Off").listen()
             .tooltip("Satellites dimmed to this level or less will not be displayed")
-        this.addSimpleSerial("satCutOff");
+       // this.addSimpleSerial("satCutOff");
 
 
         this.arrowRange = 4000
@@ -1895,42 +1912,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.loadStarData();
         this.loadCommonStarNames();
         //  loadStarDataWithNames();
-
-        // Setup the sprite material
-        const spriteMap = new TextureLoader().load(SITREC_APP+'data/images/nightsky/MickStar.png'); // Load a star texture
-        const spriteMaterial = new SpriteMaterial({map: spriteMap, color: 0xffffff});
-
-        const numStars = this.BSC_NumStars;
-        const sphereRadius = 100; // 100m radius
-
-// Define geometry
-        let starGeometry = new BufferGeometry();
-
-// Allocate arrays for positions and magnitudes
-        let positions = new Float32Array(numStars * 3); // x, y, z for each star
-        let magnitudes = new Float32Array(numStars); // magnitude for each star
-
-        for (let i = 0; i < numStars; i++) {
-            // Convert RA, Dec to 3D position
-            const equatorial = raDec2Celestial(this.BSC_RA[i], this.BSC_DEC[i], sphereRadius);
-
-            // Store position
-            positions[i * 3] = equatorial.x;
-            positions[i * 3 + 1] = equatorial.y;
-            positions[i * 3 + 2] = equatorial.z;
-
-            const mag = this.BSC_MAG[i]; // Magnitude
-            let scale = Math.pow((this.BSC_MaxMag + 0.5 - mag) * 0.1, 3) * 0.125;
-         //   scale *= Sit.starScale ?? 1;
-
-            // Store magnitude in W component
-            magnitudes[i] = scale //mag;        //this.BSC_MAG[i];
-        }
-
-// Attach data to geometry
-        starGeometry.setAttribute('position', new BufferAttribute(positions, 3));
-        starGeometry.setAttribute('magnitude', new BufferAttribute(magnitudes, 1));
-
 // Custom shaders
         const customVertexShader = `
         // Vertex Shader
@@ -1959,7 +1940,7 @@ void main() {
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mvPosition;
     gl_PointSize = size; // * (300.0 / -mvPosition.z); // Adjust size based on distance
-}`; // Your vertex shader code
+}`;
 
 
         const customFragmentShader = `// Fragment Shader
@@ -1994,15 +1975,65 @@ void main() {
             transparent: true,
             depthTest: true,
         });
-
-// Create point cloud
-        let stars = new Points(starGeometry, this.starMaterial);
-
-// Add to scene
-        scene.add(stars);
+        this.createStarSprites(scene);
 
     }
 
+
+    createStarSprites(scene) {
+        const numStars = this.BSC_NumStars;
+        const sphereRadius = 100; // 100m radius
+
+        // dispose the old star sprites if they exist
+        if (this.starSprites) {
+            scene.remove(this.starSprites);
+            this.starSprites.geometry.dispose();
+            this.starSprites = null;
+        }
+
+        // Define geometry
+        this.starGeometry = new BufferGeometry();
+
+        // Allocate arrays for positions and magnitudes
+        // Maximum number of stars is numStars, but we will resize them later
+        // as we might not use all of them (culling by magnitude)
+        let positions = new Float32Array(numStars * 3); // x, y, z for each star
+        let magnitudes = new Float32Array(numStars); // magnitude for each star
+
+        let n = 0;
+        for (let i = 0; i < numStars; i++) {
+            if (this.BSC_MAG[i] < Sit.starLimit) {
+                // Convert RA, Dec to 3D position
+                const equatorial = raDec2Celestial(this.BSC_RA[i], this.BSC_DEC[i], sphereRadius);
+
+                // Store position
+                positions[n * 3] = equatorial.x;
+                positions[n * 3 + 1] = equatorial.y;
+                positions[n * 3 + 2] = equatorial.z;
+
+                const mag = this.BSC_MAG[i]; // Magnitude
+                let scale = Math.pow((this.BSC_MaxMag + 0.5 - mag) * 0.1, 3) * 0.125;
+                magnitudes[n] = scale
+                n++;
+            }
+        }
+
+        // Resize arrays to the actual number of stars
+        positions = positions.slice(0, n * 3);
+        magnitudes = magnitudes.slice(0, n);
+
+
+// Attach data to geometry
+        this.starGeometry.setAttribute('position', new BufferAttribute(positions, 3));
+        this.starGeometry.setAttribute('magnitude', new BufferAttribute(magnitudes, 1));
+
+
+// Create point cloud
+        this.starSprites = new Points(this.starGeometry, this.starMaterial);
+
+// Add to scene
+        scene.add(this.starSprites);
+    }
 
     addConstellationNames(scene) {
         const constellations = FileManager.get("constellations");
