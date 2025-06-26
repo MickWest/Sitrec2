@@ -90,6 +90,8 @@ constructor(v) {
         depthWrite: true,
     });
 
+    this.visible = v.visible ?? false;
+
     this.geometry = new BufferGeometry();
 
     this.nSprites = v.nSprites ?? 1000;
@@ -136,7 +138,8 @@ constructor(v) {
     this.guiMenu = v.gui ?? guiMenus.effects;
     this.gui = this.guiMenu.addFolder("Flow Orbs");
 
-    this.visible = v.visible ?? false;
+    this.group.visible = this.visible;
+
     this.gui.add(this, "visible").name("Visible").onChange(() => {
         this.group.visible = this.visible;
     }).listen();
