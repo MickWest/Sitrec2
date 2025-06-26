@@ -27,9 +27,7 @@ export class CNodeTrackGUI extends CNode {
             par.renderOne=true;
             // this.metaTrack has a trackDisplayNode and a trackDisplayDataNode and a displayTargetSphere
             // need to set their group mask bit corresponding to VIEW.LOOK
-
-            this.metaTrack.trackDisplayNode.setLayerBit(LAYERS.LOOK, this.showTrackInLook);
-            this.metaTrack.trackDisplayDataNode.setLayerBit(LAYERS.LOOK, this.showTrackInLook);
+            this.setTrackVisibility(this.showTrackInLook);
 
             // the sphere is the object that is always displayed in the look window
             //this.metaTrack.displayTargetSphere.setLayerBit(LAYERS.LOOK, this.showTrackInLook);
@@ -38,6 +36,12 @@ export class CNodeTrackGUI extends CNode {
         }).name(this.metaTrack.menuText + " track in look view")
 
 
+
+    }
+
+    setTrackVisibility(visiblity) {
+        this.metaTrack.trackDisplayNode.setLayerBit(LAYERS.LOOK, visiblity);
+        this.metaTrack.trackDisplayDataNode.setLayerBit(LAYERS.LOOK, visiblity);
     }
 
     dispose() {

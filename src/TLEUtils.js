@@ -430,5 +430,21 @@ export class CTLEData {
         return this.getRecordFromNORAD(NORAD);
     }
 
+    // get array of NORAD numbers that start with the given name
+    getMatchingRecords(name) {
+        if (this.satData === null) {
+            return [];
+        }
+
+        // now get all the records that match this NORAD number
+        const records = [];
+        for (const satData of this.satData) {
+            if (satData.name.startsWith(name)) {
+                records.push(satData.number);
+            }
+        }
+        return records;
+    }
+
 
 }

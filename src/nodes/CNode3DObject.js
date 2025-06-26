@@ -1153,7 +1153,7 @@ export class CNode3DObject extends CNode3DGroup {
     }
 
     recalculate() {
-        const scale = this.in.size.v0
+        const scale = this.in.size.v0 * Globals.objectScale;
         this.group.scale.setScalar(scale);
     }
 

@@ -28,6 +28,7 @@ import {SITREC_APP} from "./configUtils";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB} from "./threeExt";
 import {TrackManager} from "./TrackManager";
+import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 
 
 
@@ -75,7 +76,30 @@ export class CCustomManager {
             .tooltip("Toggle 'Extend to Ground' for all tracks\nWill set all off if any are on\nWill set all on if none are on")
         )
 
+        if (Globals.showAllTracksInLook === undefined)
+            Globals.showAllTracksInLook = false;
+        guiMenus.showhide.add(Globals, "showAllTracksInLook").name("Show All Tracks in Look View").onChange(() => {
+            this.refreshLookViewTracks();
+
+        }).listen();
+
         guiMenus.physics.add(this, "calculateBestPairs").name("Calculate Best Pairs");
+
+
+        if (Globals.objectScale === undefined)
+            Globals.objectScale = 1.0;
+        guiMenus.objects.add(Globals, "objectScale", 0.1, 100, 0.01)
+            .name("Global Scale")
+            .onChange((value) => {
+            // iterate over all node, any CNode3DObject, and set the scale to this.objectScale
+            NodeMan.iterate((id, node) => {
+                if (node instanceof CNode3DObject) {
+                    node.recalculate();
+                }
+            });
+        });
+
+
 
 
         // TODO - Multiple events passed to EventManager.addEventListener
@@ -364,6 +388,20 @@ export class CCustomManager {
     };
 
 
+    refreshLookViewTracks() {
+        // intere over all nodes, and find all CNodeTrackGUI, and call setTrackVisibility
+        NodeMan.iterate((id, node) => {
+            if (node instanceof CNodeTrackGUI) {
+                if (Globals.showAllTracksInLook) {
+                    node.setTrackVisibility(true);
+                } else {
+                    node.setTrackVisibility(node.showTrackInLook);
+                }
+            }
+        });
+
+    }
+
 
     getCustomSitchString(local = false) {
         // the output object
@@ -526,7 +564,9 @@ export class CCustomManager {
         const globalsNeeded = [
             "showMeasurements",
             "showLabelsMain",
-            "showLabelsLook"
+            "showLabelsLook",
+            "objectScale",
+            "showAllTracksInLook"
         ]
 
         let pars = {}
@@ -759,6 +799,7 @@ export class CCustomManager {
             }
 
             refreshLabelsAfterLoading();
+            this.refreshLookViewTracks();
 
 
             if (sitchData.guiMenus) {

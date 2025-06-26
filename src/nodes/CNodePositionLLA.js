@@ -201,7 +201,8 @@ export class CNodePositionLLA extends CNode {
     update() {
         if (this.key) {
 
-            if (isKeyHeld(this.key.toLowerCase())) {
+            // Note adding 'l' key for historical reasons, as the 'l' key was used for "lookCamera" or lat/lon or locations in the past
+            if (isKeyHeld(this.key.toLowerCase()) || isKeyHeld('l')) {
 
                 // don't do any more drag-and-drop triggering of positions
                 // after we move the target or the camera

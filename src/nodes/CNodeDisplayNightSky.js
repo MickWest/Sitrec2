@@ -1113,22 +1113,25 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
 
         // first get the satellte list into an array of NORAD numbers
-        const list = this.showSatelliteList.split(",").map(x => x.trim());
+        const satList = this.showSatelliteList.split(",").map(x => x.trim());
+        const list = [];
         // this can be names or numbers, convert to numbers
-        for (let i = 0; i < list.length; i++) {
-            const num = parseInt(list[i]);
+        for (let i = 0; i < satList.length; i++) {
+            const num = parseInt(satList[i]);
             if (isNaN(num)) {
-                // look up the name
-                const satData = this.TLEData.getRecordFromName(list[i]);
-                if (satData !== null) {
-                    list[i] = satData.number;
-                } else {
-                    // not a number or a name
-                    console.warn("CNodeDisplayNightSky: unknown satellite name " + list[i])
-                    list[i] = -1;
+                const matching = this.TLEData.getMatchingRecords(satList[i])
+                // add the "matching" array to the list
+                if (matching.length > 0) {
+                    for (const number of matching) {
+                        // if the number is not already in the list, add it
+                        if (!list.includes(number)) {
+                            list.push(number);
+                        }
+                    }
                 }
+
             } else {
-                list[i] = num;
+                list.push(num);
             }
         }
 
