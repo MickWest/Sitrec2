@@ -808,10 +808,11 @@ export class CFileManager extends CManager {
             }
         } else {
             // if it's a URL, we need to check if it's got a "localhost" in it
-            // and if we are NOT running on localhost, then we need to
-            // add the SITREC_APP to the start of the URL
-            // this is a patch to keep local files compatible with the deployed
-            if (!isLocal && filename.startsWith("https://localhost/")) {
+            // Regardless of whether we are on local or not
+            // add the SITREC_DOMAIN to the start of the URL
+            // this is a patch to keep older localhost files compatible with the deployed
+            // and with the new local.metabunk.org
+            if (filename.startsWith("https://localhost/")) {
                 filename = SITREC_DOMAIN + '/' + filename.slice(18);
                 console.log("Redirecting debug local URL to " + filename);
             }
