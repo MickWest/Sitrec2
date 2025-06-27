@@ -88,8 +88,9 @@ export class CCustomManager {
 
         if (Globals.objectScale === undefined)
             Globals.objectScale = 1.0;
-        guiMenus.objects.add(Globals, "objectScale", 0.1, 100, 0.01)
+        guiMenus.objects.add(Globals, "objectScale", 1, 50, 0.01)
             .name("Global Scale")
+            .listen()
             .onChange((value) => {
             // iterate over all node, any CNode3DObject, and set the scale to this.objectScale
             NodeMan.iterate((id, node) => {
