@@ -44,8 +44,11 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         this.optionalInputs(["dropColor"])
 
 
+        // TRACK POINT SPACING
         // we don't need to draw the track every frame, so we can set up a step
         // to draw every N frames, or (for extend to ground) every N meters
+        // for custom sitch, this is set by the TrackManager.js
+        // It should be 1 for sparse tracks, like KML tracks,
         this.trackDisplayStep = v.trackDisplayStep ?? 10; // step for displaying the track, default is 10 (every 10 frames)
 
         // minWallStep is the minimum distance between points to draw a wall polygon (and outline)
@@ -103,7 +106,16 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
         if (!v.skipGUI) {
             this.gui = v.gui ?? "contents";
-            this.guiFolder = guiMenus[this.gui].addFolder(this.id).close();
+
+            const menu = guiMenus.contents;
+
+            // The track manager (TrackManager.js) creates a GUI folder for each track
+            // but not for the algorithmic track like camera, target, and satellite tracks
+            // so if it does not exist, we create it here
+            this.guiFolder = menu.getFolder(this.in.track.id);
+            if (!this.guiFolder) {
+                this.guiFolder = guiMenus[this.gui].addFolder(this.id).close();
+            }
 
             this.minGUIColor = 0.6;
 
@@ -276,7 +288,13 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         const EPS = 1e-4;           // epsilon for comparing floats
         let  lastPos;               // track the previous accepted point
 
-        for (var f = 0; f < this.frames; f+= this.trackDisplayStep) {
+
+        // we need to adjust the step based on the simulation speed
+        // as a single frame an represent a long time in the simulation
+        // when the simulation speed is high (e.g. 10x, 100x)
+        const step = this.trackDisplayStep / Sit.simSpeed
+
+        for (var f = 0; f < this.frames; f+= step) {
             let trackPoint = this.in.track.v(f)
 
             if (trackPoint === undefined && f === 0) {

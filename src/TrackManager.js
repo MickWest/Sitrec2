@@ -107,7 +107,7 @@ class CMetaTrack {
 // sourceFile = the input, either a KLM file, or one already in MISB array format
 // if it's a kml file we will first make a MISB array
 // dataID = the id of the intermediate CNodeMISBDataTrack
-export function makeTrackFromDataFile(sourceFile, dataID, trackID, columns, trackIndex = 0) {
+export function makeTrackFromDataFile(sourceFile, dataID, trackID, columns, trackIndex = 0, guiFolder = null) {
 
     // determine what type of track it is
     const fileInfo = FileManager.getInfo(sourceFile);
@@ -192,13 +192,24 @@ export function makeTrackFromDataFile(sourceFile, dataID, trackID, columns, trac
 
 
 
+    const trackSmoothGUIValue =
+        new CNodeGUIValue({
+            id: trackID+"_smoothValue",
+            value: 0,
+            start: 0,
+            end: 200,
+            step: 1,
+            desc: "Smoothing window",
+        }, guiFolder)
+
+
     // then create and return the smoothed track
     return new CNodeSmoothedPositionTrack(
         {
             id: trackID,
             source: trackID+"_unsmoothed",
             method: "moving",
-            window: 20,
+            window: trackID+"_smoothValue",
             copyData: true, // we need this to copy over the misbRow data
         }
     )
@@ -432,9 +443,13 @@ export function addTracks(trackFiles, removeDuplicates = false, sphereMask = LAY
                 })
             }
 
+            const guiID = trackID;
+            const guiFolder = guiMenus.contents.addFolder(trackID).close();
+
+
 
             // just use the default MISB Columns, so no columns are specified
-            const success = makeTrackFromDataFile(trackFileName, trackDataID, trackID, undefined, trackIndex);
+            const success = makeTrackFromDataFile(trackFileName, trackDataID, trackID, undefined, trackIndex, guiFolder);
 
 
             if (success) {
@@ -712,6 +727,7 @@ export function addTracks(trackFiles, removeDuplicates = false, sphereMask = LAY
                 const dropColor = trackColor.clone().multiplyScalar(0.75);
 
 
+                // diplay the full track data as imported
                 trackOb.trackDisplayDataNode = new CNodeDisplayTrack({
                     id: "TrackDisplayData_" + shortName,
                     track: "TrackData_" + shortName,
@@ -723,19 +739,23 @@ export function addTracks(trackFiles, removeDuplicates = false, sphereMask = LAY
                     ignoreAB: true,
                     layers: LAYER.MASK_HELPERS,
                     skipGUI: true,
+                    trackDisplayStep: 1, // display every point in the track, as this is original data
 
                 })
 
+                // Display the shorter segment of the track that matches the Sitch duration
+                // using a thicker line and a brighter color
                 trackOb.trackDisplayNode = new CNodeDisplayTrack({
                     id: "TrackDisplay_" + shortName,
                     track: "Track_" + shortName,
                     dataTrack: "TrackData_" + shortName,
                     dataTrackDisplay: "TrackDisplayData_" + shortName,
                     color: new CNodeConstant({id: "colorTrack_" + shortName, value: new Color(trackColor), pruneIfUnused: true}),
-                    width: 3,
+                    width: 2,
                     //  toGround: 1, // spacing for lines to ground
                     ignoreAB: true,
                     layers: LAYER.MASK_HELPERS,
+                    trackDisplayStep: 10, // display every 10th point in the track as this is per-frame
 
                 })
 
