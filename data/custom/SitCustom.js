@@ -778,6 +778,7 @@ sitch = {
         visible: false, passThrough: true},
 
     // labelView defaults to adding an overlay to lookView, and adds the time and date
+    // this is patched in SituationSetuo.js in the "labelView" case
     labelView: {dateTimeY:93},
 
     // a marker for checking the map is rendered in the right position. This is the

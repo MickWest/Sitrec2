@@ -910,8 +910,19 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             const overlayView = NodeMan.get(overlayNode);
             var labelVideo = new CNodeViewUI({id: data.id ?? "labelVideo", overlayView: overlayView});
             let textSize = 2.5;
-            let dataTimeY = data.dateTimeY ?? 96;
-            AddTimeDisplayToUI(labelVideo, 50, dataTimeY, textSize, "#f0f000")
+            let dateTimeY = data.dateTimeY ?? 96;
+
+            let dateTimeX = data.dateTimeX ?? 50;
+            let align = data.align ?? "center";
+
+            if (Sit.name === "custom") {
+                dateTimeX = 99.5;
+                textSize = -16
+                dateTimeY = 3;
+                align = "right"
+            }
+
+            AddTimeDisplayToUI(labelVideo, dateTimeX, dateTimeY, textSize, "#f0f000", align)
             labelVideo.setVisible(true)
             node = labelVideo;
             break;

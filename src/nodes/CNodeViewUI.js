@@ -214,7 +214,15 @@ export class CNodeViewUI extends CNodeViewCanvas2D {
 
             const x = this.px((t.x)*100)
             const y = this.py((t.y)*100)
-            this.ctx.font = Math.floor(this.sx(t.size*100)) + 'px' + " " + t.font
+
+
+            if (t.size < 0 ) {
+                const fontStyle = `${Math.floor(-t.size*100)}px ${t.font}`
+                this.ctx.font = fontStyle;
+            }
+            else {
+                this.ctx.font = Math.floor(this.sx(t.size * 100)) + 'px' + " " + t.font
+            }
 
             this.ctx.fillStyle = t.color;
             this.ctx.strokeStyle = "black"; // t.color;

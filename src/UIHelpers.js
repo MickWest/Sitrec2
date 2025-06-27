@@ -2,9 +2,9 @@ import {par} from "./par";
 import {utcDate} from "./utils";
 import {GlobalDateTimeNode} from "./Globals";
 
-export function AddTimeDisplayToUI(viewUI, x, y, size, color) {
+export function AddTimeDisplayToUI(viewUI, x, y, size, color, align = "center") {
 
-    viewUI.addText("videoTimeLabel", "2022-08-18T07:16:15.540Z", x, y, size, color).listen(par, "frame", function (v) {
+    viewUI.addText("videoTimeLabel", "2022-08-18T07:16:15.540Z", x, y, size, color, align).listen(par, "frame", function (v) {
         var nowDate = GlobalDateTimeNode.dateNow;
 
 //        this.text = utcDate(nowDate) + "  (" + localDate(nowDate)+")"
