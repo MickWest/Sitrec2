@@ -78,6 +78,17 @@ export function preventDoubleClicks(gui) {
     });
 }
 
+// Extend the GUI prototype to add a method for getting the folder with given title
+//
+GUI.prototype.getFolder = function(title) {
+    // Find the child GUI with the specified title
+    const folder = this.children.find(child => child instanceof GUI && child.$title.innerText === title);
+
+    // If found, return it; otherwise, return null
+    return folder || null;
+}
+
+
 // Extend the lil-gui Controller prototype
 Controller.prototype.setLabelColor = function(color) {
     // Find the label element within the controller's DOM
