@@ -236,6 +236,8 @@ export class CNodeDateTime extends CNode {
             .tooltip("The frames per second of the video. This will change the playback speed of the video (e.g. 30 fps, 25 fps, etc). It will also change the duration of the sitch (in secods) as it changes how long an individual frame is\n This is derived from the video were possible, but you can change it if you want to speed up or slow down the video")
         this.update(0);
 
+        this.lastFrames = Sit.frames;
+
     }
 
     adjustDaysInMonth() {
@@ -255,18 +257,29 @@ export class CNodeDateTime extends CNode {
     changedFrames() {
         Sit.frames = Math.round(Sit.frames);
         par.frames = Sit.frames;
-        NodeMan.updateSitFramesChanged();
         updateGUIFrames();
         updateFrameSlider();
 
+        // new maximum values for the aFrame and bFrame sliders
         this.guiAFrame.max(Sit.frames-1);
         this.guiBFrame.max(Sit.frames-1);
 
-        // clamp the bFrame to the new max
-        Sit.bFrame = Math.min(Sit.bFrame,Sit.frames-1);
+        // clamp the bFrame to the new Sit.frames if it was there before
+        // so draggin up the Sit.frames will also drag up the bFrame
+        if (Sit.bFrame === this.lastFrames - 1) {
+            Sit.bFrame = Sit.frames - 1;
+        } else {
+            // we've adjusted bFrame, so use the smaller of the two
+            Sit.bFrame = Math.min(Sit.bFrame, Sit.frames - 1);
+        }
 
         // if aFrame is greater than bFrame, then set it to zero
         if (Sit.aFrame > Sit.bFrame) Sit.aFrame = 0;
+
+        this.lastFrames = Sit.frames;
+
+        NodeMan.updateSitFramesChanged();
+
 
     }
 
