@@ -51,6 +51,8 @@ class CMetaTrack {
             NodeMan.unlinkDisposeRemove(this.centerNode.inputs.source);
         }
 
+        // a bit messy, should keep track of nodes some other way
+        NodeMan.unlinkDisposeRemove(this.trackID + "_smoothValue");
 
         NodeMan.unlinkDisposeRemove(this.trackDataNode);
         NodeMan.unlinkDisposeRemove(this.trackNode);
