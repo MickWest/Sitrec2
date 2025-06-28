@@ -366,6 +366,16 @@ class CameraMapControls {
 		const ptzControls= getPTZController(this.view.cameraNode);
 
 
+		var xAxis = new Vector3()
+		var yAxis = new Vector3()
+		var zAxis = new Vector3()
+
+		var oldMatrix = this.camera.matrix.clone()
+		var oldPosition = this.camera.position.clone()
+		this.camera.matrix.extractBasis(xAxis,yAxis,zAxis)
+
+		const oldUp = yAxis
+
 		switch (this.state) {
 
 			case STATE.PAN: // Rotate the camera about itself
@@ -406,15 +416,7 @@ class CameraMapControls {
 			case STATE.ROTATE: // Rotate the camera about a point on the ground,
 				// Here we want to rotate the camera
 				// about a point in the gorund
-				var xAxis = new Vector3()
-				var yAxis = new Vector3()
-				var zAxis = new Vector3()
 
-				var oldMatrix = this.camera.matrix.clone()
-				var oldPosition = this.camera.position.clone()
-				this.camera.matrix.extractBasis(xAxis,yAxis,zAxis)
-
-				const oldUp = yAxis
 
 				// use this.canvas.heightPx for both to keep it square
 				this.rotateLeft( 2 * Math.PI * this.mouseDelta.x / this.view.heightPx);
@@ -576,6 +578,10 @@ class CameraMapControls {
 
 				// force up vector to be local up for camera
 				//this.fixUp(true); // fixup after dragging
+
+				const localUp = getLocalUpVector(this.camera.position)
+				this.camera.up.copy(localUp) // force the up vector to be local up
+
 
 				break;
 
