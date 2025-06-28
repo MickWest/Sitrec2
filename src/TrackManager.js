@@ -37,6 +37,10 @@ class CMetaTrack {
     // TODO - call this when switching levels
     dispose() {
 
+        // Remove the menu folder
+       // guiMenus.contents.removeFolder(this.guiFolder);
+        this.guiFolder.destroy();
+
         // dispose data nodes before track nodes, as the track nodes have data nodes as inputs
         // OH, BUT THEY LINK FORWARD AND BACKWARDS.... SO WE NEED TO UNLINK THEM FIRST
         // BUT NOT ANYTHING ELSE, AS WE STILL WANT TO CHECK FOR UNANTICIPATED LINKS
@@ -445,11 +449,10 @@ export function addTracks(trackFiles, removeDuplicates = false, sphereMask = LAY
                 })
             }
 
-            const guiID = trackID;
-            const guiFolder = guiMenus.contents.addFolder(trackID).close();
 
 
 
+            const guiFolder = guiMenus.contents.addFolder(trackID);
             // just use the default MISB Columns, so no columns are specified
             const success = makeTrackFromDataFile(trackFileName, trackDataID, trackID, undefined, trackIndex, guiFolder);
 
@@ -468,6 +471,10 @@ export function addTracks(trackFiles, removeDuplicates = false, sphereMask = LAY
                 trackOb.menuText = shortName;
                 trackNode.shortName = shortName;
                 trackDataNode.shortName = shortName;
+
+                // track folder in Contents menu
+                trackOb.guiFolder = guiFolder;
+
 
                 // This track will include FOV and angles
                 // but if there's a center track, we make a separate track for that
@@ -988,6 +995,10 @@ export function addTracks(trackFiles, removeDuplicates = false, sphereMask = LAY
                     id: trackID + "_GUI",
                     metaTrack: trackOb,
                 })
+            } else {
+                // if we failed to make the track, then remove the folder
+                // (nothing will have been added to it)
+                guiMenus.controls.removeFolder(guiFolder);
             }
 
             trackIndex++;
