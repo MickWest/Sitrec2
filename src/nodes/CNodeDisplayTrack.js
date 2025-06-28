@@ -116,6 +116,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             if (!this.guiFolder) {
                 this.guiFolder = guiMenus[this.gui].addFolder(this.id).close();
             }
+            assert(this.guiFolder !== undefined, "CNodeDisplayTrack: guiFolder is undefined for track "+this.id);
 
             this.minGUIColor = 0.6;
 
