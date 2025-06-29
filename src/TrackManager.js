@@ -512,7 +512,7 @@ class CTrackManager extends CManager {
                     }
 
                     // add a remove button to the folder
-                    trackOb.guiFolder.add(dummy, "removeTrack");
+                    trackOb.guiFolder.add(dummy, "removeTrack").name("Remove Track");
 
 
                     // This track will include FOV and angles
