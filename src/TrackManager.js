@@ -44,7 +44,10 @@ class CMetaTrack {
         const shortName = this.trackNode.shortName;
 
 
-
+// TODO
+        // OTHER DROP TAGETS
+        // RESTORE SELECTIONS ON DROP IF A TRACK IS RE-LOADED
+        // (currently it restets it to the first selection, fixed target)
 
         if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
             const dropTargets = Sit.dropTargets["track"]
