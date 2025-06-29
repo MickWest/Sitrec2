@@ -24,6 +24,7 @@ class QuadTreeMapTexture extends QuadTreeMap {
         if (this.loadedCallback) {
             // wait a loop and call the callback
             setTimeout(() => {
+                console.warn("QuadTreeMapTexture: calling loadedCallback (fake, too early)");
                 this.loadedCallback();
                 this.loaded = true;
             }, 0) // execute after the current event loop

@@ -17,6 +17,32 @@ const testData = [
     // Add more objects as needed.
 ];
 
+    /**
+     * Wait for a specific text to appear in console messages.
+     * @param {import('puppeteer').Page} page - Puppeteer page instance.
+     * @param {string} expectedText - Text to wait for.
+     * @param {number} timeoutMs - Timeout in milliseconds.
+     * @returns {Promise<void>}
+     */
+    function waitForConsoleText(page, expectedText, timeoutMs = 15000) {
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                page.off('console', onConsole);
+                reject(new Error(`Timed out waiting for console text: "${expectedText}"`));
+            }, timeoutMs);
+
+            function onConsole(msg) {
+                if (msg.text().includes(expectedText)) {
+                    clearTimeout(timeout);
+                    page.off('console', onConsole);
+                    resolve();
+                }
+            }
+
+            page.on('console', onConsole);
+        });
+    }
+
 describe('Visual Regression Testing', () => {
     let browser;
     let page;
