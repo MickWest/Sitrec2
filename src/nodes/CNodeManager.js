@@ -52,7 +52,11 @@ export class CNodeManager extends CManager{
     unlinkDisposeRemove(id) {
         if (id === undefined)
             return;
-        const node = this.get(id);
+        const node = this.get(id, false);
+        if (node === undefined) {
+            console.warn("Tried to unlinkDisposeRemove a node that does not exist: " + id);
+            return;
+        }
         // node.outputs is an array of references to other nodes
         // so we need to move this node as an input
         // if it's a CNodeSwitch, we might need to ensure the choice is valid (i.e. not this node)
