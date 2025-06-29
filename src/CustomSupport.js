@@ -143,8 +143,20 @@ export class CCustomManager {
             Globals.sitchEstablished = true
         });
 
-        EventManager.addEventListener("PositionLLA.onChange.fixedCameraPosition", (value) => {
-            Globals.sitchEstablished = true
+        EventManager.addEventListener("PositionLLA.onChange", (data) => {
+            if (data.id === "fixedCameraPosition") {
+                Globals.sitchEstablished = true
+
+                // if there's a camera track switch, then we need to update the camera track
+                if (NodeMan.exists("cameraTrackSwitch")) {
+                    const cameraTrackSwitch = NodeMan.get("cameraTrackSwitch");
+                    // if the camera track switch is not set to "fixedCamera" or "flightSimCamera", then set it to "fixedCamera"
+                    if (cameraTrackSwitch.choice !== "fixedCamera" && cameraTrackSwitch.choice !== "flightSimCamera") {
+                        console.log("Setting camera track switch to fixedCamera");
+                        cameraTrackSwitch.selectOption("fixedCamera");
+                    }
+                }
+            }
         });
 
 

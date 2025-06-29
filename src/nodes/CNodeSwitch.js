@@ -219,6 +219,10 @@ class CNodeSwitch extends CNode {
     }
 
     selectOption(option, quiet=false) {
+        if (this.choise === option) {
+            // if the choice is already set to this option, do nothing
+            return;
+        }
         this.choice = option
         if (!quiet) {
             this.controller.setValue(option)
