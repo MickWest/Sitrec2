@@ -326,7 +326,7 @@ export class CNodeManager extends CManager{
     }
 
     pruneUnusedFlagged() {
-        console.log("Pruning unused nodes")
+//        console.log("Pruning unused nodes")
         // remove all nodes that are not connected to anything
         for (let key in this.list) {
             const node = this.list[key].data;

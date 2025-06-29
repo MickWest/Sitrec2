@@ -529,7 +529,7 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             } else {
                 const file = data.file ?? "cameraFile";
 
-                node = makeTrackFromDataFile(file, id + "Data", id);
+                node = TrackManager.makeTrackFromDataFile(file, id + "Data", id);
 
                 new CNodeDisplayTrack({
                     id: id + "Display",
@@ -837,7 +837,7 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
         case "trackFromDataFile":
             SSLog();
 
-            node = makeTrackFromDataFile(data.file, data.dataID, data.id);
+            node = TrackManager.makeTrackFromDataFile(data.file, data.dataID, data.id);
             break;
 
         case "targetObject":
@@ -939,7 +939,7 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             SSLog();
             const sphereMask = data.sphereMask ?? LAYER.MASK_HELPERS;
             const removeDuplicates = data.removeDuplicates ?? false;
-            addTracks(data.tracks, removeDuplicates, sphereMask);
+            TrackManager.addTracks(data.tracks, removeDuplicates, sphereMask);
             break;
 
         case "targetWind":

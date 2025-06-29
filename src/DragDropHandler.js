@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////
 ///  DRAG AND DROP FILES?
-import {addTracks} from "./TrackManager";
+import {TrackManager} from "./TrackManager";
 import {FileManager, Globals, NodeMan, setNewSitchObject, Sit} from "./Globals";
 import {cos, getFileExtension, isSubdomain, radians} from "./utils";
 import {par} from "./par";
@@ -11,7 +11,6 @@ import {getLocalSouthVector, getLocalUpVector} from "./SphericalMath";
 import {SITREC_DEV_DOMAIN, SITREC_DOMAIN} from "./configUtils";
 import {doesKMLContainTrack, extractKMLObjects} from "./KMLUtils";
 import {assert} from "./assert";
-import {MISB} from "./MISBUtils";
 import {findColumn} from "./ParseUtils";
 
 // The DragDropHandler is more like the local client file handler, with rehosting, and parsing
@@ -480,7 +479,7 @@ class CDragDropHandler {
             }
 
             if (isATrack) {
-                addTracks([filename], true)
+                TrackManager.addTracks([filename], true)
                 if (fileExt === "kml") {
                     console.log("KML file detected, adding anything else in the file")
                     extractKMLObjects(parsedFile)

@@ -83,6 +83,12 @@ export class CCustomManager {
 
         }).listen();
 
+        guiMenus.contents.add(this, "removeAllTracks")
+            .name("Remove All Tracks")
+            .moveToFirst()
+            .tooltip("Remove all tracks from the scene\nThis will not remove the objects, just the tracks\nYou can add them back later by dragging and dropping the files again")
+
+
         guiMenus.physics.add(this, "calculateBestPairs").name("Calculate Best Pairs");
 
 
@@ -226,6 +232,12 @@ export class CCustomManager {
         }
     }
 
+
+    removeAllTracks() {
+        TrackManager.iterate( (id, track) => {
+            TrackManager.disposeRemove(id)
+        })
+    }
 
 
     calculateBestPairs() {

@@ -6,7 +6,7 @@ import {NightSkyFiles} from "./ExtraFiles";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {expandSitData} from "./SituationSetup";
 import stringify from "json-stringify-pretty-compact";
-import {makeTrackFromDataFile} from "./TrackManager";
+import {TrackManager} from "./TrackManager";
 import {makePositionLLA} from "./nodes/CNodePositionLLA";
 import {isConsole, isLocal, setupConfigPaths} from "./configUtils";
 
@@ -203,7 +203,7 @@ export class CSituation {
     makeCameraTrack()
     {
         if (FileManager.exists("cameraFile")) {
-            makeTrackFromDataFile("cameraFile", "cameraTrackData", "cameraTrack")
+            TrackManager.makeTrackFromDataFile("cameraFile", "cameraTrackData", "cameraTrack")
             //animated segement of camera track
             new CNodeDisplayTrack({
                 id: "KMLDisplay",

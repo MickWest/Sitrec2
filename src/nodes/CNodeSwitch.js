@@ -206,6 +206,11 @@ class CNodeSwitch extends CNode {
             this.removeInput(option)
             removeOptionFromGUIMenu(this.controller, option)
         }
+
+        if (this.choice === option) {
+            // if the choice is being removed, then select the first available choice
+            this.selectFirstOption();
+        }
     }
 
     replaceOption(option, value) {
@@ -228,6 +233,10 @@ class CNodeSwitch extends CNode {
 
     selectOptionQuietly(option) {
         this.selectOption(option, true)
+    }
+
+    selectFirstOption() {
+        this.selectOption(Object.keys(this.inputs)[0], false)
     }
 
     selectFirstOptionQuietly() {
