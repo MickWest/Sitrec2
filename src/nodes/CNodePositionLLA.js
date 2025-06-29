@@ -58,10 +58,13 @@ export class CNodePositionLLA extends CNode {
                                this._LLA[1] = lon;
                                this.guiLon.value = lon;
                                this.recalculateCascade(0)
+                               EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
                                return;
                            }
                        }
                        this._LLA[0] = parseFloat(v);
+                       EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
+
                        this.recalculateCascade(0)
 
                    }
@@ -76,6 +79,8 @@ export class CNodePositionLLA extends CNode {
                    onChange: (v) => {
                        this._LLA[1] = v;
                        this.recalculateCascade(0)
+                       EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
+
                    }
                 }, v.gui)
 
@@ -93,6 +98,8 @@ export class CNodePositionLLA extends CNode {
 
                    onChange: (v) => {
                        this.recalculateCascade(0)
+                       EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
+
                      //  this.updateAltituide();
 
                    }
@@ -141,6 +148,8 @@ export class CNodePositionLLA extends CNode {
                                     this._LLA[2] = 0;
                                     this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small", true)
                                     this.recalculateCascade(0);
+                                    EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
+
 
                                     // try to get the altitude from Open-Metro
                                     const altUrl = `https://api.open-meteo.com/v1/elevation?latitude=${this.guiLat.value}&longitude=${this.guiLon.value}`;
@@ -152,6 +161,7 @@ export class CNodePositionLLA extends CNode {
                                                 this._LLA[2] = altData.elevation[0] + 2; // add 2m to the elevation
                                                 this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small", true);
                                                 this.recalculateCascade(0);
+                                                EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
 
                                             } else {
                                                 console.warn("No elevation data found for " + this.lookupString);
@@ -231,7 +241,7 @@ export class CNodePositionLLA extends CNode {
                     this.guiAlt.setValueWithUnits(groundAlt, "metric", "small", true)
                 }
                 this.recalculateCascade(0);
-                EventManager.dispatchEvent("PositionLLA.onChange."+this.id)
+                EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
                 // we don't change the altitude, as we don't know it from the cursor
             }
 
