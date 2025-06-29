@@ -340,6 +340,9 @@ class CTrackManager extends CManager {
                     // in trackFileName
                     TrackManager.iterate((key, trackOb) => {
                         if (trackOb.trackID === trackID) {
+
+                            trackColor = trackOb.trackColor; // keep the color of the existing track
+
                             // remove it from the track manager
                             TrackManager.disposeRemove(key);
 
@@ -371,6 +374,7 @@ class CTrackManager extends CManager {
                     trackOb.menuText = shortName;
                     trackNode.shortName = shortName;
                     trackDataNode.shortName = shortName;
+                    trackOb.trackColor = trackColor;
 
                     // track folder in Contents menu
                     trackOb.guiFolder = guiFolder;
