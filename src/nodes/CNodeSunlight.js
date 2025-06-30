@@ -59,17 +59,17 @@ export class CNodeSunlight extends CNode {
         // just a ballpark for how visible the stars should be.
         result.sunTotal = result.sunIntensity + result.ambientIntensity;
 
-        infoDiv.innerHTML= `<br><br>Sunlight: ${result.sunIntensity.toFixed(2)} Ambient: ${result.ambientIntensity.toFixed(2)}`
-        infoDiv.innerHTML+=`<br>SunTotal: ${result.sunTotal.toFixed(2)}`
-        infoDiv.innerHTML+=`<br>Angle: ${angle.toFixed(2)}`
-        infoDiv.innerHTML+=`<br>Sun Scattering: ${this.sunScattering.toFixed(2)}`
-        infoDiv.innerHTML+=`<br>Scale: ${scale.toFixed(2)}`
-        infoDiv.innerHTML+=`<br>ScaleScattering: ${scaleScattering.toFixed(2)}`
-        infoDiv.innerHTML+=`<br>Darkening: ${this.darkeningAngle.toFixed(2)}`
-        infoDiv.innerHTML+=`<br>Position: ${position.x.toFixed(2)} ${position.y.toFixed(2)} ${position.z.toFixed(2)}`
-        infoDiv.innerHTML+=`<br>SunPos: ${sunPos.x.toFixed(2)} ${sunPos.y.toFixed(2)} ${sunPos.z.toFixed(2)}`
-        infoDiv.innerHTML+=`<br>Dir: ${dir.x.toFixed(2)} ${dir.y.toFixed(2)} ${dir.z.toFixed(2)}`
-        infoDiv.innerHTML+=`<br>Up: ${up.x.toFixed(2)} ${up.y.toFixed(2)} ${up.z.toFixed(2)}`
+        // infoDiv.innerHTML= `<br><br>Sunlight: ${result.sunIntensity.toFixed(2)} Ambient: ${result.ambientIntensity.toFixed(2)}`
+        // infoDiv.innerHTML+=`<br>SunTotal: ${result.sunTotal.toFixed(2)}`
+        // infoDiv.innerHTML+=`<br>Angle: ${angle.toFixed(2)}`
+        // infoDiv.innerHTML+=`<br>Sun Scattering: ${this.sunScattering.toFixed(2)}`
+        // infoDiv.innerHTML+=`<br>Scale: ${scale.toFixed(2)}`
+        // infoDiv.innerHTML+=`<br>ScaleScattering: ${scaleScattering.toFixed(2)}`
+        // infoDiv.innerHTML+=`<br>Darkening: ${this.darkeningAngle.toFixed(2)}`
+        // infoDiv.innerHTML+=`<br>Position: ${position.x.toFixed(2)} ${position.y.toFixed(2)} ${position.z.toFixed(2)}`
+        // infoDiv.innerHTML+=`<br>SunPos: ${sunPos.x.toFixed(2)} ${sunPos.y.toFixed(2)} ${sunPos.z.toFixed(2)}`
+        // infoDiv.innerHTML+=`<br>Dir: ${dir.x.toFixed(2)} ${dir.y.toFixed(2)} ${dir.z.toFixed(2)}`
+        // infoDiv.innerHTML+=`<br>Up: ${up.x.toFixed(2)} ${up.y.toFixed(2)} ${up.z.toFixed(2)}`
 
 
       //  console.log(result.sunTotal);
