@@ -193,7 +193,7 @@ export function initKeyboard() {
         var key = e.key.toLowerCase()
         keyHeld[key] = true
         keyCodeHeld[keyCode] = true
-        console.log("Key: " + key + " keyCode: " + keyCode)
+//        console.log("Key: " + key + " keyCode: " + keyCode)
 
         EventManager.dispatchEvent("keydown", {key: key, keyCode: keyCode, event: e});
 
@@ -305,7 +305,7 @@ export function initKeyboard() {
 
         // now see if keycode is in the gui togglers array
         var guiController = toggles[key]
-        console.log("toggles[key] = " + guiController)
+//        console.log("toggles[key] = " + guiController)
         if (guiController !== undefined) {
             guiController.setValue(!guiController.getValue())
         }
