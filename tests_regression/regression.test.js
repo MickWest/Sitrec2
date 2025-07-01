@@ -13,7 +13,8 @@ const testData = [
     { name: 'gimbal', url: 'https://local.metabunk.org/sitrec/?sitch=gimbal&frame=10' },
     { name: 'starlink', url: 'https://local.metabunk.org/sitrec/?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Stalink%20Names/20250218_060544.js' },
     { name: "potomac", url: "https://local.metabunk.org/sitrec/?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Potomac/20250204_203812.js&frame=10" },
-    { name: "orion", url: "https://local.metabunk.org/sitrec/?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Orion%20in%20Both%20views%20for%20Label%20Check/20250306_175023.js",}
+    { name: "orion", url: "https://local.metabunk.org/sitrec/?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Orion%20in%20Both%20views%20for%20Label%20Check/20250306_175023.js" },
+    { name: "bledsoe", url: "https://local.metabunk.org/sitrec/?custom=https://sitrec.s3.us-west-2.amazonaws.com/15857/BledsoeZoom/20250623_153507.js&frame=10" },
     // Add more objects as needed.
 ];
 
