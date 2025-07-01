@@ -149,7 +149,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.BSC_NAME = [];
         this.commonNames = {};
 
-        this.nominalViewWidth = 948; // expected width of the look view in pixels, for scaling point sprites
+        this.nominalViewWidth = 2*948; // expected width of the look view in pixels, for scaling point sprites
 
         // globe used for collision
         // and specifying the center of the Earth
@@ -1438,7 +1438,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // what's this doing here? nneds to be called per camera, but not in a satellite specific function
         this.starMaterial.uniforms.cameraFOV.value = camera.fov;
 
-        let starScale = Sit.starScale/window.devicePixelRatio;
+        let starScale = Sit.starScale;
 
         // scale based on sky brightness at camera location
         const sunNode = NodeMan.get("theSun",true);
@@ -1449,10 +1449,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         assert(starScale < 2, "starScale is too big: "+starScale);
         this.starMaterial.uniforms.starScale.value = starScale;
+
+
         this.starMaterial.uniforms.pointScale.value = Math.sqrt(view.widthPx/this.nominalViewWidth);
-
-
-
 
         const toSun = this.toSun;
         const fromSun = this.fromSun
@@ -1490,7 +1489,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
 
             this.satelliteMaterial.uniforms.cameraFOV.value = camera.fov;
-            this.satelliteMaterial.uniforms.satScale.value = Sit.satScale/window.devicePixelRatio;
+            this.satelliteMaterial.uniforms.satScale.value = Sit.satScale;
 
             // we are scaling for optical intensity (area),but scale is linear
             // so we scale by the square root of the ratio of sizes
