@@ -15,8 +15,8 @@ constructor(v) {
     this.size = v.size ?? 2;
     this.mainSizeMultiplier = 1;
 
-//    this.texture = new TextureLoader().load(SITREC_APP+'data/images/WhiteDiskWithAlpha128px.png');
-    this.texture = new TextureLoader().load(SITREC_APP+'data/images/FX_CloudAlpha03.png');
+    this.texture = new TextureLoader().load(SITREC_APP+'data/images/WhiteDiskWithAlpha128px.png');
+//    this.texture = new TextureLoader().load(SITREC_APP+'data/images/FX_CloudAlpha03.png');
 
     // Define the vertex and fragment shaders
     // note "projectionMatrix" is the camera's projection matrix supplied as a uniform by three.js
