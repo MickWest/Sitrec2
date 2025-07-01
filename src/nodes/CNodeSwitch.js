@@ -200,21 +200,21 @@ class CNodeSwitch extends CNode {
         addOptionToGUIMenu(this.controller, option, option)
     }
 
-    removeOption(option) {
+    removeOption(option, dontSelectFirst=false) {
         if (this.inputs[option] !== undefined) {
 //            console.log("--- REMOVING "+option+" from "+this.id)
             this.removeInput(option)
             removeOptionFromGUIMenu(this.controller, option)
         }
 
-        if (this.choice === option) {
+        if (!dontSelectFirst && this.choice === option) {
             // if the choice is being removed, then select the first available choice
             this.selectFirstOption();
         }
     }
 
     replaceOption(option, value) {
-        this.removeOption(option)
+        this.removeOption(option, true) // don't select first option if is this is the current option, as we are replacing it
         this.addOption(option, value)
     }
 
