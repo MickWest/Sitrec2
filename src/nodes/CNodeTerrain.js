@@ -1036,6 +1036,8 @@ export class CNodeTerrain extends CNode {
         this.applyElevationTo(tile.z, tile.x, tile.y);
 
 
+        EventManager.dispatchEvent("elevationChanged", this)
+
 
 
 
