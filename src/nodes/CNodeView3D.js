@@ -1,7 +1,7 @@
 import {par} from "../par";
 import {f2m, normalizeLayerType} from "../utils";
 import {getLocalNorthVector, XYZ2EA, XYZJ2PR} from "../SphericalMath";
-import {CustomManager, Globals, guiMenus, guiTweaks, keyHeld, NodeMan} from "../Globals";
+import {CustomManager, Globals, guiMenus, guiTweaks, infoDiv, keyHeld, NodeMan} from "../Globals";
 import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene} from "../LocalFrame";
 import {DRAG, makeMouseRay} from "../mouseMoveView";
 import {
@@ -346,9 +346,9 @@ export class CNodeView3D extends CNodeViewCanvas {
                 let currentRenderTarget = null; // if no effects, we render directly to the canvas
 
                 //if (this.effectsEnabled) {
+                let width, height;
                 if (this.in.canvasWidth !== undefined) {
 
-                    let width, height;
                     const long = this.in.canvasWidth.v0;
                     if (this.widthPx > this.heightPx) {
                         width = long;
@@ -359,20 +359,21 @@ export class CNodeView3D extends CNodeViewCanvas {
                     }
 
 
-                    Globals.renderTargetAntiAliased.setSize(width, height);
-                    if (this.effectsEnabled) {
-                        // often don't have effects on the main view
-                        // so we don't need to create/resize these render targets
-                        Globals.renderTargetA.setSize(width, height);
-                        Globals.renderTargetB.setSize(width, height);
-                    }
                 } else {
-                    Globals.renderTargetAntiAliased.setSize(this.widthPx, this.heightPx);
-                    if (this.effectsEnabled) {
-                        Globals.renderTargetA.setSize(this.widthPx, this.heightPx);
-                        Globals.renderTargetB.setSize(this.widthPx, this.heightPx);
-                    }
+                    width = this.widthPx;
+                    height = this.heightPx;
                 }
+
+
+                Globals.renderTargetAntiAliased.setSize(width, height);
+
+                if (this.effectsEnabled) {
+                    Globals.renderTargetA.setSize(width, height);
+                    Globals.renderTargetB.setSize(width, height);
+                }
+
+
+
                 currentRenderTarget = Globals.renderTargetAntiAliased;
                 this.renderer.setRenderTarget(currentRenderTarget);
                 //}

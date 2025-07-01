@@ -22,7 +22,15 @@ import {
     Vector3
 } from "three";
 import {degrees, radians} from "../utils";
-import {FileManager, GlobalDateTimeNode, Globals, guiMenus, guiShowHide, guiTweaks, NodeMan, Sit} from "../Globals";
+import {
+    FileManager,
+    GlobalDateTimeNode,
+    Globals,
+    guiMenus,
+    guiShowHide,
+    NodeMan,
+    Sit
+} from "../Globals";
 import {
     DebugArrow,
     DebugArrowAB,
@@ -128,13 +136,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
    //     GlobalNightSkyScene.matrixWorldAutoUpdate = false
 
+        const satGUI = guiMenus.satellites
 
-        this.flareAngle = 5
-        guiTweaks.add(this, 'flareAngle', 0, 20, 0.1).listen().name("SL Flare Angle").tooltip("Maximum angle of the reflected view vector for a flare to be visible\ni.e. the range of angles between the vector from the satellite to the sun and the vector from the camera to the satellite reflected off the bottom of the satellite (which is parallel to the ground)")
 
-        this.penumbraDepth = 5000
-        guiTweaks.add(this, 'penumbraDepth', 0, 100000, 1).listen().name("Earth's Penumbra Depth")
-            .tooltip("Vertical depth in meters over which a satellite fades out as it enters the Earth's shadow")
 
         this.BSC_NumStars = 0;
         this.BSC_MaxMag = -10000;
@@ -144,6 +148,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.BSC_HIP = [];
         this.BSC_NAME = [];
         this.commonNames = {};
+
+        this.nominalViewWidth = 948; // expected width of the look view in pixels, for scaling point sprites
 
         // globe used for collision
         // and specifying the center of the Earth
@@ -157,10 +163,20 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
 //        const satGUI = guiShowHide.addFolder("Satellites");
 
-        const satGUI = guiMenus.satellites
         satGUI.add(this,"updateStarlink").name("Load Satellite TLE For Date")
             .onChange(function (x) {this.parent.close()})
             .tooltip("Get the latest Starlink TLE data for the current date. This will download the data from the internet, so it may take a few seconds.\nWill also enable the Starlink satellites to be displayed in the night sky.")
+
+        this.flareAngle = 5
+        satGUI.add(this, 'flareAngle', 0, 20, 0.1).listen().name("Flare Angle Spread").tooltip("Maximum angle of the reflected view vector for a flare to be visible\ni.e. the range of angles between the vector from the satellite to the sun and the vector from the camera to the satellite reflected off the bottom of the satellite (which is parallel to the ground)")
+        this.addSimpleSerial("flareAngle")
+
+
+        this.penumbraDepth = 5000
+        satGUI.add(this, 'penumbraDepth', 0, 100000, 1).listen().name("Earth's Penumbra Depth")
+            .tooltip("Vertical depth in meters over which a satellite fades out as it enters the Earth's shadow")
+        this.addSimpleSerial("penumbraDepth")
+
 
 
         this.showSunArrows = Sit.showSunArrows;
@@ -279,6 +295,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         satGUI.add(Sit,"satScale",0,6,0.01).name("Sat Brightness").listen()
             .tooltip("Scale factor for the brightness of the satellites. 1 is normal, 0 is invisible, 2 is twice as bright, etc.")
        // this.addSimpleSerial("satScale");
+
+        satGUI.add(Sit,"flareScale",0,1,0.001).name("Flare Brightness").listen()
+            .tooltip("Scale factor for the additional brightness of flaring satellites. 0 is nothing")
+
 
         satGUI.add(Sit,"satCutOff",0,0.5,0.001).name("Sat Cut-Off").listen()
             .tooltip("Satellites dimmed to this level or less will not be displayed")
@@ -1400,6 +1420,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         const camera = view.camera;
 
+        const isLookView = (view.id === "lookView");
+
+
         // for optimization we are not updating every scale on every frame
         if (camera.satTimeStep === undefined) {
             camera.satTimeStep = 5; // was 5
@@ -1426,6 +1449,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         assert(starScale < 2, "starScale is too big: "+starScale);
         this.starMaterial.uniforms.starScale.value = starScale;
+        this.starMaterial.uniforms.pointScale.value = Math.sqrt(view.widthPx/this.nominalViewWidth);
 
 
 
@@ -1468,10 +1492,15 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             this.satelliteMaterial.uniforms.cameraFOV.value = camera.fov;
             this.satelliteMaterial.uniforms.satScale.value = Sit.satScale/window.devicePixelRatio;
 
+            // we are scaling for optical intensity (area),but scale is linear
+            // so we scale by the square root of the ratio of sizes
+            this.satelliteMaterial.uniforms.pointScale.value = Math.sqrt(view.widthPx/this.nominalViewWidth);
+  //ALSO DO THIS FOR STARS??? All seems a bit ah hoc
+
+
+
             const positions = this.satelliteGeometry.attributes.position.array;
             const magnitudes = this.satelliteGeometry.attributes.magnitude.array;
-
-
 
             for (let i = camera.satStartTime; i < this.TLEData.satData.length; i++) {
                 const satData = this.TLEData.satData[i];
@@ -1492,14 +1521,15 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
                 // stagger updates unless it has an arrow.
                 if ((i - camera.satStartTime) % camera.satTimeStep !== 0 && !satData.hasSunArrow) {
-                    continue;
+       //             continue;
                 }
 
                 assert(satData.eus !== undefined, `satData.eus is undefined, i= ${i}, this.TLEData.satData.length = ${this.TLEData.satData.length} `)
 
                 const satPosition = satData.eus;
 
-                let scale = 0.1;                // base value for scale
+//                let scale = 0.1;                // base value for scale
+                let scale = 0.04;                // base value for scale
                 let darknessMultiplier = 0.3    // if in dark, multiply by this
                 var fade = 1
 
@@ -1522,8 +1552,20 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                     }
                 }
 
+
+
+
+                if (!isLookView) {
+                    scale *= 3;
+                }
+
+
                 // fade will be 1 for full visible sats, < 1 as they get hidden
                 if (fade > 0) {
+
+
+
+
 
                     // checking for flares
                     // we take the vector from the camera to the sat
@@ -1550,13 +1592,50 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                         //     scale *= 3 // a bit of a dodgy patch to make low atltitde trains stand out.
                         // }
 
+
+                        // attenuate by distance if in look view
+                        // use
+                        if (isLookView) {
+                            const distToSat = camToSat.length();
+                            scale *= 3000000 / distToSat;
+
+                            // if it's the ISS, scale it up a bit
+                            if (satData.number === 25544) {
+                                scale *= 3; // ISS is quite a bit bigger
+                            }
+
+
+
+                        }
+
+
                         const spread = this.flareAngle
-                        const glintSize = 5;
+                        const ramp = spread * 0.25; //
+                        const middle  = spread -  ramp;  // angle at which the flare is brightest, constant
+                        const glintSize = Sit.flareScale; //
                         if (glintAngle < spread) {
                             // we use the square of the angle (measured from the start of the spread)
                             // as the extra flare, to concentrate it in the middle
-                            const glintScale = 1 + fade * glintSize * (spread - glintAngle) * (spread - glintAngle) / (spread * spread)
-                            scale *= glintScale
+                            //const glintScale = 1 + fade * glintSize * (spread - glintAngle) * (spread - glintAngle) / (spread * spread)
+
+                            //const glintScale = 1 + 4 * fade * glintSize * Math.abs(spread - glintAngle)  / (spread)
+
+                            let glintScale;
+                            let d = Math.abs(glintAngle);
+                            if (d < middle) {
+                                // if the angle is less than the middle, use set to the maximum (glintSize)
+                                glintScale = fade * glintSize;
+                            } else {
+                                d = d - middle; // shift the angle to over the ramp region
+//                                glintScale = 1 + fade * glintSize * ((spread-middle) - d )/ (spread-middle);
+                                glintScale = fade * glintSize * (ramp - d ) * (ramp-d)/ (ramp * ramp);
+                            }
+
+
+
+//                            scale *= glintScale
+                            scale += glintScale
+
 
                             // arrows from camera to sat, and from sat to sun
                             var arrowHelper = DebugArrowAB(satData.name, this.camera.position, satPosition, (belowHorizon?"#303030":"#FF0000"), true, this.sunArrowGroup, 10, LAYER.MASK_HELPERS)
@@ -1573,12 +1652,19 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
                         }
                     } else {
+
+
+
                         this.removeSatSunArrows(satData);
                     }
                 }
 
-                if (scale < Sit.satCutOff)
+
+
+                if (isLookView && scale < Sit.satCutOff) {
                     scale = 0;
+                }
+
 
                 magnitudes[i] = scale
             }
@@ -1881,17 +1967,19 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         uniform float cameraFOV;
         uniform float starScale;
+        uniform float pointScale;
+        
 
         attribute float flux;
 
         void main() {
             vColor = vec3(1.0);
-            vFlux = flux;
+            //vFlux = flux;
 
             // Size proportional to flux
-            float size = flux * starScale * (30.0 / cameraFOV);
+            float size = flux * starScale * (30.0 / cameraFOV) * pointScale;
 
-            //size = 10.0;
+            vFlux = size;
 
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
             gl_Position = projectionMatrix * mvPosition;
@@ -1910,6 +1998,14 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             if (alpha < 0.0) discard;
             
             vec4 textureColor = texture2D(starTexture, gl_PointCoord);
+            
+            // for flux < 0.01, we want to make it invisible
+            if (vFlux < 0.5) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+                return;
+            }
+            
+            
             //float finalAlpha = alpha * sqrt(vFlux); // Gamma correction for perceptual brightness
 //            gl_FragColor = vec4(vColor, alpha) * textureColor;
             gl_FragColor = textureColor;
@@ -1921,7 +2017,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             uniforms: {
                 starTexture: { value: new TextureLoader().load(SITREC_APP+'data/images/nightsky/MickStar.png') },
                 cameraFOV: { value: 30 },
-                starScale: { value: Sit.starScale / window.devicePixelRatio }
+                starScale: { value: Sit.starScale / window.devicePixelRatio },
+                pointScale: { value: 1.0 }
             },
             transparent: true,
             depthTest: true,
@@ -2154,6 +2251,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     uniform float maxSize;
     uniform float cameraFOV;
     uniform float satScale;
+    uniform float pointScale;
     attribute float magnitude;
     attribute vec3 color;
     varying float vDepth;
@@ -2169,7 +2267,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
 
         float size = mix(minSize, maxSize, magnitude);
-        size *= 3.0 * (30.0 / cameraFOV) * satScale;
+       size *= 3.0 * (30.0 / cameraFOV) * satScale * pointScale;
 
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
         gl_Position = projectionMatrix * mvPosition;
@@ -2207,6 +2305,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 starTexture: { value: new TextureLoader().load(SITREC_APP+'data/images/nightsky/MickStar.png') },
                 cameraFOV: { value: 30 },
                 satScale: { value: Sit.satScale/window.devicePixelRatio },
+                pointScale: { value: 1.0 }, // scale for the points
                 ...sharedUniforms,
             },
             transparent: true,

@@ -579,6 +579,7 @@ export class CCustomManager {
             "file",
             "starScale",
             "satScale",
+            "flareScale",
             "satCutOff",
             "markerIndex",
             "sitchName",  // the same for the save file of the custom sitch
