@@ -1,7 +1,7 @@
 // Support functions for the custom sitches and mods
 
 import {
-    FileManager,
+    FileManager, GlobalDateTimeNode,
     Globals,
     guiMenus,
     infoDiv,
@@ -11,7 +11,7 @@ import {
     Units
 } from "./Globals";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
-import {ECEFToLLAVD_Sphere, EUSToECEF} from "./LLA-ECEF-ENU";
+import {ECEFToLLAVD_Sphere, EUSToECEF, EUSToLLA} from "./LLA-ECEF-ENU";
 import {createCustomModalWithCopy, saveFilePrompted} from "./CFileManager";
 import {DragDropHandler} from "./DragDropHandler";
 import {par} from "./par";
@@ -107,6 +107,8 @@ export class CCustomManager {
         });
 
 
+        guiMenus.help.add(this, "adsbReplay").name('ADSB Replay for this time and location')
+        guiMenus.help.add(this, "googleMapsLink").name('Google Maps Link for this location')
 
 
         // TODO - Multiple events passed to EventManager.addEventListener
@@ -230,6 +232,56 @@ export class CCustomManager {
             }
         })
     }
+
+    adsbReplay() {
+        // get want a URL like this:
+        // https://globe.adsbexchange.com/?replay=2025-07-02-20:31&lat=32.996&lon=-96.715&zoom=11.9
+        // which matches the current camera position and date/time
+
+
+        // get the current camera position from the lookCamera in Lat and Lon
+        const lookCamera = NodeMan.get("lookCamera");
+        const pos = lookCamera.p(par.frame);
+        const LLA = EUSToLLA(pos);
+
+        // get date and time from the current frame
+        const date = GlobalDateTimeNode.frameToDate(par.frame);
+        const dateString = date.toISOString().slice(0, 16).replace("T", "-");
+        const lat = LLA.x.toFixed(3);
+        const lon = LLA.y.toFixed(3);
+        const zoom = 13; // a fixed zoom level for the replay
+        const url = `https://globe.adsbexchange.com/?replay=${dateString}&lat=${lat}&lon=${lon}&zoom=${zoom}`;
+        console.log("ADSB Replay URL: " + url);
+        // just open it in a new tab
+        window.open(url, "_blank");
+
+    }
+
+    googleMapsLink() {
+        // example:
+        // https://www.google.com/maps/@40.6729927,-74.7598043,27767
+
+        // get the current camera position from the lookCamera in Lat and Lon
+        const lookCamera = NodeMan.get("lookCamera");
+        const pos = lookCamera.p(par.frame);
+        const LLA = EUSToLLA(pos);
+
+
+
+        //const url = `https://www.google.com/maps/@${LLA.x.toFixed(6)},${LLA.y.toFixed(6)},30000m`;
+
+        // like:
+        // https://www.google.com/maps/place/40%C2%B040'22.8%22N+74%C2%B045'35.3%22W/@40.6728307,-74.794137,12543m/
+
+        const url = `https://www.google.com/maps/place/${LLA.x.toFixed(6)},${LLA.y.toFixed(6)}/@${LLA.x.toFixed(6)},${LLA.y.toFixed(6)},30000m`;
+
+
+
+        console.log("Google Maps URL: " + url);
+        window.open(url, "_blank");
+
+    }
+
 
     updateViewFromPreset() {
         // update the views from the current view preset
