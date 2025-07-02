@@ -634,6 +634,16 @@ class MetaBezierCurveEditor {
             this.dirty = 0;
         }
 
+        // If the user shrinks the window to small size, we don't want to crash
+        // so we set a minimum size for the graph
+        if (this.g.w <= 1) {
+            this.g.w = 1;
+        }
+
+        if (this.g.h <= 1) {
+            this.g.h = 1;
+        }
+
         if (this.dynamicX) {
             // update to match the current frame count
             // need in/out handling eventually
