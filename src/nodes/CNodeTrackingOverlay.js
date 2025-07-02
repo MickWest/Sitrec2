@@ -4,7 +4,7 @@
 
 import {CNodeViewUI} from "./CNodeViewUI";
 import {assert} from "../assert";
-import {NodeMan, Sit} from "../Globals";
+import {guiMenus, NodeMan, Sit} from "../Globals";
 import {radians} from "../utils";
 import {extractFOV} from "./CNodeControllerVarious";
 import {mouseToCanvas} from "../ViewUtils";
@@ -92,7 +92,13 @@ export class CNodeActiveOverlay extends CNodeViewUI {
 
         this.draggable  = []
 
+    }
 
+
+    resetDraggable() {
+        this.draggable = [];
+        this.keyframes = [];
+        this.recalculateCascade();
     }
 
 
@@ -195,6 +201,12 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         this.input("fovNode")
 
         this.setGUI(v,"traverse");
+
+        this.showTracking = true;
+
+        this.gui.add(this, "resetDraggable").name("Reset Object Tracking")
+      //  this.gui.add(this, "showTracking").name("Show Object Tracking").listen();
+
 
         this.limitAB = true;
         this.gui.add(this, "limitAB").name("Limit AB to Video Tracking").listen().onChange(() => {
