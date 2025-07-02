@@ -438,6 +438,10 @@ export class QuadTreeTile {
             if (this.textureUrl(0, 0, 0) != null) {
                 this.buildMaterial().then((material) => {
                     this.mesh.material = material
+                    if (! this.map.scene) {
+                        console.warn("QuadTreeTile.applyMaterial: map.scene is not defined, not adding mesh to scene (changed levels?)")
+                        return resolve(material);
+                    }
                     this.map.scene.add(this.mesh); // add the mesh to the scene
                     this.added = true; // mark the tile as added to the scene
                     this.loaded = true;

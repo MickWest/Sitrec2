@@ -955,6 +955,14 @@ export class CFileManager extends CManager {
                                     // Recursively call parseAsset for each unzipped file
                                     // (note, this will currently only work for single zipped files as
                                     // the id will be the same for all of them)
+
+                                    // mutiple zip files might have the same containing filename,
+                                    // so we need to prefix the zip filename with the original filename
+                                    // to avoid conflicts
+                                    // (typically for doc.kml insize a .kmz file)
+                                    zipFilename = filename+"_"+zipFilename; // Prefix the zip filename with the original filename
+
+                                    console.log("Unzipped file: " + zipFilename + " for id: " + id);
                                     return this.parseAsset(zipFilename, id, unzippedBuffer);
                                 });
                         }

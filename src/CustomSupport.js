@@ -755,7 +755,7 @@ export class CCustomManager {
             for (let id in sitchData.loadedFiles) {
                 loadingPromises.push(FileManager.loadAsset(Sit.loadedFiles[id], id).then(
                     (result) => {
-                        console.log("Loaded " + id)
+                        console.log("Loaded " + id +"filename: " + FileManager.list[id].filename + " with data length: " + FileManager.list[id].data.length)
                         Globals.dontAutoZoom = true;
                         DragDropHandler.handleParsedFile(id, FileManager.list[id].data)
                         Globals.dontAutoZoom = false;
