@@ -2620,7 +2620,7 @@ class GUI {
                         while (value > controller._max && controller._max < controller._elasticMax) {
                             controller._max = Math.min(controller._max * 2, controller._elasticMax);
 
-                            console.error("Expanding max to: " + controller._max + "for: " + controller._name + " as value: " + value);
+                           // console.log("Expanding max to: " + controller._max + "for: " + controller._name + " as value: " + value);
 
                         }
                     }
