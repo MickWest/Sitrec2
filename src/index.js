@@ -2,6 +2,7 @@ import {ColorManagement, Group, REVISION, Scene, WebGLRenderer,} from "three";
 import "./js/uPlot/uPlot.css"
 import "./js/jquery-ui-1.13.2/jquery-ui.css"
 import "./js/jquery-ui-1.13.2/jquery-ui.js?v=1"
+import {LLAToEUS} from "./LLA-ECEF-ENU";
 import {
     addGUIFolder,
     addGUIMenu, CustomManager,
@@ -27,7 +28,7 @@ import {
     Sit,
     SitchMan,
 } from "./Globals";
-import {checkForModding, disableScroll, parseBoolean, stripComments} from './utils.js'
+import {checkForModding, disableScroll, f2m, parseBoolean, stripComments} from './utils.js'
 import {CSituation} from "./CSituation";
 import {par, resetPar} from "./par";
 
@@ -87,6 +88,8 @@ import {CCustomManager} from "./CustomSupport";
 import {EventManager} from "./CEventManager";
 import {checkLocal, getConfigFromServer} from "./configUtils";
 import {CNodeView3D} from "./nodes/CNodeView3D";
+import * as THREE from "three/src/math/Vector3";
+import {Vector3} from "three/src/math/Vector3";
 
 console.log ("SITREC START - index.js after imports")
 
@@ -241,10 +244,76 @@ if (customSitch !== null) {
 }
 
 
+// handle parames like latlon=34.2334,-118.4354
+
+const latlon = urlParams.get("latlon");
+if (latlon) {
+
+
+    // expecting something like: latlon=34.2334,-118.4354
+    const latlonArray = latlon.split(",");
+    if (latlonArray.length === 2 || latlonArray.length === 3) {
+        const lat = parseFloat(latlonArray[0]);
+        const lon = parseFloat(latlonArray[1]);
+        if (!isNaN(lat) && !isNaN(lon)) {
+            console.log("Setting GlobalDateTimeNode start lat/lon to " + lat + ", " + lon);
+
+            let alt = 0;
+
+            // if there is a third value, it's the altitude in feet
+            if (latlonArray.length === 3) {
+                alt = parseFloat(latlonArray[2]);
+                if (!isNaN(alt)) {
+                    alt = f2m(alt);
+                    console.log("Setting GlobalDateTimeNode start altitude to " + alt);
+                } else {
+                    console.error("Invalid altitude format: " + latlonArray[2]);
+                }
+            }
+
+            // the sitch has not been set up
+            // so we jsut override the value in Sit
+
+            Sit.TerrainModel.lat = lat;
+            Sit.TerrainModel.lon = lon;
+
+            Sit.mainCamera.startCameraPositionLLA = [
+                    lat-3, lon, 250000,
+                ]
+
+            Sit.mainCamera.startCameraTargetLLA = [
+                    lat , lon, 0,
+                ]
+
+            Sit.fixedCameraPosition.LLA = [
+                lat, lon, alt
+            ]
+
+
+        } else {
+            console.error("Invalid lat/lon format: " + latlon);
+        }
+    } else {
+        console.error("Invalid lat/lon format: " + latlon);
+    }
+}
+
 
 
 legacySetup();
 await setupFunctions();
+
+const dateTime = urlParams.get("datetime");
+if (dateTime) {
+    // expecting something like: datetime=2022-02-22T12:34:56Z
+    console.log("Setting GlobalDateTimeNode start date time to " + dateTime);
+    GlobalDateTimeNode.populateStartTimeFromUTCString(dateTime);
+    Globals.timeOverride = true; // flag to ignore deserializing date time
+    console.log("GlobalDateTimeNode dateStart  = " + GlobalDateTimeNode.dateStart.toISOString());
+}
+
+
+
 windowChanged()
 
 infoDiv.innerHTML = ""
@@ -807,8 +876,7 @@ async function setupFunctions() {
         await requestGeoLocation()
     }
 
-//    console.log("Finalizing....")
-
+    console.log("GlobalDateTimeNode.populateStartTimeFromUTCString(Sit.startTime) " + Sit.startTime)
     GlobalDateTimeNode.populateStartTimeFromUTCString(Sit.startTime)
 
     if (Sit.jetStuff) {

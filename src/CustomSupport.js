@@ -845,7 +845,13 @@ export class CCustomManager {
                     const node = NodeMan.get(id)
                     if (node.modDeserialize !== undefined) {
                         //console.log("Applying mod to node:" + id+ " with data:"+sitchData.mods[id]  )
-                        node.modDeserialize(Sit.mods[id])
+
+                        // bit of a patch, don't deserialise the dateTimeStart node
+                        // if we've overridden the time in the URL
+                        // see the check for urlParams.get("datetime") in index.js
+                        if (id !== "dateTimeStart" || !Globals.timeOverride) {
+                            node.modDeserialize(Sit.mods[id]);
+                        }
                     }
                 }
 
