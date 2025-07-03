@@ -84,17 +84,22 @@ export class CNodePositionLLA extends CNode {
                    }
                 }, v.gui)
 
+                // WHY IS THE ALTIDUE RANGE lik 48,000 feet if we set end to a low value
+                // like 1000
+                // seems like the end value is being changed by the elastic code BEFORE we set it
+                // but why, if the value is 0????
                this.guiAlt = new CNodeGUIValue({
                    id: id + " Alt (ft)",  // including the (ft) for historical reasons, so we have the same id as older saves
                    desc: name + " Alt",
                    value: 0, // don't set the altitude, as we want to set it with units
                    unitType: "small",
-                   start: 0, end: 100000, step: 1,
+                   start: 0, end: 1000, step: 1,
                //    stepExplicit: false, // prevent snapping
 
                    elastic: true,
                    elasticMin: 1,
                    elasticMax: 100000000,
+                   elasticShrink: true,
 
                    onChange: (v) => {
                        this.recalculateCascade(0)
@@ -105,6 +110,8 @@ export class CNodePositionLLA extends CNode {
                    }
                 }, v.gui)
                 this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small")
+
+
 
                 // //makr them both elastic
                 //
