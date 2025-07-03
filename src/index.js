@@ -107,7 +107,6 @@ const builtInSitches = {};
 const toolSitches = {};
 let toTest;
 let testing = false;
-let container;
 var fpsInterval, startTime, now, then, elapsed;
 
 let animationFrameId;
@@ -623,10 +622,6 @@ async function initializeOnce() {
 }
 
 function initRendering() {
-    // create a single div that contains everything
-    container = document.createElement('div');
-    document.body.append(container)
-
 
     console.log("Window inner size = " + window.innerWidth + "," + window.innerHeight)
 
