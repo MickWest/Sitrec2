@@ -31,6 +31,11 @@ export function setupPageStructure() {
         container.style.width = '100%';
         container.style.height = '100%';
         container.style.overflow = 'hidden';
+
+        // disable touch actions to prevent scrolling
+        container.style.touchAction = 'none';
+
+
         document.body.append(container)
 
         return;
