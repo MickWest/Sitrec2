@@ -779,22 +779,35 @@ class NumberController extends Controller {
     }
 
     // elastic will expand or contract the range if you push against the min or max
-    elastic( min = 100, max = 1000000, integer = false ) {
+    elastic( min = 100, max = 1000000, integer = false, shrink = false ) {
         this._elastic = true;
         this._elasticMin = min;
         this._elasticMax = max;
         this._elasticInteger = integer;
+        this._elasticShrink = shrink;
         this.updateElasticStep();
         return this;
     }
 
     updateElasticStep() {
         if (this._elastic) {
+
+            let bottom = this._min;
+            if (this._min < this._max/4) {
+                bottom = 0;
+            }
+
             // just set it to 0.2% of the range
-            this._step = (this._max - this._min) / 500;
+            this._step = (this._max - bottom) / 500;
             if (this._elasticInteger) {
                 this._step = Math.max(1,Math.round(this._step));
             }
+
+            // Why not this?
+            if (this._step > 1) {
+                this._step = 1;
+            }
+
         }
         return this;
     }
@@ -1053,6 +1066,13 @@ class NumberController extends Controller {
                     this._maxClick = this._max;
                     this.updateElasticStep();
                  //   value = this._min;
+                }
+
+                if (this._elasticShrink) {
+
+                    if (value < this._max/3) {
+                        this._max = Math.max(this._max / 2, this._elasticMin+1);
+                    }
                 }
 
             }
@@ -2599,6 +2619,9 @@ class GUI {
                         // if it's above the current max, then expand that in steps
                         while (value > controller._max && controller._max < controller._elasticMax) {
                             controller._max = Math.min(controller._max * 2, controller._elasticMax);
+
+                            console.error("Expanding max to: " + controller._max + "for: " + controller._name + " as value: " + value);
+
                         }
                     }
 

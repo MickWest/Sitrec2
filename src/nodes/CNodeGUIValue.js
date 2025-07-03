@@ -93,8 +93,9 @@ export class CNodeGUIValue extends CNodeGUIConstant {
         if (this.elastic) {
             this.elasticMin = v.elasticMin ?? 10;
             this.elasticMax = v.elasticMax ?? 1000000;
+            this.elasticShrink = v.elasticShrink ?? false;
 
-            this.guiEntry.elastic(this.elasticMin, this.elasticMax)
+            this.guiEntry.elastic(this.elasticMin, this.elasticMax, false, this.elasticShrink)
         }
 
         // update the desc with the units

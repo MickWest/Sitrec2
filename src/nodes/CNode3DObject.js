@@ -703,7 +703,7 @@ export class CNode3DObject extends CNode3DGroup {
                         // elastic means the range will expand 2x when you go of the right end
                         // and reset to the minimum when you go off the left end
                         // Upper limit not too important, so we just set it to 1000x the default
-                        controller.elastic(params[2], params[2] * 1000)
+                        controller.elastic(params[2]/100, params[2] * 1000)
                     }
 
                 } else {
