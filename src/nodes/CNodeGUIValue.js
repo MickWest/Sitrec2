@@ -224,7 +224,7 @@ export class CNodeGUIValue extends CNodeGUIConstant {
         const scale = Units.getScaleFactors(fromUnits)[unitType];
         value = roundIfClose(value * scale);
         this.setValue(value, ignoreOnChange);
-
+        return value;
     }
 
     updateDesc() {

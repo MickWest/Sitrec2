@@ -10,7 +10,7 @@ import {CNode} from "./CNode";
 import {V3} from "../threeUtils";
 import {CNodeGUIValue} from "./CNodeGUIValue";
 import {isKeyHeld} from "../KeyBoardHandler";
-import {adjustHeightAboveGround, altitudeAtLL} from "../threeExt";
+import {adjustHeightAboveGround, altitudeAtLL, elevationAtLL} from "../threeExt";
 import {assert} from "../assert";
 import {ViewMan} from "../CViewManager";
 import {EventManager} from "../CEventManager";
@@ -23,6 +23,9 @@ export class CNodePositionLLA extends CNode {
         this.input("wind", true)
         this.frames = Sit.frames;
         this.useSitFrames = true; // use sit frames for the LLA
+
+        this.agl = false;
+        this.addSimpleSerial("agl");
 
         if (v.LLA !== undefined) {
             // copy the array in v.LLA to this._LLA
@@ -84,10 +87,9 @@ export class CNodePositionLLA extends CNode {
                    }
                 }, v.gui)
 
-                // WHY IS THE ALTIDUE RANGE lik 48,000 feet if we set end to a low value
-                // like 1000
-                // seems like the end value is being changed by the elastic code BEFORE we set it
-                // but why, if the value is 0????
+               // The elastic range here will be increased to the default sitch altitude
+                // (currently 1000 feet?)
+                // but the eleasticShrink will be set to true, so it will shrink to the final range
                this.guiAlt = new CNodeGUIValue({
                    id: id + " Alt (ft)",  // including the (ft) for historical reasons, so we have the same id as older saves
                    desc: name + " Alt",
@@ -102,6 +104,7 @@ export class CNodePositionLLA extends CNode {
                    elasticShrink: true,
 
                    onChange: (v) => {
+                       this._LLA[2] = v;
                        this.recalculateCascade(0)
                        EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
 
@@ -111,32 +114,13 @@ export class CNodePositionLLA extends CNode {
                 }, v.gui)
                 this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small")
 
+                const gui = guiMenus[v.gui];
 
-
-                // //makr them both elastic
-                //
-                //
-                //
-                // ////////////////////////////////////////////////////////////////////
-                // // NEW FUN AGL!!!
-                // this.guiAGL = new CNodeGUIValue({
-                //     id: id + " AGL",  // including the (ft) for historical reasons, so we have the same id as older saves
-                //     desc: name + " AGL",
-                //     value: 0, // don't set the altitude, as we want to set it with units
-                //     unitType: "small",
-                //     start: 0, end: 10000, step: 1,
-                //     stepExplicit: false, // prevent snapping
-                //     onChange: (v) => {
-                //         this.recalculateCascade(0)
-                //     }
-                // }, v.gui)
-                //
-                //
-                // this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small")
-                // this.updateAltituide();
+                gui.add(this, "agl").name("Above Ground Level").onChange((v) => {
+                    this.recalculateCascade()
+                });
 
                 this.lookupString = "";
-               const gui = guiMenus[v.gui];
                gui.add(this, "lookupString").name("Lookup").onFinishChange(() => {
                     // given a string like "Sacramento, CA"
                     // fetch the lat, lon, alt from Nominatim
@@ -198,6 +182,13 @@ export class CNodePositionLLA extends CNode {
             this.input("lon")
             this.input("alt")
         }
+
+        EventManager.addEventListener("elevationChanged", () => {
+            if (this.agl) {
+                this.recalculateCascade();
+            }
+        })
+
         this.recalculate()
     }
 
@@ -213,6 +204,14 @@ export class CNodePositionLLA extends CNode {
 
     goTo() {
         NodeMan.get("mainCamera").goToPoint(this.EUS,100000,100);
+    }
+
+
+    updateGroundLevel() {
+        // given the current lat/lon, find this.groundLevel
+        if (this._LLA !== undefined) {
+            this.groundLevel = elevationAtLL(this._LLA[0], this._LLA[1]);
+        }
     }
 
     update() {
@@ -245,7 +244,7 @@ export class CNodePositionLLA extends CNode {
                     const groundPointLLA = EUSToLLA(groundPoint);
                     // so the altitude is in the Z component
                     const groundAlt = groundPointLLA.z;
-                    this.guiAlt.setValueWithUnits(groundAlt, "metric", "small", true)
+                    this._LLA[2] = this.guiAlt.setValueWithUnits(groundAlt, "metric", "small", true)
                 }
                 this.recalculateCascade(0);
                 EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
@@ -258,7 +257,17 @@ export class CNodePositionLLA extends CNode {
 
     recalculate() {
         if (this._LLA !== undefined) {
-            this.EUS = LLAToEUS(this._LLA[0], this._LLA[1], this.guiAlt.getValueFrame(0))
+
+            this.updateGroundLevel();
+
+            let alt = this.guiAlt.getValue();
+
+            if (this.agl) {
+                // optionally adjust the altitude based on the ground level
+                alt += this.groundLevel;
+            }
+
+            this.EUS = LLAToEUS(this._LLA[0], this._LLA[1], alt)
         }
     }
 
@@ -272,13 +281,22 @@ export class CNodePositionLLA extends CNode {
                 const wind = this.in.wind.v0.multiplyScalar(f);
                 // add the wind to the position
                 pos.add(wind);
+
+                // if above ground level, then clamp the position to the ground level plus the altitude
+                if (this.agl) {
+                    pos = adjustHeightAboveGround(pos, this._LLA[2]);
+                }
             }
 
             return pos
         }
         const lat = this.in.lat.v(f)
         const lon = this.in.lon.v(f)
-        const alt = this.in.alt.v(f)
+        let alt = this.in.alt.v(f)
+        // alt is MSL in meters
+
+
+
         return LLAToEUS(lat, lon, alt)
     }
 
