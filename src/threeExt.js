@@ -598,6 +598,15 @@ export function calculateAltitude(point) {
     return point.clone().sub(center).length() - wgs84.RADIUS;
 }
 
+export function elevationAtLL(lat, lon) {
+    // get the point in ESU
+    const point = LLAToEUS(lat, lon, 100000);
+    // get the ground point below it
+    const groundPoint = pointOnGround(point);
+    // calculate the elevation
+    return calculateAltitude(groundPoint);
+}
+
 export function forceFilterChange(texture, filter, renderer) {
     // Check if the filter is already set
     if (texture.minFilter === filter && texture.magFilter === filter) {
