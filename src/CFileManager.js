@@ -55,7 +55,7 @@ export class CFileManager extends CManager {
                     serverName = process.env.S3_BUCKET + ".s3"
                 }
 
-                this.guiServer = this.guiFolder.addFolder("Server (" + serverName + ")").perm().open();
+                this.guiServer = this.guiFolder.addFolder("Server (" + serverName + ") "+Globals.userID).perm().open();
 
                 // Server-side rehosting only for logged-in users
                 if (Globals.userID > 0) {
