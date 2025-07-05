@@ -177,10 +177,10 @@ if (isset($_GET['get'])) {
                 // strip off the full dir prefix to get the filename
                 // eg. if the dir is 99999998/ then we want to strip off the 99999998/
                 // check that it actually starts with this dir, including the slash
-                $startText = $dir . '/';
-                if (substr($key, 0, strlen($startText)) === $startText) {
-                    $key = str_replace($dir .'/' , "", $key);
-                }
+                 $startText = $dir . '/';
+                 if (strpos($key, $startText) === 0) {
+                     $key = substr($key, strlen($startText));
+                 }
 
 
                 if ($key != "") {
