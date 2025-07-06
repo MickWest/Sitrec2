@@ -282,6 +282,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                     // Source is WIDER than the view, so we scale to fit width
                     // and adjust from top
 
+
+                    // what fraction of the view is covered by the source?
+                    this.fovCoverage = (this.widthPx / aspectSource) / this.heightPx;
+
                     ctx.drawImage(image,
                         offsetW, offsetH, sourceW / zoom, sourceH / zoom,
                         0, (this.heightPx - this.widthPx / aspectSource) / 2, this.widthPx, this.widthPx / aspectSource)
@@ -289,6 +293,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 } else {
                     // Source is TALLER than the view, so we scale to fit height
                     // and adjust from left
+
+                    this.fovCoverage = 1;
 
                     ctx.drawImage(image,
                         offsetW, offsetH, sourceW / zoom, sourceH / zoom,

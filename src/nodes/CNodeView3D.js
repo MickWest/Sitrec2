@@ -339,6 +339,26 @@ export class CNodeView3D extends CNodeViewCanvas {
 
             if (this.visible) {
 
+                // if the lookView, then check for the video view
+                if (this.id === "lookView") {
+
+                    let videoView = null;
+                    // we default the the mirrorVideo, but if that doesn't exist, then we use the video view
+                    if (NodeMan.exists("mirrorVideo")) {
+                        videoView = NodeMan.get("mirrorVideo");
+                    }
+                    else if (NodeMan.exists("video")) {
+                        videoView = NodeMan.get("video");
+                    }
+
+                    // fov override is set by the video view, it's the vertical fraction
+                    // of the video view that is covered by the video
+                    if (videoView !== null && videoView.fovCoverage !== undefined) {
+                        this.fovOverride = 180 / Math.PI * 2 * Math.atan(Math.tan(this.camera.fov * Math.PI / 360) / videoView.fovCoverage);
+                    }
+                }
+
+
                 // popogate the view-specific camera setting to the current camera
                 // (currently this does not change, but it might in the future)
                 this.cameraNode.northUp = this.northUp;

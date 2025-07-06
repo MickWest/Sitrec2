@@ -201,6 +201,21 @@ export class CCustomManager {
                 lookView: {visible: true, left: 0.75, top: 0, width: 0.25, height: 1},
 
             },
+
+            VideoLookHorizontal: {
+                keypress: "6",
+                mainView: {visible: false},
+                video: {visible: true, left: 0.0, top: 0, width: 1, height: 0.5},
+                lookView: {visible: true, left: 0.0, top: 0.5, width: 1, height: 0.5},
+            },
+
+            VideoLookVertical: {
+                keypress: "7",
+                mainView: {visible: false},
+                video: {visible: true, left: 0.0, top: 0, width: 0.5, height: 1},
+                lookView: {visible: true, left: 0.5, top: 0, width: 0.5, height: 1},
+
+            },
         }
 
         this.currentViewPreset = "Default";
