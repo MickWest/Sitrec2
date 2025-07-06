@@ -2,7 +2,6 @@ import {ColorManagement, Group, REVISION, Scene, WebGLRenderer,} from "three";
 import "./js/uPlot/uPlot.css"
 import "./js/jquery-ui-1.13.2/jquery-ui.css"
 import "./js/jquery-ui-1.13.2/jquery-ui.js?v=1"
-import {LLAToEUS} from "./LLA-ECEF-ENU";
 import {
     addGUIFolder,
     addGUIMenu, CustomManager,
@@ -74,8 +73,7 @@ import {disposeDebugArrows, disposeDebugSpheres, disposeScene, scaleArrows} from
 import {removeMeasurementUI, setupMeasurementUI} from "./nodes/CNodeLabels3D";
 import {imageQueueManager} from "./js/get-pixels-mick";
 import {disposeGimbalChart} from "./JetChart";
-import {CNodeMath} from "./nodes/CNodeMath";
-import {CNode, CNodeConstant} from "./nodes/CNode";
+import {CNode} from "./nodes/CNode";
 import {DragDropHandler} from "./DragDropHandler";
 import {CGuiMenuBar} from "./lil-gui-extras";
 import {assert} from "./assert.js";
@@ -88,8 +86,7 @@ import {CCustomManager} from "./CustomSupport";
 import {EventManager} from "./CEventManager";
 import {checkLocal, getConfigFromServer} from "./configUtils";
 import {CNodeView3D} from "./nodes/CNodeView3D";
-import * as THREE from "three/src/math/Vector3";
-import {Vector3} from "three/src/math/Vector3";
+
 
 console.log ("SITREC START - index.js after imports")
 
