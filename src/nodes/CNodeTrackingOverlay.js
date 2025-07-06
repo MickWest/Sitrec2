@@ -35,32 +35,39 @@ export class CDraggableItem {
         assert(this.view instanceof CNodeTrackingOverlay, "CDraggableItem: view must be an instance of CNodeTrackingOverlay");
         assert(this.view.overlayView instanceof CNodeVideoView, "CDraggableItem: view.overlayView must be an instance of CNodeVideoView");
 
+        this.video = this.view.overlayView;
 
 
-        this.x = v.x;
-        this.y = v.y;
+        const [vX, vY] = this.video.canvasToVideoCoords(v.x, v.y);
+
+        console.log(`Adding draggable item at canvas (${v.x}, ${v.y}) which is video (${vX}, ${vY})`)
+
+        this.x = vX;
+        this.y = vY;
+
+
         this.dragging = false;
     }
 
-    // // canvas to percentage
-    c2p(x) {
-        return x * 100 / this.view.heightPx
-    }
 
-    // note using sy for x and y, as we want square pixels
+
+    // cX and cY gettors will convert internal video coordinates to canvas coordinates
     // canvas X
     get cX() {
-        return this.view.sy(this.x)
+        const [cX, cY] = this.video.videoToCanvasCoords(this.x, this.y);
+        return cX;
     }
 
     // canvas Y
     get cY() {
-        return this.view.sy(this.y)
+        const [cX, cY] = this.video.videoToCanvasCoords(this.x, this.y);
+        return cY;
     }
 
-    // canvas radius
+    // canvas radius NOT RIGHT
     get cR() {
-        return this.view.sy(this.radius)
+        // just a fixed radius for now.
+        return 10;
     }
 
     startDrag(x, y) {
@@ -128,11 +135,6 @@ export class CNodeActiveOverlay extends CNodeViewUI {
         this.recalculateCascade();
     }
 
-
-    c2p(x) {
-        return x * 100 / this.heightPx
-    }
-
     add(draggable) {
         this.draggable.push(draggable)
         return draggable;
@@ -148,16 +150,12 @@ export class CNodeActiveOverlay extends CNodeViewUI {
                   d => {
                         d.render(ctx)
                   }
-
         )
-
     }
 
 
     onMouseDown(e, mouseX, mouseY) {
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY)
-
-        const {vX,vY} = this.overlayView.canvasToVideoCoords(cx, cy)
 
         const x = cx;
         const y = cy;
@@ -191,13 +189,19 @@ export class CNodeActiveOverlay extends CNodeViewUI {
 
         this.draggable.forEach(d => {
             if (d.dragging) {
-//                console.log("Dragging item to ", x, y)
-                // convert canvas to percentages of the height
-                const px = d.c2p(d.cX+dx)
-                const py = d.c2p(d.cY+dy)
+                // get the coords of c as canvas coordinates
+                let cX = d.cX;
+                let cY = d.cY;
+                // now add the delta to the canvas coordinates
+                cX += dx;
+                cY += dy;
+                // and convert back to video coordinates
+                const [vX, vY] = d.video.canvasToVideoCoords(cX, cY);
+                // set the x and y of the draggable item to the new video coordinates
+                d.x = vX;
+                d.y = vY;
 
-                d.x = px;
-                d.y = py;
+
                 this.recalculateCascade();
 
             }
@@ -297,28 +301,35 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         const cameraLOSNode = this.in.cameraLOSNode
         const fovNode = this.in.fovNode
         const los = cameraLOSNode.getValueFrame(f)
-        const vFOV = extractFOV(fovNode.getValueFrame(f));
+        let  vFOV = extractFOV(fovNode.getValueFrame(f));
+
+
+        // vFov is the vertical field of view of the video in degrees
+        // we are using canvas coordinates, so need to adjust appropriately
+        vFOV = 180 / Math.PI * 2 * Math.atan(Math.tan(vFOV * Math.PI / 360) / this.overlayView.fovCoverage);
 
         // the los is a position (of the camera) and heading (centerline of the camera)
         // we will take the XY position of the camera and the heading
         // and the vertical FOV, and the width and height of the video
         // and modify the heading to pass through the XY position
 
-        // x and y are percentages of the height
-        const [x, y] = this.pointsXY[f];
+        // x and y are in video coordinates, which are pixels
+        const [vx, vy] = this.pointsXY[f];
 
-        // get aspect ratio of the video
-        // so width = height * aspect
-        // (hence aspect will be > 1 for landscape, < 1 for portrait, and = 1 for square)
-        const aspect = this.widthPx / this.heightPx;
+        // convert to canvas coordinates
+        const [x, y] = this.overlayView.videoToCanvasCoords(vx, vy);
 
         // make it relative to the center of the screen
-        // adjusting X for the aspect ratio
-        const yoff = y - 50;
-        const xoff = x - 50*aspect;
+        let yoff = y - this.heightPx/2;
+        let xoff = x - this.widthPx/2;
+
+        // scale by zoom
+        const zoom = this.overlayView.in.zoom.v(f) / 100
+        yoff /= zoom;
+        xoff /= zoom;
 
         // get focal length in pixel, given that the Y nominally spans 100.
-        const fpx = 100 / (2 * Math.tan(radians(vFOV) / 2));
+        const fpx = this.heightPx / (2 * Math.tan(radians(vFOV) / 2));
 
         // get the Y angle from the centerline
         const yangle = -Math.atan(yoff / fpx);
@@ -352,9 +363,16 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         this.updateCurve();
     }
 
+    // we now use video coordiantes
     updateCurve() {
         // Get the total number of frames
         this.frames = Sit.frames;
+
+        const videoWidth = this.overlayView.widthPx;
+        const videoHeight = this.overlayView.heightPx;
+        const centerX = videoWidth / 2;
+        const centerY = videoHeight / 2;
+
 
         // Sort keyframes by frame
         this.keyframes.sort((a, b) => a.frame - b.frame);
@@ -366,7 +384,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         if (this.keyframes.length === 0) {
             // No keyframes, set all points to middle (50, 50)
             for (let i = 0; i < this.frames; i++) {
-                this.pointsXY[i] = [50, 50];
+                this.pointsXY[i] = [centerX, centerY];
             }
             return;
         } else if (this.keyframes.length === 1) {
@@ -585,6 +603,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
         const [x, y] = mouseToCanvas(this, mouseX, mouseY)
 
+        const [vX, vY] = this.overlayView.canvasToVideoCoords(x, y);
 
          if (e.ctrlKey) {
             // control key means we add a new one at this frame
@@ -598,8 +617,8 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
                     found = true;
 
                     // move it to the new position
-                    k.x = this.c2p(x);
-                    k.y = this.c2p(y);
+                    k.x = vX;
+                    k.y = vY;
                     this.recalculateCascade();
 
 
@@ -611,8 +630,8 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
                 console.log("Adding a new keyframe at frame ", par.frame)
                 this.keyframes.push(this.add(new CNodeVideoTrackKeyframe({
                     view: this,
-                    x: this.c2p(x),
-                    y: this.c2p(y),
+                    x: x,
+                    y: y,
                     frame: par.frame
                 })))
                 this.recalculateCascade();
@@ -632,25 +651,20 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         const ctx = this.ctx
         ctx.strokeStyle = '#FFFFFF';
         ctx.lineWidth = 1.5
-        // for (let i = 0; i < this.keyframes.length - 1; i++) {
-        //     const k1 = this.keyframes[i]
-        //     const k2 = this.keyframes[i + 1]
-        //
-        //     ctx.beginPath();
-        //     ctx.moveTo(k1.cX, k1.cY);
-        //     ctx.lineTo(k2.cX, k2.cY);
-        //     ctx.stroke();
-        // }
 
         // iterate over points and render the curve
         ctx.strokeStyle = '#FF0000';
         ctx.lineWidth = 2.5
         ctx.beginPath();
         const [x0, y0] = this.pointsXY[0]
-        ctx.moveTo(this.sy(x0), this.sy(y0));
+        // convert to canvas coordinates
+        const [cX0, cY0] = this.overlayView.videoToCanvasCoords(x0, y0);
+
+        ctx.moveTo(cX0, cY0);
         for (let i = 0; i < this.frames; i++) {
-            const [x, y] = this.pointsXY[i]
-            ctx.lineTo(this.sy(x), this.sy(y))
+            const [vx, vy] = this.pointsXY[i]
+            const [x, y] = this.overlayView.videoToCanvasCoords(vx, vy);
+            ctx.lineTo(x, y)
         }
         ctx.stroke();
 
@@ -658,11 +672,12 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
         // find the XY position for the current frame
         // and render a circle there
-        const [x, y] = this.pointsXY[frame];
+        const [vx, vy] = this.pointsXY[frame];
+        const [x, y] = this.overlayView.videoToCanvasCoords(vx, vy);
         ctx.strokeStyle = '#FFFFFF';
         ctx.lineWidth = 1.5
         ctx.beginPath();
-        ctx.arc(this.sy(x), this.sy(y), 5, 0, 2 * Math.PI);
+        ctx.arc(x, y, 5, 0, 2 * Math.PI);
 
         ctx.stroke();
 
@@ -681,16 +696,25 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         }
     }
 
+    // here's and old one in case you want to be more backward compatible.
+    // https://local.metabunk.org/sitrec/?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Mosul%20Orb/20250701_215755.js
+    // and a new one
+    // https://local.metabunk.org/sitrec/?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Mosul%20Orb/20250706_234314.js
+
+
     modDeserialize(v) {
         this.draggable = [];
        // super.modDeserialize(v);
         this.keyframes = v.keyframes.map(k => {
-            return this.add(new CNodeVideoTrackKeyframe({
+            const newKeyframe = this.add(new CNodeVideoTrackKeyframe({
                 view: this,
                 x: k.x,
                 y: k.y,
                 frame: k.frame
             }))
+            newKeyframe.x = k.x;
+            newKeyframe.y = k.y;
+            return newKeyframe;
         })
     }
 

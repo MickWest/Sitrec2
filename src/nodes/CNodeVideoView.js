@@ -8,6 +8,7 @@ import {CMouseHandler} from "../CMouseHandler";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CVideoWebCodecDataRaw} from "../CVideoWebCodecDataRaw";
 import {CVideoImageData} from "../CVideoImageData";
+import {assert} from "../assert";
 
 
 export class CNodeVideoView extends CNodeViewCanvas2D {
@@ -273,34 +274,11 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
             // TODO - combine this zoom input with the mouse zoom
             if (this.in.zoom != undefined) {
-                const zoom = this.in.zoom.v0 / 100;
-                const offsetW = (sourceW - sourceW / zoom) / 2;
-                const offsetH = (sourceH - sourceH / zoom) / 2;
 
+                this.getSourceAndDestCoords();
+                ctx.drawImage(image,this.sx, this.sy, this.sWidth, this.sHeight,
+                    this.dx, this.dy, this.dWidth, this.dHeight);
 
-                if (aspectSource > aspectView) {
-                    // Source is WIDER than the view, so we scale to fit width
-                    // and adjust from top
-
-
-                    // what fraction of the view is covered by the source?
-                    this.fovCoverage = (this.widthPx / aspectSource) / this.heightPx;
-
-                    ctx.drawImage(image,
-                        offsetW, offsetH, sourceW / zoom, sourceH / zoom,
-                        0, (this.heightPx - this.widthPx / aspectSource) / 2, this.widthPx, this.widthPx / aspectSource)
-
-                } else {
-                    // Source is TALLER than the view, so we scale to fit height
-                    // and adjust from left
-
-                    this.fovCoverage = 1;
-
-                    ctx.drawImage(image,
-                        offsetW, offsetH, sourceW / zoom, sourceH / zoom,
-                        (this.widthPx - this.heightPx * aspectSource) / 2, 0, this.heightPx * aspectSource, this.heightPx)
-
-                }
             } else {
                 // Here the zoom is being controlled by zoomView
                 // which zooming in and out around the mouse
@@ -372,99 +350,92 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     }
 
 
+    // as per https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/drawImage
+
+    getSourceAndDestCoords() {
+        assert(this.in.zoom !== undefined, "canvasToVideoCoords requires zoom input to be defined");
+
+        // imageWidth and imageHeight are the original video dimensions
+        const sourceW = this.imageWidth;
+        const sourceH = this.imageHeight
+        const aspectSource = sourceW / sourceH
+
+        // the view is the canvas size, widthPx and heightPx
+        const aspectView = this.widthPx / this.heightPx
+
+        // magnification factor, it's a percentage, and we convert it to a decimal
+        // if 1, then the video will fill the view in the direction of smallest dimension
+        const zoom = this.in.zoom.v0 / 100;
+
+
+        // there offsets are relative to the source image, not the view
+        // they will be the virtual start corner of the video
+        const offsetW = (sourceW - sourceW / zoom) / 2;
+        const offsetH = (sourceH - sourceH / zoom) / 2;
+
+        // as if we are doing
+        // ctx.drawImage(image, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight)
+
+        this.sx = offsetW;
+        this.sy = offsetH;
+        this.sWidth = sourceW / zoom;
+        this.sHeight = sourceH / zoom;
+
+        let dx,dy, dWidth, dHeight;
+
+        if (aspectSource > aspectView) {
+            // Source video is WIDER than the view, so we scale to fit width
+            // and adjust from top
+            this.fovCoverage = (this.widthPx / aspectSource) / this.heightPx;
+            this.dx = 0;
+            this.dy = (this.heightPx - this.widthPx / aspectSource) / 2;
+            this.dWidth = this.widthPx;
+            this.dHeight = this.widthPx / aspectSource;
+        } else {
+            // Source is TALLER than the view, so we scale to fit height
+            // and adjust from left
+
+            this.fovCoverage = 1;
+
+            this.dx  = (this.widthPx - this.heightPx * aspectSource) / 2;
+            this.dy = 0;
+            this.dWidth = this.heightPx * aspectSource;
+            this.dHeight = this.heightPx;
+        }
+    }
+
     /**
      * Convert a canvas x,y point to relative video coordinates vX, vY
      * Returns values that can be outside [0,1]
      */
     canvasToVideoCoords(x, y) {
-        // Check if zoom input is used
-        if (this.in.zoom !== undefined) {
-            const zoom = this.in.zoom.v0 / 100;
-            const sourceW = this.imageWidth;
-            const sourceH = this.imageHeight;
-            const aspectSource = sourceW / sourceH;
-            const aspectView = this.widthPx / this.heightPx;
+        this.getSourceAndDestCoords()
 
-            let canvasLeft = 0;
-            let canvasTop = 0;
-            let canvasW = this.widthPx;
-            let canvasH = this.heightPx;
+        // we have the source and destination coordinates s and d
+        // as in // ctx.drawImage(image, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight)
+        // so we can calculate the relative video coordinates
+        const vX = (x - this.dx) / this.dWidth * this.sWidth + this.sx;
+        const vY = (y - this.dy) / this.dHeight * this.sHeight + this.sy;
+        // return as video pixels, not canvas pixels
+        return [vX, vY];
 
-            if (aspectSource > aspectView) {
-                // Fit width
-                canvasH = this.widthPx / aspectSource;
-                canvasTop = (this.heightPx - canvasH) / 2;
-            } else {
-                // Fit height
-                canvasW = this.heightPx * aspectSource;
-                canvasLeft = (this.widthPx - canvasW) / 2;
-            }
 
-            // Fraction within canvas image rectangle
-            const relX = (x - canvasLeft) / canvasW;
-            const relY = (y - canvasTop) / canvasH;
-
-            // Map to video coordinates
-            const vX = relX * sourceW;
-            const vY = relY * sourceH;
-
-            return {vX, vY};
-        } else {
-            // Using posLeft/Right, posTop/Bot method
-            const fracX = (x / this.widthPx - 0.5 - this.posLeft) / (this.posRight - this.posLeft);
-            const fracY = (y / this.widthPx - 0.5 - this.posTop) / (this.posBot - this.posTop);
-
-            const vX = fracX * this.imageWidth;
-            const vY = fracY * this.imageHeight;
-
-            return {vX, vY};
-        }
     }
 
-    /**
-     * Convert video coordinates vX, vY to canvas x, y
-     */
+    // and the inverse, convert video coordinates to canvas coordinates
     videoToCanvasCoords(vX, vY) {
-        if (this.in.zoom !== undefined) {
-            const zoom = this.in.zoom.v0 / 100;
-            const sourceW = this.imageWidth;
-            const sourceH = this.imageHeight;
-            const aspectSource = sourceW / sourceH;
-            const aspectView = this.widthPx / this.heightPx;
+        this.getSourceAndDestCoords()
 
-            let canvasLeft = 0;
-            let canvasTop = 0;
-            let canvasW = this.widthPx;
-            let canvasH = this.heightPx;
-
-            if (aspectSource > aspectView) {
-                // Fit width
-                canvasH = this.widthPx / aspectSource;
-                canvasTop = (this.heightPx - canvasH) / 2;
-            } else {
-                // Fit height
-                canvasW = this.heightPx * aspectSource;
-                canvasLeft = (this.widthPx - canvasW) / 2;
-            }
-
-            const relX = vX / sourceW;
-            const relY = vY / sourceH;
-
-            const x = canvasLeft + relX * canvasW;
-            const y = canvasTop + relY * canvasH;
-
-            return {x, y};
-        } else {
-            // Using posLeft/Right system
-            const fracX = vX / this.imageWidth;
-            const fracY = vY / this.imageHeight;
-
-            const x = (fracX * (this.posRight - this.posLeft) + this.posLeft + 0.5) * this.widthPx;
-            const y = (fracY * (this.posBot - this.posTop) + this.posTop + 0.5) * this.widthPx;
-
-            return {x, y};
-        }
+        // we have the source and destination coordinates s and d
+        // as in // ctx.drawImage(image, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight)
+        // so we can calculate the relative video coordinates
+        const cX = (vX - this.sx) / this.sWidth * this.dWidth + this.dx;
+        const cY = (vY - this.sy) / this.sHeight * this.dHeight + this.dy;
+        // return as canvas pixels
+        return [cX, cY];
     }
+
+
 
 
 
