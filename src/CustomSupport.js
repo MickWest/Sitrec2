@@ -877,7 +877,7 @@ export class CCustomManager {
             // and Sit
             if (sitchData.Sit) {
                 for (let key in sitchData.Sit) {
-                    console.warn("Applying Sit "+key+" with value "+sitchData.Sit[key])
+                    console.log("Applying Sit "+key+" with value "+sitchData.Sit[key])
                     Sit[key] = sitchData.Sit[key]
                 }
             }

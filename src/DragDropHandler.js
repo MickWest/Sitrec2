@@ -381,7 +381,7 @@ class CDragDropHandler {
         const fileExt = getFileExtension(filename);
 
         if (filename.split('.').length === 1) {
-            console.warn("Skipping handleParseFile, as no file extension for " + filename+" assuming it's an ID");
+            console.log("Skipping handleParseFile, as no file extension for " + filename+" assuming it's an ID");
             return;
         }
 
