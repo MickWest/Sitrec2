@@ -365,6 +365,103 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         par.renderOne = true;
     }
 
+
+    /**
+     * Convert a canvas x,y point to relative video coordinates vX, vY
+     * Returns values that can be outside [0,1]
+     */
+    canvasToVideoCoords(x, y) {
+        // Check if zoom input is used
+        if (this.in.zoom !== undefined) {
+            const zoom = this.in.zoom.v0 / 100;
+            const sourceW = this.imageWidth;
+            const sourceH = this.imageHeight;
+            const aspectSource = sourceW / sourceH;
+            const aspectView = this.widthPx / this.heightPx;
+
+            let canvasLeft = 0;
+            let canvasTop = 0;
+            let canvasW = this.widthPx;
+            let canvasH = this.heightPx;
+
+            if (aspectSource > aspectView) {
+                // Fit width
+                canvasH = this.widthPx / aspectSource;
+                canvasTop = (this.heightPx - canvasH) / 2;
+            } else {
+                // Fit height
+                canvasW = this.heightPx * aspectSource;
+                canvasLeft = (this.widthPx - canvasW) / 2;
+            }
+
+            // Fraction within canvas image rectangle
+            const relX = (x - canvasLeft) / canvasW;
+            const relY = (y - canvasTop) / canvasH;
+
+            // Map to video coordinates
+            const vX = relX * sourceW;
+            const vY = relY * sourceH;
+
+            return {vX, vY};
+        } else {
+            // Using posLeft/Right, posTop/Bot method
+            const fracX = (x / this.widthPx - 0.5 - this.posLeft) / (this.posRight - this.posLeft);
+            const fracY = (y / this.widthPx - 0.5 - this.posTop) / (this.posBot - this.posTop);
+
+            const vX = fracX * this.imageWidth;
+            const vY = fracY * this.imageHeight;
+
+            return {vX, vY};
+        }
+    }
+
+    /**
+     * Convert video coordinates vX, vY to canvas x, y
+     */
+    videoToCanvasCoords(vX, vY) {
+        if (this.in.zoom !== undefined) {
+            const zoom = this.in.zoom.v0 / 100;
+            const sourceW = this.imageWidth;
+            const sourceH = this.imageHeight;
+            const aspectSource = sourceW / sourceH;
+            const aspectView = this.widthPx / this.heightPx;
+
+            let canvasLeft = 0;
+            let canvasTop = 0;
+            let canvasW = this.widthPx;
+            let canvasH = this.heightPx;
+
+            if (aspectSource > aspectView) {
+                // Fit width
+                canvasH = this.widthPx / aspectSource;
+                canvasTop = (this.heightPx - canvasH) / 2;
+            } else {
+                // Fit height
+                canvasW = this.heightPx * aspectSource;
+                canvasLeft = (this.widthPx - canvasW) / 2;
+            }
+
+            const relX = vX / sourceW;
+            const relY = vY / sourceH;
+
+            const x = canvasLeft + relX * canvasW;
+            const y = canvasTop + relY * canvasH;
+
+            return {x, y};
+        } else {
+            // Using posLeft/Right system
+            const fracX = vX / this.imageWidth;
+            const fracY = vY / this.imageHeight;
+
+            const x = (fracX * (this.posRight - this.posLeft) + this.posLeft + 0.5) * this.widthPx;
+            const y = (fracY * (this.posBot - this.posTop) + this.posTop + 0.5) * this.widthPx;
+
+            return {x, y};
+        }
+    }
+
+
+
 }
 
 

@@ -1,7 +1,7 @@
 import {par} from "../par";
 import {f2m, normalizeLayerType} from "../utils";
 import {getLocalNorthVector, XYZ2EA, XYZJ2PR} from "../SphericalMath";
-import {CustomManager, Globals, guiMenus, guiTweaks, infoDiv, keyHeld, NodeMan} from "../Globals";
+import {CustomManager, Globals, guiMenus, guiTweaks, infoDiv, keyHeld, NodeMan, Sit} from "../Globals";
 import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene} from "../LocalFrame";
 import {DRAG, makeMouseRay} from "../mouseMoveView";
 import {
@@ -40,6 +40,7 @@ import {isLocal, SITREC_APP} from "../configUtils.js"
 import {VRButton} from 'three/addons/webxr/VRButton.js';
 import {mouseInViewOnly} from "../ViewUtils";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
+import {CameraMapControls} from "../js/CameraControls";
 
 
 function linearToSrgb(color) {
@@ -1225,6 +1226,12 @@ export class CNodeView3D extends CNodeViewCanvas {
         return offsetPosition;
     }
 
+    addOrbitControls() {
+        this.controls = new CameraMapControls( this.camera, this.div, this) ; // Mick's custom controls
+        this.controls.zoomSpeed = 5.0 // default 1.0 is a bit slow
+        this.controls.useGlobe = Sit.useGlobe
+        this.controls.update();
+    }
 
 }
 

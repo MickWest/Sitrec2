@@ -8,17 +8,41 @@ import {guiMenus, NodeMan, Sit} from "../Globals";
 import {radians} from "../utils";
 import {extractFOV} from "./CNodeControllerVarious";
 import {mouseToCanvas} from "../ViewUtils";
+import {CNodeVideoView} from "./CNodeVideoView";
+
+/*
+    the intent of a tracking overlay is to track point on a video
+    so the location of a point is stored as pixels in the video
+    and can extend beyond the video (visible and editable if the video is zoomed out)
+
+    So we First have mouse coordinates in the canvas which contains the video
+    we need to convert these to pixels in the video
+
+    Then for rendering, we convert these video coordinates back to canvas coordinates
+
+    CNodeVideoView has methods to convert canvas coordinates to video coordinates
+    and video coordinates to canvas coordinates
+    CNodeVideoView: canvasToVideoCoords(x, y) and videoToCanvasCoords(x, y)
+
+ */
 
 
+// Draggable items use VIDEO coordinates, which are pixels
+// the view member here is a CNodeTrackingOverlay which has a CNodeVideoView as overlayView
 export class CDraggableItem {
     constructor(v) {
         this.view = v.view;
+        assert(this.view instanceof CNodeTrackingOverlay, "CDraggableItem: view must be an instance of CNodeTrackingOverlay");
+        assert(this.view.overlayView instanceof CNodeVideoView, "CDraggableItem: view.overlayView must be an instance of CNodeVideoView");
+
+
+
         this.x = v.x;
         this.y = v.y;
         this.dragging = false;
     }
 
-    // canvas to percentage
+    // // canvas to percentage
     c2p(x) {
         return x * 100 / this.view.heightPx
     }
@@ -79,7 +103,7 @@ export class CDraggableCircle extends CDraggableItem {
 
 
 // An active overlay is a view that contains draggable and clickable items
-// such as the object tracking spline editor
+// such as the object tracking spline editor (which is currently the only thing that uses it)
 export class CNodeActiveOverlay extends CNodeViewUI {
     constructor(v) {
         super(v);
@@ -89,6 +113,9 @@ export class CNodeActiveOverlay extends CNodeViewUI {
         this.doubleClickResizes = false;
         this.doubleClickFullScreen = false
 
+        // check to see that the overlayView is set and derived from CNodeVideoView
+        assert(this.overlayView !== undefined, "CNodeActiveOverlay:overlayView is undefined, this should be set in the constructor of the derived class")
+        assert(this.overlayView instanceof CNodeVideoView, "CNodeActiveOverlay:overlayView is not an instance of CNodeVideoView, this should be set in the constructor of the derived class")
 
         this.draggable  = []
 
@@ -128,7 +155,13 @@ export class CNodeActiveOverlay extends CNodeViewUI {
 
 
     onMouseDown(e, mouseX, mouseY) {
-        const [x, y] = mouseToCanvas(this, mouseX, mouseY)
+        const [cx, cy] = mouseToCanvas(this, mouseX, mouseY)
+
+        const {vX,vY} = this.overlayView.canvasToVideoCoords(cx, cy)
+
+        const x = cx;
+        const y = cy;
+
         this.lastMouseX = x
         this.lastMouseY = y
         for (const d of this.draggable) {
@@ -158,7 +191,7 @@ export class CNodeActiveOverlay extends CNodeViewUI {
 
         this.draggable.forEach(d => {
             if (d.dragging) {
-                console.log("Dragging item to ", x, y)
+//                console.log("Dragging item to ", x, y)
                 // convert canvas to percentages of the height
                 const px = d.c2p(d.cX+dx)
                 const py = d.c2p(d.cY+dy)

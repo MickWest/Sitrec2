@@ -4,7 +4,6 @@
 // canvas elements are in CNodeView3D
 // take their size from the div.
 //
-import {CameraMapControls} from "../js/CameraControls";
 import {CNode} from './CNode.js'
 import {Globals, guiShowHideViews, NodeMan, Sit} from "../Globals";
 import {assert} from "../assert.js";
@@ -276,12 +275,7 @@ class CNodeView extends CNode {
             ",height:"+this.height.toPrecision(5)+",")
     }
 
-    addOrbitControls() {
-        this.controls = new CameraMapControls( this.camera, this.div, this) ; // Mick's custom controls
-        this.controls.zoomSpeed = 5.0 // default 1.0 is a bit slow
-        this.controls.useGlobe = Sit.useGlobe
-        this.controls.update();
-    }
+
 
     inheritSize() {
         if (this.overlayView) {
