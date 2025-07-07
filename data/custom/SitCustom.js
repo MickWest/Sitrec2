@@ -400,7 +400,8 @@ sitch = {
         //method: "moving",
         method: "moving",
         source: "targetTrackSwitch",
-        window: {kind: "GUIValue", value: 20, start:0, end:1000, step:1, desc:"Target Smooth Window", gui:"traverse"},
+        window: {kind: "GUIValue", value: 20, start:0, end:1000, step:1, desc:"Target Smooth Window", gui:"traverse",
+            tooltip:"Smoothing for target track.\nThis is the number of frames to smooth over.\nOnly use with noisy data, not generated tracks" },
         // iterations: {kind: "GUIValue", value: 6, start:1, end:100, step:1, desc:"Target Smooth Iterations", gui:"traverse"}
     },
 

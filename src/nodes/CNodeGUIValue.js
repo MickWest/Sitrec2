@@ -85,8 +85,15 @@ export class CNodeGUIValue extends CNodeGUIConstant {
             }
         ).name(v.desc ? v.desc : "<no desc>").listen()
 
+        // "tip" and "tooltip" are both used for the tooltip
+        // "tip" is legacy, "tooltip" is the recommended name
         if (v.tip) {
             this.guiEntry.tooltip(v.tip);
+        }
+
+        if (v.tooltip) {
+            this.guiEntry.tooltip(v.tooltip);
+
         }
 
         this.elastic = v.elastic ?? false;
