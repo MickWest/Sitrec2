@@ -20,6 +20,12 @@ if (result.error) {
     throw result.error;
 }
 
+function getVersionNumber() {
+    const gitTag = process.env.VERSION ||
+        child_process.execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
+    return gitTag
+}
+
 function getFormattedLocalDateTime() {
     const now = new Date();
     const year = String(now.getFullYear()).substring(2);
@@ -28,10 +34,11 @@ function getFormattedLocalDateTime() {
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
 
-    const gitTag = process.env.VERSION ||
-        child_process.execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
+    const gitTag = getVersionNumber();
+
     return `Sitrec ${gitTag}: ${year}-${month}-${day} ${hours}:${minutes} PT`;
 }
+
 
 console.log(getFormattedLocalDateTime());
 
@@ -128,6 +135,7 @@ module.exports = {
         },
         new webpack.DefinePlugin({
             'process.env.BUILD_VERSION_STRING': JSON.stringify(getFormattedLocalDateTime()),
+            'process.env.BUILD_VERSION_NUMBER': JSON.stringify(getVersionNumber()),
             'CAN_REQUIRE_CONTEXT': JSON.stringify(true),
         }),
 

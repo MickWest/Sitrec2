@@ -502,7 +502,22 @@ export class CCustomManager {
         // and can just use JSON.parse directly on the string
         // any existing one that loads already will continue to work
         // but this allows us to use more complex objects without updating the parser
-        let out = {stringified: true, isASitchFile: true}
+
+        // process.env.VERSION is a string number like "1.0.0"
+        // convert it into an integer like 10000
+
+
+        assert(process.env.BUILD_VERSION_NUMBER !== undefined, "BUILD_VERSION_NUMBER must be defined in the environment");
+        const versionParts = process.env.BUILD_VERSION_NUMBER.split('.').map(Number);
+        const versionNumber = versionParts[0] * 1000000 + versionParts[1] * 1000 + versionParts[2];
+
+        let out = {
+            stringified: true,
+            isASitchFile: true,
+            exportVersion: process.env.BUILD_VERSION_STRING,
+            exportTag: process.env.VERSION,
+            exportTagNumber: versionNumber, // this is an integer like 1000000 for 1.0.0
+        }
 
         // merge in the current Sit object
         // which might have some changes?
@@ -815,6 +830,10 @@ export class CCustomManager {
         // and some mods to apply to it
         // if so, then load the sitch and append the mods, etc
         sitchData = checkForModding(sitchData)
+
+        Globals.exportTagNumber = sitchData.exportTagNumber ?? 0;
+
+        console.log("Sitch exportTagNumber: " + Globals.exportTagNumber)
 
         const loadingPromises = [];
         if (sitchData.loadedFiles) {

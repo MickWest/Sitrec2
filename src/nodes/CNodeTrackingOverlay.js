@@ -4,7 +4,7 @@
 
 import {CNodeViewUI} from "./CNodeViewUI";
 import {assert} from "../assert";
-import {guiMenus, NodeMan, Sit} from "../Globals";
+import {Globals, NodeMan, Sit} from "../Globals";
 import {radians} from "../utils";
 import {extractFOV} from "./CNodeControllerVarious";
 import {mouseToCanvas} from "../ViewUtils";
@@ -712,8 +712,17 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
                 y: k.y,
                 frame: k.frame
             }))
-            newKeyframe.x = k.x;
-            newKeyframe.y = k.y;
+            if (Globals.exportTagNumber < 2001001) {
+                // old format x, and y are as % of the video height
+                // so we need to convert them to video coordinates
+                newKeyframe.x = k.x * this.overlayView.imageHeight / 100;
+                newKeyframe.y = k.y * this.overlayView.imageHeight / 100;
+
+
+            } else {
+                newKeyframe.x = k.x;
+                newKeyframe.y = k.y;
+            }
             return newKeyframe;
         })
     }
