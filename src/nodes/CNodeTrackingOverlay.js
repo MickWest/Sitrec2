@@ -573,16 +573,19 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
 // Get the final slope for extrapolation
     getFinalSlope(xSpline, ySpline) {
-        const lastX = xSpline[xSpline.length - 1];
-        const lastY = ySpline[ySpline.length - 1];
+        const lastSegmentX = xSpline[xSpline.length - 1];
+        const lastSegmentY = ySpline[ySpline.length - 1];
 
-        // Calculate the derivative at the end of the last segment
-        // For a cubic spline a + b*x + c*x^2 + d*x^3, the derivative is b + 2c*x + 3d*x^2
+        // Compute h = x_n - x_{n-1}
+        const h = this.keyframes[this.keyframes.length - 1].frame
+            - this.keyframes[this.keyframes.length - 2].frame;
+
         return {
-            x: lastX.b,
-            y: lastY.b
+            x: lastSegmentX.b + 2 * lastSegmentX.c * h + 3 * lastSegmentX.d * h * h,
+            y: lastSegmentY.b + 2 * lastSegmentY.c * h + 3 * lastSegmentY.d * h * h
         };
     }
+
 
 
 
