@@ -154,6 +154,16 @@ export class CNodeActiveOverlay extends CNodeViewUI {
     }
 
 
+    onMouseWheel(e, mouseX, mouseY) {
+        // pass to the  overlayView
+        if (this.overlayView.onMouseWheel) {
+            this.overlayView.onMouseWheel(e, mouseX, mouseY);
+        } else {
+            console.warn("CNodeActiveOverlay: onMouseWheel called, but overlayView does not have an onMouseWheel method");
+        }
+    }
+
+
     onMouseDown(e, mouseX, mouseY) {
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY)
 

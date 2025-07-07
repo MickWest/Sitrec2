@@ -31,6 +31,30 @@ export function SetupMouseHandler() {
     document.addEventListener( 'mousedown', onDocumentMouseDown, false );
     document.addEventListener( 'mouseup', onDocumentMouseUp, false );
     document.addEventListener( 'dblclick', onDocumentDoubleClick, false );
+    document.addEventListener( 'wheel', onDocumentWheel, false );
+
+}
+
+export function onDocumentWheel(event) {
+    // console.log("onDocumentWheel " + event.deltaX + "," + event.deltaY)
+    mouseX = (event.clientX);
+    mouseY = (event.clientY);
+
+    // if we started dragging in a view, then send moves only to that
+    if (mouseDragView) {
+        if (mouseDragView.onMouseWheel) {
+            mouseDragView.onMouseWheel(event, mouseX, mouseY, event.deltaX, event.deltaY)
+        } else {
+            console.warn("No onMouseWheel handler for " + mouseDragView.id)
+        }
+    } else {
+        ViewMan.iterateVisibleIncludingOverlays((name, view) => {
+            if (mouseInViewOnly(view, mouseX, mouseY) && view.onMouseWheel != undefined) {
+                view.onMouseWheel(event, mouseX, mouseY, event.deltaX, event.deltaY)
+            }
+        })
+    }
+
 }
 
 //

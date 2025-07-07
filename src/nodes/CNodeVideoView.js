@@ -3,7 +3,7 @@ import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
 import {par} from "../par";
 import {quickToggle} from "../KeyBoardHandler";
 import {CNodeGUIValue} from "./CNodeGUIValue";
-import {guiTweaks, Sit} from "../Globals";
+import {guiTweaks, NodeMan, Sit} from "../Globals";
 import {CMouseHandler} from "../CMouseHandler";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CVideoWebCodecDataRaw} from "../CVideoWebCodecDataRaw";
@@ -122,6 +122,20 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             this.overlay.removeText("videoLoading")
             this.overlay.addText("videoError", "Error Loading", 50, 45, 5, "#f0f000", "center")
             this.overlay.addText("videoErrorName", this.fileName, 50, 55, 1.5, "#f0f000", "center")
+        }
+    }
+
+    onMouseWheel(e) {
+        var scale = 0.90;  // zoom in/out by 10% on mouse wheel up/down
+        if (e.deltaY < 0) {
+            scale = 1 / scale
+        }
+
+        const videoZoom = NodeMan.get("videoZoom", false);
+        if (videoZoom !== undefined) {
+            let v = videoZoom.value;
+            v *= scale;
+            videoZoom.setValue(v);
         }
     }
 
