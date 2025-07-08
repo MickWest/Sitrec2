@@ -1054,7 +1054,7 @@ function renderMain(elapsed) {
         }
 
         let visible = view.visible;
-        if (view.overlayView)
+        if (view.overlayView && !view.seperateVisibilty)
             visible = view.overlayView.visible;
         if (view.relativeTo)
             visible = view.relativeTo.visible;
