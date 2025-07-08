@@ -22,8 +22,14 @@ export class CNodeHeading extends CNode {
         this.name = v.name ?? ""
         this.arrowColor = v.arrowColor ?? "white"
 
-        if(this.gui)
-            this.headingController = this.gui.add (this, "heading", 0,359,1).name(this.name+" Heading").onChange(x =>this.recalculateCascade())
+        if(this.gui) {
+            this.headingController = this.gui.add(this, "heading", 0, 359, 1).name(this.name + " Heading").onChange(x => this.recalculateCascade())
+            if (v.tooltip) {
+                this.headingController.tooltip(v.tooltip);
+            }
+        }
+
+
 
         this.recalculate()
     }

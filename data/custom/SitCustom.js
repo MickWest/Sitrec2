@@ -530,6 +530,7 @@ sitch = {
         },
         desc: "LOS Source",
         gui: "traverse",
+        tooltip: "Select where the LOS (Lines Of Sight) used for traversal calculations come from.\nCamera Center is the centerline of the camera, which is used for most traversals.\nCamera + Object Track uses the tracking overlay to modify the LOS to follow an object in the video.",
     },
 
 

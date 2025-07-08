@@ -261,6 +261,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         this.showTracking = true;
 
         this.gui.add(this, "resetDraggable").name("Reset Object Tracking")
+            .tooltip("Reset the object tracking to an empty state, removing all keyframes and draggable items")
       //  this.gui.add(this, "showTracking").name("Show Object Tracking").listen();
 
 
@@ -277,6 +278,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
             NodeMan.recalculateAllRootFirst();
 
         })
+            .tooltip("Limit the A and B frames to the range of the video tracking keyframes.")
 
 
 

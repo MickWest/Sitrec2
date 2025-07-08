@@ -91,6 +91,10 @@ class CNodeSwitch extends CNode {
 
                 })
 
+            if (v.tooltip) {
+                this.controller.tooltip(v.tooltip);
+            }
+
             this.exportable = v.exportable
             if (this.exportable) {
                 NodeMan.addExportButton(this, "exportTrackCSV", "Traverse ")

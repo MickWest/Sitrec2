@@ -622,6 +622,7 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             elastic: true,
             elasticMin: 1,
             elasticMax: 10000,
+            tooltip: "Start distance of the traverse object along the first LOS",
         }, guiMenus.traverse)
 
 
@@ -667,6 +668,7 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             step: Sit.targetSpeedStep,
             desc: "Target Speed",
             unitType: "speed",
+            tooltip: "Target speed of the traverse object.\ni.e. the speed you want the traverse object to be travelling when in 'Constant Speed' mode",
         }, guiMenus.traverse)
     }
 
@@ -722,7 +724,8 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             id: "initialHeading",
             heading: Sit.heading ?? 0,
             name: "Initial",
-            arrowColor: "green"
+            arrowColor: "green",
+            tooltip: "Start heading of straight-line traversal"
 
         }, guiMenus.traverse)
     }
@@ -734,7 +737,8 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             start: -180,
             end: 180,
             step: 0.01,
-            desc: "Tgt Relative Heading"
+            desc: "Tgt Relative Heading",
+            tooltip: "[Deprecated] Relative heading of the target, added to initialHeading to get targetActualHeading.\nUse for fine tuning",
         }, guiMenus.traverse)
     }
 
