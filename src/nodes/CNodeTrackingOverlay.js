@@ -292,11 +292,6 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
         this.keyframes = [];
 
-   //     this.keyframes.push(this.add(new CNodeVideoTrackKeyframe({view:this, x:50, y:50, frame:0})))
-   //     this.keyframes.push(this.add(new CNodeVideoTrackKeyframe({view:this, x:60, y:55, frame:1000})))
-   //     this.keyframes.push(this.add(new CNodeVideoTrackKeyframe({view:this, x:80, y:52, frame:2000})))
-
-
         this.updateCurve();
 
 
@@ -391,9 +386,8 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
         const videoWidth = this.overlayView.widthPx;
         const videoHeight = this.overlayView.heightPx;
-        const centerX = videoWidth / 2;
-        const centerY = videoHeight / 2;
-
+        // convert to video coordinates
+        const [centerX, centerY] = this.overlayView.canvasToVideoCoords(videoWidth / 2, videoHeight / 2);
 
         // Sort keyframes by frame
         this.keyframes.sort((a, b) => a.frame - b.frame);
