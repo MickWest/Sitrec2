@@ -163,6 +163,15 @@ export class CNodeActiveOverlay extends CNodeViewUI {
         }
     }
 
+    doubleClick(e, mouseX, mouseY) {
+        // pass to the overlayView
+        if (this.overlayView.doubleClick) {
+            this.overlayView.doubleClick(e, mouseX, mouseY);
+        } else {
+            console.warn("CNodeActiveOverlay: doubleClick called, but overlayView does not have an doubleClick method");
+        }
+    }
+
 
     onMouseDown(e, mouseX, mouseY) {
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY)

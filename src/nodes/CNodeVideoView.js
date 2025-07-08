@@ -131,7 +131,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             // if this is an overlay view, then we don't want to zoom
             // as the overlay view is not zoomable
             // so we just pass the event to the overlaid view
-            this.overlayView.onMouseWheel(e);
+            if (this.overlayView.onMouseWheel !== undefined) {
+                this.overlayView.onMouseWheel(e);
+            }
             return;
         }
 
