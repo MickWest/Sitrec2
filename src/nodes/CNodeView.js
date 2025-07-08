@@ -572,7 +572,10 @@ class CNodeView extends CNode {
 
         this.visible = visible
 
-        // if this is NOT an overlay view, then we can set the div visibility directly
+        // if this is NOT an overlaid view, then we can set the div visibility directly
+        // this will hide any children of the div
+        // so if there's another view (like the TrackingOverlay) that has this as a parent
+        // it will also be hidden
         if (!this.overlayView) {
             if (this.div) {
                 if (this.visible)
@@ -584,8 +587,12 @@ class CNodeView extends CNode {
         else {
            // console.warn("Overlaying view "+this.id+" set visible propagating to the overlaid view" + this.overlayView.id)
             if (!this.seperateVisibilty) {
+                // not seperate, so we set the visibility of the overlay view (the parent)
+                // which will hide the children (this)
                 this.overlayView.setVisible(visible);
             } else {
+                // seperate, so we set the visibility of the canvas
+                // so we can had the overlay independently of the parent
                console.log("Overlaying view " + this.id + " set visible using canvas")
                 this.canvas.style.visibility = this.visible ? 'visible' : 'hidden';
 

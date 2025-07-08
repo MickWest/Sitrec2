@@ -519,6 +519,7 @@ sitch = {
         overlayView: "video",
         cameraLOSNode: "JetLOSCameraCenter",
         fovNode: "fovSwitch",
+        visible: "false",
 
     },
 
