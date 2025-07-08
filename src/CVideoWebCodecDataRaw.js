@@ -6,6 +6,7 @@ import {par} from "./par";
 import {isLocal} from "./configUtils";
 import {CVideoData} from "./CVideoData";
 import {updateSitFrames} from "./UpdateSitFrames";
+import {EventManager} from "./CEventManager";
 
 // New raw version with filtering removed
 // and threaded for performance
@@ -89,14 +90,12 @@ export class CVideoWebCodecDataRaw extends CVideoData {
             }
         }
 
-        let demuxer = new MP4Demuxer(source);
-        this.startWithDemuxer(demuxer)
+        this.demuxer = new MP4Demuxer(source);
+        this.startWithDemuxer(this.demuxer)
 
     }
 
     startWithDemuxer(demuxer) {
-
-        //        let demuxer = new MP4Demuxer(v.file);
         this.frames = 0;
 
         this.lastGetImageFrame = 0
@@ -137,7 +136,6 @@ export class CVideoWebCodecDataRaw extends CVideoData {
 
                 // calculate the frame number we are decoding from how many are left
                 const frameNumber = group.frame + group.length - group.pending;
-//                console.log(frameNumber+ " Timestamp: "+frame.timestamp)
                 createImageBitmap(videoFrame).then(image => {
                     this.imageCache[frameNumber] = image
                     this.width = image.width;
@@ -218,8 +216,13 @@ export class CVideoWebCodecDataRaw extends CVideoData {
 //            offscreen.width = config.codedWidth;
 
             this.config = config;
-
             this.decoder.configure(config);
+
+            // NOT HANDLED YET - get the rotation angle from the video matrix
+            this.angle = getRotationAngleFromVideoMatrix(demuxer.track.matrix);
+
+            EventManager.dispatchEvent("videoLoaded", {videoData: this});
+
             demuxer.start((chunk) => {
                 // The demuxer will call this for each chunk it demuxes
                 // essentiall it's iterating through the frames
@@ -580,3 +583,23 @@ export class CVideoWebCodecDataRaw extends CVideoData {
     }
 
 }
+
+
+function getRotationAngleFromVideoMatrix(matrix) {
+    // Extract matrix elements and normalize by dividing by 65536
+    const a = matrix[0] / 65536;
+    const b = matrix[1] / 65536;
+    const c = matrix[3] / 65536;
+    const d = matrix[4] / 65536;
+
+    if (a === 0 && b === 1 && c === -1 && d === 0) {
+        return 90;
+    } else if (a === -1 && b === 0 && c === 0 && d === -1) {
+        return 180;
+    } else if (a === 0 && b === -1 && c === 1 && d === 0) {
+        return 270;
+    } else {
+        return 0;
+    }
+}
+

@@ -161,6 +161,24 @@ export class CCustomManager {
             }
         });
 
+        EventManager.addEventListener("videoLoaded", (data) => {
+           const width  = data.videoData.config.codedWidth;
+           const height = data.videoData.config.codedHeight;
+           const videoView = NodeMan.get("video");
+           if (!videoView.visible) {
+              // decide what preset is needed
+               if (width > height) {
+                   this.currentViewPreset = "Default"; // wide video
+               } else {
+                   this.currentViewPreset = "ThreeWide"; // tall video
+               }
+               this.updateViewFromPreset();
+
+           }
+
+
+        });
+
 
         this.viewPresets = {
             Default: {
