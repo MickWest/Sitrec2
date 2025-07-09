@@ -322,7 +322,14 @@ export class CFileManager extends CManager {
                 // the server validates the name with:
                 //     return preg_match('/^[A-Za-z0-9 _\\-\\.\\(\\)]+$/', $name);
                 // so we need to remove any invalid characters, replace them with underscore
-                const validSitchName = sitchName.replace(/[^A-Za-z0-9 _\\-\\.\\(\\)]+/g, "_");
+                let validSitchName = sitchName.replace(/[^A-Za-z0-9 _\\-\\.\\(\\)]+/g, "_");
+
+                // strip leading and trailing whitespace
+                validSitchName = validSitchName.trim();
+                // strip off any leading or trailing . or whitespace
+                validSitchName = validSitchName.replace(/^[\.\s]+|[\.\s]+$/g, "");
+
+
                 // if the name is empty, then  error
                 if (validSitchName === "") {
                     alert("Invalid sitch name, please try again");

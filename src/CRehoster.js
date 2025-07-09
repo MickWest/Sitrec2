@@ -88,6 +88,13 @@ export class CRehoster {
 
 
     rehostFile(filename, data, version) {
+        // make surethe filename does not end with a space or a dot
+        while (filename.endsWith(" ") || filename.endsWith(".")) {
+            assert(0, "Filename should not end with a space or a dot: " + filename);
+            console.warn("Filename ends with a space or a dot, removing it: ", filename);
+            filename = filename.trim().replace(/\.$/, "");
+        }
+
         var promise = this.rehostFilePromise(filename, data, version)
         this.rehostPromises.push(promise);
         return promise;
