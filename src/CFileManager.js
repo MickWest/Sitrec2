@@ -1139,7 +1139,14 @@ export class CFileManager extends CManager {
             if (NodeMan.exists("video")) {
                 const videoNode = NodeMan.get("video")
                 if (videoNode.videoData !== undefined) {
-                    const rehostFilename = videoNode.fileName;
+                    let rehostFilename = videoNode.fileName;
+                    // if more than 100 characters, then crop it to 100 characters plus a date suffix, plus the extension
+                    if (rehostFilename.length > 100) {
+                        const extension = getFileExtension(rehostFilename);
+                        rehostFilename = rehostFilename.substring(0, 100) + "-" + todayDateStr + "." + extension;
+                        console.warn("Rehosting video with cropped filename: " + rehostFilename);
+                    }
+
                     const videoDroppedData = videoNode.videoData.videoDroppedData;
 
                     if (videoDroppedData !== undefined) {
