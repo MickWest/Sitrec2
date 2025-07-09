@@ -242,6 +242,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.showFlareRegion = Sit.showFlareRegion;
         this.showFlareBand = Sit.showFlareBand;
 
+        this.showAllLabels = false;
+
         this.showSatelliteList = "";
 
 
@@ -256,6 +258,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             { key: "showSatelliteGround", name: "Satellite Ground Arrows",      action: () => this.satelliteGroundGroup.visible = this.showSatelliteGround },
             { key: "showSatelliteNames", name: "Satellite Names (Look View)",   action: () => this.updateSatelliteNamesVisibility() },
             { key: "showSatelliteNamesMain", name: "Satellite Names (Main View)", action: () => this.updateSatelliteNamesVisibility() },
+            { key: "showAllLabels", name: "Show all Labels",                     action: () => this.flareRegionGroup.visible = this.showFlareRegion},
             { key: "showFlareRegion", name: "Flare Region",                     action: () => this.flareRegionGroup.visible = this.showFlareRegion},
             { key: "showFlareBand", name: "Flare Band",                         action: () => this.flareBandGroup.visible = this.showFlareBand},
 
@@ -1664,6 +1667,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                     scale = 0;
                 }
 
+                // we store to look view scale, so we can filter out those names
+                if (isLookView) {
+                    satData.lastScale = scale;
+                }
 
                 magnitudes[i] = scale
             }
@@ -1702,7 +1709,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             // if the satellite is not visible, skip it
             // user filtered sats are either in the list, or ar e the brightest or the ISS (if those are enabled)
             // if the satellite is not user filtered, skip it
-            if (satData.visible && ( satData.userFiltered || satData.eus.distanceTo(lookPos) < this.arrowRange*1000)) {
+            if (satData.visible
+                && ( satData.userFiltered || satData.eus.distanceTo(lookPos) < this.arrowRange*1000)
+                && ( satData.lastScale > 0 || this.showAllLabels ) // if the scale is 0, we don't show the label, unless showAllLabels is true
+            ) {
             //if (satData.visible) {
                 if (!satData.spriteText) {
                     // if the sprite is not created, create it
