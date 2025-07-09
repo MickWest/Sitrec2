@@ -33,14 +33,14 @@ import {GlobalScene} from "../LocalFrame";
 
 const STATE = {
 	NONE: - 1,
-	ROTATE: 0,
+	ROTATE: 0,				     // MIDDLE button - rotate the camera around the target
 	DOLLY: 1,
-	PAN: 2,
+	PAN: 2,						 // RIGHT button - pan the world around (also CMD + LEFT button)
 	TOUCH_ROTATE: 3,
 	TOUCH_PAN: 4,
 	TOUCH_DOLLY_PAN: 5,
 	TOUCH_DOLLY_ROTATE: 6,
-	DRAG: 7,
+	DRAG: 7,                     // LEFT button - drag the world around
 };
 
 
