@@ -1558,7 +1558,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
 
                 if (!isLookView) {
-                    scale *= 3;
+                    scale *= 2;
                 }
 
 
@@ -2353,12 +2353,15 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             // Assign a color to each satellite (example: random color)
 
 
-        // SL-0000 names have are yellow, SL-00000 are orange
+            // SL-0000 names have are yellow, SL-00000 are orange
             // use the length of the name 7 or 8 to determine the color
-            let color = new Color(0xFFFFC0);
+            let color = new Color(0xF0F0FF); // default blueish white
             let length = name.length;
-            if (length > 7) {
-                color = new Color(0xFFA080);
+            if (sat.name.includes("STARLINK")) {
+                color = new Color(0xFFFFC0);
+                if (length > 7) {
+                    color = new Color(0xFFA080);
+                }
             }
 
             colors[i * 3] = color.r;
