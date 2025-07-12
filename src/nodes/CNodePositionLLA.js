@@ -152,13 +152,29 @@ export class CNodePositionLLA extends CNode {
                                                 this._LLA[2] = altData.elevation[0] + 2; // add 2m to the elevation
                                                 this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small", true);
                                                 this.recalculateCascade(0);
-                                                EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
+
 
                                             } else {
                                                 console.warn("No elevation data found for " + this.lookupString);
                                             }
+
+                                            this.goTo();
+
+                                            EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
+
+                                            if (NodeMan.exists("terrainUI")) {
+                                                const terrainUI = NodeMan.get("terrainUI")
+                                                terrainUI.lat = this._LLA[0]
+                                                terrainUI.lon = this._LLA[1]
+                                                terrainUI.flagForRecalculation();
+                                                terrainUI.startLoading = true;
+
+                                            }
+
                                         })
                                         .catch(error => console.error("Error fetching elevation: ", error));
+
+
 
 
                                 } else {
