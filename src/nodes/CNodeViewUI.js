@@ -261,7 +261,17 @@ export class CNodeViewUI extends CNodeViewCanvas2D {
 export function forceUpdateUIText() {
         NodeMan.iterate((k,n) => {
         if (n instanceof CNodeViewUI) {
-            n.recalculate()
+            // clear the t.initialValue of all text elements
+            Object.keys(n.textElements).forEach(key => {
+                const t = n.textElements[key]
+                if (t.object != undefined) {
+                    t.initialValue = undefined;
+                }
+            })
+
+            // can't do this yet, as it seem to use the old canvas
+            // n.recalculate()
+            // n.renderCanvas(par.frame)
         }
     })
 }

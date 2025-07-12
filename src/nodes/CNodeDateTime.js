@@ -110,6 +110,8 @@ export class CNodeDateTime extends CNode {
 
         this.dateTimeFolder = guiMenus.time;
 
+        this.useTimeZone = true;
+
         this.dateTime = {
             // year: 2022,
             // month: 1,
@@ -154,6 +156,8 @@ export class CNodeDateTime extends CNode {
         const guiSecond = this.dateTimeFolder.add(this.dateTime, "second", 0, 59, 1).listen().onChange(v => this.updateDateTime(v)).wrap(guiMinute)
         const guiMillisecond = this.dateTimeFolder.add(this.dateTime, "millisecond", 0, 999, 1).listen().onChange(v => this.updateDateTime(v)).wrap(guiSecond)
 
+        this.adjustGUIForTimezone();
+
         this.adjustDaysInMonth();
 
         const options = { timeZoneName: 'short' };
@@ -166,14 +170,26 @@ export class CNodeDateTime extends CNode {
             }
         }
 
-        this.dateTimeFolder.add(this, "timeZoneName", timeZoneKeys).name("Display Time Zone").listen().onChange(
+
+        // add the time zon flag
+        this.dateTimeFolder.add( this, "useTimeZone").name("Use Time Zone in UI").listen().onChange(v=>{
+            this.adjustGUIForTimezone();
+            this.populate();
+            forceUpdateUIText();
+            par.renderOne = true;
+        })
+        .tooltip("Use the time zone in the UI above\nThis will change the date and time to be in the selected time zone, rather than UTC.\nThis is useful for displaying the date and time in a specific time zone, such as the local time zone of the video or the location.");
+
+
+        this.dateTimeFolder.add(this, "timeZoneName", timeZoneKeys).name("Time Zone").listen().onChange(
             v => {
                 console.log("Timezone "+v)
+                this.populate();
                 forceUpdateUIText();
                 par.renderOne = true;
             }
         )
-            .tooltip("The time zone to display the date and time in in the look view (NOT in the Menu)")
+            .tooltip("The time zone to display the date and time in in the look view\nAlso in the UI if the 'Use Time Zone in UI' is checked");
 
         this.oldSimSpeed = Sit.simSpeed;
 
@@ -238,6 +254,28 @@ export class CNodeDateTime extends CNode {
 
         this.lastFrames = Sit.frames;
 
+    }
+
+
+    adjustGUIForTimezone() {
+        // change the color year, month, day, hour, minute, second and millisecond
+        // labels to pink if the time zone is being used
+
+        let color = "white";
+        if (this.useTimeZone) {
+            color = "pink";
+        }
+        this.dateTimeFolder.controllers.forEach(controller => {
+            if (['useTimeZone', 'year', 'month', 'day', 'hour', 'minute', 'second', 'millisecond'].includes(controller.property)) {
+                controller.setLabelColor(color);
+            }
+        });
+
+    }
+
+
+    getTimeZoneOffset() {
+        return (timeZoneOffsets[this.timeZoneName] ?? 0);
     }
 
     adjustDaysInMonth() {
@@ -398,12 +436,20 @@ export class CNodeDateTime extends CNode {
     }
 
     populate() {
-        this.dateTime.year   = this.dateNow.getUTCFullYear();
-        this.dateTime.month  = this.dateNow.getUTCMonth() + 1; // Months are 0-indexed in JavaScript
-        this.dateTime.day    = this.dateNow.getUTCDate();
-        this.dateTime.hour   = this.dateNow.getUTCHours();
-        this.dateTime.minute = this.dateNow.getUTCMinutes();
-        this.dateTime.second = this.dateNow.getUTCSeconds();
+        let dateNow = this.dateNow;
+
+        if (this.useTimeZone) {
+            // dateNow is in UTC, so we need to convert it to the local time zone
+            dateNow = new Date(dateNow.getTime() + (this.getTimeZoneOffset() * 60*60000));
+
+        }
+
+        this.dateTime.year   = dateNow.getUTCFullYear();
+        this.dateTime.month  = dateNow.getUTCMonth() + 1; // Months are 0-indexed in JavaScript
+        this.dateTime.day    = dateNow.getUTCDate();
+        this.dateTime.hour   = dateNow.getUTCHours();
+        this.dateTime.minute = dateNow.getUTCMinutes();
+        this.dateTime.second = dateNow.getUTCSeconds();
         this.dateTime.millisecond = this.dateNow.getUTCMilliseconds();
 
         Sit.startTime = this.dateStart.toISOString();
@@ -438,7 +484,8 @@ export class CNodeDateTime extends CNode {
             Globals.sitchEstablished = true;
 
             this.adjustDaysInMonth();
-            this.setNowDateTime(new Date(Date.UTC(
+
+            let newDate = new Date(Date.UTC(
                 this.dateTime.year,
                 this.dateTime.month - 1, // Months are 0-indexed in JavaScript
                 this.dateTime.day,
@@ -446,7 +493,16 @@ export class CNodeDateTime extends CNode {
                 this.dateTime.minute,
                 this.dateTime.second,
                 this.dateTime.millisecond,
-            )))
+            ));
+
+            // if the time zone is set, then we adjust FROM the local time to UTC
+            if (this.useTimeZone) {
+                // adjust the newDate to UTC by subtracting the time zone offset
+                newDate = new Date(newDate.getTime() - (this.getTimeZoneOffset() * 60*60000));
+            }
+
+
+            this.setNowDateTime(newDate)
             Globals.debugCascade = true;
             Globals.debugCounter = 0;
             this.recalculateCascade()

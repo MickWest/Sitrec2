@@ -29,6 +29,7 @@ import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB} from "./threeExt";
 import {TrackManager} from "./TrackManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
+import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 
 
 
@@ -347,6 +348,7 @@ export class CCustomManager {
             ViewMan.updateViewFromPreset("video", preset.video);
             ViewMan.updateViewFromPreset("mainView", preset.mainView);
             ViewMan.updateViewFromPreset("lookView", preset.lookView);
+            forceUpdateUIText(); // force update the text in the views, as they might have changed
         } else {
             console.warn("No view preset found for " + this.currentViewPreset);
         }
