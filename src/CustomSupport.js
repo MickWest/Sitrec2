@@ -108,7 +108,8 @@ export class CCustomManager {
 
 
         guiMenus.help.add(this, "adsbReplay").name('ADSB Replay for this time and location')
-        guiMenus.help.add(this, "googleMapsLink").name('Google Maps Link for this location')
+        guiMenus.help.add(this, "googleMapsLink").name('Google Maps for this location')
+        guiMenus.help.add(this, "inTheSkyLink").name('In-The-Sky for this time and location')
 
 
         // TODO - Multiple events passed to EventManager.addEventListener
@@ -311,6 +312,28 @@ export class CCustomManager {
 
 
         console.log("Google Maps URL: " + url);
+        window.open(url, "_blank");
+
+    }
+
+    inTheSkyLink() {
+        // https://in-the-sky.org/satmap_worldmap.php?year=2025&month=7&day=9&hour=22&min=37&latitude=40&longitude=0&timezone=0
+        // get the current camera position from the lookCamera in Lat and Lon
+        const lookCamera = NodeMan.get("lookCamera");
+        const pos = lookCamera.p(par.frame);
+        const LLA = EUSToLLA(pos);
+        // get the current date and time from the GlobalDateTimeNode
+        const date = GlobalDateTimeNode.frameToDate(par.frame);
+        const year = date.getUTCFullYear();
+        const month = date.getUTCMonth() + 1; // months are 0-indexed
+        const day = date.getUTCDate();
+        const hour = date.getUTCHours();
+        const min = date.getUTCMinutes();
+        const latitude = LLA.x.toFixed(6);
+        const longitude = LLA.y.toFixed(6);
+        const timezone = 0; // UTC
+        const url = `https://in-the-sky.org/satmap_worldmap.php?year=${year}&month=${month}&day=${day}&hour=${hour}&min=${min}&latitude=${latitude}&longitude=${longitude}&timezone=${timezone}`;
+        console.log("In The Sky URL: " + url);
         window.open(url, "_blank");
 
     }
