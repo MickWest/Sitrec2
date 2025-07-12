@@ -4,6 +4,7 @@
 // - THREE.Mesh (default)
 // - THREE.LineSegments (if wireframe or edges)
 
+import {CNode3DLight} from "./CNode3DLight";
 import {CNode3DGroup} from "./CNode3DGroup";
 import * as LAYER from "../LayerMasks";
 import {
@@ -67,8 +68,6 @@ export const ModelFiles = {
     "LCS":                 { file: 'data/models/LCS.glb',},
 
 }
-
-
 
 
 // Custom geometries
@@ -808,6 +807,9 @@ export class CNode3DObject extends CNode3DGroup {
                             this.model.castShadow = true;
                             this.model.receiveShadow = true;
                         }
+
+                        this.extractLightsFromModel(this.model);
+
                         this.group.add(this.model);
                         this.propagateLayerMask()
                         this.recalculate()
@@ -919,6 +921,53 @@ export class CNode3DObject extends CNode3DGroup {
 
 
     }
+
+
+    lightNamesToIgnore = [
+        "Sky_Dome",
+        "Light",  // the default light name in the blender cube scene, so often used, but not needed
+        "Moon_Light",
+        "Lensflare_Source",
+        "Sun_light",
+
+
+    ]
+
+    // model is a THREE.Scene loaded from a GLTF
+    // it will have children which are lights
+    // we detect them and turn them off
+    extractLightsFromModel(model) {
+        model.traverse((child) => {
+            if (child.isLight) {
+                // turn off the light
+                child.visible = false;
+
+                // check if the light name is in the list of names to ignore
+                if (this.lightNamesToIgnore.includes(child.name)) {
+                    // if it is, then just skip it
+                    return;
+                }
+
+                //check if it's a point light
+                if (child.isPointLight) {
+                    // if it's a point light, we can use it as a CNode3DLight
+                    // so we create a CNode3DLight for it
+                    // and add it to the group
+                    // this will allow us to control the light from the GUI
+                    // and also to turn it on/off
+                }
+
+                new CNode3DLight({
+                    id: this.id + "_" + child.name,
+                    light: child,
+                    scene: this.group,
+                })
+
+            }
+        });
+
+    }
+
 
     rebuildBoundingBox(force = true)
     {
