@@ -56,8 +56,8 @@ export const SitModelInspector = {
 
     targetObject: {kind: "3DObject",
 
-        //model:"F/A-18F",
-        geometry:"tictac",
+        model:"737 MAX 8 BA",
+        //geometry:"tictac",
 
         size: 1,
         radius: 2.6,
