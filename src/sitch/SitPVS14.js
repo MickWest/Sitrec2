@@ -109,7 +109,7 @@ export const SitPVS14 = {
 
 
         var labelVideo = new CNodeViewUI({id: "labelVideo", overlayView: "lookView"});
-        AddTimeDisplayToUI(labelVideo, 50,96, 3.5, "#f0f000")
+        AddTimeDisplayToUIOld(labelVideo, 50,96, 3.5, "#f0f000")
 
 
         // var labelMainViewPVS = new CNodeViewUI({id: "labelMainViewPVS", overlayView: ViewMan.list.mainView.data});

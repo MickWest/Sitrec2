@@ -16,7 +16,8 @@ sitch = {
     menuName: "Custom (Drag and Drop)",
     isCustom: true,
     canMod: false, // this is a custom sitch, so does not use the "modding" system, instead exports all of this
-    isTool: true,
+    isRoot: true,
+    tooltip: "Custom sitch - lets you add tracks and a video file, and load satellites.",
 
     centerOnLoadedTracks: true, // likely unique to SitCustom. When true, the camera will center on the loaded track(s) when they are loaded.
 

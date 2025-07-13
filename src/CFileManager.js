@@ -120,7 +120,7 @@ export class CFileManager extends CManager {
 
     sitchChanged() {
     // update the UI based on the sitch name
-        if (Sit.name === "custom") {
+        if (Sit.isCustom) {
             if (parseBoolean(process.env.SAVE_TO_LOCAL)) {
                 this.guiLocal.show();
             }
@@ -1064,7 +1064,7 @@ export class CFileManager extends CManager {
                         // if it's a custom file, then strip out any duplicate times
                         // we are being a bit more robust here, as some legacy files have duplicate times
                         // For example Aguadilla. That's probably an issue only with "Unknown" files
-                        if (Sit.name === "custom" && dataType !== "Unknown") {
+                        if (Sit.isCustom && dataType !== "Unknown") {
                             parsed = stripDuplicateTimes(parsed);
                         }
                     }

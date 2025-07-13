@@ -2,7 +2,7 @@ import { Vector3} from "three";
 import {NodeMan, Sit, GlobalDateTimeNode, Globals, FileManager, guiMenus} from "../Globals";
 import {par} from "../par";
 import {CNodeViewUI} from "../nodes/CNodeViewUI";
-import {AddTimeDisplayToUI} from "../UIHelpers";
+import {AddTimeDisplayToUI, AddTimeDisplayToUIOld} from "../UIHelpers";
 import {DragDropHandler} from "../DragDropHandler";
 import JSURL from "../js/jsurl"
 import {isLocal, SITREC_SERVER} from "../configUtils.js";
@@ -18,7 +18,7 @@ import {ViewMan} from "../CViewManager";
 
 export const SitNightSky = {
     name: "nightsky",
-    menuName: "Night Sky / Starlink",
+    menuName: "(OLD) Night Sky / Starlink",
     isTextable: false,
     isTool: true,
 
@@ -144,7 +144,7 @@ export const SitNightSky = {
         DragDropHandler.addDropArea(viewLook.div);
 
         var labelVideo = new CNodeViewUI({id: "labelVideo", overlayView: viewLook});
-        AddTimeDisplayToUI(labelVideo, 50,96, 2.5, "#f0f000")
+        AddTimeDisplayToUIOld(labelVideo, 50,96, 2.5, "#f0f000")
 
 
 

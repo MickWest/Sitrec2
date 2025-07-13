@@ -122,7 +122,17 @@ export class CNodeDateTime extends CNode {
             // millisecond: 0,
         }
 
-        this.populateStartTimeFromUTCString(Sit.startTime);
+        let startTime = Sit.startTime;
+        //use the current time if the start time is not set
+        // of if the start time is "current" (e.g. SitNightSky2.js)
+        if (startTime === undefined || startTime === "current") {
+            // if the start time is not set, then we use the current time
+            this.dateStart = new Date();
+            this.originalPopulatedStartTime = new Date();
+            startTime = this.dateStart.toISOString();
+        }
+
+        this.populateStartTimeFromUTCString(startTime);
         this.dateNow = startToNowDateTime(this.dateStart);
 
         // var for the menu to sync the time to the start time or the now time or a track

@@ -17,7 +17,7 @@ import {CNodeDisplayTargetSphere} from "./nodes/CNodeDisplayTargetSphere";
 import {CNodeArray} from "./nodes/CNodeArray";
 import {par} from "./par";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
-import {AddTimeDisplayToUI} from "./UIHelpers";
+import {AddTimeDisplayToUI, AddTimeDisplayToUIOld} from "./UIHelpers";
 import {SetupGUIFrames} from "./JetGUI";
 import {addTracks, makeTrackFromDataFile, TrackManager} from "./TrackManager";
 import {CNodeWind} from "./nodes/CNodeWind";
@@ -915,14 +915,16 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             let dateTimeX = data.dateTimeX ?? 50;
             let align = data.align ?? "center";
 
-            if (Sit.name === "custom") {
+            if (Sit.isCustom) {
                 dateTimeX = 99.5;
                 textSize = -16
                 dateTimeY = 3;
                 align = "right"
+                AddTimeDisplayToUI(labelVideo, dateTimeX, dateTimeY, textSize, "#f0f000", align)
+            } else {
+                AddTimeDisplayToUIOld(labelVideo, dateTimeX, dateTimeY, textSize, "#f0f000", align)
             }
 
-            AddTimeDisplayToUI(labelVideo, dateTimeX, dateTimeY, textSize, "#f0f000", align)
             labelVideo.setVisible(true)
             node = labelVideo;
             break;
@@ -1124,7 +1126,7 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             SSLog();
             // if data true or it is an object with no keys (i.e. {} )
             // then add the default night sky
-            if (data === true || Object.keys(data).length === 0) {
+            if (data === undefined || Object.keys(data).length === 0) {
                 node = addNightSky({starLink: "starLink"})
             } else {
                 node = addNightSky(data)

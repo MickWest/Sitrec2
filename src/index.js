@@ -95,16 +95,17 @@ console.log ("SITREC START - index.js after imports")
 // before this code is executed.
 // Building sitrec as a console application uses indexCommon instead.
 
-// We default to nightsky on the public version
+// We NOW default to nightsky2 on the public version
 // as it's now the most popular usage.
-let situation = "nightsky";
+// "nightsky" has been deprecated, but still works for URL parameter based sitches
+let situation = "nightsky2";
 
 // Some (essentially) global variables
 let urlParams;
 const sortedSitches = {};
 const selectableSitches = {};
-const builtInSitches = {};
 const toolSitches = {};
+const rootSitches = {};
 let toTest;
 let testing = false;
 var fpsInterval, startTime, now, then, elapsed;
@@ -188,7 +189,7 @@ if (customSitch !== null) {
         // do we need this if it's in CustomSupport's deserialize function?
         sitchObject = checkForModding(sitchObject);
 
-        if (sitchObject.name === "custom") {
+        if (sitchObject.isCustom) {
             // // Temporary patch for custom sitches new parameters
             // sitchObject.speedGraphForTarget.dynamicY = true;
             // sitchObject.altitudeGraphForTarget.dynamicY = true;
@@ -499,6 +500,13 @@ async function initializeOnce() {
 // basically anything that is not hidden and has a menuName
     const unsortedSitches = {}
     SitchMan.iterate((key, sitch) =>{
+
+        if (sitch.patchSatellites) {
+            if (!sitch.files) sitch.files = {};
+            sitch.files.starLink = "!"+SITREC_SERVER+"proxy.php?request=CURRENT_STARLINK"
+        }
+
+
         if (sitch.hidden !== true && sitch.menuName !== undefined
         && (isLocal || !sitch.localOnly)) {
 
@@ -515,10 +523,14 @@ async function initializeOnce() {
     sortedKeys.forEach(key => {
         const sitchName = unsortedSitches[key];
         const sitch = SitchMan.get(sitchName);
-        if (sitch.isTool)
+
+        if (sitch.isRoot) {
+            rootSitches[key] = sitchName;
+        } else if (sitch.isTool) {
             toolSitches[key] = sitchName;
-        else
+        } else {
             selectableSitches[key] = sitchName;
+        }
         sortedSitches[key] = sitchName
     });
 // Add the "Test All" option which smoke-tests all sitches
@@ -600,7 +612,25 @@ async function initializeOnce() {
     setupGUIGlobals(_gui,_guiShowHide,_guiTweaks, _guiShowHideViews, _guiPhysics)
     setUnits(new CUnits("Nautical"));
     setFileManager(new CFileManager())
-    Globals.menuBar.infoGUI.title(process.env.BUILD_VERSION_STRING);
+
+    //first add buttons for the root sitches
+
+    for (const [key, sitch] of Object.entries(rootSitches)) {
+        Globals[""+key+"Button"] = function()  {
+            var url = SITREC_APP+"?sitch=" + sitch
+            newSitch(sitch);
+            window.history.pushState({}, null, url);
+        }
+
+        const sitchObject = SitchMan.get(sitch);
+
+        _gui.add(Globals, ""+key+"Button").name(key).perm()
+            .tooltip(sitchObject.tooltip || "No tooltip defined for this sitch")
+
+    }
+
+
+
 
     const unselectedText = "-Select-";
 
@@ -779,6 +809,8 @@ function legacySetup() {
 
 async function setupFunctions() {
     resetPar();
+
+    Globals.menuBar.infoGUI.title(Sit.name + " " + process.env.BUILD_VERSION_STRING);
 
 
     // just setting visibility of the Save/Load menu items

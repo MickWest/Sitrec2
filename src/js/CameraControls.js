@@ -307,10 +307,10 @@ class CameraMapControls {
 
 		// console.log( "startCameraPosition:"+ vdump(this.camera.position,2,'[',']')+","
 		// + "\nstartCameraTarget:"+vdump(v,2,'[',']'))
-
+		//
 		// const posLLA = EUSToLLA(this.camera.position)
 		// const atLLA = EUSToLLA(v)
-
+		//
 		// console.log( "startCameraPositionLLA:"+ vdump(posLLA,6,'[',']')+","
 		// 	+ "\nstartCameraTargetLLA:"+vdump(atLLA,6,'[',']')+",")
 

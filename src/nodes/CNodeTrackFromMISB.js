@@ -40,7 +40,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         if (this.exportable) {
             NodeMan.addExportButton(this, "exportTrackCSV", "CSV ")
             if (isLocal) {
-                if (Sit.name === "custom") {
+                if (Sit.isCustom) {
                     // limited to local custom use, as it triggers "more than one export button" warning
                     NodeMan.addExportButton(this, "exportGEOJSON", "GEOJSON ")
                     NodeMan.addExportButton(this, "exportALLGEO", "ALLGEO")
