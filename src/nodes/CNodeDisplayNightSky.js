@@ -213,7 +213,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             normal: new Vector3(1, 0, 0),
             color: [1,1,0],
             width: 2,
-            offset: 3800000,
+            offset: 3650000,
             container: this.flareBandGroup,
         })
 
@@ -222,7 +222,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             normal: new Vector3(1, 0, 0),
             color: [0,1,0],
             width: 2,
-            offset: 4900000,
+            offset: 5000000,
             container: this.flareBandGroup,
         })
 
