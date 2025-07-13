@@ -1450,7 +1450,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         let attentuation = Math.max(0, 1 - skyBrightness);
         starScale *= attentuation
 
-        assert(starScale < 2, "starScale is too big: "+starScale);
+     //   assert(starScale < 2, "starScale is too big: "+starScale);
         this.starMaterial.uniforms.starScale.value = starScale;
 
 

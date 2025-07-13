@@ -4,14 +4,18 @@ import "./js/jquery-ui-1.13.2/jquery-ui.css"
 import "./js/jquery-ui-1.13.2/jquery-ui.js?v=1"
 import {
     addGUIFolder,
-    addGUIMenu, CustomManager,
+    addGUIMenu,
+    CustomManager,
     FileManager,
     GlobalDateTimeNode,
-    Globals, guiMenus,
+    Globals,
+    guiMenus,
     guiTweaks,
     incrementMainLoopCount,
-    infoDiv, NodeFactory,
-    NodeMan, setCustomManager,
+    infoDiv,
+    NodeFactory,
+    NodeMan,
+    setCustomManager,
     setFileManager,
     setGlobalDateTimeNode,
     setGlobalURLParams,
@@ -37,13 +41,7 @@ import {registerNodes} from "./RegisterNodes";
 import {registerSitches, textSitchToObject} from "./RegisterSitches";
 import {SetupMouseHandler} from "./mouseMoveView";
 import {initKeyboard, showHider} from "./KeyBoardHandler";
-import {
-    CommonJetStuff,
-    initJetStuff,
-    initJetStuffOverlays,
-    initJetVariables,
-    updateSize
-} from "./JetStuff";
+import {CommonJetStuff, initJetStuff, initJetStuffOverlays, initJetVariables, updateSize} from "./JetStuff";
 import {
     GlobalDaySkyScene,
     GlobalNightSkyScene,
@@ -59,9 +57,7 @@ import {CSitchFactory} from "./CSitchFactory";
 import {CNodeDateTime} from "./nodes/CNodeDateTime";
 import {addAlignedGlobe} from "./Globe";
 import JSURL from "./js/jsurl";
-import {
-    localSituation
-} from "../config/config";
+import {localSituation} from "../config/config";
 import {isConsole, isLocal, setupConfigPaths, SITREC_APP, SITREC_SERVER} from "./configUtils.js"
 import {SituationSetup, startLoadingInlineAssets} from "./SituationSetup";
 import {CUnits} from "./CUnits";
@@ -69,7 +65,7 @@ import {updateLockTrack} from "./updateLockTrack";
 import {updateFrame} from "./updateFrame";
 import {checkLogin, configParams} from "./login";
 import {CFileManager, waitForParsingToComplete} from "./CFileManager";
-import {disposeDebugArrows, disposeDebugSpheres, disposeScene, scaleArrows} from "./threeExt";
+import {disposeDebugArrows, disposeDebugSpheres, disposeScene} from "./threeExt";
 import {removeMeasurementUI, setupMeasurementUI} from "./nodes/CNodeLabels3D";
 import {imageQueueManager} from "./js/get-pixels-mick";
 import {disposeGimbalChart} from "./JetChart";
@@ -84,8 +80,9 @@ import {ViewMan} from "./CViewManager";
 import {glareSprite, targetSphere} from "./JetStuffVars";
 import {CCustomManager} from "./CustomSupport";
 import {EventManager} from "./CEventManager";
-import {checkLocal, getConfigFromServer} from "./configUtils";
+import {checkLocal} from "./configUtils";
 import {CNodeView3D} from "./nodes/CNodeView3D";
+import {cancelGeoLocationRequest, requestGeoLocation} from "./GeoLocation";
 
 
 console.log ("SITREC START - index.js after imports")
@@ -901,9 +898,21 @@ async function setupFunctions() {
 
 // We can get the local lat/lon (i.e. the user's location)
 // get only get the local lat/lon if we don't have URL data and if we are not testing
-    if (!testing && Sit.localLatLon && urlData === undefined && !isLocal) {
-        await requestGeoLocation()
-    }
+//    if (!isLocal) {
+        if (!testing  && Sit.localLatLon && urlData === undefined) {
+            await requestGeoLocation().then((success) => {
+                if (success) {
+                    Sit.lat = Sit.fromLat;
+                    Sit.lon = Sit.fromLon;
+                    console.log("Local lat/lon set to: " + Sit.lat + ", " + Sit.lon);
+                } else {
+                    console.warn("Failed to get local lat/lon, using default");
+                }
+            })
+        }
+//    }
+
+
 
     console.log("GlobalDateTimeNode.populateStartTimeFromUTCString(Sit.startTime) " + Sit.startTime)
     GlobalDateTimeNode.populateStartTimeFromUTCString(Sit.startTime)
@@ -1204,86 +1213,6 @@ function selectInitialSitch(force) {
     console.log("");
 
     setSit(new CSituation(startSitch))
-}
-
-async function requestGeoLocation() {
-    console.log("Requesting geolocation... Situation = " + Sit.name);
-
-    let watchID = null; // Variable to store the watch ID
-
-    Globals.geolocationPromise = new Promise((resolve, reject) => {
-        // Use watchPosition instead of getCurrentPosition
-        watchID = navigator.geolocation.watchPosition((position) => {
-
-            // Check if local lat/lon is enabled in this situation
-            // if not, then this is a patch, to avoid the situation where the user
-            // changes sitches before the geolocation is obtained
-            // I've tried to cancel it, but it's not working
-            if (!Sit.localLatLon) {
-                console.warn("Local lat/lon not enabled in this situation. Aborting geolocation.");
-                // Clear the watch to stop receiving updates after the first position is obtained
-                if (watchID !== null) {
-                    navigator.geolocation.clearWatch(watchID);
-                    watchID = null;
-                }
-                resolve(); // Resolve to continue with defaults
-                return;
-            }
-
-            // a more serious patch, to avoid the situation where the user
-            // this seems unlikely to happen, but I've escalated it to an error
-            if (!NodeMan.exists("cameraLat")) {
-                console.error("cameraLat node not found. Aborting geolocation.");
-                // Clear the watch to stop receiving updates after the first position is obtained
-                if (watchID !== null) {
-                    navigator.geolocation.clearWatch(watchID);
-                    watchID = null;
-                }
-                resolve(); // Resolve to continue with defaults
-                return;
-            }
-
-            // Successfully obtained the position
-            let lat = position.coords.latitude;
-            let long = position.coords.longitude;
-
-            Sit.lat = parseFloat(lat.toFixed(2));
-            Sit.lon = parseFloat(long.toFixed(2));
-            Sit.fromLat = Sit.lat;
-            Sit.fromLon = Sit.lon;
-
-            console.log("RESOLVED Local Lat, Lon =", Sit.lat, Sit.lon, " situation = " + Sit.name);
-
-            NodeMan.get("cameraLat").value = Sit.lat;
-            NodeMan.get("cameraLon").value = Sit.lon;
-
-            // Clear the watch to stop receiving updates after the first position is obtained
-            if (watchID !== null) {
-                navigator.geolocation.clearWatch(watchID);
-                watchID = null;
-            }
-
-            resolve(); // Resolve the promise when geolocation is obtained
-        }, (error) => {
-            // Handle errors
-            console.log("Location request failed");
-            resolve(); // Resolve to continue with defaults
-            // If you wish to reject the promise on error, use reject(error); but ensure to handle the rejection where requestGeoLocation is called
-        });
-        console.log("Geolocation watch ID:", watchID);
-    });
-
-    // Return the promise so calling code can await it or handle completion/failure
-    return Globals.geolocationPromise;
-}
-
-// To allow cancellation, you can expose a function to clear the watch from outside
-function cancelGeoLocationRequest() {
-    if (typeof Globals.geolocationWatchID === 'number') {
-        console.log("Cancelling geolocation request.");
-        navigator.geolocation.clearWatch(Globals.geolocationWatchID);
-        Globals.geolocationWatchID = null;
-    }
 }
 
 

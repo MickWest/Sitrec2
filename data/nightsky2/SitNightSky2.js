@@ -14,7 +14,7 @@ export const SitNightSky2 = {
     frames: 3000, // 100 seconds at 30 fps
     startTime: "current",
 
-    localLatLon: true,
+  //  localLatLon: true,
 
 
 }

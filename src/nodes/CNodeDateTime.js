@@ -336,14 +336,20 @@ export class CNodeDateTime extends CNode {
             ...super.modSerialize(),
             startDateTime: this.getStartTimeString(),
             timeZoneName: this.timeZoneName,
-            simSpeed: Sit.simSpeed
+            simSpeed: Sit.simSpeed,
+            useTimeZone: this.useTimeZone,
         }
     }
 
     modDeserialize(v) {
+        // for historical, useTimeZone is false by default
+        this.useTimeZone =(v.useTimeZone !== undefined) ? v.useTimeZone : false;
+
         super.modDeserialize(v);
         this.populateStartTimeFromUTCString(v.startDateTime);
         this.timeZoneName = v.timeZoneName;
+
+
         Sit.simSpeed = v.simSpeed;
         this.populate();
         this.update(0);

@@ -15,6 +15,7 @@ import {assert} from "../assert";
 import {ViewMan} from "../CViewManager";
 import {EventManager} from "../CEventManager";
 import {Globals, guiMenus, NodeMan, Sit} from "../Globals";
+import {requestGeoLocation} from "../GeoLocation";
 
 export class CNodePositionLLA extends CNode {
     constructor(v) {
@@ -185,8 +186,14 @@ export class CNodePositionLLA extends CNode {
                     }
                 });
 
+               // geolocate from browse
+                gui.add(this, "geolocate").name("Geolocate from browser")
+
                // Add a "Go To" button to the GUI
                 gui.add(this, "goTo").name("Go To the above position")
+
+
+
 
             }
 
@@ -208,6 +215,18 @@ export class CNodePositionLLA extends CNode {
         this.recalculate()
     }
 
+    setLLA(lat, lon, alt) {
+        this._LLA = [lat, lon, alt];
+        if (this.guiLat) {
+            this.guiLat.value = lat;
+            this.guiLon.value = lon;
+            this.guiAlt.setValueWithUnits(alt, "metric", "small", true);
+        }
+        this.recalculateCascade(0);
+        EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
+
+    }
+
 //     updateAltituide() {
 //         const altitude = altitudeAtLL(this._LLA[0], this._LLA[1]);
 //
@@ -220,6 +239,40 @@ export class CNodePositionLLA extends CNode {
 
     goTo() {
         NodeMan.get("mainCamera").goToPoint(this.EUS,100000,100);
+    }
+
+
+    geolocate() {
+        requestGeoLocation(true).then( (result) => {
+
+            if(!result) {
+                console.error("Geolocation failed or was cancelled.");
+                return;
+            }
+
+          // Gelocation will set Sit.Lat and Sit.Lon
+          //   this._LLA = [Sit.lat, Sit.lon, 0]; // set the altitude to 0
+          //   this.guiLat.value = Sit.lat;
+          //   this.guiLon.value = Sit.lon;
+          //   this.guiAlt.setValueWithUnits(0, "metric", "small", true);
+            this.recalculateCascade(0);
+            NodeMan.get("mainCamera").goToPoint(this.EUS,2300000,100000);
+
+
+            if (NodeMan.exists("terrainUI")) {
+                const terrainUI = NodeMan.get("terrainUI")
+                terrainUI.lat = this._LLA[0]
+                terrainUI.lon = this._LLA[1]
+                terrainUI.flagForRecalculation();
+                terrainUI.startLoading = true;
+
+            }
+
+
+            EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
+
+
+        })
     }
 
 
