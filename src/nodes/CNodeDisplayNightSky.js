@@ -1663,7 +1663,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                                 // so we can see the flare track
                                 let A = satData.eusA.clone()
                                 let dir = satData.eusB.clone().sub(satData.eusA).normalize()
-                                DebugArrow(satData.name + "flare", dir, A, 50000, "#FFFF00", true, this.satelliteFlareTracksGroup, 20, LAYER.MASK_LOOKRENDER)
+                                DebugArrow(satData.name + "flare", dir, satData.eus, 100000, "#FFFF00", true, this.satelliteFlareTracksGroup, 20, LAYER.MASK_LOOKRENDER)
                             }
 
                             satData.hasSunArrow = true;
@@ -2534,7 +2534,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                         if (this.showSatelliteTracks) {
                             let A = satData.eusA.clone()
                             let dir = satData.eusB.clone().sub(satData.eusA).normalize()
-                            DebugArrow(satData.name + "_t", dir, A, 500000, "#FFFF00", true, this.satelliteTrackGroup, 20, LAYER.MASK_LOOKRENDER)
+                            DebugArrow(satData.name + "_t", dir, satData.eus, 500000, "#FFFF00", true, this.satelliteTrackGroup, 20, LAYER.MASK_LOOKRENDER)
                         }
 
                         // Arrow from satellite to ground (red)
