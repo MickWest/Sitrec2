@@ -1,97 +1,60 @@
 import {Globals, NodeMan, Sit} from "./Globals";
 
+async function getApproximateLocationFromIP() {
+    try {
+        const res = await fetch("https://ipapi.co/json/");
+        const data = await res.json();
+        const lat = parseFloat(data.latitude.toFixed(2));
+        const lon = parseFloat(data.longitude.toFixed(2));
+        console.log("IP-based approximate location:", lat, lon);
+        return { lat, lon };
+    } catch (e) {
+        console.warn("IP geolocation failed", e);
+        return null;
+    }
+}
+
 export async function requestGeoLocation(force = false) {
-    console.log("Requesting geolocation... Situation = " + Sit.name);
+    console.log("Requesting IP-based geolocation... Situation =", Sit.name);
 
-    let watchID = null; // Variable to store the watch ID
+    if (!Sit.localLatLon && !force) {
+        console.warn("Local lat/lon not enabled in this situation. Aborting geolocation.");
+        return false;
+    }
 
-    const geolocationPromise = new Promise((resolve, reject) => {
-        // Use watchPosition instead of getCurrentPosition
-        watchID = navigator.geolocation.watchPosition((position) => {
+    if (!NodeMan.exists("cameraLat") && !NodeMan.exists("fixedCameraPosition")) {
+        console.error("cameraLat or fixedCameraPosition node not found. Aborting geolocation.");
+        return false;
+    }
 
-            // Check if local lat/lon is enabled in this situation
-            // if not, then this is a patch, to avoid the situation where the user
-            // changes sitches before the geolocation is obtained
-            // I've tried to cancel it, but it's not working
-            if (!Sit.localLatLon && !force) {
-                console.warn("Local lat/lon not enabled in this situation. Aborting geolocation.");
-                // Clear the watch to stop receiving updates after the first position is obtained
-                if (watchID !== null) {
-                    navigator.geolocation.clearWatch(watchID);
-                    watchID = null;
-                }
-                resolve(); // Resolve to continue with defaults
-                return;
-            }
+    const ipLocation = await getApproximateLocationFromIP();
+    if (!ipLocation) {
+        return false;
+    }
 
-            // a more serious patch, to avoid the situation where the user
-            // this seems unlikely to happen, but I've escalated it to an error
-            if (!NodeMan.exists("cameraLat") && !NodeMan.exists("fixedCameraPosition")) {
-                console.error("cameraLat or fixedCameraPosition node not found. Aborting geolocation.");
-                // Clear the watch to stop receiving updates after the first position is obtained
-                if (watchID !== null) {
-                    navigator.geolocation.clearWatch(watchID);
-                    watchID = null;
-                }
-                resolve(); // Resolve to continue with defaults
-                return;
-            }
+    const { lat, lon } = ipLocation;
 
-            // Successfully obtained the position
-            let lat = position.coords.latitude;
-            let lon = position.coords.longitude;
+    Sit.fromLat = lat;
+    Sit.fromLon = lon;
 
+    console.log("Resolved approximate lat/lon from IP:", lat, lon);
 
-            // Can't change Sit.lat and Sit.lon
-            // after setup,
+    if (NodeMan.exists("fixedCameraPosition")) {
+        const fixedCameraPosition = NodeMan.get("fixedCameraPosition");
+        fixedCameraPosition.setLLA(lat, lon, 0);
+    } else {
+        NodeMan.get("cameraLat").value = lat;
+        NodeMan.get("cameraLon").value = lon;
+    }
 
-            lat = parseFloat(lat.toFixed(2));
-            lon = parseFloat(lon.toFixed(2));
-
-
-
-
-            Sit.fromLat = lat;
-            Sit.fromLon = lon;
-
-            console.log("RESOLVED Local Lat, Lon =", lat, lon, " situation = " + Sit.name);
-
-            if (NodeMan.exists("fixedCameraPosition")) {
-                const fixedCameraPosition = NodeMan.get("fixedCameraPosition");
-                // this is PositionLLA node, so we can set the lat/lon
-                fixedCameraPosition.setLLA(lat, lon, 0);
-
-            } else {
-
-                NodeMan.get("cameraLat").value = lat;
-                NodeMan.get("cameraLon").value = lon;
-            }
-
-            // Clear the watch to stop receiving updates after the first position is obtained
-            if (watchID !== null) {
-                navigator.geolocation.clearWatch(watchID);
-                watchID = null;
-            }
-
-            resolve(true); // Resolve the promise when geolocation is obtained
-        }, (error) => {
-            // Handle errors
-            console.log("Location request failed");
-            resolve(false); // Resolve to continue with defaults
-            // If you wish to reject the promise on error, use reject(error); but ensure to handle the rejection where requestGeoLocation is called
-        });
-        console.log("Geolocation watch ID:", watchID);
-    });
-
-    // Return the promise so calling code can await it or handle completion/failure
-    return geolocationPromise;
+    return true;
 }
 
 // To allow cancellation, you can expose a function to clear the watch from outside
 export function cancelGeoLocationRequest() {
-    if (typeof Globals.geolocationWatchID === 'number') {
-        console.log("Cancelling geolocation request.");
-        navigator.geolocation.clearWatch(Globals.geolocationWatchID);
-        Globals.geolocationWatchID = null;
-    }
+    // if (typeof Globals.geolocationWatchID === 'number') {
+    //     console.log("Cancelling geolocation request.");
+    //     navigator.geolocation.clearWatch(Globals.geolocationWatchID);
+    //     Globals.geolocationWatchID = null;
+    // }
 }
