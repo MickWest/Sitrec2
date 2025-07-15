@@ -166,7 +166,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         satGUI.add(this,"updateStarlink").name("Load ALL Satellites For Date")
             .onChange(function (x) {this.parent.close()})
-            .tooltip("Get the latest Satelliute TLE data for the current date. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky.")
+            .tooltip("Get the latest Satelliute TLE data for the current simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky.")
 
         this.flareAngle = 5
         satGUI.add(this, 'flareAngle', 0, 20, 0.1).listen().name("Flare Angle Spread").tooltip("Maximum angle of the reflected view vector for a flare to be visible\ni.e. the range of angles between the vector from the satellite to the sun and the vector from the camera to the satellite reflected off the bottom of the satellite (which is parallel to the ground)")

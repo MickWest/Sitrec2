@@ -1,5 +1,4 @@
-import {Globals, NodeMan, Sit} from "./Globals";
-
+// Geolocation utility functions for SitRec
 
 // cache the value once, as we only need the location
 let cachedLocation = null;
@@ -9,7 +8,10 @@ export async function getApproximateLocationFromIP() {
         return cachedLocation;
     }
     try {
-        const res = await fetch("https://ipapi.co/json/");
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1000);
+        const res = await fetch("https://ipapi.co/json/", { signal: controller.signal });
+        clearTimeout(timeoutId);
         const data = await res.json();
         const lat = parseFloat(data.latitude.toFixed(2));
         const lon = parseFloat(data.longitude.toFixed(2));

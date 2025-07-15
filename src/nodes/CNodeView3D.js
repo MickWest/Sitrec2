@@ -410,9 +410,9 @@ export class CNodeView3D extends CNodeViewCanvas {
                  */
 
 
-                if (keyHeld["y"]) {
-                    return;
-                }
+                // if (keyHeld["y"]) {
+                //     return;
+                // }
 
                 // update lighting before rendering the sky
                 const lightingNode = NodeMan.get("lighting", true);
