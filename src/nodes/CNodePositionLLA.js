@@ -15,7 +15,7 @@ import {assert} from "../assert";
 import {ViewMan} from "../CViewManager";
 import {EventManager} from "../CEventManager";
 import {Globals, guiMenus, NodeMan, Sit} from "../Globals";
-import {requestGeoLocation} from "../GeoLocation";
+import {getApproximateLocationFromIP} from "../GeoLocation";
 
 export class CNodePositionLLA extends CNode {
     constructor(v) {
@@ -119,7 +119,7 @@ export class CNodePositionLLA extends CNode {
 
                 gui.add(this, "agl").name("Above Ground Level").onChange((v) => {
                     this.recalculateCascade()
-                });
+                }).listen();
 
                 this.lookupString = "";
                gui.add(this, "lookupString").name("Lookup").onFinishChange(() => {
@@ -243,18 +243,17 @@ export class CNodePositionLLA extends CNode {
 
 
     geolocate() {
-        requestGeoLocation(true).then( (result) => {
+        getApproximateLocationFromIP().then( (result) => {
 
             if(!result) {
                 console.error("Geolocation failed or was cancelled.");
                 return;
             }
 
-          // Gelocation will set Sit.Lat and Sit.Lon
-          //   this._LLA = [Sit.lat, Sit.lon, 0]; // set the altitude to 0
-          //   this.guiLat.value = Sit.lat;
-          //   this.guiLon.value = Sit.lon;
-          //   this.guiAlt.setValueWithUnits(0, "metric", "small", true);
+            this._LLA = [result.lat, result.lon, 3]; // set altitude to 6m above ground
+
+            this.agl = true; // set AGL to true, so we adjust the altitude above ground level
+
             this.recalculateCascade(0);
             NodeMan.get("mainCamera").goToPoint(this.EUS,2300000,100000);
 

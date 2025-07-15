@@ -82,7 +82,8 @@ import {CCustomManager} from "./CustomSupport";
 import {EventManager} from "./CEventManager";
 import {checkLocal} from "./configUtils";
 import {CNodeView3D} from "./nodes/CNodeView3D";
-import {cancelGeoLocationRequest, requestGeoLocation} from "./GeoLocation";
+import { getApproximateLocationFromIP } from "./GeoLocation";
+import {LLAToEUS} from "./LLA-ECEF-ENU";
 
 
 console.log ("SITREC START - index.js after imports")
@@ -92,10 +93,10 @@ console.log ("SITREC START - index.js after imports")
 // before this code is executed.
 // Building sitrec as a console application uses indexCommon instead.
 
-// We NOW default to nightsky2 on the public version
+// We NOW default to starlink on the public version
 // as it's now the most popular usage.
 // "nightsky" has been deprecated, but still works for URL parameter based sitches
-let situation = "nightsky2";
+let situation = "starlink";
 
 // Some (essentially) global variables
 let urlParams;
@@ -826,6 +827,26 @@ async function setupFunctions() {
     NodeFactory.create("Watch", {id: "frames", ob: "Sit", watchID: "frames"})
     NodeFactory.create("Watch", {id: "fps", ob: "Sit", watchID: "fps"})
 
+
+    let gotLocation = false;
+    if (!testing  && Sit.localLatLon && urlData === undefined) {
+        await getApproximateLocationFromIP().then((result) => {
+            if (result) {
+                Sit.lat = result.lat;
+                Sit.lon = result.lon;
+                Sit.TerrainModel.lat = result.lat;
+                Sit.TerrainModel.lon = result.lon;
+                gotLocation = true;
+                console.log("Approximate location set to: " + Sit.lat + ", " + Sit.lon);
+            } else {
+                console.warn("Failed to get approximate location, using default");
+            }
+            Sit.localLatLon = false; // so we don't do this again after saving and loading
+
+        })
+    }
+
+
 // Parse the URL parameters, if any
 // setting up stuff like the local coordinate system
 // this will override things like Sit.lat and Sit.lon
@@ -896,21 +917,23 @@ async function setupFunctions() {
 // i.e data members that have defer: true
     await SituationSetup(true);
 
-// We can get the local lat/lon (i.e. the user's location)
-// get only get the local lat/lon if we don't have URL data and if we are not testing
-//    if (!isLocal) {
-        if (!testing  && Sit.localLatLon && urlData === undefined) {
-            await requestGeoLocation().then((success) => {
-                if (success) {
-                    Sit.lat = Sit.fromLat;
-                    Sit.lon = Sit.fromLon;
-                    console.log("Local lat/lon set to: " + Sit.lat + ", " + Sit.lon);
-                } else {
-                    console.warn("Failed to get local lat/lon, using default");
-                }
-            })
+
+    if (gotLocation) {
+        // goto the location we got from the IP address
+        // i.e. move the camera to the location??
+        if (NodeMan.exists("fixedCameraPosition")) {
+            const fixedCameraPosition = NodeMan.get("fixedCameraPosition");
+            fixedCameraPosition.setLLA(Sit.lat, Sit.lon, 6);
+            fixedCameraPosition.agl = true; // set AGL to true, so we adjust the altitude above ground level
+
+        } else {
+            NodeMan.get("cameraLat").value = lat;
+            NodeMan.get("cameraLon").value = lon;
         }
-//    }
+        const EUS = LLAToEUS(Sit.lat, Sit.lon, 0);
+        NodeMan.get("mainCamera").goToPoint(EUS,1000000,2000000);
+
+    }
 
 
 
@@ -1223,9 +1246,6 @@ function disposeEverything() {
 
     // cancel any requested animation frames
     cancelAnimationFrame(animationFrameId);
-
-    // cancel any pending geolocation requests
-    cancelGeoLocationRequest();
 
     // Remove all event listeners
     EventManager.removeAll();

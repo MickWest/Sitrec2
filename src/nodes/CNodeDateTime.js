@@ -124,7 +124,7 @@ export class CNodeDateTime extends CNode {
 
         let startTime = Sit.startTime;
         //use the current time if the start time is not set
-        // of if the start time is "current" (e.g. SitNightSky2.js)
+        // of if the start time is "current" (e.g. SitStarlink.js)
         if (startTime === undefined || startTime === "current") {
             // if the start time is not set, then we use the current time
             this.dateStart = new Date();
