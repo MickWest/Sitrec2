@@ -246,6 +246,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.showSatelliteNamesMain = false;
         this.showFlareRegion = Sit.showFlareRegion;
         this.showFlareBand = Sit.showFlareBand;
+        this.showFlareTracks = Sit.showFlareTracks ?? false;
+
 
         this.showAllLabels = false;
 
@@ -260,6 +262,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             { key: "showOtherSatellites", name: "Other Satellites",             action: () => this.filterSatellites() },
             { key: "showSatelliteList", name: "List",                           action: () => this.filterSatellites() },
             { key: "showSatelliteTracks", name: "Satellite Arrows",             action: () => this.satelliteTrackGroup.visible = this.showSatelliteTracks },
+            { key: "showFlareTracks", name: "Flare Lines",                      action: () => this.satelliteFlareTracksGroup.visible = this.showFlareTracks },
             { key: "showSatelliteGround", name: "Satellite Ground Arrows",      action: () => this.satelliteGroundGroup.visible = this.showSatelliteGround },
             { key: "showSatelliteNames", name: "Satellite Names (Look View)",   action: () => this.updateSatelliteNamesVisibility() },
             { key: "showSatelliteNamesMain", name: "Satellite Names (Main View)", action: () => this.updateSatelliteNamesVisibility() },
@@ -339,6 +342,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // a sub-group for the satellite tracks
         this.satelliteTrackGroup = new Group();
         this.satelliteGroup.add(this.satelliteTrackGroup)
+        this.satelliteFlareTracksGroup = new Group();
+        this.satelliteGroup.add(this.satelliteFlareTracksGroup)
         this.satelliteGroundGroup = new Group();
         this.satelliteGroup.add(this.satelliteGroundGroup)
 
@@ -1301,6 +1306,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.flareBandGroup.visible = this.showFlareBand;
         this.satelliteGroup.visible = this.showSatellites;
         this.satelliteTrackGroup.visible = this.showSatelliteTracks;
+        this.satelliteFlareTracksGroup.visible = this.showSatelliteFlares;
         this.satelliteGroundGroup.visible = this.showSatelliteGround;
         this.satelliteTextGroup.visible = this.showSatelliteNames;
 
@@ -1650,6 +1656,16 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                                 satPosition.clone().add(toSun.clone().multiplyScalar(10000000)), "#c08000", true, this.sunArrowGroup, 10, LAYER.MASK_HELPERS)
                            // var arrowHelper3 = DebugArrowAB(satData.name + "reflected", satPosition,
                            //     satPosition.clone().add(reflected.clone().multiplyScalar(10000000)), "#00ff00", true, this.sunArrowGroup, 0.025, LAYER.MASK_HELPERS)
+
+                            // and maybe one for flare tracks
+                            if (this.showFlareTracks) {
+                                // we use the reflected vector, as that's the one that will be seen by the observer
+                                // so we can see the flare track
+                                let A = satData.eusA.clone()
+                                let dir = satData.eusB.clone().sub(satData.eusA).normalize()
+                                DebugArrow(satData.name + "flare", dir, A, 50000, "#FFFF00", true, this.satelliteFlareTracksGroup, 20, LAYER.MASK_LOOKRENDER)
+                            }
+
                             satData.hasSunArrow = true;
                         } else {
                             this.removeSatSunArrows(satData);
@@ -2564,6 +2580,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             removeDebugArrow(satData.name)
             removeDebugArrow(satData.name + "sun")
             removeDebugArrow(satData.name + "reflected")
+            removeDebugArrow(satData.name + "flare")
             satData.hasSunArrow = false;
         }
     }
