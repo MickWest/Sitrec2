@@ -1,6 +1,6 @@
 import {CNode3DGroup} from "./CNode3DGroup";
 import * as LAYER from "../LayerMasks";
-import {dispose} from "../threeExt";
+import {dispose, propagateLayerMaskObject} from "../threeExt";
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
 import {wgs84} from "../LLA-ECEF-ENU";
 import {Line2} from "three/addons/lines/Line2.js";
@@ -66,7 +66,10 @@ export class CNodeDisplayGlobeCircle extends CNode3DGroup {
         this.circleLine.scale.setScalar( 1 );
         this.group.add(this.circleLine);
 
+        propagateLayerMaskObject(this.group);
+
     }
+
 
 
 

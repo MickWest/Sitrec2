@@ -5,7 +5,7 @@ import {gui, guiTweaks, NodeMan, Sit} from "../Globals";
 
 import {par} from "../par";
 import {CNodeViewUI} from "../nodes/CNodeViewUI";
-import {AddTimeDisplayToUI} from "../UIHelpers";
+import {AddTimeDisplayToUI, AddTimeDisplayToUIOld} from "../UIHelpers";
 
 import {CNodeDisplayTrack} from "../nodes/CNodeDisplayTrack";
 import {CNodeConstant} from "../nodes/CNode";

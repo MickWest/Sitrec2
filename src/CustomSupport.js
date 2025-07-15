@@ -164,12 +164,23 @@ export class CCustomManager {
         });
 
         EventManager.addEventListener("videoLoaded", (data) => {
-           const width  = data.videoData.config.codedWidth;
-           const height = data.videoData.config.codedHeight;
+           let width,height;
+
+           if (data.width !== undefined && data.height !== undefined) {
+                // this is a video loaded from a file, so we can use the width and height directly
+                width  = data.width;
+                height = data.height;
+              } else if (data.videoData && data.videoData.config) {
+                // this is a video loaded from a CVideoWebCodecDataRaw, so we can use the config
+                // codedWidth and codedHeight are the original video dimensions
+               width  = data.videoData.config.codedWidth;
+               height = data.videoData.config.codedHeight;
+           }
+
            const videoView = NodeMan.get("video");
            if (!videoView.visible) {
               // decide what preset is needed
-               if (width > height) {
+               if (width == undefined || width > height) {
                    this.currentViewPreset = "Default"; // wide video
                } else {
                    this.currentViewPreset = "ThreeWide"; // tall video

@@ -9,6 +9,7 @@ import {CNodeViewUI} from "./CNodeViewUI";
 import {CVideoWebCodecDataRaw} from "../CVideoWebCodecDataRaw";
 import {CVideoImageData} from "../CVideoImageData";
 import {assert} from "../assert";
+import {EventManager} from "../CEventManager";
 
 
 export class CNodeVideoView extends CNodeViewCanvas2D {
@@ -231,6 +232,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
     makeImageVideo(filename, img, deleteAfterUsing = false) {
 
+        this.fileName = filename;
+
         this.disposeVideoData()
         this.videoData = new CVideoImageData({
                 id: this.id + "_data",
@@ -244,6 +247,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         par.paused = false; // unpause, otherwise we see nothing.
         // this.addLoadingMessage()
         // this.addDownloadButton()
+        EventManager.dispatchEvent("videoLoaded", {
+            width: img.width, height: img.height,
+            videoData: this});
     }
 
     renderCanvas(frame = 0) {

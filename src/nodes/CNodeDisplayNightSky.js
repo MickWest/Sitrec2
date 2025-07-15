@@ -37,7 +37,7 @@ import {
     DebugWireframeSphere,
     pointOnGround,
     propagateLayerMaskObject,
-    removeDebugArrow
+    removeDebugArrow, setLayerMaskRecursive
 } from "../threeExt";
 import {
     ECEF2EUS,
@@ -78,6 +78,7 @@ import {CNodeViewUI} from "./CNodeViewUI";
 // npm install satellite.js --save-dev
 import * as satellite from 'satellite.js';
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
+import {MASK_HELPERS, MASK_MAINRENDER} from "../LayerMasks";
 
 // installed with
 // npm install astronomy-engine --save-dev
@@ -227,6 +228,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         })
 
         GlobalScene.add(this.flareBandGroup)
+
+
+     //   why no work???
+        setLayerMaskRecursive(this.flareBandGroup, LAYER.MASK_HELPERS);
 
 
 
