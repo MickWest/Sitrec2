@@ -448,7 +448,7 @@ class CTrackManager extends CManager {
                 } else {
                     // if we failed to make the track, then remove the folder
                     // (nothing will have been added to it)
-                    guiMenus.controls.removeFolder(guiFolder);
+                    guiFolder.destroy();
                 }
 
                 trackIndex++;

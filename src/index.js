@@ -285,6 +285,9 @@ if (latlon) {
                 lat, lon, alt
             ]
 
+            Globals.sitchEstablished = true; // so loading tracks won't set the Lat/Lon time again
+
+
 
         } else {
             console.error("Invalid lat/lon format: " + latlon);
@@ -306,6 +309,7 @@ if (dateTime) {
     GlobalDateTimeNode.populateStartTimeFromUTCString(dateTime);
     Globals.timeOverride = true; // flag to ignore deserializing date time
     console.log("GlobalDateTimeNode dateStart  = " + GlobalDateTimeNode.dateStart.toISOString());
+    Globals.sitchEstablished = true; // so loading tracks won't set the date time again
 }
 
 
