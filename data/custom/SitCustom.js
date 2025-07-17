@@ -648,7 +648,7 @@ sitch = {
         geometry: "sphere",
         layers: "LOOKRENDER",
         size: 1,
-        radius: 10,
+        radius: 0.1,
 
         width: 10,
         height: 10,

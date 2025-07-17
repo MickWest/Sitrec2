@@ -25,7 +25,7 @@ export class CNodePositionLLA extends CNode {
         this.frames = Sit.frames;
         this.useSitFrames = true; // use sit frames for the LLA
 
-        this.agl = false;
+        this.agl = (v.agl !== undefined) ? v.agl : false; // above ground level, default to false
         this.addSimpleSerial("agl");
 
         if (v.LLA !== undefined) {

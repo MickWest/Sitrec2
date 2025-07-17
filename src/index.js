@@ -254,7 +254,7 @@ if (latlon) {
         if (!isNaN(lat) && !isNaN(lon)) {
             console.log("Setting GlobalDateTimeNode start lat/lon to " + lat + ", " + lon);
 
-            let alt = 0;
+            let alt = 1.5; // 5ft, typical camera altitude in meters for hanheld-held cameras (common in UFO videos)
 
             // if there is a third value, it's the altitude in feet
             if (latlonArray.length === 3) {
@@ -272,6 +272,8 @@ if (latlon) {
 
             Sit.TerrainModel.lat = lat;
             Sit.TerrainModel.lon = lon;
+            Sit.TerrainModel.zoom = 15;
+            Sit.TerrainModel.nTiles = 8
 
             Sit.mainCamera.startCameraPositionLLA = [
                     lat-3, lon, 250000,
@@ -284,6 +286,10 @@ if (latlon) {
             Sit.fixedCameraPosition.LLA = [
                 lat, lon, alt
             ]
+
+            // set the mode to AGL
+            Sit.fixedCameraPosition.agl = true;
+
 
             Globals.sitchEstablished = true; // so loading tracks won't set the Lat/Lon time again
 
