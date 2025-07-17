@@ -37,9 +37,14 @@ const timeZoneOffsets = {
     "EET UTC+2": 2,         // Eastern European Time
     "EEST UTC+3": 3,        // Eastern European Summer Time
     "MSK UTC+3": 3,         // Moscow Standard Time
+    "IRST UTC+3.5": 3.5,    // Iran Standard Time
     "SAMT UTC+4": 4,        // Samara Time
+    "AFT UTC+4.5": 4.5,     // Afghanistan Time
     "YEKT UTC+5": 5,        // Yekaterinburg Time
+    "IST UTC+5.5": 5.5,     // Indian Standard Time
+    "NPT UTC+5.75": 5.75,   // Nepal Time
     "OMST UTC+6": 6,        // Omsk Standard Time
+    "MMT UTC+6.5": 6.5,      // Myanmar Time
     "KRAT UTC+7": 7,        // Krasnoyarsk Time
     "IRKT UTC+8": 8,        // Irkutsk Time
     "YAKT UTC+9": 9,        // Yakutsk Time
