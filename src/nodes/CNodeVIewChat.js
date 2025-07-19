@@ -122,7 +122,11 @@ class CNodeViewChat extends CNodeView {
 
         this.addSystemMessage("Hi! Welcome to Sitrec!\nYou can ask me to do things like adjust the position and time, e.g. 'go to London at 12pm yesterday'.");
 
-        guiMenus.help.add(this, "show").name("Assistant").moveToFirst();
+        guiMenus.help.add(this, "show").name("Assistant").moveToFirst().onChange(() => {
+            guiMenus.help.close()
+        })
+
+
 
         this.setTheme(this.theme);
     }
