@@ -18,12 +18,16 @@ $sitrecDoc = $data['sitrecDoc'] ?? [];
 // get client time, or use current server time
 $date = $data['dateTime'] ?? date('Y-m-d H:i:s');
 
+//$timezoneOffset= $data['timeZoneOffset'] ?? 0;
+
 $systemPrompt = <<<EOT
 You are a helpful assistant for the Sitrec app. 
 
 You should reply in the same language as the user's prompt, unless instructed otherwise.
 
 The user's current real date and time (not the simulation time) is: {$date}. Use the timezone specified here, or any specified in the prompt.
+
+When giving a time, always use the user's local time, unless they specify UTC or another timezone.
 
 You can answer questions about Sitrec and issue JSON API calls.
 

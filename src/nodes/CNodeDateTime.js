@@ -182,6 +182,7 @@ export class CNodeDateTime extends CNode {
         for (let tz of timeZoneKeys) {
             if (tz.startsWith(timeZone)) {
                 this.timeZoneName = tz;
+                this.timeZoneOffset = timeZoneOffsets[tz];
             }
         }
 
@@ -370,6 +371,12 @@ export class CNodeDateTime extends CNode {
     }
 
     getTimeZoneOffset() {
+        // if the time zone name is not in the array than we just return the current time zone offset
+        if (this.timeZoneName === undefined || !timeZoneOffsets.hasOwnProperty(this.timeZoneName)) {
+            console.warn("CNodeDateTime - getTimeZoneOffset called with unknown time zone name: " + this.timeZoneName);
+            return this.timeZoneOffset;
+        }
+
         return(timeZoneOffsets[this.timeZoneName])
     }
 
@@ -434,8 +441,55 @@ export class CNodeDateTime extends CNode {
         }
     }
 
+    setTimeZoneNameFromOffset(offset) {
+        // set the time zone name based on the offset
+        // e.g. -7 becomes "PDT UTC-7"
+        for (const [key, value] of Object.entries(timeZoneOffsets)) {
+            if (value === offset) {
+                this.timeZoneName = key;
+                return;
+            }
+        }
+        // if we didn't find a match, then set it to plus (or minus) the offset
+        this.timeZoneName = "UTC" + (offset >= 0 ? "+" : "-") + Math.abs(offset).toFixed(2);
+    }
+
     setStartDateTime(dateTime) {
+        // gee the timezone offset, and figure out the timezone to use
+        // get do this regadless of if the time zone is used or not
+        // we are bing passed in a dateTime as ISO_8601 string, so we need to convert it to a Date object
         this.dateStart = new Date(dateTime);
+        // that will adtomatically take the time zone into account
+        // but now we need to figure out what the offset is. Z will be UTC,
+        // but it might be +1, -1, etc
+        // we calcaulte it from the dateTime string, if it is a string
+        if (typeof dateTime === 'string' && dateTime.endsWith('Z')) {
+            // if the dateTime is in UTC, then we set the time zone offset to 0
+            this.timeZoneOffset = 0;
+            this.timeZoneName = "UTC";
+        } else if (typeof dateTime === 'string' && dateTime.includes('+')) {
+            // if the dateTime is in a time zone, then we need to parse it
+            const parts = dateTime.split('+');
+            // the offseet will be like +02:00 or +02:30, but we want in in fraction hours (1, 1.5, 1.75, etc)
+            // split it into hours and minutes
+            const timeZoneParts = parts[1].split(':');
+            this.timeZoneOffset = parseInt(timeZoneParts[0], 10) + (parseInt(timeZoneParts[1], 10) / 60);
+            this.timeZoneName = "UTC+" + Math.abs(this.timeZoneOffset);
+            this.setTimeZoneNameFromOffset(this.timeZoneOffset);
+
+
+        } else if (typeof dateTime === 'string' && dateTime.includes('-')) {
+            // if the dateTime is in a time zone, then we need to parse it
+            const parts = dateTime.split('-');
+            this.timeZoneOffset = -parseInt(parts[1].substring(0, 3), 10);
+            this.timeZoneName = "UTC-" + Math.abs(this.timeZoneOffset);
+            this.setTimeZoneNameFromOffset(this.timeZoneOffset);
+        }
+
+
+
+
+
         this.dateNow = startToNowDateTime(this.dateStart);
         this.populate();
     }
@@ -541,6 +595,19 @@ export class CNodeDateTime extends CNode {
 
     getStartTimeString() {
         return this.dateStart.toISOString()
+    }
+
+
+    timeWithTimeZone(date) {
+        // ISO string with the time zone offset applied and included, like
+        // 2025-07-19T15:30:00-07:00
+        const adjustedDate = new Date(date.getTime() + (this.getTimeZoneOffset() * 60*60000));
+        return adjustedDate.toISOString().replace('Z', this.getTimeZoneOffset() >= 0 ? '+' : '-') + String(Math.abs(this.getTimeZoneOffset())).padStart(2, '0') + ':00';
+    }
+
+    getStartTimeWithTimeZone() {
+        let date = new Date(this.getStartTimeValue());
+        return this.timeWithTimeZone(date);
     }
 
     // adjust start time by t seconds, for example when the user presses a key, like [ or ]

@@ -252,12 +252,16 @@ class CNodeViewChat extends CNodeView {
     // Send message and history to server and process response
     async sendToServer(text) {
         try {
+
+            // use this to get a time string in the local timezone
+            const timeString = GlobalDateTimeNode.timeWithTimeZone(new Date());
+
             const history = this.chatHistory.slice(-10);
             const body = JSON.stringify({
                 history,
                 prompt: text,
                 sitrecDoc: sitrecAPI.getDocumentation(),
-                dateTime: new Date().toISOString(),
+                dateTime: timeString,
             });
 
             const res = await fetch(SITREC_SERVER + 'chatbot.php', {
@@ -289,7 +293,7 @@ class CNodeViewChat extends CNodeView {
         // find what document element has focus
         const focusedElement = document.activeElement;
         // log it
-        console.log(`Focused element: ${focusedElement.tagName}#${focusedElement.id}.${focusedElement.className}`);
+//        console.log(`Focused element: ${focusedElement.tagName}#${focusedElement.id}.${focusedElement.className}`);
 
 
         if (this.visible) {

@@ -32,7 +32,7 @@ class CSitrecAPI {
             setDateTime: {
                 doc: "Set the date and time for the simulation.",
                 params: {
-                    dateTime: "ISO 8601 date-time string (e.g. '2023-10-01T12:00:00Z')"
+                    dateTime: "ISO 8601 date-time string with Z or timezone offset (e.g. '2023-10-01T12:00:00+02:00')"
                 },
                 fn: (v) => {
                     const dateTime = new Date(v.dateTime);
@@ -40,7 +40,7 @@ class CSitrecAPI {
                         console.error("Invalid date-time format:", v.dateTime);
                         return;
                     }
-                    GlobalDateTimeNode.setStartDateTime(dateTime);
+                    GlobalDateTimeNode.setStartDateTime(v.dateTime);
 
                 }
             },
