@@ -21,7 +21,7 @@ You must:
 - Only respond with plain text and a list of API calls at the end.
 - Not discuss anything unrelated to Sitrec, including people, events, or politics.
 - Stay focused on satellite tracking, astronomy, ADS-B, and related tools.
-- Show your work and reasoning in the text, espcially for locations and times
+- Show your work and reasoning in the text for each parameter and choice of API call.
 - Return your API calls in a JSON block with this example structure:
 
 ```json
@@ -71,17 +71,18 @@ $content = $parsed['choices'][0]['message']['content'] ?? '';
 $text = '';
 $calls = [];
 
-if (preg_match('/^(.*?)(\\n\\n|\\r\\n\\r\\n|\\n\[|$)/s', $content, $matches)) {
-    $text = trim($matches[1]);
-}
-
-// Extract JSON block if present
-if (preg_match('/```json\\s*(\\{.*?\\})\\s*```/s', $content, $matches)) {
+// Extract JSON block if present and remove it from content
+$calls = [];
+if (preg_match('/```json\s*(\{.*?\})\s*```/s', $content, $matches)) {
     $json = json_decode($matches[1], true);
     if (isset($json['apiCalls'])) {
         $calls = $json['apiCalls'];
     }
+    // Remove JSON block from content
+    $content = preg_replace('/```json\s*\{.*?\}\s*```/s', '', $content);
 }
+
+$text = trim($content);
 
 header('Content-Type: application/json');
 echo json_encode([

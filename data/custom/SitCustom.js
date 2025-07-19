@@ -62,6 +62,7 @@ sitch = {
     videoView: {left: 0.5, top: 0, width: -1.7927, height: 0.5, autoClear: false, visible: false},
     mainView: {left: 0.0, top: 0, width: 0.5, height: 1, background: '#408080'},
 
+
     focus: {
         kind: "GUIValue",
         value: 0.00,
@@ -796,6 +797,9 @@ sitch = {
         camera: "lookCamera", visible: false},
 
 
+    // AI chatbot view
+    chatView: {kind: "ViewChat", left: 0.25, top: 0.10, width: 0.25, height: 0.85, background:"#000000",
+        draggable: false, resizable: true, freeAspect: true},
 
 
 }
