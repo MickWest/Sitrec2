@@ -1,6 +1,7 @@
 import {CNodeView} from "./CNodeView.js";
 import {guiMenus, Sit} from "../Globals";
 import {SITREC_SERVER} from "../configUtils";
+import {sitrecAPI} from "../CSitrecAPI";
 
 class CNodeViewChat extends CNodeView {
     constructor(v) {
@@ -10,7 +11,7 @@ class CNodeViewChat extends CNodeView {
 
         // Draggable Tabe with Title
         const tab = document.createElement('div');
-        tab.textContent = 'Sitrec AI Chat';
+        tab.textContent = 'Sitrec Assistant';
         tab.className = 'cnodeview-tab';
         tab.style.background = '#e0e0e0';
         tab.style.padding = '8px 16px';
@@ -32,6 +33,24 @@ class CNodeViewChat extends CNodeView {
             this.hide();
         })
         tab.appendChild(closeButton);
+
+        // Add an "New Chat" button next to the x
+        const newChatButton = document.createElement('button');
+        newChatButton.textContent = 'New Chat';
+        newChatButton.style.marginLeft = '8px';
+        newChatButton.style.padding = '4px 8px';
+        newChatButton.style.fontSize = '14px';
+        newChatButton.addEventListener('click', () => {
+            this.chatLog.innerHTML = ''; // Clear chat log
+            this.chatHistory = []; // Reset chat history
+            this.addSystemMessage("New chat started.\n");
+            // reset the input box
+            this.inputBox.value = '';
+            this.inputBox.focus(); // Focus the input box
+
+        })
+        tab.appendChild(newChatButton);
+
 
 
         // Create scrollable chat log
@@ -78,7 +97,7 @@ class CNodeViewChat extends CNodeView {
 
         this.addSystemMessage("Hi! Welcome to Sitrec!\nYou can ask me to do things like adjust the position and time, e.g. 'go to London at 12pm yesterday'.");
 
-        guiMenus.help.add(this, "show").name("AI Chat").moveToFirst();
+        guiMenus.help.add(this, "show").name("Assistant").moveToFirst();
 
     }
 
@@ -120,7 +139,9 @@ class CNodeViewChat extends CNodeView {
             const body = JSON.stringify({
                     history, // send the history array
                     prompt: text,
-                    sitrecDoc: sitrecAPI.getDocumentation()
+                    sitrecDoc: sitrecAPI.getDocumentation(),
+                    // get the client's system date and time
+                    dateTime: new Date().toISOString(),
             });
 
             console.log("Sending to server:", body);
@@ -152,28 +173,4 @@ class CNodeViewChat extends CNodeView {
     }
 }
 
-// Client-side Sitrec API with callable functions and documentation
-class CSitrecAPI {
-    constructor() {
-        this.docs = {
-            gotoLLA: "Move the camera to the location specified by Lat/Lon/Alt (Alt optional, defaults to 0). Parameters: lat (float), lon (float), alt (float, optional).",
-            setDateTime: "Set the date and time for the simulation. Parameter: dateTime (ISO 8601 string).",
-        };
-    }
-
-    gotoLLA(lat, lon, alt = 0) {
-        Sit.setLatLon(lat, lon); // Extend if altitude support is needed later
-    }
-
-    setDateTime(dateTime) {
-        Sit.setDateTime(dateTime);
-    }
-
-    getDocumentation() {
-        return this.docs;
-    }
-}
-
-const sitrecAPI = new CSitrecAPI();
-
-export {CNodeViewChat, sitrecAPI};
+export {CNodeViewChat};

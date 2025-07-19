@@ -202,6 +202,7 @@ export class CCustomManager {
                 mainView: {visible: true, left: 0.0, top: 0, width: 0.5, height: 1},
                 video: {visible: true, left: 0.5, top: 0, width: 0.5, height: 0.5},
                 lookView: {visible: true, left: 0.5, top: 0.5, width: 0.5, height: 0.5},
+                chatView: {left: 0.25, top: 0.10, width: 0.25, height: 0.85,}, // does not work
             },
 
             SideBySide: {
@@ -356,9 +357,18 @@ export class CCustomManager {
         const preset = this.viewPresets[this.currentViewPreset];
         if (preset) {
             // set the views
-            ViewMan.updateViewFromPreset("video", preset.video);
-            ViewMan.updateViewFromPreset("mainView", preset.mainView);
-            ViewMan.updateViewFromPreset("lookView", preset.lookView);
+            // ViewMan.updateViewFromPreset("video", preset.video);
+            // ViewMan.updateViewFromPreset("mainView", preset.mainView);
+            // ViewMan.updateViewFromPreset("lookView", preset.lookView);
+            // ViewMan.updateViewFromPreset("chatView", preset.lookView);
+            // Iterate over the views and set them
+            for (const viewName in preset) {
+                if (NodeMan.exists(viewName)) {
+                    ViewMan.updateViewFromPreset(viewName, preset[viewName]);
+                }
+            }
+
+
             forceUpdateUIText(); // force update the text in the views, as they might have changed
         } else {
             console.warn("No view preset found for " + this.currentViewPreset);
