@@ -56,7 +56,7 @@ class CNodeViewChat extends CNodeView {
         // Create scrollable chat log
         this.chatLog = document.createElement('div');
         this.chatLog.style.overflowY = 'auto';
-        this.chatLog.style.height = 'calc(100% - 80px)'; // 40px for tab + 40px for input
+        this.chatLog.style.height = 'calc(100% - 95px)'; // 40px for tab + 40px for input
         this.chatLog.style.padding = '8px';
         this.chatLog.style.backgroundColor = '#fff';
         this.chatLog.style.fontFamily = 'monospace';
@@ -84,6 +84,18 @@ class CNodeViewChat extends CNodeView {
                     this.addUserMessage(text);
                     this.sendToServer(text);
                     this.inputBox.value = '';
+                }
+            }
+            // if up arrow, show the last message in the input box
+            else if (e.key === 'ArrowUp') {
+                if (this.chatHistory.length > 0) {
+                    const lastUserMessage = this.chatHistory
+                        .slice()
+                        .reverse()
+                        .find(msg => msg.role === 'user');
+                    if (lastUserMessage) {
+                        this.inputBox.value = lastUserMessage.text;
+                    }
                 }
             }
         });
@@ -123,6 +135,7 @@ class CNodeViewChat extends CNodeView {
     }
 
     addDebugMessage(text) {
+        if (!sitrecAPI.debug) return;
         const div = document.createElement('div');
         div.textContent = `Debug: ${text}`;
         div.style.margin = '4px 0';
@@ -165,10 +178,7 @@ class CNodeViewChat extends CNodeView {
 
     handleAPICalls(calls) {
         for (const call of calls) {
-            if (call.fn === 'SetLatLon' && Array.isArray(call.args) && call.args.length === 2) {
-                Sit.setLatLon(call.args[0], call.args[1]);
-            }
-            // add more commands here as needed
+            sitrecAPI.handleAPICall(call);
         }
     }
 }

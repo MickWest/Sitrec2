@@ -242,6 +242,28 @@ export class CNodePositionLLA extends CNode {
     }
 
 
+    gotoLLA(lat, lon, alt) {
+        this._LLA = [lat, lon, 3]; // set altitude to 6m above ground
+
+        this.agl = true; // set AGL to true, so we adjust the altitude above ground level
+
+        this.recalculateCascade(0);
+        NodeMan.get("mainCamera").goToPoint(this.EUS,2300000,100000);
+
+
+        if (NodeMan.exists("terrainUI")) {
+            const terrainUI = NodeMan.get("terrainUI")
+            terrainUI.lat = this._LLA[0]
+            terrainUI.lon = this._LLA[1]
+            terrainUI.flagForRecalculation();
+            terrainUI.startLoading = true;
+
+        }
+
+        EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
+    }
+
+
     geolocate() {
         getApproximateLocationFromIP().then( (result) => {
 
@@ -250,25 +272,9 @@ export class CNodePositionLLA extends CNode {
                 return;
             }
 
-            this._LLA = [result.lat, result.lon, 3]; // set altitude to 6m above ground
-
-            this.agl = true; // set AGL to true, so we adjust the altitude above ground level
-
-            this.recalculateCascade(0);
-            NodeMan.get("mainCamera").goToPoint(this.EUS,2300000,100000);
+            this.gotoLLA(result.lat, result.lon, 3); // set altitude to 3m above ground
 
 
-            if (NodeMan.exists("terrainUI")) {
-                const terrainUI = NodeMan.get("terrainUI")
-                terrainUI.lat = this._LLA[0]
-                terrainUI.lon = this._LLA[1]
-                terrainUI.flagForRecalculation();
-                terrainUI.startLoading = true;
-
-            }
-
-
-            EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
 
 
         })
