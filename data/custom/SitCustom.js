@@ -799,7 +799,7 @@ sitch = {
 
     // AI chatbot view
     chatView: {kind: "ViewChat", left: 0.25, top: 0.10, width: 0.25, height: 0.85, background:"#000000",
-        draggable: false, resizable: true, freeAspect: true},
+        draggable: true, resizable: true, freeAspect: true},
 
 
 }

@@ -133,6 +133,7 @@ class CNodeView extends CNode {
             if (this.draggable) {
 
                 $(this.div).draggable({
+                    handle: v.dragHandle,
                     drag: function(event, ui) {
                         var view = $(this).data('CView')
                         if (!view.draggable)

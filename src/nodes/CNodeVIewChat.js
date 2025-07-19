@@ -4,7 +4,34 @@ import {SITREC_SERVER} from "../configUtils";
 
 class CNodeViewChat extends CNodeView {
     constructor(v) {
+        v.dragHandle = '.cnodeview-tab';
         super(v);
+
+        // Draggable Tabe with Title
+        const tab = document.createElement('div');
+        tab.textContent = 'Sitrec AI Chat';
+        tab.className = 'cnodeview-tab';
+        tab.style.background = '#e0e0e0';
+        tab.style.padding = '8px 16px';
+        tab.style.fontWeight = 'bold';
+        tab.style.fontSize = '16px';
+        tab.style.borderBottom = '1px solid #ccc';
+        tab.style.textAlign = 'left';
+        tab.style.userSelect = 'none';
+        this.div.appendChild(tab);
+
+        // add an X button to close the chat
+        const closeButton = document.createElement('span');
+        closeButton.textContent = 'X';
+        closeButton.style.float = 'right';
+        closeButton.style.cursor = 'pointer';
+        closeButton.style.color = '#888';
+        closeButton.style.marginLeft = '8px';
+        closeButton.addEventListener('click', () => {
+            this.hide();
+        })
+        tab.appendChild(closeButton);
+
 
         // Create scrollable chat log
         this.chatLog = document.createElement('div');
