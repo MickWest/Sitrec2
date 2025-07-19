@@ -1,8 +1,11 @@
 // Client-side Sitrec API with callable functions and documentation
 import {GlobalDateTimeNode, NodeMan, Sit} from "./Globals";
+import {isLocal} from "./configUtils";
 
 class CSitrecAPI {
     constructor() {
+
+        this.debug = isLocal;
 
         // have a richer structure with the functions in it
         // and extract docs at the start.

@@ -1,7 +1,31 @@
 import {CNodeView} from "./CNodeView.js";
-import {guiMenus, Sit} from "../Globals";
+import {GlobalDateTimeNode, guiMenus, Sit} from "../Globals";
 import {SITREC_SERVER} from "../configUtils";
 import {sitrecAPI} from "../CSitrecAPI";
+const THEMES = {
+    light: {
+        '--cnodeview-bg': '#fff',
+        '--cnodeview-tab-bg': '#e0e0e0',
+        '--cnodeview-tab-color': '#222',
+        '--cnodeview-tab-border': '#ccc',
+        '--cnodeview-chat-color': '#222',
+        '--cnodeview-bot-color': '#007',
+        '--cnodeview-debug-color': '#888',
+        '--cnodeview-input-bg': '#fff',
+        '--cnodeview-input-color': '#222'
+    },
+    dark: {
+        '--cnodeview-bg': '#222',
+        '--cnodeview-tab-bg': '#333',
+        '--cnodeview-tab-color': '#eee',
+        '--cnodeview-tab-border': '#444',
+        '--cnodeview-chat-color': '#eee',
+        '--cnodeview-bot-color': '#6cf',
+        '--cnodeview-debug-color': '#aaa',
+        '--cnodeview-input-bg': '#333',
+        '--cnodeview-input-color': '#eee'
+    }
+};
 
 class CNodeViewChat extends CNodeView {
     constructor(v) {
@@ -9,32 +33,26 @@ class CNodeViewChat extends CNodeView {
         super(v);
         this.div.style.position = 'relative';
 
-        // Draggable Tabe with Title
+        // Default theme
+        this.theme = 'dark';
+
+        // Draggable Tab with Title
         const tab = document.createElement('div');
         tab.textContent = 'Sitrec Assistant';
         tab.className = 'cnodeview-tab';
-        tab.style.background = '#e0e0e0';
-        tab.style.padding = '8px 16px';
-        tab.style.fontWeight = 'bold';
-        tab.style.fontSize = '16px';
-        tab.style.borderBottom = '1px solid #ccc';
-        tab.style.textAlign = 'left';
-        tab.style.userSelect = 'none';
+        this.tab = tab;
         this.div.appendChild(tab);
 
-        // add an X button to close the chat
+        // Add an X button to close the chat
         const closeButton = document.createElement('span');
         closeButton.textContent = 'X';
         closeButton.style.float = 'right';
         closeButton.style.cursor = 'pointer';
-        closeButton.style.color = '#888';
         closeButton.style.marginLeft = '8px';
-        closeButton.addEventListener('click', () => {
-            this.hide();
-        })
+        closeButton.addEventListener('click', () => this.hide());
         tab.appendChild(closeButton);
 
-        // Add an "New Chat" button next to the x
+        // Add a "New Chat" button next to the X
         const newChatButton = document.createElement('button');
         newChatButton.textContent = 'New Chat';
         newChatButton.style.marginLeft = '8px';
@@ -44,24 +62,20 @@ class CNodeViewChat extends CNodeView {
             this.chatLog.innerHTML = ''; // Clear chat log
             this.chatHistory = []; // Reset chat history
             this.addSystemMessage("New chat started.\n");
-            // reset the input box
-            this.inputBox.value = '';
+            this.inputBox.value = ''; // Reset the input box
             this.inputBox.focus(); // Focus the input box
-
-        })
+        });
         tab.appendChild(newChatButton);
-
-
 
         // Create scrollable chat log
         this.chatLog = document.createElement('div');
         this.chatLog.style.overflowY = 'auto';
         this.chatLog.style.height = 'calc(100% - 95px)'; // 40px for tab + 40px for input
         this.chatLog.style.padding = '8px';
-        this.chatLog.style.backgroundColor = '#fff';
         this.chatLog.style.fontFamily = 'monospace';
         this.chatLog.style.fontSize = '15px';
         this.chatLog.style.whiteSpace = 'pre-line';
+        this.chatLog.classList.add('cnodeview-chatlog');
         this.div.appendChild(this.chatLog);
 
         // Create input box
@@ -74,8 +88,10 @@ class CNodeViewChat extends CNodeView {
         this.inputBox.style.boxSizing = 'border-box';
         this.inputBox.style.padding = '8px';
         this.inputBox.style.fontSize = '15px';
+        this.inputBox.classList.add('cnodeview-input');
         this.div.appendChild(this.inputBox);
 
+        // Handle input box key events
         this.inputBox.addEventListener('keydown', (e) => {
             e.stopPropagation();
             if (e.key === 'Enter') {
@@ -85,25 +101,22 @@ class CNodeViewChat extends CNodeView {
                     this.sendToServer(text);
                     this.inputBox.value = '';
                 }
-            }
-            // if up arrow, show the last message in the input box
-            else if (e.key === 'ArrowUp') {
-                if (this.chatHistory.length > 0) {
-                    const lastUserMessage = this.chatHistory
-                        .slice()
-                        .reverse()
-                        .find(msg => msg.role === 'user');
-                    if (lastUserMessage) {
-                        this.inputBox.value = lastUserMessage.text;
-                    }
-                }
+            } else if (e.key === 'ArrowUp') {
+                // If up arrow, show the last message in the input box
+                const last = this.chatHistory.slice().reverse().find(msg => msg.role === 'user');
+                if (last) this.inputBox.value = last.text;
+            } else if (e.key === 'ArrowDown') {
+                // If down arrow, clear the input box
+                this.inputBox.value = '';
             }
         });
 
-        // also stop key propogation onf the chatLog
-        this.chatLog.addEventListener('keydown', (e) => {
-            e.stopPropagation();
-        });
+        // Also stop key propagation on the chatLog
+        this.chatLog.addEventListener('keydown', (e) => e.stopPropagation());
+
+        // The tab key should toggle the chat view
+        // this needs to be handled in the main Sitrec class
+
 
         this.chatHistory = [];
 
@@ -111,58 +124,76 @@ class CNodeViewChat extends CNodeView {
 
         guiMenus.help.add(this, "show").name("Assistant").moveToFirst();
 
+        this.setTheme(this.theme);
     }
 
+    // Apply theme using CSS variables
+    setTheme(name) {
+        const themeVars = THEMES[name];
+        this.theme = name;
+        for (const [key, value] of Object.entries(themeVars)) {
+            this.div.style.setProperty(key, value);
+        }
 
+        // Apply base colors using CSS variables
+        this.div.style.backgroundColor = `var(--cnodeview-bg)`;
+        this.tab.style.backgroundColor = `var(--cnodeview-tab-bg)`;
+        this.tab.style.color = `var(--cnodeview-tab-color)`;
+        this.tab.style.borderBottom = `1px solid var(--cnodeview-tab-border)`;
+        this.chatLog.style.backgroundColor = `var(--cnodeview-bg)`;
+        this.chatLog.style.color = `var(--cnodeview-chat-color)`;
+        this.inputBox.style.backgroundColor = `var(--cnodeview-input-bg)`;
+        this.inputBox.style.color = `var(--cnodeview-input-color)`;
+    }
 
+    // Add user message to chat log
     addUserMessage(text) {
         const div = document.createElement('div');
         div.textContent = `You: ${text}`;
         div.style.margin = '4px 0';
+        div.style.color = `var(--cnodeview-chat-color)`;
         this.chatLog.appendChild(div);
         this.chatLog.scrollTop = this.chatLog.scrollHeight;
         this.chatHistory.push({ role: 'user', text });
     }
 
+    // Add bot/system message to chat log
     addSystemMessage(text) {
         const div = document.createElement('div');
         div.textContent = `Bot: ${text}`;
         div.style.margin = '4px 0';
-        div.style.color = '#007';
+        div.style.color = `var(--cnodeview-bot-color)`;
         this.chatLog.appendChild(div);
         this.chatLog.scrollTop = this.chatLog.scrollHeight;
         this.chatHistory.push({ role: 'bot', text });
     }
 
+    // Add debug message to chat log (if enabled)
     addDebugMessage(text) {
         if (!sitrecAPI.debug) return;
         const div = document.createElement('div');
         div.textContent = `Debug: ${text}`;
         div.style.margin = '4px 0';
-        div.style.color = '#888';
+        div.style.color = `var(--cnodeview-debug-color)`;
         this.chatLog.appendChild(div);
         this.chatLog.scrollTop = this.chatLog.scrollHeight;
     }
 
+    // Send message and history to server and process response
     async sendToServer(text) {
         try {
-            // Add the new user message to history before sending
-            const history = this.chatHistory.slice(-10); // last 10 messages
-
+            const history = this.chatHistory.slice(-10);
             const body = JSON.stringify({
-                    history, // send the history array
-                    prompt: text,
-                    sitrecDoc: sitrecAPI.getDocumentation(),
-                    // get the client's system date and time
-                    dateTime: new Date().toISOString(),
+                history,
+                prompt: text,
+                sitrecDoc: sitrecAPI.getDocumentation(),
+                dateTime: new Date().toISOString(),
             });
 
-            console.log("Sending to server:", body);
-
             const res = await fetch(SITREC_SERVER + 'chatbot.php', {
-                body: body,
+                body,
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: { 'Content-Type': 'application/json' },
             });
             const response = await res.json();
             if (response.text) this.addSystemMessage(response.text);
@@ -176,6 +207,7 @@ class CNodeViewChat extends CNodeView {
         }
     }
 
+    // Process any API calls returned by the server
     handleAPICalls(calls) {
         for (const call of calls) {
             sitrecAPI.handleAPICall(call);
@@ -183,4 +215,4 @@ class CNodeViewChat extends CNodeView {
     }
 }
 
-export {CNodeViewChat};
+export { CNodeViewChat, THEMES };
