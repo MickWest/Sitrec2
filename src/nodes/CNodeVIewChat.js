@@ -40,8 +40,16 @@ class CNodeViewChat extends CNodeView {
         const tab = document.createElement('div');
         tab.textContent = 'Sitrec Assistant';
         tab.className = 'cnodeview-tab';
+        tab.style.userSelect = 'none';
         this.tab = tab;
         this.div.appendChild(tab);
+
+        //  double click events on title will close the chat view
+        tab.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            e.preventDefault(); // Prevent default double-click behavior
+            this.hide();
+        });
 
         // Add an X button to close the chat
         const closeButton = document.createElement('span');
@@ -51,21 +59,6 @@ class CNodeViewChat extends CNodeView {
         closeButton.style.marginLeft = '8px';
         closeButton.addEventListener('click', () => this.hide());
         tab.appendChild(closeButton);
-
-        // Add a "New Chat" button next to the X
-        const newChatButton = document.createElement('button');
-        newChatButton.textContent = 'New Chat';
-        newChatButton.style.marginLeft = '8px';
-        newChatButton.style.padding = '4px 8px';
-        newChatButton.style.fontSize = '14px';
-        newChatButton.addEventListener('click', () => {
-            this.chatLog.innerHTML = ''; // Clear chat log
-            this.chatHistory = []; // Reset chat history
-            this.addSystemMessage("New chat started.\n");
-            this.inputBox.value = ''; // Reset the input box
-            this.inputBox.focus(); // Focus the input box
-        });
-        tab.appendChild(newChatButton);
 
         // Create scrollable chat log
         this.chatLog = document.createElement('div');
@@ -78,6 +71,30 @@ class CNodeViewChat extends CNodeView {
         this.chatLog.classList.add('cnodeview-chatlog');
         this.div.appendChild(this.chatLog);
 
+        // Add a "New Chat" button to the top right corner of the chat log
+        const newChatButton = document.createElement('button');
+        newChatButton.textContent = 'New Chat';
+        newChatButton.style.position = 'absolute';
+        newChatButton.style.top = '28px';
+        newChatButton.style.right = '18px';
+        newChatButton.style.padding = '2px 10px';
+        newChatButton.style.fontSize = '13px';
+        newChatButton.style.borderRadius = '16px';
+        newChatButton.style.border = 'none';
+        newChatButton.style.background = 'var(--cnodeview-tab-bg)';
+        newChatButton.style.color = 'var(--cnodeview-tab-color)';
+        newChatButton.style.cursor = 'pointer';
+        newChatButton.style.boxShadow = '0 1px 4px rgba(0,0,0,0.08)';
+        newChatButton.addEventListener('click', () => {
+            this.chatLog.innerHTML = ''; // Clear chat log
+            this.chatHistory = []; // Reset chat history
+            this.addSystemMessage("New chat started.\n");
+            this.inputBox.value = ''; // Reset the input box
+            this.inputBox.focus(); // Focus the input box
+        });
+        this.div.appendChild(newChatButton);
+
+
         // Create input box
         this.inputBox = document.createElement('input');
         this.inputBox.type = 'text';
@@ -89,6 +106,7 @@ class CNodeViewChat extends CNodeView {
         this.inputBox.style.padding = '8px';
         this.inputBox.style.fontSize = '15px';
         this.inputBox.classList.add('cnodeview-input');
+        this.chatLog.tabIndex = 0; // Make it focusable
         this.div.appendChild(this.inputBox);
 
 
@@ -132,8 +150,28 @@ class CNodeViewChat extends CNodeView {
             }
         });
 
+        // swallow double click events on the inputBox
+        this.inputBox.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            e.preventDefault(); // Prevent default double-click behavior
+        });
+
         // Also stop key propagation on the chatLog
-        this.chatLog.addEventListener('keydown', (e) => e.stopPropagation());
+        this.chatLog.addEventListener('keydown', (e) => {
+                e.stopPropagation()
+              //  e.preventDefault()
+                if (e.key === 'Tab') {
+                    e.preventDefault();  // Stop tab from shifting focus
+                    this.toggleChatVisibility();
+                }
+        });
+
+
+        // swallow double click events on the chat log
+        this.chatLog.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            e.preventDefault(); // Prevent default double-click behavior
+        });
 
         // The tab key should toggle the chat view
         // this needs to be handled in the main Sitrec class
@@ -254,14 +292,18 @@ class CNodeViewChat extends CNodeView {
         console.log(`Focused element: ${focusedElement.tagName}#${focusedElement.id}.${focusedElement.className}`);
 
 
-        if (focusedElement !== this.inputBox && focusedElement !== document.body) {
-
-            document.body.tabIndex = 0;
-            document.body.focus();
-            document.body.removeAttribute('tabindex');
+        if (this.visible) {
+            if (focusedElement === document.body) {
+                // If the input box is not focused, focus it
+       //         this.inputBox.focus();
+            }
+        } else {
+            if (focusedElement !== document.body) {
+                document.body.tabIndex = 0;
+                document.body.focus();
+                document.body.removeAttribute('tabindex');
+            }
         }
-
-
     }
 }
 
