@@ -1,11 +1,12 @@
 import {CNodeView} from "./CNodeView.js";
-import {Sit} from "../Globals";
+import {guiMenus, Sit} from "../Globals";
 import {SITREC_SERVER} from "../configUtils";
 
 class CNodeViewChat extends CNodeView {
     constructor(v) {
         v.dragHandle = '.cnodeview-tab';
         super(v);
+        this.div.style.position = 'relative';
 
         // Draggable Tabe with Title
         const tab = document.createElement('div');
@@ -36,11 +37,12 @@ class CNodeViewChat extends CNodeView {
         // Create scrollable chat log
         this.chatLog = document.createElement('div');
         this.chatLog.style.overflowY = 'auto';
-        this.chatLog.style.height = 'calc(100% - 40px)';
+        this.chatLog.style.height = 'calc(100% - 80px)'; // 40px for tab + 40px for input
         this.chatLog.style.padding = '8px';
         this.chatLog.style.backgroundColor = '#fff';
         this.chatLog.style.fontFamily = 'monospace';
         this.chatLog.style.fontSize = '15px';
+        this.chatLog.style.whiteSpace = 'pre-line';
         this.div.appendChild(this.chatLog);
 
         // Create input box
@@ -74,7 +76,10 @@ class CNodeViewChat extends CNodeView {
 
         this.chatHistory = [];
 
-        this.addSystemMessage("Hi! You can ask me to move the camera, e.g. 'go to London at 12pm yesterday'.");
+        this.addSystemMessage("Hi! Welcome to Sitrec!\nYou can ask me to do things like adjust the position and time, e.g. 'go to London at 12pm yesterday'.");
+
+        guiMenus.help.add(this, "show").name("AI Chat").moveToFirst();
+
     }
 
 
