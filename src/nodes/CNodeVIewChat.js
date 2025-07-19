@@ -40,8 +40,17 @@ class CNodeViewChat extends CNodeView {
             }
         });
 
+        // also stop key propogation onf the chatLog
+        this.chatLog.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+        });
+
+        this.chatHistory = [];
+
         this.addSystemMessage("Hi! You can ask me to move the camera, e.g. 'go to London at 12pm yesterday'.");
     }
+
+
 
     addUserMessage(text) {
         const div = document.createElement('div');
@@ -49,6 +58,7 @@ class CNodeViewChat extends CNodeView {
         div.style.margin = '4px 0';
         this.chatLog.appendChild(div);
         this.chatLog.scrollTop = this.chatLog.scrollHeight;
+        this.chatHistory.push({ role: 'user', text });
     }
 
     addSystemMessage(text) {
@@ -58,23 +68,42 @@ class CNodeViewChat extends CNodeView {
         div.style.color = '#007';
         this.chatLog.appendChild(div);
         this.chatLog.scrollTop = this.chatLog.scrollHeight;
+        this.chatHistory.push({ role: 'bot', text });
+    }
+
+    addDebugMessage(text) {
+        const div = document.createElement('div');
+        div.textContent = `Debug: ${text}`;
+        div.style.margin = '4px 0';
+        div.style.color = '#888';
+        this.chatLog.appendChild(div);
+        this.chatLog.scrollTop = this.chatLog.scrollHeight;
     }
 
     async sendToServer(text) {
         try {
-            const res = await fetch(SITREC_SERVER + 'chatbot.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+            // Add the new user message to history before sending
+            const history = this.chatHistory.slice(-10); // last 10 messages
+
+            const body = JSON.stringify({
+                    history, // send the history array
                     prompt: text,
                     sitrecDoc: sitrecAPI.getDocumentation()
-                })
+            });
 
+            console.log("Sending to server:", body);
+
+            const res = await fetch(SITREC_SERVER + 'chatbot.php', {
+                body: body,
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
             });
             const response = await res.json();
-            console.log("Chatbot response:", response);
             if (response.text) this.addSystemMessage(response.text);
-            if (response.apiCalls) this.handleAPICalls(response.apiCalls);
+            if (response.apiCalls) {
+                this.addDebugMessage(`API calls: ${JSON.stringify(response.apiCalls)}`);
+                this.handleAPICalls(response.apiCalls);
+            }
         } catch (e) {
             this.addSystemMessage("[error contacting server]");
             console.error(e);

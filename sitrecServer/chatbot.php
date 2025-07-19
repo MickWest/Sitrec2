@@ -10,6 +10,9 @@ $S3 = getenv("S3_ACCESS_KEY_ID");
 
 $data = json_decode(file_get_contents('php://input'), true);
 $prompt = $data['prompt'] ?? '';
+// --- Accept history from client ---
+$history = $data['history'] ?? [];
+// get API documentation from client
 $sitrecDoc = $data['sitrecDoc'] ?? [];
 
 $systemPrompt = <<<EOT
@@ -32,6 +35,8 @@ You must:
 }
 Do not return anything except the plain text explanation and the JSON block at the end of your response.
 
+Always reply in plain text. Do not use Markdown, LaTeX, or code blocks.
+
 Available API functions (function name followed by description and parameter list):
 EOT;
 
@@ -41,10 +46,18 @@ foreach ($sitrecDoc as $fn => $desc) {
     $systemPrompt .= "- {$fn}: {$desc}\n";
 }
 
-$messages = [
-    ["role" => "system", "content" => $systemPrompt],
-    ["role" => "user", "content" => $prompt]
-];
+// --- Build messages array from history ---
+$messages = [["role" => "system", "content" => $systemPrompt]];
+if (is_array($history)) {
+    foreach ($history as $msg) {
+        // Map 'user'/'bot' to OpenAI roles
+        $role = $msg['role'] === 'bot' ? 'assistant' : $msg['role'];
+        $messages[] = [
+            "role" => $role,
+            "content" => $msg['text']
+        ];
+    }
+}
 
 // Call OpenAI
 $ch = curl_init("https://api.openai.com/v1/chat/completions");
