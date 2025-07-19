@@ -91,9 +91,24 @@ class CNodeViewChat extends CNodeView {
         this.inputBox.classList.add('cnodeview-input');
         this.div.appendChild(this.inputBox);
 
+
+        // Global capture of the ` key to toggle visibility
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                e.preventDefault();  // prevent character insertion
+                e.stopPropagation(); // stop other handlers
+                this.toggleChatVisibility();
+
+            } else if (e.key === 'Escape') {
+                // If escape, hide the chat view
+                this.hide();
+            }
+        });
+
+
         // Handle input box key events
         this.inputBox.addEventListener('keydown', (e) => {
-            e.stopPropagation();
+                e.stopPropagation();
             if (e.key === 'Enter') {
                 const text = this.inputBox.value.trim();
                 if (text) {
@@ -108,6 +123,12 @@ class CNodeViewChat extends CNodeView {
             } else if (e.key === 'ArrowDown') {
                 // If down arrow, clear the input box
                 this.inputBox.value = '';
+            } else if (e.key === 'Tab') {
+                e.preventDefault();  // Stop tab from shifting focus
+                this.toggleChatVisibility();
+            } else if (e.key === 'Escape') {
+                // If escape, hide the chat view
+                this.hide();
             }
         });
 
@@ -129,6 +150,13 @@ class CNodeViewChat extends CNodeView {
 
 
         this.setTheme(this.theme);
+    }
+
+    toggleChatVisibility() {
+        this.setVisible(!this.visible);
+        if (this.visible) {
+            this.inputBox.focus();
+        }
     }
 
     // Apply theme using CSS variables
@@ -216,6 +244,24 @@ class CNodeViewChat extends CNodeView {
         for (const call of calls) {
             sitrecAPI.handleAPICall(call);
         }
+    }
+
+
+    update(f) {
+        // find what document element has focus
+        const focusedElement = document.activeElement;
+        // log it
+        console.log(`Focused element: ${focusedElement.tagName}#${focusedElement.id}.${focusedElement.className}`);
+
+
+        if (focusedElement !== this.inputBox && focusedElement !== document.body) {
+
+            document.body.tabIndex = 0;
+            document.body.focus();
+            document.body.removeAttribute('tabindex');
+        }
+
+
     }
 }
 
