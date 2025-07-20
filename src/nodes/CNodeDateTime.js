@@ -481,11 +481,11 @@ export class CNodeDateTime extends CNode {
             this.timeZoneName = "UTC+" + Math.abs(this.timeZoneOffset);
             this.setTimeZoneNameFromOffset(this.timeZoneOffset);
 
-
-        } else if (typeof dateTime === 'string' && dateTime.includes('-')) {
+        } else if (typeof dateTime === 'string' ) {
             // if the dateTime is in a time zone, then we need to parse it
             const parts = dateTime.split('-');
-            this.timeZoneOffset = -parseInt(parts[1].substring(0, 3), 10);
+            const timeZoneParts = parts[3].split(':');
+            this.timeZoneOffset = -(parseInt(timeZoneParts[0], 10) + (parseInt(timeZoneParts[1], 10) / 60));
             this.timeZoneName = "UTC-" + Math.abs(this.timeZoneOffset);
             this.setTimeZoneNameFromOffset(this.timeZoneOffset);
         }
@@ -496,6 +496,7 @@ export class CNodeDateTime extends CNode {
 
         this.dateNow = startToNowDateTime(this.dateStart);
         this.populate();
+        par.renderOne = true;
     }
 
     setNowDateTime(dateTime) {
