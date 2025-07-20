@@ -11,7 +11,7 @@ import {
 } from "../SphericalMath";
 import {CNode3D} from "./CNode3D";
 import {MV3} from "../threeUtils";
-import {getCelestialDirectionFromRaDec} from "../CelestialMath";
+import {getCelestialDirection, getCelestialDirectionFromRaDec} from "../CelestialMath";
 
 export class CNodeCamera extends CNode3D {
     constructor(v, camera = null) {
@@ -208,7 +208,7 @@ export class CNodeCamera extends CNode3D {
 
 
     setFromRaDec(ra, dec) {
-        // set the camera position based on Right Ascension and Declination
+        // set the camera orientation based on Right Ascension and Declination
         // ra is in hours, dec is in degrees
         // convert ra to radians
         const raRad = ra * (Math.PI / 12); // 1 hour = π/12 radians
@@ -218,12 +218,16 @@ export class CNodeCamera extends CNode3D {
         const dateNow = GlobalDateTimeNode.dateNow;
 
         const dir = getCelestialDirectionFromRaDec(raRad, decRad, dateNow);
+        this.setFromDirection(dir);
 
+    }
+
+    setFromDirection(dir) {
         const target = this.camera.position.clone().add(dir.multiplyScalar(1000)); // 1000m away in the direction of the celestial body
         this.camera.lookAt(target);
         this.camera.updateMatrixWorld();
 
-        //         
+        //
         const [az, el] = getAzElFromPositionAndMatrix(this.camera.position, this.camera.matrixWorld);
 
         // get the PTZ Controller and set the az/el
@@ -235,8 +239,17 @@ export class CNodeCamera extends CNode3D {
         } else {
             console.warn("CNodeCamera:setFromRaDec No PTZ Controller found to set az/el for camera " + this.id);
         }
+    }
 
-
+// set the camera orientation based on a named celestial object
+    // e.g. "Sun", "Moon", "Mars"
+    setFromNamedObject(objectName) {
+         const dir = getCelestialDirection(objectName, GlobalDateTimeNode.dateNow);
+        if (!dir) {
+            console.warn("CNodeCamera:setFromNamedObject No direction found for object " + objectName);
+            return;
+        }
+        this.setFromDirection(dir);
     }
 
 

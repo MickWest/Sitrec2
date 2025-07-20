@@ -186,6 +186,10 @@ export class CNodeDateTime extends CNode {
             }
         }
 
+        // get the time zone offset from a new Date object
+        const offset = new Date().getTimezoneOffset() / -60; // getTimezoneOffset returns in minutes, so divide by -60 to get hours
+        this.setTimeZoneNameFromOffset(offset);
+
 
         // add the time zon flag
         this.dateTimeFolder.add( this, "useTimeZone").name("Use Time Zone in UI").listen().onChange(v=>{

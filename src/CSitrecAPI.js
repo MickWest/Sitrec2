@@ -45,8 +45,8 @@ class CSitrecAPI {
                 }
             },
 
-            setCameraFromRaDec: {
-                doc: "Set the camera position based on Right Ascension and Declination. Use for looking at stars",
+            pointCameraAtRaDec: {
+                doc: "Set the camera orientation based on Right Ascension and Declination. Use for looking at stars and other fixed sky object (not planets or the sun",
                 params: {
                     ra: "Right Ascension in hours (float)",
                     dec: "Declination in degrees (float)",
@@ -54,6 +54,17 @@ class CSitrecAPI {
                 fn: (v) => {
                     const camera = NodeMan.get("lookCamera");
                     camera.setFromRaDec(v.ra, v.dec);
+                }
+            },
+
+            pointCameraAtNamedObject: {
+                doc: "Point the camera at a named celestial object (e.g. 'Sun', 'Moon', 'Mars'). Use this for things that are not fixed.",
+                params: {
+                    object: "Name of the celestial object (string)"
+                },
+                fn: (v) => {
+                    const camera = NodeMan.get("lookCamera");
+                    camera.setFromNamedObject(v.object);
                 }
             },
 

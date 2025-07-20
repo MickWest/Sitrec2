@@ -302,18 +302,18 @@ class CNodeViewChat extends CNodeView {
 //        console.log(`Focused element: ${focusedElement.tagName}#${focusedElement.id}.${focusedElement.className}`);
 
 
-        if (this.visible) {
-            if (focusedElement === document.body) {
-                // If the input box is not focused, focus it
-       //         this.inputBox.focus();
-            }
-        } else {
-            if (focusedElement !== document.body) {
-                document.body.tabIndex = 0;
-                document.body.focus();
-                document.body.removeAttribute('tabindex');
-            }
-        }
+       //  if (this.visible) {
+       //      if (focusedElement === document.body) {
+       //          // If the input box is not focused, focus it
+       // //         this.inputBox.focus();
+       //      }
+       //  } else {
+       //      if (focusedElement !== document.body) {
+       //          document.body.tabIndex = 0;
+       //          document.body.focus();
+       //          document.body.removeAttribute('tabindex');
+       //      }
+       //  }
     }
 }
 
