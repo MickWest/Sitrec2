@@ -124,7 +124,7 @@ if (preg_match('/```json\s*(\{.*?\})\s*```/s', $content, $matches)) {
         $calls = $json['apiCalls'];
     }
     // Remove JSON block from content
-    //$content = preg_replace('/```json\s*\{.*?\}\s*```/s', '', $content);
+    $content = preg_replace('/```json\s*\{.*?\}\s*```/s', '', $content);
 }
 
 $text = trim($content);
