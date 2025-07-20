@@ -137,7 +137,13 @@ class CNodeViewChat extends CNodeView {
             } else if (e.key === 'ArrowUp') {
                 // If up arrow, show the last message in the input box
                 const last = this.chatHistory.slice().reverse().find(msg => msg.role === 'user');
-                if (last) this.inputBox.value = last.text;
+                if (last) {
+                    this.inputBox.value = last.text;
+                    // move the cursor to the end of the input box
+                    setTimeout(() => {
+                        this.inputBox.focus();
+                        this.inputBox.setSelectionRange(this.inputBox.value.length, this.inputBox.value.length);
+                    }, 0);                }
             } else if (e.key === 'ArrowDown') {
                 // If down arrow, clear the input box
                 this.inputBox.value = '';
