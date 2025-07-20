@@ -135,18 +135,30 @@ class CNodeViewChat extends CNodeView {
                     this.inputBox.value = '';
                 }
             } else if (e.key === 'ArrowUp') {
-                // If up arrow, show the last message in the input box
-                const last = this.chatHistory.slice().reverse().find(msg => msg.role === 'user');
-                if (last) {
-                    this.inputBox.value = last.text;
-                    // move the cursor to the end of the input box
-                    setTimeout(() => {
-                        this.inputBox.focus();
-                        this.inputBox.setSelectionRange(this.inputBox.value.length, this.inputBox.value.length);
-                    }, 0);                }
+
+                // using this.historyPosition to navigate chat history
+                // first get a list of all user messages in the chat history
+
+                const userMessages = this.chatHistory.filter(msg => msg.role === 'user');
+                if (userMessages.length === 0 || this.historyPosition === userMessages.length) return; // No user messages to show
+                // Get the message at the current history position
+                const index = userMessages.length - 1 - this.historyPosition;
+                const message = userMessages[index];
+                this.setInputTextAndFocus(message.text);
+                this.historyPosition = (this.historyPosition + 1) // % userMessages.length; // Cycle through history
             } else if (e.key === 'ArrowDown') {
-                // If down arrow, clear the input box
-                this.inputBox.value = '';
+                // If down arrow go down the history
+                const userMessages = this.chatHistory.filter(msg => msg.role === 'user');
+                this.historyPosition--;
+                if (this.historyPosition <= 0) {
+                    this.historyPosition = 0; // Reset to 0 if we go past the start
+                    this.setInputTextAndFocus("")
+                }
+                else {
+                    const index = userMessages.length - 0 - this.historyPosition;
+                    const message = userMessages[index];
+                    this.setInputTextAndFocus(message.text);
+                }
             } else if (e.key === 'Tab') {
                 e.preventDefault();  // Stop tab from shifting focus
                 this.toggleChatVisibility();
@@ -184,6 +196,7 @@ class CNodeViewChat extends CNodeView {
 
 
         this.chatHistory = [];
+        this.historyPosition = 0; // For navigating chat history
 
         this.addSystemMessage("Hi! Welcome to Sitrec!\nYou can ask me to do things like adjust the position and time, e.g. 'go to London at 12pm yesterday'." +
             "\n\nYou can also ask me to do things like 'show me orion's belt.'" +
@@ -200,6 +213,15 @@ class CNodeViewChat extends CNodeView {
 
 
         this.setTheme(this.theme);
+    }
+
+    setInputTextAndFocus(text) {
+        this.inputBox.value = text;
+        // move the cursor to the end of the input box
+        setTimeout(() => {
+            this.inputBox.focus();
+            this.inputBox.setSelectionRange(this.inputBox.value.length, this.inputBox.value.length);
+        }, 0);
     }
 
     toggleChatVisibility() {
@@ -263,6 +285,7 @@ class CNodeViewChat extends CNodeView {
 
     // Send message and history to server and process response
     async sendToServer(text) {
+        this.historyPosition = 0;  // Reset history position when sending a new message
         try {
 
             // use this to get a time string in the local timezone
