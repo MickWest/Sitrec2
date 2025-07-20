@@ -1,10 +1,17 @@
 import {Camera, PerspectiveCamera, Vector3} from "three";
 import {f2m, m2f, vdump} from "../utils";
-import {guiMenus, NodeMan} from "../Globals";
-import {ECEFToLLAVD_Sphere, EUSToECEF, EUSToLLA, LLAVToEUS} from "../LLA-ECEF-ENU";
-import {altitudeAboveSphere, getLocalSouthVector, getLocalUpVector, raisePoint} from "../SphericalMath";
+import {GlobalDateTimeNode, guiMenus, NodeMan} from "../Globals";
+import {ECEFToLLAVD_Sphere, EUSToECEF, EUSToLLA, LLAVToEUS, raDecToAzElRADIANS} from "../LLA-ECEF-ENU";
+import {
+    altitudeAboveSphere,
+    getAzElFromPositionAndMatrix,
+    getLocalSouthVector,
+    getLocalUpVector,
+    raisePoint
+} from "../SphericalMath";
 import {CNode3D} from "./CNode3D";
 import {MV3} from "../threeUtils";
+import {getCelestialDirectionFromRaDec} from "../CelestialMath";
 
 export class CNodeCamera extends CNode3D {
     constructor(v, camera = null) {
@@ -197,6 +204,39 @@ export class CNodeCamera extends CNode3D {
         this.camera.up.copy(up);
         // and look at the target point
         this.camera.lookAt(point);
+    }
+
+
+    setFromRaDec(ra, dec) {
+        // set the camera position based on Right Ascension and Declination
+        // ra is in hours, dec is in degrees
+        // convert ra to radians
+        const raRad = ra * (Math.PI / 12); // 1 hour = π/12 radians
+        const decRad = dec * (Math.PI / 180); // degrees to radians
+
+
+        const dateNow = GlobalDateTimeNode.dateNow;
+
+        const dir = getCelestialDirectionFromRaDec(raRad, decRad, dateNow);
+
+        const target = this.camera.position.clone().add(dir.multiplyScalar(1000)); // 1000m away in the direction of the celestial body
+        this.camera.lookAt(target);
+        this.camera.updateMatrixWorld();
+
+        //         
+        const [az, el] = getAzElFromPositionAndMatrix(this.camera.position, this.camera.matrixWorld);
+
+        // get the PTZ Controller and set the az/el
+        const ptzController = NodeMan.get("ptzAngles", false);
+        if (ptzController) {
+            ptzController.az = az;
+            ptzController.el = el;
+            ptzController.recalculateCascade();
+        } else {
+            console.warn("CNodeCamera:setFromRaDec No PTZ Controller found to set az/el for camera " + this.id);
+        }
+
+
     }
 
 

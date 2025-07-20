@@ -164,13 +164,14 @@ export function getCelestialDirection(body, date, pos) {
         LLA = V3(Sit.lat, Sit.lon, 0)
     }
 
-//    let observer = new Astronomy.Observer(Sit.lat, Sit.lon, 0);
     let observer = new Astronomy.Observer(LLA.x, LLA.y, LLA.z);
     const celestialInfo = Astronomy.Equator(body, date, observer, false, true);
     const ra = (celestialInfo.ra) / 24 * 2 * Math.PI;   // Right Ascension NOTE, in hours, so 0..24 -> 0..2π
     const dec = radians(celestialInfo.dec); // Declination
-    //  const equatorial = raDec2Celestial(ra, dec, wgs84.RADIUS)
+    return getCelestialDirectionFromRaDec(ra, dec, date);
+}
 
+export function getCelestialDirectionFromRaDec(ra, dec, date) {
     const gst = calculateGST(date);
     const ecef = celestialToECEF(ra, dec, wgs84.RADIUS, gst)
     // ecef for the sun will give us a vector from the center to the earth towards the Sun (which, for our purposes

@@ -45,6 +45,18 @@ class CSitrecAPI {
                 }
             },
 
+            setCameraFromRaDec: {
+                doc: "Set the camera position based on Right Ascension and Declination. Use for looking at stars",
+                params: {
+                    ra: "Right Ascension in hours (float)",
+                    dec: "Declination in degrees (float)",
+                },
+                fn: (v) => {
+                    const camera = NodeMan.get("lookCamera");
+                    camera.setFromRaDec(v.ra, v.dec);
+                }
+            },
+
             debug: {
                 doc: "Toggle debug mode",
                 params: {

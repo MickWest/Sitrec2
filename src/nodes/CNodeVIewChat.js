@@ -179,7 +179,13 @@ class CNodeViewChat extends CNodeView {
 
         this.chatHistory = [];
 
-        this.addSystemMessage("Hi! Welcome to Sitrec!\nYou can ask me to do things like adjust the position and time, e.g. 'go to London at 12pm yesterday'.");
+        this.addSystemMessage("Hi! Welcome to Sitrec!\nYou can ask me to do things like adjust the position and time, e.g. 'go to London at 12pm yesterday'." +
+            "\n\nYou can also ask me to do things like 'show me orion's belt.'" +
+            "\n\nYou can toggle me on and off with Tab, or click on the X, or 'Assistant' in the Help menu" +
+            "\n\nThis window can be resized and moved around, and you can scroll the chat log with the mouse wheel. Up arrow will repeat the last command" +
+            "\n\nI'm a work in progress, so please be patient with me! Report bugs, quirks, and features you would like to Mick West on Metabunk" +
+
+        "");
 
         guiMenus.help.add(this, "show").name("Assistant").moveToFirst().onChange(() => {
             guiMenus.help.close()
