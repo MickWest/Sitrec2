@@ -26,9 +26,6 @@ THE SOFTWARE.
 
 var ndarray = require("ndarray")
 var GifReader = require("omggif").GifReader
-var ppm = require("ppm")
-var pack = require("ndarray-pack")
-var through = require("through")
 const {getFileExtension} = require("../utils");
 
 class ImageQueueManager {
@@ -132,26 +129,6 @@ function defaultImage(url, cb) {
 // });
 
 
-
-
-// function defaultImage(url, cb) {
-//   var img = new Image()
-//   img.crossOrigin = "anonymous";  // MICKMOD
-//   img.onload = function() {
-//     var canvas = document.createElement("canvas")
-//     canvas.width = img.width
-//     canvas.height = img.height
-//     var context = canvas.getContext("2d")
-//     context.drawImage(img, 0, 0)
-//     var pixels = context.getImageData(0, 0, img.width, img.height)
-//     cb(null, ndarray(new Uint8Array(pixels.data), [img.height, img.width, 4], [4*img.width, 4, 1], 0))
-//   }
-//   img.onerror = function(err) {
-//     cb(err)
-//   }
-//   img.src = url
-// }
-
 //Animated gif loading
 function handleGIF(url, cb) {
     var xhr = new XMLHttpRequest()
@@ -204,35 +181,6 @@ function handleGIF(url, cb) {
     xhr.send()
 }
 
-//PPM loading
-function handlePPM(url, cb) {
-    var xhr = new XMLHttpRequest()
-    xhr.responseType = "arraybuffer"
-    xhr.overrideMimeType("application/binary")
-    xhr.onerror = function(err) {
-        cb(err)
-    }
-    xhr.onload = function() {
-        if(xhr.readyState !== 4) {
-            return
-        }
-        var fakeStream = through()
-        ppm.parse(fakeStream, function(err, pixels) {
-            if(err) {
-                cb(err)
-                return
-            }
-            var nshape = [ pixels.length, pixels[0].length, pixels[0][0].length ]
-            var data = new Uint8Array(nshape[0] * nshape[1] * nshape[2])
-            var result = ndarray(data, nshape)
-            pack(pixels, result)
-            cb(undefined, result)
-        })
-        fakeStream.end(new Uint8Array(xhr.response))
-    }
-    xhr.open("GET", url, true)
-    xhr.send()
-}
 
 export function getPixels(url, cb) {
 //    console.log("getPixels ("+url+")")
