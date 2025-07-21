@@ -1,0 +1,458 @@
+- 2025-07-20
+  - Up arrown in chat box now moves cursor to end of line if we get history (i.e. if we get the last input)
+  - Auto detect time zone from client AI API look at object (planets, sun, moon)
+  - AI can now set the camera using RA/Dec, which allows it to look at static celestial objects (Stars, constellations)
+- 2025-07-19
+  - Better handling of timezones. Chatbot tries to use the +/- format when not in Z Clien passes the time in the selected timezone to the server
+  - Fixed button presses and double clicks getign thorought the chat window
+  - Cleanly toggle the chat view with Tab (Esc will also close it, but not open it)
+  - Close help menu after turning on the Assistant
+  - Dark and light themes, defaults to dark.
+  - System prompt tweaks for more concise answers
+  - Hooked up AI location setting
+  - Renamed "Assistant", improved system prompt with info about Sitrec Added "New Chat" button. Refactored the API into its own file
+  - Fixed paragraphs, other AI tweaks
+  - Chat window has a draggabe tab at the top, and an X button to close (hide) it
+  - maintain chat history
+  - Improved chat, displaying all the thinking
+- 2025-07-18
+  - Basic Chatbot working
+- 2025-07-17
+  - Added som fraction time zones (Iran, Afganistan, India, Nepal, Myanmar)
+- 2025-07-16
+  - CameraSpeher object now tiny Better Sitrec URL startup with larger terrain an alt set to AGL
+  - Sitrec link from chatbot now establishes a sitch 
+  - Fixed bug with multiple tracks crashing when it encounters one invalid one (was calling removerFolder() insteasd of .destroy()
+- 2025-07-15
+  - Changed max sim speed to 3600
+  - Cookie based caching of user IP-based location
+  - Short timeout (1 second) on geolocation request.
+  - Smooth motion for arrows and flare lines
+  - Added Flare lines
+  - More accurate flare band (moved yellow about 10% closer to the sun)
+  - Fixed drag and drop images for saving the vewi prest setup Removed flare bands fromthe look view
+- 2025-07-14
+  - Fixed geolocation (now IP based, as browser is slow). Improved starup for Starlink sitch
+  - Changed geolocation to use IP based, as browser based is too unreliable
+- 2025-07-13
+  - Geolocation and startup Starlink loading (not working on remote server)
+  - Now custom/nightsky2 setup
+  - Needs geolocations
+- 2025-07-12
+  - Expanded flare band a bit to match actual reflections
+  - Use time zone in UI
+  - Very basic 3D lights, with two lights on the 737
+  - Go to location and load terrain after using camera/lookup
+  - Extracting lights
+  - basic 3D lights with dummy sphere for now
+  - Added link to in-the-sky replay
+- 2025-07-10
+  - Removed old code
+  - Non-Starlink sats now bluish white
+- 2025-07-09
+  - Docs
+  - filter out illegal names (good on S3, bad on MacOS/Windows)
+  - Shorten long filenames when rehosting to s3 S3 can do 1024 chars, but MacOS is limited to 256 (and I use MacOS for backups)
+  - Added "show all lables", defaulting to off (so we onlt lable visible satellites)
+- 2025-07-08
+  - Fixed the trackign default single point (i.e. when there's no track) so it's in the centerof the video (with the new coordinate systems)
+  - Notes on visibility for overlay views tracker invisible by default
+  - Don't render the tracking view if not visible. Tracking view is the only thing that uses the seperateVisibility flag
+  - Removed unused demuser_mp4.js
+  - Startup with no video window, just size-by-size main and look view Detect aspect ratio, and choose appropriate view preset when loading a video
+  - Tooltips
+- 2025-07-07
+  - Pass through double clink on tacking overlay, so you can full-screen the video view
+  - Fixed zooming in lookView
+  - Minor tooltips
+  - Fixed linear extrapolation of final segment
+  - Mose wheel now zooms video in Custom
+- 2025-07-06
+  - Backwards compatibility with older object tracks
+  - Fixed tracking node scaling and serialization
+  - Added two non-main view setups. Video and Look either side by side, or one above the other Fixed inconsistent scaling of 3D view with viewports
+  - Tidy debug logs
+  - Initial restructuring of the TrackingOverlay coordinate systems
+  - Tidy unused imports
+- 2025-07-05
+  - Altitude for LLA controls (Camera and Target) is now optionally AGL (Defaults to MSL)
+  - Added getElevation at LL
+  - Added User ID to the Server info in the file menu (for debugging)
+  - Fixed bug where filenames that ended with the user ID were not being found on the server for "Open"
+- 2025-07-03
+  - Removed some debug text
+  - Added support of optional datetime and lat/lon parameters
+  - Elastic shrinking of altitide value, not without issues
+  - Modifications to elastic parameters to allow finer control
+  - Disable touch scroll and zooming for better experience on mobile
+  - Removed old container div
+- 2025-07-02
+  - Links to ADSBx and Google Maps for current sitch location and date/time
+  - Added reset button for object tracking.
+  - Patch for very small graphs crashing graph rendering code
+- 2025-07-01
+  - Ensure extracted zip files (like doc.kml) have unique names.
+  - Ignore loaded material, if the map no-longer has a scene
+  - Fire elevationChangedeven when elevation tile loaded
+  - Flow orbs back to spheres
+  - Added "C" key to legacy Starlink sitch (same as "L" key, to move the camera/LL
+  - Remove device pixel ratios from sprite scaling, as not needed.
+  - Added Bledsoe satellite view to visual regression tests
+  - Fixed replaceOption changing the option if it's selected when we replace it (was messing up selecting satellite target)
+  - Better perceptual scaling of stars and sats Fixed point sprite scaling when viewport changes size
+- 2025-06-30
+  - Removed unlight debug to infoDiv (Keys)
+  - removed keyboard debug logging
+- 2025-06-29
+  - Switching to fixedCamera if camera position is changed manually
+  - "Show in look view" moved to the "Contents" menu
+  - Restores track choice when reloading
+  - Minor debug
+  - Keep color when reloading a track
+  - refactoring makeTracks
+  - "Remove Track" button name
+  - Cleaner adding tracks to gui. Remove tracks individually, and cleanly
+- 2025-06-28
+  - Correctly tracks and removing gui folder for track when track is re-loaded or replaced
+  - Debugging assert for guiFolder for a track (in Contents Menu)
+  - Cleaning up the new SmoothValue when disposing duplicate tracks.
+  - Correctly adjust B frame when changing Sit.Frames
+  - Fixed camera up vector after dragging a long distance (e.g. CA to FL)
+- 2025-06-27
+  - Track manager now creates the per-track folder in "Contents", so it can add things like smoothing window. Added smoothing window, defaulting to 0
+  - Added getFolder method to GUI
+  - Fix for local legacy files with "localhost" in URL
+  - Video time display now in top right in Custom sitch
+  - Finer roll and object scale adjustments
+- 2025-06-26
+  - Global object scale Global show tracks in look view Sim Speed up to 500 Satellite list now does all sats that START with the given string added "L" key in addition to "C", for historical reasons (setting LLA postion used "L" in Starlink tool)
+  - fixed flow orbs (currently clouds) visibility
+- 2025-06-25
+  - Ignore ambient in sky color calculation (might be too dull now) Moon correct size Stars dimmer to better match the moon.
+  - Improved star scaling for perveptual brightness. Still rather ad-hoc
+- 2025-06-24
+  - CPU side magnitude filtering of stars
+  - Smaller star database by removing unneeded is, xrpm and xdpm fields
+  - Fixed aspect ratios on render targets (to be the same as the canvas and the div) Removed unecessary aspect correction in shader code
+  - Removed aspect adjustment
+  - Lots more stars Aspect ratio for Point sprites is messed up
+- 2025-06-23
+  - Allow roll from PTZ when using "To Target"
+- 2025-06-21
+  - Update the position of celestial vectors that are tied to moving cameras
+  - Fixed NaN error from trying to interpolate header columns
+  - Correctly flagging video files statiURL so it will not continually rehost it.
+  - Fixed speed graphs for sitches not near the origin
+- 2025-06-20
+  - Fixed detection of data types on reloaded filed (duplicates some code from the dragdrop handler)
+  - Flow Orbs inprovemetns. Temporarily using the cloud sprite
+- 2025-06-19
+  - Added speed graph for camera Frame relative time for custom FLL track
+  - Optional Altitude column in Frame/Lat/Lon (FLL) data files Support El column in Frame/Az/El data files.
+- 2025-06-15
+  - Dynamic subdivision now a menu option.
+  - Refactored SharedUniforms.js
+  - More attempts at improving and speeding up applying elevation. But really it needs a significant refactoring
+  - Bump brace-expansion from 1.1.11 to 1.1.12
+  - Disabled console CI test as it's no-longer supported
+- 2025-06-14
+  - Sitrec2 Test commit
+  - Initial Sitrec2
+
+### The following are the SIREC 1 Changes after end of contract
+
+- 2025-06-14
+  - Better tile visiblity when subdividing Some satellites were being skipped in scale (brightness) calculation
+- 2025-06-13
+  - Can now change map textures without having to reload the elevation
+  - Optimized elevation calculation by caching the last used tile (checks are often in the same vicinitiy, but especitally when generating terraim models) Don't reload the map when elevation scale changes.
+- 2025-06-12
+  - Minor cleanup
+  - Elevation improvements Debug tiles
+  - Applying elevation when elevation tile changes (only for matching maps) maxZoom limit on different map types Fixed refreshing debug grid
+- 2025-06-11
+  - Removed the old "startLoading" tile stuff
+  - Elevation times are now loaded and subdivided, but not yet applting new elevation to textures
+  - Fixed elevation scale slider
+  - Don't apply elevation scale until slider is released
+  - "map" renamed as "texture"
+  - Code reformatting for 2->4 indent
+  - More refactoring subdivision
+  - Refactoring QuadTreeMap (Previously Map33) and related
+  - Fixed legacy non-dynamic tile loading
+- 2025-06-10
+  - Wait for map to be loaded before attempting subdivision
+  - Improved subdivision and merging rules
+  - No longer using quad texture better subdivision and merging
+  - Look View not draggable
+  - Simple dynamic tile subdivision working
+- 2025-06-08
+  - Removed unneeded reference to LOSTraverseStraightLineFixed
+  - It's still created in CreateTraverseNodes, but is of no use in custom sitches as it's local-origin relative (which might be on the other side of the world)
+  - Changed hardwaired "localhost" to use the LOCALHOST environment variable, allowing more flexible debug domain, like local.metabunk.org
+  - Removed unused radius parameter
+  - Code cleanup
+  - Code cleanup
+- 2025-06-05
+  - DisplayGroundMovement node
+- 2025-06-04
+  - Adjusted margins on graphs. Graphs now show only A-B range
+- 2025-06-03
+  - Fixed label on camera Az graph
+  - Fixed serializing aFrame and bFrame
+  - Manual bump of tar-fs up to 3.0.9 Was not a real secuity risk, as it was only used by puppeteer for local visual regression tests.
+  - Package updates
+  -  @babel/core                               ^7.26.10  →   ^7.27.4
+  -  @babel/plugin-transform-modules-commonjs   ^7.26.3  →   ^7.27.1
+  -  @babel/preset-env                          ^7.26.9  →   ^7.27.2
+  -  axios                                       ^1.8.4  →    ^1.9.0
+  -  jest-image-snapshot                         ^6.4.0  →    ^6.5.1
+  -  mathjs                                     ^14.4.0  →   ^14.5.2
+  -  puppeteer                                  ^24.6.0  →  ^24.10.0
+  -  satellite.js                                ^5.0.0  →    ^6.0.0
+  -  three                                     ^0.175.0  →  ^0.177.0
+  -  webpack                                    ^5.98.0  →   ^5.99.9
+  -  webpack-dev-server                          ^5.2.1  →    ^5.2.2
+  - Balanced the globe lighitng for new lighting model. Dimmed the (now optional) night sky layer.
+- 2025-06-02
+  - Improved lighting of the globe. Defer loading of city lights, toggle in lighitng menu, off by default.
+  - FR24CSV bug
+  - Added support for FR24 CSV track files, which seem to be identical in resolution to the KML files.
+  - Fixed FR24 track loading. Correctly detects it, and ignore the line shapes.
+  - Fixed camera being wonky after dragging in a track
+- 2025-06-01
+  - Fixed look view dimensions on portrait presets
+  - Fixed units of altitude offset
+  - Satellite text now only for visible satellites, and only either those that are withing the arrow range, or have been selected as the 100 birightest, ISS, or the user list. Now fetched the full LEOALL set, which contains around 20,000 sats? Fixed bug where satellites with the same name (but different NORAD numbers) were being combined.
+  - Added LEOALL and ALL to Satellite proxy fetch
+  - added ocena surface
+- 2025-05-29
+  - Removed debug logging
+  - Added back optional FLIR shader, which does a rough job of simulated white hot FLIR intensities from colors (green will be brighter, etc)
+  - fixed interpolation issues with custom az, and possibly others
+  - Support for importing Custom FLL (Frame, Lat, Lon) files.
+  - Using "none" for tilt type on camera object to allow for wind heading adjustment
+  - Fixed constant refresh issue
+- 2025-05-28
+  - Custom PTZ now inherits the "relative" flag from its fallback PTZ
+  - Fixed visibilt of lookView on saved sitches where it's invisible.
+- 2025-05-27
+  - Code cleanup while debugging
+  - Added LCS Model Added camera object to custom sitch
+  - Added cities data (not currently used, but whills be used to show cities on the map)
+  - Refactored TLE code from CNodeDisplayNightSky.js to TLEUtils.js Display the date range for the TLEs
+  - Clear the tleLoaded event listener after handled.
+- 2025-05-26
+  - Defer setting "Satellite" as a choice for switch nodes until satellites are loaded.
+  - Cna now use Satallite as target or camera
+  - Fixed for triggering unnecessary terrain loads when changning zoom, nTiles, or location
+  - On location lookuo, fetch elevation from open-meteo.com
+  - Added a "Go To" button for locations
+  - Added location lookup using Nominatim (Open Streetmap)
+- 2025-05-25
+  - Added alternative view preset layouts, on the 1-6 keys (and the view menu, under presets. Like side-by-side, top and bottom, 3-up, etc.
+  - Fixed propogation of videospeed from VideoView to VideoData (AFR157)
+  - Framework for versions menu (not yet used)
+  - Added distance arrows back as "measurements"
+  - Changed the delta legend on graphs to include min and max Add value display of current point on graph Fixed visiblity redraw issue
+- 2025-05-24
+  - fixed graph redrawing on being made visible.
+  - Fixed Sitch not always updating visiblity state of active inputs (like when loading, and using selectOptionQuietly)
+  - getPointBelow now always snaps to zero if terrain is below zero (i.e. ocean) Fixed inconsistencies in rendering AGL and MSL altitudes (only display msl if both the same. display negative AGL if underground)
+  - Better sanitizing of filename to strip out things like quotes and parentheses (and any other illegal char)
+  - Handle CSV AZ files with "Time" as the first column, indicating time in seconds (previously only expected "Frame")
+  - Debug logging removed
+  - Fix for view getting reset when you drag in a KML that contains some existing tracks.
+  - Removed rust test code
+  - Framework for incorporating Rust functions into the codebase (not hooked up, but working)
+- 2025-05-23
+  - Stripping assert from production builds for performance
+  - Restored alitiude adjusment and locking for  tracks.
+  - Renamed "Build-in" sitches as "Legacy" to make clear they are all older cases.
+  - Check for console when hiding sources (visual thing, so not needed)
+  - fixed import paths
+  - Caching expensive misb data fetches now in CNodeTrackFromMISB.js, allowing for multiple caches of the same misb file
+  - Reverted MISB caching, as it does not handle MISB files with multiple LLA tracks, like the center track. Need an intermediate view on the data, like a CNodeMISBDataLLA
+  - Baked the ENU -> EUS conversion step into the ECEF -> EUS transform
+  - More inlining and optimizing
+  - Optimized TrackFrom MISB recalculate by inlining code to allow for precalculating constants.
+- 2025-05-22
+  - Optimized direct fetching a position from CNodeMISBData for a specific time (not a MISB frame)
+  - CNodeMISBData caches values, speeding things up whenre there's lots of tracks (like 20+)
+  - For Switches, now only update the visiblity of the sources when the switch option changes.
+  - Fixes for track visiblity toggle, and hence fixed unneeded recalculation if a track (and its object and label) are hidden
+  - Larger steps for display tracks, and much larger for satellites (which are both fast and far away, so densely packed on screen.)
+  - Restored LOSTraverseWindTarget for older custom saves
+  - Recalculation otimizations for generic graphs and celestial arrows.
+  - Can now filter satellites by name Simplified calcSatEUS to use LLA values directly from satellite.js
+  - More setting of estabishedSitch, to prevent drag-and-drop from making unexpected changed.
+  - MQ9-type overlay better visibility handling Optimization, try not to recaculat things if their outputs don't lead to something that is dislplayed
+- 2025-05-19
+  - Added MQ9UI overlay view (invisible by default) Better menu names for graph views
+  - Fixed some issues with recalculation order, improved speed.
+  - Added dumpRoots local debug (in File Menu)
+- 2025-05-18
+  - "Dump Nodes" debugging local menu options
+- 2025-05-16
+  - Extra debug timing code for node recalculation now ignore invisible nodes when recalculating.
+  - Merge in new custom sitch things (like graphs), if on local custom sitch, and not in a regression test.
+  - Added Az Graph. and code for generic value graphs
+- 2025-05-15
+  - Added "closest to target" traverse method
+  - Drag and drop of Az and use as a custom angles controller
+  - Removed video debug logging
+  - Greatly improved video playback performance when CPU bound. Mostly avoid hangs. Large buffer if available (and for local debugging)
+  - Streamlined raw version of video decoder (with no filters)
+  - Restructuring in anticipation of multi-threading
+  - Removed explicit step flag for LLA alitude, as that made changes over sensitive (lil-gui 10xs it for some reason)
+  - Fixed display of tracks that use Sit.frames
+- 2025-05-14
+  - Longer timeout needed for visual regression tests
+  - CNodeSpecificFrame allows a node to always return the value another node would at a specific frame. Added wind driven target object track fixedTargetWind The old fixedTarget used the first frame of that track
+- 2025-05-03
+  - Merge remote-tracking branch 'origin/main'
+  - Added note about using images instead of videos
+  - Optimized CNodePositionLLA
+  - Fixed performance issue rendering tracks with lots of coincident points (like a static camera track)
+  - normalize(0,0) produces NaNs/inf. Those NaNs propagate into
+  - gl_Position, so each degenerate quad is treated by the GPU as a
+  - full‑screen triangle with undefined coordinates
+- 2025-05-02
+  - Fixed lookView video overlay
+  - Fixed warnings when detecting file type in the drop handler
+  - Cleanup when going between videos and images in the video view
+  - Basic single image video working. Needed better cleanup for going between video and image and then saving
+  - Minor docs and reordering for readability
+  - Simplified video loading in initial vide node setup
+  - Fix to allow FileManager to load legcy video files paths
+  - Refactoring video views, moving stuff out of WebCodecView
+- 2025-05-01
+  - made both dra and drop for files and the "Import File" menu entry go through th exact same path.
+- 2025-04-30
+  - Moved stopStreaming functionality from Video View to Data
+  - rename Video -> videoData to be more consistent
+  - More video refactoring
+  - Partial refactor of video view nodes and data class
+- 2025-04-29
+  - Extracted the mouse handler used by the video view
+- 2025-04-28
+  - Fixed issue with WatchObject being passed a non-string object (like par)
+  - Removed Watch noded for console build
+  - Visibility fixes for GUIValues
+  - Removed satellite data missing warning messages.
+  - Fixes to linked values calculation propagation
+  - Corrected setting watch node initial value
+  - Extracted addMathInputs for use with GUIValue links
+  - Added missing assert import
+  - Implemented total turn rate linked to turnRate, with the math links
+  - Roll limits extended to +/- 180 as it's needed for satellites
+  - Refactored to extract object independent expression evaluation
+  - Removed target wind, and not everything has it
+  - Better handling of illegal file names. Replaces illegal characters with underscore. Gives alert if it still fails.
+- 2025-04-24
+  - Tooltip
+- 2025-04-23
+  - Locking lookView to North, Compass fixes, Satellite tweaks. Use target wind for the planes
+- 2025-04-22
+  - Refactoring satellite filtering and selecting
+  - If a TLE line is 69 characters then assume it's in the correct format - which allows us to handle well-formed TLE entries with missing fields - specifically the 0 TBA - TO BE ASSIGNED entries
+  - Bump http-proxy-middleware from 2.0.7 to 2.0.9
+  - Removed old PVS info box
+- 2025-04-21
+  - Back to bun, maybe the issue was the lack of npm install locally
+  - Updated package-lock.json after doing npm install
+  - changed back to npm ci, bun install has issues with frozen lockfile errors
+  - added  --no-frozen-lockfile to bun install
+  - extended setting of "sitchEstablished" flag to reduce use editing being reset or overwritten when dragging and dropping a track
+  - Mode the in-range display from night sky to all sitches that use a night sky (and satellites) Fixed it for filtering satellites
+  - Removed limit on altitide for LLA nodes (made it elastic)
+  - Refactored satellite  menu setup to be a bit more data driven
+- 2025-04-20
+  - Fixed serializing satellite stuff
+  - Fixed satellite arrows
+  - Fixed scaling of satellites per view
+- 2025-04-19
+  - Toggle for brightest satellites Toggle for Satellite Label visibility in both views (scale not working)
+- 2025-04-18
+  - Optimized countVisibleNodes slightly
+  - Optimization of breadth-first node tree traversal. Ensures correct recalculation order with no duplicates (and no O(n^3) calculation!)
+- 2025-04-17
+  - Fixed refreshing satellite name in UI after loading
+  - Defaul traverse to "Taret Object" (i.e. no traverse path calculated)
+  - Fixed initial altitude in custom sitches
+  - Changed defautl camera mode to "Use Angles"
+  - Removed legacy "B" key usage (now used by AB measure)
+  - Fixed arrow head scaling
+  - Change "Show All" to "Show Other" for satellites, so we can turn off a filtered set like Starlink
+  - Adjusted "Go To Track" so it works better with satellites Hiding the satallite gui elements (camera track, and satellite selector) until satellites are loaded.
+  - Added option to show all satellites Added ability to select the satellite as a camera track
+- 2025-04-16
+  - Basic satellite as camera track working
+  - Docs
+- 2025-04-15
+  - Removed wrapping from wind speed gui
+  - Fixed broken PTZ menu GUI.
+  - Basic setup to get the "best" pairs of planes and display them
+- 2025-04-10
+  - Reduces the size of save files by skipping over node mods that are just "visible:true"
+  - Fixed bug where loading the same named track twices was over pruning unlinked nodes - some of which were valid. Now only prunes auto-created number and color nodes A symmptom of this was the lookCamera position being reset to default as the gui nodes were pruned.
+  - Added compasses to MISB example
+- 2025-04-09
+  - Skipping over tracks in multi-select ADSB files that are just a folder. This happens sometimes when using Geometric altitide at export
+  - Removed debug message
+  - Ignore tracks with just one point Added better console warnings
+- 2025-04-07
+  - Basic satellite filtering
+  - Fixed version number appending to urls that already have a query string (like the satellites)
+- 2025-04-05
+  - Satellite files now zipped by default. Handles zip files without a .zip extension by inspecting the signature.
+  - Updated NOde packages to latest, including three.js 173->175
+  - Reurn plain TLE if not zipping
+- 2025-04-04
+  - Extra validation of filenames/version for filesystem hosted
+- 2025-04-03
+  - Optional zipping of starlink proxy LEO getting
+  - Added LEO type for satellite fetch
+- 2025-03-18
+  - Fixed visiblity serialization
+  - Changed tracking spline interpoloation from Catmull-Rom to Cubit Spline as it's smoother
+  - Removed temporary custom patch
+  - Enabled dynamic Y axis on speed graph Fixed serialization of graphs position and visibility
+  - Removed logging, allowed smaller graph windows
+- 2025-03-17
+  - Restore sitch name if you cancel a "Save As"
+  - Don't resize canvas if the containing div is hidden, as clientWidth would be zero.
+  - Added assert to validate findStep (instead of getting into an infinte loop). Updated its description, as the old one was for a different method
+  - Changed min sized of 3d object parameters from 10cm to 1cm (0.1m to 0.01m) so we can model small things, like seagulls.
+- 2025-03-10
+  - Added tool tips for Lighting menu
+  - Added toggle all extend to ground
+  - Defer recalculation when moving camera (or other PositionLLA
+  - Fixed issue loading KML polygons/lines not in folder (was being ingterpreted as a track, now checks for that)
+- 2025-03-09
+  - Capped polygon Paths are now flat, with the cap polygon at the level of the center of the path.
+- 2025-03-08
+  - fixed giant star at 0,0 bug.
+  - Fixed setting mesh position
+  - tile mesh position now set to it's actual Lat/Lon midpoint Fixes jiggly ground. Removed redundant Utils class
+  - Changed track recalculation event to to elevationChanged, to support faster elevation scale changes
+  - Some debug logging
+  - Removed some debug logging
+  - Recalculate terrain-relative tracks via the terrainLoaded event (instead of recalculateAll, which would be excessive)
+- 2025-03-07
+  - Better color selection for track walls with no specificed dropColor No track walls for the track segments that have a data track (i.e. segments of a longer KML track)
+- 2025-03-06
+  - Minimum wall step for legacy track displays with dense data (i.e. a point every frame). Now has a 50m minimum for wall polygons
+  - A more accurate ground point detection for KML lines and polygons that are relative to the ground. RecalculateAll after new terrain elevation (and hence ground polygon collisions) loaded.
+  - Added starlink labels regression test. Fixed regression tests asking for unload confirmation (adding &ignoreunload=1 to unit test parameters
+  - Fixed issue with star labels. (Skipping stars with zero ra/dec caused the rendered stars to be out of sync with the BSC list, and so names were wrong)
+  - Extract and display paths and polygons from KML input files
+- 2025-02-27
+  - Added doesKMLContainTrack
+  - Debug logging. Fixed async issue with loading track causeing terrain loading crash due to not waiting for capabilities to be loaded. Defer all recalculateAll until after loading an asset.
+  - Added CNode log() method
+  - Reset origin logic (not used, just hooked up to the debug option in the file menu for local only
+
+
+
+
