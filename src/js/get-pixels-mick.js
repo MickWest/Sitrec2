@@ -1,32 +1,5 @@
 "use strict"
-/*
-The MIT License (MIT)
-
-Copyright (c) 2013 Mikola Lysenko
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-    The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-*/
-
-
 var ndarray = require("ndarray")
-var GifReader = require("omggif").GifReader
-const {getFileExtension} = require("../utils");
 
 class ImageQueueManager {
     constructor() {
@@ -85,119 +58,42 @@ class ImageQueueManager {
     }
 
 
-    defaultImage(url, cb) {
-        var img = new Image();
-        img.crossOrigin = "anonymous";
-        img.onload = () => {
-            var canvas = document.createElement("canvas");
-            canvas.width = img.width;
-            canvas.height = img.height;
-            var context = canvas.getContext("2d");
-            context.drawImage(img, 0, 0);
-            var pixels = context.getImageData(0, 0, img.width, img.height);
-            cb(null, ndarray(new Uint8Array(pixels.data), [img.height, img.width, 4], [4 * img.width, 4, 1], 0));
-        };
-        img.onerror = (err) => {
-            console.log("img.onerror = " +err+"  "+url)
-            cb(err);
-        };
-        // Check if errorOccurred flag is true and delay setting the src accordingly
-        if (this.errorOccurred) {
-            setTimeout(() => {
-                img.src = url;
-            }, 100); // Delay by 0.1 second
-        } else {
+defaultImage(url, cb) {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+
+    img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const context = canvas.getContext("2d");
+        context.drawImage(img, 0, 0);
+        const pixels = context.getImageData(0, 0, img.width, img.height);
+        const pixelArray = new Uint8Array(pixels.data);
+        const shape = [img.height, img.width, 4];
+        const stride = [4 * img.width, 4, 1];
+        cb(null, ndarray(pixelArray, shape, stride, 0));
+    };
+
+    img.onerror = (err) => {
+        console.log(`img.onerror = ${err}  ${url}`);
+        cb(err);
+    };
+
+    // If an error previously occurred, delay setting the image source
+    if (this.errorOccurred) {
+        setTimeout(() => {
             img.src = url;
-        }
+        }, 100); // Delay by 0.1 second
+    } else {
+        img.src = url;
     }
+}
 }
 
 // Usage
 export const imageQueueManager = new ImageQueueManager();
 
-function defaultImage(url, cb) {
-    imageQueueManager.enqueueImage(url, cb);
-}
-
-// Example usage
-// loadImage('https://example.com/image1.png', (err, result) => {
-//   if (err) {
-//     console.error(err);
-//   } else {
-//     console.log('Image 1 loaded:', result);
-//   }
-// });
-
-
-//Animated gif loading
-function handleGIF(url, cb) {
-    var xhr = new XMLHttpRequest()
-    xhr.responseType = "arraybuffer"
-    xhr.overrideMimeType("application/binary")
-    xhr.onerror = function(err) {
-        cb(err)
-    }
-    xhr.onload = function() {
-        if(xhr.readyState !== 4) {
-            return
-        }
-        var data = new Uint8Array(xhr.response)
-        var reader
-        try {
-            reader = new GifReader(data)
-        } catch(err) {
-            cb(err)
-            return
-        }
-        if(reader.numFrames() > 0) {
-            var nshape = [reader.numFrames(), reader.height, reader.width, 4]
-            var ndata = new Uint8Array(nshape[0] * nshape[1] * nshape[2] * nshape[3])
-            var result = ndarray(ndata, nshape)
-            try {
-                for(var i=0; i<reader.numFrames(); ++i) {
-                    reader.decodeAndBlitFrameRGBA(i, ndata.subarray(
-                        result.index(i, 0, 0, 0),
-                        result.index(i+1, 0, 0, 0)))
-                }
-            } catch(err) {
-                cb(err)
-                return
-            }
-            cb(undefined, result)
-        } else {
-            var nshape = [reader.height, reader.width, 4]
-            var ndata = new Uint8Array(nshape[0] * nshape[1] * nshape[2])
-            var result = ndarray(ndata, nshape)
-            try {
-                reader.decodeAndBlitFrameRGBA(0, ndata)
-            } catch(err) {
-                cb(err)
-                return
-            }
-            cb(undefined, result)
-        }
-    }
-    xhr.open("GET", url, true)
-    xhr.send()
-}
-
-
 export function getPixels(url, cb) {
-//    console.log("getPixels ("+url+")")
-//    var ext = path.extname(url)
-    var ext = getFileExtension(url)
-    switch(ext.toUpperCase()) {
-        case ".GIF":
-            handleGIF(url, cb)
-            break
-        case ".PPM":
-            handlePPM(url, cb)
-            break
-        default:
-            if(url.indexOf('data:image/gif;') === 0) {
-                handleGIF(url, cb)
-            } else {
-                defaultImage(url, cb)
-            }
-    }
+    imageQueueManager.enqueueImage(url, cb);
 }
