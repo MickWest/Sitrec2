@@ -7,9 +7,10 @@ import {
     ShaderMaterial,
     Mesh,
     AdditiveBlending,
-    Color
+    Color, Vector3
 } from 'three';
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
+import {NodeMan} from "../Globals";
 
 export class CNode3DLight extends CNode3D {
     constructor(v) {
@@ -21,8 +22,10 @@ export class CNode3DLight extends CNode3D {
 
         console.log("CNode3DLight created for light: " + this.light.name);
 
+        const size = v.size || 4; // default size if not specified
+
 // Create plane geometry
-        const geometry = new PlaneGeometry(16, 16); // adjust size as needed
+        const geometry = new PlaneGeometry(size, size); // adjust size as needed
 
 // Shader material with HDR-style disk + falloff
         const material = new ShaderMaterial({
@@ -113,7 +116,7 @@ export class CNode3DLight extends CNode3D {
             this._object.lookAt(camera.position);
         }
 
-        // // maybe sclae the billboard based on distance to camera?
+
         // const distance = this._object.position.distanceTo(view.camera.position);
         //
         // // Scale the billboard up a bit based on distance
@@ -126,16 +129,35 @@ export class CNode3DLight extends CNode3D {
 
 
         const camPos = camera.position;
-        const objPos = this._object.position;
+
+        // get the world position of the light, which will be a child of some other object like a jet or a ship
+        const objPos = this.light.getWorldPosition(new Vector3());
 
         const distance = camPos.distanceTo(objPos);
+        const fovRadians = camera.fov * (Math.PI / 180);
 
-// Instead of scale ∝ 1 / distance
-        const scaleFactor = 1 / Math.sqrt(distance);
 
-// Adjust base size as needed
-        const baseSize = 20; // tweak this
-        this._object.scale.setScalar(scaleFactor * baseSize);
+        // boostScale function to adjust the size so that there's a minimum angular size
+        function boostScale(S0, W, D, F, boost = 0.01) {
+            const base = (S0 * W) / (2 * D);
+            const addedAngle = boost * F / 2;
+            const newS = (2 * D / W) * Math.tan(Math.atan(base) + addedAngle);
+            return newS;
+        }
+
+        let newSize = boostScale(0.5, 5, distance, fovRadians, 0.01);
+
+        // how daylight is it? get the sky color from the scene
+        const sunNode = NodeMan.get("theSun", true);
+        if (sunNode !== undefined) {
+            const skyOpacity = sunNode.calculateSkyOpacity(camera.position);
+            newSize *= (1.0 - skyOpacity); // scale down the size based on the sky opacity
+        }
+        this._object.scale.setScalar(newSize);
+
+        // AND - why is moveing camera with C not working right in:
+        // - locked mode
+        // - when frame > 0
 
     }
 

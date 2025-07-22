@@ -241,7 +241,7 @@ The private video folder contains videos taken by individuals and posted on the 
 The public folder contain videos that are government produced, are by me, or are otherwise free of restrictions. They can be found here: https://www.dropbox.com/scl/fo/biko4zk689lgh5m5ojgzw/h?rlkey=stuaqfig0f369jzujgizsicyn&dl=0
 
 ## Create/Edit the config files in config/
-You will need to edit shared.env, config.js, config-install.js and config.php. The defaults will work to an extend (with no credentials for downloading Mapbox or Space-Data, etc), so the _minumum_ you need to edit is config-install.js
+You will need to edit shared.env, config.js, config-install.js and config.php. The defaults will work to an extent (with no credentials for downloading Mapbox or Space-Data, etc), so the _minumum_ you need to edit is config-install.js
 
 ### sitrec/config/shared.env
 

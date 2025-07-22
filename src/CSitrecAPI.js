@@ -7,9 +7,6 @@ class CSitrecAPI {
 
         this.debug = isLocal;
 
-        // have a richer structure with the functions in it
-        // and extract docs at the start.
-
         this.docs = {
             gotoLLA: "Move the camera to the location specified by Lat/Lon/Alt (Alt optional, defaults to 0). Parameters: lat (float), lon (float), alt (float, optional).",
             setDateTime: "Set the date and time for the simulation. Parameter: dateTime (ISO 8601 string).",
