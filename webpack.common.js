@@ -67,6 +67,9 @@ module.exports = {
         alias: {},
     },
     plugins: [
+
+    //    new webpack.debug.ProfilingPlugin(),
+
         new Dotenv({
             path: './config/shared.env',
         }),
