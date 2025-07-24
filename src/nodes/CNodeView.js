@@ -515,7 +515,7 @@ class CNodeView extends CNode {
         // calculations here:
         // infoDiv.innerHTML += " - Adjusted Scale = "+scale+"<br>";
 
-        return scale;
+        return scale / 2;
     }
 
 

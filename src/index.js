@@ -993,6 +993,7 @@ function startAnimating(fps) {
     startTime = then;
     console.log("STARTUP TIME = " + startTime/1000);
     animate();
+    setRenderOne(true);
 }
 
 

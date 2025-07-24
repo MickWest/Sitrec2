@@ -3,7 +3,6 @@ import {GlobalScene} from "./LocalFrame";
 import {wgs84} from "./LLA-ECEF-ENU";
 import {radians} from "./utils";
 import {Globals, NodeMan, Sit} from "./Globals";
-import {renderOne} from "./par";
 
 import {SITREC_APP} from "./configUtils";
 import {Texture} from "three/src/textures/Texture";
@@ -13,11 +12,11 @@ export function createSphere(radius, radius1, segments) {
     const sphere = new Mesh(
         new SphereGeometry(radius, segments, segments),
         new MeshPhongMaterial({
-            map: new TextureLoader().load(SITREC_APP+'data/images/2_no_clouds_4k.jpg',renderOne),
+            map: new TextureLoader().load(SITREC_APP+'data/images/2_no_clouds_4k.jpg'),
      //       map: new TextureLoader().load(SITREC_APP+'data/images/Earthlights_2002.jpg'),
-            bumpMap: new TextureLoader().load(SITREC_APP+'data/images/elev_bump_4k.jpg',renderOne),
+            bumpMap: new TextureLoader().load(SITREC_APP+'data/images/elev_bump_4k.jpg'),
             bumpScale: 0.005,
-            specularMap: new TextureLoader().load(SITREC_APP+'data/images/water_4k.png',renderOne),
+            specularMap: new TextureLoader().load(SITREC_APP+'data/images/water_4k.png'),
             //           specular:    new Color('grey'),
             specular: new Color('#222222'),
             color: new Color('white'),
@@ -37,7 +36,7 @@ export var nightTexture = new Texture(); // just a dummy texture to avoid null c
 let nightTextureLoaded = false; //
 
 export function updateNightTexture(noNightLights) {
-    //nightTexture = new TextureLoader().load(SITREC_APP+'data/images/Earthlights_2002.jpg',renderOne);
+    //nightTexture = new TextureLoader().load(SITREC_APP+'data/images/Earthlights_2002.jpg');
 
     if (noNightLights) {
         // if no night lights, just set the night texture to null
@@ -90,9 +89,9 @@ export function updateNightTexture(noNightLights) {
 export function createSphereDayNight(radius, radius1, segments) {
 
     const loader = new TextureLoader();
-    const dayTexture = loader.load('data/images/2_no_clouds_4k.jpg',renderOne);
+    const dayTexture = loader.load('data/images/2_no_clouds_4k.jpg');
 
-    // const nightTexture = loader.load('data/images/Earthlights_2002.jpg',renderOne);
+    // const nightTexture = loader.load('data/images/Earthlights_2002.jpg');
     // make a dummy night texture, just a black texture with a slight blue tint
     //loadNightTexture();
 

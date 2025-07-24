@@ -1496,7 +1496,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             // sprites are scaled in pixels, so we need to scale them based on the view height
 
             let scale= Sit.satScale;
-            scale = view.adjustPointScale(scale);
+            scale = view.adjustPointScale(scale*2);
             this.satelliteMaterial.uniforms.satScale.value = scale;
 
             const positions = this.satelliteGeometry.attributes.position.array;
@@ -2184,6 +2184,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.addSatellites(this.satelliteGroup, this.satelliteTextGroup)
         this.filterSatellites()
         EventManager.dispatchEvent("tleLoaded", {})
+        setRenderOne(2); // force a render update after loading the TLE data, allowing two frames for the update to take effect
     }
 
     removeSatellites() {

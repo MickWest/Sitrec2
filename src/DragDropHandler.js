@@ -375,6 +375,8 @@ class CDragDropHandler {
     // @param {ArrayBuffer} parsedFile - The parsed file data (from parseResult)
     handleParsedFile(filename, parsedFile) {
 
+        setRenderOne(2)
+
         const fileManagerEntry = FileManager.list[filename];
 
         const fileExt = getFileExtension(filename);

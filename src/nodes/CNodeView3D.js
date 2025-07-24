@@ -1,7 +1,7 @@
 import {par} from "../par";
 import {f2m, normalizeLayerType} from "../utils";
 import {getLocalNorthVector, XYZ2EA, XYZJ2PR} from "../SphericalMath";
-import {CustomManager, Globals, guiMenus, guiTweaks, infoDiv, keyHeld, NodeMan, Sit} from "../Globals";
+import {setRenderOne, CustomManager, Globals, guiMenus, guiTweaks, infoDiv, keyHeld, NodeMan, Sit} from "../Globals";
 import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene} from "../LocalFrame";
 import {DRAG, makeMouseRay} from "../mouseMoveView";
 import {

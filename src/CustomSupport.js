@@ -996,7 +996,7 @@ export class CCustomManager {
             // like the CSwitches turning off if they are not used
             // which they don't know immediately
             NodeMan.recalculateAllRootFirst()
-            setRenderOne(true);
+            setRenderOne(3);
 
         })
 
