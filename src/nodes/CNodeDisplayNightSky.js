@@ -1438,24 +1438,15 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         let attentuation = Math.max(0, 1 - skyBrightness);
         starScale *= attentuation
 
-        //   assert(starScale < 2, "starScale is too big: "+starScale);
+        starScale = view.adjustPointScale(starScale)
         this.starMaterial.uniforms.starScale.value = starScale;
         //infoDiv.innerHTML += `<br>${view.id}: starScale = ${starScale.toFixed(3)}; skyBrightness = ${skyBrightness.toFixed(3)}<br>`;
-        let scale = 1;
-        scale = view.adjustPointScale(scale)
-
-        // this.starMaterial.uniforms.pointScale.value = Math.sqrt(view.widthPx/this.nominalViewWidth);
-//        this.starMaterial.uniforms.pointScale.value = view.widthPx/this.nominalViewWidth;
-        this.starMaterial.uniforms.pointScale.value = scale;
-
     }
 
     updateSatelliteScales(view) {
 
         const camera = view.camera;
-
         const isLookView = (view.id === "lookView");
-
 
         // for optimization we are not updating every scale on every frame
         if (camera.satTimeStep === undefined) {
@@ -1466,13 +1457,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             if (camera.satStartTime >= camera.satTimeStep)
                 camera.satStartTime = 0;
         }
-
-     //   console.log("camera.satStartTime = "+camera.satStartTime)
-
-
-
-
-
 
         const toSun = this.toSun;
         const fromSun = this.fromSun
@@ -1509,22 +1493,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             // }
 
 
-            this.satelliteMaterial.uniforms.cameraFOV.value = camera.fov;
-
             // sprites are scaled in pixels, so we need to scale them based on the view height
 
             let scale= Sit.satScale;
             scale = view.adjustPointScale(scale);
-
-
             this.satelliteMaterial.uniforms.satScale.value = scale;
-
-  //           // we are scaling for optical intensity (area),but scale is linear
-  //           // so we scale by the square root of the ratio of sizes
-  //           this.satelliteMaterial.uniforms.pointScale.value = Math.sqrt(view.widthPx/this.nominalViewWidth);
-  // //ALSO DO THIS FOR STARS??? All seems a bit ah hoc
-
-
 
             const positions = this.satelliteGeometry.attributes.position.array;
             const magnitudes = this.satelliteGeometry.attributes.magnitude.array;
@@ -1579,20 +1552,12 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                     }
                 }
 
-
-
-
                 if (!isLookView) {
                     scale *= 2;
                 }
 
-
                 // fade will be 1 for full visible sats, < 1 as they get hidden
                 if (fade > 0) {
-
-
-
-
 
                     // checking for flares
                     // we take the vector from the camera to the sat
@@ -1630,11 +1595,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                             if (satData.number === 25544) {
                                 scale *= 3; // ISS is quite a bit bigger
                             }
-
-
-
                         }
-
 
                         const spread = this.flareAngle
                         const ramp = spread * 0.25; //
@@ -1654,15 +1615,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                                 glintScale = fade * glintSize;
                             } else {
                                 d = d - middle; // shift the angle to over the ramp region
-//                                glintScale = 1 + fade * glintSize * ((spread-middle) - d )/ (spread-middle);
                                 glintScale = fade * glintSize * (ramp - d ) * (ramp-d)/ (ramp * ramp);
                             }
 
-
-
-//                            scale *= glintScale
                             scale += glintScale
-
 
                             // arrows from camera to sat, and from sat to sun
                             var arrowHelper = DebugArrowAB(satData.name, this.camera.position, satPosition, (belowHorizon?"#303030":"#FF0000"), true, this.sunArrowGroup, 10, LAYER.MASK_HELPERS)
@@ -2011,9 +1967,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         uniform float cameraFOV;
         uniform float starScale;
-        uniform float pointScale;
         
-
         attribute float flux;
 
         void main() {
@@ -2021,8 +1975,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             //vFlux = flux;
 
             // Size proportional to flux
-//            float size = flux * starScale * (30.0 / cameraFOV) * pointScale;
-            float size = flux * starScale * pointScale;
+            float size = flux * starScale;
 
             vFlux = size;
 
@@ -2063,7 +2016,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 starTexture: { value: new TextureLoader().load(SITREC_APP+'data/images/nightsky/MickStar.png') },
                 cameraFOV: { value: 30 },
                 starScale: { value: Sit.starScale / window.devicePixelRatio },
-                pointScale: { value: 1.0 }
             },
             transparent: true,
             depthTest: true,
@@ -2296,7 +2248,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     uniform float maxSize;
     uniform float cameraFOV;
     uniform float satScale;
-    uniform float pointScale;
     attribute float magnitude;
     attribute vec3 color;
     varying float vDepth;
@@ -2312,7 +2263,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
 
         float size = mix(minSize, maxSize, magnitude);
-       size *= 3.0 * (30.0 / cameraFOV) * satScale * pointScale;
+        size *= satScale;
 
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
         gl_Position = projectionMatrix * mvPosition;
@@ -2350,7 +2301,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 starTexture: { value: new TextureLoader().load(SITREC_APP+'data/images/nightsky/MickStar.png') },
                 cameraFOV: { value: 30 },
                 satScale: { value: Sit.satScale/window.devicePixelRatio },
-                pointScale: { value: 1.0 }, // scale for the points
                 ...sharedUniforms,
             },
             transparent: true,
