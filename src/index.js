@@ -844,8 +844,10 @@ async function setupFunctions() {
             if (result) {
                 Sit.lat = result.lat;
                 Sit.lon = result.lon;
-                Sit.TerrainModel.lat = result.lat;
-                Sit.TerrainModel.lon = result.lon;
+                if (Sit.TerrainModel) {
+                    Sit.TerrainModel.lat = result.lat;
+                    Sit.TerrainModel.lon = result.lon;
+                }
                 gotLocation = true;
                 console.log("Approximate location set to: " + Sit.lat + ", " + Sit.lon);
             } else {
@@ -937,8 +939,8 @@ async function setupFunctions() {
             fixedCameraPosition.agl = true; // set AGL to true, so we adjust the altitude above ground level
 
         } else {
-            NodeMan.get("cameraLat").value = lat;
-            NodeMan.get("cameraLon").value = lon;
+            NodeMan.get("cameraLat").value = Sit.lat;
+            NodeMan.get("cameraLon").value = Sit.lon;
         }
         const EUS = LLAToEUS(Sit.lat, Sit.lon, 0);
         NodeMan.get("mainCamera").goToPoint(EUS,1000000,2000000);
