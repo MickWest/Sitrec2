@@ -27,7 +27,7 @@ import {
     GlobalDateTimeNode,
     Globals,
     guiMenus,
-    guiShowHide,
+    guiShowHide, infoDiv,
     NodeMan,
     Sit
 } from "../Globals";
@@ -150,7 +150,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.BSC_NAME = [];
         this.commonNames = {};
 
-        this.nominalViewWidth = 2*948; // expected width of the look view in pixels, for scaling point sprites
 
         // globe used for collision
         // and specifying the center of the Earth
@@ -1330,13 +1329,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         if (this.useDayNight) {
             const sun = Globals.sunTotal / Math.PI;
             this.sunLevel = sun;
-            const blue = new Vector3(0.53,0.81,0.92)
+            const blue = new Vector3(0.53, 0.81, 0.92)
             blue.multiplyScalar(sun)
             this.skyColor = new Color(blue.x, blue.y, blue.z)
         }
-
-
-
 
 
         this.celestialSphere.quaternion.identity()
@@ -1399,10 +1395,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         let observer = new Astronomy.Observer(Sit.lat, Sit.lon, 0);
         // update the planets position for the current time
         for (const [name, planet] of Object.entries(this.planetSprites)) {
-            this.updatePlanetSprite(name, planet.sprite, nowDate, observer,100)
+            this.updatePlanetSprite(name, planet.sprite, nowDate, observer, 100)
         }
 
-        if ( this.showSatellites && this.TLEData) {
+        if (this.showSatellites && this.TLEData) {
             // Update satellites to correct position for nowDate
             // for (const [index, sat] of Object.entries(this.TLEData.satData)) {
             //     const success = this.updateSatelliteSprite(sat.spriteText, sat, nowDate)
@@ -1425,8 +1421,32 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             globeCircle2.normal = this.fromSun.clone().normalize();
             globeCircle2.rebuild();
         }
+    }
 
 
+    updateStarScales(view) {
+
+        const camera = view.camera;
+
+        let starScale = Sit.starScale;
+        this.starMaterial.uniforms.cameraFOV.value = camera.fov;
+
+        // scale based on sky brightness at camera location
+        const sunNode = NodeMan.get("theSun",true);
+        const skyBrightness = sunNode.calculateSkyBrightness(camera.position);
+        //console.log("skyBrightness = "+skyBrightness)
+        let attentuation = Math.max(0, 1 - skyBrightness);
+        starScale *= attentuation
+
+        //   assert(starScale < 2, "starScale is too big: "+starScale);
+        this.starMaterial.uniforms.starScale.value = starScale;
+        //infoDiv.innerHTML += `<br>${view.id}: starScale = ${starScale.toFixed(3)}; skyBrightness = ${skyBrightness.toFixed(3)}<br>`;
+        let scale = 1;
+        scale = view.adjustPointScale(scale)
+
+        // this.starMaterial.uniforms.pointScale.value = Math.sqrt(view.widthPx/this.nominalViewWidth);
+//        this.starMaterial.uniforms.pointScale.value = view.widthPx/this.nominalViewWidth;
+        this.starMaterial.uniforms.pointScale.value = scale;
 
     }
 
@@ -1449,23 +1469,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
      //   console.log("camera.satStartTime = "+camera.satStartTime)
 
-        // what's this doing here? nneds to be called per camera, but not in a satellite specific function
-        this.starMaterial.uniforms.cameraFOV.value = camera.fov;
-
-        let starScale = Sit.starScale;
-
-        // scale based on sky brightness at camera location
-        const sunNode = NodeMan.get("theSun",true);
-        const skyBrightness = sunNode.calculateSkyBrightness(camera.position);
-        //console.log("skyBrightness = "+skyBrightness)
-        let attentuation = Math.max(0, 1 - skyBrightness);
-        starScale *= attentuation
-
-     //   assert(starScale < 2, "starScale is too big: "+starScale);
-        this.starMaterial.uniforms.starScale.value = starScale;
 
 
-        this.starMaterial.uniforms.pointScale.value = Math.sqrt(view.widthPx/this.nominalViewWidth);
+
+
 
         const toSun = this.toSun;
         const fromSun = this.fromSun
@@ -1503,12 +1510,19 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
 
             this.satelliteMaterial.uniforms.cameraFOV.value = camera.fov;
-            this.satelliteMaterial.uniforms.satScale.value = Sit.satScale;
 
-            // we are scaling for optical intensity (area),but scale is linear
-            // so we scale by the square root of the ratio of sizes
-            this.satelliteMaterial.uniforms.pointScale.value = Math.sqrt(view.widthPx/this.nominalViewWidth);
-  //ALSO DO THIS FOR STARS??? All seems a bit ah hoc
+            // sprites are scaled in pixels, so we need to scale them based on the view height
+
+            let scale= Sit.satScale;
+            scale = view.adjustPointScale(scale);
+
+
+            this.satelliteMaterial.uniforms.satScale.value = scale;
+
+  //           // we are scaling for optical intensity (area),but scale is linear
+  //           // so we scale by the square root of the ratio of sizes
+  //           this.satelliteMaterial.uniforms.pointScale.value = Math.sqrt(view.widthPx/this.nominalViewWidth);
+  // //ALSO DO THIS FOR STARS??? All seems a bit ah hoc
 
 
 
@@ -2007,7 +2021,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             //vFlux = flux;
 
             // Size proportional to flux
-            float size = flux * starScale * (30.0 / cameraFOV) * pointScale;
+//            float size = flux * starScale * (30.0 / cameraFOV) * pointScale;
+            float size = flux * starScale * pointScale;
 
             vFlux = size;
 

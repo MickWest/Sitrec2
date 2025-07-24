@@ -5,7 +5,7 @@
 // take their size from the div.
 //
 import {CNode} from './CNode.js'
-import {Globals, guiShowHideViews, NodeMan, Sit} from "../Globals";
+import {Globals, guiShowHideViews, infoDiv, NodeMan, Sit} from "../Globals";
 import {assert} from "../assert.js";
 import {ViewMan} from "../CViewManager";
 
@@ -27,6 +27,10 @@ class CNodeView extends CNode {
     constructor (v) {
         assert(v.id !== undefined,"View Node Requires ID")
         super(v)
+
+        this.nominalViewWidth = 2*948; // expected width of the look view in pixels, for scaling point sprites
+        this.nominalViewHeight = 1080
+
 
         // optionally make the view relative to anohther view
         this.input("relativeTo", true);
@@ -453,6 +457,65 @@ class CNodeView extends CNode {
                 }
             }
         }
+    }
+
+    adjustPointScale(scale)  {
+
+        const view = this;
+        const camera = view.camera;
+
+        // infoDiv.innerHTML += "view.id = "+view.id+"<br>";
+        // infoDiv.innerHTML += " - view.widthPx = "+view.widthPx+",  view.heightPx = "+view.heightPx+"<br>";
+        // infoDiv.innerHTML += " - view.div.clientWidth = "+view.div.clientWidth+", view.div.clientHeight = "+view.div.clientHeight+"<br>";
+        // infoDiv.innerHTML += " - view.canvas.width = "+view.canvas.width+", view.canvas.height = "+view.canvas.height+"<br>";
+        // infoDiv.innerHTML += " - this.nominalViewWidth = "+this.nominalViewWidth+"<br>";
+        // infoDiv.innerHTML += " - input Scale = "+scale+"<br>";
+        // infoDiv.innerHTML += " - view.in.canvasWidth = "+view.in.canvasWidth+"<br>";
+        // infoDiv.innerHTML += " - window.devicePixelRatio = "+window.devicePixelRatio+"<br>";
+        // infoDiv.innerHTML += " - view.canvas.width/view.widthPx = "+(view.canvas.width/view.widthPx)+"<br>";
+
+        // camera.fov is in degrees, and is the vertical FOV of the camera in this viewpoirt
+        // view.widthPx is the width of the viewport in screen-space pixels The size of the containing div
+        // view.heightPx is the height of the viewport in screen-space pixels
+        // if (!this.in.canvasWidth) i.e. no custom canvas width set
+        //    view.canvas.width is the width of the canvas in device pixels
+        //    view.canvas.height is the height of the canvas in device pixels
+        // else
+        //    view.canvas.width is the width of an off-screen canvas in device pixels
+        //    view.canvas.height is the height of an off-screen canvas in device pixels
+        //    this off-screen canvas is used to render the view, and then the result is drawn to the screen
+        // end if
+        // widonew.devicePixelRatio is the ratio of device pixels to screen pixels (usually 2 for retina displays)
+        //
+        //
+
+        // we are rending sprites as point sprites, so we need to scale them
+        // by the size of the viewport in screen pixels, and the FOV of the camera
+        // accounting for the device pixel ratio
+        // and the
+
+        // firsgure out how many canvas pixels high the viewport is
+        // we know that's one FOV height
+        // for angular size is proportional to that
+        let veticalCanvasPx;
+
+        if (view.in.canvasWidth) {
+            // if we have a fixed canvas width, then the height is the same
+            // as the width, so we can use that
+            veticalCanvasPx = view.canvas.height;
+        } else {
+            // if we don't have a fixed canvas width, then the height is the same as the width
+            // so we can use that
+            veticalCanvasPx = view.heightPx;
+        }
+
+        scale *= (veticalCanvasPx / view.nominalViewHeight)
+        scale *= 45/view.camera.fov; // 45 is the default FOV, so we scale by that
+
+        // calculations here:
+        // infoDiv.innerHTML += " - Adjusted Scale = "+scale+"<br>";
+
+        return scale;
     }
 
 

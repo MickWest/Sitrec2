@@ -631,6 +631,7 @@ export class CNodeView3D extends CNodeViewCanvas {
 
             // // scale the sprites one for each viewport
             const nightSkyNode = NodeMan.get("NightSkyNode")
+            nightSkyNode.updateStarScales(this)
             nightSkyNode.updateSatelliteScales(this)
 
             if (this.id === "lookView" && nightSkyNode.showSatelliteNames
