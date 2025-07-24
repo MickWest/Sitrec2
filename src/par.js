@@ -86,8 +86,3 @@ export function resetPar() {
     }
 
 }
-
-
-export function renderOne() {
-    par.renderOne = true;
-}

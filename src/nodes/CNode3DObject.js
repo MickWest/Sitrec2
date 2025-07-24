@@ -32,8 +32,7 @@ import {
     TorusKnotGeometry, TubeGeometry, Vector2, Vector3,
     WireframeGeometry
 } from "three";
-import {FileManager, Globals, guiMenus, guiShowHide, NodeMan} from "../Globals";
-import {par} from "../par";
+import {FileManager, Globals, guiMenus, guiShowHide, NodeMan, setRenderOne} from "../Globals";
 import {assert} from "../assert";
 import {disposeObject, disposeScene, propagateLayerMaskObject, setLayerMaskRecursive} from "../threeExt";
 import {loadGLTFModel} from "./CNode3DModel";
@@ -494,7 +493,7 @@ export class CNode3DObject extends CNode3DGroup {
 
         this.modelOrGeometryMenu = this.gui.add(this, "modelOrGeometry", ["geometry", "model"]).listen().name("Model or Geometry").onChange((v) => {
             this.rebuild();
-            par.renderOne = true
+            setRenderOne(true)
         }).tooltip("Select whether to use a 3D Model or a generated geometry for this object");
 
         this.modelOrGeometryMenu.isCommon = true;
@@ -503,7 +502,7 @@ export class CNode3DObject extends CNode3DGroup {
         this.modelMenu = this.gui.add(this, "selectModel", Object.keys(ModelFiles)).name("Model").onChange((v) => {
             this.modelOrGeometry = "model"
             this.rebuild();
-            par.renderOne = true
+            setRenderOne(true)
         }).tooltip("Selecte a 3D Model to use for this object");
 
         this.modelMenu.isCommon = true;
@@ -517,7 +516,7 @@ export class CNode3DObject extends CNode3DGroup {
 
         this.gui.add(this, "displayBoundingBox").name("Display Bounding Box").listen().onChange((v) => {
             this.rebuild();
-            par.renderOne = true
+            setRenderOne(true)
         })
             .tooltip("Display the bounding box of the object with dimensions")
             .isCommon = true;
@@ -681,7 +680,7 @@ export class CNode3DObject extends CNode3DGroup {
                 controller = gui.addColor(toHere, key).name(key).listen()
                     .onChange((v) => {
                         this.rebuild();
-                        par.renderOne = true
+                        setRenderOne(true)
                     }).tooltip(tip);
 
             } else if (Array.isArray(params)) {
@@ -696,7 +695,7 @@ export class CNode3DObject extends CNode3DGroup {
                     controller = gui.add(toHere, key, params[1], params[2], params[3]).name(key).listen()
                         .onChange((v) => {
                             this.rebuild();
-                            par.renderOne = true
+                            setRenderOne(true)
                         }).tooltip(tip);
                     if (isElastic) {
                         // elastic means the range will expand 2x when you go of the right end
@@ -714,7 +713,7 @@ export class CNode3DObject extends CNode3DGroup {
                                 this.modelOrGeometry = "geometry"
                             }
                             this.rebuild();
-                            par.renderOne = true
+                            setRenderOne(true)
                         }).tooltip(tip);
                 }
 
@@ -724,7 +723,7 @@ export class CNode3DObject extends CNode3DGroup {
                 controller = gui.add(toHere, key).name(key).listen()
                     .onChange((v) => {
                         this.rebuild();
-                        par.renderOne = true
+                        setRenderOne(true)
                     }).tooltip(tip);
             }
 

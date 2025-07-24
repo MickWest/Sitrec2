@@ -1,11 +1,10 @@
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CRegionSelector} from "../CRegionSelector";
 import {CNodeCurveEditor} from "./CNodeCurveEdit";
-import {FileManager, gui, NodeMan, Sit} from "../Globals";
+import {FileManager, gui, NodeMan, setRenderOne, Sit} from "../Globals";
 import {RollingAverage} from "../utils";
 import {CNodeArray} from "./CNodeArray";
 import {CNodeGraphSeries} from "./CNodeGraphSeries";
-import {par} from "../par";
 import {assert} from "../assert.js";
 
 
@@ -295,7 +294,7 @@ export class CNodeImageAnalysis extends CNodeImageView {
             this.graph.editorView.recalculate()
             this.makeImageFromPixels()
         }
-        par.renderOne = true;
+        setRenderOne(true);
     }
 
 

@@ -7,6 +7,7 @@ import {par} from "./par";
 import {V2} from "./threeUtils";
 import {ViewMan} from "./CViewManager";
 import {mouseInViewOnly} from "./ViewUtils";
+import {setRenderOne} from "./Globals";
 
 var mouseDragView
 var mouseDown = false
@@ -87,7 +88,7 @@ export function onDocumentMouseDown(event) {
     }
 
     // click forces update
-    par.renderOne = true;
+    setRenderOne(true);
 
     mouseDown = true;
 }
@@ -125,7 +126,7 @@ export function onDocumentMouseMove(event) {
 
     // Mouse dragging is likely to need rendering update
     if (mouseDown)
-        par.renderOne = true;
+        setRenderOne(true);
 
     mouseLastX = mouseX;
     mouseLastY = mouseY;
@@ -157,7 +158,7 @@ export function onDocumentDoubleClick(event) {
             }
         }
     })
-    par.renderOne = true;
+    setRenderOne(true);
 }
 
 export function makeMouseRay(view, mouseX, mouseY) {

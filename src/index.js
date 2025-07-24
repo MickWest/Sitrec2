@@ -22,7 +22,7 @@ import {
     setInfoDiv,
     setNodeFactory,
     setNodeMan,
-    setNullNode,
+    setNullNode, setRenderOne,
     setSit,
     setSitchMan,
     setUnits,
@@ -1048,9 +1048,12 @@ function renderMain(elapsed) {
 
     if (Sit.animated) {
         var lastFrame = par.frame
+        // upateFrame will update the frame number based on either user
+        // input, or the elapsed time since the last frame
+        // (unless paused or noLogic is set)
         updateFrame(elapsed)
         if (lastFrame !== par.frame)
-            par.renderOne = true;
+            setRenderOne(true);
     }
 
     // frame number forced by URL parameter
@@ -1058,64 +1061,64 @@ function renderMain(elapsed) {
         par.frame = Globals.fixedFrame;
         GlobalDateTimeNode.update(Globals.fixedFrame);
         par.paused = true;
-        par.renderOne = true;
+        setRenderOne(true);
     }
 
 
     DragDropHandler.checkDropQueue();
 
-    if (par.paused && !par.renderOne && !par.noLogic) return;
-
-//    console.log(par.renderOne)
+//    if (par.paused && !par.renderOne && !par.noLogic) return;
+    if (par.paused && !par.renderOne) return;
 
     // par.renderOne is a flag set whenever something is done that forces an update.
-    //par.renderOne = false;
     if (par.renderOne === true) {
-        par.renderOne = 1;
-    }
-    // allow it to be a number if we want to force more than one frame render
-    if (par.renderOne > 0) {
-//        console.log("Render One = "+par.renderOne)
-        par.renderOne--;
-    }
-
-    Globals.menuBar.updateListeners();
-
-    if (Sit.updateFunction) {
-        Sit.updateFunction(par.frame)
+        setRenderOne(false);
+    } else if (typeof par.renderOne === "number") {
+        // allow it to be a number if we want to force more than one frame render
+        if (par.renderOne > 0) {
+            par.renderOne--;
+        }
     }
 
-    if (Sit.update) {
-        Sit.update(par.frame)
-    }
+    if (!par.noLogic) {
+        Globals.menuBar.updateListeners();
 
-    if (Sit.isCustom) {
-        CustomManager.update()
-    }
-
-    NodeMan.iterate((key, node) => {
-        if (node.update !== undefined) {
-            node.update(par.frame)
+        if (Sit.updateFunction) {
+            Sit.updateFunction(par.frame)
         }
 
-        // debug_v should not be used in production
-        if (node.debug_v !== undefined) {
-            node.debug_v()
+        if (Sit.update) {
+            Sit.update(par.frame)
         }
 
-    })
+        if (Sit.isCustom) {
+            CustomManager.update()
+        }
+
+        NodeMan.iterate((key, node) => {
+            if (node.update !== undefined) {
+                node.update(par.frame)
+            }
+
+            // debug_v should not be used in production
+            if (node.debug_v !== undefined) {
+                node.debug_v()
+            }
+
+        })
 
 
-    windowChanged();
+        windowChanged();
 
-    if (Sit.jetStuff && Sit.showGlare) {
-        if (glareSprite) {
-            glareSprite.position.set(targetSphere.position.x, targetSphere.position.y, targetSphere.position.z)
+        if (Sit.jetStuff && Sit.showGlare) {
+            if (glareSprite) {
+                glareSprite.position.set(targetSphere.position.x, targetSphere.position.y, targetSphere.position.z)
 
-            if (!glareSprite.visible)
-                targetSphere.layers.enable(LAYER.podsEye)
-            else
-                targetSphere.layers.disable(LAYER.podsEye)
+                if (!glareSprite.visible)
+                    targetSphere.layers.enable(LAYER.podsEye)
+                else
+                    targetSphere.layers.disable(LAYER.podsEye)
+            }
         }
     }
 

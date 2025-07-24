@@ -5,7 +5,7 @@ import {CNode3D} from "./CNode3D";
 import {normalizeLayerType} from "../utils";
 import {assert} from "../assert.js";
 import {convertColorInput} from "../ConvertColorInputs";
-import {guiShowHide} from "../Globals";
+import {guiShowHide, setRenderOne} from "../Globals";
 import {par} from "../par";
 import {toggles} from "../KeyBoardHandler";
 
@@ -101,7 +101,7 @@ export class CNode3DGroup extends CNode3D {
         this.visible = this.group.visible;
         const hider = guiShowHide.add(this, "visible").name(name).listen().onChange((v) => {
             this.show(v);
-            par.renderOne = true;
+            setRenderOne(true);
         })
 
         if (key) {

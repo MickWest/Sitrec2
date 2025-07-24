@@ -1,4 +1,4 @@
-import {Globals, guiMenus, NodeMan, Sit} from "../Globals";
+import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {CNode} from "./CNode";
 import {par} from "../par";
 import {isKeyCodeHeld, isKeyHeld} from "../KeyBoardHandler";
@@ -196,7 +196,7 @@ export class CNodeDateTime extends CNode {
             this.adjustGUIForTimezone();
             this.populate();
             forceUpdateUIText();
-            par.renderOne = true;
+            setRenderOne(true);
         })
         .tooltip("Use the time zone in the UI above\nThis will change the date and time to be in the selected time zone, rather than UTC.\nThis is useful for displaying the date and time in a specific time zone, such as the local time zone of the video or the location.");
 
@@ -206,7 +206,7 @@ export class CNodeDateTime extends CNode {
                 console.log("Timezone "+v)
                 this.populate();
                 forceUpdateUIText();
-                par.renderOne = true;
+                setRenderOne(true);
             }
         )
             .tooltip("The time zone to display the date and time in in the look view\nAlso in the UI if the 'Use Time Zone in UI' is checked");
@@ -401,7 +401,7 @@ export class CNodeDateTime extends CNode {
                     this.syncToTrack(v)
                 }
                 this.populate();
-                par.renderOne = true
+                setRenderOne(true)
 
                 // reset it back to the default
                 // so we can select the same thing again
@@ -496,7 +496,7 @@ export class CNodeDateTime extends CNode {
 
         this.dateNow = startToNowDateTime(this.dateStart);
         this.populate();
-        par.renderOne = true;
+        setRenderOne(true);
     }
 
     setNowDateTime(dateTime) {
@@ -588,7 +588,7 @@ export class CNodeDateTime extends CNode {
             this.recalculateCascade()
 //            console.log("Did a time change recalc debugCounter = "+Globals.debugCounter)
             Globals.debugCascade = false;
-            par.renderOne = true;
+            setRenderOne(true);
             Globals.sitchEstablished = true;
         }
     }

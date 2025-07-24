@@ -3,7 +3,7 @@ import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
 import {par} from "../par";
 import {quickToggle} from "../KeyBoardHandler";
 import {CNodeGUIValue} from "./CNodeGUIValue";
-import {guiTweaks, NodeMan, Sit} from "../Globals";
+import {guiTweaks, NodeMan, setRenderOne, Sit} from "../Globals";
 import {CMouseHandler} from "../CMouseHandler";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CVideoWebCodecDataRaw} from "../CVideoWebCodecDataRaw";
@@ -189,7 +189,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                     this.scrubFrame -= whole;
                 }
 
-                par.renderOne = true;
+                setRenderOne(true);
             },
 
 
@@ -349,7 +349,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.posTop += offY;
         this.posBot += offY;
 
-        par.renderOne = true;
+        setRenderOne(true);
     }
 
     defaultPosition() {
@@ -377,7 +377,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.posRight = -this.posLeft;
         this.posBot = -this.posTop;
         this.positioned = true;
-        par.renderOne = true;
+        setRenderOne(true);
     }
 
 
@@ -485,7 +485,7 @@ export function addFiltersToVideoNode(videoNode) {
             videoNode.inputs.brightness.value = 1;
             videoNode.inputs.contrast.value = 1;
             videoNode.inputs.blur.value = 0;
-            par.renderOne = true;
+            setRenderOne(true);
         }
     }
 

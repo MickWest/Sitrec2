@@ -16,7 +16,7 @@
 // a display node might also be an input, like something you can drag with the mouse
 
 import {par} from "../par";
-import {FileManager, Globals, guiMenus, NodeMan, Sit} from "../Globals";
+import {FileManager, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {assert} from "../assert.js";
 import {V3} from "../threeUtils";
 import {isConsole} from "../configUtils";
@@ -729,7 +729,7 @@ class CNode {
         recalculateNodesBreadthFirst(listOfOne, f, noControllers, depth)
         // bit of a patch - whenever we do a recalculateCascade we make sure we render one frame
         // so any changes are reflected in the display
-        par.renderOne = true;
+        setRenderOne(true);
         return
 
     }

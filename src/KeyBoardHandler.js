@@ -1,4 +1,4 @@
-import {Globals, gui, guiShowHide, keyCodeHeld, keyHeld, NodeMan, Sit} from "./Globals";
+import {Globals, gui, guiShowHide, keyCodeHeld, keyHeld, NodeMan, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
 import {closeFullscreen, openFullscreen} from "./utils";
 import {Vector3} from "three";
@@ -137,7 +137,7 @@ export function quickToggle(key, start = false, toggleGui = gui) {
     if (quickToggles[key] === undefined) {
         quickToggles[key] = {gui: null, value: start};
         quickToggles[key].gui = toggleGui.add(quickToggles[key], "value").name(key).onChange(()=>{
-            par.renderOne = true;
+            setRenderOne(true);
         })
     }
     return quickToggles[key].value
@@ -185,7 +185,7 @@ export function initKeyboard() {
 
         // since there's a variety of things the keys might do, have them all render a frame
         // so that changes are reflected in the display (e.g. 'J' = toggle jet
-        par.renderOne = true;
+        setRenderOne(true);
 
 //        console.log ("Key Down: ")
 

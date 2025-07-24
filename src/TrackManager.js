@@ -6,7 +6,7 @@ import {CNodeConstant} from "./nodes/CNode";
 import * as LAYER from "./LayerMasks";
 import {Color} from "three";
 import {getFileExtension, scaleF2M} from "./utils";
-import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, Sit} from "./Globals";
+import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "./Globals";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {CManager} from "./CManager";
 import {CNodeControllerMatrix, CNodeControllerTrackPosition} from "./nodes/CNodeControllerVarious";
@@ -19,7 +19,6 @@ import {assert} from "./assert.js";
 import {getLocalSouthVector, getLocalUpVector, pointOnSphereBelow} from "./SphericalMath";
 import {closestIntersectionTime, trackBoundingBox} from "./trackUtils";
 import {CNode3DObject} from "./nodes/CNode3DObject";
-import {par} from "./par";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {CGeoJSON} from "./geoJSONUtils";
 import {CNodeSmoothedPositionTrack} from "./nodes/CNodeSmoothedPositionTrack";
@@ -459,7 +458,7 @@ class CTrackManager extends CManager {
 
         // we've loaded some tracks, and set stuff up, so ensure everything is calculated
         NodeMan.recalculateAllRootFirst()
-        par.renderOne = true;
+        setRenderOne(true);
 
     }
 
@@ -652,7 +651,7 @@ class CTrackManager extends CManager {
 
                 GlobalDateTimeNode.setStartDateTime(time);
                 GlobalDateTimeNode.recalculateCascade();
-                par.renderOne = true;
+                setRenderOne(true);
 
                 // and make the 2nd track the target track if we have a targetTrackSwitch
                 if (NodeMan.exists("targetTrackSwitch")) {

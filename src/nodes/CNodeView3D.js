@@ -758,7 +758,7 @@ export class CNodeView3D extends CNodeViewCanvas {
 
             this.effectsEnabled = true;
             guiTweaks.add(this, "effectsEnabled").name("Effects").onChange(() => {
-                par.renderOne = true
+                setRenderOne(true)
             }).tooltip("Enable/Disable All Effects")
 
             this.effects = effects;
@@ -1173,7 +1173,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // holding down command/Window let's you scrub along the track
                 if (keyHeld['meta']) {
                     par.frame = closestFrame
-                    par.renderOne = true;
+                    setRenderOne(true);
                 }
 
 
@@ -1191,7 +1191,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 if (this.showLOSArrow) {
                     DebugArrowAB("LOS from Mouse", this.camera.position, target, 0xffff00, true, GlobalScene, 0)
                 }
-                par.renderOne = true;
+                setRenderOne(true);
             }
 
             // here we are just mouseing over the globe viewport

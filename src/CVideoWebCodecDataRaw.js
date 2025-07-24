@@ -1,4 +1,4 @@
-import {FileManager, GlobalDateTimeNode, Globals, infoDiv, Sit} from "./Globals";
+import {FileManager, GlobalDateTimeNode, Globals, infoDiv, setRenderOne, Sit} from "./Globals";
 import {assert} from "./assert";
 import {loadImage, versionString} from "./utils";
 import {MP4Demuxer, MP4Source} from "./js/mp4-decode/mp4_demuxer";
@@ -151,7 +151,7 @@ export class CVideoWebCodecDataRaw extends CVideoData {
                     // if it's the last one we wanted, then tell the system to render a frame
                     // so we update the video display
                     if (frameNumber === this.lastGetImageFrame) {
-                        par.renderOne = true;
+                        setRenderOne(true);
                     }
 
                     const group = this.getGroup(frameNumber);
@@ -550,7 +550,7 @@ export class CVideoWebCodecDataRaw extends CVideoData {
         for (let g in this.groups) {
             const group = this.groups[g]
             if (group.pending > 0)
-                par.renderOne = true;
+                setRenderOne(true);
         }
 
         // if we've decoded all the frames, then make sure they get to where they are going

@@ -76,6 +76,9 @@ export function setupGUIjetTweaks(_jetTweaks) {
     guiJetTweaks = _jetTweaks
 }
 
+export function setRenderOne(value) {
+    par.renderOne = value;
+}
 
 
 // the curvature of the earth WAS adjusted for refraction using the standard 7/6R

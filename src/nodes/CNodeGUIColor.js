@@ -5,6 +5,7 @@ import {isLocal} from "../configUtils.js"
 import {assert} from "../assert.js";
 import {Color} from "three";
 import {CNodeGUIConstant} from "./CNodeGUIValue";
+import {setRenderOne} from "../Globals";
 
 export class CNodeGUIColor extends CNodeGUIConstant {
     constructor(v, _guiMenu) {
@@ -49,7 +50,7 @@ export class CNodeGUIColor extends CNodeGUIConstant {
                 if (this.onChange !== undefined) {
                     this.onChange(value)
                 }
-                par.renderOne = true;
+                setRenderOne(true);
             }
         ).name(v.desc ? v.desc : "<no desc>").listen()
 

@@ -1,5 +1,5 @@
 import { Vector3} from "three";
-import {NodeMan, Sit, GlobalDateTimeNode, Globals, FileManager, guiMenus} from "../Globals";
+import {NodeMan, Sit, GlobalDateTimeNode, Globals, FileManager, guiMenus, setRenderOne} from "../Globals";
 import {par} from "../par";
 import {CNodeViewUI} from "../nodes/CNodeViewUI";
 import {AddTimeDisplayToUI, AddTimeDisplayToUIOld} from "../UIHelpers";
@@ -400,7 +400,7 @@ export const SitNightSky = {
 
 
         // we do a par.renderOne to ensure the initial display looks good if we are paused.
-        par.renderOne = true;
+        setRenderOne(true);
     },
 
     update: function(frame) {

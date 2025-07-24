@@ -28,7 +28,7 @@ import {
     Globals,
     guiMenus,
     guiShowHide, infoDiv,
-    NodeMan,
+    NodeMan, setRenderOne,
     Sit
 } from "../Globals";
 import {
@@ -184,7 +184,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.sunArrowGroup.visible = this.showSunArrows;
         GlobalScene.add(this.sunArrowGroup)
         satGUI.add(this, "showSunArrows").listen().onChange(()=>{
-            par.renderOne=true;
+            setRenderOne(true);
             this.sunArrowGroup.visible = this.showSunArrows;
         }).name("Sun Angle Arrows")
             .tooltip("When glare is detected, show arrows from camera to satellite, and then satellite to sun")
@@ -273,7 +273,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         satelliteOptions.forEach(option => {
             satGUI.add(this, option.key).listen().onChange(() => {
-                par.renderOne = true;
+                setRenderOne(true);
                 option.action();
             }).name(option.name);
             this.addSimpleSerial(option.key);
@@ -296,7 +296,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         guiMenus.view.add(Sit,"starLimit",-2,15,0.01).name("Star Limit").listen()
             .tooltip("Brightness limit for stars to be displayed")
             .onChange(() => {
-                par.renderOne = true;
+                setRenderOne(true);
                 this.createStarSprites(this.celestialSphere);
             })
 
@@ -320,7 +320,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             .tooltip("Satellites beyond this distance will not have their names or arrows displayed")
             .onChange(() => {
                 this.filterSatellites();
-                par.renderOne = true;
+                setRenderOne(true);
             })
         this.addSimpleSerial("arrowRange");
 
@@ -389,7 +389,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
 
         guiShowHide.add(this,"showEquatorialGrid" ).listen().onChange(()=>{
-            par.renderOne=true;
+            setRenderOne(true);
             this.updateVis()
         }).name("Equatorial Grid")
         this.addSimpleSerial("showEquatorialGrid")
@@ -399,7 +399,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.celestialSphere.add(this.constellationsGroup);
         this.showConstellations = (v.showConstellations !== undefined) ? v.showConstellations : true;
         guiShowHide.add(this,"showConstellations" ).listen().onChange(()=>{
-            par.renderOne=true;
+            setRenderOne(true);
             this.updateVis()
         }).name("Constellation Lines")
         this.addSimpleSerial("showConstellations")
@@ -415,13 +415,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         this.useDayNight = (v.useDayNight !== undefined) ? v.useDayNight : true;
         guiShowHide.add(this,"useDayNight" ).listen().onChange(()=>{
-            par.renderOne=true;
+            setRenderOne(true);
         }).name("Day/Night Sky")
 
 
         this.showEquatorialGridLook = (v.showEquatorialGridLook !== undefined) ? v.showEquatorialGridLook : true;
         guiShowHide.add(this,"showEquatorialGridLook" ).listen().onChange(()=>{
-            par.renderOne=true;
+            setRenderOne(true);
             this.updateVis()
 
         }).name("Equatorial Grid in Look View")
@@ -514,7 +514,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
 
         guiShowHide.add(this, flagName).listen().onChange(()=>{
-            par.renderOne=true;
+            setRenderOne(true);
             this[groupName].show(this[flagName]);
         }).name(name+" Vector");
         this.addSimpleSerial(flagName)

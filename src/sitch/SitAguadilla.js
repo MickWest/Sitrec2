@@ -1,5 +1,5 @@
 import {par} from "../par";
-import {FileManager, gui, guiMenus, NodeMan, Sit} from "../Globals";
+import {FileManager, gui, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {
     AlwaysDepth
 } from "three";
@@ -818,7 +818,7 @@ export const SitAguadilla = {
             assert(!Number.isNaN(lookCamera.fov), "SitAguadilla: camera.fov is NaN");
             assert(lookCamera.fov !== undefined && lookCamera.fov>0 && lookCamera.fov <= 180, `bad fov ${lookCamera.fov}` )
             lookCamera.updateProjectionMatrix()
-            par.renderOne = true;
+            setRenderOne(true);
         }).listen().name("Look Cam FOV")
 
         toggler('g', guiMenus.view.add(par, 'showGraphs').listen().name("[G]raphs").onChange(value =>

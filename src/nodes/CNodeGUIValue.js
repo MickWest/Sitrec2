@@ -1,9 +1,8 @@
 // a node that lets you choose a value with a slider/input box
 import {CNodeConstant} from "./CNode";
-import {par} from "../par";
 import {isLocal} from "../configUtils.js"
 import {assert} from "../assert.js";
-import {Globals, NodeMan, Units} from "../Globals";
+import {Globals, NodeMan, setRenderOne, Units} from "../Globals";
 import {roundIfClose, stripComments} from "../utils";
 import {EventManager} from "../CEventManager";
 import {addMathInputs, evaluateExpression} from "./CNodeMath";
@@ -81,7 +80,7 @@ export class CNodeGUIValue extends CNodeGUIConstant {
                 }
                // console.log("GUIValue.onChange."+this.id);
                 EventManager.dispatchEvent("GUIValue.onChange."+this.id, value)
-                par.renderOne = true;
+                setRenderOne(true);
             }
         ).name(v.desc ? v.desc : "<no desc>").listen()
 
@@ -359,7 +358,7 @@ export class CNodeGUIFlag extends CNodeConstant {
                 if (this.onChange !== undefined) {
                     this.onChange()
                 }
-                par.renderOne = true;
+                setRenderOne(true);
             }
         ).name(v.desc ? v.desc : "<no desc>").listen()
     }

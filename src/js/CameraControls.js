@@ -19,7 +19,7 @@ import {
 	getLocalDownVector, getLocalEastVector, getLocalNorthVector,
 	getLocalUpVector, pointOnSphereBelow,
 } from "../SphericalMath";
-import {Globals, NodeFactory, NodeMan, Sit} from "../Globals";
+import {Globals, NodeFactory, NodeMan, setRenderOne, Sit} from "../Globals";
 import {CNodeControllerPTZUI} from "../nodes/CNodeControllerPTZUI";
 import {intersectSphere2, V3} from "../threeUtils";
 import {onDocumentMouseMove} from "../mouseMoveView";
@@ -146,7 +146,7 @@ class CameraMapControls {
 		this.zoomBy(Math.sign(event.deltaY));
 
 
-		par.renderOne = true;
+		setRenderOne(true);
 	}
 
 
@@ -260,7 +260,7 @@ class CameraMapControls {
 		const [x, y] = mouseToView(this.view, event.clientX, event.clientY)
 		this.mouseStart.set( x, y );
 		this.canvas.setPointerCapture(event.pointerId)
-		par.renderOne = true;
+		setRenderOne(true);
 		if (this.view.showCursor) {
 			this.view.cursorSprite.visible = true;
 		}
@@ -339,7 +339,7 @@ class CameraMapControls {
 			const groundPoint = pointAbove(cursprPos, 5,)
 
 			DebugSphere("Mouse2"+event.clientX*1000+event.clientY, groundPoint, 5, 0xFF0000)
-
+			setRenderOne(true);
 
 
 		}
@@ -348,7 +348,7 @@ class CameraMapControls {
 	//	console.log ("CameraMapControls Mouse MOVE, with non-zero state, enabled = "+this.enabled)
 		this.updateStateFromEvent(event)
 
-		par.renderOne = true;
+		setRenderOne(true);
 
 		const [x, y] = mouseToView(this.view, event.clientX, event.clientY)
 		this.mouseEnd.set( x, y );
@@ -600,18 +600,21 @@ class CameraMapControls {
 		const mainView = ViewMan.get("mainView");
 		const cursorPos = mainView.cursorSprite.position.clone();
 
+		let update = false;
 
 		if (isKeyHeld('a')) {
 			this.measureStartPoint.set(cursorPos.x, cursorPos.y, cursorPos.z);
+			update = true;
 		}
 
 		if (isKeyHeld('b')) {
 			this.measureEndPoint.set(cursorPos.x, cursorPos.y, cursorPos.z);
+			update = true;
 		}
 
 
 		// move the end of the measure arrow
-		if (this.measureStart !== null) {
+		if (update && this.measureStart !== null) {
 			const A = this.measureStartPoint;
 			const B = this.measureEndPoint;
 			const Center = V3(0, -wgs84.RADIUS, 0)

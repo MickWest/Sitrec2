@@ -6,6 +6,7 @@ import {assert} from "./assert.js";
 import {V3} from "./threeUtils";
 import {ViewMan} from "./CViewManager";
 import {mouseInViewOnly, mouseToViewNormalized} from "./ViewUtils";
+import {setRenderOne} from "./Globals";
 
 // base class for curve editors
 // has a list of positions that are the control points
@@ -509,7 +510,7 @@ export class PointEditor {
 
        // console.log("+++ Set Editor DIRTY here")
         this.dirty = true;
-        par.renderOne = true;
+        setRenderOne(true);
 
     }
 

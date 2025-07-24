@@ -1,5 +1,4 @@
-import {guiMenus, NodeMan} from "../Globals";
-import {par} from "../par";
+import {guiMenus, NodeMan, setRenderOne} from "../Globals";
 import * as LAYERS from "../LayerMasks";
 import {CNode} from "./CNode";
 
@@ -12,7 +11,7 @@ export class CNodeToggleInLookView extends CNode {
 
         this.showTrackInLook = false;
         this.guiShowInLook = guiMenus.showhide.add(this, "showTrackInLook").listen().onChange(() => {
-            par.renderOne = true;
+            setRenderOne(true);
             this.displayNode.setLayerBit(LAYERS.LOOK, this.showTrackInLook);
         }).name(name+" in look view")
     }

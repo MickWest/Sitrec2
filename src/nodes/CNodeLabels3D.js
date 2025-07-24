@@ -7,7 +7,7 @@ import * as LAYER from "../LayerMasks";
 import {calculateAltitude, DebugArrowAB, propagateLayerMaskObject, removeDebugArrow} from "../threeExt";
 import {altitudeAboveSphere, pointOnSphereBelow} from "../SphericalMath";
 import {CNodeMunge} from "./CNodeMunge";
-import {Globals, guiShowHide, infoDiv, NodeMan, Units} from "../Globals";
+import {Globals, guiShowHide, infoDiv, NodeMan, setRenderOne, Units} from "../Globals";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {par} from "../par";
 import {LLAToEUS} from "../LLA-ECEF-ENU";
@@ -63,7 +63,7 @@ export function setupMeasurementUI() {
     measurementUIVars.controller =  guiShowHide.add(Globals, "showMeasurements").name("Measurements").listen().onChange( (value) => {
 //        console.warn("%%%%%%% showMeasurements changed to " + value)
         refreshMeasurementVisibility();
-        par.renderOne = true;
+        setRenderOne(true);
     })
 
     Globals.showLabelsMain = true;

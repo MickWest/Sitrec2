@@ -1,4 +1,4 @@
-import {FileManager, gui, guiMenus, guiPhysics, NodeFactory, NodeMan, Sit, SitchMan} from "./Globals";
+import {FileManager, gui, guiMenus, guiPhysics, NodeFactory, NodeMan, setRenderOne, Sit, SitchMan} from "./Globals";
 import {CNode, CNodeConstant} from "./nodes/CNode";
 import {LLAToEUS, wgs84} from "./LLA-ECEF-ENU";
 import {CNodeGUIValue, makeCNodeGUIValue} from "./nodes/CNodeGUIValue";
@@ -1294,7 +1294,7 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             guiPhysics.add(par, 'jetPitch', -8, 8, 0.01).onChange(function () {
                 curveChanged();
                 // calculateGlareStartAngle();
-                par.renderOne = true;
+                setRenderOne(true);
             }).listen().name('Jet Pitch')
             Sit.update = function(f) {
                 let IRW = true;

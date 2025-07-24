@@ -1,5 +1,5 @@
 import {CNodeGUIColor} from "./CNodeGUIColor";
-import {guiMenus, guiShowHide, NodeMan} from "../Globals";
+import {guiMenus, guiShowHide, NodeMan, setRenderOne} from "../Globals";
 import {CNode} from "./CNode";
 import {par} from "../par";
 import * as LAYERS from "../LayerMasks";
@@ -24,7 +24,7 @@ export class CNodeTrackGUI extends CNode {
 
         this.showTrackInLook = false;
         this.guiShowInLook = this.metaTrack.guiFolder.add(this, "showTrackInLook").listen().onChange(()=>{
-            par.renderOne=true;
+            setRenderOne(true);
             // this.metaTrack has a trackDisplayNode and a trackDisplayDataNode and a displayTargetSphere
             // need to set their group mask bit corresponding to VIEW.LOOK
             this.setTrackVisibility(this.showTrackInLook);

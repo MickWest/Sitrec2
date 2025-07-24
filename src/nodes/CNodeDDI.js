@@ -2,6 +2,7 @@ import {CNodeViewUI} from "./CNodeViewUI";
 import {Vector2} from "three";
 import {par} from "../par";
 import {mouseToCanvas} from "../ViewUtils";
+import {setRenderOne} from "../Globals";
 
 // A DDI is a screen in a fighter jet, F/A-18 or similar
 // it's square and has five buttons on each edge (10 horizontal, 10 vertical)
@@ -116,7 +117,7 @@ export class CNodeDDI extends CNodeViewUI {
                     if (b.callback) {
                         b.callback(b)
                     }
-                    par.renderOne = true;
+                    setRenderOne(true);
                 }
             }
         })

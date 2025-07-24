@@ -1,13 +1,11 @@
-import {FileManager, GlobalDateTimeNode, NodeMan} from "../Globals";
+import {FileManager, GlobalDateTimeNode, NodeMan, setRenderOne} from "../Globals";
 import {ECEFToLLAVD_Sphere, EUSToECEF, LLAToEUS} from "../LLA-ECEF-ENU";
 import {DebugSphere, removeDebugSphere} from "../threeExt";
 import {Group, Raycaster, Vector2} from "three";
 import {GlobalScene} from "../LocalFrame";
 import {makeMouseRay} from "../mouseMoveView";
-import {MASK_MAINRENDER} from "../LayerMasks";
 import * as LAYERS from "../LayerMasks";
 import {CNodeViewUI} from "../nodes/CNodeViewUI";
-import {par} from "../par";
 import {ViewMan} from "../CViewManager";
 
 export const SitFAA2023 = {
@@ -200,7 +198,7 @@ export const SitFAA2023 = {
 
 
             this.redoIndexSphere();
-            par.renderOne = true;
+            setRenderOne(true);
 
         }
     },

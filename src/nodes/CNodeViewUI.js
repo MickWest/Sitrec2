@@ -2,9 +2,8 @@
 // uses a 2d canvas that optionally sits on top of a CView
 import {cos, getTextBBox, radians, sin} from "../utils";
 import {CUIText} from "./CNodeView";
-import {NodeMan} from "../Globals";
+import {NodeMan, setRenderOne} from "../Globals";
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
-import {par} from "../par";
 
 export class CNodeViewUI extends CNodeViewCanvas2D {
     // constructor is passed a CView object or id, if null then this is stand-alone
@@ -253,7 +252,7 @@ export class CNodeViewUI extends CNodeViewCanvas2D {
                 t.checkListener();
             }
         })
-        par.renderOne = true;
+        setRenderOne(true);
       //  this.render(par.frame);
     }
 }

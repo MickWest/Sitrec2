@@ -1,5 +1,5 @@
 import { par } from "../par";
-import { NodeMan, Sit } from "../Globals";
+import {NodeMan, setRenderOne, Sit} from "../Globals";
 import { CNode } from "./CNode";
 import {parseBoolean} from "../utils";
 
@@ -175,7 +175,7 @@ export class CNodeFrameSlider extends CNode {
 
         const newFrame = (frame) => {
             par.frame = frame;
-            par.renderOne = true;
+            setRenderOne(true);
         };
 
         const getFrameFromSlider = () => {

@@ -1,7 +1,7 @@
 // CNodeDisplaySkyOverlay takes a CNodeCanvas derived node, CNodeDisplayNightSky and a camera
 // and displays star names on an overlay
 import {CNodeViewUI} from "./CNodeViewUI";
-import {GlobalDateTimeNode, guiShowHide, Sit} from "../Globals";
+import {GlobalDateTimeNode, guiShowHide, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
 import {raDec2Celestial} from "../CelestialMath";
 import {bestSat} from "../TLEUtils";
@@ -23,9 +23,9 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         this.showSatelliteNames = false;
         this.showStarNames = false;
 
-        //    guiShowHide.add(this,"showSatelliteNames" ).onChange(()=>{par.renderOne=true;}).name(this.overlayView.id+" Sat names")
+        //    guiShowHide.add(this,"showSatelliteNames" ).onChange(()=>{setRenderOne(true);}).name(this.overlayView.id+" Sat names")
         guiShowHide.add(this, "showStarNames").onChange(() => {
-            par.renderOne = true;
+            setRenderOne(true);
         }).name(this.overlayView.id + " Star names").listen();
         this.addSimpleSerial("showStarNames");
 

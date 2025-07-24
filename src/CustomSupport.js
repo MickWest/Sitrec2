@@ -6,7 +6,7 @@ import {
     guiMenus,
     infoDiv,
     NodeMan,
-    setCustomManager,
+    setCustomManager, setRenderOne,
     Sit,
     Units
 } from "./Globals";
@@ -996,7 +996,7 @@ export class CCustomManager {
             // like the CSwitches turning off if they are not used
             // which they don't know immediately
             NodeMan.recalculateAllRootFirst()
-            par.renderOne = true;
+            setRenderOne(true);
 
         })
 

@@ -1,6 +1,5 @@
 import {CNodeController} from "./CNodeController";
-import {guiMenus, NodeMan, Sit} from "../Globals";
-import {par} from "../par";
+import {guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {trackAcceleration, trackDirection, trackVelocity} from "../trackUtils";
 import {V3} from "../threeUtils";
 import {Matrix4} from "three";
@@ -59,7 +58,7 @@ export class CNodeControllerObjectTilt extends CNodeController {
                 bottomPointingAir:"bottomPointingAir",
                 glareAngle:"glareAngle",
             }).name("Object Orientation type")
-                .listen(()=>{par.renderOne = true})
+                .listen(()=>{setRenderOne(true)})
         }
 
         // optional input for the angle of attack

@@ -1,9 +1,8 @@
 //////////////////////////////////////////////////////
 ///  DRAG AND DROP FILES?
 import {TrackManager} from "./TrackManager";
-import {FileManager, Globals, NodeMan, setNewSitchObject, Sit} from "./Globals";
+import {FileManager, Globals, NodeMan, setNewSitchObject, setRenderOne, Sit} from "./Globals";
 import {cos, getFileExtension, isSubdomain, radians} from "./utils";
-import {par} from "./par";
 import {textSitchToObject} from "./RegisterSitches";
 import {ModelFiles} from "./nodes/CNode3DObject";
 import {LLAToEUS} from "./LLA-ECEF-ENU";
@@ -365,7 +364,7 @@ class CDragDropHandler {
 
                 }
                 console.log("parseResult: DONE Parse " + filename)
-                par.renderOne = true;
+                setRenderOne(true);
             })
     }
 

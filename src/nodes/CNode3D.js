@@ -1,5 +1,5 @@
 import {CNode} from "./CNode";
-import {guiShowHide, mainLoopCount, NodeFactory, NodeMan} from "../Globals";
+import {guiShowHide, mainLoopCount, NodeFactory, NodeMan, setRenderOne} from "../Globals";
 import {par} from "../par";
 import {assert} from "../assert.js";
 import {normalizeLayerType} from "../utils";
@@ -24,7 +24,7 @@ export class CNode3D extends CNode {
 
     // add a gui checkbox toggle for a member variable
     guiToggle(member, name) {
-        guiShowHide.add(this, member).name(name ?? member).listen().onChange((v) => {par.renderOne = true})
+        guiShowHide.add(this, member).name(name ?? member).listen().onChange((v) => {setRenderOne(true)})
 
         // as its something controlled by the UI, we need to ensure that it's serialized
         this.addSimpleSerial(member)
