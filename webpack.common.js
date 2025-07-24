@@ -70,6 +70,19 @@ module.exports = {
 
     //    new webpack.debug.ProfilingPlugin(),
 
+        {
+            apply: (compiler) => {
+                compiler.hooks.beforeRun.tap('CleanOutputDirPlugin', () => {
+                    const outDir = InstallPaths.dev_path;
+                    if (fs.existsSync(outDir)) {
+                        fs.rmSync(outDir, {recursive: true, force: true});
+                        fs.mkdirSync(outDir, {recursive: true});
+                        console.log(`Cleaned ${outDir}`);
+                    }
+                });
+            }
+        },
+
         new Dotenv({
             path: './config/shared.env',
         }),
@@ -201,6 +214,6 @@ module.exports = {
     output: {
         filename: '[name].[contenthash].bundle.js',
         path: InstallPaths.dev_path,
-        clean: true, // this deletes the contents of path (InstallPaths.dev_path)
+        //clean: true, // this deletes the contents of path (InstallPaths.dev_path)
     },
 };
