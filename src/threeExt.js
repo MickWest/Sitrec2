@@ -27,7 +27,7 @@ import {LLAToEUS, wgs84} from "./LLA-ECEF-ENU";
 import {LineMaterial} from "three/addons/lines/LineMaterial.js";
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
 import {Line2} from "three/addons/lines/Line2.js";
-import {NodeMan} from "./Globals";
+import {NodeMan, setRenderOne} from "./Globals";
 import {isArray} from "mathjs";
 import {assert} from "./assert.js";
 import {intersectSphere2, makeMatrix4PointYAt, V3} from "./threeUtils";
@@ -396,11 +396,13 @@ export function propagateLayerMaskObject(parent) {
     // copy group layers bitmask into all children
     const layersMask = parent.layers.mask;
     parent.traverse( function( child ) { child.layers.mask = layersMask } )
+    setRenderOne(true);
 }
 
 export function setLayerMaskRecursive(object, mask) {
     object.layers.mask = mask;
     object.traverse( function( child ) { child.layers.mask = mask } )
+    setRenderOne(true);
 
 }
 

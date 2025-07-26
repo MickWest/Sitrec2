@@ -11,6 +11,7 @@
 // If you upgrade version, then you will probably want to carry over the modifications
 
 import {assert} from "../assert";
+import {setRenderOne} from "../Globals";
 
 /**
  * Base class for all controllers.
@@ -159,6 +160,12 @@ class Controller {
         if ( this._onChange !== undefined ) {
             this._onChange.call( this, this.getValue() );
         }
+
+        // MICK: added this to ensure that the main rendering is called on all UI changes
+        // previously this was called every frame, but we don't need that when paused
+        // however, we do need it if we've changed something
+        setRenderOne(true);
+
 
         this._changed = true;
 

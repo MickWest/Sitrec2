@@ -380,6 +380,8 @@ export class CCustomManager {
         TrackManager.iterate( (id, track) => {
             TrackManager.disposeRemove(id)
         })
+        setRenderOne(true);
+
     }
 
 
@@ -537,6 +539,8 @@ export class CCustomManager {
                 node.recalculate();
             }
         })
+        setRenderOne(true);
+
     }
 
     loginAttempt() {
@@ -555,7 +559,7 @@ export class CCustomManager {
                 }
             }
         });
-
+        setRenderOne(true)
     }
 
 
