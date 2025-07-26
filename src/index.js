@@ -332,6 +332,10 @@ const testCheckInterval = 1000;
 setTimeout( checkForTest, Globals.quickTerrain?1:testCheckInterval);
 setTimeout( checkFornewSitchObject, 500);
 
+// some sitches start paused (e.g. the ModelInspector)
+// so force rendering of the first few frames
+setRenderOne(3)
+
 // **************************************************************************************************
 // *********** That's it for top-level code. Functions follow ***************************************
 // **************************************************************************************************
