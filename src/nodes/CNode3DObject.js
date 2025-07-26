@@ -815,6 +815,7 @@ export class CNode3DObject extends CNode3DGroup {
                         this.applyMaterialToModel();
                         this.rebuildBoundingBox();
                         console.log("ADDED TO SCENE : ", model.file);
+                        setRenderOne(true);
 
                     }
                 });
