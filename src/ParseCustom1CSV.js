@@ -17,7 +17,8 @@ const CustomCSVFormats = {
         alt:      ["ALTITUDE", "ALT", "ALTITUDE (m)*", "TPHAE"],
         agl:      ["AGL", "ALT (m/agl)"],
         aircraft: ["AIRCRAFT", "AIRCRAFTSPECIFICTYPE"],
-        callsign: ["CALLSIGN", "TAILNUMBER"]
+        callsign: ["CALLSIGN", "TAILNUMBER"],
+        az:       ["AZIMUTH", "AZ"],
     }
 }
 
@@ -56,6 +57,7 @@ export function parseCustom1CSV(csv) {
     const lonCol =      findColumn(csv, headerValues.lon, true)
     const altCol =      findColumn(csv, headerValues.alt, true)
     const aglCol =      findColumn(csv, headerValues.agl, true)
+    const azCol =   findColumn(csv, headerValues.az, true)
     const aircraftCol = findColumn(csv, headerValues.aircraft, true)
     const callsignCol = findColumn(csv, headerValues.callsign, true)
 

@@ -1,4 +1,5 @@
 import {MISB} from "./MISBUtils";
+import {assert} from "./assert";
 
 export function splitOnCommas(str) {
     // Regular expression to match commas that are not inside parentheses
@@ -69,6 +70,7 @@ export function findColumn(csv, text, exactMatch = false) {
 
     for (const searchText of text) {
 
+        assert(typeof searchText === 'string', "Search text must be a string or an array of strings");
         const lowerSearchText = searchText.toLowerCase();
         // Iterate through each column of the first row
         for (let col = 0; col < csv[0].length; col++) {

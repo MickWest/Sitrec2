@@ -307,7 +307,7 @@ class CTrackManager extends CManager {
 
                 const trackDataID = "TrackData_" + shortName;
                 const trackID = "Track_" + shortName;
-                let hasAngles = false;
+                //let hasAngles = false;
                 let hasFOV = false;
                 let hasCenter = false;
                 console.log("Creating track with trackID", shortName, "in addTracks")
@@ -426,7 +426,7 @@ class CTrackManager extends CManager {
                     }
 
 
-                    hasAngles = this.updateDropTargets(trackNumber, shortName, trackID, centerID, trackDataID, trackNode, hasFOV, hasAngles, trackOb);
+                    let hasAngles = this.updateDropTargets(trackNumber, shortName, trackID, centerID, trackDataID, trackNode, hasFOV, trackOb);
 
                     this.makeMotionTrack(trackOb, shortName, trackColor, dropColor, trackID);
                     this.makeAnyCenterTrack(centerID, trackOb, shortName);
@@ -718,7 +718,8 @@ class CTrackManager extends CManager {
         }
     }
 
-    updateDropTargets(trackNumber, shortName, trackID, centerID, trackDataID, trackNode, hasFOV, hasAngles, trackOb) {
+    updateDropTargets(trackNumber, shortName, trackID, centerID, trackDataID, trackNode, hasFOV, trackOb) {
+        let hasAngles = false;
         if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
             const dropTargets = Sit.dropTargets["track"]
             for (let dropTargetSwitch of dropTargets) {
