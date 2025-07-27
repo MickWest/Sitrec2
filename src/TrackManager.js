@@ -1042,7 +1042,7 @@ class CTrackManager extends CManager {
                     // is it a misb file?
                     if (ext === "srt" || ext === "csv" || ext === "klv") {
                         const misb = FileManager.get(trackFileName)
-                        if (misb[0][MISB.PlatformTailNumber] !== undefined) {
+                        if (misb[0][MISB.PlatformTailNumber] !== null) {
                             shortName = misb[0][MISB.PlatformTailNumber];
                         } else {
                             // MISB, but can't find a tail number, so just use the filename without the extension
