@@ -69,6 +69,7 @@ export function findColumn(csv, text, exactMatch = false) {
 
     for (const searchText of text) {
 
+        const lowerSearchText = searchText.toLowerCase();
         // Iterate through each column of the first row
         for (let col = 0; col < csv[0].length; col++) {
             if (typeof csv[0][col] !== 'string') {
@@ -77,12 +78,12 @@ export function findColumn(csv, text, exactMatch = false) {
             }
             if (exactMatch) {
                 // Check if the column header matches the text exactly
-                if (csv[0][col].trim() === searchText) {
+                if (csv[0][col].trim().toLowerCase() === lowerSearchText) {
                     return col; // Return the column index
                 }
             } else {
                 // Check if the first element of the column starts with the text
-                if (csv[0][col].trimStart().startsWith(searchText)) {
+                if (csv[0][col].trimStart().toLowerCase().startsWith(lowerSearchText)) {
                     return col; // Return the column index
                 }
             }

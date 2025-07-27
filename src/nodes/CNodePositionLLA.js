@@ -10,7 +10,7 @@ import {CNode} from "./CNode";
 import {V3} from "../threeUtils";
 import {CNodeGUIValue} from "./CNodeGUIValue";
 import {isKeyHeld} from "../KeyBoardHandler";
-import {adjustHeightAboveGround, altitudeAtLL, elevationAtLL} from "../threeExt";
+import {adjustHeightAboveGround, elevationAtLL} from "../threeExt";
 import {assert} from "../assert";
 import {ViewMan} from "../CViewManager";
 import {EventManager} from "../CEventManager";

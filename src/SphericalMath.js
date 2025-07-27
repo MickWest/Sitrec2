@@ -149,7 +149,8 @@ function drop(x,y,radius) {
     return radius - Math.sqrt(radius*radius - dist*dist)
 
 }
-
+// get altitude of a point in EUS coordinates above the WGS84 sphere
+// for full terrain use altitudeAt(position) or altitudeAtLL(lat, lon)
 export function pointAltitude(position, radius=wgs84.RADIUS) {
     return V3(0,-radius,0).sub(position).length() - radius;
 }

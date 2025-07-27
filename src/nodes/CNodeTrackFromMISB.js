@@ -22,7 +22,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         super(v);
     //    this.kml = FileManager.get(v.cameraFile)
 
-        this._columns = v.columns || ["SensorLatitude", "SensorLongitude", "SensorTrueAltitude"]
+        this._columns = v.columns || ["SensorLatitude", "SensorLongitude", "SensorTrueAltitude", "AltitudeAGL"]
 
 //        console.log("CNodeTrackFromMISB:constructor(): columns[2] = ",this._columns[2])
 
@@ -230,6 +230,17 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         this.frames = Sit.frames;
         this.useSitFrames = true; // flag to say we need recalculate if Sit.frames changes
 
+        // we need to do this again in case the elevation has changed
+        // even if not, the recalculate has been trigggered by an input, so we can't rely on that input
+        // might be  aperformance issue? In which case need to detect if we need to call this
+        // for now just do it if useing AGL
+
+        if (misb.useAGL) {
+            this.cacheValues();
+        } else {
+            console.warn("CNodeTrackFromMISB:recalculate(): Not using AGL, so not re-caching values from this.in.misb")
+        }
+
         assert(this.frames === Math.floor(this.frames),`Frames must be an integer, it's ${this.frames}`)
 
      //   const data = this.in.timedData.data;
@@ -363,6 +374,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
             const fraction = (msNow - this.timeArray[slot]) / (this.timeArray[slot + 1] - this.timeArray[slot])
             const lat = interpolate(this.latArray[slot], this.latArray[slot +1], fraction);
             const lon = interpolate(this.lonArray[slot], this.lonArray[slot +1], fraction);
+//            const alt = misb.adjustAlt(interpolate(this.rawAltArray[slot], this.rawAltArray[slot +1], fraction));
             const alt = misb.adjustAlt(interpolate(this.rawAltArray[slot], this.rawAltArray[slot +1], fraction));
 
 

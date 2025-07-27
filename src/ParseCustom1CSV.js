@@ -11,10 +11,11 @@ import {f2m} from "./utils";
 // we need at least time, lat, lon, and alt
 const CustomCSVFormats = {
     CUSTOM1: {
-        time:     ["TIME", "TIMESTAMP", "DATE", "UTC"],
+        time:     ["TIME", "TIMESTAMP", "DATE", "UTC", "DATETIME"],
         lat:      ["LAT", "LATITUDE", "TPLAT"],
         lon:      ["LON", "LONG", "LONGITUDE", "TPLON"],
         alt:      ["ALTITUDE", "ALT", "ALTITUDE (m)*", "TPHAE"],
+        agl:      ["AGL", "ALT (m/agl)"],
         aircraft: ["AIRCRAFT", "AIRCRAFTSPECIFICTYPE"],
         callsign: ["CALLSIGN", "TAILNUMBER"]
     }
@@ -36,7 +37,7 @@ export function isCustom1(csv) {
     if (findColumn(csv, headerValues.time, true) !== -1
         && findColumn(csv, headerValues.lat, true) !== -1
         && findColumn(csv, headerValues.lon, true) !== -1
-        && findColumn(csv, headerValues.alt, true) !== -1
+        && (findColumn(csv, headerValues.alt, true) !== -1 || findColumn(csv, headerValues.agl, true) !== -1)
     ) {
         return true;
     }
@@ -54,8 +55,15 @@ export function parseCustom1CSV(csv) {
     const latCol =      findColumn(csv, headerValues.lat, true)
     const lonCol =      findColumn(csv, headerValues.lon, true)
     const altCol =      findColumn(csv, headerValues.alt, true)
+    const aglCol =      findColumn(csv, headerValues.agl, true)
     const aircraftCol = findColumn(csv, headerValues.aircraft, true)
     const callsignCol = findColumn(csv, headerValues.callsign, true)
+
+    console.log("Detected Custom1 CSV format with columns: " +
+    "dateCol=" + dateCol + ", latCol=" + latCol +
+        ", lonCol=" + lonCol + ", altCol=" + altCol +
+        ", aglCol=" + aglCol + ", aircraftCol=" + aircraftCol +
+        ", callsignCol=" + callsignCol);
 
     // speed is currently ignored, and is generally derived from the position data
     const speedCol = findColumn(csv, "SPEED_KTS", true)
@@ -64,6 +72,7 @@ export function parseCustom1CSV(csv) {
   //  console.log("Detected Airdata start time of " + startTime)
 
     for (let i = 1; i < rows; i++) {
+        // any empty column will be null
         MISBArray[i - 1] = new Array(MISBFields).fill(null);
 
         // date can either be an ISO date string, or
@@ -78,7 +87,16 @@ export function parseCustom1CSV(csv) {
 
         MISBArray[i - 1][MISB.SensorLatitude] = Number(csv[i][latCol])
         MISBArray[i - 1][MISB.SensorLongitude] = Number(csv[i][lonCol])
-        MISBArray[i - 1][MISB.SensorTrueAltitude] = Number(csv[i][altCol]);
+
+        // we expect either alt or agl to be present, but not both
+        // altitude is in meters, agl is in meters above ground level
+        if (altCol !== -1) {
+            MISBArray[i - 1][MISB.SensorTrueAltitude] = Number(csv[i][altCol]);
+        }
+
+        if (aglCol !== -1) {
+            MISBArray[i - 1][MISB.AltitudeAGL] = Number(csv[i][aglCol]);
+        }
 
         if (aircraftCol !== -1) {
             MISBArray[i - 1][MISB.PlatformDesignation] = csv[i][aircraftCol]

@@ -6,6 +6,9 @@ import {saveAs} from "../js/FileSaver";
 
 import {CNodeLOSTrackMISB} from "./CNodeLOSTrackMISB";
 import {makeArrayNodeFromMISBColumn} from "./CNodeArrayFromMISBColumn";
+import {assert} from "../assert";
+import {EventManager} from "../CEventManager";
+import {elevationAtLL} from "../threeExt";
 
 //export const MISBFields = Object.keys(MISB).length;
 
@@ -29,7 +32,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             this.misb = FileManager.get(v.misb)
         }
 
-        this.selectSourceColumns(v.columns || ["SensorLatitude", "SensorLongitude", "SensorTrueAltitude"]);
+        this.selectSourceColumns(v.columns || ["SensorLatitude", "SensorLongitude", "SensorTrueAltitude", "AltitudeAGL"]);
 
         this.recalculate()
 
@@ -37,6 +40,19 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         if (this.exportable) {
             NodeMan.addExportButton(this, "exportMISBCSV", "MISB ")
         }
+
+
+        EventManager.addEventListener("elevationChanged", () => {
+            if (this.useAGL) {
+
+                // WHY DOES THIS NOT ADJSUT THE ALTITUDE BASED ON THE NEW ELEVATION?
+
+                this.makeArrayForTrackDisplay();
+
+                // CHECK IF THIS IS RECREATING THE DISPLAY TRACKS
+                this.recalculateCascade()
+            }
+        });
     }
 
     exportMISBCSV() {
@@ -76,6 +92,13 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         this.latCol = MISB[columns[0]]
         this.lonCol = MISB[columns[1]]
         this.altCol = MISB[columns[2]]
+        this.useAGL = false;
+        // check to see if we have data in altCol
+        if (this.misb[0][this.altCol] === null) {
+            this.useAGL = true;
+            this.altCol = MISB[columns[3]]; // this is the altitude column
+            assert(this.misb[0][this.altCol] !== undefined, "CNodeMISBDataTrack: AGL altitude column not found in MISB data");
+        }
     }
 
 
@@ -117,7 +140,22 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
     }
 
     getRawAlt(i) {
-        return Number(this.misb[i][this.altCol])
+        let alt = Number(this.misb[i][this.altCol])
+        if (!this.useAGL) {
+            // if we are not using AGL, then the altitude is the true altitude
+            return alt;
+        }
+        // if we are using AGL, then the altitude is the AGL altitude
+        // so we need to adjust it to be the true altitude
+        const lat = this.getLat(i);
+        const lon = this.getLon(i);
+       // const position = LLAToEUS(lat, lon, alt);
+        // get the base altitude at this position
+        const elevation = elevationAtLL(lat, lon);
+        alt += elevation;
+        return alt;
+
+
     }
 
     adjustAlt(a) {
@@ -131,7 +169,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
 
 
     getAlt(i) {
-        let a = Number(this.misb[i][this.altCol])
+        let a = this.getRawAlt(i);
         return this.adjustAlt(a);
     }
 

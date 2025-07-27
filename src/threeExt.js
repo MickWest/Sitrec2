@@ -556,6 +556,8 @@ export class CDisplayLine {
     }
 }
 
+// get the point on the ground below a point in ESU
+// if the terrain model is loaded, use that, otherwise use the sphere
 export function pointOnGround(A) {
     if (NodeMan.exists("TerrainModel")) {
         let terrainNode = NodeMan.get("TerrainModel")
@@ -570,20 +572,20 @@ export function pointOnGroundLL(lat, lon) {
     return pointOnGround(A)
 }
 
-// get the aboe ground altitude a point in ESU
-export function altitudeAt(A) {
+// get the above ground altitude a point in ESU
+export function aboveGroundLevelAt(A) {
     const B = pointOnGround(A);
     const altitude = A.clone().sub(B).length();
     return altitude;
 }
 
-// get the ground altitude (MSL) at a point speciifed by lat/lon
-export function altitudeAtLL(lat, lon) {
+// get the AGL altitude at a point speciifed by lat/lon
+export function aboveGroundLevelAtLL(lat, lon) {
     const A = LLAToEUS(lat, lon, 100000);
-    return altitudeAt(A)
+    return aboveGroundLevelAt(A)
 }
 
-
+// given a point in ESU, return a point above (or below) it by a given additional height
 export function pointAbove(point, height) {
     const center = V3(0,-wgs84.RADIUS,0);
     const toPoint = point.clone().sub(center).normalize();
@@ -595,11 +597,15 @@ export function adjustHeightAboveGround (point, height) {
     return pointAbove(ground, height);
 }
 
+// given a point in ESU, calculate the altitude above the WGS84 sphere (i.e. the MSL altitude)
 export function calculateAltitude(point) {
     const center = V3(0,-wgs84.RADIUS,0);
     return point.clone().sub(center).length() - wgs84.RADIUS;
 }
 
+// given a lat/lon, calculate the terrainelevation of the ground above the WGS84 sphere
+// (i.e. the MSL altitude of the ground below that point)
+// uses the terrain model if available, otherwise uses the WGS84 sphere
 export function elevationAtLL(lat, lon) {
     // get the point in ESU
     const point = LLAToEUS(lat, lon, 100000);
