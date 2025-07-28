@@ -148,118 +148,102 @@ class CTrackManager extends CManager {
 // sourceFile = the input, either a KLM file, or one already in MISB array format
 // if it's a kml file we will first make a MISB array
 // dataID = the id of the intermediate CNodeMISBDataTrack
-    makeTrackFromDataFile(sourceFile, dataID, trackID, columns, trackIndex = 0, guiFolder = null) {
-
-        // determine what type of track it is
+    makeMISBDataTrack(sourceFile, dataID, trackIndex = 0) {
         const fileInfo = FileManager.getInfo(sourceFile);
-        const ext = getFileExtension(fileInfo.filename)
+        const ext = getFileExtension(fileInfo.filename);
 
         let misb = null;
 
         if (ext === "json") {
             const geo = new CGeoJSON();
             geo.json = FileManager.get(sourceFile);
-            misb = geo.toMISB(trackIndex)
+            misb = geo.toMISB(trackIndex);
         } else if (ext === "kml") {
-            // new CNodeKMLDataTrack({
-            //     id: dataID,
-            //     KMLFile: sourceFile,
-            // })
             misb = KMLToMISB(FileManager.get(sourceFile), trackIndex);
         } else if (ext === "srt" || ext === "csv" || ext === "klv") {
-            misb = FileManager.get(sourceFile)
+            misb = FileManager.get(sourceFile);
         } else {
-            assert(0, "Unknown file type: " + fileInfo.filename)
+            assert(0, "Unknown file type: " + fileInfo.filename);
         }
 
-        let frameRelativeTime = false;
-        if (fileInfo.dataType === "CUSTOM_FLL") {
-            frameRelativeTime = true;
-        }
-
-        // if there's no data, then return, which will just skip this track
-        // als skip track with just on point
         if (!misb) {
-            console.warn("makeTrackFromDataFile: No data in file: ", sourceFile)
+            console.warn("makeMISBDataTrack: No data in file:", sourceFile);
             return false;
         }
 
         if (misb.length <= 1) {
-            console.warn("makeTrackFromDataFile: Insufficent data in file: ", sourceFile, " misb length: ", misb.length)
+            console.warn("makeMISBDataTrack: Insufficient data in file:", sourceFile, " misb length:", misb.length);
             return false;
         }
-
-
-        // first make a data track with id = dataID
-        // from the misb array source
-        // This will be an array of :
-        // {
-        // position: V3,
-        // time: ms,
-        // vFov: degrees, (optional)
-        // misbRow: object reference to the original row in the MISB array
 
         new CNodeMISBDataTrack({
             id: dataID,
             misb: misb,
             exportable: true,
-        })
+        });
 
-        // then use that to make the per-frame track, which might just be a portion of the original data
+        return true;
+    }
+
+    makeTrackFromMISBData(sourceFile, dataID, trackID, columns, guiFolder = null) {
+        const fileInfo = FileManager.getInfo(sourceFile);
+        const frameRelativeTime = (fileInfo.dataType === "CUSTOM_FLL");
 
         // right now we only smooth the track if it's a custom situation
         // otherwise we just use the raw interpolated data
         if (Sit.name !== "custom") {
-            // then use that to make the per-frame track, which might just be a portion of the original data
             return new CNodeTrackFromMISB({
                 id: trackID,
                 misb: dataID,
                 columns: columns,
                 exportable: true,
-            })
+            });
         }
 
         // we want to smooth the track
         // so first create an unsmoothed node (same as above, but with a different id)
-        new CNodeTrackFromMISB({
+        const unsmoothed = new CNodeTrackFromMISB({
             id: trackID + "_unsmoothed",
             misb: dataID,
             columns: columns,
             exportable: true,
             pruneIfUnused: true,
             frameRelativeTime: frameRelativeTime,
+        });
 
-        })
+        new CNodeGUIValue({
+            id: trackID + "_smoothValue",
+            value: 0,
+            start: 0,
+            end: 200,
+            step: 1,
+            desc: "Smoothing window",
+        }, guiFolder);
 
-
-        const trackSmoothGUIValue =
-            new CNodeGUIValue({
-                id: trackID + "_smoothValue",
-                value: 0,
-                start: 0,
-                end: 200,
-                step: 1,
-                desc: "Smoothing window",
-            }, guiFolder)
-
-
-        // then create and return the smoothed track
-        return new CNodeSmoothedPositionTrack(
-            {
-                id: trackID,
-                source: trackID + "_unsmoothed",
-                method: "moving",
-                window: trackID + "_smoothValue",
-                copyData: true, // we need this to copy over the misbRow data
-            }
-        )
-
-
+        return new CNodeSmoothedPositionTrack({
+            id: trackID,
+            source: trackID + "_unsmoothed",
+            method: "moving",
+            window: trackID + "_smoothValue",
+            copyData: true,
+        });
     }
+
+    makeTrackFromDataFile(sourceFile, dataID, trackID, columns, trackIndex = 0, guiFolder = null) {
+        if (!this.makeMISBDataTrack(sourceFile, dataID, trackIndex)) {
+            return false;
+        }
+
+        return this.makeTrackFromMISBData(sourceFile, dataID, trackID, columns, guiFolder);
+    }
+
 
 // tracks = array of filenames of files that have been loaded and that
 // we want to make tracks from
     addTracks(trackFiles, removeDuplicates = false, sphereMask = LAYER.MASK_HELPERS) {
+
+        let setSitchEstablished = false;
+
 
         console.log("-----------------------------------------------------")
         console.log("addTracks called with ", trackFiles)
@@ -357,12 +341,29 @@ class CTrackManager extends CManager {
 
 
 
+
+
+
                 const guiFolder = guiMenus.contents.addFolder(trackID);
                 // just use the default MISB Columns, so no columns are specified
-                const success = this.makeTrackFromDataFile(trackFileName, trackDataID, trackID, undefined, trackIndex, guiFolder);
+                //const success = this.makeTrackFromDataFile(trackFileName, trackDataID, trackID, undefined, trackIndex, guiFolder);
+
+                const success = this.makeMISBDataTrack(trackFileName, trackDataID, trackIndex);
+
+                // add to the "Sync Time to" menu
+                GlobalDateTimeNode.addSyncToTrack(trackDataID);
+                // and call it to sync the time. Note we do this BEFORE we create the actual tracks
+                // to ensure we have the correct start time, and hence we can get good track positions for use
+                // with determining the initial terrain
+                if (!Globals.sitchEstablished) {
+                    GlobalDateTimeNode.syncStartTimeTrack();
+                }
 
 
                 if (success) {
+
+                    this.makeTrackFromMISBData(trackFileName, trackDataID, trackID, undefined, guiFolder);
+
                     const trackNode = NodeMan.get(trackID);
                     const trackDataNode = NodeMan.get(trackDataID);
                     // this has the original data in common MISB format, regardless of the data type
@@ -434,9 +435,9 @@ class CTrackManager extends CManager {
 
                     this.centerOnTrack(shortName, trackNumber, trackOb, hasCenter, hasAngles);
 
-                    // if there's more than one track loaded, or there's a center track, then set Globals.sitchEstablished = true;
+                    // if there's more than one track loaded, or there's a center track, then flag to set Globals.sitchEstablished = true after the track is processed
                     if (trackNumber > 0 || hasCenter) {
-                        Globals.sitchEstablished = true;
+                        setSitchEstablished = true;
                     }
 
 
@@ -455,6 +456,10 @@ class CTrackManager extends CManager {
 
 
         } // and go to the next track
+
+        if (setSitchEstablished) {
+            Globals.sitchEstablished = true;
+        }
 
         // we've loaded some tracks, and set stuff up, so ensure everything is calculated
         NodeMan.recalculateAllRootFirst()
@@ -697,6 +702,7 @@ class CTrackManager extends CManager {
                 }
 
 
+
                 // if it's a simple track with no center track and no angles (i.e. not MISB)
                 // then switch to "Use Angles" for the camera heading
                 // which will use the PTZ control as no angles track will be loaded yet
@@ -790,16 +796,26 @@ class CTrackManager extends CManager {
                     }
 
 
-                    // add to the "Sync Time to" menu
-                    GlobalDateTimeNode.addSyncToTrack(trackDataID);
-                    // and call it to sync the time
-                    // we don't need to recalculate from this track
-                    // as it's only just been loaded. ????????
-                    // Actually, we do, as the change in time will change the
-                    // position of the per-frame track segment and the display
-                    if (!Globals.sitchEstablished) {
-                        GlobalDateTimeNode.syncStartTimeTrack();
-                    }
+                    // // add to the "Sync Time to" menu
+                    // GlobalDateTimeNode.addSyncToTrack(trackDataID);
+                    // // and call it to sync the time
+                    // // we don't need to recalculate from this track
+                    // // as it's only just been loaded. ????????
+                    // // Actually, we do, as the change in time will change the
+                    // // position of the per-frame track segment and the display
+                    // if (!Globals.sitchEstablished) {
+                    //     GlobalDateTimeNode.syncStartTimeTrack();
+                    //
+                    //     // PROBLEM - at this point the track was calculated with the old time
+                    //     // and the new time will change the position of the track
+                    //
+                    //     // it's all based on the trackDataNode
+                    //    // trackOb.trackDataNode.checkDisplayOutputs = false;
+                    //     trackOb.trackDataNode.recalculateCascade();
+                    //
+                    //     console.log("TrackManager: Updated trackDataNode for ", shortName, " with new time")
+                    //
+                    // }
 
                 }
             }

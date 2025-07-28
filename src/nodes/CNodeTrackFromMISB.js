@@ -372,6 +372,9 @@ export class CNodeTrackFromMISB extends CNodeTrack {
 
            // assert(slot < points, "not enough data, or a bug in your code - Time wrong? id=" + this.id)
             const fraction = (msNow - this.timeArray[slot]) / (this.timeArray[slot + 1] - this.timeArray[slot])
+
+     //       assert(fraction >= 0 && fraction <= 1, "CNodeTrackFromMISB:recalculate(): fraction out of range: " + fraction + " slot = " + slot + " msNow = " + msNow + " timeArray[slot] = " + this.timeArray[slot] + " timeArray[slot+1] = " + this.timeArray[slot+1] + " id=" + this.id)
+
             const lat = interpolate(this.latArray[slot], this.latArray[slot +1], fraction);
             const lon = interpolate(this.lonArray[slot], this.lonArray[slot +1], fraction);
 //            const alt = misb.adjustAlt(interpolate(this.rawAltArray[slot], this.rawAltArray[slot +1], fraction));
