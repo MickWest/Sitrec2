@@ -296,25 +296,7 @@ class CTrackManager extends CManager {
                 let hasCenter = false;
                 console.log("Creating track with trackID", shortName, "in addTracks")
 
-                // how many tracks are there now?
-                const trackNumber = TrackManager.size();
-                // count how many tracks we have now
-                const trackColors = [
-                    new Color(1, 0, 0),
-                    new Color(0, 1, 0),
-                    new Color(0, 0, 1),
-                    // new Color(1, 1, 0), skip yellow as it's the traverse color
-                    new Color(1, 0, 1),
-                    new Color(0, 1, 1),
-                    new Color(0.5, 0, 0),
-                    new Color(0, 0.5, 0),
-                    new Color(0, 0, 0.5),
-                    new Color(0.5, 0.5, 0),
-                    new Color(0, 0.5, 0.5),
-                    new Color(0.5, 0, 0.5),
-                ];
 
-                let trackColor = trackColors[trackNumber % trackColors.length];
 
 
                 // removeDuplicates will be true if it's, for example, loaded via drag-and-drop
@@ -335,14 +317,6 @@ class CTrackManager extends CManager {
                         }
                     })
                 }
-
-                // make dropcolor be the same as the track color bur reduced in brightness to 75%
-                const dropColor = trackColor.clone().multiplyScalar(0.75);
-
-
-
-
-
 
                 const guiFolder = guiMenus.contents.addFolder(trackID);
                 // just use the default MISB Columns, so no columns are specified
@@ -377,7 +351,6 @@ class CTrackManager extends CManager {
                     trackOb.menuText = shortName;
                     trackNode.shortName = shortName;
                     trackDataNode.shortName = shortName;
-                    trackOb.trackColor = trackColor;
 
                     // track folder in Contents menu
                     trackOb.guiFolder = guiFolder;
@@ -393,6 +366,30 @@ class CTrackManager extends CManager {
                     // add a remove button to the folder
                     trackOb.guiFolder.add(dummy, "removeTrack").name("Remove Track");
 
+
+
+                    // how many tracks are there now?
+                    const trackNumber = TrackManager.size();
+                    const trackColors = [
+                        new Color(1, 0, 0),
+                        new Color(0, 1, 0),
+                        new Color(0, 0, 1),
+                        // new Color(1, 1, 0), skip yellow as it's the traverse color
+                        new Color(1, 0, 1),
+                        new Color(0, 1, 1),
+                        new Color(0.5, 0, 0),
+                        new Color(0, 0.5, 0),
+                        new Color(0, 0, 0.5),
+                        new Color(0.5, 0.5, 0),
+                        new Color(0, 0.5, 0.5),
+                        new Color(0.5, 0, 0.5),
+                    ];
+
+                    let trackColor = trackColors[trackNumber % trackColors.length];
+                    // make dropcolor be the same as the track color bur reduced in brightness to 75%
+                    const dropColor = trackColor.clone().multiplyScalar(0.75);
+
+                    trackOb.trackColor = trackColor;
 
                     // This track will include FOV and angles
                     // but if there's a center track, we make a separate track for that
