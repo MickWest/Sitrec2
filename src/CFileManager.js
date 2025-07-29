@@ -863,6 +863,8 @@ export class CFileManager extends CManager {
             })
         }
 
+        Globals.pendingActions++;
+
         var original = null;
         return bufferPromise
             .then(arrayBuffer => {
@@ -908,11 +910,13 @@ export class CFileManager extends CManager {
 
                 Globals.parsing--;
 //                console.log("<<< loadAsset() parsing Finished: " + filename + " GlobPars=" + Globals.parsing + " id=" + id);
+                Globals.pendingActions--;
                 return parsedAsset; // Return the asset for further chaining if necessary
             })
             .catch(error => {
                 Globals.parsing--;
                 console.log('There was a problem with the fetch operation: ', error.message);
+                Globals.pendingActions--;
                 throw error;
             });
     }

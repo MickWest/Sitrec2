@@ -790,6 +790,7 @@ export class CNode3DObject extends CNode3DGroup {
                 //const loader = new GLTFLoader();
                 console.log("LOADING NEW GLTF model: ", model.file);
 
+                Globals.pendingActions++;
                 loadGLTFModel(model.file, gltf => {
                     // since it's async, we might now be rendering a geometry
                     // If so, then don't add the model to the group
@@ -818,6 +819,7 @@ export class CNode3DObject extends CNode3DGroup {
                         setRenderOne(true);
 
                     }
+                    Globals.pendingActions--;
                 });
             }
 

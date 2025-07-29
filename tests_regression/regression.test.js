@@ -18,31 +18,31 @@ const testData = [
     // Add more objects as needed.
 ];
 
-    /**
-     * Wait for a specific text to appear in console messages.
-     * @param {import('puppeteer').Page} page - Puppeteer page instance.
-     * @param {string} expectedText - Text to wait for.
-     * @param {number} timeoutMs - Timeout in milliseconds.
-     * @returns {Promise<void>}
-     */
-    function waitForConsoleText(page, expectedText, timeoutMs = 15000) {
-        return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
+/**
+ * Wait for a specific text to appear in console messages.
+ * @param {import('puppeteer').Page} page - Puppeteer page instance.
+ * @param {string} expectedText - Text to wait for.
+ * @param {number} timeoutMs - Timeout in milliseconds.
+ * @returns {Promise<void>}
+ */
+function waitForConsoleText(page, expectedText, timeoutMs = 15000) {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            page.off('console', onConsole);
+            reject(new Error(`Timed out waiting for console text: "${expectedText}"`));
+        }, timeoutMs);
+
+        function onConsole(msg) {
+            if (msg.text().includes(expectedText)) {
+                clearTimeout(timeout);
                 page.off('console', onConsole);
-                reject(new Error(`Timed out waiting for console text: "${expectedText}"`));
-            }, timeoutMs);
-
-            function onConsole(msg) {
-                if (msg.text().includes(expectedText)) {
-                    clearTimeout(timeout);
-                    page.off('console', onConsole);
-                    resolve();
-                }
+                resolve();
             }
+        }
 
-            page.on('console', onConsole);
-        });
-    }
+        page.on('console', onConsole);
+    });
+}
 
 describe('Visual Regression Testing', () => {
     let browser;
@@ -53,7 +53,7 @@ describe('Visual Regression Testing', () => {
 
     beforeAll(async () => {
         browser = await puppeteer.launch({
-            headless: true,
+            headless: false,
             defaultViewport: {
                 width: 1920,
                 height: 1080,
@@ -61,6 +61,7 @@ describe('Visual Regression Testing', () => {
             args: ['--no-sandbox', '--disable-setuid-sandbox']
         });
         page = await browser.newPage();
+
     });
 
     afterAll(async () => {
@@ -74,20 +75,32 @@ describe('Visual Regression Testing', () => {
                 // Set a consistent viewport size.
                 await page.setViewport({ width: 1920, height: 1080 });
 
+                // Remove all existing 'console' listeners from previous test runs
+                page.removeAllListeners('console');
+
                 url = url+'&ignoreunload=1&regression=1';
 
+                const consolePromise = waitForConsoleText(page, 'No pending actions', 35000);
+
+
                 // Navigate to the URL with detailed error logging.
+                // Wait for the network to be idle.
                 const response = await page.goto(url, {
                     waitUntil: ['networkidle0', 'domcontentloaded'],
                     timeout: 30000
                 });
 
+
                 if (!response.ok()) {
                     console.error(`Page load failed with status: ${response.status()} for URL: ${url}`);
                 }
 
-                // Wait for the network to be idle.
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                // wait a second to ensure the page is fully loaded.
+                //await new Promise(resolve => setTimeout(resolve, 3000));
+
+                await consolePromise;
+
+                //await new Promise(resolve => setTimeout(resolve, 500));
 
                 // Ensure the page is fully rendered.
                 await page.evaluate(() => {
@@ -97,6 +110,8 @@ describe('Visual Regression Testing', () => {
                         });
                     });
                 });
+
+
 
                 // Take the screenshot with explicit encoding.
                 const screenshot = await page.screenshot({

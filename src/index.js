@@ -112,6 +112,11 @@ let animationFrameId;
 
 checkUserAgent();
 
+// we set Globals.wasPending to 5 so if we get to the render loop with no pending async actions
+// we will still get the "No pending actions" message
+// 5 just means wait 5 frames before showing the message
+Globals.wasPending = 5;
+
 await setupConfigPaths();
 
 //await getConfigFromServer();
@@ -147,6 +152,9 @@ resetPar();
 const queryString = window.location.search;
 urlParams = new URLSearchParams(queryString);
 setGlobalURLParams(urlParams)
+
+// a count of async pending actions, so we can tell when a level has fully loaded and settled up
+Globals.pendingActions = 0;
 
 Globals.fixedFrame = undefined;
 if (urlParams.get("frame") !== null) {
@@ -1047,8 +1055,17 @@ function windowChanged() {
 }
 
 
-
 function renderMain(elapsed) {
+
+    if (Globals.pendingActions > 0) {
+        Globals.wasPending = 5;
+        console.log("Pending actions: " + Globals.pendingActions)
+    } else if (Globals.wasPending > 0) {
+        Globals.wasPending--;
+        if (Globals.wasPending === 0)
+            console.log("No pending actions")
+
+    }
 
     incrementMainLoopCount();
 
