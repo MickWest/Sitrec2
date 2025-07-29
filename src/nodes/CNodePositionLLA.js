@@ -320,7 +320,7 @@ export class CNodePositionLLA extends CNode {
                     const groundAlt = groundPointLLA.z;
                     this._LLA[2] = this.guiAlt.setValueWithUnits(groundAlt, "metric", "small", true)
                 }
-                this.recalculateCascade(0);
+                this.recalculateCascade();
                 EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
                 // we don't change the altitude, as we don't know it from the cursor
             }
