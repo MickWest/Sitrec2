@@ -238,7 +238,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         if (misb.useAGL) {
             this.cacheValues();
         } else {
-            console.warn("CNodeTrackFromMISB:recalculate(): Not using AGL, so not re-caching values from this.in.misb")
+//            console.warn("CNodeTrackFromMISB:recalculate(): Not using AGL, so not re-caching values from this.in.misb")
         }
 
         assert(this.frames === Math.floor(this.frames),`Frames must be an integer, it's ${this.frames}`)

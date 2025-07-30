@@ -363,7 +363,7 @@ export class CTLEData {
                     return satNum
                 }
             }
-            console.warn("CNodeSatelliteTrack: no satellite found for number" + s)
+//            console.warn("CNodeSatelliteTrack: no satellite found for number" + s)
         }
 
         // if it's a string, try to find it in the TLE database, first try to match the name exactly
