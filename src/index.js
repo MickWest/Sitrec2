@@ -957,6 +957,11 @@ async function setupFunctions() {
         const EUS = LLAToEUS(Sit.lat, Sit.lon, 0);
         NodeMan.get("mainCamera").goToPoint(EUS,1000000,2000000);
 
+        // normally setting the camera positon means we have established the sitch
+        // however if it's ust geolocating the camera, then we don't want to set the sitch established
+        // as we still want to load tracks and have it set the start time and location to the track
+        Globals.sitchEstablished = false;
+
     }
 
 

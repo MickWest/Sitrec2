@@ -21,7 +21,9 @@ export const SitStarlink = {
      bFrame: 3000,
      startTime: "current",
     //
-    //localLatLon: true,
+    //
+
+    localLatLon: true,
 
     nightSky: {
         starLink: "starLink",
