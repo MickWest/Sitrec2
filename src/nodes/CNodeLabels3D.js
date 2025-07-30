@@ -209,17 +209,26 @@ export class CNodeLabel3D extends CNode3DGroup {
 
         let pos = this.position.clone();
         if (this.offset !== undefined) {
-            pos = view.offsetScreenPixels(pos, this.offset.x, this.offset.y);
+           pos = view.offsetScreenPixels(pos, this.offset.x, this.offset.y);
         }
 
         this.sprite.position.copy(pos);
+
+
+        let zoom = 1;
+        if (view.syncVideoZoom && NodeMan.exists("videoZoom")) {
+            var videoZoom = NodeMan.get("videoZoom")
+            if (videoZoom != undefined) {
+                zoom = videoZoom.v0 / 100;
+            }
+        }
 
         const mask = camera.layers.mask;
         const fovScale = 0.0025 * Math.tan((camera.fov / 2) * (Math.PI / 180))
          const sprite = this.sprite;
         if (sprite.layers.mask & mask) {
             const distance = camera.position.distanceTo(sprite.position);
-            let scale = distance * fovScale * this.size * ViewMan.heightPx/view.heightPx;
+            let scale = distance * fovScale * this.size * ViewMan.heightPx/view.heightPx/zoom;
             sprite.scale.set(scale * sprite.aspect, scale, 1);
         }
 
