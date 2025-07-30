@@ -62,9 +62,10 @@ export function updateNightTexture(noNightLights) {
 
     // otherwise, start to laod it
 
+    Globals.pendingActions++;
     // load it asynchronously
     const loader = new TextureLoader();
-        loader
+    loader
         .loadAsync(SITREC_APP + 'data/images/Earthlights_2002.jpg')
         .then((texture) => {
             nightTexture = texture;
@@ -81,6 +82,9 @@ export function updateNightTexture(noNightLights) {
         })
         .catch((err) => {
             console.error('Failed to load texture:', err);
+        })
+        .finally(()=> {
+            Globals.pendingActions--;
         });
 
 
