@@ -95,6 +95,8 @@ export class CNode3DLight extends CNode3D {
 // Save reference
         this._object = billboard;
 
+        this.scene = v.scene; // save the scene for later use
+
 
 
 
@@ -102,10 +104,12 @@ export class CNode3DLight extends CNode3D {
 
     dispose() {
         if (this._object) {
+            this.scene.remove(this._object);
             this._object.geometry.dispose();
             this._object.material.dispose();
             this._object = null;
         }
+        super.dispose();
     }
 
     preRender(view) {

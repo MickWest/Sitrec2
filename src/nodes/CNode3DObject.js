@@ -755,6 +755,8 @@ export class CNode3DObject extends CNode3DGroup {
 
         const common = this.common;
 
+        this.destroyLights();
+
 
         if (this.modelOrGeometry === "model") {
             //this.destroyNonCommonUI(this.gui);
@@ -939,6 +941,7 @@ export class CNode3DObject extends CNode3DGroup {
     // it will have children which are lights
     // we detect them and turn them off
     extractLightsFromModel(model) {
+        this.destroyLights();
         model.traverse((child) => {
             if (child.isLight) {
                 // turn off the light
@@ -959,11 +962,13 @@ export class CNode3DObject extends CNode3DGroup {
                     // and also to turn it on/off
                 }
 
-                new CNode3DLight({
+                const light = new CNode3DLight({
                     id: this.id + "_" + child.name,
                     light: child,
                     scene: this.group,
                 })
+
+                this.lights.push(light);
 
             }
         });
@@ -1182,6 +1187,9 @@ export class CNode3DObject extends CNode3DGroup {
             this.object = undefined;
         }
 
+        // remove any lights from the model
+        this.destroyLights();
+
         if (this.material) {
             this.material.dispose();
         }
@@ -1192,6 +1200,16 @@ export class CNode3DObject extends CNode3DGroup {
             this.model = undefined
         }
 
+    }
+
+    destroyLights() {
+        if (this.lights !== undefined) {
+            // if we have lights, then dispose them
+            for (const light of this.lights) {
+                NodeMan.disposeRemove(light, true);
+            }
+        }
+        this.lights = [];
     }
 
     dispose() {
