@@ -20,6 +20,7 @@ export class CVideoWebCodecDataRaw extends CVideoData {
         this.format = ""
         this.error = false;
         this.loaded = false;
+        this.loadedCallback = loadedCallback;
 
         this.incompatible = true;
         try {
@@ -62,9 +63,6 @@ export class CVideoWebCodecDataRaw extends CVideoData {
                 // Remove it from the file manager
                 // as we only need it for the initial load
                 FileManager.disposeRemove("video");
-
-                loadedCallback();
-
             })
         } else {
 
@@ -84,9 +82,7 @@ export class CVideoWebCodecDataRaw extends CVideoData {
                     reader.result.fileStart = 0;        // patch in the fileStart of 0, as this is the whole thing
                     source.file.appendBuffer(reader.result)
                     source.file.flush();
-                    loadedCallback();
                 }
-
             }
         }
 
@@ -215,13 +211,16 @@ export class CVideoWebCodecDataRaw extends CVideoData {
 //            offscreen.height = config.codedHeight;
 //            offscreen.width = config.codedWidth;
 
+            // image width and height are needed for things like the video tracking overlay
+            this.imageWidth = config.codedWidth;
+            this.imageHeight = config.codedHeight;
+
             this.config = config;
             this.decoder.configure(config);
 
             // NOT HANDLED YET - get the rotation angle from the video matrix
             this.angle = getRotationAngleFromVideoMatrix(demuxer.track.matrix);
 
-            EventManager.dispatchEvent("videoLoaded", {videoData: this});
 
             demuxer.start((chunk) => {
                 // The demuxer will call this for each chunk it demuxes
@@ -270,6 +269,11 @@ export class CVideoWebCodecDataRaw extends CVideoData {
             Sit.fps = demuxer.source.fps;
 
             updateSitFrames()
+
+            this.loadedCallback();
+
+            EventManager.dispatchEvent("videoLoaded", {videoData: this, width: config.codedWidth, height: config.codedHeight});
+
         });
 
     }

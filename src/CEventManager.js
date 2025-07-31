@@ -4,7 +4,7 @@ class CEventManager {
     }
 
     // Currently there's no facility for removing event listeners
-    // they are just added and never removed
+    // they are just added and never removed unless the callback returns true
     // but are all cleared when a new sitch is loaded
     // possibly should have object responsible for removing their own listeners
     addEventListener(event, callback) {
@@ -30,10 +30,7 @@ class CEventManager {
             return;
         }
 
-        //this.events[event].forEach((cb) => cb(data));
-
 //        console.log("🎃 EventManager dispatching event", event, "with data", data);
-
         // call the callbacks, if any return true, then delete that one
         this.events[event] = this.events[event].filter((cb) => !cb(data));
 

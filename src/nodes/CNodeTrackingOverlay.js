@@ -9,6 +9,7 @@ import {radians} from "../utils";
 import {extractFOV} from "./CNodeControllerVarious";
 import {mouseToCanvas} from "../ViewUtils";
 import {CNodeVideoView} from "./CNodeVideoView";
+import {EventManager} from "../CEventManager";
 
 /*
     the intent of a tracking overlay is to track point on a video
@@ -115,6 +116,7 @@ export class CNodeActiveOverlay extends CNodeViewUI {
     constructor(v) {
         super(v);
 
+
         // disable double clicking to full-screen or resize, as it does not
         // work well with the active overlay
         this.doubleClickResizes = false;
@@ -125,6 +127,12 @@ export class CNodeActiveOverlay extends CNodeViewUI {
         assert(this.overlayView instanceof CNodeVideoView, "CNodeActiveOverlay:overlayView is not an instance of CNodeVideoView, this should be set in the constructor of the derived class")
 
         this.draggable  = []
+
+        EventManager.addEventListener("videoLoaded", (data) => {
+           this.recalculateCascade();
+           return true;
+        });
+
 
     }
 
@@ -386,10 +394,6 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         // Get the total number of frames
         this.frames = Sit.frames;
 
-        const videoWidth = this.overlayView.widthPx;
-        const videoHeight = this.overlayView.heightPx;
-        // convert to video coordinates
-        const [centerX, centerY] = this.overlayView.canvasToVideoCoords(videoWidth / 2, videoHeight / 2);
 
         // Sort keyframes by frame
         this.keyframes.sort((a, b) => a.frame - b.frame);
@@ -400,6 +404,12 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         // Handle special cases first
         if (this.keyframes.length === 0) {
             // No keyframes, set all points to middle (50, 50)
+            // get the center of the overlay view in view coordinates
+            const viewWidth = this.overlayView.widthPx;
+            const viewHeight = this.overlayView.heightPx;
+            // convert center to video coordinates
+            const [centerX, centerY] = this.overlayView.canvasToVideoCoords(viewWidth / 2, viewHeight / 2);
+
             for (let i = 0; i < this.frames; i++) {
                 this.pointsXY[i] = [centerX, centerY];
             }
@@ -733,10 +743,20 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
                 frame: k.frame
             }))
             if (Globals.exportTagNumber < 2001001) {
+                console.log("exportTagNumber is less than 2001001 (" + Globals.exportTagNumber + "), converting keyframe coordinates to video coordinates");
                 // old format x, and y are as % of the video height
                 // so we need to convert them to video coordinates
-                newKeyframe.x = k.x * this.overlayView.imageHeight / 100;
-                newKeyframe.y = k.y * this.overlayView.imageHeight / 100;
+                // PROBLEM. The video has not yet been loaded, so we can't use the video height
+                // newKeyframe.x = k.x * this.overlayView.imageHeight / 100;
+                // newKeyframe.y = k.y * this.overlayView.imageHeight / 100;
+
+                let h = 720; // PATCH, for legacy Mosul Orb videos
+
+                // if (this.overlayView.imageHeight > 100 )
+                //     h = this.overlayView.imageHeight;
+
+                newKeyframe.x = k.x * h / 100;
+                newKeyframe.y = k.y * h / 100;
 
 
             } else {

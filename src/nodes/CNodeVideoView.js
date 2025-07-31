@@ -107,9 +107,15 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
     loadedCallback() {
         this.removeText();
+
+        // Setting image Width and Height
+        // this will get overwritten later if the frames decode to a different size
+        // however this should be the correct size for the video now
+        this.imageWidth = this.videoData.imageWidth;
+        this.imageHeight = this.videoData.imageHeight;
+
         // if we loaded from a mod or custom
         // then we might want to set the frame nubmer
-
         if (Sit.pars !== undefined && Sit.pars.frame !== undefined) {
             par.frame = Sit.pars.frame;
         }
