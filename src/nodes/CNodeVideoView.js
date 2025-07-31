@@ -105,14 +105,23 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
 
 
-    loadedCallback() {
+    loadedCallback(videoData) {
         this.removeText();
+
+
+        // in the case where the videoData is immediately set up ina  constructor,
+        // allow video data derived constructors to pass in "this" so we can get the width and height
+        // Speicifically this handles the case where a "video" is a single image.
+        if (videoData === undefined)
+            videoData = this.videoData;
+
+        assert (videoData, "CNodeVideoView loadedCallback called with no videoData, possibly because it's called in the constructor before the this.videoData is assigned");
 
         // Setting image Width and Height
         // this will get overwritten later if the frames decode to a different size
         // however this should be the correct size for the video now
-        this.imageWidth = this.videoData.imageWidth;
-        this.imageHeight = this.videoData.imageHeight;
+        this.imageWidth = videoData.imageWidth;
+        this.imageHeight = videoData.imageHeight;
 
         // if we loaded from a mod or custom
         // then we might want to set the frame nubmer
