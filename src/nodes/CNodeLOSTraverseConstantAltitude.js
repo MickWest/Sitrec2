@@ -6,6 +6,7 @@ import {Color, Ray, Sphere} from "three";
 import {CNodeTrack} from "./CNodeTrack";
 import {intersectSphere2, V3} from "../threeUtils";
 import {wgs84} from "../LLA-ECEF-ENU";
+import {assert} from "../assert";
 
 export class CNodeLOSTraverseConstantAltitude extends CNodeTrack {
     constructor(v) {
@@ -86,6 +87,7 @@ export class CNodeLOSTraverseConstantAltitude extends CNodeTrack {
                 }
 
             }
+            assert(!isNaN(position.x) && !isNaN(position.y) && !isNaN(position.z), "CNodeLOSTraverseConstantAltitude: NaN position at frame " + f);
             result.position = position
 
 

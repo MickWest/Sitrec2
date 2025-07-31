@@ -370,6 +370,8 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         los.up = undefined;
         los.right = undefined;
 
+        assert(!isNaN(los.heading.x) && !isNaN(los.heading.y) && !isNaN(los.heading.z), "CNodeTrackingOverlay:getValueFrame: los.heading is NaN at frame " + f);
+
 
         return los;
 

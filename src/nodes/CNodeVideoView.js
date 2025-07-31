@@ -386,9 +386,21 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     getSourceAndDestCoords() {
         assert(this.in.zoom !== undefined, "canvasToVideoCoords requires zoom input to be defined");
 
+//        assert(this.imageWidth > 0 && this.imageHeight > 0, "canvasToVideoCoords requires imageWidth and imageHeight to be set, this="+this.id);
+
+
         // imageWidth and imageHeight are the original video dimensions
-        const sourceW = this.imageWidth;
-        const sourceH = this.imageHeight
+        let sourceW = this.imageWidth;
+        let sourceH = this.imageHeight
+
+        if (sourceW <= 0 || sourceH <= 0) {
+            // if the sourceW or sourceH is not set, then we can't calculate the coordinates
+            console.error("CNodeVideoView.getSourceAndDestCoords called with invalid image dimensions, video not loaded? this="+this.id+", sourceW="+sourceW+", sourceH="+sourceH);
+            sourceW = this.widthPx;
+            sourceH = this.heightPx;
+        }
+
+
         const aspectSource = sourceW / sourceH
 
         // the view is the canvas size, widthPx and heightPx
@@ -412,7 +424,6 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.sWidth = sourceW / zoom;
         this.sHeight = sourceH / zoom;
 
-        let dx,dy, dWidth, dHeight;
 
         if (aspectSource > aspectView) {
             // Source video is WIDER than the view, so we scale to fit width
@@ -433,6 +444,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             this.dWidth = this.heightPx * aspectSource;
             this.dHeight = this.heightPx;
         }
+        assert(!isNaN(this.dWidth) && !isNaN(this.dHeight), "getSourceAndDestCoords returned NaN for dWidth or dHeight, this="+this.id+", zoom="+this.in.zoom.v0);
+
     }
 
     /**
