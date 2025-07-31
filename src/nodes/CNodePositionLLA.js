@@ -242,8 +242,12 @@ export class CNodePositionLLA extends CNode {
     }
 
 
-    gotoLLA(lat, lon, alt) {
-        this._LLA = [lat, lon, 3]; // set altitude to 6m above ground
+    gotoLLA(lat, lon, alt=2) {
+
+        this._LLA = [lat, lon, alt];
+        this.guiLat.value = lat
+        this.guiLon.value = lon
+        this.guiAlt.value = alt; // set altitude to 3m above ground
 
         this.agl = true; // set AGL to true, so we adjust the altitude above ground level
 
