@@ -11,6 +11,7 @@ import {SITREC_DEV_DOMAIN, SITREC_DOMAIN} from "./configUtils";
 import {doesKMLContainTrack, extractKMLObjects} from "./KMLUtils";
 import {assert} from "./assert";
 import {findColumn} from "./ParseUtils";
+import {EventManager} from "./CEventManager";
 
 // The DragDropHandler is more like the local client file handler, with rehosting, and parsing
 class CDragDropHandler {
@@ -127,10 +128,15 @@ class CDragDropHandler {
                 }
             }
         }
+
     }
 
 
     uploadDroppedFile(file) {
+
+        EventManager.dispatchEvent("fileDropped", {})
+
+
         // if it's a video file, that's handled differently
         // as we might (in the future) want to stream it
         if (file.type.startsWith("video")) {

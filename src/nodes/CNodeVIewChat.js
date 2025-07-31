@@ -2,6 +2,7 @@ import {CNodeView} from "./CNodeView.js";
 import {GlobalDateTimeNode, guiMenus, Sit} from "../Globals";
 import {SITREC_SERVER} from "../configUtils";
 import {sitrecAPI} from "../CSitrecAPI";
+import {EventManager} from "../CEventManager";
 const THEMES = {
     light: {
         '--cnodeview-bg': '#fff',
@@ -211,6 +212,11 @@ class CNodeViewChat extends CNodeView {
             guiMenus.help.close()
         })
 
+
+        // Listen for file dropped events to hide the chat view
+        EventManager.addEventListener("fileDropped", (e) => {
+            this.hide();
+        })
 
 
         this.setTheme(this.theme);
