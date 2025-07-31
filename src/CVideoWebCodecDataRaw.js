@@ -363,6 +363,9 @@ export class CVideoWebCodecDataRaw extends CVideoData {
                 numPending++;
             if (keep.find(keeper => keeper === group) === undefined && group.loaded) {
 //                console.log("Purging group at frame "+group.frame+" group pending = "+group.pending)
+
+                assert (this.imageCache, "imageCache is undefined when purging groups but groups.length = " + this.groups.length);
+
                 for (let i = group.frame + 1; i < group.frame + group.length; i++) {
                     // release all the frames in this group
                     this.imageCache[i] = new Image()    // TODO, maybe better as null, but other code expect an empty Image when not loaded
@@ -398,13 +401,15 @@ export class CVideoWebCodecDataRaw extends CVideoData {
                 var images = 0;
                 var imageDatas = 0
                 var framesCaches = 0
-                for (var i = g.frame; i < g.frame + g.length; i++) {
-                    if (this.imageCache[i] != undefined && this.imageCache[i].width != 0)
-                        images++
-                    if (this.imageDataCache[i] != undefined && this.imageDataCache[i].width != 0)
-                        imageDatas++
-                    if (this.frameCache[i] != undefined)
-                        framesCaches++
+                if (this.imageCache) {
+                    for (var i = g.frame; i < g.frame + g.length; i++) {
+                        if (this.imageCache[i] != undefined && this.imageCache[i].width != 0)
+                            images++
+                        if (this.imageDataCache[i] != undefined && this.imageDataCache[i].width != 0)
+                            imageDatas++
+                        if (this.frameCache[i] != undefined)
+                            framesCaches++
+                    }
                 }
 
                 const currentGroup = this.getGroup(par.frame)
@@ -441,7 +446,7 @@ export class CVideoWebCodecDataRaw extends CVideoData {
         } else {
 
             // if not loaded any groups yet, then don't try to render anything
-            if (this.groups.length === 0)
+            if (this.groups.length === 0 || !this.imageCache)
                 return null;
 
             let cacheWindow = 30; // how much we seek ahead (and keep behind)
@@ -505,6 +510,8 @@ export class CVideoWebCodecDataRaw extends CVideoData {
             // purge all the other groups
             this.purgeGroupsExcept(groupsToKeep)
 
+            assert(this.imageCache, "imageCache is " + this.imageCache + " for frame " + frame + " but groups.length = " + this.groups.length);
+
             // return the closest frame that has been loaded
             // usually this just mean it returns the one indicated by "frame"
             // but if we've rapidly scrubbed then we might not have this frame
@@ -562,7 +569,7 @@ export class CVideoWebCodecDataRaw extends CVideoData {
         //     this.decoder.flush()
 
         if (isLocal) {
-            // this.debugVideo()
+             // this.debugVideo()
         }
     }
 

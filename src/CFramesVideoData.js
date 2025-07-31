@@ -75,6 +75,7 @@ export class CFramesVideoData extends CVideoData {
         this.fullName = null;
         this.startedLoadingTiny = false;
         this.startedLoadingFull = false;
+        this.groups = null;
     }
 
 }
