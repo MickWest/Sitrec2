@@ -494,7 +494,8 @@ export class CNode3DObject extends CNode3DGroup {
         this.modelOrGeometryMenu = this.gui.add(this, "modelOrGeometry", ["geometry", "model"]).listen().name("Model or Geometry").onChange((v) => {
             this.rebuild();
             setRenderOne(true)
-        }).tooltip("Select whether to use a 3D Model or a generated geometry for this object");
+        }).tooltip("Select whether to use a 3D Model or a generated geometry for this object")
+            .listen();
 
         this.modelOrGeometryMenu.isCommon = true;
 
@@ -503,7 +504,9 @@ export class CNode3DObject extends CNode3DGroup {
             this.modelOrGeometry = "model"
             this.rebuild();
             setRenderOne(true)
-        }).tooltip("Selecte a 3D Model to use for this object");
+        })
+            .listen()
+            .tooltip("Selecte a 3D Model to use for this object");
 
         this.modelMenu.isCommon = true;
 
