@@ -2,7 +2,7 @@ import {Color, Group, Mesh, MeshPhongMaterial, ShaderMaterial, SphereGeometry, T
 import {GlobalScene} from "./LocalFrame";
 import {wgs84} from "./LLA-ECEF-ENU";
 import {radians} from "./utils";
-import {Globals, NodeMan, Sit} from "./Globals";
+import {Globals, NodeMan, setRenderOne, Sit} from "./Globals";
 
 import {SITREC_APP} from "./configUtils";
 import {Texture} from "three/src/textures/Texture";
@@ -79,6 +79,7 @@ export function updateNightTexture(noNightLights) {
             }
             nightTextureLoaded = true;
             console.log('Night texture loaded successfully');
+            setRenderOne(true);
         })
         .catch((err) => {
             console.error('Failed to load texture:', err);
@@ -86,8 +87,6 @@ export function updateNightTexture(noNightLights) {
         .finally(()=> {
             Globals.pendingActions--;
         });
-
-
 }
 
 export function createSphereDayNight(radius, radius1, segments) {
