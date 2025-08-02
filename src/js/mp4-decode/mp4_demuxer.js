@@ -1,6 +1,7 @@
 import MP4Box from "../mp4box.all.js";
 //var MP4Box = require('mp4box');  // node.js version
 import {Sit} from "../../Globals";
+import {extractAllMetaData} from "../../ExtractMetadata";
 
 export class MP4Source {
   constructor() {
@@ -53,7 +54,15 @@ export class MP4Source {
     return reader.read().then(appendBuffers);
   }
 
+
   onReady(info) {
+
+    const meta = extractAllMetaData(this.file.boxes);
+    if (meta) {
+        Sit.metadata = meta;
+        console.log("MP4Source onReady metadata = ", Sit.metadata);
+    }
+
     // TODO: Generate configuration changes.
     this.info = info;
     //console.log("MP4Source onReady info = ", info)

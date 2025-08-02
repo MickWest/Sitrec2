@@ -189,6 +189,22 @@ export class CCustomManager {
 
            }
 
+           if (Sit.metadata && !Globals.sitchEstablished) {
+               const meta = Sit.metadata;
+               // got lat, lon, alt?
+               if (meta.latitude && meta.longitude && meta.altitude) {
+                   const camera = NodeMan.get("fixedCameraPosition");
+                   camera.gotoLLA(meta.latitude, meta.longitude, meta.altitude)
+               }
+
+                // got date and time?
+
+               // and set sitchEstablished to true
+               Globals.sitchEstablished = true;
+
+           }
+
+
 
         });
 
