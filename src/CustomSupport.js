@@ -198,6 +198,11 @@ export class CCustomManager {
                }
 
                 // got date and time?
+               if (meta.creationDate) {
+                   // parse the date and time
+                   // set the GlobalDateTimeNode to this date
+                   GlobalDateTimeNode.setStartDateTime(meta.creationDate);
+              }
 
                // and set sitchEstablished to true
                Globals.sitchEstablished = true;

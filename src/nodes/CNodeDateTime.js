@@ -8,6 +8,7 @@ import {assert} from "../assert.js";
 import {calculateGST} from "../CelestialMath";
 import {updateGUIFrames} from "../JetGUI";
 import {updateFrameSlider} from "./CNodeFrameSlider";
+import {getOffsetFromDateTimeString} from "../DateTimeUtils";
 
 const timeZoneOffsets = {
     "IDLW UTC-12": -12,     // International Date Line West
@@ -458,41 +459,12 @@ export class CNodeDateTime extends CNode {
         this.timeZoneName = "UTC" + (offset >= 0 ? "+" : "-") + Math.abs(offset).toFixed(2);
     }
 
+    // get the start time from a string in ISO 8601 format
+    // or from a Date object
     setStartDateTime(dateTime) {
-        // gee the timezone offset, and figure out the timezone to use
-        // get do this regadless of if the time zone is used or not
-        // we are bing passed in a dateTime as ISO_8601 string, so we need to convert it to a Date object
         this.dateStart = new Date(dateTime);
-        // that will adtomatically take the time zone into account
-        // but now we need to figure out what the offset is. Z will be UTC,
-        // but it might be +1, -1, etc
-        // we calcaulte it from the dateTime string, if it is a string
-        if (typeof dateTime === 'string' && dateTime.endsWith('Z')) {
-            // if the dateTime is in UTC, then we set the time zone offset to 0
-            this.timeZoneOffset = 0;
-            this.timeZoneName = "UTC";
-        } else if (typeof dateTime === 'string' && dateTime.includes('+')) {
-            // if the dateTime is in a time zone, then we need to parse it
-            const parts = dateTime.split('+');
-            // the offseet will be like +02:00 or +02:30, but we want in in fraction hours (1, 1.5, 1.75, etc)
-            // split it into hours and minutes
-            const timeZoneParts = parts[1].split(':');
-            this.timeZoneOffset = parseInt(timeZoneParts[0], 10) + (parseInt(timeZoneParts[1], 10) / 60);
-            this.timeZoneName = "UTC+" + Math.abs(this.timeZoneOffset);
-            this.setTimeZoneNameFromOffset(this.timeZoneOffset);
 
-        } else if (typeof dateTime === 'string' ) {
-            // if the dateTime is in a time zone, then we need to parse it
-            const parts = dateTime.split('-');
-            const timeZoneParts = parts[3].split(':');
-            this.timeZoneOffset = -(parseInt(timeZoneParts[0], 10) + (parseInt(timeZoneParts[1], 10) / 60));
-            this.timeZoneName = "UTC-" + Math.abs(this.timeZoneOffset);
-            this.setTimeZoneNameFromOffset(this.timeZoneOffset);
-        }
-
-
-
-
+        this.setTimeZoneNameFromOffset(getOffsetFromDateTimeString(dateTime));
 
         this.dateNow = startToNowDateTime(this.dateStart);
         this.populate();
@@ -680,14 +652,4 @@ export class CNodeDateTime extends CNode {
     //     }
 
 }
-
-// export var GlobalDateTimeNode;
-//
-// export function MakeDateTimeNode() {
-//     GlobalDateTimeNode = new CNodeDateTime({
-//         id:"dat",
-//     })
-// }
-
-
 
