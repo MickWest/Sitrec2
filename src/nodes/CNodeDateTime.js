@@ -447,6 +447,17 @@ export class CNodeDateTime extends CNode {
     }
 
     setTimeZoneNameFromOffset(offset) {
+
+        // we only use this if we can't find the time zone name in the timeZoneOffsets object
+        this.timeZoneOffset = offset;
+
+        if (offset === undefined || offset === null) {
+            console.warn("CNodeDateTime - setTimeZoneNameFromOffset called with undefined or null offset");
+            this.timeZoneName = "???"
+            assert(0, "CNodeDateTime - setTimeZoneNameFromOffset called with undefined or null offset");
+            return;
+        }
+
         // set the time zone name based on the offset
         // e.g. -7 becomes "PDT UTC-7"
         for (const [key, value] of Object.entries(timeZoneOffsets)) {
@@ -455,6 +466,7 @@ export class CNodeDateTime extends CNode {
                 return;
             }
         }
+
         // if we didn't find a match, then set it to plus (or minus) the offset
         this.timeZoneName = "UTC" + (offset >= 0 ? "+" : "-") + Math.abs(offset).toFixed(2);
     }
@@ -464,7 +476,9 @@ export class CNodeDateTime extends CNode {
     setStartDateTime(dateTime) {
         this.dateStart = new Date(dateTime);
 
-        this.setTimeZoneNameFromOffset(getOffsetFromDateTimeString(dateTime));
+        if (typeof dateTime === 'string') {
+            this.setTimeZoneNameFromOffset(getOffsetFromDateTimeString(dateTime));
+        }
 
         this.dateNow = startToNowDateTime(this.dateStart);
         this.populate();
