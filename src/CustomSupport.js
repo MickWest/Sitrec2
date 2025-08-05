@@ -306,6 +306,19 @@ export class CCustomManager {
         // https://globe.adsbexchange.com/?replay=2025-07-02-20:31&lat=32.996&lon=-96.715&zoom=11.9
         // which matches the current camera position and date/time
 
+        const date = GlobalDateTimeNode.frameToDate(par.frame);
+
+        // check to see if it's withing 30 minutes of the current time
+        // and if so, give an alert saying that's too soon for replay
+
+        const now = new Date();
+        const diffMinutes = Math.abs((now - date) / 60000); // difference in minutes
+        if (diffMinutes < 30) {
+            alert("ADSB Replay is not available for the last 30 minutes.\nPlease wait until the data is available.");
+            return;
+        }
+
+
 
         // get the current camera position from the lookCamera in Lat and Lon
         const lookCamera = NodeMan.get("lookCamera");
@@ -313,7 +326,6 @@ export class CCustomManager {
         const LLA = EUSToLLA(pos);
 
         // get date and time from the current frame
-        const date = GlobalDateTimeNode.frameToDate(par.frame);
         const dateString = date.toISOString().slice(0, 16).replace("T", "-");
         const lat = LLA.x.toFixed(3);
         const lon = LLA.y.toFixed(3);
