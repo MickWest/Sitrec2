@@ -88,6 +88,16 @@ export class CRehoster {
 
 
     rehostFile(filename, data, version) {
+
+        let limit = process.env.MAX_FILE_SIZE_MB || 99; // default to 99MB if not set
+
+        // if data is bigger than 99MB then do not rehost it
+        if (data.byteLength > limit * 1024 * 1024) {
+            console.warn("File is too big to rehost: ", filename, " size: ", data.byteLength, " bytes");
+            alert("File is too big to rehost: " + filename + " size: " + data.byteLength + " bytes. Please use a smaller file. Limit = " + limit + " MB");
+            return Promise.reject(new Error("File is too big to rehost: " + filename + " size: " + data.byteLength + " bytes. Please use a smaller file."));
+        }
+
         // make surethe filename does not end with a space or a dot
         while (filename.endsWith(" ") || filename.endsWith(".")) {
             assert(0, "Filename should not end with a space or a dot: " + filename);
