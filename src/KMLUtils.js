@@ -208,13 +208,7 @@ export function getKMLTrackWhenCoord(kml, trackIndex, when, coord, info) {
 
     //assert(info.name !== undefined && info.name !== "", "Unable to find name")
     if (info.name === undefined || info.name !== "") {
-        // if we don't have a name, then use the first track's name
-        // this is a bit of a hack, but it works for now
-        if (tracks[0].name !== undefined && tracks[0].name["#text"] !== undefined) {
-            info.name = tracks[0].name["#text"];
-        } else {
-            info.name = "Unnamed Track";
-        }
+        info.name = "Unnamed Track";
     }
 
 
