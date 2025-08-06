@@ -506,7 +506,8 @@ function convert(key, dataview, options) {
 				return {
 					key,
 					name: st0601data(key).name,
-					value: buffer.readInt8(0),
+				//	value: buffer.readInt8(0),
+					data: dataview.getInt8(0),
 					unit: "°C",
 				};
 			case 40:
