@@ -993,10 +993,13 @@ class CTrackManager extends CManager {
             }
 
             if (!found) {
-                if (kml.kml !== undefined && kml.kml.Document !== undefined && kml.kml.Document.name !== undefined) {
+                if (kml.kml !== undefined
+                    && kml.kml.Document !== undefined
+                    && kml.kml.Document.name !== undefined
+                    && kml.kml.Document.name['#text'] !== undefined) {
                     // example: FlightAware ✈ RYR5580 15-Oct-2022 (EDI / EGPH-ALC / LEAL)
                     // so we want the RYR5580 part
-                    const name = kml.kml.Document.name['#text']
+                    const name = kml.kml.Document.name['#text'];
 
                     const match = name.match(/FlightAware ✈ ([A-Z0-9]+) /);
                     if (match !== null) {
