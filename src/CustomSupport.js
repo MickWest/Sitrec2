@@ -1210,7 +1210,7 @@ export class CCustomManager {
 
 function disableIfNearCameraTrack(ob, camera) {
     const dist = ob.position.distanceTo(camera.position)
-    if (dist < 5) {   // need a bit of slack for smoothed vs. unsmoothed tracks. FIX THIS so camera track and object tracks always smoothed
+    if (dist < 0.001) {  // slack WAS 5m, for smoothed vs unsmoothed tracks
         ob.customOldVisible = ob.visible;
         ob.visible = false;
     } else {
