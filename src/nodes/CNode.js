@@ -566,6 +566,9 @@ class CNode {
             value = this.getValueFrame(0);
         } else {
             // here we have at least two frames, so can interpolate and extrapolate
+            // there's there cases (frameFloat < 0, frameFloat >= numFrames, or in between)
+            // and in each case we need to handle the interpolatin/extrapolation of
+            // number, vector, or object with position
             if (frameFloat < 0) {
                 // extrapolating backwards
                 const value0 = this.getValueFrame(0)
@@ -604,6 +607,7 @@ class CNode {
                     //console.warn("Extrapolated: "+vdump(value0)+" ... "+vdump(value1)+" by "+(frameFloat-(numFrames-1)) + " to "+vdump(value) + "STRIPPED ANY OTHER DATA");
                 }
             } else {
+                // interpolating between two known frames
                 if (Number.isInteger(frameFloat)) {
                     value = this.getValueFrame(frameFloat)
                 } else {
@@ -614,9 +618,18 @@ class CNode {
                     assert(value0 !== undefined, "Node "+this.id+" has undefined value0 at frame "+frameInt)
                     assert(value1 !== undefined, "Node "+this.id+" has undefined value1 at frame "+(frameInt+1))
 
-                    if (value0.position === undefined)
-                        value = value0 + (value1-value0) * (frameFloat - frameInt)
-                    else {
+                    if (value0.position === undefined) {
+                        // as above, if both values are numbers, then interpolate
+                        // otherwise, assume they are vectors
+                        if (typeof value0 === 'number' && typeof value1 === 'number') {
+                            value = value0 + (value1 - value0) * (frameFloat - frameInt);
+                        } else {
+                            // interpolating raw 3D vectors
+                            assert (value0.x !== undefined, "Interpolating non-vector in "+this.id+ " frame " + frameFloat);
+                            value = value1.clone().sub(value0).multiplyScalar(frameFloat - frameInt).add(value0)
+                        }
+
+                    } else {
                         //  value = value0 // to copy the color and other per-frame data
                         value = {}
                         value.position = value1.position.clone().sub(value0.position).multiplyScalar(frameFloat - frameInt).add(value0.position)
