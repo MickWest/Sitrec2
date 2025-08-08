@@ -61,7 +61,7 @@ export class CNodePositionLLA extends CNode {
                                this._LLA[0] = lat;
                                this._LLA[1] = lon;
                                this.guiLon.value = lon;
-                               this.recalculateCascade(0)
+                               this.recalculateCascade()
                                EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
                                return;
                            }
@@ -69,7 +69,7 @@ export class CNodePositionLLA extends CNode {
                        this._LLA[0] = parseFloat(v);
                        EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
 
-                       this.recalculateCascade(0)
+                       this.recalculateCascade()
 
                    }
                }, v.gui)
@@ -82,7 +82,7 @@ export class CNodePositionLLA extends CNode {
                    stepExplicit: false, // prevent snapping
                    onChange: (v) => {
                        this._LLA[1] = v;
-                       this.recalculateCascade(0)
+                       this.recalculateCascade()
                        EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
 
                    }
@@ -106,7 +106,7 @@ export class CNodePositionLLA extends CNode {
 
                    onChange: (v) => {
                        this._LLA[2] = v;
-                       this.recalculateCascade(0)
+                       this.recalculateCascade()
                        EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
 
                      //  this.updateAltituide();
@@ -139,7 +139,7 @@ export class CNodePositionLLA extends CNode {
                                     // set the altitude to 0
                                     this._LLA[2] = 0;
                                     this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small", true)
-                                    this.recalculateCascade(0);
+                                    this.recalculateCascade();
                                     EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
 
 
@@ -152,7 +152,7 @@ export class CNodePositionLLA extends CNode {
                                                 // add 2m to the elevation, as we want to be above ground
                                                 this._LLA[2] = altData.elevation[0] + 2; // add 2m to the elevation
                                                 this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small", true);
-                                                this.recalculateCascade(0);
+                                                this.recalculateCascade();
 
 
                                             } else {
@@ -222,7 +222,7 @@ export class CNodePositionLLA extends CNode {
             this.guiLon.value = lon;
             this.guiAlt.setValueWithUnits(alt, "metric", "small", true);
         }
-        this.recalculateCascade(0);
+        this.recalculateCascade();
         EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
 
     }
@@ -251,7 +251,7 @@ export class CNodePositionLLA extends CNode {
 
         this.agl = true; // set AGL to true, so we adjust the altitude above ground level
 
-        this.recalculateCascade(0);
+        this.recalculateCascade();
         NodeMan.get("mainCamera").goToPoint(this.EUS,2300000,100000);
 
 
