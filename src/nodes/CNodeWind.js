@@ -40,6 +40,10 @@ export class CNodeWind extends CNode {
         // the zero frame will NOT have any wind applied, as that time dependent (and the zero frame has t=0)
         this.originTrack = v.originTrack; // optional, if supplied, the wind is in the frame of reference of the track
 
+        // forcing extra intial recalculate cascades (only of there's an origin track)
+        // this is to ensure that the wind is in the correct frame of reference
+        // bit of a patch, but it works. Really need to sort out the initialization order here
+        this.extraRecalculate = 2;
 
         this.lock = v.lock;
 
@@ -146,7 +150,19 @@ export class CNodeWind extends CNode {
         }
 
         if (this.originTrack !== undefined) {
-            this.position = this.originTrack.getValueFrame(0)
+            const newPosition = this.originTrack.getValueFrame(0);
+            if (!newPosition.equals(this.position)) {
+                // force TWO recalculate cycles to ensure it propogates through the system
+                this.extraRecalculate = 2;
+                this.setPosition(newPosition);
+            }
+
+            if (this.extraRecalculate) {
+                this.extraRecalculate--;
+                // changing the frame of reference of the wind will change dependent nodes
+                // so we need to recalculate them
+                this.recalculateCascade();
+            }
         }
     }
 
@@ -159,8 +175,8 @@ export class CNodeWind extends CNode {
     }
 
     recalculate() {
-        if (this.dontRecurse) return;
-        this.dontRecurse = true;
+         if (this.dontRecurse) return;
+         this.dontRecurse = true;
 
         if (this.lock !== undefined) {
             if (NodeMan.exists("lockWind")) {
