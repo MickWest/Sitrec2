@@ -28,15 +28,18 @@ export class CNodeWind extends CNode {
             this.guiKnots = this.gui.add (this, "knots", 0, this.max, 1).name(this.name+" Wind Knots").onChange(x => this.recalculateCascade())
         }
 
-        this.optionalInputs(["originTrack"])
+       // this.optionalInputs(["originTrack"])
         // wind defaults to being in the frame of reference of the EUS origin (0,0,0)
         this.position=V3(0,0,0);
 
-        // But if there a track is supplied, then the wind is in the frame of reference of the track
-        // we just set the position to the origin of the track
-        // if (this.in.originTrack !== undefined) {
-        //     this.position = this.in.originTrack.p(0)
-        // }
+
+
+        // we can't use originTrack as an input as typically it's going to be something like the
+        // target position, which then depends on the wind, which depends on the target position
+        // so in the update function we can just get the zero frame position of the origin track
+        // the zero frame will NOT have any wind applied, as that time dependent (and the zero frame has t=0)
+        this.originTrack = v.originTrack; // optional, if supplied, the wind is in the frame of reference of the track
+
 
         this.lock = v.lock;
 
@@ -90,13 +93,20 @@ export class CNodeWind extends CNode {
     // in EUS coordinates
     // optionally supply a position to get the wind at that position
     // with reference to local north and up vectors
-    getValueFrame(f) {
+    getValueFrame(f, position) {
+
+        // if no position is supplied, use the current position
+        // fine for a target that does not move much, but if the target moves a lot, then
+        // we should supply the position of the target at the time of the frame
+        if (position === undefined) {
+            position = this.position;
+        }
 
         //let wind = V3(0, 0, -metersPerSecondFromKnots(this.knots) / Sit.fps);
         //const posUp = V3(0, 1, 0)
-        let wind = getLocalNorthVector(this.position)
+        let wind = getLocalNorthVector(position)
         wind.multiplyScalar(metersPerSecondFromKnots(this.knots) / Sit.fps)
-        const posUp = getLocalUpVector(this.position)
+        const posUp = getLocalUpVector(position)
         wind.applyAxisAngle(posUp, radians(180-this.from))
 
         // assert no NaNs in the wind vector
@@ -123,6 +133,20 @@ export class CNodeWind extends CNode {
 
                 target.show(!lock.value)
             }
+        }
+
+        // if we have an origin track, then update the position to be the zero frame position of that track
+        // so we have an accurate frame of reference for the wind
+
+        // if the originTrack is a string, then get the node from NodeMan
+        // this allows to make the wind position depended on a track that has not been created yet
+        // (i.e. the target position, which depends on the wind)
+        if (typeof this.originTrack === "string") {
+            this.originTrack = NodeMan.get(this.originTrack);
+        }
+
+        if (this.originTrack !== undefined) {
+            this.position = this.originTrack.getValueFrame(0)
         }
     }
 

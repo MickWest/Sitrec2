@@ -947,12 +947,13 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
         case "targetWind":
             SSLog();
             node = new CNodeWind({
+                ...data,
                 id: "targetWind",
-                from: data.from,
-                knots: data.knots,
-                max: data.max,
-                name: "Target",
-                arrowColor: "red"
+                // from: data.from,
+                // knots: data.knots,
+                // max: data.max,
+                name: data.name ?? "Target",
+                arrowColor: data.arrowColor ?? "red"
             }, guiPhysics)
             break;
 

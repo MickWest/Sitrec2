@@ -253,7 +253,13 @@ sitch = {
 
 
     // target wind is the wind at the target location, which isn't always known
-    targetWind: {from: 270, knots: 0, name: "Target", arrowColor: "cyan"},
+    targetWind: {
+        from: 277,
+        knots: 0,
+        name: "Target",
+        arrowColor: "cyan",
+        originTrack: "targetTrackSwitch"
+    },
 
     // local wind is the wind at the camera location
     localWind: {
