@@ -56,9 +56,9 @@ const situationDefaults = {
     //
     mainFOV: 30,
     lookFOV: 0.35,
-    nearClip: 1,
+    nearClip: 0.01,
     farClipLook: 800000,
-    nearClipLook: 1,
+    nearClipLook: 0.01,
 
     defaultCameraDist: 1300,
 
