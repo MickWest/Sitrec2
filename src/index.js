@@ -1062,6 +1062,12 @@ function windowChanged() {
 
 function renderMain(elapsed) {
 
+
+    // since we are no longer call the logic on very frame, we need to update the listeners here
+    // so that the GUI and other things can update
+    Globals.menuBar.updateListeners();
+
+
     if (Globals.pendingActions > 0) {
         Globals.wasPending = 5;
         console.log("Pending actions: " + Globals.pendingActions)
@@ -1110,7 +1116,6 @@ function renderMain(elapsed) {
     }
 
     if (!par.noLogic) {
-        Globals.menuBar.updateListeners();
 
         if (Sit.updateFunction) {
             Sit.updateFunction(par.frame)
