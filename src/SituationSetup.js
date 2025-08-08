@@ -495,7 +495,7 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
                 id: cameraID,
                 fov: data.fov ?? 10,
                 //            aspect: window.innerWidth / window.innerHeight,
-                near: data.near ?? 1,
+                near: data.near ?? 0.01,
                 far: data.far ?? 8000000,
                 layers: data.mask ?? LAYER.MASK_LOOKRENDER,
                 //                   layers: data.mask ?? LAYER.MASK_MAIN_HELPERS,
