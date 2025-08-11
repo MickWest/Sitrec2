@@ -281,7 +281,9 @@ export async function resolveAnonObjects(data, depth=0) {
     // if the value for that key is an object
     // and that object has a "kind" key, then recursively call SetupFromKeyAndData
     for (let subKey in data) {
-        if (typeof data[subKey] === "object") {
+        // null is an object, so we need to check for that explicitly
+        // this is used, for example in the metadata serialization of videos
+        if ( data[subKey] !== null && typeof data[subKey] === "object") {
             if (data[subKey].kind !== undefined) {
                 // here the key will be the name of a variable
                 // so we can't use it as a node id
