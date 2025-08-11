@@ -42,7 +42,7 @@ if (!preg_match("/^\d{4}-\d{2}-\d{2}$/", $request)) {
 }
 
 // Whitelist the allowed types explicitly
-$allowed_types = ["", "LEO","ALL", "LEOALL"];
+$allowed_types = ["", "LEO", "ALL", "SLOW", "LEOALL"];
 
 $type = isset($_GET["type"]) ? $_GET["type"] : "";
 if (!in_array($type, $allowed_types, true)) {
@@ -64,6 +64,11 @@ if ($type == "LEO") {
 // LEOALL is all the LEO objects, including payloads and debris
 if ($type == "LEOALL") {
     $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/format/3le";
+}
+
+if ($type == "SLOW") {
+    // SLOW is for objects with a mean motion of less than 11.25 (using 11.26 to overlap with LEO a little)
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/<11.26/format/3le";
 }
 
 // override for ALL query

@@ -163,9 +163,14 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
 //        const satGUI = guiShowHide.addFolder("Satellites");
 
-        satGUI.add(this,"updateStarlink").name("Load ALL Satellites For Date")
+        satGUI.add(this,"updateLEOSats").name("Load LEO Satellites For Date")
             .onChange(function (x) {this.parent.close()})
-            .tooltip("Get the latest Satelliute TLE data for the current simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky.")
+            .tooltip("Get the latest LEO Satellite TLE data for the current simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky.")
+
+        // satGUI.add(this,"updateSLOWSats").name("(Experimental) Load SLOW Satellites")
+        //     .onChange(function (x) {this.parent.close()})
+        //     .tooltip("Get the latest SLOW Satellite TLE data for the current simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky. Might time-out for recent dates")
+
 
         this.flareAngle = 5
         satGUI.add(this, 'flareAngle', 0, 20, 0.1).listen().name("Flare Angle Spread").tooltip("Maximum angle of the reflected view vector for a flare to be visible\ni.e. the range of angles between the vector from the satellite to the sun and the vector from the camera to the satellite reflected off the bottom of the satellite (which is parallel to the ground)")
@@ -1241,7 +1246,16 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     }
 
 
-    updateStarlink() {
+
+    updateLEOSats() {
+        this.updateSats("LEO");
+    }
+
+    updateSLOWSats() {
+        this.updateSats("SLOW");
+    }
+
+    updateSats(satType) {
         // get the start time
         const startTime = GlobalDateTimeNode.dateNow;
 
@@ -1262,7 +1276,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // it fixed based on the date
         // so we don't need to rehost it
 //        const url = SITREC_SERVER+"proxyStarlink.php?request="+dateStr+"&type=LEO";
-        const url = SITREC_SERVER+"proxyStarlink.php?request="+dateStr+"&type=LEOALL";
+        const url = SITREC_SERVER+"proxyStarlink.php?request="+dateStr+"&type="+satType;
 
         // TODO: remove the old starlink from the file manager.
 
