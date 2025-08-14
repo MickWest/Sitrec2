@@ -214,7 +214,7 @@ export class CNodeDateTime extends CNode {
 
         this.oldSimSpeed = Sit.simSpeed;
 
-        this.dateTimeFolder.add(Sit, 'simSpeed', 1, 3600, 0.01).name("Simulation Speed").listen().onChange(
+        this.dateTimeFolder.add(Sit, 'simSpeed', 0.01, 3600, 0.01).name("Simulation Speed").listen().onChange(
             v => {
                 // if the simSpeed changes, we need to update the start time
                 // but we want the nowTime to remain the same, so we need to calculate
