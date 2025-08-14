@@ -167,9 +167,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             .onChange(function (x) {this.parent.close()})
             .tooltip("Get the latest LEO Satellite TLE data for the current simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky.")
 
-        // satGUI.add(this,"updateSLOWSats").name("(Experimental) Load SLOW Satellites")
-        //     .onChange(function (x) {this.parent.close()})
-        //     .tooltip("Get the latest SLOW Satellite TLE data for the current simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky. Might time-out for recent dates")
+        satGUI.add(this,"updateSLOWSats").name("(Experimental) Load SLOW Satellites")
+            .onChange(function (x) {this.parent.close()})
+            .tooltip("Get the latest SLOW Satellite TLE data for the current simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky. Might time-out for recent dates")
+
+        satGUI.add(this,"updateALLSats").name("(Experimental) Load ALL Satellites")
+            .onChange(function (x) {this.parent.close()})
+            .tooltip("Get the latest Satellite TLE data for ALL the satellites for the current simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky. Might time-out for recent dates")
 
 
         this.flareAngle = 5
@@ -1253,6 +1257,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
     updateSLOWSats() {
         this.updateSats("SLOW");
+    }
+
+    updateALLSats() {
+        this.updateSats("ALL");
     }
 
     updateSats(satType) {
@@ -2480,7 +2488,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 // Starlink is typically 7.5 km/s, so if it's much higher than that, then it's probably an error
                 // I use 11,000 as an upper limit to include highly elliptical orbits, see:
                 // https://space.stackexchange.com/questions/48830/what-is-the-fastest-satellite-in-earth-orbit
-                if (velocity < 5000 || velocity > 11000) {
+                // Geostationary satellites are around 3 km/s, so we can use that as a lower limit
+                //
+                if (velocity < 2500 || velocity > 11000) {
                     // if the velocity is too high, then we assume it's an error and skip it
                     satData.invalidPosition = true;
                 } else {
