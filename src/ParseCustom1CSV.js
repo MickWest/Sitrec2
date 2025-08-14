@@ -11,7 +11,7 @@ import {f2m} from "./utils";
 // we need at least time, lat, lon, and alt
 const CustomCSVFormats = {
     CUSTOM1: {
-        time:     ["TIME", "TIMESTAMP", "DATE", "UTC", "DATETIME"],
+        time:     ["TIME", "TIMESTAMP", "DATE", "UTC", "DATETIME", "DATE_TIME"],
         lat:      ["LAT", "LATITUDE", "TPLAT"],
         lon:      ["LON", "LONG", "LONGITUDE", "TPLON"],
         alt:      ["ALTITUDE", "ALT", "ALTITUDE (m)*", "TPHAE"],
