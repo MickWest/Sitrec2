@@ -62,9 +62,9 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
 
         const timeStartMin = v.timeStartMin ?? 52;
         const timeStartSec = v.timeStartSec ?? 45;
-        par.timeStartTotalSec = 60*timeStartMin + timeStartSec
+        par.startTimeSeconds = 60*timeStartMin + timeStartSec
         this.addText("time", "....", 45.9, 99.8).listen(par, "time", function (value) {
-            var sec = par.timeStartTotalSec + floor(value)
+            var sec = par.startTimeSeconds + floor(value)
             this.text = pad(floor(sec/60),2)+pad(sec%60,2);
         })
 
