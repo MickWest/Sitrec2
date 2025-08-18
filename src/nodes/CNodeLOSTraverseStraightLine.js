@@ -115,7 +115,7 @@ export class CNodeLOSTraverseStraightLine extends CNodeTrack {
     }
 
     getValueFrame(f) {
-        return this.array[f]
+        return this.array[Math.floor(f)]
     }
 
 }
@@ -177,7 +177,7 @@ export class CNodeLOSTraverseStraightLineFixed extends CNodeTrack {
     }
 
     getValueFrame(f) {
-        return this.array[f]
+        return this.array[Math.floor(f)]
     }
 
 }
@@ -236,7 +236,7 @@ export class CNodeLOSTraverseWind extends CNodeTrack {
     }
 
     getValueFrame(f) {
-        return this.array[f]
+        return this.array[Math.floor(f)]
     }
 
 }

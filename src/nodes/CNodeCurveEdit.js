@@ -176,7 +176,7 @@ export class CNodeCurveEditor extends CNode {
     }
 
     getValueFrame(f) {
-        return this.curve.getY(f)
+        return this.curve.getY(Math.floor(f))
     }
 }
 

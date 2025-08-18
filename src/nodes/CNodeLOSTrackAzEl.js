@@ -68,7 +68,7 @@ export class CNodeLOSTrackAzEl extends CNodeTrack {
     }
 
     getValueFrame(f) {
-        return this.array[f]
+        return this.array[Math.floor(f)]
     }
 
 }

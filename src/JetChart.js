@@ -58,7 +58,7 @@ export function getData() {
             if (1) {
                 data[3].push(-Frame2CueAz(frame))  // Cyan = Cue Az
                 //data[4].push(-this.CSV[frame][9])  // Grey = Recorded Cue Az
-                data[4].push(NodeMan.get("recordedCueAz").getValueFrame(frame))
+                data[4].push(NodeMan.get("recordedCueAz").getValue(frame))
             } else {
                 // super magnified
                 data[3].push(20 + 25 * (-Frame2CueAz(frame) + Frame2Az(frame)))  // Cyan = Cue Az
@@ -226,12 +226,12 @@ export function setupOpts() {
                 if (sc.max > 0 && self.mickWidth != undefined) {
 
                     if (self.mickDragging == true) {
-                        par.time = self.mickMouseLeft1 / self.mickWidth * sc.max;
+                        par.frame = self.mickMouseLeft1 / self.mickWidth * sc.max * Sit.fps;
                        // UIChangedTime()
                         console.warn("Cursor move but not updating time as UIChangedTime caused circular dependencies at build time")
                         return [mouseLeft1, mouseTop1]
                     } else
-                        return [par.time / sc.max * self.mickWidth, 1]
+                        return [par.frame / Sit.fps / sc.max * self.mickWidth, 1]
                 } else return [10, 10]
 //        else return [mouseLeft1, mouseTop1]
             }

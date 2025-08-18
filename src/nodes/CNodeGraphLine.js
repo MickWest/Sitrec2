@@ -6,6 +6,7 @@
 
 import {CNodeViewUI} from "./CNodeViewUI";
 import {par} from "../par";
+import {assert} from "../assert";
 
 export class CNodeGraphLine extends CNodeViewUI {
     constructor(v) {
@@ -42,7 +43,7 @@ export class CNodeGraphLine extends CNodeViewUI {
         // maybe options needed?
         if (e.compareNode) {
             for (let i = 0; i < e.compareNode.length; i++) {
-                const value = e.compareNode[i].getValueFrame(par.frame);
+                const value = e.compareNode[i].getValue(par.frame);
                 const valueText = value.toFixed(1);
                 // calculate height of the text in pixels in this context
                 const textHeight = c.measureText(valueText).actualBoundingBoxAscent;

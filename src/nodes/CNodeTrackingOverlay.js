@@ -675,6 +675,9 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
     renderCanvas(frame) {
         super.renderCanvas(frame) // will be CNodeViewCanvas2D
 
+        // The tracking overlay is based on integer frames
+        frame = Math.floor(frame);
+
         this.updateCurve();
 
         // iterate over keyframes and render lines between them

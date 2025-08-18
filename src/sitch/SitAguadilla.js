@@ -190,7 +190,7 @@ export const SitAguadilla = {
         lookView.preRenderFunction = function() {
 
             var csv = FileManager.get("aguaCSV")
-            var lookFOV = parseFloat(csv[par.frame][15])
+            var lookFOV = parseFloat(csv[Math.floor(par.frame)][15])
 
             let zoom = 1;
             // special cose where zoom displays as 2024

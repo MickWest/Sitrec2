@@ -62,7 +62,7 @@ export class CNodeArray extends CNode {
     }
 
     getValueFrame(frame) {
-        return this.array[frame]
+        return this.array[Math.floor(frame)]
     }
 }
 export class CNodeEmptyArray extends CNodeArray {

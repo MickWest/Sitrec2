@@ -151,7 +151,7 @@ export class CNodeTrackFromLLAArray extends CNodeTrack {
     }
 
     getValueFrame(frame) {
-        const v = this.array[frame];
+        const v = this.array[Math.floor(frame)];
         const lat = v[0]
         const lon = v[1];
         const alt = v[2];

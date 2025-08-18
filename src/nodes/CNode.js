@@ -602,7 +602,7 @@ class CNode {
                     }
 
                 } else {
-                    value = {...value0} // make a copy, so we can alter the position
+                    value = {...value1} // make a copy, so we can alter the position
                     value.position = value1.position.clone().sub(value0.position).multiplyScalar(frameFloat-(numFrames-1)).add(value1.position)
                     //console.warn("Extrapolated: "+vdump(value0)+" ... "+vdump(value1)+" by "+(frameFloat-(numFrames-1)) + " to "+vdump(value) + "STRIPPED ANY OTHER DATA");
                 }
@@ -624,15 +624,30 @@ class CNode {
                         if (typeof value0 === 'number' && typeof value1 === 'number') {
                             value = value0 + (value1 - value0) * (frameFloat - frameInt);
                         } else {
-                            // interpolating raw 3D vectors
-                            assert (value0.x !== undefined, "Interpolating non-vector in "+this.id+ " frame " + frameFloat);
-                            value = value1.clone().sub(value0).multiplyScalar(frameFloat - frameInt).add(value0)
+                            if (typeof value0 === "string" && typeof value1 === "string") {
+                                // both values are strings, but we are expecting a number
+                                // so we just return the first one
+                                value = value0;
+
+                            } else {
+                                // interpolating raw 3D vectors
+                                assert(value0.x !== undefined, "Interpolating non-vector in " + this.id + " frame " + frameFloat);
+                                value = value1.clone().sub(value0).multiplyScalar(frameFloat - frameInt).add(value0)
+                            }
                         }
 
                     } else {
                         //  value = value0 // to copy the color and other per-frame data
-                        value = {}
+                        value = {...value0} // make a copy, so we can alter the position and heading
                         value.position = value1.position.clone().sub(value0.position).multiplyScalar(frameFloat - frameInt).add(value0.position)
+
+                        if (value0.heading !== undefined) {
+                            // if the value has a heading, then interpolate that too
+                            // this is used for tracks that have a heading
+                            value.heading = value0.heading + (value1.heading - value0.heading) * (frameFloat - frameInt);
+                            if (value.heading < -Math.PI) value.heading += 2 * Math.PI;
+                            if (value.heading > Math.PI) value.heading -= 2 * Math.PI;                        }
+
                     }
                 }
             }

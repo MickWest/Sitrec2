@@ -123,7 +123,7 @@ export function getGlareAngleFromFrame(f) {
         return par.glareStartAngle + modified
     }
 
-    return par.glareStartAngle + NodeMan.get("glareAngle").getValueFrame(f)
+    return par.glareStartAngle + NodeMan.get("glareAngle").getValue(f)
 
 } // calculate just the pod roll, ie global roll less the jet roll
 // Take a frame number in the video (i.e. a time in 1/30ths)

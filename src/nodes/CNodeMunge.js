@@ -69,7 +69,7 @@ export class CNodeGForce extends CNode{
 
     }
 
-    getValueFrame(f) {0
+    getValueFrame(f) {
         let originalF = f;
         // can't do the last two frames, and ignore the one before that
         // as final frames are often corrupt

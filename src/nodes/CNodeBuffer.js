@@ -20,7 +20,7 @@ export class CNodeBuffer extends CNode {
     }
 
     getValueFrame(f) {
-        return this.buffer[f];
+        return this.buffer[Math.floor(f)];
     }
 
     getBuffer() {

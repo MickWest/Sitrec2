@@ -110,7 +110,7 @@ export class CNodeTrackSpeed extends CNode {
     }
 
     getValueFrame(f) {
-        if (f === 0) f = 1;
+        if (f < 1) f = 1;
         let move = this.in.source.p(f)
         move.sub(this.in.source.p(f - 1))
         if (this.horizontal)
@@ -136,7 +136,7 @@ export class CNodeTrackScreenAngle extends CNode {
     }
 
     getValueFrame(f) {
-        if (f === 0) f = 1;
+        if (f < 0) f = 1;
         let pos = this.in.targetTrack.p(f)
         let vel = pos.clone().sub(this.in.targetTrack.p(f - 1))
         let cameraPos = this.in.cameraTrack.p(f)

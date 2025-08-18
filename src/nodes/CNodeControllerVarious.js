@@ -480,6 +480,7 @@ export class CNodeControllerCameraShake extends CNodeController {
     }
 
     apply(f, objectNode) {
+        f = Math.floor(f); // ensure f is an integer frame number
         // rotate the camera about the up axis by the Y offset
         // and the right axis by the X offset
         const camera = objectNode.camera;
