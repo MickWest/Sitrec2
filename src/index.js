@@ -1008,10 +1008,9 @@ async function setupFunctions() {
 
 function startAnimating(fps) {
     fpsInterval = 1000 / fps ;           // e.g. 1000/30 = 33.333333
-    then = window.performance.now();    //
     startTime = then;
     console.log("STARTUP TIME = " + startTime/1000);
-    animate();
+    animationFrameId = requestAnimationFrame( animate );
     setRenderOne(true);
 }
 
@@ -1026,11 +1025,18 @@ function animate(newtime) {
     Globals.stats.begin();
    // infoDiv.innerHTML = "";
 
-    now = newtime;
-    elapsed = now - then;
-
     // note te user can change Sit.fps (for example, if they are unsure of the framerate of the video)
     fpsInterval = 1000 / Sit.fps;
+
+    // if we don't have a "then" time, then set it to the current time minus the fpsInterval
+    // this allows us to start the animation at the current time, rather than waiting for the next frame
+    // needed for the first frame of the simulation
+    if (then === undefined) {
+        then = newtime - fpsInterval;
+    }
+
+    now = newtime;
+    elapsed = now - then;
 
     // if enough time has elapsed, draw the next frame
     if (elapsed > fpsInterval) {
