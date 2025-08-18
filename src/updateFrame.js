@@ -5,34 +5,32 @@ import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
 import {UpdatePRFromEA} from "./JetStuff";
 import {Frame2Az, Frame2El} from "./JetUtils";
 
-var lastTime = 0;
 
+// given the elapsed time since this was last called,
+// update the frame number and time based on the current state of the controls
 export function updateFrame(elapsed) {
-    const lastFrame = par.frame;
-
-    // calculate the timestep since this was last called
-    // using the high precision timer
-    // const now = performance.now();
-    //const dt = now - lastTime;
-    // lastTime = now;
 
     const dt = elapsed;
 
     const A = Sit.aFrame;
     let B = Sit.bFrame ?? Sit.frames-1;
 
+    // dt is in milliseconds, so divide by 1000 to get seconds
+    // then multiply by the frames per second to get the number of frames
+    // to advance
+    let frameStep = dt / 1000 * Sit.fps;
 
     if (isKeyHeld('arrowup')) {
-        par.frame = Math.round(par.frame - 10);
+        par.frame -= 10 * frameStep;
         par.paused = true;
     } else if (isKeyHeld('arrowdown')) {
-        par.frame = Math.round(par.frame + 10);
+        par.frame += 10 * frameStep;
         par.paused = true;
     } else if (isKeyHeld('arrowleft')) {
-        par.frame = Math.round(par.frame - 1);
+        par.frame -= frameStep
         par.paused = true;
     } else if (isKeyHeld('arrowright')) {
-        par.frame = Math.round(par.frame + 1);
+        par.frame += frameStep
         par.paused = true;
     } else if (!par.paused && !par.noLogic) {
         // Frame advance with no controls (i.e. just playing)
@@ -41,17 +39,12 @@ export function updateFrame(elapsed) {
         // so 1.0 is real time, 0.5 is half speed, 2.0 is double speed
         // par.frame is the frame number in the video
         // (par.frame * Sit.simSpeed) is the time (based on frame number) in reality
-       //par.frame = Math.round(par.frame + par.direction);
 
-        // dt is in milliseconds, so divide by 1000 to get seconds
-        // then multiply by the frames per second to get the number of frames
-        // to advance
-        const advance = dt / 1000 * par.direction;
-        par.time = par.time + advance;
-        par.frame = Math.floor(par.time * Sit.fps);
-        //mebug("par.frame = "+par.frame+" par.time = "+par.time+" advance = "+advance+" dt = "+dt+" Sit.fps = "+Sit.fps+" par.direction = "+par.direction);
+        const advance = frameStep * par.direction;
+        par.frame += advance;
+//        console.log("par.frame = "+par.frame+" par.time = "+par.time+" advance = "+advance+" dt = "+dt+" Sit.fps = "+Sit.fps+" par.direction = "+par.direction);
 
-        // A-B wrapping
+        // A-B wrapping. We have a seperate check he so we can loop is just playing without keyboard controls
         if (par.frame > B) {
             if (par.pingPong) {
                 par.frame = B;
@@ -73,9 +66,10 @@ export function updateFrame(elapsed) {
 
     updateFrameSlider();
 
-
-    //      if (par.frame != lastFrame) {
+    // par time no longer controls things, but we update it for the UI display
     par.time = par.frame / Sit.fps
+
+    // legacy code for gimbal, etc. Most sitches should NOT have an azSlider.
     if (Sit.azSlider) {
         const oldAz = par.az;
         const oldEl = par.el;
