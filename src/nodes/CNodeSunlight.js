@@ -65,7 +65,7 @@ export class CNodeSunlight extends CNode {
         // infoDiv.innerHTML+=`<br>Sun Scattering: ${this.sunScattering.toFixed(2)}`
         // infoDiv.innerHTML+=`<br>Scale: ${scale.toFixed(2)}`
         // infoDiv.innerHTML+=`<br>ScaleScattering: ${scaleScattering.toFixed(2)}`
-        // infoDiv.innerHTML+=`<br>Darkening: ${this.darkeningAngle.toFixed(2)}`
+        // infoDiv.innerHTML  +=`<br>Darkening: ${this.darkeningAngle.toFixed(2)}`
         // infoDiv.innerHTML+=`<br>Position: ${position.x.toFixed(2)} ${position.y.toFixed(2)} ${position.z.toFixed(2)}`
         // infoDiv.innerHTML+=`<br>SunPos: ${sunPos.x.toFixed(2)} ${sunPos.y.toFixed(2)} ${sunPos.z.toFixed(2)}`
         // infoDiv.innerHTML+=`<br>Dir: ${dir.x.toFixed(2)} ${dir.y.toFixed(2)} ${dir.z.toFixed(2)}`
@@ -120,11 +120,13 @@ export class CNodeSunlight extends CNode {
 
     calculateSkyColor(position, date) {
 
-        const sunTotal = this.calculateSkyBrightness(position, date);
+        // the 0.75 is a factor to make the sky color more saturated by limiting max brightness
+        const sunTotal = this.calculateSkyBrightness(position, date) * 0.75;
 
         const blue = new Vector3(0.53,0.81,0.92)
         blue.multiplyScalar(sunTotal)
-        // infoDiv.innerHTML+=`<br>Sky Color: ${blue.x.toFixed(2)} ${blue.y.toFixed(2)} ${blue.z.toFixed(2)}`
+         infoDiv.innerHTML=`<br>Sky Color: ${blue.x.toFixed(2)} ${blue.y.toFixed(2)} ${blue.z.toFixed(2)}`
+        infoDiv.innerHTML+=`<br>Sun Total: ${sunTotal.toFixed(2)}`
         return new Color(blue.x, blue.y, blue.z)
     }
 
