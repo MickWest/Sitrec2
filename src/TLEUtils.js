@@ -197,6 +197,12 @@ export class CTLEData {
     // constructor is passed in a string that contains the TLE file as \n seperated lines
     // extracts in into
     constructor(fileData) {
+
+        // fileData is a string that contains the TLE file as \n separated lines
+        assert(fileData !== undefined, "CTLEData: fileData is undefined");
+        assert(typeof fileData === "string", "CTLEData: fileData is not a string");
+
+        // split the stringified fileData into an array of lines
         const lines = fileData.split('\n');
 
         this.satData = []

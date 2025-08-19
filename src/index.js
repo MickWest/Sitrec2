@@ -895,6 +895,20 @@ async function setupFunctions() {
         }
     }
 
+
+    const sitchData = Sit;
+    // patch to handle extra starLink files to avoid double loading
+    // we move the starLink file from Sit.loadedFiles to Sit.files
+    // and then delete it from Sit.loadedFiles
+    if (sitchData.loadedFiles !== undefined) {
+        if (sitchData.loadedFiles.starLink !== undefined && sitchData.files.starLink !== undefined) {
+            sitchData.files.starLink = sitchData.loadedFiles.starLink;
+            delete sitchData.loadedFiles.starLink;
+            console.log ("CCustomManager.setup: Removed Sit.files.starLink, as it is now in Sit.loadedFiles.starLink");
+        }
+    }
+
+
 // Start loading the assets in Sit.files, and wait for them to load
 
 //    console.log("START Load Assets")
