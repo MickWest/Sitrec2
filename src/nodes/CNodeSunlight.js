@@ -59,7 +59,7 @@ export class CNodeSunlight extends CNode {
         // just a ballpark for how visible the stars should be.
         result.sunTotal = result.sunIntensity + result.ambientIntensity;
 
-        // infoDiv.innerHTML= `<br><br>Sunlight: ${result.sunIntensity.toFixed(2)} Ambient: ${result.ambientIntensity.toFixed(2)}`
+        // infoDiv.innerHTML= `<br><br>Sun Intensity ${result.sunIntensity.toFixed(2)} Ambient: ${result.ambientIntensity.toFixed(2)}`
         // infoDiv.innerHTML+=`<br>SunTotal: ${result.sunTotal.toFixed(2)}`
         // infoDiv.innerHTML+=`<br>Angle: ${angle.toFixed(2)}`
         // infoDiv.innerHTML+=`<br>Sun Scattering: ${this.sunScattering.toFixed(2)}`
@@ -79,18 +79,43 @@ export class CNodeSunlight extends CNode {
     }
 
 
+    // the brightness of the sky is different to the brightness of the sun at a point
+    // as the sun is illuminating a body of atmosphere above the viewer
+    // so we use a different ad-hoc model to calculate the sky brightness
+    // just interpolating from 0 at -8 degrees to 1.0 at +5 degrees
+    // this is a simple model, and does not take into account the actual scattering of light
     calculateSkyBrightness(position, date) {
         if (!this.atmosphere) {
             return 0;
         }
         const sun = this.calculateSunAt(position, date)
-        let sunTotal = sun.sunIntensity / Math.PI;
+        const skyDarkAngle = -8;
+        const skyBrightAngle = 5;
+        // use result.sunAngle, and go from 0 at skyDarkAngle to 1.0 at skyBrightAngle
+        // and return the result
+        let skyBrightness = 0;
+        if (sun.sunAngle < skyDarkAngle) {
+            skyBrightness = 0; // night
+        } else if (sun.sunAngle > skyBrightAngle) {
+            skyBrightness = 1; // full daylight
+        } else {
+            // linear interpolation between the two angles
+            skyBrightness = (sun.sunAngle - skyDarkAngle) / (skyBrightAngle - skyDarkAngle);
+        }
+        // infoDiv.innerHTML+=`<br>Sky Brightness: ${skyBrightness.toFixed(2)} (angle: ${sun.sunAngle.toFixed(2)})`
+        // return the sky brightness
+
+
+
+        // let oldBrightness = sun.sunIntensity / Math.PI;
+        // infoDiv.innerHTML+=`<br>Old Sun Brightness: ${oldBrightness.toFixed(2)} (sunIntensity: ${sun.sunIntensity.toFixed(2)})`
 
         // attentuate by the square of the altitiude
         const alt = pointAltitude(position);
         const atten = Math.pow(0.5, alt/100000);
-        sunTotal *= atten;
-        return sunTotal;
+        skyBrightness *= atten;
+        // infoDiv.innerHTML+=`<br>Sun Total (attenuated): ${skyBrightness.toFixed(2)} (altitude: ${alt.toFixed(2)}) attenuation: ${atten.toFixed(2)}`
+        return skyBrightness;
     }
 
     calculateSkyColor(position, date) {
@@ -99,6 +124,7 @@ export class CNodeSunlight extends CNode {
 
         const blue = new Vector3(0.53,0.81,0.92)
         blue.multiplyScalar(sunTotal)
+        // infoDiv.innerHTML+=`<br>Sky Color: ${blue.x.toFixed(2)} ${blue.y.toFixed(2)} ${blue.z.toFixed(2)}`
         return new Color(blue.x, blue.y, blue.z)
     }
 
@@ -108,6 +134,9 @@ export class CNodeSunlight extends CNode {
     calculateSkyOpacity(position, date) {
         const skyBrightness = this.calculateSkyBrightness(position, date);
         const skyOpacity = Math.min(1.0, skyBrightness*2);
+        // infoDiv.innerHTML+=`<br>Sky Brightness (for opacity): ${skyBrightness.toFixed(2)}`
+        // infoDiv.innerHTML+=`<br>Sky Opacity: ${skyOpacity.toFixed(2)}`
+
         return skyOpacity;
     }
 
