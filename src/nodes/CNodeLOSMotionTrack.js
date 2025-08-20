@@ -2,6 +2,7 @@ import {CNodeEmptyArray} from "./CNodeArray";
 import {ExpandKeyframes, radians, RollingAverage, tan} from "../utils";
 import {FileManager, Sit} from "../Globals";
 import {V3} from "../threeUtils";
+import {getLocalUpVector} from "../SphericalMath";
 
 
 /*
@@ -66,7 +67,7 @@ export class CNodeLOSMotionTrack extends CNodeEmptyArray {
             var cam = this.in.cameraTrack.v(f)
             var pos = cam.position.clone()
             var fwd = cam.heading.clone() // this cannot change
-            var up = V3(0, 1, 0) // default up direction, might want this to be variable later
+            var up = getLocalUpVector(pos); // default up direction, might want this to be variable later
             var right = V3().crossVectors(up, fwd)
             up.crossVectors(fwd, right)
 
