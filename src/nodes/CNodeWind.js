@@ -150,7 +150,8 @@ export class CNodeWind extends CNode {
         }
 
         if (this.originTrack !== undefined) {
-            const newPosition = this.originTrack.getValueFrame(0);
+            const newPosition = this.originTrack.p(0);
+            assert(newPosition.x !== undefined, "Wind origin track did not return a valid position");
             if (!newPosition.equals(this.position)) {
                 // force TWO recalculate cycles to ensure it propogates through the system
                 this.extraRecalculate = 2;
