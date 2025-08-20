@@ -351,12 +351,18 @@ export class CNodePositionLLA extends CNode {
 
     // return vector3 EUS for the specified LLA (animateabel)
     getValueFrame(f) {
+
+        // f is the frame niumber in the video
+        // but we need the physical time this represents
+        // as video might be running at different speeds to reality
+        const time = f * Sit.simSpeed;
+
         if (this._LLA !== undefined) {
             assert(this.guiAlt !== undefined, "CNodePositionLLA: no guiAlt defined")
        //     return LLAToEUS(this._LLA[0], this._LLA[1], this.guiAlt.getValueFrame(f))
-            let pos = this.EUS.clone();
+             let pos = this.EUS.clone();
             if (this.in.wind) {
-                const wind = this.in.wind.v0.multiplyScalar(f);
+                const wind = this.in.wind.v0.multiplyScalar(time);
                 // add the wind to the position
                 pos.add(wind);
 
