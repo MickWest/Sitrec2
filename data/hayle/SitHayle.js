@@ -57,7 +57,7 @@ export const SitHayle = {
         gui: "physics"
     },
 
-    DisplayLOS: { id: "displayMotionTrackLOS", LOS: "motionTrackLOS", width: 3},
+    DisplayLOS: { id: "displayMotionTrackLOS", LOS: "motionTrackLOS", width: 1, color: [0.5, 0.1, 0.1]},
 
     startDistanceFeet: {value: 300, start: 0, end: 20000, step: 1, desc: "Tgt Start Dist (Ft)", gui: "physics"},
 
