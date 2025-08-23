@@ -9,6 +9,8 @@ export var LocalFrame;
 export var GlobalScene;
 export var GlobalNightSkyScene;
 export var GlobalDaySkyScene;
+export var GlobalSunSkyScene;
+
 
 export function setupScene(_scene){
     // The root GlobalScene
@@ -17,6 +19,10 @@ export function setupScene(_scene){
 
 export function setupNightSkyScene(_scene){
     GlobalNightSkyScene = _scene;
+}
+
+export function setupSunSkyScene(_scene){
+    GlobalSunSkyScene = _scene;
 }
 
 export function setupDaySkyScene(_scene){

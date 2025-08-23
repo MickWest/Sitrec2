@@ -45,7 +45,7 @@ import {CommonJetStuff, initJetStuff, initJetStuffOverlays, initJetVariables, up
 import {
     GlobalDaySkyScene,
     GlobalNightSkyScene,
-    GlobalScene,
+    GlobalScene, GlobalSunSkyScene,
     LocalFrame,
     setupDaySkyScene,
     setupLocalFrame,
@@ -1350,6 +1350,10 @@ function disposeEverything() {
         setupNightSkyScene(undefined)
     }
     if (GlobalDaySkyScene !== undefined) {
+        disposeScene(GlobalDaySkyScene)
+        setupDaySkyScene(undefined)
+    }
+    if (GlobalSunSkyScene !== undefined) {
         disposeScene(GlobalDaySkyScene)
         setupDaySkyScene(undefined)
     }

@@ -1,5 +1,11 @@
 import {CNode3DGroup} from "./CNode3DGroup";
-import {GlobalNightSkyScene, GlobalScene, setupNightSkyScene} from "../LocalFrame";
+import {
+    GlobalNightSkyScene,
+    GlobalScene,
+    setupNightSkyScene,
+    setupDaySkyScene,
+    GlobalSunSkyScene, setupSunSkyScene
+} from "../LocalFrame";
 import {
     BufferAttribute,
     BufferGeometry,
@@ -133,6 +139,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         if (GlobalNightSkyScene === undefined) {
             setupNightSkyScene(new Scene())
+        }
+        if (GlobalSunSkyScene === undefined) {
+            setupSunSkyScene(new Scene())
         }
 
    //     GlobalNightSkyScene.matrixWorldAutoUpdate = false
@@ -343,6 +352,12 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         this.celestialSphere = new Group();
         GlobalNightSkyScene.add(this.celestialSphere)
+        
+        // Create a separate celestial sphere for the day sky scene
+        this.celestialDaySphere = new Group();
+        if (GlobalSunSkyScene) {
+            GlobalSunSkyScene.add(this.celestialDaySphere);
+        }
 
         this.satelliteGroup = new Group();
         GlobalScene.add(this.satelliteGroup)
@@ -368,7 +383,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.addStars(this.celestialSphere)
 
 //        console.log("Loading planets")
-        this.addPlanets(this.celestialSphere)
+        this.addPlanets(this.celestialSphere, this.celestialDaySphere)
 
 
 
@@ -1357,8 +1372,14 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
 
 
+        // Reset both celestial spheres to identity
         this.celestialSphere.quaternion.identity()
         this.celestialSphere.updateMatrix()
+        
+        if (this.celestialDaySphere) {
+            this.celestialDaySphere.quaternion.identity()
+            this.celestialDaySphere.updateMatrix()
+        }
 
         // do adjustements for date/time, and maybe precession, here
         // .....
@@ -1407,9 +1428,16 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 //         // apply them
 //         this.celestialSphere.applyMatrix4(rotationMatrixX)
 
+        // Apply rotation matrices to both celestial spheres
         this.celestialSphere.applyMatrix4(rotationMatrixY)
         this.celestialSphere.applyMatrix4(rotationMatrixZ)
         this.celestialSphere.applyMatrix4(rotationMatrixX)
+        
+        if (this.celestialDaySphere) {
+            this.celestialDaySphere.applyMatrix4(rotationMatrixY)
+            this.celestialDaySphere.applyMatrix4(rotationMatrixZ)
+            this.celestialDaySphere.applyMatrix4(rotationMatrixX)
+        }
 
 
         var nowDate = this.in.startTime.dateNow
@@ -1418,6 +1446,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // update the planets position for the current time
         for (const [name, planet] of Object.entries(this.planetSprites)) {
             this.updatePlanetSprite(name, planet.sprite, nowDate, observer, 100)
+            
+            // Also update the day sky sprite if it exists (for Sun)
+            if (planet.daySkySprite) {
+                this.updatePlanetSprite(name, planet.daySkySprite, nowDate, observer, 100)
+            }
         }
 
         if (this.showSatellites && this.TLEData) {
@@ -2141,7 +2174,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     }
 
 
-    addPlanets(scene) {
+    addPlanets(scene, dayScene = null) {
 
         assert(Sit.lat !== undefined, "addStars needs Sit.lat")
         assert(Sit.lon !== undefined, "addStars needs Sit.lon")
@@ -2184,6 +2217,17 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
             // Add sprite to scene
             scene.add(sprite);
+            
+            // Also add a separate sun and moon sprite to the day sky celestial sphere for daytime visibility
+            if ((planet === "Sun" || planet === "Moon") && dayScene) {
+                const sunSpriteMaterial = new SpriteMaterial({map: spriteMap, color: color});
+                const sunSpriteForDayScene = new Sprite(sunSpriteMaterial);
+                this.updatePlanetSprite(planet, sunSpriteForDayScene, date, observer, sphereRadius);
+                dayScene.add(sunSpriteForDayScene);
+                //
+                // Store reference to the day scene sun sprite
+                this.planetSprites[planet].daySkySprite = sunSpriteForDayScene;
+            }
 
         }
     }

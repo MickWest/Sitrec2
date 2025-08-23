@@ -2,7 +2,7 @@ import {par} from "../par";
 import {f2m, normalizeLayerType} from "../utils";
 import {getLocalNorthVector, XYZ2EA, XYZJ2PR} from "../SphericalMath";
 import {setRenderOne, CustomManager, Globals, guiMenus, guiTweaks, infoDiv, keyHeld, NodeMan, Sit} from "../Globals";
-import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene} from "../LocalFrame";
+import {GlobalDaySkyScene, GlobalNightSkyScene,GlobalSunSkyScene, GlobalScene} from "../LocalFrame";
 import {DRAG, makeMouseRay} from "../mouseMoveView";
 import {
     Camera,
@@ -707,6 +707,21 @@ export class CNodeView3D extends CNodeViewCanvas {
                 this.renderer.render(this.fullscreenQuadScene, this.skyCamera);
                 //this.renderer.autoClear = true;
                 this.renderer.clearDepth();
+                
+                // Render the day sky scene (which contains the sun) on top of the sky brightness overlay
+                if (GlobalSunSkyScene) {
+
+                    var tempPos = this.camera.position.clone();
+                    this.camera.position.set(0, 0, 0);
+                    this.camera.updateMatrix();
+                    this.camera.updateMatrixWorld();
+
+                    this.renderer.render(GlobalSunSkyScene, this.camera);
+                    this.renderer.clearDepth();
+                    this.camera.position.copy(tempPos);
+                    this.camera.updateMatrix();
+                    this.camera.updateMatrixWorld();
+                }
             }
 
 
