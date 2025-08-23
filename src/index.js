@@ -612,7 +612,7 @@ async function initializeOnce() {
         if (parseBoolean(process.env.LOCAL_DOCS) ) {
             return guiMenus.help.addExternalLink(name+ " (Local)", "./"+file+".html").perm();
         } else {
-            return guiMenus.help.addExternalLink(name+ " (Github)", "https://github.com/MickWest/sitrec/blob/main/"+file+".md").perm();
+            return guiMenus.help.addExternalLink(name+ " (Github)", "https://github.com/MickWest/sitrec2/blob/main/"+file+".md").perm();
         }
     }
 
