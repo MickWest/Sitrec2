@@ -93,10 +93,6 @@ module.exports = {
         new webpack.ProvidePlugin({
             Buffer: ['buffer', 'Buffer'],
         }),
-        new webpack.ProvidePlugin({
-            $: "jquery",
-            jQuery: "jquery",
-        }),
         new CopyPlugin({
             patterns: [
                 ...copyPatterns, // Existing patterns

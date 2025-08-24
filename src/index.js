@@ -1191,9 +1191,7 @@ function renderMain(elapsed) {
 
         if (visible) {
 
-            // we set from div, as that's the jQueryUI moving arond
-            // which we really should get rid of, and just do it directly with mouse events
-            // dragging, etc.
+            // we set from div, which can be moved or resized by the user, or by screen/window resizing
             view.setFromDiv(view.div)
 
             view.updateWH()

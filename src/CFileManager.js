@@ -13,8 +13,8 @@ import {CustomManager, Globals, guiMenus, NodeMan, setNewSitchObject, Sit} from 
 import {DragDropHandler} from "./DragDropHandler";
 import {parseAirdataCSV} from "./ParseAirdataCSV";
 import {parseKLVFile, parseMISB1CSV} from "./MISBUtils";
-// when running as a console app jQuery's $ is not available, so load just the csv plugin separately
-import csv from "./js/jquery.csv.js";
+// Modern CSV parser
+import csv from "./utils/CSVParser";
 import {asyncCheckLogin} from "./login";
 import {par} from "./par";
 import {assert} from "./assert.js";

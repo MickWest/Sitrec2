@@ -311,7 +311,6 @@ index.9a60e8af738fb4a9ce40.bundle.js (or similar, the name changes) - the code
 /src/ - web worker code which is not included in webpack
 /sitrecServer/ - the PHP server files
 /data/ a copy of the /sitrec/data folder
-Some .png files from jquery-ui (not important)
 ```
 
 Since this is building (via dev-path) into the local server, the dev app will be at 
