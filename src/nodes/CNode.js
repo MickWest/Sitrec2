@@ -65,10 +65,10 @@ class CNode {
         if (v.id !== undefined) {
             this.id = v.id
         } else {
+            assert(false, "Anonymous nodes not supported! (Deprecated)")
             // if no node id is given, then make a unique one
-            this.id = this.constructor.name + NodeMan.UniqueNodeNumber++;
-            console.log("Node with unique ID: " + this.id + " created, class = " + this.constructor.name);
-            assert(0, "anonymous nodes not supported!")
+            // this.id = this.constructor.name + NodeMan.UniqueNodeNumber++;
+            // console.log("Node with unique ID: " + this.id + " created, class = " + this.constructor.name);
         }
         this.simpleSerials = ["visible"];       // a list of serializable properties, default to nothing
 
@@ -125,13 +125,13 @@ class CNode {
 
     // maybe this should be in the base class
     addGUIValue(variable, start, end, step, name) {
-        assert(this.gui, "No GUI in addGUIValue for node ${this.id}");
+        assert(this.gui, `No GUI in addGUIValue for node ${this.id}`);
         this.addSimpleSerial(variable)
         return this.gui.add(this, variable, start, end, step).name(name).listen().onChange(()=>this.recalculate());
     }
 
     addGUIBoolean(variable, name) {
-        assert(this.gui, "No GUI in addGUIValue for node ${this.id}");
+        assert(this.gui, `No GUI in addGUIBoolean for node ${this.id}`);
         this.addSimpleSerial(variable)
         return this.gui.add(this, variable).name(name).listen().onChange(()=>this.recalculate());
     }
@@ -187,29 +187,6 @@ class CNode {
         }
     }
 
-    // the default serialize function
-    // this is overridden or extended by derived classes
-    // to add their own properties
-    // the default is just the kind
-    // it should be something that, when used in a sitch statement, will recreate the node
-    serialize() {
-        const classType = this.constructor.name;
-        // strip off the CNode part
-        const kind = classType.slice(5);
-        return {
-            kind: kind,
-            ...this.simpleSerialize(this, this.simpleSerials)
-        }
-    }
-
-    // serialize the inputs of an object,as key, id pairs
-    serializeInputs() {
-        let inputs = {}
-        Object.keys(this.inputs).forEach(key => {
-            inputs[key] = this.inputs[key].id;
-        })
-        return {inputs: inputs}
-    }
 
     // v0 = shorthand accessor for the value at 0,
     // usually for nodes that are not frame dependent
