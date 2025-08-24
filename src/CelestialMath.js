@@ -10,10 +10,8 @@
 import {V3} from "./threeUtils";
 import {ECEF2EUS, ECEFToLLAVD_Sphere, wgs84} from "./LLA-ECEF-ENU";
 import {Sit} from "./Globals";
-//import Astronomy from "astronomy-engine";
+import * as Astronomy from "astronomy-engine";
 import {radians} from "./utils";
-
-var Astronomy = require("astronomy-engine")
 
 export function raDec2Celestial(raRad, decRad, sphereRadius) {
     const x = sphereRadius * Math.cos(decRad) * Math.cos(raRad);

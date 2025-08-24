@@ -6,7 +6,7 @@ import {Color} from "three";
 import {assert} from "./assert";
 import {ViewMan} from "./CViewManager";
 import {parseBoolean} from "./utils";
-const Stats = require("stats.js");
+import Stats from "stats.js";
 
 // Issue with lil-gui, the OptionController options() method adds a
 // _names array to the controller object, and a _values array

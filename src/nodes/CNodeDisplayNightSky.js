@@ -84,12 +84,11 @@ import {CNodeViewUI} from "./CNodeViewUI";
 // npm install satellite.js --save-dev
 import * as satellite from 'satellite.js';
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
-import {MASK_HELPERS, MASK_MAINRENDER} from "../LayerMasks";
 
 // installed with
 // npm install astronomy-engine --save-dev
 // in the project dir (using terminal in PHPStorm)
-var Astronomy = require("astronomy-engine")
+import * as Astronomy from "astronomy-engine";
 
 
 // other source of stars, if we need more (for zoomed-in pics)

@@ -2,14 +2,12 @@
 // and displays star names on an overlay
 import {CNodeViewUI} from "./CNodeViewUI";
 import {GlobalDateTimeNode, guiShowHide, setRenderOne, Sit} from "../Globals";
-import {par} from "../par";
 import {raDec2Celestial} from "../CelestialMath";
 import {bestSat} from "../TLEUtils";
 import {V3} from "../threeUtils";
 import {ECEF2ENU, wgs84} from "../LLA-ECEF-ENU";
 import {radians} from "../utils";
-
-var satellite = require('satellite.js');
+import * as satellite from 'satellite.js';
 
 export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
