@@ -113,12 +113,13 @@ export function updateChartSize() {
     par.graphSize = 100 * view.widthPx / (600 * scale)
 
     // scaling the fonts
-    $("div.u-title").each(function (i) {
-        this.style.fontSize = 18 * scale * par.graphSize / 100 + "px"
-    })
-    $("div.u-lable").each(function (i) {
-        this.style.fontSize = 8 * scale * par.graphSize / 100 + "px"
-    })
+    document.querySelectorAll("div.u-title").forEach(element => {
+        element.style.fontSize = 18 * scale * par.graphSize / 100 + "px";
+    });
+    
+    document.querySelectorAll("div.u-lable").forEach(element => {
+        element.style.fontSize = 8 * scale * par.graphSize / 100 + "px";
+    });
 
     // take chart size from the encapsulating view
     theChart.setSize({

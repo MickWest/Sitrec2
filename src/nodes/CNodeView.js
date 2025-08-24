@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////
 // CNodeView is the base class of all the views (2D, text, 3D, and maybe more)
-// it has a div, which can be externally resized with jQuery.ui
+// it has a div, which can be resized with our modern drag/resize utilities
 // canvas elements are in CNodeView3D
 // take their size from the div.
 //
@@ -8,6 +8,7 @@ import {CNode} from './CNode.js'
 import {Globals, guiShowHideViews, infoDiv, NodeMan, Sit} from "../Globals";
 import {assert} from "../assert.js";
 import {ViewMan} from "../CViewManager";
+import {makeDraggable, makeResizable, removeDraggable, removeResizable} from "../DragResizeUtils";
 
 
 const defaultCViewParams = {
@@ -135,31 +136,29 @@ class CNodeView extends CNode {
             this.divParent.appendChild(this.div);
 
             if (this.draggable) {
-
-                $(this.div).draggable({
+                makeDraggable(this.div, {
                     handle: v.dragHandle,
-                    drag: function(event, ui) {
-                        var view = $(this).data('CView')
-                        if (!view.draggable)
-                            return false;
-                        if (view.shiftDrag)
-                            return event.shiftKey;
-                        else
-                            return true;
-                        //  view.dumpPosition()
-                    }
-                }).data("CView",this)
-            }
-            if (this.resizable) {
-                $(this.div).resizable({
-                    handles: 'all',
-                    aspectRatio: !this.freeAspect,
-                    resize: function(event, ui) {
-                        var view = $(this).data('CView')
-                        //view.dumpPosition()
+                    viewInstance: this,
+                    shiftKey: this.shiftDrag,
+                    onDrag: (event, data) => {
+                        const view = data.viewInstance;
+                        if (!view.draggable) return false;
+                        if (view.shiftDrag && !event.shiftKey) return false;
                         return true;
                     }
-                }).data("CView",this);
+                });
+            }
+            
+            if (this.resizable) {
+                makeResizable(this.div, {
+                    handles: 'all',
+                    aspectRatio: !this.freeAspect,
+                    viewInstance: this,
+                    onResize: (event, data) => {
+                        const view = data.viewInstance;
+                        return true;
+                    }
+                });
             }
 
             const visibleToSet = this.visible;
@@ -233,15 +232,20 @@ class CNodeView extends CNode {
     dispose() {
         console.log("Disposing CNodeView: "+this.id)
 
-        // if (this.id === "mainView")
-        //     debugger;
-
         // if it's an overlay view, then we don't want to remove the div
         if (this.overlayView === undefined && this.div) {
+            // Clean up draggable and resizable functionality
+            if (this.draggable) {
+                removeDraggable(this.div);
+            }
+            
+            if (this.resizable) {
+                removeResizable(this.div);
+            }
 
             this.divParent.removeChild(this.div);
- //           this.div = null
         }
+        
         super.dispose()
 
         // views are stored in two managers, the node manager and the view manager

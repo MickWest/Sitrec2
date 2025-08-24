@@ -1,9 +1,9 @@
 import {CNodeView} from "./CNodeView";
 import {setChartDiv, updateChartSize} from "../JetChart";
+import {makeDraggable, makeResizable} from "../DragResizeUtils";
 
 export class CNodeChartView extends CNodeView {
     constructor(v) {
-        //   debugger;
         super(v);
         setChartDiv(this.div)
         this.div.style.fontFamily = "Monospace"
@@ -11,20 +11,24 @@ export class CNodeChartView extends CNodeView {
         this.div.style.color = "grey";
         this.div.setAttribute("id", "myChartDiv")
         this.div.style.pointerEvents = 'auto'
-        $(this.div).draggable({
-            drag: function (event, ui) {
+        
+        // Make the div draggable with shift key requirement
+        makeDraggable(this.div, {
+            viewInstance: this,
+            shiftKey: true,
+            onDrag: (event, data) => {
                 return event.shiftKey;
-            },
-        }).resizable({
-            resize: function (event, ui) {
-//                if (!event.shiftKey) return true;
-                //    var scale = window.innerHeight / 1080
-                //    par.graphSize = 100*ui.size.width/(600*scale)
-                updateChartSize()
-                return true
             }
-        })
-
+        });
+        
+        // Make the div resizable
+        makeResizable(this.div, {
+            viewInstance: this,
+            onResize: (event, data) => {
+                updateChartSize();
+                return true;
+            }
+        });
     }
 
     // if the doubleclick has updated the size, we need to pass that on

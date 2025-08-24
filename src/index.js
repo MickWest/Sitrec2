@@ -1,7 +1,6 @@
 import {ColorManagement, Group, REVISION, Scene, WebGLRenderer,} from "three";
 import "./js/uPlot/uPlot.css"
-import "./js/jquery-ui-1.13.2/jquery-ui.css"
-import "./js/jquery-ui-1.13.2/jquery-ui.js?v=1"
+import {makeDraggable} from "./DragResizeUtils";
 import {
     addGUIFolder,
     addGUIMenu,
@@ -762,7 +761,7 @@ function initRendering() {
         infoDiv.style.zIndex = 4000; // behind the gui menus, but in front of everything else
    // }
     infoDiv.style.background="black";
-    $(infoDiv).draggable();
+    makeDraggable(infoDiv);
     document.body.appendChild(infoDiv);
 
 
