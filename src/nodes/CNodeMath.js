@@ -23,8 +23,7 @@ import {NodeMan} from "../Globals";
 
 import {assert} from "../assert.js";
 import {stripComments} from "../utils";
-
-const math = require('mathjs')
+import * as math from 'mathjs';
 
 
 export class CNodeMath extends CNode {
