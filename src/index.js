@@ -440,7 +440,11 @@ async function newSitch(situation, customSetup = false ) {
     // otherwise it gets messy using an old menu config in a new sitch.
     Globals.menuBar.reset();
 
-    cancelAnimationFrame(animate);
+    // Cancel any existing animation frame to prevent memory leaks
+    if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+    }
     console.log("%%%%% BEFORE the two AWAITS %%%%%%%%")
     await waitForParsingToComplete();
 
@@ -1309,7 +1313,10 @@ function disposeEverything() {
     console.log("");
 
     // cancel any requested animation frames
-    cancelAnimationFrame(animationFrameId);
+    if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+    }
 
     // Remove all event listeners
     EventManager.removeAll();
