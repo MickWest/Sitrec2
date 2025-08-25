@@ -87,7 +87,13 @@ sitch = {
         tip: "Horizontal resolution of the output canvas"
     },
 
-    canvasHeight: {kind: "Math", math: "$canvasResolution/1.7927"},
+    //canvasHeight: {kind: "Math", math: "$canvasResolution/1.7927"},
+
+    canvasHeight: {
+        kind: "Scale",
+        in: "canvasResolution",
+        scale: 0.57813
+    },
 
     lookView: {
 //        left: 0.5, top: 0.5, width: -1.7927, height: 0.5,
