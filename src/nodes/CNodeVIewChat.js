@@ -3,6 +3,7 @@ import {GlobalDateTimeNode, guiMenus, Sit} from "../Globals";
 import {SITREC_SERVER} from "../configUtils";
 import {sitrecAPI} from "../CSitrecAPI";
 import {EventManager} from "../CEventManager";
+import {makeDraggable, removeDraggable} from "../DragResizeUtils";
 const THEMES = {
     light: {
         '--cnodeview-bg': '#fff',
@@ -30,7 +31,11 @@ const THEMES = {
 
 class CNodeViewChat extends CNodeView {
     constructor(v) {
-        v.dragHandle = '.cnodeview-tab';
+        // Store draggable setting for later
+        const wasDraggable = v.draggable;
+        // Temporarily disable draggable during super() call
+        v.draggable = false;
+        
         super(v);
         this.div.style.position = 'relative';
 
@@ -44,6 +49,22 @@ class CNodeViewChat extends CNodeView {
         tab.style.userSelect = 'none';
         this.tab = tab;
         this.div.appendChild(tab);
+
+        // Now set up dragging with the correct handle after tab is created
+        if (wasDraggable) {
+            this.draggable = true;
+            makeDraggable(this.div, {
+                handle: '.cnodeview-tab',
+                viewInstance: this,
+                shiftKey: this.shiftDrag,
+                onDrag: (event, data) => {
+                    const view = data.viewInstance;
+                    if (!view.draggable) return false;
+                    if (view.shiftDrag && !event.shiftKey) return false;
+                    return true;
+                }
+            });
+        }
 
         //  double click events on title will close the chat view
         tab.addEventListener('dblclick', (e) => {
@@ -218,6 +239,13 @@ class CNodeViewChat extends CNodeView {
             this.hide();
         })
 
+        // Add click handler to the main div to focus input box when clicking in the chat area
+        this.div.addEventListener('click', (e) => {
+            // Only focus if we're not clicking on interactive elements (but allow input box clicks)
+            if (e.target !== closeButton && e.target !== newChatButton) {
+                this.inputBox.focus();
+            }
+        });
 
         this.setTheme(this.theme);
     }
