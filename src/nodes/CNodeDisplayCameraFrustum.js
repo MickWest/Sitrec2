@@ -10,7 +10,6 @@ import {Color, Ray, Raycaster, Sphere, Vector3} from "three";
 import {getLocalUpVector} from "../SphericalMath";
 import {wgs84} from "../LLA-ECEF-ENU";
 import * as LAYER from "../LayerMasks";
-import {isNaN} from "mathjs";
 import {assert} from "../assert.js";
 import {intersectSphere2} from "../threeUtils";
 

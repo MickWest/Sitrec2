@@ -28,7 +28,6 @@ import {LineMaterial} from "three/addons/lines/LineMaterial.js";
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
 import {Line2} from "three/addons/lines/Line2.js";
 import {NodeMan, setRenderOne} from "./Globals";
-import {isArray} from "mathjs";
 import {assert} from "./assert.js";
 import {intersectSphere2, makeMatrix4PointYAt, V3} from "./threeUtils";
 
