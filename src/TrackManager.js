@@ -11,7 +11,7 @@ import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {CManager} from "./CManager";
 import {CNodeControllerMatrix, CNodeControllerTrackPosition} from "./nodes/CNodeControllerVarious";
 import {MISB} from "./MISBUtils";
-import {isNumber} from "mathjs";
+// Removed mathjs import - using native JavaScript Number.isFinite or typeof checks
 import {CNodeMISBDataTrack, makeLOSNodeFromTrackAngles, removeLOSNodeColumnNodes} from "./nodes/CNodeMISBData";
 import {KMLToMISB} from "./KMLUtils";
 import {CNodeTrackFromMISB} from "./nodes/CNodeTrackFromMISB";
@@ -843,7 +843,7 @@ class CTrackManager extends CManager {
             value = Number(value);
         }
 
-        if (isNumber(value)) {
+        if (typeof value === 'number' && !isNaN(value)) {
             hasFOV = true;
         } else if (value.misbRow !== undefined
             && value.misbRow[MISB.SensorVerticalFieldofView] !== null
@@ -870,7 +870,7 @@ class CTrackManager extends CManager {
         }
 
         // same type of thing for heading angles
-        if (value.misbRow !== undefined && isNumber(value.misbRow[MISB.PlatformPitchAngle])) {
+        if (value.misbRow !== undefined && typeof value.misbRow[MISB.PlatformPitchAngle] === 'number' && !isNaN(value.misbRow[MISB.PlatformPitchAngle])) {
             hasAngles = true;
         }
 
@@ -907,7 +907,7 @@ class CTrackManager extends CManager {
 
         let hasWind = false;
         // and for wind speed and direction
-        if (value.misbRow !== undefined && isNumber(value.misbRow[MISB.WindSpeed])) {
+        if (value.misbRow !== undefined && typeof value.misbRow[MISB.WindSpeed] === 'number' && !isNaN(value.misbRow[MISB.WindSpeed])) {
             hasWind = true;
         }
 
