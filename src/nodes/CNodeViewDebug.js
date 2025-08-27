@@ -58,34 +58,39 @@ class CNodeViewDebug extends CNodeViewText {
         this.scrollToBottom();
     }
 
+    /**
+     * Get formatted timestamp for log messages
+     */
+    getTimeStamp() {
+        const now = new Date();
+        const time = now.toLocaleTimeString();
+        const milliseconds = now.getMilliseconds().toString().padStart(3, '0');
+        return '[' + time + '.' + milliseconds + '] ';
+    }
+
     // Helper function to log text to the debug console
     log(text) {
-        const timestamp = new Date().toLocaleTimeString();
-        this.addMessage(`[${timestamp}] ${text}`);
+        this.addMessage(`${this.getTimeStamp()}${text}`);
     }
 
     // Helper function to log debug messages with debug styling
     debug(text) {
-        const timestamp = new Date().toLocaleTimeString();
-        this.addMessage(`[${timestamp}] DEBUG: ${text}`, '#aaaaaa');
+        this.addMessage(`${this.getTimeStamp()}DEBUG: ${text}`, '#aaaaaa');
     }
 
     // Helper function to log errors in red
     error(text) {
-        const timestamp = new Date().toLocaleTimeString();
-        this.addMessage(`[${timestamp}] ERROR: ${text}`, '#ff4444');
+        this.addMessage(`${this.getTimeStamp()}ERROR: ${text}`, '#ff4444');
     }
 
     // Helper function to log warnings in yellow
     warn(text) {
-        const timestamp = new Date().toLocaleTimeString();
-        this.addMessage(`[${timestamp}] WARNING: ${text}`, '#ffaa00');
+        this.addMessage(`${this.getTimeStamp()}WARNING: ${text}`, '#ffaa00');
     }
 
     // Helper function to log info in blue
     info(text) {
-        const timestamp = new Date().toLocaleTimeString();
-        this.addMessage(`[${timestamp}] INFO: ${text}`, '#4488ff');
+        this.addMessage(`${this.getTimeStamp()}INFO: ${text}`, '#4488ff');
     }
 }
 
