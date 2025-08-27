@@ -299,6 +299,18 @@ export class CCustomManager {
                 }
             }
         })
+
+        // Test the debug view after a short delay to ensure it's initialized
+        setTimeout(() => {
+            if (NodeMan.exists("debugView")) {
+                const debugView = NodeMan.get("debugView");
+                debugView.log("CCustomManager setup complete!");
+                debugView.info("Debug view is working correctly.");
+                debugView.warn("This is a warning message.");
+                debugView.error("This is an error message.");
+                debugView.debug("This is a debug message.");
+            }
+        }, 1000);
     }
 
     adsbReplay() {

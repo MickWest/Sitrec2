@@ -31,13 +31,15 @@ const THEMES = {
 
 class CNodeViewChat extends CNodeView {
     constructor(v) {
+        
         // Store draggable setting for later
         const wasDraggable = v.draggable;
         // Temporarily disable draggable during super() call
         v.draggable = false;
         
         super(v);
-        this.div.style.position = 'relative';
+        this.div.id = 'chat-view-' + v.id;
+        // Keep the absolute positioning from base class - don't override to relative
 
         // Default theme
         this.theme = 'dark';
@@ -45,7 +47,7 @@ class CNodeViewChat extends CNodeView {
         // Draggable Tab with Title
         const tab = document.createElement('div');
         tab.textContent = 'Sitrec Assistant';
-        tab.className = 'cnodeview-tab';
+        tab.className = 'cnodeview-tab cnodeview-chat-tab';
         tab.style.userSelect = 'none';
         this.tab = tab;
         this.div.appendChild(tab);

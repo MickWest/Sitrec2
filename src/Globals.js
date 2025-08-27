@@ -95,3 +95,21 @@ export function setFileManager(f) {FileManager = f;}
 
 export var keyHeld = {}
 export var keyCodeHeld = {}
+
+// Helper function to access the debug view
+export function getDebugView() {
+    if (NodeMan && NodeMan.exists("debugView")) {
+        return NodeMan.get("debugView");
+    }
+    return null;
+}
+
+// Global debug logging function
+export function debugLog(text) {
+    const debugView = getDebugView();
+    if (debugView) {
+        debugView.log(text);
+    } else {
+        console.log("Debug:", text);
+    }
+}

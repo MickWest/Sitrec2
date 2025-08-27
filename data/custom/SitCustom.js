@@ -816,4 +816,8 @@ sitch = {
         draggable: true, resizable: true, freeAspect: true},
 
 
+    debugView: {kind: "ViewDebug", left: 0.55, top: 0.10, width: 0.25, height: 0.85, background:"#000000",
+        draggable: true, resizable: true, freeAspect: true, visible:false},
+
+
 }
