@@ -28,7 +28,7 @@ Most values in Sitrec are edited via sliders. You can modify these in various wa
 Most sliders will stop at the left or right minimum or maximum values, but some, such as the hours/minutes, etc., will wrap around and increment/decrement the slider above them. 
 
 ## Color Pickers
-![Color Picker.jpg](docimages/Color Picker.jpg)
+![Color Picker.jpg](docimages/Color-Picker.jpg)
 
 Color pickers let you edit the hex value of the color directly, or you can change the hue, saturation and intensity with the slider and the 2D color selector. You can also switch between RGB, HSL, and HEX inputs. Clicking on the eyedropper tool allows you to sample a color from anywhere on screen. 
 
