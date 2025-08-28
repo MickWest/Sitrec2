@@ -1488,12 +1488,6 @@ class StringController extends Controller {
             this._callOnFinishChange();
         } );
 
-        // MICK
-        this.$input.addEventListener( 'mouseout', e => {
-            console.log("Mouse out of input")
-            this.$input.blur();
-        })
-
         this.$widget.appendChild( this.$input );
 
         this.$disable = this.$input;
