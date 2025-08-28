@@ -25,7 +25,9 @@ Most values in Sitrec are edited via sliders. You can modify these in various wa
 - Dragging the number _vertically_ will change it in small increments
 - Clicking on the number and then using the up/down arrows will change the number in single steps
 
-Most sliders will stop at the left or right minimum or maximum values, but some, such as the hours/minutes, etc., will wrap around and increment/decrement the slider above them. 
+Most sliders will stop at the left or right minimum or maximum values, but some, such as the hours/minutes, etc., will wrap around and increment/decrement the slider above them. This makes it very convenient to adjust the time by dragging the seconds slider.
+
+Some sliders will expand in scale if you drag over the right side, or contract in scale if you drag over the left side.
 
 ## Color Pickers
 ![Color Picker.jpg](docimages/Color-Picker.jpg)
