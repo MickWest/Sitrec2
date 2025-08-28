@@ -324,17 +324,16 @@ class CTrackManager extends CManager {
 
                 const success = this.makeMISBDataTrack(trackFileName, trackDataID, trackIndex);
 
-                // add to the "Sync Time to" menu
-                GlobalDateTimeNode.addSyncToTrack(trackDataID);
-                // and call it to sync the time. Note we do this BEFORE we create the actual tracks
-                // to ensure we have the correct start time, and hence we can get good track positions for use
-                // with determining the initial terrain
-                if (!Globals.sitchEstablished) {
-                    GlobalDateTimeNode.syncStartTimeTrack();
-                }
-
-
                 if (success) {
+
+                    // add to the "Sync Time to" menu
+                    GlobalDateTimeNode.addSyncToTrack(trackDataID);
+                    // and call it to sync the time. Note we do this BEFORE we create the actual tracks
+                    // to ensure we have the correct start time, and hence we can get good track positions for use
+                    // with determining the initial terrain
+                    if (!Globals.sitchEstablished) {
+                        GlobalDateTimeNode.syncStartTimeTrack();
+                    }
 
                     this.makeTrackFromMISBData(trackFileName, trackDataID, trackID, undefined, guiFolder);
 
