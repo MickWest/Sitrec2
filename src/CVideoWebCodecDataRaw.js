@@ -1,4 +1,4 @@
-import {FileManager, GlobalDateTimeNode, Globals, infoDiv, setRenderOne, Sit} from "./Globals";
+import {debugLog, FileManager, GlobalDateTimeNode, Globals, infoDiv, setRenderOne, Sit} from "./Globals";
 import {assert} from "./assert";
 import {loadImage, versionString} from "./utils";
 import {MP4Demuxer, MP4Source} from "./js/mp4-decode/mp4_demuxer";
@@ -538,6 +538,9 @@ export class CVideoWebCodecDataRaw extends CVideoData {
                     B++
                 }
             }
+
+            debugLog(par.frame+" getImage " + frame + " returning frame " + bestFrame)
+
 
             let image = this.imageCache[bestFrame]
             return image;
