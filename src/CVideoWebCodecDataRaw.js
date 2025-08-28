@@ -539,9 +539,6 @@ export class CVideoWebCodecDataRaw extends CVideoData {
                 }
             }
 
-            debugLog(par.frame+" getImage " + frame + " returning frame " + bestFrame)
-
-
             let image = this.imageCache[bestFrame]
             return image;
 

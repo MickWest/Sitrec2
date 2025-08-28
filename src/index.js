@@ -4,7 +4,7 @@ import {makeDraggable} from "./DragResizeUtils";
 import {
     addGUIFolder,
     addGUIMenu,
-    CustomManager,
+    CustomManager, debugLog,
     FileManager,
     GlobalDateTimeNode,
     Globals,
@@ -1025,7 +1025,8 @@ async function setupFunctions() {
 
 function startAnimating(fps) {
     fpsInterval = 1000 / fps ;           // e.g. 1000/30 = 33.333333
-    startTime = then;
+    startTime = performance.now();
+    then = startTime;
     console.log("STARTUP TIME = " + startTime/1000);
     animationFrameId = requestAnimationFrame( animate );
     setRenderOne(true);
@@ -1042,34 +1043,34 @@ function animate(newtime) {
     Globals.stats.begin();
    // infoDiv.innerHTML = "";
 
-    // note te user can change Sit.fps (for example, if they are unsure of the framerate of the video)
+    // note the user can change Sit.fps (for example, if they are unsure of the framerate of the video)
     fpsInterval = 1000 / Sit.fps;
 
-    // if we don't have a "then" time, then set it to the current time minus the fpsInterval
-    // this allows us to start the animation at the current time, rather than waiting for the next frame
-    // needed for the first frame of the simulation
-    if (then === undefined) {
-        then = newtime - fpsInterval;
-    }
+
 
     now = newtime;
     elapsed = now - then;
 
     // if enough time has elapsed, draw the next frame
-    if (elapsed > fpsInterval) {
+    if (elapsed >= fpsInterval) {
 
-        // Get ready for next frame by setting then=now, but...
-        // Also, adjust for fpsInterval not being multiple of 16.67
-        then = now - (elapsed % fpsInterval);
-        // draw stuff here
-        renderMain(elapsed)
+        if (!par.paused)
+        debugLog("Newtime = " + newtime + " ms" + "Elapsed = " + elapsed + " ms" + " fpsInterval = " + fpsInterval + " fps = " + Sit.fps + " frame = " + par.frame)
+
+        // we need to account for full frames and fractions of frames
+        // so first calculate the fraction of a frame that has elapsed
+        const remainder = elapsed % fpsInterval;
+        // and reset the "then" time to the current time minus the remainder
+        then = now - remainder;
+        // and execute logic for a whole number of frames (usually 1)
+        renderMain(elapsed - remainder)
     } else {
         // It is not yet time for a new frame
         // so just render - which will allow smooth 60 fps motion moving the camera
        // const oldPaused = par.paused
         //par.paused = true;
         par.noLogic = true;
-        renderMain(elapsed);
+        renderMain(elapsed); // check if "elapsed" is used with noLogic
         par.noLogic = false;
         //par.paused = oldPaused;
     }
