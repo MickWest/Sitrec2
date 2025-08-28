@@ -9,6 +9,7 @@ class CNodeViewChat extends CNodeViewText {
         // Set up configuration for the base class
         v.title = 'Sitrec Assistant';
         v.idPrefix = 'chat-view';
+        v.hideOnFileDrop = true; // Chat should hide when files are dropped
         
         super(v);
 

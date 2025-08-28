@@ -6,6 +6,7 @@ class CNodeViewDebug extends CNodeViewText {
         // Set up configuration for the base class
         v.title = 'Debug Console';
         v.idPrefix = 'debug-view';
+        v.hideOnFileDrop = false; // Debug console should stay visible when files are dropped
         
         super(v);
 

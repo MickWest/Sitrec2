@@ -46,6 +46,10 @@ export class CNodeViewText extends CNodeView {
 
         // Default theme
         this.theme = v.theme || 'dark';
+        
+        // Configure whether this view should hide when files are dropped
+        // Default is true for backward compatibility
+        this.hideOnFileDrop = v.hideOnFileDrop !== undefined ? v.hideOnFileDrop : true;
 
         // Create the tab with title
         this.createTab(v.title || 'Text View');
@@ -186,9 +190,11 @@ export class CNodeViewText extends CNodeView {
             e.preventDefault();
         });
 
-        // Listen for file dropped events to hide the view
+        // Listen for file dropped events to hide the view (if configured to do so)
         EventManager.addEventListener("fileDropped", (e) => {
-            this.hide();
+            if (this.hideOnFileDrop) {
+                this.hide();
+            }
         });
     }
 
