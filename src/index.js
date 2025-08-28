@@ -1051,28 +1051,36 @@ function animate(newtime) {
     now = newtime;
     elapsed = now - then;
 
-    // if enough time has elapsed, draw the next frame
-    if (elapsed >= fpsInterval) {
+    // what if paused? just always call?
+    const smoothFrameRate = false;
 
-        // if (!par.paused)
-        // debugLog("Newtime = " + newtime + " ms" + "Elapsed = " + elapsed + " ms" + " fpsInterval = " + fpsInterval + " fps = " + Sit.fps + " frame = " + par.frame)
-
-        // we need to account for full frames and fractions of frames
-        // so first calculate the fraction of a frame that has elapsed
-        const remainder = elapsed % fpsInterval;
-        // and reset the "then" time to the current time minus the remainder
-        then = now - remainder;
-        // and execute logic for a whole number of frames (usually 1)
-        renderMain(elapsed - remainder)
+    if (smoothFrameRate) {
+        renderMain(elapsed);
+        then = now;
     } else {
-        // It is not yet time for a new frame
-        // so just render - which will allow smooth 60 fps motion moving the camera
-       // const oldPaused = par.paused
-        //par.paused = true;
-        par.noLogic = true;
-        renderMain(elapsed); // check if "elapsed" is used with noLogic
-        par.noLogic = false;
-        //par.paused = oldPaused;
+        // if enough time has elapsed, draw the next frame
+        if (elapsed >= fpsInterval) {
+
+            // if (!par.paused)
+            // debugLog("Newtime = " + newtime + " ms" + "Elapsed = " + elapsed + " ms" + " fpsInterval = " + fpsInterval + " fps = " + Sit.fps + " frame = " + par.frame)
+
+            // we need to account for full frames and fractions of frames
+            // so first calculate the fraction of a frame that has elapsed
+            const remainder = elapsed % fpsInterval;
+            // and reset the "then" time to the current time minus the remainder
+            then = now - remainder;
+            // and execute logic for a whole number of frames (usually 1)
+            renderMain(elapsed - remainder)
+        } else {
+            // It is not yet time for a new frame
+            // so just render - which will allow smooth 60 fps motion moving the camera
+            // const oldPaused = par.paused
+            //par.paused = true;
+            par.noLogic = true;
+            renderMain(0); // 0 so we don't advance anything between frames
+            par.noLogic = false;
+            //par.paused = oldPaused;
+        }
     }
     Globals.stats.end();
     animationFrameId = requestAnimationFrame( animate );
