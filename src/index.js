@@ -1054,8 +1054,8 @@ function animate(newtime) {
     // if enough time has elapsed, draw the next frame
     if (elapsed >= fpsInterval) {
 
-        if (!par.paused)
-        debugLog("Newtime = " + newtime + " ms" + "Elapsed = " + elapsed + " ms" + " fpsInterval = " + fpsInterval + " fps = " + Sit.fps + " frame = " + par.frame)
+        // if (!par.paused)
+        // debugLog("Newtime = " + newtime + " ms" + "Elapsed = " + elapsed + " ms" + " fpsInterval = " + fpsInterval + " fps = " + Sit.fps + " frame = " + par.frame)
 
         // we need to account for full frames and fractions of frames
         // so first calculate the fraction of a frame that has elapsed
