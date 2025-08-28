@@ -48,7 +48,7 @@ class CNodeViewDebug extends CNodeViewText {
      * Override to adjust height for debug console
      */
     getOutputAreaHeight() {
-        return 'calc(100% - 35px)'; // Slightly different height for debug console
+        return 'calc(100% - 43px)'; // Leave 8px space at bottom for resize handle
     }
 
     /**

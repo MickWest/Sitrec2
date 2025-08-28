@@ -171,11 +171,19 @@ export function makeResizable(element, options = {}) {
         handle.style.height = '10px';
         handle.style.backgroundColor = 'transparent';
         handle.style.zIndex = '1000';
+        // Add subtle hover effect to make handles more discoverable
+        handle.style.transition = 'background-color 0.2s ease';
+        handle.addEventListener('mouseenter', () => {
+            handle.style.backgroundColor = 'rgba(100, 150, 255, 0.3)';
+        });
+        handle.addEventListener('mouseleave', () => {
+            handle.style.backgroundColor = 'transparent';
+        });
         
         // Position the handle
         switch (dir) {
             case 'n':
-                handle.style.top = '-5px';
+                handle.style.top = '0px';
                 handle.style.left = '50%';
                 handle.style.transform = 'translateX(-50%)';
                 handle.style.cursor = 'n-resize';
@@ -184,14 +192,14 @@ export function makeResizable(element, options = {}) {
                 break;
             case 'e':
                 handle.style.top = '50%';
-                handle.style.right = '-5px';
+                handle.style.right = '0px';
                 handle.style.transform = 'translateY(-50%)';
                 handle.style.cursor = 'e-resize';
                 handle.style.width = '10px';
                 handle.style.height = '100%';
                 break;
             case 's':
-                handle.style.bottom = '-5px';
+                handle.style.bottom = '0px';
                 handle.style.left = '50%';
                 handle.style.transform = 'translateX(-50%)';
                 handle.style.cursor = 's-resize';
@@ -200,30 +208,30 @@ export function makeResizable(element, options = {}) {
                 break;
             case 'w':
                 handle.style.top = '50%';
-                handle.style.left = '-5px';
+                handle.style.left = '0px';
                 handle.style.transform = 'translateY(-50%)';
                 handle.style.cursor = 'w-resize';
                 handle.style.width = '10px';
                 handle.style.height = '100%';
                 break;
             case 'ne':
-                handle.style.top = '-5px';
-                handle.style.right = '-5px';
+                handle.style.top = '0px';
+                handle.style.right = '0px';
                 handle.style.cursor = 'ne-resize';
                 break;
             case 'se':
-                handle.style.bottom = '-5px';
-                handle.style.right = '-5px';
+                handle.style.bottom = '0px';
+                handle.style.right = '0px';
                 handle.style.cursor = 'se-resize';
                 break;
             case 'sw':
-                handle.style.bottom = '-5px';
-                handle.style.left = '-5px';
+                handle.style.bottom = '0px';
+                handle.style.left = '0px';
                 handle.style.cursor = 'sw-resize';
                 break;
             case 'nw':
-                handle.style.top = '-5px';
-                handle.style.left = '-5px';
+                handle.style.top = '0px';
+                handle.style.left = '0px';
                 handle.style.cursor = 'nw-resize';
                 break;
         }
