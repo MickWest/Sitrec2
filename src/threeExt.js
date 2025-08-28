@@ -697,7 +697,7 @@ export function testTextureCube(url, position, size, scene) {
 export function testColorCube(color, position, size, scene) {
     let materials = [];
 
-    if (isArray(color)) {
+    if (Array.isArray(color)) {
         color.forEach(c => {
             c = new Color(c)
             materials.push(new MeshBasicMaterial({color: c}));
