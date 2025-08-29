@@ -393,6 +393,8 @@ export class CGuiMenuBar {
     resetZIndex(gui) {
         const div = this.divs.find((div) => div === gui.domElement.parentElement);
         div.style.zIndex = this.baseZIndex;
+        gui.$children.style.zIndex = '';
+        gui.$children.style.position = '';
     }
 
 
@@ -697,9 +699,9 @@ export class CGuiMenuBar {
                 // Menu has been dragged and released - set it as detached and bring to front
                 newGUI.mode = "DETACHED";
                 this.bringToFront(newGUI);
-                // Apply detached styling
-                this.applyModeStyles(newGUI);
             }
+            this.applyModeStyles(newGUI)
+
             
             event.preventDefault();
         }
