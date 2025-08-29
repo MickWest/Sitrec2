@@ -270,6 +270,9 @@ export class CGuiMenuBar {
         this.slots = []; // array of GUI objects
 
         this.barHeight = 25; // height of the menu bar
+        
+        // Z-index management for bringing clicked menus to front
+        this.baseZIndex = 5000; // Base z-index for menu divs
 
         // create a div for the menu bar
         this.menuBar = document.createElement("div");
@@ -337,7 +340,7 @@ export class CGuiMenuBar {
             div.style.height = "1px";
 
        //     div.style.overflowY = "auto"; // Allow scrolling if content overflows
-            div.style.zIndex = 5000;
+            div.style.zIndex = this.baseZIndex;
 
             this.menuBar.appendChild(div);
             this.divs.push(div);
@@ -360,6 +363,39 @@ export class CGuiMenuBar {
 
 
     }
+
+    // Bring a menu to the front by updating its z-index
+    bringToFront(gui) {
+
+        const div = this.divs.find((div) => div === gui.domElement.parentElement);
+
+        let maxZIndex = this.baseZIndex;
+        // iterate over the slots. If on has a higher zIndex, set it as the maximum
+        for (const otherDiv of this.divs) {
+            if (div !== otherDiv) {
+                const zIndex = parseInt(otherDiv.style.zIndex);
+                if (zIndex > maxZIndex) {
+                    maxZIndex = zIndex;
+                }
+            }
+        }
+
+        // just use one higher than the max
+        maxZIndex++;
+
+        if (div) {
+            div.style.zIndex = maxZIndex;
+            gui.$children.style.zIndex = maxZIndex;
+            gui.$children.style.position = 'relative'; // Ensure positioning context
+        }
+    }
+
+    resetZIndex(gui) {
+        const div = this.divs.find((div) => div === gui.domElement.parentElement);
+        div.style.zIndex = this.baseZIndex;
+    }
+
+
 
     updateListeners() {
 
@@ -481,10 +517,13 @@ export class CGuiMenuBar {
 
         newGUI.mode = "DOCKED";
 
-        // when opened, close the others
+        // when opened, close the others (keep this for user interactions like clicking)
         newGUI.onOpenClose( (changedGUI) => {
 
             if (!changedGUI._closed) {
+                // Bring this menu to the front when opened
+                this.bringToFront(newGUI);
+                
                 this.slots.forEach((gui, index) => {
                     if (gui !== newGUI && !gui._closed) {
                         gui.close();
@@ -495,6 +534,9 @@ export class CGuiMenuBar {
                 if (newGUI.children.length === 1 && newGUI.children[0].constructor.name === "GUI") {
                     newGUI.children[0].open();
                 }
+            } else {
+                //closing, so reset the z-index to base value
+                this.resetZIndex(newGUI)
             }
         })
 
@@ -514,6 +556,14 @@ export class CGuiMenuBar {
         newGUI.$title.addEventListener("mousedown", this.boundHandleTitleMouseDown);
         newGUI.$title.addEventListener("dblclick", this.boundHandleTitleDoubleClick);
 
+        // Add click listener to the entire GUI to bring it to front when any part is clicked
+        newGUI.domElement.addEventListener("mousedown", (event) => {
+            // Only bring to front if this is a detached menu (not docked or currently being dragged)
+            // console.log(`GUI content mousedown on menu "${newGUI.$title.innerHTML}", mode: ${newGUI.mode}`);
+            if (newGUI.mode === "DETACHED") {
+                this.bringToFront(newGUI);
+            }
+        });
 
         return newGUI;
     }
@@ -536,14 +586,29 @@ export class CGuiMenuBar {
 
         newDiv.style.left = newGUI.originalLeft + "px";
         newDiv.style.top = newGUI.originalTop + "px";
+        // Reset z-index to base value when docked
+        newDiv.style.zIndex = this.baseZIndex;
+
+        // Also reset the children's z-index
+        newGUI.$children.style.zIndex = '';
+        newGUI.$children.style.position = '';
         newGUI.lockOpenClose = false;
         newGUI.mode = "DOCKED";
+
+
+
+
     }
 
     handleTitleMouseDown(event) {
         // event.target will be the title element we just moused over
         // find the GUI object that has this title element
         const newGUI = this.slots.find((gui) => gui.$title === event.target);
+
+        // console.log(`Title mousedown on menu "${newGUI.$title.innerHTML}", mode: ${newGUI.mode}`);
+
+        // Bring this menu to the front
+        this.bringToFront(newGUI);
 
         // and find the div
         const newDiv = this.divs.find((div) => div === newGUI.domElement.parentElement);
@@ -595,14 +660,23 @@ export class CGuiMenuBar {
 
 
         const boundHandleMouseUp = (event) => {
-            console.log("Mouse up in boundHandleMouseUp")
             document.removeEventListener("mousemove", boundHandleMouseMove);
             newDiv.removeEventListener("mouseup", boundHandleMouseUp);
 
             // if in the first drag, and only moved a little, then snap it back
             if (newGUI.firstDrag && parseInt(newDiv.style.top) < 5) {
-                this.restoreToBar(newGUI);
+                // This was just a click, not a drag - restore position but keep high z-index
+                newDiv.style.left = newGUI.originalLeft + "px";
+                newDiv.style.top = newGUI.originalTop + "px";
+                newGUI.lockOpenClose = false;
+                newGUI.mode = "DOCKED";
+                // Don't reset z-index - keep it high so menu stays in front
+            } else {
+                // Menu has been dragged and released - set it as detached and bring to front
+                newGUI.mode = "DETACHED";
+                this.bringToFront(newGUI);
             }
+            
             event.preventDefault();
         }
         newDiv.addEventListener("mouseup", boundHandleMouseUp);
@@ -629,6 +703,8 @@ export class CGuiMenuBar {
             if (gui) {
 
                 gui.$title.removeEventListener("mouseover", this.boundHandleTitleMouseOver);
+                gui.$title.removeEventListener("mousedown", this.boundHandleTitleMouseDown);
+                gui.$title.removeEventListener("dblclick", this.boundHandleTitleDoubleClick);
 
                 gui.destroy(all);
 
@@ -668,6 +744,7 @@ export class CGuiMenuBar {
                 closed: gui._closed,
                 left: gui.domElement.parentElement.style.left,
                 top: gui.domElement.parentElement.style.top,
+                zIndex: gui.$children.style.zIndex || gui.domElement.parentElement.style.zIndex,
                 mode: gui.mode,
                 lockOpenClose: gui.lockOpenClose,
             };
@@ -679,6 +756,7 @@ export class CGuiMenuBar {
 
     modDeserialize( v ) {
         const guiData = v;
+
         for (let i = 0; i < this.slots.length; i++) {
             const key = this.getSerialID(i);
             if (v[key] !== undefined) {
@@ -687,6 +765,25 @@ export class CGuiMenuBar {
                 gui._closed = data.closed;
                 gui.domElement.parentElement.style.left = data.left;
                 gui.domElement.parentElement.style.top = data.top;
+                // Restore z-index if available, otherwise use base value
+                if (data.zIndex !== undefined) {
+                    const zIndexValue = parseInt(data.zIndex) || this.baseZIndex;
+                    if (zIndexValue > this.baseZIndex) {
+                        // High z-index goes to children
+                        gui.$children.style.zIndex = data.zIndex;
+                        gui.$children.style.position = 'relative';
+                        gui.domElement.parentElement.style.zIndex = this.baseZIndex;
+                    } else {
+                        // Base z-index goes to div
+                        gui.domElement.parentElement.style.zIndex = data.zIndex;
+                        gui.$children.style.zIndex = '';
+                        gui.$children.style.position = '';
+                    }
+                } else {
+                    gui.domElement.parentElement.style.zIndex = this.baseZIndex;
+                    gui.$children.style.zIndex = '';
+                    gui.$children.style.position = '';
+                }
                 gui.mode = data.mode;
                 gui.lockOpenClose = data.lockOpenClose;
                 if (gui.lockOpenClose) {

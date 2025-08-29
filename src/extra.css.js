@@ -185,5 +185,49 @@ html, body {
     height: 100%;
 }
 
+/* Menu title bar styling - make titles appear as tabs instead of full-width bars */
+.lil-gui.root > .title {
+    display: inline-block !important;
+    width: auto !important;
+    min-width: fit-content !important;
+    max-width: none !important;
+    padding: 4px 12px 4px 8px !important;
+    background: var(--title-background-color) !important;
+    border: 1px solid #666 !important;
+    border-bottom: none !important;
+    border-radius: 4px 4px 0 0 !important;
+    position: relative !important;
+    margin-right: auto !important;
+}
+
+/* Remove border for docked menus (in the menu bar) */
+#menuBar .lil-gui.root > .title {
+    border: none !important;
+    border-radius: 0 !important;
+}
+
+/* Make the root GUI container have transparent background and pass through mouse events */
+.lil-gui.root {
+    background: transparent !important;
+    pointer-events: none !important;
+}
+
+/* Re-enable pointer events only on the visible title and children */
+.lil-gui.root > .title {
+    pointer-events: auto !important;
+}
+
+.lil-gui.root > .children {
+    pointer-events: auto !important;
+}
+
+/* Ensure the dropdown content has proper background and connects to the tab */
+.lil-gui.root > .children {
+    background: var(--background-color) !important;
+    border: 1px solid #666 !important;
+    border-top: none !important;
+    margin-top: 0 !important;
+}
+
 
 `;
