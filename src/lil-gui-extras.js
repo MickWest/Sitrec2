@@ -595,9 +595,30 @@ export class CGuiMenuBar {
         newGUI.lockOpenClose = false;
         newGUI.mode = "DOCKED";
 
+        // Remove detached styling when docked
+        this.applyModeStyles(newGUI);
+    }
 
-
-
+    applyModeStyles(gui) {
+        const titleElement = gui.$title;
+        
+        if (gui.mode !== "DOCKED") {
+            // Apply styling for dragging or detached menus - only to title bar
+            titleElement.style.setProperty('border-top-left-radius', '6px', 'important');
+            titleElement.style.setProperty('border-top-right-radius', '6px', 'important');
+            titleElement.style.setProperty('border-top', '1px solid #555', 'important');
+            titleElement.style.setProperty('border-left', '1px solid #555', 'important');
+            titleElement.style.setProperty('border-right', '1px solid #555', 'important');
+            titleElement.style.setProperty('box-shadow', '0 2px 8px rgba(0, 0, 0, 0.3)', 'important');
+        } else {
+            // Remove styling for docked menus
+            titleElement.style.removeProperty('border-top-left-radius');
+            titleElement.style.removeProperty('border-top-right-radius');
+            titleElement.style.removeProperty('border-top');
+            titleElement.style.removeProperty('border-left');
+            titleElement.style.removeProperty('border-right');
+            titleElement.style.removeProperty('box-shadow');
+        }
     }
 
     handleTitleMouseDown(event) {
@@ -621,6 +642,7 @@ export class CGuiMenuBar {
         newGUI.firstDrag = (newGUI.mode === "DOCKED");
 
         newGUI.mode = "DRAGGING"
+        this.applyModeStyles(newGUI)
 
         // capture all the mouse move events and use then to move the div
         // when the mouse is released, remove the event listener
@@ -675,6 +697,8 @@ export class CGuiMenuBar {
                 // Menu has been dragged and released - set it as detached and bring to front
                 newGUI.mode = "DETACHED";
                 this.bringToFront(newGUI);
+                // Apply detached styling
+                this.applyModeStyles(newGUI);
             }
             
             event.preventDefault();
@@ -792,6 +816,8 @@ export class CGuiMenuBar {
                     gui.open();
                     gui.lockOpenClose = true;
                 }
+                // Apply mode-specific styling
+                this.applyModeStyles(gui);
             }
         }
 
