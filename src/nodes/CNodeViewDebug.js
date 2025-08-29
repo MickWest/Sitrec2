@@ -60,6 +60,7 @@ class CNodeViewDebug extends CNodeViewText {
         messageDiv.style.marginBottom = '2px';
         messageDiv.textContent = text;
         this.outputArea.appendChild(messageDiv);
+        this.cullMessages();
         this.scrollToBottom();
     }
 

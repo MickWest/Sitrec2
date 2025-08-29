@@ -51,6 +51,9 @@ export class CNodeViewText extends CNodeView {
         // Default is true for backward compatibility
         this.hideOnFileDrop = v.hideOnFileDrop !== undefined ? v.hideOnFileDrop : true;
 
+        // Configure maximum number of messages (0 = unlimited)
+        this.maxMessages = v.maxMessages || 1000;
+
         // Create the tab with title
         this.createTab(v.title || 'Text View');
 
@@ -239,6 +242,7 @@ export class CNodeViewText extends CNodeView {
             div.style.color = `var(--cnodeview-text-color)`;
         }
         this.outputArea.appendChild(div);
+        this.cullMessages();
         this.scrollToBottom();
     }
 
@@ -251,6 +255,7 @@ export class CNodeViewText extends CNodeView {
         div.style.margin = '2px 0';
         div.style.color = `var(--cnodeview-debug-color)`;
         this.outputArea.appendChild(div);
+        this.cullMessages();
         this.scrollToBottom();
     }
 
@@ -259,6 +264,22 @@ export class CNodeViewText extends CNodeView {
      */
     scrollToBottom() {
         this.outputArea.scrollTop = this.outputArea.scrollHeight;
+    }
+
+    /**
+     * Cull old messages if maxMessages limit is exceeded
+     */
+    cullMessages() {
+        if (this.maxMessages <= 0) return; // No limit set
+        
+        const children = this.outputArea.children;
+        if (children.length > this.maxMessages) {
+            // Remove the oldest messages (from the beginning)
+            const messagesToRemove = children.length - this.maxMessages;
+            for (let i = 0; i < messagesToRemove; i++) {
+                this.outputArea.removeChild(children[0]);
+            }
+        }
     }
 
     /**

@@ -1,8 +1,7 @@
-import {CNodeViewText, THEMES} from "./CNodeViewText.js";
-import {GlobalDateTimeNode, guiMenus, Sit} from "../Globals";
+import {CNodeViewText} from "./CNodeViewText.js";
+import {GlobalDateTimeNode, guiMenus} from "../Globals";
 import {SITREC_SERVER} from "../configUtils";
 import {sitrecAPI} from "../CSitrecAPI";
-import {EventManager} from "../CEventManager";
 
 class CNodeViewChat extends CNodeViewText {
     constructor(v) {
@@ -10,7 +9,7 @@ class CNodeViewChat extends CNodeViewText {
         v.title = 'Sitrec Assistant';
         v.idPrefix = 'chat-view';
         v.hideOnFileDrop = true; // Chat should hide when files are dropped
-        
+
         super(v);
 
         // Rename outputArea to chatLog for consistency with existing code
@@ -212,6 +211,7 @@ class CNodeViewChat extends CNodeViewText {
         div.style.margin = '4px 0';
         div.style.color = `var(--cnodeview-chat-color)`;
         this.chatLog.appendChild(div);
+        this.cullMessages();
         this.scrollToBottom();
         this.chatHistory.push({ role: 'user', text });
     }
@@ -223,6 +223,7 @@ class CNodeViewChat extends CNodeViewText {
         div.style.margin = '4px 0';
         div.style.color = `var(--cnodeview-bot-color)`;
         this.chatLog.appendChild(div);
+        this.cullMessages();
         this.scrollToBottom();
         this.chatHistory.push({ role: 'bot', text });
     }
@@ -235,6 +236,7 @@ class CNodeViewChat extends CNodeViewText {
         div.style.margin = '4px 0';
         div.style.color = `var(--cnodeview-debug-color)`;
         this.chatLog.appendChild(div);
+        this.cullMessages();
         this.scrollToBottom();
     }
 
