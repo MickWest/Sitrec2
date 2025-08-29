@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 
-import { CGuiMenuBar } from '../src/lil-gui-extras.js';
+import {CGuiMenuBar} from '../src/lil-gui-extras.js';
 
 // Mock the required modules
 jest.mock('../src/Globals', () => ({
@@ -34,6 +34,22 @@ process.env.BANNER_ACTIVE = 'false';
 
 describe('CGuiMenuBar Z-Index Management', () => {
     let menuBar;
+
+    // Helper function to normalize color values for cross-browser compatibility
+    const normalizeColor = (color) => {
+        if (!color) return '';
+        // Convert hex #555 to rgb(85, 85, 85) for consistent comparison
+        if (color === '#555') return 'rgb(85, 85, 85)';
+        if (color === '1px solid #555') return '1px solid rgb(85, 85, 85)';
+        return color;
+    };
+
+    // Helper function to check if a color matches either hex or rgb format
+    const expectColorToBe = (actual, expected) => {
+        const normalizedActual = normalizeColor(actual);
+        const normalizedExpected = normalizeColor(expected);
+        expect(normalizedActual).toBe(normalizedExpected);
+    };
 
     beforeEach(() => {
         // Clear the DOM
@@ -378,9 +394,9 @@ describe('CGuiMenuBar Z-Index Management', () => {
         expect(gui.mode).toBe('DRAGGING');
         expect(titleElement.style.getPropertyValue('border-top-left-radius')).toBe('6px');
         expect(titleElement.style.getPropertyValue('border-top-right-radius')).toBe('6px');
-        expect(titleElement.style.getPropertyValue('border-top')).toBe('1px solid #555');
-        expect(titleElement.style.getPropertyValue('border-left')).toBe('1px solid #555');
-        expect(titleElement.style.getPropertyValue('border-right')).toBe('1px solid #555');
+        expectColorToBe(titleElement.style.getPropertyValue('border-top'), '1px solid #555');
+        expectColorToBe(titleElement.style.getPropertyValue('border-left'), '1px solid #555');
+        expectColorToBe(titleElement.style.getPropertyValue('border-right'), '1px solid #555');
         expect(titleElement.style.getPropertyValue('box-shadow')).toBe('0 2px 8px rgba(0, 0, 0, 0.3)');
     });
 
@@ -407,9 +423,9 @@ describe('CGuiMenuBar Z-Index Management', () => {
         expect(gui.mode).toBe('DETACHED');
         expect(titleElement.style.getPropertyValue('border-top-left-radius')).toBe('6px');
         expect(titleElement.style.getPropertyValue('border-top-right-radius')).toBe('6px');
-        expect(titleElement.style.getPropertyValue('border-top')).toBe('1px solid #555');
-        expect(titleElement.style.getPropertyValue('border-left')).toBe('1px solid #555');
-        expect(titleElement.style.getPropertyValue('border-right')).toBe('1px solid #555');
+        expectColorToBe(titleElement.style.getPropertyValue('border-top'), '1px solid #555');
+        expectColorToBe(titleElement.style.getPropertyValue('border-left'), '1px solid #555');
+        expectColorToBe(titleElement.style.getPropertyValue('border-right'), '1px solid #555');
         expect(titleElement.style.getPropertyValue('box-shadow')).toBe('0 2px 8px rgba(0, 0, 0, 0.3)');
     });
 
@@ -424,7 +440,7 @@ describe('CGuiMenuBar Z-Index Management', () => {
         
         // Verify styling is applied
         expect(titleElement.style.getPropertyValue('border-top-left-radius')).toBe('6px');
-        expect(titleElement.style.getPropertyValue('border-top')).toBe('1px solid #555');
+        expectColorToBe(titleElement.style.getPropertyValue('border-top'), '1px solid #555');
         
         // Now restore to bar (which sets mode to DOCKED and removes styling)
         menuBar.restoreToBar(gui);
@@ -470,7 +486,7 @@ describe('CGuiMenuBar Z-Index Management', () => {
         // After deserialize - should have styling applied and correct mode
         expect(newGui.mode).toBe('DETACHED');
         expect(newTitleElement.style.getPropertyValue('border-top-left-radius')).toBe('6px');
-        expect(newTitleElement.style.getPropertyValue('border-top')).toBe('1px solid #555');
+        expectColorToBe(newTitleElement.style.getPropertyValue('border-top'), '1px solid #555');
         
         newMenuBar.destroy();
     });
