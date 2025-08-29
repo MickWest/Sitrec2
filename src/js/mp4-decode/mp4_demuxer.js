@@ -90,7 +90,7 @@ export class MP4Source {
         console.log('Frames Per Second: ', framesPerSecond);
 
       // is it something reasonable?
-        if (framesPerSecond > 0 && framesPerSecond < 100) {
+        if (framesPerSecond > 0 && framesPerSecond <= 240) {
             this.fps = framesPerSecond;
         } else {
             console.warn('Invalid frame rate: ', framesPerSecond, " setting to 30");
