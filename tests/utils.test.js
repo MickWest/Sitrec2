@@ -95,12 +95,27 @@ describe('unitsToMeters', () => {
         test('triggers assertion but returns fallback value for unknown units', () => {
             // The assert function logs to console and triggers debugger but doesn't throw
             // The function returns the original value as a fallback due to the unreachable return statement
+            
+            // Mock console methods to suppress output during this test
+            const originalConsoleTrace = console.trace;
+            const originalConsoleError = console.error;
+            console.trace = jest.fn();
+            console.error = jest.fn();
+            
             expect(unitsToMeters('unknown', 100)).toBe(100);
             expect(unitsToMeters('inches', 12)).toBe(12);
             expect(unitsToMeters('yards', 10)).toBe(10);
             expect(unitsToMeters('centimeters', 100)).toBe(100);
             expect(unitsToMeters('millimeters', 1000)).toBe(1000);
             expect(unitsToMeters('', 100)).toBe(100);
+            
+            // Verify that console methods were called (assertions were triggered)
+            expect(console.trace).toHaveBeenCalled();
+            expect(console.error).toHaveBeenCalled();
+            
+            // Restore original console methods
+            console.trace = originalConsoleTrace;
+            console.error = originalConsoleError;
         });
 
         test('handles null/undefined units with toLowerCase error', () => {
