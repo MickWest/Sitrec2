@@ -230,7 +230,6 @@ Clone Sitrec from GitHub, or download a release archive. This will give you the 
 - `docs` - other .md format Documentation and images
 - `sitrecServer` - The server-side PHP files, like cachemaps.php
 - `src` - The JavaScript source, with the entry point of index.js
-- `three.js` - The 3D engine, the largest library used
 - `test` - Test files for the console build
 - `tests` - Unit tests that can be run by Jest
 
