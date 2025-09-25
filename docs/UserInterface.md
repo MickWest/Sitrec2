@@ -6,9 +6,7 @@ Sitrec is a web application that will run in any popular desktop browser like Ch
 
 **Note** that the use of local files requires the use of a web browser that suuports this functionality such as Chrome and Edge. Firefox, Safari and other browser may not support using the local file system (for example, the defaults for Brave disallow local filesystem access [but can be enabled in the Brave settings](https://github.com/brave/brave-browser/issues/29411]).
 
-<div align="center">
-![File System Menu](docimages/ui-local-settings-file.png)
-</div>
+![File System Menu](docimages/ui-local-settings-file.jpg)
 
 ## The Menu System
 
