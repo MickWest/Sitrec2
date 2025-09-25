@@ -12,9 +12,10 @@ For security reasons not all browsers support local filesystem access. This is r
 | Browser | Capable |
 |---------|-----|
 | Chrome  | Yes |
+| Opera   | Yes |
 | Edge    | Yes |
-| Firefox | No  |
 | Safari  | Yes |
+| Firefox | No  |
 | Brave   | <em>No by default</em> |
 
 By default Brave Browser has local filesystem access disabled but can be enabled by visiting the "[brave://flags/#file-system-access-api](brave://flags/#file-system-access-api)"
