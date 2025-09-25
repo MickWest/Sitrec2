@@ -15,7 +15,7 @@ For security reasons not all browsers support local filesystem access. This is r
 | Edge    | Yes |
 | Firefox | No  |
 | Safari  | Yes |
-| Brave   | [No by default but also see](https://github.com/brave/brave-browser/issues/29411]) |
+| Brave   | [No by default but also see](https://github.com/brave/brave-browser/issues/29411) |
 
 
 
