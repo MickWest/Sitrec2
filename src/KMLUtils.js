@@ -10,7 +10,7 @@ import {timeStrToEpoch} from "./DateTimeUtils";
 
 export function parseXml(xml, arrayTags)
 {
-    var dom = null;
+    let dom = null;
     if (window.DOMParser)
     {
         dom = (new DOMParser()).parseFromString(xml, "text/xml");
@@ -37,7 +37,7 @@ export function parseXml(xml, arrayTags)
     function parseNode(xmlNode, result)
     {
         if (xmlNode.nodeName === "#text") {
-            var v = xmlNode.nodeValue;
+            const v = xmlNode.nodeValue;
             if (v.trim()) {
                 result['#text'] = v;
 //                    result = v;
@@ -45,8 +45,8 @@ export function parseXml(xml, arrayTags)
             return;
         }
 
-        var jsonNode = {};
-        var existing = result[xmlNode.nodeName];
+        const jsonNode = {};
+        const existing = result[xmlNode.nodeName];
         if(existing)
         {
             if(!isArray(existing))
@@ -72,22 +72,22 @@ export function parseXml(xml, arrayTags)
 
         if(xmlNode.attributes)
         {
-            var length = xmlNode.attributes.length;
-            for(var i = 0; i < length; i++)
+            const length = xmlNode.attributes.length;
+            for(let i = 0; i < length; i++)
             {
-                var attribute = xmlNode.attributes[i];
+                const attribute = xmlNode.attributes[i];
                 jsonNode[attribute.nodeName] = attribute.nodeValue;
             }
         }
 
-        var length = xmlNode.childNodes.length;
-        for(var i = 0; i < length; i++)
+        const length2 = xmlNode.childNodes.length;
+        for(let i = 0; i < length2; i++)
         {
             parseNode(xmlNode.childNodes[i], jsonNode);
         }
     }
 
-    var result = {};
+    const result = {};
     for (let i = 0; i < dom.childNodes.length; i++)
     {
         parseNode(dom.childNodes[i], result);
@@ -126,7 +126,7 @@ export function getKMLTrackWhenCoord(kml, trackIndex, when, coord, info) {
 
     if (kml.kml.Document !== undefined) {
         if (kml.kml.Document.Folder !== undefined && Array.isArray(kml.kml.Document.Folder)) {
-            var route = kml.kml.Document.Folder[0]
+            const route = kml.kml.Document.Folder[0]
             if (route && route.name && route.name["#text"] === "Route") {
                 if (when === undefined) {
                     // skip if we don't need the data
@@ -137,7 +137,7 @@ export function getKMLTrackWhenCoord(kml, trackIndex, when, coord, info) {
                 // FR24 format
                 info.name = kml.kml.Document.name && kml.kml.Document.name["#text"] || "FR24 Track";
                 const p = route.Placemark
-                for (var i=0;i<p.length;i++) {
+                for (let i=0;i<p.length;i++) {
                     const date = p[i].TimeStamp.when["#text"]
 
                     if (i>0 && p[i].TimeStamp.when["#text"] === p[i-1].TimeStamp.when["#text"]) {
@@ -148,11 +148,11 @@ export function getKMLTrackWhenCoord(kml, trackIndex, when, coord, info) {
 
                     when.push(timeStrToEpoch(date))
 
-                    var c = p[i].Point.coordinates["#text"]
-                    var cs = c.split(',')
-                    var lon = Number(cs[0])
-                    var lat = Number(cs[1])
-                    var alt = Number(cs[2])
+                    const c = p[i].Point.coordinates["#text"]
+                    const cs = c.split(',')
+                    const lon = Number(cs[0])
+                    const lat = Number(cs[1])
+                    const alt = Number(cs[2])
                     coord.push({lat: lat, lon: lon, alt: alt})
                 }
 
@@ -164,7 +164,7 @@ export function getKMLTrackWhenCoord(kml, trackIndex, when, coord, info) {
 
     // otherwise we assume it's
 
-    var tracks;
+    let tracks;
 
     if (kml.kml.Document !== undefined) {
         // There is only one track in a FlightAware file
@@ -240,24 +240,24 @@ export function getKMLTrackWhenCoord(kml, trackIndex, when, coord, info) {
         assert(track["gx:Track"]["gx:coord"] !== undefined, "No gx:Track.gx:coord in KML");
 
         const gxTrack = track["gx:Track"];
-        var whenArray;
-        var coordArray;
+        let whenArray;
+        let coordArray;
         whenArray = gxTrack["when"]
         coordArray = gxTrack["gx:coord"]
         const len = whenArray.length;
-        for (var i = 0; i < len; i++) {
+        for (let i = 0; i < len; i++) {
 
             if (i>0 && whenArray[i]["#text"] === whenArray[i-1]["#text"]) {
 //                console.warn("getKMLTrackWhenCoord: Duplicate time "+whenArray[i]["#text"])
                 continue;
             }
 
-            var w = whenArray[i]["#text"]
-            var c = coordArray[i]["#text"]
-            var cs = c.split(' ')
-            var lon = Number(cs[0])
-            var lat = Number(cs[1])
-            var alt = Number(cs[2])
+            const w = whenArray[i]["#text"]
+            const c = coordArray[i]["#text"]
+            const cs = c.split(' ')
+            const lon = Number(cs[0])
+            const lat = Number(cs[1])
+            const alt = Number(cs[2])
 //                console.log(">>"+w+"    "+lat+","+lon+" - "+alt)
 
             when.push(timeStrToEpoch(w))  // whenArray is time in MS since 1970
