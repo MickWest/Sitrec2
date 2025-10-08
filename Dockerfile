@@ -32,6 +32,9 @@ RUN npm ci
 # and will build the app using Webpack into the dist folder
 # (See docker-config-install.js, which sets those paths)
 
+# Set environment variable to indicate this is a Docker build
+ENV DOCKER_BUILD=true
+
 RUN npm run deploy
 
 

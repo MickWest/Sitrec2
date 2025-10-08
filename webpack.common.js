@@ -151,6 +151,7 @@ module.exports = {
         new webpack.DefinePlugin({
             'process.env.BUILD_VERSION_STRING': JSON.stringify(getFormattedLocalDateTime()),
             'process.env.BUILD_VERSION_NUMBER': JSON.stringify(getVersionNumber()),
+            'process.env.DOCKER_BUILD': JSON.stringify(process.env.DOCKER_BUILD === 'true'),
             'CAN_REQUIRE_CONTEXT': JSON.stringify(true),
         }),
 
