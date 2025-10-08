@@ -6,6 +6,7 @@
     "test-regression": "npx jest tests_regression/",
     "test-all": "npx jest",
     "test-misb": "node ../test-all-misb-files.js",
+    "start": "npx webpack serve --config webpack.dev.js",
     "build": "npx webpack --config webpack.dev.js",
     "deploy": "npx webpack --config webpack.prod.js",
     "copy": "npx webpack --config webpack.copy-files.js"

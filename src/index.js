@@ -551,8 +551,10 @@ async function initializeOnce() {
     registerNodes();
 
 // Get all the text based sitches from the server
+
 // these are the sitches defined by <name>.sitch.js files inside the folder of the same name in data
     let textSitches = [];
+    console.log("Getting TEXT BASED Sitches from: "+ SITREC_SERVER+"getsitches.php");
     await fetch((SITREC_SERVER+"getsitches.php"), {mode: 'cors'}).then(response => response.text()).then(data => {
 //        console.log("TEXT BASED Sitches: " + data)
 //        console.log ("parsed data: ")

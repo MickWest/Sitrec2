@@ -1,0 +1,60 @@
+# Development Dockerfile for Sitrec
+# This setup allows for rapid iteration with hot reloading
+
+FROM node:22
+
+# Install PHP and Apache for the backend server
+RUN apt-get update && apt-get install -y \
+    apache2 \
+    php8.2 \
+    php8.2-cli \
+    php8.2-xml \
+    php8.2-mbstring \
+    php8.2-curl \
+    libapache2-mod-php8.2 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Enable Apache modules
+RUN a2enmod rewrite proxy proxy_http headers
+
+# Configure Apache to run on port 8081 (so we can run both webpack-dev-server and Apache)
+RUN sed -i 's/Listen 80/Listen 8081/' /etc/apache2/ports.conf
+RUN sed -i 's/:80/:8081/' /etc/apache2/sites-available/000-default.conf
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files first (for better layer caching)
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# The source code will be mounted as a volume
+# So we don't copy it here - this allows live editing
+
+# Create necessary directories
+RUN mkdir -p /var/www/html/sitrec-cache && chmod 777 /var/www/html/sitrec-cache
+RUN mkdir -p /var/www/html/sitrec-upload && chmod 777 /var/www/html/sitrec-upload
+
+# Expose ports
+# 8080 - Webpack dev server (with hot reload)
+# 8081 - Apache/PHP server (for backend APIs)
+EXPOSE 8080 8081
+
+# Create a startup script
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+# Start Apache in the background\n\
+echo "Starting Apache..."\n\
+apache2ctl start\n\
+\n\
+# Start webpack dev server\n\
+echo "Starting Webpack Dev Server..."\n\
+cd /app\n\
+npm run start\n\
+' > /start.sh && chmod +x /start.sh
+
+CMD ["/start.sh"]

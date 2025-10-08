@@ -1,0 +1,136 @@
+# ============================================================================
+# Sitrec Development Environment - Docker Compose Configuration
+# ============================================================================
+#
+# This Docker Compose file sets up a complete development environment for Sitrec
+# with hot module reloading and live file editing capabilities.
+#
+# ARCHITECTURE:
+# -------------
+# The container runs two services simultaneously:
+#   1. Webpack Dev Server (port 8080) - Frontend with hot reload
+#   2. Apache/PHP (port 8081) - Backend API server
+#
+# The webpack dev server proxies PHP requests to Apache, so you only need
+# to access http://localhost:8080 for development.
+#
+# FILE SYSTEM LAYOUT:
+# -------------------
+# Source files are mounted at TWO locations to serve different purposes:
+#
+#   /app/*                    - For webpack dev server and Node.js
+#     ├── src/                - JavaScript/CSS source files (hot reload)
+#     ├── data/               - Sitch definition files
+#     ├── config/             - Configuration files
+#     ├── sitrecServer/       - PHP backend files
+#     └── node_modules/       - NPM packages (container-only, not mounted)
+#
+#   /var/www/html/*           - For Apache/PHP server
+#     ├── sitrecServer/       - PHP scripts (executed by Apache)
+#     ├── data/               - Sitch files (scanned by getsitches.php)
+#     ├── sitrec-videos/      - Video files directory
+#     └── dist/               - Webpack build output (served by Apache)
+#
+# HOT RELOAD BEHAVIOR:
+# --------------------
+#   • JavaScript/CSS (src/): Auto-recompiled by webpack, browser updates automatically
+#   • PHP files (sitrecServer/): Immediately available, requires page refresh
+#   • Sitch files (data/): Immediately available, requires page refresh
+#   • Webpack config: Requires container restart
+#
+# USAGE:
+# ------
+#   docker-compose -f docker-compose.dev.yml build   # Build image
+#   docker-compose -f docker-compose.dev.yml up      # Start development
+#   docker-compose -f docker-compose.dev.yml down    # Stop and cleanup
+#
+# See DOCKER-DEV.md for complete documentation.
+# ============================================================================
+
+services:
+  sitrec-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - '8080:8080'  # Webpack dev server (primary access point)
+      - '8081:8081'  # Apache/PHP backend (proxied by webpack)
+    volumes:
+      # ========================================================================
+      # WEBPACK/NODE.JS MOUNTS (at /app/)
+      # These files are accessed by webpack dev server and Node.js processes
+      # ========================================================================
+      
+      # Source code directories (hot reload enabled for src/)
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./docs:/app/docs
+      - ./config:/app/config
+      - ./sitrecServer:/app/sitrecServer
+      
+      # Webpack configuration files
+      - ./webpack.common.js:/app/webpack.common.js
+      - ./webpack.dev.js:/app/webpack.dev.js
+      - ./webpack.prod.js:/app/webpack.prod.js
+      - ./webpackCopyPatterns.js:/app/webpackCopyPatterns.js
+      
+      # Docker-specific configuration override
+      # This replaces config-install.js with Docker-appropriate paths
+      - ./config/config-install.docker.js:/app/config/config-install.js
+      
+      # ========================================================================
+      # APACHE/PHP MOUNTS (at /var/www/html/)
+      # These files are accessed by Apache web server and PHP scripts
+      # ========================================================================
+      
+      # PHP backend scripts (executed by Apache)
+      - ./sitrecServer:/var/www/html/sitrecServer
+      
+      # Data directory (required by getsitches.php to scan for sitches)
+      - ./data:/var/www/html/data
+      
+      # PHP configuration files (read-only to prevent accidental modification)
+      # Note: These override any config files in sitrecServer/
+      - ./config/config.php:/var/www/html/sitrecServer/config.php:ro
+      - ./config/shared.env:/var/www/html/shared.env.php:ro
+      
+      # Video files directory (served by Apache)
+      - ./sitrec-videos:/var/www/html/sitrec-videos
+      
+      # Webpack build output (served by Apache as fallback/static files)
+      - ./dist:/var/www/html
+      
+      # ========================================================================
+      # CONTAINER-MANAGED VOLUMES
+      # ========================================================================
+      
+      # Node modules are kept in container for performance
+      # (prevents host filesystem from overwriting container's npm packages)
+      - node_modules:/app/node_modules
+      
+      # ========================================================================
+      # OPTIONAL MOUNTS (uncomment if needed)
+      # ========================================================================
+      
+      # Cache directory for map tiles and other cached data
+      # Uncomment to persist cache between container restarts
+      # - ./sitrec-cache:/var/www/html/sitrec-cache
+    environment:
+      # Node.js environment mode (enables development features)
+      - NODE_ENV=development
+      
+      # Enable polling for file watching (required for Docker volume mounts)
+      # Without this, webpack may not detect file changes on the host
+      - CHOKIDAR_USEPOLLING=true
+      
+      # Version identifier (fallback since .git directory is not mounted)
+      - VERSION=dev
+      
+    # Enable interactive terminal (useful for debugging)
+    stdin_open: true
+    tty: true
+
+# Named volumes managed by Docker
+volumes:
+  # Persistent storage for node_modules (improves performance)
+  node_modules:
