@@ -110,7 +110,7 @@ const toolSitches = {};
 const rootSitches = {};
 let toTest;
 let testing = false;
-var fpsInterval, startTime, now, then, elapsed;
+let fpsInterval, startTime, now, then, elapsed;
 
 let animationFrameId;
 
@@ -378,7 +378,7 @@ function checkForTest() {
 //        var url = SITREC_APP + "?test=" + toTest
 //        window.location.assign(url)
 
-        var testArray = toTest.split(',');
+        const testArray = toTest.split(',');
         situation = testArray.shift() // remove the first (gimbal)
         toTest = testArray.join(",")
         // log current time:
@@ -708,7 +708,7 @@ async function initializeOnce() {
     _gui.add(par, "nameSelect", selectableSitches).name("Legacy Sitches").perm().onChange(sitch => {
         par.name = par.nameSelect;
         console.log("SITCH par.name CHANGE TO: "+sitch+" ->"+par.nameSelect)
-        var url = SITREC_APP+"?sitch=" + sitch
+        const url = SITREC_APP+"?sitch=" + sitch
         newSitch(sitch);
         window.history.pushState({}, null, url);
         par.nameSelect = unselectedText ;
@@ -720,13 +720,13 @@ async function initializeOnce() {
     par.toolSelect = unselectedText;
     _gui.add(par, "toolSelect", toolSitches).name("Tools").perm().listen().onChange(sitch => {
         console.log("SITCH par.name CHANGE TO: "+sitch+" ->"+par.name)
-        var url = SITREC_APP+"?sitch=" + sitch
+        const url = SITREC_APP+"?sitch=" + sitch
 
 // smoke test of everything after the current sitch in alphabetical order
         if (sitch === "testhere") {
             toTest = ""
             let skip = true;
-            for (var key in sortedSitches) {
+            for (const key in sortedSitches) {
                 if (skip) {
                     if (sortedSitches[key] === situation)
                         skip = false;
@@ -1333,7 +1333,7 @@ function selectInitialSitch(force) {
 // if it is set, we will test the first one, then the rest
 // will be tested in order.
         if (toTest !== undefined) {
-            var testArray = toTest.split(',');
+            const testArray = toTest.split(',');
             situation = testArray.shift() // remove the first (gimbal)
             toTest = testArray.join(",")
             console.log("Testing " + situation + ", will text next: " + toTest)
