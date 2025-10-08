@@ -12,7 +12,6 @@ import {EventManager} from "../CEventManager";
 import {QuadTreeMapTexture} from "../QuadTreeMapTexture";
 import {QuadTreeMapElevation} from "../QuadTreeMapElevation";
 import * as LAYER from "../LayerMasks";
-import {showError} from "../showError";
 import {ViewMan} from "../CViewManager";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {isLocal} from "../configUtils";
@@ -458,7 +457,7 @@ export class CNodeTerrain extends CNode {
                     // first check to see if it has been disposed
                     // this happnes and need fixing, but for now just warn and
                     if (this.maps[id].map === undefined) {
-                        showError("FIX NEEDED: CNodeTerrain: id = " + id + " map loaded callback called with no map object")
+                        console.error("FIX NEEDED: CNodeTerrain: id = " + id + " map loaded callback called with no map object")
                         return;
                     }
 
