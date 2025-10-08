@@ -12,7 +12,10 @@ export const _configParams = {
     rehostRequiresLogin: true,
 
     // This is the default map type if none specificed in the Sit file
-    defaultMapType: process.env.DEFAULT_MAP_TYPE ?? "NRL_WMTS", //"NRL_WMTS",
+    // Use DOCKER_MAP_TYPE if building for Docker, otherwise use DEFAULT_MAP_TYPE
+    defaultMapType: process.env.DOCKER_BUILD
+        ? (process.env.DOCKER_MAP_TYPE ?? "debug")
+        : (process.env.DEFAULT_MAP_TYPE ?? "debug"), //"NRL_WMTS",
 
     customMapSources: {
 
@@ -30,6 +33,7 @@ export const _configParams = {
             },
             layer: "satellite",
             maxZoom: 18,
+            supportsOceanSurface: true, // MapBox satellite imagery can have ocean surface overlay
         },
 
         mapboxProxied: {
@@ -67,6 +71,7 @@ export const _configParams = {
             },
             layer: "satellite",
             maxZoom: 15,
+            supportsOceanSurface: true, // MapBox legacy satellite imagery can have ocean surface overlay
 
         },
         osm: {
@@ -75,6 +80,7 @@ export const _configParams = {
                 return SITREC_SERVER+"cachemaps.php?url=" + encodeURIComponent(`https://c.tile.openstreetmap.org/${z}/${x}/${y}.png`)
             },
             maxZoom: 17,
+            supportsOceanSurface: true, // OpenStreetMap can have ocean surface overlay
 
         },
         maptiler: {
@@ -104,6 +110,7 @@ export const _configParams = {
                 return(`https://api.maptiler.com/tiles/${layerName}/${z}/${x}/${y}.${layerType}?key=${process.env.MAPTILER_KEY}`); // key is metabunk specific - replace with your own
             },
             maxZoom: 16,
+            supportsOceanSurface: true, // MapTiler satellite imagery can have ocean surface overlay
 
         },
         eox: {
@@ -112,6 +119,7 @@ export const _configParams = {
                 return SITREC_SERVER+"cachemaps.php?url=" + encodeURIComponent(`https://tiles.maps.eox.at/wmts?layer=s2cloudless_3857&style=default&tilematrixset=g&Service=WMTS&Request=GetTile&Version=1.0.0&Format=image%2Fjpeg&TileMatrix=${z}&TileCol=${x}&TileRow=${y}`)
             },
             maxZoom: 12,
+            supportsOceanSurface: true, // EOX satellite imagery can have ocean surface overlay
 
         },
 
@@ -126,6 +134,7 @@ export const _configParams = {
             capabilities: "https://geoint.nrlssc.org/nrltileserver/wms/category/Imagery?REQUEST=GetCapabilities&SERVICE=WMS",
             layer: "ImageryMosaic",
             maxZoom: 12,
+            supportsOceanSurface: true, // NRL WMS imagery can have ocean surface overlay
 
         },
 
@@ -139,6 +148,7 @@ export const _configParams = {
             layer: "BlueMarble_AUTO",
             mapping: 4326,
             maxZoom: 12,
+            supportsOceanSurface: true, // NRL WMTS imagery can have ocean surface overlay
 
         },
 
