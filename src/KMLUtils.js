@@ -21,17 +21,17 @@ export function parseXml(xml, arrayTags)
         dom.async = false;
         if (!dom.loadXML(xml))
         {
-            throw dom.parseError.reason + " " + dom.parseError.srcText;
+            throw new Error(dom.parseError.reason + " " + dom.parseError.srcText);
         }
     }
     else
     {
-        throw "cannot parse xml string!";
+        throw new Error("cannot parse xml string!");
     }
 
     function isArray(o)
     {
-        return Object.prototype.toString.apply(o) === '[object Array]';
+        return Array.isArray(o);
     }
 
     function parseNode(xmlNode, result)
@@ -60,7 +60,7 @@ export function parseXml(xml, arrayTags)
         }
         else
         {
-            if(arrayTags && arrayTags.indexOf(xmlNode.nodeName) != -1)
+            if(arrayTags && arrayTags.includes(xmlNode.nodeName))
             {
                 result[xmlNode.nodeName] = [jsonNode];
             }
@@ -127,7 +127,7 @@ export function getKMLTrackWhenCoord(kml, trackIndex, when, coord, info) {
     if (kml.kml.Document !== undefined) {
         if (kml.kml.Document.Folder !== undefined && Array.isArray(kml.kml.Document.Folder)) {
             var route = kml.kml.Document.Folder[0]
-            if (route.name["#text"] === "Route") {
+            if (route && route.name && route.name["#text"] === "Route") {
                 if (when === undefined) {
                     // skip if we don't need the data
                     // i.e. just checking if it's a valid track
@@ -135,7 +135,7 @@ export function getKMLTrackWhenCoord(kml, trackIndex, when, coord, info) {
                     return true;
                 }
                 // FR24 format
-                info.name = kml.kml.Document.name["#text"];
+                info.name = kml.kml.Document.name && kml.kml.Document.name["#text"] || "FR24 Track";
                 const p = route.Placemark
                 for (var i=0;i<p.length;i++) {
                     const date = p[i].TimeStamp.when["#text"]
@@ -208,7 +208,7 @@ export function getKMLTrackWhenCoord(kml, trackIndex, when, coord, info) {
     }
 
     //assert(info.name !== undefined && info.name !== "", "Unable to find name")
-    if (info.name === undefined || info.name !== "") {
+    if (info.name === undefined || info.name === "") {
         info.name = "Unnamed Track";
     }
 
@@ -331,6 +331,13 @@ export function parseSRT(data) {
     return parseSRT1(lines)
 }
 
+// Placeholder function for SRT2 format - currently not implemented
+// TODO: Implement parseSRT2 based on the commented code below
+function parseSRT2(lines) {
+    console.warn("parseSRT2 is not yet implemented - falling back to parseSRT1");
+    return parseSRT1(lines);
+}
+
 
 
 
@@ -433,7 +440,7 @@ const SRTMapMISB = {
         date: null,  // also needs converting
         heading: MISB.PlatformHeadingAngle,
         pitch: MISB.PlatformPitchAngle,
-        roll: MISB.PlatformPitchAngle,
+        roll: MISB.PlatformRollAngle,
         gHeading: MISB.SensorRelativeAzimuthAngle,
         gPitch: MISB.SensorRelativeElevationAngle,
         gRoll: MISB.SensorRelativeRollAngle,
@@ -488,7 +495,6 @@ export function parseSRT1(lines) {
                 if (SRT.hasOwnProperty(key)) {
        //             MISBArray[i][SRT[key]] = value;
                     if(SRTMapMISB[key] !== null) {
-                        if (i<20) console.log("key: "+key+" value: "+value+" SRTMapMISB[SRT[key]]: "+SRTMapMISB[key]);
                         MISBArray[i][SRTMapMISB[key]] = value;
                     }
 
