@@ -374,7 +374,7 @@ function checkUserAgent() {
 
 function checkForTest() {
     console.log("Testing = " + testing + " toTest = " + toTest)
-    if (toTest != undefined && toTest != "") {
+    if (toTest !== undefined && toTest !== "") {
 //        var url = SITREC_APP + "?test=" + toTest
 //        window.location.assign(url)
 
@@ -1316,8 +1316,9 @@ function selectInitialSitch(force) {
             toTest = ""
             for (const key in sortedSitches) {
              //   if (sortedSitches[key] !== "testall" && sortedSitches[key] !== "testquick" && sortedSitches[key] !== "testhere")
-                if (SitchMan.exists(sortedSitches[key]));
+                if (SitchMan.exists(sortedSitches[key])) {
                     toTest += sortedSitches[key] + ",";
+                }
             }
             toTest += localSituation; // end up with the current situation being tested
             testing = true;
