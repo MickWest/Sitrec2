@@ -2434,7 +2434,7 @@ export class QuadTreeTile {
 //        console.log(`Fetching elevation data for tile ${this.key()} from ${elevationURL}`);
 
         try {
-            if (elevationURL.endsWith('.png')) {
+            if (elevationURL.endsWith('.png') || elevationURL.includes('.pngraw')) {
                 await this.handlePNGElevation(elevationURL);
             } else {
                 await this.handleGeoTIFFElevation(elevationURL);
@@ -2477,7 +2477,11 @@ export class QuadTreeTile {
                     reject(new Error(`PNG processing error: ${err.message}`));
                     return;
                 }
-                this.computeElevationFromRGBA(pixels);
+                if (url.includes('.pngraw')) {
+                    this.computeElevationFromRGBA_MB(pixels);
+                } else {
+                    this.computeElevationFromRGBA(pixels);
+                }
                 resolve();
             });
         });
@@ -2494,7 +2498,25 @@ export class QuadTreeTile {
                     pixels.data[rgba] * 256.0 +
                     pixels.data[rgba + 1] +
                     pixels.data[rgba + 2] / 256.0 -
-                    32768.0;
+                   32768.0;
+            }
+        }
+        this.elevation = elevation;
+    }
+
+    // Mapbox is height = -10000 + ((R * 256 * 256 + G * 256 + B) * 0.1)
+    computeElevationFromRGBA_MB(pixels) {
+        this.shape = pixels.shape;
+        const elevation = new Float32Array(pixels.shape[0] * pixels.shape[1]);
+        for (let i = 0; i < pixels.shape[0]; i++) {
+            for (let j = 0; j < pixels.shape[1]; j++) {
+                const ij = i + pixels.shape[0] * j;
+                const rgba = ij * 4;
+                elevation[ij] =
+                    (pixels.data[rgba] * 256.0 *256.0 +
+                    pixels.data[rgba + 1] *256 +
+                    pixels.data[rgba + 2] ) * 0.1
+                    -10000;
             }
         }
         this.elevation = elevation;

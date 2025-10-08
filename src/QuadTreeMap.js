@@ -24,6 +24,7 @@ export class QuadTreeMap {
         this.geoLocation = geoLocation
         this.dynamic = options.dynamic || false; // if true, we use a dynamic tile grid
         this.maxZoom = options.maxZoom ?? 15; // default max zoom level
+        this.minZoom = options.minZoom ?? 0; // default min zoom level
         this.lastLoggedStats = new Map(); // Track last logged stats per view to reduce console spam
         this.inactiveTileTimeout = 1000; // Time in ms before pruning inactive tiles (1 seconds)
         this.currentStats = new Map(); // Store current stats per view for debug display
