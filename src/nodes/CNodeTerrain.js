@@ -451,6 +451,7 @@ export class CNodeTerrain extends CNode {
                 mapProjection: this.mapProjectionTextures,
                 elevationMap: this.elevationMap,
                 maxZoom: mapDef.maxZoom ?? 14, // default to 14 if not set
+                minZoom: mapDef.minZoom ?? 0, // default to 0 if not set
                 loadedCallback: () => {
                     this.log("CNodeTerrain: id = " + id + " map loaded callback")
 
