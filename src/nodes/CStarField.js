@@ -117,6 +117,7 @@ export class CStarField {
             this.BSC_DEC[this.BSC_NumStars] = sdec0;
             this.BSC_MAG[this.BSC_NumStars] = mag;
             this.BSC_HIP[this.BSC_NumStars] = xno;
+            this.BSC_NAME[this.BSC_NumStars] = "HIP " + xno.toString().padStart(6, '0');
 
             this.BSC_NumStars++;
             nInput++;
@@ -306,8 +307,17 @@ export class CStarField {
      * @param {number} index Star index in BSC catalog
      * @returns {string|undefined} Common name or undefined if not found
      */
-    getStarName(index) {
+    getStarCommonName(index) {
         return this.commonNames[index];
+    }
+
+    /**
+     * Gets the HIP name of a star by index
+     * @param {number} index Star index in BSC catalog
+     * @returns {string|undefined} Common name or undefined if not found
+     */
+    getStarName(index) {
+        return this.BSC_NAME[index];
     }
 
     /**

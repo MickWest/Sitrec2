@@ -79,12 +79,13 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                     // Apply videoZoom to the projected coordinates
                     var zoomedX = pos.x * this.zoom;
                     var zoomedY = pos.y * this.zoom;
+                    var commonName = this.nightSky.starField.getStarCommonName(HR);
                     
                     var x = (zoomedX + 1) * this.widthPx / 2
                     var y = (-zoomedY + 1) * this.heightPx / 2
                     x += 5
                     y -= 5
-                    this.ctx.fillText(this.nightSky.starField.commonNames[HR], x, y)
+                    this.ctx.fillText(commonName, x, y)
                 }
             }
 

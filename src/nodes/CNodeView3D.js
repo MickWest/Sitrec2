@@ -1616,6 +1616,19 @@ export class CNodeView3D extends CNodeViewCanvas {
         console.log(`Checking celestial objects:`);
         console.log(`  Ray direction (from origin): (${rayDirection.x.toFixed(4)}, ${rayDirection.y.toFixed(4)}, ${rayDirection.z.toFixed(4)})`);
 
+        // Check stars
+        if (nightSkyNode.starField.starSprites) {
+            console.log(`Checking starSprite length: ${Object.keys(nightSkyNode.starField.starSprites).length}`);
+            console.log(`Checking starGeometry length: ${Object.keys(nightSkyNode.starField.starGeometry).length}`);
+            console.log(`Checking commonNames length: ${Object.keys(nightSkyNode.starField.commonNames).length}`);
+            const commonStarNameKeys = Object.keys(nightSkyNode.starField.commonNames);
+            const commonStarNameValues = Object.values(nightSkyNode.starField.commonNames);
+            for (const [idx, starId] of Object.entries(commonStarNameKeys)) {
+                const starName = commonStarNameValues[idx];
+                console.log(`  -> Tuple: (${idx}, ${starId} ${starName})`);
+            }
+        }
+
         // Check planets
         if (nightSkyNode.planets.planetSprites) {
             console.log(`Checking ${Object.keys(nightSkyNode.planets.planetSprites).length} planets`);
