@@ -165,6 +165,10 @@ services:
       # Set automatically by docker-compose from host environment
       - TZ=${TZ:-UTC}
       
+      # Used for satellite downloading.
+      - SPACEDATA_USERNAME=kirkham.andy@yahoo.com
+      - SPACEDATA_PASSWORD=cj5JZcdx3r3qH5Ab5ZjAxGnY
+      
     # Enable interactive terminal (useful for debugging)
     stdin_open: true
     tty: true

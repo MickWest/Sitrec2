@@ -17,7 +17,7 @@
  * - configUtils.SITREC_APP: Application root path for resources
  */
 
-import {BufferAttribute, BufferGeometry, Points, ShaderMaterial, TextureLoader} from "three";
+import {BufferAttribute, BufferGeometry, Points, ShaderMaterial, TextureLoader, Vector2, Vector3} from "three";
 import {FileManager, NodeMan, Sit} from "../Globals";
 import {raDec2Celestial} from "../CelestialMath";
 import {SITREC_APP} from "../configUtils";
@@ -46,9 +46,13 @@ export class CStarField {
         this.BSC_MAG = [];     // Magnitude (brightness)
         this.BSC_HIP = [];     // Hipparcos catalog ID
         this.BSC_NAME = [];    // Star names (rarely used, mostly empty)
+        this.BSC_EQUI = [];    // RA/Dec equatorial vector
 
         // Common star names indexed by position in catalog
         this.commonNames = {};
+
+        // Information about stars that are being rendered.
+        this.visualStarData = null;
 
         // Rendering objects
         this.starSprites = null;        // Points object for GPU rendering
@@ -247,6 +251,8 @@ export class CStarField {
 
         let positions = [];
         let fluxes = [];
+        let starIndexes = []; //new Int32Array();
+        let visualStarDataArr = [];
 
         // Reference magnitude for flux calculation normalization
         // Corresponds to Sirius-like brightness
@@ -254,6 +260,7 @@ export class CStarField {
 
         // Create vertices for each star that passes magnitude filter
         for (let i = 0; i < numStars; i++) {
+
             const mag = this.BSC_MAG[i];
             
             // Only include stars brighter than the limit
@@ -267,12 +274,32 @@ export class CStarField {
                 // This converts astronomical magnitude scale to visual point size
                 const flux = Math.cbrt(100000000 * Math.pow(10, -0.4 * (mag - magRef))) / 16;
                 fluxes.push(flux);
+
+                starIndexes.push(i);
+
+                const hip = this.BSC_HIP[i];
+                const cname = this.commonNames[i];
+
+                // Object star data of star being displayed.
+                visualStarDataArr.push({
+                    "bsc_index": i,
+                    "name": this.BSC_NAME[i],
+                    "cname": cname,
+                    "ra": this.BSC_RA[i],
+                    "dec": this.BSC_DEC[i],
+                    "hip": hip,
+                    "mag": mag,
+                });
             }
         }
+
+        // Save star data that is being displayed.
+        this.visualStarData = visualStarDataArr;
 
         // Set geometry attributes
         this.starGeometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
         this.starGeometry.setAttribute('flux', new BufferAttribute(new Float32Array(fluxes), 1));
+        this.starGeometry.setAttribute('starIndexes', new BufferAttribute(new Int32Array(starIndexes), 1));
 
         // Create and add Points object to scene
         this.starSprites = new Points(this.starGeometry, this.starMaterial);
@@ -304,7 +331,7 @@ export class CStarField {
 
     /**
      * Gets the common name of a star by index
-     * @param {number} index Star index in BSC catalog
+     * @param {number} index Star index in BSC common name catalog
      * @returns {string|undefined} Common name or undefined if not found
      */
     getStarCommonName(index) {
@@ -312,12 +339,28 @@ export class CStarField {
     }
 
     /**
+     * Gets the Vector3 for the star's precomputed RA/Dec
+     * @param {number} index Star index in BSC common name catalog
+     * @returns {Vector3} The star's V3 RA/Dec vector
+     */
+    getBSCSarEqui(index) {
+        return this.BSC_EQUI[index];
+    }
+
+    /**
      * Gets the HIP name of a star by index
      * @param {number} index Star index in BSC catalog
      * @returns {string|undefined} Common name or undefined if not found
      */
-    getStarName(index) {
+    getBSCStarName(index) {
+        const hip = this.BSC_HIP[index];
+        const n = this.commonNames[hip];
+        if(n) return n;
         return this.BSC_NAME[index];
+    }
+
+    getStarMag(index) {
+        return this.BSC_MAG[index];
     }
 
     /**

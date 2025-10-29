@@ -54,6 +54,7 @@ import {CameraMapControls} from "../js/CameraControls";
 import {ViewMan} from "../CViewManager";
 import * as LAYER from "../LayerMasks";
 import {globalProfiler} from "../VisualProfiler";
+import {raDec2Celestial} from "../CelestialMath";
 
 
 function linearToSrgb(color) {
@@ -97,6 +98,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         }
         this.addSimpleSerial("northUp");
 
+        this.sphereRadius = 100;
 
         this.isIR = v.isIR ?? false;
         this.fovOverride = v.fovOverride;
@@ -1585,6 +1587,10 @@ export class CNodeView3D extends CNodeViewCanvas {
         standaloneMenu.open();
     }
 
+    //v3close(v1, v2, epsilon = Number.EPSILON) {
+    //    return ((Math.abs(v1.x - v2.x) < epsilon) && (Math.abs(v1.y - v2.y) < epsilon) && (Math.abs(v1.z - v2.z) < epsilon));
+    //}
+
     // Find the closest celestial object (star, planet, or satellite) to a ray
     findClosestCelestialObject(mouseRay, maxAngleDegrees = 5) {
         const nightSkyNode = NodeMan.get("NightSkyNode", false);
@@ -1616,22 +1622,43 @@ export class CNodeView3D extends CNodeViewCanvas {
         console.log(`Checking celestial objects:`);
         console.log(`  Ray direction (from origin): (${rayDirection.x.toFixed(4)}, ${rayDirection.y.toFixed(4)}, ${rayDirection.z.toFixed(4)})`);
 
-        // Check stars
-        if (nightSkyNode.starField.starSprites) {
-            console.log(`Checking starSprite length: ${Object.keys(nightSkyNode.starField.starSprites).length}`);
-            console.log(`Checking starGeometry length: ${Object.keys(nightSkyNode.starField.starGeometry).length}`);
-            console.log(`Checking commonNames length: ${Object.keys(nightSkyNode.starField.commonNames).length}`);
-            const commonStarNameKeys = Object.keys(nightSkyNode.starField.commonNames);
-            const commonStarNameValues = Object.values(nightSkyNode.starField.commonNames);
-            for (const [idx, starId] of Object.entries(commonStarNameKeys)) {
-                const starName = commonStarNameValues[idx];
-                console.log(`  -> Tuple: (${idx}, ${starId} ${starName})`);
+        // Check stars.
+        if (nightSkyNode.starField.starSprites.geometry) {
+            const visualStars = nightSkyNode.starField.starSprites.geometry.getAttribute("starIndexes");
+            const positions = nightSkyNode.starField.starSprites.geometry.getAttribute("position");
+            if(visualStars && visualStars.count > 0) {            
+                for (let starIndex = 0; starIndex < visualStars.array.length; starIndex++) {
+                    const starBSCIndex = visualStars.array[starIndex];
+                    const ra = nightSkyNode.starField.getStarRA(starBSCIndex);
+                    const dec = nightSkyNode.starField.getStarDEC(starBSCIndex);
+                    const starPos = raDec2Celestial(ra, dec, this.sphereRadius).normalize();
+                    const starDir = starPos.clone().sub(this.camera.position).normalize();
+                    const dot = rayDirection.dot(starDir);
+                    const angle = Math.acos(Math.max(-1, Math.min(1, dot))) * 180 / Math.PI;
+                    if (angle < closestAngle) {
+                        const data = {
+                            "ra": ra,
+                            "dec": dec,
+                            "mag": mag,
+                            "name": name,
+                            "equatorial": starPos
+                        }   ;
+                        closestAngle = angle;
+                        closestObject = {
+                            type: 'star',
+                            name: name,
+                            data: data,
+                            angle: angle
+                        };
+                        console.log(`    -> New closest object (star): ${name} at ${angle.toFixed(2)}°`);
+                    }
+                }
             }
         }
 
         // Check planets
         if (nightSkyNode.planets.planetSprites) {
-            console.log(`Checking ${Object.keys(nightSkyNode.planets.planetSprites).length} planets`);
+            console.log(`  Checking ${Object.keys(nightSkyNode.planets.planetSprites).length} planets`);
             for (const [planetName, planetData] of Object.entries(nightSkyNode.planets.planetSprites)) {
                 if (!planetData.sprite || !planetData.sprite.visible) continue;
 
@@ -1666,7 +1693,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                         data: planetData,
                         angle: angle
                     };
-                    console.log(`    -> New closest object: ${planetName} at ${angle.toFixed(2)}°`);
+                    console.log(`    -> New closest object (planet): ${planetName} at ${angle.toFixed(2)}°`);
                 }
             }
         }

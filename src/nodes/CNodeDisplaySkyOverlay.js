@@ -78,39 +78,42 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 if (pos.z > -1 && pos.z < 1 && pos.x >= -1 && pos.x <= 1 && pos.y >= -1 && pos.y <= 1) {
                     // Apply videoZoom to the projected coordinates
                     var zoomedX = pos.x * this.zoom;
-                    var zoomedY = pos.y * this.zoom;
-                    var commonName = this.nightSky.starField.getStarCommonName(HR);
-                    
+                    var zoomedY = pos.y * this.zoom;                    
                     var x = (zoomedX + 1) * this.widthPx / 2
                     var y = (-zoomedY + 1) * this.heightPx / 2
                     x += 5
                     y -= 5
+
+                    const commonName = this.nightSky.starField.getStarCommonName(HR);
                     this.ctx.fillText(commonName, x, y)
                 }
             }
 
-            // // iterate over ALL the stars, not just the common ones
-            // // and lable them with the index
-            //   for (let n = 0; n < this.nightSky.starField.getStarCount(); n++) {
-            //       const ra = this.nightSky.starField.getStarRA(n)
-            //       const dec = this.nightSky.starField.getStarDEC(n)
-            //       assert(ra !== 0 || dec !== 0, "ra AND dec is 0 for star "+n)
-            //       const pos1 = raDec2Celestial(ra, dec, 100) // get equatorial
-            //       pos1.applyMatrix4(this.nightSky.celestialSphere.matrix) // convert equatorial to EUS
-            //       pos1.project(camera) // project using the EUS camera
-            //
-            //       if (pos1.z > -1 && pos1.z < 1 && pos1.x >= -1 && pos1.x <= 1 && pos1.y >= -1 && pos1.y <= 1) {
-            //           // Apply videoZoom to the projected coordinates
-            //           var zoomedX = pos1.x * this.zoom;
-            //           var zoomedY = pos1.y * this.zoom;
-            //           
-            //           var x = (zoomedX + 1) * this.widthPx / 2
-            //           var y = (-zoomedY + 1) * this.heightPx / 2
-            //           x += 5
-            //           y -= 5
-            //           this.ctx.fillText(n, x, y)
-            //       }
-            //   }
+            // iterate over ALL the stars, not just the common ones
+            // and lable them with the index.
+            // ToDo: Only display names of rendered stars, hold "false" for now until implemented.
+            if (false) {
+                for (let n = 0; n < this.nightSky.starField.getStarCount(); n++) {
+                    const ra = this.nightSky.starField.getStarRA(n)
+                    const dec = this.nightSky.starField.getStarDEC(n)
+                    //assert(ra !== 0 || dec !== 0, "ra AND dec is 0 for star "+n)
+                    const pos1 = raDec2Celestial(ra, dec, 100) // get equatorial
+                    pos1.applyMatrix4(this.nightSky.celestialSphere.matrix) // convert equatorial to EUS
+                    pos1.project(camera) // project using the EUS camera            
+                    if (pos1.z > -1 && pos1.z < 1 && pos1.x >= -1 && pos1.x <= 1 && pos1.y >= -1 && pos1.y <= 1) {
+                        // Apply videoZoom to the projected coordinates
+                        var zoomedX = pos1.x * this.zoom;
+                        var zoomedY = pos1.y * this.zoom;
+                        
+                        var x = (zoomedX + 1) * this.widthPx / 2
+                        var y = (-zoomedY + 1) * this.heightPx / 2
+                        x += 5
+                        y -= 5
+                        const starName = this.nightSky.starField.getBSCStarName(n)
+                        this.ctx.fillText(starName, x, y)
+                    }
+                }
+            }
 
 
             // Note this is overlay code, so we use this.nightSky.
