@@ -66,8 +66,84 @@ class CSitrecAPI {
                 }
             },
 
-            satelliteLabelsOn: {
-                doc: "Switch on satellite names/lables.",
+            satellitesShowSatellites: {
+                doc: "Show satellites.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showSatellites = true;
+                    }
+                }
+            },
+            satellitesHideSatellites: {
+                doc: "Hide satellites.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showSatellites = false;
+                    }
+                }
+            },
+
+            satellitesShowStarlink: {
+                doc: "Show Starlink satellites.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showStarlink = true;
+                    }
+                }
+            },
+            satellitesHideStarlink: {
+                doc: "Hide Starlink satellites.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showStarlink = false;
+                    }
+                }
+            },
+
+            satellitesShowISS: {
+                doc: "Show ISS satellite.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showISS = true;
+                    }
+                }
+            },
+            satellitesHideISS: {
+                doc: "Hide ISS satellite.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showISS = false;
+                    }
+                }
+            },
+
+            satellitesShowBrightest: {
+                doc: "Show Celestrak brightest satellites.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showBrightest = true;
+                    }
+                }
+            },
+            satellitesHideBrightest: {
+                doc: "Hide Celestrak brightest satellites.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showBrightest = false;
+                    }
+                }
+            },
+
+            satelliteLookViewNamesOn: {
+                doc: "Switch on satellite names in the look view.",
                 fn: () => {
                     const nightSky = NodeMan.get("NightSkyNode");
                     if(nightSky) {
@@ -77,8 +153,8 @@ class CSitrecAPI {
                 }
             },
 
-            satelliteLabelsOff: {
-                doc: "Switch off satellite names/lables.",
+            satelliteLookViewNamesOff: {
+                doc: "Switch off satellite names in the look view.",
                 fn: () => {
                     const nightSky = NodeMan.get("NightSkyNode");
                     if(nightSky) {
@@ -88,8 +164,8 @@ class CSitrecAPI {
                 }
             },
 
-            satelliteLabelsToggle: {
-                doc: "Toggle satellite names/lables.",
+            satelliteLookViewNamesToggle: {
+                doc: "Toggle satellite names in the look view.",
                 fn: () => {
                     const nightSky = NodeMan.get("NightSkyNode");
                     if(nightSky) {
@@ -99,8 +175,8 @@ class CSitrecAPI {
                 }
             },
 
-            satelliteLabelsMainViewOn: {
-                doc: "Switch on satellite names/lables in the main view.",
+            satelliteMainViewNamesOn: {
+                doc: "Switch on satellite names in the main view.",
                 fn: () => {
                     const nightSky = NodeMan.get("NightSkyNode");
                     if(nightSky) {
@@ -110,7 +186,7 @@ class CSitrecAPI {
                 }
             },
 
-            satelliteLabelsMainViewOff: {
+            satelliteMainViewNamesOff: {
                 doc: "Switch off satellite names/lables in the main view.",
                 fn: () => {
                     const nightSky = NodeMan.get("NightSkyNode");
@@ -121,12 +197,34 @@ class CSitrecAPI {
                 }
             },
 
-            toggleSatelliteLabelsMainView: {
-                doc: "Toggles the display of satellite names/lables in the main view.",
+            satelliteNamesMainViewToggle: {
+                doc: "Toggle the display of satellite names in the main view.",
                 fn: () => {
                     const nightSky = NodeMan.get("NightSkyNode");
                     if(nightSky) {
                         nightSky.showSatelliteNamesMain = nightSky.showSatelliteNamesMain === true ? false : true ;
+                        nightSky.updateSatelliteNamesVisibility();
+                    }
+                }
+            },
+
+            satelliteLabelsOn: {
+                doc: "Switches on satellite labels.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showAllLabels = true;
+                        nightSky.updateSatelliteNamesVisibility();
+                    }
+                }
+            },
+
+            satelliteLabelsOff: {
+                doc: "Switches off satellite labels.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showAllLabels = false;
                         nightSky.updateSatelliteNamesVisibility();
                     }
                 }
@@ -151,6 +249,20 @@ class CSitrecAPI {
                     }
                 }
             },
+
+            //{ key: "showFlareRegion", name: "Flare Region", object: this, action: () => this.flareRegionGroup.visible = this.showFlareRegion},
+            satellitesFlareRegionOn: {
+                doc: "Loads current Starlink satellites.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.satellites.updateStarlink();
+                    }
+                }
+            },
+
+
+            //{ key: "showFlareBand", name: "Flare Band", object: this, action: () => this.flareBandGroup.visible = this.showFlareBand},
 
             debug: {
                 doc: "Toggle debug mode",
