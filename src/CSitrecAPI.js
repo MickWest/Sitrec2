@@ -2,6 +2,7 @@
 import {GlobalDateTimeNode, NodeMan} from "./Globals";
 import {isLocal} from "./configUtils";
 import {showError} from "./showError";
+//import {nightSky} from "./nodes/CNodeDisplayNightSky";
 
 class CSitrecAPI {
     constructor() {
@@ -63,6 +64,72 @@ class CSitrecAPI {
                 fn: (v) => {
                     const camera = NodeMan.get("lookCamera");
                     camera.setFromNamedObject(v.object);
+                }
+            },
+
+            satelliteLabelsOn: {
+                doc: "Switch on satellite names/lables.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showSatelliteNames = true;
+                        nightSky.updateSatelliteNamesVisibility();
+                    }
+                }
+            },
+
+            satelliteLabelsOff: {
+                doc: "Switch off satellite names/lables.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showSatelliteNames = false;
+                        nightSky.updateSatelliteNamesVisibility();
+                    }
+                }
+            },
+
+            satelliteLabelsToggle: {
+                doc: "Toggle satellite names/lables.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showSatelliteNames = nightSky.showSatelliteNames === true ? false : true;
+                        nightSky.updateSatelliteNamesVisibility();
+                    }
+                }
+            },
+
+            satelliteLabelsMainViewOn: {
+                doc: "Switch on satellite names/lables in the main view.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showSatelliteNamesMain = true;
+                        nightSky.updateSatelliteNamesVisibility();
+                    }
+                }
+            },
+
+            satelliteLabelsMainViewOff: {
+                doc: "Switch off satellite names/lables in the main view.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showSatelliteNamesMain = false;
+                        nightSky.updateSatelliteNamesVisibility();
+                    }
+                }
+            },
+
+            toggleSatelliteLabelsMainView: {
+                doc: "Toggles the display of satellite names/lables in the main view.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.showSatelliteNamesMain = nightSky.showSatelliteNamesMain === true ? false : true ;
+                        nightSky.updateSatelliteNamesVisibility();
+                    }
                 }
             },
 
