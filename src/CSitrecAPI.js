@@ -2,7 +2,6 @@
 import {GlobalDateTimeNode, NodeMan} from "./Globals";
 import {isLocal} from "./configUtils";
 import {showError} from "./showError";
-//import {nightSky} from "./nodes/CNodeDisplayNightSky";
 
 class CSitrecAPI {
     constructor() {
