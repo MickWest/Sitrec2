@@ -102,21 +102,19 @@ if ($isDockerBuild) {
 }
 
 $server_config = [
-"UPLOAD"     => $UPLOAD_URL,
-"CACHE"      => $CACHE_URL,
-"TERRAIN"    => $TERRAIN_URL,
-"UPLOAD_PATH" => $UPLOAD_PATH,
-"CACHE_PATH"  => $CACHE_PATH,
-"TERRAIN_PATH" => $TERRAIN_PATH,
-"ROOT"       => $ROOT_URL,
-"ROOT_PATH"  => $ROOT_PATH,
-"APP"        => $APP_URL,
-"APP_PATH"   => $APP_PATH,
+    "UPLOAD"     => $UPLOAD_URL,
+    "CACHE"      => $CACHE_URL,
+    "TERRAIN"    => $TERRAIN_URL,
+    "UPLOAD_PATH" => $UPLOAD_PATH,
+    "CACHE_PATH"  => $CACHE_PATH,
+    "TERRAIN_PATH" => $TERRAIN_PATH,
+    "ROOT"       => $ROOT_URL,
+    "ROOT_PATH"  => $ROOT_PATH,
+    "APP"        => $APP_URL,
+    "APP_PATH"   => $APP_PATH,
     "ROOT_IS_APP" => $ROOT_IS_APP,
-
-
-"SHORTENER"  => $SHORTENER_URL,
-"SHORTENER_PATH" => $SHORTENER_PATH,
+    "SHORTENER"  => $SHORTENER_URL,
+    "SHORTENER_PATH" => $SHORTENER_PATH,
     "HTTP_HOST" => $_SERVER['HTTP_HOST'],
     "REQUEST_URI" => $_SERVER['REQUEST_URI'],
     "SERVER_NAME" => $_SERVER['SERVER_NAME'],
@@ -125,9 +123,9 @@ $server_config = [
     "SERVER_PROTOCOL" => $_SERVER['SERVER_PROTOCOL'],
 ];
 
-
 // if there is a FETCH_CONFIG parameter, then we are fetching the config
 if (isset($_GET["FETCH_CONFIG"])) {
-echo json_encode($server_config);
-exit (0);
+	header('Content-Type: application/json');
+	echo json_encode($server_config);
+	exit (0);
 }
