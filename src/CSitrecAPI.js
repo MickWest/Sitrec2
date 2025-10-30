@@ -132,6 +132,26 @@ class CSitrecAPI {
                 }
             },
 
+            satellitesLoadLEO: {
+                doc: "Loads LEO low-earth orbit satellites.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.satellites.updateLEOSats();
+                    }
+                }
+            },
+
+            satellitesLoadCurrentStarlink: {
+                doc: "Loads current Starlink satellites.",
+                fn: () => {
+                    const nightSky = NodeMan.get("NightSkyNode");
+                    if(nightSky) {
+                        nightSky.satellites.updateStarlink();
+                    }
+                }
+            },
+
             debug: {
                 doc: "Toggle debug mode",
                 params: {
