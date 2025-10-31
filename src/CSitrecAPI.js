@@ -14,6 +14,7 @@ class CSitrecAPI {
         };
 
         this.api = {
+
             gotoLLA: {
                 doc: "Move the camera to the specified latitude, longitude, and altitude.",
                 params: {
@@ -250,20 +251,6 @@ class CSitrecAPI {
                 }
             },
 
-            //{ key: "showFlareRegion", name: "Flare Region", object: this, action: () => this.flareRegionGroup.visible = this.showFlareRegion},
-            satellitesFlareRegionOn: {
-                doc: "Loads current Starlink satellites.",
-                fn: () => {
-                    const nightSky = NodeMan.get("NightSkyNode");
-                    if(nightSky) {
-                        nightSky.satellites.updateStarlink();
-                    }
-                }
-            },
-
-
-            //{ key: "showFlareBand", name: "Flare Band", object: this, action: () => this.flareBandGroup.visible = this.showFlareBand},
-
             debug: {
                 doc: "Toggle debug mode",
                 params: {
@@ -274,13 +261,57 @@ class CSitrecAPI {
             }
 
         }
-
     }
 
+    addMoveCameraDirectionInKM(in_api) {
+        var api = in_api;
+        const camera_pos = NodeMan.get("fixedCameraPosition", false);
+        if(camera_pos) {
+            const cam_lat = camera_pos._LLA[0];
+            const cam_lon = camera_pos._LLA[1];
+            const cam_alt = camera_pos._LLA[2];
+            var cameraMoveDirectionKM = {};
+            cameraMoveDirectionKM.doc = `Given the camera is currently at latitude ${cam_lat} longitude ${cam_lon} calculate the new latitude and longitude to move the camera in the specified direction by the specified distance in kilometers.`;
+            cameraMoveDirectionKM.params = {
+                lat: "New latitude of camera in degrees (float)",
+                lon: "New longitude of camera in degrees (float)"
+            };
+            cameraMoveDirectionKM.fn = (v) => {
+                const camera = NodeMan.get("fixedCameraPosition");
+                camera.setLLA(v.lat, v.lon, cam_alt);            
+            };
+            api["cameraMoveDirectionKM"] = cameraMoveDirectionKM;
+        }
+        return api;
+    }
+
+    addMoveCameraDirectionInDegrees(in_api) {
+        var api = in_api;
+        const camera_pos = NodeMan.get("fixedCameraPosition", false);
+        if(camera_pos) {
+            const cam_lat = camera_pos._LLA[0];
+            const cam_lon = camera_pos._LLA[1];
+            const cam_alt = camera_pos._LLA[2];
+            var cameraMoveDirectionKM = {};
+            cameraMoveDirectionKM.doc = `Given the camera is currently at latitude ${cam_lat} longitude ${cam_lon} calculate the new latitude and longitude to move the camera in the specified direction by the specified distance in decimal degrees.`;
+            cameraMoveDirectionKM.params = {
+                lat: "New latitude of camera in degrees (float)",
+                lon: "New longitude of camera in degrees (float)"
+            };
+            cameraMoveDirectionKM.fn = (v) => {
+                const camera = NodeMan.get("fixedCameraPosition");
+                camera.setLLA(v.lat, v.lon, cam_alt);            
+            };
+            api["cameraMoveDirectionKM"] = cameraMoveDirectionKM;
+        }
+        return api;
+    }
 
     getDocumentation() {
-        //return this.docs;
-        return Object.entries(this.api).reduce((acc, [key, value]) => {
+        var api = this.api;
+        var api = this.addMoveCameraDirectionInKM(api);
+        var api = this.addMoveCameraDirectionInDegrees(api);
+        return Object.entries(api).reduce((acc, [key, value]) => {
             // conver the parameters to strings, like
             //             gotoLLA: "Move the camera to the location specified by Lat/Lon/Alt (Alt optional, defaults to 0). Parameters: lat (float), lon (float), alt (float, optional).",
             let paramsString = Object.entries(value.params || {})
@@ -291,7 +322,6 @@ class CSitrecAPI {
             return acc;
         }, {});
     }
-
 
     handleAPICall(call) {
         console.log("Handling API call:", call);
