@@ -216,6 +216,11 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
             dblClick: (e) => {
                 this.defaultPosition();
+            },
+
+            contextMenu: (e) => {
+                // TODO: Implement actual video view context menu
+                alert("Context menu triggered on video view.\nContext menus are not yet fully implemented for video views.");
             }
 
         })

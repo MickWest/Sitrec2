@@ -99,9 +99,20 @@ class CameraMapControls {
 		this.pinchDistance = 0;
 		this.lastPinchDistance = 0;
 
+		// Long press support for mobile context menu
+		this.longPressTimer = null;
+		this.longPressDuration = 500; // 500ms
+		this.longPressThreshold = 10; // 10px movement threshold
+		this.longPressStartX = 0;
+		this.longPressStartY = 0;
+		this.longPressEvent = null;
+		this.isLongPressTriggered = false;
+		this.activePointers = new Set(); // Track active pointer IDs for multi-touch detection
+
 		this.canvas.addEventListener( 'contextmenu', e => this.onContextMenu(e) );
 		this.canvas.addEventListener( 'pointerdown', e => this.handleMouseDown(e) );
 		this.canvas.addEventListener( 'pointerup', e => this.handleMouseUp(e) );
+		this.canvas.addEventListener( 'pointercancel', e => this.handlePointerCancel(e) );
 		this.canvas.addEventListener( 'pointermove', e => this.handleMouseMove(e) );
 		this.canvas.addEventListener( 'wheel', e => this.handleMouseWheel(e) );
 		this.canvas.addEventListener( 'touchstart', e => this.handleTouchStart(e), { passive: false } );
@@ -185,6 +196,12 @@ class CameraMapControls {
 
 	}
 
+	clearLongPressTimer() {
+		if (this.longPressTimer) {
+			clearTimeout(this.longPressTimer);
+			this.longPressTimer = null;
+		}
+	}
 
 
 	handleMouseWheel( event ) {
@@ -367,10 +384,14 @@ class CameraMapControls {
 		if (!this.pinchActive && Math.abs(totalMotion.pinchDelta) > this.scaleChangeThreshold && this.zoomGestures) {
 			this.pinchActive = true;
 			this.state = STATE.TOUCH_PINCH_ZOOM;
+			// Update zoom target to the point between the fingers
+			this.updateTargetFromScreenPosition(this.gestureStartCentroid.x, this.gestureStartCentroid.y);
 		}
 		if (!this.rotateActive && Math.abs(totalMotion.rotateDelta) > this.rotationThreshold && this.rotateGestures) {
 			this.rotateActive = true;
 			this.state = STATE.TOUCH_TWO_FINGER_ROTATE;
+			// Update rotation target to the point between the fingers
+			this.updateTargetFromScreenPosition(this.gestureStartCentroid.x, this.gestureStartCentroid.y);
 		}
 		if (!this.tiltActive && Math.abs(totalMotion.tiltDelta) > this.tiltThreshold && this.tiltGestures) {
 			this.tiltActive = true;
@@ -381,7 +402,7 @@ class CameraMapControls {
 		if (this.pinchActive) {
 			// PINCH ZOOM - relative motion along the finger line
 			// Positive pinchDelta = fingers apart (zoom out), negative = together (zoom in)
-			const zoomDelta = incrementalMotion.pinchDelta * 0.02;
+			const zoomDelta = incrementalMotion.pinchDelta * 0.04;
 			this.zoomBy(zoomDelta);
 		}
 
@@ -419,6 +440,59 @@ class CameraMapControls {
 	}
 
 	// ===== GESTURE OPERATIONS =====
+
+	/**
+	 * Update this.target from screen coordinates by raycasting
+	 * @param {number} clientX - Screen X coordinate
+	 * @param {number} clientY - Screen Y coordinate
+	 */
+	updateTargetFromScreenPosition(clientX, clientY) {
+		if (!this.view || !this.view.raycaster) {
+			return; // Can't update target without view/raycaster
+		}
+
+		// Convert client coordinates to view-relative coordinates
+		const viewX = clientX - this.view.leftPx;
+		const viewY = clientY - this.view.topPx;
+
+		// Convert to normalized device coordinates (-1 to +1)
+		// Y is inverted for Three.js coordinate system
+		const mouseRay = new Vector2();
+		mouseRay.x = (viewX / this.view.widthPx) * 2 - 1;
+		mouseRay.y = -(viewY / this.view.heightPx) * 2 + 1;
+
+		// Set up raycaster from camera
+		this.view.raycaster.setFromCamera(mouseRay, this.camera);
+
+		let found = false;
+		let targetPoint = null;
+
+		// Try terrain intersection first
+		if (NodeMan.exists("TerrainModel")) {
+			const terrainNode = NodeMan.get("TerrainModel");
+			const firstIntersect = terrainNode.getClosestIntersect(this.view.raycaster);
+			if (firstIntersect) {
+				targetPoint = firstIntersect.point.clone();
+				this.targetIsTerrain = true;
+				found = true;
+			}
+		}
+
+		// Fall back to globe sphere intersection
+		if (!found) {
+			const possibleTarget = new Vector3();
+			const dragSphere = new Sphere(new Vector3(0, -wgs84.RADIUS, 0), wgs84.RADIUS);
+			if (this.view.raycaster.ray.intersectSphere(dragSphere, possibleTarget)) {
+				targetPoint = possibleTarget.clone();
+				this.targetIsTerrain = false;
+				found = true;
+			}
+		}
+
+		if (found && targetPoint) {
+			this.target = targetPoint;
+		}
+	}
 
 	rotateAroundPoint(screenPoint, angle) {
 		if (!this.rotateGestures) return;
@@ -546,9 +620,62 @@ class CameraMapControls {
 //		console.log ("CameraMapControls Mouse DOWN, button = "+event.button)
 		this.button = event.button;
 		
+		// Track pointer for multi-touch detection
+		this.activePointers.add(event.pointerId);
+		
 		// Track right mouse button down position for context menu drag detection
 		if (event.button === 2) {
 			this.contextMenuDownPos = { x: event.clientX, y: event.clientY };
+		}
+		
+		// Cancel long press if a second finger touches down
+		if (this.activePointers.size > 1 && this.longPressTimer) {
+			clearTimeout(this.longPressTimer);
+			this.longPressTimer = null;
+			this.isLongPressTriggered = false;
+		}
+		
+		// Start long press timer for single-finger touch events only (not for mouse right-click)
+		if (event.pointerType === 'touch' && event.button === 0 && this.activePointers.size === 1) {
+			this.longPressStartX = event.clientX;
+			this.longPressStartY = event.clientY;
+			this.longPressEvent = event;
+			this.isLongPressTriggered = false;
+			
+			this.longPressTimer = setTimeout(() => {
+				this.isLongPressTriggered = true;
+				
+				// Create synthetic context menu event
+				const syntheticEvent = new PointerEvent('contextmenu', {
+					bubbles: true,
+					cancelable: true,
+					clientX: this.longPressStartX,
+					clientY: this.longPressStartY,
+					pointerType: 'touch',
+					button: 2
+				});
+				
+				// Add custom properties
+				Object.defineProperty(syntheticEvent, 'isSynthetic', { value: true });
+				Object.defineProperty(syntheticEvent, 'originalEvent', { value: event });
+				
+				// Call the view's context menu handler directly (same as handleMouseUp does)
+				if (this.view && this.view.onContextMenu) {
+					this.view.onContextMenu(syntheticEvent, this.longPressStartX, this.longPressStartY);
+				}
+				
+				// Clean up state since context menu interrupts normal pointer flow
+				this.activePointers.clear();
+				this.state = STATE.NONE;
+				if (event.pointerId !== undefined) {
+					this.canvas.releasePointerCapture(event.pointerId);
+				}
+				
+				// Vibrate for tactile feedback
+				if (navigator.vibrate) {
+					navigator.vibrate(50);
+				}
+			}, this.longPressDuration);
 		}
 		
 		this.updateStateFromEvent(event)
@@ -584,16 +711,28 @@ class CameraMapControls {
 
 	handleMouseUp(event) {
 
+		// Remove pointer from active set
+		this.activePointers.delete(event.pointerId);
+
 		// if not paused, then removed the cursor's LLA label
 		if (!par.paused) {
 			NodeMan.disposeRemove("cursorLLA");
 		}
 		this.view.cursorSprite.visible = false;
 
+		// Clear long press timer
+		this.clearLongPressTimer();
+
 		// Check for tap gesture (left button, minimal movement) before handling context menu
-		if (event.button === 0 && this.state === STATE.NONE) {
+		// Don't trigger if long press was triggered
+		if (event.button === 0 && this.state === STATE.NONE && !this.isLongPressTriggered) {
 			// It was a tap gesture - check for double-tap zoom
 			this.handleSingleTap(event);
+		}
+		
+		// Reset long press flag
+		if (this.isLongPressTriggered) {
+			this.isLongPressTriggered = false;
 		}
 		
 		// Check if this was a right-click release without dragging
@@ -641,10 +780,29 @@ class CameraMapControls {
 
 	}
 
+	handlePointerCancel(event) {
+		// Handle pointer interruptions (e.g., browser gestures, context menus)
+		this.canvas.releasePointerCapture(event.pointerId);
+		this.activePointers.delete(event.pointerId);
+		this.clearLongPressTimer();
+		this.state = STATE.NONE;
+		this.isLongPressTriggered = false;
+	}
+
 	handleMouseMove(event) {
 		if (!this.enabled) {
 			this.state = STATE.NONE
 			return;
+		}
+
+		// Check if movement exceeds long press threshold
+		if (this.longPressTimer) {
+			const deltaX = Math.abs(event.clientX - this.longPressStartX);
+			const deltaY = Math.abs(event.clientY - this.longPressStartY);
+			
+			if (deltaX > this.longPressThreshold || deltaY > this.longPressThreshold) {
+				this.clearLongPressTimer();
+			}
 		}
 
 		// Skip mouse move handling if we're in a touch gesture

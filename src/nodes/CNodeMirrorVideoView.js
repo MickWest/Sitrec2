@@ -9,6 +9,10 @@ export class CNodeMirrorVideoView extends CNodeVideoView {
         // so we are just reusing the data, and should not have to recalculate anything.
 
         this.videoData = this.in.mirror.videoData;
+        
+        // Mirror videos are overlays and should not intercept pointer events
+        // This allows touch/mouse events to pass through to the underlying 3D view
+        this.ignoreMouseEvents();
     }
 
     // update just checks to see if the video has changed
