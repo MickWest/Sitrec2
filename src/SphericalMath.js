@@ -291,36 +291,50 @@ export function altitudeAboveSphere(p) {
     return p.clone().sub(center).length() - wgs84.RADIUS;
 }
 
-// given a psotion and an orientatioin maxtrix, return the Azimuth and Elevation (heading and pitch)
+// given a position and a forward vector, return the Azimuth and Elevation (heading and pitch)
+// Az and El are relative to the local north and up vectors at that position
+// Az is degrees clockwise from north (0-360)
+// El is degrees above horizontal (+90) or below horizontal (-90)
+
+// NOTE, prior to 2.7.18, this function was backwards and was being using inconsistently
+// with both forward and backward vectors (with local negating to compensate)
+
 export function getAzElFromPositionAndForward(position, forward) {
+
+
     const up = getLocalUpVector(position);
     const north = getLocalNorthVector(position);
-    const forwardH = forward.clone().sub(up.clone().multiplyScalar(forward.dot(up)));
-    const northH = north.clone().sub(up.clone().multiplyScalar(north.dot(up)));
-    let heading = Math.PI - forwardH.angleTo(northH);
+
+    // get the forward vector projected onto the horizontal plane defined by up
+    const forwardH = forward.clone().sub(up.clone().multiplyScalar(forward.dot(up))).normalize();
+
+    // same with the north vector (should already be horizontal, but ensure it)
+    const northH = north.clone().sub(up.clone().multiplyScalar(north.dot(up))).normalize();
+
+    // get the east vector (north × up gives east in EUS coordinates)
     const east = north.clone().cross(up);
-    if (forwardH.dot(east) > 0) {
-        heading = -heading;
-    }
+
+    // calculate the heading using atan2 for proper quadrant handling
+    // project forwardH onto north and east axes
+    const forwardNorth = forwardH.dot(northH);
+    const forwardEast = forwardH.dot(east);
+    
+    // atan2(east, north) gives angle clockwise from north
+    // atan2(y, x) where x=north component, y=east component
+    let heading = Math.atan2(forwardEast, forwardNorth);
+    
+    // convert to degrees and normalize to 0-360
     const headingDeg = heading * 180 / Math.PI;
     const headingPos = (headingDeg + 360) % 360;
 
-    // calculate the elevation as the angle between the forward vector and the global up vector
+    // calculate the elevation as the angle between the forward vector and the up vector
     const elevation = forward.angleTo(up);
-    const elevationDeg = 90 - (elevation * 180 / Math.PI) ;
+    // elevation: 0° = up, 90° = horizontal, 180° = down
+    // convert to standard elevation: -90° (down) to 0° (horizontal) to +90° (up)
+    const elevationDeg = 90 - (elevation * 180 / Math.PI);
     return [headingPos, elevationDeg];
 }
 
-// of the camera or object
-export function getAzElFromPositionAndMatrix(position, matrix) {
-
-    // calculat the heading as the andle between the forward vector and the north vector
-    // in the horizontal plane
-    // account for the sign of the angle
-    const forward = new Vector3();
-    matrix.extractBasis(new Vector3(), new Vector3(), forward);
-    return getAzElFromPositionAndForward(position, forward);
-}
 
 // given position and a vector, return the heading in degrees relative to the north vector at that position
 export function getCompassHeading(position, forward, camera) {
@@ -332,31 +346,26 @@ export function getCompassHeading(position, forward, camera) {
     const north = getLocalNorthVector(position);
 
     // project the forward vector onto the horizontal plane defined by up
-    const forwardH = forward.clone().sub(up.clone().multiplyScalar(forward.dot(up)));
+    const forwardH = forward.clone().sub(up.clone().multiplyScalar(forward.dot(up))).normalize();
 
-    // same with the north vector
-    const northH = north.clone().sub(up.clone().multiplyScalar(north.dot(up)));
+    // same with the north vector (should already be horizontal, but ensure it)
+    const northH = north.clone().sub(up.clone().multiplyScalar(north.dot(up))).normalize();
 
-    // get the angle between the forward vector and the north vector
-    // using the three.js angleTo function
-    let heading = Math.PI - forwardH.angleTo(northH);
-
-
-    // get the east vector
+    // get the east vector (north × up gives east in EUS coordinates)
     const east = north.clone().cross(up);
 
-    // is it east (positive) or west (negative)
-    if (forwardH.dot(east) > 0) {
-        heading = -heading;
-    }
-
+    // calculate the heading using atan2 for proper quadrant handling
+    const forwardNorth = forwardH.dot(northH);
+    const forwardEast = forwardH.dot(east);
+    
+    // atan2(east, north) gives angle clockwise from north (in radians)
+    let heading = Math.atan2(forwardEast, forwardNorth);
 
     // optional check for upside down camera
     if (camera) {
-        // when we lock the up vetor the camera can be upside down
+        // when we lock the up vector the camera can be upside down
         // so check the dot product with the local up vector and the camera's up vector
         // from the matrix
-//        const forward = MV3(camera.matrixWorld.elements.slice(8,11));
         const cameraUp = MV3(camera.matrixWorld.elements.slice(4, 7));
 
         if (up.dot(cameraUp) < 0) {

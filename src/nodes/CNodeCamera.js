@@ -4,7 +4,7 @@ import {GlobalDateTimeNode, guiMenus, NodeMan} from "../Globals";
 import {ECEFToLLAVD_Sphere, EUSToECEF, EUSToLLA, LLAVToEUS} from "../LLA-ECEF-ENU";
 import {
     altitudeAboveSphere,
-    getAzElFromPositionAndMatrix,
+    getAzElFromPositionAndForward,
     getLocalSouthVector,
     getLocalUpVector,
     raisePoint
@@ -230,8 +230,10 @@ export class CNodeCamera extends CNode3D {
         this.camera.lookAt(target);
         this.camera.updateMatrixWorld();
 
-        //
-        const [az, el] = getAzElFromPositionAndMatrix(this.camera.position, this.camera.matrixWorld);
+        // FIXED: Use camera.getWorldDirection() which correctly negates Z for cameras
+        const fwd = new Vector3();
+        this.camera.getWorldDirection(fwd);
+        const [az, el] = getAzElFromPositionAndForward(this.camera.position, fwd);
 
         // get the PTZ Controller and set the az/el
         const ptzController = NodeMan.get("ptzAngles", false);

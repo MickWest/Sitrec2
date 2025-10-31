@@ -3,8 +3,14 @@ import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene, setupNightSkyScene,
 import {Color, Group, Matrix4, Raycaster, Scene, Sphere, Vector3} from "three";
 import {degrees, radians} from "../utils";
 import {FileManager, GlobalDateTimeNode, Globals, guiMenus, guiShowHide, NodeMan, setRenderOne, Sit} from "../Globals";
-import {DebugArrow, DebugArrowAB, propagateLayerMaskObject, setLayerMaskRecursive} from "../threeExt";
-import {ECEF2EUS, ECEFToLLAVD_Sphere, EUSToECEF, wgs84} from "../LLA-ECEF-ENU";
+import {
+    DebugArrow,
+    DebugArrowAB,
+    DebugWireframeSphere,
+    propagateLayerMaskObject,
+    setLayerMaskRecursive
+} from "../threeExt";
+import {ECEFToLLAVD_Sphere, EUSToECEF, getLST, raDecToAzElRADIANS, wgs84} from "../LLA-ECEF-ENU";
 // npm install three-text2d --save-dev
 // https://github.com/gamestdio/three-text2d
 //import { MeshText2D, textAlign } from 'three-text2d'
@@ -16,7 +22,7 @@ import {CNodeDisplayGlobeCircle} from "./CNodeDisplayGlobeCircle";
 import {CNodeDisplayEarthShadow} from "./CNodeDisplayEarthShadow";
 import {assert} from "../assert.js";
 import {intersectSphere2, V3} from "../threeUtils";
-import {calculateGST, celestialToECEF, getSiderealTime} from "../CelestialMath";
+import {getCelestialDirectionFromRaDec, getJulianDate, getSiderealTime, raDecToAltAz} from "../CelestialMath";
 import {ViewMan} from "../CViewManager";
 import {CNodeLabeledArrow} from "./CNodeLabels3D";
 import {CNodeDisplaySkyOverlay} from "./CNodeDisplaySkyOverlay";
@@ -33,6 +39,7 @@ import {CStarField} from "./CStarField";
 import {CCelestialElements} from "./CCelestialElements";
 import {CPlanets} from "./CPlanets";
 import {CSatellite} from "./CSatellite";
+import {Ray} from "three/src/math/Ray";
 
 
 // other source of stars, if we need more (for zoomed-in pics)
@@ -75,8 +82,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         if (v.id === undefined) v.id = "NightSkyNode"
         super(v);
         //     this.checkInputs(["cloudData", "material"])
-        this.addInput("startTime",GlobalDateTimeNode)
-
+        this.addInput("startTime", GlobalDateTimeNode)
 
 
         if (GlobalNightSkyScene === undefined) {
@@ -86,13 +92,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             setupSunSkyScene(new Scene())
         }
 
-   //     GlobalNightSkyScene.matrixWorldAutoUpdate = false
-
         const satGUI = guiMenus.satellites
 
         // globe used for collision
         // and specifying the center of the Earth
-        this.globe = new Sphere(new Vector3(0,-wgs84.RADIUS,0), wgs84.POLAR_RADIUS)
+        this.globe = new Sphere(new Vector3(0, -wgs84.RADIUS, 0), wgs84.POLAR_RADIUS)
 
         this.camera = NodeMan.get("lookCamera").camera;
         assert(this.camera, "CNodeDisplayNightSky needs a look camera")
@@ -153,13 +157,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             .tooltip("Vertical depth in meters over which a satellite fades out as it enters the Earth's shadow")
         this.addSimpleSerial("penumbraDepth")
 
-
-
         this.showSunArrows = Sit.showSunArrows;
         this.sunArrowGroup = new Group();
         this.sunArrowGroup.visible = this.showSunArrows;
         GlobalScene.add(this.sunArrowGroup)
-        satGUI.add(this, "showSunArrows").listen().onChange(()=>{
+        satGUI.add(this, "showSunArrows").listen().onChange(() => {
             setRenderOne(true);
             this.sunArrowGroup.visible = this.showSunArrows;
         }).name("Sun Angle Arrows")
@@ -178,7 +180,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.celestialArrowsOnTraverse = false;
         this.celestialGUI.add(this, "celestialArrowsOnTraverse")
             .listen()
-            .onChange((x)=>{
+            .onChange((x) => {
                 if (x) {
                     this.updateCelestialArrowsTo("traverseObject")
                 } else {
@@ -192,7 +194,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.celestialArrowsInLookView = false;
         this.celestialGUI.add(this, "celestialArrowsInLookView")
             .listen()
-            .onChange((x)=>{
+            .onChange((x) => {
                 if (x) {
                     this.updateCelestialArrowsMask(LAYER.MASK_LOOKRENDER)
                 } else {
@@ -215,7 +217,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         new CNodeDisplayGlobeCircle({
             id: "globeCircle1",
             normal: new Vector3(1, 0, 0),
-            color: [1,1,0],
+            color: [1, 1, 0],
             width: 2,
             offset: 3000000,
             container: this.flareBandGroup,
@@ -224,7 +226,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         new CNodeDisplayGlobeCircle({
             id: "globeCircle2",
             normal: new Vector3(1, 0, 0),
-            color: [0,1,0],
+            color: [0, 1, 0],
             width: 2,
             offset: 5000000,
             container: this.flareBandGroup,
@@ -233,9 +235,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         GlobalScene.add(this.flareBandGroup)
 
 
-     //   why no work???
+        //   why no work???
         setLayerMaskRecursive(this.flareBandGroup, LAYER.MASK_HELPERS);
-
 
 
         if (Sit.showEathShadow === undefined)
@@ -249,27 +250,92 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             gui: this.celestialGUI,
             visible: Sit.showEarthShadow,
         });
-        
+
         this.showFlareRegion = Sit.showFlareRegion;
         this.showFlareBand = Sit.showFlareBand;
 
         this.showAllLabels = false;
 
         const satelliteOptions = [
-            { key: "showSatellites", name: "Overall Satellites Flag", object: this.satellites, action: () => {this.satelliteGroup.visible = this.satellites.showSatellites; this.satellites.filterSatellites() }},
-            { key: "showStarlink", name: "Starlink", object: this.satellites, action: () => this.satellites.filterSatellites() },
-            { key: "showISS", name: "ISS", object: this.satellites, action: () => this.satellites.filterSatellites() },
-            { key: "showBrightest", name: "Celestrack's Brightest", object: this.satellites, action: () => this.satellites.filterSatellites() },
-            { key: "showOtherSatellites", name: "Other Satellites", object: this.satellites, action: () => this.satellites.filterSatellites() },
-            { key: "showSatelliteList", name: "List", object: this.satellites, action: () => this.satellites.filterSatellites() },
-            { key: "showSatelliteTracks", name: "Satellite Arrows", object: this.satellites, action: () => this.satelliteTrackGroup.visible = this.satellites.showSatelliteTracks },
-            { key: "showFlareTracks", name: "Flare Lines", object: this.satellites, action: () => this.satelliteFlareTracksGroup.visible = this.satellites.showFlareTracks },
-            { key: "showSatelliteGround", name: "Satellite Ground Arrows", object: this.satellites, action: () => this.satelliteGroundGroup.visible = this.satellites.showSatelliteGround },
-            { key: "showSatelliteNames", name: "Satellite Names (Look View)", object: this.satellites, action: () => this.updateSatelliteNamesVisibility() },
-            { key: "showSatelliteNamesMain", name: "Satellite Names (Main View)", object: this.satellites, action: () => this.updateSatelliteNamesVisibility() },
-            { key: "showAllLabels", name: "Show all Labels", object: this, action: () => this.flareRegionGroup.visible = this.showFlareRegion},
-            { key: "showFlareRegion", name: "Flare Region", object: this, action: () => this.flareRegionGroup.visible = this.showFlareRegion},
-            { key: "showFlareBand", name: "Flare Band", object: this, action: () => this.flareBandGroup.visible = this.showFlareBand},
+            {
+                key: "showSatellites", name: "Overall Satellites Flag", object: this.satellites, action: () => {
+                    this.satelliteGroup.visible = this.satellites.showSatellites;
+                    this.satellites.filterSatellites()
+                }
+            },
+            {
+                key: "showStarlink",
+                name: "Starlink",
+                object: this.satellites,
+                action: () => this.satellites.filterSatellites()
+            },
+            {key: "showISS", name: "ISS", object: this.satellites, action: () => this.satellites.filterSatellites()},
+            {
+                key: "showBrightest",
+                name: "Celestrack's Brightest",
+                object: this.satellites,
+                action: () => this.satellites.filterSatellites()
+            },
+            {
+                key: "showOtherSatellites",
+                name: "Other Satellites",
+                object: this.satellites,
+                action: () => this.satellites.filterSatellites()
+            },
+            {
+                key: "showSatelliteList",
+                name: "List",
+                object: this.satellites,
+                action: () => this.satellites.filterSatellites()
+            },
+            {
+                key: "showSatelliteTracks",
+                name: "Satellite Arrows",
+                object: this.satellites,
+                action: () => this.satelliteTrackGroup.visible = this.satellites.showSatelliteTracks
+            },
+            {
+                key: "showFlareTracks",
+                name: "Flare Lines",
+                object: this.satellites,
+                action: () => this.satelliteFlareTracksGroup.visible = this.satellites.showFlareTracks
+            },
+            {
+                key: "showSatelliteGround",
+                name: "Satellite Ground Arrows",
+                object: this.satellites,
+                action: () => this.satelliteGroundGroup.visible = this.satellites.showSatelliteGround
+            },
+            {
+                key: "showSatelliteNames",
+                name: "Satellite Names (Look View)",
+                object: this.satellites,
+                action: () => this.updateSatelliteNamesVisibility()
+            },
+            {
+                key: "showSatelliteNamesMain",
+                name: "Satellite Names (Main View)",
+                object: this.satellites,
+                action: () => this.updateSatelliteNamesVisibility()
+            },
+            {
+                key: "showAllLabels",
+                name: "Show all Labels",
+                object: this,
+                action: () => this.flareRegionGroup.visible = this.showFlareRegion
+            },
+            {
+                key: "showFlareRegion",
+                name: "Flare Region",
+                object: this,
+                action: () => this.flareRegionGroup.visible = this.showFlareRegion
+            },
+            {
+                key: "showFlareBand",
+                name: "Flare Band",
+                object: this,
+                action: () => this.flareBandGroup.visible = this.showFlareBand
+            },
         ];
 
         satelliteOptions.forEach(option => {
@@ -289,7 +355,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // the addSimpleSerial calls were doing nothing
 
         // Create star brightness slider and store reference
-        this.guiStarScale = guiMenus.view.add(Sit,"starScale",0,3,0.01).name("Star Brightness").listen()
+        this.guiStarScale = guiMenus.view.add(Sit, "starScale", 0, 3, 0.01).name("Star Brightness").listen()
             .tooltip("Scale factor for the brightness of the stars. 1 is normal, 0 is invisible, 2 is twice as bright, etc.")
             .onChange(() => {
                 setRenderOne(true);
@@ -305,7 +371,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             Sit.starLimit = 15; // default to 15 if not set
 
 
-        guiMenus.view.add(Sit,"starLimit",-2,15,0.01).name("Star Limit").listen()
+        guiMenus.view.add(Sit, "starLimit", -2, 15, 0.01).name("Star Limit").listen()
             .tooltip("Brightness limit for stars to be displayed")
             .onChange(() => {
                 setRenderOne(true);
@@ -320,7 +386,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             Sit.lockStarPlanetBrightness = true; // default to true (locked) if not set
 
         // Create planet brightness slider and store reference
-        this.guiPlanetScale = guiMenus.view.add(Sit,"planetScale",0,3,0.01).name("Planet Brightness").listen()
+        this.guiPlanetScale = guiMenus.view.add(Sit, "planetScale", 0, 3, 0.01).name("Planet Brightness").listen()
             .tooltip("Scale factor for the brightness of the planets (except Sun and Moon). 1 is normal, 0 is invisible, 2 is twice as bright, etc.")
             .onChange(() => {
                 if (Sit.lockStarPlanetBrightness) {
@@ -330,21 +396,21 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             })
 
         // Add lock checkbox
-        guiMenus.view.add(Sit,"lockStarPlanetBrightness").name("Lock Star Planet Brightness").listen()
+        guiMenus.view.add(Sit, "lockStarPlanetBrightness").name("Lock Star Planet Brightness").listen()
             .tooltip("When checked, the Star Brightness and Planet Brightness sliders are locked together")
 
-        satGUI.add(Sit,"satScale",0,6,0.01).name("Sat Brightness").listen()
+        satGUI.add(Sit, "satScale", 0, 6, 0.01).name("Sat Brightness").listen()
             .tooltip("Scale factor for the brightness of the satellites. 1 is normal, 0 is invisible, 2 is twice as bright, etc.")
 
-        satGUI.add(Sit,"flareScale",0,1,0.001).name("Flare Brightness").listen()
+        satGUI.add(Sit, "flareScale", 0, 1, 0.001).name("Flare Brightness").listen()
             .tooltip("Scale factor for the additional brightness of flaring satellites. 0 is nothing")
 
 
-        satGUI.add(Sit,"satCutOff",0,0.5,0.001).name("Sat Cut-Off").listen()
+        satGUI.add(Sit, "satCutOff", 0, 0.5, 0.001).name("Sat Cut-Off").listen()
             .tooltip("Satellites dimmed to this level or less will not be displayed")
 
 
-        satGUI.add(this.satellites,"arrowRange",10,10000,1).name("Display Range (km)").listen()
+        satGUI.add(this.satellites, "arrowRange", 10, 10000, 1).name("Display Range (km)").listen()
             .tooltip("Satellites beyond this distance will not have their names or arrows displayed")
             .onChange(() => {
                 this.satellites.filterSatellites();
@@ -353,14 +419,12 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.addSimpleSerial("arrowRange");
 
 
-
         // Sun Direction will get recalculated based on data (in satellites)
-
 
 
         this.celestialSphere = new Group();
         GlobalNightSkyScene.add(this.celestialSphere)
-        
+
         // Create a separate celestial sphere for the day sky scene
         this.celestialDaySphere = new Group();
         if (GlobalSunSkyScene) {
@@ -401,7 +465,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         })
 
 
-
         // if (FileManager.exists("starLink")) {
         //     console.log("parsing starlink")
         //     this.replaceTLE(FileManager.get("starLink"))
@@ -411,12 +474,12 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // this is the id of the file in the FileManager
         // which might be the filename, or an ID.
         if (v.starLink !== undefined) {
-            console.log("parsing starlink "+v.starLink)
+            console.log("parsing starlink " + v.starLink)
             if (FileManager.exists(v.starLink)) {
                 this.replaceTLE(FileManager.get(v.starLink))
             } else {
                 if (v.starLink !== "starLink")
-                    console.warn("Starlink file/ID "+v.starLink+" does not exist")
+                    console.warn("Starlink file/ID " + v.starLink + " does not exist")
             }
         }
 
@@ -427,7 +490,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.showEquatorialGrid = (v.showEquatorialGrid !== undefined) ? v.showEquatorialGrid : true;
 
 
-        this.celestialGUI.add(this,"showEquatorialGrid" ).listen().onChange(()=>{
+        this.celestialGUI.add(this, "showEquatorialGrid").listen().onChange(() => {
             setRenderOne(true);
             this.updateVis()
         }).name("Equatorial Grid")
@@ -437,15 +500,15 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.constellationsGroup = new Group();
         this.celestialSphere.add(this.constellationsGroup);
         this.showConstellations = (v.showConstellations !== undefined) ? v.showConstellations : true;
-        this.celestialGUI.add(this,"showConstellations" ).listen().onChange(()=>{
+        this.celestialGUI.add(this, "showConstellations").listen().onChange(() => {
             setRenderOne(true);
             this.updateVis()
         }).name("Constellation Lines")
         this.addSimpleSerial("showConstellations")
         this.celestialElements.addConstellationLines(this.constellationsGroup)
-        
+
         this.showStars = (v.showStars !== undefined) ? v.showStars : true;
-        this.celestialGUI.add(this,"showStars" ).listen().onChange(()=>{
+        this.celestialGUI.add(this, "showStars").listen().onChange(() => {
             setRenderOne(true);
             this.updateVis()
         }).name("Render Stars")
@@ -467,7 +530,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
 
         this.showEquatorialGridLook = (v.showEquatorialGridLook !== undefined) ? v.showEquatorialGridLook : true;
-        this.celestialGUI.add(this,"showEquatorialGridLook" ).listen().onChange(()=>{
+        this.celestialGUI.add(this, "showEquatorialGridLook").listen().onChange(() => {
             setRenderOne(true);
             this.updateVis()
 
@@ -475,12 +538,12 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.addSimpleSerial("showEquatorialGridLook")
 
         // same for the flare region
-        this.showFlareRegionLook =  false;
-        satGUI.add(this,"showFlareRegionLook" ).listen().onChange(()=>{
+        this.showFlareRegionLook = false;
+        satGUI.add(this, "showFlareRegionLook").listen().onChange(() => {
             if (this.showFlareRegionLook) {
-                this.flareRegionGroup.layers.mask=LAYER.MASK_LOOKRENDER;
+                this.flareRegionGroup.layers.mask = LAYER.MASK_LOOKRENDER;
             } else {
-                this.flareRegionGroup.layers.mask=LAYER.MASK_HELPERS;
+                this.flareRegionGroup.layers.mask = LAYER.MASK_HELPERS;
             }
             propagateLayerMaskObject(this.flareRegionGroup);
         }).name("Flare Region in Look View");
@@ -509,18 +572,18 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         par.validPct = 0;
         const nightSky = this;
-        labelMainViewPVS.addText("videoLabelInRange", "xx",    100, 2, 1.5, "#f0f00080", "right").update(function() {
+        labelMainViewPVS.addText("videoLabelInRange", "xx", 100, 2, 1.5, "#f0f00080", "right").update(function () {
 
             this.text = "";
 
             const TLEData = nightSky.satellites.TLEData;
             if (TLEData !== undefined && TLEData.satData !== undefined && TLEData.satData.length > 0) {
                 // format dates as YYYY-MM-DD HH:MM
-                this.text = "TLEs: "+TLEData.startDate.toISOString().slice(0, 19).replace("T", " ") + " - " +
+                this.text = "TLEs: " + TLEData.startDate.toISOString().slice(0, 19).replace("T", " ") + " - " +
                     TLEData.endDate.toISOString().slice(0, 19).replace("T", " ") + "   ";
             }
 
-            this.text += par.validPct ? "In Range:" + par.validPct.toFixed(1) + "%"  : "";
+            this.text += par.validPct ? "In Range:" + par.validPct.toFixed(1) + "%" : "";
 
         });
 
@@ -537,9 +600,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
     // See updateArrow
     addCelestialArrow(name) {
-        const flagName = "show"+name+"Arrow";
-        const groupName = name+"ArrowGroup";
-        const obName = name+"ArrowOb";
+        const flagName = "show" + name + "Arrow";
+        const groupName = name + "ArrowGroup";
+        const obName = name + "ArrowOb";
 
         this[flagName] = Sit[flagName] ?? false;
         this[groupName] = new CNode3DGroup({id: groupName});
@@ -549,7 +612,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             id: obName,
             visible: this[flagName],
             start: "lookCamera",
-            direction: V3(0,0,1),
+            direction: V3(0, 0, 1),
             length: -200,
             color: this.planets.planetColors[this.planets.planets.indexOf(name)],
             groupNode: groupName,
@@ -560,10 +623,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         })
 
 
-        this.celestialGUI.add(this, flagName).listen().onChange(()=>{
+        this.celestialGUI.add(this, flagName).listen().onChange(() => {
             setRenderOne(true);
             this[groupName].show(this[flagName]);
-        }).name(name+" Vector");
+        }).name(name + " Vector");
         this.addSimpleSerial(flagName)
     }
 
@@ -587,7 +650,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     updateCelestialArrowsMask(mask) {
 
         this.planets.planets.forEach(name => {
-            const groupName = name+"ArrowGroup";
+            const groupName = name + "ArrowGroup";
             if (this[groupName]) {
                 this[groupName].group.layers.mask = mask;
                 this[groupName].propagateLayerMask()
@@ -597,7 +660,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // it takes two frames for this to have an effect
         setRenderOne(2);
     }
-
 
 
     updateVis() {
@@ -653,7 +715,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // Reset both celestial spheres to identity
         this.celestialSphere.quaternion.identity()
         this.celestialSphere.updateMatrix()
-        
+
         if (this.celestialDaySphere) {
             this.celestialDaySphere.quaternion.identity()
             this.celestialDaySphere.updateMatrix()
@@ -710,7 +772,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.celestialSphere.applyMatrix4(rotationMatrixY)
         this.celestialSphere.applyMatrix4(rotationMatrixZ)
         this.celestialSphere.applyMatrix4(rotationMatrixX)
-        
+
         // The day sky sphere should use the same transformations as the night sky sphere
         // since both are rendered with camera at origin and should show celestial objects
         // in the same positions
@@ -791,14 +853,14 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // and atmospheric refraction also makes more visible.
 
         const raycaster = new Raycaster();
-        raycaster.layers.mask  |= LAYER.MASK_MAIN | LAYER.MASK_LOOK;
+        raycaster.layers.mask |= LAYER.MASK_MAIN | LAYER.MASK_LOOK;
 
         var hitPoint = new Vector3();
         var hitPoint2 = new Vector3();
         // get the forward vector (-z) of the camera matrix, for perp distance
-        const cameraForward = new Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+        const cameraForward = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
 
-        if ( this.satellites.showSatellites && this.satellites.TLEData) {
+        if (this.satellites.showSatellites && this.satellites.TLEData) {
 
 
             // // we scale ALL the text sprites, as it's per camera
@@ -821,8 +883,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
             // sprites are scaled in pixels, so we need to scale them based on the view height
 
-            let scale= Sit.satScale;
-            scale = view.adjustPointScale(scale*2);
+            let scale = Sit.satScale;
+            scale = view.adjustPointScale(scale * 2);
             this.satellites.satelliteMaterial.uniforms.satScale.value = scale;
 
             const positions = this.satellites.satelliteGeometry.attributes.position.array;
@@ -847,7 +909,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
                 // stagger updates unless it has an arrow.
                 if ((i - camera.satStartTime) % camera.satTimeStep !== 0 && !satData.hasSunArrow) {
-       //             continue;
+                    //             continue;
                 }
 
                 assert(satData.eus !== undefined, `satData.eus is undefined, i= ${i}, this.satellites.TLEData.satData.length = ${this.satellites.TLEData.satData.length} `)
@@ -868,7 +930,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                     if (occludedMeters < this.satellites.penumbraDepth) {
 
                         // fade will give us a value from 1 (no fade) to 0 (occluded)
-                        fade = 1 - occludedMeters/this.satellites.penumbraDepth
+                        fade = 1 - occludedMeters / this.satellites.penumbraDepth
 
                         scale *= darknessMultiplier + (1 - darknessMultiplier) * fade
                     } else {
@@ -925,7 +987,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
                         const spread = this.satellites.flareAngle
                         const ramp = spread * 0.25; //
-                        const middle  = spread -  ramp;  // angle at which the flare is brightest, constant
+                        const middle = spread - ramp;  // angle at which the flare is brightest, constant
                         const glintSize = Sit.flareScale; //
                         if (glintAngle < spread) {
                             // we use the square of the angle (measured from the start of the spread)
@@ -941,17 +1003,17 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                                 glintScale = fade * glintSize;
                             } else {
                                 d = d - middle; // shift the angle to over the ramp region
-                                glintScale = fade * glintSize * (ramp - d ) * (ramp-d)/ (ramp * ramp);
+                                glintScale = fade * glintSize * (ramp - d) * (ramp - d) / (ramp * ramp);
                             }
 
                             scale += glintScale
 
                             // arrows from camera to sat, and from sat to sun
-                            var arrowHelper = DebugArrowAB(satData.name, this.camera.position, satPosition, (belowHorizon?"#303030":"#FF0000"), true, this.sunArrowGroup, 10, LAYER.MASK_HELPERS)
+                            var arrowHelper = DebugArrowAB(satData.name, this.camera.position, satPosition, (belowHorizon ? "#303030" : "#FF0000"), true, this.sunArrowGroup, 10, LAYER.MASK_HELPERS)
                             var arrowHelper2 = DebugArrowAB(satData.name + "sun", satPosition,
                                 satPosition.clone().add(toSun.clone().multiplyScalar(10000000)), "#c08000", true, this.sunArrowGroup, 10, LAYER.MASK_HELPERS)
-                           // var arrowHelper3 = DebugArrowAB(satData.name + "reflected", satPosition,
-                           //     satPosition.clone().add(reflected.clone().multiplyScalar(10000000)), "#00ff00", true, this.sunArrowGroup, 0.025, LAYER.MASK_HELPERS)
+                            // var arrowHelper3 = DebugArrowAB(satData.name + "reflected", satPosition,
+                            //     satPosition.clone().add(reflected.clone().multiplyScalar(10000000)), "#00ff00", true, this.sunArrowGroup, 0.025, LAYER.MASK_HELPERS)
 
                             // and maybe one for flare tracks
                             if (this.satellites.showFlareTracks) {
@@ -973,11 +1035,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                     } else {
 
 
-
                         this.satellites.removeSatSunArrows(satData);
                     }
                 }
-
 
 
                 if (isLookView && scale < Sit.satCutOff) {
@@ -1005,9 +1065,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
 
         const camera = view.camera;
-        const cameraForward = new Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+        const cameraForward = new Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
         const cameraPos = camera.position;
-        const tanHalfFOV = Math.tan(radians(camera.fov/2))
+        const tanHalfFOV = Math.tan(radians(camera.fov / 2))
 
         const viewScale = 0.025 * view.divParent.clientHeight / view.heightPx;
 
@@ -1027,10 +1087,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             // user filtered sats are either in the list, or ar e the brightest or the ISS (if those are enabled)
             // if the satellite is not user filtered, skip it
             if (satData.visible
-                && ( satData.userFiltered || satData.eus.distanceTo(lookPos) < this.satellites.arrowRange*1000)
-                && ( satData.lastScale > 0 || this.showAllLabels ) // if the scale is 0, we don't show the label, unless showAllLabels is true
+                && (satData.userFiltered || satData.eus.distanceTo(lookPos) < this.satellites.arrowRange * 1000)
+                && (satData.lastScale > 0 || this.showAllLabels) // if the scale is 0, we don't show the label, unless showAllLabels is true
             ) {
-            //if (satData.visible) {
+                //if (satData.visible) {
                 if (!satData.spriteText) {
                     // if the sprite is not created, create it
                     // this is done in the TLEData constructor, but might not be called
@@ -1038,7 +1098,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                     var name = satData.name.replace("0 STARLINK", "SL").replace("STARLINK", "SL");
                     // strip whitespae off the end
                     name = name.replace(/\s+$/, '');
-                    satData.spriteText = new SpriteText(name, 0.01, "white", {depthTest:true} );
+                    satData.spriteText = new SpriteText(name, 0.01, "white", {depthTest: true});
 
                     // propagate the layer mask
                     satData.spriteText.layers.mask = layerMask;
@@ -1060,28 +1120,19 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 const offsetPost = view.offsetScreenPixels(pos, 0, 30);
                 sprite.position.copy(offsetPost);
             } else {
-               // if not visible dispose it
-               if (satData.spriteText) {
+                // if not visible dispose it
+                if (satData.spriteText) {
                     // remove the sprite from the group
                     this.satelliteTextGroup.remove(satData.spriteText);
                     satData.spriteText.dispose();
                     satData.spriteText = null;
-               }
+                }
 
 
-               //satData.spriteText.scale.set(0,0,0);
+                //satData.spriteText.scale.set(0,0,0);
             }
         }
     }
-
-
-
-
-
-
-
-
-
 
 
     /*
@@ -1239,10 +1290,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     }
 
 
-
     // Note, here we are claculating the ECEF position of planets on the celestial sphere
     // these are NOT the actual positions in space
-
 
 
     updateArrow(planet, ra, dec, date, observer, sphereRadius) {
@@ -1263,25 +1312,133 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
 
         if (this[flagName]) {
-             const gst = calculateGST(date);
-            const ecef = celestialToECEF(ra, dec, wgs84.RADIUS, gst)
-            const eusDir = ECEF2EUS(ecef, radians(Sit.lat), radians(Sit.lon), 0, true);
-            eusDir.normalize();
+            const eusDir = getCelestialDirectionFromRaDec(ra, dec, date)
             this[obName].updateDirection(eusDir)
         }
 
         // Handle Sun-specific calculations for flare region
         if (planet === "Sun") {
-            const gst = calculateGST(date);
-            const ecef = celestialToECEF(ra, dec, wgs84.RADIUS, gst)
-            const eusDir = ECEF2EUS(ecef, radians(Sit.lat), radians(Sit.lon), 0, true).normalize();
-            
+            const eusDir = getCelestialDirectionFromRaDec(ra, dec, date)
+
             // Store sun direction vectors for flare calculations
             this.satellites.toSun.copy(eusDir.clone().normalize())
             this.satellites.fromSun.copy(this.satellites.toSun.clone().negate())
             Globals.fromSun = this.satellites.fromSun.clone()
+            Globals.toSun = this.satellites.toSun.clone()
+
+            this.updateFlareRegion(ra, dec, date);
+
+
         }
     }
+
+
+    updateFlareRegion(ra, dec, date) {
+
+
+        if (this.showFlareRegion) {
+
+            const camera = NodeMan.get("lookCamera").camera;
+
+            const cameraPos = camera.position;
+            const cameraEcef = EUSToECEF(cameraPos)
+            const LLA = ECEFToLLAVD_Sphere(cameraEcef)
+
+            const {
+                az: az1,
+                el: el1
+            } = raDecToAzElRADIANS(ra, dec, radians(LLA.x), radians(LLA.y), getLST(date, radians(LLA.y)))
+            const {az, el} = raDecToAltAz(ra, dec, radians(LLA.x), radians(LLA.y), getJulianDate(date))
+            //console.log(`RA version ${planet}, ${degrees(az1)}, ${degrees(el1)}`)
+            //console.log(`raDecToAltAz  ${planet}, ${degrees(az)}, ${degrees(el)}`)
+
+            ///////////////////////////////////////////////////////////////////////
+            // attempt to find the glint position for radius r
+            // i.e. the position on the earth centered sphere, of radius r where
+            // a line from the camera to that point will reflect in the direction of
+            // the sun
+            // This is a non-trivial problem, related to Alhazen's problem, and does not
+            // easily submit to analytical approaches
+            // So here I use an iterative geometric approach
+            // first we simplify the search to two dimensions, as we know the point must lay in
+            // the plane specified by the origin O, the camera position P, and the sun vector v
+            // we could do it all in 2D, or just rotate about the axis perpendicular to this.
+            // 2D seems like it would be fastest, but just rotating maybe simpler
+            // So first calculate the axis perpendicular to OP and v
+            const P = this.camera.position;
+            const O = this.globe.center;
+            const OP = P.clone().sub(O)             // from origin to camera
+            const OPn = OP.clone().normalize();       // normalized for cross product
+            const v = Globals.toSun                    // toSun is already normalized
+            const axis = V3().crossVectors(v, OPn).normalize()   // axis to rotate the point on
+            const r = wgs84.RADIUS + 550000         // 550 km is approximate starlink altitude
+
+            // We are looking for a point X, at radisu R. Let's just start directly above P
+            // as that's nice and simple
+            const X0 = OPn.clone().multiplyScalar(r).add(O)
+
+            var bestX = X0
+            var bestGlintAngle = 100000; // large value so the first one primes it
+            var bestAngle = 0;
+
+            var start = 0
+            var end = 360
+            var step = 1
+            var attempts = 0
+            const maxAttempts = 6
+
+            do {
+                //  console.log(`Trying Start = ${start}, end=${end}, step=${step},  bestAngle=${bestAngle}, bestGlintAngle=${bestGlintAngle}`)
+                // try a simple iteration for now
+                for (var angle = start; angle <= end; angle += step) {
+                    // the point needs rotating about the globe origin
+                    // (which is not 0,0,0, as we are in EUS)
+                    // so sub O, rotate about the axis, then add O back
+                    const X = X0.clone().sub(O).applyAxisAngle(axis, radians(angle)).add(O)
+
+                    // we now have a potential new position, so calculate the glint angle
+
+                    // only want to do vectors that point tawards the sun
+                    const camToSat = X.clone().sub(P)
+
+                    if (camToSat.dot(v) > 0) {
+
+                        const globeToSat = X.clone().sub(O).normalize()
+                        const reflected = camToSat.clone().reflect(globeToSat).normalize()
+                        const dot = reflected.dot(v)
+                        const glintAngle = (degrees(Math.acos(dot)))
+                        if ((glintAngle >= 0) && (glintAngle < bestGlintAngle)) {
+                            // check if it's obscured by the globe
+                            // this check is more expensive, so only do it
+                            // for potential "best" angles.
+                            const ray = new Ray(X, this.toSun)
+                            if (!intersectSphere2(ray, this.globe)) {
+                                bestAngle = angle;
+                                bestGlintAngle = glintAngle;
+                                bestX = X.clone();
+                            }
+                        }
+                    }
+                }
+
+
+                start = bestAngle - step;
+                end = bestAngle + step;
+                step /= 10
+                attempts++;
+
+            } while (bestGlintAngle > 0.0001 && attempts < maxAttempts)
+
+            DebugArrowAB("ToGlint", this.camera.position, bestX, "#FF0000", true, this.flareRegionGroup, 20, LAYER.MASK_HELPERS)
+            DebugArrow("ToSunFromGlint", Globals.toSun, bestX, 5000000, "#FF0000", true, this.flareRegionGroup, 20, LAYER.MASK_HELPERS)
+            DebugWireframeSphere("ToGlint", bestX, 500000, "#FF0000", 4, this.flareRegionGroup)
+
+        }
+
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////
 
     dispose() {
         // Clean up star field resources

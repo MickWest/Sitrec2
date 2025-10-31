@@ -3,10 +3,8 @@
 
 import {CNodeViewUI} from "./CNodeViewUI";
 import {getAzElFromPositionAndForward, getCompassHeading} from "../SphericalMath";
-import {MV3} from "../threeUtils";
 import {Globals, NodeMan} from "../Globals";
-
-//import {Globals} from "../Globals";
+import {Vector3} from "three";
 
 export class   CNodeCompassUI extends CNodeViewUI {
 
@@ -69,13 +67,14 @@ export class   CNodeCompassUI extends CNodeViewUI {
         // get the three.js camera from the camera node
         const camera = this.in.camera.camera;
         // get the camera's forward vector, the negative z basis from its matrix
-        const forward = MV3(camera.matrixWorld.elements.slice(8,11));
-
+        const forward = new Vector3();
+        camera.getWorldDirection(forward);
 
         // get the heading of the camera, in radians
         const heading = getCompassHeading(camera.position, forward, camera);
+        // AZELISSUE: CORRECT - using camera.getWorldDirection() which auto-negates camera's -Z to forward
         const azel =  getAzElFromPositionAndForward(camera.position, forward);
-        const elevationRound = -Math.round(azel[1] * 10) / 10;
+        const elevationRound = Math.round(azel[1] * 10) / 10;
 
         // convert to 0..360 degrees for display
         const headingDeg = heading * 180 / Math.PI;

@@ -56,6 +56,7 @@ export class CNodeLOSFromCamera extends CNodeLOS {
         var position = camera.position.clone()
         var fwd = new Vector3();
         fwd.setFromMatrixColumn(camera.matrixWorld, 2);
+        // AZELISSUE: CORRECT - manually negating camera's +Z (backward) to get forward vector
         fwd.multiplyScalar(-1)
         // also return the up and right vectors of the camera
         var up = new Vector3();
@@ -83,6 +84,7 @@ export class CNodeAzFromLOS extends CNodeEmptyArray {
             const start = los.position.clone();
             const heading = los.heading.clone();
 
+            // AZELISSUE: CORRECT - the LOS.heading is already a properly negated forward vector (from line 59)
             const [az, el] = getAzElFromPositionAndForward(start, heading)
 
             this.array.push(az)
@@ -108,6 +110,7 @@ export class CNodeElFromLOS extends CNodeEmptyArray {
             const start = los.position.clone();
             const heading = los.heading.clone();
 
+            // AZELISSUE: CORRECT - the LOS.heading is already a properly negated forward vector (from line 59)
             const [az, el] = getAzElFromPositionAndForward(start, heading)
 
             this.array.push(el)

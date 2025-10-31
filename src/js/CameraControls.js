@@ -7,7 +7,7 @@ import {par} from "../par";
 import {ECEFToLLAVD_Sphere, EUSToECEF, wgs84} from "../LLA-ECEF-ENU";
 import {
 	altitudeAboveSphere,
-	getAzElFromPositionAndMatrix,
+	getAzElFromPositionAndForward,
 	getLocalDownVector,
 	getLocalEastVector,
 	getLocalNorthVector,
@@ -1028,7 +1028,10 @@ class CameraMapControls {
 		// and recalculate the matrix
 
 		// calculate tilt from the camera's matrix
-		const [az, el] = getAzElFromPositionAndMatrix(this.camera.position, this.camera.matrix)
+		// FIXED: Use camera.getWorldDirection() which correctly negates Z for cameras
+		const camFwdForAzEl = new Vector3();
+		this.camera.getWorldDirection(camFwdForAzEl);
+		const [az, el] = getAzElFromPositionAndForward(this.camera.position, camFwdForAzEl)
 
 
 		// decide what tyoe of rotation to do
