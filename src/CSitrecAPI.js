@@ -263,8 +263,7 @@ class CSitrecAPI {
         }
     }
 
-    addMoveCameraDirectionInKM(in_api) {
-        var api = in_api;
+    addMoveCameraDirectionInKM() {
         const camera_pos = NodeMan.get("fixedCameraPosition", false);
         if(camera_pos) {
             const cam_lat = camera_pos._LLA[0];
@@ -280,38 +279,34 @@ class CSitrecAPI {
                 const camera = NodeMan.get("fixedCameraPosition");
                 camera.setLLA(v.lat, v.lon, cam_alt);            
             };
-            api["cameraMoveDirectionKM"] = cameraMoveDirectionKM;
+            this.api["cameraMoveDirectionKM"] = cameraMoveDirectionKM;
         }
-        return api;
     }
 
-    addMoveCameraDirectionInDegrees(in_api) {
-        var api = in_api;
+    addMoveCameraDirectionInDegrees() {
         const camera_pos = NodeMan.get("fixedCameraPosition", false);
         if(camera_pos) {
             const cam_lat = camera_pos._LLA[0];
             const cam_lon = camera_pos._LLA[1];
             const cam_alt = camera_pos._LLA[2];
-            var cameraMoveDirectionKM = {};
-            cameraMoveDirectionKM.doc = `Given the camera is currently at latitude ${cam_lat} longitude ${cam_lon} calculate the new latitude and longitude to move the camera in the specified direction by the specified distance in decimal degrees.`;
-            cameraMoveDirectionKM.params = {
+            var cameraMoveDirectionDegrees = {};
+            cameraMoveDirectionDegrees.doc = `Given the camera is currently at latitude ${cam_lat} longitude ${cam_lon} calculate the new latitude and longitude to move the camera in the specified great circle path by the specified distance in decimal degrees.`;
+            cameraMoveDirectionDegrees.params = {
                 lat: "New latitude of camera in degrees (float)",
                 lon: "New longitude of camera in degrees (float)"
             };
-            cameraMoveDirectionKM.fn = (v) => {
+            cameraMoveDirectionDegrees.fn = (v) => {
                 const camera = NodeMan.get("fixedCameraPosition");
                 camera.setLLA(v.lat, v.lon, cam_alt);            
             };
-            api["cameraMoveDirectionKM"] = cameraMoveDirectionKM;
+            this.api["cameraMoveDirectionDegrees"] = cameraMoveDirectionDegrees;
         }
-        return api;
     }
 
     getDocumentation() {
-        var api = this.api;
-        var api = this.addMoveCameraDirectionInKM(api);
-        var api = this.addMoveCameraDirectionInDegrees(api);
-        return Object.entries(api).reduce((acc, [key, value]) => {
+        this.addMoveCameraDirectionInKM();
+        this.addMoveCameraDirectionInDegrees();
+        return Object.entries(this.api).reduce((acc, [key, value]) => {
             // conver the parameters to strings, like
             //             gotoLLA: "Move the camera to the location specified by Lat/Lon/Alt (Alt optional, defaults to 0). Parameters: lat (float), lon (float), alt (float, optional).",
             let paramsString = Object.entries(value.params || {})
