@@ -542,8 +542,6 @@ class CNodeView extends CNode {
 
     doubleClick() {
         if (this.visible && (this.doubleClickResizes || this.doubleClickFullScreen)) {
-            console.log("")
-            console.log("DOUBLE CLICK on id = "+this.id);
             if (!this.doubled) {
                 this.doubled = true;
                 this.preDoubledLeft = this.left;
@@ -559,7 +557,6 @@ class CNodeView extends CNode {
                     if (this.height > 0) {
                         this.height *= 2;
                     }
-                    console.log("Doubling: "+this.id+" to "+this.width+","+this.height)
                 } else {
 
                     // let aspect;
@@ -592,7 +589,6 @@ class CNodeView extends CNode {
                     this.top = 0;
                     // this.width = 1;
                     // this.height = 1;
-                    console.log("Full Screen: "+this.id+" to "+this.width+","+this.height)
                 }
 
 

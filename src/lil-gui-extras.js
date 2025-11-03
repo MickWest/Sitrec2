@@ -151,6 +151,18 @@ Controller.prototype.setValueQuietly = function(value) {
     return this; // Return the controller to allow method chaining
 }
 
+// Set this button as the double-click action for its parent GUI/folder
+// Allows chaining: gui.add(obj, 'method').name('Button').setDoubleClickAction()
+Controller.prototype.setDoubleClickAction = function() {
+    // Find the parent GUI
+    const parentGui = this.parent;
+    if (parentGui && parentGui.setDoubleClickAction) {
+        parentGui.setDoubleClickAction(this);
+    }
+    
+    return this; // Return the controller to allow method chaining
+}
+
 
 // same but for a GUI object (i.e. a folder)
 GUI.prototype.setLabelColor = function(color, min=0) {
@@ -185,6 +197,36 @@ GUI.prototype.setLabelColor = function(color, min=0) {
 GUI.prototype.tooltip = function(tooltip) {
     this.domElement.title = tooltip;
     return this; // Return the controller to allow method chaining
+}
+
+// Set a button action to fire when the folder title is double-clicked
+// This is useful for context menus where double-clicking should perform a default action
+// If no buttonController is provided, double-clicking will close the menu (same as clicking outside)
+GUI.prototype.setDoubleClickAction = function(buttonController) {
+    // Store the button controller reference
+    this._doubleClickButton = buttonController;
+    
+    // Add the double-click listener to the title if not already added
+    if (!this._doubleClickListenerAdded) {
+        this.$title.addEventListener("dblclick", (event) => {
+            if (this._doubleClickButton) {
+                // Trigger the button's action
+                const obj = this._doubleClickButton.object;
+                const prop = this._doubleClickButton.property;
+                if (obj && prop && typeof obj[prop] === 'function') {
+                    obj[prop]();
+                }
+            } else {
+                // No double-click action set - close the menu (same as clicking outside)
+                this.destroy();
+            }
+            event.preventDefault();
+            event.stopPropagation();
+        });
+        this._doubleClickListenerAdded = true;
+    }
+    
+    return this; // Return the GUI to allow method chaining
 }
 
 
@@ -384,6 +426,13 @@ export class CGuiMenuBar {
         // Z-index management for bringing clicked menus to front
         this.baseZIndex = 5000; // Base z-index for menu divs
 
+        // Track the currently active persistent menu (dismissOnOutsideClick = false)
+        this.activePersistentMenu = null;
+        
+        // Track the currently active context menu (dismissOnOutsideClick = true)
+        // Only one context menu should be visible at a time
+        this.activeContextMenu = null;
+
         // create a div for the menu bar
         this.menuBar = document.createElement("div");
         this.menuBar.id = "menuBar";
@@ -441,14 +490,16 @@ export class CGuiMenuBar {
                     gui.close();
                 });
                 
-                // Close standalone menus
+                // Close standalone menus (unless locked open)
                 const allContainers = Array.from(this.menuBar.children);
                 allContainers.forEach((container) => {
                     // Find the GUI associated with this container
                     const gui = container._gui;
                     if (gui && gui._standaloneContainer) {
-                        // This is a standalone menu, close it by removing the container
-                        gui.destroy();
+                        // Only close if not locked open
+                        if (!gui.lockOpenClose) {
+                            gui.destroy();
+                        }
                     }
                 });
             }
@@ -857,6 +908,44 @@ export class CGuiMenuBar {
         return visiblePercentage < 20;
     }
 
+    /**
+     * Ensure a standalone menu container is fully on screen
+     * If any part is off screen, move it back so it's entirely visible
+     * @param {HTMLElement} containerDiv - The container div for the standalone menu
+     */
+    ensureMenuOnScreen(containerDiv) {
+        // Get the container's current position and size
+        const rect = containerDiv.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        
+        // Parse current position
+        let left = parseInt(containerDiv.style.left);
+        let top = parseInt(containerDiv.style.top);
+        
+        // Check and adjust horizontal position
+        if (rect.left < 0) {
+            // Menu is off screen to the left
+            left = 0;
+        } else if (rect.right > viewportWidth) {
+            // Menu is off screen to the right
+            left = viewportWidth - rect.width;
+        }
+        
+        // Check and adjust vertical position
+        if (rect.top < 0) {
+            // Menu is off screen at the top
+            top = 0;
+        } else if (rect.bottom > viewportHeight) {
+            // Menu is off screen at the bottom
+            top = viewportHeight - rect.height;
+        }
+        
+        // Apply adjusted position
+        containerDiv.style.left = left + "px";
+        containerDiv.style.top = top + "px";
+    }
+
     applyModeStyles(gui) {
         const titleElement = gui.$title;
         
@@ -1137,7 +1226,22 @@ export class CGuiMenuBar {
     // Create a standalone pop-up menu that can be dragged around
     // Returns a GUI object that behaves like the individual menus from the menu bar
     // but is not attached to the menu bar itself
-    createStandaloneMenu(title, x = 100, y = 100) {
+    // dismissOnOutsideClick: if true, clicking outside the menu will dismiss it (for context menus)
+    createStandaloneMenu(title, x = 100, y = 100, dismissOnOutsideClick = false) {
+        // If a persistent menu is already open, don't allow creating new context menus
+        // This prevents right-clicking from opening menus while editing
+        if (this.activePersistentMenu && dismissOnOutsideClick) {
+            console.log(`Cannot create context menu "${title}" - persistent menu "${this.activePersistentMenu.$title.textContent}" is open`);
+            return null;
+        }
+        
+        // Hard rule: only one context menu visible at once
+        // If creating a new context menu, dismiss any existing context menu first
+        if (dismissOnOutsideClick && this.activeContextMenu) {
+            this.activeContextMenu.destroy();
+            this.activeContextMenu = null;
+        }
+        
         // Create a container div for the standalone menu
         const containerDiv = document.createElement("div");
         containerDiv.style.position = "absolute";
@@ -1161,6 +1265,21 @@ export class CGuiMenuBar {
         gui.originalLeft = x;
         gui.originalTop = y;
         
+        // Mark if this is a persistent menu (doesn't dismiss on outside click)
+        gui.isPersistent = !dismissOnOutsideClick;
+        
+        // If this is a persistent menu, track it as the active persistent menu
+        if (gui.isPersistent) {
+            // Close any existing persistent menu before opening a new one
+            if (this.activePersistentMenu) {
+                this.activePersistentMenu.destroy();
+            }
+            this.activePersistentMenu = gui;
+        } else {
+            // If this is a context menu, track it as the active context menu
+            this.activeContextMenu = gui;
+        }
+        
         // Apply detached styling
         this.applyModeStyles(gui);
         
@@ -1169,6 +1288,9 @@ export class CGuiMenuBar {
         
         // Add mouse tracking to disable keyboard shortcuts
         addGUIMouseTracking(gui);
+        
+        // Enable double-click on title to close menu (can be overridden with setDoubleClickAction)
+        gui.setDoubleClickAction();
         
         // Add drag functionality to the title
         gui.$title.addEventListener("mousedown", (event) => {
@@ -1259,6 +1381,22 @@ export class CGuiMenuBar {
             if (gui._escapeKeyHandler) {
                 document.removeEventListener('keydown', gui._escapeKeyHandler);
             }
+            // Remove the outside click listener if it exists
+            if (gui._outsideClickHandler) {
+                document.removeEventListener('click', gui._outsideClickHandler);
+            }
+            // Remove the outside contextmenu listener if it exists
+            if (gui._outsideContextMenuHandler) {
+                document.removeEventListener('contextmenu', gui._outsideContextMenuHandler);
+            }
+            // Clear the active persistent menu reference if this was it
+            if (gui.isPersistent && this.activePersistentMenu === gui) {
+                this.activePersistentMenu = null;
+            }
+            // Clear the active context menu reference if this was it
+            if (!gui.isPersistent && this.activeContextMenu === gui) {
+                this.activeContextMenu = null;
+            }
             // Reset mouseOverGUI flag to ensure keyboard controls work after menu is closed
             setMouseOverGUI(false);
             originalDestroy(all);
@@ -1288,6 +1426,51 @@ export class CGuiMenuBar {
             }
         };
         document.addEventListener('keydown', gui._escapeKeyHandler);
+        
+        // Add outside click handler if requested (for context menus)
+        if (dismissOnOutsideClick) {
+            // Helper function to check if click is outside the menu
+            const isClickOutside = (event) => {
+                // Walk up the DOM tree to see if we're inside this menu or any GUI element
+                let element = event.target;
+                while (element) {
+                    // If we find our container, the click is inside the menu
+                    if (element === containerDiv) {
+                        return false;
+                    }
+                    // If we find any lil-gui element, the click is on a GUI element
+                    if (element.classList && element.classList.contains('lil-gui')) {
+                        return false;
+                    }
+                    element = element.parentElement;
+                }
+                return true;
+            };
+            
+            // Left-click handler: dismiss on outside click
+            gui._outsideClickHandler = (event) => {
+                if (isClickOutside(event) && containerDiv.parentElement) {
+                    gui.destroy();
+                }
+            };
+            
+            // Right-click handler: dismiss on outside right-click (allows new context menu to be created)
+            gui._outsideContextMenuHandler = (event) => {
+                if (isClickOutside(event) && containerDiv.parentElement) {
+                    gui.destroy();
+                    // Don't preventDefault - let the application handle the right-click to create new menu
+                }
+            };
+            
+            // Use setTimeout to avoid immediately triggering on the same click that created the menu
+            setTimeout(() => {
+                document.addEventListener('click', gui._outsideClickHandler);
+                document.addEventListener('contextmenu', gui._outsideContextMenuHandler);
+            }, 100);
+        }
+        
+        // Ensure the menu is fully on screen
+        this.ensureMenuOnScreen(containerDiv);
         
         return gui;
     }

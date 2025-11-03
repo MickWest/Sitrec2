@@ -6,6 +6,7 @@ export function incrementMainLoopCount() {
 
 export var Globals = {
     editingTrack: null,  // Reference to the CMetaTrack currently being edited
+    editingBuilding: null,  // Reference to the CNodeSynthBuilding currently being edited
     GPUMemoryMonitor: null,  // GPU Memory Monitor instance
     debugGPUBacklog: false,  // Enable logging of GPU buffer flushes
     showTileStats: false,  // Enable tile statistics logging
@@ -57,7 +58,11 @@ export function setSitchMan(n) {SitchMan = n;}
 export var CustomManager;
 export function setCustomManager(n) {CustomManager = n;}
 
+export var Synth3DManager;
+export function setSynth3DManager(n) {Synth3DManager = n;}
 
+export var UndoManager;
+export function setUndoManager(n) {UndoManager = n;}
 
 export var gui;
 export var guiTweaks;

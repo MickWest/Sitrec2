@@ -64,6 +64,14 @@ export function sanitizeSettings(settings) {
         }
     }
     
+    if (settings.lastBuildingRotation !== undefined) {
+        const rotation = Number(settings.lastBuildingRotation);
+        // Allow any rotation angle (will be normalized to 0-2π internally)
+        if (!isNaN(rotation)) {
+            sanitized.lastBuildingRotation = rotation;
+        }
+    }
+    
     return sanitized;
 }
 
@@ -249,6 +257,7 @@ export async function initializeSettings() {
             fpsLimit: 30, // Frame rate limit (60, 30, 20, or 15)
             tileSegments: 32, // Tile mesh resolution (16-256)
             videoMaxSize: "720P", // Video frame max size (None, 1080P, 720P, 480P, 360P)
+            lastBuildingRotation: 0, // Last building rotation in radians (persists across sessions)
         };
     }
     

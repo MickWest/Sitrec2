@@ -9,7 +9,8 @@ import {
     keyHeld,
     NodeMan,
     setGPUMemoryMonitor,
-    setRenderOne
+    setRenderOne,
+    Synth3DManager
 } from "../Globals";
 import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame";
 import {DRAG, makeMouseRay} from "../mouseMoveView";
@@ -37,7 +38,13 @@ import {
     WebGLRenderer,
     WebGLRenderTarget
 } from "three";
-import {DebugArrowAB, forceFilterChange, scaleArrows, updateTrackPositionIndicator} from "../threeExt";
+import {
+    DebugArrowAB,
+    forceFilterChange,
+    scaleArrows,
+    scaleBuildingHandles,
+    updateTrackPositionIndicator
+} from "../threeExt";
 import {CNodeViewCanvas} from "./CNodeViewCanvas";
 import {wgs84} from "../LLA-ECEF-ENU";
 import {getCameraNode} from "./CNodeCamera";
@@ -1116,6 +1123,14 @@ export class CNodeView3D extends CNodeViewCanvas {
         updateTrackPositionIndicator(this);
         if (globalProfiler) globalProfiler.pop();
 
+        // Profile: Building Handle Scaling (only for mainView)
+        if (this.id === "mainView" && globalProfiler) globalProfiler.push('#9467bd', 'buildingHandles');
+        // Update building handles to maintain constant screen size (size-invariant at 40px)
+        if (this.id === "mainView") {
+            scaleBuildingHandles(this);
+        }
+        if (this.id === "mainView" && globalProfiler) globalProfiler.pop();
+
         // Profile: Render Target and Effects (typically the most expensive)
         if (globalProfiler) globalProfiler.push('#ff0000', 'renderTargetEffects');
         this.renderTargetAndEffects()
@@ -1550,7 +1565,12 @@ export class CNodeView3D extends CNodeViewCanvas {
             menuTitle = `Star: ${celestialObject.name}`;
         }
         
-        const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, clientX, clientY);
+        const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, clientX, clientY, true);
+        
+        // If menu creation was blocked (persistent menu is open), return early
+        if (!standaloneMenu) {
+            return;
+        }
         
         // Add information about the celestial object
         if (celestialObject.type === 'planet') {
@@ -1703,7 +1723,12 @@ export class CNodeView3D extends CNodeViewCanvas {
             const menuTitle = `Track: ${closestTrack.trackOb?.menuText || closestTrack.trackID}`;
             
             // Create a standalone menu and mirror the track's GUI folder
-            const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, event.clientX, event.clientY);
+            const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, event.clientX, event.clientY, true);
+            
+            // If menu creation was blocked (persistent menu is open), return early
+            if (!standaloneMenu) {
+                return;
+            }
             
             // Set up dynamic mirroring for the track's GUI folder
             CustomManager.setupDynamicMirroring(closestTrack.guiFolder, standaloneMenu);
@@ -1767,6 +1792,29 @@ export class CNodeView3D extends CNodeViewCanvas {
 
 //                        DebugSphere("DEBUGPIck"+par.frame, groundPoint, 2, 0xFFFF00)
 
+                        // Check if this is a synthetic 3D building - if so, enter edit mode
+                        if (objectID.startsWith('synthBuilding_')) {
+                            const building = Synth3DManager.getBuilding(objectID);
+                            if (building) {
+                                console.log(`Right-clicked on synthetic building: ${objectID}, entering edit mode`);
+                                
+                                // First, exit edit mode on the currently edited building (if any)
+                                if (Globals.editingBuilding && Globals.editingBuilding !== building) {
+                                    console.log(`  Exiting edit mode on previous building: ${Globals.editingBuilding.buildingID}`);
+                                    Globals.editingBuilding.setEditMode(false);
+                                }
+                                
+                                // Enter edit mode (this will create handles and set up state)
+                                building.setEditMode(true);
+                                
+                                // Show the building edit menu at the mouse position (better UX than default position)
+                                // This will close the default-positioned menu created by setEditMode and show it at the cursor
+                                CustomManager.showBuildingEditingMenu(event.clientX, event.clientY, groundPoint);
+                                
+                                return; // Edit mode entered, we're done
+                            }
+                        }
+
                         // Get the node from NodeManager
                         const node = NodeMan.get(objectID);
                         if (node && node.gui) {
@@ -1775,7 +1823,12 @@ export class CNodeView3D extends CNodeViewCanvas {
                             
                             // Create a standalone menu and mirror the object's GUI folder
                             // Use the same approach as tracks for consistency
-                            const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, event.clientX, event.clientY);
+                            const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, event.clientX, event.clientY, true);
+                            
+                            // If menu creation was blocked (persistent menu is open), return early
+                            if (!standaloneMenu) {
+                                return;
+                            }
                             
                             // Set up dynamic mirroring for the object's GUI folder
                             CustomManager.setupDynamicMirroring(node.gui, standaloneMenu);
@@ -1794,7 +1847,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                         return; // Found an object, don't check tracks or ground
                     } else {
                         // Debug: log what we're hitting
-                        console.log(`Hit object without valid name: ${object.type}, name: "${object.name}", userData:`, object.userData);
+                       // console.log(`Hit object without valid name: ${object.type}, name: "${object.name}", userData:`, object.userData);
                     }
                 }
                 

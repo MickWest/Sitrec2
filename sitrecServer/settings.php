@@ -98,6 +98,11 @@ function sanitizeSettings($settings) {
         }
     }
     
+    if (isset($settings['lastBuildingRotation'])) {
+        // Rotation angle in radians - allow any numeric value
+        $sanitized['lastBuildingRotation'] = floatval($settings['lastBuildingRotation']);
+    }
+    
     // Add more settings here as needed
     // Remember to also update SettingsManager.js!
     

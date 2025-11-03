@@ -208,7 +208,12 @@ class CFeatureManager extends CManager {
         
         // Create an edit menu for the feature
         const menuTitle = `Feature: ${featureNode.text || "(blank)"}`;
-        const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, clientX, clientY);
+        const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, clientX, clientY, true);
+        
+        // If menu creation was blocked (persistent menu is open), return early
+        if (!standaloneMenu) {
+            return;
+        }
         
         // Add editable text field
         const editableData = {

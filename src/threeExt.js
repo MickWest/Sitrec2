@@ -20,7 +20,7 @@ import {
     WireframeGeometry
 } from "three";
 
-import {Globals, NodeMan, setRenderOne} from './Globals';
+import {Globals, NodeMan, setRenderOne, Synth3DManager} from './Globals';
 import {par} from "./par";
 
 
@@ -384,6 +384,32 @@ export function updateTrackPositionIndicator(view) {
     
     // Update the position indicator
     splineEditor.updatePositionIndicator(position, view);
+}
+
+/**
+ * Update building handle scales to maintain constant screen size
+ * This should be called from the render loop to keep handles at a fixed pixel size
+ * regardless of camera distance
+ * @param {CNodeView3D} view - The view to use for screen-space scaling
+ */
+export function scaleBuildingHandles(view) {
+    // Only apply to views with pixelsToMeters support (3D views)
+    if (!view || !view.pixelsToMeters) {
+        return;
+    }
+
+    const s = Synth3DManager;
+
+    // Iterate over all synthetic buildings and update their handle scales
+    if (Synth3DManager && Synth3DManager.list) {
+        for (const buildingId in Synth3DManager.list) {
+            const building = Synth3DManager.list[buildingId].data;
+
+            if (building && building.updateHandleScales) {
+                building.updateHandleScales(view);
+            }
+        }
+    }
 }
 
 export function removeDebugArrow(name) {

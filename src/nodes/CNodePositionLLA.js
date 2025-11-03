@@ -301,34 +301,42 @@ export class CNodePositionLLA extends CNode {
 
                 const mainView = ViewMan.get("mainView")
                 const cursorPos = mainView.cursorSprite.position.clone();
-                // convert to LLA
-                const ecef = EUSToECEF(cursorPos)
-                const LLA = ECEFToLLAVD_Sphere(ecef)
 
-                // we set the values in the UI nodes
-                this.guiLat.value = LLA.x
-                this.guiLon.value = LLA.y
-                this._LLA[0] = LLA.x
-                this._LLA[1] = LLA.y
+                this.setFromEUS(cursorPos, true);
 
-                // if the shift key is held, then set the altitude to the ground + 2m
-                if (isKeyHeld('Shift')) {
-                    // get the ground altitude, buy first getting the cursor position, adjusted for height
-                    const groundPoint = adjustHeightAboveGround(cursorPos, 2);
-                    // converts the ground point to LLA
-                    const groundPointLLA = EUSToLLA(groundPoint);
-                    // so the altitude is in the Z component
-                    const groundAlt = groundPointLLA.z;
-                    this._LLA[2] = this.guiAlt.setValueWithUnits(groundAlt, "metric", "small", true)
-                }
-                this.recalculateCascade();
-                EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
                 // we don't change the altitude, as we don't know it from the cursor
             }
 
 
         }
     }
+
+    setFromEUS(cursorPos, changeAlt=false) {
+
+        // convert to LLA
+        const ecef = EUSToECEF(cursorPos)
+        const LLA = ECEFToLLAVD_Sphere(ecef)
+
+        // we set the values in the UI nodes
+        this.guiLat.value = LLA.x
+        this.guiLon.value = LLA.y
+        this._LLA[0] = LLA.x
+        this._LLA[1] = LLA.y
+
+        // if the shift key is held, then set the altitude to the ground + 2m
+        if (isKeyHeld('Shift') && changeAlt) {
+            // get the ground altitude, buy first getting the cursor position, adjusted for height
+            const groundPoint = adjustHeightAboveGround(cursorPos, 2);
+            // converts the ground point to LLA
+            const groundPointLLA = EUSToLLA(groundPoint);
+            // so the altitude is in the Z component
+            const groundAlt = groundPointLLA.z;
+            this._LLA[2] = this.guiAlt.setValueWithUnits(groundAlt, "metric", "small", true)
+        }
+        this.recalculateCascade();
+        EventManager.dispatchEvent("PositionLLA.onChange", {id: this.id})
+    }
+
 
     recalculate() {
         if (this._LLA !== undefined) {

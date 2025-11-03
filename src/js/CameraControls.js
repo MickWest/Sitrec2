@@ -2,7 +2,7 @@
 
 import {Matrix4, Plane, Raycaster, Sphere, Vector2, Vector3} from "three";
 import {degrees, radians, vdump} from "../utils";
-import {DebugArrowAB, DebugSphere, intersectMSL, pointAbove} from "../threeExt";
+import {DebugArrowAB, DebugSphere, getPointBelow, intersectMSL, pointAbove} from "../threeExt";
 import {par} from "../par";
 import {ECEFToLLAVD_Sphere, EUSToECEF, wgs84} from "../LLA-ECEF-ENU";
 import {
@@ -173,6 +173,12 @@ class CameraMapControls {
 		// but the + key on the numeric keypad
 		if (isKeyHeld("=") || isKeyHeld("+")) {
 			this.zoomBy(-zoomSpeed)
+		}
+
+		// WASD walking controls (terrain-following)
+		// Only active for lookView
+		if (this.view && this.view.id === "lookView") {
+			this.updateWASDWalking();
 		}
 
 		this.updateMeasureArrow();
@@ -1100,7 +1106,7 @@ class CameraMapControls {
 
 		let update = false;
 
-		if (isKeyHeld('a')) {
+		if (isKeyHeld('v')) {
 			this.measureStartPoint.set(cursorPos.x, cursorPos.y, cursorPos.z);
 			update = true;
 		}
@@ -1145,6 +1151,74 @@ class CameraMapControls {
 			this.measureDownA = DebugArrowAB("MeasureDownA", A2, A, 0x00FF00, true, GlobalScene)
 			this.measureDownB = DebugArrowAB("MeasureDownB", B2, B, 0xFF0000, true, GlobalScene)
 		}
+	}
+
+	updateWASDWalking() {
+		// WASD walking controls with terrain-following
+		// Normal speed: 3 m/s, Fast speed (with Shift): 10 m/s
+		// Maintains constant height above terrain
+		
+		let moveForward = 0;
+		let moveRight = 0;
+		
+		// Check WASD keys
+		if (isKeyHeld('w')) moveForward += 1;
+		if (isKeyHeld('s')) moveForward -= 1;
+		if (isKeyHeld('d')) moveRight += 1;
+		if (isKeyHeld('a')) moveRight -= 1;
+		
+		// If no movement, return early
+		if (moveForward === 0 && moveRight === 0) return;
+		
+		// Determine speed based on Shift key
+		const normalSpeed = 10.0;  // meters per second
+		const fastSpeed = 50.0;   // meters per second with Shift
+		const isShiftHeld = isKeyHeld('Shift');
+		const speed = isShiftHeld ? fastSpeed : normalSpeed;
+		
+		// Frame time (assuming 60fps as default, or use actual delta time if available)
+		const deltaTime = 1/60;
+		const moveDistance = speed * deltaTime;
+		
+		// Get current camera position
+		const currentPos = this.camera.position.clone();
+		
+		// Calculate height above terrain at current position
+		const groundBelow = getPointBelow(currentPos);
+		const localUp = getLocalUpVector(currentPos);
+		const currentHeight = currentPos.clone().sub(groundBelow).dot(localUp);
+		
+		// Get camera forward and right vectors
+		// Forward is the camera's looking direction projected onto the horizontal plane
+		const cameraForward = new Vector3();
+		this.camera.getWorldDirection(cameraForward);
+		
+		// Project forward vector onto horizontal plane (perpendicular to local up)
+		const forwardHorizontal = cameraForward.clone().sub(
+			localUp.clone().multiplyScalar(cameraForward.dot(localUp))
+		).normalize();
+		
+		// Right vector is perpendicular to both up and forward
+		const rightHorizontal = new Vector3().crossVectors(localUp, forwardHorizontal).normalize().negate();
+		
+		// Calculate movement vector
+		const movement = new Vector3();
+		movement.add(forwardHorizontal.multiplyScalar(moveForward * moveDistance));
+		movement.add(rightHorizontal.multiplyScalar(moveRight * moveDistance));
+		
+		// Apply movement to camera position
+		const newPos = currentPos.add(movement);
+		
+		// Snap to terrain-relative height
+		const newGroundBelow = getPointBelow(newPos);
+		const finalPos = pointAbove(newGroundBelow, currentHeight);
+		
+		// Convert to LLA and update fixed camera track using gotoLLA
+		const fixedCamera = NodeMan.get("fixedCameraPosition");
+		fixedCamera.setFromEUS(finalPos);
+		
+		// Trigger re-render
+		setRenderOne(true);
 	}
 
 	fixUp(force = false) {

@@ -1411,7 +1411,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                             // check if it's obscured by the globe
                             // this check is more expensive, so only do it
                             // for potential "best" angles.
-                            const ray = new Ray(X, this.toSun)
+                            const ray = new Ray(X, Globals.toSun)
                             if (!intersectSphere2(ray, this.globe)) {
                                 bestAngle = angle;
                                 bestGlintAngle = glintAngle;

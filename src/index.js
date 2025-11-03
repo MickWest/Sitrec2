@@ -26,6 +26,8 @@ import {
     setSit,
     setSitchEstablished,
     setSitchMan,
+    setSynth3DManager,
+    setUndoManager,
     setUnits,
     setupGUIGlobals,
     setupGUIjetTweaks,
@@ -99,6 +101,8 @@ import {showError} from "./showError";
 import {destroyGlobalProfiler, globalProfiler, initGlobalProfiler} from "./VisualProfiler";
 import {fileSystemFetch} from "./fileSystemFetch";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
+import {C3DSynthManager} from "./C3DSynthManager";
+import {undoManager} from "./UndoManager";
 
 // CRITICAL: Global context menu blocker - ensures system context menu NEVER appears
 // Uses capture mode (true) so it catches events before other listeners
@@ -115,7 +119,6 @@ console.log ("SITREC START - index.js after imports")
 // This is the main entry point for the sitrec web application
 // However note that the imports above might have code that is executed
 // before this code is executed.
-// Building sitrec as a console application uses indexCommon instead.
 
 // We NOW default to "Custom" unless overridden by a URL parameter
 // otherwise we get lots of sitches with unnecessary satellites
@@ -1028,16 +1031,20 @@ async function initializeOnce() {
     setNodeMan(new CNodeManager())
     setNodeFactory(new CNodeFactory(NodeMan))
     setSitchMan(new CSitchFactory())
+    setSynth3DManager(new C3DSynthManager())
+    setUndoManager(undoManager)
     
     // Expose objects to window for testing purposes
     if (typeof window !== 'undefined') {
         window.NodeMan = NodeMan;
         window.DragDropHandler = DragDropHandler;
+        window.UndoManager = undoManager;
         
         // Set a flag to indicate that these objects are ready
         window.SITREC_OBJECTS_READY = {
             NodeMan: true,
             DragDropHandler: true,
+            UndoManager: true,
             timestamp: Date.now()
         };
         

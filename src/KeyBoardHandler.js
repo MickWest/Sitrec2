@@ -1,4 +1,15 @@
-import {Globals, gui, guiShowHide, keyCodeHeld, keyHeld, mouseOverGUI, NodeMan, setRenderOne, Sit} from "./Globals";
+import {
+    Globals,
+    gui,
+    guiShowHide,
+    keyCodeHeld,
+    keyHeld,
+    mouseOverGUI,
+    NodeMan,
+    setRenderOne,
+    Sit,
+    UndoManager
+} from "./Globals";
 import {par} from "./par";
 import {closeFullscreen, openFullscreen} from "./utils";
 import {Vector3} from "three";
@@ -259,6 +270,23 @@ export function initKeyboard() {
 
                     c.lookAt(new Vector3(0, 0, 0));
                     break;
+            }
+        }
+
+        // Handle undo/redo with Ctrl/Cmd modifiers
+        if (UndoManager) {
+            // Undo: Ctrl+Z or Cmd+Z
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && keyCode === 'KeyZ') {
+                e.preventDefault();
+                UndoManager.undo();
+                return;
+            }
+            
+            // Redo: Ctrl+Y or Cmd+Y or Ctrl+Shift+Z or Cmd+Shift+Z
+            if ((e.ctrlKey || e.metaKey) && (keyCode === 'KeyY' || (e.shiftKey && keyCode === 'KeyZ'))) {
+                e.preventDefault();
+                UndoManager.redo();
+                return;
             }
         }
 
