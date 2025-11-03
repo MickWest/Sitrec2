@@ -29,7 +29,6 @@ import {bestSat} from "../TLEUtils";
             this.norad = null; // reset the norad number to force recalculation of the satellite data
             this.recalculate();
             this.satelliteText = this.satData.name;
-
         }).listen().hide().tooltip("Name or NORAD number of satellite to track. \nStart of name is ok (i.e. ISS)");
 
         // Use event listeners to update the track when the satellite changes
@@ -126,9 +125,9 @@ import {bestSat} from "../TLEUtils";
         if (!this.norad) {
             this.norad = this.getSatelliteNumber(this.satellite);
             if (!this.norad) {
-//                console.warn(`CNodeSatelliteTrack:recalculate no NORAD number found for ${this.satellite}`);
+                console.warn(`CNodeSatelliteTrack:recalculate no NORAD number found for ${this.satellite}`);
                 this.hide();
-                this.guiSatellite?.hide();
+                //this.guiSatellite?.hide();
                 return false;
             }
         }
