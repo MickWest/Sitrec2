@@ -156,7 +156,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📱 Compass & Elevation</h1>
+            <h1>📱 XCompass & Elevation</h1>
         </div>
 
         <div id="permissionSection">
@@ -172,16 +172,28 @@
 
         <div class="readings">
             <div class="reading-card">
-                <div class="reading-label">Heading</div>
+                <div class="reading-label">Azimuth (Heading)</div>
                 <div class="reading-value" id="headingValue">--</div>
                 <div class="reading-unit">degrees</div>
                 <div class="direction" id="headingDirection">--</div>
             </div>
             <div class="reading-card">
-                <div class="reading-label">Elevation</div>
+                <div class="reading-label">Elevation (Tilt)</div>
                 <div class="reading-value" id="elevationValue">--</div>
                 <div class="reading-unit">degrees</div>
                 <div class="direction" id="elevationDirection">--</div>
+            </div>
+        </div>
+
+        <div class="reading-card" style="margin-top: 15px;">
+            <div class="reading-label">Raw Sensor Data</div>
+            <div id="rawData" style="font-size: 14px; font-family: monospace; line-height: 1.8;">
+                <div>alpha: <span id="alphaValue">--</span>°</div>
+                <div>beta: <span id="betaValue">--</span>°</div>
+                <div>gamma: <span id="gammaValue">--</span>°</div>
+                <div>webkitCompassHeading: <span id="webkitValue">--</span>°</div>
+                <div>screenOrientation: <span id="orientValue">--</span>°</div>
+                <div>isAbsolute: <span id="absoluteValue">--</span></div>
             </div>
         </div>
 
@@ -197,6 +209,10 @@
         let canvas, ctx;
         let animationId;
         let screenOrientation = 0; // 0, 90, -90, 180
+        let rawAlpha = 0;
+        let rawBeta = 0;
+        let rawGamma = 0;
+        let rawWebkit = null;
         
         // Detect iOS
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
@@ -214,15 +230,24 @@
         // Track screen orientation changes
         function trackOrientation() {
             function updateOrientation() {
+                let angle = 0;
+                
                 if (screen.orientation) {
-                    // Modern API - preferred method
-                    const angle = screen.orientation.angle;
-                    screenOrientation = angle;
+                    // Modern API - returns 0, 90, 180, 270
+                    angle = screen.orientation.angle;
                 } else if (window.orientation !== undefined) {
-                    // Legacy fallback for older iOS devices (deprecated but necessary for compatibility)
+                    // Legacy API - returns 0, 90, -90, 180
                     // @ts-ignore - window.orientation is deprecated but required for older iOS
-                    screenOrientation = window.orientation;
+                    angle = window.orientation;
                 }
+                
+                // Normalize to modern standard: Convert -90 to 270
+                // Both represent landscape-right (device rotated clockwise when in portrait)
+                if (angle === -90) {
+                    angle = 270;
+                }
+                
+                screenOrientation = angle;
             }
             
             updateOrientation();
@@ -293,6 +318,12 @@
         }
 
         function handleOrientation(event) {
+            // Store raw values
+            rawAlpha = event.alpha !== null ? event.alpha : 0;
+            rawBeta = event.beta !== null ? event.beta : 0;
+            rawGamma = event.gamma !== null ? event.gamma : 0;
+            rawWebkit = event.webkitCompassHeading !== undefined ? event.webkitCompassHeading : null;
+            
             // Check if we have absolute orientation
             isAbsolute = event.absolute === true || event.type === 'deviceorientationabsolute';
             
@@ -305,7 +336,7 @@
                 rawHeading = event.webkitCompassHeading;
                 useWebkitHeading = true;
                 isAbsolute = true;
-                updateStatus('✓ Active - True heading (iOS)', false);
+                updateStatus('✓ Active (iOS)', false);
             } 
             // Android with absolute orientation
             else if (event.alpha !== null) {
@@ -314,7 +345,7 @@
                 rawHeading = Math.abs(event.alpha - 360);
                 
                 if (isAbsolute) {
-                    updateStatus('✓ Active - True heading (absolute orientation)', false);
+                    updateStatus('✓ Active (absolute)', false);
                 } else {
                     updateStatus('⚠️ Relative heading - needs device calibration', true);
                 }
@@ -323,29 +354,31 @@
             // Adjust heading based on screen orientation
             // webkitCompassHeading gives the direction the DEVICE top is pointing
             // We need to adjust it to show the direction the SCREEN top is pointing
-            // screenOrientation: 0 (portrait), 90 (landscape-left), -90 (landscape-right), 180 (upside down)
+            // screenOrientation: 0 (portrait), 90 (landscape-left), 270 (landscape-right), 180 (upside down)
             compassHeading = (rawHeading + screenOrientation + 360) % 360;
             
-            // Adjust elevation based on screen orientation
-            const beta = event.beta || 0;
-            const gamma = event.gamma || 0;
-            
-            switch(screenOrientation) {
-                case 0: // Portrait
-                    elevationAngle = beta;
-                    break;
-                case 90: // Landscape-left (rotated counter-clockwise)
-                    elevationAngle = -gamma;
-                    break;
-                case -90: // Landscape-right (rotated clockwise)
-                    elevationAngle = gamma;
-                    break;
-                case 180: // Upside down
-                    elevationAngle = -beta;
-                    break;
-                default:
-                    elevationAngle = beta;
+            // Calculate elevation using simple gamma correction
+            // Gamma goes 0 to -90 then 90 to 0
+            let correctedElevation = rawGamma;
+            if (screenOrientation === 90) {
+                // Landscape-left
+                if (rawGamma < 0) {
+                    correctedElevation = -rawGamma;
+                } else {
+                    correctedElevation = 180 - rawGamma;
+                }
+            } else if (screenOrientation === 270) {
+                // Landscape-right (inverted)
+                if (rawGamma < 0) {
+                    correctedElevation = 180 - (-rawGamma);
+                } else {
+                    correctedElevation = rawGamma;
+                }
+            } else {
+                // Portrait mode (0° or 180°) - use beta
+                correctedElevation = rawBeta;
             }
+            elevationAngle = correctedElevation;
             
             updateReadings();
         }
@@ -360,6 +393,14 @@
             const elevation = Math.round(elevationAngle);
             document.getElementById('elevationValue').textContent = elevation;
             document.getElementById('elevationDirection').textContent = getElevationDescription(elevation);
+            
+            // Update raw sensor data
+            document.getElementById('alphaValue').textContent = rawAlpha.toFixed(1);
+            document.getElementById('betaValue').textContent = rawBeta.toFixed(1);
+            document.getElementById('gammaValue').textContent = rawGamma.toFixed(1);
+            document.getElementById('webkitValue').textContent = rawWebkit !== null ? rawWebkit.toFixed(1) : 'N/A';
+            document.getElementById('orientValue').textContent = screenOrientation;
+            document.getElementById('absoluteValue').textContent = isAbsolute ? 'Yes' : 'No';
         }
 
         function getCardinalDirection(degrees) {

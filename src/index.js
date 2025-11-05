@@ -103,6 +103,7 @@ import {fileSystemFetch} from "./fileSystemFetch";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
 import {C3DSynthManager} from "./C3DSynthManager";
 import {undoManager} from "./UndoManager";
+import {arModeManager} from "./ARMode";
 
 // CRITICAL: Global context menu blocker - ensures system context menu NEVER appears
 // Uses capture mode (true) so it catches events before other listeners
@@ -825,6 +826,7 @@ function checkUserAgent() {
     Globals.inVR = false;
     Globals.onMetaQuest = false;
     Globals.onMac = false;
+    Globals.isMobile = false;
 
     if (!isConsole) {
         const userAgent = navigator.userAgent;
@@ -840,6 +842,14 @@ function checkUserAgent() {
             Globals.onMac = true;
         }
 
+        // Check for mobile devices (phones/tablets)
+        if (/Android|webOS|iPhone|iPad|iPod|BlackBerry/i.test(navigator.userAgent) ||
+            (/Android|webOS|iPhone|iPad|iPod|BlackBerry/i.test(navigator.platform)) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 0)
+        ) {
+            Globals.isMobile = true;
+            console.log("Mobile device detected");
+        }
 
     }
 }
@@ -1919,6 +1929,10 @@ function renderMain(elapsed) {
     // so that the GUI and other things can update
     Globals.menuBar.updateListeners();
 
+    // Update AR mode if enabled
+    if (Globals.arMode) {
+        arModeManager.update();
+    }
 
     if (Globals.pendingActions > 0) {
         Globals.wasPending = 5;

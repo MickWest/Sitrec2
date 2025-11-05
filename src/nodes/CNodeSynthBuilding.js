@@ -245,6 +245,126 @@ export class CNodeSynthBuilding extends CNode3DGroup {
     }
     
     /**
+     * Update roof edge height from GUI slider
+     * This adjusts all roof vertices to be at the new height above the highest ground point
+     */
+    updateRoofEdgeHeight(newHeight) {
+        this.roofAGL = newHeight;
+        
+        // Find highest ground point
+        if (this.vertices.length < 8) return;
+        
+        const groundPositions = [];
+        for (let i = 0; i < 4; i++) {
+            if (this.vertices[i] && this.vertices[i].type === 'bottom') {
+                groundPositions.push(this.vertices[i].position);
+            }
+        }
+        
+        if (groundPositions.length !== 4) return;
+        
+        const refGround = groundPositions[0];
+        const refUp = getLocalUpVector(refGround);
+        
+        let maxHeight = 0;
+        let highPointIndex = 0;
+        for (let i = 0; i < 4; i++) {
+            const height = groundPositions[i].clone().sub(refGround).dot(refUp);
+            if (height > maxHeight) {
+                maxHeight = height;
+                highPointIndex = i;
+            }
+        }
+        const highestGround = groundPositions[highPointIndex].clone();
+        
+        // Update all roof vertices to be at roofAGL above highest ground
+        for (let i = 0; i < 4; i++) {
+            const groundPos = groundPositions[i];
+            const roofVertex = this.vertices[i + 4];
+            
+            if (roofVertex && roofVertex.type === 'top') {
+                const localUp = getLocalUpVector(groundPos);
+                const groundToHigh = highestGround.clone().sub(groundPos).dot(localUp);
+                roofVertex.position.copy(pointAbove(groundPos, groundToHigh + this.roofAGL));
+            }
+        }
+        
+        // Update roofline vertices (they are relative to roof edge)
+        this.updateRooflineVertices();
+        
+        // Rebuild mesh and controls
+        this.buildMesh();
+        if (this.editMode) {
+            this.createControlPoints();
+        }
+        
+        // Update GUI controllers
+        this.updateGUIControllers();
+        
+        setRenderOne(true);
+        saveSettings();
+    }
+    
+    /**
+     * Update roofline height from GUI slider
+     * This adjusts the roofline vertices to be at the new height above the roof edge
+     */
+    updateRooflineHeight(newHeight) {
+        this.rooflineHeightAGL = newHeight;
+        
+        // Update roofline vertices
+        this.updateRooflineVertices();
+        
+        // Rebuild mesh and controls
+        this.buildMesh();
+        if (this.editMode) {
+            this.createControlPoints();
+        }
+        
+        // Update GUI controllers
+        this.updateGUIControllers();
+        
+        setRenderOne(true);
+        saveSettings();
+    }
+    
+    /**
+     * Update roofline vertex positions based on current rooflineHeightAGL
+     */
+    updateRooflineVertices() {
+        const roof1 = this.vertices[8];
+        const roof2 = this.vertices[9];
+        
+        if (roof1 && roof1.type === 'roofline' && this.vertices[4] && this.vertices[5]) {
+            const roof1EdgePos = this.vertices[4].position.clone().add(this.vertices[5].position).multiplyScalar(0.5);
+            const upVector1 = getLocalUpVector(roof1EdgePos);
+            roof1.position.copy(roof1EdgePos.clone().add(upVector1.multiplyScalar(this.rooflineHeightAGL)));
+        }
+        
+        if (roof2 && roof2.type === 'roofline' && this.vertices[6] && this.vertices[7]) {
+            const roof2EdgePos = this.vertices[6].position.clone().add(this.vertices[7].position).multiplyScalar(0.5);
+            const upVector2 = getLocalUpVector(roof2EdgePos);
+            roof2.position.copy(roof2EdgePos.clone().add(upVector2.multiplyScalar(this.rooflineHeightAGL)));
+        }
+    }
+    
+    /**
+     * Update GUI controllers to reflect current values
+     * Controllers store display units, so we use setSIValue to convert from building's SI values
+     */
+    updateGUIControllers() {
+        if (this.roofEdgeHeightController) {
+            // Update proxy display value from building's SI value
+            this.roofEdgeHeightController.setSIValue(this.roofAGL);
+        }
+        if (this.ridgelineHeightController) {
+            // Update proxy display value from building's SI values
+            const totalHeight = this.roofAGL + this.rooflineHeightAGL;
+            this.ridgelineHeightController.setSIValue(totalHeight);
+        }
+    }
+    
+    /**
      * Snap all ground vertices (0-3) to terrain and update linked top vertices
      * This is called after moving or rotating the building to ensure ground vertices
      * stay on the terrain surface.
@@ -979,6 +1099,10 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                 CustomManager.buildingEditMenu = null;
             }
             
+            // Clear controller references
+            this.roofEdgeHeightController = null;
+            this.ridgelineHeightController = null;
+            
             // Hide GUI folder
             if (this.guiFolder) {
                 this.guiFolder.hide();
@@ -1016,6 +1140,9 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         // Rebuild the mesh with new vertex positions
         this.buildMesh();
         
+        // Update GUI controllers to reflect restored values
+        this.updateGUIControllers();
+        
         // Update control points if in edit mode
         if (this.editMode) {
             this.createControlPoints();
@@ -1040,6 +1167,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         EventManager.addEventListener("elevationChanged", () => {
             this.recalculateVerticesFromTerrain();
             this.buildMesh();
+            this.updateGUIControllers();
             setRenderOne();
         });
     }
@@ -1893,6 +2021,9 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             
             // Sync parameters from the modified vertices
             this.syncParametersFromVertices();
+            
+            // Update GUI controllers to reflect new values
+            this.updateGUIControllers();
             
             // Recreate control points to update their positions
             this.createControlPoints();

@@ -1,7 +1,18 @@
 // A variety of functions related to the jet and the atflir pod orientation, and glare
 // so mostly related to Gimbal, GoFast, FLIR1 and Aguadilla
 
-import {EarthRadiusMiles, gui, guiMenus, guiPhysics, guiTweaks, infoDiv, NodeMan, setRenderOne, Sit} from "./Globals";
+import {
+    EarthRadiusMiles,
+    Globals,
+    gui,
+    guiMenus,
+    guiPhysics,
+    guiTweaks,
+    infoDiv,
+    NodeMan,
+    setRenderOne,
+    Sit
+} from "./Globals";
 import {par} from "./par";
 import {metersFromMiles, metersFromNM, radians} from "./utils";
 import {EA2XYZ, EAJP2PR, getLocalUpVector, PRJ2XYZ} from "./SphericalMath";
@@ -73,8 +84,12 @@ import {
     ATFLIR,
     bSphere,
     glareSphere,
-    glareSprite, setASphere,
-    setATFLIR, setBSphere, setGlareSphere, setGlareSprite,
+    glareSprite,
+    setASphere,
+    setATFLIR,
+    setBSphere,
+    setGlareSphere,
+    setGlareSprite,
     setTargetSphere,
     targetSphere,
     vizRadius
@@ -995,10 +1010,8 @@ export function initViews() {
     }
 
     // mobile adjustments, no keyboard, no chart, UI closed
-    if (/Android|webOS|iPhone|iPad|iPod|BlackBerry/i.test(navigator.userAgent) ||
-        (/Android|webOS|iPhone|iPad|iPod|BlackBerry/i.test(navigator.platform)) ||
-        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 0)
-    ) {
+    // Note: Globals.isMobile is set early in index.js checkUserAgent()
+    if (Globals.isMobile) {
         gui.close()
         par.showChart = false;
         chartDiv.style.display = 'none';

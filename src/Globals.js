@@ -11,6 +11,8 @@ export var Globals = {
     debugGPUBacklog: false,  // Enable logging of GPU buffer flushes
     showTileStats: false,  // Enable tile statistics logging
     showCompassElevation: false, // Show elevation on compass
+    isMobile: false, // Is device a mobile/touchscreen device
+    arMode: false, // AR mode active (camera follows device orientation)
     
     // Granular render debug flags - shared across ALL views
     renderDebugFlags: {

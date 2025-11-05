@@ -1,7 +1,7 @@
 // Helper functions for lil-gui
 import GUI, {Controller} from "./js/lil-gui.esm";
 //import {updateSize} from "./JetStuff";
-import {Globals, setMouseOverGUI} from "./Globals";
+import {Globals, setMouseOverGUI, Units} from "./Globals";
 import {Color} from "three";
 import {assert} from "./assert";
 import {ViewMan} from "./CViewManager";
@@ -149,6 +149,154 @@ Controller.prototype.setValueQuietly = function(value) {
     this.updateDisplay();
 
     return this; // Return the controller to allow method chaining
+}
+
+// Add unit conversion support to numerical controllers
+// Usage: controller.setUnitType("small") - for height/distance in m/ft
+// Controller stores values in current display units (feet or meters)
+// External code should use getSIValue()/setSIValue() to interact in SI units
+Controller.prototype.setUnitType = function(unitType) {
+    // Store the unit type
+    this._unitType = unitType;
+    
+    // Only works for number controllers with $input
+    if (!this.$input) {
+        console.warn('setUnitType only works on number controllers');
+        return this;
+    }
+    
+    // Store the original name (without units)
+    if (!this._originalName) {
+        this._originalName = this._name;
+    }
+    
+    // Store original min/max/step in SI units (only first time)
+    if (this._originalMinSI === undefined) {
+        // Assume initial values are in SI units
+        this._originalMinSI = this._min;
+        this._originalMaxSI = this._max;
+        this._originalStepSI = this._step;
+        
+        // Convert the initial value from SI to current display units
+        if (Units) {
+            const unitInfo = Units.factors[Units.units][unitType];
+            if (unitInfo) {
+                const currentSIValue = this.getValue();
+                const displayValue = currentSIValue / unitInfo.toM;
+                // Set without triggering onChange
+                this.object[this.property] = displayValue;
+            }
+        }
+    }
+    
+    // Update the display name with units
+    const updateName = () => {
+        if (!Units) return;
+        
+        const unitInfo = Units.factors[Units.units][this._unitType];
+        if (unitInfo) {
+            this._name = this._originalName + ' (' + unitInfo.abbrev + ')';
+            this.$name.innerHTML = this._name;
+        }
+    };
+    
+    // Convert min/max/step to current display units
+    const updateRanges = () => {
+        if (!Units) return;
+        
+        const unitInfo = Units.factors[Units.units][this._unitType];
+        if (!unitInfo) return;
+        
+        this._min = this._originalMinSI / unitInfo.toM;
+        this._max = this._originalMaxSI / unitInfo.toM;
+        this._step = this._originalStepSI / unitInfo.toM;
+        this._onUpdateMinMax();
+    };
+    
+    // Initial setup
+    updateName();
+    updateRanges();
+    
+    // Listen for unit changes
+    const onUnitsChange = (oldUnits) => {
+        if (!Units) return;
+        
+        const oldUnitInfo = Units.factors[oldUnits][this._unitType];
+        const newUnitInfo = Units.factors[Units.units][this._unitType];
+        if (!oldUnitInfo || !newUnitInfo) return;
+        
+        // Convert the stored value from old units to new units
+        // old display value * toM = SI value
+        // SI value / new toM = new display value
+        const conversionFactor = oldUnitInfo.toM / newUnitInfo.toM;
+        const oldDisplayValue = this.getValue();
+        const newDisplayValue = oldDisplayValue * conversionFactor;
+        
+        // Update the stored value without triggering onChange
+        this.object[this.property] = newDisplayValue;
+        
+        // Update ranges and display
+        updateRanges();
+        updateName();
+        this.updateDisplay();
+    };
+    
+    // Listen for global units changes
+    if (!this._unitsCheckInterval) {
+        let lastUnits = Units ? Units.units : null;
+        this._unitsCheckInterval = setInterval(() => {
+            if (Units && Units.units !== lastUnits) {
+                const oldUnits = lastUnits;
+                lastUnits = Units.units;
+                onUnitsChange(oldUnits);
+            }
+        }, 500);
+    }
+    
+    this.updateDisplay();
+    
+    return this; // Return the controller to allow method chaining
+}
+
+// Get value in SI units (meters)
+Controller.prototype.getSIValue = function() {
+    if (!this._unitType || !Units) {
+        return this.getValue();
+    }
+    
+    const unitInfo = Units.factors[Units.units][this._unitType];
+    if (!unitInfo) {
+        return this.getValue();
+    }
+    
+    // Convert from display units to SI units
+    const displayValue = this.getValue();
+    return displayValue * unitInfo.toM;
+}
+
+// Set value in SI units (meters) 
+// This updates the controller WITHOUT triggering onChange (used for syncing from model)
+Controller.prototype.setSIValue = function(siValue) {
+    if (!this._unitType || !Units) {
+        // No unit conversion - just update directly without triggering onChange
+        this.object[this.property] = siValue;
+        this.updateDisplay();
+        return this;
+    }
+    
+    const unitInfo = Units.factors[Units.units][this._unitType];
+    if (!unitInfo) {
+        // No unit info - update directly without triggering onChange
+        this.object[this.property] = siValue;
+        this.updateDisplay();
+        return this;
+    }
+    
+    // Convert from SI units to display units and update WITHOUT triggering onChange
+    const displayValue = siValue / unitInfo.toM;
+    this.object[this.property] = displayValue;
+    this.updateDisplay();
+    return this;
 }
 
 // Set this button as the double-click action for its parent GUI/folder

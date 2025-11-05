@@ -5,6 +5,7 @@ import {CNodeViewUI} from "./CNodeViewUI";
 import {getAzElFromPositionAndForward, getCompassHeading} from "../SphericalMath";
 import {Globals, NodeMan} from "../Globals";
 import {Vector3} from "three";
+import {arModeManager} from "../ARMode";
 
 export class   CNodeCompassUI extends CNodeViewUI {
 
@@ -29,11 +30,41 @@ export class   CNodeCompassUI extends CNodeViewUI {
         this.lastElevation = null;
         this.lastTargetWindFrom = null;
         this.lastLocalWindFrom = null;
+        this.lastARMode = false;
+        
+        // Long-press detection for AR mode
+        this.longPressTimer = null;
+        this.longPressDelay = 800; // milliseconds
+        this.isLongPress = false;
+        
+        // Enable pointer events for compass interactions (overrides parent's ignoreMouseEvents)
+        this.canvas.style.pointerEvents = 'auto';
+        
+        // Add touch event listeners for mobile support
+        if (Globals.isMobile) {
+            this.canvas.addEventListener('touchstart', this.handleTouchStart.bind(this), { passive: false });
+            this.canvas.addEventListener('touchend', this.handleTouchEnd.bind(this), { passive: false });
+            this.canvas.addEventListener('touchmove', this.handleTouchMove.bind(this), { passive: false });
+        }
     }
 
 
     onMouseDown(e, mouseX, mouseY) {
         const view = this.in.relativeTo;
+        
+        console.log("Compass onMouseDown - view:", view?.id, "isMobile:", Globals.isMobile);
+        
+        // For lookView on mobile, start long-press detection for AR mode
+        if (view?.id === "lookView" && Globals.isMobile) {
+            console.log("Starting long-press timer for AR mode");
+            this.isLongPress = false;
+            this.longPressTimer = setTimeout(() => {
+                console.log("Long-press detected! Toggling AR mode");
+                this.isLongPress = true;
+                this.toggleARMode();
+            }, this.longPressDelay);
+            return;
+        }
         
         // clicking on the compass in the main view should rotate the view to north
         if (view?.id === "mainView") {
@@ -57,6 +88,210 @@ export class   CNodeCompassUI extends CNodeViewUI {
                 }
             });
         }
+    }
+    
+    onMouseUp(e, mouseX, mouseY) {
+        const view = this.in.relativeTo;
+        
+        // Cancel long-press timer if released early
+        if (this.longPressTimer) {
+            clearTimeout(this.longPressTimer);
+            this.longPressTimer = null;
+        }
+        
+        // If this wasn't a long press on lookView mobile, handle as regular click
+        if (view?.id === "lookView" && Globals.isMobile && !this.isLongPress) {
+            Globals.showCompassElevation = !Globals.showCompassElevation;
+            // Force update of all compass UI nodes by resetting their state
+            NodeMan.iterate((id, node) => {
+                if (node.constructor.name === "CNodeCompassUI") {
+                    node.lastHeading = null;
+                }
+            });
+        }
+        
+        // Reset long-press state
+        this.isLongPress = false;
+    }
+    
+    onMouseMove(e, mouseX, mouseY) {
+        // Cancel long-press if user moves finger (helps prevent accidental activation)
+        if (this.longPressTimer) {
+            console.log("Movement detected - canceling long-press timer");
+            clearTimeout(this.longPressTimer);
+            this.longPressTimer = null;
+        }
+    }
+    
+    handleTouchStart(e) {
+        const view = this.in.relativeTo;
+        
+        console.log("Compass touchStart - view:", view?.id, "isMobile:", Globals.isMobile);
+        
+        // Prevent default to avoid triggering mouse events afterward
+        e.preventDefault();
+        
+        // For lookView on mobile, start long-press detection for AR mode
+        if (view?.id === "lookView" && Globals.isMobile) {
+            console.log("Starting long-press timer for AR mode (touch)");
+            this.isLongPress = false;
+            this.touchStartTime = Date.now();
+            this.longPressTimer = setTimeout(() => {
+                console.log("Long-press detected! Toggling AR mode (touch)");
+                this.isLongPress = true;
+                this.toggleARMode();
+            }, this.longPressDelay);
+        }
+    }
+    
+    handleTouchEnd(e) {
+        const view = this.in.relativeTo;
+        
+        console.log("Compass touchEnd - view:", view?.id, "isLongPress:", this.isLongPress);
+        
+        // Prevent default to avoid triggering mouse events
+        e.preventDefault();
+        
+        // Cancel long-press timer if released early
+        if (this.longPressTimer) {
+            clearTimeout(this.longPressTimer);
+            this.longPressTimer = null;
+        }
+        
+        // If this wasn't a long press on lookView mobile, handle as regular tap (toggle elevation)
+        if (view?.id === "lookView" && Globals.isMobile && !this.isLongPress) {
+            console.log("Short tap detected - toggling compass elevation");
+            Globals.showCompassElevation = !Globals.showCompassElevation;
+            // Force update of all compass UI nodes by resetting their state
+            NodeMan.iterate((id, node) => {
+                if (node.constructor.name === "CNodeCompassUI") {
+                    node.lastHeading = null;
+                }
+            });
+        }
+        
+        // Reset long-press state
+        this.isLongPress = false;
+    }
+    
+    handleTouchMove(e) {
+        // Cancel long-press if user moves finger significantly
+        // Allow small movements (< 10px) to account for natural finger wobble
+        if (this.longPressTimer && e.touches.length > 0) {
+            const touch = e.touches[0];
+            const rect = this.canvas.getBoundingClientRect();
+            const moveDistance = Math.sqrt(
+                Math.pow(touch.clientX - rect.left - rect.width/2, 2) +
+                Math.pow(touch.clientY - rect.top - rect.height/2, 2)
+            );
+            
+            // Only cancel if moved more than 10 pixels
+            if (moveDistance > 10) {
+                console.log("Significant movement detected - canceling long-press timer");
+                e.preventDefault();
+                clearTimeout(this.longPressTimer);
+                this.longPressTimer = null;
+            }
+        }
+    }
+    
+    async toggleARMode() {
+        if (Globals.arMode) {
+            arModeManager.disableARMode();
+            alert('AR Mode disabled');
+        } else {
+            const view = this.in.relativeTo;
+            if (view?.id === "lookView") {
+                // If permission not yet granted, show a button that user must click
+                // (iOS requires permission request in a direct user gesture, not setTimeout)
+                if (!arModeManager.permissionGranted) {
+                    this.showARPermissionButton();
+                } else {
+                    // Permission already granted, activate directly
+                    const success = await arModeManager.enableARMode(this.in.camera);
+                    if (success) {
+                        alert('AR Mode enabled! Point your device to look around.');
+                    } else {
+                        alert('Failed to enable AR Mode. Please check permissions.');
+                    }
+                }
+            }
+        }
+    }
+    
+    showARPermissionButton() {
+        // Create overlay with button
+        const overlay = document.createElement('div');
+        overlay.style.position = 'fixed';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.width = '100%';
+        overlay.style.height = '100%';
+        overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+        overlay.style.display = 'flex';
+        overlay.style.flexDirection = 'column';
+        overlay.style.justifyContent = 'center';
+        overlay.style.alignItems = 'center';
+        overlay.style.zIndex = '10000';
+        
+        const message = document.createElement('div');
+        message.textContent = 'Enable AR Mode to use device orientation';
+        message.style.color = 'white';
+        message.style.fontSize = '18px';
+        message.style.marginBottom = '20px';
+        message.style.textAlign = 'center';
+        message.style.padding = '0 20px';
+        
+        const button = document.createElement('button');
+        button.textContent = 'Allow AR Mode';
+        button.style.padding = '15px 30px';
+        button.style.fontSize = '18px';
+        button.style.backgroundColor = '#4CAF50';
+        button.style.color = 'white';
+        button.style.border = 'none';
+        button.style.borderRadius = '8px';
+        button.style.cursor = 'pointer';
+        button.style.marginBottom = '10px';
+        
+        const cancelButton = document.createElement('button');
+        cancelButton.textContent = 'Cancel';
+        cancelButton.style.padding = '10px 20px';
+        cancelButton.style.fontSize = '16px';
+        cancelButton.style.backgroundColor = '#666';
+        cancelButton.style.color = 'white';
+        cancelButton.style.border = 'none';
+        cancelButton.style.borderRadius = '8px';
+        cancelButton.style.cursor = 'pointer';
+        
+        // Button click handler - this is a direct user gesture!
+        button.onclick = async () => {
+            console.log("AR permission button clicked - requesting permission");
+            const granted = await arModeManager.requestPermission();
+            document.body.removeChild(overlay);
+            
+            if (granted) {
+                console.log("Permission granted, enabling AR mode");
+                const success = await arModeManager.enableARMode(this.in.camera);
+                if (success) {
+                    alert('AR Mode enabled! Point your device to look around.');
+                } else {
+                    alert('Failed to enable AR Mode.');
+                }
+            } else {
+                console.log("Permission denied");
+                alert('AR Mode requires device orientation permission.');
+            }
+        };
+        
+        cancelButton.onclick = () => {
+            console.log("AR permission request cancelled");
+            document.body.removeChild(overlay);
+        };
+        
+        overlay.appendChild(message);
+        overlay.appendChild(button);
+        overlay.appendChild(cancelButton);
+        document.body.appendChild(overlay);
     }
 
 
@@ -89,23 +324,33 @@ export class   CNodeCompassUI extends CNodeViewUI {
         const currentTargetWindFrom = targetWind?.from;
         const currentLocalWindFrom = localWind?.from;
 
-        // Check if anything has changed
+        // Check if anything has changed (including AR mode status)
         if (this.lastHeading === headingRound && this.lastElevation === elevationRound &&
             this.lastTargetWindFrom === currentTargetWindFrom &&
-            this.lastLocalWindFrom === currentLocalWindFrom) {
+            this.lastLocalWindFrom === currentLocalWindFrom &&
+            this.lastARMode === Globals.arMode) {
             return; // Nothing changed, early out
         }
 
         // set the text to the rounded heading
+        let headingText = "";
         if(Globals.showCompassElevation === false) {
-            this.removeText("heading");
-            this.text = this.addText("heading", headingRound + "°", 50, 20, 20, "white", "center", "Arial")
+            headingText = headingRound + "°";
         }
         else {
-            this.removeText("heading");
-            this.text = this.addText("heading", headingRound + "° / " + elevationRound + "°", 50, 20, 16, "white", "center", "Arial")
+            headingText = headingRound + "° / " + elevationRound + "°";
             this.lastElevation = elevationRound; // only track elevation if we're displaying it
         }
+        
+        // Add AR mode indicator if active
+        const view = this.in.relativeTo;
+        if (Globals.arMode && view?.id === "lookView") {
+            headingText = "🎯 " + headingText + " AR";
+        }
+        
+        this.removeText("heading");
+        this.text = this.addText("heading", headingText, 50, 20, 
+            Globals.showCompassElevation ? 16 : 20, "white", "center", "Arial");
 
         // after updating the text, render the text
         super.renderCanvas(frame);
@@ -114,6 +359,7 @@ export class   CNodeCompassUI extends CNodeViewUI {
         this.lastHeading = headingRound;
         this.lastTargetWindFrom = currentTargetWindFrom;
         this.lastLocalWindFrom = currentLocalWindFrom;
+        this.lastARMode = Globals.arMode;
 
         // now draw a centered arrow rotated by the heading
 
@@ -193,6 +439,24 @@ export class   CNodeCompassUI extends CNodeViewUI {
         this.rLine(this.cx,this.cy-length,this.cx+3,this.cy-length*0.5,heading);
         c.stroke();
 
+    }
+    
+    dispose() {
+        // Clean up touch event listeners
+        if (Globals.isMobile) {
+            this.canvas.removeEventListener('touchstart', this.handleTouchStart.bind(this));
+            this.canvas.removeEventListener('touchend', this.handleTouchEnd.bind(this));
+            this.canvas.removeEventListener('touchmove', this.handleTouchMove.bind(this));
+        }
+        
+        // Clear any pending timers
+        if (this.longPressTimer) {
+            clearTimeout(this.longPressTimer);
+            this.longPressTimer = null;
+        }
+        
+        // Call parent dispose
+        super.dispose();
     }
 
 
