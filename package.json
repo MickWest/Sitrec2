@@ -59,7 +59,7 @@
     "copy-webpack-plugin": "^13.0.1",
     "css-loader": "^7.1.2",
     "dotenv-webpack": "^8.1.1",
-    "express": "^4.21.2",
+    "express": "^4.22.1",
     "fs-extra": "^11.3.1",
     "html-webpack-plugin": "^5.6.4",
     "http-proxy-middleware": "^3.0.3",
