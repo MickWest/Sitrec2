@@ -10,9 +10,8 @@ import {NoColorSpace} from "three";
 // Create and configure a DRACO loader
 function createDRACOLoader() {
     const dracoLoader = new DRACOLoader();
-    // Set the path to the DRACO decoder files
-    // These are typically served from a CDN or local path
-    dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+    // Set the path to the DRACO decoder files (served locally)
+    dracoLoader.setDecoderPath('./libs/draco/');
     return dracoLoader;
 }
 

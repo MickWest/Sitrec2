@@ -77,4 +77,10 @@ patterns.push(
     { from: "site.webmanifest", to: "./" }
 );
 
+// Copy Draco decoder files for local hosting
+patterns.push({
+    from: path.join(__dirname, 'node_modules/three/examples/jsm/libs/draco/gltf'),
+    to: './libs/draco'
+});
+
 module.exports = patterns;
