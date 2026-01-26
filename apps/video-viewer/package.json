@@ -11,7 +11,7 @@
     "build-universal": "electron-builder --mac --universal"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
+    "electron": "^35.7.5",
     "electron-builder": "^25.0.0"
   },
   "build": {
