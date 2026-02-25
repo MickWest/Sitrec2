@@ -5,6 +5,13 @@ export function incrementMainLoopCount() {
 };
 
 export const Globals = {
+    // Earth model radii — updated by updateEarthRadii() in LLA-ECEF-ENU.js.
+    // Both default to wgs84.RADIUS so legacy code is unaffected until a sitch loads.
+    // useEllipsoid=false → both equal wgs84.RADIUS (degenerate sphere).
+    // useEllipsoid=true  → equatorRadius=wgs84.RADIUS, polarRadius=wgs84.POLAR_RADIUS.
+    equatorRadius: 6378137,   // wgs84.RADIUS
+    polarRadius:   6378137,   // starts as sphere; set to wgs84.POLAR_RADIUS when useEllipsoid
+
     editingTrack: null,  // Reference to the CMetaTrack currently being edited
     editingBuilding: null,  // Reference to the CNodeSynthBuilding currently being edited
     editingClouds: null,  // Reference to the CNodeSynthClouds currently being edited
@@ -79,6 +86,7 @@ export let guiJetTweaks;
 export let guiShowHideViews
 export let guiShowHideGraphs
 export let guiPhysics;
+
 
 export let infoDiv;
 export function setInfoDiv(i) {infoDiv=i;}

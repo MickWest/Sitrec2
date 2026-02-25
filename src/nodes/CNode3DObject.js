@@ -18,11 +18,13 @@ import {
     CubeCamera,
     CurvePath,
     CylinderGeometry,
+    DataTexture,
     DodecahedronGeometry,
     EdgesGeometry,
     HalfFloatType,
     IcosahedronGeometry,
     LatheGeometry,
+    LinearFilter,
     LineCurve3,
     LineSegments,
     Mesh,
@@ -32,13 +34,17 @@ import {
     MeshPhysicalMaterial,
     OctahedronGeometry,
     QuadraticBezierCurve3,
+    Raycaster,
+    RGBAFormat,
     RingGeometry,
+    ShaderMaterial,
     Sphere,
     SphereGeometry,
     TetrahedronGeometry,
     TorusGeometry,
     TorusKnotGeometry,
     TubeGeometry,
+    UnsignedByteType,
     Vector2,
     Vector3,
     WebGLCubeRenderTarget,
@@ -46,7 +52,8 @@ import {
 } from "three";
 import {FileManager, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {assert} from "../assert";
-import {disposeScene, propagateLayerMaskObject} from "../threeExt";
+import {DebugArrowAB, disposeScene, propagateLayerMaskObject, removeDebugArrow} from "../threeExt";
+import {CNodeViewText} from "./CNodeViewText.js";
 import {loadGLTFModel} from "./CNode3DModel";
 import {V3} from "../threeUtils";
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
@@ -55,6 +62,8 @@ import {EUSToLLA} from "../LLA-ECEF-ENU";
 
 import {findRootTrack} from "../FindRootTrack";
 import {GlobalScene} from "../LocalFrame";
+import {sharedUniforms} from "../js/map33/material/SharedUniforms";
+import {par} from "../par";
 
 // Note these files are CASE SENSIVE. Mac OS is case insensitive, so be careful. (e.g. F-15.glb will not work on my deployed server)
 export const ModelFiles = {
@@ -455,6 +464,158 @@ const gTypes = {
 
 }
 
+// Gradient palette definitions for thermal imaging visualization
+// Each palette is an array of [position, r, g, b] color stops
+const gradientPalettes = {
+    "Ironbow": [
+        [0, 0, 0, 0],
+        [0.25, 42, 0, 102],
+        [0.5, 204, 51, 0],
+        [0.75, 255, 153, 0],
+        [1, 255, 255, 255],
+    ],
+    "Black Hot": [
+        [0, 255, 255, 255],
+        [1, 0, 0, 0],
+    ],
+    "White Hot": [
+        [0, 0, 0, 0],
+        [1, 255, 255, 255],
+    ],
+    "Rainbow": [
+        [0, 0, 0, 255],
+        [0.25, 0, 255, 255],
+        [0.5, 0, 255, 0],
+        [0.75, 255, 255, 0],
+        [1, 255, 0, 0],
+    ],
+    "Lava": [
+        [0, 0, 0, 0],
+        [0.33, 204, 0, 0],
+        [0.66, 255, 153, 0],
+        [1, 255, 255, 255],
+    ],
+    "Arctic": [
+        [0, 0, 0, 51],
+        [0.5, 0, 204, 204],
+        [1, 255, 255, 255],
+    ],
+    "Plasma": [
+        [0, 13, 8, 135],
+        [0.25, 126, 3, 168],
+        [0.5, 204, 71, 120],
+        [0.75, 248, 149, 64],
+        [1, 240, 249, 33],
+    ],
+};
+
+// Create a 256x1 DataTexture from a named gradient palette
+function createGradientTexture(paletteName) {
+    const stops = gradientPalettes[paletteName] || gradientPalettes["Ironbow"];
+    const width = 256;
+    const data = new Uint8Array(width * 4); // RGBA
+
+    for (let i = 0; i < width; i++) {
+        const t = i / (width - 1);
+
+        // Find surrounding stops
+        let lower = stops[0];
+        let upper = stops[stops.length - 1];
+        for (let s = 0; s < stops.length - 1; s++) {
+            if (t >= stops[s][0] && t <= stops[s + 1][0]) {
+                lower = stops[s];
+                upper = stops[s + 1];
+                break;
+            }
+        }
+
+        // Interpolate between stops
+        const range = upper[0] - lower[0];
+        const frac = range > 0 ? (t - lower[0]) / range : 0;
+
+        const idx = i * 4;
+        data[idx]     = Math.round(lower[1] + (upper[1] - lower[1]) * frac);
+        data[idx + 1] = Math.round(lower[2] + (upper[2] - lower[2]) * frac);
+        data[idx + 2] = Math.round(lower[3] + (upper[3] - lower[3]) * frac);
+        data[idx + 3] = 255;
+    }
+
+    const texture = new DataTexture(data, width, 1, RGBAFormat, UnsignedByteType);
+    texture.minFilter = LinearFilter;
+    texture.magFilter = LinearFilter;
+    texture.needsUpdate = true;
+    return texture;
+}
+
+const gradientVertexShader = `
+    varying vec3 vWorldPosition;
+    varying vec3 vWorldNormal;
+    varying vec4 vPosition;
+
+    void main() {
+        // All gradient modes use world-space positions so the gradient is
+        // consistent across model hierarchies with varying internal transforms.
+        vec4 worldPos = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = worldPos.xyz;
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        vPosition = projectionMatrix * mvPosition;
+        gl_Position = vPosition;
+    }
+`;
+
+const gradientFragmentShader = `
+    uniform sampler2D gradientMap;
+    uniform vec3 gradientCenter;
+    uniform vec3 gradientDir;
+    uniform float gradientHalfHeight;
+    uniform float gradientScale;
+    uniform float gradientShift;
+    uniform float useLeadingEdge;
+    uniform float reverseGradient;
+    uniform vec3 baseColor;
+    uniform float baseMix;
+    uniform float nearPlane;
+    uniform float farPlane;
+
+    varying vec3 vWorldPosition;
+    varying vec3 vWorldNormal;
+    varying vec4 vPosition;
+
+    void main() {
+        float t;
+
+        if (useLeadingEdge > 0.5) {
+            // Leading Edge: color based on angle between surface normal and motion direction.
+            // Surfaces facing into the motion (nose, wing leading edges) are "hot" (t=1),
+            // surfaces perpendicular or facing away are "cold" (t=0).
+            // The dot product gives 0-1, treated as a unit-diameter space so
+            // scale and shift apply the same way as position-based modes.
+            float d = dot(normalize(vWorldNormal), gradientDir) - gradientShift;
+            float extent = 0.5 * (gradientScale / 100.0);
+            t = d / (2.0 * extent) + 0.5;
+        } else {
+            // Position-based gradient: project onto direction vector
+            float d = dot(vWorldPosition - gradientCenter, gradientDir);
+            float extent = gradientHalfHeight * (gradientScale / 100.0);
+            t = d / (2.0 * extent) + 0.5;
+        }
+
+        if (reverseGradient > 0.5) {
+            t = 1.0 - t;
+        }
+        t = clamp(t, 0.0, 1.0);
+
+        vec4 gradientColor = texture2D(gradientMap, vec2(t, 0.5));
+        gl_FragColor = vec4(mix(gradientColor.rgb, baseColor, baseMix), 1.0);
+
+        // Logarithmic depth (matching other shaders in the codebase)
+        float w = vPosition.w;
+        float z = (log2(max(nearPlane, 1.0 + w)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
+        gl_FragDepthEXT = z * 0.5 + 0.5;
+    }
+`;
+
 // material types for meshes
 const materialTypes = {
     basic: {
@@ -524,12 +685,25 @@ const materialTypes = {
             flatShading: [false, "Enable flat shading - i.e. no smooth shading"],
             fog: [true, "Enable Fog"],
         }
+    },
+
+    gradient: {
+        m: null, // custom ShaderMaterial, not a standard Three.js material
+        params: {
+            gradientPalette: [["Ironbow", "Black Hot", "White Hot", "Rainbow", "Lava", "Arctic", "Plasma"], "Color palette for the gradient (thermal imaging presets)"],
+            gradientDirection: [["Model Down", "World Down", "Motion Forward", "Leading Edge"], "Axis along which the gradient is mapped: Model/World Down use Y axis, Motion Forward along velocity, Leading Edge colors by angle between surface normal and velocity"],
+            reverse: [false, "Flip the gradient so the start color appears at the opposite end"],
+            baseColor: ["black", "Base color to blend with the gradient"],
+            baseMix: [[0, 0, 1, 0.01], "Blend between gradient and base color (0 = pure gradient, 1 = pure base color)"],
+            scale: [[100, 1, 1000, 1], "Scale the gradient extent as a percentage of the object height (100% = full height)"],
+            shift: [[0, -100, 100, 1], "Offset the gradient center along its direction (% of bounding diameter)"],
+        }
     }
 
 }
 
 const commonMaterialParams = {
-    material: [["basic", "lambert", "phong", "physical", "envMap"],"Type of Material lighting"],
+    material: [["basic", "lambert", "phong", "physical", "envMap", "gradient"],"Type of Material lighting"],
     wireframe: [false, "Display geometry object as a wireframe"],
     edges: [false, "Display geometry object as edges"],
     depthTest: [true, "Enable depth testing"],
@@ -654,6 +828,25 @@ export class CNode3DObject extends CNode3DGroup {
        this.gui.add(this, "exportToKML").name("Export to KML")
             .tooltip("Export this 3D object as a KML file for Google Earth")
             .isCommon = true;
+
+        // Reflection Analysis
+        this.reflectionGridSize = 50;
+        this.reflectionArrowIds = [];
+
+        this.reflectionFolder = this.gui.addFolder("Reflection Analysis").close();
+        this.reflectionFolder.isCommon = true;
+
+        this.reflectionFolder.add(this, "startReflectionAnalysis")
+            .name("Start Analysis").isCommon = true;
+
+        this.reflectionFolder.add(this, "reflectionGridSize", 5, 100, 1)
+            .name("Grid Size")
+            .onFinishChange(() => {
+                if (this.reflectionArrowIds.length > 0) this.startReflectionAnalysis();
+            }).isCommon = true;
+
+        this.reflectionFolder.add(this, "cleanUpReflectionAnalysis")
+            .name("Clean Up").isCommon = true;
 
         this.rebuild();
 
@@ -1289,8 +1482,21 @@ export class CNode3DObject extends CNode3DGroup {
         for (const key in v.geometryParams) {
             this.geometryParams[key] = v.geometryParams[key];
         }
-        for (const key in v.materialParams) {
-            this.materialParams[key] = v.materialParams[key];
+
+        // First rebuildMaterial creates the correct param structure and UI
+        // for the (possibly new) material type. This resets this.materialParams
+        // with defaults and builds fresh GUI controllers.
+        this.rebuildMaterial();
+
+        // Now copy deserialized material params into the freshly created object.
+        // The GUI controllers are bound to this.materialParams with .listen(),
+        // so they'll reflect the restored values.
+        if (v.materialParams) {
+            for (const key in v.materialParams) {
+                if (key in this.materialParams) {
+                    this.materialParams[key] = v.materialParams[key];
+                }
+            }
         }
 
         // Migrate old 'specularcolor' to correct Three.js property names (Feb 2026)
@@ -1304,8 +1510,8 @@ export class CNode3DObject extends CNode3DGroup {
             delete this.materialParams.specularcolor;
         }
 
-        // might need a modelParams
-
+        // Rebuild material again with the deserialized values.
+        // Since the type hasn't changed, params won't be reset.
         this.rebuildMaterial();
         this.rebuild();
 
@@ -1353,7 +1559,7 @@ export class CNode3DObject extends CNode3DGroup {
 
             let controller;
 
-            const colorNames = ["color", "emissive", "specularColor", "sheenColor"]
+            const colorNames = ["color", "emissive", "specularColor", "sheenColor", "baseColor"]
             if (colorNames.includes(key)) {
                 // assume string values are colors
                 // (might need to have an array of names of color keys, like "emissive"
@@ -1466,6 +1672,19 @@ export class CNode3DObject extends CNode3DGroup {
             } else {
                 this.materialFolder.show();
             }
+
+            // Hide common material controls that don't apply to gradient ShaderMaterial
+            const isGradient = this.common.material?.toLowerCase() === "gradient";
+            const hideForGradient = ['wireframe', 'edges', 'depthTest', 'opacity', 'transparent'];
+            for (const c of this.materialFolder.controllers) {
+                if (hideForGradient.includes(c.property)) {
+                    if (isGradient) {
+                        c.hide();
+                    } else {
+                        c.show();
+                    }
+                }
+            }
         }
     }
 
@@ -1560,7 +1779,12 @@ export class CNode3DObject extends CNode3DGroup {
                         // Cache the bounding sphere in local coordinates for efficient camera collision detection
                         this.cachedBoundingSphere = computeGroupBoundingSphere(this.model);
                         console.log("Cached bounding sphere for model:", model.file, "radius:", this.cachedBoundingSphere.radius);
-                        
+
+                        // Cache half extents of the local bounding box for gradient mapping
+                        const modelBox = computeLocalBoundingBox(this.model);
+                        this.cachedHalfHeight = (modelBox.max.y - modelBox.min.y) / 2;
+                        this.cachedHalfLength = (modelBox.max.z - modelBox.min.z) / 2;
+
                         // Cache the height from center to lowest point for ground clamping
                         this.cachedCenterToLowestPoint = computeCenterToLowestPoint(this.model);
                         console.log("Cached center to lowest point for model:", model.file, "height:", this.cachedCenterToLowestPoint);
@@ -1674,7 +1898,7 @@ export class CNode3DObject extends CNode3DGroup {
         // For geometry objects, compute it from the geometry's bounding sphere
         this.geometry.computeBoundingSphere();
         this.cachedBoundingSphere = this.geometry.boundingSphere.clone();
-        
+
         // Cache the height from center to lowest point for ground clamping
         // For geometry objects, compute it from the geometry's bounding box
         this.geometry.computeBoundingBox();
@@ -1682,6 +1906,10 @@ export class CNode3DObject extends CNode3DGroup {
         const geomCenter = new Vector3();
         geomBox.getCenter(geomCenter);
         this.cachedCenterToLowestPoint = geomCenter.y - geomBox.min.y;
+
+        // Cache half extents of the bounding box for gradient mapping
+        this.cachedHalfHeight = (geomBox.max.y - geomBox.min.y) / 2;
+        this.cachedHalfLength = (geomBox.max.z - geomBox.min.z) / 2;
         
         this.propagateLayerMask()
         this.recalculate()
@@ -1909,15 +2137,39 @@ export class CNode3DObject extends CNode3DGroup {
 
         const params = {...this.materialParams};
         const isEnvMap = materialType === "envmap";
+        const isGradient = materialType === "gradient";
 
-        if (isEnvMap) {
+        if (isGradient) {
+            this.disposeCubeCamera();
+            const palette = this.materialParams.gradientPalette ?? "Ironbow";
+            const gradientTexture = createGradientTexture(palette);
+
+            this.material = new ShaderMaterial({
+                uniforms: {
+                    gradientMap: { value: gradientTexture },
+                    gradientCenter: { value: new Vector3() },
+                    gradientDir: { value: new Vector3(0, -1, 0) },
+                    gradientHalfHeight: { value: 1.0 },
+                    gradientScale: { value: this.materialParams.scale ?? 100 },
+                    gradientShift: { value: 0.0 },
+                    useLeadingEdge: { value: 0.0 },
+                    reverseGradient: { value: this.materialParams.reverse ? 1.0 : 0.0 },
+                    baseColor: { value: new Color(this.materialParams.baseColor ?? "black") },
+                    baseMix: { value: this.materialParams.baseMix ?? 0.0 },
+                    ...sharedUniforms,
+                },
+                vertexShader: gradientVertexShader,
+                fragmentShader: gradientFragmentShader,
+                fog: false,
+            });
+        } else if (isEnvMap) {
             delete params.envMapResolution;
             this.setupCubeCamera();
+            this.material = new materialDef.m(params);
         } else {
             this.disposeCubeCamera();
+            this.material = new materialDef.m(params);
         }
-
-        this.material = new materialDef.m(params);
     }
 
     setupCubeCamera() {
@@ -1960,13 +2212,15 @@ export class CNode3DObject extends CNode3DGroup {
         if (this.model === undefined || !this.common.applyMaterial) {
             return;
         }
+        const isShader = this.material && this.material.isShaderMaterial;
         this.model.traverse((child) => {
             if (child.isMesh) {
                 if (child.originalMaterial === undefined) {
                     // save the original material so we can restore it later
                     child.originalMaterial = child.material;
                 }
-                child.material = this.material.clone();
+                // ShaderMaterial is shared (not cloned) to avoid texture/uniform issues
+                child.material = isShader ? this.material : this.material.clone();
                 // // if the material has a map, then set the colorSpace to NoColorSpace
                 // if (child.material.map) {
                 //     child.material.map.colorSpace = NoColorSpace;
@@ -2063,6 +2317,59 @@ export class CNode3DObject extends CNode3DGroup {
         }
 
         this.updateEnvMap(view);
+
+        // Update gradient material uniforms with direction and extent data.
+        // All modes use world-space positions so the gradient is consistent across
+        // model hierarchies with varying internal transforms.
+        if (this.material && this.material.isShaderMaterial && this.material.uniforms.gradientHalfHeight) {
+            if (this.cachedBoundingSphere) {
+                const direction = this.materialParams.gradientDirection ?? "Model Down";
+
+                // Center is always in world space
+                const center = this.cachedBoundingSphere.center.clone();
+                center.applyMatrix4(this.group.matrixWorld);
+
+                const isLeadingEdge = direction === "Leading Edge";
+                const usesMotion = direction === "Motion Forward" || isLeadingEdge;
+
+                let dir;
+                if (usesMotion) {
+                    dir = this.getMotionForwardVector();
+                } else if (direction === "World Down") {
+                    dir = new Vector3(0, -1, 0);
+                } else {
+                    // Model Down: extract the object's local -Y axis in world space
+                    // from the group's world matrix. This accounts for any internal
+                    // model rotations and user-applied rotations.
+                    dir = new Vector3(0, -1, 0);
+                    dir.transformDirection(this.group.matrixWorld);
+                }
+
+                this.material.uniforms.useLeadingEdge.value = isLeadingEdge ? 1.0 : 0.0;
+
+                // Use half-length (Z) for motion-based modes, half-height (Y) for down modes
+                const halfExtent = usesMotion
+                    ? (this.cachedHalfLength ?? this.cachedBoundingSphere.radius)
+                    : (this.cachedHalfHeight ?? this.cachedBoundingSphere.radius);
+                const shift = this.materialParams.shift ?? 0;
+                if (isLeadingEdge) {
+                    // Leading Edge uses dot product space (0-1 unit diameter),
+                    // so shift is applied directly in the shader as an offset to d.
+                    this.material.uniforms.gradientShift.value = shift / 100;
+                } else {
+                    // Position-based modes: shift the center along the direction
+                    this.material.uniforms.gradientShift.value = 0;
+                    if (shift !== 0) {
+                        center.addScaledVector(dir, shift / 100 * halfExtent * 2);
+                    }
+                }
+
+                this.material.uniforms.gradientCenter.value.copy(center);
+                this.material.uniforms.gradientDir.value.copy(dir);
+                this.material.uniforms.gradientHalfHeight.value = halfExtent;
+                this.material.uniforms.gradientScale.value = this.materialParams.scale ?? 100;
+            }
+        }
     }
 
     updateEnvMap(view) {
@@ -2103,6 +2410,40 @@ export class CNode3DObject extends CNode3DGroup {
         this.group.visible = true;
     }
 
+    // Find the source track that drives this object's position via controllers
+    getSourceTrack() {
+        for (const inputID in this.inputs) {
+            const input = this.inputs[inputID];
+            if (input.isController && input.in && input.in.sourceTrack) {
+                return input.in.sourceTrack;
+            }
+        }
+        return null;
+    }
+
+    // Compute the forward direction from the object's motion (velocity vector)
+    // Returns a normalized world-space direction vector, or down if unavailable
+    getMotionForwardVector() {
+        const track = this.getSourceTrack();
+        if (track) {
+            const f = par.frame;
+            const maxF = (track.frames ?? Sit.frames) - 1;
+            // Use central difference when possible, forward/backward at edges
+            const f0 = Math.max(0, Math.min(f - 1, maxF));
+            const f1 = Math.max(0, Math.min(f + 1, maxF));
+            if (f0 !== f1) {
+                const p0 = track.p(f0);
+                const p1 = track.p(f1);
+                const dir = p1.sub(p0);
+                if (dir.lengthSq() > 0) {
+                    return dir.normalize();
+                }
+            }
+        }
+        // Fallback: use world down if no track or zero velocity
+        return new Vector3(0, -1, 0);
+    }
+
     applyEnvMapToModel(texture) {
         if (!this.model) return;
         this.model.traverse((child) => {
@@ -2128,7 +2469,327 @@ export class CNode3DObject extends CNode3DGroup {
         }
     }
 
+    startReflectionAnalysis() {
+        // Clean up any previous arrows
+        this.cleanUpReflectionAnalysis();
+
+        // Apply rotation (same as preRender) so raycasting sees the rotated geometry
+        const common = this.common;
+        let needsRotationUndo = false;
+        let savedQuaternion;
+        if (common && this.group && (common.rotateX || common.rotateY || common.rotateZ)) {
+            needsRotationUndo = true;
+            savedQuaternion = this.group.quaternion.clone();
+            if (common.rotateY) this.group.rotateY(common.rotateY * Math.PI / 180);
+            if (common.rotateX) this.group.rotateX(common.rotateX * Math.PI / 180);
+            if (common.rotateZ) this.group.rotateZ(common.rotateZ * Math.PI / 180);
+            this.group.updateMatrix();
+            this.group.updateMatrixWorld();
+        }
+
+        const lookCameraNode = NodeMan.get("lookCamera", false);
+        if (!lookCameraNode) {
+            console.warn("Reflection Analysis: no lookCamera found");
+            return;
+        }
+        const camera = lookCameraNode.camera;
+
+        const terrainNode = NodeMan.get("TerrainModel", false);
+        if (!terrainNode) {
+            console.warn("Reflection Analysis: no TerrainModel found");
+            return;
+        }
+
+        if (!this.cachedBoundingSphere) {
+            console.warn("Reflection Analysis: no bounding sphere cached");
+            return;
+        }
+
+        // Get object world position and bounding sphere radius in world space
+        const objectWorldPos = new Vector3();
+        this.group.getWorldPosition(objectWorldPos);
+        const worldScale = new Vector3();
+        this.group.getWorldScale(worldScale);
+        const worldRadius = this.cachedBoundingSphere.radius * Math.max(worldScale.x, worldScale.y, worldScale.z);
+
+        console.log("Reflection Analysis: objectWorldPos", objectWorldPos);
+        console.log("Reflection Analysis: worldScale", worldScale, "worldRadius", worldRadius);
+        console.log("Reflection Analysis: cachedBoundingSphere radius", this.cachedBoundingSphere.radius, "center", this.cachedBoundingSphere.center);
+
+        // Check if object is in front of the camera
+        const toObject = objectWorldPos.clone().sub(camera.position);
+        const cameraDir = new Vector3();
+        camera.getWorldDirection(cameraDir);
+        console.log("Reflection Analysis: camera pos", camera.position, "dir", cameraDir, "dot", toObject.dot(cameraDir));
+        if (toObject.dot(cameraDir) < 0) {
+            console.warn("Reflection Analysis: object is behind the camera");
+            return;
+        }
+
+        // Project the bounding sphere center to NDC
+        const centerNDC = objectWorldPos.clone().project(camera);
+        console.log("Reflection Analysis: centerNDC", centerNDC);
+
+        // Compute NDC extent by offsetting by the world-space radius along camera's right and up
+        const camRight = new Vector3();
+        const camUp = new Vector3();
+        camRight.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+        camUp.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+
+        const edgePointRight = objectWorldPos.clone().add(camRight.clone().multiplyScalar(worldRadius));
+        const edgeNDCRight = edgePointRight.project(camera);
+        const ndcRadiusX = Math.abs(edgeNDCRight.x - centerNDC.x);
+
+        const edgePointUp = objectWorldPos.clone().add(camUp.clone().multiplyScalar(worldRadius));
+        const edgeNDCUp = edgePointUp.project(camera);
+        const ndcRadiusY = Math.abs(edgeNDCUp.y - centerNDC.y);
+
+        // Add a small margin
+        const margin = 1.1;
+        const halfExtentX = ndcRadiusX * margin;
+        const halfExtentY = ndcRadiusY * margin;
+
+        console.log("Reflection Analysis: NDC extents X", halfExtentX, "Y", halfExtentY);
+
+        const gridSize = this.reflectionGridSize;
+        const raycaster = new Raycaster();
+
+        let objectHitCount = 0;
+        let terrainHitCount = 0;
+        let noObjectHitCount = 0;
+        let noFaceCount = 0;
+        let backFaceCount = 0;
+        let noTerrainHitCount = 0;
+        let skippedClipCount = 0;
+        let totalTerrainDist = 0;
+        let totalPathLength = 0;
+        let minPathLength = Infinity;
+        let maxPathLength = -Infinity;
+
+        for (let gy = 0; gy < gridSize; gy++) {
+            for (let gx = 0; gx < gridSize; gx++) {
+                // Map grid cell to NDC coordinates centered on the object
+                const u = gridSize > 1 ? gx / (gridSize - 1) : 0.5;
+                const v = gridSize > 1 ? gy / (gridSize - 1) : 0.5;
+                const ndcX = centerNDC.x + (u * 2 - 1) * halfExtentX;
+                const ndcY = centerNDC.y + (v * 2 - 1) * halfExtentY;
+
+                const arrowId = `ReflAnalysis_${this.id}_${gx}_${gy}`;
+
+                // Skip points outside clip space
+                if (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1) {
+                    skippedClipCount++;
+                    continue;
+                }
+
+                const ndcPoint = new Vector2(ndcX, ndcY);
+                raycaster.setFromCamera(ndcPoint, camera);
+                raycaster.layers.enableAll();
+
+                // Intersect with this object's group
+                const intersects = raycaster.intersectObjects([this.group], true);
+                if (intersects.length === 0) {
+                    noObjectHitCount++;
+                    continue;
+                }
+
+                const hit = intersects[0];
+                objectHitCount++;
+
+                if (!hit.face) {
+                    noFaceCount++;
+                    continue;
+                }
+
+                // Get the world-space normal from the face
+                const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+
+                // Compute the incident direction (from camera toward hit point)
+                const incident = raycaster.ray.direction.clone().normalize();
+
+                // Reflect: r = d - 2(d·n)n
+                const dotDN = incident.dot(worldNormal);
+                // Only reflect if the ray hits the front face (normal facing toward camera)
+                if (dotDN >= 0) {
+                    backFaceCount++;
+                    continue;
+                }
+                const reflected = incident.clone().sub(worldNormal.clone().multiplyScalar(2 * dotDN)).normalize();
+
+                // Trace reflected ray against terrain
+                const reflectedRaycaster = new Raycaster(hit.point.clone(), reflected);
+                reflectedRaycaster.layers.mask |= 0xFFFFFFFF; // match all layers
+
+                const terrainHit = terrainNode.getClosestIntersect(reflectedRaycaster);
+                if (!terrainHit) {
+                    noTerrainHitCount++;
+                    continue;
+                }
+
+                // Terrain hit — draw in green
+                terrainHitCount++;
+                const terrainDist = hit.point.distanceTo(terrainHit.point);
+                const cameraToObject = camera.position.distanceTo(hit.point);
+                const pathLength = cameraToObject + terrainDist;
+                totalTerrainDist += terrainDist;
+                totalPathLength += pathLength;
+                if (pathLength < minPathLength) minPathLength = pathLength;
+                if (pathLength > maxPathLength) maxPathLength = pathLength;
+
+                DebugArrowAB(arrowId, hit.point.clone(), terrainHit.point.clone(), "#00ff00", true, GlobalScene, 5);
+                this.reflectionArrowIds.push(arrowId);
+            }
+        }
+
+        // Compute "behind object" distance: ray from camera through object center to terrain
+        let behindObjectDist = 0;
+        const behindArrowId = `ReflAnalysis_${this.id}_behind`;
+        const behindDir = objectWorldPos.clone().sub(camera.position).normalize();
+        const behindRaycaster = new Raycaster(camera.position.clone(), behindDir);
+        behindRaycaster.layers.enableAll();
+        const behindHit = terrainNode.getClosestIntersect(behindRaycaster);
+        if (behindHit) {
+            behindObjectDist = camera.position.distanceTo(behindHit.point);
+            DebugArrowAB(behindArrowId, objectWorldPos.clone(), behindHit.point.clone(), "#ff00ff", true, GlobalScene, 5);
+            this.reflectionArrowIds.push(behindArrowId);
+        }
+
+        // Compute stats
+        const distToObject = camera.position.distanceTo(objectWorldPos);
+        const percentGround = objectHitCount > 0 ? (terrainHitCount / objectHitCount) * 100 : 0;
+        const avgTerrainDist = terrainHitCount > 0 ? totalTerrainDist / terrainHitCount : 0;
+        const avgPathLength = terrainHitCount > 0 ? totalPathLength / terrainHitCount : 0;
+        const pathFraction = (behindObjectDist > 0 && avgPathLength > 0) ? avgPathLength / behindObjectDist : 0;
+        if (terrainHitCount === 0) { minPathLength = 0; maxPathLength = 0; }
+
+        console.log(`Reflection Analysis results for ${this.id}:`);
+        console.log(`  Grid: ${gridSize}x${gridSize} = ${gridSize * gridSize} rays`);
+        console.log(`  Skipped (outside clip): ${skippedClipCount}`);
+        console.log(`  No object hit: ${noObjectHitCount}`);
+        console.log(`  Object hits: ${objectHitCount}`);
+        console.log(`    No face: ${noFaceCount}`);
+        console.log(`    Back face: ${backFaceCount}`);
+        console.log(`    No terrain hit: ${noTerrainHitCount}`);
+        console.log(`    Terrain hits: ${terrainHitCount}`);
+
+        // Restore rotation
+        if (needsRotationUndo) {
+            this.group.quaternion.copy(savedQuaternion);
+            this.group.updateMatrix();
+            this.group.updateMatrixWorld();
+        }
+
+        // Create or update the results text view
+        this.showReflectionResults({
+            gridSize, objectHitCount, terrainHitCount,
+            noObjectHitCount, noFaceCount, backFaceCount,
+            noTerrainHitCount, skippedClipCount,
+            distToObject, percentGround, avgTerrainDist, avgPathLength,
+            minPathLength, maxPathLength,
+            behindObjectDist, pathFraction,
+        });
+
+        setRenderOne(true);
+    }
+
+    showReflectionResults(stats) {
+        const viewId = `ReflAnalysisView_${this.id}`;
+
+        // Create the view if it doesn't exist yet
+        if (!this.reflectionView) {
+            this.reflectionView = new CNodeViewText({
+                id: viewId,
+                title: `Reflection: ${this.id}`,
+                idPrefix: "refl-view",
+                draggable: true,
+                resizable: true,
+                freeAspect: true,
+                left: 0.01, top: 0.05, width: 0.30, height: 0.45,
+                visible: true,
+                manualScroll: true,
+                maxMessages: 0,
+            });
+        }
+
+        const v = this.reflectionView;
+        v.clearOutput();
+        v.show(true);
+
+        const nm = (value) => `${(value / 1852).toFixed(2)} NM`;
+        const grid = stats.gridSize;
+
+        v.addMessage(`=== Reflection Analysis: ${this.id} ===`);
+        v.addMessage(`Grid: ${grid}x${grid} = ${grid * grid} rays`);
+        v.addMessage(``);
+        v.addMessage(`--- Ray Counts ---`);
+        v.addMessage(`Object hits:      ${stats.objectHitCount} / ${grid * grid - stats.skippedClipCount}`);
+        v.addMessage(`  No face:        ${stats.noFaceCount}`);
+        v.addMessage(`  Back face:      ${stats.backFaceCount}`);
+        v.addMessage(`  No terrain hit: ${stats.noTerrainHitCount}`);
+        v.addMessage(`  Terrain hits:   ${stats.terrainHitCount}`);
+        v.addMessage(`No object hit:    ${stats.noObjectHitCount}`);
+        if (stats.skippedClipCount > 0) {
+            v.addMessage(`Skipped (clip):   ${stats.skippedClipCount}`);
+        }
+        v.addMessage(``);
+        v.addMessage(`--- Results ---`);
+        v.addMessage(`Percent ground:        ${stats.percentGround.toFixed(1)}%`);
+        v.addMessage(`Dist to object:        ${nm(stats.distToObject)}`);
+        v.addMessage(`Avg terrain dist:      ${nm(stats.avgTerrainDist)}`);
+        v.addMessage(`Avg total path length: ${nm(stats.avgPathLength)}`);
+        v.addMessage(`Min path:              ${nm(stats.minPathLength)}`);
+        v.addMessage(`Max path:              ${nm(stats.maxPathLength)}`);
+        v.addMessage(`Dist to far ground:    ${nm(stats.behindObjectDist)}`, "#ff00ff");
+        v.addMessage(`Path fraction:         ${(stats.pathFraction * 100).toFixed(1)}%`);
+    }
+
+    cleanUpReflectionAnalysis() {
+        for (const id of this.reflectionArrowIds) {
+            removeDebugArrow(id);
+        }
+        this.reflectionArrowIds = [];
+        if (this.reflectionView) {
+            this.reflectionView.hide();
+        }
+        setRenderOne(true);
+    }
+
+    reflectionDistanceToColor(distance) {
+        // Map distance to a color gradient: red (close) -> yellow -> green -> cyan -> blue (far)
+        // Normalize distance to 0-1 range using reasonable bounds
+        const minDist = 100;   // meters
+        const maxDist = 50000; // meters
+        const t = Math.max(0, Math.min(1, (distance - minDist) / (maxDist - minDist)));
+
+        let r, g, b;
+        if (t < 0.25) {
+            // red -> yellow
+            const s = t / 0.25;
+            r = 1; g = s; b = 0;
+        } else if (t < 0.5) {
+            // yellow -> green
+            const s = (t - 0.25) / 0.25;
+            r = 1 - s; g = 1; b = 0;
+        } else if (t < 0.75) {
+            // green -> cyan
+            const s = (t - 0.5) / 0.25;
+            r = 0; g = 1; b = s;
+        } else {
+            // cyan -> blue
+            const s = (t - 0.75) / 0.25;
+            r = 0; g = 1 - s; b = 1;
+        }
+
+        const toHex = (v) => Math.round(v * 255).toString(16).padStart(2, '0');
+        return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    }
+
     dispose() {
+        this.cleanUpReflectionAnalysis();
+        if (this.reflectionView) {
+            this.reflectionView.dispose();
+            this.reflectionView = null;
+        }
         if (this.label) {
             NodeMan.disposeRemove(this.label, true);
         }

@@ -56,6 +56,16 @@ function LLAToEUS(lat, lon, alt) {
 }
 
 /**
+ * Bilinear interpolation of geoid offset within a tile.
+ * xFrac and yFrac are in [0,1], where (0,0) is the NW corner.
+ */
+function interpolateGeoidOffset(corners, xFrac, yFrac) {
+    const top = corners.nw + (corners.ne - corners.nw) * xFrac;
+    const bot = corners.sw + (corners.se - corners.sw) * xFrac;
+    return top + (bot - top) * yFrac;
+}
+
+/**
  * Main worker message handler
  */
 self.onmessage = function(event) {
@@ -64,15 +74,15 @@ self.onmessage = function(event) {
             // Geometry data
             positionCount,
             // nPosition passed but not strictly needed (we calculate from positionCount)
-            
+
             // Pre-calculated lat/lon from main thread
             latLonData,
-            
+
             // Elevation data
             elevationData,
             elevationSize,
             elevationZoom,
-            
+
             // Tile information
             tileX,
             tileY,
@@ -81,12 +91,15 @@ self.onmessage = function(event) {
             tileOffsetY,
             tileFractionX,
             tileFractionY,
-            
+
             // Configuration
             zScale,
             tileCenterX,
             tileCenterY,
             tileCenterZ,
+
+            // Geoid correction corners (WGS84 height of MSL at tile corners)
+            geoidCorners,
         } = event.data;
 
         // Initialize output arrays
@@ -151,8 +164,13 @@ self.onmessage = function(event) {
                 elevation *= zScale;
             }
 
-            // Clamp to sea level to avoid z-fighting with ocean tiles
-            if (elevation < 0) elevation = 0;
+            // Clamp to geoid sea level to avoid z-fighting with ocean tiles
+            if (geoidCorners) {
+                const seaLevel = interpolateGeoidOffset(geoidCorners, xTileFraction, yTileFraction);
+                if (elevation < seaLevel) elevation = seaLevel;
+            } else if (elevation < 0) {
+                elevation = 0;
+            }
 
             if (elevation > highestAltitude) {
                 highestAltitude = elevation;

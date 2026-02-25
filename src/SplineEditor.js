@@ -6,18 +6,19 @@ import * as LAYER from "./LayerMasks";
 
 export class   SplineEditor extends PointEditor{
 
-    constructor(_scene, _camera, _renderer, controls, onChange, initialPoints, isLLA, curveType) {
+    constructor(_scene, _camera, _renderer, controls, onChange, initialPoints, isLLA, curveType, legacyEUS) {
 
-        super(_scene, _camera, _renderer, controls, onChange, initialPoints, isLLA)
+        super(_scene, _camera, _renderer, controls, onChange, initialPoints, isLLA, legacyEUS)
 
 
         // segments per arc (between control points) for rendering
         this.ARC_SEGMENTS = 200;
-        this.minimumPoints = 4;
+        // CatmullRomCurve3 needs 4+ points; linear mode works with 2
+        this.minimumPoints = (curveType === 'linear') ? 2 : 4;
 
-
-    // Load will reset the random initial positions to these
-        this.load(initialPoints)
+        // Note: positions are already loaded by the parent PointEditor constructor
+        // (which handles LLA→EUS conversion when isLLA=true).
+        // Do NOT re-load here — that would overwrite correct EUS coords with raw LLA values.
 
         // Local origin for precision: use the first point as the origin
         // This prevents floating-point precision issues when coordinates are far from world origin
@@ -38,7 +39,8 @@ export class   SplineEditor extends PointEditor{
         // Store curve type for linear mode support
         this.curveType = curveType;
         // 'chordal' gives a smooth velocity across the segment.
-        this.spline.curveType = curveType === 'catmull' ? 'catmullrom' : curveType;
+        // For 'linear' mode we handle interpolation ourselves, so set a valid CatmullRom type as fallback
+        this.spline.curveType = curveType === 'catmull' ? 'catmullrom' : (curveType === 'linear' ? 'chordal' : curveType);
         this.spline.mesh = new Line(geometry.clone(), new LineBasicMaterial({
             color: 0xFF0FF,
             opacity: 0.35
@@ -98,12 +100,11 @@ export class   SplineEditor extends PointEditor{
         let len = 0;
         const lastPos = new Vector3()
         const pos = new Vector3()
-        const spline = this.spline
-        spline.getPoint(0,lastPos)
+        this.getPoint(0,lastPos)
 
         for (let i=1;i<steps;i++){
             const t = i/(steps-1) // go from 0 to 1, so we need steps-1 for the last one
-            spline.getPoint(t,pos)
+            this.getPoint(t,pos)
             len += pos.clone().sub(lastPos).length()
             lastPos.copy(pos)
         }
@@ -148,7 +149,17 @@ export class   SplineEditor extends PointEditor{
         // This avoids GPU precision issues with large world coordinates
         for (let i = 0; i < this.ARC_SEGMENTS; i++) {
             const t = i / (this.ARC_SEGMENTS - 1);
-            this.spline.getPoint(t, point); // Get in local coords (don't add offset)
+            if (this.curveType === 'linear') {
+                // Linear interpolation in local coords (PointEditor-style)
+                const np = this.localPositions.length;
+                let a = Math.floor(t * (np - 1));
+                if (t >= 1.0) a = np - 2;
+                const b = a + 1;
+                const f = t * (np - 1) - a;
+                point.copy(this.localPositions[b]).sub(this.localPositions[a]).multiplyScalar(f).add(this.localPositions[a]);
+            } else {
+                this.spline.getPoint(t, point); // Get in local coords (don't add offset)
+            }
             position.setXYZ(i, point.x, point.y, point.z);
         }
         position.needsUpdate = true;
@@ -159,6 +170,7 @@ export class   SplineEditor extends PointEditor{
 
     setCurveType(type) {
         this.curveType = type;
+        this.minimumPoints = (type === 'linear') ? 2 : 4;
         if (type !== 'linear') {
             this.spline.curveType = type === 'catmull' ? 'catmullrom' : type;
         }

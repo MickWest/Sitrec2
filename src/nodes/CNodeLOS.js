@@ -1,10 +1,10 @@
-// Base class for the vasrious sources of LOS information.
+// Base class for the various sources of LOS information.
 // LOS = Lines of Sight, which is a track with heading vectors
 // getValueFrame(f) will return
-// {position: position, // EUS location in meters,
-// heading: fwd,        // unit vector pointing along the LOS
+// {position: position, // ECEF position in meters (EUS=ECEF),
+// heading: fwd,        // unit vector pointing along the LOS (ECEF)
 // up: up,              // (optional) up unit vector for LOS, e.g. camera orientation
-// right:               // (option) right unit vector
+// right:               // (optional) right unit vector
 // }
 
 
@@ -12,7 +12,7 @@ import {CNodeTrack} from "./CNodeTrack";
 import {GlobalDateTimeNode, NodeMan, Sit} from "../Globals";
 import {saveAs} from "file-saver";
 import {Matrix3, Vector3} from "three";
-import {ECEF2ENU, ECEFToEUS, ENU2ECEF, EUSToECEF, EUSToLLA, wgs84} from "../LLA-ECEF-ENU";
+import {ECEF2ENU_radii, ECEFToEUS, ENU2ECEF_radii, EUSToECEF, EUSToLLA} from "../LLA-ECEF-ENU";
 import {extractFOV} from "./CNodeControllerVarious";
 import {elevationAtLL} from "../threeExt";
 import {roundIfClose} from "../utils";
@@ -41,43 +41,19 @@ export class CNodeLOS extends CNodeTrack {
         // Get the LLA of the first position to establish the new ENU origin
         const firstPosEUS = firstData.position;
         const firstLLA = EUSToLLA(firstPosEUS);
-        
+
         // The new ENU origin is on the ground (altitude = 0) below the first point
         const originLat = firstLLA.x * Math.PI / 180;  // Convert to radians
         const originLon = firstLLA.y * Math.PI / 180;  // Convert to radians
 
-        // Pre-compute transformation matrices for direction vectors
-        // We need to transform from EUS (at Sit.lat, Sit.lon) to ENU (at origin)
-        
-        // Step 1: EUS to ENU at Sit location (just axis swap)
-        // EUS: x=east, y=up, z=south
-        // ENU: x=east, y=north, z=up
-        // So: ENU = (EUS.x, -EUS.z, EUS.y)
-        
-        // Step 2: Rotate from Sit ENU frame to origin ENU frame
-        const sitLat = Sit.lat * Math.PI / 180;
-        const sitLon = Sit.lon * Math.PI / 180;
-        
-        // Matrix to transform from ECEF to ENU at Sit location
-        const mECEF2ENU_Sit = new Matrix3().set(
-            -Math.sin(sitLon), Math.cos(sitLon), 0,
-            -Math.sin(sitLat) * Math.cos(sitLon), -Math.sin(sitLat) * Math.sin(sitLon), Math.cos(sitLat),
-            Math.cos(sitLat) * Math.cos(sitLon), Math.cos(sitLat) * Math.sin(sitLon), Math.sin(sitLat)
-        );
-        
-        // Matrix to transform from ENU at Sit to ECEF
-        const mENU2ECEF_Sit = new Matrix3().copy(mECEF2ENU_Sit).invert();
-        
-        // Matrix to transform from ECEF to ENU at origin location
+        // EUS is now identical to ECEF, so data.heading is already an ECEF vector.
+        // We just need the ECEF→ENU rotation at the export origin.
         const mECEF2ENU_Origin = new Matrix3().set(
             -Math.sin(originLon), Math.cos(originLon), 0,
             -Math.sin(originLat) * Math.cos(originLon), -Math.sin(originLat) * Math.sin(originLon), Math.cos(originLat),
             Math.cos(originLat) * Math.cos(originLon), Math.cos(originLat) * Math.sin(originLon), Math.sin(originLat)
         );
-        
-        // Combined transformation for direction vectors: EUS@Sit -> ENU@Sit -> ECEF -> ENU@Origin
-        const mEUS2ENU = new Matrix3();
-        mEUS2ENU.multiplyMatrices(mECEF2ENU_Origin, mENU2ECEF_Sit);
+        const mENU2ECEF_Origin = new Matrix3().copy(mECEF2ENU_Origin).invert();
 
         // Build CSV
         let csv = "Time, SensorPositionX, SensorPositionY, SensorPositionZ, LOSUnitVectorX, LOSUnitVectorY, LOSUnitVectorZ, maxRange, LOSUncertaintyVertical, LOSUncertaintyHorizontal, OriginLat, OriginLon, BaseAltitude\n";
@@ -102,23 +78,17 @@ export class CNodeLOS extends CNodeTrack {
                 continue;
             }
 
-            // Convert position from EUS to ECEF, then to ENU with new origin
             const posEUS = data.position;
             const posECEF = EUSToECEF(posEUS);
-            const posENU = ECEF2ENU(posECEF, originLat, originLon, wgs84.RADIUS, false);
+            const posENU = ECEF2ENU_radii(posECEF, originLat, originLon, false);
 
             // Round ENU position components if very close to whole numbers
             const px = roundIfClose(posENU.x, 1e-6);
             const py = roundIfClose(posENU.y, 1e-6);
             const pz = roundIfClose(posENU.z, 1e-6);
 
-            // Convert heading vector from EUS to ENU
-            // First convert EUS to ENU at Sit location (axis swap)
-            const headingEUS = data.heading;
-            const headingENU_Sit = new Vector3(headingEUS.x, -headingEUS.z, headingEUS.y);
-            
-            // Then rotate to ENU at origin location
-            const headingENU = headingENU_Sit.clone().applyMatrix3(mEUS2ENU);
+            // data.heading is ECEF (EUS=ECEF). Convert directly to ENU at origin.
+            const headingENU = data.heading.clone().applyMatrix3(mECEF2ENU_Origin);
             
             // Normalize to ensure it's a unit vector
             headingENU.normalize();
@@ -207,27 +177,12 @@ export class CNodeLOS extends CNodeTrack {
         const lines = csv.split('\n');
         const dataLines = lines.slice(1).filter(line => line.trim().length > 0);
         
-        // Pre-compute transformation matrices for direction vectors (reverse direction)
-        const sitLat = Sit.lat * Math.PI / 180;
-        const sitLon = Sit.lon * Math.PI / 180;
-        
-        // Matrix to transform from ENU at origin to ECEF
+        // ENU→ECEF matrix at origin (inverse of ECEF→ENU)
         const mENU2ECEF_Origin = new Matrix3().set(
             -Math.sin(originLon), Math.cos(originLon), 0,
             -Math.sin(originLat) * Math.cos(originLon), -Math.sin(originLat) * Math.sin(originLon), Math.cos(originLat),
             Math.cos(originLat) * Math.cos(originLon), Math.cos(originLat) * Math.sin(originLon), Math.sin(originLat)
         ).invert();
-        
-        // Matrix to transform from ECEF to ENU at Sit location
-        const mECEF2ENU_Sit = new Matrix3().set(
-            -Math.sin(sitLon), Math.cos(sitLon), 0,
-            -Math.sin(sitLat) * Math.cos(sitLon), -Math.sin(sitLat) * Math.sin(sitLon), Math.cos(sitLat),
-            Math.cos(sitLat) * Math.cos(sitLon), Math.cos(sitLat) * Math.sin(sitLon), Math.sin(sitLat)
-        );
-        
-        // Combined transformation for direction vectors: ENU@Origin -> ECEF -> ENU@Sit
-        const mENU2ENU_Sit = new Matrix3();
-        mENU2ENU_Sit.multiplyMatrices(mECEF2ENU_Sit, mENU2ECEF_Origin);
         
         let maxPosError = 0;
         let maxHeadingError = 0;
@@ -247,20 +202,14 @@ export class CNodeLOS extends CNodeTrack {
                 continue;
             }
             
-            // Convert position from ENU back to EUS
+            // Convert position from ENU back to EUS (EUS=ECEF)
             const posENU = new Vector3(x, y, z);
-            const posECEF = ENU2ECEF(posENU, originLat, originLon, wgs84.RADIUS, false);
+            const posECEF = ENU2ECEF_radii(posENU, originLat, originLon, false);
             const posEUS = ECEFToEUS(posECEF);
-            
-            // Convert heading vector from ENU back to EUS
-            // First rotate from ENU@Origin to ENU@Sit
+
+            // Convert heading from ENU back to ECEF (=EUS)
             const headingENU = new Vector3(dx, dy, dz);
-            const headingENU_Sit = headingENU.clone().applyMatrix3(mENU2ENU_Sit);
-            
-            // Then convert from ENU@Sit to EUS (reverse axis swap)
-            // ENU@Sit = (EUS.x, -EUS.z, EUS.y)
-            // So: EUS.x = ENU.x, EUS.y = ENU.z, EUS.z = -ENU.y
-            const headingEUS = new Vector3(headingENU_Sit.x, headingENU_Sit.z, -headingENU_Sit.y);
+            const headingEUS = headingENU.clone().applyMatrix3(mENU2ECEF_Origin);
             headingEUS.normalize();
             
             // Compare with original

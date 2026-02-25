@@ -84,7 +84,7 @@ export class CNodeGimbalTriangulate extends CNode3DGroup {
         const fwd = dir.clone().multiplyScalar(scale);
         let end = start.clone().add(fwd);
 
-        if (this.clipSeaLevel && fwd.y < 0) {
+        if (this.clipSeaLevel && fwd.dot(getLocalUpVector(start)) < 0) {
             const seaLevelPoint = intersectMSL(start, fwd);
             if (seaLevelPoint) {
                 end = seaLevelPoint;

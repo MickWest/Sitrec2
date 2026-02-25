@@ -101,24 +101,23 @@ export function preventDoubleClicks(gui) {
     });
 }
 
-// Add mouse tracking to GUI elements to disable keyboard shortcuts when mouse is over them
+function isActiveElementTextInput() {
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = el.tagName.toLowerCase();
+    const type = el.type ? el.type.toLowerCase() : '';
+    return tag === 'textarea' || (tag === 'input' && (type === 'text' || type === 'number'));
+}
+
 export function addGUIMouseTracking(gui) {
-    // Track mouse enter/leave on the entire GUI element
     gui.domElement.addEventListener('mouseenter', function (e) {
         setMouseOverGUI(true);
     });
 
     gui.domElement.addEventListener('mouseleave', function (e) {
         setMouseOverGUI(false);
-        if (document.activeElement && gui.domElement.contains(document.activeElement)) {
-            // Fix: Don't blur text/number inputs when mouse leaves so typing isn't interrupted
-            const tag = document.activeElement.tagName.toLowerCase();
-            const type = document.activeElement.type ? document.activeElement.type.toLowerCase() : '';
-            const isTextInput = tag === 'textarea' || (tag === 'input' && (type === 'text' || type === 'number'));
-
-            if (!isTextInput) {
-                document.activeElement.blur();
-            }
+        if (document.activeElement && gui.domElement.contains(document.activeElement) && !isActiveElementTextInput()) {
+            document.activeElement.blur();
         }
     });
 }
@@ -2217,7 +2216,7 @@ function openSliderSettingsMenu(controller, event) {
     };
 
     const LOG_ZERO_THRESHOLD = 1e-4;
-    const sliderRangeMax = Math.max(originalMax, currentMax);
+    const sliderRangeMax = controller._maxMax ?? Math.max(originalMax, currentMax);
     
     const minController = menu.add(settings, 'min', LOG_ZERO_THRESHOLD, sliderRangeMax, 0.0001)
         .name('Min')

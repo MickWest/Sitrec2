@@ -4,17 +4,19 @@ import {Matrix4, Plane, Raycaster, Sphere, Vector2, Vector3} from "three";
 import {degrees, radians, vdump} from "../utils";
 import {clampAboveGround, DebugArrowAB, DebugSphere, getPointBelow, intersectMSL, pointAbove} from "../threeExt";
 import {par} from "../par";
-import {ECEFToLLAVD_Sphere, EUSToECEF, wgs84} from "../LLA-ECEF-ENU";
+import {EUSToLLA} from "../LLA-ECEF-ENU";
 import {
-    altitudeAboveSphere,
-    getAzElFromPositionAndForward,
-    getLocalDownVector,
-    getLocalEastVector,
-    getLocalNorthVector,
-    getLocalUpVector,
-    pointOnSphereBelow,
+	altitudeAboveSphere,
+	altitudeMSL,
+	earthCenterEUS,
+	getAzElFromPositionAndForward,
+	getLocalDownVector,
+	getLocalEastVector,
+	getLocalNorthVector,
+	getLocalUpVector,
+	pointOnSphereBelow,
 } from "../SphericalMath";
-import {NodeFactory, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
+import {Globals, NodeFactory, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
 import {CNodeControllerPTZUI} from "../nodes/CNodeControllerPTZUI";
 import {intersectSphere2, V3} from "../threeUtils";
 import {getCursorPositionFromTopView, getTopViewWithCursor, onDocumentMouseMove} from "../mouseMoveView";
@@ -254,8 +256,8 @@ class CameraMapControls {
 		const raycaster = new Raycaster();
 		raycaster.setFromCamera(ndc, this.camera);
 
-		const dragHeight = altitudeAboveSphere(this.target);
-		const groundSphere = new Sphere(new Vector3(0, -wgs84.RADIUS, 0), wgs84.RADIUS + dragHeight);
+		const earthCenter = earthCenterEUS();
+		const groundSphere = new Sphere(earthCenter.clone(), earthCenter.distanceTo(this.target));
 		const hitBefore = new Vector3();
 		const hasHit = intersectSphere2(raycaster.ray, groundSphere, hitBefore);
 
@@ -265,21 +267,20 @@ class CameraMapControls {
 			raycaster.setFromCamera(ndc, this.camera);
 			const hitAfter = new Vector3();
 			if (intersectSphere2(raycaster.ray, groundSphere, hitAfter)) {
-				const origin = V3(0, -wgs84.RADIUS, 0);
-				const originToBefore = hitBefore.clone().sub(origin);
-				const originToAfter = hitAfter.clone().sub(origin);
+				const originToBefore = hitBefore.clone().sub(earthCenter);
+				const originToAfter = hitAfter.clone().sub(earthCenter);
 				const rotationAxis = new Vector3().crossVectors(originToAfter, originToBefore).normalize();
 				const cosAngle = originToAfter.dot(originToBefore) / (originToAfter.length() * originToBefore.length());
 				const angle = Math.acos(Math.min(1, Math.max(-1, cosAngle)));
 
 				if (!isNaN(angle) && angle > 0) {
-					this.camera.position.sub(origin);
+					this.camera.position.sub(earthCenter);
 					this.camera.rotateOnWorldAxis(rotationAxis, angle);
 					this.camera.position.applyAxisAngle(rotationAxis, angle);
-					this.camera.position.add(origin);
-					this.target.sub(origin);
+					this.camera.position.add(earthCenter);
+					this.target.sub(earthCenter);
 					this.target.applyAxisAngle(rotationAxis, angle);
-					this.target.add(origin);
+					this.target.add(earthCenter);
 					this.camera.updateMatrix();
 					this.camera.updateMatrixWorld();
 					const localUp = getLocalUpVector(this.camera.position);
@@ -546,7 +547,7 @@ class CameraMapControls {
 		// Fall back to globe sphere intersection
 		if (!found) {
 			const possibleTarget = new Vector3();
-			const dragSphere = new Sphere(new Vector3(0, -wgs84.RADIUS, 0), wgs84.RADIUS);
+			const dragSphere = new Sphere(earthCenterEUS(), Globals.equatorRadius);
 			if (this.view.raycaster.ray.intersectSphere(dragSphere, possibleTarget)) {
 				targetPoint = possibleTarget.clone();
 				this.targetIsTerrain = false;
@@ -631,7 +632,7 @@ class CameraMapControls {
 
 			var maxDistance;
 			if (Sit.useGlobe) {
-				maxDistance = this.camera.far - 2.5 * wgs84.RADIUS;
+				maxDistance = this.camera.far - 2.5 * Globals.equatorRadius;
 			} else {
 				maxDistance = this.camera.far / 2;
 			}
@@ -755,8 +756,7 @@ class CameraMapControls {
 			this.view.cursorSprite.visible = true;
 		}
 		const cursorPos = this.view.cursorSprite.position.clone();
-		const ecef = EUSToECEF(cursorPos)
-		const LLA = ECEFToLLAVD_Sphere(ecef)
+		const LLA = EUSToLLA(cursorPos);
 		//		console.log("Cursor LLA: "+vdump(LLA));
 		if (NodeMan.exists("cursorLLA")) {
 			NodeMan.get("cursorLLA").changeLLA(LLA.x, LLA.y, LLA.z)
@@ -1008,7 +1008,10 @@ class CameraMapControls {
 				this.camera.updateMatrixWorld(true)
 				this.camera.matrix.extractBasis(xAxis, yAxis, zAxis)
 
-				if (!Sit.useGlobe && yAxis.y <= 0.01) {
+				// Prevent camera from tilting past horizontal
+				// Check if camera's up basis still has a positive component along local up
+				const localUpForTilt = getLocalUpVector(this.camera.position);
+				if (!Sit.useGlobe && yAxis.dot(localUpForTilt) <= 0.01) {
 					this.camera.position.copy(oldPosition)
 					this.camera.quaternion.setFromRotationMatrix(oldMatrix);
 					this.camera.updateMatrix()
@@ -1038,17 +1041,17 @@ class CameraMapControls {
 				// if useGlobe then us the sphere, of this radius
 
 
-				// make a plane at target height
-				// Note this is LEGACY code, and should be replaced with a sphere
-				// as it will only work when near the origin
-				const dragPlane = new Plane(new Vector3(0, -1, 0), this.target.y)
+				// make a plane at the target, perpendicular to local up
+				// This is used for terrain dragging when not in globe mode
+				const localUpAtTarget = getLocalUpVector(this.target);
+				const dragPlaneDist = localUpAtTarget.dot(this.target);
+				const dragPlane = new Plane(localUpAtTarget.clone().negate(), dragPlaneDist)
 
-				let dragHeight = altitudeAboveSphere(this.target);
-
+				const dragOrigin = earthCenterEUS();
 
 				var dragSphere;
 				//	if (this.useGlobe) {
-				dragSphere = new Sphere(new Vector3(0, -wgs84.RADIUS, 0), wgs84.RADIUS + dragHeight)
+				dragSphere = new Sphere(dragOrigin.clone(), dragOrigin.distanceTo(this.target))
 				//	}
 
 
@@ -1088,8 +1091,7 @@ class CameraMapControls {
 				} else {
 					startHitSphere = intersectSphere2(raycaster.ray, dragSphere, start3D);
 					if (!startHitSphere) {
-						const origin = V3(0, -wgs84.RADIUS, 0);
-						const toCamera = this.camera.position.clone().sub(origin).normalize();
+						const toCamera = this.camera.position.clone().sub(dragOrigin).normalize();
 						const tangentPlane = new Plane().setFromNormalAndCoplanarPoint(toCamera, dragSphere.center.clone().add(toCamera.multiplyScalar(dragSphere.radius)));
 						if (!raycaster.ray.intersectPlane(tangentPlane, start3D)) break;
 					}
@@ -1101,8 +1103,7 @@ class CameraMapControls {
 				} else {
 					endHitSphere = intersectSphere2(raycaster.ray, dragSphere, end3D);
 					if (!endHitSphere) {
-						const origin = V3(0, -wgs84.RADIUS, 0);
-						const toCamera = this.camera.position.clone().sub(origin).normalize();
+						const toCamera = this.camera.position.clone().sub(dragOrigin).normalize();
 						const tangentPlane = new Plane().setFromNormalAndCoplanarPoint(toCamera, dragSphere.center.clone().add(toCamera.multiplyScalar(dragSphere.radius)));
 						if (!raycaster.ray.intersectPlane(tangentPlane, end3D)) break;
 					}
@@ -1123,7 +1124,7 @@ class CameraMapControls {
 				//var delta3D = end3D.clone().sub(start3D)
 				//this.camera.position.sub(delta3D)
 
-				const origin = V3(0, -wgs84.RADIUS, 0)
+				const origin = dragOrigin;
 				const originToStart = start3D.clone().sub(origin)
 				const originToEnd = end3D.clone().sub(origin)
 
@@ -1191,19 +1192,13 @@ class CameraMapControls {
 
 		const A = g.startPoint;
 		const B = g.endPoint;
-		const Center = V3(0, -wgs84.RADIUS, 0)
 
-		const A_radius = A.clone().sub(Center).length()
-		const B_radius = B.clone().sub(Center).length()
-		const radius = Math.max(A_radius, B_radius)
+		const alt_A = altitudeMSL(A);
+		const alt_B = altitudeMSL(B);
+		const alt_max = Math.max(alt_A, alt_B);
 
-		const M = A.clone().add(B).multiplyScalar(0.5)
-		const C = pointOnSphereBelow(M, radius - wgs84.RADIUS);
-		const C_height = C.clone().sub(Center).length()
-		const M_height = M.clone().sub(Center).length()
-		const scale = C_height / M_height
-		const A2 = Center.clone().add(A.clone().sub(Center).multiplyScalar(scale))
-		const B2 = Center.clone().add(B.clone().sub(Center).multiplyScalar(scale))
+		const A2 = pointOnSphereBelow(A.clone(), alt_max);
+		const B2 = pointOnSphereBelow(B.clone(), alt_max);
 
 		g.measureStart.setXYZ(A2.x, A2.y, A2.z)
 		g.measureEnd.setXYZ(B2.x, B2.y, B2.z)
@@ -1348,7 +1343,7 @@ class CameraMapControls {
 		var zAxis = new Vector3()
 		this.camera.updateMatrix();
 		this.camera.matrix.extractBasis(xAxis, yAxis, zAxis)
-		const up = getLocalUpVector(this.camera.position, wgs84.RADIUS)
+		const up = getLocalUpVector(this.camera.position)
 		const alt = altitudeAboveSphere(this.camera.position);
 		if (alt < 100000 || force) {
 			const upAngle = degrees(up.angleTo(xAxis))
@@ -1401,7 +1396,7 @@ class CameraMapControls {
 			// console.log("Rotate about ground to " + heading + " from az,el = " + az + "," + el)
 
 			// get the up vector at the ground point
-			const groundUp = getLocalUpVector(ground, wgs84.RADIUS)
+			const groundUp = getLocalUpVector(ground)
 
 			// find angle needed to rotate the camera to the heading
 			const angle = radians(heading - az);
@@ -1441,7 +1436,7 @@ class CameraMapControls {
 	rotateLeft(angle) {
 		this.camera.position.sub(this.target) // make relative to the target
 		//const up = new Vector3(0,1,0)
-		const up = getLocalUpVector(this.target, wgs84.RADIUS)
+		const up = getLocalUpVector(this.target)
 		this.camera.position.applyAxisAngle(up, -angle) // rotate around origin (around target)
 		this.camera.position.add(this.target) // back into world space
 		this.camera.rotateOnWorldAxis(up, -angle) // rotate the camere as well, so target stays in same spot

@@ -18,12 +18,12 @@ export const SitFlir1 = {
     timeZone: "PST",
 
 
-    mainCamera: {
-        startCameraPosition: [-126342.63, 56439.02, 101932.66],
-        startCameraTarget: [-126346.69, 56137.48, 100979.21],
-    },
-
     terrain: {lat:   31.605, lon:-117.870, zoom:7, nTiles:6},
+
+    mainCamera: {
+        startCameraPositionLLA:[31.422928,-117.507958,20376.418971],
+        startCameraTargetLLA:[31.417656,-117.516151,20167.294779],
+    },
 
     files: {
         Flir1Az: 'flir1/FLIR1 AZ.csv',
@@ -285,9 +285,7 @@ export const SitFlir1 = {
     jetTrack: { kind: "JetTrack",
         inputs: {
             speed: "jetTAS",
-            altitude: "jetAltitude",
             turnRate: "turnRate",
-            radius: "radiusMiles",
             wind: "localWind",
             heading: "initialHeading",
             origin: "jetOrigin",

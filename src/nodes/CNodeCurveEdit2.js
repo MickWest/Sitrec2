@@ -85,7 +85,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         const snapSettings = {
             defaultSnap: this.defaultSnap
         };
-        
+
         this.tabMenu.add(snapSettings, 'defaultSnap')
             .name('Default Snap')
             .onChange((value) => {
@@ -93,17 +93,38 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
             })
         .tooltip("When enabled, points will snap to horizontal alignment by default while dragging.\nHold Shift (while dragging) to to the opposite");
 
-        // add a control for the yMax
-        const yMaxControl = {
-            yMax: this.maxY
-        };
-        this.tabMenu.add(yMaxControl, "yMax", 0.1,170,1)
-            .name((this.yLabel ?? 'Y') + ' Max')
-            .onChange((value) => {
-                this.maxY = value;
-            })
-            .tooltip("Set the maximum Y value for the curve editor.");
+        this.createYRangeSlider();
+    }
 
+    createYRangeSlider() {
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = 1;
+        slider.max = 170;
+        slider.step = 1;
+        slider.value = this.maxY;
+
+        slider.style.position = 'absolute';
+        slider.style.right = '4px';
+        slider.style.top = '60px';
+        slider.style.bottom = '60px';
+        slider.style.width = '20px';
+        slider.style.zIndex = '100';
+        slider.style.writingMode = 'vertical-lr';
+        slider.style.direction = 'rtl';
+        slider.style.appearance = 'slider-vertical';
+        slider.style.margin = '0';
+        slider.style.padding = '0';
+        slider.style.cursor = 'pointer';
+
+        slider.addEventListener('input', (e) => {
+            e.stopPropagation();
+            this.maxY = Number(e.target.value);
+        });
+        slider.addEventListener('pointerdown', (e) => e.stopPropagation());
+
+        this.div.appendChild(slider);
+        this.yRangeSlider = slider;
     }
     
     screenToGraph(screenX, screenY) {

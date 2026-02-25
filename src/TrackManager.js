@@ -86,9 +86,6 @@ class CMetaTrack {
         // dispose data nodes before track nodes, as the track nodes have data nodes as inputs
         // OH, BUT THEY LINK FORWARD AND BACKWARDS.... SO WE NEED TO UNLINK THEM FIRST
         // BUT NOT ANYTHING ELSE, AS WE STILL WANT TO CHECK FOR UNANTICIPATED LINKS
-        //NodeMan.unlink(this.trackNode, this.trackDataNode); TODO
-        //OR  - change disposeRemove so it unlinks first
-
         // trackNode and centerNode will also have the _unsmoothed versions as input, so need to delete those first
         // they will be in the "source" input object
 
@@ -99,6 +96,8 @@ class CMetaTrack {
 
         // a bit messy, should keep track of nodes some other way
         NodeMan.unlinkDisposeRemove(this.trackID + "_smoothValue");
+        NodeMan.unlinkDisposeRemove(this.trackID + "_tensionValue");
+        NodeMan.unlinkDisposeRemove(this.trackID + "_intervalsValue");
 
         NodeMan.unlinkDisposeRemove(this.trackDataNode);
         NodeMan.unlinkDisposeRemove(this.trackNode);
@@ -235,11 +234,34 @@ class CTrackManager extends CManager {
             desc: "Smoothing window",
         }, guiFolder);
 
+        new CNodeGUIValue({
+            id: trackID + "_tensionValue",
+            value: 0.5,
+            start: 0,
+            end: 1,
+            step: 0.01,
+            desc: "Catmull Tension",
+        }, guiFolder);
+
+        new CNodeGUIValue({
+            id: trackID + "_intervalsValue",
+            value: 10,
+            start: 2,
+            end: 100,
+            step: 1,
+            desc: "Catmull Intervals",
+        }, guiFolder);
+
         return new CNodeSmoothedPositionTrack({
             id: trackID,
             source: trackID + "_unsmoothed",
-            method: "moving",
+            dataTrack: dataID,
+            method: "spline",  // 2/20/26 - changed from "moving" to "spline" as the default, as the moving average was not giving good results for some tracks, and the spline is much better, and not much more expensive to calculate
             window: trackID + "_smoothValue",
+            tension: trackID + "_tensionValue",
+            intervals: trackID + "_intervalsValue",
+            isDynamicSmoothing: true,
+            guiFolder: guiFolder,
             copyData: true,
             exportable: false,
         });
@@ -373,7 +395,9 @@ class CTrackManager extends CManager {
 
                     const dummy = {
                         removeTrack : () => {
-                            TrackManager.disposeRemove(trackID);
+                            if (confirm(`Remove track "${shortName}"?`)) {
+                                TrackManager.disposeRemove(trackID);
+                            }
                         },
                         createSpline : () => {
                             const frames = trackNode.frames;
@@ -459,6 +483,25 @@ class CTrackManager extends CManager {
                         id: trackID + "_GUI",
                         metaTrack: trackOb,
                     })
+
+                    // For primary tracks (not center tracks), check for spurious data points
+                    // and offer to enable filtering. Done after all nodes are set up so
+                    // recalculateCascade works correctly.
+                    // Only prompt for manually imported/drag-and-drop files, not when
+                    // loading from a saved sitch. For saved sitches, filterEnabled is
+                    // restored via deserialization.
+                    if (trackIndex === 0 && !Globals.deserializing) {
+                        const maxG = trackDataNode.getMaxGForce();
+                        if (maxG > trackDataNode.filterMaxG) {
+                            const enable = confirm(
+                                `Bad points in track data "${shortName}". Max g-force: ${maxG.toFixed(1)}g. Enable Bad Data Filter?`
+                            );
+                            if (enable) {
+                                trackDataNode.filterEnabled = true;
+                                trackDataNode.recalculateCascade();
+                            }
+                        }
+                    }
                 } else {
                     // if we failed to make the track, then remove the folder
                     // (nothing will have been added to it)
@@ -578,6 +621,7 @@ class CTrackManager extends CManager {
         trackOb.displayTargetSphere.addController("ObjectTilt", {
             track: trackID,
             tiltType: "banking",
+            guiFolder: trackOb.displayTargetSphere.gui,
             //                 wind: "targetWind" // NOT ALL SITCHES HAVE THIS
         })
     }
@@ -1271,7 +1315,8 @@ class CTrackManager extends CManager {
                 // When disposing this object, use: CustomMan.disposeObjectWithControllers(objectID)
                 objectNode.addController("ObjectTilt", {
                     track: trackID,
-                    tiltType: "banking"
+                    tiltType: "banking",
+                    guiFolder: objectNode.gui,
                 });
 
                 console.log(`Associated object ${options.objectID} with track ${trackID} and added controllers`);

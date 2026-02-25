@@ -19,6 +19,7 @@ sitch = {
     isRoot: true,
     tooltip: "Custom sitch - lets you add tracks and a video file, and load satellites.",
 
+    useEllipsoid: true,
     centerOnLoadedTracks: true, // likely unique to SitCustom. When true, the camera will center on the loaded track(s) when they are loaded.
 
     // compatibility flags

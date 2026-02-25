@@ -1,16 +1,9 @@
-import {
-    Color,
-} from "three";
-import {gui, guiTweaks, NodeMan, Sit} from "../Globals";
-
-import {par} from "../par";
+import {NodeMan} from "../Globals";
 import {CNodeViewUI} from "../nodes/CNodeViewUI";
-import {AddTimeDisplayToUI, AddTimeDisplayToUIOld} from "../UIHelpers";
+import {AddTimeDisplayToUIOld} from "../UIHelpers";
 
 import {CNodeDisplayTrack} from "../nodes/CNodeDisplayTrack";
-import {CNodeConstant} from "../nodes/CNode";
 import * as LAYER from "../LayerMasks";
-import {ViewMan} from "../CViewManager";
 
 export const SitPVS14 = {
     name: "pvs14",
@@ -61,8 +54,8 @@ export const SitPVS14 = {
 
     mainCamera: {
         far:    50000000,
-        startCameraPosition: [-829629.50, 1259822.75, 2121960.81],
-        startCameraTarget: [-829308.42, 1259357.65, 2121135.83],
+        startCameraPositionLLA:[26.187608,-106.783796,556343.519398],
+        startCameraTargetLLA:[26.194274,-106.779828,555939.060697],
     },
 
     targetSize: 500,

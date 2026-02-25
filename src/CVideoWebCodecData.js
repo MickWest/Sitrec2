@@ -44,9 +44,7 @@ export class CVideoWebCodecData extends CVideoData {
         // if it's got no forward slashes, then it's a local file
 
 
-        // QUESTION: why do we need to use the file manager here?
-        // why not load the file directly?
-        // ANSWER The file manager does some parsing of the path???
+        // FileManager handles URL resolution, caching, and path normalization
 
         if (v.file !== undefined ) {
             FileManager.loadAsset(v.file, "video").then(result => {
@@ -158,7 +156,7 @@ export class CVideoWebCodecData extends CVideoData {
         // until that group has finished loading
         // at that point we just request the very last frame that was requestes
         this.groupsPending = 0;
-        this.nextRequest = -1
+        this.nextRequest = null
 
 
         this.incomingFrame = 0;
@@ -174,20 +172,20 @@ export class CVideoWebCodecData extends CVideoData {
 
 
                 this.lastDecodeInfo = "last frame.timestamp = " + videoFrame.timestamp + "<br>";
-                // first chunk does not always have a 0 timestamp
-                //               const frameNumber1 = (frame.timestamp - this.chunks[0].timestamp) / this.chunks[0].duration   // TODO: This ASSUMES that the first chunk duration is the same for all except the last frame
-                //var frameNumber = this.incomingFrame++; //NO - as won't work when seeking
 
-                var groupNumber = 0;
-                // find the group this frame is in
-                // will be the group before the first group that starts after this frame
-                // OR the last group (no next group to check)
-                while (groupNumber + 1 < this.groups.length && videoFrame.timestamp >= this.groups[groupNumber + 1].timestamp)
-                    groupNumber++;
-                var group = this.groups[groupNumber]
+                const frameNumber = this.timestampToChunkIndex?.get(videoFrame.timestamp);
+                if (frameNumber === undefined) {
+                    videoFrame.close();
+                    return;
+                }
 
-                // calculate the frame number we are decoding from how many are left
-                const frameNumber = group.frame + group.length - group.pending;
+                var group = this.getGroup(frameNumber);
+                if (!group) {
+                    videoFrame.close();
+                    return;
+                }
+
+                group.decodePending++;
 //                console.log(frameNumber+ " Timestamp: "+frame.timestamp)
                 createImageBitmap(videoFrame).then(image => {
                     this.imageCache[frameNumber] = image
@@ -218,48 +216,27 @@ export class CVideoWebCodecData extends CVideoData {
 
                     const group = this.getGroup(frameNumber);
 
-                    assert(group.decodeOrder !== undefined, "Missing decode order, maybe different group for frame: " + frameNumber
-                        + " timestamp =" + videoFrame.timestamp + " group.frame = " + group.frame + " group.length = " + group.length)
-
                     if (group.decodeOrder !== undefined)
                         group.decodeOrder.push(frameNumber)
 
-
-                    assert(group.pending > 0, "Decoding more frames than were listed as pending at frame " + frameNumber
-                        + " timestamp =" + videoFrame.timestamp + " group.frame = " + group.frame + " group.length = " + group.length)
-
-
-                    if (group.pending <= 0) {
-                        let framesDecoded = "";
-                        for (let i in group.decodeOrder) {
-                            framesDecoded += group.decodeOrder[i] + ", "
+                    if (group.pending > 0) {
+                        group.pending--;
+                        if (group.pending === 0) {
+                            group.loaded = true;
+                            this.groupsPending--;
+                            if (this.groupsPending === 0 && this.nextRequest != null) {
+                                const req = this.nextRequest;
+                                this.nextRequest = null;
+                                this.requestGroup(req)
+                            }
                         }
-                        //                       console.log(framesDecoded)
-                    }
-
-                    group.pending--;
-                    if (group.pending === 0) {
-                        // this one group has finished loading
-                        //                  console.log("finished loading group at frame "+ group.frame)
-                        group.loaded = true;
-                        this.groupsPending--; // count one less group pending
-                        if (this.groupsPending === 0 && this.nextRequest >= 0) {
-                            console.log("FULFILLING deferred request as no groups pending , frame = " + this.nextRequest)
-                            this.requestGroup(this.nextRequest)
-                            this.nextRequest = -1
-                        }
-
-//                        console.log("Done group " + frameNumber
-//                            + " timestamp =" + frame.timestamp + " group.frame = " + group.frame
-//                            + " group.length = " + group.length + " this.groupsPending =  " + this.groupsPending)
-
                     }
 
                     if (this.decoder.decodeQueueSize === 0) {
-                        if (this.nextRequest >= 0) {
-//                            console.log("FULFILLING deferred request asthis.decoder.decodeQueueSize === 0, frame = " + this.nextRequest)
-                            this.requestFrame(this.nextRequest)
-                            this.nextRequest = -1
+                        if (this.nextRequest != null) {
+                            const req = this.nextRequest;
+                            this.nextRequest = null;
+                            this.requestGroup(req)
                         }
                     }
 
@@ -323,9 +300,8 @@ export class CVideoWebCodecData extends CVideoData {
                 // decoding is now deferred
                 //            decoder.decode(chunk);
             })
-            // at this point demuxing should be done, so we should have an accurate frame count
-            // note, that's only true if we are not loading the video async
-            // (i.e. the entire video is loaded before we start decoding)
+            this.buildTimestampMap();
+
             console.log("Demuxing done (assuming not async loading), frames = " + this.frames + ", Sit.videoFrames = " + Sit.videoFrames)
             console.log("Demuxer calculated frames as " + demuxer.source.totalFrames)
             //assert(this.frames === demuxer.source.totalFrames, "Frames mismatch between demuxer and decoder"+this.frames+"!="+demuxer.source.totalFrames)
@@ -380,24 +356,40 @@ export class CVideoWebCodecData extends CVideoData {
         // if some OTHER group is currently pending, then we just store the request for when it has finished
         // note this does not queue the requests, so only the most recent one will be honored
 //        if (this.groupsPending > 0) {
-        if (this.decoder.decodeQueueSize > 0) {
-            //assert(this.nextRequest === -1 || this.nextRequest === group, "nextRequest should be -1 or same as group , but is " + this.nextRequest)
+        if (this.flushing || this.decoder.decodeQueueSize > 0) {
             this.nextRequest = group;
             return;
         }
 
+        const extraChunks = group.openGopExtra || 0;
         group.pending = group.length;
+        group.decodePending = 0;
         group.loaded = false;
         group.decodeOrder = []
         this.groupsPending++;
-        const decodeQueueSizeBefore = this.decoder.decodeQueueSize;
-        for (let i = group.frame; i < group.frame + group.length; i++) {
-            this.decoder.decode(this.chunks[i])
+        const decodeEnd = group.frame + group.length + (extraChunks > 0 ? extraChunks + 1 : 0);
+        for (let i = group.frame; i < decodeEnd; i++) {
+            if (i < this.chunks.length) {
+                this.decoder.decode(this.chunks[i])
+            }
         }
-        const addedToDecodeQueue = this.decoder.decodeQueueSize - decodeQueueSizeBefore
 
-        // Kick the reorder buffer so the tail frames are delivered.
-        this.decoder.flush().catch(()=>{ /* ignore mid-seek aborts */ });
+        this.flushing = true;
+        this.decoder.flush().then(() => {
+            this.flushing = false;
+            const droppedFrames = group.length - group.decodePending;
+            if (droppedFrames > 0) {
+                group.pending -= droppedFrames;
+                if (group.pending <= 0) {
+                    group.pending = 0;
+                    group.loaded = true;
+                    this.groupsPending--;
+                }
+            }
+            this.handleGroupComplete();
+        }).catch(() => {
+            this.flushing = false;
+        });
 
 //        console.log ("decodeQueuesize = "+this.decoder.decodeQueueSize+" added "+addedToDecodeQueue)
     }
@@ -471,6 +463,13 @@ export class CVideoWebCodecData extends CVideoData {
         infoDiv.style.fontSize = "13px";
         infoDiv.style.zIndex = '1001';
         infoDiv.innerHTML = d;
+    }
+
+    getCachedImage(frame) {
+        frame = Math.floor(frame / this.videoSpeed);
+        if (!this.imageCache || frame < 0 || frame >= this.imageCache.length) return null;
+        const img = this.imageCache[frame];
+        return (img && img.width !== 0) ? img : null;
     }
 
     isFrameLoaded(frame) {
@@ -560,32 +559,50 @@ export class CVideoWebCodecData extends CVideoData {
             if (this.groups.length === 0)
                 return null;
 
-            const cacheWindow = 30; // how much we seek ahead (and keep behind)
-
-            this.requestFrame(frame) // request this frame, of course, probable already have it though.
-
-            if (frame >= this.lastGetImageFrame) {
-                // going forward
-                if (frame + cacheWindow < this.chunks.length)
-                    this.requestFrame(frame + cacheWindow)
-            } else {
-                // going backward
-                if (frame > cacheWindow)
-                    this.requestFrame(frame - cacheWindow)
-            }
+            const cacheWindow = 30;
+            const echoNeeded = this.echoFramesNeeded || 0;
+            const backwardKeep = Math.max(cacheWindow, echoNeeded);
 
             this.lastGetImageFrame = frame
 
-            // we purge everything except the three proximate groups and any groups that are being decoded
-            // in theory this should be no more that four
-            // purge before a new request
             const groupsToKeep = [];
-            if (frame > cacheWindow)
-                groupsToKeep.push(this.getGroup(frame - cacheWindow))
-            groupsToKeep.push(this.getGroup(frame))
-            if (frame < this.chunks.length - cacheWindow)
-                groupsToKeep.push(this.getGroup(frame + cacheWindow))
+            const groupsToRequest = [];
+
+            const currentGroup = this.getGroup(frame);
+            if (currentGroup) {
+                groupsToKeep.push(currentGroup);
+                groupsToRequest.push(currentGroup);
+            }
+
+            for (const group of this.groups) {
+                const groupEnd = group.frame + group.length;
+                if (groupEnd > frame - backwardKeep && group.frame <= frame + cacheWindow) {
+                    if (!groupsToKeep.includes(group)) groupsToKeep.push(group);
+                }
+            }
+
+            if (echoNeeded > 0) {
+                const echoStart = Math.max(0, frame - echoNeeded);
+                for (const group of groupsToKeep) {
+                    const groupEnd = group.frame + group.length;
+                    if (groupEnd > echoStart && group.frame <= frame && !groupsToRequest.includes(group)) {
+                        groupsToRequest.push(group);
+                    }
+                }
+            }
+
+            const lookaheadFrame = Math.min(frame + cacheWindow, this.chunks.length - 1);
+            const lookaheadGroup = this.getGroup(lookaheadFrame);
+            if (lookaheadGroup && !groupsToRequest.includes(lookaheadGroup)) {
+                groupsToRequest.push(lookaheadGroup);
+            }
+
             this.purgeGroupsExcept(groupsToKeep)
+
+            for (const group of groupsToRequest) {
+                if (group !== currentGroup) this.requestFrame(group.frame);
+            }
+            this.requestFrame(frame)
 
             // return the closest frame that has been loaded
             // usually this just mean it returns the one indicated by "frame"

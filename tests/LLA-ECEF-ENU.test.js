@@ -50,7 +50,8 @@ describe('haversineDistanceKM', () => {
 
     test('calculates distance across antimeridian', () => {
         const dist = haversineDistanceKM(0, 179, 0, -179);
-        expect(dist).toBeCloseTo(222, 0);
+        // 2° at the equator ≈ 222.6 km using WGS84 equatorial radius
+        expect(dist).toBeCloseTo(222.6, 0);
     });
 
     test('handles negative coordinates', () => {

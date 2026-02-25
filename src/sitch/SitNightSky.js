@@ -97,6 +97,7 @@ export const SitNightSky = {
     useDayNightGlobe: true,
     globeScale: 1,  // was defaulting to 0.99
     localLatLon: true,
+    useEllipsoid: true,
 
     dropTargets: {
         "track": ["cameraSwitch"],
@@ -111,7 +112,6 @@ export const SitNightSky = {
     // we want to make that a switch.
 
     setup2: function () {
-
 
         const cameraSwitch = new CNodeSwitch({
             id: "cameraSwitch",

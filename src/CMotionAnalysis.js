@@ -10,7 +10,7 @@ import {
 } from "./Globals";
 import {isLocal} from "./configUtils";
 import {par} from "./par";
-import {ExportProgressWidget} from "./utils";
+import {ExportProgressWidget, getExportPrefix} from "./utils";
 
 import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";
 import {CNodeSpeedOverlay} from "./nodes/CNodeSpeedOverlay";
@@ -2626,7 +2626,7 @@ async function exportMotionPanorama() {
     if (exportPanoMenuItem) exportPanoMenuItem.name("Saving...");
 
     panoCanvas.toBlob((blob) => {
-        const filename = `motion_panorama_${Sit.name || 'export'}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
+        const filename = `${getExportPrefix()}_motion_panorama_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -2957,7 +2957,7 @@ function toggleStabilization() {
 export function addMotionAnalysisMenu() {
     if (!guiMenus.view) return;
     
-    motionFolder = guiMenus.view.addFolder("Motion Analysis").close().perm();
+    motionFolder = guiMenus.video.addFolder("Motion Analysis").close().perm();
     
     const menuActions = {
         analyzeMotion: toggleMotionAnalysis,

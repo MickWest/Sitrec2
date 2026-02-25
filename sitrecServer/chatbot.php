@@ -289,11 +289,15 @@ $requestedModel = $data['model'] ?? null;
 
 function getHelpDocContent($docName, $availableDocs) {
     global $APP_PATH;
-    
+
+    if (!preg_match('/^[A-Za-z0-9_-]+$/', $docName)) {
+        return ['error' => "Invalid doc name: $docName"];
+    }
+
     if (!isset($availableDocs[$docName])) {
         return ['error' => "Unknown doc: $docName. Available: " . implode(', ', array_keys($availableDocs))];
     }
-    
+
     $docPath = __DIR__ . '/' . $APP_PATH . 'docs/' . $docName . '.md';
     if (!file_exists($docPath)) {
         return ['error' => "Doc file not found: $docName. Tried path: $docPath, __DIR__=" . __DIR__ . ", APP_PATH=$APP_PATH"];

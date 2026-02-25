@@ -13,7 +13,7 @@ export const SitKML = {
         fov: 10, // this is the default, but we can override it with a new lookCamera object
     },
 
-    // we add empty defintions to define the order of in which things are created
+    // we add empty defintions to defidisne the order of in which things are created
     // other sitches that uses this as a base class must override these
     // we need mainView specifically as some things use it when created
     mainCamera: {},

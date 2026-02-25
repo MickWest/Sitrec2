@@ -16,7 +16,7 @@ import {
 } from "three";
 import * as LAYER from "../LayerMasks";
 import {dropFromDistance, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
-import {EUSToLLA, LLAToEUS, wgs84} from "../LLA-ECEF-ENU";
+import {EUSToLLA, LLAToEUS} from "../LLA-ECEF-ENU";
 import {screenToNDC} from "../mouseMoveView";
 import {ViewMan} from "../CViewManager";
 import {CustomManager, Globals, guiMenus, NodeMan, setRenderOne, Sit, Synth3DManager, UndoManager} from "../Globals";
@@ -230,7 +230,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
                 color: { value: new Color(baseColor, baseColor, baseColor) },
                 emissive: { value: new Color(emissiveIntensity, emissiveIntensity, emissiveIntensity) },
                 sunDirection: { value: new Vector3(0, 1, 0) },
-                earthCenter: { value: new Vector3(0, -wgs84.RADIUS, 0) },
+                earthCenter: { value: new Vector3(0, 0, 0) },
                 ...sharedUniforms,
             },
             vertexShader: `

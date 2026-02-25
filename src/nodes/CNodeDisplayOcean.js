@@ -4,11 +4,10 @@ import {metersFromMiles} from "../utils";
 import {drop} from "../SphericalMath";
 import {dispose} from "../threeExt";
 import {CNode3DGroup} from "./CNode3DGroup";
-import {assert} from "../assert.js";
 
 
 class SimpleOceanGeometry extends BufferGeometry {
-    constructor(w, h, alt, radius) {
+    constructor(w, h, alt) {
         super();
         this.type = 'SimpleOceanGeometry';
         const indices = [];
@@ -19,8 +18,6 @@ class SimpleOceanGeometry extends BufferGeometry {
 
         // using a fixed see for this RNG so clouds are in same place
         var rng = seedrandom("x")
-
-        const rm = metersFromMiles(radius)
 
         var step = 0.1
         var sm = metersFromMiles(step)
@@ -33,10 +30,10 @@ class SimpleOceanGeometry extends BufferGeometry {
 
 
                 // get the four corners, A, B, C, D
-                var A = new Vector3(xm, 0 - drop(xm, ym, rm), -ym)
-                var B = new Vector3(xm + sm, 0 - drop(xm + sm, ym, rm), -ym)
-                var C = new Vector3(xm + sm, 0 - drop(xm + sm, ym + step, rm), -(ym + sm))
-                var D = new Vector3(xm, 0 - drop(xm, ym + sm, rm), -(ym + sm))
+                var A = new Vector3(xm, 0 - drop(xm, ym), -ym)
+                var B = new Vector3(xm + sm, 0 - drop(xm + sm, ym), -ym)
+                var C = new Vector3(xm + sm, 0 - drop(xm + sm, ym + step), -(ym + sm))
+                var D = new Vector3(xm, 0 - drop(xm, ym + sm), -(ym + sm))
 
                 vertices.push(B.x, B.y, B.z)
                 vertices.push(A.x, A.y, A.z)
@@ -89,10 +86,7 @@ export class CNodeDisplayOcean extends CNode3DGroup {
         dispose(this.oceanGeometry)
 
         // now batch the geometry in a single mesh
-        //   const cloudData = this.in.cloudData.v0
-        const radius = this.in.radius.v0
-        //   this.altitude = cloudData.altitude;
-        this.oceanGeometry = new SimpleOceanGeometry(this.w, this.h, this.altitude, radius)
+        this.oceanGeometry = new SimpleOceanGeometry(this.w, this.h, this.altitude)
         this.oceanMesh = new Mesh(this.oceanGeometry, this.in.material.v(0));
         this.group.add(this.oceanMesh)
 

@@ -1,6 +1,5 @@
 import {ExpandKeyframes, radians, RollingAverage} from "../utils";
-import {getLocalDownVector, getLocalUpVector} from "../SphericalMath";
-import {ECEF2EUS, wgs84} from "../LLA-ECEF-ENU";
+import {getLocalDownVector, getLocalUpVector, getNorthPole} from "../SphericalMath";
 import {NodeMan, Sit} from "../Globals";
 
 import {CNodeController} from "./CNodeController";
@@ -41,13 +40,10 @@ export class CNodeControllerAzElZoom extends CNodeController {
         const camera = objectNode.camera
 
         //  since the user controls roll here, we don't want to use north for up
-        var up = getLocalUpVector(camera.position, wgs84.RADIUS)
-
+        var up = getLocalUpVector(camera.position)
 
         // to get a northish direction we get the vector from here to the north pole.
-        // to get the north pole in EUS, we take the north pole's position in ECEF
-        var northPoleECEF = V3(0,0,wgs84.RADIUS)
-        var northPoleEUS = ECEF2EUS(northPoleECEF,radians(Sit.lat),radians(Sit.lon),wgs84.RADIUS)
+        var northPoleEUS = getNorthPole()
         var toNorth = northPoleEUS.clone().sub(camera.position).normalize()
         // take only the component perpendicular
         let dot = toNorth.dot(up)

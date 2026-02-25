@@ -1,4 +1,4 @@
-import {AlwaysDepth, Color} from "three";
+import {AlwaysDepth, Color, Group, Matrix4} from "three";
 import * as LAYER from "../LayerMasks";
 import {par} from "../par";
 import {arrayColumn, ExpandKeyframes, RollingAverage, scaleF2M} from "../utils";
@@ -20,7 +20,10 @@ import {CNodeSAPage} from "../nodes/CNodeSAPage";
 import {CNodeLOSTrackAzEl} from "../nodes/CNodeLOSTrackAzEl";
 import {calculateGlareStartAngle} from "../JetHorizon";
 import {curveChanged, SetupCommon, SetupTrackLOSNodes, SetupTraverseNodes} from "../JetStuff";
-import {LocalFrame} from "../LocalFrame";
+import {GlobalScene, LocalFrame} from "../LocalFrame";
+import {getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
+import {LLAToEUS} from "../LLA-ECEF-ENU";
+import {V3} from "../threeUtils";
 import {SetupJetGUI} from "../JetGUI";
 import {CNodeFleeter} from "../nodes/CNodeFleeter";
 import {CNodeGraphSeries} from "../nodes/CNodeGraphSeries";
@@ -412,8 +415,8 @@ export const SitGimbal = {
     defaultTraverse: "Const Air Spd",
 
     mainCamera: {
-        startCameraPosition: [45827.79, 51645.36, 17968.72],
-        startCameraTarget: [44976.22, 51163.57, 17762.06],
+        startCameraPositionLLA:[28.470586,-79.100902,26132.346324],
+        startCameraTargetLLA:[28.470824,-79.110720,25870.046771],
     },
 
     lookCamera: { fov:0.35 },
@@ -528,8 +531,8 @@ export const SitGimbalNear = {
     defaultTraverse:"Straight Line",
 
     mainCamera: {
-        startCameraPosition: [22361.77, 19855.62, 1055.93],
-        startCameraTarget: [21400.39, 19583.24, 1095.64],
+        startCameraPositionLLA:[28.439097,-79.122589,27625.934704],
+        startCameraTargetLLA:[28.440007,-79.132252,27330.469158]
     },
 
     lookCamera: { fov:0.35 },
@@ -646,8 +649,8 @@ export const SitGimbalSR71 = {
     },
 
     mainCamera: {
-        startCameraPosition:[8485.70,11640.47,2794.97],
-        startCameraTarget:[7548.47,11387.54,2554.90]
+        startCameraPositionLLA:[28.484775,-79.425842,11025.313939],
+        startCameraTargetLLA:[28.486547,-79.435512,10775.171728],
     },
 
     videoView: {left: 0.66, top: 0.45, width: -1, height: 0.5,background:[1,0,0,0]},
@@ -804,15 +807,57 @@ export function SetupGimbal() {
         }
     )
 
+    new CNodeWind({
+        id: "cloudWind",
+        from: Sit.cloudWindFrom,
+        knots: Sit.cloudWindKnots,
+        name: "Cloud",
+        arrowColor: "white",
+        pos: "jetTrack",
+
+    }, gui)
+
+    new CNodeWind({
+        id: "targetWind",
+        from: Sit.targetWindFrom,
+        knots: Sit.targetWindKnots,  // 90
+        name: "Target",
+        arrowColor: "yellow",
+        pos: "LOSTraverseSelect",
+
+    }, gui)
+
+    new CNodeWind({
+        id: "localWind",
+        from: Sit.localWindFrom,
+        knots: Sit.localWindKnots,  // 120 knots from the west
+        name: "Local",
+        arrowColor: "cyan",
+        pos: "jetTrack",
+
+    }, gui)
+
+
+    new CNodeHeading({
+        id: "initialHeading",
+        heading: 315,
+        name: "Initial",
+        arrowColor: "green",
+        jetOrigin: "jetOrigin",
+
+    }, gui)
+
     var turnRateFromCloudsNode = new CNodeTurnRateFromClouds({
         id: "turnRateFromClouds",
         inputs: {
             cloudAlt: "cloudAltitude",
             speed: "jetTAS",
-            altitude: "jetAltitude",
-            radius: "radiusMiles",
             az: "azSources",
             cloudSpeed: "cloudSpeedEditor",
+            wind: "localWind",
+            cloudWind: "cloudWind",
+            heading: "initialHeading",
+            origin: "jetOrigin",
         }
     })
 
@@ -843,53 +888,6 @@ export function SetupGimbal() {
         desc: "Turn Rate Type"
     }, guiJetTweaks)
 
-
-    new CNodeWind({
-        id: "cloudWind",
-        from: Sit.cloudWindFrom,
-        knots: Sit.cloudWindKnots,
-        name: "Cloud",
-        arrowColor: "white",
-        radius: "radiusMiles",
-
-        pos: "jetTrack",
-
-    }, gui)
-
-    new CNodeWind({
-        id: "targetWind",
-        from: Sit.targetWindFrom,
-        knots: Sit.targetWindKnots,  // 90
-        name: "Target",
-        arrowColor: "yellow",
-        radius: "radiusMiles",
-        pos: "LOSTraverseSelect",
-
-
-    }, gui)
-
-    new CNodeWind({
-        id: "localWind",
-        from: Sit.localWindFrom,
-        knots: Sit.localWindKnots,  // 120 knots from the west
-        name: "Local",
-        arrowColor: "cyan",
-        radius: "radiusMiles",
-        pos: "jetTrack",
-
-
-    }, gui)
-
-
-    new CNodeHeading({
-        id: "initialHeading",
-        heading: 315,
-        name: "Initial",
-        arrowColor: "green",
-        jetOrigin: "jetOrigin",
-
-    }, gui)
-
     console.log("+++ jetTrack Node")
     var jetTrack = new CNodeJetTrack({
         id: "jetTrack",
@@ -897,7 +895,6 @@ export function SetupGimbal() {
             speed: "jetTAS",
             altitude: "jetAltitude",
             turnRate: "turnRate",
-            radius: "radiusMiles",
             wind: "localWind",
             heading: "initialHeading",
             origin: "jetOrigin",
@@ -921,6 +918,25 @@ export function SetupGimbal() {
 
     LocalFrame.position.copy(jetTrack.v0.position.clone())
     console.log("Setting LocalFrame Position to " + LocalFrame.position.x + "," + LocalFrame.position.y + "," + LocalFrame.position.z)
+
+    // Create a static ground-level frame at the surface below the sitch origin.
+    // Grid and clouds use local flat-plane geometry (X=east, Y=up, Z=south)
+    // so this frame is positioned at sea level and oriented to match that convention.
+    // LLAToEUS uses Globals.equatorRadius/polarRadius, so it adapts to the active earth model.
+    const surfacePos = LLAToEUS(Sit.lat, Sit.lon, 0);
+    const groundUp = getLocalUpVector(surfacePos);
+    const groundNorth = getLocalNorthVector(surfacePos);
+    const groundEast = V3().crossVectors(groundNorth, groundUp).normalize();
+    const groundSouth = groundNorth.clone().negate();
+    const groundMatrix = new Matrix4();
+    groundMatrix.makeBasis(groundEast, groundUp, groundSouth);
+    Sit.groundFrame = new Group();
+    Sit.groundFrame.position.copy(surfacePos);
+    Sit.groundFrame.quaternion.setFromRotationMatrix(groundMatrix);
+    Sit.groundFrame.updateMatrix();
+    Sit.groundFrame.updateMatrixWorld();
+    GlobalScene.add(Sit.groundFrame);
+
     console.log("+++ JetLOS Node")
     new CNodeLOSTrackAzEl({
         id: "JetLOS",

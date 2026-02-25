@@ -369,6 +369,7 @@ export function initKeyboard() {
 
 
             case 'Space' :
+                e.preventDefault();
                 par.paused = !par.paused;
                 break;
 

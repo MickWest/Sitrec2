@@ -1,13 +1,13 @@
 import {CNodeEmptyArray} from "./CNodeArray";
 import {GlobalDateTimeNode, NodeMan, Sit} from "../Globals";
-import {EUSToLLA, LLAToEUS, wgs84} from "../LLA-ECEF-ENU";
+import {EUSToLLA, LLAToEUS} from "../LLA-ECEF-ENU";
 import {EventManager} from "../CEventManager";
 import {getAzElFromPositionAndForward, getLocalUpVector, pointOnSphereBelow} from "../SphericalMath";
 import {showError} from "../showError";
 import {MISB} from "../MISBUtils";
 import {saveAs} from "file-saver";
 import {degrees} from "../utils";
-import {V3} from "../threeUtils";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 
 export class CNodeTrack extends CNodeEmptyArray {
     constructor(v) {
@@ -78,12 +78,7 @@ export class CNodeTrack extends CNodeEmptyArray {
     }
 
     _pointFromElevation(lat, lon, elevation, agl) {
-        const pos = LLAToEUS(lat, lon, 0);
-        const earthCenterENU = V3(0, -wgs84.RADIUS, 0);
-        const centerToA = pos.clone().sub(earthCenterENU);
-        const elev = Math.max(0, elevation);
-        const scale = (wgs84.RADIUS + elev + agl) / centerToA.length();
-        return earthCenterENU.add(centerToA.multiplyScalar(scale));
+        return LLAToEUS(lat, lon, Math.max(0, elevation) + agl);
     }
 
     serializeElevationCache() {
@@ -330,6 +325,9 @@ export class CNodeTrackFromLLAArray extends CNodeTrack {
         super(v);
         this.altitudeMode = v.altitudeMode ?? "absolute";
         this.showCap = v.showCap ?? false;
+        // altitudeReference: "HAE" (default) or "MSL"
+        // KML "absolute" is HAE per spec; custom data may provide MSL
+        this.altitudeReference = v.altitudeReference ?? "HAE";
 
 
         // using events to recalculate the track when the terrain is loaded
@@ -397,7 +395,11 @@ export class CNodeTrackFromLLAArray extends CNodeTrack {
         const v = this.array[Math.floor(frame)];
         const lat = v[0]
         const lon = v[1];
-        const alt = v[2];
+        let alt = v[2];
+        // Convert MSL altitude to HAE if needed (h = H + N)
+        if (this.altitudeReference === "MSL") {
+            alt += meanSeaLevelOffset(lat, lon);
+        }
         let eus = LLAToEUS(lat, lon, alt);
 
         // while this is sub optimal, it should not be done constantly.

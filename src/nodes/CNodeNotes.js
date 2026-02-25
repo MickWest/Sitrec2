@@ -278,7 +278,8 @@ class CNodeNotes extends CNodeView {
         const escaped = this.notesText
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
         
         const linked = escaped.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?\])>"'])/gi, (url) => {
             const decodedUrl = url.replace(/&amp;/g, '&');

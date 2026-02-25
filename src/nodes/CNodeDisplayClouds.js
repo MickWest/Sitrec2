@@ -17,7 +17,7 @@ function getRandomInt(min, max) {
 }
 
 class MultiCloudGeometry extends BufferGeometry {
-    constructor(w, h, alt, radius) {
+    constructor(w, h, alt) {
         super();
         this.type = 'CloudGeometry';
         //   this.type = 'PlaneGeometry';
@@ -35,7 +35,7 @@ class MultiCloudGeometry extends BufferGeometry {
             for (var y = 0; y < 250; y += 2) {
                 if (abs(x / y) > 0.5 && abs(x / y) < 3) {
                     var pos = V3(metersFromMiles(x) + getRandomInt(f2m(-5000), f2m(5000)),
-                        alt - f2m(1500) - drop(metersFromMiles(x), metersFromMiles(y), metersFromMiles(radius)) + getRandomInt(f2m(-100), f2m(100)),
+                        alt - f2m(1500) - drop(metersFromMiles(x), metersFromMiles(y)) + getRandomInt(f2m(-100), f2m(100)),
                         -metersFromMiles(y) + getRandomInt(f2m(-5000), f2m(5000)))
 
                     vertices.push(pos.x - xz / 2, pos.y + h / 2, pos.z + xz)
@@ -104,9 +104,8 @@ export class CNodeDisplayClouds extends CNode3DGroup {
 
         // now batch the geometry in a single mesh
         const cloudData = this.in.cloudData.v0
-        const radius = this.in.radius.v0
         this.altitude = cloudData.altitude;
-        this.cloudGeometry = new MultiCloudGeometry(this.w, this.h, this.altitude, radius)
+        this.cloudGeometry = new MultiCloudGeometry(this.w, this.h, this.altitude)
         this.cloudMesh = new Mesh(this.cloudGeometry, this.in.material.v(0));
 
         this.cloudMesh.rotateY(-radians(this.in.heading.getHeading()))

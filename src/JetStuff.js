@@ -15,7 +15,7 @@ import {
 } from "./Globals";
 import {par} from "./par";
 import {metersFromMiles, metersFromNM, radians} from "./utils";
-import {EA2XYZ, EAJP2PR, getLocalUpVector, PRJ2XYZ} from "./SphericalMath";
+import {EA2XYZ, EAJP2PR, getLocalNorthVector, getLocalUpVector, PRJ2XYZ} from "./SphericalMath";
 import {DebugArrowAB, dispose, GridHelperWorld, propagateLayerMaskObject, sphereMark} from "./threeExt";
 import * as LAYER from "./LayerMasks";
 import {Line2} from "three/addons/lines/Line2.js";
@@ -341,72 +341,27 @@ export function ChangedPR() {
     let headingChange = newHeading - oldHeading;
     if (headingChange < -180) headingChange += 360;
 
-    // rotate the LocalFrame by this
-    // TODO: this is a about the Y axis, should it not be local up?
-    const upAxis = V3(0, 1, 0)
+    // Build LocalFrame orientation from the local tangent plane at the jet position.
+    // In old EUS, identity quaternion had Y=up, -Z=north, so rotating around Y by -heading worked.
+    // In ECEF, we must construct the tangent frame explicitly:
+    //   X = east, Y = up, -Z = north (matching Three.js convention where -Z is forward)
+    // then apply heading rotation around the up axis.
+    const upAxis = getLocalUpVector(jet)
+    const northAxis = getLocalNorthVector(jet)
+    const eastAxis = V3().crossVectors(northAxis, upAxis).normalize()
 
-    // rotateOnAxis is in OBJECT space, so it rotates the object
-    // about it's own origin
-    //LocalFrame.rotateOnAxis(upAxis,-radians(headingChange))
+    // Start with the tangent frame: X=east, Y=up, Z=south (i.e. -Z=north)
+    const _x = eastAxis.clone()
+    const _y = upAxis.clone()
+    const _z = northAxis.clone().negate() // south = -north, so -Z = north
 
-    LocalFrame.quaternion.identity()
-    LocalFrame.rotateOnAxis(upAxis, -radians(newHeading))
-
-    LocalFrame.updateMatrix()
-    LocalFrame.updateMatrixWorld()
-
-    // lock camamera to ATFLIR helper
-    //
-
-
-    // // Lock camera to jet by adding the same ffset and rotating by the heading change
-    // if (par.lockCameraToJet) {
-    //     const mainCam = NodeMan.get("mainCamera").camera;
-    //
-    //     mainCam.position.add(offset)
-    //
-    //     mainCam.position.sub(LocalFrame.position)
-    //     mainCam.position.applyAxisAngle(upAxis, -radians(headingChange))
-    //     mainCam.position.add(LocalFrame.position)
-    //
-    //     mainCam.rotateOnAxis(upAxis, -radians(headingChange))
-    //
-    //     mainCam.updateMatrix()
-    //     mainCam.updateMatrixWorld()
-    // }
-
-    // now the forward vector of the jet will be correct
-    // we need to adjust the local frame so the up Vector is correct,
-    // OR should we set it from the track?
-    // really what we are interest in here are
-    // A) the view of the lookCam
-    // B) the lines of sight
-
-    const _x = V3()
-    const _y = V3()
-    const _z = V3()
-    LocalFrame.matrix.extractBasis(_x, _y, _z)  // matrix or matrixWorld? parent is GlobalScene, so
-
-    // INPUT
-    const localUp = getLocalUpVector(LocalFrame.position, metersFromMiles(NodeMan.get("radiusMiles").v0))
-
-    _y.copy(localUp)
-
-    // as per lookAt,
-    // x = cross(y,z)
-    // y = cross(z,x)
-    // z = cross(x,y)
-
-    _x.crossVectors(_y, _z)
-    _z.crossVectors(_x, _y)
+    // Rotate the horizontal axes (X and Z) by -heading around Y (up)
+    _x.applyAxisAngle(_y, -radians(newHeading))
+    _z.applyAxisAngle(_y, -radians(newHeading))
 
     const m = new Matrix4()
     m.makeBasis(_x, _y, _z)
-
-    LocalFrame.quaternion.setFromRotationMatrix(m);
-
-    // the local matrix is composed from position, quaternion, and scale.
-    // the world matrix is the parent's world matrix multipled by this local matrix
+    LocalFrame.quaternion.setFromRotationMatrix(m)
 
     LocalFrame.updateMatrix()
     LocalFrame.updateMatrixWorld()
@@ -633,6 +588,7 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             value: Sit.startDistance,
             start: Sit.startDistanceMin,
             end: Sit.startDistanceMax,
+            maxMax: 300,
             step: 0.001,
             desc: "Tgt Start Dist",
             color: "#FFC0C0",
@@ -778,7 +734,6 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
         id: "LOSTraverseStraightLine"+idExtra,
         LOS: los,
         startDist: "startDistance",
-        radius: "radiusMiles",
         lineHeading: "targetActualHeading",
     })
 
@@ -954,7 +909,7 @@ export function initViews() {
         // a grid spaced one Nautical mile square
         const gridSquaresGround = 200
         let gridHelperGround = new GridHelperWorld(1,metersFromNM(gridSquaresGround), gridSquaresGround, metersFromMiles(EarthRadiusMiles), 0x606000, 0x606000);
-        GlobalScene.add(gridHelperGround);
+        Sit.groundFrame.add(gridHelperGround);
 
         setATFLIR(new CNodeDisplayATFLIR({
             id: "displayATFLIR",
@@ -1150,10 +1105,18 @@ export function initJetStuff() {
 
     const farClipLook = metersFromMiles(500)
 
-    // viw of the back of the pod with rotating glare on it.
+    // view of the back of the pod with rotating glare on it.
     const podCamera = new PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, farClipLook);
-    podCamera.position.set(-20, LocalFrame.position.y + 20, -40)
-    podCamera.lookAt(new Vector3(0, LocalFrame.position.y, 0));
+    // Position the pod camera offset from LocalFrame using local tangent vectors
+    const podUp = getLocalUpVector(LocalFrame.position);
+    const podNorth = getLocalNorthVector(LocalFrame.position);
+    const podEast = V3().crossVectors(podUp, podNorth).normalize();
+    podCamera.position.copy(LocalFrame.position.clone()
+        .add(podEast.clone().multiplyScalar(-20))
+        .add(podUp.clone().multiplyScalar(20))
+        .add(podNorth.clone().multiplyScalar(40)));
+    podCamera.up.copy(podUp);
+    podCamera.lookAt(LocalFrame.position);
 
 
     // wrap these other cameras in nodes
@@ -1182,8 +1145,12 @@ export function initJetStuff() {
     })
 
     viewPod.addOrbitControls(view.renderer);
-    viewPod.controls.position = new Vector3(10, LocalFrame.position.y, 0);
-    viewPod.controls.target = new Vector3(0, LocalFrame.position.y, 0);
+    // Set orbit controls position/target relative to LocalFrame using local tangent vectors
+    const podCtrlUp = getLocalUpVector(LocalFrame.position);
+    const podCtrlNorth = getLocalNorthVector(LocalFrame.position);
+    const podCtrlEast = V3().crossVectors(podCtrlUp, podCtrlNorth).normalize();
+    viewPod.controls.position = LocalFrame.position.clone().add(podCtrlEast.clone().multiplyScalar(10));
+    viewPod.controls.target = LocalFrame.position.clone();
 
 
 //

@@ -38,16 +38,21 @@
   },
   "jest": {
     "testPathIgnorePatterns": [
-      "<rootDir>/test/"
+      "<rootDir>/test/",
+      "<rootDir>/.claude/",
+      "<rootDir>/tests_regression/",
+      "<rootDir>/test_other/"
     ],
     "roots": [
       "<rootDir>"
     ]
   },
   "dependencies": {
+    "3d-tiles-renderer": "^0.4.21",
     "astronomy-engine": "^2.1.19",
     "buffer": "^6.0.3",
     "chrono-node": "^2.9.0",
+    "egm96-universal": "^1.1.1",
     "file-saver": "^2.0.5",
     "geotiff": "^2.1.3",
     "js-md5": "^0.8.3",

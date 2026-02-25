@@ -60,9 +60,8 @@ import {isConsole, isLocal, isServerless, SITREC_APP, SITREC_DOMAIN, SITREC_SERV
 import {TSParser} from "./TSParser";
 import {showError} from "./showError";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
-import {ECEFToLLAVD_Sphere, EUSToECEF, EUSToLLA} from "./LLA-ECEF-ENU";
+import {EUSToLLA} from "./LLA-ECEF-ENU";
 import {projectedBoundsToWGS84} from "./proj4Loader";
-import {V3} from "./threeUtils";
 import {isAudioOnlyFormat} from "./AudioFormats";
 import {extractFeaturesFromFile, isFeaturesCSV} from "./ParseFeaturesCSV";
 import {createImageFromArrayBuffer} from "./FileUtils";
@@ -189,9 +188,7 @@ export class CFileManager extends CManager {
         const lookCamera = NodeMan.get("lookCamera").camera;
         const pos = lookCamera.position;
 
-        // get the current EUS origin in ECEF
-        const oldEUSOrigin = EUSToECEF(V3(0,0,0));
-        const LLA = ECEFToLLAVD_Sphere(EUSToECEF(pos));
+        const LLA = EUSToLLA(pos);
 
         // Now serialize the sitch to capture the new origin (Sit.lat, Sit.lon)
         // and then deserialize it in memory to reload everything with the new origin

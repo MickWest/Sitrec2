@@ -1,9 +1,10 @@
-import {LLAToEUS, RLLAToECEFV_Sphere} from "../LLA-ECEF-ENU";
+import {LLAToEUS, RLLAToECEF_radii} from "../LLA-ECEF-ENU";
 import {f2m, radians} from "../utils";
 import {Sit} from "../Globals";
 
 import {CNodeController} from "./CNodeController";
 import {assert} from "../assert.js";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 
 
 // Controller to position the camera at a specified LLA point
@@ -20,7 +21,7 @@ export class CNodeControllerUIPositionLLA extends CNodeController {
     apply(f, cameraNode) {
         
         const camera = cameraNode.camera;
-        Sit.originECEF = RLLAToECEFV_Sphere(radians(Sit.lat),radians(Sit.lon),0)
+        Sit.originECEF = RLLAToECEF_radii(radians(Sit.lat),radians(Sit.lon),0)
         assert(!Number.isNaN(Sit.originECEF.x),"Sit.originECEF NaN")
 
         var from;
@@ -28,11 +29,11 @@ export class CNodeControllerUIPositionLLA extends CNodeController {
         var changed = false;
 
         if (this.in.fromLat) {
-            from = LLAToEUS(
-                this.in.fromLat.v(f),
-                this.in.fromLon.v(f),
-                f2m(this.in.fromAltFeet.v(f)),
-            )
+            const lat = this.in.fromLat.v(f);
+            const lon = this.in.fromLon.v(f);
+            // fromAltFeet is MSL; convert to HAE for LLAToEUS (h = H + N)
+            const altHAE = f2m(this.in.fromAltFeet.v(f)) + meanSeaLevelOffset(lat, lon);
+            from = LLAToEUS(lat, lon, altHAE)
             if (!camera.position.equals(from)) {
                 camera.position.copy(from)
                 changed = true;

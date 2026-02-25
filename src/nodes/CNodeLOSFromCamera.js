@@ -159,6 +159,11 @@ export class CNodeLOSFromCamera extends CNodeLOS {
             return;
         }
 
+        // ESP normalization constants (matching Google Earth Studio ranges)
+        const ALT_MAX = 65117481;
+        const ALT_MIN = -500;
+        const FOV_MAX = 178; // GES FOV range is 0-178°
+
         // Log keyframe data for debugging
         console.log("ESP Export keyframes:");
         keyframeData.forEach((kf, i) => {
@@ -166,11 +171,7 @@ export class CNodeLOSFromCamera extends CNodeLOS {
             console.log(`  KF ${i}: t=${kf.time.toFixed(3)} lat=${kf.lat.toFixed(6)} lon=${kf.lon.toFixed(6)} alt=${kf.alt.toFixed(1)}m (norm=${altNorm.toFixed(10)}) heading=${kf.heading.toFixed(1)}° el=${kf.elevation.toFixed(1)}° hFOV=${kf.hFOV.toFixed(1)}°`);
         });
 
-        // ESP normalization constants (matching Google Earth Studio ranges)
-        const ALT_MAX = 65117481;
-        const ALT_MIN = -500;
-        const FOV_MAX = 178; // GES FOV range is 0-178°
-
+        
         // Build normalized keyframe arrays
         const lonKF = keyframeData.map(kf => ({time: kf.time, value: (kf.lon + 180) / 360}));
         const latKF = keyframeData.map(kf => ({time: kf.time, value: (kf.lat + 90) / 180}));

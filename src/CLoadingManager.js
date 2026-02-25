@@ -90,6 +90,8 @@ class CLoadingManagerClass {
 
         this.loadingDiv.style.display = 'block';
 
+        const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
         const categories = new Map();
         for (const [taskId, entry] of this.loadingTasks) {
             if (!categories.has(entry.category)) {
@@ -104,16 +106,16 @@ class CLoadingManagerClass {
 
         for (const [category, tasks] of categories) {
             if (categories.size > 1) {
-                html += `<div style="color: #aaa; font-size: 11px; margin-top: 6px; margin-bottom: 2px;">${category}</div>`;
+                html += `<div style="color: #aaa; font-size: 11px; margin-top: 6px; margin-bottom: 2px;">${esc(category)}</div>`;
             }
-            
+
             for (const { taskId, entry } of tasks) {
                 const elapsed = Math.round((Date.now() - entry.startTime) / 1000);
                 const progressPercent = Math.round(entry.progress);
 
                 html += `<div style="margin: 6px 0; padding: 6px; background: rgba(74, 74, 106, 0.3); border-radius: 4px;">
                     <div style="color: #aaa; font-size: 11px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                        ${entry.name}
+                        ${esc(entry.name)}
                     </div>
                     <div style="background: #2a2a4a; border-radius: 3px; height: 6px; overflow: hidden;">
                         <div style="background: linear-gradient(90deg, #4a9eff, #00d4aa); width: ${progressPercent}%; height: 100%; transition: width 0.3s;"></div>

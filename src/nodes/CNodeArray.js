@@ -1,7 +1,7 @@
 import {CNode} from "./CNode";
 import {GlobalDateTimeNode, NodeMan, Sit} from "../Globals";
 import {assert} from "../assert.js";
-import {EUSToLLA} from "../LLA-ECEF-ENU";
+import {EUSToLLA, LLAToEUS} from "../LLA-ECEF-ENU";
 import {roundIfClose} from "../utils";
 import {saveAs} from "file-saver";
 
@@ -12,6 +12,11 @@ export class CNodeArray extends CNode {
         super(v);
         // frames?
         this.array = v.array
+        this.reprojectFromLLA = v.reprojectFromLLA ?? false;
+
+        if (this.reprojectFromLLA) {
+            this.recalculate();
+        }
 
         this.exportable = v.exportable ?? false;
         if (this.exportable) {
@@ -83,6 +88,18 @@ export class CNodeArray extends CNode {
         super.dispose()
         if (this.exportButton !== undefined) {
             this.exportButton.dispose();
+        }
+    }
+
+    recalculate() {
+        if (!this.reprojectFromLLA) return;
+        if (!Array.isArray(this.array)) return;
+
+        for (let i = 0; i < this.array.length; i++) {
+            const entry = this.array[i];
+            if (entry?.lla === undefined) continue;
+            const lla = entry.lla;
+            entry.position = LLAToEUS(lla[0], lla[1], lla[2]);
         }
     }
 

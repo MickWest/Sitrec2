@@ -26,8 +26,8 @@ export const SitHulsey = {
 
     mainCamera: {
         far:    50000000,
-        startCameraPosition: [-29111.506164711383, 68091.7505344188, 149221.43786749756],
-        startCameraTarget: [-29082.08960581131, 67711.97280864988, 148296.8279253748],
+        startCameraPositionLLA:[32.196473,-118.552091,61421.551577],
+        startCameraTargetLLA:[32.205235,-118.553536,61314.832650],
     },
 
     // with a ptz setup, add showGUI:true to allow changing it

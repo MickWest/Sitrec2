@@ -1288,3 +1288,9 @@ export class ExportProgressWidget {
         this.div.remove();
     }
 }
+
+export function getExportPrefix() {
+    const name = Sit.sitchName || Sit.menuName || "";
+    if (!name) return "Sitrec";
+    return "Sitrec-" + name.replace(/[\s%20]+/g, "_");
+}

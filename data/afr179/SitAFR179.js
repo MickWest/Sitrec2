@@ -27,8 +27,8 @@ export const SitAFR179 = {
 
     mainCamera: {
         fov: 30,
-        startCameraPosition: [51932.24, 32612.20, 98754.72],
-        startCameraTarget: [51817.84, 32302.32, 97810.85],
+        startCameraPositionLLA:[37.646687,-84.451078,20038.443137],
+        startCameraTargetLLA:[37.652252,-84.445355,19440.283895],
     },
 
     mainView:{left:0.0, top:0, width:0.9,height:1},

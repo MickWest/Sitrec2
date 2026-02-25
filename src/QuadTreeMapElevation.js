@@ -3,6 +3,7 @@ import {QuadTreeTile} from "./QuadTreeTile";
 import * as LAYER from "./LayerMasks";
 import {showError} from "./showError";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
+import {meanSeaLevelOffset} from "./EGM96Geoid";
 
 export class QuadTreeMapElevation extends QuadTreeMap {
     constructor(terrainNode, geoLocation, options = {}) {
@@ -507,7 +508,7 @@ export class QuadTreeMapElevation extends QuadTreeMap {
         const {x, y, zoom} = this.geo2TileFractionAndZoom([lat, lon], desiredZoom);
 
         if (x === null)
-            return 0; // no tile found, return sea level
+            return meanSeaLevelOffset(lat, lon); // no tile found, return geoid sea level
 
         const intX = Math.floor(x)
         const intY = Math.floor(y)
@@ -537,14 +538,14 @@ export class QuadTreeMapElevation extends QuadTreeMap {
             const elevation = f0 + (f1 - f0) * (yIndex - y0)
             return elevation * this.options.zScale;
         }
-        return 0  // default to sea level if elevation data not loaded
+        return meanSeaLevelOffset(lat, lon)  // default to geoid sea level if elevation data not loaded
     }
 
     getElevationWithTileInfo(lat, lon, desiredZoom = null) {
         const {x, y, zoom} = this.geo2TileFractionAndZoom([lat, lon], desiredZoom);
 
         if (x === null)
-            return {elevation: 0, tileZ: -1, tileX: -1, tileY: -1};
+            return {elevation: meanSeaLevelOffset(lat, lon), tileZ: -1, tileX: -1, tileY: -1};
 
         const intX = Math.floor(x)
         const intY = Math.floor(y)
@@ -572,7 +573,7 @@ export class QuadTreeMapElevation extends QuadTreeMap {
             const elevation = f0 + (f1 - f0) * (yIndex - y0)
             return {elevation: elevation * this.options.zScale, tileZ: zoom, tileX: intX, tileY: intY};
         }
-        return {elevation: 0, tileZ: -1, tileX: -1, tileY: -1};
+        return {elevation: meanSeaLevelOffset(lat, lon), tileZ: -1, tileX: -1, tileY: -1};
     }
 
     tileHasHigherZoom(z, x, y) {

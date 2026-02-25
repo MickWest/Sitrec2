@@ -233,6 +233,28 @@ foreach ($tileUsage as $u) {
     foreach ($u['daily'] as $s => $c) $tileTotalDay[$s] = ($tileTotalDay[$s] ?? 0) + $c;
 }
 
+$tracked3DServices = [
+    'google_3d_root',
+    'google_3d_tiles',
+    'cesium_osm_3d_tiles',
+    'cesium_osm_3d_bytes',
+];
+foreach ($tracked3DServices as $service) {
+    if (!isset($tileTotalHour[$service])) $tileTotalHour[$service] = 0;
+    if (!isset($tileTotalDay[$service])) $tileTotalDay[$service] = 0;
+}
+ksort($tileTotalHour);
+ksort($tileTotalDay);
+
+$google3DRootHour = $tileTotalHour['google_3d_root'] ?? 0;
+$google3DRootDay = $tileTotalDay['google_3d_root'] ?? 0;
+$google3DTilesHour = $tileTotalHour['google_3d_tiles'] ?? 0;
+$google3DTilesDay = $tileTotalDay['google_3d_tiles'] ?? 0;
+$cesiumOSMTilesHour = $tileTotalHour['cesium_osm_3d_tiles'] ?? 0;
+$cesiumOSMTilesDay = $tileTotalDay['cesium_osm_3d_tiles'] ?? 0;
+$cesiumOSMBytesHour = $tileTotalHour['cesium_osm_3d_bytes'] ?? 0;
+$cesiumOSMBytesDay = $tileTotalDay['cesium_osm_3d_bytes'] ?? 0;
+
 $diskSpace = getDiskSpace();
 $s3Usage = getS3Usage();
 $aiRequestLogs = loadAIRequestLogs($AI_LOG_FILE, 50);
@@ -398,6 +420,27 @@ $userNames = getUserNames($allUserIds);
                 <h2>Tile Usage (Today)</h2>
                 <div class="stat-value"><?= number_format(array_sum($tileTotalDay)) ?></div>
                 <div class="stat-label">Daily total for audit</div>
+            </div>
+
+            <div class="card">
+                <h2>Google 3D Root Sessions</h2>
+                <div class="stat-value"><?= number_format($google3DRootDay) ?></div>
+                <div class="stat-label">Day: <?= number_format($google3DRootDay) ?> | Hour: <?= number_format($google3DRootHour) ?></div>
+            </div>
+
+            <div class="card">
+                <h2>Google 3D Tile Requests</h2>
+                <div class="stat-value"><?= number_format($google3DTilesDay) ?></div>
+                <div class="stat-label">Day: <?= number_format($google3DTilesDay) ?> | Hour: <?= number_format($google3DTilesHour) ?></div>
+            </div>
+
+            <div class="card">
+                <h2>Cesium OSM 3D Bandwidth</h2>
+                <div class="stat-value"><?= formatBytes($cesiumOSMBytesDay) ?></div>
+                <div class="stat-label">
+                    BW Day: <?= formatBytes($cesiumOSMBytesDay) ?> | Hour: <?= formatBytes($cesiumOSMBytesHour) ?><br>
+                    Requests Day: <?= number_format($cesiumOSMTilesDay) ?> | Hour: <?= number_format($cesiumOSMTilesHour) ?>
+                </div>
             </div>
         </div>
         

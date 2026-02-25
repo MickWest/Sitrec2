@@ -9,6 +9,28 @@ import {CNodeSmoothedPositionTrack} from "./CNodeSmoothedPositionTrack";
 import {getGlareAngleFromFrame} from "../JetUtils";
 
 
+// Full set of tilt options for sitch-defined objects (Gimbal, etc.)
+// lil-gui convention: { displayLabel: storedValue }
+const allTiltOptions = {
+    "No Banking":"none",
+    "Physical Banking":"banking",
+    frontPointing:"frontPointing",
+    frontPointingAir:"frontPointingAir",
+    axialPush:"axialPush",
+    axialPull:"axialPull",
+    axialPushZeroG:"axialPushZeroG",
+    axialPullZeroG:"axialPullZeroG",
+    bottomPointing:"bottomPointing",
+    bottomPointingAir:"bottomPointingAir",
+    glareAngle:"glareAngle",
+};
+
+// Simplified set for dynamically-added track objects
+const simpleTiltOptions = {
+    "No Banking":"none",
+    "Physical Banking":"banking",
+};
+
 export class CNodeControllerObjectTilt extends CNodeController {
     constructor(v) {
         super(v);
@@ -16,14 +38,9 @@ export class CNodeControllerObjectTilt extends CNodeController {
         this.input("track")
         this.optionalInputs(["wind", "airTrack"])
         this.tiltType = v.tiltType ?? "none"
+        this._savedQuaternion = null;
 
-        // the input track is likely not smooth enought, so create a smoothed version
-        this.smoothedTrack = new CNodeSmoothedPositionTrack({
-            id: this.id + "Smoothed",
-            source: this.in.track,
-            method: "sliding",
-            window: 200}
-        )
+
 
         // with a large smoothing sliding window, the smoothed track will be offset from the original track
         // when going around a corner.
@@ -44,33 +61,36 @@ export class CNodeControllerObjectTilt extends CNodeController {
 
 
 
-        // Add orientation type menu - initially to physics, can be moved later
+        // Add orientation type menu
         this.noMenu = v.noMenu;
         this.tiltTypeGui = null;
         this.tiltTypeGuiParent = null;
-        console.log("CNodeControllerObjectTilt constructor, tiltType:", this.tiltType, "noMenu:", v.noMenu)
-        if (this.tiltType !== "banking" && !v.noMenu) {
-            console.log("  Creating tiltType GUI in physics menu")
-            this.tiltTypeGuiParent = guiMenus.physics;
-            this.tiltTypeGui = this.tiltTypeGuiParent.add(this,"tiltType",{
-                banking:"banking",
-                none:"none", // we need a none if we are going to use it to init things
-                frontPointing:"frontPointing",
-                frontPointingAir:"frontPointingAir",
-                axialPush:"axialPush",
-                axialPull:"axialPull",
-                axialPushZeroG:"axialPushZeroG",
-                axialPullZeroG:"axialPullZeroG",
-                bottomPointing:"bottomPointing",
-                bottomPointingAir:"bottomPointingAir",
-                glareAngle:"glareAngle",
-            }).name("Object Orientation type")
-                .listen(()=>{setRenderOne(true)})
+        if (!v.noMenu) {
+            this.tiltTypeGuiParent = v.guiFolder ?? guiMenus.physics;
+            this._explicitGuiFolder = !!v.guiFolder;
+            const options = this._explicitGuiFolder ? simpleTiltOptions : allTiltOptions;
+            this._createTiltGui(this.tiltTypeGuiParent, options);
         }
+
+        // the input track is likely not smooth enought, so create a smoothed version
+        this.smoothedTrack = new CNodeSmoothedPositionTrack({
+            id: this.id + "Smoothed",
+            source: this.in.track,
+            method: "sliding",
+            window: 200}
+        )
+
+        // hook the to this node so it will get updated before this node does
+        this.addInput("smoothedTrack", this.smoothedTrack)
 
         // optional input for the angle of attack
         this.input("angleOfAttack",true);
 
+    }
+
+    recalculate() {
+
+        super.recalculate();
     }
 
     dispose() {
@@ -82,29 +102,24 @@ export class CNodeControllerObjectTilt extends CNodeController {
         }
     }
 
+    _createTiltGui(parent, options) {
+        if (this.tiltTypeGui) {
+            this.tiltTypeGui.destroy();
+        }
+        this.tiltTypeGuiParent = parent;
+        this.tiltTypeGui = parent.add(this, "tiltType", options)
+            .name("Banking")
+            .listen(() => { setRenderOne(true) })
+        // Mark as common so CNode3DObject.destroyNonCommonUI() preserves it
+        // when rebuilding geometry-specific GUI controls during deserialization
+        this.tiltTypeGui.isCommon = true;
+    }
+
     // Move the tilt type GUI from physics menu to the object's GUI folder
     moveGuiTo(newParent) {
-        console.log("moveGuiTo called, tiltTypeGui:", this.tiltTypeGui, "parent:", this.tiltTypeGuiParent, "newParent:", newParent)
+        if (this._explicitGuiFolder) return;
         if (this.tiltTypeGui && this.tiltTypeGuiParent !== newParent) {
-            console.log("  Moving tilt type GUI to new parent")
-            // Destroy the old one
-            this.tiltTypeGui.destroy();
-            // Create new one in the target folder
-            this.tiltTypeGuiParent = newParent;
-            this.tiltTypeGui = newParent.add(this,"tiltType",{
-                banking:"banking",
-                none:"none",
-                frontPointing:"frontPointing",
-                frontPointingAir:"frontPointingAir",
-                axialPush:"axialPush",
-                axialPull:"axialPull",
-                axialPushZeroG:"axialPushZeroG",
-                axialPullZeroG:"axialPullZeroG",
-                bottomPointing:"bottomPointing",
-                bottomPointingAir:"bottomPointingAir",
-                glareAngle:"glareAngle",
-            }).name("Object Orientation type")
-                .listen(()=>{setRenderOne(true)})
+            this._createTiltGui(newParent, allTiltOptions);
         }
     }
 
@@ -127,36 +142,46 @@ export class CNodeControllerObjectTilt extends CNodeController {
         if (object !== undefined) {
             if (f >= 0) {
 
-                if (this.tiltType === "none") return;
+                var rawNext = this.in.track.p(f + 1)
+                const currentPos = this.in.track.p(f)
 
-                var next = this.in.track.p(f + 1)
+                // FIX B/C: distance check on RAW positions (before wind),
+                // store/restore quaternion for degenerate positions
+                if (currentPos.distanceTo(rawNext) < 1e-6) {
+                    if (this._savedQuaternion) {
+                        object.quaternion.copy(this._savedQuaternion);
+                        object.updateMatrix();
+                        object.updateMatrixWorld();
+                    } else {
+                        this._savedQuaternion = object.quaternion.clone();
+                    }
+                    return;
+                }
 
-                // if (this.id === "orientCameraObjectTarget") {
-                //     debugger;
-                // }
-
+                var next = rawNext;
                 // if we have a wind vector then subtract that to get the nose heading
                 // pass the track position to get wind in the correct local frame
                 if (this.in.wind !== undefined) {
                     const trackPos = this.in.track.p(f)
                     const windVector = this.in.wind.getValueFrame(f, trackPos)
+                    next = rawNext.clone();
                     next.sub(windVector)
                 }
-
-                const currentPos = this.in.track.p(f)
-                if (currentPos.distanceTo(next) < 1e-6) return;
 
                 // we want to use track positions not the object.position as the clampAboveGroung might have moved it
                 // so temporarily set the object position back to where it was before any clampAboveGround call
 
                 const oldPos = object.position.clone();
-                 object.position.copy(currentPos)
+                object.position.copy(currentPos)
 
                 object.up = objectNode.getUpVector(object.position)
                 object.lookAt(next)
 
                 // restore the object position
                 object.position.copy(oldPos);
+
+                // Save base orientation AFTER lookAt, BEFORE switch block modifies it
+                this._savedQuaternion = object.quaternion.clone();
 
                 // calculate the heading on the SMOOTHED track
                 var from = this.in.track.p(f)
@@ -334,7 +359,7 @@ export class CNodeControllerObjectTilt extends CNodeController {
                         break;
 
                     default:
-                        asert(0, "Unknown tilt type: " + this.tiltType + " in CNodeControllerObjectTilt.js, node id: " + this.id)
+                        assert(0, "Unknown tilt type: " + this.tiltType + " in CNodeControllerObjectTilt.js, node id: " + this.id)
                         break;
 
                 }

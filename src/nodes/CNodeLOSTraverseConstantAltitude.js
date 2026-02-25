@@ -4,9 +4,36 @@
 import {Color, Ray, Sphere} from "three";
 import {CNodeTrack} from "./CNodeTrack";
 import {intersectSphere2, V3} from "../threeUtils";
-import {wgs84} from "../LLA-ECEF-ENU";
 import {assert} from "../assert";
 import {showError} from "../showError";
+import {Globals} from "../Globals";
+import {ECEFToLLA_radii, EUSToECEF} from "../LLA-ECEF-ENU";
+
+// Intersect ray with ellipsoid of semi-axes (a, a, b) centered at origin.
+// Returns nearest positive-t intersection point, or null.
+function intersectEllipsoidAlt(ray, a, b) {
+    const ox = ray.origin.x, oy = ray.origin.y, oz = ray.origin.z;
+    const dx = ray.direction.x, dy = ray.direction.y, dz = ray.direction.z;
+    const a2 = a * a, b2 = b * b;
+
+    const A = (dx * dx + dy * dy) / a2 + (dz * dz) / b2;
+    const B = 2 * ((ox * dx + oy * dy) / a2 + (oz * dz) / b2);
+    const C = (ox * ox + oy * oy) / a2 + (oz * oz) / b2 - 1;
+
+    const disc = B * B - 4 * A * C;
+    if (disc < 0) return null;
+
+    const sqrtDisc = Math.sqrt(disc);
+    const t1 = (-B - sqrtDisc) / (2 * A);
+    const t2 = (-B + sqrtDisc) / (2 * A);
+
+    let t;
+    if (t1 > 0) t = t1;
+    else if (t2 > 0) t = t2;
+    else return null;
+
+    return ray.origin.clone().add(ray.direction.clone().multiplyScalar(t));
+}
 
 export class CNodeLOSTraverseConstantAltitude extends CNodeTrack {
     constructor(v) {
@@ -21,18 +48,21 @@ export class CNodeLOSTraverseConstantAltitude extends CNodeTrack {
     recalculate() {
         this.array = [];
         this.frames = this.in.LOS.frames
-        var earthRadius = wgs84.RADIUS;
+        const isEllipsoid = Globals.equatorRadius !== Globals.polarRadius;
+        var earthRadius = Globals.equatorRadius;
         if (this.in.radius !== undefined) {
             showError("Radius deprecated, generally we assume fixed wgs84 radius")
             earthRadius = (this.in.radius.v0)
         }
         var startRadius = earthRadius;
         var position;
-        var altitudeSphere;
+        var altitudeSphere; // used in sphere mode
+        var targetAltitude; // geodetic altitude for ellipsoid mode
 
         if (this.in.altitude !== undefined) {
-            startRadius = earthRadius + this.in.altitude.v0;
-            altitudeSphere = new Sphere(V3(0, -earthRadius, 0), startRadius )
+            targetAltitude = this.in.altitude.v0;
+            startRadius = earthRadius + targetAltitude;
+            altitudeSphere = new Sphere(V3(0, 0, 0), startRadius)
             position = this.in.LOS.v0.position.clone() // in case there's no initial intersection, default
         }
 
@@ -47,35 +77,51 @@ export class CNodeLOSTraverseConstantAltitude extends CNodeTrack {
                 var startDistance = this.in.startDist.v(0)
                 heading.multiplyScalar(startDistance)
                 position.add(heading)
-                startRadius = V3(0, -earthRadius, 0).sub(position).length()
-                altitudeSphere = new Sphere(V3(0, -earthRadius, 0), startRadius)
+                // Derive target altitude from starting position
+                if (isEllipsoid) {
+                    const ecef = EUSToECEF(position);
+                    const lla = ECEFToLLA_radii(ecef.x, ecef.y, ecef.z);
+                    targetAltitude = lla[2];
+                } else {
+                    startRadius = V3(0, 0, 0).sub(position).length()
+                    altitudeSphere = new Sphere(V3(0, 0, 0), startRadius)
+                }
             } else {
 
              //   if we have a vertical speed, then we increase the radius of the altitude sphere
                 if (this.in.verticalSpeed !== undefined) {
                     let verticalSpeed = this.in.verticalSpeed.v(f)
-                    startRadius += verticalSpeed / this.fps;
-                    altitudeSphere.radius = startRadius
+                    if (isEllipsoid) {
+                        targetAltitude += verticalSpeed / this.fps;
+                    } else {
+                        startRadius += verticalSpeed / this.fps;
+                        altitudeSphere.radius = startRadius
+                    }
                 }
 
 
                 let losPosition = los.position.clone();
                 let losHeading = los.heading.clone()
-                // we have a line from losPosition, heading vector losHeading
-                // and a sphere at position, radius perFrameMotion
-                // so find the intersections between the line and the sphere
                 let ray = new Ray(losPosition, losHeading)
+                let hit = null;
 
-                let target0 = V3() // first intersection
-                let target1 = V3() // second intersection
-                if (intersectSphere2(ray, altitudeSphere, target0, target1)) {
-                    // hit the sphere, pick the near or far point
-                    // if (movingAway)
-                    //     position = target1;
-                    //else
-                    position = target0;
+                if (isEllipsoid) {
+                    // Ellipsoid at constant geodetic altitude h has semi-axes (a+h, a+h, b+h)
+                    const a = Globals.equatorRadius + targetAltitude;
+                    const b = Globals.polarRadius + targetAltitude;
+                    hit = intersectEllipsoidAlt(ray, a, b);
                 } else {
-                    // no intersection, so we use the same distance as the precious point
+                    let target0 = V3() // first intersection
+                    let target1 = V3() // second intersection
+                    if (intersectSphere2(ray, altitudeSphere, target0, target1)) {
+                        hit = target0;
+                    }
+                }
+
+                if (hit) {
+                    position = hit;
+                } else {
+                    // no intersection, so we use the same distance as the previous point
                     let oldDistance = los.position.distanceTo(position)
                     position = los.position.clone();
                     let heading = los.heading.clone();

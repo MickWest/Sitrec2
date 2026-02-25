@@ -1,7 +1,7 @@
 import {par} from "../par";
 import {createVideoExporter, DefaultVideoFormat, getBestFormatForResolution, getVideoExtension} from "../VideoExporter";
 import {drawVideoWatermark, ExportProgressWidget} from "../utils";
-import {XYZ2EA, XYZJ2PR} from "../SphericalMath";
+import {earthCenterEUS, XYZ2EA, XYZJ2PR} from "../SphericalMath";
 import {raDec2Celestial} from "../CelestialMath";
 import {Frame2Az, Frame2El} from "../JetUtils";
 import {
@@ -54,7 +54,6 @@ import {
 } from "../threeExt";
 import {CNodeViewCanvas} from "./CNodeViewCanvas";
 import {CNode} from "./CNode";
-import {wgs84} from "../LLA-ECEF-ENU";
 import {getCameraNode} from "./CNodeCamera";
 import {CNodeEffect} from "./CNodeEffect";
 import {assert} from "../assert.js";
@@ -335,7 +334,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 
                 for (const entry of Object.values(NodeMan.list)) {
                     const node = entry.data;
-                    if (node.isController) {
+                    if (node.isController && !node.allowUpdate) {
                         assert(node.update === CNode.prototype.update,
                             `Controller ${node.id} has overridden update() - move logic to apply()`);
                         continue;
@@ -358,8 +357,34 @@ export class CNodeView3D extends CNodeViewCanvas {
                 }
                 
                 this.renderCanvas(frame);
-                
+
                 compositeCtx.drawImage(this.canvas, 0, 0);
+
+                // Also render visible child views (overlays and relativeTo children like compass, MQ9UI)
+                // Scale from CSS pixels to composite canvas backing pixels
+                const scaleX = width / this.widthPx;
+                const scaleY = height / this.heightPx;
+                ViewMan.computeEffectiveVisibility();
+                ViewMan.iterate((id, childView) => {
+                    if (childView === this) return;
+                    if (!childView._effectivelyVisible) return;
+                    const isChild = (childView.overlayView === this) ||
+                                    (childView.in.relativeTo === this);
+                    if (!isChild) return;
+
+                    childView.renderCanvas(frame);
+                    if (childView.canvas) {
+                        const dx = (childView.leftPx - this.leftPx) * scaleX;
+                        const dy = (childView.topPx - this.topPx) * scaleY;
+                        const dw = childView.widthPx * scaleX;
+                        const dh = childView.heightPx * scaleY;
+                        const alpha = childView.transparency !== undefined ? childView.transparency : 1;
+                        if (alpha < 1) compositeCtx.globalAlpha = alpha;
+                        compositeCtx.drawImage(childView.canvas, dx, dy, dw, dh);
+                        if (alpha < 1) compositeCtx.globalAlpha = 1;
+                    }
+                });
+
                 drawVideoWatermark(compositeCtx, width);
                 
                 await exporter.addFrame(compositeCanvas, frame);
@@ -604,9 +629,6 @@ export class CNodeView3D extends CNodeViewCanvas {
 //        const fov = xrCamera.fov * Math.PI / 180;
 
 
-        // TODO: this is probably wrong in XR mode with two different fovs
-        // so we really need to go in the other direction
-
         // NOTE: focal length is now set in renderTargetAndEffects() after render targets are sized
         // Do NOT set it here as it would use heightPx instead of actual render target height
         // const fov = lookCamera.fov * Math.PI / 180;
@@ -684,12 +706,8 @@ export class CNodeView3D extends CNodeViewCanvas {
             
             // Render sky brightness overlay and sun sky only during daytime
             if (skyOpacity > 0) {
-                // Recreate fullscreen quad (matches renderSky behavior)
-                if (this.fullscreenQuadScene !== undefined) {
-                    this.fullscreenQuadScene.remove(this.fullscreenQuad);
-                }
-                this.fullscreenQuad = new Mesh(this.fullscreenQuadGeometry, this.skyBrightnessMaterial);
-                this.fullscreenQuadScene.add(this.fullscreenQuad);
+                // Restore sky material (effects pipeline swaps it each frame)
+                this.fullscreenQuad.material = this.skyBrightnessMaterial;
                 
                 this.updateSkyUniforms(skyColor, skyOpacity);
                 
@@ -1369,9 +1387,6 @@ export class CNodeView3D extends CNodeViewCanvas {
             let skyOpacity = 1;
 
 
-            //           why is main view dark when look view camera is in darkness
-            //           is it not useing the main view camera here?
-
             const sunNode = NodeMan.get("theSun", true);
             if (sunNode !== undefined) {
                 this.renderer.setClearColor("black")
@@ -1411,21 +1426,9 @@ export class CNodeView3D extends CNodeViewCanvas {
             // Only render the quad if skyOpacity is greater than zero
             if (skyOpacity > 0) {
 
-                // Add the fullscreen quad to a scene dedicated to it
-                // PROBLEM - WHY DO WE NEED TO KEEP RECREATING THIS?????
-                // if we move the new Mesh to the initSky() function, then it
-                // will render was a plain white polygon. Why?
-                // Not a serious issue, but seems like a bug
-                // or possible some asyc issue with the renerer.clear call
-
-                // // cleanup the old quad and scene
-                if (this.fullscreenQuadScene !== undefined) {
-                    // cleanly remove the scene
-                    this.fullscreenQuadScene.remove(this.fullscreenQuad);
-
-                }
-                this.fullscreenQuad = new Mesh(this.fullscreenQuadGeometry, this.skyBrightnessMaterial);
-                this.fullscreenQuadScene.add(this.fullscreenQuad);
+                // Restore sky material — the effects pipeline (renderCanvas) swaps
+                // this.fullscreenQuad.material to effect/copy materials each frame.
+                this.fullscreenQuad.material = this.skyBrightnessMaterial;
 
                 this.updateSkyUniforms(skyColor, skyOpacity);
 
@@ -1627,6 +1630,16 @@ export class CNodeView3D extends CNodeViewCanvas {
             this.xrActive = false;
         }
         
+        // Dispose render targets
+        if (this.renderTargetAntiAliased) this.renderTargetAntiAliased.dispose();
+        if (this.renderTargetA) this.renderTargetA.dispose();
+        if (this.renderTargetB) this.renderTargetB.dispose();
+
+        // Dispose shader materials and geometry
+        if (this.copyMaterial) this.copyMaterial.dispose();
+        if (this.skyBrightnessMaterial) this.skyBrightnessMaterial.dispose();
+        if (this.fullscreenQuadGeometry) this.fullscreenQuadGeometry.dispose();
+
         super.dispose();
         this.renderer.dispose();
         this.renderer.forceContextLoss();
@@ -1701,7 +1714,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             this.controls.update(1);
 
             // if we have a focus track, then focus on it after camera controls have updated
-            if (this.focusTrackName !== "default") {
+            if (this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName)) {
                 this.controls.justRotate = true;
                 var focusTrackNode = NodeMan.get(this.focusTrackName)
                 const target = focusTrackNode.p(par.frame);
@@ -1826,38 +1839,6 @@ export class CNodeView3D extends CNodeViewCanvas {
 
             // debugText = ""
 
-            /*
-
-            // TODO: dragging spheres
-
-            // we don't check the glare (green) sphere if it's locked to the white (target sphere)
-            if (targetSphere.position.y !== glareSphere.position.y) {
-                if (intersects.find(hit => hit.object === glareSphere) !== undefined) {
-                    // CLICKED ON THE green SPHERE
-                    this.dragMode = DRAG.MOVEHANDLE;
-                    // must pause, as we are controlling the pod now
-                    par.paused = true;
-                }
-            }
-            if (intersects.find(hit => hit.object === targetSphere) !== undefined) {
-
-                if (this.dragMode === 1) {
-                    var glareSphereWorldPosition = glareSphere.getWorldPosition(new Vector3())
-                    var targetSphereWorldPosition = targetSphere.getWorldPosition(new Vector3())
-                    var distGlare = this.raycaster.ray.distanceSqToPoint(glareSphereWorldPosition)
-                    var distTarget = this.raycaster.ray.distanceSqToPoint(targetSphereWorldPosition)
-                    //console.log("glare = " + distGlare + " target = " + distTarget)
-                    // already in mode 1 (glare)
-                    // so only switch if targetGlare is closer to the ray
-                    if (distTarget < distGlare)
-                        this.dragMode = 2;
-                } else {
-                    this.dragMode = 2;
-                }
-                // must pause, as we are controlling the pod now
-                par.paused = true;
-            }
-*/
         }
         if (this.dragMode === 0 && this.controls && mouseInViewOnly(this, mouseX, mouseY)) {
 //            console.log ("Click re-Enabled "+this.id)
@@ -1960,14 +1941,14 @@ export class CNodeView3D extends CNodeViewCanvas {
             } else {
                 var possibleTarget = V3()
                 this.raycaster.setFromCamera(mouseRay, this.camera);
-                const dragSphere = new Sphere(new Vector3(0, -wgs84.RADIUS, 0), wgs84.RADIUS /* + f2m(this.defaultTargetHeight) */)
+                const dragSphere = new Sphere(earthCenterEUS(), Globals.equatorRadius /* + f2m(this.defaultTargetHeight) */)
                 if (this.raycaster.ray.intersectSphere(dragSphere, possibleTarget)) {
                     target = possibleTarget.clone()
                 }
             }
 
             // regardless of what we find above, if there's a focusTrackName, then snap to the closest point on that track
-            if (this.focusTrackName !== "default") {
+            if (this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName)) {
                 var focusTrackNode = NodeMan.get(this.focusTrackName)
 
                 var closestFrame = focusTrackNode.closestFrameToRay(this.raycaster.ray)
@@ -2107,7 +2088,9 @@ export class CNodeView3D extends CNodeViewCanvas {
             const trackNode = trackOb.trackNode;
             const trackDataNode = trackOb.trackDataNode;
             
-            if (!trackNode || !trackNode.visible) return;
+            // Check the display node's visibility (trackDisplayNode for loaded tracks, displayTrack for synthetic)
+            const displayNode = trackOb.trackDisplayNode || trackOb.displayTrack;
+            if (!trackNode || (displayNode && !displayNode.visible)) return;
             
             // Check ONLY the track data node if it exists (raw data points)
             // This represents the actual track data (e.g., from KML/CSV) and is the complete track
@@ -2430,28 +2413,35 @@ export class CNodeView3D extends CNodeViewCanvas {
     // Helper method to show track menu (extracted to avoid duplication)
     showTrackMenu(closestTrack, event) {
         console.log(`Found track near mouse: ${closestTrack.trackID}`);
-        
+
         // Mirror the track's GUI folder from the Contents menu
         if (closestTrack.guiFolder) {
+            // Refresh smoothing parameter visibility before creating the menu
+            const trackOb = closestTrack.trackOb;
+            const smoothedNode = trackOb?.smoothedTrackNode || trackOb?.trackNode;
+            if (smoothedNode?.isDynamicSmoothing) {
+                smoothedNode._updateParameterVisibility();
+            }
+
             const menuTitle = `Track: ${closestTrack.trackOb?.menuText || closestTrack.trackID}`;
-            
+
             // Create a standalone menu and mirror the track's GUI folder
             // Use dismissOnOutsideClick=false so dragging control points doesn't close the menu
             const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, event.clientX, event.clientY, false);
-            
+
             // If menu creation was blocked (persistent menu is open), return early
             if (!standaloneMenu) {
                 return;
             }
-            
+
             // Set up dynamic mirroring for the track's GUI folder
             CustomManager.setupDynamicMirroring(closestTrack.guiFolder, standaloneMenu);
-            
+
             // Add a method to manually refresh the mirror
             standaloneMenu.refreshMirror = () => {
                 CustomManager.updateMirror(standaloneMenu);
             };
-            
+
             // Open the menu by default
             standaloneMenu.open();
             console.log(`Created standalone menu for track: ${closestTrack.trackID}`);
@@ -2571,8 +2561,8 @@ export class CNodeView3D extends CNodeViewCanvas {
 
 
                             // Create a standalone menu and mirror the object's GUI folder
-                            // Use the same approach as tracks for consistency
-                            const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, event.clientX, event.clientY, true);
+                            // Use dismissOnOutsideClick=false so interacting with the scene doesn't close the menu
+                            const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, event.clientX, event.clientY, false);
                             
                             // If menu creation was blocked (persistent menu is open), return early
                             if (!standaloneMenu) {

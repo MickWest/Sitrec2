@@ -1,13 +1,12 @@
 // Track of LOS intersection with the cloud horizon
 // i.e. the point on on the LOS closes to the horizon viewed from the LOS start point in the direction of the LOS
 import {calcHorizonPoint} from "../SphericalMath";
-import {metersFromMiles} from "../utils";
 import {CNodeLOS} from "./CNodeLOS";
 
 export class CNodeLOSHorizonTrack extends CNodeLOS {
     constructor(v) {
         super(v);
-        this.checkInputs(["LOS", "cloudAltitude", "radius"])
+        this.checkInputs(["LOS", "cloudAltitude"])
         this.recalculate()
     }
 
@@ -20,7 +19,7 @@ export class CNodeLOSHorizonTrack extends CNodeLOS {
             var A = this.in.LOS.p(f)
             var fwd = this.in.LOS.v(f).heading.clone()
 
-            const horizonPoint = calcHorizonPoint(A, fwd, cloudAlt, metersFromMiles(this.in.radius.v(0)))
+            const horizonPoint = calcHorizonPoint(A, fwd, cloudAlt)
 
             this.array.push({position: horizonPoint})
 

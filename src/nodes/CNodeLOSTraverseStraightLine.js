@@ -5,6 +5,7 @@ import {Color, Plane, Ray} from "three";
 import {CNodeTrack} from "./CNodeTrack";
 import {assert} from "../assert.js";
 import {V3} from "../threeUtils";
+import {getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 
 export class CNodeLOSTraverseStraightLine extends CNodeTrack {
     constructor(v) {
@@ -40,8 +41,8 @@ export class CNodeLOSTraverseStraightLine extends CNodeTrack {
                 // given our current position, calculate a frame
                 // which this heading, and local up
                 const lineHeading = this.in.lineHeading.v(f);
-                let fwd = V3(0, 0, -1)
-                const upAxis = V3(0, 1, 0)
+                const upAxis = getLocalUpVector(position)
+                let fwd = getLocalNorthVector(position).negate() // start facing south (like old V3(0,0,-1) in EUS)
                 // test if lineHeading is a number
                 // if not, it's a vector
                 if (typeof lineHeading !== "number") {
@@ -159,10 +160,8 @@ export class CNodeLOSTraverseStraightLineFixed extends CNodeTrack {
                 // given our current position, calculate a frame
                 // which this heading, and local up
                 const lineHeading = radians(this.in.lineHeading.v(f))
-                var fwd = V3(0, 0, -1)
-
-                //           var upAxis = getLocalUpVector(position, radius)
-                var upAxis = V3(0, 1, 0)
+                var fwd = getLocalNorthVector(position).negate() // start facing south (like old V3(0,0,-1) in EUS)
+                var upAxis = getLocalUpVector(position)
 
                 fwd.applyAxisAngle(upAxis, -lineHeading)
 

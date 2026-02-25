@@ -442,6 +442,8 @@ export class CTrackFileKML extends CTrackFile {
     makeKMLDisplayTrack(coordinates, style, name, altitudeMode, showCap) {
         if (coordinates.length > 1) {
             let id = NodeMan.getUniqueID(name)
+            // KML "absolute" altitude is HAE per spec (OGC KML 2.3, §9.1.3.8)
+            // altitudeReference defaults to "HAE" which is correct for KML
             const trackOb = new CNodeTrackFromLLAArray({
                 id: id,
                 altitudeMode: altitudeMode,

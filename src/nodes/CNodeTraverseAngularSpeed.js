@@ -2,7 +2,8 @@
 // angular difference between the lines beteeen the nodes
 // for this frame and the previous frame.
 import {CNode} from "./CNode";
-import {asin, clockwiseZX, degrees} from "../utils";
+import {asin, degrees} from "../utils";
+import {getLocalUpVector} from "../SphericalMath";
 
 export class CNodeTraverseAngularSpeed extends CNode {
     constructor(v) {
@@ -20,57 +21,36 @@ export class CNodeTraverseAngularSpeed extends CNode {
         let trackPos = this.in.track.p(f)
         let traversePos = this.in.traverse.p(f)
 
-        trackPos.y = 0;
-        traversePos.y = 0;
+        const up = getLocalUpVector(trackPos);
 
         let offset = traversePos.clone().sub(trackPos)
-//        let angle = atan2(offset.z, offset.x)
+        offset.sub(up.clone().multiplyScalar(offset.dot(up)))
 
         let trackPos0 = this.in.track.p(f - 1)
         let traversePos0 = this.in.traverse.p(f - 1)
-        trackPos0.y = 0;
 
         // this position has ALSO moved by the per-frame cloud wind velocity
         const wind = this.in.wind.v(f)
         traversePos0.add(wind)
-        traversePos0.y = 0;
-
-        let offset0 = traversePos0.clone(0).sub(trackPos0)
-//        let angle0 = atan2(offset0.z, offset0.x)
-
-//        let angleDifferenceDegrees = degrees(angle - angle0) * this.fps
-        //const angleDifferenceDegrees = -degrees(offset0.angleTo(offset)) * this.fps
 
         var step = traversePos.clone().sub(traversePos0)
+        step.sub(up.clone().multiplyScalar(step.dot(up)))
 
         // Step is how far we've moved along curve that touches the horison.
         // nee to get this PERPENDICULAR to the view vector (which we assume is offset)
         const viewNormal = offset.clone().normalize()
-        const viewComponentOfStep = step.clone().sub(viewNormal.multiplyScalar(viewNormal.dot(step)))
+        const viewComponentOfStep = step.clone().sub(viewNormal.clone().multiplyScalar(viewNormal.dot(step)))
 
         let angleDifferenceDegrees = -degrees(asin(viewComponentOfStep.length()/offset.length())) * this.fps;
 
-        if (!clockwiseZX(trackPos,traversePos,traversePos.clone().add(viewComponentOfStep))) {
+        // Determine sign using cross product projected onto local up.
+        const toTraverse = offset.clone();
+        const crossSign = toTraverse.cross(viewComponentOfStep).dot(up);
+        if (crossSign <= 0) {
             angleDifferenceDegrees = -angleDifferenceDegrees;
         }
 
-   //     if (f == 1) console.log("------------")
-   //     if (f <5)
-   //         console.log("CNodeTraverseAngularSpeed, frame = "+f+" angleDiff = " + angleDifferenceDegrees
-   //         + " offset: "+vdump(offset,3)+ " offset0:"+vdump(offset0,3)+" wind: "+vdump(wind,3)+" St:"+step.length())
-
         return (angleDifferenceDegrees)
-
-        /*
-        offset.normalize()
-        offset0.normalize()
-//        var d = offset.dot(offset0)
-        var d = offset.x*offset0.x + offset.y*offset0.y + offset.z*offset0.z
-        let angle2 = (degrees(Math.acos(d)))
-        return angle2*this.fps
-*/
-
     }
 
 }
-

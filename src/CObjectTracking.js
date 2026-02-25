@@ -5,7 +5,7 @@ import {getJsfeat, loadJsfeat} from "./jsfeatLoader";
 import {interpolatePosition} from "./CVideoData";
 import {EventManager} from "./CEventManager";
 import {createVideoExporter, DefaultVideoFormat, getBestFormatForResolution, getVideoExtension} from "./VideoExporter";
-import {drawVideoWatermark, ExportProgressWidget} from "./utils";
+import {drawVideoWatermark, ExportProgressWidget, getExportPrefix} from "./utils";
 
 let cv = null;
 
@@ -1286,7 +1286,7 @@ async function renderStabilizedVideo(expanded = false) {
                 (status) => progress.setStatus(status)
             );
 
-            const filename = `stabilized_${expanded ? 'expanded_' : ''}${Sit.name || 'export'}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
+            const filename = `${getExportPrefix()}_stabilized_${expanded ? 'expanded_' : ''}${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -1317,7 +1317,7 @@ let stabilizeToggleMenuItem = null;
 export function addObjectTrackingMenu() {
     if (!guiMenus.view) return;
 
-    trackingFolder = guiMenus.view.addFolder("Auto Tracking").close().perm();
+    trackingFolder = guiMenus.video.addFolder("Auto Tracking").close().perm();
 
     const menuActions = {
         enableTracking: toggleEnableTracking,

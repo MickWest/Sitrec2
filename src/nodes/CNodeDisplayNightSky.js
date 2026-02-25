@@ -23,7 +23,13 @@ import {CNodeDisplayEarthShadow} from "./CNodeDisplayEarthShadow";
 import {CNodeDisplayMoonShadow} from "./CNodeDisplayMoonShadow";
 import {assert} from "../assert.js";
 import {intersectSphere2, V3} from "../threeUtils";
-import {getCelestialDirectionFromRaDec, getJulianDate, getSiderealTime, raDecToAltAz} from "../CelestialMath";
+import {
+    getCelestialDirectionFromRaDec,
+    getGeocentricBodyPositionEUS,
+    getJulianDate,
+    getSiderealTime,
+    raDecToAltAz
+} from "../CelestialMath";
 import {ViewMan} from "../CViewManager";
 import {CNodeLabeledArrow} from "./CNodeLabels3D";
 import {CNodeDisplaySkyOverlay} from "./CNodeDisplaySkyOverlay";
@@ -99,7 +105,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         // globe used for collision
         // and specifying the center of the Earth
-        this.globe = new Sphere(new Vector3(0, -wgs84.RADIUS, 0), wgs84.POLAR_RADIUS)
+        // Use POLAR_RADIUS (slightly smaller than equatorial) so that cameras on
+        // the surface at equatorial radius are outside the sphere, avoiding false
+        // ray-sphere intersections for above-horizon satellites.
+        this.globe = new Sphere(new Vector3(0, 0, 0), wgs84.POLAR_RADIUS)
 
         this.camera = NodeMan.get("lookCamera").camera;
         assert(this.camera, "CNodeDisplayNightSky needs a look camera")
@@ -276,7 +285,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         GlobalScene.add(this.flareBandGroup)
 
 
-        //   why no work???
         setLayerMaskRecursive(this.flareBandGroup, LAYER.MASK_HELPERS);
 
 
@@ -815,65 +823,24 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             this.celestialDaySphere.updateMatrix()
         }
 
-        // do adjustements for date/time, and maybe precession, here
-        // .....
-
-        // The EUS Coordinate system is right handed Y-Up
-        // X = East
-        // Y = Up
-        // Z = South (-Z = North)
-
-        // With the identity transform, the Celestial Sphere (CS) has:
-        // RA of 0 along the X axis, i.e. EAST
-        // Dec of 90 ia along the Y Axis, i.e. UP
-
-        // The CS is in Standard ECEF, right handed, Z = up
-
-        // a good test is where the north star ends up. No matter what date, etc,
-        // Polaris has dec of about 89°, and should always be north, tilted down by the latitude
-
+        // The celestial sphere star data is in ECI (Earth-Centered Inertial) coordinates:
+        //   X = vernal equinox (RA=0), Y = RA=6h, Z = north celestial pole
+        // In ECEF, Z is also the north pole. The only difference is Earth's rotation:
+        // ECEF X (lon=0) points at RA = GMST on the celestial sphere.
+        // So we just rotate by -GMST around Z to convert ECI → ECEF.
+        // (The old EUS code also needed lat/lon tilts and a 180° Y flip
+        //  to convert from Z-up celestial to Y-up local tangent plane.)
 
         var nowDate = this.in.startTime.dateNow;
-        const fieldRotation = getSiderealTime(nowDate, 0) - 90
+        const GMST = getSiderealTime(nowDate, 0); // degrees
 
-        // we just use the origin of the local EUS coordinate systems
-        // to tilt the stars by latitude and rotate them by longitude
-        const lat1 = radians(Sit.lat);
-        const lon1 = radians(Sit.lon);
-
-        // note, rotateOnAxis is in LOCAL space, so we can't just chain them here
-        // we need to rotate around the WORLD Z then the WORLD X
-
-//         // Create a matrix for rotation around Y-axis by 180° to get north in the right place
-        const rotationMatrixY = new Matrix4();
-        rotationMatrixY.makeRotationY(radians(180));
-//
-// // Create a matrix for rotation around Z-axis by the longitude (will alls include data/time here)
         const rotationMatrixZ = new Matrix4();
-        rotationMatrixZ.makeRotationZ(radians(Sit.lon + fieldRotation));
-//
-// // Create a matrix for rotation around X-axis by the latitude (tilt)
-        const rotationMatrixX = new Matrix4();
-        rotationMatrixX.makeRotationX(radians(Sit.lat));
-//
-//         //Combine them, so they are applied in the order Y, Z, X
-//         rotationMatrixX.multiply(rotationMatrixZ.multiply(rotationMatrixY))
-//
-//         // apply them
-//         this.celestialSphere.applyMatrix4(rotationMatrixX)
+        rotationMatrixZ.makeRotationZ(radians(-GMST));
 
-        // Apply rotation matrices to the night sky celestial sphere
-        this.celestialSphere.applyMatrix4(rotationMatrixY)
         this.celestialSphere.applyMatrix4(rotationMatrixZ)
-        this.celestialSphere.applyMatrix4(rotationMatrixX)
 
-        // The day sky sphere should use the same transformations as the night sky sphere
-        // since both are rendered with camera at origin and should show celestial objects
-        // in the same positions
         if (this.celestialDaySphere) {
-            this.celestialDaySphere.applyMatrix4(rotationMatrixY)
             this.celestialDaySphere.applyMatrix4(rotationMatrixZ)
-            this.celestialDaySphere.applyMatrix4(rotationMatrixX)
         }
 
 
@@ -1283,32 +1250,27 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         // Handle Sun-specific calculations for flare region
         if (planet === "Sun") {
-            const eusDir = getCelestialDirectionFromRaDec(ra, dec, date)
+            const sunPos = getGeocentricBodyPositionEUS(Astronomy.Body.Sun, date, true);
+            const sunDir = sunPos.clone().normalize();
 
             // Store sun direction vectors for flare calculations
-            this.satellites.toSun.copy(eusDir.clone().normalize())
+            this.satellites.toSun.copy(sunDir)
             this.satellites.fromSun.copy(this.satellites.toSun.clone().negate())
             Globals.fromSun = this.satellites.fromSun.clone()
             Globals.toSun = this.satellites.toSun.clone()
+            Globals.sunPos = sunPos.clone()
 
             this.updateFlareRegion(ra, dec, date);
         }
 
         // Handle Moon-specific calculations for shadow
         if (planet === "Moon") {
-            const eusDir = getCelestialDirectionFromRaDec(ra, dec, date)
-            
-            Globals.toMoon = eusDir.clone().normalize()
+            const moonPos = getGeocentricBodyPositionEUS(Astronomy.Body.Moon, date, true);
+
+            Globals.toMoon = moonPos.clone().normalize()
             Globals.fromMoon = Globals.toMoon.clone().negate()
-            
-            const eusOriginObserver = new Astronomy.Observer(Sit.lat, Sit.lon, 0);
-            const moonFromOrigin = Astronomy.Equator(planet, date, eusOriginObserver, false, true);
-            const moonDistance = moonFromOrigin.dist * 149597870700;
-            const moonRA = (moonFromOrigin.ra) / 24 * 2 * Math.PI;
-            const moonDec = radians(moonFromOrigin.dec);
-            const moonDir = getCelestialDirectionFromRaDec(moonRA, moonDec, date);
-            
-            Globals.moonPos = moonDir.clone().multiplyScalar(moonDistance)
+
+            Globals.moonPos = moonPos
         }
     }
 
@@ -1473,6 +1435,3 @@ export function addNightSky(def) {
 
     return nightSky;
 }
-
-
-

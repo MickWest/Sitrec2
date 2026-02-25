@@ -454,11 +454,11 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             if (!groundVertex || groundVertex.type !== 'bottom') continue;
             
             const currentPos = groundVertex.position.clone();
-            const localUp = getLocalUpVector(currentPos);
-            
-            // Lift point high above terrain, then drop to find ground
-            const highPoint = currentPos.clone().add(localUp.clone().multiplyScalar(10000));
-            const terrainPoint = getPointBelow(highPoint);
+
+            // Snap to terrain — no need to lift first for the non-raycast path;
+            // lifting along the geodetic normal shifts lat/lon on an ellipsoid,
+            // causing systematic drift.
+            const terrainPoint = getPointBelow(currentPos);
             
             // Update ground vertex position
             groundVertex.position.copy(terrainPoint);
@@ -533,8 +533,8 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         const groundCorners = [];
         for (let i = 0; i < 4; i++) {
             const {lat, lon} = this.cornerLatLons[i];
-            const highPoint = LLAToEUS(lat, lon, 10000); // Start at high altitude
-            const groundPoint = getPointBelow(highPoint);
+            const surfacePoint = LLAToEUS(lat, lon, 0);
+            const groundPoint = getPointBelow(surfacePoint);
             groundCorners.push(groundPoint);
         }
         
@@ -2128,10 +2128,9 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                 // Calculate new horizontal position
                 const newHorizontalPos = oldPosition.clone().add(horizontalDisplacement);
                 
-                // Snap to terrain using getPointBelow()
-                // First, lift the point high above terrain, then drop it to find ground
-                const highPoint = newHorizontalPos.clone().add(localUp.clone().multiplyScalar(10000));
-                const terrainPoint = getPointBelow(highPoint);
+                // Snap to terrain — pass directly without lifting to avoid
+                // lat/lon drift on ellipsoid (non-raycast path only needs lat/lon)
+                const terrainPoint = getPointBelow(newHorizontalPos);
                 
                 // Move the dragged vertex to the terrain position
                 draggedVertex.position.copy(terrainPoint);
@@ -2170,10 +2169,8 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                     const projectedMovement1 = horizontalDisp.dot(edgeDir1);
                     const neighbor1NewPos = neighbor1.position.clone().add(edgeDir1.multiplyScalar(projectedMovement1));
                     
-                    // Snap neighbor1 to terrain
-                    const neighbor1Up = getLocalUpVector(neighbor1.position);
-                    const neighbor1High = neighbor1NewPos.clone().add(neighbor1Up.clone().multiplyScalar(10000));
-                    neighbor1.position.copy(getPointBelow(neighbor1High));
+                    // Snap neighbor1 to terrain (no lift — avoids ellipsoid lat/lon drift)
+                    neighbor1.position.copy(getPointBelow(neighbor1NewPos));
                     
                     // Update the linked top vertex for neighbor1
                     const linkedTop1 = this.vertices[neighbor1.linkedVertex];
@@ -2193,10 +2190,8 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                     const projectedMovement2 = horizontalDisp.dot(edgeDir2);
                     const neighbor2NewPos = neighbor2.position.clone().add(edgeDir2.multiplyScalar(projectedMovement2));
                     
-                    // Snap neighbor2 to terrain
-                    const neighbor2Up = getLocalUpVector(neighbor2.position);
-                    const neighbor2High = neighbor2NewPos.clone().add(neighbor2Up.clone().multiplyScalar(10000));
-                    neighbor2.position.copy(getPointBelow(neighbor2High));
+                    // Snap neighbor2 to terrain (no lift — avoids ellipsoid lat/lon drift)
+                    neighbor2.position.copy(getPointBelow(neighbor2NewPos));
                     
                     // Update the linked top vertex for neighbor2
                     const linkedTop2 = this.vertices[neighbor2.linkedVertex];
@@ -2257,19 +2252,22 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                 this.draggingPoint = {userData: {isBuildingMesh: true}};
             } else if (isRoofCenter) {
                 this.draggingPoint = this.roofCenterHandle;
-                // Update the initial position and intersection for next frame (incremental dragging)
+                // Update the initial position, intersection, and local up for next frame (incremental dragging)
                 this.dragInitialHandlePosition.copy(this.roofCenterHandle.position);
                 this.dragInitialIntersection.copy(currentIntersection);
+                this.dragLocalUp = getLocalUpVector(this.dragInitialHandlePosition);
             } else if (isRoofline) {
                 this.draggingPoint = this.rooflineHandle;
-                // Update the initial position and intersection for next frame (incremental dragging)
+                // Update the initial position, intersection, and local up for next frame (incremental dragging)
                 this.dragInitialHandlePosition.copy(this.rooflineHandle.position);
                 this.dragInitialIntersection.copy(currentIntersection);
+                this.dragLocalUp = getLocalUpVector(this.dragInitialHandlePosition);
             } else {
                 this.draggingPoint = this.controlPoints[this.draggingVertexIndex];
-                // Update the initial position and intersection for next frame (incremental dragging)
+                // Update the initial position, intersection, and local up for next frame (incremental dragging)
                 this.dragInitialHandlePosition.copy(this.draggingPoint.position);
                 this.dragInitialIntersection.copy(currentIntersection);
+                this.dragLocalUp = getLocalUpVector(this.dragInitialHandlePosition);
             }
             
             setRenderOne(true);

@@ -2,10 +2,10 @@ import {CNode3DGroup} from "./CNode3DGroup";
 import * as LAYER from "../LayerMasks";
 import {dispose, propagateLayerMaskObject} from "../threeExt";
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
-import {wgs84} from "../LLA-ECEF-ENU";
 import {Line2} from "three/addons/lines/Line2.js";
 import {makeMatLine} from "../MatLines";
 import {perpendicularVector, V3} from "../threeUtils";
+import {Globals} from "../Globals";
 
 
 export class CNodeDisplayGlobeCircle extends CNode3DGroup {
@@ -18,7 +18,7 @@ export class CNodeDisplayGlobeCircle extends CNode3DGroup {
         this.normal = v.normal.clone() ?? V3(0, 0, 1);
         this.normal.normalize()
         this.offset = v.offset ?? 300000;
-        this.radius = v.radius ?? wgs84.RADIUS*1.001;
+        this.radius = v.radius ?? Globals.equatorRadius*1.001;
 
         this.circleGeometry = null;
         this.circleLine = null;
@@ -45,7 +45,7 @@ export class CNodeDisplayGlobeCircle extends CNode3DGroup {
         const perpendicular = perpendicularVector(this.normal).normalize();
         const otherPerpendicular = this.normal.clone().cross(perpendicular);
 
-        const globeCenter = V3(0,-wgs84.RADIUS,0);
+        const globeCenter = V3(0, 0, 0);
         const circleCenter = globeCenter.clone().add(this.normal.multiplyScalar(this.offset));
         const circleRadius = Math.sqrt(this.radius*this.radius - this.offset*this.offset);
         const segments = 100;

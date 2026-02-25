@@ -1,13 +1,22 @@
-// get heading in the XZ plane - i.e. the compass heading
+// get heading in the local tangent plane - i.e. the compass heading
 import {NodeMan, Sit} from "./Globals";
 import {degrees} from "./utils";
 import {assert} from "./assert";
+import {getLocalUpVector, getLocalNorthVector} from "./SphericalMath";
+import {V3} from "./threeUtils";
 
 export function trackHeading(source, f) {
     if (f > Sit.frames - 2) f = Sit.frames - 2; // hand out of range
     if (f < 0) f = 0
-    const fwd = source.p(f + 1).sub(source.p(f))
-    const heading = degrees(Math.atan2(fwd.x, -fwd.z))
+    const pos = source.p(f);
+    const fwd = source.p(f + 1).sub(pos);
+    // Project fwd onto local tangent plane and compute heading from north
+    const localUp = getLocalUpVector(pos);
+    const localNorth = getLocalNorthVector(pos);
+    const localEast = V3().crossVectors(localUp, localNorth).normalize();
+    // Remove vertical component
+    const fwdH = fwd.clone().sub(localUp.clone().multiplyScalar(fwd.dot(localUp)));
+    const heading = degrees(Math.atan2(fwdH.dot(localEast), fwdH.dot(localNorth)));
     return heading
 } // per frame closing speed
 // per frame velocity vector

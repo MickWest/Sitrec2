@@ -10,8 +10,8 @@ import {
     SitchMan,
     TrackManager
 } from "./Globals";
-import {CNode, CNodeConstant} from "./nodes/CNode";
-import {LLAToEUS, wgs84} from "./LLA-ECEF-ENU";
+import {CNode} from "./nodes/CNode";
+import {LLAToEUS} from "./LLA-ECEF-ENU";
 import {CNodeGUIValue, makeCNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {CNodeCamera} from "./nodes/CNodeCamera";
 import * as LAYER from "./LayerMasks";
@@ -51,6 +51,7 @@ import {CNodeMirrorVideoView} from "./nodes/CNodeMirrorVideoView";
 import {CNodeTerrainUI} from "./nodes/CNodeTerrainUI";
 import {showError} from "./showError";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
+import {meanSeaLevelOffset} from "./EGM96Geoid";
 
 export async function SituationSetup(runDeferred = false) {
     console.log("++++++ SituationSetup")
@@ -66,8 +67,7 @@ export async function SituationSetup(runDeferred = false) {
      //
      // setSit(deserialized);
 
-    if (!runDeferred)
-        new CNodeConstant({id:"radiusMiles", value: wgs84.radiusMiles});
+    // radiusMiles constant removed — use Globals.equatorRadius instead
 
     await SituationSetupFromData(Sit, runDeferred);
 
@@ -472,9 +472,30 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             if (data.startCameraPosition === undefined && data.startCameraPositionLLA === undefined) {
                 data = {
                     ...data,
-                    ...{startCameraPosition:[0,130000,160000],
-                        startCameraTarget:[0,0,0]}
+                    ...{startCameraPositionLLA:[Sit.lat - 1, Sit.lon, 200000],
+                        startCameraTargetLLA:[Sit.lat, Sit.lon, 0]}
                 }
+            }
+
+            // Sitch camera positions are MSL (orthometric) altitudes from the old sphere model.
+            // Terrain now includes EGM96 geoid correction (h = H + N), so we must convert
+            // camera altitudes from MSL to HAE by adding the geoid undulation N.
+            // This does NOT apply to modSerialize/modDeserialize which already use HAE.
+            if (data.startCameraPosition !== undefined) {
+                const N = meanSeaLevelOffset(Sit.lat, Sit.lon);
+                data.startCameraPosition[1] += N;
+                if (data.startCameraTarget !== undefined) {
+                    data.startCameraTarget[1] += N;
+                }
+            }
+
+            if (data.startCameraPositionLLA !== undefined) {
+                const N = meanSeaLevelOffset(data.startCameraPositionLLA[0], data.startCameraPositionLLA[1]);
+                data.startCameraPositionLLA[2] += N;
+            }
+            if (data.startCameraTargetLLA !== undefined) {
+                const N = meanSeaLevelOffset(data.startCameraTargetLLA[0], data.startCameraTargetLLA[1]);
+                data.startCameraTargetLLA[2] += N;
             }
 
             const cameraNode = new CNodeCamera({
@@ -505,7 +526,17 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             SSLog();
 
             const cameraID = data.id ?? "lookCamera";
-            
+
+            // Convert sitch MSL altitudes to HAE (see mainCamera comment above)
+            if (data.startCameraPositionLLA !== undefined) {
+                const N = meanSeaLevelOffset(data.startCameraPositionLLA[0], data.startCameraPositionLLA[1]);
+                data.startCameraPositionLLA[2] += N;
+            }
+            if (data.startCameraTargetLLA !== undefined) {
+                const N = meanSeaLevelOffset(data.startCameraTargetLLA[0], data.startCameraTargetLLA[1]);
+                data.startCameraTargetLLA[2] += N;
+            }
+
             node = new CNodeCamera({
                 id: cameraID,
                 fov: data.fov ?? 10,
@@ -762,6 +793,7 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
 
                 initialPoints: data.initialPoints,
                 initialPointsLLA: data.initialPointsLLA,
+                legacyEUS: data.initialPoints !== undefined && data.initialPointsLLA === undefined,
             })
             break;
 
@@ -835,7 +867,6 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
                     step: 0.1,
                     desc: "Camera Alt (ft)"
                 }, data.gui ?? guiMenus.view),
-                radiusMiles: "radiusMiles",
             })
             break;
 

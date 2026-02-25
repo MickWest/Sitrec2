@@ -2,7 +2,7 @@ import {par} from "../par";
 import {FileManager, guiMenus, guiTweaks, NodeMan, setRenderOne, Sit} from "../Globals";
 import {AlwaysDepth} from "three";
 import {ExpandKeyframes, f2m, scaleF2M} from "../utils";
-import {LLAToEUS} from "../LLA-ECEF-ENU";
+import {EUSToLLA, LLAToEUS} from "../LLA-ECEF-ENU";
 import {CNodeSplineEditor} from "../nodes/CNodeSplineEdit";
 import * as LAYER from "../LayerMasks.js"
 import {CNodeSwitch} from "../nodes/CNodeSwitch";
@@ -78,10 +78,14 @@ export const SitAguadilla = {
 
     },
 
+    // Aguadilla terrain location. 8x8 tiles at zooom level 15
+    // there's no file for terrain, it all comes from the server
+    // based purely on the lat/lon
+    terrain: {lat:  18.499617, lon: -67.113636, zoom:15, nTiles:8},
 
     mainCamera: {
-        startCameraPosition: [-9851.407079455104, 2847.1976940099407, -2584.264310831998],
-        startCameraTarget: [-8986.013511122388, 2586.5050262571704, -2156.3235382146754],
+        startCameraPositionLLA:[18.599594,-67.201396,6577.336072],
+        startCameraTargetLLA:[18.592961,-67.196258,6178.143664],
     },
     mainView: {left: 0.0, top: 0, width: 1, height: 1, fov:50, background: '#005000'},
 
@@ -140,10 +144,6 @@ export const SitAguadilla = {
     videoFile: "../sitrec-videos/public/Aquadilla High Quality Original.mp4",
     videoView: {left: 0.6250, top: 0, width: -1.5, height: 0.5,},
 
-    // Aguadilla terrain location. 8x8 tiles at zooom level 15
-    // there's no file for terrain, it all comes from the server
-    // based purely on the lat/lon
-    terrain: {lat:  18.499617, lon: -67.113636, zoom:15, nTiles:8},
 
     focusTracks:{
         "Ground (No Track)": "default",
@@ -283,13 +283,16 @@ export const SitAguadilla = {
 
 
            for (row=0;row<csv.length;row++) {
-               points.push({position: V3(xExp[row], yExp[row], zExp[row])});
+               const position = V3(xExp[row], yExp[row], zExp[row]);
+               const lla = EUSToLLA(position);
+               points.push({position, lla: [lla.x, lla.y, lla.z]});
            }
 
 
            const track = new CNodeArray({
                id:id,
                array:points,
+               reprojectFromLLA: true,
            })
 
            return track;
@@ -618,18 +621,6 @@ export const SitAguadilla = {
 
 
 
-        // MAGENTA debug line from final jet track to ground spline
-        // This will differ from other spline transits
-        // mostly due to different spacing on nodes, and how we are not really going along the spline smoothly
-        // a big TODO here is to fix this
-        // new CNodeDisplayTrackToTrack({
-        //     cameraTrack: "jetTrackSmooth",
-        //     targetTrack: "groundSplineEditor",
-        //     color: [1,0,1],
-        //     width: 2,
-        //
-        // })
-
 // The in-air target track that we use to intersect with the ground
         new CNodeSwitch({id:"LOSTargetTrack",
             inputs: {
@@ -732,20 +723,6 @@ export const SitAguadilla = {
             extensioncolor: [0,1,0],
 
         })
-
-
-        /*
-        // the second half the the line is drawn in green
-        // TODO: need a new second half calculating with smoothed value
-        new CNodeDisplayTrackToTrack({
-            id: "DisplayLOS2",
-            cameraTrack: "LOSTraverseSelectSmoothed",
-            targetTrack: "LOSTargetTrack",  // this was terrain track, should be a camera ground track
-            color: [0,1,0],
-            width: 2,
-
-        })
-*/
 
         new CNodeScale("sizeScaled", scaleF2M,
             new CNodeGUIValue({value:Sit.targetSize,start:1,end:2000, step:0.1, desc:"Target size ft"},guiMenus.objects)

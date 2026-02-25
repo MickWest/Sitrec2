@@ -88,7 +88,7 @@ export class CNodeViewEphemeris extends CNodeViewText {
         }
 
         // Create Earth globe for shadow calculations (same as in CNodeDisplayNightSky)
-        const globe = new Sphere(new Vector3(0, -wgs84.RADIUS, 0), wgs84.POLAR_RADIUS);
+        const globe = new Sphere(new Vector3(0, 0, 0), wgs84.POLAR_RADIUS);
         
         // Check if satellite is in Earth's shadow by casting ray from satellite to sun
         const raycaster = new Raycaster();
@@ -105,8 +105,7 @@ export class CNodeViewEphemeris extends CNodeViewText {
         }
         
         // Calculate sun elevation at observer position
-        // Observer position relative to Earth center (globe center is at 0, -RADIUS, 0)
-        const earthCenter = new Vector3(0, -wgs84.RADIUS, 0);
+        const earthCenter = new Vector3(0, 0, 0);
         const observerFromCenter = cameraPos.clone().sub(earthCenter).normalize();
         const sunDir = toSun.clone().normalize();
         

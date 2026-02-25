@@ -1,6 +1,6 @@
 import {GlobalDateTimeNode, NodeMan, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
-import {ExportProgressWidget} from "./utils";
+import {ExportProgressWidget, getExportPrefix} from "./utils";
 import {ViewMan} from "./CViewManager";
 import {CNode} from "./nodes/CNode";
 import {Raycaster, Vector3} from "three";
@@ -187,7 +187,7 @@ export async function exportPanorama() {
 
             for (const entry of Object.values(NodeMan.list)) {
                 const node = entry.data;
-                if (node.isController) {
+                if (node.isController && !node.allowUpdate) {
                     assert(node.update === CNode.prototype.update,
                         `Controller ${node.id} has overridden update() - move logic to apply()`);
                     continue;
@@ -228,7 +228,7 @@ export async function exportPanorama() {
             progress.setStatus('Saving panorama...');
             
             panoCanvas.toBlob((blob) => {
-                const filename = `panorama_${Sit.name || 'export'}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
+                const filename = `${getExportPrefix()}_panorama_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;

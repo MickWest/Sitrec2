@@ -44,9 +44,7 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
         // if it's got no forward slashes, then it's a local file
 
 
-        // QUESTION: why do we need to use the file manager here?
-        // why not load the file directly?
-        // ANSWER The file manager does some parsing of the path???
+        // FileManager handles URL resolution, caching, and path normalization
 
         if (v.file !== undefined ) {
             console.log(`[CVideoMp4Data] Loading video file: ${v.file}`);
@@ -105,15 +103,19 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
                 this.format = videoFrame.format;
                 this.lastDecodeInfo = "last frame.timestamp = " + videoFrame.timestamp + "<br>";
 
-                var groupNumber = 0;
-                // find the group this frame is in
-                while (groupNumber + 1 < this.groups.length && videoFrame.timestamp >= this.groups[groupNumber + 1].timestamp)
-                    groupNumber++;
-                var group = this.groups[groupNumber];
+                const frameNumber = this.timestampToChunkIndex?.get(videoFrame.timestamp);
+                if (frameNumber === undefined) {
+                    videoFrame.close();
+                    return;
+                }
 
-                // calculate the frame number we are decoding from how many are left
-                const frameNumber = group.frame + group.length - group.pending;
-                
+                const group = this.getGroup(frameNumber);
+                if (!group) {
+                    videoFrame.close();
+                    return;
+                }
+
+                group.decodePending++;
                 this.processDecodedFrame(frameNumber, videoFrame, group);
             },
             error: e => showError(e),
@@ -124,16 +126,13 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
      * Override group completion handling for MP4-specific nextRequest logic
      */
     handleGroupComplete() {
-        if (this.groupsPending === 0 && this.nextRequest >= 0) {
-            console.log("FULFILLING deferred request as no groups pending, frame = " + this.nextRequest);
-            this.requestGroup(this.nextRequest);
-            this.nextRequest = -1;
+        if (this.groupsPending === 0 && this.nextRequest != null) {
+            const group = this.nextRequest;
+            this.nextRequest = null;
+            this.requestGroup(group);
         }
     }
 
-    /**
-     * Override busy decoder handling for MP4-specific nextRequest logic
-     */
     handleBusyDecoder(group) {
         this.nextRequest = group;
     }
@@ -144,41 +143,31 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
      * @param {MP4Demuxer} demuxer - The MP4 demuxer instance
      */
     startWithDemuxer(demuxer) {
-        // Reset common variables (base class handles initialization)
         this.initializeCommonVariables();
-        this.nextRequest = -1; // MP4 specific: uses -1 instead of null
-
-        this.decoder = this.createDecoder();
+        this.nextRequest = null;
+        this.rawChunkData = [];
 
         this.demuxFrame = 0;
 
         const configPromise = demuxer.getConfig().then((config) => {
-//            offscreen.height = config.codedHeight;
-//            offscreen.width = config.codedWidth;
-
-            // video width and height are needed for things like the video tracking overlay
-            // it's set for the Image objects created below, but at the start we use the config
             this.videoWidth = config.codedWidth;
             this.videoHeight = config.codedHeight;
             
-            // Store original dimensions (never changed, used for tracking/analysis)
             this.originalVideoWidth = config.codedWidth;
             this.originalVideoHeight = config.codedHeight;
 
             console.log("🍿Setting Video width and height to ", config.codedWidth, "x", config.codedHeight )
 
             this.config = config;
-            this.decoder.configure(config);
 
-            // Get rotation from video matrix metadata (e.g., from phone videos)
-            // This sets metadataRotation which combines with userRotation via effectiveRotation getter
             this.metadataRotation = getRotationAngleFromVideoMatrix(demuxer.videoTrack.matrix);
 
-            // Swap dimensions if metadata rotation is 90 or 270 degrees
             if (this.metadataRotation === 90 || this.metadataRotation === 270) {
                 [this.videoWidth, this.videoHeight] = [this.videoHeight, this.videoWidth];
                 console.log("🍿Swapped dimensions for metadata rotation: ", this.videoWidth, "x", this.videoHeight);
             }
+
+            this.configureWorker(config);
 
             // Store the original fps from the video (will be needed for audio sync)
             this.originalFps = demuxer.source.fps;
@@ -196,6 +185,8 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
             }
             
             const completeExtraction = () => {
+                this.buildTimestampMap();
+
                 const audioWaitStartTime = Date.now();
                 const audioWaitTimeout = 15000;
                 
@@ -258,18 +249,19 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
                 // Now start extraction with both video and audio callbacks
                 demuxer.start(
                     (chunk) => {
-                        // The demuxer will call this for each chunk it demuxes
-                        // essentiall it's iterating through the frames
-                        // each chunk is either a key frame or a delta frame
                         chunk.frameNumber = this.demuxFrame++
                         this.chunks.push(chunk)
 
+                        const rawBuf = new ArrayBuffer(chunk.byteLength);
+                        chunk.copyTo(rawBuf);
+                        this.rawChunkData.push(rawBuf);
+
                         if (chunk.type === "key") {
                             this.groups.push({
-                                    frame: this.chunks.length - 1,  // first frame of this group
-                                    length: 1,                      // for now, increase with each delta demuxed
-                                    pending: 0,                     // how many frames requested and pending
-                                    loaded: false,                  // set when all the frames in the group are loaded
+                                    frame: this.chunks.length - 1,
+                                    length: 1,
+                                    pending: 0,
+                                    loaded: false,
                                     timestamp: chunk.timestamp,
                                 }
                             )
@@ -277,9 +269,6 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
                             const lastGroup = this.groups[this.groups.length - 1]
                             lastGroup.length++;
                         }
-
-                        // console.log(this.chunks.length - 1 + ": Demuxer got a " + chunk.type + " chunk, timestamp=" + chunk.timestamp +
-                        //      ", duration = " + chunk.duration + ", byteLength = " + chunk.byteLength)
 
                         this.frames++;
                         Sit.videoFrames = this.frames * this.videoSpeed;
@@ -301,10 +290,13 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
             }).catch(e => {
                 console.warn(`[CVideoMp4Data] Audio initialization failed:`, e);
                 console.log(`[CVideoMp4Data] Proceeding with video-only extraction...`);
-                // Still start video extraction if audio fails
                 demuxer.start((chunk) => {
                     chunk.frameNumber = this.demuxFrame++
                     this.chunks.push(chunk)
+
+                    const rawBuf = new ArrayBuffer(chunk.byteLength);
+                    chunk.copyTo(rawBuf);
+                    this.rawChunkData.push(rawBuf);
 
                     if (chunk.type === "key") {
                         this.groups.push({

@@ -32,9 +32,15 @@ if ($userId <= 0) {
     $userGroups = [0];
 }
 
-// Tile service rate limits by user group (tiles per hour)
+// Tile service rate limits by user group (tiles per hour).
+// For Google/Cesium 3D tracking:
+// - google_3d_root is controlled primarily by DAILY limits below.
+// - google_3d_tiles and cesium_osm_3d_tiles are tracked for audit but
+//   effectively not hourly-limited here.
 // Groups: admin=3, registered=2, verified=9, sitrec=14
-// Services: mapbox, maptiler, aws, osm, eox, esri, other
+// Services: mapbox, maptiler, aws, osm, eox, esri, google_3d_root,
+//           google_3d_tiles, cesium_osm_3d_tiles, cesium_osm_3d_bytes, other
+$UNLIMITED_TILE_RATE = 1000000000;
 $TILE_RATE_LIMITS = [
     3 => [ // admin - effectively unlimited
         'mapbox' => 1000000,
@@ -43,6 +49,10 @@ $TILE_RATE_LIMITS = [
         'osm' => 1000000,
         'eox' => 1000000,
         'esri' => 1000000,
+        'google_3d_root' => 1000000,
+        'google_3d_tiles' => $UNLIMITED_TILE_RATE,
+        'cesium_osm_3d_tiles' => $UNLIMITED_TILE_RATE,
+        'cesium_osm_3d_bytes' => $UNLIMITED_TILE_RATE * 1024,
         'other' => 1000000,
     ],
     14 => [ // sitrec - premium
@@ -52,6 +62,10 @@ $TILE_RATE_LIMITS = [
         'osm' => 50000,
         'eox' => 20000,
         'esri' => 50000,
+        'google_3d_root' => 1000000,
+        'google_3d_tiles' => $UNLIMITED_TILE_RATE,
+        'cesium_osm_3d_tiles' => $UNLIMITED_TILE_RATE,
+        'cesium_osm_3d_bytes' => $UNLIMITED_TILE_RATE * 1024,
         'other' => 10000,
     ],
     9 => [ // verified - mid tier
@@ -61,6 +75,10 @@ $TILE_RATE_LIMITS = [
         'osm' => 20000,
         'eox' => 10000,
         'esri' => 20000,
+        'google_3d_root' => 1000000,
+        'google_3d_tiles' => $UNLIMITED_TILE_RATE,
+        'cesium_osm_3d_tiles' => $UNLIMITED_TILE_RATE,
+        'cesium_osm_3d_bytes' => $UNLIMITED_TILE_RATE * 1024,
         'other' => 5000,
     ],
     2 => [ // registered - basic
@@ -70,7 +88,24 @@ $TILE_RATE_LIMITS = [
         'osm' => 10000,
         'eox' => 5000,
         'esri' => 10000,
+        'google_3d_root' => 1000000,
+        'google_3d_tiles' => $UNLIMITED_TILE_RATE,
+        'cesium_osm_3d_tiles' => $UNLIMITED_TILE_RATE,
+        'cesium_osm_3d_bytes' => $UNLIMITED_TILE_RATE * 1024,
         'other' => 2000,
+    ],
+    19 => [ // sitrec plus
+        'mapbox' => 5000,
+        'maptiler' => 5000,
+        'aws' => 50000,
+        'osm' => 50000,
+        'eox' => 20000,
+        'esri' => 50000,
+        'google_3d_root' => 1000000,
+        'google_3d_tiles' => $UNLIMITED_TILE_RATE,
+        'cesium_osm_3d_tiles' => $UNLIMITED_TILE_RATE,
+        'cesium_osm_3d_bytes' => $UNLIMITED_TILE_RATE * 1024,
+        'other' => 10000,
     ],
     0 => [ // guest - minimal
         'mapbox' => 200,
@@ -79,6 +114,10 @@ $TILE_RATE_LIMITS = [
         'osm' => 5000,
         'eox' => 2000,
         'esri' => 5000,
+        'google_3d_root' => 1000000,
+        'google_3d_tiles' => $UNLIMITED_TILE_RATE,
+        'cesium_osm_3d_tiles' => $UNLIMITED_TILE_RATE,
+        'cesium_osm_3d_bytes' => $UNLIMITED_TILE_RATE * 1024,
         'other' => 1000,
     ],
 ];
@@ -91,7 +130,34 @@ $DEFAULT_LIMITS = [
     'osm' => 5000,
     'eox' => 2000,
     'esri' => 5000,
+    'google_3d_root' => 1000000,
+    'google_3d_tiles' => $UNLIMITED_TILE_RATE,
+    'cesium_osm_3d_tiles' => $UNLIMITED_TILE_RATE,
+    'cesium_osm_3d_bytes' => $UNLIMITED_TILE_RATE * 1024,
     'other' => 1000,
+];
+
+// Daily limits by user group. This enforces Google 3D root/session requests.
+$CESIUM_OSM_DAILY_BYTES_LIMIT = intdiv(1024 * 1024 * 1024, 30); // 1 GiB / 30 days per day
+$TILE_DAILY_LIMITS = [
+    3 => [ // admin
+        'google_3d_root' => 1000000,
+        'cesium_osm_3d_bytes' => 1000000000000,
+    ],
+    14 => [ // Meta Members
+        'google_3d_root' => 30,
+        'cesium_osm_3d_bytes' => $CESIUM_OSM_DAILY_BYTES_LIMIT,
+    ],
+    19 => [ // Sitrec Plus
+        'google_3d_root' => 30,
+        'cesium_osm_3d_bytes' => $CESIUM_OSM_DAILY_BYTES_LIMIT,
+    ],
+];
+
+$DEFAULT_DAILY_LIMITS = [
+    // No Google 3D root sessions unless user is in an allowed group above.
+    'google_3d_root' => 0,
+    'cesium_osm_3d_bytes' => 0,
 ];
 
 $TILE_USAGE_DIR = sys_get_temp_dir() . '/sitrec_tile_usage/';
@@ -109,6 +175,22 @@ function getTileLimitsForUser($userGroups) {
         }
     }
     
+    return $limits;
+}
+
+function getTileDailyLimitsForUser($userGroups) {
+    global $TILE_DAILY_LIMITS, $DEFAULT_DAILY_LIMITS;
+
+    $limits = $DEFAULT_DAILY_LIMITS;
+
+    foreach ($userGroups as $group) {
+        if (isset($TILE_DAILY_LIMITS[$group])) {
+            foreach ($TILE_DAILY_LIMITS[$group] as $service => $limit) {
+                $limits[$service] = max($limits[$service] ?? 0, $limit);
+            }
+        }
+    }
+
     return $limits;
 }
 
@@ -165,6 +247,7 @@ function saveUserUsage($userId, $usageDir, $data) {
 // Handle GET request - fetch current usage and limits
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $limits = getTileLimitsForUser($userGroups);
+    $dailyLimits = getTileDailyLimitsForUser($userGroups);
     $usage = loadUserUsage($userId, $TILE_USAGE_DIR);
     
     $remaining = [];
@@ -172,14 +255,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $used = $usage['hourly'][$service] ?? 0;
         $remaining[$service] = max(0, $limit - $used);
     }
+
+    $dailyRemaining = [];
+    foreach ($dailyLimits as $service => $limit) {
+        $used = $usage['daily'][$service] ?? 0;
+        $dailyRemaining[$service] = max(0, $limit - $used);
+    }
     
     echo json_encode([
         'userId' => $userId,
         'isGuest' => $isGuest,
         'userGroups' => $userGroups,
         'limits' => $limits,
+        'dailyLimits' => $dailyLimits,
         'usage' => $usage['hourly'],
         'remaining' => $remaining,
+        'dailyRemaining' => $dailyRemaining,
         'hourReset' => $usage['hourReset'],
         'dailyUsage' => $usage['daily'],
     ]);
@@ -198,6 +289,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     $reportedUsage = $input['usage'];
     $limits = getTileLimitsForUser($userGroups);
+    $dailyLimits = getTileDailyLimitsForUser($userGroups);
     $currentUsage = loadUserUsage($userId, $TILE_USAGE_DIR);
     
     $warnings = [];
@@ -219,19 +311,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Add to daily usage (for audit purposes)
         $currentUsage['daily'][$service] = ($currentUsage['daily'][$service] ?? 0) + $count;
         
-        // Check if over limit
+        // Check hourly limit
         $limit = $limits[$service] ?? $limits['other'] ?? 1000;
         if ($currentUsage['hourly'][$service] > $limit) {
             $blocked[$service] = [
                 'used' => $currentUsage['hourly'][$service],
                 'limit' => $limit,
+                'window' => 'hourly',
             ];
         } elseif ($currentUsage['hourly'][$service] > $limit * 0.8) {
             $warnings[$service] = [
                 'used' => $currentUsage['hourly'][$service],
                 'limit' => $limit,
                 'remaining' => $limit - $currentUsage['hourly'][$service],
+                'window' => 'hourly',
             ];
+        }
+
+        // Check daily limit for services that define one
+        if (isset($dailyLimits[$service])) {
+            $dailyLimit = $dailyLimits[$service];
+            if ($currentUsage['daily'][$service] > $dailyLimit) {
+                $blocked[$service] = [
+                    'used' => $currentUsage['daily'][$service],
+                    'limit' => $dailyLimit,
+                    'window' => 'daily',
+                ];
+            } elseif ($currentUsage['daily'][$service] > $dailyLimit * 0.8) {
+                $warnings[$service] = [
+                    'used' => $currentUsage['daily'][$service],
+                    'limit' => $dailyLimit,
+                    'remaining' => $dailyLimit - $currentUsage['daily'][$service],
+                    'window' => 'daily',
+                ];
+            }
         }
     }
     
@@ -242,14 +355,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $used = $currentUsage['hourly'][$service] ?? 0;
         $remaining[$service] = max(0, $limit - $used);
     }
+
+    $dailyRemaining = [];
+    foreach ($dailyLimits as $service => $limit) {
+        $used = $currentUsage['daily'][$service] ?? 0;
+        $dailyRemaining[$service] = max(0, $limit - $used);
+    }
     
     echo json_encode([
         'success' => true,
         'usage' => $currentUsage['hourly'],
         'remaining' => $remaining,
+        'dailyRemaining' => $dailyRemaining,
         'warnings' => $warnings,
         'blocked' => $blocked,
         'hourReset' => $currentUsage['hourReset'],
+        'dayReset' => $currentUsage['dayReset'],
     ]);
     exit;
 }

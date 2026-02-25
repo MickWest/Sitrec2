@@ -1,7 +1,7 @@
 // given an array of "positions" smooth the x,y,and z tracks by moving average
 // or other techniques
 // optionally copy any other data (like color, fov, etc) to the new array
-import {NodeMan} from "../Globals";
+import {GlobalDateTimeNode, NodeMan, setRenderOne, Sit} from "../Globals";
 import {RollingAverage, SlidingAverage} from "../utils";
 import {CatmullRomCurve3} from "three";
 import {V3} from "../threeUtils";
@@ -13,31 +13,76 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
     constructor(v) {
         super(v)
         this.method = v.method || "moving"
+        this.isDynamicSmoothing = v.isDynamicSmoothing ?? false
         this.input("source") // source array node
-        if (this.method === "moving" || this.method === "sliding") {
-            this.input("window") // amount to smooth (rolling average window size)
-            this.optionalInputs(["iterations"])
+
+        if (this.isDynamicSmoothing) {
+            // Dynamic mode: register all inputs upfront so we can switch methods at runtime
+            this.input("window")
+            this.input("tension")
+            this.input("intervals")
+            this.optionalInputs(["iterations", "dataTrack"])
+            this.guiFolder = v.guiFolder
+        } else {
+            // Static mode: only register inputs needed for the current method
+            if (this.method === "moving" || this.method === "sliding") {
+                this.input("window")
+                this.optionalInputs(["iterations"])
+            }
+            if (this.method === "catmull") {
+                this.input("tension")
+                this.input("intervals")
+            }
         }
 
         this.frames = this.in.source.frames;
         this.useSitFrames = this.in.source.useSitFrames;
 
-
-        if (this.method === "catmull") {
-            // this.intervals = v.intervals ?? 10
-            this.input("tension")
-            this.input("intervals")
-        }
-
         this.copyData = v.copyData ?? false;
 
         this.recalculate()
+
+        if (this.isDynamicSmoothing) {
+            this._setupDynamicSmoothingGUI()
+        }
 
         this.exportable = v.exportable ?? false;
         if (this.exportable) {
             NodeMan.addExportButton(this, "exportTrackCSV")
             NodeMan.addExportButton(this, "exportTrackKML")
         }
+    }
+
+    _setupDynamicSmoothingGUI() {
+        const methods = ["moving", "sliding", "catmull"];
+        if (this.in.dataTrack) methods.push("spline");
+        this.guiFolder.add(this, "method", methods)
+            .name("Smoothing Method")
+            .onChange(() => this._onMethodChanged());
+        // Set initial visibility, and defer a second pass to ensure the GUI is fully settled
+        this._updateParameterVisibility();
+        setTimeout(() => this._updateParameterVisibility(), 0);
+
+        // Refresh visibility when the folder is opened
+        this.guiFolder.onOpenClose((gui) => {
+            if (!gui._closed) {
+                this._updateParameterVisibility();
+            }
+        });
+    }
+
+    _onMethodChanged() {
+        this._updateParameterVisibility();
+        this.recalculateCascade();
+        setRenderOne(true);
+    }
+
+    _updateParameterVisibility() {
+        const isCatmull = this.method === "catmull";
+        const isSpline = this.method === "spline";
+        this.in.window.show(!isCatmull && !isSpline);
+        this.in.tension.show(isCatmull);
+        this.in.intervals.show(isCatmull);
     }
 
 
@@ -69,11 +114,68 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
             }
         }
 
-        if (this.method === "moving" || this.method === "sliding") {
+        if (this.method === "spline" && this.in.dataTrack) {
+            // Spline: smooth chordal spline through the original sparse data points,
+            // sampled per frame with time-based parameter mapping to preserve velocity.
+            const dataTrack = this.in.dataTrack;
+            const numPoints = dataTrack.misb.length;
 
-            // const x = this.sourceArray.map(pos => pos.position.x)
-            // const y = this.sourceArray.map(pos => pos.position.y)
-            // const z = this.sourceArray.map(pos => pos.position.z)
+            const startMS = GlobalDateTimeNode.getStartTimeValue();
+            const msPerFrame = (Sit.simSpeed ?? 1) * 1000 / Sit.fps;
+
+            // Account for time offsets that CNodeTrackFromMISB applies
+            const manualOffset = dataTrack.timeOffset ?? 0;
+            const startTimeOffset = (typeof dataTrack.getTrackStartTimeOffsetSeconds === 'function')
+                ? dataTrack.getTrackStartTimeOffsetSeconds() : 0;
+            const totalOffsetFrames = (manualOffset + startTimeOffset) * Sit.fps;
+
+            // Collect valid sparse data point positions and their frame numbers
+            const sparsePositions = [];
+            const sparseFrames = [];
+            for (let i = 0; i < numPoints; i++) {
+                if (!dataTrack.isValid(i)) continue;
+                sparsePositions.push(dataTrack.getPosition(i));
+                const timeMS = dataTrack.getTime(i);
+                sparseFrames.push((timeMS - startMS) / msPerFrame - totalOffsetFrames);
+            }
+
+            if (sparsePositions.length >= 2) {
+                this.spline = new CatmullRomCurve3(sparsePositions);
+                this.spline.curveType = 'chordal';
+
+                // Sample per frame using time-based parameter mapping
+                const n = sparsePositions.length;
+                this.array = [];
+                for (let f = 0; f < this.frames; f++) {
+                    let t;
+                    if (f <= sparseFrames[0]) {
+                        t = 0;
+                    } else if (f >= sparseFrames[n - 1]) {
+                        t = 1;
+                    } else {
+                        // Find the bracketing sparse points for this frame
+                        let idx = 0;
+                        while (idx < n - 2 && sparseFrames[idx + 1] < f) {
+                            idx++;
+                        }
+                        // Interpolate spline parameter proportional to time within this segment
+                        const alpha = (f - sparseFrames[idx]) / (sparseFrames[idx + 1] - sparseFrames[idx]);
+                        t = (idx + alpha) / (n - 1);
+                    }
+                    const pos = V3();
+                    this.spline.getPoint(t, pos);
+                    this.array.push({position: pos});
+                }
+            } else {
+                // Not enough sparse points — fall back to copying the source positions
+                this.array = [];
+                for (let i = 0; i < this.frames; i++) {
+                    this.array.push({position: this.in.source.p(i)});
+                }
+            }
+            this.frames = this.array.length;
+
+        } else if (this.method === "moving" || this.method === "sliding") {
 
             // create x,y,z arrays using getValueFrame, so we can smooth abstract data
             // (like catmullrom tracks, which don't create the sourceArray)
@@ -124,30 +226,20 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
             }
             this.frames = this.array.length;
         } else {
-            // Catmull!
-            // here sourceArray is an array of {position:...} type vecrot
-            // convert to a simple array of Vector3s at the desired interval
+            // Catmull: spline through uniformly-sampled points from the per-frame data
             var interval = Math.floor(this.frames / this.in.intervals.v0)
             var data = []
             for (var i = 0; i < this.frames; i += interval) {
                 var splinePoint = this.sourceArray[i].position.clone()
-                //        DebugSphere("SplinePoint" + i, splinePoint, 20, 0xff00ff)
-
                 data.push(splinePoint)
             }
             this.spline = new CatmullRomCurve3(data);
             this.spline.tension = this.in.tension.v0;  // only has effect for catmullrom
 
-            // for a track, we will want to use chordal
-            // as it keeps the velocity smooth across a segment
-            // the different methods only have significant other differences with sharp turns.
-            this.spline.curveType = 'chordal';  // Possible values are centripetal, chordal and catmullrom.
+            // chordal keeps the velocity smooth across a segment
+            this.spline.curveType = 'chordal';
 
-            //   this.dump()
-
-            // now make the array of positions
-            // this avoids recalculating the spline each frame
-            // and allows us to re-smooth a catmull track with existing code
+            // pre-compute the array of positions
             this.array = []
             for (var i = 0; i < this.frames; i++) {
                 var pos = V3()
@@ -173,14 +265,13 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
 
     getValueFrame(frame) {
         let pos;
-        if (this.method === "moving" || this.method === "sliding") {
+        if (this.method === "moving" || this.method === "sliding" || this.method === "spline") {
             assert(this.array[frame] !== undefined, "CNodeSmoothedPositionTrack: array[frame] is undefined, frame=" + frame + " id=" + this.id)
             pos = this.array[frame].position
         } else {
             pos = V3()
             var t = frame / this.frames
             this.spline.getPoint(t, pos)
-            //       console.log(vdump(pos))
         }
 
         if (this.copyData) {

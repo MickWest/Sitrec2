@@ -40,6 +40,7 @@ export class CNodeGUIValue extends CNodeGUIConstant {
         this.start = v.start ?? 0
         this.end = v.end ?? v.value * 2
         this.step = v.step ?? Math.abs((this.end-this.start)/100);
+        this.maxMax = v.maxMax ?? this.end;
 
         if (v.quietLink !== undefined) {
             this.quietLink = v.quietLink;
@@ -83,6 +84,8 @@ export class CNodeGUIValue extends CNodeGUIConstant {
                 setRenderOne(true);
             }
         ).name(v.desc ? v.desc : "<no desc>").listen()
+
+        this.guiEntry._maxMax = this.maxMax;
 
         if (v.noSlider) {
             this.guiEntry.noSlider();
@@ -190,6 +193,8 @@ export class CNodeGUIValue extends CNodeGUIConstant {
         // min and max need to be changed in the gui
         this.guiEntry._min = roundIfClose(this.guiEntry._min * scale);
         this.guiEntry._max = roundIfClose(this.guiEntry._max * scale);
+        this.maxMax = roundIfClose(this.maxMax * scale);
+        this.guiEntry._maxMax = this.maxMax;
 
         // elastic bounds also need to be changed
         if (this.guiEntry._elastic) {
@@ -258,12 +263,19 @@ export class CNodeGUIValue extends CNodeGUIConstant {
     modSerialize() {
         return {
             ...super.modSerialize(),
-            value: this.value
+            value: this.value,
+            maxMax: this.maxMax,
         }
     }
 
     modDeserialize(v) {
         super.modDeserialize(v);
+        if (v.maxMax !== undefined) {
+            this.maxMax = v.maxMax;
+            if (this.guiEntry) {
+                this.guiEntry._maxMax = this.maxMax;
+            }
+        }
         if (this.value !== v.value) {
             this.value = v.value
             this.guiEntry.setValue(this.value)
@@ -293,10 +305,7 @@ export class CNodeGUIValue extends CNodeGUIConstant {
             return this
 
 
-        if (visible)
-            this.guiEntry.show()
-        else
-            this.guiEntry.hide()
+        this.guiEntry.show(visible)
 
         return this
     }

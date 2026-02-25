@@ -1,6 +1,6 @@
 import {interpolate} from "../utils";
-import {GlobalDateTimeNode, NodeMan, Sit} from "../Globals";
-import {RLLAToECEFV_Sphere, wgs84} from "../LLA-ECEF-ENU";
+import {GlobalDateTimeNode, Globals, NodeMan, Sit} from "../Globals";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 
 import {MISB} from "../MISBUtils";
 import {saveAs} from "file-saver";
@@ -9,7 +9,7 @@ import {assert} from "../assert.js";
 import {CGeoJSON} from "../geoJSONUtils";
 import {isLocal} from "../configUtils.js"
 import stringify from "json-stringify-pretty-compact";
-import {Matrix3, Matrix4, Vector3} from "three";
+import {Matrix4, Vector3} from "three";
 
 export class CNodeTrackFromMISB extends CNodeTrack {
     constructor(v) {
@@ -88,7 +88,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
                 + "," + "," + ","
                 + misb.getLat(slot) + "," + misb.getLon(slot) + ","
                 + "," + ","
-                + misb.getAlt(slot) + ","
+                + misb.getAltMSL(slot) + ","
                 + "F-15" + ","+ id + ","
                 + 0 + "\n" // speed is currently ignored
 
@@ -143,7 +143,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         var points = misb.misb.length
         const id = this.id;
         for (let slot = 0; slot < points; slot++) {
-            geo.addPoint(id, misb.getLat(slot), misb.getLon(slot), misb.getAlt(slot), misb.getTime(slot))
+            geo.addPoint(id, misb.getLat(slot), misb.getLon(slot), misb.getAltMSL(slot), misb.getTime(slot))
         }
     }
 
@@ -300,49 +300,17 @@ export class CNodeTrackFromMISB extends CNodeTrack {
 
         const lon1 = rSitLon
         const lat1 = rSitLat
-        const radius = wgs84.RADIUS;
 
 
 
-// I'm now precalculating a lot for speed. Could do more.
-// Build ECEF to ENU rotation
-        const mECEF2ENU = new Matrix3().set(
-            -Math.sin(lon1),                    Math.cos(lon1),                      0,
-            -Math.sin(lat1)*Math.cos(lon1), -Math.sin(lat1)*Math.sin(lon1), Math.cos(lat1),
-            Math.cos(lat1)*Math.cos(lon1),  Math.cos(lat1)*Math.sin(lon1), Math.sin(lat1)
-        );
+// EXPERIMENT: EUS is now identical to ECEF, so use identity matrix
+        const mECEF2EUS = new Matrix4(); // identity
 
-// Compose ENU → EUS swap
-        const mENUtoEUS = new Matrix3().set(
-            1, 0,  0,
-            0, 0,  1,
-            0, -1, 0
-        );
-
-// Final rotation
-        const mECEF2EUS_3x3 = new Matrix3().multiplyMatrices(mENUtoEUS, mECEF2ENU);
-
-// Promote to Matrix4
-        const mECEF2EUS = new Matrix4();
-
-// Assign that combined 3x3 rotation into top-left of 4x4
-        const e = mECEF2EUS.elements;
-        const r = mECEF2EUS_3x3.elements;
-
-        e[0] = r[0]; e[4] = r[3]; e[8]  = r[6]; e[12] = 0;
-        e[1] = r[1]; e[5] = r[4]; e[9]  = r[7]; e[13] = 0;
-        e[2] = r[2]; e[6] = r[5]; e[10] = r[8]; e[14] = 0;
-        e[3] = 0;    e[7] = 0;    e[11] = 0;    e[15] = 1;
-
-
-// Translation
-        const originECEF = RLLAToECEFV_Sphere(lat1, lon1, 0, wgs84.RADIUS);
-        const translation = new Matrix4().makeTranslation(-originECEF.x, -originECEF.y, -originECEF.z);
-
-// Final matrix: rotate * translate
-
-        // TODO!!! this should be global, and used in many other places for ECEF->EUS
-        mECEF2EUS.multiply(translation);
+        // Pre-compute ellipsoid constants for per-vertex ECEF conversion
+        const eqR = Globals.equatorRadius;
+        const polR = Globals.polarRadius;
+        const _e2 = (eqR * eqR - polR * polR) / (eqR * eqR);
+        const _ratio = (polR * polR) / (eqR * eqR);
 
         for (var f=0;f<Sit.frames;f++) {
             var msNow = msStart + Math.floor(frameTime*1000)
@@ -394,24 +362,26 @@ export class CNodeTrackFromMISB extends CNodeTrack {
 
             const lat = interpolate(this.latArray[slot], this.latArray[slot +1], fraction);
             const lon = interpolate(this.lonArray[slot], this.lonArray[slot +1], fraction);
-            const alt = misb.adjustAlt(interpolate(this.rawAltArray[slot], this.rawAltArray[slot +1], fraction), lat, lon);
+            // SensorTrueAltitude is MSL (orthometric); convert to HAE for EUS (h = H + N)
+            const altMSL = misb.adjustAlt(interpolate(this.rawAltArray[slot], this.rawAltArray[slot +1], fraction), lat, lon);
+            const alt = altMSL + meanSeaLevelOffset(lat, lon);
 
 
             //const pos = LLAToEUS(lat, lon, alt)
 
-            // expanded LLAToEUS out for speed
+            // expanded LLAToEUS out for speed (ellipsoid-aware)
             const rLat = lat * Math.PI / 180
             const rLon = lon * Math.PI / 180
             const cosLat = Math.cos(rLat)
             const sinLat = Math.sin(rLat)
             const cosLon = Math.cos(rLon)
             const sinLon = Math.sin(rLon)
-            const radiusAlt = radius + alt;
+            const N = eqR / Math.sqrt(1 - _e2 * sinLat * sinLat);
 
-            // convert LLA to ECEF, including altitude
-            const ecefX = radiusAlt * cosLat * cosLon;
-            const ecefY = radiusAlt * cosLat * sinLon;
-            const ecefZ = radiusAlt * sinLat;
+            // convert LLA to ECEF using ellipsoid model
+            const ecefX = (N + alt) * cosLat * cosLon;
+            const ecefY = (N + alt) * cosLat * sinLon;
+            const ecefZ = (_ratio * N + alt) * sinLat;
 
             // convert ECEF to ENU
             // const ecef = new Vector3(ecefX, ecefY, ecefZ);

@@ -22,10 +22,13 @@ export class QuadTreeMap {
         this.nTiles = this.options.nTiles
         this.zoom = this.options.zoom
         this.tileSize = this.options.tileSize
-        this.radius = wgs84.RADIUS; // force this
+        // Web Mercator tile math uses spherical radius — correct for tile indexing.
+        // Vertex positioning uses LLAToEUS() which reads Globals.equatorRadius/polarRadius.
+        this.radius = wgs84.RADIUS;
         this.loadedCallback = options.loadedCallback; // function to call when map is all loaded
         this.loaded = false; // mick flag to indicate loading is finished
         this.tileCache = {};
+        this.allTiles = new Set(); // Flat set of all tiles for fast iteration
         this.terrainNode = terrainNode
         this.geoLocation = geoLocation
         this.dynamic = options.dynamic || false; // if true, we use a dynamic tile grid
@@ -35,7 +38,27 @@ export class QuadTreeMap {
         this.inactiveTileTimeout = 100000; // Time in ms before pruning inactive tiles (100 seconds)
         this.currentStats = new Map(); // Store current stats per view for debug display
         this.parentTiles = new Set(); // Track tiles that have children for efficient iteration
+        this._tileStateGeneration = 0; // Generation counter for areaCoveredByDescendants cache
+        this._dirtyParents = new Set(); // Parents that need coverage re-check (event-driven)
 
+    }
+
+    // Invalidate the areaCoveredByDescendants cache and mark dirty parents.
+    // Called whenever tile state changes that could affect coverage results.
+    // Walks up the tree from the changed tile, adding all ancestors to the dirty set.
+    invalidateCoverageCache(tile) {
+        this._tileStateGeneration++;
+        if (!tile) return;
+        // If this tile itself is a parent, mark it dirty (e.g., its children changed)
+        if (tile.children) {
+            this._dirtyParents.add(tile);
+        }
+        // Walk up the tree marking all ancestors as needing coverage re-check
+        let current = tile.parent;
+        while (current) {
+            this._dirtyParents.add(current);
+            current = current.parent;
+        }
     }
 
     // Helper methods for nested cache access
@@ -47,6 +70,7 @@ export class QuadTreeMap {
         if (!this.tileCache[z]) this.tileCache[z] = {};
         if (!this.tileCache[z][x]) this.tileCache[z][x] = {};
         this.tileCache[z][x][y] = tile;
+        this.allTiles.add(tile);
     }
 
     deleteTile(x, y, z) {
@@ -65,8 +89,9 @@ export class QuadTreeMap {
                     // Parent no longer has children, remove from parent tracking set
                     this.parentTiles.delete(tile.parent);
                 }
+                this.invalidateCoverageCache(tile);
             }
-            
+
             // Clean up tree structure: clear children references
             if (tile.children) {
                 tile.children.forEach(child => {
@@ -75,9 +100,11 @@ export class QuadTreeMap {
                 tile.children = null;
                 // This tile no longer has children, remove from parent tracking set
                 this.parentTiles.delete(tile);
+                this.invalidateCoverageCache(tile);
             }
             tile.parent = null;
             
+            this.allTiles.delete(tile);
             delete this.tileCache[z][x][y];
             // Clean up empty objects to prevent memory leaks
             if (Object.keys(this.tileCache[z][x]).length === 0) {
@@ -89,28 +116,14 @@ export class QuadTreeMap {
         }
     }
 
-    // Helper to get all tiles (for Object.values() replacement)
+    // Helper to get all tiles as an array
     getAllTiles() {
-        const tiles = [];
-        for (const z in this.tileCache) {
-            for (const x in this.tileCache[z]) {
-                for (const y in this.tileCache[z][x]) {
-                    tiles.push(this.tileCache[z][x][y]);
-                }
-            }
-        }
-        return tiles;
+        return [...this.allTiles];
     }
 
-    // Helper to get tile count (more efficient than getAllTileKeys().length)
+    // Helper to get tile count
     getTileCount() {
-        let count = 0;
-        for (const z in this.tileCache) {
-            for (const x in this.tileCache[z]) {
-                count += Object.keys(this.tileCache[z][x]).length;
-            }
-        }
-        return count;
+        return this.allTiles.size;
     }
 
     // Helper to get all tile keys (for Object.keys() replacement)
@@ -126,14 +139,10 @@ export class QuadTreeMap {
         return keys;
     }
 
-    // Helper to iterate over all tiles
+    // Helper to iterate over all tiles using the flat Set for speed
     forEachTile(callback) {
-        for (const z in this.tileCache) {
-            for (const x in this.tileCache[z]) {
-                for (const y in this.tileCache[z][x]) {
-                    callback(this.tileCache[z][x][y]);
-                }
-            }
+        for (const tile of this.allTiles) {
+            callback(tile);
         }
     }
 
@@ -260,52 +269,27 @@ export class QuadTreeMap {
         const tilesToPrune = [];
 
         // COMBINED PASS: Process all tiles in a single iteration
-        this.forEachTile((tile) => {
+        // Inlined iteration over allTiles Set to avoid callback overhead
+        for (const tile of this.allTiles) {
             // OPERATION 1: Cleanup inactive tiles - cancel pending loads
             if (!tile.tileLayers && (tile.isLoading || tile.isLoadingElevation)) {
                 tile.cancelPendingLoads();
             }
 
-            // // OPERATION 2: Remove inactive tiles from scene
-            // if (tile.added && !tile.tileLayers && tile.mesh) {
-            //     const children = this.getChildren(tile);
-            //     if (children) {
-            //         const allChildrenLoaded = children.every(child => child && child.loaded);
-            //         if (allChildrenLoaded) {
-            //             this.scene.remove(tile.mesh);
-            //             if (tile.skirtMesh) {
-            //                 this.scene.remove(tile.skirtMesh);
-            //             }
-            //             tile.added = false;
-            //
-            //             // Reset lazy loading flags when tile is removed from scene
-            //             if (tile.usingParentData) {
-            //                 tile.needsHighResLoad = false;
-            //             }
-            //
-            //             this.refreshDebugGeometry(tile);
-            //         }
-            //     }
-            //
-            //
-            //     // note not passing a layer mask here, WHY?
-            //     assert(this.areaIsCovered(tile), "Tile removed as all chilren loaded, but area is not covered by children");
-            //
-            // }
-
             // OPERATION 3: Identify tiles to prune (collect for deletion after iteration)
-            const children = this.getChildren(tile);
+            const children = tile.children;
             if (children) {
                 // Check if all four children meet pruning criteria
-                const allChildrenPrunable = children.every(child => {
-                    if (child.tileLayers !== 0) return false; // Still active
-                    if (this.hasChildren(child)) return false; // Has children
-                    if (!child.inactiveSince) return false; // No timestamp
-                    if (now - child.inactiveSince < this.inactiveTileTimeout) return false; // Not old enough
-                    return true;
-                });
-
-
+                let allChildrenPrunable = true;
+                for (let i = 0; i < children.length; i++) {
+                    const child = children[i];
+                    if (!child) continue; // null/false children are prunable
+                    if (child.tileLayers !== 0 || child.children !== null || !child.inactiveSince ||
+                        now - child.inactiveSince < this.inactiveTileTimeout) {
+                        allChildrenPrunable = false;
+                        break;
+                    }
+                }
 
                 if (allChildrenPrunable) {
                     // Collect children for pruning (delete after iteration completes)
@@ -317,35 +301,37 @@ export class QuadTreeMap {
 
             // if a dead branch, prune ALL its descendants
             if (tile.isDeadBranch) {
-                const children = tile.children;
-                if (children) {
+                const deadChildren = tile.children;
+                if (deadChildren) {
                     let allChildrenPrunable = true;
-                    children.forEach(child => {
+                    for (let i = 0; i < deadChildren.length; i++) {
+                        const child = deadChildren[i];
+                        if (!child) continue;
                         if (child.children || child.isLoading) {
                             child.isDeadBranch = true; // mark as dead branch, so its descendants get pruned too
                             allChildrenPrunable = false; // can't prune this one yet
-                        } else {
                         }
-                    });
+                    }
 
                     if (allChildrenPrunable) {
                         // Collect children for pruning (delete after iteration completes)
-                        tilesToPrune.push(...children);
+                        tilesToPrune.push(...deadChildren);
 
                         // dead branch pruning can prune active tiles too, so mark them as inactive
                         // (otherwise we get possible errors from aborting loads on active tiles)
-                        children.forEach(child => {
-                            child.tileLayers = 0; // mark as inactive so we can cleanly abort loads
-                        })
+                        for (let i = 0; i < deadChildren.length; i++) {
+                            if (deadChildren[i]) deadChildren[i].tileLayers = 0;
+                        }
 
                         tile.children = null; // Clear children reference from parent
                     }
                 }
             }
-        });
+        }
 
         // Prune collected tiles after iteration completes (safe to delete now)
         tilesToPrune.forEach(child => {
+            if (!child) return;
             // Clean up the tile
             if (child.mesh) {
                 this.scene.remove(child.mesh);
@@ -446,29 +432,30 @@ export class QuadTreeMap {
         }
 
         // PASS 3: Process each tile for subdivision/merging and lazy loading
-        this.forEachTile((tile) => {
-            if (!this.canSubdivide(tile)) return;
+        // Inlined iteration over allTiles Set to avoid callback overhead (hot path)
+        for (const tile of this.allTiles) {
+            if (!this.canSubdivide(tile)) continue;
 
-            const hasChildren = this.hasChildren(tile);
-            
+            const hasChildren = tile.children !== null;
+
             // Skip inactive tiles without children
-            if (!tile.tileLayers && !hasChildren) return;
+            if (!tile.tileLayers && !hasChildren) continue;
 
             // OPTIMIZATION #7: Early exit for tiles not active in this view
             // Only process tiles that are either:
             // 1. Active in this view (for subdivision/lazy loading), OR
             // 2. Have children (for potential merging)
             const isActiveInView = (tile.tileLayers & tileLayers) !== 0;
-            if (!isActiveInView && !hasChildren) return;
+            if (!isActiveInView && !hasChildren) continue;
 
             // Calculate visibility and screen size
             // This is expensive, so we only do it after early exit checks
             const visibility = this.calculateTileVisibility(tile, camera);
-            
+
             // OPTIMIZATION #7: Early exit for invisible tiles without children
             // If tile is not visible and has no children to merge, skip further processing
-            if (!visibility.visible && !hasChildren) return;
-            
+            if (!visibility.visible && !hasChildren) continue;
+
             // Handle lazy loading for visible tiles using parent data
             if (isTextureMap && visibility.actuallyVisible) {
                 this.triggerLazyLoadIfNeeded(tile, tileLayers);
@@ -479,45 +466,28 @@ export class QuadTreeMap {
 
             if (shouldSubdivide && isActiveInView && tile.z < this.maxZoom) {
                 // RACE CONDITION FIX: Defer subdivision while parent tile is loading
-                // 
-                // Problem: On page reload (with cached resources), parent tiles are created and
-                // immediately start loading textures asynchronously. If subdivideTiles() runs
-                // before the parent texture finishes loading, child tiles can't extract parent
-                // data and fall back to normal loading (0 lazy tiles).
-                //
-                // Solution: Wait for parent tile to finish loading before subdividing. This gives
-                // child tiles access to the parent's loaded texture for lazy loading.
-                //
-                // Safety: Don't wait forever - after 60 frames (~1 second at 60fps), subdivide
-                // anyway to prevent blocking the UI if a tile load is slow or fails.
                 if (isTextureMap && tile.isLoading) {
-                    // Track how many frames we've deferred subdivision
                     if (!tile.subdivisionDeferredFrames) {
                         tile.subdivisionDeferredFrames = 0;
                     }
                     tile.subdivisionDeferredFrames++;
-                    
-                    // Timeout: If we've waited 60 frames, proceed anyway
-                    // Most texture loads complete in 1-10 frames, so this is a safety net
+
                     if (tile.subdivisionDeferredFrames < 60) {
-                        return; // Defer subdivision until next frame (when parent may be loaded)
+                        continue; // Defer subdivision until next frame
                     }
-                    // Fall through: subdivide without parent data after timeout
-                    // Child tiles will load normally, can still be upgraded later via triggerLazyLoadIfNeeded()
                 }
-                
-                // Reset the deferred frames counter when we actually subdivide
+
                 tile.subdivisionDeferredFrames = 0;
-                
+
                 this.subdivideTile(tile, tileLayers, isTextureMap);
-                return; // Process one subdivision at a time
+                continue; // Process one subdivision at a time
             }
 
             // Check for merging children back to parent
             if (!shouldSubdivide && hasChildren) {
                 this.mergeChildrenIfPossible(tile, tileLayers);
             }
-        });
+        }
     }
 
     /**
@@ -572,19 +542,26 @@ export class QuadTreeMap {
      * instead of all tiles. With 100 tiles, typically only 10-25 are parents (75-90% reduction).
      */
     deactivateParentsWithLoadedChildren(tileLayers) {
-        // Iterate only over parent tiles (tiles that have children)
-        // This is much more efficient than iterating all tiles
-        this.parentTiles.forEach((tile) => {
-            if (tile.z >= this.maxZoom) return;
-            if (tile.isLoading) return;
-            if (tile.isDeadBranch) return;
+        if (this._dirtyParents.size === 0) return;
 
-            const allChildrenReady = this.areaCoveredByDescendants(tile, tileLayers)
-            
-            if (allChildrenReady) {
+        // Process only parents whose children changed state.
+        // Copy to array since deactivateTile may trigger further invalidations.
+        const toCheck = [...this._dirtyParents];
+        this._dirtyParents.clear();
+
+        for (let i = 0; i < toCheck.length; i++) {
+            const tile = toCheck[i];
+            if (!tile.children) continue;       // already pruned
+            if (tile.z >= this.maxZoom) continue;
+            if (tile.isLoading) continue;
+            if (tile.isDeadBranch) continue;
+            // Only check if tile is still active in this view
+            if (!(tile.tileLayers & tileLayers)) continue;
+
+            if (this.areaCoveredByDescendants(tile, tileLayers)) {
                 this.deactivateTile(tile, tileLayers, true);
             }
-        });
+        }
     }
 
     /**
@@ -766,6 +743,7 @@ export class QuadTreeMap {
 
         // Track this tile as a parent for efficient iteration
         this.parentTiles.add(tile);
+        this.invalidateCoverageCache(tile);
 
         // For texture maps: Deactivate parent if all children are loaded and added
         // (even if using parent data - that's valid for display, just lower quality)
@@ -814,7 +792,9 @@ export class QuadTreeMap {
         if (tile.children) {
             // recursively deactivate children
             for (let child of tile.children) {
-                this.deactivateBranch(child, layerMask, instant);
+                if (child) {
+                    this.deactivateBranch(child, layerMask, instant);
+                }
             }
         }
     }
@@ -869,6 +849,7 @@ export class QuadTreeMap {
         }
         
         if (oldMask !== layerMask) {
+            this.invalidateCoverageCache(tile);
             EventManager.dispatchEvent("tileVisibilityChanged", {tile, oldMask, newMask: layerMask});
         }
     }

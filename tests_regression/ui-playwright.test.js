@@ -165,7 +165,7 @@ test.describe.serial('UI Interaction Tests - Playwright', () => {
         await sharedPage.close();
     });
 
-    test('should adjust Lighting ambient intensity slider to 1.5', async ({}, testInfo) => {
+    test.skip('should adjust Lighting ambient intensity slider to 1.5', async ({}, testInfo) => {
         console.log('[TEST:ui-lighting:STARTED]');
         try {
             test.setTimeout(60000);

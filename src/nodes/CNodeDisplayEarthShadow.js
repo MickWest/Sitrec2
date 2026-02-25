@@ -2,7 +2,6 @@ import {CNode3DGroup} from "./CNode3DGroup";
 import * as LAYER from "../LayerMasks";
 import {dispose, propagateLayerMaskObject} from "../threeExt";
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
-import {wgs84} from "../LLA-ECEF-ENU";
 import {Line2} from "three/addons/lines/Line2.js";
 import {makeMatLine} from "../MatLines";
 import {perpendicularVector, V3} from "../threeUtils";
@@ -38,7 +37,7 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
         
         // Sun parameters (all in meters)
         this.sunRadius = 696000000; // ~696,000 km
-        this.earthRadius = wgs84.RADIUS; // ~6,371 km
+        this.earthRadius = Globals.equatorRadius;
         this.sunEarthDistance = 149597870700; // ~149.6 million km (1 AU)
         
         // Geometry and line objects
@@ -125,7 +124,7 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
     calculateShadowRadii(altitude) {
         // Constants (all in meters)
         // Earth's radius, used as the size of the object casting the shadow
-        const EARTH_RADIUS = 6371000; // meters
+        const EARTH_RADIUS = Globals.equatorRadius;
         // Sun's radius, used to calculate its angular size
         const SUN_RADIUS = 696000000; // meters
         // Average Earth-Sun distance (1 AU), used to compute the Sun's angular size
@@ -196,8 +195,8 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
         const vertices = [];
         const indices = [];
         
-        // Globe center in EUS coordinates
-        const globeCenter = V3(0, -this.earthRadius, 0);
+        // ECEF/EUS are identical in this mode, so Earth's center is at origin.
+        const globeCenter = V3(0, 0, 0);
         
         // Bottom circle (at Earth)
         for (let i = 0; i < segments; i++) {
@@ -267,8 +266,8 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
         const umbraRadius = shadowData.umbraDiameter / 2;
         const penumbraRadius = shadowData.penumbraDiameter / 2;
         
-        // Globe center in EUS coordinates
-        const globeCenter = V3(0, -this.earthRadius, 0);
+        // ECEF/EUS are identical in this mode, so Earth's center is at origin.
+        const globeCenter = V3(0, 0, 0);
         
         // Circle center is at altitude along antisolar direction (fromSun)
         const circleCenter = globeCenter.clone().add(this.fromSun.clone().multiplyScalar(this.altitude));

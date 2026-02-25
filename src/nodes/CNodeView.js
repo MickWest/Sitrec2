@@ -237,7 +237,7 @@ class CNodeView extends CNode {
     //     }
     // }
 
-    toSerialCNodeView = ["left","top","width","height","visible","preFullScreenVisible","doubled","preDoubledLeft","preDoubledTop","preDoubledWidth","preDoubledHeight"];
+    toSerialCNodeView = ["left","top","width","height","visible","doubled","preDoubledLeft","preDoubledTop","preDoubledWidth","preDoubledHeight"];
 
 
 
@@ -248,13 +248,16 @@ class CNodeView extends CNode {
         };
     }
 
-    // need to also handle full screen state....
     modDeserialize(v) {
         super.modDeserialize(v);
         this.simpleDeserialize(v,this.toSerialCNodeView)
         this.updateWH();
         this.visible = !v.visible; // ensure we toggle the visibility
-        this.setVisible(v.visible)
+        this.setVisible(v.visible);
+        // Restore fullscreen state if this view was doubled with fullscreen
+        if (this.doubled && this.doubleClickFullScreen) {
+            ViewMan.fullscreenView = this;
+        }
     }
 
     dispose() {
@@ -634,117 +637,65 @@ class CNodeView extends CNode {
                 if (this.doubleClickResizes) {
                     if (this.width > 0) {
                         this.width *= 2;
-
                     }
                     if (this.height > 0) {
                         this.height *= 2;
                     }
                 } else {
-
-                    // let aspect;
-                    // if (this.width>0 && this.height>0) {
-                    //     aspect = this.width/this.height;
-                    // } else {
-                    //     if (this.width<0) {
-                    //         aspect = -this.width;
-                    //     } else {
-                    //         aspect = -1/this.height;
-                    //     }
-                    // }
-                    // if (aspect > 1) {
-                    //     this.width = 1;
-                    //     this.height = 1/aspect;
-                    // }
-
                     this.width = 1;
                     this.height = 1;
-
-                    // if (this.width > 0) {
-                    //     this.width = 1;
-                    // }
-                    // if (this.height > 0) {
-                    //     this.height = 1;
-                    // }
-                    // problem if we have height = -1, meaning a fucntion of width
-
                     this.left = 0;
                     this.top = 0;
-                    // this.width = 1;
-                    // this.height = 1;
                 }
 
+                if (this.width > 1) this.width = 1;
+                if (this.height > 1) this.height = 1;
 
-                if (this.width > 1) this.width=1;
-                if (this.height > 1) this.height=1;
-
-
-                this.updateWH()
-                this.snapInsidePx(0,0,this.containerWidth(),this.containerHeight())
+                this.updateWH();
+                this.snapInsidePx(0, 0, this.containerWidth(), this.containerHeight());
 
                 if (this.doubleClickFullScreen) {
-                    ViewMan.iterate((id,v) => {
-                        if (v !== this && v.overlayView !== this && v.in.relativeTo !== this) {
-                            v.preFullScreenVisible = v.visible;
-//                            console.log("Hiding: "+v.id+" for full screen")
-                            v.setVisible(false);
-                        }
-                    })
+                    ViewMan.fullscreenView = this;
                 }
-
 
             } else {
                 this.doubled = false;
-                this.left = this.preDoubledLeft
-                this.top = this.preDoubledTop
+                this.left = this.preDoubledLeft;
+                this.top = this.preDoubledTop;
                 if (this.width > 0) this.width = this.preDoubledWidth;
                 if (this.height > 0) this.height = this.preDoubledHeight;
-                console.log("Restoring: "+this.id+" to "+this.width+","+this.height);
-                this.updateWH()
+                this.updateWH();
+
                 if (this.doubleClickFullScreen) {
-                    ViewMan.iterate((id, v) => {
-                        if (v !== this && v.overlayView !== this  && v.in.relativeTo !== this) {
-    //                        console.log("Restoring visible: "+v.id+" to "+v.preFullScreenVisible)
-                            v.setVisible(v.preFullScreenVisible);
-                        }
-                    })
+                    ViewMan.fullscreenView = null;
                 }
             }
         }
     }
 
     setVisible(visible) {
+        if (this.visible === visible)
+            return;
 
-         if (this.visible === visible)
-              return;
+        this.visible = visible;
 
-        this.visible = visible
+        // Immediate DOM update for responsiveness.
+        // Central DOM updates happen in ViewMan.updateDOMVisibility() each frame.
+        this._updateOwnDOM();
+    }
 
-        // if this is NOT an overlaid view, then we can set the div visibility directly
-        // this will hide any children of the div
-        // so if there's another view (like the TrackingOverlay) that has this as a parent
-        // it will also be hidden
+    // Update this view's own DOM elements based on this.visible (user intent)
+    _updateOwnDOM() {
         if (!this.overlayView) {
             if (this.div) {
-                if (this.visible)
-                    this.div.style.display = 'block'
-                else
-                    this.div.style.display = 'none'
+                this.div.style.display = this.visible ? 'block' : 'none';
             }
-        }
-        else {
-           // console.warn("Overlaying view "+this.id+" set visible propagating to the overlaid view" + this.overlayView.id)
-            if (!this.separateVisibility) {
-                // not separate, so we set the visibility of the overlay view (the parent)
-                // which will hide the children (this)
-                this.overlayView.setVisible(visible);
-            } else {
-                // separate, so we set the visibility of the canvas
-                // so we can had the overlay independently of the parent
-               console.log("Overlaying view " + this.id + " set visible using canvas")
+        } else if (this.separateVisibility) {
+            if (this.canvas) {
                 this.canvas.style.visibility = this.visible ? 'visible' : 'hidden';
-
             }
         }
+        // Non-separateVisibility overlays: DOM controlled by parent's div
     }
 
     show(visible = true) {

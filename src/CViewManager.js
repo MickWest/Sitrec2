@@ -5,6 +5,7 @@ import {isConsole} from "./configUtils";
 class CViewManager extends CManager {
     constructor(v) {
         super(v);
+        this.fullscreenView = null; // tracks which view is in fullscreen mode (null = none)
         if (!isConsole) { // will not be used in console mode, so just an empty singleton
             setupPageStructure();
             this.topPx = 24;
@@ -96,6 +97,65 @@ class CViewManager extends CManager {
         // Side-by-side if combined width is approximately 1 (accounting for negative widths)
         // and both have reduced width
         return mainWidth < 0.9 && lookWidth < 0.9 && (mainWidth + lookWidth) > 0.9;
+    }
+
+    // Check if view is a descendant (overlay child or relativeTo child) of ancestor
+    isDescendantOf(view, ancestor) {
+        if (view === ancestor) return true;
+        if (view.overlayView && this.isDescendantOf(view.overlayView, ancestor)) return true;
+        if (view.in.relativeTo && this.isDescendantOf(view.in.relativeTo, ancestor)) return true;
+        return false;
+    }
+
+    // Compute _effectivelyVisible for all views based on user intent, parent state, and fullscreen
+    computeEffectiveVisibility() {
+        // Reset memoization
+        this.iterate((key, view) => { view._evComputed = false; });
+        // Compute for all views
+        this.iterate((key, view) => { this._computeEV(view); });
+    }
+
+    _computeEV(view) {
+        if (view._evComputed) return view._effectivelyVisible;
+
+        let effective = view.visible;
+
+        // Overlay children inherit parent visibility (unless separateVisibility)
+        if (view.overlayView && !view.separateVisibility) {
+            effective = effective && this._computeEV(view.overlayView);
+        }
+
+        // RelativeTo children inherit parent visibility
+        if (view.in.relativeTo) {
+            effective = effective && this._computeEV(view.in.relativeTo);
+        }
+
+        // Fullscreen: only fullscreen view and its descendants are visible
+        if (this.fullscreenView && !this.isDescendantOf(view, this.fullscreenView)) {
+            effective = false;
+        }
+
+        view._effectivelyVisible = effective;
+        view._evComputed = true;
+        return effective;
+    }
+
+    // Update DOM display/visibility based on computed _effectivelyVisible
+    updateDOMVisibility() {
+        this.iterate((key, view) => {
+            if (!view.overlayView) {
+                // Non-overlay view: control div display
+                if (view.div) {
+                    view.div.style.display = view._effectivelyVisible ? 'block' : 'none';
+                }
+            } else if (view.separateVisibility) {
+                // Separate visibility overlay: control canvas visibility
+                if (view.canvas) {
+                    view.canvas.style.visibility = view._effectivelyVisible ? 'visible' : 'hidden';
+                }
+            }
+            // Non-separateVisibility overlays: DOM controlled by parent's div display
+        });
     }
 
     updateZOrder() {

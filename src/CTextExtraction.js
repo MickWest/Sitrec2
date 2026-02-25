@@ -655,7 +655,7 @@ export function addTextExtractionMenu() {
     if (!guiMenus.view) return;
     if (!isLocal) return;
 
-    textExtractionFolder = guiMenus.view.addFolder("[BETA] Text Extraction").close().perm();
+    textExtractionFolder = guiMenus.video.addFolder("[BETA] Text Extraction").close().perm();
 
     const menuActions = {
         enableExtraction: toggleEnableExtraction,

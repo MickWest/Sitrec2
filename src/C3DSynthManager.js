@@ -9,9 +9,9 @@ import {Globals, NodeMan, setRenderOne} from "./Globals";
 import {ViewMan} from "./CViewManager";
 import {screenToNDC} from "./mouseMoveView";
 import {V3} from "./threeUtils";
-import {getLocalUpVector} from "./SphericalMath";
+import {earthCenterEUS, getLocalUpVector} from "./SphericalMath";
 import {Sphere, Vector3} from "three";
-import {EUSToLLA, LLAToEUS, wgs84} from "./LLA-ECEF-ENU";
+import {EUSToLLA, LLAToEUS} from "./LLA-ECEF-ENU";
 import {f2m} from "./utils";
 
 export class C3DSynthManager extends CManager {
@@ -183,8 +183,8 @@ export class C3DSynthManager extends CManager {
             return closestPoint.clone();
         }
         
-        // Fallback: intersect with spherical ground
-        const groundSphere = new Sphere(new Vector3(0, -wgs84.RADIUS, 0), wgs84.RADIUS);
+        // Fallback: intersect with ellipsoid ground approximation
+        const groundSphere = new Sphere(earthCenterEUS(), Globals.equatorRadius);
         const intersectPoint = new Vector3();
         
         if (view.raycaster.ray.intersectSphere(groundSphere, intersectPoint)) {

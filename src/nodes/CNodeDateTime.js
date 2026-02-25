@@ -9,6 +9,7 @@ import {calculateGST} from "../CelestialMath";
 import {updateGUIFrames} from "../JetGUI";
 import {updateFrameSlider} from "./CNodeFrameSlider";
 import {getOffsetFromDateTimeString} from "../DateTimeUtils";
+import {EventManager} from "../CEventManager";
 
 const timeZoneOffsets = {
     "IDLW UTC-12": -12,     // International Date Line West
@@ -283,6 +284,8 @@ export class CNodeDateTime extends CNode {
             updateFrameSlider();
             NodeMan.recalculateAllRootFirst(); // really just need to redraw things..
 
+        }).onFinishChange(() => {
+            EventManager.dispatchEvent("abFrameChanged");
         })
             .tooltip("limited the playback to between A and B, displayed as green and red on the frame slider")
 
@@ -296,6 +299,8 @@ export class CNodeDateTime extends CNode {
             NodeMan.recalculateAllRootFirst();
 
 
+        }).onFinishChange(() => {
+            EventManager.dispatchEvent("abFrameChanged");
         })
             .tooltip("limited the playback to between A and B, displayed as green and red on the frame slider")
 
@@ -548,7 +553,7 @@ export class CNodeDateTime extends CNode {
 
     // get the start time from a string in ISO 8601 format
     // or from a Date object
-    setStartDateTime(dateTime) {
+    setStartDateTime(dateTime, skipLiveModeReset = false) {
         this.dateStart = new Date(dateTime);
 
         if (typeof dateTime === 'string') {
@@ -556,14 +561,14 @@ export class CNodeDateTime extends CNode {
         }
 
         this.dateNow = startToNowDateTime(this.dateStart);
-        this.populate();
+        this.populate(skipLiveModeReset);
         setRenderOne(true);
     }
 
-    setNowDateTime(dateTime) {
+    setNowDateTime(dateTime, skipLiveModeReset = false) {
         this.dateNow = new Date(dateTime);
         this.dateStart = nowToStartDateTime(this.dateNow);
-        this.populate();
+        this.populate(skipLiveModeReset);
     }
 
     resetStartTime() {
@@ -576,7 +581,17 @@ export class CNodeDateTime extends CNode {
         this.updateDateTime()
     }
 
-    populate() {
+    populate(skipLiveModeReset = false) {
+
+        // if we are populating the time, then clear the live mode, as they are manually setting the time,
+        // so we don't want to override it later in the update function
+
+        if (!skipLiveModeReset && this.liveMode) {
+            console.log("CNodeDateTime - populate - resetting live mode to false")
+            this.liveMode = false;
+        }
+
+
         let dateNow = this.dateNow;
 
         if (this.useTimeZone) {
@@ -600,10 +615,10 @@ export class CNodeDateTime extends CNode {
 
     }
 
-    populateStartTimeFromUTCString(utcString) {
+    populateStartTimeFromUTCString(utcString, skipLiveModeReset = false) {
         // make a copy of the the original start time, so we can reset to it later with a UI button
         this.originalPopulatedStartTime = new Date(utcString);
-        this.setStartDateTime(new Date(utcString));
+        this.setStartDateTime(new Date(utcString), skipLiveModeReset);
     }
 
 
@@ -708,15 +723,17 @@ export class CNodeDateTime extends CNode {
             // we lock the frame to the center of the slider
             par.frame = Math.floor(Sit.frames / 2);
             const currentTime = new Date();
-            this.setNowDateTime(currentTime);
+            this.setNowDateTime(currentTime, true);
         }
 
         this.frame = frame
         this.dateNow = startToNowDateTime(this.dateStart);
 
-        this.refreshingUI = true;
-        this.populate();
-        this.refreshingUI = false;
+        if (!this.liveMode) {
+            this.refreshingUI = true;
+            this.populate();
+            this.refreshingUI = false;
+        }
 
         var speedscale = 1;
         if (isKeyHeld('shift'))

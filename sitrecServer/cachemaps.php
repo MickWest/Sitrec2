@@ -48,9 +48,9 @@ $url = $_GET["url"];  // usage examples above
 
 ob_start();			// output buffering, so the echo commands don't get sent (some servers will not send the header() if there's already output
 
-echo "Attempting: ".$url."<br>";
+echo "Attempting: ".htmlspecialchars($url, ENT_QUOTES, 'UTF-8')."<br>";
 $url = rawurldecode($url);
-echo "Decoded: ".$url."<br>";
+echo "Decoded: ".htmlspecialchars($url, ENT_QUOTES, 'UTF-8')."<br>";
 
 // Parse the URL and return its components
 $url_components = parse_url($url);
@@ -58,7 +58,7 @@ $url_components = parse_url($url);
 // Check if the URL parse was successful
 if (false === $url_components) {
     // Invalid URL, return 403 (Forbidden)
-    echo "Missing url ". $url . "<br>";
+    echo "Missing url ".htmlspecialchars($url, ENT_QUOTES, 'UTF-8')."<br>";
     http_response_code(403);
     return;
 }
@@ -78,15 +78,9 @@ foreach ($acceptable_domains as $domain) {
 
 
 if (!$domain_allowed) {
-    // if the domain is not allowed, redirect to the URL
-    // this will still allow the browser to fetch the image directly
-    // and not use the server as a proxy
-    // that will worok for anything except the mapbox url that needs an additional token
-    header_remove();
-    header("Location: " . $url);
-    exit();
-
-
+    ob_end_clean();
+    http_response_code(403);
+    exit("Domain not allowed");
 }
 
 // It's an acceptable domain, continue with your logic
@@ -126,7 +120,7 @@ if (strcmp($url_parts['host'],"tiles.maps.eox.at") === 0)
 // if there is no array, or an empty array, then allow all extensions
 if (isset($acceptable_extensions) && count($acceptable_extensions) > 0) {
     if (!in_array($ext, $acceptable_extensions)) {
-        exit("Illegal File Type " . $ext);
+        exit("Illegal File Type " . htmlspecialchars($ext, ENT_QUOTES, 'UTF-8'));
     }
 }
 
@@ -191,7 +185,7 @@ if (file_exists($cachedFile)) {
 
         $dataBlob = curl_exec($ch);
         if ($dataBlob === false) {
-            echo "<br>FAILED to fetch " . $url . $extra;
+            echo "<br>FAILED to fetch " . htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
             $info = curl_getinfo($ch);
             echo '<pre>';
             print_r($info);
@@ -222,7 +216,7 @@ if (file_exists($cachedFile)) {
 
 
     if ($dataBlob == false || strlen($dataBlob) === 0) {
-        echo "<br>FAILED to fetch " . $url . $extra;
+        echo "<br>FAILED to fetch " . htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
         if ($dataBlob == false) echo "<br>that returned false";
         else echo "<br>$dataBlob zero size";
         ob_end_flush();

@@ -3,9 +3,8 @@ import {Sit, Units} from "../Globals";
 import {CNodeEmptyArray} from "./CNodeArray";
 
 import {V3} from "../threeUtils";
+import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 
-
-const fleeterScale = 1.5;
 
 export class CNodeFleeter extends CNodeEmptyArray {
     constructor(v) {
@@ -32,27 +31,40 @@ export class CNodeFleeter extends CNodeEmptyArray {
         // position is relative to gimbal at frame 0
         var pos = this.in.gimbal.v0.position.clone()
 
+        // Get local tangent frame at the starting position
+        const localUp = getLocalUpVector(pos)
+        const localEast = getLocalEastVector(pos)
+        const localNorth = getLocalNorthVector(pos)
+
         // offsetting by offX,offY,offZ
-        // needs XZ to be relative to the heading of the Gimbal object
+        // offX = east (old EUS X), offY = up (old EUS Y), offZ = south (old EUS Z)
+        // needs to be relative to the heading of the Gimbal object
 
         const gv = this.in.gimbal.p(1).sub(this.in.gimbal.p(0))
         gv.normalize()
-        const heading = Math.atan2(gv.z, gv.x) + Math.PI/2
-        const off = V3(this.offX, this.offY, this.offZ)
-        off.applyAxisAngle(V3(0,1,0), -heading)
+        // Project velocity onto the local tangent plane to get heading
+        const velEast = gv.dot(localEast)
+        const velNorth = gv.dot(localNorth)
+        const heading = Math.atan2(velEast, velNorth)
 
+        // Build offset in local tangent frame: offX=east, offY=up, offZ=south
+        const off = V3(this.offX, this.offY, this.offZ)
+        // Rotate the offset around up axis by -heading (same logic as before, but in local frame)
+        // First express offset in world coords via local basis, then rotate
+        const offWorld = localEast.clone().multiplyScalar(off.x)
+            .add(localUp.clone().multiplyScalar(off.y))
+            .add(localNorth.clone().multiplyScalar(-off.z)) // south = -north
+        offWorld.applyAxisAngle(localUp, -heading)
 
         const fleeterScale = this.in.spacing.v0
-        // pos.x += metersFromNM(this.offX*fleeterScale+this.in.fleetX.v0)
-        // pos.y += metersFromNM(this.offY*fleeterScale)
-        // pos.z += metersFromNM(this.offZ*fleeterScale+this.in.fleetY.v0)
-        pos.x += metersFromNM(off.x*fleeterScale+this.in.fleetX.v0)
-        pos.y += metersFromNM(off.y*fleeterScale)
-        pos.z += metersFromNM(off.z*fleeterScale+this.in.fleetY.v0)
+        // Apply scaled offset + fleet position offset (fleetX=east, fleetY=south in old EUS)
+        const fleetOffWorld = localEast.clone().multiplyScalar(metersFromNM(this.in.fleetX.v0))
+            .add(localNorth.clone().multiplyScalar(-metersFromNM(this.in.fleetY.v0))) // fleetY was south
+        pos.add(offWorld.multiplyScalar(metersFromNM(fleeterScale)))
+        pos.add(fleetOffWorld)
 
-  //      console.log("TUrnframe = "+this.in.turnFrame.v0)
-
-        var upAxis = V3(0, 1, 0)  // rotate around 0,1,0, i.e. up at the origin
+        // Use local up as the turn axis (instead of hardcoded Y-up)
+        var upAxis = localUp.clone()
 
         // velocity comes from the first two frames of the gimbal object track
         // and give us a per-frame
@@ -68,13 +80,8 @@ export class CNodeFleeter extends CNodeEmptyArray {
             if (!turnStarted && f>this.in.turnFrame.v0) {
                 turnStarted = true;
                 var speed = Units.m2Speed * vel.length() * Sit.fps;
-             //   console.log("Fleet speed WAS "+speed)
                 vel.multiplyScalar(this.in.acc.v0)
                 speed = Units.m2Speed * vel.length() * Sit.fps;
-             //   console.log("Fleet speed scaled to "+speed)
-
-    //            this.turnRate*=2 // PATCH
-
             }
             if (turnStarted && !turnEnded) {
                 const turn = radians(this.in.turnRate.v0/Sit.fps)

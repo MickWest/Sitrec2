@@ -44,16 +44,17 @@ export function updateGUIFrames() {
 
 export function SetupJetGUI() {
 
-    guiTweaks.add(Sit, 'aFrame', 0, Sit.frames - 1, 1).listen().onChange(function () {
-        if (Sit.bFrame < Sit.aFrame) Sit.bFrame = paSitr.aFrame
-        par.frame = Sit.aFrame;
-        UIChangedFrame()
-    })
-    guiTweaks.add(Sit, 'bFrame', 0, Sit.frames - 1, 1).listen().onChange(function () {
-        if (Sit.aFrame > Sit.bFrame) Sit.aFrame = Sit.bFrame
-        par.frame = Sit.bFrame;
-        UIChangedFrame()
-    })
+    // Duplicated in CNodeDataTime.js
+    // guiTweaks.add(Sit, 'aFrame', 0, Sit.frames - 1, 1).listen().onChange(function () {
+    //     if (Sit.bFrame < Sit.aFrame) Sit.bFrame = paSitr.aFrame
+    //     par.frame = Sit.aFrame;
+    //     UIChangedFrame()
+    // })
+    // guiTweaks.add(Sit, 'bFrame', 0, Sit.frames - 1, 1).listen().onChange(function () {
+    //     if (Sit.aFrame > Sit.bFrame) Sit.aFrame = Sit.bFrame
+    //     par.frame = Sit.bFrame;
+    //     UIChangedFrame()
+    // })
     guiTweaks.add(par, 'pingPong').listen().name("A-B Ping-Pong")
 
     guiJetTweaks.add(par, 'podPitchPhysical', -20, 150, 1).onChange(UIChangedPR).listen().name("Pod (Ball) Pitch")

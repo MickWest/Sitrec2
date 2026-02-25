@@ -31,7 +31,7 @@ import {
     Units
 } from "./Globals";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
-import {ECEFToLLAVD_Sphere, EUSToECEF, EUSToLLA, LLAToEUS} from "./LLA-ECEF-ENU";
+import {EUSToLLA, LLAToEUS} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {GlobalScene} from "./LocalFrame";
 import {refreshLabelsAfterLoading} from "./nodes/CNodeLabels3D";
@@ -483,7 +483,7 @@ export class CCustomManager {
         EventManager.addEventListener("videoLoaded", (data) => {
             let width, height;
 
-            if (Sit.name !== "custom") {
+            if (!Sit.isCustom) {
                 console.warn("videoLoaded event received for non-custom sitch: " + Sit.name);
                 return;
             }
@@ -533,7 +533,8 @@ export class CCustomManager {
                     setSitchEstablished(true);
                 }
 
-
+                // regardless, we clear the live mode on GlobalDateTimeNode, as loading a video should always put us in control of the time
+                GlobalDateTimeNode.liveMode = false;
 
             }
 
@@ -695,7 +696,7 @@ export class CCustomManager {
                         draggable: true, resizable: true, freeAspect: true, shiftDrag: false,
                         editorConfig: {
                             useRegression: true,
-                            minX: 0, maxX: "Sit.frames", minY: 0.1, maxY: 100,
+                            minX: 0, maxX: "Sit.frames", minY: 0, maxY: 40,
                             xLabel: "Frame", xStep: 1, yLabel: "FOV", yStep: 5,
                             points: [0, 30, 100, 30, 400, 30, 900, 30]
                         },
@@ -729,7 +730,7 @@ export class CCustomManager {
         const videoInfo = NodeMan.get("videoInfo", false);
         if (!videoInfo) return;
 
-        videoInfo.setupMenu(guiMenus.view);
+        videoInfo.setupMenu(guiMenus.video);
     }
     
     setupOSDDataSeriesController() {
@@ -1099,7 +1100,7 @@ export class CCustomManager {
     async setupVideoExport() {
         const { VideoExportManager } = await import("./VideoExporter");
         this.videoExportManager = new VideoExportManager();
-        await this.videoExportManager.setupMenu(guiMenus.view);
+        await this.videoExportManager.setupMenu(guiMenus.video);
     }
 
     setupStandaloneMenuExample() {
@@ -1668,8 +1669,14 @@ export class CCustomManager {
             if (controller.constructor.name === 'ColorController') {
                 mirroredController = target.addColor(object, property);
             } else if (controller.constructor.name === 'OptionController') {
-                // For dropdown/select controllers
-                mirroredController = target.add(object, property, controller._values);
+                // For dropdown/select controllers, reconstruct the {label: value} map
+                // so lil-gui uses _names as display labels and _values as stored values.
+                // Passing just _values (an array) would lose the human-readable labels.
+                const optionsMap = {};
+                for (let i = 0; i < controller._names.length; i++) {
+                    optionsMap[controller._names[i]] = controller._values[i];
+                }
+                mirroredController = target.add(object, property, optionsMap);
             } else if (controller.constructor.name === 'NumberController') {
                 // For numeric controllers with min/max
                 if (controller._min !== undefined && controller._max !== undefined) {
@@ -2740,6 +2747,8 @@ export class CCustomManager {
     updateViewFromPreset() {
         const preset = this.viewPresets[this.currentViewPreset];
         if (preset) {
+            // Clear any fullscreen state before applying preset
+            ViewMan.fullscreenView = null;
             ViewMan.iterate((id, v) => {
                 if (v.doubled) {
                     v.doubled = false;
@@ -2748,14 +2757,6 @@ export class CCustomManager {
                     if (v.width > 0) v.width = v.preDoubledWidth;
                     if (v.height > 0) v.height = v.preDoubledHeight;
                     v.updateWH();
-                }
-            });
-            ViewMan.iterate((id, v) => {
-                if (v.preFullScreenVisible !== undefined) {
-                    if (!(id in preset)) {
-                        v.setVisible(v.preFullScreenVisible);
-                    }
-                    v.preFullScreenVisible = undefined;
                 }
             });
 
@@ -3129,10 +3130,11 @@ export class CCustomManager {
 
         if (Sit.canMod) {
             // for a modded sitch, we just need to store the name of the sitch we are modding
-            // TODO: are there some things in the Sit object that we need to store?????
+            // plus any Sit-level properties that the user can change via the UI
             out = {
                 ...out,
-                modding: Sit.name
+                modding: Sit.name,
+                useEllipsoid: Sit.useEllipsoid,
             }
         }
         else {
@@ -3889,6 +3891,8 @@ export class CCustomManager {
         // in case there's some missing dependency
         // like the CSwitches turning off if they are not used
         // which they don't know immediately
+        // Note: terrain is excluded (withTerrain=false) because maps may not be loaded yet.
+        // Terrain updates resume naturally via CNodeTerrainUI.update() on the next frame.
         NodeMan.recalculateAllRootFirst();
 
         // and we do it twice as sometimes there's initialization ordering issues
@@ -4054,8 +4058,7 @@ export class CCustomManager {
                 const cursorPos = getCursorPositionFromTopView();
                 if (cursorPos) {
                     setSitchEstablished(true);
-                    const ecef = EUSToECEF(cursorPos)
-                    const LLA = ECEFToLLAVD_Sphere(ecef)
+                    const LLA = EUSToLLA(cursorPos);
 
                     if (terrainUI.lat !== LLA.x || terrainUI.lon !== LLA.y) {
                         terrainUI.lat = LLA.x

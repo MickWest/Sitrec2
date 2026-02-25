@@ -25,8 +25,8 @@ export const SitArea6 = {
     ],
     mainCamera: {
         far:    80000000,
-        startCameraPosition: [41177.15, 35874.31, 182331.95],
-        startCameraTarget: [40980.64, 35831.97, 181352.36],
+        startCameraPositionLLA:[35.634518,-115.803981,15230.038169],
+        startCameraTargetLLA:[35.643396,-115.805449,15202.826558],
     },
 
     mainView:{left:0.0, top:0, width:0.50,height:1,background:'#132d44',},

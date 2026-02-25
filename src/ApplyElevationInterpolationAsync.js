@@ -1,15 +1,17 @@
 /**
  * Async wrapper for elevation interpolation using a Web Worker
- * 
+ *
  * Offloads the computationally expensive vertex elevation calculation to a background thread,
  * allowing the main thread to remain responsive during tile recalculation.
- * 
+ *
  * This handles:
  * - Coordinate mapping and projection calculations
  * - Bilinear elevation interpolation
  * - LLA to EUS coordinate conversion
  * - Tile center relative positioning
  */
+
+import {geoidCorrectionForTile} from "./EGM96Geoid";
 
 let elevationWorker = null;
 
@@ -127,6 +129,9 @@ export async function applyElevationInterpolationAsync(
             // while the main thread retains access to the original.
             const elevationDataCopy = new Float32Array(elevationTile.elevation);
 
+            // Compute geoid correction corners for this tile
+            const geoidCorners = geoidCorrectionForTile(mapProjection, tileZ, tileX, tileY);
+
             // Send message to worker with pre-calculated lat/lon
             worker.postMessage(
                 {
@@ -147,6 +152,7 @@ export async function applyElevationInterpolationAsync(
                     tileCenterX: tileCenter.x,
                     tileCenterY: tileCenter.y,
                     tileCenterZ: tileCenter.z,
+                    geoidCorners,
                 },
                 [elevationDataCopy.buffer, latLonData.buffer] // Transfer both buffers
             );

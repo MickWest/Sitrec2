@@ -175,7 +175,8 @@ function tleEpochToDate(epochYr, epochDays) {
     const fullYear = (epochYr < 57) ? 2000 + epochYr : 1900 + epochYr;
 
     // Calculate milliseconds since start of year
-    const startOfYear = new Date(Date.UTC(fullYear, 0, 1));
+    // TLE day 1.0 = Jan 1, so use Dec 31 of prior year as base (matching dateToTLE)
+    const startOfYear = new Date(Date.UTC(fullYear, 0, 0));
     const msSinceStart = epochDays * 24 * 60 * 60 * 1000;
 
     return new Date(startOfYear.getTime() + msSinceStart);
@@ -216,7 +217,15 @@ export class CTLEData {
         }
 
         // split the stringified fileData into an array of lines
-        const lines = fileData.split('\n');
+        let lines = fileData.split('\n');
+
+        // Strip leading and trailing blank lines (some TLE files have extra blank lines)
+        while (lines.length > 0 && lines[0].trim() === '') {
+            lines.shift();
+        }
+        while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+            lines.pop();
+        }
 
         this.satData = []
         let satrec = null;
@@ -282,7 +291,7 @@ export class CTLEData {
                     // is 40978, 39575, and 31702
                     // So we need to use the NORAD number as the key
 
-                    if (this.satData[satrecName] === undefined) {
+                    if (this.satData[satrecNumber] === undefined) {
                         //console.log(satrecName + " " + satrec.satnum + " ");
                         // it's a new satData entry
                         // so create a new one with the name and the satrec array, which has one satrec

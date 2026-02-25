@@ -127,7 +127,7 @@ export const SitVideo = {
         const videoInfo = this.videoInfoNode;
         if (!videoInfo) return;
 
-        videoInfo.setupMenu(guiMenus.view);
+        videoInfo.setupMenu(guiMenus.video);
     },
 }
 

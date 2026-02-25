@@ -200,6 +200,11 @@ class CNode {
         }
     }
 
+    addSimpleSerials(serials) {
+        serials.forEach(serial => this.addSimpleSerial(serial))
+    }
+
+
     simpleSerialize(list) {
         let result = {}
         if (list === undefined) return result;
@@ -428,7 +433,7 @@ class CNode {
     // the parameter nodeID can be a node object, or a node name,
     // or a number (which will be wrapped in a CNodeConstant)
     addInput(key, nodeID, optional = false) {
-        assert(this.in.key === undefined, `Adding input ${key} that is already defined`)
+        assert(this.in[key] === undefined, `Adding input ${key} that is already defined`)
         assert(typeof key === 'string', "Input key must be a string")
 
         // assert also that it will not be coerced to a number, as that will break the inputs ordering
@@ -1027,7 +1032,7 @@ export class CNodeSpecificFrame extends CNode {
     }
 
     getValueFrame(frame) {
-        return this.in.node.getValueFrame(frame)
+        return this.in.node.getValueFrame(this.specificFrame)
     }
 }
 

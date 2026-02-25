@@ -2,6 +2,7 @@
 // and hence manges the nodeTypes
 import {assert} from "../assert";
 import {CNodeController} from "./CNodeController";
+import {FileManager} from "../Globals";
 
 export class CNodeFactory {
     constructor(nodeMan) {
@@ -133,19 +134,9 @@ export class CNodeFactory {
 
         oldNode.recalculateCascade(0)
 
-        // if the old node had an export button, then the new node should too
-        // and we need to rename the old export button to the _old name
-        if (oldNode.exportType !== undefined && oldNode.exportButtons !== undefined) {
-            /// should only have one at most
-            assert(Object.keys(oldNode.exportButtons).length <= 1, "More than one export button in old node");
-            // rename the old button
-            // for (const button in oldNode.exportButtons) {
-            //     button.name(newNode.exportType + oldNode.id)
-            // }
-
-            console.warn("TODO: rename export button")
-
-        }
+        // The new node inherits exportable (set above) and creates its own export buttons
+        // in its constructor, so remove the old node's export buttons to avoid duplicates.
+        FileManager.removeExportButton(oldNode);
 
         return newNode;
     }

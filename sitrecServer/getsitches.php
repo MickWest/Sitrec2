@@ -1,9 +1,26 @@
 <?php
 
 header('Content-Type: application/json');
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+
+// SECURITY: Restrict CORS to own origin and the configured dev host (LOCALHOST env var).
+// Only set Allow-Origin when an Origin header is present (i.e. a cross-origin browser request).
+$requestOrigin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if ($requestOrigin) {
+    $serverOrigin = $_SERVER['REQUEST_SCHEME'] . '://' . $_SERVER['HTTP_HOST'];
+    $allowedOrigins = [$serverOrigin];
+    $localhostEnv = getenv('LOCALHOST');
+    if ($localhostEnv) {
+        $allowedOrigins[] = 'https://' . $localhostEnv;
+        $allowedOrigins[] = 'http://'  . $localhostEnv;
+    }
+    if (in_array($requestOrigin, $allowedOrigins, true)) {
+        header('Access-Control-Allow-Origin: ' . $requestOrigin);
+        header('Vary: Origin');
+        header('Access-Control-Allow-Methods: GET, OPTIONS');
+        header('Access-Control-Allow-Headers: Content-Type');
+    }
+    // Origin not in allowlist: no Allow-Origin header → browser blocks the request.
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);

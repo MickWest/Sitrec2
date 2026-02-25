@@ -1,7 +1,7 @@
 import {NodeMan} from "./Globals";
 import {radians} from "./utils";
 import {trackHeading} from "./trackUtils";
-import {V3} from "./threeUtils";
+import {getLocalUpVector} from "./SphericalMath";
 
 // move the main camera based on the lock track
 // this makes the camera follow the track (i.e. a plane)
@@ -10,16 +10,14 @@ import {V3} from "./threeUtils";
 // the camera is rotated based on the difference between the current
 // heading and the last heading
 export function updateLockTrack(view, f) {
-    if (view.lockTrackName !== "default" && view.lockTrackName !== undefined) {
+    if (view.lockTrackName !== "default" && view.lockTrackName !== undefined && NodeMan.exists(view.lockTrackName)) {
         const lockTrack = NodeMan.get(view.lockTrackName);
         // get the current position and heading from the track
         const lockPos = lockTrack.p(f);
         const lockHeading = trackHeading(lockTrack, f)
         if (view.lastLockPos !== null && view.lastLockPos !== undefined) {
             const mainCam = view.camera;
-            // TODO: this is a about the Y axis, should it not be local up?
-            // TODO: that would require that trackHeading() use the same up vector
-            const upAxis = V3(0, 1, 0)
+            const upAxis = getLocalUpVector(lockPos);
             const offset = lockPos.clone().sub(view.lastLockPos)
             let headingChange = lockHeading - view.lastLockHeading;
 

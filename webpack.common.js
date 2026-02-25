@@ -26,6 +26,20 @@ function getVersionNumber() {
     return gitTag
 }
 
+function getWorktreeName() {
+    // Detect if running in a git worktree and return its name
+    try {
+        const gitDir = child_process.execSync('git rev-parse --git-dir', { encoding: 'utf8' }).trim();
+        // Worktrees have a .git file (not directory) pointing to the main repo's worktrees/<name> dir
+        if (gitDir.includes('/worktrees/')) {
+            return path.basename(gitDir);
+        }
+    } catch (e) {
+        // Not in a git repo or git not available
+    }
+    return null;
+}
+
 function getFormattedLocalDateTime() {
     const now = new Date();
     const year = String(now.getFullYear()).substring(2);
@@ -34,8 +48,12 @@ function getFormattedLocalDateTime() {
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
 
-    const gitTag = getVersionNumber();
+    const worktreeName = getWorktreeName();
+    if (worktreeName) {
+        return `${worktreeName} ${hours}:${minutes}`;
+    }
 
+    const gitTag = getVersionNumber();
     return `Sitrec ${gitTag}: ${year}-${month}-${day} ${hours}:${minutes} PT`;
 }
 

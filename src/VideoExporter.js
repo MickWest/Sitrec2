@@ -281,6 +281,11 @@ export class VideoExportManager {
         }, "exportFullscreenViewport").name("Render Fullscreen Video")
             .tooltip("Export the entire viewport in fullscreen mode as a video file with all frames");
 
+        this.renderVideoFolder.add({
+            exportWindow: () => this.exportWindowVideo()
+        }, "exportWindow").name("Record Browser Window")
+            .tooltip("Record the entire browser window (including menus and UI) as a video with locked framerate");
+
         this.renderVideoFolder.add(this, "retinaExport")
             .name("Use HD/Retina Export")
             .tooltip("Export at retina/HiDPI resolution (2x on most displays)");
@@ -289,11 +294,38 @@ export class VideoExportManager {
             .name("Include Audio")
             .tooltip("Include audio track from source video if available");
 
+        this.renderVideoFolder.add({
+            exportFrame: () => this.exportVideoFrame()
+        }, "exportFrame").name("Export Video Frame")
+            .tooltip("Export the current video frame as displayed (with effects) as a PNG file");
+
         if (!options.skipPanorama) {
             setupPanoramaExport(this.renderVideoFolder);
         }
 
         return this.renderVideoFolder;
+    }
+
+    async exportVideoFrame() {
+        const { NodeMan } = await import("./Globals");
+        const { par } = await import("./par");
+        const { saveAs } = await import("file-saver");
+        const { getExportPrefix } = await import("./utils");
+
+        const videoView = NodeMan.get("video", false);
+        if (!videoView || !videoView.canvas) {
+            alert("No video view available to export.");
+            return;
+        }
+
+        const frame = Math.floor(par.frame);
+        const fileName = `${getExportPrefix()}_frame_${String(frame).padStart(5, "0")}.png`;
+
+        videoView.canvas.toBlob((blob) => {
+            if (blob) {
+                saveAs(blob, fileName);
+            }
+        }, "image/png");
     }
 
     async exportViewportVideo() {
@@ -413,20 +445,10 @@ export class VideoExportManager {
                 const nonOverlays = [];
                 const overlays = [];
 
+                ViewMan.computeEffectiveVisibility();
+
                 ViewMan.iterate((id, view) => {
-                    if (view.overlayView && !view.separateVisibility) {
-                        view.setVisible(view.overlayView.visible);
-                    }
-
-                    let visible = view.visible;
-                    if (view.overlayView && !view.separateVisibility) {
-                        visible = view.overlayView.visible;
-                    }
-                    if (view.in.relativeTo) {
-                        visible = view.visible && view.in.relativeTo.visible;
-                    }
-
-                    if (visible) {
+                    if (view._effectivelyVisible) {
                         if (view.overlayView) {
                             overlays.push(view);
                         } else {
@@ -531,7 +553,8 @@ export class VideoExportManager {
                     (status) => progress.setStatus(status)
                 );
 
-                const filename = `viewport_${Sit.name || 'export'}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
+                const { getExportPrefix } = await import("./utils");
+                const filename = `${getExportPrefix()}_viewport_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
@@ -582,6 +605,204 @@ export class VideoExportManager {
             if (uiWasVisible) {
                 Globals.menuBar.toggleVisiblity();
             }
+        }
+    }
+
+    async exportWindowVideo() {
+        const { GlobalDateTimeNode, NodeMan, Sit, setRenderOne, guiMenus } = await import("./Globals");
+        const { par } = await import("./par");
+        const { drawVideoWatermark } = await import("./utils");
+
+        if (this.renderVideoFolder) {
+            this.renderVideoFolder.close();
+        }
+
+        const viewMenu = guiMenus.view;
+        const viewMenuWasOpen = viewMenu && !viewMenu._closed;
+        if (viewMenuWasOpen && viewMenu.mode !== "SIDEBAR_LEFT" && viewMenu.mode !== "SIDEBAR_RIGHT") {
+            viewMenu.close();
+        }
+
+        let displayStream;
+        try {
+            displayStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { frameRate: { max: 60 } },
+                preferCurrentTab: true,
+            });
+        } catch (e) {
+            console.error('getDisplayMedia failed:', e);
+            alert('Window recording cancelled or not supported: ' + e.message);
+            return;
+        }
+
+        const videoTrack = displayStream.getVideoTracks()[0];
+        const trackSettings = videoTrack.getSettings();
+        const captureWidth = trackSettings.width;
+        const captureHeight = trackSettings.height;
+
+        const videoEl = document.createElement('video');
+        videoEl.srcObject = displayStream;
+        videoEl.muted = true;
+        videoEl.playsInline = true;
+        await videoEl.play();
+
+        await new Promise(r => setTimeout(r, 200));
+
+        const startFrame = Sit.aFrame;
+        const endFrame = Sit.bFrame;
+        const totalFrames = endFrame - startFrame + 1;
+        const fps = Sit.fps;
+
+        const width = Math.ceil(captureWidth / 2) * 2;
+        const height = Math.ceil(captureHeight / 2) * 2;
+
+        const bestFormat = await getBestFormatForResolution(this.videoFormat, width, height);
+        if (!bestFormat.formatId) {
+            displayStream.getTracks().forEach(t => t.stop());
+            alert(`Video export failed: ${bestFormat.reason}`);
+            return;
+        }
+        if (bestFormat.fallback) {
+            console.log(`${bestFormat.reason}, falling back to ${bestFormat.formatId}`);
+        }
+
+        const formatId = bestFormat.formatId;
+        const extension = getVideoExtension(formatId);
+
+        console.log(`Starting window video export (${formatId}): ${totalFrames} frames (${startFrame}-${endFrame}) at ${fps} fps, ${width}x${height}`);
+
+        const savedFrame = par.frame;
+        const savedPaused = par.paused;
+        const savedTitle = document.title;
+        par.paused = true;
+
+        let stopEarly = false;
+        let abortExport = false;
+        const onKeyDown = (e) => {
+            if (e.key === 'Escape') { abortExport = true; }
+            if (e.key === 'Enter') { stopEarly = true; }
+        };
+        document.addEventListener('keydown', onKeyDown);
+
+        const captureCanvas = document.createElement('canvas');
+        captureCanvas.width = width;
+        captureCanvas.height = height;
+        const captureCtx = captureCanvas.getContext('2d');
+
+        const videoStartDate = GlobalDateTimeNode ? GlobalDateTimeNode.frameToDate(startFrame) : null;
+
+        let audioBuffer = null;
+        let audioStartTime = 0;
+        let audioDuration = null;
+        let originalFps = fps;
+
+        if (this.exportAudio) {
+            for (const entry of Object.values(NodeMan.list)) {
+                const node = entry.data;
+                if (node.videoData && node.videoData.audioHandler &&
+                    node.videoData.audioHandler.decodingComplete) {
+                    const exportAudioBuffer = node.videoData.audioHandler.getAudioBufferForExport();
+                    if (exportAudioBuffer) {
+                        audioBuffer = exportAudioBuffer;
+                        originalFps = node.videoData.audioHandler.originalFps || fps;
+                        audioStartTime = startFrame / originalFps;
+                        audioDuration = totalFrames / fps;
+                        break;
+                    }
+                }
+            }
+        }
+
+        const waitForPaint = () => new Promise(resolve => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(resolve);
+            });
+        });
+
+        try {
+            const exporter = await createVideoExporter(formatId, {
+                width,
+                height,
+                fps,
+                bitrate: 8_000_000,
+                keyFrameInterval: 30,
+                videoStartDate,
+                audioBuffer,
+                audioStartTime,
+                audioDuration,
+                originalFps,
+                hardwareAcceleration: bestFormat.hardwareAcceleration,
+            });
+
+            await exporter.initialize();
+
+            for (let i = 0; i < totalFrames; i++) {
+                if (stopEarly || abortExport) break;
+                if (videoTrack.readyState !== 'live') {
+                    console.warn('Display capture stream ended');
+                    break;
+                }
+
+                const frame = startFrame + i;
+                par.frame = frame;
+                if (GlobalDateTimeNode) GlobalDateTimeNode.update(frame);
+
+                for (const entry of Object.values(NodeMan.list)) {
+                    const node = entry.data;
+                    if (node.videoData && node.videoData.waitForFrame) {
+                        await node.videoData.waitForFrame(frame);
+                    }
+                }
+
+                setRenderOne(true);
+                await waitForPaint();
+
+                captureCtx.fillStyle = '#000000';
+                captureCtx.fillRect(0, 0, width, height);
+                captureCtx.drawImage(videoEl, 0, 0, width, height);
+
+                drawVideoWatermark(captureCtx, width);
+
+                await exporter.addFrame(captureCanvas, frame);
+
+                if (i % 10 === 0) {
+                    document.title = `Recording ${i + 1}/${totalFrames} [Enter=save, Esc=abort]`;
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+
+            if (!abortExport) {
+                document.title = 'Finalizing video...';
+                const blob = await exporter.finalize(
+                    null,
+                    (status) => { document.title = status; }
+                );
+
+                const { getExportPrefix } = await import("./utils");
+                const filename = `${getExportPrefix()}_window_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(url);
+
+                console.log(`Window video export complete: ${filename}`);
+            } else {
+                console.log('Window video export aborted by user');
+            }
+
+        } catch (e) {
+            console.error('Export failed:', e);
+            alert('Window video export failed: ' + e.message);
+        } finally {
+            document.removeEventListener('keydown', onKeyDown);
+            document.title = savedTitle;
+            displayStream.getTracks().forEach(t => t.stop());
+            videoEl.srcObject = null;
+            par.frame = savedFrame;
+            par.paused = savedPaused;
+            setRenderOne(true);
         }
     }
 }

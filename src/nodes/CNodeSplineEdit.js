@@ -1,5 +1,5 @@
 import {SplineEditor} from "../SplineEditor";
-import {guiMenus, NodeMan, Sit, TrackManager} from "../Globals";
+import {Globals, guiMenus, NodeMan, Sit, TrackManager} from "../Globals";
 import {Vector3} from "three";
 import {getCameraNode} from "./CNodeCamera";
 import {assert} from "../assert.js";
@@ -31,9 +31,17 @@ export class CNodeSplineEditor extends CNodeTrack {
 
         const camera = getCameraNode(v.camera).camera;
 
+        // Auto-detect legacy EUS: if initialPoints is provided without initialPointsLLA,
+        // assume the points are in old EUS local tangent plane coordinates
+        const legacyEUS = v.legacyEUS ?? (v.initialPoints !== undefined && v.initialPointsLLA === undefined);
+        this.reprojectOnEarthModelChange =
+            v.reprojectOnEarthModelChange ?? (v.initialPointsLLA !== undefined || legacyEUS);
+        this._earthModelSignature = this.getEarthModelSignature();
+        this._controlPointsLLA = null;
+
         if (v.initialPointsLLA === undefined) {
             this.splineEditor = new SplineEditor(v.scene, camera, renderer, controls, () => this.recalculateCascade(),
-                v.initialPoints, false, v.type.toLowerCase())
+                v.initialPoints, false, v.type.toLowerCase(), legacyEUS)
         } else {
             this.splineEditor = new SplineEditor(v.scene, camera, renderer, controls, () => this.recalculateCascade(),
                 v.initialPointsLLA, true, v.type.toLowerCase())
@@ -147,6 +155,52 @@ export class CNodeSplineEditor extends CNodeTrack {
         if (v.elevationCache !== undefined) {
             this.deserializeElevationCache(v.elevationCache);
         }
+        if (this.reprojectOnEarthModelChange) {
+            this._earthModelSignature = this.getEarthModelSignature();
+            this._controlPointsLLA = this.captureControlPointsLLA();
+        }
+    }
+
+    getEarthModelSignature() {
+        return `${Globals.equatorRadius}:${Globals.polarRadius}:${Sit.lat}:${Sit.lon}`;
+    }
+
+    captureControlPointsLLA() {
+        const frameNumbers = this.splineEditor?.frameNumbers ?? [];
+        const positions = this.splineEditor?.positions ?? [];
+        const points = [];
+        for (let i = 0; i < positions.length; i++) {
+            const lla = EUSToLLA(positions[i]);
+            points.push([frameNumbers[i], lla.x, lla.y, lla.z]);
+        }
+        return points;
+    }
+
+    reprojectControlPointsFromLLA() {
+        if (!this._controlPointsLLA || this._controlPointsLLA.length === 0) return;
+
+        const eusPositions = [];
+        for (let i = 0; i < this._controlPointsLLA.length; i++) {
+            const [frameNumber, lat, lon, alt] = this._controlPointsLLA[i];
+            const eus = LLAVToEUS(new Vector3(lat, lon, alt));
+            eusPositions.push([frameNumber, eus.x, eus.y, eus.z]);
+        }
+        this.splineEditor.load(eusPositions);
+        this.splineEditor.updatePointEditorGraphics();
+    }
+
+    reprojectControlPointsIfNeeded() {
+        if (!this.reprojectOnEarthModelChange) return;
+
+        const signature = this.getEarthModelSignature();
+        if (signature === this._earthModelSignature) return;
+
+        if (!this._controlPointsLLA || this._controlPointsLLA.length === 0) {
+            this._controlPointsLLA = this.captureControlPointsLLA();
+        }
+
+        this.reprojectControlPointsFromLLA();
+        this._earthModelSignature = signature;
     }
     
     setAltitudeLock(value) {
@@ -202,6 +256,7 @@ export class CNodeSplineEditor extends CNodeTrack {
     recalculate() {
 //        console.log("+++++Start Recalculate Spline")
  //       const spline = this.splineEditor.spline;
+        this.reprojectControlPointsIfNeeded();
         this.array = []
         var pos = new Vector3()
 
@@ -346,6 +401,11 @@ export class CNodeSplineEditor extends CNodeTrack {
               this.array.push({position: this.applyAltitudeLock(pos, i)})
           }
         }
+
+        if (this.reprojectOnEarthModelChange) {
+            this._controlPointsLLA = this.captureControlPointsLLA();
+            this._earthModelSignature = this.getEarthModelSignature();
+        }
     }
 
     insertPoint(frame, point) {
@@ -400,4 +460,3 @@ export class CNodeSplineEditor extends CNodeTrack {
     }
 
  }
-

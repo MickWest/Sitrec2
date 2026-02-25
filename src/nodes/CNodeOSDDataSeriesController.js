@@ -8,6 +8,8 @@ import {CNodeDisplayTrack} from "./CNodeDisplayTrack";
 import {CNode3DObject} from "./CNode3DObject";
 import {Color} from "three";
 import * as LAYER from "../LayerMasks";
+import JSZip from "jszip";
+import {saveAs} from "file-saver";
 
 const DEFAULT_X = 50;
 const DEFAULT_Y = 20;
@@ -213,12 +215,12 @@ export class CNodeOSDDataSeriesController extends CNode {
         
         this.boundHandleKeyDown = (e) => this.handleKeyDown(e);
         this.boundHandleDoubleClick = (e) => this.handleDoubleClick(e);
-        
+        this.guiMenu = guiMenus.video;
         this.setupMenu();
     }
 
     setupMenu() {
-        this.guiFolder = guiMenus.view.addFolder("OSD Tracker").close()
+        this.guiFolder = guiMenus.video.addFolder("OSD Tracker").close()
             .tooltip("On-Screen Display text tracker for user-defined per-frame text");
         
         this.guiFolder.add(this, "addNewTrack").name("Add New OSD Data Series")
@@ -235,7 +237,10 @@ export class CNodeOSDDataSeriesController extends CNode {
                 setRenderOne();
             })
             .tooltip("Toggle visibility of all OSD data series");
-        
+
+        this.guiFolder.add(this, "exportAllData").name("Export All Data")
+            .tooltip("Export all OSD data series as CSVs in a ZIP file");
+
         EventManager.addEventListener("keydown", (data) => {
             if (data.key === '\\') {
                 this.cycleEditingTrack();
@@ -942,6 +947,160 @@ export class CNodeOSDDataSeriesController extends CNode {
         NodeMan.unlinkDisposeRemove(entry.trackID + "_Display");
         NodeMan.unlinkDisposeRemove(entry.trackID + "_Color");
         NodeMan.unlinkDisposeRemove(entry.trackID);
+    }
+
+    _isNumericSeries(track) {
+        for (let f = 0; f < Sit.frames; f++) {
+            if (track.isKeyframe(f)) {
+                if (isNaN(parseFloat(track.frameData[f]))) return false;
+            }
+        }
+        return true;
+    }
+
+    _buildExpandedArray(track) {
+        if (this._isNumericSeries(track)) {
+            // Replicate expandLerp logic
+            const kfs = [];
+            for (let f = 0; f < Sit.frames; f++) {
+                if (track.isKeyframe(f)) {
+                    const num = parseFloat(track.frameData[f]);
+                    if (!isNaN(num)) kfs.push({frame: f, value: num});
+                }
+            }
+            const n = kfs.length;
+            if (n === 0) return new Array(Sit.frames).fill(null);
+            if (n === 1) return new Array(Sit.frames).fill(kfs[0].value);
+
+            const first = kfs[0], second = kfs[1];
+            const last = kfs[n - 1], prevLast = kfs[n - 2];
+            const slopeStart = (second.value - first.value) / (second.frame - first.frame);
+            const slopeEnd = (last.value - prevLast.value) / (last.frame - prevLast.frame);
+
+            const arr = new Array(Sit.frames);
+            for (let f = 0; f < Sit.frames; f++) {
+                if (f <= first.frame) {
+                    arr[f] = first.value + slopeStart * (f - first.frame);
+                } else if (f >= last.frame) {
+                    arr[f] = last.value + slopeEnd * (f - last.frame);
+                } else {
+                    let lo = 0, hi = n - 1;
+                    while (lo < hi - 1) {
+                        const mid = (lo + hi) >> 1;
+                        if (kfs[mid].frame <= f) lo = mid; else hi = mid;
+                    }
+                    const prev = kfs[lo], next = kfs[hi];
+                    const t = (f - prev.frame) / (next.frame - prev.frame);
+                    arr[f] = prev.value + t * (next.value - prev.value);
+                }
+            }
+            return arr;
+        } else {
+            // Replicate expandStepped logic
+            const arr = new Array(Sit.frames).fill(null);
+            let last = null;
+            for (let f = 0; f < Sit.frames; f++) {
+                if (track.isKeyframe(f)) last = track.frameData[f];
+                arr[f] = last;
+            }
+            if (arr[0] === null) {
+                const first = arr.find(v => v !== null);
+                if (first !== null && first !== undefined) {
+                    for (let f = 0; f < Sit.frames; f++) {
+                        if (arr[f] !== null) break;
+                        arr[f] = first;
+                    }
+                }
+            }
+            return arr;
+        }
+    }
+
+    exportAllData() {
+        if (this.tracks.length === 0) return;
+
+        const zip = new JSZip();
+
+        // A-B range (original frame numbers preserved)
+        const fMin = Sit.aFrame ?? 0;
+        const fMax = Sit.bFrame ?? (Sit.frames - 1);
+
+        // Sim time: nowMS = startMS + frame * 1000 * simSpeed / fps
+        const startMS = new Date(Sit.startTime).getTime();
+        const simSpeed = Sit.simSpeed ?? 1;
+        const frameToEpoch = (f) => Math.round(startMS + f * 1000 * simSpeed / Sit.fps);
+
+        // a) Individual per-series CSVs (keyframes only)
+        for (const track of this.tracks) {
+            let csv = "Frame,Time,Epoch,DateTime," + track.name + "\n";
+            for (let f = fMin; f <= fMax; f++) {
+                if (track.isKeyframe(f)) {
+                    const time = (f / Sit.fps).toFixed(4);
+                    const epoch = frameToEpoch(f);
+                    const datetime = new Date(epoch).toISOString();
+                    csv += f + "," + time + "," + epoch + "," + datetime + "," + track.frameData[f] + "\n";
+                }
+            }
+            zip.file(track.name + ".csv", csv);
+        }
+
+        // Build expanded arrays for all tracks (used by combined CSVs)
+        const expandedArrays = this.tracks.map(track => this._buildExpandedArray(track));
+
+        // Shared header for combined CSVs
+        const combinedHeader = "Frame,Time,Epoch,DateTime," + this.tracks.map(t => t.name).join(",") + "\n";
+
+        // Helper to build a row from expanded arrays at a given frame
+        const buildRow = (f) => {
+            const time = (f / Sit.fps).toFixed(4);
+            const epoch = frameToEpoch(f);
+            const datetime = new Date(epoch).toISOString();
+            const values = expandedArrays.map(arr => {
+                const v = arr[f];
+                return v !== null && v !== undefined ? v : "";
+            });
+            return f + "," + time + "," + epoch + "," + datetime + "," + values.join(",") + "\n";
+        };
+
+        // b) Every Keyframe combined CSV
+        const keyframeFrames = new Set();
+        for (const track of this.tracks) {
+            for (let f = fMin; f <= fMax; f++) {
+                if (track.isKeyframe(f)) keyframeFrames.add(f);
+            }
+        }
+        const sortedKeyframeFrames = [...keyframeFrames].sort((a, b) => a - b);
+
+        {
+            let csv = combinedHeader;
+            for (const f of sortedKeyframeFrames) csv += buildRow(f);
+            zip.file("EveryKeyframe.csv", csv);
+        }
+
+        // c) Every Second CSV
+        {
+            let csv = combinedHeader;
+            // Start from the first whole-second boundary at or after fMin
+            const startSec = Math.ceil(fMin / Sit.fps);
+            for (let sec = startSec; ; sec++) {
+                const f = Math.round(sec * Sit.fps);
+                if (f > fMax) break;
+                csv += buildRow(f);
+            }
+            zip.file("EverySecond.csv", csv);
+        }
+
+        // d) Every Frame CSV
+        {
+            let csv = combinedHeader;
+            for (let f = fMin; f <= fMax; f++) csv += buildRow(f);
+            zip.file("EveryFrame.csv", csv);
+        }
+
+        // d) ZIP and download
+        zip.generateAsync({type: "blob"}).then(blob => {
+            saveAs(blob, "OSDData.zip");
+        });
     }
 
     dispose() {

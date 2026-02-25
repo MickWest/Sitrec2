@@ -4,8 +4,7 @@
 // X axis - To vernal equinox
 // Y Axis - right angles to this, in the equatorial plane
 // Z Axis - Up through the North pole
-// Compared to a EUS coordinate system where the ECEF X axis exit the surface of the earth
-// EUS(X,Y,Z) would be ECEF(Y, Z, X) (not sure if this is useful info).
+// EUS is now identical to ECEF (identity mapping), so celestial and scene coords are the same.
 // See: https://en.wikipedia.org/wiki/Equatorial_coordinate_system#Rectangular_coordinates
 import {V3} from "./threeUtils";
 import {ECEF2EUS, EUSToLLA, wgs84} from "./LLA-ECEF-ENU";
@@ -141,7 +140,9 @@ export function getCelestialDirection(body, date, pos) {
     // if a position is provided, use that to calculate the LLA of the observer
     // realistically this won't make any significant difference for the Sun,
     // the biggest difference will be for the Moon, then nearby planets
-    if (pos !== undefined) {
+    if (pos !== undefined && pos.lengthSq() > 1e12) {
+        // Position must be on or above Earth's surface (radius ~6.4e6 m, so lengthSq ~4e13)
+        // If too close to origin (e.g. camera not yet positioned), fall back to Sit origin.
         LLA = EUSToLLA(pos);
     } else {
         // default to the local origin, should be fine for the sun.
@@ -164,4 +165,27 @@ export function getCelestialDirectionFromRaDec(ra, dec, date) {
     // rotate this into the EUS coordinate system and normalize
     const eusDir = ECEF2EUS(ecef, radians(Sit.lat), radians(Sit.lon), 0, true).normalize();
     return eusDir;
+}
+
+// Geocentric body vector in ECEF/EUS (meters).
+// Uses astronomy-engine's geocentric EQJ vector, rotates to EQD (of-date),
+// then rotates by GAST into Earth-fixed coordinates.
+export function getGeocentricBodyPositionEUS(body, date, aberration = true) {
+    const time = Astronomy.MakeTime(date);
+    const bodyId = typeof body === "string" ? Astronomy.Body[body] : body;
+    const eqj = Astronomy.GeoVector(bodyId, time, aberration); // AU, EQJ
+    const eqd = Astronomy.RotateVector(Astronomy.Rotation_EQJ_EQD(time), eqj); // AU, EQD
+
+    const gastRad = radians(15 * Astronomy.SiderealTime(time));
+    const x = eqd.x * Math.cos(gastRad) + eqd.y * Math.sin(gastRad);
+    const y = -eqd.x * Math.sin(gastRad) + eqd.y * Math.cos(gastRad);
+    const z = eqd.z;
+
+    const scale = Astronomy.KM_PER_AU * 1000; // AU -> meters
+    const ecef = V3(x * scale, y * scale, z * scale);
+    return ECEF2EUS(ecef, radians(Sit.lat), radians(Sit.lon), 0, false);
+}
+
+export function getGeocentricBodyDirectionEUS(body, date, aberration = true) {
+    return getGeocentricBodyPositionEUS(body, date, aberration).normalize();
 }

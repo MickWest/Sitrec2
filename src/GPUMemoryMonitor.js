@@ -28,6 +28,7 @@ class GPUMemoryMonitor {
         
         // GUI reference
         this.guiFolder = null;
+        this.guiDebugMenu = null;
         this.displayControls = {};
         
         // Detect GPU memory extensions (Chrome-specific)
@@ -563,6 +564,7 @@ class GPUMemoryMonitor {
             return;
         }
         
+        this.guiDebugMenu = guiMenus.debug;
         this.guiFolder = guiMenus.debug.addFolder('GPU Memory Monitor');
         
         // Add display object for stats
@@ -592,6 +594,10 @@ class GPUMemoryMonitor {
      */
     updateGUI() {
         if (!this.displayControls.enabled || !this.guiFolder) {
+            return;
+        }
+
+        if ((this.guiDebugMenu && this.guiDebugMenu._closed) || this.guiFolder._closed) {
             return;
         }
         

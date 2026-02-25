@@ -4,7 +4,7 @@ import {CNode} from "./CNode";
 import {GlobalDateTimeNode, Globals, NodeMan} from "../Globals";
 import {getCelestialDirection} from "../CelestialMath";
 import {degrees} from "../utils";
-import {getLocalUpVector, pointAltitude} from "../SphericalMath";
+import {altitudeMSL, getLocalUpVector} from "../SphericalMath";
 import {Color, Vector3} from "three";
 
 // will exist as a singleton node: "theSun"
@@ -111,7 +111,7 @@ export class CNodeSunlight extends CNode {
         // infoDiv.innerHTML+=`<br>Old Sun Brightness: ${oldBrightness.toFixed(2)} (sunIntensity: ${sun.sunIntensity.toFixed(2)})`
 
         // attentuate by the square of the altitiude
-        const alt = pointAltitude(position);
+        const alt = altitudeMSL(position);
         const atten = Math.pow(0.5, alt/100000);
         skyBrightness *= atten;
         // infoDiv.innerHTML+=`<br>Sun Total (attenuated): ${skyBrightness.toFixed(2)} (altitude: ${alt.toFixed(2)}) attenuation: ${atten.toFixed(2)}`

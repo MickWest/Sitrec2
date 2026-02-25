@@ -176,7 +176,7 @@ export function onDocumentDoubleClick(event) {
 
     let done=false;
     ViewMan.iterate((key, view) => {
-        if (!done && view.visible) {
+        if (!done && view._effectivelyVisible) {
             if (mouseInViewOnly(view, mouseX, mouseY)) {
                 //  console.log("Dbl " + key)
                 view.doubleClick();

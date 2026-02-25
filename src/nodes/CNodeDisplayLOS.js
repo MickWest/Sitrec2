@@ -5,6 +5,7 @@ import {DebugSphere, dispose, intersectMSL} from "../threeExt";
 import {par} from "../par";
 import {metersFromMiles} from "../utils";
 import {CNode3DGroup} from "./CNode3DGroup";
+import {getLocalUpVector} from "../SphericalMath";
 
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
 import {Line2} from "three/addons/lines/Line2.js";
@@ -131,7 +132,7 @@ export class CNodeDisplayLOS extends CNode3DGroup {
                 fwd.multiplyScalar(scale)
                 B.add(fwd)
 
-                if (this.clipSeaLevel && fwd.y < 0) {
+                if (this.clipSeaLevel && fwd.dot(getLocalUpVector(A)) < 0) {
                     // intersecting with a plane is no good with larger scales
                     // especially when a sitch is setup with large tiles
                     // as the "level" plane diverges significantly from the globe

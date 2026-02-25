@@ -21,6 +21,7 @@ export function asyncCheckLogin() {
     if (!configParams.rehostRequiresLogin) {
         console.log("Rehost attempt does not require login")
         Globals.userID = 12345678;
+        Globals.userData = { userID: 12345678 };
         return Promise.resolve();
     }
 
@@ -29,15 +30,17 @@ export function asyncCheckLogin() {
     if (isServerless) {
         console.log("Serverless mode: using default user ID")
         Globals.userID = 88888888;
+        Globals.userData = { userID: 88888888 };
         return Promise.resolve();
     }
 
     const url = SITREC_SERVER + "rehost.php?getuser=1"
     console.log("Checking login at " + url)
     return fetch(url, {mode: 'cors'})
-        .then(response => response.text())
+        .then(response => response.json())
         .then(data => {
-            Globals.userID = parseInt(data)
+            Globals.userData = data;
+            Globals.userID = data.userID;
             console.log("User ID is " + Globals.userID)
         });
 }

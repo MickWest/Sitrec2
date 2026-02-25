@@ -48,7 +48,7 @@ if (!$request) {
     exit("No request");
 }
 if (!array_key_exists($request, $request_url_map)) {
-    exit("Invalid request key ".$request);
+    exit("Invalid request key ".htmlspecialchars($request, ENT_QUOTES, 'UTF-8'));
 }
 
 

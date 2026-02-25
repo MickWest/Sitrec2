@@ -2,7 +2,6 @@ import {CNode3DGroup} from "./CNode3DGroup";
 import * as LAYER from "../LayerMasks";
 import {clampAboveGround, dispose, intersectEllipsoid, propagateLayerMaskObject} from "../threeExt";
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
-import {wgs84} from "../LLA-ECEF-ENU";
 import {Line2} from "three/addons/lines/Line2.js";
 import {makeMatLine} from "../MatLines";
 import {perpendicularVector} from "../threeUtils";
@@ -24,7 +23,6 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         
         this.sunRadius = 696000000;
         this.moonRadius = 1737400;
-        this.earthRadius = wgs84.RADIUS;
         this.sunMoonDistance = 149597870700;
         
         this.umbraGeometry = null;
@@ -229,26 +227,33 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         
         const shadowDir = Globals.fromSun.clone().normalize();
         
-        const globeCenter = new Vector3(0, -this.earthRadius, 0);
-        
-        const oc = moonCenter.clone().sub(globeCenter);
-        const b = -oc.dot(shadowDir);
-        const c = oc.dot(oc) - this.earthRadius * this.earthRadius;
-        const discriminant = b * b - c;
-        
         let coneReferenceDistance;
-        if (discriminant >= 0) {
-            coneReferenceDistance = b - Math.sqrt(discriminant);
+        // Ellipsoid-correct intersection for the shadow axis with Earth.
+        const axisHit = intersectEllipsoid(moonCenter, shadowDir);
+        if (axisHit) {
+            coneReferenceDistance = moonCenter.distanceTo(axisHit);
         } else {
-            const t = -oc.dot(shadowDir);
-            coneReferenceDistance = t > 0 ? t : moonCenter.length();
+            // Fallback: spherical approximation using equatorial radius.
+            // This should rarely be needed, but keeps rendering robust.
+            const oc = moonCenter.clone();
+            const b = -oc.dot(shadowDir);
+            const c = oc.dot(oc) - Globals.equatorRadius * Globals.equatorRadius;
+            const discriminant = b * b - c;
+            if (discriminant >= 0) {
+                coneReferenceDistance = b - Math.sqrt(discriminant);
+            } else {
+                const t = -oc.dot(shadowDir);
+                coneReferenceDistance = t > 0 ? t : moonCenter.length();
+            }
         }
         
         const coneEndPoint = moonCenter.clone().add(shadowDir.clone().multiplyScalar(coneReferenceDistance));
         
-        const sunEarthDistance = 149597870700;
-        const sunPos = Globals.toSun.clone().normalize().multiplyScalar(sunEarthDistance);
-        const sunMoonDistance = sunPos.distanceTo(moonCenter);
+        // Use the actual geocentric Sun position at this frame (not fixed 1 AU),
+        // because umbra size is sensitive to the Sun's apparent angular radius.
+        const sunMoonDistance = Globals.sunPos
+            ? Globals.sunPos.distanceTo(moonCenter)
+            : Globals.toSun.clone().normalize().multiplyScalar(this.sunMoonDistance).distanceTo(moonCenter);
         
         const perpendicular = perpendicularVector(shadowDir).normalize();
         const otherPerpendicular = shadowDir.clone().cross(perpendicular);

@@ -9,6 +9,7 @@ import stringify from "json-stringify-pretty-compact";
 import {makePositionLLA} from "./nodes/CNodePositionLLA";
 import {isConsole, setupConfigPaths} from "./configUtils";
 import {updateNewCustomFields} from "./utils";
+import {updateEarthRadii} from "./LLA-ECEF-ENU";
 
 
 // These are some parameters used as defaults for a situation
@@ -99,7 +100,10 @@ const situationDefaults = {
 
     paused: false,
 
-
+    // Earth model: false = sphere (legacy, default), true = WGS84 ellipsoid.
+    // SitCustom (name:"custom") and SitStarlink (name:"nightsky") default to true.
+    // All other legacy sitches default to false for regression stability.
+    useEllipsoid: false,
 
 }
 
@@ -124,6 +128,15 @@ export class CSituation {
 
 //        console.log("Setting units to: ",this.units)
         this.change(props)
+
+        // SitCustom (name:"custom") defaults to ellipsoid unless the sitch data
+        // explicitly sets useEllipsoid:false.
+        if (props.useEllipsoid) {
+            this.useEllipsoid = true;
+        }
+
+        // Sync Globals.equatorRadius / Globals.polarRadius to this sitch's earth model.
+        updateEarthRadii(this.useEllipsoid);
     }
 
     change(props) {

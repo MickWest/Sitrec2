@@ -1,8 +1,8 @@
 // a node that displays a 3D arc with a start point, end point
 
-import {V3} from "../threeUtils";
-import {wgs84} from "../LLA-ECEF-ENU";
-import {Vector3, BufferGeometry, LineBasicMaterial, Line, Quaternion} from "three";
+import {Globals} from "../Globals";
+import {earthCenterEUS} from "../SphericalMath";
+import {BufferGeometry, Line, LineBasicMaterial, Quaternion, Vector3} from "three";
 import {CNode3DGroup} from "./CNode3DGroup";
 
 export class CNode3DLLAArc extends CNode3DGroup {
@@ -18,8 +18,8 @@ export class CNode3DLLAArc extends CNode3DGroup {
         const A = this.in.A.v() + this.in.height.v();
         const B = this.in.B.v() + this.in.height.v();
 
-        const Center = V3(0, -wgs84.RADIUS, 0)
-        const Radius = wgs84.RADIUS + this.in.height.v()
+        const Center = earthCenterEUS()
+        const Radius = Globals.equatorRadius + this.in.height.v()
 
         const segments = 64;
 

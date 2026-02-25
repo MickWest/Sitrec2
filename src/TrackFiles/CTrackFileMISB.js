@@ -9,6 +9,36 @@ export class CTrackFileMISB extends CTrackFile {
             this.isRelativeTime = true;
             this.parsingBaseTime = data.parsingBaseTime;
         }
+        this._uniqueTrackIDs = null; // lazy-initialized cache
+    }
+
+    // Returns array of unique TrackID values found in the data, or null if only one/no TrackID
+    _getUniqueTrackIDs() {
+        if (this._uniqueTrackIDs !== undefined && this._uniqueTrackIDs !== null) {
+            return this._uniqueTrackIDs;
+        }
+        if (!this.data || this.data.length === 0) {
+            this._uniqueTrackIDs = null;
+            return null;
+        }
+        const ids = new Set();
+        for (const row of this.data) {
+            const id = row[MISB.TrackID];
+            if (id !== null && id !== undefined && id !== "") {
+                ids.add(id);
+            }
+        }
+        // Only use multi-track splitting if there are 2+ distinct IDs
+        if (ids.size >= 2) {
+            this._uniqueTrackIDs = Array.from(ids);
+        } else {
+            this._uniqueTrackIDs = null;
+        }
+        return this._uniqueTrackIDs;
+    }
+
+    _isMultiTrack() {
+        return this._getUniqueTrackIDs() !== null;
     }
 
     static canHandle(filename, data) {
@@ -84,6 +114,14 @@ export class CTrackFileMISB extends CTrackFile {
             return false;
         }
 
+        // Multi-track: filter rows by TrackID
+        const uniqueIDs = this._getUniqueTrackIDs();
+        if (uniqueIDs) {
+            const targetID = uniqueIDs[trackIndex];
+            return this.data.filter(row => row[MISB.TrackID] === targetID);
+        }
+
+        // Single-track: original behavior
         if (trackIndex === 0) {
             return this.data;
         }
@@ -117,6 +155,24 @@ export class CTrackFileMISB extends CTrackFile {
     }
 
     getShortName(trackIndex = 0, trackFileName = "") {
+        // Multi-track: use the tail number from the first row of the specific track,
+        // falling back to the TrackID
+        const uniqueIDs = this._getUniqueTrackIDs();
+        if (uniqueIDs) {
+            const targetID = uniqueIDs[trackIndex];
+            // Find the first row for this track and try to get its tail number
+            const firstRow = this.data.find(row => row[MISB.TrackID] === targetID);
+            if (firstRow) {
+                const tailNumber = firstRow[MISB.PlatformTailNumber];
+                if (tailNumber !== null && tailNumber !== undefined && tailNumber !== "") {
+                    return tailNumber;
+                }
+            }
+            // Fall back to the TrackID itself
+            return targetID;
+        }
+
+        // Single-track: original behavior
         let baseName = "";
         if (this.data && this.data.length > 0) {
             const tailNumber = this.data[0][MISB.PlatformTailNumber];
@@ -141,6 +197,10 @@ export class CTrackFileMISB extends CTrackFile {
     }
 
     getTrackCount() {
+        const uniqueIDs = this._getUniqueTrackIDs();
+        if (uniqueIDs) {
+            return uniqueIDs.length;
+        }
         if (this._hasCenter()) {
             return 2;
         }

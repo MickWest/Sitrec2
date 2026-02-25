@@ -26,6 +26,7 @@ import {showError} from "./showError";
 import {processTextureColors} from "./TextureColorProcessor";
 import {createTerrainDayNightMaterial} from "./js/map33/material/TerrainDayNightMaterial";
 import {fileSystemFetch} from "./fileSystemFetch";
+import {geoidCorrectionForTile, interpolateGeoidOffset, meanSeaLevelOffset} from "./EGM96Geoid";
 
 
 // we maintain a set of bad texture URLs to avoid retrying them
@@ -499,8 +500,9 @@ export class QuadTreeTile {
                 elevation *= this.map.elevationMap.options.zScale;
             }
 
-            // Clamp to sea level to avoid z-fighting with ocean tiles
-            if (elevation < 0) elevation = 0;
+            // Clamp to geoid sea level to avoid z-fighting with ocean tiles
+            const seaLevel = meanSeaLevelOffset(lat, lon);
+            if (elevation < seaLevel) elevation = seaLevel;
 
             if (elevation > this.highestAltitude) {
                 this.highestAltitude = elevation;
@@ -877,8 +879,9 @@ export class QuadTreeTile {
             // get the elevation, independent of the display map coordinate system
             let elevation = this.map.getElevationInterpolated(lat, lon, zoomTile);
 
-            // clamp to sea level to avoid z-fighting with ocean tiles
-            if (elevation < 0) elevation = 0;
+            // clamp to geoid sea level to avoid z-fighting with ocean tiles
+            const seaLevel = meanSeaLevelOffset(lat, lon);
+            if (elevation < seaLevel) elevation = seaLevel;
 
             if (elevation > this.highestAltitude) {
                 this.highestAltitude = elevation;
@@ -1065,7 +1068,9 @@ export class QuadTreeTile {
                 elevation *= this.map.elevationMap.options.zScale;
             }
 
-            if (elevation < 0) elevation = 0;
+            // Clamp to geoid sea level to avoid z-fighting with ocean tiles
+            const seaLevel = meanSeaLevelOffset(lat, lon);
+            if (elevation < seaLevel) elevation = seaLevel;
 
             if (elevation > this.highestAltitude) {
                 this.highestAltitude = elevation;
@@ -2066,8 +2071,9 @@ export class QuadTreeTile {
                 // Get elevation using the interpolated method
                 let elevation = this.map.getElevationInterpolated(lat, lon, this.z);
 
-                // Clamp to sea level
-                if (elevation < 0) elevation = 0;
+                // Clamp to geoid sea level
+                const seaLevel = meanSeaLevelOffset(lat, lon);
+                if (elevation < seaLevel) elevation = seaLevel;
 
                 heightmap[index] = elevation;
                 minElevation = Math.min(minElevation, elevation);
@@ -2607,6 +2613,7 @@ export class QuadTreeTile {
                     if (!this.map.scene) {
                         console.warn("QuadTreeTile.applyMaterial: map.scene is not defined, not adding mesh to scene (changed levels?)")
                         this.loaded = true; // Mark as loaded even if scene is not available
+                        this.map.invalidateCoverageCache(this);
                         this.isLoading = false;
                         this.isCancelling = false; // Clear cancelling state
                         this.updateDebugGeometry();
@@ -2622,6 +2629,7 @@ export class QuadTreeTile {
                         });
                     } else {
                         this.loaded = true;
+                        this.map.invalidateCoverageCache(this);
                         this.isLoading = false;
                         this.isCancelling = false;
                         this.updateDebugGeometry();
@@ -2631,6 +2639,7 @@ export class QuadTreeTile {
                 }).catch((error) => {
                     // Even if material loading fails, mark tile as "loaded" to prevent infinite pending state
                     this.loaded = true;
+                    this.map.invalidateCoverageCache(this);
                     this.isLoading = false; // Clear loading state on error
                     this.isCancelling = false; // Clear cancelling state on error
                     this.updateDebugGeometry(); // Update debug geometry to remove loading indicator
@@ -2639,6 +2648,7 @@ export class QuadTreeTile {
             } else {
                 // No texture URL available, but tile is still considered "loaded"
                 this.loaded = true;
+                this.map.invalidateCoverageCache(this);
                 this.isLoading = false;
                 this.isCancelling = false; // Clear cancelling state
                 this.updateDebugGeometry();
@@ -2649,6 +2659,7 @@ export class QuadTreeTile {
 
     addAfterLoaded() {
         this.loaded = true;
+        this.map.invalidateCoverageCache(this);
 
         if (this.tileLayers > 0) {
             this.map.scene.add(this.mesh);
@@ -2793,16 +2804,22 @@ export class QuadTreeTile {
 
     computeElevationFromRGBA(pixels) {
         this.shape = pixels.shape;
-        const elevation = new Float32Array(pixels.shape[0] * pixels.shape[1]);
-        for (let i = 0; i < pixels.shape[0]; i++) {
-            for (let j = 0; j < pixels.shape[1]; j++) {
-                const ij = i + pixels.shape[0] * j;
+        const width = pixels.shape[0];
+        const height = pixels.shape[1];
+        const elevation = new Float32Array(width * height);
+        const geoidCorners = geoidCorrectionForTile(this.map.options.mapProjection, this.z, this.x, this.y);
+        const xScale = width > 1 ? 1 / (width - 1) : 0;
+        const yScale = height > 1 ? 1 / (height - 1) : 0;
+        for (let i = 0; i < width; i++) {
+            for (let j = 0; j < height; j++) {
+                const ij = i + width * j;
                 const rgba = ij * 4;
                 elevation[ij] =
                     pixels.data[rgba] * 256.0 +
                     pixels.data[rgba + 1] +
                     pixels.data[rgba + 2] / 256.0 -
-                    32768.0;
+                    32768.0 +
+                    interpolateGeoidOffset(geoidCorners, i * xScale, j * yScale);
             }
         }
         this.elevation = elevation;
@@ -2811,16 +2828,22 @@ export class QuadTreeTile {
     // Mapbox is height = -10000 + ((R * 256 * 256 + G * 256 + B) * 0.1)
     computeElevationFromRGBA_MB(pixels) {
         this.shape = pixels.shape;
-        const elevation = new Float32Array(pixels.shape[0] * pixels.shape[1]);
-        for (let i = 0; i < pixels.shape[0]; i++) {
-            for (let j = 0; j < pixels.shape[1]; j++) {
-                const ij = i + pixels.shape[0] * j;
+        const width = pixels.shape[0];
+        const height = pixels.shape[1];
+        const elevation = new Float32Array(width * height);
+        const geoidCorners = geoidCorrectionForTile(this.map.options.mapProjection, this.z, this.x, this.y);
+        const xScale = width > 1 ? 1 / (width - 1) : 0;
+        const yScale = height > 1 ? 1 / (height - 1) : 0;
+        for (let i = 0; i < width; i++) {
+            for (let j = 0; j < height; j++) {
+                const ij = i + width * j;
                 const rgba = ij * 4;
                 elevation[ij] =
                     (pixels.data[rgba] * 256.0 * 256.0 +
                         pixels.data[rgba + 1] * 256 +
                         pixels.data[rgba + 2]) * 0.1
-                    - 10000;
+                    - 10000 +
+                    interpolateGeoidOffset(geoidCorners, i * xScale, j * yScale);
             }
         }
         this.elevation = elevation;

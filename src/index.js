@@ -117,6 +117,7 @@ import {undoManager} from "./UndoManager";
 import {arModeManager} from "./ARMode";
 import {TileUsageTracker} from "./TileUsageTracker";
 import {debugLog} from "./DebugLog";
+import {FeatureManager} from "./CFeatureManager";
 
 // Initialize debug log capture BEFORE any console output
 debugLog.init();
@@ -393,23 +394,36 @@ if (customSitch !== null) {
         }
     }
 
-    await fetch(customSitch, {mode: 'cors'}).then(response => response.text()).then(data => {
-        console.log("Custom sitch = " + customSitch)
+    let customSitchLoaded = false;
+    try {
+        const response = await fetch(customSitch, {mode: 'cors'});
+        if (!response.ok) {
+            showError("Failed to load custom sitch: HTTP " + response.status + " " + response.statusText + "\nURL: " + customSitch);
+        } else {
+            const data = await response.text();
+            console.log("Custom sitch = " + customSitch)
 
-        Globals.sitchEstablished = true;
+            Globals.sitchEstablished = true;
 
-        let sitchObject = textSitchToObject(data);
+            let sitchObject = textSitchToObject(data);
 
-        setSit(new CSituation(sitchObject))
+            setSit(new CSituation(sitchObject))
 
-        Sit.initialDropZoneAnimation = false;
-        
-        if (typeof window !== 'undefined') {
-            window.Sit = Sit;
+            Sit.initialDropZoneAnimation = false;
+
+            if (typeof window !== 'undefined') {
+                window.Sit = Sit;
+            }
+
+            customSitchLoaded = true;
         }
+    } catch (e) {
+        showError("Failed to load custom sitch: " + e.message + "\nURL: " + customSitch, e);
+    }
 
-
-    });
+    if (!customSitchLoaded) {
+        selectInitialSitch();
+    }
 // }
 //
 //
@@ -1170,6 +1184,8 @@ async function initializeOnce() {
     // Expose objects to window for testing purposes
     if (typeof window !== 'undefined') {
         window.NodeMan = NodeMan;
+        window.LocalFrame = LocalFrame;
+        window.GlobalScene = GlobalScene;
         window.DragDropHandler = DragDropHandler;
         window.UndoManager = undoManager;
         window.toggleMotionAnalysis = toggleMotionAnalysis;
@@ -1316,6 +1332,12 @@ async function initializeOnce() {
     const _gui = addGUIMenu("main", "Sitrec").tooltip("Selecting legacy sitches and tools\nSome legacy sitches have controls here by default");
     addGUIMenu("file", "File").tooltip("File operations like saving,loading, and exporting");
     addGUIMenu("view", "View").tooltip("Miscellaneous view controls\nLike all menus, this menu can be dragged off the menu bar to make it a floating menu");
+
+
+
+    addGUIMenu("video", "Video").tooltip("Video adjustment, effects, and analysis");
+
+
     addGUIMenu("time", "Time").tooltip("Time and frame controls\nDragging one time slider past the end will affect the above slider\nNote that the time sliders are UTC");
     addGUIMenu("objects", "Objects").tooltip("3D Objects and their properties\nEach folder is one object. The traverseObject is the object that traverses the lines of sight - i.e. the UAP we are interested in");
     
@@ -1344,6 +1366,7 @@ async function initializeOnce() {
             }
         }
     };
+
     
     guiMenus.objects.add(objectMenuActions, 'addObject')
         .name("Add Object")
@@ -1587,6 +1610,8 @@ function initRendering() {
     setupLocalFrame(new Group())
 
     GlobalScene.add(LocalFrame)
+    window.LocalFrame = LocalFrame;
+    window.GlobalScene = GlobalScene;
 
     disableScroll()
     SetupMouseHandler();
@@ -1795,7 +1820,7 @@ async function setupFunctions() {
 
 
     console.log("GlobalDateTimeNode.populateStartTimeFromUTCString(Sit.startTime) " + Sit.startTime)
-    GlobalDateTimeNode.populateStartTimeFromUTCString(Sit.startTime)
+    GlobalDateTimeNode.populateStartTimeFromUTCString(Sit.startTime, true)
 
     if (Sit.jetStuff) {
         // only gimbal
@@ -2331,6 +2356,10 @@ function renderMain(elapsed) {
     // Only render viewports if not in XR mode
     // When in XR mode, the XR animation loop handles rendering
     if (!xrActive) {
+        // Compute effective visibility for all views (handles overlays, relativeTo, fullscreen)
+        ViewMan.computeEffectiveVisibility();
+        ViewMan.updateDOMVisibility();
+
         ViewMan.iterate((key, view) => {
 
             // In video analysis mode, only render the video viewport
@@ -2338,31 +2367,7 @@ function renderMain(elapsed) {
                 return;
             }
 
-            // if this is an overlay view, then inherit the "visible" flag from the parent view (this this view overlays)
-            if (view.overlayView && !view.separateVisibility) {
-                view.setVisible(view.overlayView.visible);
-            }
-
-            if (view.in.relativeTo) {
-                if (!view.in.relativeTo.visible) {
-                    if (!view._hiddenByParent) {
-                        view._preParentHiddenVisible = view.visible;
-                        view._hiddenByParent = true;
-                    }
-                    view.setVisible(false);
-                } else if (view._hiddenByParent) {
-                    view._hiddenByParent = false;
-                    view.setVisible(view._preParentHiddenVisible ?? true);
-                }
-            }
-
-            let visible = view.visible;
-            if (view.overlayView && !view.separateVisibility)
-                visible = view.overlayView.visible;
-            if (view.in.relativeTo)
-                visible = view.in.relativeTo.visible;
-
-            if (visible) {
+            if (view._effectivelyVisible) {
                 if (globalProfiler) globalProfiler.push(getViewProfileColor(key), `${key}`);
 
                 // we set from div, which can be moved or resized by the user, or by screen/window resizing
@@ -2574,6 +2579,9 @@ function disposeEverything() {
     // delete all the nodes (which should remove their GUI elements, but might not have implement that all. CNodeSwitch destroys)
     NodeMan.disposeAll();
 
+    // dispose of any feature manager managed nodes
+    FeatureManager.disposeAll();
+
     // reset motion analysis state (must be after NodeMan.disposeAll since it references the video node)
     resetMotionAnalysis();
     resetObjectTracking();
@@ -2617,6 +2625,9 @@ function disposeEverything() {
 
     // ensure the next sitch has a good default value (false) for Globals.dynamicSubdivision
     Globals.dynamicSubdivision = false;
+
+    // Clear any fullscreen/double-click zoom state so new sitch views are all visible
+    ViewMan.fullscreenView = null;
 
    // ViewMan.disposeAll()
     assert(ViewMan.size() === 0, "ViewMan.size() should be zero, it's " + ViewMan.size());

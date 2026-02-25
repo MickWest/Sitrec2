@@ -25,10 +25,10 @@ import {Globals, NodeMan, setRenderOne, Synth3DManager} from './Globals';
 import {par} from "./par";
 
 
-import {drop3, pointOnSphereBelow} from "./SphericalMath"
+import {altitudeMSL, drop3, earthCenterEUS, pointOnSphereBelow, raisePoint, setAltitudeMSL} from "./SphericalMath"
 import {GlobalScene} from "./LocalFrame";
 import * as LAYER from "./LayerMasks";
-import {ECEFToEUS, EUSToECEF, LLAToEUS, wgs84} from "./LLA-ECEF-ENU";
+import {ECEFToEUS, EUSToECEF, LLAToEUS} from "./LLA-ECEF-ENU";
 import {LineMaterial} from "three/addons/lines/LineMaterial.js";
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
 import {Line2} from "three/addons/lines/Line2.js";
@@ -60,9 +60,9 @@ class GridHelperWorldComplex extends LineSegments {
         let j = 0
         for (let x = xStart; x < xEnd; x+= xStep) {
             for (let y = yStart; y< yEnd; y+= yStep) {
-                const A = drop3(x,y,radius)
-                const B = drop3(x+xStep,y,radius)
-                const C = drop3(x,y+yStep,radius)
+                const A = drop3(x,y)
+                const B = drop3(x+xStep,y)
+                const C = drop3(x,y+yStep)
                 A.z += altitude
                 B.z += altitude
                 C.z += altitude
@@ -616,10 +616,14 @@ export class DEBUGGroup extends Group {
     }
 }
 
-// get intersection of a point/heading ray with the Mean Sea Level
-// i.e. intersection with the WGS84 sphere, intersect the globe at radius wgs84.RADIUS
+// get intersection of a point/heading ray with the Mean Sea Level surface.
+// In ellipsoid mode, delegates to intersectEllipsoid for accuracy.
+// In sphere mode (equatorRadius === polarRadius), uses fast sphere intersection.
 export function intersectMSL(point, headingVector) {
-    const globe = new Sphere(new Vector3(0, -wgs84.RADIUS, 0), wgs84.RADIUS);
+    if (Globals.equatorRadius !== Globals.polarRadius) {
+        return intersectEllipsoid(point, headingVector);
+    }
+    const globe = new Sphere(earthCenterEUS(), Globals.equatorRadius);
     const ray = new Ray(point, headingVector.clone().normalize());
     const sphereCollision = new Vector3();
     if (intersectSphere2(ray, globe, sphereCollision))
@@ -630,8 +634,8 @@ export function intersectMSL(point, headingVector) {
 // get intersection of a point/heading ray with the WGS84 ellipsoid
 // More accurate than intersectMSL for high-latitude locations
 export function intersectEllipsoid(pointEUS, headingVectorEUS) {
-    const a = wgs84.RADIUS;
-    const b = wgs84.POLAR_RADIUS;
+    const a = Globals.equatorRadius;
+    const b = Globals.polarRadius;
     
     const originECEF = EUSToECEF(pointEUS);
     const dirEUS = headingVectorEUS.clone().normalize();
@@ -762,9 +766,7 @@ export function aboveGroundLevelAtLL(lat, lon) {
 
 // given a point in EUS, return a point above (or below) it by a given additional height
 export function pointAbove(point, height) {
-    const center = V3(0,-wgs84.RADIUS,0);
-    const toPoint = point.clone().sub(center).normalize();
-    return point.clone().add(toPoint.multiplyScalar(height));
+    return raisePoint(point, height);
 }
 
 export function adjustHeightAboveGround (point, height, raycast = false) {
@@ -773,14 +775,11 @@ export function adjustHeightAboveGround (point, height, raycast = false) {
 }
 
 export function adjustHeightMSL(point, height) {
-    const center = V3(0, -wgs84.RADIUS, 0);
-    const dir = point.clone().sub(center).normalize();
-    return center.clone().add(dir.multiplyScalar(wgs84.RADIUS + height));
+    return setAltitudeMSL(point, height);
 }
 
 export function calculateAltitude(point) {
-    const center = V3(0,-wgs84.RADIUS,0);
-    return point.clone().sub(center).length() - wgs84.RADIUS;
+    return altitudeMSL(point);
 }
 
 // given a lat/lon, calculate the terrainelevation of the ground above the WGS84 sphere

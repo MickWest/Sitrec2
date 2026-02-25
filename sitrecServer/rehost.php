@@ -34,10 +34,100 @@ function startS3() {
     return $s3;
 }
 
+function getGoogle3DRootDailyLimitForGroups($userGroups) {
+    $dailyLimits = [
+        3 => 1000000, // Admin: effectively unlimited
+        14 => 30,     // Meta Members
+        19 => 30,     // Sitrec Plus
+    ];
 
-// if we were passed the parameter "getuser", then we just return the user_id
+    $limit = 0;
+    foreach ($userGroups as $group) {
+        if (isset($dailyLimits[$group])) {
+            $limit = max($limit, $dailyLimits[$group]);
+        }
+    }
+    return $limit;
+}
+
+function getCesiumOSM3DBytesDailyLimitForGroups($userGroups) {
+    $dailyLimitBytes = intdiv(1024 * 1024 * 1024, 30); // 1 GiB / 30 days per day
+    $dailyLimits = [
+        3 => 1000000000000, // Admin: effectively unlimited
+        14 => $dailyLimitBytes,
+        19 => $dailyLimitBytes,
+    ];
+
+    $limit = 0;
+    foreach ($userGroups as $group) {
+        if (isset($dailyLimits[$group])) {
+            $limit = max($limit, $dailyLimits[$group]);
+        }
+    }
+    return $limit;
+}
+
+function getTileServiceDailyUsage($userId, $service) {
+    $usageDir = sys_get_temp_dir() . '/sitrec_tile_usage/';
+    $file = $usageDir . "user_{$userId}.json";
+    if (!file_exists($file)) {
+        return 0;
+    }
+
+    $data = json_decode(file_get_contents($file), true);
+    if (!$data) {
+        return 0;
+    }
+
+    $now = time();
+    if ($now > ($data['dayReset'] ?? 0)) {
+        return 0;
+    }
+
+    return max(0, intval($data['daily'][$service] ?? 0));
+}
+
+// if we were passed the parameter "getuser", then we return user data as JSON
 if (isset($_GET['getuser'])) {
-    echo $user_id;
+    header('Content-Type: application/json');
+
+    $userInfo = getUserInfo();
+    $userGroups = $userInfo['user_groups'] ?? [];
+    $allowed3DBuildingGroups = [3, 14, 19]; // Admin, Sitrec Members, Sitrec Plus
+    $has3DBuildingGroup = count(array_intersect($userGroups, $allowed3DBuildingGroups)) > 0;
+
+    $response = [
+        'userID' => $user_id,
+        'userGroups' => $userGroups,
+        'canUse3DBuildings' => false,
+    ];
+
+    $googleRootLimit = getGoogle3DRootDailyLimitForGroups($userGroups);
+    $googleRootUsed = getTileServiceDailyUsage($user_id, 'google_3d_root');
+    $googleRootRemaining = max(0, $googleRootLimit - $googleRootUsed);
+    $response['google3DRootDailyLimit'] = $googleRootLimit;
+    $response['google3DRootDailyRemaining'] = $googleRootRemaining;
+
+    $cesiumBytesLimit = getCesiumOSM3DBytesDailyLimitForGroups($userGroups);
+    $cesiumBytesUsed = getTileServiceDailyUsage($user_id, 'cesium_osm_3d_bytes');
+    $cesiumBytesRemaining = max(0, $cesiumBytesLimit - $cesiumBytesUsed);
+    $response['cesium3DBytesDailyLimit'] = $cesiumBytesLimit;
+    $response['cesium3DBytesDailyRemaining'] = $cesiumBytesRemaining;
+
+    // Include 3D buildings API keys only for allowed groups (or localhost).
+    $isLocalhost = ($_SERVER['REMOTE_ADDR'] === '127.0.0.1' ||
+                    $_SERVER['REMOTE_ADDR'] === '::1');
+    if ($has3DBuildingGroup || $isLocalhost) {
+        $googleKey = getenv('GOOGLE_MAPS_API_KEY');
+        $cesiumToken = getenv('CESIUM_ION_TOKEN');
+        $googleAllowedByQuota = $isLocalhost || $googleRootRemaining > 0;
+        $cesiumAllowedByQuota = $isLocalhost || $cesiumBytesRemaining > 0;
+        if ($googleKey && $googleAllowedByQuota) $response['GOOGLE_MAPS_API_KEY'] = $googleKey;
+        if ($cesiumToken && $cesiumAllowedByQuota) $response['CESIUM_ION_TOKEN'] = $cesiumToken;
+        $response['canUse3DBuildings'] = true;
+    }
+
+    echo json_encode($response);
     exit();
 }
 
@@ -67,9 +157,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'getPresignedUrl') {
     
     $fileName = preg_replace('/[^\w\s\.\-\(\)]/', '_', $fileName);
     
-    if (!isSafeName($fileName) || ($version && !isSafeName($version))) {
+    if (!isSafeName($fileName) || !isSafeExtension($fileName) ||
+        ($version && (!isSafeName($version) || !isSafeExtension($version)))) {
         http_response_code(400);
-        echo json_encode(['error' => 'Invalid filename or version']);
+        echo json_encode(['error' => 'Invalid filename, version, or file type']);
         exit();
     }
     
@@ -162,9 +253,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'initiateMultipart') {
     
     $fileName = preg_replace('/[^\w\s\.\-\(\)]/', '_', $fileName);
     
-    if (!isSafeName($fileName) || ($version && !isSafeName($version))) {
+    if (!isSafeName($fileName) || !isSafeExtension($fileName) ||
+        ($version && (!isSafeName($version) || !isSafeExtension($version)))) {
         http_response_code(400);
-        echo json_encode(['error' => 'Invalid filename or version']);
+        echo json_encode(['error' => 'Invalid filename, version, or file type']);
         exit();
     }
     
@@ -269,9 +361,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'completeMultipart') {
     
     $fileName = preg_replace('/[^\w\s\.\-\(\)]/', '_', $fileName);
     
-    if (!isSafeName($fileName) || ($version && !isSafeName($version))) {
+    if (!isSafeName($fileName) || !isSafeExtension($fileName) ||
+        ($version && (!isSafeName($version) || !isSafeExtension($version)))) {
         http_response_code(400);
-        echo json_encode(['error' => 'Invalid filename or version']);
+        echo json_encode(['error' => 'Invalid filename, version, or file type']);
         exit();
     }
     
@@ -358,6 +451,17 @@ function isSafeName($name) {
     return preg_match('/^[A-Za-z0-9 _\\-\\.\\(\\)]+$/', $name);
 }
 
+// Extensions that must never be stored — server-side executables and config overrides
+function isSafeExtension($filename) {
+    static $DANGEROUS_EXTENSIONS = [
+        'php', 'php3', 'php4', 'php5', 'php7', 'phtml', 'phar',
+        'shtml', 'shtm', 'cgi', 'pl', 'py', 'rb', 'sh', 'bash',
+        'asp', 'aspx', 'jsp', 'cfm', 'htaccess', 'htpasswd'
+    ];
+    $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    return !in_array($ext, $DANGEROUS_EXTENSIONS, true);
+}
+
 // check to see if we have delete = true
 if (isset($_POST['delete']) && $_POST['delete'] == 'true') {
     $filename = $_POST['filename'] ?? '';
@@ -423,11 +527,12 @@ $version = isset($_POST['version']) ? basename($_POST['version']) : null;
 $fileName = preg_replace('/[^\w\s\.\-\(\)]/', '_', $fileName);
 
 
-// Validate names
-if (!isSafeName($fileName) || ($version && !isSafeName($version))) {
+// Validate names and extensions
+if (!isSafeName($fileName) || !isSafeExtension($fileName) ||
+    ($version && (!isSafeName($version) || !isSafeExtension($version)))) {
     http_response_code(400);
-    echo("Invalid filename or version provided " . $fileName);
-    exit("Invalid filename or version provided");
+    echo("Invalid filename, version, or file type provided " . $fileName);
+    exit("Invalid filename, version, or file type provided");
 }
 
 writeLog(print_r($_FILES, true));

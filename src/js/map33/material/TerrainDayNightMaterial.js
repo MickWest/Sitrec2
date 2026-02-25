@@ -1,6 +1,5 @@
 import {ShaderMaterial, Vector3} from "three";
 import {sharedUniforms} from "./SharedUniforms";
-import {wgs84} from "../../../LLA-ECEF-ENU";
 import {Globals} from "../../../Globals";
 
 /**
@@ -19,7 +18,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
         uniforms: {
             map: { value: texture },
             sunDirection: { value: Globals.sunLight.position }, // reference, so normalize before use
-            earthCenter: { value: new Vector3(0, -wgs84.RADIUS, 0) },
+            earthCenter: { value: new Vector3(0, 0, 0) },
             terrainShadingStrength: { value: terrainShadingStrength },
             transparency: { value: transparency },
             ...sharedUniforms,

@@ -94,9 +94,30 @@ class Controller {
         this.domElement.appendChild( this.$name );
         this.domElement.appendChild( this.$widget );
 
-        // Don't fire global key events while typing in a controller
-        this.domElement.addEventListener( 'keydown', e => e.stopPropagation() );
-        this.domElement.addEventListener( 'keyup', e => e.stopPropagation() );
+        // Mick: For text inputs, stop propagation so typing works normally.
+        // Mick: For non-text controls (checkboxes, selects), blur and preventDefault
+        // Mick: so the key event propagates to the document-level handler instead.
+        this.domElement.addEventListener( 'keydown', e => {
+            const el = document.activeElement;
+            if (el) {
+                const tag = el.tagName.toLowerCase();
+                const type = (el.type || '').toLowerCase();
+                if (tag === 'textarea' || (tag === 'input' && (type === 'text' || type === 'number'))) {
+                    e.stopPropagation();
+                    return;
+                }
+            }
+            el?.blur();
+            e.preventDefault();
+        } );
+        this.domElement.addEventListener( 'keyup', e => {
+            const el = e.target;
+            const tag = el.tagName.toLowerCase();
+            const type = (el.type || '').toLowerCase();
+            if (tag === 'textarea' || (tag === 'input' && (type === 'text' || type === 'number'))) {
+                e.stopPropagation();
+            }
+        } );
 
         this.parent.children.push( this );
         this.parent.controllers.push( this );
@@ -2208,9 +2229,29 @@ class GUI {
             this.domElement.style.setProperty( '--width', width + 'px' );
         }
 
-        // Mick: Don't fire global key events while typing in the GUI:
-        this.domElement.addEventListener( 'keydown', e => e.stopPropagation() );
-        this.domElement.addEventListener( 'keyup', e => e.stopPropagation() );
+        // Mick: Only stop key event propagation for text inputs in the GUI.
+        // Mick: Non-text controls let events through to the document-level handler.
+        this.domElement.addEventListener( 'keydown', e => {
+            const el = document.activeElement;
+            if (el) {
+                const tag = el.tagName.toLowerCase();
+                const type = (el.type || '').toLowerCase();
+                if (tag === 'textarea' || (tag === 'input' && (type === 'text' || type === 'number'))) {
+                    e.stopPropagation();
+                    return;
+                }
+            }
+        } );
+        this.domElement.addEventListener( 'keyup', e => {
+            const el = document.activeElement;
+            if (el) {
+                const tag = el.tagName.toLowerCase();
+                const type = (el.type || '').toLowerCase();
+                if (tag === 'textarea' || (tag === 'input' && (type === 'text' || type === 'number'))) {
+                    e.stopPropagation();
+                }
+            }
+        } );
 
         this._closeFolders = closeFolders;
 

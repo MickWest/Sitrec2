@@ -80,8 +80,8 @@ export const SitGoFast = {
 
     lookCamera: { fov: 0.7,},
     mainCamera: {
-        startCameraPosition: [25034.03, 13882.82, 10206.08],
-        startCameraTarget: [24090.07, 13646.05, 9976.13],
+        startCameraPositionLLA:[28.408129,-79.239481,13906.420293],
+        startCameraTargetLLA:[28.410205,-79.249087,13665.661683],
     },
 
     mainView: {left: 0, top: 0, width: 1, height: 1,background:[0.05,0.05,0.05]},
@@ -314,7 +314,6 @@ export const SitGoFast = {
                 speed: "jetTAS",         // new CNodeWatch({ob:par,watchID:"TAS"}),
                 altitude: "jetAltitude",
                 turnRate: "turnRate",
-                radius: "radiusMiles",
                 wind: "localWind",
                 heading: "initialHeading",
                 origin: "jetOrigin",
@@ -451,8 +450,6 @@ export const SitGoFast = {
         new CNodeDisplayOcean({
             id: "oceanDisplay",
             inputs: {
-                //     OceanData: OceanDataNode,
-                radius: "radiusMiles",
                 material: new CNodeConstant({id: "oceanMaterial", value: waterMaterial})
             },
         })

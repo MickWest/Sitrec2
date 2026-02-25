@@ -11,6 +11,7 @@ import {EUSToLLA, haversineDistanceKM} from "../LLA-ECEF-ENU";
 import {forward as mgrsForward} from "mgrs";
 import {degrees} from "../utils";
 import {NodeMan} from "../Globals";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 
 export class   CNodeMQ9UI extends CNodeViewUI {
 
@@ -267,11 +268,12 @@ export class   CNodeMQ9UI extends CNodeViewUI {
             const map = terrainNode.maps[terrainNode.UI.mapType]?.map;
             if (map) {
                 let elevation = map.getElevationInterpolated(lla.x, lla.y);
-                if (elevation < 0) elevation = 0;
+                const seaLevel = meanSeaLevelOffset(lla.x, lla.y);
+                if (elevation < seaLevel) elevation = seaLevel;
                 return elevation;
             }
         }
-        return 0;
+        return meanSeaLevelOffset(lla.x, lla.y);
     }
 
 

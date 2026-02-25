@@ -3,7 +3,7 @@ import {LineGeometry} from "three/addons/lines/LineGeometry.js";
 import {Line2} from "three/addons/lines/Line2.js";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {DebugArrow, dispose, removeDebugArrow} from "../threeExt";
-import {guiMenus, guiShowHide, NodeMan, setRenderOne, Units} from "../Globals";
+import {Globals, guiMenus, guiShowHide, NodeMan, setRenderOne, Units} from "../Globals";
 import {disposeMatLine, makeMatLine} from "../MatLines";
 import {LineSegmentsGeometry} from "three/addons/lines/LineSegmentsGeometry.js";
 import {
@@ -17,8 +17,8 @@ import {
     Sphere,
     Vector3
 } from "three";
-import {getLocalUpVector} from "../SphericalMath";
-import {EUSToLLA, wgs84} from "../LLA-ECEF-ENU";
+import {earthCenterEUS, getLocalUpVector} from "../SphericalMath";
+import {EUSToLLA} from "../LLA-ECEF-ENU";
 import {CNodeGroundOverlay} from "./CNodeGroundOverlay";
 import * as LAYER from "../LayerMasks";
 import {assert} from "../assert.js";
@@ -437,9 +437,9 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
             // if all corners are nell then radius of the globle is wgs84.radius
             // otherwise it's the average.
             // note the results are in world space
-            const sphereCenter = new Vector3(0, -wgs84.RADIUS, 0);
+            const sphereCenter = earthCenterEUS();
             // first calculate the radius of the sphere
-            let sphereRadius = wgs84.RADIUS;
+            let sphereRadius = Globals.equatorRadius;
             // let n = 0;
             // let rSum = 0;
             // for (let i = 0; i < 4; i++) {
@@ -595,7 +595,7 @@ export class CNodeDisplayGroundMovement extends CNode3DGroup {
         }
         if (center === null) {
             // if we don't have a terrain model, then we can use the globe
-            center = sphereCollideCameraRelative(new Sphere(new Vector3(0, -wgs84.RADIUS, 0), wgs84.RADIUS), this.camera, new Vector3(0, 0, -1000));
+            center = sphereCollideCameraRelative(new Sphere(earthCenterEUS(), Globals.equatorRadius), this.camera, new Vector3(0, 0, -1000));
         }
         if (center === null) {
 //            console.warn("CNodeDisplayGroundMovement: No ground found for camera at "+this.camera.position);

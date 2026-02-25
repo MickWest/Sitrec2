@@ -284,6 +284,11 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
             }
 
+            // Hook up g-force filter GUI if the data track supports it
+            if (track !== undefined) {
+                track.setupFilterGUI?.(this.guiFolder);
+            }
+
             this.guiFolder.add(this, "gotoTrack").name("Go to track");
 
         }

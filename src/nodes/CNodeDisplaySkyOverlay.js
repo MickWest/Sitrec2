@@ -68,7 +68,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         this.ctx.strokeStyle = '#ffffff';
         this.ctx.textAlign = 'left';
 
-        const earthSphere = new Sphere(V3(0, -wgs84.RADIUS, 0), wgs84.RADIUS)
+        const earthSphere = new Sphere(V3(0, 0, 0), wgs84.POLAR_RADIUS)
         const actualCameraPosition = this.camera.position
         const date = this.in.startTime.dateNow
 

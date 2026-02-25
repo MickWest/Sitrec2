@@ -1,6 +1,6 @@
 import {atan, degrees, radians, tan} from "../utils";
 import {par} from "../par";
-import {ECEFToLLAVD_Sphere, EUSToECEF, LLAToEUS, wgs84} from "../LLA-ECEF-ENU";
+import {EUSToLLA, LLAToEUS} from "../LLA-ECEF-ENU";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {GlobalDateTimeNode, gui, guiMenus, guiPhysics, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
 import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
@@ -221,8 +221,7 @@ export class CNodeControllerManualPosition extends CNodeController {
                     this.undoCameraLon = NodeMan.get("cameraLon").value;
                 }
                 this.applying = true;
-                const ecef = EUSToECEF(cursorPos)
-                const LLA = ECEFToLLAVD_Sphere(ecef)
+                const LLA = EUSToLLA(cursorPos);
 
                 NodeMan.get("cameraLat").value = LLA.x
                 NodeMan.get("cameraLon").value = LLA.y
@@ -340,13 +339,10 @@ export class CNodeControllerLookAtLLA extends CNodeController {
 
     apply(f, objectNode) {
         const camera = objectNode.camera
-        var radius = wgs84.RADIUS
-
         var to = LLAToEUS(
             this.in.lat.v(f),
             this.in.lon.v(f),
             this.in.alt.v(f),
-            radius
         )
         camera.lookAt(to)
 
@@ -726,7 +722,7 @@ export class CNodeControllerCelestial extends CNodeController {
             return;
         }
         const target = camera.position.clone().add(dir);
-        camera.up = getLocalUpVector(camera.position, wgs84.RADIUS);
+        camera.up = getLocalUpVector(camera.position);
         camera.lookAt(target);
         objectNode.syncUIPosition();
     }

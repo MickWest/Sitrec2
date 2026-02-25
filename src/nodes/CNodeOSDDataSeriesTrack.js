@@ -6,6 +6,7 @@ import {parseSingleCoordinate} from "../CoordinateParser";
 import {EventManager} from "../CEventManager";
 import {f2m} from "../utils";
 import {adjustHeightAboveGround, adjustHeightMSL} from "../threeExt";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 
 export class CNodeOSDDataSeriesTrack extends CNodeTrack {
     constructor(v) {
@@ -15,6 +16,8 @@ export class CNodeOSDDataSeriesTrack extends CNodeTrack {
         this.frames = Sit.frames;
         this.useSitFrames = true;
         this.isGroundRelative = false;
+        // OSD altitudes are typically MSL (barometric); convert to HAE for LLAToEUS
+        this.altitudeReference = v.altitudeReference ?? "MSL";
         EventManager.addEventListener("elevationChanged", () => this.onElevationChanged());
         this.recalculate();
     }
@@ -166,6 +169,10 @@ export class CNodeOSDDataSeriesTrack extends CNodeTrack {
             let alt = 0;
             if (altArr && altArr[f] !== null) {
                 alt = altTrackFt ? f2m(altArr[f]) : altArr[f];
+            }
+            // Convert MSL to HAE if needed (h = H + N)
+            if (this.altitudeReference === "MSL" && alt !== 0) {
+                alt += meanSeaLevelOffset(latArr[f], lonArr[f]);
             }
             this.array[f] = {position: LLAToEUS(latArr[f], lonArr[f], alt)};
         }

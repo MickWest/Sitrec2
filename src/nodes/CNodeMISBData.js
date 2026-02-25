@@ -10,6 +10,7 @@ import {assert} from "../assert";
 import {EventManager} from "../CEventManager";
 import {elevationAtLL} from "../threeExt";
 import {parsePartialDateTime} from "../ParseUtils";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 
 //export const MISBFields = Object.keys(MISB).length;
 
@@ -40,6 +41,13 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             this.parsingBaseTime = v.trackFile.parsingBaseTime;
         }
         this.trackStartTime = "";       // user-entered ISO datetime string
+
+        // G-force filter for removing spurious data points
+        this.filterEnabled = false;
+        this.filterMaxG = 3.0;  // 3g is a lot higher than you'd get in reality, but with sparse curved tracks the effective g can be quite high. Most spurious data will result in much higher values (like >100g)
+        this.tryAltitudeFirst = true; // try replacing just altitude before removing the point
+        this.filteredSlots = new Set();
+        this.altitudeFixedSlots = new Map(); // slot -> corrected altitude
 
         this.selectSourceColumns(v.columns || ["SensorLatitude", "SensorLongitude", "SensorTrueAltitude", "AltitudeAGL"]);
 
@@ -76,6 +84,207 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             .tooltip("Override start time (e.g., '10:30', 'Jan 15', '2024-01-15T10:30:00Z'). Leave blank for global start time.");
 
         this.addSimpleSerial("trackStartTime");
+    }
+
+    // Add GUI controls for the g-force filter
+    setupFilterGUI(guiFolder) {
+        const folder = guiFolder.addFolder("Filter Bad Data").close();
+        folder.add(this, "filterEnabled").name("Enable Filter").listen().onChange(() => {
+            this.runGForceFilter();
+            this.recalculateCascade();
+        });
+        folder.add(this, "tryAltitudeFirst").name("Try Altitude First").listen().onChange(() => {
+            this.runGForceFilter();
+            this.recalculateCascade();
+        });
+        folder.add(this, "filterMaxG", 0.1, 10, 0.1).name("Max G").listen().onChange(() => {
+            this.runGForceFilter();
+            this.recalculateCascade();
+        });
+
+        this.addSimpleSerial("filterEnabled");
+        this.addSimpleSerial("tryAltitudeFirst");
+        this.addSimpleSerial("filterMaxG");
+    }
+
+    // Compute acceleration at slot b given neighbors a and c.
+    // Returns acceleration in m/s², or -1 if it can't be computed.
+    _computeAccelAtSlot(a, b, c) {
+        const posA = this.getPosition(a);
+        const posB = this.getPosition(b);
+        const posC = this.getPosition(c);
+
+        const timeA = this.getTime(a);
+        const timeBMs = this.getTime(b);
+        const timeC = this.getTime(c);
+
+        const dtAB = (timeBMs - timeA) / 1000;
+        const dtBC = (timeC - timeBMs) / 1000;
+        if (dtAB <= 0 || dtBC <= 0) return -1;
+
+        const velAB = posB.clone().sub(posA).divideScalar(dtAB);
+        const velBC = posC.clone().sub(posB).divideScalar(dtBC);
+
+        const dtAC = (timeC - timeA) / 2000;
+        return velBC.clone().sub(velAB).length() / dtAC;
+    }
+
+    // Multi-pass g-force filter: marks slots where acceleration exceeds filterMaxG * 9.81 m/s²
+    // Uses wide-baseline velocity estimates (minDt = 0.5s) to avoid false positives from
+    // timestamp quantization noise in high-frame-rate data.
+    // When tryAltitudeFirst is enabled, bad points first get their altitude replaced with
+    // an interpolated value from neighbors. Only if that doesn't fix it is the point removed.
+    runGForceFilter() {
+        this.filteredSlots.clear();
+        this.altitudeFixedSlots.clear();
+        if (!this.filterEnabled) return;
+
+        const maxAccel = this.filterMaxG * 9.81;
+        const minDt = 0.5; // minimum time span for velocity estimates (seconds)
+        let changed = true;
+
+        while (changed) {
+            changed = false;
+
+            const validSlots = [];
+            for (let i = 0; i < this.misb.length; i++) {
+                if (!this.filteredSlots.has(i) && this._isValidBasic(i)) {
+                    validSlots.push(i);
+                }
+            }
+
+            for (let idx = 1; idx < validSlots.length - 1; idx++) {
+                const b = validSlots[idx];
+
+                // Find wide-baseline neighbors before and after B
+                let aBefore = idx - 1;
+                const timeBMs = this.getTime(b);
+                while (aBefore >= 0 && (timeBMs - this.getTime(validSlots[aBefore])) / 1000 < minDt) aBefore--;
+                if (aBefore < 0) aBefore = 0;
+
+                let cAfter = idx + 1;
+                while (cAfter < validSlots.length && (this.getTime(validSlots[cAfter]) - timeBMs) / 1000 < minDt) cAfter++;
+                if (cAfter >= validSlots.length) cAfter = validSlots.length - 1;
+
+                const a = validSlots[aBefore];
+                const c = validSlots[cAfter];
+                if (a === b || c === b) continue;
+
+                const accel = this._computeAccelAtSlot(a, b, c);
+                if (accel < 0) continue;
+
+                if (accel > maxAccel) {
+                    // Try altitude fix first if enabled
+                    if (this.tryAltitudeFirst && !this.altitudeFixedSlots.has(b)) {
+                        const timeA = this.getTime(a);
+                        const timeC = this.getTime(c);
+                        const t = (timeBMs - timeA) / (timeC - timeA);
+                        const altA = this.getAltMSL(a);
+                        const altC = this.getAltMSL(c);
+                        const interpolatedAlt = altA + (altC - altA) * t;
+
+                        // Temporarily apply the fix and recheck
+                        this.altitudeFixedSlots.set(b, interpolatedAlt);
+                        const newAccel = this._computeAccelAtSlot(a, b, c);
+
+                        if (newAccel >= 0 && newAccel <= maxAccel) {
+                            // Altitude fix worked — keep the point with corrected altitude
+                            changed = true;
+                            continue;
+                        }
+                        // Altitude fix didn't help — remove the fix and filter the point
+                        this.altitudeFixedSlots.delete(b);
+                    }
+
+                    this.filteredSlots.add(b);
+                    changed = true;
+                }
+            }
+        }
+
+        if (this.altitudeFixedSlots.size > 0) {
+            console.log(`Altitude-fixed ${this.altitudeFixedSlots.size} points in track ${this.id}`);
+        }
+        if (this.filteredSlots.size > 0) {
+            console.log(`Filtered ${this.filteredSlots.size} points from track ${this.id} (max ${this.filterMaxG}g)`);
+        }
+    }
+
+    // Scan the track and return the peak g-force value (without modifying filteredSlots)
+    // Uses the same wide-baseline approach as runGForceFilter.
+    getMaxGForce() {
+        const validSlots = [];
+        for (let i = 0; i < this.misb.length; i++) {
+            if (this._isValidBasic(i)) {
+                validSlots.push(i);
+            }
+        }
+
+        const minDt = 0.5;
+        let maxG = 0;
+        for (let idx = 1; idx < validSlots.length - 1; idx++) {
+            const b = validSlots[idx];
+            const timeBMs = this.getTime(b);
+
+            let aBefore = idx - 1;
+            while (aBefore >= 0 && (timeBMs - this.getTime(validSlots[aBefore])) / 1000 < minDt) aBefore--;
+            if (aBefore < 0) aBefore = 0;
+
+            let cAfter = idx + 1;
+            while (cAfter < validSlots.length && (this.getTime(validSlots[cAfter]) - timeBMs) / 1000 < minDt) cAfter++;
+            if (cAfter >= validSlots.length) cAfter = validSlots.length - 1;
+
+            const a = validSlots[aBefore];
+            const c = validSlots[cAfter];
+            if (a === b || c === b) continue;
+
+            const posA = this.getPosition(a);
+            const posB = this.getPosition(b);
+            const posC = this.getPosition(c);
+
+            const timeA = this.getTime(a);
+            const timeC = this.getTime(c);
+
+            const dtAB = (timeBMs - timeA) / 1000;
+            const dtBC = (timeC - timeBMs) / 1000;
+            if (dtAB <= 0 || dtBC <= 0) continue;
+
+            const velAB = posB.clone().sub(posA).divideScalar(dtAB);
+            const velBC = posC.clone().sub(posB).divideScalar(dtBC);
+            const dtAC = (timeC - timeA) / 2000;
+            const accel = velBC.clone().sub(velAB).length() / dtAC;
+            const g = accel / 9.81;
+            if (g > maxG) maxG = g;
+        }
+        return maxG;
+    }
+
+    // Basic validity check without the g-force filter (used by runGForceFilter to avoid circular dependency)
+    _isValidBasic(slotNumber) {
+        let lat = this.getLat(slotNumber)
+        let lon = this.getLon(slotNumber)
+        let alt = this.getAltMSL(slotNumber)
+        let time = this.getTime(slotNumber)
+
+        if (isNaN(time) || time < 0 || time > 4102444800000) return false
+        if (isNaN(lat) || isNaN(lon) || isNaN(alt)) return false
+        if (lat < -90 || lat > 90) return false
+        if (lon < -360 || lon > 360) return false
+        if (alt < -1000) return false
+        if (alt > 36000000) return false
+
+        if (lat === 0) {
+            if (this.lastValidSlot === undefined || Math.abs(this.getLat(this.lastValidSlot)) > 1.0) {
+                return false;
+            }
+        }
+        if (lon === 0) {
+            if (this.lastValidSlot === undefined || Math.abs(this.getLon(this.lastValidSlot)) > 1.0) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     // Parse trackStartTime using chrono-node with parsingBaseTime as reference.
@@ -182,7 +391,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
 
             const lat = this.getLat(f);
             const lon = this.getLon(f);
-            const alt = this.getAlt(f);
+            const alt = this.getAltMSL(f);
             coordLines.push(`<gx:coord>${lon} ${lat} ${alt}</gx:coord>`);
         }
 
@@ -231,11 +440,14 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         for (var f = 0; f < points; f++) {
             // we only handle rows that have valid data
             if (this.isValid(f)) {
-                var pos = LLAToEUS(this.getLat(f), this.getLon(f), this.getAlt(f));
+                var pos = LLAToEUS(this.getLat(f), this.getLon(f), this.getAltHAE(f));
                 this.array.push({position: pos})
+            } else if (this.filteredSlots.has(f)) {
+                // Filtered out by g-force filter — skip silently
+                this.array.push({})
             } else {
                 // otherwise, just give it an empty structure
-                console.warn("CNodeMISBDataTrack: invalid data at frame " + f + " in track " + this.id + " lat=" + this.getLat(f) + " lon=" + this.getLon(f) + " alt=" + this.getAlt(f));
+                console.warn("CNodeMISBDataTrack: invalid data at frame " + f + " in track " + this.id + " lat=" + this.getLat(f) + " lon=" + this.getLon(f) + " alt=" + this.getAltMSL(f));
                 console.warn("Returning empty object {}")
                 assert(0, "CNodeMISBDataTrack: invalid data at frame " + f + " in track " + this.id);
                 this.array.push({})
@@ -290,9 +502,21 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
     }
 
 
-    getAlt(i) {
+    // Returns MSL altitude (orthometric). Use for exports (KML, CSV, GeoJSON).
+    getAltMSL(i) {
+        // If this slot had its altitude corrected by the filter, use that
+        if (this.altitudeFixedSlots && this.altitudeFixedSlots.has(i)) {
+            return this.altitudeFixedSlots.get(i);
+        }
         let a = this.getRawAlt(i);
         return this.adjustAlt(a, this.getLat(i), this.getLon(i));
+    }
+
+    // Returns HAE altitude (h = H + N). Use for EUS/ECEF conversions.
+    getAltHAE(i) {
+        const lat = this.getLat(i);
+        const lon = this.getLon(i);
+        return this.getAltMSL(i) + meanSeaLevelOffset(lat, lon);
     }
 
     // get time at frame i in milliseconds since epoch
@@ -322,7 +546,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
 
     // get EUS position at frame i
     getPosition(i) {
-        return LLAToEUS(this.getLat(i), this.getLon(i), this.getAlt(i));
+        return LLAToEUS(this.getLat(i), this.getLon(i), this.getAltHAE(i));
     }
 
     // given a time in ms (UNIX time), return the position at that time
@@ -334,9 +558,10 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
     // a slot is valid if it has a valid timestamp
     // and the lat/lon/alt are not NaN
     isValid(slotNumber) {
+        if (this.filteredSlots && this.filteredSlots.has(slotNumber)) return false;
         let lat = this.getLat(slotNumber)
         let lon = this.getLon(slotNumber)
-        let alt = this.getAlt(slotNumber)
+        let alt = this.getAltMSL(slotNumber)
         let time = this.getTime(slotNumber)
 
         // time is in unix time, check its a number and from 1970 to 2100
@@ -374,7 +599,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             // always allow alt === 0, as it's common for grounded planes (ADS-B)
             // maybe we might want to check if it is on the ground and use terrain elevation?
             // // check if the last valid slot's alt was near zero, if so we allow this
-            // if (this.lastValidSlot === undefined || Math.abs(this.getAlt(this.lastValidSlot)) > 1000) {
+            // if (this.lastValidSlot === undefined || Math.abs(this.getAltMSL(this.lastValidSlot)) > 1000) {
             //     return false;
             // }
             if (!this.warnedAboutZeroAltitude)
@@ -393,6 +618,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
 
 
     recalculate() {
+        this.runGForceFilter();
         this.makeArrayForTrackDisplay()
     }
 }

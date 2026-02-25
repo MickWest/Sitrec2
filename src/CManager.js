@@ -76,7 +76,7 @@ class CManager {
                     if (node.outputs.length === 0) {
                         // remove it
 //                        console.log("Removing unused constant " + key);
-                        this.disposeRemove(key)
+                        this.unlinkDisposeRemove(key)
                     }
 
                 }
@@ -88,18 +88,22 @@ class CManager {
         for (let key in this.list) {
             if (this.list.hasOwnProperty(key)) {
                 const node = this.list[key].data;
-                // is it CNodeConstant class object?
                 if (node instanceof CNodeController) {
                     // is it not connected to anything?
                     if (node.outputs.length === 0) {
                         // remove it
                         console.log("Removing unused controller " + key);
-                        this.disposeRemove(key)
+                        this.unlinkDisposeRemove(key)
                     }
 
                 }
             }
         }
+    }
+
+    // override in subclass (CNodeManager) to properly unlink inputs/outputs
+    unlinkDisposeRemove(id) {
+        this.disposeRemove(id);
     }
 
 
@@ -150,7 +154,7 @@ class CManager {
     iterateVisible (callback) {
         Object.keys(this.list).forEach(key => {
             const view = this.list[key].data
-            if (view.visible && !view.overlayView)
+            if (view._effectivelyVisible && !view.overlayView)
                 callback(key, view);
         })
     }
@@ -158,7 +162,7 @@ class CManager {
     iterateVisibleIncludingOverlays (callback) {
         Object.keys(this.list).forEach(key => {
             const view = this.list[key].data
-            if (view.visible)
+            if (view._effectivelyVisible)
                 callback(key, view);
         })
     }

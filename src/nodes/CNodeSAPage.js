@@ -1,8 +1,9 @@
 import {cos, metersFromNM, radians, sin} from "../utils";
 import {CNodeDDI} from "./CNodeDDI";
-import {Sit} from "../Globals";
+import {Globals, Sit} from "../Globals";
 import {par} from "../par";
 import {trackVelocity} from "../trackUtils";
+import {getLocalEastVector, getLocalNorthVector} from "../SphericalMath";
 
 const pipText = ['N', '⦁', '⦁', '3', '⦁', '⦁', '6', '⦁', '⦁',
     'E', '⦁', '⦁','12', '⦁', '⦁','15', '⦁', '⦁',
@@ -154,10 +155,14 @@ export class CNodeSAPage extends CNodeDDI {
 
     worldToSA(pos, clamp=false) {
 
+        // Project ECEF offset into local tangent plane (east/south)
+        const offset = pos.clone().sub(this.camPos);
+        const eastDist = offset.dot(this.localEast);
+        const southDist = -offset.dot(this.localNorth); // south = -north
+
         // convert to xp,yp percentages
-        let xp = 100*(pos.x-this.camX)/this.scaleM
-        let yp = 100*(pos.z-this.camZ)/this.scaleM
-        // rotate?
+        let xp = 100 * eastDist / this.scaleM
+        let yp = 100 * southDist / this.scaleM
 
         let xr = xp*cos(this.angleSA) + yp*sin(this.angleSA)
         let yr = -xp*sin(this.angleSA) + yp*cos(this.angleSA)
@@ -231,8 +236,11 @@ export class CNodeSAPage extends CNodeDDI {
         this.angleSA = radians(heading)
         if (this.northUp)
             this.angleSA = 0
-        this.camX = camPos.x
-        this.camZ = camPos.z  // z as overhead is the xz plane
+        // Store local tangent frame at the jet for projecting ECEF positions
+        // into local east/south offsets used by worldToSA
+        this.camPos = camPos;
+        this.localEast = getLocalEastVector(camPos);
+        this.localNorth = getLocalNorthVector(camPos);
 
         const c = this.ctx
 
@@ -304,8 +312,9 @@ export class CNodeSAPage extends CNodeDDI {
             if (h.erraticAspect !== 0 && !par.paused && !Globals.regression) {
                 aspectAngle += radians((Math.random() - 0.5) * h.erraticAspect)
             }
-            var ax = aspectVector.x
-            var ay = aspectVector.z // z as in xz plane
+            // Project aspect vector into local tangent plane (east/south)
+            var ax = aspectVector.dot(this.localEast)
+            var ay = -aspectVector.dot(this.localNorth) // south = -north
             var aLen = Math.sqrt(ax * ax + ay * ay)
             let axr = (ax * cos(aspectAngle) + ay * sin(aspectAngle)) / aLen
             let ayr = (-ax * sin(aspectAngle) + ay * cos(aspectAngle)) / aLen

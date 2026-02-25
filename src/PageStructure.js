@@ -83,7 +83,7 @@ export function setupPageStructure() {
     bannerTop.style.fontSize = process.env.BANNER_TEXT_HEIGHT + 'px';
     bannerTop.style.lineHeight = process.env.BANNER_HEIGHT + 'px';
   //  bannerTop.style.borderBottom = '1px solid ' + process.env.BANNER_BORDER_COLOR;
-    bannerTop.innerHTML = process.env.BANNER_TOP_TEXT;
+    bannerTop.textContent = process.env.BANNER_TOP_TEXT;
     document.body.append(bannerTop);
 
     // create the content div, accounting for top banner, controls, and bottom banner (+ 10px offset + 4px padding)
@@ -127,7 +127,7 @@ export function setupPageStructure() {
     bannerBottom.style.fontFamily = process.env.BANNER_FONT;
     bannerBottom.style.lineHeight = process.env.BANNER_HEIGHT + 'px';
   //  bannerBottom.style.borderTop = '1px solid ' + process.env.BANNER_BORDER_COLOR;
-    bannerBottom.innerHTML = process.env.BANNER_BOTTOM_TEXT;
+    bannerBottom.textContent = process.env.BANNER_BOTTOM_TEXT;
     document.body.append(bannerBottom);
 
 

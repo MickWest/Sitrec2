@@ -1,5 +1,5 @@
 import {FileManager, GlobalDateTimeNode, NodeMan, setRenderOne} from "../Globals";
-import {ECEFToLLAVD_Sphere, EUSToECEF, LLAToEUS} from "../LLA-ECEF-ENU";
+import {EUSToLLA, LLAToEUS} from "../LLA-ECEF-ENU";
 import {DebugSphere, removeDebugSphere} from "../threeExt";
 import {Group, Raycaster} from "three";
 import {GlobalScene} from "../LocalFrame";
@@ -186,8 +186,7 @@ export const SitFAA2023 = {
             this.markerIndex = index;
             GlobalDateTimeNode.setStartDateTime(this.markerGroup.children[this.markerIndex].userData.time)
 
-            const ecef = EUSToECEF(this.markerGroup.children[this.markerIndex].position);
-            const LLA = ECEFToLLAVD_Sphere(ecef)
+            const LLA = EUSToLLA(this.markerGroup.children[this.markerIndex].position);
 
             // we set the values in the UI nodes, which creates an
             // automatic cascade recalculation for anything that uses them.

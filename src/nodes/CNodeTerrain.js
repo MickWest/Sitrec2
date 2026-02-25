@@ -2,15 +2,16 @@ import {CNode} from "./CNode";
 import {pointAbove} from "../threeExt";
 import {cos, radians} from "../utils";
 import {Globals, NodeMan, Sit} from "../Globals";
-import {EUSToLLA, RLLAToECEFV_Sphere, wgs84} from "../LLA-ECEF-ENU";
+import {EUSToLLA, RLLAToECEF_radii, RLLAToECEFV_Sphere} from "../LLA-ECEF-ENU";
+import {earthCenterEUS, setAltitudeMSL} from "../SphericalMath";
 import {Group, Mesh, MeshBasicMaterial, Raycaster, SphereGeometry} from "three";
 import {GlobalScene} from "../LocalFrame";
-import {V3} from "../threeUtils";
 import {assert} from "../assert";
 import {CTileMappingGoogleCRS84Quad, CTileMappingGoogleMapsCompatible} from "../WMSUtils";
 import {EventManager} from "../CEventManager";
 import {QuadTreeMapTexture} from "../QuadTreeMapTexture";
 import {QuadTreeMapElevation} from "../QuadTreeMapElevation";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 import * as LAYER from "../LayerMasks";
 import {ViewMan} from "../CViewManager";
 import {CNodeViewUI} from "./CNodeViewUI";
@@ -50,8 +51,9 @@ export class CNodeTerrain extends CNode {
         //   this.debugLog = true;
 
         this.loaded = false;
+        this.hide3DTilesGreySphere = false;
 
-        this.radius = wgs84.RADIUS;
+        this.radius = Globals.equatorRadius;
 
         this.input("flattening", true) //optional
 
@@ -119,14 +121,27 @@ export class CNodeTerrain extends CNode {
         this.group = new Group();
         GlobalScene.add(this.group);
 
-        // Create a grey sphere positioned at the center of the Earth
-        // Radius is 1km less than the globe radius to prevent z-fighting
-        // Only visible when Globals.dynamicSubdivision is true
-        const greySphereRadius = wgs84.RADIUS - 1000;
-        const greySphereGeometry = new SphereGeometry(greySphereRadius, 32, 32);
+        // Create a grey ellipsoid positioned at the centre of the Earth.
+        // Semi-axes are 1 km smaller than the earth model radii to prevent z-fighting.
+        // A unit sphere is scaled non-uniformly: equatorial (a) on X/Z, polar (b) on Y.
+        // The local Y axis (polar) is then rotated so it points along the actual Earth
+        // rotation axis in EUS space: R_x(lat − 90°) maps Y → (0, sin(lat), −cos(lat)).
+        // Degenerates to a sphere when polarRadius === equatorRadius.
+        // Only visible when Globals.dynamicSubdivision is true.
+        const greySphereGeometry = new SphereGeometry(1, 32, 32);
         const greySphereMaterial = new MeshBasicMaterial({ color: 0x808080 }); // Grey
         this.greySphere = new Mesh(greySphereGeometry, greySphereMaterial);
-        this.greySphere.position.set(0, -wgs84.RADIUS, 0);
+        this.greySphere.scale.set(
+            Globals.equatorRadius - 1000,  // X – equatorial semi-axis
+            Globals.polarRadius  - 1000,   // Y – polar semi-axis (before rotation)
+            Globals.equatorRadius - 1000   // Z – equatorial semi-axis
+        );
+        // Rotate so the polar (local-Y) axis aligns with the Earth's rotation axis.
+        // In ECEF the polar axis is always Z, so rotate Y→+Z with +π/2 about X.
+        // (In old EUS this was latitude-dependent: Sit.lat * π/180 - π/2)
+        this.greySphere.rotation.x = Math.PI / 2;
+        // Position at the true Earth centre in EUS (depends on ellipsoid shape and latitude).
+        this.greySphere.position.copy(earthCenterEUS());
         this.greySphere.visible = Globals.dynamicSubdivision === true;
         GlobalScene.add(this.greySphere);
 
@@ -378,9 +393,19 @@ export class CNodeTerrain extends CNode {
     }
 
     updateGreySphereVisibility() {
-        // Grey sphere should only be visible when Globals.dynamicSubdivision is true
+        // Grey sphere should only be visible when dynamic subdivision is on
+        // and 3D tiles are not active (they provide their own ground surface).
         if (this.greySphere) {
-            this.greySphere.visible = Globals.dynamicSubdivision === true;
+            this.greySphere.visible = Globals.dynamicSubdivision === true
+                && !this.hide3DTilesGreySphere;
+            // Sync scale, rotation and position with the active earth model.
+            this.greySphere.scale.set(
+                Globals.equatorRadius - 1000,
+                Globals.polarRadius  - 1000,
+                Globals.equatorRadius - 1000
+            );
+            this.greySphere.rotation.x = Math.PI / 2;
+            this.greySphere.position.copy(earthCenterEUS());
         }
     }
 
@@ -401,7 +426,8 @@ export class CNodeTerrain extends CNode {
         this.elevationMap.clean()
         this.elevationMap = undefined;
         this.unloadMap(mapID);
-        this.loadMap(mapID)
+        this.loadMap(mapID);
+        this.updateGreySphereVisibility();
     }
 
     loadMapElevation(id, deferLoad) {
@@ -562,13 +588,7 @@ export class CNodeTerrain extends CNode {
 
                     this.refreshDebugGrids()
 
-                    // WHY IS THIS NEEDED - IF WE HAVE WIREFRAME MODE
-                    // THEN IT SHOULD ALWAYS HAVE GEOMETRY
-
-
-                    // The elevation system might have tried to apply elevation to this tile before
-                    // and failed because there's no geometry yet.
-                    // Process any pending elevation updates that arrived before the texture map was ready
+                    // Process any pending elevation updates that arrived before geometry was ready
                     if (this.pendingElevationUpdates && this.pendingElevationUpdates.length > 0) {
                         this.log("CNodeTerrain: processing " + this.pendingElevationUpdates.length + " pending elevation updates")
                         this.pendingElevationUpdates.forEach(update => {
@@ -711,7 +731,7 @@ export class CNodeTerrain extends CNode {
         this.log("CNodeTerrain: recalculate")
 
         var radius = this.radius;
-        // flattening is 0 to 1, whenre 0=no flattening, 1=flat
+        // flattening is 0 to 1, where 0=no flattening, 1=flat
         // so scale radius by (1/(1-flattening)
         if (this.in.flattening !== undefined) {
             var flattening = this.in.flattening.v0
@@ -719,9 +739,19 @@ export class CNodeTerrain extends CNode {
             radius *= (1 / (1 - flattening))
 
         }
-        Sit.originECEF = RLLAToECEFV_Sphere(radians(Sit.lat), radians(Sit.lon), 0, radius)
-        assert(this.maps[this.UI.mapType].map !== undefined, "CNodeTerrain: map is undefined")
-        this.maps[this.UI.mapType].map.recalculateCurveMap(this.radius, true)
+        // Use ellipsoid-aware origin when no flattening override is active
+        if (this.in.flattening !== undefined && this.in.flattening.v0 > 0) {
+            Sit.originECEF = RLLAToECEFV_Sphere(radians(Sit.lat), radians(Sit.lon), 0, radius)
+        } else {
+            Sit.originECEF = RLLAToECEF_radii(radians(Sit.lat), radians(Sit.lon), 0)
+        }
+        const map = this.maps[this.UI.mapType].map;
+        assert(map !== undefined, "CNodeTerrain: map is undefined")
+        if (!map.loaded) {
+            console.warn("CNodeTerrain: texture map not loaded yet, deferring recalculateCurveMap")
+            return;
+        }
+        map.recalculateCurveMap(this.radius, true)
 
        //  propagateLayerMaskObject(this.group)
 
@@ -771,29 +801,23 @@ export class CNodeTerrain extends CNode {
 
 
         const LLA = EUSToLLA(A)
-        let elevation = 0;
+        let elevation = meanSeaLevelOffset(LLA.x, LLA.y);
         if (this.elevationMap)
             elevation = this.elevationMap.getElevationInterpolated(LLA.x, LLA.y)
 
-        if (elevation < 0) {
-            // if the elevation is negative, then we assume it's below sea level
-            // so we set it to zero
-            elevation = 0;
+        // Clamp to geoid sea level to avoid z-fighting with ocean tiles
+        const seaLevel = meanSeaLevelOffset(LLA.x, LLA.y);
+        if (elevation < seaLevel) {
+            elevation = seaLevel;
         }
 
-
-        // then we scale a vector from the center of the earth to the point
-        // so that its length is the radius of the earth plus the elevation
-        // then the end of this vector (added to the center) is the point on the terrain
-        const earthCenterENU = V3(0, -wgs84.RADIUS, 0)
-        const centerToA = A.clone().sub(earthCenterENU)
-        const scale = (wgs84.RADIUS + elevation + agl) / centerToA.length()
-        return earthCenterENU.add(centerToA.multiplyScalar(scale))
+        return setAltitudeMSL(A, elevation + agl);
     }
 
     getPointBelowWithTileInfo(A, agl = 0) {
         const LLA = EUSToLLA(A)
-        let elevation = 0;
+        const seaLevel = meanSeaLevelOffset(LLA.x, LLA.y);
+        let elevation = seaLevel;
         let tileZ = -1, tileX = -1, tileY = -1;
         if (this.elevationMap) {
             const info = this.elevationMap.getElevationWithTileInfo(LLA.x, LLA.y);
@@ -804,14 +828,12 @@ export class CNodeTerrain extends CNode {
         }
 
         const rawElevation = elevation;
-        if (elevation < 0) {
-            elevation = 0;
+        // Clamp to geoid sea level to avoid z-fighting with ocean tiles
+        if (elevation < seaLevel) {
+            elevation = seaLevel;
         }
 
-        const earthCenterENU = V3(0, -wgs84.RADIUS, 0)
-        const centerToA = A.clone().sub(earthCenterENU)
-        const scale = (wgs84.RADIUS + elevation + agl) / centerToA.length()
-        const point = earthCenterENU.add(centerToA.multiplyScalar(scale))
+        const point = setAltitudeMSL(A, elevation + agl);
         return {point, elevation: rawElevation, tileZ, tileX, tileY};
     }
 

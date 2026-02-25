@@ -21,8 +21,8 @@ export const SitITY621 = {
     skyColor: '#AFBDD1',  // grey from the video
 
     mainCamera: {
-        startCameraPosition: [61967.92, 37073.99, -39378.75],
-        startCameraTarget: [61140.05, 36689.14, -38970.70],
+        startCameraPositionLLA:[47.922826,-4.048730,26060.674549],
+        startCameraTargetLLA:[47.919852,-4.059607,25585.505755],
     },
     lookCamera:{ fov: 12.5},
     cameraTrack: {},

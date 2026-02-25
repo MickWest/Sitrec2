@@ -1,9 +1,8 @@
 import {CNodeTrack} from "./CNodeTrack";
 import {NodeMan, Sit} from "../Globals";
-import {getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
+import {getLocalNorthVector, getLocalUpVector, setAltitudeMSL} from "../SphericalMath";
 import {radians} from "../utils";
 import {V3} from "../threeUtils";
-import {wgs84} from "../LLA-ECEF-ENU";
 import {EventManager} from "../CEventManager";
 
 export class CNodeTrackFromVelocity extends CNodeTrack {
@@ -35,8 +34,8 @@ export class CNodeTrackFromVelocity extends CNodeTrack {
 
     recalculate() {
         this.array = [];
+        this.elevationCache = null; // flush cache for fresh terrain queries
 
-        const radius = wgs84.RADIUS;
         const pos = this.in.origin.p(0).clone();
 
         for (let f = 0; f < this.frames; f++) {
@@ -48,7 +47,7 @@ export class CNodeTrackFromVelocity extends CNodeTrack {
 
             const vel = this.in.velocity.v(f);
             if (vel && (vel.speed !== undefined || vel.dx !== undefined)) {
-                const up = getLocalUpVector(pos, radius);
+                const up = getLocalUpVector(pos);
                 const north = getLocalNorthVector(pos);
 
                 let moveVector;
@@ -67,7 +66,7 @@ export class CNodeTrackFromVelocity extends CNodeTrack {
 
                     const rightAxis = V3().crossVectors(up, moveVector);
                     if (rightAxis.lengthSq() > 0.0001) {
-                        const newUp = getLocalUpVector(pos, radius);
+                        const newUp = getLocalUpVector(pos);
                         const newNorth = getLocalNorthVector(pos);
                         const newRight = V3().crossVectors(newUp, newNorth);
                     }
@@ -81,11 +80,6 @@ export class CNodeTrackFromVelocity extends CNodeTrack {
         if (terrainNode) {
             return this.getPointBelowCached(terrainNode, pos, this.agl, frame);
         }
-        const up = getLocalUpVector(pos);
-        const groundLevel = wgs84.RADIUS;
-        const centerToPos = pos.clone().add(V3(0, wgs84.RADIUS, 0));
-        const distFromCenter = centerToPos.length();
-        const adjustment = distFromCenter - groundLevel - this.agl;
-        return pos.clone().sub(up.multiplyScalar(adjustment));
+        return setAltitudeMSL(pos, this.agl);
     }
 }

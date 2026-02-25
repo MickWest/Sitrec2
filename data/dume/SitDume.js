@@ -12,8 +12,8 @@ export const SitDume = {
     flattening: true,
 
     mainCamera: {
-        startCameraPosition: [-43094.29665986946, 3824.242926331847, 422.4154566350642],
-        startCameraTarget: [-42114.354308866445, 3638.0780342768676, 351.31256163886894],
+        startCameraPositionLLA:[34.005276,-118.863148,1078.535159],
+        startCameraTargetLLA:[34.005919,-118.852541,887.903708],
     },
     mainView: {left: 0.0, top: 0, width: 0.5, height: 1,fov:50,background: [0.53, 0.81, 0.92]},
 

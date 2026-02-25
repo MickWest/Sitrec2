@@ -2,8 +2,8 @@ import {CNodeCurveEditor} from "./nodes/CNodeCurveEdit";
 import {CNodeGraphSeries} from "./nodes/CNodeGraphSeries";
 import {CNodeMunge, makeMunge} from "./nodes/CNodeMunge";
 import {NodeMan, Sit, Units} from "./Globals";
-import {acos, degrees, m2f, metersFromMiles, NMFromMeters} from "./utils";
-import {getLocalUpVector, pointAltitude} from "./SphericalMath";
+import {acos, degrees, m2f, NMFromMeters} from "./utils";
+import {altitudeMSL, getLocalUpVector} from "./SphericalMath";
 import {CNodeTrackScreenAngle} from "./nodes/CNodeJetTrack";
 import {assert} from "./assert.js";
 import {getGlareAngleFromFrame} from "./JetUtils";
@@ -404,10 +404,10 @@ export function AddAltitudeGraph(min, max, source = "LOSTraverseSelect", left  =
                 // Munge node to convert a traverse track to altitude
                 source: new CNodeMunge({
                     id: "altitudeGraphMunge",
-                    inputs: {source: source, radius: "radiusMiles",},
+                    inputs: {source: source},
                     munge: function (f) {
                         const pos = this.in.source.p(f)
-                        const alt = m2f(pointAltitude(pos, metersFromMiles(this.in.radius.v0)))
+                        const alt = m2f(altitudeMSL(pos))
                         return alt;
                     }
                 }),
