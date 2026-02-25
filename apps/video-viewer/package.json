@@ -12,7 +12,7 @@
   },
   "devDependencies": {
     "electron": "^35.7.5",
-    "electron-builder": "^25.0.0"
+    "electron-builder": "^26.8.1"
   },
   "build": {
     "appId": "com.metabunk.sitrec-video-viewer",
