@@ -3,6 +3,9 @@
 
 name: CI
 
+permissions:
+  contents: read
+
 on:   # when this workflow should be triggered
   push:
     tags-ignore:
