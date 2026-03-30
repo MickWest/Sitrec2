@@ -33,7 +33,7 @@ patterns.push({ from: "./src/PixelFilters.js", to:"./src" });
 
 // Copy tools directory (exclude SitrecBridge dev artifacts — only the dist zip is needed)
 patterns.push({ from: "tools", to: "./tools", globOptions: {
-    ignore: [...globalIgnore, "**/SitrecBridge/node_modules/**", "**/SitrecBridge/package-lock.json"],
+    ignore: [...globalIgnore, "**/SitrecBridge/node_modules/**", "**/SitrecBridge/package-lock.json", "**/sitrec-comms/node_modules/**", "**/sitrec-comms/package-lock.json"],
 } });
 patterns.push({ from: "assets/install", to: "./install" });
 
