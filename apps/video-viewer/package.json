@@ -17,7 +17,7 @@
     "build-win-direct": "node ../../scripts/runDesktopBuilder.js --platform win --target nsis --arch x64 --output final"
   },
   "devDependencies": {
-    "electron": "^35.7.5",
+    "electron": "^39.8.4",
     "electron-builder": "^26.8.1"
   },
   "build": {
