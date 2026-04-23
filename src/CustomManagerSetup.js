@@ -54,7 +54,7 @@ import {CNodeCurveEditor2} from "./nodes/CNodeCurveEdit2";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
 import {CNodeNotes} from "./nodes/CNodeNotes";
 import {createCustomModalWithCopy, saveFilePrompted, saveFileToDirectory, saveFileToHandle} from "./FileUtils";
-import {deserializeMotionAnalysis, serializeMotionAnalysis} from "./CMotionAnalysis";
+import {deserializeMotionAnalysis, serializeMotionAnalysis} from "./CMotionAnalysisUI";
 import {deserializeAutoTracking, serializeAutoTracking} from "./CObjectTracking";
 import {getCursorPositionFromTopView} from "./mouseMoveView";
 import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightSidebar} from "./PageStructure";

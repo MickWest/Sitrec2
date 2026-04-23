@@ -115,7 +115,7 @@ import {
     getMotionAnalyzerForTesting,
     resetMotionAnalysis,
     toggleMotionAnalysis
-} from "./CMotionAnalysis";
+} from "./CMotionAnalysisUI";
 import {addObjectTrackingMenu, resetObjectTracking} from "./CObjectTracking";
 import {addTextExtractionMenu} from "./CTextExtraction";
 import {QuadTreeTile} from "./QuadTreeTile";
