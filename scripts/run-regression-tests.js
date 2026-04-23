@@ -15,7 +15,11 @@ const {spawn, spawnSync} = require('child_process');
 const path = require('path');
 
 const extraArgs = process.argv.slice(2);
-const passArgs = extraArgs.length ? extraArgs : ["--grep-invert=Chatbot Tests"];
+// Always exclude Chatbot Tests (they require live API credentials and aren't
+// part of the pixel-diff regression suite). Extra args from the CLI are
+// appended, not substituted — so `npm run test-regression -- --update-snapshots`
+// still skips chatbot. Override by passing your own `--grep` which wins.
+const passArgs = ["--grep-invert=Chatbot Tests", ...extraArgs];
 
 // Default REGRESSION_LOCAL_TERRAIN=1 so baselines are deterministic across
 // host and sandbox — the test suite appends regressionLocalTerrain=1 to every
