@@ -257,7 +257,9 @@ test.describe('WebM Video Export', () => {
         expect(result.fps).toBe(3);
 
         const webmBuffer = Buffer.from(result.base64, 'base64');
-        const outputPath = path.join(__dirname, 'test-output-video.webm');
+        const outputDir = path.join(__dirname, '..', 'test-results');
+        fs.mkdirSync(outputDir, { recursive: true });
+        const outputPath = path.join(outputDir, 'test-output-video.webm');
         fs.writeFileSync(outputPath, webmBuffer);
         console.log(`WebM file saved to: ${outputPath} (${webmBuffer.length} bytes)`);
 
