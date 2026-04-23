@@ -47,6 +47,9 @@ function buildRegressionUrl(url) {
     const additions = [];
     if (!hasParam(fullUrl, "ignoreunload")) additions.push("ignoreunload=1");
     if (!hasParam(fullUrl, "regression")) additions.push("regression=1");
+    if (process.env.REGRESSION_LOCAL_TERRAIN === "1" && !hasParam(fullUrl, "regressionLocalTerrain")) {
+        additions.push("regressionLocalTerrain=1");
+    }
 
     if (additions.length > 0) {
         const needsJoin = !fullUrl.endsWith("?") && !fullUrl.endsWith("&");
@@ -357,6 +360,11 @@ test.describe('Visual Regression Testing', () => {
                     assertionReject = reject;
                 });
 
+                // In local-terrain mode, tiles beyond the downloaded zoom range 404;
+                // Three.js / sitrec handle this by falling back to the parent tile,
+                // so these are expected and shouldn't fail the test.
+                const ignoreTileMisses = process.env.REGRESSION_LOCAL_TERRAIN === "1";
+
                 page.on('console', msg => {
                     const text = msg.text();
                     const type = msg.type();
@@ -365,6 +373,10 @@ test.describe('Visual Regression Testing', () => {
                         console.error(`[WORKER-${testInfo.workerIndex}] ASSERTION FAILURE DETECTED: ${text}`);
                         assertionReject(new Error(`ASSERTION FAILURE: ${text}`));
                     } else if (type === 'error') {
+                        if (ignoreTileMisses && text.includes('Failed to load resource') &&
+                            msg.location()?.url?.includes('/sitrec-terrain/')) {
+                            return;
+                        }
                         console.error(`[WORKER-${testInfo.workerIndex}] CONSOLE ERROR DETECTED: ${text}`);
                         assertionReject(new Error(`CONSOLE ERROR: ${text}`));
                     }
