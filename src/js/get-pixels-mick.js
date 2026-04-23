@@ -7,12 +7,22 @@ function logNetwork(url, status) {
     // }
 }
 
-// Web Worker code for processing images
+// Web Worker code for processing images.
+// fetch() has no default timeout — in headless Chromium against external tile
+// servers we hit indefinite stalls where the socket never errors and no
+// response arrives. Without AbortController, the worker sits forever and the
+// main-thread pending-request never fires its callback, leaving tiles stuck
+// isLoadingElevation. WORKER_FETCH_TIMEOUT_MS converts that into an
+// AbortError the existing catch block handles.
+const WORKER_FETCH_TIMEOUT_MS = 10000;
 const workerCode = `
+const FETCH_TIMEOUT_MS = ${WORKER_FETCH_TIMEOUT_MS};
 self.onmessage = async (event) => {
     const { url, id } = event.data;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-        const response = await fetch(url);
+        const response = await fetch(url, { signal: controller.signal });
         if (!response.ok) {
             throw new Error(\`HTTP \${response.status}\`);
         }
@@ -41,6 +51,8 @@ self.onmessage = async (event) => {
             error: err.message,
             url
         });
+    } finally {
+        clearTimeout(timer);
     }
 };
 `;
@@ -68,19 +80,52 @@ class ImageQueueManager {
         if (this.useWorkerPool) {
             this.initWorkerPool();
         }
+
+        // Diagnostic escape hatch for debugging tile-load hangs (queueLen,
+        // pendingRequests, workerBusy). Read-only state; always on.
+        if (typeof window !== "undefined") {
+            window.__imageQueueManager = this;
+        }
     }
 
     initWorkerPool() {
         for (let i = 0; i < this.numWorkers; i++) {
             const worker = new Worker(workerBlobUrl);
             worker.busy = false;
+            worker.currentRequestId = null;
+            worker.stallTimer = null;
             worker.onmessage = (event) => this.handleWorkerMessage(event, i);
-            worker.onerror = (err) => {
-                console.error(`Worker ${i} error:`, err);
-                this.errorOccurred = true;
-            };
+            worker.onerror = (err) => this.handleWorkerError(err, i);
             this.workers.push(worker);
         }
+    }
+
+    // Worker crashed (onerror). The in-flight request never got a response,
+    // so fail it, free the slot, and drain the queue — otherwise the worker
+    // stays busy=true forever and the pending-actions signal hangs.
+    handleWorkerError(err, workerIndex) {
+        console.error(`Worker ${workerIndex} error:`, err);
+        this.errorOccurred = true;
+        const worker = this.workers[workerIndex];
+        if (!worker) return;
+        const rid = worker.currentRequestId;
+        if (worker.stallTimer) { clearTimeout(worker.stallTimer); worker.stallTimer = null; }
+        worker.busy = false;
+        worker.currentRequestId = null;
+        if (rid != null) {
+            const req = this.pendingRequests?.get(rid);
+            this.pendingRequests?.delete(rid);
+            this.activeRequests = Math.max(0, this.activeRequests - 1);
+            if (req) {
+                if (req.retries < this.maxRetries) {
+                    console.warn(`Retrying (re-queueing after worker crash) ${req.url}`);
+                    this.enqueueImage(req.url, req.cb, req.retries + 1);
+                } else {
+                    req.cb(new Error(`Worker crashed: ${err?.message || err}`));
+                }
+            }
+        }
+        this.processQueueWorker();
     }
 
     handleWorkerMessage(event, workerIndex) {
@@ -116,6 +161,8 @@ class ImageQueueManager {
         // Mark worker as available and process next item
         const worker = this.workers[workerIndex];
         if (worker) {
+            if (worker.stallTimer) { clearTimeout(worker.stallTimer); worker.stallTimer = null; }
+            worker.currentRequestId = null;
             worker.busy = false;
         }
         this.processQueueWorker();
@@ -129,7 +176,10 @@ class ImageQueueManager {
             this.pendingRequests.clear();
         }
         if (this.useWorkerPool && this.workers.length > 0) {
-            this.workers.forEach(w => w.terminate());
+            this.workers.forEach(w => {
+                if (w.stallTimer) clearTimeout(w.stallTimer);
+                w.terminate();
+            });
             this.workers = [];
             // Reinitialize worker pool for next sitch
             this.initWorkerPool();
@@ -162,7 +212,17 @@ class ImageQueueManager {
 
         const requestId = this.workerId++;
         availableWorker.busy = true;
+        availableWorker.currentRequestId = requestId;
         this.pendingRequests.set(requestId, { url, cb, retries });
+
+        // Cheap insurance: if a worker stays busy for >60s (way past the
+        // 10s fetch timeout + image decode), surface it so the next leak is
+        // diagnosable without rerunning instrumentation.
+        const workerIdx = this.workers.indexOf(availableWorker);
+        if (availableWorker.stallTimer) clearTimeout(availableWorker.stallTimer);
+        availableWorker.stallTimer = setTimeout(() => {
+            console.warn(`[pixel-worker ${workerIdx}] stalled >60s on ${url}`);
+        }, 60000);
 
         logNetwork(url, 'pending');
         availableWorker.postMessage({ url, id: requestId });
