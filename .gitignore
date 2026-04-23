@@ -26,8 +26,6 @@ tests/__image_snapshots__/
 /dist/
 /dist-serverless/
 /.certs/
-/tests_regression/regression.test.js-snapshots/
-/tests_regression/ui-playwright.test.js-snapshots/
 /app_build/
 /app_dist/
 /apps_dist/
@@ -41,3 +39,4 @@ tests/__image_snapshots__/
 *_Diff.png
 *_Good.png
 AGENTS.md
+/tests_regression/snapshots-diffs/
