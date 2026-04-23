@@ -44,6 +44,11 @@ export default defineConfig({
       use: { 
         ...devices['Desktop Chrome'],
         launchOptions: {
+          // Debian chromium ships with proprietary codecs (H.264) that Playwright's
+          // bundled Chromium lacks on arm64 Linux. The Docker sandbox sets
+          // SITREC_CHROMIUM=/usr/bin/chromium; on macOS dev machines it's unset and
+          // Playwright falls back to its own build.
+          executablePath: process.env.SITREC_CHROMIUM || undefined,
           args: [
             '--use-angle=swiftshader',
             '--ignore-gpu-blocklist',

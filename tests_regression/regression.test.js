@@ -373,8 +373,14 @@ test.describe('Visual Regression Testing', () => {
                         console.error(`[WORKER-${testInfo.workerIndex}] ASSERTION FAILURE DETECTED: ${text}`);
                         assertionReject(new Error(`ASSERTION FAILURE: ${text}`));
                     } else if (type === 'error') {
+                        const errUrl = msg.location()?.url || '';
+                        // Browsers auto-request /favicon.ico; sitrec doesn't ship one at
+                        // the app root and returns 404. Not a real failure.
+                        if (text.includes('Failed to load resource') && errUrl.endsWith('/favicon.ico')) {
+                            return;
+                        }
                         if (ignoreTileMisses && text.includes('Failed to load resource') &&
-                            msg.location()?.url?.includes('/sitrec-terrain/')) {
+                            errUrl.includes('/sitrec-terrain/')) {
                             return;
                         }
                         console.error(`[WORKER-${testInfo.workerIndex}] CONSOLE ERROR DETECTED: ${text}`);
