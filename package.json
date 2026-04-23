@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "scripts": {
     "test": "npx jest tests/",
-    "test-regression": "npx playwright test --grep-invert='Chatbot Tests'",
+    "test-regression": "node scripts/run-regression-tests.js",
     "pretest-ui": "find tests_regression -name '*.png' -exec xattr -d com.apple.quarantine {} \\; 2>/dev/null || true",
     "test-ui": "npx playwright test",
     "test-ui-headed": "npx playwright test --headed",

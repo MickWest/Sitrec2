@@ -6,7 +6,7 @@ test.describe('Motion Accumulation Accuracy', () => {
     test('Linear Tracklet + Consensus accumulation matches expected displacement', async ({ page }) => {
         console.log('[TEST:motion-acc:STARTED]');
         try {
-        await page.goto('/sitrec/');
+        await page.goto('./');
         
         await page.evaluate(() => {
             return new Promise((resolve, reject) => {
@@ -496,7 +496,7 @@ test.describe('Motion Accumulation Accuracy', () => {
     test('motion accumulation simulating real video analysis loop', async ({ page }) => {
         console.log('[TEST:motion-acc2:STARTED]');
         try {
-        await page.goto('/sitrec/');
+        await page.goto('./');
         
         await page.evaluate(() => {
             return new Promise((resolve, reject) => {

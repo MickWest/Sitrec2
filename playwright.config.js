@@ -1,6 +1,21 @@
 import {defineConfig, devices} from '@playwright/test';
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'https://local.metabunk.org';
+// PLAYWRIGHT_BASE_URL should point at the sitrec app root.
+// - Production: https://local.metabunk.org/sitrec/ (sitrec served under /sitrec/)
+// - Docker sandbox: http://localhost:8080/ (PHP `-t /build` serves sitrec at /)
+// If env var is unset, default to production layout.
+// If env var is set without a path, assume production-style /sitrec/ subpath so
+// legacy configs that only override host keep working.
+let baseURL = process.env.PLAYWRIGHT_BASE_URL || 'https://local.metabunk.org';
+{
+  const u = new URL(baseURL);
+  if (u.pathname === '/' && !process.env.PLAYWRIGHT_BASE_URL) {
+    u.pathname = '/sitrec/';
+  } else if (!u.pathname.endsWith('/')) {
+    u.pathname += '/';
+  }
+  baseURL = u.toString();
+}
 
 export default defineConfig({
   testDir: './tests_regression',
@@ -14,7 +29,7 @@ export default defineConfig({
   reporter: 'list',
   
   use: {
-    baseURL: baseURL + '/sitrec',
+    baseURL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

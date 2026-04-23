@@ -6,7 +6,7 @@ test.describe('Motion Analysis Techniques', () => {
     test('all four techniques detect diagonal motion correctly', async ({ page }) => {
         console.log('[TEST:opencv:STARTED]');
         try {
-            await page.goto('/sitrec/');
+            await page.goto('./');
         
         await page.evaluate(() => {
             return new Promise((resolve, reject) => {
@@ -486,7 +486,7 @@ test.describe('Motion Analysis Integration', () => {
             page.on('console', handler);
         });
 
-        await page.goto('/sitrec/' + sitchUrl, { waitUntil: 'load', timeout: 60000 });
+        await page.goto(sitchUrl, { waitUntil: 'load', timeout: 60000 });
         await consolePromise;
         
         await page.waitForTimeout(5000);
@@ -530,7 +530,7 @@ test.describe('Motion Analysis Integration', () => {
             page.on('console', handler);
         });
 
-        await page.goto('/sitrec/' + sitchUrl, { waitUntil: 'load', timeout: 60000 });
+        await page.goto(sitchUrl, { waitUntil: 'load', timeout: 60000 });
         await consolePromise;
         
         await page.waitForFunction(() => window.NodeMan, { timeout: 30000 });
@@ -781,7 +781,7 @@ test.describe('Motion Analysis Integration', () => {
             page.on('console', handler);
         });
 
-        await page.goto('/sitrec/' + sitchUrl, { waitUntil: 'load', timeout: 60000 });
+        await page.goto(sitchUrl, { waitUntil: 'load', timeout: 60000 });
         await consolePromise;
         
         await page.waitForFunction(() => window.NodeMan, { timeout: 30000 });
