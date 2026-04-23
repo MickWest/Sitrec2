@@ -374,7 +374,10 @@ ${bodyContent}
         filename: '[name].[contenthash].bundle.js',
         path: InstallPaths.dev_path,
         clean: {
-            keep: /sitrec-upload|sitrec-cache|sitrec-videos/,  // preserve user uploads, cache, and sandbox video symlink across builds
+            // preserve user uploads, cache, video symlink, and the read-only
+            // terrain bind mount (used by the sandbox + Apache local dev)
+            // across builds
+            keep: /sitrec-upload|sitrec-cache|sitrec-videos|sitrec-terrain/,
         },
     },
 });
