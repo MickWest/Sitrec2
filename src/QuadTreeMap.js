@@ -7,6 +7,7 @@ import * as LAYER from "./LayerMasks";
 import {assert} from "./assert";
 import "./threeExt";
 import {EventManager} from "./CEventManager";
+import {asyncOperationRegistry} from "./AsyncOperationRegistry";
 
 // Reusable Vector3 objects to avoid garbage collection pressure
 // These are reused across all tile visibility calculations
@@ -175,6 +176,57 @@ export class QuadTreeMap {
     }
 
     initTiles() {
+        // Register the initial tile-load batch with the async operation
+        // registry so that "No pending actions" cannot fire before this map's
+        // first cohort of tiles has finished loading.
+        //
+        // Why: in fixed-grid mode, initTilePositions() activates nTiles*nTiles
+        // tiles in one synchronous loop, but applyMaterial() (which sets
+        // tile.isLoading=true) runs as part of the per-tile activation that
+        // queues async work. There's a window between initTilePositions()
+        // returning and the first tile's isLoading=true assignment becoming
+        // observable to hasPendingTiles(). If Globals.pendingActions has
+        // already hit zero by that point, the renderMain "No pending actions"
+        // emit can fire while the 64-tile batch hasn't started loading yet,
+        // and the regression test screenshots an empty terrain rendered
+        // against the scene background. (Symptom: solid green where terrain
+        // should be on agua/potomac etc.)
+        //
+        // Dynamic mode has the same shape but is less affected because
+        // camera-driven subdivision keeps tiles continuously in flight, so
+        // the pending-tile signal is naturally a steady-state. Registering
+        // here covers both modes, which is the right architectural fit.
+        const initBatchPromise = (async () => {
+            // Let any synchronous activateTile() calls queue their async
+            // work into pendingTileLoads. requestAnimationFrame is the right
+            // signal for "browser has had a chance to run microtasks +
+            // start a frame"; setTimeout(0) would also work but rAF is
+            // more meaningfully tied to the render-loop cadence.
+            await new Promise((r) => {
+                if (typeof requestAnimationFrame === "function") {
+                    requestAnimationFrame(r);
+                } else {
+                    setTimeout(r, 16);
+                }
+            });
+            // Drain pendingTileLoads. Bounded at 60s so a stalled tile
+            // server can't pin pendingActions forever; tests have their
+            // own outer timeout that subsumes this.
+            const startTime = Date.now();
+            while (
+                this.pendingTileLoads &&
+                this.pendingTileLoads.size > 0 &&
+                Date.now() - startTime < 60000
+            ) {
+                await new Promise((r) => setTimeout(r, 50));
+            }
+        })();
+        asyncOperationRegistry.registerPromise(
+            initBatchPromise,
+            "tile-init",
+            `${this.constructor.name} ${this.dynamic ? "dynamic" : `${this.nTiles}x${this.nTiles}`}@z${this.zoom}`,
+        );
+
         if (this.dynamic) {
             this.initTilePositionsDynamic()
          } else {
