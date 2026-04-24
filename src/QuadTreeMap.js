@@ -197,27 +197,42 @@ export class QuadTreeMap {
         // the pending-tile signal is naturally a steady-state. Registering
         // here covers both modes, which is the right architectural fit.
         const initBatchPromise = (async () => {
-            // Let any synchronous activateTile() calls queue their async
-            // work into pendingTileLoads. requestAnimationFrame is the right
-            // signal for "browser has had a chance to run microtasks +
-            // start a frame"; setTimeout(0) would also work but rAF is
-            // more meaningfully tied to the render-loop cadence.
-            await new Promise((r) => {
-                if (typeof requestAnimationFrame === "function") {
-                    requestAnimationFrame(r);
-                } else {
-                    setTimeout(r, 16);
-                }
-            });
-            // Drain pendingTileLoads. Bounded at 60s so a stalled tile
-            // server can't pin pendingActions forever; tests have their
-            // own outer timeout that subsumes this.
+            // Yield so the synchronous activateTile() loop in
+            // initTilePositions{,Dynamic} has finished queueing its async
+            // work and the per-tile applyMaterial / recalculateCurve
+            // microtasks have set the per-tile isLoading flags. 100ms is
+            // overkill but the only cost is a tiny floor on
+            // pendingActions-zero latency; well under one regression-test
+            // frame budget.
+            await new Promise((r) => setTimeout(r, 100));
+
+            // Drain the per-tile loading flags using the SAME predicate
+            // hasPendingTiles() in indexRender.js uses — that's the
+            // signal "No pending actions" gates on, so polling the same
+            // thing is what closes the race definitively. Works for both
+            // QuadTreeMapTexture (.isLoading) and QuadTreeMapElevation
+            // (.isLoadingElevation) without needing per-subclass state.
+            // (My earlier attempt polled this.pendingTileLoads, which
+            // only exists on the texture subclass — the elevation
+            // map's promise resolved immediately, leaving the original
+            // race wide open. See commit 76593927 for the broken first
+            // pass.)
+            // Bounded at 60s; tests have their own outer timeout.
             const startTime = Date.now();
-            while (
-                this.pendingTileLoads &&
-                this.pendingTileLoads.size > 0 &&
-                Date.now() - startTime < 60000
-            ) {
+            while (Date.now() - startTime < 60000) {
+                let pending = false;
+                if (this.forEachTile) {
+                    this.forEachTile((tile) => {
+                        if (
+                            tile.isLoading ||
+                            tile.isLoadingElevation ||
+                            tile.isRecalculatingCurve
+                        ) {
+                            pending = true;
+                        }
+                    });
+                }
+                if (!pending) break;
                 await new Promise((r) => setTimeout(r, 50));
             }
         })();
