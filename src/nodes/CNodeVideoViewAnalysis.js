@@ -16,6 +16,13 @@
 import {Globals, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
 import {
+    checkVideoEncodingSupport,
+    createVideoExporter,
+    getBestFormatForResolution,
+    getVideoExtension,
+} from "../VideoExporter";
+import {decodeImageBlob} from "./CNodeVideoViewFilters";
+import {
     applyELAOutputExpansion,
     canvasToBlobAsync,
     clampByte,

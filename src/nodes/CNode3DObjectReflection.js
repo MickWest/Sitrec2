@@ -8,6 +8,7 @@
 
 import {Raycaster, Vector2, Vector3} from "three";
 import {NodeMan, setRenderOne} from "../Globals";
+import {GlobalScene} from "../LocalFrame";
 import {DebugArrowAB, removeDebugArrow} from "../threeExt";
 import {CNodeViewText} from "./CNodeViewText";
 

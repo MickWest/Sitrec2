@@ -16,7 +16,8 @@
  */
 
 import {Vector3} from "three";
-import {NodeMan, setRenderOne} from "../Globals";
+import {NodeMan, setRenderOne, UndoManager} from "../Globals";
+import {degrees, radians} from "../mathUtils";
 import {ViewMan} from "../CViewManager";
 import {mouseInViewOnly} from "../ViewUtils";
 import {screenToNDC} from "../mouseMoveView";

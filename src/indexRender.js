@@ -19,6 +19,8 @@ import {
     Sit,
 } from "./Globals";
 import {par} from "./par";
+import {arModeManager} from "./ARMode";
+import {glareSprite, targetSphere} from "./JetStuffVars";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
 import {VideoLoadingManager} from "./CVideoLoadingManager";
 import {ViewMan} from "./CViewManager";

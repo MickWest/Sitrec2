@@ -7,7 +7,7 @@
  * time, so any code that imports lil-gui-extras transitively picks them up.
  */
 
-import {NumberController} from "./js/lil-gui.esm";
+import {GUI, NumberController} from "./js/lil-gui.esm";
 import {Globals} from "./Globals";
 
 const textWidths = {};

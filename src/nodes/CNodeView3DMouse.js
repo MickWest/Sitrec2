@@ -37,6 +37,8 @@ import {earthCenterECEF, XYZ2EA, XYZJ2PR} from "../SphericalMath";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {glareSphere, targetSphere} from "../JetStuffVars";
 import {jetPitchFromFrame} from "../JetUtils";
+import {t} from "../i18n";
+import {raDec2Celestial} from "../CelestialMath";
 // NOTE: ChangedPR / UIChangedAz intentionally NOT imported. They are used only
 // inside the legacy "GIMBAL SPECIFIC, NOT USED" dragMode>0 code path below.
 // Importing from ../JetStuff creates a circular dependency

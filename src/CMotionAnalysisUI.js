@@ -12,7 +12,7 @@
  * cycle.
  */
 
-import {Globals, guiMenus, NodeMan, registerFrameBlocker, setRenderOne, Sit, unregisterFrameBlocker} from "./Globals";
+import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, registerFrameBlocker, setRenderOne, Sit, unregisterFrameBlocker} from "./Globals";
 import {isAdmin} from "./configUtils";
 import {par} from "./par";
 import {ExportProgressWidget, getExportPrefix} from "./utils";

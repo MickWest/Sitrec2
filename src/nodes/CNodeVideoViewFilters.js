@@ -836,7 +836,7 @@ export function canvasToBlobAsync(canvas, type, quality) {
     });
 }
 
-function decodeImageBlob(blob) {
+export function decodeImageBlob(blob) {
     if (typeof createImageBitmap === "function") {
         return createImageBitmap(blob);
     }

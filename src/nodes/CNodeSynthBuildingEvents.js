@@ -13,7 +13,9 @@
  */
 
 import {Plane, Vector3} from "three";
-import {CustomManager, Globals, NodeMan, setRenderOne} from "../Globals";
+import {CustomManager, Globals, NodeMan, setRenderOne, UndoManager} from "../Globals";
+import {getLocalUpVector} from "../SphericalMath";
+import {getPointBelow} from "../threeExt";
 import {EventManager} from "../CEventManager";
 import {ViewMan} from "../CViewManager";
 import {assert} from "../assert";
