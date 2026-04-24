@@ -884,20 +884,12 @@ wss.on('connection', (ws) => {
             delete testResults[id];
         }
         
-        // Default REGRESSION_LOCAL_TERRAIN=1 to match scripts/run-regression-tests.js,
-        // so the test-viewer path produces the same renders as `npm run test-regression`.
-        // Without this, the test suite fetches live external tiles (ESRI/AWS), which
-        // (a) renders differently from the local-tile baselines and (b) is prone to
-        // headless-fetch stalls. Override per-launch by exporting REGRESSION_LOCAL_TERRAIN=0.
-        const childEnv = { ...process.env, FORCE_COLOR: '0' };
-        if (childEnv.REGRESSION_LOCAL_TERRAIN === undefined) {
-            childEnv.REGRESSION_LOCAL_TERRAIN = '1';
-        }
-
+        // Local-terrain mode is the default in regression.test.js; opt out by
+        // launching the viewer with REGRESSION_LOCAL_TERRAIN=0.
         testProcess = spawn('npx', ['playwright', 'test', '--reporter=line', '-g', escapedGrep], {
             cwd: __dirname,
             shell: true,
-            env: childEnv,
+            env: { ...process.env, FORCE_COLOR: '0' }
         });
 
         let totalTests = 0;

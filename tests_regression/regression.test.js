@@ -47,7 +47,12 @@ function buildRegressionUrl(url) {
     const additions = [];
     if (!hasParam(fullUrl, "ignoreunload")) additions.push("ignoreunload=1");
     if (!hasParam(fullUrl, "regression")) additions.push("regression=1");
-    if (process.env.REGRESSION_LOCAL_TERRAIN === "1" && !hasParam(fullUrl, "regressionLocalTerrain")) {
+    // Local-terrain mode is the default for the regression suite — baselines
+    // were rendered against the pre-cached local tile mirror, and external
+    // ESRI/AWS tile fetches are non-deterministic (live data) and prone to
+    // headless-fetch stalls. Opt out for any run that specifically wants to
+    // exercise the live-tile path: REGRESSION_LOCAL_TERRAIN=0.
+    if (process.env.REGRESSION_LOCAL_TERRAIN !== "0" && !hasParam(fullUrl, "regressionLocalTerrain")) {
         additions.push("regressionLocalTerrain=1");
     }
 
@@ -371,10 +376,11 @@ test.describe('Visual Regression Testing', () => {
                     assertionReject = reject;
                 });
 
-                // In local-terrain mode, tiles beyond the downloaded zoom range 404;
-                // Three.js / sitrec handle this by falling back to the parent tile,
-                // so these are expected and shouldn't fail the test.
-                const ignoreTileMisses = process.env.REGRESSION_LOCAL_TERRAIN === "1";
+                // In local-terrain mode (the default — see addRegressionParams),
+                // tiles beyond the downloaded zoom range 404; Three.js / sitrec
+                // handle this by falling back to the parent tile, so these are
+                // expected and shouldn't fail the test.
+                const ignoreTileMisses = process.env.REGRESSION_LOCAL_TERRAIN !== "0";
 
                 page.on('console', msg => {
                     const text = msg.text();

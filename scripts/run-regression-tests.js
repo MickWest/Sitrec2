@@ -21,17 +21,9 @@ const extraArgs = process.argv.slice(2);
 // still skips chatbot. Override by passing your own `--grep` which wins.
 const passArgs = ["--grep-invert=Chatbot Tests", ...extraArgs];
 
-// Default REGRESSION_LOCAL_TERRAIN=1 so baselines are deterministic across
-// host and sandbox — the test suite appends regressionLocalTerrain=1 to every
-// URL, which forces the sitch to use the Local map source (the pre-cached
-// tile bind mount) instead of external ESRI/AWS tiles. That both avoids the
-// headless-fetch-stall bug and keeps darwin vs linux baselines tile-compatible
-// (they differ only by rendering, not by tile data). Override per-run with
-// REGRESSION_LOCAL_TERRAIN=0 for anyone who specifically wants to exercise
-// the external-tile path.
-if (process.env.REGRESSION_LOCAL_TERRAIN === undefined) {
-    process.env.REGRESSION_LOCAL_TERRAIN = '1';
-}
+// Local-terrain mode is now the default in regression.test.js itself, so no
+// env-var defaulting is needed here. Pass REGRESSION_LOCAL_TERRAIN=0 to opt
+// out and exercise live external tiles.
 
 function commandExists(cmd) {
     const r = spawnSync('sh', ['-c', `command -v ${cmd} >/dev/null 2>&1`], {stdio: 'ignore'});
