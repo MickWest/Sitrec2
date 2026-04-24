@@ -85,6 +85,9 @@
     ],
     "transform": {
       "\\.[jt]s$": "babel-jest"
+    },
+    "moduleNameMapper": {
+      ".+\\.mjs$": "<rootDir>/tests/__mocks__/three-addons-stub.js"
     }
   },
   "dependencies": {

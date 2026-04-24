@@ -19,13 +19,15 @@ import path from 'path';
 // Extract detectCSVType source and re-implement it for testing
 // This avoids the deep CFileManager import chain
 const source = fs.readFileSync(
-    path.resolve(__dirname, '../src/CFileManager.js'), 'utf-8'
+    path.resolve(__dirname, '../src/CFileManagerParse.js'), 'utf-8'
 );
 
-// Verify the function exists and hasn't been moved
+// Verify the function exists and hasn't been moved. detectCSVType moved
+// from CFileManager.js to CFileManagerParse.js during the refactor2
+// module split (commit 36bcc1d7).
 describe('detectCSVType source presence', () => {
-    test('detectCSVType is exported from CFileManager.js', () => {
-        expect(source).toContain('export function detectCSVType(csv)');
+    test('detectCSVType is exported from CFileManagerParse.js', () => {
+        expect(source).toContain('export function detectCSVType(');
     });
 });
 
