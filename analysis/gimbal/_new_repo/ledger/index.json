@@ -1,0 +1,153 @@
+{
+  "generated": "2026-04-20T00:00:00.000Z",
+  "count": 8,
+  "by_status": {
+    "agreed": 6,
+    "open": 2
+  },
+  "findings": [
+    {
+      "id": "F-0001",
+      "summary": "Glare in Gimbal video rotates at slope in the range −0.5 to −1.3 against pod-roll across NCC-reliable active-roll windows",
+      "status": "agreed",
+      "updated": "2026-04-19",
+      "sources": [
+        "analysis/scripts/145_pod_roll_vs_glare.js",
+        "analysis/scripts/148_ncc_full_video.js",
+        "analysis/data/145_pod_roll_vs_glare.csv",
+        "analysis/data/148_ncc_full.csv",
+        "analysis/logs/36_pod_roll_correlation.md",
+        "analysis/logs/39_pod_roll_full_video.md",
+        "X-US9121758"
+      ],
+      "depends_on": [],
+      "reproducibility": "scripted",
+      "file": "ledger/findings/F-0001-pod-roll-coupling-slope.md"
+    },
+    {
+      "id": "F-0002",
+      "summary": "Diffraction-spike orientation and glare orientation maintain a constant angular offset (std 2–6°) within NCC templates, indicating shared optical origin",
+      "status": "agreed",
+      "updated": "2026-04-19",
+      "sources": [
+        "analysis/scripts/155_obs5_unwrap.js",
+        "analysis/scripts/157_combined_scatter.js",
+        "analysis/data/155_spike_unwrap.csv",
+        "analysis/logs/45_obs5_strong.md",
+        "analysis/logs/46_spike_glare_coupling.md"
+      ],
+      "depends_on": [
+        "F-0001"
+      ],
+      "reproducibility": "scripted",
+      "file": "ledger/findings/F-0002-spike-glare-offset-constancy.md"
+    },
+    {
+      "id": "F-0003",
+      "summary": "A stitched panorama of the Gimbal video built from AH-stabilized cloud-feature tracking produces a curved \"katana\" shape ~27:1 aspect",
+      "status": "agreed",
+      "updated": "2026-04-19",
+      "sources": [
+        "analysis/scripts/174_sitrec_stitched_panorama.js",
+        "analysis/scripts/180_final_panorama.js",
+        "analysis/gimbal-motion-analysis-sitch/Sitrec-Gimbal_Cloud_Motion_Analyss_motion_2026-04-18T21-41-19.csv",
+        "analysis/outputs/180_panorama.png",
+        "analysis/logs/58_katana_panorama.md",
+        "X-MB-14839"
+      ],
+      "depends_on": [],
+      "reproducibility": "recipe",
+      "file": "ledger/findings/F-0003-katana-panorama-shape.md"
+    },
+    {
+      "id": "F-0004",
+      "summary": "The katana panorama shape does not by itself discriminate between the derotator, camera-pan, and frustum-roll readings",
+      "status": "agreed",
+      "updated": "2026-04-19",
+      "sources": [
+        "analysis/logs/58_katana_panorama.md",
+        "X-MB-14839"
+      ],
+      "depends_on": [
+        "F-0003"
+      ],
+      "reproducibility": null,
+      "file": "ledger/findings/F-0004-katana-interpretation.md"
+    },
+    {
+      "id": "F-0005",
+      "summary": "Late-video pod-roll-rate window (f>800) residual has a named candidate mechanism (primary-gimbal rate-limit exceeded + fourth-axis fine-steering crossover at the az=0 singularity) but remains unverified; bench telemetry required",
+      "status": "open",
+      "updated": "2026-04-20",
+      "sources": [
+        "analysis/scripts/156_lbf_upstream_lag.js",
+        "analysis/scripts/164_gimbal_residual_decomp.js",
+        "analysis/scripts/165_scaled_ideal_verify.js",
+        "analysis/scripts/167_late_roll_investigate.js",
+        "analysis/logs/47_lbf_upstream_falsified.md",
+        "analysis/logs/55_late_residual_singularity.md",
+        "analysis/logs/56_r6_r7_close.md",
+        "X-US9121758"
+      ],
+      "depends_on": [
+        "F-0001"
+      ],
+      "reproducibility": null,
+      "file": "ledger/findings/F-0005-late-rapid-roll-residual.md"
+    },
+    {
+      "id": "F-0006",
+      "summary": "GoFast companion video's low pod-roll change (Δ=3.76°) predicts ~4° of artefact rotation under the derotator reading, matching observation",
+      "status": "agreed",
+      "updated": "2026-04-19",
+      "sources": [
+        "analysis/scripts/20_gofast_predict.js",
+        "analysis/scripts/158_gofast_formula_decomp.js",
+        "analysis/data/20_gofast_predict.csv",
+        "analysis/logs/49_gofast_pod_roll.md",
+        "analysis/logs/50_gofast_formula_decomp.md"
+      ],
+      "depends_on": [
+        "F-0001"
+      ],
+      "reproducibility": null,
+      "file": "ledger/findings/F-0006-gofast-control.md"
+    },
+    {
+      "id": "F-0007",
+      "summary": "Clean-cloud image rotation (20.3° endpoint swing) exceeds the bank×cos(az) geometric prediction (~12°) by ~8° across the whole clip; spatial uniformity of flow across the frame implicates camera-internal mechanical rotation, not scene parallax",
+      "status": "open",
+      "updated": "2026-04-20",
+      "sources": [
+        "analysis/scripts/182_zaine_check.js",
+        "analysis/scripts/183_offaxis_decomp.js",
+        "analysis/scripts/184_offaxis_refined.js",
+        "analysis/scripts/185_residual_structure.js",
+        "analysis/scripts/187_linear_model_fit.js",
+        "analysis/scripts/188_with_heading.js",
+        "analysis/scripts/190_tile_flow.js",
+        "analysis/outputs/185_residual_structure.png"
+      ],
+      "depends_on": [
+        "F-0001"
+      ],
+      "reproducibility": "scripted",
+      "file": "ledger/findings/F-0007-cloud-rotation-excess.md"
+    },
+    {
+      "id": "F-0008",
+      "summary": "The glare's fitted ellipse shape (semi-major a, semi-minor b, eccentricity e) stays within ATFLIR compression noise (~5% on 11-px blobs) while the ellipse position-angle sweeps 123° across the clip — the signature predicted for a PSF-dominated optical artefact, not a rigid aspect-varying object",
+      "status": "agreed",
+      "updated": "2026-04-20",
+      "sources": [
+        "analysis/scripts/192_glare_ellipse.js",
+        "analysis/outputs/192_glare_ellipse.csv"
+      ],
+      "depends_on": [
+        "F-0001"
+      ],
+      "reproducibility": "scripted",
+      "file": "ledger/findings/F-0008-glare-shape-stability.md"
+    }
+  ]
+}

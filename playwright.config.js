@@ -20,10 +20,21 @@ let baseURL = process.env.PLAYWRIGHT_BASE_URL || 'https://local.metabunk.org';
 export default defineConfig({
   testDir: './tests_regression',
   testMatch: ['**/ui-playwright.test.js', '**/ui-menu-sweep.test.js', '**/regression.test.js', '**/chatbot-playwright.test.js', '**/webm-video-export.test.js', '**/motion-analysis.test.js', '**/motion-accumulation.test.js', '**/video-loading.test.js', '**/satellite-label-visibility.test.js', '**/mobile-viewport.test.js', '**/video-cache-gaps.test.js', '**/nitf-decode.test.js'],
+  // All baseline snapshots live under a single tracked directory,
+  // organized by source test file. Diffs and "actual" images on test
+  // failure go to snapshots-diffs/ (gitignored) instead of the default
+  // test-results/. Paths are relative to testDir so every worktree
+  // produces the same layout.
+  snapshotPathTemplate: '{testDir}/snapshots-baseline/{testFileName}/{arg}{-projectName}{-platform}{ext}',
+  outputDir: './tests_regression/snapshots-diffs',
   timeout: 120000,
   fullyParallel: true,
   forbidOnly: false,
-  retries: 0,
+  // One retry absorbs the transient WebGL context-lost / shader-link races
+  // that appear intermittently with workers=4 in the Docker sandbox's
+  // SwiftShader backend. Real regressions fail both attempts; flakes pass
+  // the second time without rescheduling the whole suite.
+  retries: 1,
   workers: 4,
   maxFailures: 1,
   reporter: 'list',

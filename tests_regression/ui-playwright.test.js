@@ -427,7 +427,7 @@ test.describe.serial('UI Interaction Tests - Playwright', () => {
             });
 
             const fileChooser = await fileChooserPromise;
-            await fileChooser.setFiles(['/Users/mick/Dropbox/Sitrec Resources/TEST CSVs/LA Features.csv']);
+            await fileChooser.setFiles([path.resolve(__dirname, 'fixtures/LA Features.csv')]);
 
             await consolePromise;
 

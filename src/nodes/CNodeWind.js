@@ -1,91 +1,12 @@
 import {CNode, CNodeOrigin} from "./CNode";
 import {metersPerSecondFromKnots, radians} from "../utils";
-import {GlobalDateTimeNode, NodeMan, Sit} from "../Globals";
+import {NodeMan, Sit} from "../Globals";
 import {DebugArrowAB} from "../threeExt";
 import {GlobalScene} from "../LocalFrame";
 import {getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {assert} from "../assert";
 import {V3} from "../threeUtils";
-import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
-import {meanSeaLevelOffset} from "../EGM96Geoid";
-import {showError} from "../showError";
 import {t} from "../i18n";
-
-const PRESSURE_LEVELS = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200, 150, 100, 70, 50, 30];
-
-// Approximate geopotential altitude (meters) for each pressure level under standard atmosphere.
-// Used to select a small subset of levels near the target altitude, keeping the API URL short.
-const APPROX_ALT = {
-    1000: 100, 975: 300, 950: 500, 925: 750, 900: 1000,
-    850: 1500, 800: 2000, 700: 3000, 600: 4200, 500: 5500,
-    400: 7200, 300: 9200, 250: 10400, 200: 11800, 150: 13600,
-    100: 16200, 70: 18500, 50: 20600, 30: 23800,
-};
-
-// Return the subset of PRESSURE_LEVELS that bracket the target altitude,
-// with one extra level on each side for safety.
-function selectPressureLevels(targetAltMSL) {
-    // sorted low-altitude-first (high pressure first) — same order as PRESSURE_LEVELS
-    let upper = 0; // index of first level whose approx alt >= target
-    for (let i = 0; i < PRESSURE_LEVELS.length; i++) {
-        if (APPROX_ALT[PRESSURE_LEVELS[i]] >= targetAltMSL) { upper = i; break; }
-        upper = i; // if target is above everything, clamp to last
-    }
-    const lo = Math.max(0, upper - 1);
-    const hi = Math.min(PRESSURE_LEVELS.length - 1, upper + 1);
-    return PRESSURE_LEVELS.slice(lo, hi + 1);
-}
-
-// Interpolate wind speed and direction at a target altitude given arrays of
-// geopotential heights, wind speeds, and wind directions from pressure-level data.
-function interpolateWindAtAltitude(targetAlt, heights, speeds, dirs) {
-    const valid = [];
-    for (let i = 0; i < heights.length; i++) {
-        if (heights[i] != null && speeds[i] != null && dirs[i] != null) {
-            valid.push({height: heights[i], speed: speeds[i], dir: dirs[i]});
-        }
-    }
-
-    if (valid.length === 0) {
-        return {speed: 0, direction: 0};
-    }
-
-    // geopotential heights increase as pressure decreases
-    valid.sort((a, b) => a.height - b.height);
-
-    // clamp to nearest if outside range
-    if (targetAlt <= valid[0].height) {
-        return {speed: valid[0].speed, direction: valid[0].dir};
-    }
-    if (targetAlt >= valid[valid.length - 1].height) {
-        const last = valid[valid.length - 1];
-        return {speed: last.speed, direction: last.dir};
-    }
-
-    // find bracketing levels
-    for (let i = 0; i < valid.length - 1; i++) {
-        if (valid[i].height <= targetAlt && valid[i + 1].height >= targetAlt) {
-            const t = (targetAlt - valid[i].height) / (valid[i + 1].height - valid[i].height);
-            const speed = valid[i].speed + t * (valid[i + 1].speed - valid[i].speed);
-            const direction = circularInterp(valid[i].dir, valid[i + 1].dir, t);
-            return {speed, direction};
-        }
-    }
-
-    // fallback (shouldn't reach here)
-    return {speed: valid[0].speed, direction: valid[0].dir};
-}
-
-// Interpolate between two angles (in degrees) handling the 360/0 wraparound
-function circularInterp(a, b, t) {
-    const aRad = a * Math.PI / 180;
-    const bRad = b * Math.PI / 180;
-    const sinVal = Math.sin(aRad) * (1 - t) + Math.sin(bRad) * t;
-    const cosVal = Math.cos(aRad) * (1 - t) + Math.cos(bRad) * t;
-    let result = Math.atan2(sinVal, cosVal) * 180 / Math.PI;
-    if (result < 0) result += 360;
-    return result;
-}
 
 export class CNodeWind extends CNode {
     constructor(v, _guiMenu) {
@@ -119,14 +40,10 @@ export class CNodeWind extends CNode {
         // so in the update function we can just get the zero frame position of the origin track
         // the zero frame will NOT have any wind applied, as that time dependent (and the zero frame has t=0)
         this.originTrack = v.originTrack; // optional, if supplied, the wind is in the frame of reference of the track
-
-        // add fetch button if we have an origin track to get position from
-        this.fetchingWind = false;
-        if (this.gui && this.originTrack) {
-            this.fetchWindButtonName = "[BETA] Fetch " + this.name + " Wind";
-            this.guiFetchWind = this.gui.add(this, "fetchWind").name(this.fetchWindButtonName)
-                .tooltip(t("misc.fetchWind.tooltip"));
-        }
+        // Manual per-node Open-Meteo fetch used to live here as a "[BETA]
+        // Fetch ... Wind" button. Superseded by the Wind Data folder
+        // (Source=open-meteo + Refresh) which drives this node via
+        // propagateToWindNodes.
 
         // forcing extra intial recalculate cascades (only of there's an origin track)
         // this is to ensure that the wind is in the correct frame of reference
@@ -283,122 +200,6 @@ export class CNodeWind extends CNode {
         // var B = A.clone().add(this.p().multiplyScalar(Sit.frames))
         // DebugArrowAB(this.id+" Wind",A,B,this.arrowColor,true,GlobalScene)
     }
-
-    async fetchWind() {
-        if (!this.originTrack) return;
-        if (this.fetchingWind) return; // ignore clicks while already fetching
-
-        // resolve originTrack string to node if needed
-        if (typeof this.originTrack === "string") {
-            this.originTrack = NodeMan.get(this.originTrack);
-        }
-
-        // start animated "Fetching..." indicator
-        this.fetchingWind = true;
-        let dotCount = 0;
-        const dotInterval = setInterval(() => {
-            dotCount = (dotCount % 5) + 1;
-            this.guiFetchWind?.name("Fetching" + ".".repeat(dotCount));
-        }, 300);
-
-        // get position from originTrack at current frame
-        const f = Sit.currentFrame ?? 0;
-        const posECEF = this.originTrack.p(f);
-        const lla = ECEFToLLAVD_radii(posECEF);
-        const lat = lla.x;
-        const lon = lla.y;
-        const altMSL = lla.z - meanSeaLevelOffset(lat, lon);
-
-        // determine date — use sitch date if available, otherwise current time
-        const dateNow = (GlobalDateTimeNode && GlobalDateTimeNode.dateNow)
-            ? GlobalDateTimeNode.dateNow
-            : new Date();
-        const dateStr = dateNow.toISOString().slice(0, 10);
-
-        // choose forecast vs historical-forecast endpoint
-        // note: archive-api does NOT support pressure-level variables,
-        // but historical-forecast-api does (reanalysis data with pressure levels)
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const isHistorical = dateNow < today;
-        const baseUrl = isHistorical
-            ? "https://historical-forecast-api.open-meteo.com/v1/forecast"
-            : "https://api.open-meteo.com/v1/forecast";
-
-        // select only pressure levels near the target altitude to keep URL short
-        const levels = selectPressureLevels(altMSL);
-        const windSpeedVars = levels.map(l => `wind_speed_${l}hPa`).join(",");
-        const windDirVars = levels.map(l => `wind_direction_${l}hPa`).join(",");
-        const geoHeightVars = levels.map(l => `geopotential_height_${l}hPa`).join(",");
-
-        const url = `${baseUrl}?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}`
-            + `&hourly=${windSpeedVars},${windDirVars},${geoHeightVars}`
-            + `&wind_speed_unit=kn&start_date=${dateStr}&end_date=${dateStr}`;
-
-        // retry with 30-second timeout per attempt (Open-Meteo recommends this)
-        const maxRetries = 3;
-        let lastError;
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-                const response = await fetch(url, {signal: controller.signal});
-                clearTimeout(timeoutId);
-
-                if (response.status === 429) {
-                    // rate-limited — wait and retry
-                    throw new Error("Rate limited (429), retrying...");
-                }
-                if (!response.ok) {
-                    throw new Error(`Open-Meteo API error: ${response.status} ${response.statusText}`);
-                }
-                const data = await response.json();
-
-                // find hourly index closest to our time
-                const hourIndex = dateNow.getUTCHours();
-
-                // extract values at this hour for each pressure level
-                const heights = levels.map(l => data.hourly[`geopotential_height_${l}hPa`]?.[hourIndex]);
-                const speeds = levels.map(l => data.hourly[`wind_speed_${l}hPa`]?.[hourIndex]);
-                const dirs = levels.map(l => data.hourly[`wind_direction_${l}hPa`]?.[hourIndex]);
-
-                const result = interpolateWindAtAltitude(altMSL, heights, speeds, dirs);
-
-                this.from = Math.round(result.direction);
-                this.knots = Math.round(result.speed);
-
-                if (this.guiFrom) this.guiFrom.updateDisplay();
-                if (this.guiKnots) this.guiKnots.updateDisplay();
-                this.recalculateCascade();
-
-                console.log(`Fetched ${this.name} wind at ${lat.toFixed(2)}, ${lon.toFixed(2)}, `
-                    + `alt ${altMSL.toFixed(0)}m MSL: from ${this.from}° at ${this.knots} kn`);
-                lastError = null;
-                break; // success
-            } catch (error) {
-                lastError = error;
-                if (error.name === "AbortError") {
-                    lastError = new Error("Request timed out (30s)");
-                }
-                console.warn(`Wind fetch attempt ${attempt}/${maxRetries} failed:`, lastError.message);
-                if (attempt < maxRetries) {
-                    this.guiFetchWind?.name(`Retry ${attempt + 1}/${maxRetries}...`);
-                    await new Promise(r => setTimeout(r, 2000 * attempt)); // backoff
-                }
-            }
-        }
-
-        if (lastError) {
-            console.error("Wind fetch failed after retries:", lastError);
-            showError("Failed to fetch wind data: " + lastError.message + "\nFrom:\n" + url);
-        }
-
-        clearInterval(dotInterval);
-        this.fetchingWind = false;
-        this.guiFetchWind?.name(this.fetchWindButtonName);
-    }
-
 
 }
 
