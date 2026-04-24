@@ -1,5 +1,5 @@
 import {altitudeAboveSphere, getLocalUpVector} from "../SphericalMath";
-import {Sit} from "../Globals";
+import {NodeMan, Sit} from "../Globals";
 import {CNodeTrack} from "./CNodeTrack";
 import {assert} from "../assert";
 import {V3} from "../threeUtils";

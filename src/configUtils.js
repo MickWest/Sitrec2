@@ -1,5 +1,6 @@
 import {Globals} from "./Globals";
 import {getEnv} from "./envUtils";
+import {assert} from "./assert";
 
 export const isConsole = (typeof window === 'undefined');
 

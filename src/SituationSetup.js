@@ -1530,7 +1530,10 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
                 // in console mode the nodes many not already be registered
                 // so attempt to register them if they're not already known to be valid
                 if(isConsole && !valid && data.kind !== undefined) {
-                    valid = await registerNodeConsole(key, consoleKeyInfo.file)
+                    const consoleKeyInfo = consoleKeys?.get(key);
+                    if (consoleKeyInfo) {
+                        valid = await registerNodeConsole(key, consoleKeyInfo.file)
+                    }
                 }
                 
                 if (valid) {

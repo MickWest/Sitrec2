@@ -3,6 +3,7 @@
 import {findColumn, parseISODate} from "./ParseUtils";
 import {MISB, MISBFields} from "./MISBUtils";
 import {GlobalDateTimeNode, Sit} from "./Globals";
+import {showError} from "./showError";
 import {f2m} from "./utils";
 import {parseMGRS} from "./CoordinateParser";
 import {ecefToLLA, extendECEFTelemetryWithOrbit} from "./ParseFlightClubJSON";

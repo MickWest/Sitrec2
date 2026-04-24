@@ -10,6 +10,7 @@ import {
 } from "./Globals";
 import {isAdmin} from "./configUtils";
 import {par} from "./par";
+import {startAnalysis, updateGuiValues, updateOptimizeStatus} from "./CMotionAnalysisShared";
 import {ExportProgressWidget, getExportPrefix} from "./utils";
 
 import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";

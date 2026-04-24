@@ -1,4 +1,5 @@
 import {getTranslationVariants, t} from "./i18n";
+import {par} from "./par";
 
 export let mainLoopCount = 0;
 export function incrementMainLoopCount() {

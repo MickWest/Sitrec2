@@ -1,6 +1,7 @@
 import {CNode} from "./CNode";
 import {Globals, NodeMan, Sit} from "../Globals";
 import {assert} from "../assert";
+import {par} from "../par";
 
 class CNodeWatch extends CNode {
     constructor(v) {

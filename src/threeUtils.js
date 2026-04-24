@@ -1,5 +1,5 @@
 // Utlity functions to make vectors, 2 or 3 size.
-import {Color, Vector2, Vector3} from "three";
+import {Color, Matrix4, Vector2, Vector3} from "three";
 
 
 export function V2(x = 0, y = 0) {
@@ -71,9 +71,9 @@ export function intersectEllipse(ray, sphere, minorRadius, axis, target0, target
     const ratio = sphere.radius / minorRadius; // ratio to scale UP
     const rayScaled = ray.clone();
     rayScaled.origin.sub(sphere.center)
-    rayScaled.origin = scaleVectorInDirection(rayScaled.origin, axis, scale)
+    rayScaled.origin = scaleVectorInDirection(rayScaled.origin, axis, ratio)
     rayScaled.origin.add(sphere.center)
-    rayScaled.direction = scaleVectorInDirection(rayScaled.direction, axis, scale).normalize()
+    rayScaled.direction = scaleVectorInDirection(rayScaled.direction, axis, ratio).normalize()
 
     const collision = intersectSphere2(rayScaled, sphere, target0, target1)
     if (collision) {

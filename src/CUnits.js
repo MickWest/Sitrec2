@@ -262,13 +262,13 @@ export class CUnits {
     }
 
     convertMeters(m, unitType="big", decimals=0) {
-        switch (toUnits) {
+        switch (unitType) {
             case "big":
                 return this.big(m);
             case "small":
                 return this.small(m);
             default:
-                assert(0, "CUnits: unknown units: " + toUnits);
+                assert(0, "CUnits: unknown units: " + unitType);
         }
     }
 

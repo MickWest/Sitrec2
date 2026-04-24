@@ -1,5 +1,6 @@
 import {findColumn} from "./ParseUtils";
 import {FeatureManager} from "./CFeatureManager";
+import {showError} from "./showError";
 
 // a features CSV has lat, lon, (optional) alt, and label columns
 

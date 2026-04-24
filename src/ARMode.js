@@ -2,7 +2,7 @@
 // Based on compass/index.html device orientation code
 // i.e. point your phone (or other device) North to face the camera North
 
-import {Globals} from "./Globals";
+import {Globals, NodeMan} from "./Globals";
 import {Euler, MathUtils} from "three";
 import {DeviceOrientationCompass} from "../tools/src/DeviceOrientationCompass";
 

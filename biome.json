@@ -1,6 +1,25 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.4.4/schema.json",
 	"assist": { "actions": { "source": { "organizeImports": "on" } } },
+	"files": {
+		"includes": [
+			"**",
+			"!src/js/misb.js-main/**",
+			"!src/js/mp4box.all.js",
+			"!src/js/mp4-decode/**",
+			"!src/js/opencv.js",
+			"!src/js/lil-gui.esm.js",
+			"!src/workers/**"
+		]
+	},
+	"javascript": {
+		"globals": [
+			"CAN_REQUIRE_CONTEXT",
+			"__SITREC_BUILD_DIR__",
+			"__SITREC_BROWSER_PROCESS_ENV__",
+			"INCLUDE_IWER_EMULATOR"
+		]
+	},
 	"linter": {
 		"enabled": true,
 		"rules": {

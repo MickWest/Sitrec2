@@ -2,7 +2,7 @@
 
 import {DebugArrowAB, intersectSurface, removeDebugArrow} from "../threeExt";
 import {CNode} from "./CNode";
-import {guiShowHide} from "../Globals";
+import {guiShowHide, NodeMan} from "../Globals";
 import {convertColorInput} from "../ConvertColorInputs";
 import {Raycaster, Vector3} from "three";
 import * as LAYER from "../LayerMasks";

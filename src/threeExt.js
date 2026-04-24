@@ -24,6 +24,7 @@ import {
 
 import {Globals, NodeMan, setRenderOne, Synth3DManager} from './Globals';
 import {par} from "./par";
+import {showError} from "./showError";
 
 
 import {altitudeHAE, drop3, earthCenterECEF, pointOnSphereBelow, raisePoint, setAltitudeHAE} from "./SphericalMath"

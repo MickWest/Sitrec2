@@ -1,5 +1,6 @@
 import {isLocal, SITREC_SERVER} from "./configUtils";
 import {withTestUser} from "./Globals";
+import {showError} from "./showError";
 
 export function writeToClipboard(text) {
     navigator.clipboard.writeText(text).then(() => {

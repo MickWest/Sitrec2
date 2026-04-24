@@ -6,6 +6,7 @@
 import {CNodeViewUI} from "./CNodeViewUI";
 import {assert} from "../assert";
 import {Globals, NodeMan, Sit} from "../Globals";
+import {par} from "../par";
 import {radians} from "../utils";
 import {extractFOV} from "./CNodeControllerVarious";
 import {mouseToCanvas} from "../ViewUtils";

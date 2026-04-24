@@ -13,6 +13,7 @@ import {BufferAttribute, BufferGeometry, Color, DoubleSide, DynamicDrawUsage, In
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {guiPhysics, NodeMan, setRenderOne, Sit} from "../Globals";
+import {par} from "../par";
 import {EventManager} from "../CEventManager";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import * as LAYER from "../LayerMasks";

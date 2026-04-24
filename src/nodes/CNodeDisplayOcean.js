@@ -4,6 +4,7 @@ import {metersFromMiles} from "../utils";
 import {drop} from "../SphericalMath";
 import {dispose} from "../threeExt";
 import {CNode3DGroup} from "./CNode3DGroup";
+import {assert} from "../assert";
 
 
 class SimpleOceanGeometry extends BufferGeometry {

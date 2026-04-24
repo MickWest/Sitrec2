@@ -3,6 +3,7 @@ import {V3} from "../threeUtils";
 import {LLAToECEFRadians} from "../LLA-ECEF-ENU";
 import {SITREC_SERVER} from "../configUtils";
 import {FileManager, GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne} from "../Globals";
+import {par} from "../par";
 import {EventManager} from "../CEventManager";
 import * as satellite from 'satellite.js';
 import {bestSat, CTLEData, satRecToDate} from "../TLEUtils";

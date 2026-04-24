@@ -290,7 +290,7 @@ export function UpdateHUD(text="") {
         ;
     }
     if (ViewMan.list.video && ViewMan.list.video.data.videoPercentLoaded > 0 && ViewMan.list.video.data.videoPercentLoaded < 100) {
-        keyInfo += "Loading Video " + VideoPercentLoaded + "%<br>";
+        keyInfo += "Loading Video " + ViewMan.list.video.data.videoPercentLoaded + "%<br>";
     }
 
 

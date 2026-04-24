@@ -21,6 +21,7 @@ import {getCV, loadOpenCV} from "./openCVLoader";
 import {applyConvolution} from "./nodes/CNodeVideoView";
 import {getFlowAlignRotation, isAlignWithFlowEnabled, setAlignWithFlow, setMotionAnalyzerRef} from "./FlowAlignment";
 import {t} from "./i18n";
+import {setStartAnalysis, setUpdateGuiValues, setUpdateOptimizeStatus, updateGuiValues} from "./CMotionAnalysisShared";
 import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";
 import {CNodeSpeedOverlay} from "./nodes/CNodeSpeedOverlay";
 import {CNodeVelocityFromMotion} from "./nodes/CNodeVelocityFromMotion";
@@ -265,8 +266,9 @@ function drawFrameToPano(panoCtx, image, x, y, crop, croppedWidth, croppedHeight
     }
 }
 let motionAnalyzer = null;
-let updateOptimizeStatus = null;
-let updateGuiValues = null;
+// updateOptimizeStatus and updateGuiValues live in CMotionAnalysisShared.js so
+// CMotionAnalysis.js can import + call them without creating a circular dep
+// (UI already imports from CMotionAnalysis). Assignments below use the setters.
 let analyzeMenuItem = null;
 let renderHooked = false;
 
@@ -302,6 +304,8 @@ export async function toggleMotionAnalysis() {
 
 let paramControllers = [];
 
+// Registered with the shared module so CMotionAnalysis.js can invoke it
+// without importing from this file directly (avoids circular dep).
 function startAnalysis(videoView) {
     if (!motionAnalyzer) {
         motionAnalyzer = new MotionAnalyzer(videoView);
@@ -328,6 +332,7 @@ function startAnalysis(videoView) {
 
     setRenderOne(true);
 }
+setStartAnalysis(startAnalysis);
 
 let motionFolder = null;
 let motionTrackCounter = 0;
@@ -1197,22 +1202,22 @@ function createParamSliders() {
         if (abortBtn) abortBtn.show(show);
     };
     
-    updateGuiValues = () => {
+    setUpdateGuiValues(() => {
         for (const ctrl of paramControllers) {
             if (ctrl && ctrl.updateDisplay) {
                 try { ctrl.updateDisplay(); } catch (e) {}
             }
         }
-    };
-    
-    updateOptimizeStatus = (gen, fitness, bestParams) => {
+    });
+
+    setUpdateOptimizeStatus((gen, fitness, bestParams) => {
         if (bestParams) {
             statusText.value = `Gen ${gen}: fit=${fitness.toFixed(3)} [fs=${bestParams.frameSkip} blur=${bestParams.blurSize} feat=${bestParams.maxFeatures} qual=${bestParams.minQuality.toFixed(2)}]`;
         } else {
             statusText.value = `Gen ${gen}: fit=${fitness.toFixed(3)}`;
         }
         if (statusCtrl) statusCtrl.updateDisplay();
-    };
+    });
     
     const buildReport = (original, final, accepted) => {
         const changes = [];

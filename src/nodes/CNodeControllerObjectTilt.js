@@ -2,6 +2,7 @@ import {CNodeController} from "./CNodeController";
 import {guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {trackAcceleration, trackDirection, trackVelocity} from "../trackUtils";
 import {V3} from "../threeUtils";
+import {assert} from "../assert";
 import {Matrix4} from "three";
 import {radians} from "../utils";
 import {getLocalUpVector} from "../SphericalMath";
