@@ -7,7 +7,6 @@ import * as LAYER from "./LayerMasks";
 import {assert} from "./assert";
 import "./threeExt";
 import {EventManager} from "./CEventManager";
-import {asyncOperationRegistry} from "./AsyncOperationRegistry";
 
 // Reusable Vector3 objects to avoid garbage collection pressure
 // These are reused across all tile visibility calculations
@@ -176,72 +175,6 @@ export class QuadTreeMap {
     }
 
     initTiles() {
-        // Register the initial tile-load batch with the async operation
-        // registry so that "No pending actions" cannot fire before this map's
-        // first cohort of tiles has finished loading.
-        //
-        // Why: in fixed-grid mode, initTilePositions() activates nTiles*nTiles
-        // tiles in one synchronous loop, but applyMaterial() (which sets
-        // tile.isLoading=true) runs as part of the per-tile activation that
-        // queues async work. There's a window between initTilePositions()
-        // returning and the first tile's isLoading=true assignment becoming
-        // observable to hasPendingTiles(). If Globals.pendingActions has
-        // already hit zero by that point, the renderMain "No pending actions"
-        // emit can fire while the 64-tile batch hasn't started loading yet,
-        // and the regression test screenshots an empty terrain rendered
-        // against the scene background. (Symptom: solid green where terrain
-        // should be on agua/potomac etc.)
-        //
-        // Dynamic mode has the same shape but is less affected because
-        // camera-driven subdivision keeps tiles continuously in flight, so
-        // the pending-tile signal is naturally a steady-state. Registering
-        // here covers both modes, which is the right architectural fit.
-        const initBatchPromise = (async () => {
-            // Yield so the synchronous activateTile() loop in
-            // initTilePositions{,Dynamic} has finished queueing its async
-            // work and the per-tile applyMaterial / recalculateCurve
-            // microtasks have set the per-tile isLoading flags. 100ms is
-            // overkill but the only cost is a tiny floor on
-            // pendingActions-zero latency; well under one regression-test
-            // frame budget.
-            await new Promise((r) => setTimeout(r, 100));
-
-            // Drain the per-tile loading flags using the SAME predicate
-            // hasPendingTiles() in indexRender.js uses — that's the
-            // signal "No pending actions" gates on, so polling the same
-            // thing is what closes the race definitively. Works for both
-            // QuadTreeMapTexture (.isLoading) and QuadTreeMapElevation
-            // (.isLoadingElevation) without needing per-subclass state.
-            // (My earlier attempt polled this.pendingTileLoads, which
-            // only exists on the texture subclass — the elevation
-            // map's promise resolved immediately, leaving the original
-            // race wide open. See commit 76593927 for the broken first
-            // pass.)
-            // Bounded at 60s; tests have their own outer timeout.
-            const startTime = Date.now();
-            while (Date.now() - startTime < 60000) {
-                let pending = false;
-                if (this.forEachTile) {
-                    this.forEachTile((tile) => {
-                        if (
-                            tile.isLoading ||
-                            tile.isLoadingElevation ||
-                            tile.isRecalculatingCurve
-                        ) {
-                            pending = true;
-                        }
-                    });
-                }
-                if (!pending) break;
-                await new Promise((r) => setTimeout(r, 50));
-            }
-        })();
-        asyncOperationRegistry.registerPromise(
-            initBatchPromise,
-            "tile-init",
-            `${this.constructor.name} ${this.dynamic ? "dynamic" : `${this.nTiles}x${this.nTiles}`}@z${this.zoom}`,
-        );
-
         if (this.dynamic) {
             this.initTilePositionsDynamic()
          } else {

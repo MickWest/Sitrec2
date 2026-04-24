@@ -18,13 +18,22 @@ const testDataDefault = [
     { id: "testquick", name: "testquick", url: "?testAll=2", waitFor: "All tests complete"},
     { id: 'default', name: 'default', url: '?action=new&frame=10' },
  //   { id: 'wmts', name: 'WMTS', url: '?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Regression%20test%20NRL%20WMTS/20251204_001658.js&mapType=WMTS' },
-    { id: 'agua', name: 'agua', url: '?sitch=agua&frame=10' },
+    // agua: fixed-grid sitch saved at zoom 15. The Local map source's
+    // pre-cached tiles cap out at maxZoom=6 (elevation) / 8 (texture), so
+    // local-terrain mode rejects every activateTile() call (z > effMax)
+    // and the map renders empty (scene background green). Use live tiles
+    // for this test; baseline was captured the same way.
+    { id: 'agua', name: 'agua', url: '?sitch=agua&frame=10', localTerrain: false },
     // ocean: explicitly tests the OceanSurface map type, so do NOT force the
     // local-terrain mirror — the test would render the wrong tiles otherwise.
     { id: 'ocean', name: 'ocean surface', url: '?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/REGRESSION%20TEST%20_%20Ocean%20Surface/20251114_234141.js&frame=10&mapType=OceanSurface', localTerrain: false },
     { id: 'gimbal', name: 'gimbal', url: '?sitch=gimbal&frame=10', timeout: 120000 },
     { id: 'starlink', name: 'starlink', url: '?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Stalink%20Names/20250218_060544.js' },
-    { id: "potomac", name: "potomac", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Potomac/20250204_203812.js&frame=10" },
+    // potomac: same root cause as agua — fixed-grid saved at a zoom deeper
+    // than the Local map source's pre-cached tile depth, so local-terrain
+    // mode loads no tiles and renders empty. Live tiles preserve the
+    // baseline-matching render.
+    { id: "potomac", name: "potomac", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Potomac/20250204_203812.js&frame=10", localTerrain: false },
     { id: "orion", name: "orion", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Orion%20in%20Both%20views%20for%20Label%20Check/20251127_200130.js&frame=10" },
     { id: "bledsoe", name: "bledsoe", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/15857/BledsoeZoom/20250623_153507.js&frame=10" },
     { id: "mosul", name: "mosul", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Mosul%20Orb/20250707_055311.js&frame=62"},
