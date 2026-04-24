@@ -375,7 +375,13 @@ test.describe('Visual Regression Testing', () => {
     // serial mode just cascades one flake into skipping the rest of the
     // describe. Extra retries are the least-bad lever: genuine regressions
     // still fail all three attempts, random link failures get absorbed.
-    test.describe.configure({ retries: 2 });
+    // 3 retries (4 total attempts) absorbs intermittent live-tile / SwiftShader
+    // races that occasionally produce empty (white/green) renders for sitches
+    // hitting external sources at workers=4. Genuine regressions still fail
+    // all 4 attempts. Retries fire end-to-end (verified via the
+    // snapshots-diffs/...retry1-repeat1 artifact pattern from a --repeat-each
+    // experiment), so this is a real lever, not a config no-op.
+    test.describe.configure({ retries: 3 });
 
     testData.forEach(({ id, name, url, waitFor, timeout, localTerrain }) => {
         test(`should match the baseline screenshot for ${name}`, async ({ page }, testInfo) => {
