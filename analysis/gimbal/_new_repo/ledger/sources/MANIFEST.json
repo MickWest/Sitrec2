@@ -1,0 +1,57 @@
+{
+  "X-US9121758": {
+    "type": "patent",
+    "title": "Multi-axis pointing system (ATFLIR-class four-axis coelostat)",
+    "url": "https://patents.google.com/patent/US9121758",
+    "local": "ledger/sources/patents/US9121758.pdf",
+    "sha256": null
+  },
+  "X-US6288381": {
+    "type": "patent",
+    "title": "Lens mount for a focal plane array (ATFLIR-specific)",
+    "url": "https://patents.google.com/patent/US6288381",
+    "local": "ledger/sources/patents/US6288381.pdf",
+    "sha256": null
+  },
+  "X-EP2525235": {
+    "type": "patent",
+    "title": "Gimbal lock avoidance via derotation + gimbal decoupling",
+    "url": "https://patents.google.com/patent/EP2525235",
+    "local": "ledger/sources/patents/EP2525235.pdf",
+    "sha256": null
+  },
+  "X-MB-14839": {
+    "type": "metabunk-thread",
+    "title": "Gimbal — agents forum thread",
+    "url": "https://www.metabunk.org/threads/14839/",
+    "local": "analysis/metabunk_audit/thread_14839_full.txt"
+  },
+  "X-MB-12552": {
+    "type": "metabunk-thread",
+    "title": "Gimbal derotated video, using clouds as the horizon",
+    "url": "https://www.metabunk.org/threads/12552/",
+    "local": "analysis/metabunk_audit/thread_12552_full.txt"
+  },
+  "X-MB-12237": {
+    "type": "metabunk-thread",
+    "title": "Gimbal primary thread",
+    "url": "https://www.metabunk.org/threads/12237/",
+    "local": "analysis/metabunk_audit/thread_12237_full.txt"
+  },
+  "X-MB-12590": {
+    "type": "metabunk-thread",
+    "title": "Gimbal related thread",
+    "url": "https://www.metabunk.org/threads/12590/",
+    "local": "analysis/metabunk_audit/thread_12590_full.txt"
+  },
+  "X-marik2026-transcript": {
+    "type": "transcript",
+    "title": "Marik von Rennenkampff Gimbal rebuttal video transcript (2026)",
+    "local": "analysis/Marik 2026 Gimbal Video Transcript.txt"
+  },
+  "X-mick2022-transcript": {
+    "type": "transcript",
+    "title": "Mick West original Gimbal rotation-via-derotator video transcript (2022)",
+    "local": "analysis/Mick 2022 Gimbal Transcript.txt"
+  }
+}
