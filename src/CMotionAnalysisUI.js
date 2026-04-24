@@ -31,6 +31,7 @@ import {
     ensureOpenCVAndAnalyzer,
     getAnalyzeWithEffects,
     getVideoEffectsFilterString,
+    MOTION_TECHNIQUES,
     MotionAnalyzer,
     mt,
     setAnalyzeWithEffects,
