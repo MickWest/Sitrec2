@@ -12,13 +12,37 @@
  * Installed on CNodeView3D.prototype via Object.assign (see CNodeView3D.js).
  */
 
-import {CustomManager, Globals, NodeMan, Sit, setRenderOne} from "../Globals";
+import {
+    CustomManager,
+    GlobalDateTimeNode,
+    Globals,
+    NodeMan,
+    setRenderOne,
+    Sit,
+    Synth3DManager,
+    TrackManager,
+} from "../Globals";
+import {Sphere, Vector3} from "three";
 import {par} from "../par";
 import {DRAG, screenToNDC} from "../mouseMoveView";
+import {mouseInViewOnly} from "../ViewUtils";
 import {DebugArrowAB} from "../threeExt";
 import {CNode3DObject} from "./CNode3DObject";
 import {FeatureManager} from "../CFeatureManager";
 import {wgs84} from "../LLA-ECEF-ENU";
+import {intersectSphere2, V3} from "../threeUtils";
+import {GlobalScene, LocalFrame} from "../LocalFrame";
+import {ViewMan} from "../CViewManager";
+import {earthCenterECEF, XYZ2EA, XYZJ2PR} from "../SphericalMath";
+import {isKeyHeld} from "../KeyBoardHandler";
+import {glareSphere, targetSphere} from "../JetStuffVars";
+import {jetPitchFromFrame} from "../JetUtils";
+// NOTE: ChangedPR / UIChangedAz intentionally NOT imported. They are used only
+// inside the legacy "GIMBAL SPECIFIC, NOT USED" dragMode>0 code path below.
+// Importing from ../JetStuff creates a circular dependency
+// (JetStuff -> CNodeView3D -> CNodeView3DMouse -> JetStuff) that webpack flags
+// as an error. If that code path is ever revived, either move ChangedPR /
+// UIChangedAz to a non-cyclic module or use a lazy require at call site.
 
 export const mouseMethods = {
     onMouseUp() {
