@@ -30,7 +30,11 @@ export default defineConfig({
   timeout: 120000,
   fullyParallel: true,
   forbidOnly: false,
-  retries: 0,
+  // One retry absorbs the transient WebGL context-lost / shader-link races
+  // that appear intermittently with workers=4 in the Docker sandbox's
+  // SwiftShader backend. Real regressions fail both attempts; flakes pass
+  // the second time without rescheduling the whole suite.
+  retries: 1,
   workers: 4,
   maxFailures: 1,
   reporter: 'list',

@@ -64,6 +64,44 @@ function buildLocalObjectUrl($key) {
 }
 
 /**
+ * Builds the same-origin S3 proxy URL for an object key. Used in non-AWS mode
+ * when the local mirror is missing a referenced object but S3 credentials are
+ * configured.
+ *
+ * @param string $key
+ * @return string
+ */
+function buildS3ProxyObjectUrl($key) {
+    global $APP_URL;
+    return rtrim($APP_URL, '/') . '/sitrecServer/s3-proxy.php?key=' . rawurlencode($key);
+}
+
+/**
+ * Returns true when the given key points at a readable file inside the local
+ * upload mirror.
+ *
+ * @param string $key
+ * @return bool
+ */
+function localObjectExists($key) {
+    global $UPLOAD_PATH;
+    $path = rtrim($UPLOAD_PATH, '/') . '/' . $key;
+    return is_file($path);
+}
+
+/**
+ * Returns true when S3 credentials are populated enough to round-trip a
+ * read through the proxy (bucket + region set). Access keys are not required
+ * for public objects.
+ *
+ * @return bool
+ */
+function s3ProxyConfigured() {
+    global $s3creds;
+    return !empty($s3creds['bucket']) && !empty($s3creds['region']);
+}
+
+/**
  * Attempts to parse a Sitrec object key from a legacy S3 URL.
  *
  * Supports:
@@ -154,19 +192,27 @@ function resolveLatestObjectKey($folderKey) {
 
     if (!$useAWS) {
         $localDir = rtrim($UPLOAD_PATH, '/') . '/' . $folderKey;
-        if (!is_dir($localDir)) {
-            return null;
-        }
-
-        $files = scandir($localDir);
-        foreach ($files as $file) {
-            if (is_file($localDir . $file) && preg_match('/\.js$/', $file)) {
-                if ($latestFile === null || strcmp($file, $latestFile) > 0) {
-                    $latestFile = $file;
+        if (is_dir($localDir)) {
+            $files = scandir($localDir);
+            foreach ($files as $file) {
+                if (is_file($localDir . $file) && preg_match('/\.js$/', $file)) {
+                    if ($latestFile === null || strcmp($file, $latestFile) > 0) {
+                        $latestFile = $file;
+                    }
                 }
             }
+            if ($latestFile !== null) {
+                return $folderKey . $latestFile;
+            }
         }
-        return $latestFile ? $folderKey . $latestFile : null;
+
+        // Fall through to S3 listing when nothing is mirrored locally. This
+        // lets sandbox installs (SAVE_TO_S3=false) still resolve folders that
+        // only exist upstream, paired with the s3-proxy.php fetch path.
+        if (empty($s3creds['accessKeyId']) || empty($s3creds['secretAccessKey'])
+            || empty($s3creds['bucket']) || empty($s3creds['region'])) {
+            return null;
+        }
     }
 
     require_once __DIR__ . '/vendor/autoload.php';
@@ -211,6 +257,12 @@ function buildResolvedObjectUrl($key) {
     global $useAWS, $s3creds;
 
     if (!$useAWS) {
+        if (!localObjectExists($key) && s3ProxyConfigured()) {
+            return [
+                'url' => buildS3ProxyObjectUrl($key),
+                'expiresAt' => null
+            ];
+        }
         return [
             'url' => buildLocalObjectUrl($key),
             'expiresAt' => null
