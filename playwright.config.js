@@ -35,7 +35,15 @@ export default defineConfig({
   // SwiftShader backend. Real regressions fail both attempts; flakes pass
   // the second time without rescheduling the whole suite.
   retries: 1,
-  workers: 4,
+  // Worker count tradeoff: workers=4 is fast (~3 min for the whole suite)
+  // but produces SwiftShader shader-link failures under contention — the
+  // ocean shader, gimbal video paths, and other GPU-heavy tests flake.
+  // Set PLAYWRIGHT_WORKERS=2 (or 1) when running the full suite locally
+  // through the test viewer; the default of 4 stays correct for CI where
+  // each shard runs on a fresh container.
+  workers: process.env.PLAYWRIGHT_WORKERS
+      ? Number(process.env.PLAYWRIGHT_WORKERS)
+      : 4,
   maxFailures: 1,
   reporter: 'list',
   
