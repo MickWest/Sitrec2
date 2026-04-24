@@ -886,22 +886,12 @@ wss.on('connection', (ws) => {
         
         // Local-terrain mode is the default in regression.test.js; opt out by
         // launching the viewer with REGRESSION_LOCAL_TERRAIN=0.
-        //
-        // Workers default to 2 here (vs. 4 for the headless runner) — the
-        // viewer is for interactive single-machine use, where SwiftShader
-        // shader-link failures under workers=4 produce flaky red diffs in
-        // the ocean / gimbal / other GPU-heavy tests. Override with
-        // PLAYWRIGHT_WORKERS=N to run faster when GPU contention is known
-        // not to be an issue (e.g. fewer tests selected).
-        const childEnv = { ...process.env, FORCE_COLOR: '0' };
-        if (childEnv.PLAYWRIGHT_WORKERS === undefined) {
-            childEnv.PLAYWRIGHT_WORKERS = '2';
-        }
-
+        // Worker count defers to playwright.config.js (currently 4); override
+        // per-launch with PLAYWRIGHT_WORKERS=N if needed.
         testProcess = spawn('npx', ['playwright', 'test', '--reporter=line', '-g', escapedGrep], {
             cwd: __dirname,
             shell: true,
-            env: childEnv,
+            env: { ...process.env, FORCE_COLOR: '0' }
         });
 
         let totalTests = 0;
