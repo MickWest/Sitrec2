@@ -1,0 +1,24 @@
+#!/bin/bash
+#
+# Pre-commit hook: run Biome's lint over staged src/ files.
+#
+# Activated by `npm install` via the "prepare" script in package.json, which
+# sets git's core.hooksPath to .githooks/. No husky, no extra deps.
+#
+# Bypass: git commit --no-verify  (use sparingly — the noUndeclaredVariables
+# rule has already caught ~17 real bugs; skipping is not free).
+
+set -e
+
+# Fast path: no files staged under src/ → nothing to lint.
+STAGED_SRC=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^src/.*\.(js|mjs|ts)$' || true)
+if [ -z "$STAGED_SRC" ]; then
+    exit 0
+fi
+
+npm run lint-staged --silent || {
+    echo ""
+    echo "❌ Lint failed. Fix the issues above, or bypass with:"
+    echo "   git commit --no-verify"
+    exit 1
+}

@@ -162,6 +162,7 @@ export const mouseMethods = {
                         par.podPitchPhysical = pitch;
                         par.globalRoll = roll
                         par.podRollPhysical = par.globalRoll - NodeMan.get("bank").v(par.frame)
+                        // biome-ignore lint/correctness/noUndeclaredVariables: JetStuff circular-dep; see imports block
                         ChangedPR()
                     } else if (this.dragMode == 2) {
                         // dragging white
@@ -170,6 +171,7 @@ export const mouseMethods = {
                         // we want to keep it on the track, so are only changing Az, not El
                         // this is then converted to a frame number
                         par.az = az;
+                        // biome-ignore lint/correctness/noUndeclaredVariables: JetStuff circular-dep; see imports block
                         UIChangedAz();
                     }
                 }
