@@ -19,7 +19,9 @@ const testDataDefault = [
     { id: 'default', name: 'default', url: '?action=new&frame=10' },
  //   { id: 'wmts', name: 'WMTS', url: '?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Regression%20test%20NRL%20WMTS/20251204_001658.js&mapType=WMTS' },
     { id: 'agua', name: 'agua', url: '?sitch=agua&frame=10' },
-    { id: 'ocean', name: 'ocean surface', url: '?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/REGRESSION%20TEST%20_%20Ocean%20Surface/20251114_234141.js&frame=10&mapType=OceanSurface' },
+    // ocean: explicitly tests the OceanSurface map type, so do NOT force the
+    // local-terrain mirror — the test would render the wrong tiles otherwise.
+    { id: 'ocean', name: 'ocean surface', url: '?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/REGRESSION%20TEST%20_%20Ocean%20Surface/20251114_234141.js&frame=10&mapType=OceanSurface', localTerrain: false },
     { id: 'gimbal', name: 'gimbal', url: '?sitch=gimbal&frame=10', timeout: 120000 },
     { id: 'starlink', name: 'starlink', url: '?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Stalink%20Names/20250218_060544.js' },
     { id: "potomac", name: "potomac", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Potomac/20250204_203812.js&frame=10" },
@@ -36,7 +38,7 @@ const testDataTrackFiles = [
     { id: "mosul", name: "mosul", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Mosul%20Orb/20250707_055311.js&frame=62"},
 ]
 
-function buildRegressionUrl(url) {
+function buildRegressionUrl(url, { localTerrain = true } = {}) {
     const hasParam = (input, key) => new RegExp(`[?&]${key}=`).test(input);
     let fullUrl = url;
 
@@ -50,9 +52,13 @@ function buildRegressionUrl(url) {
     // Local-terrain mode is the default for the regression suite — baselines
     // were rendered against the pre-cached local tile mirror, and external
     // ESRI/AWS tile fetches are non-deterministic (live data) and prone to
-    // headless-fetch stalls. Opt out for any run that specifically wants to
-    // exercise the live-tile path: REGRESSION_LOCAL_TERRAIN=0.
-    if (process.env.REGRESSION_LOCAL_TERRAIN !== "0" && !hasParam(fullUrl, "regressionLocalTerrain")) {
+    // headless-fetch stalls. Opt out two ways:
+    //   - per-test: set localTerrain: false in the testData entry (used by
+    //     tests that explicitly exercise a non-Local map type, e.g. ocean
+    //     with mapType=OceanSurface).
+    //   - per-run: REGRESSION_LOCAL_TERRAIN=0 in the environment.
+    const useLocalTerrain = localTerrain && process.env.REGRESSION_LOCAL_TERRAIN !== "0";
+    if (useLocalTerrain && !hasParam(fullUrl, "regressionLocalTerrain")) {
         additions.push("regressionLocalTerrain=1");
     }
 
@@ -362,7 +368,7 @@ test.describe('Visual Regression Testing', () => {
     // still fail all three attempts, random link failures get absorbed.
     test.describe.configure({ retries: 2 });
 
-    testData.forEach(({ id, name, url, waitFor, timeout }) => {
+    testData.forEach(({ id, name, url, waitFor, timeout, localTerrain }) => {
         test(`should match the baseline screenshot for ${name}`, async ({ page }, testInfo) => {
             console.log(`[TEST:${id}:STARTED]`);
             
@@ -376,11 +382,14 @@ test.describe('Visual Regression Testing', () => {
                     assertionReject = reject;
                 });
 
-                // In local-terrain mode (the default — see addRegressionParams),
+                // In local-terrain mode (the default — see buildRegressionUrl),
                 // tiles beyond the downloaded zoom range 404; Three.js / sitrec
                 // handle this by falling back to the parent tile, so these are
-                // expected and shouldn't fail the test.
-                const ignoreTileMisses = process.env.REGRESSION_LOCAL_TERRAIN !== "0";
+                // expected and shouldn't fail the test. Tests that opt out of
+                // local terrain (localTerrain: false) hit live tile sources, so
+                // a tile miss there is a real problem and shouldn't be ignored.
+                const useLocalTerrain = (localTerrain !== false) && process.env.REGRESSION_LOCAL_TERRAIN !== "0";
+                const ignoreTileMisses = useLocalTerrain;
 
                 page.on('console', msg => {
                     const text = msg.text();
@@ -419,7 +428,7 @@ test.describe('Visual Regression Testing', () => {
                     console.log(`[WORKER-${testInfo.workerIndex}] Request failed: ${req.url()}`);
                 });
 
-                const fullUrl = buildRegressionUrl(url);
+                const fullUrl = buildRegressionUrl(url, { localTerrain });
 
                 const runTest = async () => {
                     const expectedText = waitFor || 'No pending actions';
