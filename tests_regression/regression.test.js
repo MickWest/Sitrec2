@@ -88,15 +88,16 @@ async function waitForRenderFrame(page, timeoutMs = 5000) {
 async function checkWebGLHealth(page) {
     return page.evaluate(() => {
         const results = [];
-        if (window.Globals?.renderData) {
-            window.Globals.renderData.forEach((rd, i) => {
-                if (rd.renderer) {
-                    try {
-                        const gl = rd.renderer.getContext();
-                        results.push({ index: i, lost: gl ? gl.isContextLost() : true });
-                    } catch (e) {
-                        results.push({ index: i, lost: true, error: e.message });
-                    }
+        const vm = window.ViewMan;
+        if (vm && vm.list) {
+            Object.entries(vm.list).forEach(([id, entry]) => {
+                const view = entry && entry.data;
+                if (!view || !view.renderer) return;
+                try {
+                    const gl = view.renderer.getContext();
+                    results.push({ id, lost: gl ? gl.isContextLost() : true });
+                } catch (e) {
+                    results.push({ id, lost: true, error: e.message });
                 }
             });
         }
@@ -346,6 +347,16 @@ if (process.env.TEST_TRACKFILES === 'true') {
 }
 
 test.describe('Visual Regression Testing', () => {
+    // SwiftShader occasionally fails WebGL program link under cross-file
+    // CPU contention (THREE.WebGLProgram VALIDATE_STATUS false, GL 1282),
+    // producing flaky snapshots — orion was the recurring symptom. There's
+    // no "shaders ready" signal to poll (SwiftShader doesn't expose
+    // KHR_parallel_shader_compile), and trying to reduce contention via
+    // serial mode just cascades one flake into skipping the rest of the
+    // describe. Extra retries are the least-bad lever: genuine regressions
+    // still fail all three attempts, random link failures get absorbed.
+    test.describe.configure({ retries: 2 });
+
     testData.forEach(({ id, name, url, waitFor, timeout }) => {
         test(`should match the baseline screenshot for ${name}`, async ({ page }, testInfo) => {
             console.log(`[TEST:${id}:STARTED]`);
