@@ -2679,26 +2679,33 @@ export class CFileManager extends CManager {
                     resolvedFilename = SITREC_APP + "data/" + resolvedFilename;
                 }
             } else if (isUrl) {
-                // if it's a URL, we need to check if it's got a "localhost" in it
-                // Regardless of whether we are on local or not
-                // add the SITREC_DOMAIN to the start of the URL
-                // this is a patch to keep older localhost files compatible with the deployed
-                // and with the new local.metabunk.org
-                if (resolvedFilename.startsWith("https://localhost/")) {
-                    resolvedFilename = SITREC_DOMAIN + "/" + resolvedFilename.slice(18);
-                    console.log("Redirecting debug local URL to " + resolvedFilename);
+                // Rewrite references to the canonical dev host(s) onto the current
+                // origin/app path. Sitches saved on a real local.metabunk.org dev
+                // install embed absolute URLs like
+                //   https://local.metabunk.org/sitrec/data/models/PA28.glb
+                // which won't resolve when the same sitch is loaded on a different
+                // host (deployed prod, Docker sandbox at localhost:8080 serving the
+                // app at "/", etc.). Use SITREC_APP (origin + app path) so the
+                // rewrite lands on the correct sub-path regardless of where this
+                // install serves sitrec from.
+                const rewriteBases = [
+                    "https://localhost/sitrec/",
+                    "http://localhost/sitrec/",
+                    "https://local.metabunk.org/sitrec/",
+                    "http://local.metabunk.org/sitrec/",
+                ];
+                const localhostEnv = getEnv("LOCALHOST", process.env.LOCALHOST);
+                if (localhostEnv) {
+                    rewriteBases.push("https://" + localhostEnv + "/sitrec/");
+                    rewriteBases.push("http://" + localhostEnv + "/sitrec/");
                 }
-
-                // same for https://local.metabunk.org/
-                if (!isLocal && resolvedFilename.startsWith("https://local.metabunk.org/")) {
-                    resolvedFilename = SITREC_DOMAIN + "/" + resolvedFilename.slice(27);
-                    console.log("Redirecting debug local URL to " + resolvedFilename);
-                }
-
-                // and the specified LOCALHOST env var
-                if (!isLocal && resolvedFilename.startsWith(getEnv("LOCALHOST", process.env.LOCALHOST))) {
-                    resolvedFilename = SITREC_DOMAIN + "/" + resolvedFilename.slice(getEnv("LOCALHOST", process.env.LOCALHOST).length);
-                    console.log("Redirecting debug local URL to " + resolvedFilename);
+                for (const base of rewriteBases) {
+                    if (resolvedFilename.startsWith(base) && !resolvedFilename.startsWith(SITREC_APP)) {
+                        const rewritten = SITREC_APP + resolvedFilename.slice(base.length);
+                        console.log("Redirecting debug local URL to " + rewritten);
+                        resolvedFilename = rewritten;
+                        break;
+                    }
                 }
             }
 

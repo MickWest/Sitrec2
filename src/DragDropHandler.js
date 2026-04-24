@@ -10,6 +10,7 @@ import {EventManager} from "./CEventManager";
 import {MP4_DEMUXER_EXTENSIONS, WEBAUDIO_SUPPORTED_EXTENSIONS} from "./AudioFormats";
 import {ViewMan} from "./CViewManager";
 import {quickFetch} from "./quickFetch";
+import {isResolvableSitrecReference, resolveURLForFetch} from "./SitrecObjectResolver";
 import {convertTiffBufferToBlobURL} from "./TIFFUtils";
 import {extractJPEGImportMetadata} from "./EXIFUtils";
 
@@ -599,7 +600,15 @@ class CDragDropHandler {
             return;
         }
 
-        return quickFetch(url, { showLoading: true, loadingCategory: "File" })
+        // Route legacy Sitrec S3 URLs through the resolver so they become
+        // same-origin fetches (object.php returns either a local upload URL
+        // or the s3-proxy.php stream). Avoids CORS failures when the S3
+        // bucket does not whitelist this origin.
+        const fetchUrl = isResolvableSitrecReference(url)
+            ? await resolveURLForFetch(url)
+            : url;
+
+        return quickFetch(fetchUrl, { showLoading: true, loadingCategory: "File" })
             .then(response => {
                 if (!response.ok) {
                     throw new Error('Network response was not ok');

@@ -406,7 +406,11 @@ test.describe('Visual Regression Testing', () => {
 
                 const runTest = async () => {
                     const expectedText = waitFor || 'No pending actions';
-                    const consoleTimeout = waitFor ? 600000 : (timeout || 60000);
+                    // Default "No pending actions" wait needs to survive 4 parallel
+                    // workers competing for CPU/GPU on video-heavy sitches (gimbal,
+                    // agua). 60s was fine with workers=2; bumped to 180s to absorb
+                    // scheduler jitter without inflating individual test entries.
+                    const consoleTimeout = waitFor ? 600000 : (timeout || 180000);
                     const consolePromise = waitForConsoleText(page, expectedText, consoleTimeout);
                     console.log(`[WORKER-${testInfo.workerIndex}] Loading URL for ${name}: ${fullUrl}`);
 
