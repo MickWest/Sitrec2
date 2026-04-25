@@ -302,7 +302,6 @@ class MetaBezierCurveEditor {
 
     constructor(p) {
 
-
         if (p.points === undefined) {
             p.points = []
         }

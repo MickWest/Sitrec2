@@ -560,10 +560,14 @@ class CNodeView extends CNode {
             this.div.style.height = this.heightPx + 'px'
         }
 
-        // this check is now internal to changedSize
-     //   if (oldHeight !== this.heightPx || oldWidth !== this.widthPx) {
+        // Only notify of a size change when dimensions actually changed.
+        // updateWH() is called every frame from indexRender.js for every visible view,
+        // so without this gate every 2D-canvas view would set _pendingCanvasResize=true
+        // every frame, forcing graph editors etc. to fully repaint at 60Hz.
+        // (WebGL views debounce inside changedSize, but the 2D-canvas branch does not.)
+        if (oldHeight !== this.heightPx || oldWidth !== this.widthPx) {
             this.changedSize();
-     //   }
+        }
 
 
     }

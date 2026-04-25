@@ -43,8 +43,9 @@ export class CNodeGraphLine extends CNodeViewUI {
             const shownValues = [];
             for (let i = 0; i < e.compareNode.length; i++) {
                 const value = e.compareNode[i].getValue(par.frame);
+                if (value === undefined || !Number.isFinite(value)) continue;
                 const valueText = value.toFixed(1);
-                
+
                 if (shownValues.includes(valueText)) continue;
                 shownValues.push(valueText);
                 

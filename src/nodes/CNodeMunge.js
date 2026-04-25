@@ -8,8 +8,15 @@ export class CNodeMunge extends CNode {
         super(v);
         this.munge = v.munge
 
-        // copy frame count from first input
-        this.frames = v.frames ?? this.inputs[Object.keys(this.inputs)[0]].frames
+        // remember the input we derived frame count from, so recalculate()
+        // can re-read it after Sit.frames cascades through the source node
+        if (v.frames === undefined) {
+            const firstKey = Object.keys(this.inputs)[0];
+            this.framesSource = this.inputs[firstKey];
+            this.frames = this.framesSource.frames;
+        } else {
+            this.frames = v.frames;
+        }
 
         // we allow a frame count of 0, to indicate a constant
         assert(this.frames !== undefined, "CNodeMunge missing frame count, unexpected, but tecnically legal")
@@ -19,6 +26,11 @@ export class CNodeMunge extends CNode {
     }
 
     recalculate() {
+        // if frames were derived from an input, re-sync — the input's frame
+        // count may have grown via the Sit.frames cascade
+        if (this.framesSource !== undefined) {
+            this.frames = this.framesSource.frames;
+        }
         if (this.frames > 0) {
             this.cachedValues = new Array(this.frames);
             for (let f = 0; f < this.frames; f++) {
