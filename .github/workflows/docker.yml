@@ -216,6 +216,21 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD: true
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
 
+      - name: Pre-pull Playwright image (with retry)
+        # MCR is occasionally blocked by Azure Front Door WAF for runner IPs,
+        # surfacing as "pull access denied" with an HTML body. Retrying with
+        # backoff almost always clears it within a minute.
+        run: |
+          for i in 1 2 3; do
+            if docker pull mcr.microsoft.com/playwright:v1.58.2-noble; then
+              exit 0
+            fi
+            echo "Pull attempt $i failed, retrying in $((i*15))s..."
+            sleep $((i*15))
+          done
+          echo "All 3 pull attempts failed"
+          exit 1
+
       - name: Run Playwright smoke test
         run: |
           docker run --rm --ipc=host --network=host \
