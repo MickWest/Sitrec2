@@ -43,6 +43,25 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Helper: print a "running" status line with the live version probed from
+# the container's build-version.txt (written by webpack into the webroot).
+# Polls for up to ~10s while the container starts serving HTTP.
+# ---------------------------------------------------------------------------
+print_running() {
+    local prefix="$1"  # e.g. "Running" or "Updated and running"
+    local version=""
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        version=$(curl -sf http://localhost:8080/build-version.txt 2>/dev/null) && break
+        sleep 1
+    done
+    if [ -n "$version" ]; then
+        echo "[sitrec] ${prefix} at http://localhost:8080 — $version"
+    else
+        echo "[sitrec] ${prefix} at http://localhost:8080 (version probe timed out)"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Helper: switch the image tag in docker-compose.yml
 # ---------------------------------------------------------------------------
 switch_version() {
@@ -53,7 +72,7 @@ switch_version() {
     $COMPOSE pull
     $COMPOSE down
     $COMPOSE up -d
-    echo "[sitrec] Running version ${tag} at http://localhost:8080"
+    print_running "Running"
 }
 
 # ---------------------------------------------------------------------------
@@ -64,7 +83,7 @@ case "${1:-help}" in
         echo "[sitrec] Starting (recreating container to pick up any .env changes)..."
         $COMPOSE down 2>/dev/null || true
         $COMPOSE up -d
-        echo "[sitrec] Running at http://localhost:8080"
+        print_running "Running"
         ;;
     stop)
         echo "[sitrec] Stopping..."
@@ -75,7 +94,7 @@ case "${1:-help}" in
         $COMPOSE pull
         $COMPOSE down
         $COMPOSE up -d
-        echo "[sitrec] Updated and running at http://localhost:8080"
+        print_running "Updated and running"
         ;;
     versions)
         echo "[sitrec] Fetching available versions from GHCR..."
