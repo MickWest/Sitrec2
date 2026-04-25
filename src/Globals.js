@@ -161,7 +161,20 @@ export function addTranslatedGUIMenu(id, titleKey) {
 
 // ad a folder to a menu
 export function addGUIFolder(id, title, parent) {
-    guiMenus[id] = guiMenus[parent].addFolder(title).close().perm();
+    const parentMenu = guiMenus[parent];
+    const existing = guiMenus[id];
+    // Catch the bug where a permanent folder is created a second time:
+    // menuBar.destroy(false) keeps permanent folders but destroys their
+    // non-permanent children, so a duplicate addGUIFolder leaves the empty
+    // husk behind and adds a new folder beside it. Permanent folders must
+    // be created once at app init, not from per-sitch setup paths.
+    // Inline assert (Globals can't import ./assert without a circular dep).
+    if (existing && parentMenu && parentMenu.folders && parentMenu.folders.includes(existing)) {
+        console.trace();
+        console.error(`ASSERT: addGUIFolder("${id}") called twice — folder already exists under "${parent}"`);
+        if (!Globals.validationMode) debugger;
+    }
+    guiMenus[id] = parentMenu.addFolder(title).close().perm();
     return guiMenus[id];
 }
 

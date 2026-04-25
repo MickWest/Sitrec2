@@ -11,6 +11,7 @@ import {ColorManagement, Group, REVISION, Scene, WebGLRenderer,} from "three";
 import "./js/uPlot/uPlot.css"
 import {makeDraggable} from "./DragResizeUtils";
 import {
+    addGUIFolder,
     addTranslatedGUIFolder,
     addTranslatedGUIMenu,
     CustomManager,
@@ -1559,6 +1560,12 @@ async function initializeOnce() {
     // these four have legacy globals
     const _guiPhysics = addTranslatedGUIMenu("physics", "menus.physics.title")
         .tooltip(t("menus.physics.tooltip"));
+
+    // Permanent sub-folders inside Physics. Their non-permanent contents are
+    // rebuilt by CCustomManager.setup() on every sitch load; the folder shells
+    // live here so we don't end up with duplicate husks after destroy(false).
+    addGUIFolder("wind", "Wind Data", "physics");
+    addGUIFolder("gimbalAnalysis", "Gimbal Analysis Preset", "physics");
 
     // addGUIMenu("missile", "Missile").tooltip("Homing missile parameters\nControls for the missile simulation including mass, thrust, air resistance, and burn time");
 

@@ -5,7 +5,6 @@
  * CCustomManager.prototype so `this` references the CCustomManager instance.
  */
 import {
-    addGUIFolder,
     FileManager,
     getEffectiveUserID,
     GlobalDateTimeNode,
@@ -218,7 +217,10 @@ export const setupMethods = {
             },
         });
 
-        const windFolder = addGUIFolder("wind", "Wind Data", "physics");
+        // The folder shell is created once at app init (in index.js
+        // initializeOnce); only its non-permanent contents get rebuilt here
+        // each sitch load.
+        const windFolder = guiMenus.wind;
 
         // Auto-load nearby soundings when a source declares autoLoad and no
         // matching profiles exist yet. Returns true on success, false on
@@ -415,7 +417,8 @@ export const setupMethods = {
         // ── end ATFLIR Pod ──────────────────────────────────────
 
         // ── Gimbal Preset — full pipeline, creates a new sitch ──
-        const gimbalFolder = addGUIFolder("gimbalAnalysis", "Gimbal Analysis Preset", "physics");
+        // Folder shell created once in initializeOnce; rebuild contents here.
+        const gimbalFolder = guiMenus.gimbalAnalysis;
 
         this._gimbalConfig = {
             showGlare: true, showATFLIR: true,
