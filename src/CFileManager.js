@@ -2101,7 +2101,29 @@ export class CFileManager extends CManager {
                             {path: normalizedWorkingFolderPath, reusedExisting: true});
                     }
                     LoadingManager.completeLoading(loadingId);
-                    return this.parseResult(filename, arrayBuffer, null);
+                    return this.parseResult(filename, arrayBuffer, null).then(result => {
+                        // parseResult keys entries by filename, but loadAsset's
+                        // contract (matched by the URL-fetch path above) is
+                        // that callers can look up the entry by the `id` they
+                        // passed in. For single-file (non-archive) results
+                        // where id and filename differ — e.g. sitch reload
+                        // calling loadAsset(localPath, "windGrid_GFS_10m") —
+                        // promote the FileManager entry from list[filename]
+                        // to list[id]. Without this, the wind node's
+                        // modDeserialize lookup `FileManager.list[windFileId]`
+                        // misses on local saves and the wind data silently
+                        // fails to restore (S3 saves work because the URL
+                        // path stores by id directly).
+                        if (id && id !== filename
+                            && Array.isArray(result) && result.length === 1) {
+                            const entry = this.list[filename];
+                            if (entry && !entry.isMultiple && this.list[id] === undefined) {
+                                this.list[id] = entry;
+                                delete this.list[filename];
+                            }
+                        }
+                        return result;
+                    });
                 })
                 .catch(error => {
                     if (error?.name === "NotFoundError" && canFallbackToBundledAsset) {
