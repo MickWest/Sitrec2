@@ -204,10 +204,11 @@ describe("parseLatLonPair", () => {
     });
 
     describe("space separated decimal", () => {
-        test("simple space separation", () => {
-            const result = parseLatLonPair("45.5 -122.5");
-            expect(result.lat).toBeCloseTo(45.5, 5);
-            expect(result.lon).toBeCloseTo(-122.5, 5);
+        test("bare space is NOT a pair separator (ambiguous with DM format)", () => {
+            // "32 55" could be the pair (32, 55) OR the single DM value 32°55' = 32.9166°.
+            // We reserve bare whitespace for DM/DMS input within a single coordinate,
+            // so callers should use comma, semicolon, or N/S/E/W to express a pair.
+            expect(parseLatLonPair("45.5 -122.5")).toBeNull();
         });
     });
 

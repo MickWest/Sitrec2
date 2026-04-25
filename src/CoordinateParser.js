@@ -165,11 +165,10 @@ function splitLatLon(input) {
         };
     }
 
-    const spaceMatch = input.match(/^(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/);
-    if (spaceMatch) {
-        return {lat: spaceMatch[1], lon: spaceMatch[2]};
-    }
-
+    // Bare whitespace is intentionally NOT treated as a pair separator:
+    // "32 55" is ambiguous with degrees-minutes notation (32°55'), and
+    // greedy pair-matching breaks live typing in the LLA Lat input.
+    // Pairs must use comma, semicolon, or N/S/E/W direction markers.
     return null;
 }
 
