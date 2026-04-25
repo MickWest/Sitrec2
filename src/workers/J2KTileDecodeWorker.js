@@ -5,7 +5,7 @@
  * Loads OpenJPEG WASM and decodes individual J2K tiles.
  *
  * Protocol:
- *   init → {type:'init', wasmScriptUrl, wasmLocateBase, mainHeader, sizOffset, sizParams,
+ *   init → {type:'init', mainHeader, sizOffset, sizParams,
  *            reduceLevel, isYCbCr, componentMap}
  *   ready ← {type:'ready'}
  *   decodeTile → {type:'decodeTile', tileIndex, tileData, tileCol, tileRow}
@@ -189,9 +189,10 @@ self.onmessage = async (e) => {
 
     if (msg.type === 'init') {
         try {
-            importScripts(msg.wasmScriptUrl);
+            const wasmBase = new URL('../../libs/openjpeg/', self.location).href;
+            importScripts(wasmBase + 'openjpegwasm_decode.js');
             Module = await self.OpenJPEGWASM({
-                locateFile: (filename) => msg.wasmLocateBase + filename,
+                locateFile: (filename) => wasmBase + filename,
                 print: () => {},
                 printErr: () => {},
             });

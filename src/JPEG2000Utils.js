@@ -598,8 +598,6 @@ export async function decodeJ2KTiledToCanvas(arrayBuffer, options) {
  */
 async function _decodeWithWorkers(tileEntries, data, cs, numTilesX, totalTiles, drawTile, buildTileData, startTime, reduceLevel, onProgress, options) {
     const numWorkers = Math.min(navigator.hardwareConcurrency || 4, 8);
-    const baseUrl = location.href.replace(/[^/]*$/, '');
-    const wasmScriptUrl = baseUrl + 'libs/openjpeg/openjpegwasm_decode.js';
 
     console.log(`JPEG2000Utils: Starting ${numWorkers} decode workers`);
 
@@ -677,8 +675,6 @@ async function _decodeWithWorkers(tileEntries, data, cs, numTilesX, totalTiles, 
             // Send init — worker starts compiling WASM immediately
             w.postMessage({
                 type: 'init',
-                wasmScriptUrl,
-                wasmLocateBase: baseUrl + 'libs/openjpeg/',
                 mainHeader: cs.mainHeader,
                 sizOffset: cs.sizOffset,
                 sizParams: cs.sizParams,
