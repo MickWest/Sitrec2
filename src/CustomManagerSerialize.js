@@ -385,7 +385,21 @@ export const serializeMethods = {
             "jetOffset",
             "TAS",
             "integrate",
-            "trackToTrackStopAt"
+            "trackToTrackStopAt",
+
+            // Wind Data panel state. The wind node itself serializes its
+            // internal source/altitude/grid-file refs via modSerialize, but
+            // the par fields below back the lil-gui controls and are what
+            // determines the UI's dropdown/slider/checkbox state. Without
+            // these, every reload reverts the UI to "Manual / Not loaded /
+            // Show Wind off" even when the underlying node was restored.
+            "windSource",
+            "windAltFt",
+            "windShow",
+            "windOpacity",
+            "windSpacing",
+            "windMaxSpeed",
+            "balloonCount"
         ]
 
         const SitNeeded = [
@@ -1035,12 +1049,12 @@ export const serializeMethods = {
      * @returns {Promise} - Promise that resolves when all mods are applied and pending actions are complete
      */
     async deserializeMods(mods) {
-        // If wind field mod exists, auto-create the node before standard deserialization
+        // If a wind field mod exists, auto-create the node before the standard
+        // deserialize loop so its modDeserialize can restore source/altitude/
+        // grids. The wind node is otherwise created lazily on first "Show Wind"
+        // toggle, so without this branch the mod would be silently dropped.
         if (mods.windField && !NodeMan.exists("windField")) {
-            this._windActivated = true;
             this._windNode = NodeFactory.create("DisplayWindField", {id: "windField"});
-            if (this._activateBtn) this._activateBtn.hide();
-            if (guiMenus.wind) this._showPostActivationControls(guiMenus.wind);
         }
 
         const deprecatedIds = {
@@ -1135,6 +1149,19 @@ export const serializeMethods = {
             for (let key in sitchData.pars) {
                 par[key] = sitchData.pars[key];
             }
+        }
+
+        // After mods + pars are applied, the wind node (if restored) is the
+        // authoritative source of truth. Sync the visible par fields back from
+        // it so the dropdown/slider/status display match the loaded data —
+        // this also handles older saves that predate the wind par fields
+        // being persisted, where pars wouldn't carry windSource/etc. at all.
+        if (NodeMan.exists("windField")) {
+            const windNode = NodeMan.get("windField");
+            const sourceLabel = windSourceByKey(windNode.source)?.label;
+            if (sourceLabel) par.windSource = sourceLabel;
+            if (typeof windNode.windAltFt === "number") par.windAltFt = windNode.windAltFt;
+            if (windNode.statusText) par.windStatus = windNode.statusText;
         }
 
         // and the globals

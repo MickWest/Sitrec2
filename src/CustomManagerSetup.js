@@ -284,13 +284,20 @@ export const setupMethods = {
         };
 
         // Source selector — loads data for the new source immediately.
+        // .listen() is needed so that when finishDeserialization syncs
+        // par.windSource from the restored wind node, the dropdown updates.
         windFolder.add(par, "windSource", Object.keys(this._windSourceOptions))
             .name("Source")
+            .listen()
             .onChange(async () => { await this._loadWindForCurrentSource(); });
 
         // Display altitude in feet. Target/local winds use their own track
         // altitudes, independent of this.
-        windFolder.add(par, "windAltFt", 0, 45000, 100).name("Altitude (ft)").onChange(async () => {
+        // onFinishChange (not onChange): a wind fetch hits the network/cache,
+        // so we only fire it once the user commits the value (Enter / blur /
+        // mouseup), not on every keystroke or drag tick.
+        // .listen() so the slider tracks par.windAltFt when restored from save.
+        windFolder.add(par, "windAltFt", 0, 45000, 100).name("Altitude (ft)").listen().onFinishChange(async () => {
             if (!this._windNode) return;
             par.windStatus = "Loading...";
             await this._windNode.fetchWindForAltitude(par.windAltFt);
