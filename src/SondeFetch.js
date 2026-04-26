@@ -268,6 +268,44 @@ export function haversineKm(lat1, lon1, lat2, lon2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Anchor lat/lon for sounding-station proximity sorts. Same fallback
+// chain everywhere (pickStation, getNearbyWeatherBalloons, the dialog
+// fallback walk) so manual + auto + retry paths all measure distance
+// from the same point.
+function _sortAnchorLatLon() {
+    try {
+        const lookCamera = NodeMan.get("lookCamera").camera;
+        const lla = ECEFToLLAVD_radii(lookCamera.position);
+        return {lat: lla.x, lon: lla.y, label: "lookCamera"};
+    } catch {
+        return {lat: Sit.lat || 0, lon: Sit.lon || 0, label: "sitch center"};
+    }
+}
+
+// Sitch year for the lastYear/firstYear filter — sounding stations
+// outside [firstYear, lastYear] of the playback year by definition
+// can't have data for that day.
+function _sitchYear() {
+    try {
+        return GlobalDateTimeNode.frameToDate(0).getUTCFullYear();
+    } catch {
+        return new Date().getFullYear();
+    }
+}
+
+// Filter + sort the station list for a given anchor. Excludes stations
+// that the IGRA2 metadata says were inactive in the sitch year — those
+// can't have data for the requested date and would just clutter the
+// nearest-neighbor walk on import-fail.
+function _stationsSortedByDistance(stations, anchor, simYear) {
+    return stations
+        .filter(s => s.wmo
+            && s.lastYear  >= simYear
+            && s.firstYear <= simYear)
+        .map(s => ({...s, dist: haversineKm(anchor.lat, anchor.lon, s.lat, s.lon)}))
+        .sort((a, b) => a.dist - b.dist);
+}
+
 /**
  * Show a searchable station picker dialog.
  * Sorts by proximity to the lookCamera (the observer's position) so
@@ -277,33 +315,11 @@ export function haversineKm(lat1, lon1, lat2, lon2) {
  */
 export async function pickStation() {
     const stations = await loadStationList();
-
-    // Sort anchor: lookCamera position. Falls back to Sit.lat/lon (legacy
-    // fixed-camera sitches that don't expose a lookCamera) so the dialog
-    // never hard-fails — a globe-distance sort against (0,0) is wrong but
-    // not broken.
-    let sitLat, sitLon;
-    let sortAnchor = "lookCamera";
-    try {
-        const lookCamera = NodeMan.get("lookCamera").camera;
-        const lla = ECEFToLLAVD_radii(lookCamera.position);
-        sitLat = lla.x;
-        sitLon = lla.y;
-    } catch {
-        sitLat = Sit.lat || 0;
-        sitLon = Sit.lon || 0;
-        sortAnchor = "sitch center";
-    }
-    let simYear;
-    try {
-        simYear = GlobalDateTimeNode.frameToDate(0).getUTCFullYear();
-    } catch {
-        simYear = new Date().getFullYear();
-    }
-    const sorted = stations
-        .filter(s => s.wmo && s.lastYear >= simYear)
-        .map(s => ({ ...s, dist: haversineKm(sitLat, sitLon, s.lat, s.lon) }))
-        .sort((a, b) => a.dist - b.dist);
+    const anchor = _sortAnchorLatLon();
+    const simYear = _sitchYear();
+    const sortAnchor = anchor.label;
+    const sitLat = anchor.lat, sitLon = anchor.lon;
+    const sorted = _stationsSortedByDistance(stations, anchor, simYear);
 
     return new Promise((resolve) => {
         // Build modal dialog
@@ -677,16 +693,43 @@ async function importViaUWYO(station, date) {
     if (hourStr === null) return;
     const hour = parseInt(hourStr);
 
-    try {
-        console.log(`Fetching UWYO sounding: station=${station.wmo}, date=${date}, hour=${hour}`);
-        const html = await fetchUWYOSounding(station.wmo, date, hour, "list");
-        const filename = `sounding_${station.wmo}_${date}_${String(hour).padStart(2, '0')}Z.html`;
-        await FileManager.parseResult(filename, new TextEncoder().encode(html).buffer);
-        console.log("Sounding imported: " + filename);
-    } catch (e) {
-        alert("Failed to import sounding:\n" + e.message);
-        console.error("Sounding import error:", e);
+    // Fallback walk: even though the station passes the lastYear filter,
+    // UWYO's coverage doesn't perfectly mirror the IGRA2-sourced station
+    // list — a station can be "active in 2025" overall but missing the
+    // specific date the user wants. Rather than fail, walk down the
+    // distance-sorted list from the user's pick to find the next-nearest
+    // station that does have data for date/hour. Matches the behavior of
+    // getNearbyWeatherBalloons' auto-import path; the user is told which
+    // substitute station was actually imported (if any).
+    const stations = await loadStationList();
+    const anchor = _sortAnchorLatLon();
+    const simYear = _sitchYear();
+    const sorted = _stationsSortedByDistance(stations, anchor, simYear);
+    const startIdx = Math.max(0, sorted.findIndex(s => s.wmo === station.wmo));
+    const MAX_FALLBACK_ATTEMPTS = 5;
+
+    let lastError = null;
+    for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS && (startIdx + attempt) < sorted.length; attempt++) {
+        const s = sorted[startIdx + attempt];
+        try {
+            console.log(`UWYO fetch (attempt ${attempt + 1}): ${s.wmo} ${s.name} for ${date} ${hour}Z`);
+            const html = await fetchUWYOSounding(s.wmo, date, hour, "list");
+            const filename = `sounding_${s.wmo}_${date}_${String(hour).padStart(2, '0')}Z.html`;
+            await FileManager.parseResult(filename, new TextEncoder().encode(html).buffer);
+            console.log("Sounding imported: " + filename);
+            if (attempt > 0) {
+                alert(`Station ${station.wmo} ${station.name} had no UWYO data for ${date} ${hour}Z.\n\n`
+                    + `Imported next-nearest with data: ${s.wmo} ${s.name} (${Math.round(s.dist)} km).`);
+            }
+            return;
+        } catch (e) {
+            console.warn(`UWYO ${s.wmo} ${s.name} failed: ${e.message}`);
+            lastError = e;
+        }
     }
+    alert(`Failed to import sounding from ${station.wmo} ${station.name} or the next ${MAX_FALLBACK_ATTEMPTS - 1} nearest stations for ${date} ${hour}Z.\n\n`
+        + `Last error: ${lastError?.message ?? "unknown"}`);
+    console.error("Sounding import error: all fallback attempts failed", lastError);
 }
 
 async function importViaIGRA2(station, date) {
