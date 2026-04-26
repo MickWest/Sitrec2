@@ -1162,6 +1162,8 @@ export const serializeMethods = {
             if (sourceLabel) par.windSource = sourceLabel;
             if (typeof windNode.windAltFt === "number") par.windAltFt = windNode.windAltFt;
             if (windNode.statusText) par.windStatus = windNode.statusText;
+            if (typeof windNode.nearbyOnly === "boolean") par.windNearbyOnly = windNode.nearbyOnly;
+            if (typeof windNode.nearbyRadiusKm === "number") par.windNearbyRadiusKm = windNode.nearbyRadiusKm;
         }
 
         // and the globals

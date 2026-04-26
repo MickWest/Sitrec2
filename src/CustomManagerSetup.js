@@ -197,6 +197,14 @@ export const setupMethods = {
         par.windOpacity = 0.9;
         par.windSpacing = 1.5;
         par.windMaxSpeed = 30;
+        par.windNearbyOnly = true;
+        par.windNearbyRadiusKm = 250;
+
+        // Track which sources we've already auto-shown wind for, so the
+        // "first switch to GFS/sounding turns on Show Wind" rule fires once
+        // per source per session — and never again if the user later toggles
+        // wind off explicitly.
+        this._autoShownWindSources = new Set();
 
         // windShow is a live alias for this._windNode.visible so the Wind Data
         // folder checkbox and the Show/Hide "Wind Field" checkbox stay in sync.
@@ -286,23 +294,81 @@ export const setupMethods = {
         // Source selector — loads data for the new source immediately.
         // .listen() is needed so that when finishDeserialization syncs
         // par.windSource from the restored wind node, the dropdown updates.
+        // (.listen() does NOT fire onChange — the auto-show rule below only
+        // triggers on actual user dropdown changes, not on save restore.)
         windFolder.add(par, "windSource", Object.keys(this._windSourceOptions))
             .name("Source")
             .listen()
-            .onChange(async () => { await this._loadWindForCurrentSource(); });
+            .onChange(async () => {
+                const sourceKey = this._windSourceOptions[par.windSource];
+                // Auto-show wind the first time the user picks a real
+                // data-bearing source this session — saves the discovery step
+                // of "I picked GFS, why don't I see anything?".
+                const autoShowSources = ["gfs", "uwyo", "igra2", "manual-soundings"];
+                if (autoShowSources.includes(sourceKey)
+                    && !this._autoShownWindSources.has(sourceKey)
+                    && !par.windShow) {
+                    par.windShow = true;
+                }
+                if (autoShowSources.includes(sourceKey)) {
+                    this._autoShownWindSources.add(sourceKey);
+                }
+                await this._loadWindForCurrentSource();
+            });
 
         // Display altitude in feet. Target/local winds use their own track
         // altitudes, independent of this.
-        // onFinishChange (not onChange): a wind fetch hits the network/cache,
-        // so we only fire it once the user commits the value (Enter / blur /
-        // mouseup), not on every keystroke or drag tick.
         // .listen() so the slider tracks par.windAltFt when restored from save.
-        windFolder.add(par, "windAltFt", 0, 45000, 100).name("Altitude (ft)").listen().onFinishChange(async () => {
+        // Two handlers:
+        //  - onChange: live re-blend + streamline rebuild while dragging IF
+        //    Nearby Wind Only is on AND the needed levels are already cached.
+        //    Cuts perceived latency on altitude scrubbing to one frame.
+        //  - onFinishChange: full fetch (handles uncached levels via network)
+        //    when the user commits the value.
+        windFolder.add(par, "windAltFt", 0, 60000, 10).name("Altitude (ft)").listen()
+            .onChange(() => {
+                if (!this._windNode) return;
+                if (!par.windNearbyOnly) return;
+                const wn = this._windNode;
+                // Allow live updates only when the source's hot path is local
+                // (no network on the drag tick):
+                //   - GFS: both bracketing pressure levels already cached
+                //   - sounding-based / manual: IDW from in-memory profiles
+                //   - openmeteo: skipped (per-altitude HTTP fetch)
+                const localSources = ["uwyo", "igra2", "manual-soundings", "manual"];
+                const isLocal = localSources.includes(wn.source)
+                    || (wn.source === "gfs" && wn.hasGFSBracketCached(par.windAltFt));
+                if (!isLocal) return;
+                // Don't gate on wn.fetching — fetchWindForAltitude has its own
+                // _pendingAltFt coalescer that picks up the latest value when
+                // the in-flight call finishes. Bailing here would drop every
+                // drag tick after the first.
+                wn.fetchWindForAltitude(par.windAltFt);
+            })
+            .onFinishChange(async () => {
+                if (!this._windNode) return;
+                par.windStatus = "Loading...";
+                await this._windNode.fetchWindForAltitude(par.windAltFt);
+                par.windStatus = this._windNode.statusText;
+            });
+
+        // Nearby Wind Only: clip streamline seeding to a radius around the
+        // sitch origin. With this on, altitude scrubbing is near-instant.
+        windFolder.add(par, "windNearbyOnly").name("Nearby Wind Only").listen().onChange(() => {
             if (!this._windNode) return;
-            par.windStatus = "Loading...";
-            await this._windNode.fetchWindForAltitude(par.windAltFt);
-            par.windStatus = this._windNode.statusText;
-        }).elastic(1000, 60000, true);
+            this._windNode.nearbyOnly = par.windNearbyOnly;
+            this._windNode.rebuildStreamlines();
+            setRenderOne(true);
+        });
+
+        windFolder.add(par, "windNearbyRadiusKm", 5, 500, 5).name("Nearby Radius (km)").listen().onChange(() => {
+            if (!this._windNode) return;
+            this._windNode.nearbyRadiusKm = par.windNearbyRadiusKm;
+            if (this._windNode.nearbyOnly) {
+                this._windNode.rebuildStreamlines();
+                setRenderOne(true);
+            }
+        });
 
         // Show Wind checkbox — first toggle on creates the field and loads
         // data; later toggles just flip visibility. If a previous load failed

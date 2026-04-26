@@ -2120,6 +2120,11 @@ export class CFileManager extends CManager {
                             if (entry && !entry.isMultiple && this.list[id] === undefined) {
                                 this.list[id] = entry;
                                 delete this.list[filename];
+                                // Tag the result entry with the promoted id so downstream
+                                // consumers (CustomManagerSerialize, etc.) using
+                                // `fileID = x.id ?? x.filename` find list[id], not the
+                                // now-deleted list[filename].
+                                result[0].id = id;
                             }
                         }
                         return result;

@@ -4,13 +4,15 @@
 
 import {CNode3DGroup} from "./CNode3DGroup";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
+import {DebugArrowAB, DebugArrows, removeDebugArrow} from "../threeExt";
+import {getLocalNorthVector, getLocalEastVector} from "../SphericalMath";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {FileManager, GlobalDateTimeNode, NodeMan, Sit} from "../Globals";
 import pako from "pako";
 import * as LAYER from "../LayerMasks";
 import {
     BufferAttribute, BufferGeometry, LineSegments,
-    ShaderMaterial,
+    ShaderMaterial, Vector3,
 } from "three";
 import {setRenderOne} from "../Globals";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
@@ -90,6 +92,20 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.fetching = false;
         this._lastDateCycle = null;  // "YYYYMMDD_HH" of the last-fetched GFS cycle
         this._levelCache = {};       // level string → GFS json (one per pressure level)
+
+        // Catalog of every GFS pressure-level grid we've persisted to FileManager
+        // for the current cycle. Map<fileId, {level, dateStr, hour, source}>.
+        // Survives modSerialize/Deserialize so altitude changes after reload
+        // don't re-hit the network for a level we already had on disk.
+        this._loadedWindFiles = new Map();
+
+        // Nearby-only filter: when enabled, rebuildStreamlines() restricts
+        // seeding to a lat/lon box around Sit.fromLat/Sit.fromLon. Cuts the
+        // streamline count from ~thousands to ~tens for typical radii,
+        // making altitude scrubbing nearly instantaneous. On by default —
+        // global wind fields are rarely what users actually want to look at.
+        this.nearbyOnly      = v.nearbyOnly      ?? true;
+        this.nearbyRadiusKm  = v.nearbyRadiusKm  ?? 250;
 
         // ---------- shader material ----------
         this.material = new ShaderMaterial({
@@ -248,6 +264,95 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         return lineIndex + 1;
     }
 
+    // ── Per-sonde wind arrow at the configured altitude ─────────────
+    //
+    // Renders one viewport-scaled arrow per loaded sonde profile, placed at
+    // the balloon's interpolated 3D position at windAltFt and pointing in
+    // the direction the wind is blowing TO. Uses the same negative-length
+    // pixel-relative pattern as celestial vectors (CNodeLabeledArrow),
+    // realised here directly via DebugArrowAB + a preRender hook so the
+    // arrows stay screen-consistent at any zoom.
+    //
+    // Stored direction-only data per sonde so preRender can recompute the
+    // endpoint cheaply each view without re-traversing the profile.
+    _updateSondeWindArrows() {
+        if (!this._sondeArrows) this._sondeArrows = new Map();
+        const seen = new Set();
+        const altM = this.windAltFt * 0.3048;
+
+        if (this.visible) {
+            const profiles = this._gatherSondeProfiles(null);
+            for (const p of profiles) {
+                const data = p.getAtAltitude(altM);
+                if (!data || data.windDir == null || data.windSpeed == null) continue;
+                const start = p.getPositionAtAltitude(altM);
+                if (!start || isNaN(start.x)) continue;
+
+                // Wind blows FROM windDir; arrow points TO (windDir + 180).
+                const bearingRad = ((data.windDir + 180) % 360) * DEG;
+                const north = getLocalNorthVector(start);
+                const east  = getLocalEastVector(start);
+                const dir = new Vector3()
+                    .addScaledVector(north, Math.cos(bearingRad))
+                    .addScaledVector(east,  Math.sin(bearingRad))
+                    .normalize();
+
+                const name = `sondeWindAtAlt_${p.id}`;
+                this._sondeArrows.set(name, {start, dir, profileId: p.id});
+                seen.add(name);
+            }
+        }
+
+        // Drop any arrows for sondes that disappeared (or all of them when
+        // the wind field is hidden).
+        for (const name of [...this._sondeArrows.keys()]) {
+            if (!seen.has(name)) {
+                removeDebugArrow(name);
+                this._sondeArrows.delete(name);
+            }
+        }
+    }
+
+    // Per-view per-frame: turn the stored direction-only arrow data into
+    // actual world-space lines whose length is the same number of pixels
+    // on screen regardless of camera distance.
+    preRender(view) {
+        if (!this._sondeArrows || this._sondeArrows.size === 0) return;
+        if (!view.pixelsToMeters) return;
+        const PX = 100; // arrow length in screen pixels
+        for (const [name, entry] of this._sondeArrows) {
+            const lengthM = view.pixelsToMeters(entry.start, PX);
+            const end = entry.start.clone().addScaledVector(entry.dir, lengthM);
+            DebugArrowAB(name, entry.start, end, "#ff66ff", true,
+                this.group, 20, LAYER.MASK_HELPERS);
+        }
+    }
+
+    // Resolve a "where am I looking from" lat/lon for the nearby filter.
+    // Tries Sit.fromLat/fromLon first (legacy fixed-camera sitches), then
+    // cameraTrack at frame 0 (jet/track sitches like Gimbal — same fallback
+    // chain used by _windNodePositions). Returns null if nothing's available.
+    _referenceLatLon() {
+        if (Sit.fromLat != null && Sit.fromLon != null
+            && Number.isFinite(Sit.fromLat) && Number.isFinite(Sit.fromLon)) {
+            return {lat: Sit.fromLat, lon: Sit.fromLon};
+        }
+        for (const id of ["cameraTrack", "jetTrack", "lookCamera"]) {
+            if (!NodeMan.exists(id)) continue;
+            const n = NodeMan.get(id);
+            const f = Sit.currentFrame ?? 0;
+            let pos = null;
+            if (typeof n.p === "function") pos = n.p(f);
+            else if (n.camera?.position) pos = n.camera.position;
+            if (!pos) continue;
+            const lla = ECEFToLLAVD_radii(pos);
+            if (Number.isFinite(lla.x) && Number.isFinite(lla.y)) {
+                return {lat: lla.x, lon: lla.y};
+            }
+        }
+        return null;
+    }
+
     // ── streamline geometry with multi-LOD ───────────────────────────
     rebuildStreamlines() {
         if (this.linesMesh) {
@@ -255,6 +360,13 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             this.linesMesh.geometry.dispose();
             this.linesMesh = null;
         }
+
+        // Per-sonde altitude arrows update independently of the streamline
+        // mesh — they only depend on windAltFt and the loaded sonde profiles.
+        // Run BEFORE the early-returns below so they refresh even when the
+        // streamline geometry is empty (e.g. nearby bbox missed all data).
+        this._updateSondeWindArrows();
+
         if (!this.windU) return;
 
         const alt    = this.renderAltitude;
@@ -273,12 +385,42 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         const seeded = new Set();
         const finestSpacing = spacings[spacings.length - 1];
 
+        // Nearby-only: clip seed iteration to a lat/lon bbox around the
+        // sitch origin so we don't trace global streamlines we'll never see.
+        // 1° lat ≈ 111 km; lon scales by cos(lat). Box rounds outward so the
+        // visible disk is fully covered even at coarse spacings.
+        let latMin = -85, latMax = 85, lonMin = 0, lonMax = 360;
+        let crossesAntimeridian = false;
+        if (this.nearbyOnly) {
+            const ref = this._referenceLatLon();
+            if (ref) {
+                const dLat = this.nearbyRadiusKm / 111;
+                const cosLat = Math.max(0.05, Math.cos(ref.lat * DEG));
+                const dLon = this.nearbyRadiusKm / (111 * cosLat);
+                latMin = Math.max(-85, ref.lat - dLat);
+                latMax = Math.min( 85, ref.lat + dLat);
+                // Normalize sitch origin lon into [0, 360) for the cell loop,
+                // which also runs in [0, 360). Antimeridian wrap is handled below.
+                const cLon = ((ref.lon % 360) + 360) % 360;
+                lonMin = cLon - dLon;
+                lonMax = cLon + dLon;
+                crossesAntimeridian = lonMin < 0 || lonMax >= 360;
+            }
+        }
+        const inLonBox = (lon) => {
+            if (!crossesAntimeridian) return lon >= lonMin && lon <= lonMax;
+            // Wrap: bbox spans the seam, so accept the two halves separately.
+            return lon >= ((lonMin + 360) % 360) || lon <= (lonMax % 360);
+        };
+
         for (let lod = 0; lod < spacings.length; lod++) {
             const sp = spacings[lod];
             for (let lat0 = -85; lat0 <= 85; lat0 += sp) {
+                if (lat0 < latMin || lat0 > latMax) continue;
                 const row = Math.round((lat0 + 85) / sp);
                 const lonOff = (row % 2) ? sp * 0.5 : 0;
                 for (let lon0 = 0; lon0 < 360; lon0 += sp) {
+                    if (!inLonBox(lon0)) continue;
                     // Quantise to the finest grid cell to de-duplicate across LOD levels
                     const qLat = Math.round(lat0 / finestSpacing);
                     const qLon = Math.round(lon0 / finestSpacing);
@@ -321,10 +463,49 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             `(LOD0: ${lodCounts[0] / 2}, LOD1: ${lodCounts[1] / 2}, LOD2: ${lodCounts[2] / 2})`);
     }
 
+    // True when both bracketing GFS pressure levels for `altFt` are already
+    // resident (in _levelCache or in FileManager via _loadedWindFiles).
+    // The altitude-slider live-update path uses this to decide whether it can
+    // safely re-fetch on every drag tick without hitting the network.
+    hasGFSBracketCached(altFt) {
+        if (this.source !== "gfs") return false;
+        const dateNode = GlobalDateTimeNode;
+        const dateNow = dateNode?.dateNow ?? new Date();
+        const dateStr = dateNow.toISOString().slice(0, 10).replace(/-/g, "");
+        const hour = Math.floor(dateNow.getUTCHours() / 6) * 6;
+        const {lo, hi} = bracketingLevels(altFt);
+        const has = (level) => {
+            if (this._levelCache[`${dateStr}_${hour}_${level}`]) return true;
+            for (const meta of this._loadedWindFiles.values()) {
+                if (meta.dateStr === dateStr
+                    && meta.hour === String(hour)
+                    && meta.level === level) return true;
+            }
+            return false;
+        };
+        return has(lo.level) && (lo.level === hi.level || has(hi.level));
+    }
+
     // ── fetch a single level (with caching) ─────────────────────────
     async _fetchLevel(level, dateStr, hour) {
         const cacheKey = `${dateStr}_${hour}_${level}`;
         if (this._levelCache[cacheKey]) return this._levelCache[cacheKey];
+
+        // Persistent cache: a previous session may have stored this level's
+        // grid in FileManager (and we restored it in modDeserialize). Reuse
+        // the cached file rather than re-hitting the network.
+        for (const [fid, meta] of this._loadedWindFiles) {
+            if (meta.dateStr === dateStr && meta.hour === String(hour) && meta.level === level) {
+                const entry = FileManager.list[fid];
+                if (entry) {
+                    const cached = CNodeDisplayWindField._parseWindEntry(entry);
+                    if (cached?.u && cached?.v) {
+                        this._levelCache[cacheKey] = cached;
+                        return cached;
+                    }
+                }
+            }
+        }
 
         const url = `sitrecServer/windProxy.php?date=${dateStr}&hour=${hour}&level=${level}`;
         // The proxy shells out to fetch_wind.py which pulls a GRIB2 slice from
@@ -847,23 +1028,23 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this._lastWindJSON = json;   // keep for serialization
     }
 
-    // Store source wind level files in FileManager for serialization
+    // Store source wind level files in FileManager for serialization.
+    // ACCUMULATES — every level we've fetched for the current cycle stays in
+    // FileManager and in this._loadedWindFiles so a later altitude change
+    // that needs a different bracket can reuse it without re-fetching.
+    // The current blend's IDs are tracked separately in this._windFileIds for
+    // backward compat with code that reads "what did we just load".
     _storeWindFiles(jsonLo, jsonHi, needTwo, dateStr, hour) {
-        // Remove any previous wind grid files from FileManager
-        const oldIds = this._windFileIds ?? [];
-        for (const oldId of oldIds) {
-            if (FileManager.list[oldId]) delete FileManager.list[oldId];
-        }
-        // Also sweep any stale windGrid_ entries not in our list
-        for (const key of Object.keys(FileManager.list)) {
-            if (key.startsWith("windGrid_")) delete FileManager.list[key];
-        }
-
         const src = (jsonLo.source ?? "GFS").replace(/[^a-zA-Z0-9]/g, "");
         this._windFileIds = [];
 
         const store = (json, suffix) => {
             const fileId = `windGrid_${src}_${suffix}`;
+            // Already stored from an earlier bracket fetch this session — reuse.
+            if (FileManager.list[fileId] && this._loadedWindFiles.has(fileId)) {
+                this._windFileIds.push(fileId);
+                return;
+            }
             const compressed = pako.deflate(JSON.stringify(json));
             if (FileManager.list[fileId]) delete FileManager.list[fileId];
             FileManager.add(fileId, json, compressed.buffer);
@@ -879,10 +1060,27 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             entry.staticURL = `data/wind/wind_${refDate || dateStr}_${refHour || hour}z_${levelStr}.json`;
             entry.localStaticURL = entry.staticURL;
             this._windFileIds.push(fileId);
+            this._loadedWindFiles.set(fileId, {
+                level: json.level ?? suffix,
+                dateStr: refDate || dateStr,
+                hour: refHour || String(hour),
+                source: src,
+            });
         };
 
         store(jsonLo, jsonLo.level ?? "lo");
         if (needTwo) store(jsonHi, jsonHi.level ?? "hi");
+    }
+
+    // Drop all cached GFS grids — call when the active cycle changes so we
+    // don't accumulate stale data across days.
+    _evictAllWindGrids() {
+        for (const fid of this._loadedWindFiles.keys()) {
+            if (FileManager.list[fid]) delete FileManager.list[fid];
+        }
+        this._loadedWindFiles.clear();
+        this._levelCache = {};
+        this._windFileIds = [];
     }
 
     // Legacy single-file store (used by _storeWindFile calls in modDeserialize)
@@ -920,13 +1118,24 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             this._storeWindFile();
         }
 
+        // Serialize the full catalog (level/date/hour per file id) so reload
+        // restores every level we'd fetched, not just the active blend. This
+        // lets altitude scrubbing skip the network entirely.
+        const loadedWindFiles = this.source === "gfs"
+            ? Array.from(this._loadedWindFiles.entries()).map(([fileId, meta]) => ({fileId, ...meta}))
+            : [];
+
         return {
             ...super.modSerialize(),
             source: this.source,
             windAltFt: this.windAltFt,
             windLevel: this.windLevel,
             windFileIds: this.source === "gfs" ? (this._windFileIds ?? []) : [],
+            loadedWindFiles,
             hasWindData: this.source === "gfs" && !!this._lastWindJSON,
+            nearbyOnly: this.nearbyOnly,
+            nearbyRadiusKm: this.nearbyRadiusKm,
+            lastDateCycle: this._lastDateCycle,
         };
     }
 
@@ -935,6 +1144,19 @@ export class CNodeDisplayWindField extends CNode3DGroup {
 
         this.source = v.source ?? "gfs";
         this.windAltFt = v.windAltFt ?? 33;
+        this.nearbyOnly = v.nearbyOnly ?? true;
+        this.nearbyRadiusKm = v.nearbyRadiusKm ?? 250;
+        if (v.lastDateCycle) this._lastDateCycle = v.lastDateCycle;
+
+        // Rebuild the catalog of cached wind files so _fetchLevel can find
+        // them on the next altitude change without hitting the network.
+        if (Array.isArray(v.loadedWindFiles)) {
+            this._loadedWindFiles = new Map(
+                v.loadedWindFiles
+                    .filter(e => e?.fileId && FileManager.list[e.fileId])
+                    .map(e => [e.fileId, {level: e.level, dateStr: e.dateStr, hour: e.hour, source: e.source}])
+            );
+        }
 
         // Non-GFS sources don't persist grids — they're recomputed on demand.
         // If the saved sitch had the wind field visible, re-fetch after the
@@ -1018,7 +1240,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                 const currentCycle = `${dateStr}_${hour}`;
                 if (currentCycle !== this._lastDateCycle) {
                     this._lastDateCycle = currentCycle;
-                    this._levelCache = {};  // clear cache for new cycle
+                    // Cycle changed — last cycle's GFS grids are stale. Drop them
+                    // from FileManager and the in-memory cache so we re-fetch.
+                    this._evictAllWindGrids();
                     this.fetchWindForAltitude(this.windAltFt);
                 }
             }
@@ -1028,6 +1252,10 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     dispose() {
         if (this.linesMesh) {
             this.linesMesh.geometry.dispose();
+        }
+        if (this._sondeArrows) {
+            for (const name of this._sondeArrows.keys()) removeDebugArrow(name);
+            this._sondeArrows.clear();
         }
         this.material.dispose();
         super.dispose();

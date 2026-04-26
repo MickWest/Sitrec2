@@ -47,6 +47,7 @@ export class CNodeAtmosphericProfile extends CNode {
             }
 
             this.levels.push({
+                idx: i,    // original MISB row, so callers can lookup track position
                 alt: alt,
                 temp: row[MISB.OutsideAirTemperature] ?? null,
                 pressure: row[MISB.StaticPressure] ?? null,
@@ -58,6 +59,29 @@ export class CNodeAtmosphericProfile extends CNode {
 
         // Sort ascending by altitude
         this.levels.sort(function(a, b) { return a.alt - b.alt; });
+    }
+
+    // Interpolate the balloon's 3D position (ECEF Vector3) at an altitude.
+    // Lerps between the two bracketing sounding levels' actual track positions
+    // so the result reflects balloon drift, not just the launch site.
+    getPositionAtAltitude(altM) {
+        if (!this.in.dataTrack || this.levels.length === 0) return null;
+        const dt = this.in.dataTrack;
+        if (altM <= this.levels[0].alt) return dt.getPosition(this.levels[0].idx);
+        const top = this.levels[this.levels.length - 1];
+        if (altM >= top.alt) return dt.getPosition(top.idx);
+        for (let i = 0; i < this.levels.length - 1; i++) {
+            const lo = this.levels[i];
+            const hi = this.levels[i + 1];
+            if (altM >= lo.alt && altM <= hi.alt) {
+                const t = (altM - lo.alt) / (hi.alt - lo.alt);
+                const pLo = dt.getPosition(lo.idx);
+                const pHi = dt.getPosition(hi.idx);
+                if (!pLo || !pHi) return pLo ?? pHi ?? null;
+                return pLo.clone().lerp(pHi, t);
+            }
+        }
+        return null;
     }
 
     recalculate() {
