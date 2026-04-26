@@ -1627,9 +1627,13 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         let loaded = 0;
         const failures = [];
 
-        // Parallel re-fetch — windProxy serialises on its end, but firing
-        // them off together hides individual round-trip latency.
-        const promises = savedLevels.map(async (e) => {
+        // Bounded-parallel re-fetch. Hides individual round-trip latency
+        // without stampeding windProxy.php — every cold-cache miss forks a
+        // fetch_wind.py subprocess, and 8+ simultaneous misses can pin a
+        // small server or trigger NOMADS rate limits. Three is enough to
+        // keep one or two requests in-flight while another is finishing.
+        const MAX_CONCURRENT = 3;
+        const fetchOne = async (e) => {
             const dateStr = e.dateStr || fallbackDate;
             const hour = parseInt(e.hour ?? fallbackHour, 10);
             try {
@@ -1642,8 +1646,10 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                 failures.push(e.level);
                 console.warn(`Wind level ${e.level} reload failed:`, err.message);
             }
-        });
-        await Promise.all(promises);
+        };
+        for (let i = 0; i < total; i += MAX_CONCURRENT) {
+            await Promise.all(savedLevels.slice(i, i + MAX_CONCURRENT).map(fetchOne));
+        }
 
         // Render at the saved altitude (uses the now-warm cache; should be
         // a single bracketing-blend tick with no network).
