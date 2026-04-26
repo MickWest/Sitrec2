@@ -705,9 +705,14 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // visible disk is fully covered even at coarse spacings.
         let latMin = -85, latMax = 85, lonMin = 0, lonMax = 360;
         let crossesAntimeridian = false;
+        // Track which reference lat/lon this build was anchored to, so
+        // update() can rebuild when the camera scrubs far enough that the
+        // bbox no longer covers what the user is looking at.
+        this._lastRebuildRef = null;
         if (this.nearbyOnly) {
             const ref = this._referenceLatLon();
             if (ref) {
+                this._lastRebuildRef = {lat: ref.lat, lon: ref.lon};
                 const dLat = this.nearbyRadiusKm / 111;
                 const cosLat = Math.max(0.05, Math.cos(ref.lat * DEG));
                 const dLon = this.nearbyRadiusKm / (111 * cosLat);
@@ -1662,6 +1667,26 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                     // from FileManager and the in-memory cache so we re-fetch.
                     this._evictAllWindGrids();
                     this.fetchWindForAltitude(this.windAltFt);
+                }
+            }
+        }
+
+        // Time-scrub bbox staleness: when the reference comes from a
+        // moving cameraTrack (jet/track sitches), scrubbing the timeline
+        // drifts the lookat lat/lon. The streamline mesh was built around
+        // the reference at last rebuildStreamlines(); once the camera
+        // moves past half the radius, the bbox no longer covers what the
+        // user is looking at, so the user sees empty space where streamlines
+        // should be. Re-anchor the build when drift exceeds half the
+        // current radius — once per crossing, not per frame.
+        if (this.nearbyOnly && this.windU && !this.fetching && this._lastRebuildRef) {
+            const ref = this._referenceLatLon();
+            if (ref) {
+                const driftKm = greatCircleDistanceDeg(
+                    this._lastRebuildRef.lat, this._lastRebuildRef.lon,
+                    ref.lat, ref.lon) * 111;
+                if (driftKm > this.nearbyRadiusKm * 0.5) {
+                    this.rebuildStreamlines();
                 }
             }
         }
