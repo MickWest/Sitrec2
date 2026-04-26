@@ -411,7 +411,10 @@ class CNode {
         if (_gui) {
             // if it's a string, then it's from the data driven setup
             if (typeof _gui === "string") {
-                this.gui = guiMenus[_gui.toLowerCase()];
+                // Try the string as-is first (camelCase keys like
+                // "gimbalAnalysis" must round-trip), then fall back to
+                // lowercase for legacy "Physics"/"Wind"/"Camera" capitalization.
+                this.gui = guiMenus[_gui] ?? guiMenus[_gui.toLowerCase()];
                 assert(this.gui !== undefined, "Unknown gui type: " + _gui)
             } else {
                 // otherwise, it's a gui object passed in the parameters

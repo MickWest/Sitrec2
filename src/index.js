@@ -1564,8 +1564,8 @@ async function initializeOnce() {
     // Permanent sub-folders inside Physics. Their non-permanent contents are
     // rebuilt by CCustomManager.setup() on every sitch load; the folder shells
     // live here so we don't end up with duplicate husks after destroy(false).
-    addGUIFolder("wind", "Wind Data", "physics");
-    addGUIFolder("gimbalAnalysis", "Gimbal Analysis Preset", "physics");
+    addGUIFolder("wind", "Wind", "physics");
+    addGUIFolder("gimbalAnalysis", "Gimbal Analysis", "physics");
 
     // addGUIMenu("missile", "Missile").tooltip("Homing missile parameters\nControls for the missile simulation including mass, thrust, air resistance, and burn time");
 

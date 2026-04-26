@@ -378,7 +378,7 @@ export const setupMethods = {
         // (.listen() does NOT fire onChange — the auto-show rule below only
         // triggers on actual user dropdown changes, not on save restore.)
         windFolder.add(par, "windSource", Object.keys(this._windSourceOptions))
-            .name("Source")
+            .name("Target Wind Source")
             .listen()
             .onChange(async () => {
                 const sourceKey = this._windSourceOptions[par.windSource];
@@ -737,7 +737,7 @@ export const setupMethods = {
                     window.location.reload();
                 });
             };
-            guiMenus.physics.add(this, "_addATFLIR").name("Add ATFLIR Pod (reload)");
+            guiMenus.gimbalAnalysis.add(this, "_addATFLIR").name("Add ATFLIR Pod (reload)");
         }
         // ── end ATFLIR Pod ──────────────────────────────────────
 

@@ -239,7 +239,8 @@ sitch = {
                         end: 2000,
                         step: 0.01,
                         desc: "Pixel Zoom %",
-                        //  hidden: true
+                        gui: "effects",
+                        hidden: true,
                     },
                 }
             },
@@ -270,6 +271,7 @@ sitch = {
         name: "Target",
         arrowColor: "cyan",
         originTrack: "targetTrackSwitch",
+        gui: "wind",
         force: true,
     },
 
@@ -281,13 +283,13 @@ sitch = {
         name: "Local",
         arrowColor: "cyan",
         lock: "targetWind",
-        gui: "physics",
+        gui: "wind",
         originTrack: "cameraTrackSwitch",
         force: true,
     },
 
     // we can lock them so they are the same, defaults to not locked
-    lockWind: {kind: "GUIFlag", value: false, desc: "Lock Target Wind to Local", gui: "physics"},
+    lockWind: {kind: "GUIFlag", value: false, desc: "Lock Target Wind to Local", gui: "wind"},
 
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -520,7 +522,7 @@ sitch = {
             "Manual": "localWind",
         },
         desc: "Local Wind Source",
-        gui: "physics",
+        gui: "wind",
     },
 
 
@@ -566,7 +568,7 @@ sitch = {
         end: 200,
         step: 1,
         tip: "Smooth custom Az",
-        gui: "physics",
+        gui: "gimbalAnalysis",
     },
 
     customElSmooth: {
@@ -577,7 +579,7 @@ sitch = {
         end: 200,
         step: 1,
         tip: "Smooth custom El",
-        gui: "physics",
+        gui: "gimbalAnalysis",
     },
 
 
