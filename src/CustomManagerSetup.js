@@ -267,8 +267,23 @@ export const setupMethods = {
 
         // Lazily create the wind node and load data for the current source.
         // Source changes and the first Show Wind toggle both go through here.
-        this._loadWindForCurrentSource = async () => {
+        //
+        // Concurrent callers (e.g. rapid Show / Show Arrows / Inspect toggles
+        // before the first fetch finishes) all await the same in-flight
+        // promise — without this, each one would overwrite par.windStatus
+        // and re-fire _ensureSoundingsForWind, producing flicker and
+        // redundant work.
+        //
+        // Source change mid-flight: the node's source field is assigned
+        // unconditionally, and a fetchWindForAltitude call is forwarded so
+        // the wind node's _pendingSource coalescer notices the change and
+        // re-runs after the in-flight settles. The original in-flight
+        // promise's `await fetchWindForAltitude(...)` chains through the
+        // re-run, so our promise still resolves only after the new source
+        // has actually loaded.
+        this._loadWindForCurrentSource = () => {
             const sourceKey = this._windSourceOptions[par.windSource];
+
             if (!this._windNode) {
                 // Capture the pre-creation show state; par.windShow is a
                 // getter that will delegate to the node once it exists, so
@@ -285,12 +300,48 @@ export const setupMethods = {
                 this._windNode.visible = initiallyVisible;
                 this._windNode.group.visible = initiallyVisible;
             }
+
+            // Always tell the node about the requested source so the inner
+            // coalescer in fetchWindForAltitude can re-run with the right
+            // source if it changed mid-flight.
             this._windNode.source = sourceKey;
-            par.windStatus = "Loading...";
-            const ok = await this._ensureSoundingsForWind(sourceKey);
-            if (!ok) return; // status already set with the real failure reason
-            await this._windNode.fetchWindForAltitude(par.windAltFt);
-            par.windStatus = this._windNode.statusText;
+
+            if (this._windLoadInFlight) {
+                // Forward to fetchWindForAltitude so its _pendingSource /
+                // _pendingAltFt coalescer picks up any change since the
+                // current flight started.
+                //
+                // Two cases the forwarded promise covers:
+                //   1. The in-flight is mid-fetch (fetching=true): the
+                //      forwarded call sets _pendingAltFt/_pendingSource
+                //      and returns immediately. The in-flight's tail
+                //      handles the recursion to load the new source.
+                //   2. The in-flight failed before reaching its fetch
+                //      (e.g. _ensureSoundingsForWind returned false):
+                //      fetching=false, so the forwarded call kicks off
+                //      a real fetch for the new source.
+                //
+                // We allSettled both so par.windStatus syncs to the wind
+                // node's current statusText after everything finishes —
+                // otherwise case 2 leaves par.windStatus pinned to the
+                // failure reason for the OLD source.
+                const fwd = this._windNode.fetchWindForAltitude(par.windAltFt);
+                return Promise.allSettled([this._windLoadInFlight, fwd])
+                    .then(() => {
+                        if (this._windNode) par.windStatus = this._windNode.statusText;
+                    });
+            }
+
+            this._windLoadInFlight = (async () => {
+                par.windStatus = "Loading...";
+                const ok = await this._ensureSoundingsForWind(sourceKey);
+                if (!ok) return; // status already set with the real failure reason
+                await this._windNode.fetchWindForAltitude(par.windAltFt);
+                par.windStatus = this._windNode.statusText;
+            })().finally(() => {
+                this._windLoadInFlight = null;
+            });
+            return this._windLoadInFlight;
         };
 
         // Source selector — loads data for the new source immediately.
