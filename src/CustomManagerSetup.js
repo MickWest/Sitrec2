@@ -69,7 +69,7 @@ import {getEnvBool} from "./envUtils";
 import {CNodeFloodSim} from "./nodes/CNodeFloodSim";
 import {CNodeOrbitTrack} from "./nodes/CNodeOrbitTrack";
 import {CNodeTrackSwitch} from "./nodes/CNodeTrackSwitch";
-import {getNearbyWeatherBalloons, importSoundingDialog} from "./SondeFetch";
+import {getNearbyWeatherBalloons, haversineKm, importSoundingDialog, loadStationList} from "./SondeFetch";
 import {WIND_SOURCES, windSourceLabelsToKeys, windSourceByKey} from "./nodes/WindSources";
 import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
 import {CNodeSAPage} from "./nodes/CNodeSAPage";
@@ -240,6 +240,15 @@ export const setupMethods = {
             const src = windSourceByKey(sourceKey);
             const autoKey = src?.autoLoad;
             if (!autoKey) return true;
+            // If a refresh-driven relocation is mid-flight (profiles temp-
+            // disposed before the new fetch lands), don't probe `have` —
+            // we'd see false and kick off our own getNearbyWeatherBalloons,
+            // racing the relocate's. Wait for relocation to settle, then
+            // re-probe; the new profiles will satisfy `have` and we skip
+            // the redundant fetch.
+            if (this._relocatingSoundings) {
+                try { await this._relocatingSoundings; } catch { /* swallow */ }
+            }
             let have = false;
             NodeMan.iterate((id, n) => {
                 if (n && n.constructor?.name === "CNodeAtmosphericProfile"
@@ -494,19 +503,157 @@ export const setupMethods = {
             setRenderOne(true);
         });
 
+        // For sounding sources (uwyo/igra2): if the camera has moved
+        // since soundings were originally loaded, the once-nearest stations
+        // may no longer be a good IDW basis. Detect drift and swap in the
+        // new nearest stations so refresh actually freshens what the user
+        // sees, not just re-runs the IDW build over stale far-away data.
+        //
+        // Returns true if soundings were relocated. The single-flight guard
+        // (_relocatingSoundings) keeps a double-clicked refresh from
+        // disposing the same tracks twice and double-fetching from UWYO.
+        this._maybeRelocateSoundings = async (source) => {
+            if (source !== "uwyo" && source !== "igra2") return false;
+            if (this._relocatingSoundings) return this._relocatingSoundings;
+
+            this._relocatingSoundings = (async () => {
+                // Camera position — same fallback chain as getNearbyWeatherBalloons
+                // so the "current" position matches what the auto-load uses.
+                let camLat, camLon;
+                try {
+                    const lookCamera = NodeMan.get("lookCamera").camera;
+                    const lla = ECEFToLLAVD_radii(lookCamera.position);
+                    camLat = lla.x;
+                    camLon = lla.y;
+                } catch {
+                    return false;
+                }
+
+                // Loaded profiles for this source that have a station coord.
+                // Profiles missing coords can't participate in the proximity
+                // comparison, but we still want to nuke their tracks if
+                // relocation runs (they're stale by the same logic).
+                const loaded = [];
+                NodeMan.iterate((id, node) => {
+                    if (node?.constructor?.name === "CNodeAtmosphericProfile"
+                        && node.source === source
+                        && node.stationLat != null && node.stationLon != null) {
+                        loaded.push(node);
+                    }
+                });
+                if (loaded.length === 0) return false;
+
+                const wantedN = Math.max(1, Math.min(par.balloonCount ?? 3, 10));
+
+                // Sort all stations by current proximity. Filter to
+                // currently-active stations using the sitch year (matches
+                // the same year gate getNearbyWeatherBalloons applies —
+                // keeps decommissioned stations out of the "nearest" pool).
+                let stations;
+                try {
+                    stations = await loadStationList();
+                } catch {
+                    return false;
+                }
+                if (!Array.isArray(stations) || stations.length === 0) return false;
+                let targetYear;
+                try {
+                    targetYear = GlobalDateTimeNode.frameToDate(0).getUTCFullYear();
+                } catch {
+                    targetYear = new Date().getUTCFullYear();
+                }
+                const sorted = stations
+                    .filter(s => s.wmo && s.lastYear >= targetYear)
+                    .map(s => ({...s, dist: haversineKm(camLat, camLon, s.lat, s.lon)}))
+                    .sort((a, b) => a.dist - b.dist);
+                if (sorted.length === 0) return false;
+
+                const optimalMaxDist = sorted[Math.min(wantedN, sorted.length) - 1].dist;
+                const loadedDists = loaded.map(p =>
+                    haversineKm(camLat, camLon, p.stationLat, p.stationLon));
+                const maxLoadedDist = Math.max(...loadedDists);
+
+                // Reload triggers when:
+                //   - Loaded count differs from the requested count (user
+                //     changed balloonCount in either direction, or some
+                //     loads previously failed), OR
+                //   - The farthest loaded station is significantly farther
+                //     than the farthest of the current N nearest. The 1.5× +
+                //     50 km clause keeps small jitters from triggering reloads
+                //     on slow-moving tracks; the 100 km absolute-difference
+                //     clause catches sitch-origin changes that cross
+                //     continents but happen to keep the same proportional ratio.
+                const drifted = maxLoadedDist > optimalMaxDist * 1.5 + 50
+                    || (maxLoadedDist - optimalMaxDist) > 100;
+                if (loaded.length === wantedN && !drifted) return false;
+
+                par.windStatus = `Soundings: relocating to ${wantedN} nearest…`;
+
+                // A sounding profile is owned by a TrackManager track, with
+                // a parallel TrackData_*, _windArrows, displayTargetSphere
+                // and FileManager entry. The standard CMetaTrack.dispose
+                // teardown does NOT explicitly drop atmosphericProfile or
+                // <shortName>_windArrows — they ride into orphan-land when
+                // TrackData_* is unlinked, leaving stale entries in NodeMan
+                // (and getNearbyWeatherBalloons would re-import the same
+                // station as a new <id>_1 next to them). Drop those two
+                // sounding-specific extras up-front so the track-level
+                // dispose has a clean handoff.
+                const profileSet = new Set(loaded);
+                const trackIdsToRemove = [];
+                TrackManager.iterate((trackID, trackOb) => {
+                    if (trackOb?.atmosphericProfile
+                        && profileSet.has(trackOb.atmosphericProfile)) {
+                        const profileId = trackOb.atmosphericProfile.id;
+                        if (NodeMan.exists(profileId)) {
+                            NodeMan.unlinkDisposeRemove(profileId);
+                        }
+                        // Sonde tracks also create:
+                        //   - <shortName>_windArrows  (CNodeWindArrows)
+                        //   - colorData_<shortName>   (per-row color)
+                        //   - colorTrack_<shortName>  (per-track color)
+                        // None are dropped by CMetaTrack.dispose, so without
+                        // this cleanup re-importing the same station throws
+                        // "adding <id> twice to a CManager".
+                        const shortName = trackID.replace(/^Track_/, "");
+                        for (const sub of [
+                            `${shortName}_windArrows`,
+                            `colorData_${shortName}`,
+                            `colorTrack_${shortName}`,
+                        ]) {
+                            if (NodeMan.exists(sub)) NodeMan.unlinkDisposeRemove(sub);
+                        }
+                        trackIdsToRemove.push(trackID);
+                    }
+                });
+                for (const trackID of trackIdsToRemove) {
+                    TrackManager.disposeRemove(trackID);
+                }
+
+                try {
+                    await getNearbyWeatherBalloons(wantedN, source);
+                } catch (e) {
+                    console.warn("Sounding relocation fetch failed:", e?.message ?? e);
+                }
+                return true;
+            })().finally(() => {
+                this._relocatingSoundings = null;
+            });
+            return this._relocatingSoundings;
+        };
+
         const refresh = async () => {
             if (!this._windNode) return;
             // Drop every per-source cache the wind node owns so the next
             // fetch actually hits the network (or the IDW pipeline) again.
             //   GFS:        FileManager entries + _levelCache (via _evictAllWindGrids)
             //   open-meteo: _omCache
-            // Sounding sources read profiles from CNodeAtmosphericProfile,
-            // which the user manages separately — there's nothing to evict
-            // here for those, and rebuilding the IDW grid is the actual
-            // refresh signal.
+            //   uwyo/igra2: relocate to current N nearest if drifted; the
+            //               IDW rebuild inside fetchWindForAltitude does the rest.
             this._windNode._evictAllWindGrids();
             if (this._windNode._omCache) this._windNode._omCache.clear();
             par.windStatus = "Loading...";
+            await this._maybeRelocateSoundings(this._windNode.source);
             await this._windNode.fetchWindForAltitude(par.windAltFt);
             par.windStatus = this._windNode.statusText;
         };
