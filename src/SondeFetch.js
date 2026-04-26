@@ -3,7 +3,7 @@
 
 import {SITREC_SERVER, SITREC_APP, isServerless} from "./configUtils";
 import {FileManager, GlobalDateTimeNode, NodeMan, Sit} from "./Globals";
-import {promptForText} from "./TextPrompt";
+import {promptForChoice, promptForText} from "./TextPrompt";
 import {detectSondeFormat, listIGRA2Soundings, parseIGRA2, parseUWYOList, parseUWYOCSV} from "./ParseSonde";
 import {reconstructTrajectory} from "./SondeTrajectory";
 import {initProgress, updateProgress, hideProgress} from "./CProgressIndicator";
@@ -589,20 +589,25 @@ export async function importSoundingDialog() {
     }
     if (!station) return;
 
-    // Step 2: Source selection
-    const source = await promptForText({
-        title: `Import Sounding — Source (${station.wmo} ${station.name})`,
-        message: "Choose data source:\n"
-            + "  uwyo  — University of Wyoming (recent data, needs PHP proxy)\n"
-            + "  igra2 — NOAA NCEI archive (historical data, direct download)\n",
-        defaultValue: isServerless ? "igra2" : "uwyo",
-        validate: (val) => {
-            const v = val.trim().toLowerCase();
-            if (v !== "uwyo" && v !== "igra2") return "Enter 'uwyo' or 'igra2'";
-            return "";
-        },
-    });
-    if (source === null) return;
+    // Step 2: Source selection. UWYO needs the PHP proxy (CORS) so it's
+    // only an option when running against a real sitrec server; in
+    // serverless / file:// builds we silently default to IGRA2 (no
+    // dialog needed — there's only one valid choice).
+    let source;
+    if (isServerless) {
+        source = "igra2";
+    } else {
+        source = await promptForChoice({
+            title: `Import Sounding — Source (${station.wmo} ${station.name})`,
+            message: "Choose data source:",
+            defaultValue: "uwyo",
+            options: [
+                {value: "uwyo",  label: "UWYO",  description: "University of Wyoming (fastest)"},
+                {value: "igra2", label: "IGRA2", description: "NOAA NCEI archive (possibly more accurate)"},
+            ],
+        });
+        if (source === null) return;
+    }
 
     // Step 3: Date — default to the sitch's start date (frame 0) so the
     // imported sounding lines up with the data the user is analyzing.
