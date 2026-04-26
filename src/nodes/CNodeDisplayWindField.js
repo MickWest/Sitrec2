@@ -43,6 +43,16 @@ export {
 const R_EARTH = 6371000; // meters
 const DEG = Math.PI / 180;
 
+// Module-level scratch Vector3s for the per-frame screen-grid path.
+// Each renders ~60 arrows; without these, every iteration allocates 4-6
+// Vector3s (ndc, hit, dir, end, plus the local-frame helpers' internals).
+// Wind nodes are singletons within a sitch so sharing scratches across
+// arrows is safe — they're never read after a single iteration completes.
+const _scratchNDC = new Vector3();
+const _scratchHit = new Vector3();
+const _scratchDir = new Vector3();
+const _scratchEnd = new Vector3();
+
 export class CNodeDisplayWindField extends CNode3DGroup {
     constructor(v) {
         super(v);
@@ -339,8 +349,8 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             if (this._sondeArrows) {
                 for (const [name, entry] of this._sondeArrows) {
                     const lengthM = view.pixelsToMeters(entry.start, PX);
-                    const end = entry.start.clone().addScaledVector(entry.dir, lengthM);
-                    DebugArrowAB(name, entry.start, end, "#ff66ff", true,
+                    _scratchEnd.copy(entry.start).addScaledVector(entry.dir, lengthM);
+                    DebugArrowAB(name, entry.start, _scratchEnd, "#ff66ff", true,
                         this.group, 50, LAYER.MASK_HELPERS);
                 }
             }
@@ -350,25 +360,26 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     }
 
     // Cast a ray from the main view's camera through the given pixel and
-    // intersect with the WGS84-shaped shell at altMSL. Returns the ECEF hit
-    // point or null. Shared between the screen-grid arrows and inspect mode.
-    _rayHitWindShell(view, px, py, altMSL) {
+    // intersect with the WGS84-shaped shell at altMSL. Writes the ECEF hit
+    // point into `out` and returns it, or null on miss. `out` is mandatory
+    // so callers can supply a scratch Vector3 and avoid per-arrow allocations.
+    _rayHitWindShell(view, px, py, altMSL, out) {
         if (!view?.camera || !view.widthPx || !view.heightPx) return null;
         const a = Globals.equatorRadius + altMSL;
         const b = Globals.polarRadius + altMSL;
         const a2 = a * a, b2 = b * b;
         const cam = view.camera.position;
 
-        const ndc = new Vector3(
+        _scratchNDC.set(
             (px / view.widthPx) * 2 - 1,
             -(py / view.heightPx) * 2 + 1,
             1,
         );
-        ndc.unproject(view.camera);
+        _scratchNDC.unproject(view.camera);
 
-        let dirX = ndc.x - cam.x;
-        let dirY = ndc.y - cam.y;
-        let dirZ = ndc.z - cam.z;
+        let dirX = _scratchNDC.x - cam.x;
+        let dirY = _scratchNDC.y - cam.y;
+        let dirZ = _scratchNDC.z - cam.z;
         const dlen = Math.hypot(dirX, dirY, dirZ);
         if (dlen === 0) return null;
         dirX /= dlen; dirY /= dlen; dirZ /= dlen;
@@ -385,7 +396,36 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         const t2 = (-B + sqd) / (2 * A);
         const t = t1 > 0 ? t1 : (t2 > 0 ? t2 : -1);
         if (t < 0) return null;
-        return new Vector3(cam.x + dirX * t, cam.y + dirY * t, cam.z + dirZ * t);
+        out.set(cam.x + dirX * t, cam.y + dirY * t, cam.z + dirZ * t);
+        return out;
+    }
+
+    // Compute the wind-blow-TO direction (unit ECEF) at lat/lon for a given
+    // FROM-bearing in radians, written into `out`. Avoids the 12+ Vector3
+    // allocations per call that getLocalNorthVector/getLocalEastVector incur
+    // by computing the local north/east components directly from sin/cos
+    // (sphere approximation — sub-degree error vs ellipsoid, irrelevant for
+    // arrow direction visualization).
+    static _windDirFromBearing(latDeg, lonDeg, bearingFromRad, out) {
+        const lat = latDeg * DEG;
+        const lon = lonDeg * DEG;
+        const sLat = Math.sin(lat), cLat = Math.cos(lat);
+        const sLon = Math.sin(lon), cLon = Math.cos(lon);
+        // ENU local basis at (lat, lon):
+        //   north = (-sLat*cLon, -sLat*sLon, cLat)
+        //   east  = (-sLon, cLon, 0)
+        // arrow TO = (bearingFromRad+180°): cos = -cos(from), sin = -sin(from)
+        const cFrom = Math.cos(bearingFromRad);
+        const sFrom = Math.sin(bearingFromRad);
+        const cTo = -cFrom, sTo = -sFrom;
+        const nX = -sLat * cLon, nY = -sLat * sLon, nZ = cLat;
+        const eX = -sLon,        eY =  cLon,        eZ = 0;
+        out.set(
+            cTo * nX + sTo * eX,
+            cTo * nY + sTo * eY,
+            cTo * nZ + sTo * eZ,
+        );
+        return out;
     }
 
     // Screen-space wind arrow grid for the main view.
@@ -416,7 +456,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
 
             for (let py = STEP / 2; py < view.heightPx; py += STEP) {
                 for (let px = STEP / 2; px < view.widthPx; px += STEP) {
-                    const hit = this._rayHitWindShell(view, px, py, altMSL);
+                    const hit = this._rayHitWindShell(view, px, py, altMSL, _scratchHit);
                     if (!hit) continue;
                     const lla = ECEFToLLAVD_radii(hit);
                     if (!Number.isFinite(lla.x) || !Number.isFinite(lla.y)) continue;
@@ -425,20 +465,14 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                     if (!w || !Number.isFinite(w.u) || !Number.isFinite(w.v)) continue;
                     if (Math.hypot(w.u, w.v) < 0.5) continue;  // noise floor
 
-                    // Wind FROM → arrow TO direction.
                     const {from} = fromUVToDirKnots(w.u, w.v);
-                    const bearingRad = ((from + 180) % 360) * DEG;
-                    const north = getLocalNorthVector(hit);
-                    const east  = getLocalEastVector(hit);
-                    const dir3d = new Vector3()
-                        .addScaledVector(north, Math.cos(bearingRad))
-                        .addScaledVector(east,  Math.sin(bearingRad))
-                        .normalize();
+                    CNodeDisplayWindField._windDirFromBearing(
+                        lla.x, lla.y, from * DEG, _scratchDir);
 
                     const lengthM = view.pixelsToMeters(hit, PX);
-                    const end = hit.clone().addScaledVector(dir3d, lengthM);
+                    _scratchEnd.copy(hit).addScaledVector(_scratchDir, lengthM);
                     const name = `windArrowGrid_${px}_${py}`;
-                    DebugArrowAB(name, hit, end, "#00ffff", true,
+                    DebugArrowAB(name, hit, _scratchEnd, "#00ffff", true,
                         this.group, 30, LAYER.MASK_MAIN);
                     seen.add(name);
                 }
@@ -525,7 +559,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
 
         const [vx, vy] = mouseToView(view, this._inspectClient.x, this._inspectClient.y);
         const altMSL = this.windAltFt * 0.3048;
-        const hit = this._rayHitWindShell(view, vx, vy, altMSL);
+        const hit = this._rayHitWindShell(view, vx, vy, altMSL, _scratchHit);
         if (!hit) {
             removeDebugArrow("windInspectArrow");
             if (this._inspectDiv) this._inspectDiv.style.display = "none";
@@ -550,16 +584,11 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         const speedUnit = Units?.speedUnits ?? "knots";
 
         // Arrow points TO (drift direction), 100 px on screen.
-        const bearingRad = ((from + 180) % 360) * DEG;
-        const north = getLocalNorthVector(hit);
-        const east  = getLocalEastVector(hit);
-        const dir3d = new Vector3()
-            .addScaledVector(north, Math.cos(bearingRad))
-            .addScaledVector(east,  Math.sin(bearingRad))
-            .normalize();
+        CNodeDisplayWindField._windDirFromBearing(
+            lla.x, lla.y, from * DEG, _scratchDir);
         const lengthM = view.pixelsToMeters(hit, 100);
-        const end = hit.clone().addScaledVector(dir3d, lengthM);
-        DebugArrowAB("windInspectArrow", hit, end, "#ffff00", true,
+        _scratchEnd.copy(hit).addScaledVector(_scratchDir, lengthM);
+        DebugArrowAB("windInspectArrow", hit, _scratchEnd, "#ffff00", true,
             this.group, 30, LAYER.MASK_MAIN);
 
         // Readout, positioned next to the cursor (offset so it doesn't
