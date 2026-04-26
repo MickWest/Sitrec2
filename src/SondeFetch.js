@@ -604,13 +604,22 @@ export async function importSoundingDialog() {
     });
     if (source === null) return;
 
-    // Step 3: Date
-    const today = new Date().toISOString().slice(0, 10);
+    // Step 3: Date — default to the sitch's start date (frame 0) so the
+    // imported sounding lines up with the data the user is analyzing.
+    // Falls back to today only if there's no sitch clock yet.
+    let defaultDate;
+    try {
+        const sitStart = GlobalDateTimeNode.frameToDate(0);
+        defaultDate = sitStart.toISOString().slice(0, 10);
+    } catch {
+        defaultDate = new Date().toISOString().slice(0, 10);
+    }
     const dateStr = await promptForText({
         title: `Import Sounding — Date (${station.wmo} ${station.name})`,
         message: "Enter sounding date (YYYY-MM-DD).\n"
-            + "Most stations launch at 00Z and 12Z daily.",
-        defaultValue: today,
+            + "Most stations launch at 00Z and 12Z daily.\n"
+            + "Defaults to the sitch start date.",
+        defaultValue: defaultDate,
         validate: (val) => {
             if (!/^\d{4}-\d{2}-\d{2}$/.test(val.trim())) return "Use YYYY-MM-DD format";
             return "";
@@ -629,10 +638,19 @@ export async function importSoundingDialog() {
 }
 
 async function importViaUWYO(station, date) {
+    // Default hour: the most recent 00Z / 12Z launch on or before the
+    // sitch start time (matching getNearbyWeatherBalloons' auto-pick
+    // logic, so manual + auto imports converge on the same launch).
+    let defaultHour = "12";
+    try {
+        const sitStart = GlobalDateTimeNode.frameToDate(0);
+        defaultHour = sitStart.getUTCHours() >= 12 ? "12" : "0";
+    } catch { /* leave default */ }
     const hourStr = await promptForText({
         title: `Import Sounding — Hour (${station.wmo} ${station.name})`,
-        message: "Enter UTC launch hour (0 or 12).",
-        defaultValue: "12",
+        message: "Enter UTC launch hour (0 or 12).\n"
+            + "Defaults to the most recent launch on the sitch start date.",
+        defaultValue: defaultHour,
         validate: (val) => {
             const v = val.trim();
             if (v !== "0" && v !== "00" && v !== "12") return "Must be 0 or 12";
