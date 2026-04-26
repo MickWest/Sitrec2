@@ -627,40 +627,15 @@ export const setupMethods = {
 
                 par.windStatus = `Soundings: relocating to ${wantedN} nearest…`;
 
-                // A sounding profile is owned by a TrackManager track, with
-                // a parallel TrackData_*, _windArrows, displayTargetSphere
-                // and FileManager entry. The standard CMetaTrack.dispose
-                // teardown does NOT explicitly drop atmosphericProfile or
-                // <shortName>_windArrows — they ride into orphan-land when
-                // TrackData_* is unlinked, leaving stale entries in NodeMan
-                // (and getNearbyWeatherBalloons would re-import the same
-                // station as a new <id>_1 next to them). Drop those two
-                // sounding-specific extras up-front so the track-level
-                // dispose has a clean handoff.
+                // TrackManager.disposeRemove cascades through CMetaTrack.dispose
+                // which now cleans up the full sonde cluster (atmosphericProfile,
+                // _windArrows, colorData_*, colorTrack_*) — no hand-cleanup
+                // needed here.
                 const profileSet = new Set(loaded);
                 const trackIdsToRemove = [];
                 TrackManager.iterate((trackID, trackOb) => {
                     if (trackOb?.atmosphericProfile
                         && profileSet.has(trackOb.atmosphericProfile)) {
-                        const profileId = trackOb.atmosphericProfile.id;
-                        if (NodeMan.exists(profileId)) {
-                            NodeMan.unlinkDisposeRemove(profileId);
-                        }
-                        // Sonde tracks also create:
-                        //   - <shortName>_windArrows  (CNodeWindArrows)
-                        //   - colorData_<shortName>   (per-row color)
-                        //   - colorTrack_<shortName>  (per-track color)
-                        // None are dropped by CMetaTrack.dispose, so without
-                        // this cleanup re-importing the same station throws
-                        // "adding <id> twice to a CManager".
-                        const shortName = trackID.replace(/^Track_/, "");
-                        for (const sub of [
-                            `${shortName}_windArrows`,
-                            `colorData_${shortName}`,
-                            `colorTrack_${shortName}`,
-                        ]) {
-                            if (NodeMan.exists(sub)) NodeMan.unlinkDisposeRemove(sub);
-                        }
                         trackIdsToRemove.push(trackID);
                     }
                 });

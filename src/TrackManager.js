@@ -164,6 +164,24 @@ class CMetaTrack {
         unlinkManagedNode(this.anglesController);
         removeLOSNodeColumnNodes(this.trackID);
 
+        // Sonde-track extras. makeMotionTrack adds these for tracks
+        // sourced from CTrackFileSonde (UWYO / IGRA2 imports + nearby-
+        // balloon auto-fetch); they're undefined on non-sonde tracks.
+        // Without this cleanup, removing a sonde track leaves four
+        // orphans behind in NodeMan — atmosphericProfile_<sn>,
+        // <sn>_windArrows, colorData_<sn>, colorTrack_<sn> — which then
+        // collide as "adding <id> twice to a CManager" the next time the
+        // same station is re-imported (e.g. a refresh-driven sounding
+        // relocation, or a manual re-import after Remove track).
+        unlinkManagedNode(this.atmosphericProfile);
+        for (const id of [
+            `${shortName}_windArrows`,
+            `colorData_${shortName}`,
+            `colorTrack_${shortName}`,
+        ]) {
+            if (NodeMan.exists(id)) NodeMan.unlinkDisposeRemove(id);
+        }
+
         // more limited pruning
         NodeMan.pruneUnusedControllers();
         NodeMan.pruneUnusedFlagged();
