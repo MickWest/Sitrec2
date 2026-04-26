@@ -199,6 +199,8 @@ export const setupMethods = {
         par.windMaxSpeed = 30;
         par.windNearbyOnly = true;
         par.windNearbyRadiusKm = 250;
+        par.windShowArrows = false;
+        par.windInspect = false;
 
         // Track which sources we've already auto-shown wind for, so the
         // "first switch to GFS/sounding turns on Show Wind" rule fires once
@@ -370,12 +372,13 @@ export const setupMethods = {
             }
         });
 
-        // Show Wind checkbox — first toggle on creates the field and loads
-        // data; later toggles just flip visibility. If a previous load failed
-        // (node exists but empty), toggling back on retries the load instead
-        // of showing an invisible empty field forever. `.listen()` keeps it
-        // in sync with the Show/Hide menu's "Wind Field" toggle.
-        windFolder.add(par, "windShow").name("Show Wind").listen().onChange(async (v) => {
+        // Show Wind Lines checkbox — first toggle on creates the field and
+        // loads data; later toggles just flip visibility of the streamline
+        // mesh. If a previous load failed (node exists but empty), toggling
+        // back on retries the load instead of showing an invisible empty
+        // field forever. `.listen()` keeps it in sync with the Show/Hide
+        // menu's "Wind Field" toggle.
+        windFolder.add(par, "windShow").name("Show Wind Lines").listen().onChange(async (v) => {
             const needsLoad = v && (!this._windNode || !this._windNode.windU);
             if (needsLoad) {
                 await this._loadWindForCurrentSource();
@@ -384,6 +387,35 @@ export const setupMethods = {
                     this._windNode.group.visible = !!v;
                     setRenderOne(true);
                 }
+            }
+        });
+
+        // Show Wind Arrows: render a 200 px screen-space grid of wind arrows
+        // in the main view, ray-cast onto the ellipsoid at the current wind
+        // altitude. Independent of the streamline mesh — either or both can
+        // be on.
+        windFolder.add(par, "windShowArrows").name("Show Wind Arrows").listen().onChange(async (v) => {
+            // Loading wind data needs the node — create it on first toggle
+            // (same path as Show Wind Lines).
+            if (v && (!this._windNode || !this._windNode.windU)) {
+                await this._loadWindForCurrentSource();
+            }
+            if (this._windNode) {
+                this._windNode.showArrows = !!v;
+                setRenderOne(true);
+            }
+        });
+
+        // Inspect Wind: cursor-driven readout. Single arrow at the cursor's
+        // ellipsoid intersection plus a floating panel with speed (display
+        // units) and FROM heading (compass + degrees).
+        windFolder.add(par, "windInspect").name("Inspect Wind").listen().onChange(async (v) => {
+            if (v && (!this._windNode || !this._windNode.windU)) {
+                await this._loadWindForCurrentSource();
+            }
+            if (this._windNode) {
+                this._windNode.setInspect(!!v);
+                setRenderOne(true);
             }
         });
 

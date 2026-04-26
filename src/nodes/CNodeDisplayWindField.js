@@ -7,7 +7,8 @@ import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {DebugArrowAB, DebugArrows, removeDebugArrow} from "../threeExt";
 import {getLocalNorthVector, getLocalEastVector} from "../SphericalMath";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
-import {FileManager, GlobalDateTimeNode, NodeMan, Sit} from "../Globals";
+import {FileManager, GlobalDateTimeNode, Globals, NodeMan, Sit, Units} from "../Globals";
+import {mouseInView, mouseToView} from "../ViewUtils";
 import pako from "pako";
 import * as LAYER from "../LayerMasks";
 import {
@@ -106,6 +107,22 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // global wind fields are rarely what users actually want to look at.
         this.nearbyOnly      = v.nearbyOnly      ?? true;
         this.nearbyRadiusKm  = v.nearbyRadiusKm  ?? 250;
+
+        // Screen-grid wind arrows: per-frame ray-cast a uniform 200 px grid
+        // through the main view, intersect each ray with the ellipsoid at the
+        // configured altitude, and draw a 100 px arrow there. Independent
+        // of the streamline mesh visibility ("Show Wind Lines"), so users
+        // can pick either or both.
+        this.showArrows = v.showArrows ?? false;
+
+        // Inspect mode: cursor-driven single arrow + on-screen readout
+        // (heading and speed at the wind altitude under the mouse). Drives a
+        // document-level mousemove listener that's installed/removed on
+        // toggle so we don't pay the cost when the feature is off.
+        this.inspect = false;
+        this._inspectClient = null;     // {x, y} clientX/Y or null when no cursor
+        this._inspectDiv = null;        // DOM readout, lazy-created
+        this._inspectMouseHandler = null;
 
         // ---------- shader material ----------
         this.material = new ShaderMaterial({
@@ -317,15 +334,243 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // actual world-space lines whose length is the same number of pixels
     // on screen regardless of camera distance.
     preRender(view) {
-        if (!this._sondeArrows || this._sondeArrows.size === 0) return;
-        if (!view.pixelsToMeters) return;
-        const PX = 100; // arrow length in screen pixels
-        for (const [name, entry] of this._sondeArrows) {
-            const lengthM = view.pixelsToMeters(entry.start, PX);
-            const end = entry.start.clone().addScaledVector(entry.dir, lengthM);
-            DebugArrowAB(name, entry.start, end, "#ff66ff", true,
-                this.group, 20, LAYER.MASK_HELPERS);
+        if (view.pixelsToMeters) {
+            const PX = 100; // arrow length in screen pixels
+            if (this._sondeArrows) {
+                for (const [name, entry] of this._sondeArrows) {
+                    const lengthM = view.pixelsToMeters(entry.start, PX);
+                    const end = entry.start.clone().addScaledVector(entry.dir, lengthM);
+                    DebugArrowAB(name, entry.start, end, "#ff66ff", true,
+                        this.group, 50, LAYER.MASK_HELPERS);
+                }
+            }
         }
+        this._updateScreenWindArrows(view);
+        this._updateInspectArrow(view);
+    }
+
+    // Cast a ray from the main view's camera through the given pixel and
+    // intersect with the WGS84-shaped shell at altMSL. Returns the ECEF hit
+    // point or null. Shared between the screen-grid arrows and inspect mode.
+    _rayHitWindShell(view, px, py, altMSL) {
+        if (!view?.camera || !view.widthPx || !view.heightPx) return null;
+        const a = Globals.equatorRadius + altMSL;
+        const b = Globals.polarRadius + altMSL;
+        const a2 = a * a, b2 = b * b;
+        const cam = view.camera.position;
+
+        const ndc = new Vector3(
+            (px / view.widthPx) * 2 - 1,
+            -(py / view.heightPx) * 2 + 1,
+            1,
+        );
+        ndc.unproject(view.camera);
+
+        let dirX = ndc.x - cam.x;
+        let dirY = ndc.y - cam.y;
+        let dirZ = ndc.z - cam.z;
+        const dlen = Math.hypot(dirX, dirY, dirZ);
+        if (dlen === 0) return null;
+        dirX /= dlen; dirY /= dlen; dirZ /= dlen;
+
+        const A = (dirX * dirX + dirY * dirY) / a2 + (dirZ * dirZ) / b2;
+        const B = 2 * ((cam.x * dirX + cam.y * dirY) / a2
+            + (cam.z * dirZ) / b2);
+        const C = (cam.x * cam.x + cam.y * cam.y) / a2
+            + (cam.z * cam.z) / b2 - 1;
+        const disc = B * B - 4 * A * C;
+        if (disc < 0) return null;
+        const sqd = Math.sqrt(disc);
+        const t1 = (-B - sqd) / (2 * A);
+        const t2 = (-B + sqd) / (2 * A);
+        const t = t1 > 0 ? t1 : (t2 > 0 ? t2 : -1);
+        if (t < 0) return null;
+        return new Vector3(cam.x + dirX * t, cam.y + dirY * t, cam.z + dirZ * t);
+    }
+
+    // Screen-space wind arrow grid for the main view.
+    //
+    // For each 200 px cell in the viewport, cast a ray from the camera
+    // through the cell centre, intersect it with the ellipsoid at the wind
+    // altitude (a + altMSL, b + altMSL), then sample the wind grid at that
+    // lat/lon and draw a 100 px arrow pointing in the wind-blow-to direction.
+    // Skips cells whose ray misses the globe or where wind speed is below
+    // a noise floor.
+    _updateScreenWindArrows(view) {
+        // preRender fires for every view; only the main view owns these
+        // arrows. Skip everything (including the cleanup loop) for other
+        // views or we'd remove and recreate ~60 ArrowHelpers per frame —
+        // a GPU-buffer-thrash that can crash the renderer.
+        if (view?.id !== "mainView") return;
+
+        if (!this._screenArrowNames) this._screenArrowNames = new Set();
+        const seen = new Set();
+
+        if (this.showArrows && this.windU
+            && view.pixelsToMeters && view.camera
+            && view.widthPx > 0 && view.heightPx > 0) {
+
+            const altMSL = this.windAltFt * 0.3048;
+            const STEP = 200;
+            const PX = 100;
+
+            for (let py = STEP / 2; py < view.heightPx; py += STEP) {
+                for (let px = STEP / 2; px < view.widthPx; px += STEP) {
+                    const hit = this._rayHitWindShell(view, px, py, altMSL);
+                    if (!hit) continue;
+                    const lla = ECEFToLLAVD_radii(hit);
+                    if (!Number.isFinite(lla.x) || !Number.isFinite(lla.y)) continue;
+
+                    const w = this.sampleWind(lla.x, lla.y);
+                    if (!w || !Number.isFinite(w.u) || !Number.isFinite(w.v)) continue;
+                    if (Math.hypot(w.u, w.v) < 0.5) continue;  // noise floor
+
+                    // Wind FROM → arrow TO direction.
+                    const {from} = fromUVToDirKnots(w.u, w.v);
+                    const bearingRad = ((from + 180) % 360) * DEG;
+                    const north = getLocalNorthVector(hit);
+                    const east  = getLocalEastVector(hit);
+                    const dir3d = new Vector3()
+                        .addScaledVector(north, Math.cos(bearingRad))
+                        .addScaledVector(east,  Math.sin(bearingRad))
+                        .normalize();
+
+                    const lengthM = view.pixelsToMeters(hit, PX);
+                    const end = hit.clone().addScaledVector(dir3d, lengthM);
+                    const name = `windArrowGrid_${px}_${py}`;
+                    DebugArrowAB(name, hit, end, "#00ffff", true,
+                        this.group, 30, LAYER.MASK_MAIN);
+                    seen.add(name);
+                }
+            }
+        }
+
+        // Drop arrows that didn't get refreshed this frame (off-screen, or
+        // toggle flipped off). Cheap — usually 0 entries to remove.
+        for (const name of this._screenArrowNames) {
+            if (!seen.has(name)) removeDebugArrow(name);
+        }
+        this._screenArrowNames = seen;
+    }
+
+    // Toggle inspect mode. Installs/removes a document mousemove listener
+    // and tears down the readout DOM + arrow when disabled.
+    setInspect(enabled) {
+        this.inspect = !!enabled;
+        if (this.inspect && !this._inspectMouseHandler) {
+            this._inspectMouseHandler = (e) => {
+                this._inspectClient = {x: e.clientX, y: e.clientY};
+                setRenderOne(true);
+            };
+            document.addEventListener("mousemove", this._inspectMouseHandler);
+        } else if (!this.inspect && this._inspectMouseHandler) {
+            document.removeEventListener("mousemove", this._inspectMouseHandler);
+            this._inspectMouseHandler = null;
+        }
+        if (!this.inspect) {
+            removeDebugArrow("windInspectArrow");
+            this._inspectClient = null;
+            if (this._inspectDiv) this._inspectDiv.style.display = "none";
+        }
+    }
+
+    // 16-point compass direction string from a degree value (0 = N, CW).
+    static _compassFromDeg(deg) {
+        const points = ["N","NNE","NE","ENE","E","ESE","SE","SSE",
+                        "S","SSW","SW","WSW","W","WNW","NW","NNW"];
+        const idx = Math.floor(((deg % 360 + 360) % 360 + 11.25) / 22.5) % 16;
+        return points[idx];
+    }
+
+    // Build (lazily) the floating readout div used by inspect mode.
+    _ensureInspectDiv() {
+        if (this._inspectDiv) return this._inspectDiv;
+        const d = document.createElement("div");
+        d.style.cssText = `
+            position: fixed;
+            background: rgba(0, 0, 0, 0.78);
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            padding: 8px 12px;
+            border: 1px solid #00ffff;
+            border-radius: 4px;
+            pointer-events: none;
+            z-index: 10000;
+            line-height: 1.25;
+            white-space: nowrap;
+        `;
+        document.body.appendChild(d);
+        this._inspectDiv = d;
+        return d;
+    }
+
+    // Cursor-driven inspect arrow + readout. Same shell intersection as the
+    // grid; computes wind speed in current display units and a 16-point
+    // compass heading (FROM) plus exact degrees.
+    _updateInspectArrow(view) {
+        // Single-view feature; bail before any side effects on other views
+        // so we don't churn the inspect ArrowHelper between mainView and
+        // lookView passes (would crash Edge under sustained interaction).
+        if (view?.id !== "mainView") return;
+        if (!this.inspect || !this.windU
+            || !view.pixelsToMeters || !this._inspectClient) {
+            return;
+        }
+        // Cursor must be inside the main view to inspect.
+        if (!mouseInView(view, this._inspectClient.x, this._inspectClient.y)) {
+            removeDebugArrow("windInspectArrow");
+            if (this._inspectDiv) this._inspectDiv.style.display = "none";
+            return;
+        }
+
+        const [vx, vy] = mouseToView(view, this._inspectClient.x, this._inspectClient.y);
+        const altMSL = this.windAltFt * 0.3048;
+        const hit = this._rayHitWindShell(view, vx, vy, altMSL);
+        if (!hit) {
+            removeDebugArrow("windInspectArrow");
+            if (this._inspectDiv) this._inspectDiv.style.display = "none";
+            return;
+        }
+        const lla = ECEFToLLAVD_radii(hit);
+        if (!Number.isFinite(lla.x) || !Number.isFinite(lla.y)) {
+            removeDebugArrow("windInspectArrow");
+            return;
+        }
+        const w = this.sampleWind(lla.x, lla.y);
+        if (!w || !Number.isFinite(w.u) || !Number.isFinite(w.v)) {
+            removeDebugArrow("windInspectArrow");
+            return;
+        }
+
+        const speedMS = Math.hypot(w.u, w.v);
+        // Wind FROM (where it's coming from) — what aviation reports.
+        const {from} = fromUVToDirKnots(w.u, w.v);
+        const compass = CNodeDisplayWindField._compassFromDeg(from);
+        const speedDisp = speedMS * (Units?.m2Speed ?? 1.94384);  // m/s → display
+        const speedUnit = Units?.speedUnits ?? "knots";
+
+        // Arrow points TO (drift direction), 100 px on screen.
+        const bearingRad = ((from + 180) % 360) * DEG;
+        const north = getLocalNorthVector(hit);
+        const east  = getLocalEastVector(hit);
+        const dir3d = new Vector3()
+            .addScaledVector(north, Math.cos(bearingRad))
+            .addScaledVector(east,  Math.sin(bearingRad))
+            .normalize();
+        const lengthM = view.pixelsToMeters(hit, 100);
+        const end = hit.clone().addScaledVector(dir3d, lengthM);
+        DebugArrowAB("windInspectArrow", hit, end, "#ffff00", true,
+            this.group, 30, LAYER.MASK_MAIN);
+
+        // Readout, positioned next to the cursor (offset so it doesn't
+        // sit under the pointer and steal hover focus).
+        const div = this._ensureInspectDiv();
+        div.style.display = "block";
+        div.style.left = (this._inspectClient.x + 18) + "px";
+        div.style.top  = (this._inspectClient.y + 18) + "px";
+        div.innerHTML =
+            `<div style="font-size:22px;font-weight:600">${speedDisp.toFixed(0)} ${speedUnit}</div>` +
+            `<div style="font-size:13px;opacity:0.85">FROM ${compass} ${Math.round(from)}°</div>`;
     }
 
     // Resolve a "where am I looking from" lat/lon for the nearby filter.
@@ -1053,7 +1298,13 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             entry.dataType = "windGrid";
             entry.filename = `wind-${src}-${suffix}.json.deflate`;
             entry.compressed = true;
-            // Cache URL for serving without S3
+            // Skip URL-based serialization: the staticURL we'd write here is
+            // synthetic (data/wind/...) and only happens to exist when
+            // windProxy.php cached the response server-side at exactly that
+            // path. On reload we re-fetch via _fetchLevel using the
+            // loadedWindFiles catalog (modSerialize/Deserialize) and
+            // windProxy's cache, which is cheaper and reliable.
+            entry.skipSerialization = true;
             const refDate = (json.refTime ?? "").replace(/[-T:Z]/g, "").slice(0, 8);
             const refHour = (json.refTime ?? "").slice(11, 13);
             const levelStr = json.level ?? "10m";
@@ -1135,6 +1386,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             hasWindData: this.source === "gfs" && !!this._lastWindJSON,
             nearbyOnly: this.nearbyOnly,
             nearbyRadiusKm: this.nearbyRadiusKm,
+            showArrows: this.showArrows,
             lastDateCycle: this._lastDateCycle,
         };
     }
@@ -1146,15 +1398,23 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.windAltFt = v.windAltFt ?? 33;
         this.nearbyOnly = v.nearbyOnly ?? true;
         this.nearbyRadiusKm = v.nearbyRadiusKm ?? 250;
+        this.showArrows = v.showArrows ?? false;
         if (v.lastDateCycle) this._lastDateCycle = v.lastDateCycle;
 
-        // Rebuild the catalog of cached wind files so _fetchLevel can find
-        // them on the next altitude change without hitting the network.
+        // Rebuild the catalog of saved wind files. Keep entries even when
+        // FileManager doesn't currently have the blob (the new normal —
+        // wind grids set skipSerialization so they're not URL-saved). The
+        // metadata still drives the post-deserialize re-fetch, and once
+        // _fetchLevel pulls each level back, _storeWindFiles re-populates
+        // FileManager under the same deterministic fileIds.
         if (Array.isArray(v.loadedWindFiles)) {
             this._loadedWindFiles = new Map(
                 v.loadedWindFiles
-                    .filter(e => e?.fileId && FileManager.list[e.fileId])
-                    .map(e => [e.fileId, {level: e.level, dateStr: e.dateStr, hour: e.hour, source: e.source}])
+                    .filter(e => e?.fileId)
+                    .map(e => [e.fileId, {
+                        level: e.level, dateStr: e.dateStr,
+                        hour: e.hour, source: e.source,
+                    }])
             );
         }
 
@@ -1183,15 +1443,33 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         if (fileIds.length === 0 && v.windFileId && FileManager.list[v.windFileId]) {
             fileIds.push(v.windFileId);
         }
-        if (!v.hasWindData || fileIds.length === 0) return;
-
         const jsons = [];
         for (const fid of fileIds) {
             if (!FileManager.list[fid]) continue;
             const json = CNodeDisplayWindField._parseWindEntry(FileManager.list[fid]);
             if (json && json.u && json.v) jsons.push(json);
         }
-        if (jsons.length === 0) return;
+
+        // Wind grids are no longer URL-serialized (skipSerialization is set
+        // in _storeWindFiles), so a saved-and-reloaded sitch arrives here
+        // with no FileManager entries. Re-fetch each saved level via
+        // windProxy on next tick so the wind reappears at the saved altitude
+        // AND the per-level cache is rewarmed for instant altitude scrubbing.
+        if (jsons.length === 0) {
+            if (v.hasWindData && this.visible) {
+                const savedLevels = Array.isArray(v.loadedWindFiles)
+                    ? v.loadedWindFiles : [];
+                this.statusText = savedLevels.length > 0
+                    ? `Reloading 0/${savedLevels.length} wind levels…`
+                    : "Reloading wind…";
+                setTimeout(() => {
+                    this._reloadGFSAfterDeserialize(savedLevels).catch(err => {
+                        console.warn("GFS wind reload failed:", err);
+                    });
+                }, 0);
+            }
+            return;
+        }
 
         // Sort the two-file blend by ascending altitude so
         // jsons[0] = lo, jsons[1] = hi — matches bracketingLevels().
@@ -1222,6 +1500,70 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         const altLabel = this.windAltFt < 300 ? "Surface" : `${this.windAltFt.toLocaleString()} ft`;
         this.statusText = `GFS ${jsons[0].refTime ?? "?"} ${altLabel}`;
         console.log("Wind data restored from saved files");
+    }
+
+    // Pre-warm every level the saved sitch had loaded, then render the
+    // saved altitude from cache. Reports progress and a final summary that
+    // distinguishes "all loaded", "partial — closest is X", and pure failure.
+    async _reloadGFSAfterDeserialize(savedLevels) {
+        const dateNow = GlobalDateTimeNode?.dateNow ?? new Date();
+        const fallbackDate = dateNow.toISOString().slice(0, 10).replace(/-/g, "");
+        const fallbackHour = Math.floor(dateNow.getUTCHours() / 6) * 6;
+
+        const total = savedLevels.length;
+        let loaded = 0;
+        const failures = [];
+
+        // Parallel re-fetch — windProxy serialises on its end, but firing
+        // them off together hides individual round-trip latency.
+        const promises = savedLevels.map(async (e) => {
+            const dateStr = e.dateStr || fallbackDate;
+            const hour = parseInt(e.hour ?? fallbackHour, 10);
+            try {
+                await this._fetchLevel(e.level, dateStr, hour);
+                loaded++;
+                if (total > 0) {
+                    this.statusText = `Reloading ${loaded}/${total} wind levels…`;
+                }
+            } catch (err) {
+                failures.push(e.level);
+                console.warn(`Wind level ${e.level} reload failed:`, err.message);
+            }
+        });
+        await Promise.all(promises);
+
+        // Render at the saved altitude (uses the now-warm cache; should be
+        // a single bracketing-blend tick with no network).
+        try {
+            await this.fetchWindForAltitude(this.windAltFt);
+        } catch (err) {
+            console.warn("Wind altitude render failed:", err.message);
+        }
+
+        // Final status: tailored to outcome.
+        const altLabel = this.windAltFt < 300 ? "Surface" : `${this.windAltFt.toLocaleString()} ft`;
+        if (total === 0) {
+            // Pre-loadedWindFiles save format — single fetchWindForAltitude
+            // already set a sensible status; leave it alone.
+        } else if (failures.length === 0) {
+            this.statusText = `GFS ${altLabel} — all ${total} levels loaded`;
+        } else if (failures.length < total) {
+            // Pick the loaded level whose altitude is closest to the
+            // current display altitude.
+            const successLevels = savedLevels
+                .filter(e => !failures.includes(e.level))
+                .map(e => e.level);
+            let closest = successLevels[0];
+            let minDiff = Math.abs(levelToAltFeet(closest) - this.windAltFt);
+            for (const lvl of successLevels) {
+                const diff = Math.abs(levelToAltFeet(lvl) - this.windAltFt);
+                if (diff < minDiff) { minDiff = diff; closest = lvl; }
+            }
+            this.statusText =
+                `GFS ${altLabel} — ${total - failures.length}/${total} levels (closest: ${closest})`;
+        } else {
+            this.statusText = `GFS reload failed (${failures.length}/${total} levels)`;
+        }
     }
 
     // ── per-frame update ─────────────────────────────────────────────
@@ -1257,6 +1599,21 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             for (const name of this._sondeArrows.keys()) removeDebugArrow(name);
             this._sondeArrows.clear();
         }
+        if (this._screenArrowNames) {
+            for (const name of this._screenArrowNames) removeDebugArrow(name);
+            this._screenArrowNames.clear();
+        }
+        // Inspect-mode tear-down: drop the listener, the floating div, and
+        // the arrow so nothing leaks across sitch reloads.
+        if (this._inspectMouseHandler) {
+            document.removeEventListener("mousemove", this._inspectMouseHandler);
+            this._inspectMouseHandler = null;
+        }
+        if (this._inspectDiv) {
+            this._inspectDiv.remove();
+            this._inspectDiv = null;
+        }
+        removeDebugArrow("windInspectArrow");
         this.material.dispose();
         super.dispose();
     }

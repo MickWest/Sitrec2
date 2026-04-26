@@ -880,7 +880,13 @@ export const serializeMethods = {
 
 
                     }
-                ))
+                ).catch((err) => {
+                    // Don't let one missing/failed asset crash the rest of
+                    // the sitch reload. Log and move on; the affected node
+                    // will reload from source on first interaction (e.g.
+                    // the wind node re-fetches via windProxy on modDeserialize).
+                    console.warn(`Failed to load asset ${id}:`, err?.message ?? err);
+                }))
             }
         }
 
@@ -1164,6 +1170,7 @@ export const serializeMethods = {
             if (windNode.statusText) par.windStatus = windNode.statusText;
             if (typeof windNode.nearbyOnly === "boolean") par.windNearbyOnly = windNode.nearbyOnly;
             if (typeof windNode.nearbyRadiusKm === "number") par.windNearbyRadiusKm = windNode.nearbyRadiusKm;
+            if (typeof windNode.showArrows === "boolean") par.windShowArrows = windNode.showArrows;
         }
 
         // and the globals
