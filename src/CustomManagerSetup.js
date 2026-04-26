@@ -445,7 +445,16 @@ export const setupMethods = {
 
         const refresh = async () => {
             if (!this._windNode) return;
-            this._windNode._levelCache = {};  // force re-fetch of GFS grids
+            // Drop every per-source cache the wind node owns so the next
+            // fetch actually hits the network (or the IDW pipeline) again.
+            //   GFS:        FileManager entries + _levelCache (via _evictAllWindGrids)
+            //   open-meteo: _omCache
+            // Sounding sources read profiles from CNodeAtmosphericProfile,
+            // which the user manages separately — there's nothing to evict
+            // here for those, and rebuilding the IDW grid is the actual
+            // refresh signal.
+            this._windNode._evictAllWindGrids();
+            if (this._windNode._omCache) this._windNode._omCache.clear();
             par.windStatus = "Loading...";
             await this._windNode.fetchWindForAltitude(par.windAltFt);
             par.windStatus = this._windNode.statusText;

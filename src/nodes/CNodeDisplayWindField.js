@@ -1393,7 +1393,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     }
 
     // Drop all cached GFS grids — call when the active cycle changes so we
-    // don't accumulate stale data across days.
+    // don't accumulate stale data across days. Also called from the
+    // "Refresh Wind Data" button, where the user wants the next fetch to
+    // round-trip the network even if the cycle is unchanged.
     _evictAllWindGrids() {
         for (const fid of this._loadedWindFiles.keys()) {
             if (FileManager.list[fid]) delete FileManager.list[fid];
@@ -1401,6 +1403,11 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this._loadedWindFiles.clear();
         this._levelCache = {};
         this._windFileIds = [];
+        // Clearing _lastDateCycle keeps the cycle-change detector in
+        // update() from treating a manual refresh as "still on the same
+        // cycle"; without this, a refresh on a stale cycle wouldn't
+        // re-arm the detector for the next clock advance.
+        this._lastDateCycle = null;
     }
 
     // Legacy single-file store (used by _storeWindFile calls in modDeserialize)
