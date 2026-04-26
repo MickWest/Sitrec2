@@ -270,14 +270,20 @@ export function haversineKm(lat1, lon1, lat2, lon2) {
 
 /**
  * Show a searchable station picker dialog.
- * Sorts by proximity to the current sitch center.
+ * Sorts by proximity to the lookCamera (the observer's position) so
+ * scrolling through the unfiltered list shows the most relevant
+ * stations first.
  * @returns {Promise<{wmo: string, name: string}|null>} Selected station or null if cancelled.
  */
 export async function pickStation() {
     const stations = await loadStationList();
 
-    // Sort by distance to lookCamera position
+    // Sort anchor: lookCamera position. Falls back to Sit.lat/lon (legacy
+    // fixed-camera sitches that don't expose a lookCamera) so the dialog
+    // never hard-fails — a globe-distance sort against (0,0) is wrong but
+    // not broken.
     let sitLat, sitLon;
+    let sortAnchor = "lookCamera";
     try {
         const lookCamera = NodeMan.get("lookCamera").camera;
         const lla = ECEFToLLAVD_radii(lookCamera.position);
@@ -286,6 +292,7 @@ export async function pickStation() {
     } catch {
         sitLat = Sit.lat || 0;
         sitLon = Sit.lon || 0;
+        sortAnchor = "sitch center";
     }
     let simYear;
     try {
@@ -310,7 +317,7 @@ export async function pickStation() {
             <h3 style="margin:0 0 10px 0;color:#fff;">Select Radiosonde Station</h3>
             <input type="text" id="sonde-search" placeholder="Search by name, ID, or country..."
                 style="width:100%;padding:8px;margin-bottom:10px;background:#2a2a4a;color:#fff;border:1px solid #444;border-radius:4px;box-sizing:border-box;font-size:14px;">
-            <div style="font-size:11px;color:#888;margin-bottom:5px;">Sorted by distance from sitch center (${sitLat.toFixed(1)}°, ${sitLon.toFixed(1)}°)</div>
+            <div style="font-size:11px;color:#888;margin-bottom:5px;">Sorted by distance from ${sortAnchor} (${sitLat.toFixed(1)}°, ${sitLon.toFixed(1)}°)</div>
             <div id="sonde-station-list" style="overflow-y:auto;flex:1;max-height:50vh;"></div>
             <div style="margin-top:10px;text-align:right;">
                 <button id="sonde-cancel" style="padding:6px 16px;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;">Cancel</button>
