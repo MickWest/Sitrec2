@@ -452,43 +452,72 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         if (view?.id !== "mainView") return;
 
         if (!this._screenArrowNames) this._screenArrowNames = new Set();
-        const seen = new Set();
 
-        if (this.showArrows && this.windU
+        const active = this.showArrows && this.windU
             && view.pixelsToMeters && view.camera
-            && view.widthPx > 0 && view.heightPx > 0) {
+            && view.widthPx > 0 && view.heightPx > 0;
 
-            const altMSL = this.windAltFt * 0.3048;
-            const STEP = 200;
-            const PX = 100;
+        if (!active) {
+            // Drop any arrows from a previous active frame, then short-circuit
+            // subsequent inactive frames (set will already be empty).
+            if (this._screenArrowNames.size > 0) {
+                for (const name of this._screenArrowNames) removeDebugArrow(name);
+                this._screenArrowNames.clear();
+            }
+            this._lastScreenGridSnapshot = null;
+            return;
+        }
 
-            for (let py = STEP / 2; py < view.heightPx; py += STEP) {
-                for (let px = STEP / 2; px < view.widthPx; px += STEP) {
-                    const hit = this._rayHitWindShell(view, px, py, altMSL, _scratchHit);
-                    if (!hit) continue;
-                    const lla = ECEFToLLAVD_radii(hit);
-                    if (!Number.isFinite(lla.x) || !Number.isFinite(lla.y)) continue;
+        // Snapshot the inputs that determine arrow positions. If unchanged
+        // since last call, every arrow ends up in the same place — so the
+        // ~60 ray-casts and DebugArrowAB calls are pure busy-work. A still
+        // scene with the screen-grid on used to do all that every frame.
+        //
+        // matrixWorld covers camera position/orientation; projectionMatrix
+        // covers FOV/zoom (mouse-wheel zoom, fovOverride, matchVideoAspect
+        // — these mutate the projection without touching matrixWorld, but
+        // they do change which rays _rayHitWindShell casts through pixels).
+        const m = view.camera.matrixWorld.elements;
+        const p = view.camera.projectionMatrix.elements;
+        const snap = `${view.widthPx},${view.heightPx},${this.windAltFt},`
+            + `${this._windDataVersion ?? 0},`
+            + `${m[0]},${m[1]},${m[2]},${m[4]},${m[5]},${m[6]},`
+            + `${m[8]},${m[9]},${m[10]},${m[12]},${m[13]},${m[14]},`
+            + `${p[0]},${p[5]},${p[8]},${p[9]},${p[10]}`;
+        if (this._lastScreenGridSnapshot === snap) return;
+        this._lastScreenGridSnapshot = snap;
 
-                    const w = this.sampleWind(lla.x, lla.y);
-                    if (!w || !Number.isFinite(w.u) || !Number.isFinite(w.v)) continue;
-                    if (Math.hypot(w.u, w.v) < 0.5) continue;  // noise floor
+        const seen = new Set();
+        const altMSL = this.windAltFt * 0.3048;
+        const STEP = 200;
+        const PX = 100;
 
-                    const {from} = fromUVToDirKnots(w.u, w.v);
-                    CNodeDisplayWindField._windDirFromBearing(
-                        lla.x, lla.y, from * DEG, _scratchDir);
+        for (let py = STEP / 2; py < view.heightPx; py += STEP) {
+            for (let px = STEP / 2; px < view.widthPx; px += STEP) {
+                const hit = this._rayHitWindShell(view, px, py, altMSL, _scratchHit);
+                if (!hit) continue;
+                const lla = ECEFToLLAVD_radii(hit);
+                if (!Number.isFinite(lla.x) || !Number.isFinite(lla.y)) continue;
 
-                    const lengthM = view.pixelsToMeters(hit, PX);
-                    _scratchEnd.copy(hit).addScaledVector(_scratchDir, lengthM);
-                    const name = `windArrowGrid_${px}_${py}`;
-                    DebugArrowAB(name, hit, _scratchEnd, "#00ffff", true,
-                        this.group, 30, LAYER.MASK_MAIN);
-                    seen.add(name);
-                }
+                const w = this.sampleWind(lla.x, lla.y);
+                if (!w || !Number.isFinite(w.u) || !Number.isFinite(w.v)) continue;
+                if (Math.hypot(w.u, w.v) < 0.5) continue;  // noise floor
+
+                const {from} = fromUVToDirKnots(w.u, w.v);
+                CNodeDisplayWindField._windDirFromBearing(
+                    lla.x, lla.y, from * DEG, _scratchDir);
+
+                const lengthM = view.pixelsToMeters(hit, PX);
+                _scratchEnd.copy(hit).addScaledVector(_scratchDir, lengthM);
+                const name = `windArrowGrid_${px}_${py}`;
+                DebugArrowAB(name, hit, _scratchEnd, "#00ffff", true,
+                    this.group, 30, LAYER.MASK_MAIN);
+                seen.add(name);
             }
         }
 
         // Drop arrows that didn't get refreshed this frame (off-screen, or
-        // toggle flipped off). Cheap — usually 0 entries to remove.
+        // wind sample dropped below noise floor at this cell). Cheap.
         for (const name of this._screenArrowNames) {
             if (!seen.has(name)) removeDebugArrow(name);
         }
@@ -1345,6 +1374,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.windCov = json.cov ? new Float32Array(json.cov) : null;
         this.dataSource = json.source ?? "GFS";
         this._lastWindJSON = json;   // keep for serialization
+        // Bump data version so the screen-grid arrow cache invalidates and
+        // re-samples the new field on the next preRender.
+        this._windDataVersion = (this._windDataVersion ?? 0) + 1;
     }
 
     // Store source wind level files in FileManager for serialization.
