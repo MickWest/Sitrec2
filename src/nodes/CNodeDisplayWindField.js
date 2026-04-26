@@ -150,7 +150,6 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.inspectPoints = [];        // [{lat, lon}] — persisted dropped points
         this._inspectMouseHandler = null;
         this._inspectClickHandler = null;
-        this._inspectContextHandler = null;
         // Per-point DOM readouts, keyed by stable id ("cursor","camera",
         // "target","drop:<idx>"). Entries that don't get refreshed in a
         // given frame are hidden, then garbage-collected on the next
@@ -333,7 +332,15 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             if (cached) return cached;
         }
 
-        // Manual + everything else: no per-altitude path.
+        // Manual: targetWind is treated as uniform across the column, so
+        // the grid sample IS the right answer at any altitude — return it
+        // (rather than null) so the caller treats this as a hit and shows
+        // the requested altitude (e.g. Camera @ jet altitude) instead of
+        // falling back to the display altitude in the readout.
+        if (this.source === "manual") {
+            return this.sampleWind(lat, lon);
+        }
+
         return null;
     }
 
@@ -598,10 +605,17 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this._screenArrowNames = seen;
     }
 
-    // Toggle inspect mode. Installs/removes document mousemove + click +
-    // contextmenu listeners. On disable, hides all readout divs and removes
+    // Toggle inspect mode. Installs/removes document mousemove + mouse-
+    // down/up listeners. On disable, hides all readout divs and removes
     // the per-point arrows (dropped points themselves stay in
     // this.inspectPoints so the next enable restores them).
+    //
+    // Click semantics:
+    //   shift+left-click → drop a new point at the wind-shell hit
+    //   alt/option+left-click → remove the closest dropped point
+    //   plain left-click → no inspect action (camera-orbit / etc still works)
+    // The modifier requirement keeps inspect from interfering with normal
+    // mouse navigation; right-click is left alone for the OS / page menu.
     setInspect(enabled) {
         this.inspect = !!enabled;
 
@@ -620,25 +634,17 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             };
             document.addEventListener("mousemove", this._inspectMouseHandler);
 
-            // Click → drop a persistent point. Track mousedown vs mouseup
-            // distance to skip drags (camera-orbit / pan would otherwise be
-            // mis-classified as clicks and drop points the user didn't ask for).
+            // Modified-click handler. Tracks mousedown vs mouseup so a drag
+            // (camera-orbit / pan) doesn't get reinterpreted as a click.
             this._inspectClickHandler = this._handleInspectClick.bind(this);
             document.addEventListener("mousedown", this._inspectClickHandler);
             document.addEventListener("mouseup", this._inspectClickHandler);
-
-            // Right-click → remove nearest dropped point. preventDefault on the
-            // contextmenu so the OS menu doesn't pop up over the inspection.
-            this._inspectContextHandler = (e) => this._handleInspectRightClick(e);
-            document.addEventListener("contextmenu", this._inspectContextHandler);
         } else if (!this.inspect && this._inspectMouseHandler) {
             document.removeEventListener("mousemove", this._inspectMouseHandler);
             document.removeEventListener("mousedown", this._inspectClickHandler);
             document.removeEventListener("mouseup", this._inspectClickHandler);
-            document.removeEventListener("contextmenu", this._inspectContextHandler);
             this._inspectMouseHandler = null;
             this._inspectClickHandler = null;
-            this._inspectContextHandler = null;
         }
 
         if (!this.inspect) {
@@ -665,24 +671,25 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     }
 
     // mousedown/mouseup pair-detector for click vs drag classification.
-    // We track the down position; on up, if the delta is < 5 px and the
-    // event target is in mainView, we treat it as a click and drop a point.
+    // We track the down position AND whether shift/alt was held; on up, if
+    // the modifier still matches (or was set on either edge), the delta is
+    // < 5 px, and the event target is in mainView, we treat it as a click.
+    //   shift → add a new point
+    //   alt   → remove the closest dropped point
     // Larger deltas mean the user was orbiting/panning, so we ignore.
     _handleInspectClick(e) {
         if (!this.inspect) return;
-        // Only left-button (button 0). Right-clicks are handled by the
-        // contextmenu listener (which fires before mouseup), and middle-
-        // button drags shouldn't drop points.
-        if (e.button !== 0) return;
-        // GUI inputs that pixel-overlap mainView (sliders, dropdowns) must
-        // not be reinterpreted as drop gestures.
+        if (e.button !== 0) return;  // only left-button
         if (this._eventTargetIsGui(e)) {
             this._inspectMouseDown = null;
             return;
         }
 
         if (e.type === "mousedown") {
-            this._inspectMouseDown = {x: e.clientX, y: e.clientY, t: Date.now()};
+            this._inspectMouseDown = {
+                x: e.clientX, y: e.clientY,
+                shift: e.shiftKey, alt: e.altKey,
+            };
             return;
         }
         // mouseup
@@ -692,43 +699,42 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         const dx = e.clientX - down.x, dy = e.clientY - down.y;
         if (dx * dx + dy * dy > 25) return;  // > 5 px = drag, not click
 
+        // Require the modifier on both edges OR on mouseup (some users only
+        // press the modifier mid-click). The down state covers users who
+        // release the modifier before mouseup. Either path is intentional.
+        const wantAdd = down.shift || e.shiftKey;
+        const wantDelete = down.alt || e.altKey;
+        if (!wantAdd && !wantDelete) return;
+        // Don't ambiguously do both if the user held both — prefer add,
+        // since destroying state on a stray modifier combo is the worse
+        // failure mode.
+        const action = wantAdd ? "add" : "delete";
+
         const view = ViewMan.get("mainView", false);
         if (!view || !mouseInView(view, e.clientX, e.clientY)) return;
 
-        const [vx, vy] = mouseToView(view, e.clientX, e.clientY);
-        const altMSL = this.windAltFt * 0.3048;
-        const hit = this._rayHitWindShell(view, vx, vy, altMSL, _scratchHit);
-        if (!hit) return;
-        const lla = ECEFToLLAVD_radii(hit);
-        if (!Number.isFinite(lla.x) || !Number.isFinite(lla.y)) return;
+        if (action === "add") {
+            const [vx, vy] = mouseToView(view, e.clientX, e.clientY);
+            const altMSL = this.windAltFt * 0.3048;
+            const hit = this._rayHitWindShell(view, vx, vy, altMSL, _scratchHit);
+            if (!hit) return;
+            const lla = ECEFToLLAVD_radii(hit);
+            if (!Number.isFinite(lla.x) || !Number.isFinite(lla.y)) return;
+            this.inspectPoints.push({lat: lla.x, lon: lla.y});
+            setRenderOne(true);
+            return;
+        }
 
-        this.inspectPoints.push({lat: lla.x, lon: lla.y});
-        setRenderOne(true);
-    }
-
-    // Right-click anywhere in mainView: find the closest dropped point (by
-    // screen-pixel distance to the click) and remove it. Camera/Target
-    // points are not removable — they're tied to nodes, not the user list.
-    _handleInspectRightClick(e) {
-        if (!this.inspect) return;
-        // Don't swallow right-clicks on GUI inputs — same reasoning as
-        // _handleInspectClick. Also lets the user keep using the OS context
-        // menu inside lil-gui dropdowns.
-        if (this._eventTargetIsGui(e)) return;
-        const view = ViewMan.get("mainView", false);
-        if (!view || !mouseInView(view, e.clientX, e.clientY)) return;
+        // delete: closest dropped point by screen-pixel distance.
         if (this.inspectPoints.length === 0) return;
-
-        e.preventDefault();
-
         let bestIdx = -1, bestDist = Infinity;
         const altMSL = this.windAltFt * 0.3048;
         for (let i = 0; i < this.inspectPoints.length; i++) {
             const p = this.inspectPoints[i];
             const screen = this._latLonToScreen(view, p.lat, p.lon, altMSL);
             if (!screen) continue;
-            const dx = screen.x - e.clientX, dy = screen.y - e.clientY;
-            const d = dx * dx + dy * dy;
+            const ddx = screen.x - e.clientX, ddy = screen.y - e.clientY;
+            const d = ddx * ddx + ddy * ddy;
             if (d < bestDist) { bestDist = d; bestIdx = i; }
         }
         if (bestIdx >= 0) {
@@ -761,6 +767,12 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     _removeAllInspectArrows() {
         for (const id of [...this._inspectDivs.keys()]) {
             removeDebugArrow(`windInspect_${id}`);
+        }
+        if (this._inspectStalkIds) {
+            for (const id of this._inspectStalkIds) {
+                removeDebugArrow(`windInspectStalk_${id}`);
+            }
+            this._inspectStalkIds.clear();
         }
     }
 
@@ -931,6 +943,27 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                 this.group, 30, LAYER.MASK_MAIN);
             seenIds.add(p.id);
 
+            // Stalk: for user-dropped points, draw a thin green line from
+            // the surface (altMSL = 0) to the wind-shell point so it's clear
+            // where on the ground the point sits — useful when scrubbing
+            // altitude or panning the view at a steep angle. headLength=0
+            // makes the "arrow" render as a plain line. Cursor and Camera/
+            // Target points already have a clear ground anchor (the cursor
+            // / the moving track) so they don't need the stalk.
+            if (p.id.startsWith("drop:")) {
+                const surfaceECEF = LLAToECEF(p.lat, p.lon, 0);
+                if (surfaceECEF) {
+                    // headLength=1 (minimum non-fraction value) keeps the
+                    // arrow head essentially invisible so the stalk reads
+                    // as a plain line, while still staying on the
+                    // recommended (non-fraction) headLength API.
+                    DebugArrowAB(`windInspectStalk_${p.id}`,
+                        surfaceECEF, _scratchHit, "#00cc66", true,
+                        this.group, 1, LAYER.MASK_MAIN);
+                    seenIds.add(`stalk:${p.id}`);
+                }
+            }
+
             // Readout div. Every readout (cursor + anchored + dropped)
             // shows its own sample altitude — Camera/Target reflect the
             // track's altitude, dropped points reflect the display altitude.
@@ -979,6 +1012,19 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             removeDebugArrow(`windInspect_${id}`);
             const div = this._inspectDivs.get(id);
             if (div) div.style.display = "none";
+        }
+        // Stalks are tracked separately because they don't have associated
+        // divs (the readout div hovers near the point, not the stalk).
+        if (!this._inspectStalkIds) this._inspectStalkIds = new Set();
+        for (const id of this._inspectStalkIds) {
+            if (seenIds.has(`stalk:${id}`)) continue;
+            removeDebugArrow(`windInspectStalk_${id}`);
+        }
+        this._inspectStalkIds = new Set();
+        for (const id of seenIds) {
+            if (id.startsWith("stalk:")) {
+                this._inspectStalkIds.add(id.slice("stalk:".length));
+            }
         }
     }
 
