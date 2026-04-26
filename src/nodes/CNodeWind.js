@@ -7,6 +7,7 @@ import {getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {assert} from "../assert";
 import {V3} from "../threeUtils";
 import {t} from "../i18n";
+import {MISB} from "../MISBUtils";
 
 export class CNodeWind extends CNode {
     constructor(v, _guiMenu) {
@@ -44,6 +45,13 @@ export class CNodeWind extends CNode {
         // Fetch ... Wind" button. Superseded by the Wind Data folder
         // (Source=open-meteo + Refresh) which drives this node via
         // propagateToWindNodes.
+
+        // Optional MISB-track source. When set to a TrackData_<shortName> id,
+        // update(f) reads MISB WindDirection/WindSpeed at frame f and writes
+        // them into from/knots — overriding the manual GUI value. Cleared
+        // when the user picks any non-track source from the wind GUI.
+        this.trackSource = v.trackSource ?? null;
+        this.simpleSerials.push("trackSource");
 
         // forcing extra intial recalculate cascades (only of there's an origin track)
         // this is to ensure that the wind is in the correct frame of reference
@@ -126,6 +134,40 @@ export class CNodeWind extends CNode {
 
 
     update(f) {
+        // Track-driven wind: pull WindDirection/WindSpeed from the bound
+        // MISB track each frame. When set, this overrides whatever the
+        // user has in the GUI (the GUI fields just track the live value).
+        // Falls through silently if the track is missing (was removed,
+        // not yet loaded) — the previous value stays put rather than
+        // jumping to zero.
+        if (this.trackSource && NodeMan.exists(this.trackSource)) {
+            const td = NodeMan.get(this.trackSource);
+            const misb = td?.misb;
+            if (Array.isArray(misb) && misb.length > 0) {
+                // Linear map from sitch frame to misb row. Tracks generally
+                // have far fewer rows than sitch frames, so this gives a
+                // step-stable lookup without interpolation noise.
+                const denom = Math.max(1, (Sit.frames ?? 1) - 1);
+                const slotF = (f / denom) * (misb.length - 1);
+                const slot = Math.max(0, Math.min(misb.length - 1, Math.round(slotF)));
+                const row = misb[slot];
+                if (row) {
+                    const dir = row[MISB.WindDirection];
+                    const spd = row[MISB.WindSpeed];
+                    if (typeof dir === "number" && Number.isFinite(dir)
+                        && typeof spd === "number" && Number.isFinite(spd)) {
+                        if (this.from !== dir || this.knots !== spd) {
+                            this.from = dir;
+                            this.knots = spd;
+                            if (this.guiFrom) this.guiFrom.updateDisplay();
+                            if (this.guiKnots) this.guiKnots.updateDisplay();
+                            this.recalculateCascade();
+                        }
+                    }
+                }
+            }
+        }
+
         // if we have a lock, then hide the gui of the wind we lock to
         if (this.lock !== undefined) {
             if (NodeMan.exists("lockWind")) {

@@ -516,14 +516,10 @@ sitch = {
         source: "fovSwitch",
     },
 
-    windSwitch: {
-        kind: "Switch",
-        inputs: {
-            "Manual": "localWind",
-        },
-        desc: "Local Wind Source",
-        gui: "wind",
-    },
+    // Note: the legacy single-option "Local Wind Source" Switch
+    // (windSwitch) was replaced by the par-based dropdown built in
+    // CustomManagerSetup. The replacement supports the same dynamic
+    // option set as Target Wind Source, including per-MISB-track entries.
 
 
     // A controller for the camera position, TrackPosition just follows the track, updating the position and not

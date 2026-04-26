@@ -70,7 +70,13 @@ import {CNodeFloodSim} from "./nodes/CNodeFloodSim";
 import {CNodeOrbitTrack} from "./nodes/CNodeOrbitTrack";
 import {CNodeTrackSwitch} from "./nodes/CNodeTrackSwitch";
 import {getNearbyWeatherBalloons, haversineKm, importSoundingDialog, loadStationList} from "./SondeFetch";
-import {WIND_SOURCES, windSourceLabelsToKeys, windSourceByKey} from "./nodes/WindSources";
+import {
+    WIND_SOURCES,
+    isTrackSourceKey,
+    trackDataIdFromSourceKey,
+    windSourceByKey,
+    windSourceLabelsToKeysWithTracks,
+} from "./nodes/WindSources";
 import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
 import {CNodeSAPage} from "./nodes/CNodeSAPage";
 import {
@@ -207,9 +213,12 @@ export const setupMethods = {
         // Source labels ↔ internal source keys — single source of truth in
         // src/nodes/WindSources.js. UWYO/IGRA2 auto-fetch nearby soundings
         // if none of that source are loaded; Manual Soundings uses whatever
-        // the user has dropped in.
-        this._windSourceOptions = windSourceLabelsToKeys();
-        par.windSource = windSourceByKey("manual").label;
+        // the user has dropped in. Track-bearing-wind MISB tracks add a
+        // "Track: <shortName>" entry to this map, refreshed on every
+        // tracksChanged event from TrackManager.
+        this._windSourceOptions = windSourceLabelsToKeysWithTracks();
+        par.windSource      = windSourceByKey("manual").label;  // target wind
+        par.windSourceLocal = windSourceByKey("manual").label;  // local wind
         par.windAltFt = 33;       // default = surface (~10m) — display altitude
         par.windStatus = "Not loaded";
         par.windOpacity = 0.9;
@@ -372,30 +381,119 @@ export const setupMethods = {
             return this._windLoadInFlight;
         };
 
-        // Source selector — loads data for the new source immediately.
-        // .listen() is needed so that when finishDeserialization syncs
-        // par.windSource from the restored wind node, the dropdown updates.
-        // (.listen() does NOT fire onChange — the auto-show rule below only
-        // triggers on actual user dropdown changes, not on save restore.)
-        windFolder.add(par, "windSource", Object.keys(this._windSourceOptions))
+        // ── Source selectors ──────────────────────────────────────────
+        //
+        // Target Wind Source drives the windField fetch + IDW display.
+        // Local Wind Source is independent: it can pick a per-frame
+        // MISB track or fall through to the windField sample at the
+        // local position when an atmospheric source is chosen.
+        //
+        // Both dropdowns share the same option set, which is rebuilt
+        // whenever TrackManager fires tracksChanged so MISB tracks with
+        // wind columns can come and go as the user imports / removes
+        // them. .listen() keeps the dropdowns synced when restored from
+        // a save.
+
+        // Resolve a track-derived sourceKey to its TrackData id, or
+        // null for non-track sources. Centralised so the code below
+        // doesn't repeat the prefix dance.
+        const resolveTrackSource = (sourceKey) => isTrackSourceKey(sourceKey)
+            ? trackDataIdFromSourceKey(sourceKey)
+            : null;
+
+        // Target source onChange: when the user picks a track, route
+        // targetWind to it (no atmospheric fetch needed). When they
+        // pick atmospheric/manual, clear the override and run the
+        // existing fetch/load pipeline. Auto-show fires on the first
+        // user-driven pick of a data-bearing source.
+        const onTargetSourceChange = async () => {
+            const sourceKey = this._windSourceOptions[par.windSource];
+            const targetWind = NodeMan.exists("targetWind")
+                ? NodeMan.get("targetWind") : null;
+            const tdId = resolveTrackSource(sourceKey);
+            if (tdId) {
+                if (targetWind) targetWind.trackSource = tdId;
+                return; // track-driven; no fetchWindForAltitude needed
+            }
+            if (targetWind) targetWind.trackSource = null;
+            const autoShowSources = ["gfs", "uwyo", "igra2", "manual-soundings"];
+            if (autoShowSources.includes(sourceKey)
+                && !this._autoShownWindSources.has(sourceKey)
+                && !par.windShow) {
+                par.windShow = true;
+            }
+            if (autoShowSources.includes(sourceKey)) {
+                this._autoShownWindSources.add(sourceKey);
+            }
+            await this._loadWindForCurrentSource();
+        };
+
+        // Local source onChange: track sources get a per-frame override
+        // on localWind; atmospheric/manual selections clear the override
+        // and let the windField propagate the value. (When target and
+        // local pick *different* atmospheric sources, only the target
+        // source actually fetches — local samples that grid. A future
+        // pass would add an independent local fetch; for now this is
+        // documented and acceptable.)
+        const onLocalSourceChange = () => {
+            const sourceKey = this._windSourceOptions[par.windSourceLocal];
+            const localWind = NodeMan.exists("localWind")
+                ? NodeMan.get("localWind") : null;
+            const tdId = resolveTrackSource(sourceKey);
+            if (tdId) {
+                if (localWind) localWind.trackSource = tdId;
+                return;
+            }
+            if (localWind) localWind.trackSource = null;
+        };
+
+        // Add both dropdowns. Hold references so the tracksChanged
+        // listener can rebuild option lists in place.
+        this._windSourceCtrl = windFolder.add(par, "windSource",
+            Object.keys(this._windSourceOptions))
             .name("Target Wind Source")
             .listen()
-            .onChange(async () => {
-                const sourceKey = this._windSourceOptions[par.windSource];
-                // Auto-show wind the first time the user picks a real
-                // data-bearing source this session — saves the discovery step
-                // of "I picked GFS, why don't I see anything?".
-                const autoShowSources = ["gfs", "uwyo", "igra2", "manual-soundings"];
-                if (autoShowSources.includes(sourceKey)
-                    && !this._autoShownWindSources.has(sourceKey)
-                    && !par.windShow) {
-                    par.windShow = true;
-                }
-                if (autoShowSources.includes(sourceKey)) {
-                    this._autoShownWindSources.add(sourceKey);
-                }
-                await this._loadWindForCurrentSource();
-            });
+            .onChange(onTargetSourceChange);
+        this._windSourceLocalCtrl = windFolder.add(par, "windSourceLocal",
+            Object.keys(this._windSourceOptions))
+            .name("Local Wind Source")
+            .listen()
+            .onChange(onLocalSourceChange);
+
+        // tracksChanged listener — rebuilds both dropdowns in place
+        // when the imported-track set changes, preserving the user's
+        // current selection where possible. lil-gui's controller.options
+        // returns a NEW controller (the old one is destroyed), so we
+        // have to re-attach name/listen/onChange and re-stash the ref.
+        const refreshSourceCtrls = () => {
+            const tracks = (TrackManager && typeof TrackManager.tracksWithWind === "function")
+                ? TrackManager.tracksWithWind() : [];
+            this._windSourceOptions = windSourceLabelsToKeysWithTracks(tracks);
+            const labels = Object.keys(this._windSourceOptions);
+            const reattach = (ctrlField, parField, label, handler) => {
+                const old = this[ctrlField];
+                if (!old) return;
+                const oldVal = par[parField];
+                const newVal = labels.includes(oldVal) ? oldVal : "Manual";
+                par[parField] = newVal;
+                this[ctrlField] = old.options(labels)
+                    .name(label)
+                    .listen()
+                    .onChange(handler);
+                this[ctrlField].setValue(newVal);
+            };
+            reattach("_windSourceCtrl",      "windSource",      "Target Wind Source", onTargetSourceChange);
+            reattach("_windSourceLocalCtrl", "windSourceLocal", "Local Wind Source",  onLocalSourceChange);
+        };
+        // The setup function runs once per sitch load; old listener
+        // bindings would survive across reloads if we didn't track
+        // them, so the previous one is removed and the new one is
+        // remembered for the next setup call.
+        if (this._tracksChangedListener) {
+            EventManager.removeEventListener?.("tracksChanged", this._tracksChangedListener);
+        }
+        this._tracksChangedListener = refreshSourceCtrls;
+        EventManager.addEventListener("tracksChanged", refreshSourceCtrls);
 
         // Display altitude in feet. Target/local winds use their own track
         // altitudes, independent of this.

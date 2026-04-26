@@ -49,3 +49,37 @@ export function windSourceShortLabels() {
     for (const s of WIND_SOURCES) out[s.key] = s.short;
     return out;
 }
+
+// Track-source key encoding. MISB tracks with embedded WindDirection /
+// WindSpeed columns are exposed as additional options on the source
+// dropdowns; their internal key is `track:<TrackData_*>` so the wind
+// node can resolve them by NodeMan lookup. Two helpers keep the encoding
+// in one place (parser + builder).
+export const TRACK_SOURCE_PREFIX = "track:";
+
+export function isTrackSourceKey(key) {
+    return typeof key === "string" && key.startsWith(TRACK_SOURCE_PREFIX);
+}
+
+export function trackSourceKey(trackDataId) {
+    return TRACK_SOURCE_PREFIX + trackDataId;
+}
+
+export function trackDataIdFromSourceKey(key) {
+    return isTrackSourceKey(key)
+        ? key.slice(TRACK_SOURCE_PREFIX.length)
+        : null;
+}
+
+// Build the labels→keys map for both source dropdowns, including any
+// MISB tracks that carry per-frame wind columns. Each track entry is
+// rendered as "Track: <shortName>" in the dropdown, mapping to the
+// "track:TrackData_<shortName>" internal key.
+export function windSourceLabelsToKeysWithTracks(trackEntries = []) {
+    const out = {};
+    for (const s of WIND_SOURCES) out[s.label] = s.key;
+    for (const entry of trackEntries) {
+        out[`Track: ${entry.shortName}`] = trackSourceKey(entry.trackDataId);
+    }
+    return out;
+}

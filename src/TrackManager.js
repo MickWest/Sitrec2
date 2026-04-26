@@ -22,6 +22,7 @@ import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {CManager} from "./CManager";
 import {CNodeControllerMatrix, CNodeControllerTrackPosition} from "./nodes/CNodeControllerVarious";
 import {MISB} from "./MISBUtils";
+import {EventManager} from "./CEventManager";
 // Removed mathjs import - using native JavaScript Number.isFinite or typeof checks
 import {CNodeMISBDataTrack, makeLOSNodeFromTrackAngles, removeLOSNodeColumnNodes} from "./nodes/CNodeMISBData";
 import {CNodeTrackFromMISB} from "./nodes/CNodeTrackFromMISB";
@@ -218,6 +219,43 @@ class CTrackManager extends CManager {
     constructor() {
         super();
         this.usedShortNames = new Set(); // Track all used short names for uniqueness
+    }
+
+    // Tracks whose underlying MISB array has at least one valid
+    // WindSpeed entry — these can drive the wind GUI's per-track
+    // source option ("Track: <shortName>"). Returns one entry per
+    // track-with-wind: { trackID, trackDataId, shortName }.
+    tracksWithWind() {
+        const out = [];
+        this.iterate((trackID, trackOb) => {
+            const td = trackOb?.trackDataNode;
+            const misb = td?.misb;
+            if (!Array.isArray(misb) || misb.length === 0) return;
+            // A single valid WindSpeed cell is enough to call this a
+            // wind-bearing track — patchColumn will fill the rest at
+            // track-build time.
+            for (let i = 0; i < misb.length; i++) {
+                const v = misb[i]?.[MISB.WindSpeed];
+                if (typeof v === "number" && !isNaN(v)) {
+                    out.push({
+                        trackID,
+                        trackDataId: td.id,
+                        shortName: trackOb.menuText
+                            ?? td.shortName
+                            ?? trackID,
+                    });
+                    break;
+                }
+            }
+        });
+        return out;
+    }
+
+    // Fire the "tracksChanged" event whenever the set of imported tracks
+    // shifts. The wind GUI listens so it can rebuild its source dropdowns
+    // (track-bearing-wind options come and go with imports/removals).
+    notifyTracksChanged() {
+        EventManager.dispatchEvent("tracksChanged", this);
     }
 
 
@@ -701,6 +739,11 @@ class CTrackManager extends CManager {
         NodeMan.recalculateAllRootFirst()
         setRenderOne(true);
 
+        // Notify listeners that the imported-track set has changed.
+        // Wind GUI uses this to re-add / re-order "Track: <shortName>"
+        // options on its source dropdowns when a track with WindSpeed/
+        // WindDirection columns shows up.
+        this.notifyTracksChanged();
     }
 
 
@@ -1374,6 +1417,11 @@ class CTrackManager extends CManager {
         if (this.size() === 0) {
             setSitchEstablished(false);
         }
+
+        // The imported-track set just shrank; notify listeners (wind GUI)
+        // so any "Track: <shortName>" source options pointing at this
+        // track get pruned.
+        this.notifyTracksChanged();
     }
 
     /**
