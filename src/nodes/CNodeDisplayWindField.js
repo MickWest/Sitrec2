@@ -747,6 +747,12 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // Returns {x, y} in clientX/Y, or null if the point is behind the camera
     // or projects outside the visible viewport (in which case showing a
     // floating readout would just clutter the corners with off-screen labels).
+    //
+    // view.leftPx is relative to ViewMan's Content container, NOT the page —
+    // mirrors mouseToView's screenOffsetX correction so the projected screen
+    // pixel matches what e.clientX reports for the same on-screen pixel.
+    // Without this, layouts with a sidebar would offset all anchored
+    // readouts by the sidebar width.
     _latLonToScreen(view, lat, lon, altMSL) {
         const ecef = LLAToECEF(lat, lon, altMSL);
         if (!ecef) return null;
@@ -759,7 +765,8 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // just not on screen — hide the readout for it.
         if (_scratchNDC.x < -1 || _scratchNDC.x > 1
             || _scratchNDC.y < -1 || _scratchNDC.y > 1) return null;
-        const x = view.leftPx + (_scratchNDC.x + 1) * 0.5 * view.widthPx;
+        const offsetX = ViewMan.screenOffsetX || 0;
+        const x = offsetX + view.leftPx + (_scratchNDC.x + 1) * 0.5 * view.widthPx;
         const y = view.topPx + (1 - _scratchNDC.y) * 0.5 * view.heightPx;
         return {x, y};
     }
@@ -808,15 +815,19 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // pipeline. Returns null when no usable track exists.
     _trackForAnchor(anchor) {
         // Camera = the observer's physical position (the jet, the ship, the
-        // ground station). Prefer the *track* nodes — cameraTrack/jetTrack —
-        // over lookCamera, because lookCamera is the *rendering* camera
-        // and in many sitches it sits far out in space looking down at the
-        // scene, which would project off-screen and isn't a meaningful
-        // wind-sample location.
+        // ground station). Prefer the *track* nodes over lookCamera —
+        // lookCamera is the *rendering* camera and in many sitches sits far
+        // out in space looking down at the scene, which would project off-
+        // screen and isn't a meaningful wind-sample location.
+        //
+        // Custom sitches use cameraTrackSwitchSmooth / targetTrackSwitchSmooth
+        // (smoothed outputs of the switch nodes); legacy fixed sitches use
+        // cameraTrack / targetTrack; gimbal-style sitches use jetTrack /
+        // LOSTraverseSelect. Try them in that order.
         const candidates = anchor === "camera"
-            ? ["cameraTrack", "jetTrack", "lookCamera"]
+            ? ["cameraTrackSwitchSmooth", "cameraTrack", "jetTrack", "lookCamera"]
             : anchor === "target"
-            ? ["targetTrack", "LOSTraverseSelect"]
+            ? ["targetTrackSwitchSmooth", "targetTrack", "LOSTraverseSelect"]
             : [];
         for (const id of candidates) {
             if (!NodeMan.exists(id)) continue;
