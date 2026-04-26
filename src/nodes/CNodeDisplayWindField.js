@@ -43,6 +43,14 @@ export {
 const R_EARTH = 6371000; // meters
 const DEG = Math.PI / 180;
 
+// Cursor-jitter floor for inspect-mode mousemove (in client pixels). Small
+// enough that intentional drags still feel instant, large enough that
+// trackpad easing and OS coalescing don't drive a per-pixel render storm.
+const INSPECT_MOVE_THRESHOLD_PX = 2;
+// Padding from cursor → readout, and from viewport edge → readout when
+// auto-flipped to the opposite side.
+const INSPECT_TOOLTIP_OFFSET_PX = 18;
+
 // Module-level scratch Vector3s for the per-frame screen-grid path.
 // Each renders ~60 arrows; without these, every iteration allocates 4-6
 // Vector3s (ndc, hit, dir, end, plus the local-frame helpers' internals).
@@ -493,6 +501,16 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.inspect = !!enabled;
         if (this.inspect && !this._inspectMouseHandler) {
             this._inspectMouseHandler = (e) => {
+                // Sub-pixel cursor jitter (laptop trackpads, OS easing) fires
+                // mousemove repeatedly with no real movement; each one schedules
+                // a forced render via setRenderOne(true). Filter out moves
+                // smaller than the threshold so a stationary cursor doesn't
+                // drive a render storm.
+                if (this._inspectClient
+                    && Math.abs(e.clientX - this._inspectClient.x) < INSPECT_MOVE_THRESHOLD_PX
+                    && Math.abs(e.clientY - this._inspectClient.y) < INSPECT_MOVE_THRESHOLD_PX) {
+                    return;
+                }
                 this._inspectClient = {x: e.clientX, y: e.clientY};
                 setRenderOne(true);
             };
@@ -592,14 +610,36 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             this.group, 30, LAYER.MASK_MAIN);
 
         // Readout, positioned next to the cursor (offset so it doesn't
-        // sit under the pointer and steal hover focus).
+        // sit under the pointer and steal hover focus). Show altitude in
+        // the readout so it stays self-documenting when the user changes
+        // the wind altitude slider.
         const div = this._ensureInspectDiv();
         div.style.display = "block";
-        div.style.left = (this._inspectClient.x + 18) + "px";
-        div.style.top  = (this._inspectClient.y + 18) + "px";
+        const altLabel = this.windAltFt < 300
+            ? "Surface"
+            : `${this.windAltFt.toLocaleString()} ft`;
         div.innerHTML =
             `<div style="font-size:22px;font-weight:600">${speedDisp.toFixed(0)} ${speedUnit}</div>` +
-            `<div style="font-size:13px;opacity:0.85">FROM ${compass} ${Math.round(from)}°</div>`;
+            `<div style="font-size:13px;opacity:0.85">FROM ${compass} ${Math.round(from)}°</div>` +
+            `<div style="font-size:11px;opacity:0.65">@ ${altLabel}</div>`;
+
+        // Position with edge-aware auto-flip: if the default down-right
+        // placement would clip the readout outside the viewport, flip to
+        // the opposite side. offsetWidth/Height are read AFTER innerHTML so
+        // they reflect the current readout's size, not a previous frame's.
+        const cx = this._inspectClient.x;
+        const cy = this._inspectClient.y;
+        const tipW = div.offsetWidth;
+        const tipH = div.offsetHeight;
+        const M = INSPECT_TOOLTIP_OFFSET_PX;
+        // Default placement is down-right of the cursor; flip to up-left
+        // when that would clip past the viewport edge. Clamp to ≥ 0 for
+        // pathologically narrow side-panel layouts where even the flipped
+        // placement won't fit (cheap insurance against off-screen anchors).
+        const left = (cx + M + tipW > window.innerWidth)  ? cx - M - tipW : cx + M;
+        const top  = (cy + M + tipH > window.innerHeight) ? cy - M - tipH : cy + M;
+        div.style.left = Math.max(0, left) + "px";
+        div.style.top  = Math.max(0, top) + "px";
     }
 
     // Resolve a "where am I looking from" lat/lon for the nearby filter.
