@@ -26,6 +26,8 @@ import {
     fromDirSpeedKnotsToUV,
     fromUVToDirKnots,
     greatCircleDistanceDeg,
+    compassFromDeg,
+    windDirFromBearing,
 } from "./WindHelpers";
 
 // Re-export so existing importers that reach into CNodeDisplayWindField keep working.
@@ -408,34 +410,6 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         return out;
     }
 
-    // Compute the wind-blow-TO direction (unit ECEF) at lat/lon for a given
-    // FROM-bearing in radians, written into `out`. Avoids the 12+ Vector3
-    // allocations per call that getLocalNorthVector/getLocalEastVector incur
-    // by computing the local north/east components directly from sin/cos
-    // (sphere approximation — sub-degree error vs ellipsoid, irrelevant for
-    // arrow direction visualization).
-    static _windDirFromBearing(latDeg, lonDeg, bearingFromRad, out) {
-        const lat = latDeg * DEG;
-        const lon = lonDeg * DEG;
-        const sLat = Math.sin(lat), cLat = Math.cos(lat);
-        const sLon = Math.sin(lon), cLon = Math.cos(lon);
-        // ENU local basis at (lat, lon):
-        //   north = (-sLat*cLon, -sLat*sLon, cLat)
-        //   east  = (-sLon, cLon, 0)
-        // arrow TO = (bearingFromRad+180°): cos = -cos(from), sin = -sin(from)
-        const cFrom = Math.cos(bearingFromRad);
-        const sFrom = Math.sin(bearingFromRad);
-        const cTo = -cFrom, sTo = -sFrom;
-        const nX = -sLat * cLon, nY = -sLat * sLon, nZ = cLat;
-        const eX = -sLon,        eY =  cLon,        eZ = 0;
-        out.set(
-            cTo * nX + sTo * eX,
-            cTo * nY + sTo * eY,
-            cTo * nZ + sTo * eZ,
-        );
-        return out;
-    }
-
     // Screen-space wind arrow grid for the main view.
     //
     // For each 200 px cell in the viewport, cast a ray from the camera
@@ -504,8 +478,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                 if (Math.hypot(w.u, w.v) < 0.5) continue;  // noise floor
 
                 const {from} = fromUVToDirKnots(w.u, w.v);
-                CNodeDisplayWindField._windDirFromBearing(
-                    lla.x, lla.y, from * DEG, _scratchDir);
+                windDirFromBearing(lla.x, lla.y, from * DEG, _scratchDir);
 
                 const lengthM = view.pixelsToMeters(hit, PX);
                 _scratchEnd.copy(hit).addScaledVector(_scratchDir, lengthM);
@@ -553,14 +526,6 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             this._inspectClient = null;
             if (this._inspectDiv) this._inspectDiv.style.display = "none";
         }
-    }
-
-    // 16-point compass direction string from a degree value (0 = N, CW).
-    static _compassFromDeg(deg) {
-        const points = ["N","NNE","NE","ENE","E","ESE","SE","SSE",
-                        "S","SSW","SW","WSW","W","WNW","NW","NNW"];
-        const idx = Math.floor(((deg % 360 + 360) % 360 + 11.25) / 22.5) % 16;
-        return points[idx];
     }
 
     // Build (lazily) the floating readout div used by inspect mode.
@@ -626,13 +591,12 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         const speedMS = Math.hypot(w.u, w.v);
         // Wind FROM (where it's coming from) — what aviation reports.
         const {from} = fromUVToDirKnots(w.u, w.v);
-        const compass = CNodeDisplayWindField._compassFromDeg(from);
+        const compass = compassFromDeg(from);
         const speedDisp = speedMS * (Units?.m2Speed ?? 1.94384);  // m/s → display
         const speedUnit = Units?.speedUnits ?? "knots";
 
         // Arrow points TO (drift direction), 100 px on screen.
-        CNodeDisplayWindField._windDirFromBearing(
-            lla.x, lla.y, from * DEG, _scratchDir);
+        windDirFromBearing(lla.x, lla.y, from * DEG, _scratchDir);
         const lengthM = view.pixelsToMeters(hit, 100);
         _scratchEnd.copy(hit).addScaledVector(_scratchDir, lengthM);
         DebugArrowAB("windInspectArrow", hit, _scratchEnd, "#ffff00", true,

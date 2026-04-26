@@ -9,6 +9,8 @@ import {
     fromDirSpeedKnotsToUV,
     fromUVToDirKnots,
     greatCircleDistanceDeg,
+    compassFromDeg,
+    windDirFromBearing,
 } from '../src/nodes/WindHelpers';
 
 describe('bracketingLevels', () => {
@@ -102,6 +104,81 @@ describe('greatCircleDistanceDeg', () => {
     });
     test('pole to equator → 90°', () => {
         expect(greatCircleDistanceDeg(90, 0, 0, 0)).toBeCloseTo(90, 4);
+    });
+});
+
+describe('compassFromDeg', () => {
+    test('cardinal directions land on the right name', () => {
+        expect(compassFromDeg(0)).toBe('N');
+        expect(compassFromDeg(90)).toBe('E');
+        expect(compassFromDeg(180)).toBe('S');
+        expect(compassFromDeg(270)).toBe('W');
+    });
+    test('intercardinals at 45° steps', () => {
+        expect(compassFromDeg(45)).toBe('NE');
+        expect(compassFromDeg(135)).toBe('SE');
+        expect(compassFromDeg(225)).toBe('SW');
+        expect(compassFromDeg(315)).toBe('NW');
+    });
+    test('22.5° step boundaries — half-way snaps to next bin', () => {
+        // 11.25° is the bin boundary; just below stays N, just above is NNE.
+        expect(compassFromDeg(11)).toBe('N');
+        expect(compassFromDeg(12)).toBe('NNE');
+        expect(compassFromDeg(33)).toBe('NNE');
+        expect(compassFromDeg(34)).toBe('NE');
+    });
+    test('handles negative and >360 inputs via modulo', () => {
+        expect(compassFromDeg(-90)).toBe('W');
+        expect(compassFromDeg(450)).toBe('E');
+        expect(compassFromDeg(-1)).toBe('N');  // -1 → 359 → bin "N"
+    });
+    test('returns one of the 16 known points for any input', () => {
+        const set = new Set(['N','NNE','NE','ENE','E','ESE','SE','SSE',
+                              'S','SSW','SW','WSW','W','WNW','NW','NNW']);
+        for (let d = 0; d < 360; d += 1) {
+            expect(set.has(compassFromDeg(d))).toBe(true);
+        }
+    });
+});
+
+describe('windDirFromBearing', () => {
+    // Helper: build a Vector3-like that records what set() was called with
+    function makeOut() {
+        const out = {x: 0, y: 0, z: 0};
+        out.set = function(x, y, z) { this.x = x; this.y = y; this.z = z; };
+        return out;
+    }
+
+    test('writes into out and returns it when out.set is provided', () => {
+        const out = makeOut();
+        const r = windDirFromBearing(0, 0, 0, out);
+        expect(r).toBe(out);
+        // At lat=0, lon=0, FROM-bearing 0 = north wind blowing south.
+        // Local north at (0,0) ECEF = (0, 0, 1). TO direction = -north = (0, 0, -1).
+        expect(out.x).toBeCloseTo(0, 6);
+        expect(out.y).toBeCloseTo(0, 6);
+        expect(out.z).toBeCloseTo(-1, 6);
+    });
+    test('returns plain object when no out provided', () => {
+        const r = windDirFromBearing(0, 0, 0);
+        expect(r.x).toBeCloseTo(0, 6);
+        expect(r.y).toBeCloseTo(0, 6);
+        expect(r.z).toBeCloseTo(-1, 6);
+    });
+    test('east bearing at (0,0) → flow westward in ECEF', () => {
+        // FROM east (90°), wind blows TO west.
+        // Local east at (0,0) = (0, 1, 0). TO direction = -east = (0, -1, 0).
+        const r = windDirFromBearing(0, 0, Math.PI / 2);
+        expect(r.x).toBeCloseTo(0, 6);
+        expect(r.y).toBeCloseTo(-1, 6);
+        expect(r.z).toBeCloseTo(0, 6);
+    });
+    test('returned vector is unit-length', () => {
+        for (const [lat, lon, bearDeg] of [[0,0,0],[45,30,90],[-30,150,200],[60,-120,17]]) {
+            const r = windDirFromBearing(lat, lon, bearDeg * Math.PI / 180);
+            const m = Math.sqrt(r.x*r.x + r.y*r.y + r.z*r.z);
+            expect(m).toBeCloseTo(1, 6);
+        }
     });
 });
 

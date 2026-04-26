@@ -118,3 +118,44 @@ export function greatCircleDistanceDeg(lat1, lon1, lat2, lon2) {
     const a = sLat * sLat + Math.cos(lat1 * D) * Math.cos(lat2 * D) * sLon * sLon;
     return 2 * Math.asin(Math.min(1, Math.sqrt(a))) * 180 / Math.PI;
 }
+
+// 16-point compass direction string from a degree value (0 = N, CW).
+export function compassFromDeg(deg) {
+    const points = ["N","NNE","NE","ENE","E","ESE","SE","SSE",
+                    "S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    const idx = Math.floor(((deg % 360 + 360) % 360 + 11.25) / 22.5) % 16;
+    return points[idx];
+}
+
+// Compute the wind-blow-TO unit vector (ECEF) at lat/lon for a given
+// FROM-bearing in radians. If `out` has a `.set(x,y,z)` method (e.g. a
+// Three.js Vector3), the result is written into it and `out` is returned;
+// otherwise a plain {x,y,z} object is returned.
+//
+// Avoids the 12+ Vector3 allocations per call that getLocalNorthVector /
+// getLocalEastVector incur — sphere approximation, sub-degree error vs
+// ellipsoid, irrelevant for arrow direction visualization.
+export function windDirFromBearing(latDeg, lonDeg, bearingFromRad, out) {
+    const D = Math.PI / 180;
+    const lat = latDeg * D;
+    const lon = lonDeg * D;
+    const sLat = Math.sin(lat), cLat = Math.cos(lat);
+    const sLon = Math.sin(lon), cLon = Math.cos(lon);
+    // ENU local basis at (lat, lon):
+    //   north = (-sLat*cLon, -sLat*sLon, cLat)
+    //   east  = (-sLon, cLon, 0)
+    // arrow TO = (bearingFromRad+180°): cos = -cos(from), sin = -sin(from)
+    const cFrom = Math.cos(bearingFromRad);
+    const sFrom = Math.sin(bearingFromRad);
+    const cTo = -cFrom, sTo = -sFrom;
+    const nX = -sLat * cLon, nY = -sLat * sLon, nZ = cLat;
+    const eX = -sLon,        eY =  cLon,        eZ = 0;
+    const x = cTo * nX + sTo * eX;
+    const y = cTo * nY + sTo * eY;
+    const z = cTo * nZ + sTo * eZ;
+    if (out && typeof out.set === "function") {
+        out.set(x, y, z);
+        return out;
+    }
+    return {x, y, z};
+}
