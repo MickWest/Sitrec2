@@ -9,6 +9,8 @@ import {getLocalNorthVector, getLocalEastVector} from "../SphericalMath";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {FileManager, GlobalDateTimeNode, Globals, NodeMan, Sit, Units} from "../Globals";
 import {mouseInView, mouseToView} from "../ViewUtils";
+import {ViewMan} from "../CViewManager";
+import {par} from "../par";
 import pako from "pako";
 import * as LAYER from "../LayerMasks";
 import {
@@ -135,14 +137,30 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // can pick either or both.
         this.showArrows = v.showArrows ?? false;
 
-        // Inspect mode: cursor-driven single arrow + on-screen readout
-        // (heading and speed at the wind altitude under the mouse). Drives a
-        // document-level mousemove listener that's installed/removed on
-        // toggle so we don't pay the cost when the feature is off.
+        // Inspect mode: when on, renders one arrow + readout per "inspect
+        // point". Three kinds of points can be active:
+        //   - cursor:  follows the mouse (one transient point)
+        //   - dropped: persistent, click-to-add / right-click-to-remove
+        //   - camera/target: anchored to lookCamera / target track positions,
+        //     auto-added when inspect is on if the corresponding node exists
+        // Listeners (mousemove/click/contextmenu) are installed only while
+        // inspect is on so we don't pay the cost when the feature is off.
         this.inspect = false;
-        this._inspectClient = null;     // {x, y} clientX/Y or null when no cursor
-        this._inspectDiv = null;        // DOM readout, lazy-created
+        this._inspectClient = null;     // {x, y} clientX/Y of the cursor point
+        this.inspectPoints = [];        // [{lat, lon}] — persisted dropped points
         this._inspectMouseHandler = null;
+        this._inspectClickHandler = null;
+        this._inspectContextHandler = null;
+        // Per-point DOM readouts, keyed by stable id ("cursor","camera",
+        // "target","drop:<idx>"). Entries that don't get refreshed in a
+        // given frame are hidden, then garbage-collected on the next
+        // setInspect(false) / dispose().
+        this._inspectDivs = new Map();
+        // Lock the wind altitude to the camera or target track's altitude
+        // each frame, instead of taking it from the manual slider. Persisted
+        // alongside the wind node so save/restore preserves the lock.
+        // Values: "none" (default) | "camera" | "target".
+        this.lockAltitudeTo = "none";
 
         // ---------- shader material ----------
         this.material = new ShaderMaterial({
@@ -236,6 +254,89 @@ export class CNodeDisplayWindField extends CNode3DGroup {
              + w01 * this.windV[idx01] + w11 * this.windV[idx11],
         };
     }
+
+    // Sample wind at (lat, lon) at a specific altitude (meters MSL).
+    //
+    // Sounding-based sources keep multi-level wind in CNodeAtmosphericProfile
+    // for each loaded station, so we can do a per-point IDW from the K=3
+    // nearest profiles' wind-at-altitude values — accurate at any altitude,
+    // not just the one the IDW grid was built for.
+    //
+    // GFS keeps every fetched pressure level in _levelCache (and FileManager
+    // for save/restore). Bracket the requested altitude between two cached
+    // levels and bilinearly interpolate each, then blend.
+    //
+    // For sources without a per-altitude path (manual, openmeteo cache miss),
+    // returns null so the caller can fall back to the current display-altitude
+    // sample. Returns null in any error path so callers don't have to spot-
+    // check intermediate failures.
+    sampleWindAtAltitude(lat, lon, altM) {
+        if (!Number.isFinite(altM)) return null;
+        const altFt = altM * 3.28084;
+
+        // Sounding-based: per-profile getAtAltitude + IDW.
+        if (this.source === "uwyo" || this.source === "igra2"
+            || this.source === "manual-soundings") {
+            const profiles = this._gatherSondeProfiles(
+                this.source === "manual-soundings" ? null : this.source);
+            const samples = [];
+            for (const p of profiles) {
+                if (p.stationLat == null || p.stationLon == null) continue;
+                const data = p.getAtAltitude(altM);
+                if (!data || data.windDir == null || data.windSpeed == null) continue;
+                const dLat = p.stationLat - lat;
+                const dLon = p.stationLon - lon;
+                const cosLat = Math.cos(lat * DEG);
+                const distDeg2 = dLat * dLat + (dLon * cosLat) ** 2;
+                samples.push({distDeg2, data});
+            }
+            if (samples.length === 0) return null;
+            samples.sort((a, b) => a.distDeg2 - b.distDeg2);
+            const K = Math.min(3, samples.length);
+            let sumU = 0, sumV = 0, totalW = 0;
+            for (let i = 0; i < K; i++) {
+                const s = samples[i];
+                // 1/d² IDW. Tiny epsilon (0.0001 deg² ≈ 11 m²) protects
+                // against div-by-zero when the sample point coincides with
+                // a station; the resulting weight just dominates the blend.
+                const w = 1 / Math.max(s.distDeg2, 1e-4);
+                const {u, v} = fromDirSpeedToUV(s.data.windDir, s.data.windSpeed);
+                sumU += u * w; sumV += v * w; totalW += w;
+            }
+            return {u: sumU / totalW, v: sumV / totalW};
+        }
+
+        // GFS: cached pressure-level grids, bracket-then-blend.
+        if (this.source === "gfs" && this._lastDateCycle) {
+            const [dateStr, hour] = this._lastDateCycle.split("_");
+            const {lo, hi, t} = bracketingLevels(altFt);
+            const jsonLo = this._levelCache[`${dateStr}_${hour}_${lo.level}`];
+            const jsonHi = lo.level === hi.level
+                ? jsonLo
+                : this._levelCache[`${dateStr}_${hour}_${hi.level}`];
+            if (!jsonLo || !jsonHi) return null;
+            const sampleLo = sampleJSONGrid(jsonLo, lat, lon);
+            const sampleHi = sampleJSONGrid(jsonHi, lat, lon);
+            return {
+                u: (1 - t) * sampleLo.u + t * sampleHi.u,
+                v: (1 - t) * sampleLo.v + t * sampleHi.v,
+            };
+        }
+
+        // openmeteo with a cache hit at this exact (lat,lon,altBucket,hour).
+        if (this.source === "openmeteo" && this._omCache) {
+            const dateNow = GlobalDateTimeNode?.dateNow ?? new Date();
+            const key = `${lat.toFixed(4)}|${lon.toFixed(4)}`
+                + `|${Math.round(altM / 100)}`
+                + `|${dateNow.toISOString().slice(0, 13)}`;
+            const cached = this._omCache.get(key);
+            if (cached) return cached;
+        }
+
+        // Manual + everything else: no per-altitude path.
+        return null;
+    }
+
 
     setGridParams(nx, ny, lon0, lat0, dlon, dlat) {
         this.gridNx = nx; this.gridNy = ny;
@@ -366,7 +467,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             }
         }
         this._updateScreenWindArrows(view);
-        this._updateInspectArrow(view);
+        this._updateInspectArrows(view);
     }
 
     // Cast a ray from the main view's camera through the given pixel and
@@ -497,17 +598,18 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this._screenArrowNames = seen;
     }
 
-    // Toggle inspect mode. Installs/removes a document mousemove listener
-    // and tears down the readout DOM + arrow when disabled.
+    // Toggle inspect mode. Installs/removes document mousemove + click +
+    // contextmenu listeners. On disable, hides all readout divs and removes
+    // the per-point arrows (dropped points themselves stay in
+    // this.inspectPoints so the next enable restores them).
     setInspect(enabled) {
         this.inspect = !!enabled;
+
         if (this.inspect && !this._inspectMouseHandler) {
             this._inspectMouseHandler = (e) => {
                 // Sub-pixel cursor jitter (laptop trackpads, OS easing) fires
                 // mousemove repeatedly with no real movement; each one schedules
-                // a forced render via setRenderOne(true). Filter out moves
-                // smaller than the threshold so a stationary cursor doesn't
-                // drive a render storm.
+                // a forced render. Filter out moves smaller than the threshold.
                 if (this._inspectClient
                     && Math.abs(e.clientX - this._inspectClient.x) < INSPECT_MOVE_THRESHOLD_PX
                     && Math.abs(e.clientY - this._inspectClient.y) < INSPECT_MOVE_THRESHOLD_PX) {
@@ -517,122 +619,367 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                 setRenderOne(true);
             };
             document.addEventListener("mousemove", this._inspectMouseHandler);
+
+            // Click → drop a persistent point. Track mousedown vs mouseup
+            // distance to skip drags (camera-orbit / pan would otherwise be
+            // mis-classified as clicks and drop points the user didn't ask for).
+            this._inspectClickHandler = this._handleInspectClick.bind(this);
+            document.addEventListener("mousedown", this._inspectClickHandler);
+            document.addEventListener("mouseup", this._inspectClickHandler);
+
+            // Right-click → remove nearest dropped point. preventDefault on the
+            // contextmenu so the OS menu doesn't pop up over the inspection.
+            this._inspectContextHandler = (e) => this._handleInspectRightClick(e);
+            document.addEventListener("contextmenu", this._inspectContextHandler);
         } else if (!this.inspect && this._inspectMouseHandler) {
             document.removeEventListener("mousemove", this._inspectMouseHandler);
+            document.removeEventListener("mousedown", this._inspectClickHandler);
+            document.removeEventListener("mouseup", this._inspectClickHandler);
+            document.removeEventListener("contextmenu", this._inspectContextHandler);
             this._inspectMouseHandler = null;
+            this._inspectClickHandler = null;
+            this._inspectContextHandler = null;
         }
+
         if (!this.inspect) {
-            removeDebugArrow("windInspectArrow");
             this._inspectClient = null;
-            if (this._inspectDiv) this._inspectDiv.style.display = "none";
+            // Hide all per-point readouts and remove all arrows; the next
+            // enable will recreate them. inspectPoints itself is preserved
+            // so dropped points re-appear when the user re-enables.
+            for (const div of this._inspectDivs.values()) {
+                if (div) div.style.display = "none";
+            }
+            this._removeAllInspectArrows();
         }
     }
 
-    // Build (lazily) the floating readout div used by inspect mode.
-    _ensureInspectDiv() {
-        if (this._inspectDiv) return this._inspectDiv;
-        const d = document.createElement("div");
+    // True when the event target sits inside a UI panel (lil-gui, native
+    // form input, button) — clicks there should be handled by the GUI,
+    // never reinterpreted as drop/remove gestures even if their pixel
+    // coords happen to fall inside the mainView rectangle (lil-gui panels
+    // float over the canvas in many layouts).
+    _eventTargetIsGui(e) {
+        const t = e.target;
+        if (!t || typeof t.closest !== "function") return false;
+        return !!t.closest(".lil-gui, .dg, .gui, select, input, textarea, button, label");
+    }
+
+    // mousedown/mouseup pair-detector for click vs drag classification.
+    // We track the down position; on up, if the delta is < 5 px and the
+    // event target is in mainView, we treat it as a click and drop a point.
+    // Larger deltas mean the user was orbiting/panning, so we ignore.
+    _handleInspectClick(e) {
+        if (!this.inspect) return;
+        // Only left-button (button 0). Right-clicks are handled by the
+        // contextmenu listener (which fires before mouseup), and middle-
+        // button drags shouldn't drop points.
+        if (e.button !== 0) return;
+        // GUI inputs that pixel-overlap mainView (sliders, dropdowns) must
+        // not be reinterpreted as drop gestures.
+        if (this._eventTargetIsGui(e)) {
+            this._inspectMouseDown = null;
+            return;
+        }
+
+        if (e.type === "mousedown") {
+            this._inspectMouseDown = {x: e.clientX, y: e.clientY, t: Date.now()};
+            return;
+        }
+        // mouseup
+        const down = this._inspectMouseDown;
+        this._inspectMouseDown = null;
+        if (!down) return;
+        const dx = e.clientX - down.x, dy = e.clientY - down.y;
+        if (dx * dx + dy * dy > 25) return;  // > 5 px = drag, not click
+
+        const view = ViewMan.get("mainView", false);
+        if (!view || !mouseInView(view, e.clientX, e.clientY)) return;
+
+        const [vx, vy] = mouseToView(view, e.clientX, e.clientY);
+        const altMSL = this.windAltFt * 0.3048;
+        const hit = this._rayHitWindShell(view, vx, vy, altMSL, _scratchHit);
+        if (!hit) return;
+        const lla = ECEFToLLAVD_radii(hit);
+        if (!Number.isFinite(lla.x) || !Number.isFinite(lla.y)) return;
+
+        this.inspectPoints.push({lat: lla.x, lon: lla.y});
+        setRenderOne(true);
+    }
+
+    // Right-click anywhere in mainView: find the closest dropped point (by
+    // screen-pixel distance to the click) and remove it. Camera/Target
+    // points are not removable — they're tied to nodes, not the user list.
+    _handleInspectRightClick(e) {
+        if (!this.inspect) return;
+        // Don't swallow right-clicks on GUI inputs — same reasoning as
+        // _handleInspectClick. Also lets the user keep using the OS context
+        // menu inside lil-gui dropdowns.
+        if (this._eventTargetIsGui(e)) return;
+        const view = ViewMan.get("mainView", false);
+        if (!view || !mouseInView(view, e.clientX, e.clientY)) return;
+        if (this.inspectPoints.length === 0) return;
+
+        e.preventDefault();
+
+        let bestIdx = -1, bestDist = Infinity;
+        const altMSL = this.windAltFt * 0.3048;
+        for (let i = 0; i < this.inspectPoints.length; i++) {
+            const p = this.inspectPoints[i];
+            const screen = this._latLonToScreen(view, p.lat, p.lon, altMSL);
+            if (!screen) continue;
+            const dx = screen.x - e.clientX, dy = screen.y - e.clientY;
+            const d = dx * dx + dy * dy;
+            if (d < bestDist) { bestDist = d; bestIdx = i; }
+        }
+        if (bestIdx >= 0) {
+            this.inspectPoints.splice(bestIdx, 1);
+            setRenderOne(true);
+        }
+    }
+
+    // Project (lat, lon) on the wind shell into mainView client pixel coords.
+    // Returns {x, y} in clientX/Y, or null if the point is behind the camera
+    // or projects outside the visible viewport (in which case showing a
+    // floating readout would just clutter the corners with off-screen labels).
+    _latLonToScreen(view, lat, lon, altMSL) {
+        const ecef = LLAToECEF(lat, lon, altMSL);
+        if (!ecef) return null;
+        _scratchNDC.copy(ecef).project(view.camera);
+        // NDC z is depth: <-1 means behind the near plane / camera;
+        // >1 means beyond the far plane.
+        if (_scratchNDC.z < -1 || _scratchNDC.z > 1) return null;
+        // NDC x/y outside [-1, 1] means horizontally/vertically off the
+        // visible viewport. The point is still in front of the camera,
+        // just not on screen — hide the readout for it.
+        if (_scratchNDC.x < -1 || _scratchNDC.x > 1
+            || _scratchNDC.y < -1 || _scratchNDC.y > 1) return null;
+        const x = view.leftPx + (_scratchNDC.x + 1) * 0.5 * view.widthPx;
+        const y = view.topPx + (1 - _scratchNDC.y) * 0.5 * view.heightPx;
+        return {x, y};
+    }
+
+    _removeAllInspectArrows() {
+        for (const id of [...this._inspectDivs.keys()]) {
+            removeDebugArrow(`windInspect_${id}`);
+        }
+    }
+
+    // Build (lazily) a floating readout div for one inspect point. Each
+    // point gets its own div, keyed by id ("cursor","camera","target",
+    // "drop:<idx>"); cursor uses a slightly larger style for emphasis.
+    _ensureInspectDiv(id, color) {
+        let d = this._inspectDivs.get(id);
+        if (d) return d;
+        d = document.createElement("div");
+        const isCursor = id === "cursor";
         d.style.cssText = `
             position: fixed;
             background: rgba(0, 0, 0, 0.78);
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            padding: 8px 12px;
-            border: 1px solid #00ffff;
+            padding: ${isCursor ? "8px 12px" : "5px 8px"};
+            border: 1px solid ${color};
             border-radius: 4px;
             pointer-events: none;
             z-index: 10000;
-            line-height: 1.25;
+            line-height: 1.2;
             white-space: nowrap;
         `;
         document.body.appendChild(d);
-        this._inspectDiv = d;
+        this._inspectDivs.set(id, d);
         return d;
     }
 
-    // Cursor-driven inspect arrow + readout. Same shell intersection as the
-    // grid; computes wind speed in current display units and a 16-point
-    // compass heading (FROM) plus exact degrees.
-    _updateInspectArrow(view) {
+    // Resolve the camera/target track for a given anchor type. Mirrors the
+    // fallback chains used by _windNodePositions / _referenceLatLon so the
+    // anchored inspect points use the same nodes as the rest of the wind
+    // pipeline. Returns null when no usable track exists.
+    _trackForAnchor(anchor) {
+        // Camera = the observer's physical position (the jet, the ship, the
+        // ground station). Prefer the *track* nodes — cameraTrack/jetTrack —
+        // over lookCamera, because lookCamera is the *rendering* camera
+        // and in many sitches it sits far out in space looking down at the
+        // scene, which would project off-screen and isn't a meaningful
+        // wind-sample location.
+        const candidates = anchor === "camera"
+            ? ["cameraTrack", "jetTrack", "lookCamera"]
+            : anchor === "target"
+            ? ["targetTrack", "LOSTraverseSelect"]
+            : [];
+        for (const id of candidates) {
+            if (!NodeMan.exists(id)) continue;
+            const n = NodeMan.get(id);
+            if (typeof n.p === "function") return n;
+            if (n.camera?.position) {
+                // lookCamera exposes .camera.position (a Vector3 in ECEF).
+                return {p: () => n.camera.position};
+            }
+        }
+        return null;
+    }
+
+    // Per-frame multi-point inspect render. Iterates cursor + dropped +
+    // camera + target points, drawing one arrow + readout per active point.
+    //
+    // Altitude convention: every arrow is drawn on the wind shell at the
+    // current windAltFt — even for Camera/Target points, whose anchor track
+    // may sit thousands of feet above. The arrow is a wind-sample marker
+    // pinned to the *displayed wind layer*, not the object itself. With
+    // Lock Altitude = Camera/Target, windAltFt tracks the object's altitude
+    // each frame and the arrow ends up exactly at the object's height; with
+    // Lock = None the arrows mark the column directly under each anchor at
+    // whatever the user has set as the display altitude.
+    //
+    // Stale arrows/divs (from points removed since last frame) are cleaned
+    // up at the end of the loop so the next frame is consistent.
+    _updateInspectArrows(view) {
         // Single-view feature; bail before any side effects on other views
-        // so we don't churn the inspect ArrowHelper between mainView and
-        // lookView passes (would crash Edge under sustained interaction).
+        // so we don't churn ArrowHelpers between mainView/lookView passes.
         if (view?.id !== "mainView") return;
-        if (!this.inspect || !this.windU
-            || !view.pixelsToMeters || !this._inspectClient) {
-            return;
-        }
-        // Cursor must be inside the main view to inspect.
-        if (!mouseInView(view, this._inspectClient.x, this._inspectClient.y)) {
-            removeDebugArrow("windInspectArrow");
-            if (this._inspectDiv) this._inspectDiv.style.display = "none";
-            return;
+        if (!this.inspect || !this.windU || !view.pixelsToMeters) return;
+
+        // Build the list of points to render this frame. Each entry has:
+        //   id      — stable key (used for arrow name + div map)
+        //   color   — arrow + readout border
+        //   label   — short tag in the readout (omitted for cursor)
+        //   lat/lon — sample location
+        //   altMSL  — per-point sample altitude in meters MSL. Cursor and
+        //             dropped points use the wind-display altitude; Camera
+        //             and Target use the underlying track's actual altitude
+        //             (so e.g. Camera shows the wind at jet altitude even
+        //             when windAltFt is set somewhere else).
+        const dispAltMSL = this.windAltFt * 0.3048;
+        const points = [];
+
+        // Cursor — only when inside mainView.
+        if (this._inspectClient
+            && mouseInView(view, this._inspectClient.x, this._inspectClient.y)) {
+            const [vx, vy] = mouseToView(view, this._inspectClient.x, this._inspectClient.y);
+            const hit = this._rayHitWindShell(view, vx, vy, dispAltMSL, _scratchHit);
+            if (hit) {
+                const lla = ECEFToLLAVD_radii(hit);
+                if (Number.isFinite(lla.x) && Number.isFinite(lla.y)) {
+                    points.push({
+                        id: "cursor", color: "#ffff00",
+                        lat: lla.x, lon: lla.y, altMSL: dispAltMSL,
+                        anchorClient: {x: this._inspectClient.x, y: this._inspectClient.y},
+                    });
+                }
+            }
         }
 
-        const [vx, vy] = mouseToView(view, this._inspectClient.x, this._inspectClient.y);
-        const altMSL = this.windAltFt * 0.3048;
-        const hit = this._rayHitWindShell(view, vx, vy, altMSL, _scratchHit);
-        if (!hit) {
-            removeDebugArrow("windInspectArrow");
-            if (this._inspectDiv) this._inspectDiv.style.display = "none";
-            return;
-        }
-        const lla = ECEFToLLAVD_radii(hit);
-        if (!Number.isFinite(lla.x) || !Number.isFinite(lla.y)) {
-            removeDebugArrow("windInspectArrow");
-            return;
-        }
-        const w = this.sampleWind(lla.x, lla.y);
-        if (!w || !Number.isFinite(w.u) || !Number.isFinite(w.v)) {
-            removeDebugArrow("windInspectArrow");
-            return;
+        // Camera + Target anchors. Sample at the track's own altitude (the
+        // ECEF position's z above MSL), not the display altitude — these
+        // points exist precisely so the user can see what wind a moving
+        // object is in without having to align the slider manually.
+        for (const [anchor, color] of [["camera", "#00cc66"], ["target", "#ff3366"]]) {
+            const track = this._trackForAnchor(anchor);
+            if (!track) continue;
+            const pos = track.p(Sit.currentFrame ?? 0);
+            if (!pos) continue;
+            const lla = ECEFToLLAVD_radii(pos);
+            if (!Number.isFinite(lla.x) || !Number.isFinite(lla.y)
+                || !Number.isFinite(lla.z)) continue;
+            const trackAltM = lla.z - meanSeaLevelOffset(lla.x, lla.y);
+            points.push({
+                id: anchor, color, label: anchor[0].toUpperCase() + anchor.slice(1),
+                lat: lla.x, lon: lla.y, altMSL: trackAltM,
+            });
         }
 
-        const speedMS = Math.hypot(w.u, w.v);
-        // Wind FROM (where it's coming from) — what aviation reports.
-        const {from} = fromUVToDirKnots(w.u, w.v);
-        const compass = compassFromDeg(from);
-        const speedDisp = speedMS * (Units?.m2Speed ?? 1.94384);  // m/s → display
+        // Persisted dropped points — at the display altitude.
+        for (let i = 0; i < this.inspectPoints.length; i++) {
+            const p = this.inspectPoints[i];
+            points.push({
+                id: `drop:${i}`, color: "#ff9900", label: `#${i + 1}`,
+                lat: p.lat, lon: p.lon, altMSL: dispAltMSL,
+            });
+        }
+
+        // Render each point. seenIds tracks which arrows/divs are still
+        // active so we can clean up leftovers from the previous frame.
         const speedUnit = Units?.speedUnits ?? "knots";
+        const seenIds = new Set();
+        for (const p of points) {
+            const ecef = LLAToECEF(p.lat, p.lon, p.altMSL);
+            if (!ecef) continue;
+            // Try the per-altitude path first (sounding profiles, GFS
+            // bracketing levels, openmeteo cache). Fall back to the
+            // displayed-altitude grid sample when the source can't sample
+            // at p.altMSL (e.g. manual wind, openmeteo cache miss). The
+            // readout's altitude line reflects what was actually sampled
+            // so the user can tell the difference.
+            let w = this.sampleWindAtAltitude(p.lat, p.lon, p.altMSL);
+            let usedAltMSL = p.altMSL;
+            if (!w || !Number.isFinite(w.u) || !Number.isFinite(w.v)) {
+                w = this.sampleWind(p.lat, p.lon);
+                usedAltMSL = dispAltMSL;
+            }
+            if (!w || !Number.isFinite(w.u) || !Number.isFinite(w.v)) continue;
+            const speedMS = Math.hypot(w.u, w.v);
+            const {from} = fromUVToDirKnots(w.u, w.v);
+            const compass = compassFromDeg(from);
+            const speedDisp = speedMS * (Units?.m2Speed ?? 1.94384);
 
-        // Arrow points TO (drift direction), 100 px on screen.
-        windDirFromBearing(lla.x, lla.y, from * DEG, _scratchDir);
-        const lengthM = view.pixelsToMeters(hit, 100);
-        _scratchEnd.copy(hit).addScaledVector(_scratchDir, lengthM);
-        DebugArrowAB("windInspectArrow", hit, _scratchEnd, "#ffff00", true,
-            this.group, 30, LAYER.MASK_MAIN);
+            // Arrow points TO (drift direction), 100 px on screen.
+            windDirFromBearing(p.lat, p.lon, from * DEG, _scratchDir);
+            _scratchHit.copy(ecef);
+            const lengthM = view.pixelsToMeters(_scratchHit, 100);
+            _scratchEnd.copy(_scratchHit).addScaledVector(_scratchDir, lengthM);
+            const arrowName = `windInspect_${p.id}`;
+            DebugArrowAB(arrowName, _scratchHit, _scratchEnd, p.color, true,
+                this.group, 30, LAYER.MASK_MAIN);
+            seenIds.add(p.id);
 
-        // Readout, positioned next to the cursor (offset so it doesn't
-        // sit under the pointer and steal hover focus). Show altitude in
-        // the readout so it stays self-documenting when the user changes
-        // the wind altitude slider.
-        const div = this._ensureInspectDiv();
-        div.style.display = "block";
-        const altLabel = this.windAltFt < 300
-            ? "Surface"
-            : `${this.windAltFt.toLocaleString()} ft`;
-        div.innerHTML =
-            `<div style="font-size:22px;font-weight:600">${speedDisp.toFixed(0)} ${speedUnit}</div>` +
-            `<div style="font-size:13px;opacity:0.85">FROM ${compass} ${Math.round(from)}°</div>` +
-            `<div style="font-size:11px;opacity:0.65">@ ${altLabel}</div>`;
+            // Readout div. Every readout (cursor + anchored + dropped)
+            // shows its own sample altitude — Camera/Target reflect the
+            // track's altitude, dropped points reflect the display altitude.
+            const div = this._ensureInspectDiv(p.id, p.color);
+            const altFt = usedAltMSL * 3.28084;
+            const altLabel = altFt < 300
+                ? "Surface"
+                : `${Math.round(altFt).toLocaleString()} ft`;
+            if (p.id === "cursor") {
+                div.innerHTML =
+                    `<div style="font-size:22px;font-weight:600">${speedDisp.toFixed(0)} ${speedUnit}</div>`
+                    + `<div style="font-size:13px;opacity:0.85">FROM ${compass} ${Math.round(from)}°</div>`
+                    + `<div style="font-size:11px;opacity:0.65">@ ${altLabel}</div>`;
+            } else {
+                div.innerHTML =
+                    `<div style="font-size:11px;opacity:0.85">${p.label}</div>`
+                    + `<div style="font-size:14px;font-weight:600">${speedDisp.toFixed(0)} ${speedUnit}</div>`
+                    + `<div style="font-size:11px;opacity:0.85">${compass} ${Math.round(from)}°</div>`
+                    + `<div style="font-size:10px;opacity:0.65">@ ${altLabel}</div>`;
+            }
+            div.style.display = "block";
 
-        // Position with edge-aware auto-flip: if the default down-right
-        // placement would clip the readout outside the viewport, flip to
-        // the opposite side. offsetWidth/Height are read AFTER innerHTML so
-        // they reflect the current readout's size, not a previous frame's.
-        const cx = this._inspectClient.x;
-        const cy = this._inspectClient.y;
-        const tipW = div.offsetWidth;
-        const tipH = div.offsetHeight;
-        const M = INSPECT_TOOLTIP_OFFSET_PX;
-        // Default placement is down-right of the cursor; flip to up-left
-        // when that would clip past the viewport edge. Clamp to ≥ 0 for
-        // pathologically narrow side-panel layouts where even the flipped
-        // placement won't fit (cheap insurance against off-screen anchors).
-        const left = (cx + M + tipW > window.innerWidth)  ? cx - M - tipW : cx + M;
-        const top  = (cy + M + tipH > window.innerHeight) ? cy - M - tipH : cy + M;
-        div.style.left = Math.max(0, left) + "px";
-        div.style.top  = Math.max(0, top) + "px";
+            // Anchor: cursor uses the actual cursor position; others project
+            // their lat/lon to screen pixels. Off-screen → hide (skip).
+            const anchorPx = p.anchorClient
+                ?? this._latLonToScreen(view, p.lat, p.lon, p.altMSL);
+            if (!anchorPx) {
+                div.style.display = "none";
+                continue;
+            }
+            const tipW = div.offsetWidth;
+            const tipH = div.offsetHeight;
+            const M = INSPECT_TOOLTIP_OFFSET_PX;
+            const left = (anchorPx.x + M + tipW > window.innerWidth)
+                ? anchorPx.x - M - tipW : anchorPx.x + M;
+            const top = (anchorPx.y + M + tipH > window.innerHeight)
+                ? anchorPx.y - M - tipH : anchorPx.y + M;
+            div.style.left = Math.max(0, left) + "px";
+            div.style.top = Math.max(0, top) + "px";
+        }
+
+        // Sweep: drop arrows + hide divs whose ids didn't render this frame
+        // (cursor left the view, dropped point removed, etc).
+        for (const id of [...this._inspectDivs.keys()]) {
+            if (seenIds.has(id)) continue;
+            removeDebugArrow(`windInspect_${id}`);
+            const div = this._inspectDivs.get(id);
+            if (div) div.style.display = "none";
+        }
     }
 
     // Resolve a "where am I looking from" lat/lon for the nearby filter.
@@ -1465,6 +1812,11 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             nearbyRadiusKm: this.nearbyRadiusKm,
             showArrows: this.showArrows,
             lastDateCycle: this._lastDateCycle,
+            // Inspect-mode user state. Only dropped points need persisting —
+            // cursor/camera/target are recomputed each frame from the active
+            // mouse position / node graph.
+            inspectPoints: this.inspectPoints.map(p => ({lat: p.lat, lon: p.lon})),
+            lockAltitudeTo: this.lockAltitudeTo,
         };
     }
 
@@ -1477,6 +1829,14 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.nearbyRadiusKm = v.nearbyRadiusKm ?? 250;
         this.showArrows = v.showArrows ?? false;
         if (v.lastDateCycle) this._lastDateCycle = v.lastDateCycle;
+        if (Array.isArray(v.inspectPoints)) {
+            this.inspectPoints = v.inspectPoints
+                .filter(p => p && Number.isFinite(p.lat) && Number.isFinite(p.lon))
+                .map(p => ({lat: p.lat, lon: p.lon}));
+        }
+        if (typeof v.lockAltitudeTo === "string") {
+            this.lockAltitudeTo = v.lockAltitudeTo;
+        }
 
         // Rebuild the catalog of saved wind files. Keep entries even when
         // FileManager doesn't currently have the blob (the new normal —
@@ -1692,6 +2052,31 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                 }
             }
         }
+
+        // Altitude-lock: drive windAltFt from the camera or target track
+        // altitude. Snap to the slider's 50 ft step so smooth altitude
+        // changes don't fire fetchWindForAltitude every frame — only when
+        // the snapped value crosses a step boundary.
+        if (this.lockAltitudeTo === "camera" || this.lockAltitudeTo === "target") {
+            const track = this._trackForAnchor(this.lockAltitudeTo);
+            if (track) {
+                const pos = track.p(frame);
+                if (pos) {
+                    const lla = ECEFToLLAVD_radii(pos);
+                    if (Number.isFinite(lla.x) && Number.isFinite(lla.y)
+                        && Number.isFinite(lla.z)) {
+                        const altM = lla.z - meanSeaLevelOffset(lla.x, lla.y);
+                        const altFt = Math.max(0, Math.min(60000,
+                            Math.round(altM * 3.28084 / 50) * 50));
+                        if (altFt !== this.windAltFt) {
+                            this.windAltFt = altFt;
+                            par.windAltFt = altFt;  // sync GUI slider
+                            this.fetchWindForAltitude(altFt);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     dispose() {
@@ -1706,17 +2091,15 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             for (const name of this._screenArrowNames) removeDebugArrow(name);
             this._screenArrowNames.clear();
         }
-        // Inspect-mode tear-down: drop the listener, the floating div, and
-        // the arrow so nothing leaks across sitch reloads.
-        if (this._inspectMouseHandler) {
-            document.removeEventListener("mousemove", this._inspectMouseHandler);
-            this._inspectMouseHandler = null;
+        // Inspect-mode tear-down: drop every per-point arrow + readout div
+        // and remove the global listeners so nothing leaks across sitch
+        // reloads. setInspect(false) does the listener/arrow part already,
+        // but we also have to destroy the divs (setInspect just hides them).
+        this.setInspect(false);
+        for (const div of this._inspectDivs.values()) {
+            if (div) div.remove();
         }
-        if (this._inspectDiv) {
-            this._inspectDiv.remove();
-            this._inspectDiv = null;
-        }
-        removeDebugArrow("windInspectArrow");
+        this._inspectDivs.clear();
         this.material.dispose();
         super.dispose();
     }

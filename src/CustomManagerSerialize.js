@@ -399,7 +399,8 @@ export const serializeMethods = {
             "windOpacity",
             "windSpacing",
             "windMaxSpeed",
-            "balloonCount"
+            "balloonCount",
+            "windLockAltitude"
         ]
 
         const SitNeeded = [
@@ -1171,6 +1172,14 @@ export const serializeMethods = {
             if (typeof windNode.nearbyOnly === "boolean") par.windNearbyOnly = windNode.nearbyOnly;
             if (typeof windNode.nearbyRadiusKm === "number") par.windNearbyRadiusKm = windNode.nearbyRadiusKm;
             if (typeof windNode.showArrows === "boolean") par.windShowArrows = windNode.showArrows;
+            if (typeof windNode.lockAltitudeTo === "string") {
+                // Restore the user-facing capitalized form ("None" / "Camera"
+                // / "Target") that the dropdown expects; the node holds the
+                // lowercase form internally so we can use it as a switch key.
+                const m = windNode.lockAltitudeTo;
+                par.windLockAltitude = m === "camera" ? "Camera"
+                    : m === "target" ? "Target" : "None";
+            }
         }
 
         // and the globals

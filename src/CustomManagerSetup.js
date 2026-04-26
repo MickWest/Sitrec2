@@ -201,6 +201,7 @@ export const setupMethods = {
         par.windNearbyRadiusKm = 250;
         par.windShowArrows = false;
         par.windInspect = false;
+        par.windLockAltitude = "None";  // "None" | "Camera" | "Target"
 
         // Track which sources we've already auto-shown wind for, so the
         // "first switch to GFS/sounding turns on Show Wind" rule fires once
@@ -387,9 +388,15 @@ export const setupMethods = {
         //    Cuts perceived latency on altitude scrubbing to one frame.
         //  - onFinishChange: full fetch (handles uncached levels via network)
         //    when the user commits the value.
-        windFolder.add(par, "windAltFt", 0, 60000, 10).name("Altitude (ft)").listen()
+        const altCtrl = windFolder.add(par, "windAltFt", 0, 60000, 10).name("Altitude (ft)").listen()
             .onChange(() => {
                 if (!this._windNode) return;
+                // Lock-altitude wins: the wind node's update() will overwrite
+                // par.windAltFt next frame from the locked track. Skip the
+                // fetch we'd otherwise queue on slider input — it'd just be
+                // immediately undone, wasting a network round-trip on uncached
+                // GFS brackets.
+                if (this._windNode.lockAltitudeTo !== "none") return;
                 if (!par.windNearbyOnly) return;
                 const wn = this._windNode;
                 // Allow live updates only when the source's hot path is local
@@ -409,9 +416,22 @@ export const setupMethods = {
             })
             .onFinishChange(async () => {
                 if (!this._windNode) return;
+                if (this._windNode.lockAltitudeTo !== "none") return;
                 par.windStatus = "Loading...";
                 await this._windNode.fetchWindForAltitude(par.windAltFt);
                 par.windStatus = this._windNode.statusText;
+            });
+
+        // Lock Altitude: drive windAltFt from the camera or target track
+        // every frame, instead of taking it from the slider. The wind
+        // node's update() handles the per-frame refresh — we just mirror
+        // the dropdown choice into wn.lockAltitudeTo. .listen() syncs the
+        // dropdown when modDeserialize restores a saved value.
+        windFolder.add(par, "windLockAltitude", ["None", "Camera", "Target"])
+            .name("Lock Altitude to").listen()
+            .onChange(() => {
+                if (!this._windNode) return;
+                this._windNode.lockAltitudeTo = par.windLockAltitude.toLowerCase();
             });
 
         // Nearby Wind Only: clip streamline seeding to a radius around the
