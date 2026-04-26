@@ -181,7 +181,25 @@ export const setupMethods = {
         // `balloonCount` name kept for backward compat with saved par state.
         // Default 3 so 3-nearest IDW has enough samples to be meaningful.
         par.balloonCount = 3;
-        this._importSounding = importSoundingDialog;
+        // Wrap the dialog so a successful import switches the wind source
+        // to "Manual Soundings" — that source pulls from any loaded
+        // CNodeAtmosphericProfile regardless of origin, so the just-
+        // imported station immediately participates in the IDW field.
+        // (Cancel / failure paths return false from the dialog and leave
+        // the current source alone.)
+        this._importSounding = async () => {
+            const ok = await importSoundingDialog();
+            if (!ok) return;
+            const ctrls = guiMenus.wind?.controllers ?? [];
+            const sourceCtrl = ctrls.find(c => c.property === "windSource");
+            if (sourceCtrl && par.windSource !== "Manual Soundings") {
+                sourceCtrl.setValue("Manual Soundings");
+            } else if (this._windNode) {
+                // Already on Manual Soundings — just rebuild the IDW grid
+                // so the new profile is included.
+                this._windNode.fetchWindForAltitude(par.windAltFt);
+            }
+        };
 
         // ── Wind Visualization subfolder under Physics ──────────────
         this._windNode = null;

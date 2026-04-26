@@ -600,10 +600,10 @@ export async function importSoundingDialog() {
                 return "";
             },
         });
-        if (stationId === null) return;
+        if (stationId === null) return false;
         station = { wmo: stationId.trim(), name: stationId.trim(), id: "" };
     }
-    if (!station) return;
+    if (!station) return false;
 
     // Step 2: Source selection. UWYO needs the PHP proxy (CORS) so it's
     // only an option when running against a real sitrec server; in
@@ -622,7 +622,7 @@ export async function importSoundingDialog() {
                 {value: "igra2", label: "IGRA2", description: "NOAA NCEI archive (possibly more accurate)"},
             ],
         });
-        if (source === null) return;
+        if (source === null) return false;
     }
 
     // Step 3: Date — default to the sitch's start date (frame 0) so the
@@ -641,16 +641,15 @@ export async function importSoundingDialog() {
             return "";
         },
     });
-    if (dateStr === null) return;
+    if (dateStr === null) return false;
     const date = dateStr.trim();
 
+    // Returns true on a successful import (so the caller can flip the
+    // wind source to Manual Soundings to make the new profile visible).
     if (source.trim().toLowerCase() === "igra2") {
-        // IGRA2 path: fetch zip → decompress → pick sounding → import
-        await importViaIGRA2(station, date);
-    } else {
-        // UWYO path: fetch via PHP proxy
-        await importViaUWYO(station, date);
+        return await importViaIGRA2(station, date);
     }
+    return await importViaUWYO(station, date);
 }
 
 // Closest 00Z / 12Z launch to the sitch start time. Picks 00Z if the
@@ -690,7 +689,7 @@ async function importViaUWYO(station, date) {
             {value: "12", label: "12Z", description: "Noon UTC launch"},
         ],
     });
-    if (hourStr === null) return;
+    if (hourStr === null) return false;
     const hour = parseInt(hourStr);
 
     // Fallback walk: even though the station passes the lastYear filter,
@@ -721,7 +720,7 @@ async function importViaUWYO(station, date) {
                 alert(`Station ${station.wmo} ${station.name} had no UWYO data for ${date} ${hour}Z.\n\n`
                     + `Imported next-nearest with data: ${s.wmo} ${s.name} (${Math.round(s.dist)} km).`);
             }
-            return;
+            return true;
         } catch (e) {
             console.warn(`UWYO ${s.wmo} ${s.name} failed: ${e.message}`);
             lastError = e;
@@ -730,6 +729,7 @@ async function importViaUWYO(station, date) {
     alert(`Failed to import sounding from ${station.wmo} ${station.name} or the next ${MAX_FALLBACK_ATTEMPTS - 1} nearest stations for ${date} ${hour}Z.\n\n`
         + `Last error: ${lastError?.message ?? "unknown"}`);
     console.error("Sounding import error: all fallback attempts failed", lastError);
+    return false;
 }
 
 async function importViaIGRA2(station, date) {
@@ -738,7 +738,7 @@ async function importViaIGRA2(station, date) {
     if (!igra2Id) {
         alert("IGRA2 requires the full station ID (e.g. USM00072451). "
             + "This station doesn't have one in the database. Try UWYO instead.");
-        return;
+        return false;
     }
 
     try {
@@ -750,7 +750,7 @@ async function importViaIGRA2(station, date) {
 
         // Pick a sounding near the requested date
         const selectedIndex = await pickIGRA2Sounding(text, date);
-        if (selectedIndex === null) return; // cancelled
+        if (selectedIndex === null) return false; // cancelled
 
         // Import the selected sounding by feeding the FULL text + index into the pipeline.
         // CTrackFileSonde will parse with soundingIndex=0 by default, but we need to
@@ -766,10 +766,12 @@ async function importViaIGRA2(station, date) {
         const filename = `igra2_${igra2Id}_${dateStr}_${hourStr}.txt`;
         await FileManager.parseResult(filename, new TextEncoder().encode(singleSounding).buffer);
         console.log("IGRA2 sounding imported: " + filename);
+        return true;
 
     } catch (e) {
         alert("Failed to import IGRA2 sounding:\n" + e.message);
         console.error("IGRA2 import error:", e);
+        return false;
     }
 }
 
