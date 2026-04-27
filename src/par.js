@@ -23,6 +23,7 @@ const parDefaults = {
     set frame(value) {
         this._frame = value;
         this.renderOne = true;
+        globalThis.__sitrecWakeRenderLoop?.();
     },
 
 

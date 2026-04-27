@@ -209,6 +209,7 @@ export function setupGUIjetTweaks(_jetTweaks) {
 export function setRenderOne(value=true) {
     if (!par.renderOne) {
         par.renderOne = value;
+        globalThis.__sitrecWakeRenderLoop?.();
     }
 }
 

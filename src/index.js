@@ -109,6 +109,7 @@ import {glareSprite, targetSphere} from "./JetStuffVars";
 import {CCustomManager} from "./CustomSupport";
 import {EventManager} from "./CEventManager";
 import {CNodeView3D} from "./nodes/CNodeView3D";
+import {shouldSleepAnimationLoop as shouldSleepRenderLoopState} from "./renderLoopControl";
 import {getApproximateLocationFromIP} from "./GeoLocation";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
 import {
@@ -272,6 +273,51 @@ let fpsInterval, rafInterval, startTime, now, then, thenRender, elapsed;
 
 let animationFrameId;
 // isTransitioning lives in indexRender.js; writes go through setIsTransitioning.
+
+function clearScheduledAnimation() {
+    if (animationFrameId !== undefined && animationFrameId !== null) {
+        clearTimeout(animationFrameId);
+        animationFrameId = null;
+    }
+}
+
+function scheduleAnimationLoop(delay = 0) {
+    if (animationFrameId !== undefined && animationFrameId !== null) {
+        return;
+    }
+
+    animationFrameId = setTimeout(() => {
+        animationFrameId = null;
+        animate(performance.now());
+    }, Math.max(0, delay));
+}
+
+function shouldSleepAnimationLoop() {
+    return shouldSleepRenderLoopState({
+        hidden: document.hidden,
+        paused: par.paused,
+        renderOne: par.renderOne,
+        nodeList: NodeMan?.list,
+    });
+}
+
+function wakeAnimationLoop() {
+    if (!document.hidden) {
+        scheduleAnimationLoop(0);
+    }
+}
+
+globalThis.__sitrecWakeRenderLoop = wakeAnimationLoop;
+
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+        clearScheduledAnimation();
+        return;
+    }
+
+    setRenderOne(true);
+    wakeAnimationLoop();
+});
 
 // Adaptive frame rate control
 const frameRateController = {
@@ -1219,10 +1265,7 @@ async function newSitch(situation, customSetup = false ) {
     Globals.menuBar.reset();
 
     // Cancel any existing animation frame to prevent memory leaks
-    if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-        animationFrameId = null;
-    }
+    clearScheduledAnimation();
     console.log("%%%%% BEFORE the two AWAITS %%%%%%%%")
     await waitForParsingToComplete();
 
@@ -2148,7 +2191,7 @@ function startAnimating(fps) {
         rafFps = Globals.settings.fpsLimit;
     }
     rafInterval = 1000 / rafFps;
-    animationFrameId = setTimeout(() => animate(performance.now()), 16); // ~60fps RAF loop
+    scheduleAnimationLoop(16);
     setRenderOne(true);
 }
 
@@ -2170,12 +2213,16 @@ function animate(newtime) {
         rafFps = Globals.settings.fpsLimit;
     }
     rafInterval = 1000 / rafFps;
+
+    if (shouldSleepAnimationLoop()) {
+        return;
+    }
     
     // Check if enough time has elapsed for RAF to do anything (fpsLimit gate)
     const elapsedSinceRender = now - thenRender;
     if (elapsedSinceRender < rafInterval) {
         // Not yet time, reschedule and return early
-        animationFrameId = setTimeout(() => animate(performance.now()), 0);
+        scheduleAnimationLoop(rafInterval - elapsedSinceRender);
         return;
     }
 
@@ -2252,7 +2299,7 @@ function animate(newtime) {
     thenRender = now;
     
     // Schedule next RAF call (runs frequently, but does nothing until rafInterval elapses)
-    animationFrameId = setTimeout(() => animate(performance.now()), 0);
+    scheduleAnimationLoop(0);
 
 
     // finally we check the time taken to run the frame
@@ -2399,10 +2446,7 @@ function disposeEverything() {
     Globals.disposing = true;
 
     // cancel any requested animation frames
-    if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-        animationFrameId = null;
-    }
+    clearScheduledAnimation();
 
     // Remove all event listeners
     EventManager.removeAll();
