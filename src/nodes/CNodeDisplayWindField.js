@@ -148,6 +148,14 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // can pick either or both.
         this.showArrows = v.showArrows ?? false;
 
+        // Streamline-mesh visibility ("Show Wind Lines"). Distinct from
+        // the master visibility (this.visible / this.group.visible, owned
+        // by the Show/Hide menu's Wind Field entry). The master hides the
+        // whole group — streamlines, arrows, inspect arrows, sonde arrows.
+        // Show Wind Lines hides only the streamline mesh, so toggling it
+        // off doesn't take the arrow grid down with it.
+        this.linesVisible = v.linesVisible ?? true;
+
         // Inspect mode: when on, renders one arrow + readout per "inspect
         // point". Three kinds of points can be active:
         //   - cursor:  follows the mouse (one transient point)
@@ -1182,6 +1190,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.linesMesh.layers.mask = this.group.layers.mask;
         this.linesMesh.raycast = () => {};   // skip raycasting on millions of segments
         this.linesMesh.frustumCulled = false; // globe-spanning geometry, always draw
+        this.linesMesh.visible = this.linesVisible;
         this.group.add(this.linesMesh);
 
         const lodCounts = [0, 0, 0];
@@ -1886,6 +1895,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             showArrows: this.showArrows,
             inspect: this.inspect,
             visible: this.visible,
+            linesVisible: this.linesVisible,
             lineOpacity: this.lineOpacity,
             seedSpacing: this.seedSpacing,
             maxWindSpeed: this.maxWindSpeed,
@@ -1913,6 +1923,19 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // readout and shift-click does nothing until the user toggles it.
         if (typeof v.inspect === "boolean") this.setInspect(v.inspect);
         if (typeof v.visible === "boolean") this.visible = v.visible;
+        // Pre-split saves only stored `visible`, which back then drove the
+        // streamline mesh (par.windShow toggled both wn.visible AND
+        // wn.group.visible). Migrate it to linesVisible so saved sitches
+        // come back with the streamlines they had, and force the master
+        // visible so the group can render.
+        if (typeof v.linesVisible === "boolean") {
+            this.linesVisible = v.linesVisible;
+        } else if (typeof v.visible === "boolean") {
+            this.linesVisible = v.visible;
+            this.visible = true;
+            this.group.visible = true;
+        }
+        if (this.linesMesh) this.linesMesh.visible = this.linesVisible;
         if (typeof v.lineOpacity === "number") {
             this.lineOpacity = v.lineOpacity;
             // Field assignment doesn't reach the shader — the GUI's onChange

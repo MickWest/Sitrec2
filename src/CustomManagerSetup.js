@@ -256,8 +256,11 @@ export const setupMethods = {
                 source: "manual",
                 sourceLocal: "manual",
             });
-            this._windNode.visible = false;
-            this._windNode.group.visible = false;
+            // Streamline mesh starts off; group stays visible so the
+            // arrow grid + inspect arrows can render independently when
+            // the user enables them. The Show/Hide menu's "Wind Field"
+            // entry remains the master toggle for the whole group.
+            this._windNode.linesVisible = false;
         }
         // Local alias so the rest of the wind setup can read wn.* without
         // repeating this._windNode. Declared up here so source dropdowns
@@ -265,16 +268,25 @@ export const setupMethods = {
         // (which close over it) all see it without a TDZ.
         const wn = this._windNode;
 
-        // par.windShow is a live alias for the wind node's visibility. Kept
-        // because the Show/Hide menu and the Wind folder checkbox both bind
-        // to it for back-compat; the node is now the single source of truth.
+        // par.windShow drives the Wind folder's "Show Wind Lines" checkbox
+        // and binds the streamline-mesh visibility only — NOT the whole
+        // group. Hiding the lines must leave the screen-grid arrow overlay
+        // and Inspect Wind readouts intact. The Show/Hide menu's master
+        // "Wind Field" entry binds to wn.visible, which is independent.
         Object.defineProperty(par, "windShow", {
             configurable: true,
             enumerable: true,
-            get: () => !!this._windNode.visible,
+            get: () => !!this._windNode.linesVisible,
             set: (v) => {
-                this._windNode.visible = !!v;
-                this._windNode.group.visible = !!v;
+                const wn = this._windNode;
+                wn.linesVisible = !!v;
+                if (wn.linesMesh) wn.linesMesh.visible = !!v;
+                // Bring the master back if the user is turning lines on
+                // from a fully-hidden state — otherwise the toggle would
+                // appear to do nothing.
+                if (v && !wn.visible) {
+                    wn.show(true);
+                }
                 setRenderOne(true);
             },
         });
@@ -636,17 +648,14 @@ export const setupMethods = {
                 }
             });
 
-        // Show Wind Lines checkbox — first toggle on creates the field and
-        // loads data; later toggles just flip visibility of the streamline
-        // mesh. If a previous load failed (node exists but empty), toggling
-        // back on retries the load instead of showing an invisible empty
-        // field forever. `.listen()` keeps it in sync with the Show/Hide
-        // menu's "Wind Field" toggle.
+        // Show Wind Lines checkbox. The par.windShow setter already flips
+        // wn.linesVisible + wn.linesMesh.visible — onChange just kicks off
+        // the data load when streamlines are turned on for the first time
+        // (no windU yet). A previous failed load (windU still null) gets
+        // retried automatically here instead of showing nothing forever.
         windFolder.add(par, "windShow").name("Show Wind Lines").listen().onChange(async (v) => {
             if (v && !wn.windU) {
                 await this._loadWindForCurrentSource();
-                wn.visible = !!v;
-                wn.group.visible = !!v;
                 setRenderOne(true);
             }
         });
