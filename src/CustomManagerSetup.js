@@ -259,6 +259,12 @@ export const setupMethods = {
             this._windNode.visible = false;
             this._windNode.group.visible = false;
         }
+        // Local alias so the rest of the wind setup can read wn.* without
+        // repeating this._windNode. Declared up here so source dropdowns
+        // (which reference it directly) and slider onChange handlers
+        // (which close over it) all see it without a TDZ.
+        const wn = this._windNode;
+
         // par.windShow is a live alias for the wind node's visibility. Kept
         // because the Show/Hide menu and the Wind folder checkbox both bind
         // to it for back-compat; the node is now the single source of truth.
@@ -570,7 +576,7 @@ export const setupMethods = {
         //    Cuts perceived latency on altitude scrubbing to one frame.
         //  - onFinishChange: full fetch (handles uncached levels via network)
         //    when the user commits the value.
-        const wn = this._windNode;
+        // (wn alias for this._windNode is declared above, after node creation.)
 
         // Display altitude in feet. GUI binds directly to wn.windAltFt;
         // .listen() picks up modDeserialize-restored values without a
