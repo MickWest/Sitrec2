@@ -101,6 +101,21 @@ export class CNodeWind extends CNode {
         return this;
     }
 
+    // The "hide inactive inputs" cascade walks downward from each Switch
+    // and hides any input whose downstream consumers are all hidden. For
+    // wind nodes that's the wrong behavior — Target / Local Wind From/
+    // Knots are user-facing fields the user expects to see *and edit*
+    // even when no current Switch happens to be reading the node (e.g.
+    // when the camera-track switch picks a non-track-driven choice).
+    //
+    // Make hide() a no-op so the cascade can't hide us. The Lock Target
+    // Wind to Local logic uses show(false) directly to hide targetWind
+    // when locked — that explicit user-driven path still works because
+    // show() is unaffected.
+    hide() {
+        // intentionally empty — see comment above
+    }
+
     setPosition(pos) {
         assert(!isNaN(pos.x) && !isNaN(pos.y) && !isNaN(pos.z), "Setting Wind position has NaNs");
         this.position = pos.clone();
