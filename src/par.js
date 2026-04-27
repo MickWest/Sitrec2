@@ -16,6 +16,7 @@ const parDefaults = {
 
     _frame: 0,
     _frameOverride: undefined,
+    _paused: false,
 
     get frame() {
         return this._frameOverride !== undefined ? this._frameOverride : this._frame;
@@ -26,10 +27,22 @@ const parDefaults = {
         globalThis.__sitrecWakeRenderLoop?.();
     },
 
+    get paused() {
+        return this._paused;
+    },
+    set paused(value) {
+        const nextPaused = Boolean(value);
+        const wasPaused = this._paused;
+        this._paused = nextPaused;
+
+        if (wasPaused && !nextPaused) {
+            globalThis.__sitrecWakeRenderLoop?.();
+        }
+    },
+
 
     glareStartAngle: 90 - 32.3,  // 26.6, (32.3 for keyframes, 26.6 for auto)
     initialGlareRotation: 6,
-    paused: false,
     useRecordedBank: true,
     showVideo: true,
     showGraphs: true,
