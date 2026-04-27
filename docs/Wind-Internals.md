@@ -30,17 +30,17 @@ IGRA2 and Open-Meteo are fetched *directly from the browser* — both serve `Acc
 
 Each entry in `WIND_SOURCES` (`src/nodes/WindSources.js`) maps to one branch inside `CNodeDisplayWindField.fetchWindForAltitude(altFt)`:
 
-| Internal key | Branch | Upstream | Goes through |
-|---|---|---|---|
-| `gfs` | `_fillFromGFS(altFt)` | NOMADS GRIB filter, AWS S3 fallback | `windProxy.php` → `fetch_wind.py` → eccodes |
-| `uwyo` | `_fillFromSoundings(altFt, "uwyo")` | weather.uwyo.edu (cgi-bin or wsgi) | `proxySounding.php` (CORS) |
-| `igra2` | `_fillFromSoundings(altFt, "igra2")` | ncei.noaa.gov IGRA2 zips | direct browser `fetch()` |
-| `manual-soundings` | `_fillFromSoundings(altFt, null)` | files the user dropped in (`.csv` UWYO, `.txt` IGRA2, `.json`) | `FileManager.parseResult()` |
-| `openmeteo` | `_fillFromOpenMeteo(altFt)` | api.open-meteo.com / historical-forecast-api.open-meteo.com | direct browser `fetch()` |
-| `manual` | `_fillFromManual(altFt)` | nothing — reads `targetWind.from` / `.knots` | none |
-| `track:<id>` | `targetWind.trackSource = id` | MISB columns 35 / 36 on the named track | none |
+| Internal key | Branch | Upstream | Goes through | Grid build |
+|---|---|---|---|---|
+| `gfs` | `_fillFromGFS(altFt)` | NOMADS GRIB filter, AWS S3 fallback | `windProxy.php` → `fetch_wind.py` → eccodes | direct (already gridded) |
+| `uwyo` | `_fillFromSoundings(altFt, "uwyo")` | weather.uwyo.edu (cgi-bin or wsgi) | `proxySounding.php` (CORS) | **IDW** |
+| `igra2` | `_fillFromSoundings(altFt, "igra2")` | ncei.noaa.gov IGRA2 zips | direct browser `fetch()` | **IDW** |
+| `manual-soundings` | `_fillFromSoundings(altFt, null)` | files the user dropped in (`.csv` UWYO, `.txt` IGRA2, `.json`) | `FileManager.parseResult()` | **IDW** |
+| `openmeteo` | `_fillFromOpenMeteo(altFt)` | api.open-meteo.com / historical-forecast-api.open-meteo.com | direct browser `fetch()` | **IDW** |
+| `manual` | `_fillFromManual(altFt)` | nothing — reads `targetWind.from` / `.knots` | none | uniform (every cell = same vector) |
+| `track:<id>` | `targetWind.trackSource = id` | MISB columns 35 / 36 on the named track | none | bypasses the wind field |
 
-`_fillFromSoundings` and `_fillFromManual` ultimately call **`_buildGridFromSamples(samples, sourceLabel)`** or **`_buildUniformGrid(u, v, sourceLabel)`** — same 5° / 72×37 grid in both cases. The streamline mesh and the arrow overlay only know about the grid; they never see the source-specific code.
+The four IDW sources land in **`_buildGridFromSamples(samples, sourceLabel)`**; manual lands in `_buildUniformGrid(u, v, sourceLabel)`; GFS calls `_applyWindJSON` directly with the gridded JSON the proxy returns. All three paths produce the same 5° / 72×37 grid the streamline mesh and arrow overlay sample. **The shader code never sees source-specific logic** — by the time it's drawing, every source looks identical.
 
 ### GFS (the heavy path)
 
@@ -172,7 +172,7 @@ GET ${baseUrl}?latitude=${lat}&longitude=${lon}
 
 `<L>` is a small subset of pressure levels bracketing the requested altitude. The browser interpolates speed and direction (circular interp) between the bracketing samples by geopotential height, and converts to (u, v).
 
-This is a *per-point* request — Open-Meteo doesn't supply gridded fields the way GFS does. Sitrec uses it to seed the IDW grid with samples taken at every wind-relevant track point (target track, jet/camera track), then runs `_buildGridFromSamples` over those.
+This is a *per-point* request — Open-Meteo doesn't supply gridded fields the way GFS does. Sitrec uses it to seed the [IDW grid](#idw-grid-sounding-sources--open-meteo) with samples taken at every wind-relevant track point (target track, jet/camera track), then runs `_buildGridFromSamples` over those — same path as soundings, just with samples coming from API responses instead of radiosonde launches.
 
 ### Track-derived winds
 
@@ -215,19 +215,31 @@ External dependencies that can fail silently:
 
 Compatible with earth.nullschool.net's wind format. `dlat = -1` means the grid scans south as Y increases (north pole at top). The shader treats `(lon0, lat0)` as the top-left corner.
 
-### IDW grid (browser, applied to shader)
+### IDW grid (sounding sources + Open-Meteo)
 
-Sounding / Open-Meteo / Manual builds a smaller 72 × 37 grid (5°) in `_buildGridFromSamples`:
+**IDW** stands for **Inverse Distance Weighting** — a classical spatial-interpolation method that turns a handful of scattered point samples into a continuous field by averaging the samples around each output cell, weighting each sample by `1 / dⁿ` where `d` is the distance from the cell to the sample. Closer samples count more; faraway samples count vanishingly little.
+
+Sitrec uses IDW because the relevant data sources don't deliver pre-gridded fields:
+
+- **Soundings** (UWYO, IGRA2, Manual Soundings) come from radiosonde launches at fixed stations. Each station gives one vertical profile at one (lat, lon). After picking out the wind vector at the requested altitude from each profile, you have N (typically 1–10) scattered samples on the globe.
+- **Open-Meteo** is a per-point pressure-level forecast API. Sitrec calls it once per wind-relevant track point (target track, jet/camera track), again producing a handful of scattered samples.
+
+In both cases the streamline shader and the arrow overlay want a *grid* to read from — same shape regardless of source. `_buildGridFromSamples(samples, sourceLabel)` runs IDW over the samples to produce that grid:
 
 ![IDW grid construction](wind-images/idw-grid.svg)
 
-For each cell:
-- `wᵢ = 1 / dᵢ²` (haversine, degrees)
-- `u = Σ wᵢ uᵢ / Σ wᵢ`, same for `v`
-- `cov = exp(-d_min / L)`, `L = coverageLengthDeg = 5°` (≈ 550 km)
-- only `K = min(3, samples.length)` nearest samples per cell — keeps results local
+The implementation choices in `_buildGridFromSamples` (`src/nodes/CNodeDisplayWindField.js`):
 
-Coverage is fed to the shader as a per-vertex attribute and dims streamlines / fades arrows in regions far from any sample.
+- **Grid: 72 × 37 cells (5°).** Coarse on purpose — sounding stations sit hundreds of km apart, so a finer grid would invent precision that isn't there. The streamline integrator does its own bilinear interpolation between cells.
+- **Distance: haversine on the sphere, in degrees.** Treats the globe as a unit sphere; close enough at this resolution.
+- **Power: `wᵢ = 1 / dᵢ²`.** A common choice (sometimes called *Shepard's method* with p = 2). Higher `p` makes the field hug each sample more tightly; lower `p` smears them. `p = 2` strikes the standard balance.
+- **`u = Σ wᵢ uᵢ / Σ wᵢ`, same for `v`.** Wind is a 2-D vector, so each component IDW's independently.
+- **K = 3 nearest only** (`K = min(3, samples.length)`). Plain IDW averages every sample into every cell, which smears one distant sounding's wind into the whole globe at low weight. Restricting to the 3 nearest keeps each region's value driven by its locally relevant samples and lets the field actually vary across the map. With fewer than 3 samples we just use what we have.
+- **Coverage: `cov = exp(-d_min / L)`, `L = 5°` (≈ 550 km).** A separate per-cell number (not a wind value) representing "how trustworthy is this cell's estimate". 1.0 at a sample, ≈ 0.37 at L degrees away, ≈ 0.14 at 2L. The shader multiplies streamline alpha by `cov` so streamlines fade out smoothly in regions far from any sample, and the arrow overlay drops cells with `cov < 0.5`. This is what stops the IDW field from producing confident-looking wind in oceans where there are no soundings.
+
+**Why not GFS?** GFS already arrives as a regular 1° lat/lon grid covering the entire globe — there's nothing to interpolate. `_fillFromGFS` skips IDW entirely and just downsamples by direct sampling at the GFS grid points (every 5th cell). Coverage is a flat 1.0 everywhere because GFS has data everywhere.
+
+**Why not Manual?** Manual is a single user-typed (from, knots) value with no spatial structure to recover. `_buildUniformGrid` writes the same (u, v) into every cell.
 
 ### Cache layers
 
