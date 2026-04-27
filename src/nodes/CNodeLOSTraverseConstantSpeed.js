@@ -35,6 +35,16 @@ export class CNodeLOSTraverseConstantSpeed extends CNodeTrack {
         var position;
         for (var f = 0; f < this.frames; f++) {
 
+            // The wind node's getValueFrame rotates by `from` around the
+            // local-up vector at its current `position`. If the position
+            // is left at the ECEF origin (the CNodeWind default when no
+            // originTrack is set, e.g. Gimbal's targetWind), the local-up
+            // vector degenerates to zero and applyAxisAngle by a zero axis
+            // is a no-op — so changing Target Wind From silently has no
+            // effect. Anchor the wind at the current target position
+            // before reading so `from` rotates around a real local-up.
+            // (CNodeLOSTraverseWind already does this; mirror the pattern.)
+            if (position) this.in.wind.setPosition(position);
             var wind = this.in.wind.v(f)
             // how many feet do we want to move per frame?
             let perFrameMotion = this.in.speed.v(f) / this.fps
