@@ -195,15 +195,20 @@ export const setupMethods = {
         // the current source alone.)
         this._importSounding = async () => {
             const ok = await importSoundingDialog();
-            if (!ok) return;
-            const ctrls = guiMenus.wind?.controllers ?? [];
-            const sourceCtrl = ctrls.find(c => c.property === "windSource");
-            if (sourceCtrl && par.windSource !== "Manual Soundings") {
-                sourceCtrl.setValue("Manual Soundings");
-            } else if (this._windNode) {
-                // Already on Manual Soundings — just rebuild the IDW grid
-                // so the new profile is included.
-                this._windNode.fetchWindForAltitude(par.windAltFt);
+            if (!ok || !this._windNode) return;
+            if (this._windNode.source !== "manual-soundings") {
+                // setValue("manual-soundings") on the source dropdown
+                // fires onTargetSourceChange (which mirrors to local in
+                // shared mode and runs the load pipeline).
+                if (this._windSourceCtrl) {
+                    this._windSourceCtrl.setValue("manual-soundings");
+                } else {
+                    this._windNode.source = "manual-soundings";
+                }
+            } else {
+                // Already on Manual Soundings — rebuild the IDW grid so
+                // the new profile is included.
+                this._windNode.fetchWindForAltitude(this._windNode.windAltFt);
             }
         };
 
@@ -217,23 +222,18 @@ export const setupMethods = {
         // "Track: <shortName>" entry to this map, refreshed on every
         // tracksChanged event from TrackManager.
         this._windSourceOptions = windSourceLabelsToKeysWithTracks();
-        par.windSource      = windSourceByKey("manual").label;  // target wind
-        par.windSourceLocal = windSourceByKey("manual").label;  // local wind
-        // Default: a single "Wind Source" dropdown drives both target and
-        // local. Toggling Separate Wind Sources splits into two dropdowns
-        // for independent control. This is independent of "Lock Target
-        // Wind to Local" (which only mirrors the manual From/Knots fields).
-        par.windSourceSeparate = false;
-        par.windAltFt = 33;       // default = surface (~10m) — display altitude
+
+        // par now holds only state that doesn't belong to the wind node:
+        //   windStatus  — short status string for the disabled GUI display
+        //   balloonCount — sounding-loader knob (consumed by
+        //                  getNearbyWeatherBalloons, not the wind node)
+        // Everything wind-related (source, sourceLocal, sourceSeparate,
+        // windAltFt, lineOpacity, seedSpacing, maxWindSpeed, nearbyOnly,
+        // nearbyRadiusKm, showArrows, inspect, lockAltitudeTo, inspectPoints)
+        // now lives on this._windNode and the GUI binds straight to those
+        // fields. The dropdowns use lil-gui's options-object form so the
+        // node stores the internal key while the GUI shows labels.
         par.windStatus = "Not loaded";
-        par.windOpacity = 0.9;
-        par.windSpacing = 1.5;
-        par.windMaxSpeed = 30;
-        par.windNearbyOnly = true;
-        par.windNearbyRadiusKm = 250;
-        par.windShowArrows = false;
-        par.windInspect = false;
-        par.windLockAltitude = "None";  // "None" | "Camera" | "Target"
 
         // Track which sources we've already auto-shown wind for, so the
         // "first switch to GFS/sounding turns on Show Wind" rule fires once
@@ -241,22 +241,35 @@ export const setupMethods = {
         // wind off explicitly.
         this._autoShownWindSources = new Set();
 
-        // windShow is a live alias for this._windNode.visible so the Wind Data
-        // folder checkbox and the Show/Hide "Wind Field" checkbox stay in sync.
-        // Backing field covers the pre-creation state (node hasn't been made
-        // yet); once the node exists, the node is the single source of truth.
-        this._windShowBacking = false;
+        // Eagerly create the wind node so the GUI can bind directly to its
+        // fields. Constructor is cheap (one ShaderMaterial; no network),
+        // and visibility / streamlines are off by default so this is
+        // invisible to the user until a non-Manual source is picked.
+        // modDeserialize will restore the saved state on reload.
+        if (NodeMan.exists("windField")) {
+            this._windNode = NodeMan.get("windField");
+        } else {
+            // Default source = "manual" — no fetch, no streamlines until
+            // the user picks something else from the dropdown.
+            this._windNode = NodeFactory.create("DisplayWindField", {
+                id: "windField",
+                source: "manual",
+                sourceLocal: "manual",
+            });
+            this._windNode.visible = false;
+            this._windNode.group.visible = false;
+        }
+        // par.windShow is a live alias for the wind node's visibility. Kept
+        // because the Show/Hide menu and the Wind folder checkbox both bind
+        // to it for back-compat; the node is now the single source of truth.
         Object.defineProperty(par, "windShow", {
             configurable: true,
             enumerable: true,
-            get: () => this._windNode ? !!this._windNode.visible : this._windShowBacking,
+            get: () => !!this._windNode.visible,
             set: (v) => {
-                this._windShowBacking = !!v;
-                if (this._windNode) {
-                    this._windNode.visible = !!v;
-                    this._windNode.group.visible = !!v;
-                    setRenderOne(true);
-                }
+                this._windNode.visible = !!v;
+                this._windNode.group.visible = !!v;
+                setRenderOne(true);
             },
         });
 
@@ -324,29 +337,11 @@ export const setupMethods = {
         // re-run, so our promise still resolves only after the new source
         // has actually loaded.
         this._loadWindForCurrentSource = () => {
-            const sourceKey = this._windSourceOptions[par.windSource];
-
-            if (!this._windNode) {
-                // Capture the pre-creation show state; par.windShow is a
-                // getter that will delegate to the node once it exists, so
-                // we need the backing field here, not par.windShow.
-                const initiallyVisible = this._windShowBacking;
-                this._windNode = NodeFactory.create("DisplayWindField", {
-                    id: "windField",
-                    source: sourceKey,
-                    windAltFt: par.windAltFt,
-                    lineOpacity: par.windOpacity,
-                    seedSpacing: par.windSpacing,
-                    maxWindSpeed: par.windMaxSpeed,
-                });
-                this._windNode.visible = initiallyVisible;
-                this._windNode.group.visible = initiallyVisible;
-            }
-
-            // Always tell the node about the requested source so the inner
-            // coalescer in fetchWindForAltitude can re-run with the right
-            // source if it changed mid-flight.
-            this._windNode.source = sourceKey;
+            // wn.source is the live internal key — set by the dropdown
+            // bind directly. The inner coalescer in fetchWindForAltitude
+            // re-reads this.source if it changes mid-flight, so we just
+            // hand it the current value.
+            const sourceKey = this._windNode.source;
 
             if (this._windLoadInFlight) {
                 // Forward to fetchWindForAltitude so its _pendingSource /
@@ -367,7 +362,7 @@ export const setupMethods = {
                 // node's current statusText after everything finishes —
                 // otherwise case 2 leaves par.windStatus pinned to the
                 // failure reason for the OLD source.
-                const fwd = this._windNode.fetchWindForAltitude(par.windAltFt);
+                const fwd = this._windNode.fetchWindForAltitude(this._windNode.windAltFt);
                 return Promise.allSettled([this._windLoadInFlight, fwd])
                     .then(() => {
                         if (this._windNode) par.windStatus = this._windNode.statusText;
@@ -378,7 +373,7 @@ export const setupMethods = {
                 par.windStatus = "Loading...";
                 const ok = await this._ensureSoundingsForWind(sourceKey);
                 if (!ok) return; // status already set with the real failure reason
-                await this._windNode.fetchWindForAltitude(par.windAltFt);
+                await this._windNode.fetchWindForAltitude(this._windNode.windAltFt);
                 par.windStatus = this._windNode.statusText;
             })().finally(() => {
                 this._windLoadInFlight = null;
@@ -388,9 +383,9 @@ export const setupMethods = {
 
         // ── Source selectors ──────────────────────────────────────────
         //
-        // Default mode (par.windSourceSeparate === false): a single
+        // Default mode (this._windNode.sourceSeparate === false): a single
         // "Wind Source" dropdown drives both target and local wind.
-        // Separate mode (par.windSourceSeparate === true): two dropdowns
+        // Separate mode (this._windNode.sourceSeparate === true): two dropdowns
         // — "Target Wind Source" + "Local Wind Source" — operate
         // independently. Toggling separate→shared snaps the local
         // selection back to the target's value.
@@ -413,31 +408,28 @@ export const setupMethods = {
             : null;
 
         // Apply a sourceKey to the localWind node's trackSource override.
-        // Same logic the local-side onChange uses; lifted into a helper
-        // so the shared-source path can call it from the target onChange.
+        // For non-track sources, trackSource is null (the windField grid
+        // sample becomes the source).
         const applyLocalSource = (sourceKey) => {
             const localWind = NodeMan.exists("localWind")
                 ? NodeMan.get("localWind") : null;
             if (!localWind) return;
-            const tdId = resolveTrackSource(sourceKey);
-            localWind.trackSource = tdId;  // null for non-track sources
+            localWind.trackSource = resolveTrackSource(sourceKey);
         };
 
         // Target source onChange. Drives targetWind's trackSource override
         // (for track sources) or the windField fetch pipeline (for
-        // atmospheric / manual). When in shared mode, mirrors the
-        // selection onto localWind synchronously up-front so the local
-        // par + (hidden) dropdown stay consistent during the awaited
-        // fetch — without that, toggling Separate mid-fetch would
-        // expose a stale local value.
+        // atmospheric / manual). In shared mode, mirrors the selection
+        // onto wn.sourceLocal + localWind synchronously up-front so a
+        // toggled-Separate mid-fetch can't expose a stale local value.
         const onTargetSourceChange = async () => {
-            const sourceKey = this._windSourceOptions[par.windSource];
+            const sourceKey = wn.source;
             const targetWind = NodeMan.exists("targetWind")
                 ? NodeMan.get("targetWind") : null;
 
             // Synchronous local mirror first.
-            if (!par.windSourceSeparate) {
-                par.windSourceLocal = par.windSource;
+            if (!wn.sourceSeparate) {
+                wn.sourceLocal = sourceKey;
                 applyLocalSource(sourceKey);
                 if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.updateDisplay();
             }
@@ -461,63 +453,62 @@ export const setupMethods = {
             await this._loadWindForCurrentSource();
         };
 
-        // Local source onChange. Only meaningful when separate mode is
-        // on; in shared mode the local par is mirrored from target by
+        // Local source onChange. Only meaningful in separate mode; in
+        // shared mode the local source mirrors the target by way of
         // onTargetSourceChange and the local dropdown is hidden anyway.
         //
-        // Limitation in separate mode: when target picks atmospheric A
-        // and local picks atmospheric B (e.g. target=GFS, local=UWYO),
-        // only A actually fetches via _loadWindForCurrentSource. Local
-        // ends up sampling that grid at the local position — fine if
-        // A and B happen to be the same source, off otherwise. A
-        // truly independent local fetch would need a second windField
-        // pipeline; not implemented yet.
+        // Limitation in separate mode: when target=A and local=B are
+        // *different atmospheric* sources, only A fetches via
+        // _loadWindForCurrentSource. Local ends up sampling that grid
+        // at the local position — fine if A and B happen to be the same
+        // source, off otherwise. A truly independent local fetch would
+        // need a second windField pipeline; not implemented yet.
         const onLocalSourceChange = () => {
-            if (!par.windSourceSeparate) return;
-            const sourceKey = this._windSourceOptions[par.windSourceLocal];
-            applyLocalSource(sourceKey);
+            if (!wn.sourceSeparate) return;
+            applyLocalSource(wn.sourceLocal);
         };
 
         // Toggle Separate Wind Sources: change the target dropdown's
-        // label to make the new role obvious, show/hide the local
-        // dropdown, and on shared→separate→shared cycles snap the local
-        // back to the target so the two pipelines don't drift out of
-        // sync silently.
+        // label, show/hide the local dropdown, and on
+        // shared→separate→shared cycles snap the local source back to
+        // the target so the two pipelines don't drift out of sync
+        // silently.
         const onSeparateChange = () => {
-            if (par.windSourceSeparate) {
+            if (wn.sourceSeparate) {
                 if (this._windSourceCtrl) this._windSourceCtrl.name("Target Wind Source");
                 if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.show();
             } else {
                 if (this._windSourceCtrl) this._windSourceCtrl.name("Wind Source");
                 if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.hide();
-                par.windSourceLocal = par.windSource;
-                applyLocalSource(this._windSourceOptions[par.windSource]);
+                wn.sourceLocal = wn.source;
+                applyLocalSource(wn.source);
                 if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.updateDisplay();
             }
         };
 
-        // Add the dropdowns. Initial label depends on the shared/separate
-        // mode (default shared → "Wind Source").
-        this._windSourceCtrl = windFolder.add(par, "windSource",
-            Object.keys(this._windSourceOptions))
-            .name(par.windSourceSeparate ? "Target Wind Source" : "Wind Source")
+        // Both dropdowns bind directly to wind-node fields (wn.source /
+        // wn.sourceLocal). lil-gui's options-object form makes the GUI
+        // show LABELS while writing the internal KEY into the bound
+        // field — so the node holds the key, no par-side display proxy
+        // is needed. .listen() syncs the dropdown when the node is
+        // restored from save.
+        this._windSourceCtrl = windFolder.add(wn, "source", this._windSourceOptions)
+            .name(wn.sourceSeparate ? "Target Wind Source" : "Wind Source")
             .listen()
             .onChange(onTargetSourceChange);
 
         // Separate toggle, placed right under the target dropdown so
         // its scope is visually obvious.
-        windFolder.add(par, "windSourceSeparate")
+        windFolder.add(wn, "sourceSeparate")
             .name("Separate Wind Sources")
             .listen()
             .onChange(onSeparateChange);
 
-        this._windSourceLocalCtrl = windFolder.add(par, "windSourceLocal",
-            Object.keys(this._windSourceOptions))
+        this._windSourceLocalCtrl = windFolder.add(wn, "sourceLocal", this._windSourceOptions)
             .name("Local Wind Source")
             .listen()
             .onChange(onLocalSourceChange);
-        // Initial visibility: hidden in default shared mode.
-        if (!par.windSourceSeparate) this._windSourceLocalCtrl.hide();
+        if (!wn.sourceSeparate) this._windSourceLocalCtrl.hide();
 
         // tracksChanged listener — rebuilds both dropdowns in place
         // when the imported-track set changes. lil-gui's controller.options
@@ -527,40 +518,34 @@ export const setupMethods = {
             const tracks = (TrackManager && typeof TrackManager.tracksWithWind === "function")
                 ? TrackManager.tracksWithWind() : [];
             this._windSourceOptions = windSourceLabelsToKeysWithTracks(tracks);
-            const labels = Object.keys(this._windSourceOptions);
-            const reattach = (ctrlField, parField, label, handler) => {
+            const validKeys = Object.values(this._windSourceOptions);
+            const reattach = (ctrlField, prop, label, handler) => {
                 const old = this[ctrlField];
                 if (!old) return;
-                const oldVal = par[parField];
-                const newVal = labels.includes(oldVal) ? oldVal : "Manual";
-                par[parField] = newVal;
-                this[ctrlField] = old.options(labels)
+                // If the previously-selected key is no longer valid (e.g.
+                // its track was removed), fall back to the manual key.
+                if (!validKeys.includes(wn[prop])) wn[prop] = "manual";
+                this[ctrlField] = old.options(this._windSourceOptions)
                     .name(label)
                     .listen()
                     .onChange(handler);
-                this[ctrlField].setValue(newVal);
+                this[ctrlField].setValue(wn[prop]);
             };
-            reattach("_windSourceCtrl",
-                "windSource",
-                par.windSourceSeparate ? "Target Wind Source" : "Wind Source",
+            reattach("_windSourceCtrl", "source",
+                wn.sourceSeparate ? "Target Wind Source" : "Wind Source",
                 onTargetSourceChange);
-            reattach("_windSourceLocalCtrl",
-                "windSourceLocal",
+            reattach("_windSourceLocalCtrl", "sourceLocal",
                 "Local Wind Source",
                 onLocalSourceChange);
-            // Re-apply visibility for the local dropdown since options()
-            // re-creates the controller with default visibility.
-            if (!par.windSourceSeparate && this._windSourceLocalCtrl) {
+            if (!wn.sourceSeparate && this._windSourceLocalCtrl) {
                 this._windSourceLocalCtrl.hide();
             }
             // Reattach's setValue on the local controller fires
-            // onLocalSourceChange, which early-returns in shared mode.
-            // That means localWind.trackSource is NOT cleared when the
-            // track behind the previously-selected local source is
-            // removed. Force-sync localWind here to whatever the par
-            // says, so a removed track's stale trackSource doesn't
-            // outlive the option list.
-            applyLocalSource(this._windSourceOptions[par.windSourceLocal]);
+            // onLocalSourceChange, which early-returns in shared mode —
+            // so localWind.trackSource doesn't get cleared when the
+            // track behind the previous local selection is removed.
+            // Force-sync here.
+            applyLocalSource(wn.sourceLocal);
         };
         // Setup runs once per sitch load; remove the previous binding
         // before re-registering so reloads don't accumulate listeners.
@@ -570,92 +555,71 @@ export const setupMethods = {
         this._tracksChangedListener = refreshSourceCtrls;
         EventManager.addEventListener("tracksChanged", refreshSourceCtrls);
 
-        // Force-apply local source to localWind once at init. lil-gui's
-        // .listen() polling synchronises the dropdown DISPLAY with the
-        // par on save-restore, but doesn't fire onChange — so without
-        // this nudge, after a reload localWind.trackSource may not
-        // reflect the persisted par.windSourceLocal (in shared mode the
-        // target onChange would mirror it, but only if the user touches
-        // the dropdown). Run after the wind node is created in
-        // _loadWindForCurrentSource — defer via microtask so localWind
-        // exists by the time we touch it.
-        Promise.resolve().then(() => {
-            const sourceKey = this._windSourceOptions[par.windSourceLocal];
-            if (sourceKey) applyLocalSource(sourceKey);
-        });
+        // Force-apply local source to localWind once at init. .listen()
+        // syncs the dropdown DISPLAY on save-restore, but doesn't fire
+        // onChange — so without this nudge localWind.trackSource may
+        // not reflect the restored wn.sourceLocal.
+        Promise.resolve().then(() => applyLocalSource(wn.sourceLocal));
 
         // Display altitude in feet. Target/local winds use their own track
         // altitudes, independent of this.
-        // .listen() so the slider tracks par.windAltFt when restored from save.
+        // .listen() so the slider tracks this._windNode.windAltFt when restored from save.
         // Two handlers:
         //  - onChange: live re-blend + streamline rebuild while dragging IF
         //    Nearby Wind Only is on AND the needed levels are already cached.
         //    Cuts perceived latency on altitude scrubbing to one frame.
         //  - onFinishChange: full fetch (handles uncached levels via network)
         //    when the user commits the value.
-        const altCtrl = windFolder.add(par, "windAltFt", 0, 60000, 10).name("Altitude (ft)").listen()
+        const wn = this._windNode;
+
+        // Display altitude in feet. GUI binds directly to wn.windAltFt;
+        // .listen() picks up modDeserialize-restored values without a
+        // post-deserialize sync step.
+        windFolder.add(wn, "windAltFt", 0, 60000, 10).name("Altitude (ft)").listen()
             .onChange(() => {
-                if (!this._windNode) return;
-                // Lock-altitude wins: the wind node's update() will overwrite
-                // par.windAltFt next frame from the locked track. Skip the
-                // fetch we'd otherwise queue on slider input — it'd just be
-                // immediately undone, wasting a network round-trip on uncached
-                // GFS brackets.
-                if (this._windNode.lockAltitudeTo !== "none") return;
-                if (!par.windNearbyOnly) return;
-                const wn = this._windNode;
-                // Allow live updates only when the source's hot path is local
-                // (no network on the drag tick):
-                //   - GFS: both bracketing pressure levels already cached
-                //   - sounding-based / manual: IDW from in-memory profiles
-                //   - openmeteo: skipped (per-altitude HTTP fetch)
+                // Lock-altitude wins: the wind node's update() will
+                // overwrite windAltFt next frame from the locked track.
+                // Skip the fetch we'd otherwise queue on slider input —
+                // it'd just be immediately undone, wasting a network
+                // round-trip on uncached GFS brackets.
+                if (wn.lockAltitudeTo !== "none") return;
+                if (!wn.nearbyOnly) return;
+                // Allow live updates only when the source's hot path is
+                // local (no network on the drag tick).
                 const localSources = ["uwyo", "igra2", "manual-soundings", "manual"];
                 const isLocal = localSources.includes(wn.source)
-                    || (wn.source === "gfs" && wn.hasGFSBracketCached(par.windAltFt));
+                    || (wn.source === "gfs" && wn.hasGFSBracketCached(wn.windAltFt));
                 if (!isLocal) return;
-                // Don't gate on wn.fetching — fetchWindForAltitude has its own
-                // _pendingAltFt coalescer that picks up the latest value when
-                // the in-flight call finishes. Bailing here would drop every
-                // drag tick after the first.
-                wn.fetchWindForAltitude(par.windAltFt);
+                wn.fetchWindForAltitude(wn.windAltFt);
             })
             .onFinishChange(async () => {
-                if (!this._windNode) return;
-                if (this._windNode.lockAltitudeTo !== "none") return;
+                if (wn.lockAltitudeTo !== "none") return;
                 par.windStatus = "Loading...";
-                await this._windNode.fetchWindForAltitude(par.windAltFt);
-                par.windStatus = this._windNode.statusText;
+                await wn.fetchWindForAltitude(wn.windAltFt);
+                par.windStatus = wn.statusText;
             });
 
         // Lock Altitude: drive windAltFt from the camera or target track
-        // every frame, instead of taking it from the slider. The wind
-        // node's update() handles the per-frame refresh — we just mirror
-        // the dropdown choice into wn.lockAltitudeTo. .listen() syncs the
-        // dropdown when modDeserialize restores a saved value.
-        windFolder.add(par, "windLockAltitude", ["None", "Camera", "Target"])
-            .name("Lock Altitude to").listen()
+        // every frame. The options-as-object form keeps the GUI labels
+        // capitalized while the node holds the lowercase internal value.
+        windFolder.add(wn, "lockAltitudeTo",
+            { None: "none", Camera: "camera", Target: "target" })
+            .name("Lock Altitude to").listen();
+
+        // Nearby Wind Only: clip streamline seeding to a radius around
+        // the sitch origin. With this on, altitude scrubbing is near-
+        // instant.
+        windFolder.add(wn, "nearbyOnly").name("Nearby Wind Only").listen()
+            .onChange(() => { wn.rebuildStreamlines(); setRenderOne(true); });
+
+        windFolder.add(wn, "nearbyRadiusKm", 5, 500, 5)
+            .name("Nearby Radius (km)").listen()
             .onChange(() => {
-                if (!this._windNode) return;
-                this._windNode.lockAltitudeTo = par.windLockAltitude.toLowerCase();
+                if (wn.nearbyOnly) {
+                    wn.rebuildStreamlines();
+                    setRenderOne(true);
+                }
             });
-
-        // Nearby Wind Only: clip streamline seeding to a radius around the
-        // sitch origin. With this on, altitude scrubbing is near-instant.
-        windFolder.add(par, "windNearbyOnly").name("Nearby Wind Only").listen().onChange(() => {
-            if (!this._windNode) return;
-            this._windNode.nearbyOnly = par.windNearbyOnly;
-            this._windNode.rebuildStreamlines();
-            setRenderOne(true);
-        });
-
-        windFolder.add(par, "windNearbyRadiusKm", 5, 500, 5).name("Nearby Radius (km)").listen().onChange(() => {
-            if (!this._windNode) return;
-            this._windNode.nearbyRadiusKm = par.windNearbyRadiusKm;
-            if (this._windNode.nearbyOnly) {
-                this._windNode.rebuildStreamlines();
-                setRenderOne(true);
-            }
-        });
 
         // Show Wind Lines checkbox — first toggle on creates the field and
         // loads data; later toggles just flip visibility of the streamline
@@ -664,14 +628,11 @@ export const setupMethods = {
         // field forever. `.listen()` keeps it in sync with the Show/Hide
         // menu's "Wind Field" toggle.
         windFolder.add(par, "windShow").name("Show Wind Lines").listen().onChange(async (v) => {
-            const needsLoad = v && (!this._windNode || !this._windNode.windU);
-            if (needsLoad) {
+            if (v && !wn.windU) {
                 await this._loadWindForCurrentSource();
-                if (this._windNode) {
-                    this._windNode.visible = !!v;
-                    this._windNode.group.visible = !!v;
-                    setRenderOne(true);
-                }
+                wn.visible = !!v;
+                wn.group.visible = !!v;
+                setRenderOne(true);
             }
         });
 
@@ -679,54 +640,43 @@ export const setupMethods = {
         // in the main view, ray-cast onto the ellipsoid at the current wind
         // altitude. Independent of the streamline mesh — either or both can
         // be on.
-        windFolder.add(par, "windShowArrows").name("Show Wind Arrows").listen().onChange(async (v) => {
-            // Loading wind data needs the node — create it on first toggle
-            // (same path as Show Wind Lines).
-            if (v && (!this._windNode || !this._windNode.windU)) {
-                await this._loadWindForCurrentSource();
-            }
-            if (this._windNode) {
-                this._windNode.showArrows = !!v;
+        windFolder.add(wn, "showArrows").name("Show Wind Arrows").listen()
+            .onChange(async (v) => {
+                if (v && !wn.windU) {
+                    await this._loadWindForCurrentSource();
+                }
                 setRenderOne(true);
-            }
-        });
+            });
 
         // Inspect Wind: cursor-driven readout. Single arrow at the cursor's
         // ellipsoid intersection plus a floating panel with speed (display
         // units) and FROM heading (compass + degrees).
-        windFolder.add(par, "windInspect").name("Inspect Wind").listen().onChange(async (v) => {
-            if (v && (!this._windNode || !this._windNode.windU)) {
-                await this._loadWindForCurrentSource();
-            }
-            if (this._windNode) {
-                this._windNode.setInspect(!!v);
+        windFolder.add(wn, "inspect").name("Inspect Wind").listen()
+            .onChange(async (v) => {
+                if (v && !wn.windU) {
+                    await this._loadWindForCurrentSource();
+                }
+                wn.setInspect(!!v);
                 setRenderOne(true);
-            }
-        });
+            });
 
         // Status display
         this._windStatusCtrl = windFolder.add(par, "windStatus").name("Status").listen().disable();
 
-        windFolder.add(par, "windOpacity", 0, 1, 0.01).name("Opacity").onChange(() => {
-            if (!this._windNode) return;
-            this._windNode.lineOpacity = par.windOpacity;
-            this._windNode.material.uniforms.uOpacity.value = par.windOpacity;
-            setRenderOne(true);
-        });
+        windFolder.add(wn, "lineOpacity", 0, 1, 0.01).name("Opacity")
+            .onChange(() => {
+                wn.material.uniforms.uOpacity.value = wn.lineOpacity;
+                setRenderOne(true);
+            });
 
-        windFolder.add(par, "windSpacing", 1.5, 10, 0.5).name("Spacing (\u00b0)").onChange(() => {
-            if (!this._windNode) return;
-            this._windNode.seedSpacing = par.windSpacing;
-            this._windNode.rebuildStreamlines();
-            setRenderOne(true);
-        });
+        windFolder.add(wn, "seedSpacing", 1.5, 10, 0.5).name("Spacing (\u00b0)")
+            .onChange(() => { wn.rebuildStreamlines(); setRenderOne(true); });
 
-        windFolder.add(par, "windMaxSpeed", 5, 80, 1).name("Max Speed (m/s)").onChange(() => {
-            if (!this._windNode) return;
-            this._windNode.maxWindSpeed = par.windMaxSpeed;
-            this._windNode.material.uniforms.uMaxSpeed.value = par.windMaxSpeed;
-            setRenderOne(true);
-        });
+        windFolder.add(wn, "maxWindSpeed", 5, 80, 1).name("Max Speed (m/s)")
+            .onChange(() => {
+                wn.material.uniforms.uMaxSpeed.value = wn.maxWindSpeed;
+                setRenderOne(true);
+            });
 
         // For sounding sources (uwyo/igra2): if the camera has moved
         // since soundings were originally loaded, the once-nearest stations
@@ -854,7 +804,7 @@ export const setupMethods = {
             if (this._windNode._omCache) this._windNode._omCache.clear();
             par.windStatus = "Loading...";
             await this._maybeRelocateSoundings(this._windNode.source);
-            await this._windNode.fetchWindForAltitude(par.windAltFt);
+            await this._windNode.fetchWindForAltitude(this._windNode.windAltFt);
             par.windStatus = this._windNode.statusText;
         };
         windFolder.add({refresh}, "refresh").name("Refresh Wind Data");

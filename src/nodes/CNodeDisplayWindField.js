@@ -10,7 +10,6 @@ import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {FileManager, GlobalDateTimeNode, Globals, NodeMan, Sit, Units} from "../Globals";
 import {mouseInView, mouseToView} from "../ViewUtils";
 import {ViewMan} from "../CViewManager";
-import {par} from "../par";
 import pako from "pako";
 import * as LAYER from "../LayerMasks";
 import {
@@ -108,6 +107,18 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // The three sounding sources share the same IDW pipeline but filter
         // the profile pool differently (see _gatherSondeProfiles).
         this.source = v.source ?? "gfs";
+
+        // Local-side source (independent in separate mode; mirrors target
+        // in shared mode — controlled by sourceSeparate). Internal source
+        // key (matching this.source's vocabulary) or a "track:<id>" entry.
+        this.sourceLocal = v.sourceLocal ?? "manual";
+
+        // Default mode (sourceSeparate === false): one source dropdown
+        // drives both target and local. Toggling true exposes a separate
+        // local dropdown for independent control. Distinct from
+        // "Lock Target Wind to Local" (which mirrors the *manual From/Knots
+        // values* between the two wind nodes).
+        this.sourceSeparate = v.sourceSeparate ?? false;
 
         this.frameCount = 0;
         this.linesMesh = null;
@@ -1860,20 +1871,29 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         return {
             ...super.modSerialize(),
             source: this.source,
+            sourceLocal: this.sourceLocal,
+            sourceSeparate: this.sourceSeparate,
             windAltFt: this.windAltFt,
             windLevel: this.windLevel,
             windFileIds: this.source === "gfs" ? (this._windFileIds ?? []) : [],
             loadedWindFiles,
             hasWindData: this.source === "gfs" && !!this._lastWindJSON,
+            // GUI / behaviour state — single source of truth for save/load.
+            // These used to live in par.* and were synced post-deserialize;
+            // they're now persisted by the node directly.
             nearbyOnly: this.nearbyOnly,
             nearbyRadiusKm: this.nearbyRadiusKm,
             showArrows: this.showArrows,
-            lastDateCycle: this._lastDateCycle,
-            // Inspect-mode user state. Only dropped points need persisting —
-            // cursor/camera/target are recomputed each frame from the active
-            // mouse position / node graph.
-            inspectPoints: this.inspectPoints.map(p => ({lat: p.lat, lon: p.lon})),
+            inspect: this.inspect,
+            visible: this.visible,
+            lineOpacity: this.lineOpacity,
+            seedSpacing: this.seedSpacing,
+            maxWindSpeed: this.maxWindSpeed,
             lockAltitudeTo: this.lockAltitudeTo,
+            lastDateCycle: this._lastDateCycle,
+            // Inspect-mode dropped points (cursor/camera/target are
+            // recomputed each frame, not persisted).
+            inspectPoints: this.inspectPoints.map(p => ({lat: p.lat, lon: p.lon})),
         };
     }
 
@@ -1881,10 +1901,17 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         super.modDeserialize(v);
 
         this.source = v.source ?? "gfs";
+        this.sourceLocal = v.sourceLocal ?? "manual";
+        this.sourceSeparate = !!v.sourceSeparate;
         this.windAltFt = v.windAltFt ?? 33;
         this.nearbyOnly = v.nearbyOnly ?? true;
         this.nearbyRadiusKm = v.nearbyRadiusKm ?? 250;
         this.showArrows = v.showArrows ?? false;
+        if (typeof v.inspect === "boolean") this.inspect = v.inspect;
+        if (typeof v.visible === "boolean") this.visible = v.visible;
+        if (typeof v.lineOpacity === "number") this.lineOpacity = v.lineOpacity;
+        if (typeof v.seedSpacing === "number") this.seedSpacing = v.seedSpacing;
+        if (typeof v.maxWindSpeed === "number") this.maxWindSpeed = v.maxWindSpeed;
         if (v.lastDateCycle) this._lastDateCycle = v.lastDateCycle;
         if (Array.isArray(v.inspectPoints)) {
             this.inspectPoints = v.inspectPoints
@@ -2127,7 +2154,8 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                             Math.round(altM * 3.28084 / 50) * 50));
                         if (altFt !== this.windAltFt) {
                             this.windAltFt = altFt;
-                            par.windAltFt = altFt;  // sync GUI slider
+                            // GUI slider .listen()s this.windAltFt directly,
+                            // so no par sync needed.
                             this.fetchWindForAltitude(altFt);
                         }
                     }

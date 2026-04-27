@@ -71,7 +71,6 @@ import {CNodeFloodSim} from "./nodes/CNodeFloodSim";
 import {CNodeOrbitTrack} from "./nodes/CNodeOrbitTrack";
 import {CNodeTrackSwitch} from "./nodes/CNodeTrackSwitch";
 import {getNearbyWeatherBalloons, importSoundingDialog} from "./SondeFetch";
-import {WIND_SOURCES, windSourceLabelsToKeys, windSourceByKey} from "./nodes/WindSources";
 import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
 import {CNodeSAPage} from "./nodes/CNodeSAPage";
 import {
@@ -387,22 +386,16 @@ export const serializeMethods = {
             "integrate",
             "trackToTrackStopAt",
 
-            // Wind Data panel state. The wind node itself serializes its
-            // internal source/altitude/grid-file refs via modSerialize, but
-            // the par fields below back the lil-gui controls and are what
-            // determines the UI's dropdown/slider/checkbox state. Without
-            // these, every reload reverts the UI to "Manual / Not loaded /
-            // Show Wind off" even when the underlying node was restored.
-            "windSource",
-            "windSourceLocal",
-            "windSourceSeparate",
-            "windAltFt",
+            // Wind state (source / sourceLocal / sourceSeparate / windAltFt /
+            // lineOpacity / seedSpacing / maxWindSpeed / nearbyOnly /
+            // nearbyRadiusKm / showArrows / inspect / visible /
+            // lockAltitudeTo / inspectPoints) all live on the wind node
+            // and are persisted via its modSerialize — par doesn't double
+            // them. Only par-only state stays here:
+            //   windShow — back-compat alias for wind node visibility
+            //   balloonCount — sounding-loader knob (not part of the node)
             "windShow",
-            "windOpacity",
-            "windSpacing",
-            "windMaxSpeed",
             "balloonCount",
-            "windLockAltitude"
         ]
 
         const SitNeeded = [
@@ -1160,28 +1153,17 @@ export const serializeMethods = {
             }
         }
 
-        // After mods + pars are applied, the wind node (if restored) is the
-        // authoritative source of truth. Sync the visible par fields back from
-        // it so the dropdown/slider/status display match the loaded data —
-        // this also handles older saves that predate the wind par fields
-        // being persisted, where pars wouldn't carry windSource/etc. at all.
+        // Wind state is authoritatively held by the wind node — its
+        // modSerialize/modDeserialize round-trips source / sourceLocal /
+        // sourceSeparate / windAltFt / nearbyOnly / nearbyRadiusKm /
+        // showArrows / inspect / visible / lineOpacity / seedSpacing /
+        // maxWindSpeed / lockAltitudeTo / inspectPoints. The wind GUI
+        // binds directly to those fields with .listen(), so no post-
+        // deserialize par sync is needed; only par.windStatus needs a
+        // refresh from the node's transient statusText.
         if (NodeMan.exists("windField")) {
             const windNode = NodeMan.get("windField");
-            const sourceLabel = windSourceByKey(windNode.source)?.label;
-            if (sourceLabel) par.windSource = sourceLabel;
-            if (typeof windNode.windAltFt === "number") par.windAltFt = windNode.windAltFt;
             if (windNode.statusText) par.windStatus = windNode.statusText;
-            if (typeof windNode.nearbyOnly === "boolean") par.windNearbyOnly = windNode.nearbyOnly;
-            if (typeof windNode.nearbyRadiusKm === "number") par.windNearbyRadiusKm = windNode.nearbyRadiusKm;
-            if (typeof windNode.showArrows === "boolean") par.windShowArrows = windNode.showArrows;
-            if (typeof windNode.lockAltitudeTo === "string") {
-                // Restore the user-facing capitalized form ("None" / "Camera"
-                // / "Target") that the dropdown expects; the node holds the
-                // lowercase form internally so we can use it as a switch key.
-                const m = windNode.lockAltitudeTo;
-                par.windLockAltitude = m === "camera" ? "Camera"
-                    : m === "target" ? "Target" : "None";
-            }
         }
 
         // and the globals
