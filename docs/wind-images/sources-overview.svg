@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 360" font-family="-apple-system, system-ui, sans-serif" font-size="12">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#444"/>
+    </marker>
+  </defs>
+
+  <text x="400" y="26" text-anchor="middle" font-size="16" font-weight="700">Wind sources at a glance</text>
+
+  <!-- Wind field box (centre) -->
+  <rect x="320" y="160" width="180" height="80" rx="10" fill="#eaf3ff" stroke="#28f" stroke-width="2"/>
+  <text x="410" y="190" text-anchor="middle" font-size="14" font-weight="700" fill="#28f">Wind field</text>
+  <text x="410" y="208" text-anchor="middle" fill="#444">5° global grid (u, v)</text>
+  <text x="410" y="224" text-anchor="middle" fill="#666" font-size="11">streamlines + arrows + samplers</text>
+
+  <!-- Sources (left column) -->
+  <g font-size="12">
+    <rect x="40" y="60"  width="180" height="38" rx="6" fill="#fff" stroke="#888"/>
+    <text x="50" y="76" font-weight="600">GFS (NOAA)</text>
+    <text x="50" y="90" font-size="10" fill="#666">global forecast model</text>
+
+    <rect x="40" y="108" width="180" height="38" rx="6" fill="#fff" stroke="#888"/>
+    <text x="50" y="124" font-weight="600">UWYO Soundings</text>
+    <text x="50" y="138" font-size="10" fill="#666">Univ. of Wyoming radiosondes</text>
+
+    <rect x="40" y="156" width="180" height="38" rx="6" fill="#fff" stroke="#888"/>
+    <text x="50" y="172" font-weight="600">IGRA2 Soundings</text>
+    <text x="50" y="186" font-size="10" fill="#666">NOAA NCEI archive</text>
+
+    <rect x="40" y="204" width="180" height="38" rx="6" fill="#fff" stroke="#888"/>
+    <text x="50" y="220" font-weight="600">Manual Soundings</text>
+    <text x="50" y="234" font-size="10" fill="#666">files you drop in</text>
+
+    <rect x="40" y="252" width="180" height="38" rx="6" fill="#fff" stroke="#888"/>
+    <text x="50" y="268" font-weight="600">open-meteo</text>
+    <text x="50" y="282" font-size="10" fill="#666">per-point API</text>
+
+    <rect x="40" y="300" width="180" height="38" rx="6" fill="#fff" stroke="#888"/>
+    <text x="50" y="316" font-weight="600">Manual From / Knots</text>
+    <text x="50" y="330" font-size="10" fill="#666">single uniform vector</text>
+  </g>
+
+  <!-- arrows from sources to wind field -->
+  <g stroke="#444" stroke-width="1.4" fill="none" marker-end="url(#ar)">
+    <line x1="220" y1="79"  x2="320" y2="180"/>
+    <line x1="220" y1="127" x2="320" y2="190"/>
+    <line x1="220" y1="175" x2="320" y2="200"/>
+    <line x1="220" y1="223" x2="320" y2="210"/>
+    <line x1="220" y1="271" x2="320" y2="220"/>
+    <line x1="220" y1="319" x2="320" y2="230"/>
+  </g>
+
+  <!-- consumers (right column) -->
+  <g font-size="12">
+    <rect x="600" y="100" width="160" height="44" rx="6" fill="#fff7e0" stroke="#c80"/>
+    <text x="680" y="118" text-anchor="middle" font-weight="600" fill="#c80">Streamlines</text>
+    <text x="680" y="134" text-anchor="middle" font-size="10" fill="#666">animated flow mesh</text>
+
+    <rect x="600" y="156" width="160" height="44" rx="6" fill="#fff7e0" stroke="#c80"/>
+    <text x="680" y="174" text-anchor="middle" font-weight="600" fill="#c80">Wind Arrows</text>
+    <text x="680" y="190" text-anchor="middle" font-size="10" fill="#666">screen-grid overlay</text>
+
+    <rect x="600" y="212" width="160" height="44" rx="6" fill="#fff7e0" stroke="#c80"/>
+    <text x="680" y="230" text-anchor="middle" font-weight="600" fill="#c80">Target / Local Wind</text>
+    <text x="680" y="246" text-anchor="middle" font-size="10" fill="#666">sampled at node positions</text>
+  </g>
+  <g stroke="#444" stroke-width="1.4" fill="none" marker-end="url(#ar)">
+    <line x1="500" y1="190" x2="600" y2="122"/>
+    <line x1="500" y1="200" x2="600" y2="178"/>
+    <line x1="500" y1="210" x2="600" y2="234"/>
+  </g>
+
+  <!-- Track source side note -->
+  <rect x="40" y="14" width="280" height="32" rx="6" fill="#f3f6ff" stroke="#88a" stroke-dasharray="4 3"/>
+  <text x="180" y="34" text-anchor="middle" font-size="11" fill="#446">
+    plus <tspan font-weight="600">Track: …</tspan> options for any track with embedded MISB wind columns
+  </text>
+</svg>

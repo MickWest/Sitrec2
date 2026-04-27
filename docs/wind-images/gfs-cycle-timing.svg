@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 360" font-family="-apple-system, system-ui, sans-serif" font-size="12">
+  <defs>
+    <marker id="cyc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#444"/>
+    </marker>
+  </defs>
+
+  <text x="440" y="24" text-anchor="middle" font-size="16" font-weight="700">GFS cycle publish latency &amp; fallback walk</text>
+
+  <!-- Time axis -->
+  <line x1="60" y1="240" x2="820" y2="240" stroke="#444" stroke-width="1.5" marker-end="url(#cyc)"/>
+  <text x="836" y="244" font-size="11" fill="#444">UTC</text>
+
+  <!-- 4 cycle ticks -->
+  <g font-size="11">
+    <g transform="translate(110,240)">
+      <line x1="0" y1="-6" x2="0" y2="6" stroke="#444" stroke-width="1.5"/>
+      <text x="0" y="22" text-anchor="middle">00 Z</text>
+    </g>
+    <g transform="translate(290,240)">
+      <line x1="0" y1="-6" x2="0" y2="6" stroke="#444" stroke-width="1.5"/>
+      <text x="0" y="22" text-anchor="middle">06 Z</text>
+    </g>
+    <g transform="translate(470,240)">
+      <line x1="0" y1="-6" x2="0" y2="6" stroke="#444" stroke-width="1.5"/>
+      <text x="0" y="22" text-anchor="middle">12 Z</text>
+    </g>
+    <g transform="translate(650,240)">
+      <line x1="0" y1="-6" x2="0" y2="6" stroke="#444" stroke-width="1.5"/>
+      <text x="0" y="22" text-anchor="middle">18 Z</text>
+    </g>
+  </g>
+  <text x="440" y="278" text-anchor="middle" font-size="11" fill="#666">cycle launch times (every 6 h)</text>
+
+  <!-- "cycle bars" — when each cycle becomes available (latency 3.5–4 h after launch) -->
+  <g font-size="10">
+    <!-- 00Z bar: launches at 00, available ~04 -->
+    <rect x="225" y="100" width="65" height="18" fill="#7bd" rx="3"/>
+    <text x="257" y="113" text-anchor="middle" fill="#fff" font-weight="600">00Z avail</text>
+
+    <rect x="405" y="100" width="65" height="18" fill="#7bd" rx="3"/>
+    <text x="437" y="113" text-anchor="middle" fill="#fff" font-weight="600">06Z avail</text>
+
+    <rect x="585" y="100" width="65" height="18" fill="#7bd" rx="3"/>
+    <text x="617" y="113" text-anchor="middle" fill="#fff" font-weight="600">12Z avail</text>
+
+    <rect x="765" y="100" width="55" height="18" fill="#bbb" rx="3"/>
+    <text x="792" y="113" text-anchor="middle" fill="#fff" font-weight="600">18Z later</text>
+  </g>
+
+  <!-- "request at HH:MM" arrow -->
+  <g>
+    <line x1="540" y1="56" x2="540" y2="240" stroke="#c33" stroke-width="2" stroke-dasharray="4 3"/>
+    <circle cx="540" cy="56" r="6" fill="#c33"/>
+    <text x="540" y="48" text-anchor="middle" font-size="11" fill="#c33" font-weight="700">user requests 14:30 UTC</text>
+    <text x="540" y="35" text-anchor="middle" font-size="10" fill="#c33">"date=today, hour=14"</text>
+  </g>
+
+  <!-- Walk: 14 → 12Z (try) → if missing → 06Z (try) → … -->
+  <g font-size="11">
+    <text x="60" y="170" font-weight="700" fill="#246">Cycle resolution:</text>
+    <text x="60" y="188" fill="#444">1. round 14 → 12Z (most recent ≤ 14)</text>
+    <text x="60" y="204" fill="#444">2. probe NOMADS for 12Z</text>
+    <text x="60" y="220" fill="#444">3. on miss, fall back to 06Z, 00Z, … same day</text>
+  </g>
+
+  <!-- arc from 12Z to 06Z showing walk -->
+  <g fill="none" stroke="#c33" stroke-width="1.4" marker-end="url(#cyc)">
+    <path d="M 470 240 Q 380 290 290 240"/>
+  </g>
+  <text x="380" y="305" text-anchor="middle" font-size="10" fill="#c33">at 14:30 the 12Z bar (publish ≈ 15:30) is not yet up — fall back to 06Z</text>
+
+  <!-- caption -->
+  <g font-size="11" fill="#444">
+    <text x="60" y="328">If even 00Z of the requested day is unavailable, the proxy returns 502 with the upstream error;</text>
+    <text x="60" y="344">windProxy never crosses a day boundary backwards (the requested date is taken at face value).</text>
+  </g>
+</svg>

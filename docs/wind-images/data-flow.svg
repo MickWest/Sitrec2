@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 620" font-family="-apple-system, system-ui, sans-serif" font-size="12">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#444"/>
+    </marker>
+    <marker id="arBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#28f"/>
+    </marker>
+    <marker id="arRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c33"/>
+    </marker>
+  </defs>
+
+  <text x="460" y="24" text-anchor="middle" font-size="16" font-weight="700">Wind data flow — end to end</text>
+
+  <!-- BROWSER LANE -->
+  <rect x="20" y="48" width="880" height="160" rx="8" fill="#fafcff" stroke="#bcd"/>
+  <text x="32" y="64" font-weight="700" fill="#246">Browser (Sitrec)</text>
+
+  <g>
+    <rect x="40" y="80"  width="180" height="44" rx="6" fill="#fff" stroke="#666"/>
+    <text x="130" y="100" text-anchor="middle" font-weight="600">Wind GUI</text>
+    <text x="130" y="116" text-anchor="middle" font-size="11" fill="#666">source / altitude / show</text>
+
+    <rect x="240" y="80" width="200" height="44" rx="6" fill="#fff" stroke="#666"/>
+    <text x="340" y="100" text-anchor="middle" font-weight="600">CNodeDisplayWindField</text>
+    <text x="340" y="116" text-anchor="middle" font-size="11" fill="#666">node, owns the grid + streamlines</text>
+
+    <rect x="460" y="80" width="200" height="44" rx="6" fill="#fff" stroke="#666"/>
+    <text x="560" y="100" text-anchor="middle" font-weight="600">FileManager cache</text>
+    <text x="560" y="116" text-anchor="middle" font-size="11" fill="#666">per-level GFS JSON, by fileId</text>
+
+    <rect x="680" y="80" width="200" height="44" rx="6" fill="#fff" stroke="#666"/>
+    <text x="780" y="100" text-anchor="middle" font-weight="600">Streamline / arrow render</text>
+    <text x="780" y="116" text-anchor="middle" font-size="11" fill="#666">ShaderMaterial + DebugArrowAB</text>
+  </g>
+
+  <!-- arrows in browser lane -->
+  <g stroke="#444" stroke-width="1.4" fill="none" marker-end="url(#ar)">
+    <line x1="220" y1="102" x2="240" y2="102"/>
+    <line x1="440" y1="102" x2="460" y2="102"/>
+    <line x1="660" y1="102" x2="680" y2="102"/>
+  </g>
+
+  <!-- direct fetch box (per-source) -->
+  <g>
+    <rect x="240" y="140" width="420" height="56" rx="6" fill="#eef" stroke="#88a"/>
+    <text x="450" y="160" text-anchor="middle" font-weight="600" fill="#446">fetchWindForAltitude(altFt)</text>
+    <text x="450" y="178" text-anchor="middle" font-size="11" fill="#446">picks _fillFromGFS / _fillFromSoundings / _fillFromOpenMeteo / _fillFromManual</text>
+    <text x="450" y="190" text-anchor="middle" font-size="10" fill="#668">manual is synchronous; the rest hit the network</text>
+  </g>
+
+  <line x1="340" y1="124" x2="340" y2="140" stroke="#444" stroke-width="1.4" marker-end="url(#ar)"/>
+
+  <!-- SAME-ORIGIN PROXY LANE -->
+  <rect x="20" y="228" width="880" height="120" rx="8" fill="#fff7e6" stroke="#dab382"/>
+  <text x="32" y="244" font-weight="700" fill="#7a4a00">Same-origin proxy (PHP)</text>
+
+  <g>
+    <rect x="60" y="260" width="220" height="60" rx="6" fill="#fff" stroke="#a73"/>
+    <text x="170" y="280" text-anchor="middle" font-weight="600">windProxy.php</text>
+    <text x="170" y="296" text-anchor="middle" font-size="11" fill="#666">date · hour · level → JSON</text>
+    <text x="170" y="310" text-anchor="middle" font-size="10" fill="#888">cache: data/wind/wind_*_*z_*.json</text>
+
+    <rect x="320" y="260" width="220" height="60" rx="6" fill="#fff" stroke="#a73"/>
+    <text x="430" y="280" text-anchor="middle" font-weight="600">proxySounding.php</text>
+    <text x="430" y="296" text-anchor="middle" font-size="11" fill="#666">CORS + 24 h cache for UWYO</text>
+    <text x="430" y="310" text-anchor="middle" font-size="10" fill="#888">cache: data/sondes/&lt;md5&gt;.html</text>
+
+    <rect x="580" y="260" width="280" height="60" rx="6" fill="#fff" stroke="#a73" stroke-dasharray="4 3"/>
+    <text x="720" y="280" text-anchor="middle" font-weight="600" fill="#a63">no proxy needed</text>
+    <text x="720" y="298" text-anchor="middle" font-size="11" fill="#666">IGRA2 (NCEI), open-meteo —</text>
+    <text x="720" y="312" text-anchor="middle" font-size="11" fill="#666">browser fetches directly (CORS allowed)</text>
+  </g>
+
+  <!-- arrows to proxy -->
+  <g stroke="#28f" stroke-width="1.6" fill="none" marker-end="url(#arBlue)">
+    <path d="M 340 196 Q 340 230 170 260"/>
+    <path d="M 340 196 Q 340 230 430 260"/>
+    <path d="M 340 196 Q 340 230 720 260"/>
+  </g>
+  <text x="350" y="220" font-size="10" fill="#28f">HTTP fetch from CNodeDisplayWindField</text>
+
+  <!-- python sub-process -->
+  <rect x="60" y="332" width="220" height="32" rx="4" fill="#f3f2eb" stroke="#a73"/>
+  <text x="170" y="352" text-anchor="middle" font-size="11" fill="#7a4a00">spawns tools/fetch_wind.py</text>
+  <line x1="170" y1="320" x2="170" y2="332" stroke="#a73" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <!-- UPSTREAM LANE -->
+  <rect x="20" y="380" width="880" height="200" rx="8" fill="#f5f0fa" stroke="#a8c"/>
+  <text x="32" y="398" font-weight="700" fill="#534">Upstream data sources (public Internet)</text>
+
+  <g>
+    <rect x="40" y="416" width="200" height="64" rx="6" fill="#fff" stroke="#86c"/>
+    <text x="140" y="436" text-anchor="middle" font-weight="600">NOMADS (NOAA NCEP)</text>
+    <text x="140" y="452" text-anchor="middle" font-size="10" fill="#666">filter_gfs_1p00.pl?...</text>
+    <text x="140" y="466" text-anchor="middle" font-size="10" fill="#666">UGRD/VGRD slice GRIB2</text>
+    <text x="140" y="478" text-anchor="middle" font-size="10" fill="#666">primary GFS source</text>
+
+    <rect x="260" y="416" width="200" height="64" rx="6" fill="#fff" stroke="#86c"/>
+    <text x="360" y="436" text-anchor="middle" font-weight="600">AWS S3 (NOAA BDP)</text>
+    <text x="360" y="452" text-anchor="middle" font-size="10" fill="#666">noaa-gfs-bdp-pds bucket</text>
+    <text x="360" y="466" text-anchor="middle" font-size="10" fill="#666">.idx + Range requests</text>
+    <text x="360" y="478" text-anchor="middle" font-size="10" fill="#666">fallback when NOMADS empty</text>
+
+    <rect x="480" y="416" width="200" height="64" rx="6" fill="#fff" stroke="#86c"/>
+    <text x="580" y="436" text-anchor="middle" font-weight="600">University of Wyoming</text>
+    <text x="580" y="452" text-anchor="middle" font-size="10" fill="#666">weather.uwyo.edu</text>
+    <text x="580" y="466" text-anchor="middle" font-size="10" fill="#666">cgi-bin / wsgi sounding</text>
+    <text x="580" y="478" text-anchor="middle" font-size="10" fill="#666">rate-limited; needs proxy</text>
+
+    <rect x="700" y="416" width="180" height="64" rx="6" fill="#fff" stroke="#86c"/>
+    <text x="790" y="436" text-anchor="middle" font-weight="600">NOAA NCEI (IGRA2)</text>
+    <text x="790" y="452" text-anchor="middle" font-size="10" fill="#666">data-y2d/*.txt.zip</text>
+    <text x="790" y="466" text-anchor="middle" font-size="10" fill="#666">data-por/*.txt.zip</text>
+    <text x="790" y="478" text-anchor="middle" font-size="10" fill="#666">historical archive</text>
+
+    <rect x="320" y="500" width="320" height="56" rx="6" fill="#fff" stroke="#86c"/>
+    <text x="480" y="520" text-anchor="middle" font-weight="600">Open-Meteo</text>
+    <text x="480" y="536" text-anchor="middle" font-size="10" fill="#666">api.open-meteo.com / historical-forecast-api</text>
+    <text x="480" y="550" text-anchor="middle" font-size="10" fill="#666">per-point pressure-level forecast, no key</text>
+  </g>
+
+  <!-- arrows from python / proxies / browser to upstreams -->
+  <g stroke="#a8c" stroke-width="1.6" fill="none" marker-end="url(#arRed)">
+    <path d="M 170 364 Q 170 390 140 416"/>
+    <path d="M 170 364 Q 170 390 360 416"/>
+    <path d="M 430 320 Q 430 380 580 416"/>
+  </g>
+  <!-- Direct browser-to-upstream (no proxy) -->
+  <g stroke="#28f" stroke-width="1.6" fill="none" marker-end="url(#arBlue)">
+    <path d="M 720 320 Q 720 360 790 416"/>
+    <path d="M 720 320 Q 720 460 480 500"/>
+  </g>
+
+  <!-- legend -->
+  <g transform="translate(40,594)" font-size="11">
+    <line x1="0" y1="0" x2="20" y2="0" stroke="#28f" stroke-width="1.6" marker-end="url(#arBlue)"/>
+    <text x="26" y="4">browser fetch</text>
+    <line x1="120" y1="0" x2="140" y2="0" stroke="#a8c" stroke-width="1.6" marker-end="url(#arRed)"/>
+    <text x="146" y="4">server-side fetch (PHP / Python)</text>
+    <line x1="340" y1="0" x2="360" y2="0" stroke="#444" stroke-width="1.4" marker-end="url(#ar)"/>
+    <text x="366" y="4">in-process call</text>
+  </g>
+</svg>

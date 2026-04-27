@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 380" font-family="-apple-system, system-ui, sans-serif" font-size="12">
+  <text x="400" y="24" text-anchor="middle" font-size="16" font-weight="700">Cache layers (cold → warm)</text>
+
+  <!-- Layer 1: NOMADS / AWS -->
+  <g>
+    <rect x="40" y="60" width="180" height="86" rx="8" fill="#fff" stroke="#86c"/>
+    <text x="130" y="80" text-anchor="middle" font-weight="700" fill="#534">Upstream (cold)</text>
+    <text x="130" y="100" text-anchor="middle" font-size="11" fill="#666">NOMADS: 10 days</text>
+    <text x="130" y="116" text-anchor="middle" font-size="11" fill="#666">AWS S3: years</text>
+    <text x="130" y="132" text-anchor="middle" font-size="10" fill="#888">slow (seconds), bandwidth</text>
+  </g>
+
+  <!-- Layer 2: server cache -->
+  <g>
+    <rect x="270" y="60" width="220" height="86" rx="8" fill="#fff7e6" stroke="#a73"/>
+    <text x="380" y="80" text-anchor="middle" font-weight="700" fill="#7a4a00">Server-side (PHP cache)</text>
+    <text x="380" y="100" text-anchor="middle" font-size="11" fill="#666">data/wind/wind_DATE_HHz_LEVEL.json</text>
+    <text x="380" y="116" text-anchor="middle" font-size="11" fill="#666">data/sondes/&lt;md5&gt;.html (24 h)</text>
+    <text x="380" y="132" text-anchor="middle" font-size="10" fill="#888">disk-fast, shared across users</text>
+  </g>
+
+  <!-- Layer 3: in-browser FileManager -->
+  <g>
+    <rect x="540" y="60" width="220" height="86" rx="8" fill="#eaf3ff" stroke="#28f"/>
+    <text x="650" y="80" text-anchor="middle" font-weight="700" fill="#28f">Browser (FileManager)</text>
+    <text x="650" y="100" text-anchor="middle" font-size="11" fill="#666">per-fileId blob in memory</text>
+    <text x="650" y="116" text-anchor="middle" font-size="11" fill="#666">_loadedWindFiles registry</text>
+    <text x="650" y="132" text-anchor="middle" font-size="10" fill="#888">instantaneous re-read</text>
+  </g>
+
+  <!-- Layer 4: live decode in node -->
+  <g>
+    <rect x="270" y="180" width="220" height="86" rx="8" fill="#fff" stroke="#0a7"/>
+    <text x="380" y="200" text-anchor="middle" font-weight="700" fill="#0a7">Wind node (live)</text>
+    <text x="380" y="220" text-anchor="middle" font-size="11" fill="#666">_levelCache[level] → JSON</text>
+    <text x="380" y="236" text-anchor="middle" font-size="11" fill="#666">windU / windV / windCov arrays</text>
+    <text x="380" y="252" text-anchor="middle" font-size="10" fill="#888">in-flight = ShaderMaterial uniforms</text>
+  </g>
+
+  <g stroke="#444" stroke-width="1.4" fill="none">
+    <line x1="220" y1="103" x2="270" y2="103" marker-end="url(#ar)"/>
+    <line x1="490" y1="103" x2="540" y2="103" marker-end="url(#ar)"/>
+    <line x1="650" y1="146" x2="430" y2="180" marker-end="url(#ar)"/>
+  </g>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#444"/>
+    </marker>
+  </defs>
+
+  <!-- caption / cache key -->
+  <g transform="translate(40,290)" font-size="11" fill="#444">
+    <text x="0" y="0" font-weight="700">Cache key (server):</text>
+    <text x="120" y="0">date (YYYYMMDD) · cycle hour (00/06/12/18) · level ("10m" or "&lt;hPa&gt;hPa")</text>
+    <text x="0" y="18" font-weight="700">Cache key (browser):</text>
+    <text x="120" y="18">deterministic fileId = SHA1(`wind_${date}_${cycleHour}z_${level}`) — survives reload via FileManager</text>
+    <text x="0" y="40" font-style="italic" fill="#888">Sounding paths share the same shape (server cache + per-station blobs in FileManager).</text>
+    <text x="0" y="58" font-style="italic" fill="#888">Manual / open-meteo bypass the server cache entirely.</text>
+  </g>
+</svg>
