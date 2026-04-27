@@ -561,11 +561,20 @@ export const setupMethods = {
         this._tracksChangedListener = refreshSourceCtrls;
         EventManager.addEventListener("tracksChanged", refreshSourceCtrls);
 
-        // Force-apply local source to localWind once at init. .listen()
-        // syncs the dropdown DISPLAY on save-restore, but doesn't fire
-        // onChange — so without this nudge localWind.trackSource may
-        // not reflect the restored wn.sourceLocal.
-        Promise.resolve().then(() => applyLocalSource(wn.sourceLocal));
+        // Save-restore reconciliation. modDeserialize writes wn.source /
+        // wn.sourceLocal as plain field assignments — .listen() refreshes the
+        // dropdown DISPLAY but does NOT fire the onChange handler that
+        // normally pushes through to targetWind.trackSource / localWind.
+        // trackSource. finishDeserialization invokes this hook AFTER both
+        // SituationSetup (which creates the *Wind nodes) and modDeserialize
+        // have run, so the restored source keys actually take effect.
+        this._reconcileWindTrackSources = () => {
+            const targetWind = NodeMan.exists("targetWind")
+                ? NodeMan.get("targetWind") : null;
+            const effectiveLocalKey = wn.sourceSeparate ? wn.sourceLocal : wn.source;
+            if (targetWind) targetWind.trackSource = resolveTrackSource(wn.source);
+            applyLocalSource(effectiveLocalKey);
+        };
 
         // Display altitude in feet. Target/local winds use their own track
         // altitudes, independent of this.

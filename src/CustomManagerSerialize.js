@@ -1166,6 +1166,13 @@ export const serializeMethods = {
             if (windNode.statusText) par.windStatus = windNode.statusText;
         }
 
+        // Reconcile targetWind/localWind track-source overrides against the
+        // restored wn.source / wn.sourceLocal keys. The wind GUI's onChange
+        // handlers do this during user interaction, but .listen() poll-
+        // updates skip onChange — so without this hook, a sitch saved with
+        // a track-derived source loads with .trackSource still null.
+        this._reconcileWindTrackSources?.();
+
         // and the globals
         if (sitchData.globals) {
             for (let key in sitchData.globals) {

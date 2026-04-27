@@ -1907,11 +1907,26 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.nearbyOnly = v.nearbyOnly ?? true;
         this.nearbyRadiusKm = v.nearbyRadiusKm ?? 250;
         this.showArrows = v.showArrows ?? false;
-        if (typeof v.inspect === "boolean") this.inspect = v.inspect;
+        // Route inspect through setInspect so the document mousemove/down/up
+        // listeners + readout divs come back online. A bare `this.inspect = v`
+        // leaves the checkbox showing checked but the cursor produces no
+        // readout and shift-click does nothing until the user toggles it.
+        if (typeof v.inspect === "boolean") this.setInspect(v.inspect);
         if (typeof v.visible === "boolean") this.visible = v.visible;
-        if (typeof v.lineOpacity === "number") this.lineOpacity = v.lineOpacity;
+        if (typeof v.lineOpacity === "number") {
+            this.lineOpacity = v.lineOpacity;
+            // Field assignment doesn't reach the shader — the GUI's onChange
+            // does that, but .listen() polling is display-only and skips
+            // onChange. Push the new value into the uniform directly so the
+            // streamlines render with the saved opacity, not the constructor
+            // default 0.9.
+            if (this.material?.uniforms?.uOpacity) this.material.uniforms.uOpacity.value = this.lineOpacity;
+        }
         if (typeof v.seedSpacing === "number") this.seedSpacing = v.seedSpacing;
-        if (typeof v.maxWindSpeed === "number") this.maxWindSpeed = v.maxWindSpeed;
+        if (typeof v.maxWindSpeed === "number") {
+            this.maxWindSpeed = v.maxWindSpeed;
+            if (this.material?.uniforms?.uMaxSpeed) this.material.uniforms.uMaxSpeed.value = this.maxWindSpeed;
+        }
         if (v.lastDateCycle) this._lastDateCycle = v.lastDateCycle;
         if (Array.isArray(v.inspectPoints)) {
             this.inspectPoints = v.inspectPoints
