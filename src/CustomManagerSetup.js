@@ -219,6 +219,11 @@ export const setupMethods = {
         this._windSourceOptions = windSourceLabelsToKeysWithTracks();
         par.windSource      = windSourceByKey("manual").label;  // target wind
         par.windSourceLocal = windSourceByKey("manual").label;  // local wind
+        // Default: a single "Wind Source" dropdown drives both target and
+        // local. Toggling Separate Wind Sources splits into two dropdowns
+        // for independent control. This is independent of "Lock Target
+        // Wind to Local" (which only mirrors the manual From/Knots fields).
+        par.windSourceSeparate = false;
         par.windAltFt = 33;       // default = surface (~10m) — display altitude
         par.windStatus = "Not loaded";
         par.windOpacity = 0.9;
@@ -383,10 +388,17 @@ export const setupMethods = {
 
         // ── Source selectors ──────────────────────────────────────────
         //
-        // Target Wind Source drives the windField fetch + IDW display.
-        // Local Wind Source is independent: it can pick a per-frame
-        // MISB track or fall through to the windField sample at the
-        // local position when an atmospheric source is chosen.
+        // Default mode (par.windSourceSeparate === false): a single
+        // "Wind Source" dropdown drives both target and local wind.
+        // Separate mode (par.windSourceSeparate === true): two dropdowns
+        // — "Target Wind Source" + "Local Wind Source" — operate
+        // independently. Toggling separate→shared snaps the local
+        // selection back to the target's value.
+        //
+        // The "Lock Target Wind to Local" toggle is a different concept
+        // entirely: it mirrors the *manual* From/Knots values between
+        // the two wind nodes. Source selection is per-pipeline; manual
+        // value mirroring is per-field.
         //
         // Both dropdowns share the same option set, which is rebuilt
         // whenever TrackManager fires tracksChanged so MISB tracks with
@@ -395,27 +407,48 @@ export const setupMethods = {
         // a save.
 
         // Resolve a track-derived sourceKey to its TrackData id, or
-        // null for non-track sources. Centralised so the code below
-        // doesn't repeat the prefix dance.
+        // null for non-track sources.
         const resolveTrackSource = (sourceKey) => isTrackSourceKey(sourceKey)
             ? trackDataIdFromSourceKey(sourceKey)
             : null;
 
-        // Target source onChange: when the user picks a track, route
-        // targetWind to it (no atmospheric fetch needed). When they
-        // pick atmospheric/manual, clear the override and run the
-        // existing fetch/load pipeline. Auto-show fires on the first
-        // user-driven pick of a data-bearing source.
+        // Apply a sourceKey to the localWind node's trackSource override.
+        // Same logic the local-side onChange uses; lifted into a helper
+        // so the shared-source path can call it from the target onChange.
+        const applyLocalSource = (sourceKey) => {
+            const localWind = NodeMan.exists("localWind")
+                ? NodeMan.get("localWind") : null;
+            if (!localWind) return;
+            const tdId = resolveTrackSource(sourceKey);
+            localWind.trackSource = tdId;  // null for non-track sources
+        };
+
+        // Target source onChange. Drives targetWind's trackSource override
+        // (for track sources) or the windField fetch pipeline (for
+        // atmospheric / manual). When in shared mode, mirrors the
+        // selection onto localWind synchronously up-front so the local
+        // par + (hidden) dropdown stay consistent during the awaited
+        // fetch — without that, toggling Separate mid-fetch would
+        // expose a stale local value.
         const onTargetSourceChange = async () => {
             const sourceKey = this._windSourceOptions[par.windSource];
             const targetWind = NodeMan.exists("targetWind")
                 ? NodeMan.get("targetWind") : null;
+
+            // Synchronous local mirror first.
+            if (!par.windSourceSeparate) {
+                par.windSourceLocal = par.windSource;
+                applyLocalSource(sourceKey);
+                if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.updateDisplay();
+            }
+
             const tdId = resolveTrackSource(sourceKey);
             if (tdId) {
                 if (targetWind) targetWind.trackSource = tdId;
-                return; // track-driven; no fetchWindForAltitude needed
+                return; // track-driven: no fetch
             }
             if (targetWind) targetWind.trackSource = null;
+            // atmospheric / manual: auto-show + fetch pipeline.
             const autoShowSources = ["gfs", "uwyo", "igra2", "manual-soundings"];
             if (autoShowSources.includes(sourceKey)
                 && !this._autoShownWindSources.has(sourceKey)
@@ -428,43 +461,68 @@ export const setupMethods = {
             await this._loadWindForCurrentSource();
         };
 
-        // Local source onChange: track sources get a per-frame override
-        // on localWind; atmospheric/manual selections clear the override
-        // and let the windField propagate the value. (When target and
-        // local pick *different* atmospheric sources, only the target
-        // source actually fetches — local samples that grid. A future
-        // pass would add an independent local fetch; for now this is
-        // documented and acceptable.)
+        // Local source onChange. Only meaningful when separate mode is
+        // on; in shared mode the local par is mirrored from target by
+        // onTargetSourceChange and the local dropdown is hidden anyway.
+        //
+        // Limitation in separate mode: when target picks atmospheric A
+        // and local picks atmospheric B (e.g. target=GFS, local=UWYO),
+        // only A actually fetches via _loadWindForCurrentSource. Local
+        // ends up sampling that grid at the local position — fine if
+        // A and B happen to be the same source, off otherwise. A
+        // truly independent local fetch would need a second windField
+        // pipeline; not implemented yet.
         const onLocalSourceChange = () => {
+            if (!par.windSourceSeparate) return;
             const sourceKey = this._windSourceOptions[par.windSourceLocal];
-            const localWind = NodeMan.exists("localWind")
-                ? NodeMan.get("localWind") : null;
-            const tdId = resolveTrackSource(sourceKey);
-            if (tdId) {
-                if (localWind) localWind.trackSource = tdId;
-                return;
-            }
-            if (localWind) localWind.trackSource = null;
+            applyLocalSource(sourceKey);
         };
 
-        // Add both dropdowns. Hold references so the tracksChanged
-        // listener can rebuild option lists in place.
+        // Toggle Separate Wind Sources: change the target dropdown's
+        // label to make the new role obvious, show/hide the local
+        // dropdown, and on shared→separate→shared cycles snap the local
+        // back to the target so the two pipelines don't drift out of
+        // sync silently.
+        const onSeparateChange = () => {
+            if (par.windSourceSeparate) {
+                if (this._windSourceCtrl) this._windSourceCtrl.name("Target Wind Source");
+                if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.show();
+            } else {
+                if (this._windSourceCtrl) this._windSourceCtrl.name("Wind Source");
+                if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.hide();
+                par.windSourceLocal = par.windSource;
+                applyLocalSource(this._windSourceOptions[par.windSource]);
+                if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.updateDisplay();
+            }
+        };
+
+        // Add the dropdowns. Initial label depends on the shared/separate
+        // mode (default shared → "Wind Source").
         this._windSourceCtrl = windFolder.add(par, "windSource",
             Object.keys(this._windSourceOptions))
-            .name("Target Wind Source")
+            .name(par.windSourceSeparate ? "Target Wind Source" : "Wind Source")
             .listen()
             .onChange(onTargetSourceChange);
+
+        // Separate toggle, placed right under the target dropdown so
+        // its scope is visually obvious.
+        windFolder.add(par, "windSourceSeparate")
+            .name("Separate Wind Sources")
+            .listen()
+            .onChange(onSeparateChange);
+
         this._windSourceLocalCtrl = windFolder.add(par, "windSourceLocal",
             Object.keys(this._windSourceOptions))
             .name("Local Wind Source")
             .listen()
             .onChange(onLocalSourceChange);
+        // Initial visibility: hidden in default shared mode.
+        if (!par.windSourceSeparate) this._windSourceLocalCtrl.hide();
 
         // tracksChanged listener — rebuilds both dropdowns in place
-        // when the imported-track set changes, preserving the user's
-        // current selection where possible. lil-gui's controller.options
-        // returns a NEW controller (the old one is destroyed), so we
-        // have to re-attach name/listen/onChange and re-stash the ref.
+        // when the imported-track set changes. lil-gui's controller.options
+        // destroys + creates a new controller, so name/listen/onChange and
+        // any visibility (hidden in shared mode) must be re-applied.
         const refreshSourceCtrls = () => {
             const tracks = (TrackManager && typeof TrackManager.tracksWithWind === "function")
                 ? TrackManager.tracksWithWind() : [];
@@ -482,18 +540,49 @@ export const setupMethods = {
                     .onChange(handler);
                 this[ctrlField].setValue(newVal);
             };
-            reattach("_windSourceCtrl",      "windSource",      "Target Wind Source", onTargetSourceChange);
-            reattach("_windSourceLocalCtrl", "windSourceLocal", "Local Wind Source",  onLocalSourceChange);
+            reattach("_windSourceCtrl",
+                "windSource",
+                par.windSourceSeparate ? "Target Wind Source" : "Wind Source",
+                onTargetSourceChange);
+            reattach("_windSourceLocalCtrl",
+                "windSourceLocal",
+                "Local Wind Source",
+                onLocalSourceChange);
+            // Re-apply visibility for the local dropdown since options()
+            // re-creates the controller with default visibility.
+            if (!par.windSourceSeparate && this._windSourceLocalCtrl) {
+                this._windSourceLocalCtrl.hide();
+            }
+            // Reattach's setValue on the local controller fires
+            // onLocalSourceChange, which early-returns in shared mode.
+            // That means localWind.trackSource is NOT cleared when the
+            // track behind the previously-selected local source is
+            // removed. Force-sync localWind here to whatever the par
+            // says, so a removed track's stale trackSource doesn't
+            // outlive the option list.
+            applyLocalSource(this._windSourceOptions[par.windSourceLocal]);
         };
-        // The setup function runs once per sitch load; old listener
-        // bindings would survive across reloads if we didn't track
-        // them, so the previous one is removed and the new one is
-        // remembered for the next setup call.
+        // Setup runs once per sitch load; remove the previous binding
+        // before re-registering so reloads don't accumulate listeners.
         if (this._tracksChangedListener) {
             EventManager.removeEventListener?.("tracksChanged", this._tracksChangedListener);
         }
         this._tracksChangedListener = refreshSourceCtrls;
         EventManager.addEventListener("tracksChanged", refreshSourceCtrls);
+
+        // Force-apply local source to localWind once at init. lil-gui's
+        // .listen() polling synchronises the dropdown DISPLAY with the
+        // par on save-restore, but doesn't fire onChange — so without
+        // this nudge, after a reload localWind.trackSource may not
+        // reflect the persisted par.windSourceLocal (in shared mode the
+        // target onChange would mirror it, but only if the user touches
+        // the dropdown). Run after the wind node is created in
+        // _loadWindForCurrentSource — defer via microtask so localWind
+        // exists by the time we touch it.
+        Promise.resolve().then(() => {
+            const sourceKey = this._windSourceOptions[par.windSourceLocal];
+            if (sourceKey) applyLocalSource(sourceKey);
+        });
 
         // Display altitude in feet. Target/local winds use their own track
         // altitudes, independent of this.

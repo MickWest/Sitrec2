@@ -394,6 +394,8 @@ export const serializeMethods = {
             // these, every reload reverts the UI to "Manual / Not loaded /
             // Show Wind off" even when the underlying node was restored.
             "windSource",
+            "windSourceLocal",
+            "windSourceSeparate",
             "windAltFt",
             "windShow",
             "windOpacity",
