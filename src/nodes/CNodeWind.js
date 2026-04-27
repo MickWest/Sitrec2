@@ -26,8 +26,26 @@ export class CNodeWind extends CNode {
         // this.input("radius")
 
         if(this.gui) {
-            this.guiFrom = this.gui.add (this, "from", 0,359,1).name(this.name+" Wind From").tooltip(t("misc.windFrom.tooltip")).onChange(x =>this.recalculateCascade()).wrap()
-            this.guiKnots = this.gui.add (this, "knots", 0, this.max, 1).name(this.name+" Wind Knots").tooltip(t("misc.windKnots.tooltip")).onChange(x => this.recalculateCascade())
+            const onManualWindEdit = () => {
+                this.recalculateCascade();
+                // In manual mode, the windField grid is built from this
+                // node's from/knots (see _fillFromManual). Changing the
+                // values here doesn't propagate via the CNode graph (the
+                // wind field doesn't have us as an input — that would
+                // create a circular dependency with track-driven winds),
+                // so re-fill the grid + streamlines explicitly. Skip if
+                // the wind field hasn't materialized yet (no windU): the
+                // first Show Wind Lines toggle will pick up the latest
+                // values anyway.
+                if (NodeMan.exists("windField")) {
+                    const wf = NodeMan.get("windField");
+                    if (wf.source === "manual" && wf.windU) {
+                        wf.fetchWindForAltitude(wf.windAltFt);
+                    }
+                }
+            };
+            this.guiFrom = this.gui.add (this, "from", 0,359,1).name(this.name+" Wind From").tooltip(t("misc.windFrom.tooltip")).onChange(onManualWindEdit).wrap()
+            this.guiKnots = this.gui.add (this, "knots", 0, this.max, 1).name(this.name+" Wind Knots").tooltip(t("misc.windKnots.tooltip")).onChange(onManualWindEdit)
         }
 
        // this.optionalInputs(["originTrack"])
