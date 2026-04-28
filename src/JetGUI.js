@@ -32,6 +32,7 @@ export function updateGUIFrames() {
     guiRemove(guiFrames, par, 'time')
     guiRemove(guiFrames, par, 'frame')
     guiRemove(guiFrames, par, 'paused')
+    guiRemove(guiFrames, par, 'playbackSpeed')
 
     guiFrames.add(par, 'time', 0, Sit.frames / Sit.fps, 1 / Sit.fps).onChange(UIChangedTime).listen()
         .name(t("jet.frames.time.label"))
@@ -42,6 +43,9 @@ export function updateGUIFrames() {
     guiFrames.add(par, 'paused').listen()
         .name(t("jet.frames.paused.label"))
         .tooltip(t("jet.frames.paused.tooltip"))
+    guiFrames.add(par, 'playbackSpeed', 0.25, 10, 0.25).listen()
+        .name("Playback Speed")
+        .tooltip("Multiplier on per-tick frame advance during playback. 1 = normal, 2 = 2x, 0.25 = quarter speed.")
 
 }
 

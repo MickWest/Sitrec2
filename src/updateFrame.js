@@ -67,7 +67,10 @@ export function updateFrame(elapsed) {
 
         // Use single-frame mode when blockers require it (e.g., motion analysis with incomplete cache)
         const singleFrameMode = requiresSingleFrameMode();
-        const advance = singleFrameMode ? par.direction : frameStep * par.direction;
+        // par.playbackSpeed (Time menu slider, 0.25–10, default 1) only
+        // scales the elapsed-time-driven advance — not single-frame mode,
+        // which is gated on cache state and must remain one frame per tick.
+        const advance = singleFrameMode ? par.direction : frameStep * par.direction * (par.playbackSpeed ?? 1);
         let nextFrame = Math.floor(par.frame) + (par.direction > 0 ? 1 : -1);
         
         // Handle wrapping for nextFrame calculation (so blockers see the correct target)

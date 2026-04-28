@@ -52,6 +52,7 @@ const parDefaults = {
     scaleJetPitch: true,
     direction: 1,  // 1 or -1
     speed: 1,
+    playbackSpeed: 1,  // Multiplier on the per-tick frame advance during playback (Time menu slider)
     podWireframe: false,
     showPointer: false,
     showSphericalGrid: true,
