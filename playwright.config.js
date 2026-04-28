@@ -68,12 +68,21 @@ export default defineConfig({
           // SITREC_CHROMIUM=/usr/bin/chromium; on macOS dev machines it's unset and
           // Playwright falls back to its own build.
           executablePath: process.env.SITREC_CHROMIUM || undefined,
+          // ANGLE backend: defaults to swiftshader (CPU rasterizer) so CI
+          // and headless containers without a GPU keep working. Override
+          // via SITREC_ANGLE_BACKEND on dev machines that have a real GPU
+          // — e.g. SITREC_ANGLE_BACKEND=metal on macOS, =gl on Linux with
+          // a usable GPU. Real-GPU backends are dramatically faster and,
+          // more importantly, deterministic: SwiftShader's program-link
+          // races under workers=4 contention are what produce the
+          // intermittent orion / ocean-shader brightness and empty-render
+          // flakes that retries=3 only partially absorbs.
           args: [
-            '--use-angle=swiftshader',
+            '--use-angle=' + (process.env.SITREC_ANGLE_BACKEND || 'swiftshader'),
             '--ignore-gpu-blocklist',
             '--enable-webgl',
             '--enable-unsafe-swiftshader',
-            '--disk-cache-dir=./playwright-cache',
+            '--disk-cache-dir=' + (process.env.SITREC_PW_CACHE_DIR || './playwright-cache'),
             '--disk-cache-size=1073741824',
           ],
         },
