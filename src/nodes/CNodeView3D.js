@@ -1040,6 +1040,40 @@ export class CNodeView3D extends CNodeViewCanvas {
             this.renderer.debug.checkShaderErrors = false;
         }
 
+        // Pin WebGL programs so they're never released. Three.js's
+        // releaseProgram disposes a program when its usedTimes drops to 0,
+        // which causes thrash for any code path that recreates materials
+        // per-frame or per-tile (notably TilesDayNightPlugin, which makes a
+        // fresh DayNightStandardMaterial for every 3D-tiles mesh that
+        // arrives during panning). The tile lifecycle outpaces program
+        // re-use, so programs were being compiled, used briefly, disposed,
+        // and recompiled — costing ~14% CPU in getProgramInfoLog /
+        // getProgramParameter sync waits during active panning.
+        // The fix: clamp usedTimes to a getter that always reads >= 2 so
+        // the `if (--usedTimes === 0)` check inside releaseProgram never
+        // fires. Programs accumulate, but in practice the working set is
+        // bounded by unique material configurations (~30–50), trading a
+        // bounded ~1–2 MB of GPU memory for elimination of per-tile shader
+        // recompiles. Wrapping render() catches any program created during
+        // the most-recent draw call.
+        const origRender = this.renderer.render.bind(this.renderer);
+        const renderer = this.renderer;
+        this.renderer.render = function (...args) {
+            origRender(...args);
+            const programs = renderer.info.programs;
+            if (!programs) return;
+            for (const p of programs) {
+                if (p.__pinned) continue;
+                let v = p.usedTimes;
+                Object.defineProperty(p, 'usedTimes', {
+                    configurable: true,
+                    get() { return Math.max(2, v); },
+                    set(x) { v = x; },
+                });
+                p.__pinned = true;
+            }
+        };
+
         this.renderer.setPixelRatio(this.in.canvasWidth ? 1 : window.devicePixelRatio);
         this.renderer.setSize(this.widthDiv, this.heightDiv, false);
         this.renderer.outputColorSpace = SRGBColorSpace;
