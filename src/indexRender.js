@@ -45,7 +45,11 @@ export function windowChanged() {
 // Mutable isTransitioning flag — set by index.js/newSitch, read by renderMain
 // below. Exported via setter to avoid index.js → indexRender import cycle.
 let isTransitioning = false;
-export function setIsTransitioning(v) { isTransitioning = v; }
+let lastNodeUpdateFrame;
+export function setIsTransitioning(v) {
+    isTransitioning = v;
+    if (v) lastNodeUpdateFrame = undefined;
+}
 export function getIsTransitioning() { return isTransitioning; }
 
 export function hasPendingTiles() {
@@ -326,7 +330,11 @@ export function renderMain(elapsed) {
         }
     }
 
-    if (!par.noLogic && !Globals.justVideoAnalysis) {
+    // Render-only passes usually reuse node/controller state. Scrubbing can
+    // change par.frame between logic ticks, so update once when the rendered
+    // frame differs from the frame that last drove the nodes.
+    const frameNeedsNodeUpdate = lastNodeUpdateFrame !== par.frame;
+    if ((!par.noLogic || frameNeedsNodeUpdate) && !Globals.justVideoAnalysis) {
         if (globalProfiler) globalProfiler.push('#ff7f0e', 'Updates');
 
         if (Sit.updateFunction) {
@@ -422,6 +430,8 @@ export function renderMain(elapsed) {
                     targetSphere.layers.disable(LAYER.podsEye)
             }
         }
+
+        lastNodeUpdateFrame = par.frame;
     } else if (Globals.justVideoAnalysis) {
         const frameSlider = NodeMan.get("FrameSlider", false);
         if (frameSlider && frameSlider.update) {
