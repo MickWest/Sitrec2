@@ -45,6 +45,122 @@ Example entry format:
 
 ---
 
+## Version 2.45.22 (2026-04-29)
+
+### Bug Fixes
+- Fixed timeline scrub judder by re-running node updates when the frame changes between logic ticks
+
+---
+
+## Version 2.45.21 (2026-04-28)
+
+### Improvements
+- Video export now applies the playback-speed setting; encoder is loaded via dynamic import
+
+---
+
+## Version 2.45.20 (2026-04-28)
+
+### New Features
+- **Playback Speed slider** in the Time menu (0.25× to 10×)
+
+---
+
+## Version 2.45.19 (2026-04-27)
+
+### New Features
+- **Wind inspect tool**: shift/alt-click for multi-point readouts anchored to Camera or Target, with altitude lock, auto-flipping tooltip, and ground stalks
+- **Independent Target/Local wind sources** with a Separate Wind Sources toggle, plus a new MISB track-derived option
+- **Screen-grid wind arrows** and **sonde altitude arrows** for visualizing vertical wind structure
+- Reusable promptForChoice dialog (used by sounding-source selection)
+
+### Improvements
+- Wind/Gimbal Analysis GUI reorganized
+- Sounding import defaults to the closest 00Z/12Z observation (rolls date if needed); dialog defaults to sitch start time
+- Sounding import auto-switches source to "Manual Soundings" on success
+- UWYO sounding fetch walks to the next-nearest station on failure, with a tighter year filter
+- Wind refresh button drops every cache; reload concurrency capped at 3 to avoid stampeding the wind proxy
+- Wind streamlines rebuild when time-scrub drifts past the nearby-data bbox
+- Show Wind Lines toggle decoupled from group visibility
+- WebGL programs now pinned to prevent per-tile shader recompile thrash
+- Cut per-frame allocations in screen-grid and inspect hot paths; skip per-frame grid rebuilds when nothing changed
+
+### Bug Fixes
+- Fixed three wind save/restore drift bugs after the `par` refactor
+- Fixed wind inspect readout positioning in client coords (sidebar offset)
+- Fixed manual wind grid not refreshing when Target/Local Wind From/Knots change
+- Sounding-source dialog label now reflects the actual sort anchor
+
+### Documentation
+- New user and technical wind docs (with images), including how IDW interpolation works and which sources use it
+
+---
+
+## Version 2.45.18 (2026-04-25)
+
+### New Features
+- **Wind**: nearby-only sounding filter, persistent per-level cache, live altitude drag, sonde arrows
+
+### Improvements
+- `sitrec.sh` probes and prints the live version after start/restart/pull/switch
+
+---
+
+## Version 2.45.16 (2026-04-25)
+
+### Bug Fixes
+- Graphs: stopped full-repaint every frame; fixed munge cache when frame count changes mid-session
+
+---
+
+## Version 2.45.15 (2026-04-25)
+
+### Improvements
+- Wind Data panel state persists across save/reload; altitude commits on finish
+- Physics GUI: Wind/Gimbal folder shells created once instead of per-sitch
+- CoordinateParser now requires an explicit separator between lat/lon pairs
+
+### Bug Fixes
+- Local-folder file loads now key by id, matching the URL-fetch path so wind grids restore correctly
+- J2K tile decode worker derives its WASM URL from `self.location` instead of the init message
+
+---
+
+## Version 2.45.14 (2026-04-24)
+
+### New Features
+- **Multi-source wind field**: choose UWYO, IGRA2, Manual Soundings, open-meteo, or uniform
+- **Manual sounding import** with target anchors, 3-nearest IDW interpolation, retry until good data, and differentiated errors when all samples are rejected
+- **Coverage-aware fade** for sparse-sample wind sources
+- **OSD Graph**: raw keyframe overlay with draggable frame-line
+- **Export Motion CSV** menu item
+- **Gimbal Analysis** pipeline now available to custom sitches via a Physics > Gimbal Analysis menu
+- **SA Page**: scroll-wheel SCL zoom, compass rose, auto-add track HAFUs, and a Show/Hide > Views toggle
+- **Individual feature toggles** for SA Page, ATFLIR Pod, and Gimbal Preset
+- **BYOK (Bring Your Own Key)** foundation with direct Anthropic LLM client
+
+### Improvements
+- Wind sources consolidated; Weather Balloons folder folded into Wind Data
+- Removed [BETA] Fetch <name> Wind buttons (superseded by the Wind Data folder)
+- Wind Show toggle retries failed loads
+- Non-GFS wind sources properly reload after deserialize; GFS fetch now has a timeout
+- Wind field correctness: renderAltitude floor, propagation status, dedupe
+- Per-sandbox MCP isolation via paired origins
+- Sitrec uploads, cache, and videos preserved across docker rebuilds
+
+### Bug Fixes
+- Fixed fullscreen aspect-ratio stretch for views with negative width/height
+- DDI buttons: MQ9UI-style click detection, square fullscreen aspect
+- SA Page: button serialization, dashed-circle flicker, crash from missing wind/CMetaTrack.trackNode
+- Enable Gimbal Analysis: fixed camera/jet location mismatch, contaminated Sit serialization, and duplicate-node errors from base custom sitches
+- Guard video view references in `initViews` for sitches without video
+- SitrecBridge: stale-socket close-handler bugs, `.mcp.json` portability, MV3 worker-reload stale-socket detection
+
+### Documentation
+- Document production server requirements for the wind proxy
+
+---
+
 ## Version 2.45.12 (2026-04-16)
 
 ### New Features
