@@ -20,7 +20,12 @@ import fs from 'fs';
 import path from 'path';
 
 const NITF_DIR = path.resolve(__dirname, '../../nitf-test-files');
-const PORT = 9782;
+// Per-worker port: each Playwright worker runs its own beforeAll/afterAll, so
+// sharing a single fixed port across workers caused the owning worker to tear
+// the server down (in afterAll) while another worker's fetch was still in
+// flight — a connection-refused that surfaced as a missing FileManager entry.
+// Using PORT_BASE + workerIndex isolates the server lifecycle to each worker.
+const PORT_BASE = 9782;
 const hasTestFiles = fs.existsSync(NITF_DIR);
 
 // ── Test case definitions ─────────────────────────────────────
@@ -221,17 +226,19 @@ test.use({
 
 test.describe('NITF Decode Visual Regression', () => {
     let server;
+    let serverPort;
 
-    test.beforeAll(async () => {
+    test.beforeAll(async ({}, testInfo) => {
         if (!hasTestFiles) return;
-        server = await startFileServer(PORT);
-        console.log(`[NITF] File server started on port ${PORT}`);
+        serverPort = PORT_BASE + testInfo.workerIndex;
+        server = await startFileServer(serverPort);
+        console.log(`[NITF] File server started on port ${serverPort} (worker ${testInfo.workerIndex})`);
     });
 
     test.afterAll(async () => {
         if (server) {
             await new Promise(resolve => server.close(resolve));
-            console.log('[NITF] File server stopped');
+            console.log(`[NITF] File server stopped on port ${serverPort}`);
         }
     });
 
@@ -251,7 +258,7 @@ test.describe('NITF Decode Visual Regression', () => {
                 console.log(`[NITF:${tc.id}] [${msg.type()}] ${msg.text()}`);
             });
 
-            const sitchUrl = `http://localhost:${PORT}/sitch/${tc.id}.js`;
+            const sitchUrl = `http://localhost:${serverPort}/sitch/${tc.id}.js`;
             const fullUrl = `?custom=${encodeURIComponent(sitchUrl)}&ignoreunload=1&regression=1`;
 
             const consolePromise = waitForConsoleText(page, 'No pending actions', 60000);
