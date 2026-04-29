@@ -2021,11 +2021,23 @@ export class CFileManager extends CManager {
                     return this.parseAsset(resolvedFilename, id, arrayBuffer);
                 })
                 .then(parsedAsset => {
-                    // if an array is returned, we just assume it's the first one
-                    // because we are adding by id here, not by filename
-                    // so if it's a zipped asset, it should only be one
+                    // Multi-entry parser results: zip/KMZ (one entry per file),
+                    // TS streams (recursive), and NITF (image + optional track
+                    // when corner geocoding is present). The IDed loadAsset
+                    // contract registers exactly one entry under the caller's
+                    // `id`, so we keep the first entry and discard the rest.
+                    // The drag/drop path (parseResult) handles arrays
+                    // properly — it registers each child under its
+                    // parser-generated filename and routes them through
+                    // handleParsedFile. So drag-drop NITF gets both image and
+                    // track; a hand-authored Sit.files entry pointing at a
+                    // raw .ntf loses the track. No current sitch authors NITF
+                    // into Sit.files (drag-drop → save bakes the post-decoded
+                    // JPG + CSV via skipSerialization on the archive entry,
+                    // so reload never re-runs the parser), so this is latent.
                     if (Array.isArray(parsedAsset)) {
-                        assert(parsedAsset.length === 1, "Zipped IDed asset contains multiple files");
+                        assert(parsedAsset.length === 1,
+                            `Multi-entry parser result on IDed load (id=${id}, filename=${resolvedFilename}); only first entry kept, others dropped`);
                         parsedAsset = parsedAsset[0];
                     }
 
