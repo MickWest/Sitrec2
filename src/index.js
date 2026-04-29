@@ -1614,6 +1614,10 @@ async function initializeOnce() {
         }
     }
 
+    // When you add a new user-facing doc under docs/, link it here and add a
+    // matching key under menus.help.documentation in src/i18n/en.js. Internal
+    // architecture/plan docs (docs/dev/, docs/plans/, *Internals.md, *Plan.md)
+    // and other developer-only references should NOT be linked.
     addHelpLink("menus.help.documentation.about", "README")
     addHelpLink("menus.help.documentation.whatsNew", "docs/WhatsNew")
     addHelpLink("menus.help.documentation.uiBasics", "docs/UserInterface")
@@ -1624,6 +1628,9 @@ async function initializeOnce() {
     addHelpLink("menus.help.documentation.starlink", "docs/Starlink")
     addHelpLink("menus.help.documentation.customModels", "docs/CustomModels")
     addHelpLink("menus.help.documentation.cameraModes", "docs/satcam")
+    addHelpLink("menus.help.documentation.wind", "docs/Wind")
+    addHelpLink("menus.help.documentation.traverseMethods", "docs/TraverseMethods")
+    addHelpLink("menus.help.documentation.gimbalRecreate", "docs/gimbal-recreate")
 
     if (localDocsEnabled) {
         docs.addExternalLink(t("menus.help.documentation.thirdPartyNotices"), "./ThirdPartyNotices.txt").perm()

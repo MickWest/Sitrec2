@@ -1,5 +1,7 @@
 # Local Custom Sitches in Sitrec
 
+> **⚠️ Deprecated.** Hand-authoring `Sit*.js` files is no longer the recommended way to build a sitch. Use the drag-and-drop **Custom Sitch** tool instead — see [How to set up a sitch](CustomSitchTool.md). This document is retained for historical reference and for the small number of bundled sitches that still ship as `Sit*.js`; new sitches should not be created this way.
+
 Sitrec allows the user to create and interact with a variety of situations, called "sitches"
 
 Sitches are defined using a Javascript style structure stored in a file that starts with "Sit" and ends with .js. Each Sitch is inside a folder that can (optionally) contain asset files (like KLM or MISB tracks, CSV data files, or 3D models).
