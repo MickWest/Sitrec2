@@ -1,15 +1,20 @@
 /**
- * NITF Visual Regression Tests
+ * NITF Decode Regression Tests
  *
  * End-to-end tests that load NITF files through the full Sitrec UI
- * (browser Image API for JPEG, OpenJPEG WASM for J2K, canvas rendering)
- * and compare screenshots against baselines.
+ * (browser Image API for JPEG, OpenJPEG WASM for J2K) and verify the
+ * file was actually decoded by inspecting FileManager for the decoded
+ * image entry. The sitch produced here only registers the NITF in
+ * `files:` — nothing renders the decoded pixels — so a screenshot
+ * comparison would only assert that Sitrec's chrome is unchanged.
+ * Instead we probe `window.FileManager.list` for the virtual image
+ * file the parser creates (`<filename>_image_<i>.jpg`) and check that
+ * its parsed Image has positive dimensions.
  *
  * Requires test files in ../../nitf-test-files/ (outside repo).
  * A local HTTP server is started on port 9782 to serve the files.
  */
-import {test} from '@playwright/test';
-import {takeScreenshotOrCompare} from './snapshot-utils.js';
+import {test, expect} from '@playwright/test';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -260,14 +265,47 @@ test.describe('NITF Decode Visual Regression', () => {
             await waitForSceneToSettle(page);
             await waitForFrames(page, 5);
 
-            await page.evaluate(() => {
-                if (window.setRenderOne) window.setRenderOne(true);
-            });
+            // Probe the FileManager for the decoded image. The Sit.files
+            // load path goes through CFileManager.loadAsset, which collapses
+            // the parser's multi-entry result down to just the first entry
+            // and registers it under the original sitch-supplied id (the
+            // file's basename). So the parsed Image lives at
+            // `FileManager.list[<basename>].data`, with dataType "image".
+            // (Drag-drop uses a different path that produces virtual
+            // `<name>_image_<i>.jpg` keys — irrelevant here.)
+            // Image isn't structured-cloneable, so we project just the
+            // fields we'll assert on.
+            const sourceFilename = path.basename(tc.file);
+            const probe = await page.evaluate((srcName) => {
+                const list = window.FileManager && window.FileManager.list;
+                if (!list) return {error: 'FileManager not exposed on window'};
+                const entry = list[srcName];
+                const img = entry && entry.data;
+                return {
+                    found: !!entry,
+                    dataType: entry && entry.dataType,
+                    hasImage: !!img,
+                    naturalWidth: (img && img.naturalWidth) || 0,
+                    naturalHeight: (img && img.naturalHeight) || 0,
+                    complete: !!(img && img.complete),
+                    allKeys: Object.keys(list),
+                };
+            }, sourceFilename);
 
-            await takeScreenshotOrCompare(page, `${tc.id}-snapshot`, testInfo, {
-                threshold: 0.02,
-                maxDiffPixels: 20000,
-            });
+            // Stuff the full probe into each assertion message — when one
+            // bursts, the failure tells you exactly what shape the entry
+            // actually had (missing entry vs wrong dataType vs zero dims
+            // vs decode-not-finished), not just "expected X to equal Y".
+            const diag = JSON.stringify(probe, null, 2);
+            expect(probe.error, `probe error\n${diag}`).toBeUndefined();
+            expect(probe.found, `no FileManager entry for ${sourceFilename}\n${diag}`).toBe(true);
+            expect(probe.dataType, `wrong dataType\n${diag}`).toBe('image');
+            expect(probe.hasImage, `parsed Image missing\n${diag}`).toBe(true);
+            expect(probe.complete, `Image.complete is false (decode never finished)\n${diag}`).toBe(true);
+            expect(probe.naturalWidth, `naturalWidth is 0\n${diag}`).toBeGreaterThan(0);
+            expect(probe.naturalHeight, `naturalHeight is 0\n${diag}`).toBeGreaterThan(0);
+
+            console.log(`[NITF:${tc.id}] decoded ${sourceFilename}: ${probe.naturalWidth}x${probe.naturalHeight}`);
         });
     }
 });

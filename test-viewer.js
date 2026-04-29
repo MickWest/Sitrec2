@@ -325,6 +325,75 @@ app.get('/', (req, res) => {
         #startBtn:disabled {
             background: #3e3e42;
         }
+        /* Failure-summary modal: shown only when tests complete with failures. */
+        #failureOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.65);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        #failureOverlay.visible {
+            display: flex;
+        }
+        #failureModal {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border: 1px solid #444;
+            border-radius: 6px;
+            width: min(900px, 92vw);
+            max-height: 86vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+        }
+        #failureModal header {
+            padding: 12px 16px;
+            border-bottom: 1px solid #444;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 14px;
+            color: #f48771;
+        }
+        #failureModal .actions {
+            display: flex;
+            gap: 8px;
+        }
+        #failureModal button {
+            background: #3e3e42;
+            color: #d4d4d4;
+            border: 1px solid #555;
+            padding: 4px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        #failureModal button:hover {
+            background: #505056;
+        }
+        #failureBody {
+            padding: 12px 16px;
+            overflow: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            user-select: text;
+        }
+        #failureBody .failure-block {
+            border-left: 3px solid #f48771;
+            padding: 6px 10px;
+            margin-bottom: 12px;
+            background: #2a2a2e;
+        }
+        #failureBody .failure-header {
+            color: #f48771;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
     </style>
 </head>
 <body>
@@ -377,6 +446,19 @@ app.get('/', (req, res) => {
                     ${testListHtml}
                 </div>
             </div>
+        </div>
+    </div>
+    <!-- Failure summary modal — shown after a run finishes with failures -->
+    <div id="failureOverlay" role="dialog" aria-modal="true" aria-labelledby="failureTitle">
+        <div id="failureModal">
+            <header>
+                <span id="failureTitle">❌ Tests completed with failures</span>
+                <div class="actions">
+                    <button id="failureCopyBtn" type="button">Copy</button>
+                    <button id="failureDismissBtn" type="button">Dismiss</button>
+                </div>
+            </header>
+            <div id="failureBody"></div>
         </div>
     </div>
     <script>
@@ -639,14 +721,28 @@ app.get('/', (req, res) => {
                 } else if (data.type === 'complete') {
                     testsRunning = false;
                     const hasFailures = data.code !== 0;
-                    status.className = hasFailures ? 'status error' : 'status complete';
+                    const failureBlocks = Array.isArray(data.failures) ? data.failures : [];
+                    // A flaky run is one where Playwright reports overall
+                    // success (exit code 0) but the transcript still contains
+                    // failure blocks from first-attempt failures that passed
+                    // on retry. We surface those instead of silently hiding
+                    // them behind "All tests passed".
+                    const isFlaky = !hasFailures && failureBlocks.length > 0;
+                    status.className = hasFailures ? 'status error'
+                        : isFlaky ? 'status running'
+                        : 'status complete';
                     const totalTime = globalStartTime ? ' (' + formatTime(Date.now() - globalStartTime) + ')' : '';
-                    statusText.textContent = hasFailures 
+                    statusText.textContent = hasFailures
                         ? '❌ Tests completed with failures' + totalTime
+                        : isFlaky
+                        ? '⚠ All tests passed, but ' + failureBlocks.length + ' flaky failure' + (failureBlocks.length === 1 ? '' : 's') + ' on retry' + totalTime
                         : '✅ All tests passed!' + totalTime;
                     abortBtn.disabled = true;
                     startBtn.disabled = false;
                     if (timerInterval) clearInterval(timerInterval);
+                    if (failureBlocks.length > 0) {
+                        showFailureModal(failureBlocks, { flaky: isFlaky });
+                    }
                 } else if (data.type === 'aborted') {
                     testsRunning = false;
                     status.className = 'status error';
@@ -701,6 +797,73 @@ app.get('/', (req, res) => {
             netlogs.forEach(netlog => netlog.innerHTML = '');
             setVisibleWorkers(4);
         }
+
+        // ── Failure summary modal ─────────────────────────────────────
+        // Shown automatically when a run finishes with failures. The
+        // body is filled from the per-failure blocks the server pulls
+        // out of the buffered Playwright stdout transcript.
+        function escapeHtml(str) {
+            return str
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+        function showFailureModal(failures, opts = {}) {
+            const body = document.getElementById('failureBody');
+            const title = document.getElementById('failureTitle');
+            // Distinguish hard failures (exit code != 0) from flaky tests
+            // (exit code 0 but transcript contains failure blocks from
+            // first-attempt failures that passed on retry). Same modal,
+            // different framing so the user knows a "pass" was actually flaky.
+            const n = failures.length;
+            const plural = n === 1 ? '' : 's';
+            title.textContent = opts.flaky
+                ? '⚠ ' + n + ' flaky test' + plural + ' (passed on retry)'
+                : '❌ ' + n + ' test failure' + plural;
+            body.innerHTML = failures.map(f => {
+                const head = '#' + f.number + ' — ' + (f.header || '(unknown)');
+                return '<div class="failure-block">'
+                    + '<div class="failure-header">' + escapeHtml(head) + '</div>'
+                    + escapeHtml(f.text || '(no error context captured)')
+                    + '</div>';
+            }).join('');
+            // Stash the plain-text version for the Copy button.
+            body.dataset.copyText = failures.map(f =>
+                '#' + f.number + ' — ' + (f.header || '') + '\\n' + (f.text || '')
+            ).join('\\n\\n──────────\\n\\n');
+            document.getElementById('failureOverlay').classList.add('visible');
+        }
+        function dismissFailureModal() {
+            document.getElementById('failureOverlay').classList.remove('visible');
+        }
+        document.getElementById('failureDismissBtn').addEventListener('click', dismissFailureModal);
+        document.getElementById('failureOverlay').addEventListener('click', e => {
+            if (e.target.id === 'failureOverlay') dismissFailureModal();
+        });
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape' && document.getElementById('failureOverlay').classList.contains('visible')) {
+                dismissFailureModal();
+            }
+        });
+        document.getElementById('failureCopyBtn').addEventListener('click', async () => {
+            const body = document.getElementById('failureBody');
+            const text = body.dataset.copyText || body.innerText || '';
+            const btn = document.getElementById('failureCopyBtn');
+            const original = btn.textContent;
+            try {
+                await navigator.clipboard.writeText(text);
+                btn.textContent = 'Copied ✓';
+            } catch {
+                // Fallback for browsers without clipboard API: select the body text
+                const range = document.createRange();
+                range.selectNodeContents(body);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+                btn.textContent = 'Selected — Cmd/Ctrl+C';
+            }
+            setTimeout(() => { btn.textContent = original; }, 1500);
+        });
 
         function abortTests() {
             if (ws && confirm('Are you sure you want to abort the tests?')) {
@@ -901,7 +1064,57 @@ wss.on('connection', (ws) => {
         const workerTestNames = new Map();
         const runningTests = new Set();
         const failedTests = new Set();
+        // Cumulative stdout transcript so we can extract failure blocks at end-of-run
+        const transcriptLines = [];
         
+        // Walk the buffered Playwright stdout and pull out the per-failure
+        // blocks. Each block starts with "  N) [chromium] › ..." and runs
+        // until the next failure marker, retry marker, or summary line. We
+        // also clip per-block length so a runaway error doesn't blow up the
+        // payload sent to the browser.
+        function extractFailureBlocks(lines) {
+            const out = [];
+            let current = null;
+            const pushCurrent = () => {
+                if (!current) return;
+                // Drop trailing blank lines; cap at 80 lines per block so
+                // attachment lists and very long stack traces don't dominate
+                // the modal — the user can still see the full text in the
+                // worker output panes.
+                while (current.body.length && !current.body[current.body.length - 1].trim()) {
+                    current.body.pop();
+                }
+                if (current.body.length > 80) {
+                    const dropped = current.body.length - 80;
+                    current.body = current.body.slice(0, 80);
+                    current.body.push(`    … (${dropped} more lines truncated; see worker output)`);
+                }
+                out.push({
+                    number: current.number,
+                    header: current.header,
+                    text: current.body.join('\n').trim(),
+                });
+                current = null;
+            };
+            for (const line of lines) {
+                const fail = line.match(/^\s*(\d+)\)\s+\[chromium\]\s*›\s*(.+)$/);
+                if (fail) {
+                    pushCurrent();
+                    current = { number: fail[1], header: fail[2].trim(), body: [] };
+                    continue;
+                }
+                // End-of-failures section: Playwright's summary lines like
+                // "  3 failed", "  1 interrupted", "  10 passed (2.6m)"
+                if (current && /^\s*\d+\s+(?:passed|failed|interrupted|flaky|skipped)\b/.test(line)) {
+                    pushCurrent();
+                    continue;
+                }
+                if (current) current.body.push(line);
+            }
+            pushCurrent();
+            return out;
+        }
+
         function findMatchingTest(testDesc) {
             const descLower = testDesc.toLowerCase();
             let bestMatch = null;
@@ -926,6 +1139,14 @@ wss.on('connection', (ws) => {
         testProcess.stdout.on('data', (data) => {
             const text = data.toString().replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
             process.stdout.write(text);
+
+            // Buffer the transcript line-by-line so we can post-mortem extract
+            // failure blocks after Playwright finishes. Cap at 50k lines to
+            // bound memory in the (unlikely) case a hung test floods stdout.
+            for (const line of text.split('\n')) {
+                if (transcriptLines.length >= 50000) break;
+                transcriptLines.push(line);
+            }
             
             const testIdStarted = text.match(/\[TEST:([a-z0-9-]+):STARTED\]/g);
             if (testIdStarted) {
@@ -1134,9 +1355,13 @@ wss.on('connection', (ws) => {
                 }
                 return;
             }
-            
+
             console.log(`\nTests completed with code ${code}\n`);
-            ws.send(JSON.stringify({ type: 'complete', code }));
+            // Extract per-failure blocks from the buffered transcript so the
+            // viewer can show a copyable summary instead of just "tests
+            // completed with failures".
+            const failures = extractFailureBlocks(transcriptLines);
+            ws.send(JSON.stringify({ type: 'complete', code, failures }));
             
             if (exitAfterTests) {
                 setTimeout(() => process.exit(code === 0 ? 0 : code), 2000);

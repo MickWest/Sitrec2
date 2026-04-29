@@ -7,6 +7,12 @@ const defaultAccelerationOrder = isFirefox
     ? ['prefer-software', 'no-preference'] 
     : ['prefer-hardware', 'prefer-software', 'no-preference'];
 
+// When playback speed > 1 pushes desired fps above this, lock fps here and
+// skip source frames at frameStep = desiredFps / MAX_OUTPUT_FPS. Cap is gated
+// on speed > 1 so high-fps sources at 1x still encode at their native rate.
+// Invariant: frameStep >= 1 always (cap can't shrink fps below desired).
+const MAX_OUTPUT_FPS = 60;
+
 export const VideoFormats = {
     'mp4-h264': {
         name: 'MP4 (H.264)',
@@ -344,19 +350,24 @@ export class VideoExportManager {
         const { GlobalDateTimeNode, NodeMan, Sit, Globals, setRenderOne } = await import("./Globals");
         const { par } = await import("./par");
         const { GlobalScene, LocalFrame } = await import("./LocalFrame");
-        const { Frame2Az, Frame2El, UpdatePRFromEA } = await import("./JetStuff");
+        const { Frame2Az, Frame2El } = await import("./JetUtils");
+        const { UpdatePRFromEA } = await import("./JetStuff");
         const { ExportProgressWidget, drawVideoWatermark } = await import("./utils");
         const { drawAttributionOnCanvas } = await import("./AttributionOverlay");
-        const { getMotionAnalysisOverlays } = await import("./CMotionAnalysis");
+        const { getMotionAnalysisOverlays } = await import("./CMotionAnalysisUI");
         const { CNodeView3D } = await import("./nodes/CNodeView3D");
 
         const startFrame = Sit.aFrame;
         const endFrame = Sit.bFrame;
-        const totalFrames = endFrame - startFrame + 1;
+        const totalSourceFrames = endFrame - startFrame + 1;
         const scale = this.retinaExport ? (window.devicePixelRatio || 1) : 1;
         const width = Math.round(ViewMan.widthPx * scale);
         const height = Math.round(ViewMan.heightPx * scale);
-        const fps = Sit.fps;
+        const playbackSpeed = par.playbackSpeed ?? 1;
+        const desiredFps = Sit.fps * playbackSpeed;
+        const fps = playbackSpeed > 1 ? Math.min(desiredFps, MAX_OUTPUT_FPS) : desiredFps;
+        const frameStep = desiredFps / fps;
+        const totalFrames = Math.ceil(totalSourceFrames / frameStep);
 
         const bestFormat = await getBestFormatForResolution(this.videoFormat, width, height);
         if (!bestFormat.formatId) {
@@ -370,7 +381,10 @@ export class VideoExportManager {
         const formatId = bestFormat.formatId;
         const extension = getVideoExtension(formatId);
 
-        console.log(`Starting viewport video export (${formatId}): ${totalFrames} frames (${startFrame}-${endFrame}) at ${fps} fps, ${width}x${height} (scale: ${scale}x)`);
+        const speedInfo = playbackSpeed !== 1
+            ? ` (${playbackSpeed}x playback speed${frameStep > 1 ? `, capped at ${MAX_OUTPUT_FPS} fps, step ${frameStep.toFixed(3)}` : ''})`
+            : '';
+        console.log(`Starting viewport video export (${formatId}): ${totalFrames} output frames from ${totalSourceFrames} source (${startFrame}-${endFrame}) at ${fps} fps${speedInfo}, ${width}x${height} (scale: ${scale}x)`);
 
         const savedFrame = par.frame;
         const savedPaused = par.paused;
@@ -390,7 +404,7 @@ export class VideoExportManager {
         let audioDuration = null;
         let originalFps = fps;
 
-        if (this.exportAudio) {
+        if (this.exportAudio && playbackSpeed === 1) {
             for (const entry of Object.values(NodeMan.list)) {
                 const node = entry.data;
                 if (node.videoData && node.videoData.audioHandler &&
@@ -406,6 +420,8 @@ export class VideoExportManager {
                     }
                 }
             }
+        } else if (this.exportAudio && playbackSpeed !== 1) {
+            console.log(`Audio export skipped: playback speed ${playbackSpeed}x would desync from video`);
         }
 
         try {
@@ -428,7 +444,7 @@ export class VideoExportManager {
             for (let i = 0; i < totalFrames; i++) {
                 if (progress.shouldStop()) break;
 
-                const frame = startFrame + i;
+                const frame = Math.min(startFrame + Math.round(i * frameStep), endFrame);
                 const visible3DViewIds = [];
                 const renderCompositeFrame = async () => {
                     par.frame = frame;
@@ -578,7 +594,8 @@ export class VideoExportManager {
                 );
 
                 const { getExportPrefix } = await import("./utils");
-                const filename = `${getExportPrefix()}_viewport_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
+                const speedSuffix = playbackSpeed !== 1 ? `_${playbackSpeed}x` : '';
+                const filename = `${getExportPrefix()}_viewport${speedSuffix}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
@@ -675,8 +692,12 @@ export class VideoExportManager {
 
         const startFrame = Sit.aFrame;
         const endFrame = Sit.bFrame;
-        const totalFrames = endFrame - startFrame + 1;
-        const fps = Sit.fps;
+        const totalSourceFrames = endFrame - startFrame + 1;
+        const playbackSpeed = par.playbackSpeed ?? 1;
+        const desiredFps = Sit.fps * playbackSpeed;
+        const fps = playbackSpeed > 1 ? Math.min(desiredFps, MAX_OUTPUT_FPS) : desiredFps;
+        const frameStep = desiredFps / fps;
+        const totalFrames = Math.ceil(totalSourceFrames / frameStep);
 
         const width = Math.ceil(captureWidth / 2) * 2;
         const height = Math.ceil(captureHeight / 2) * 2;
@@ -694,7 +715,10 @@ export class VideoExportManager {
         const formatId = bestFormat.formatId;
         const extension = getVideoExtension(formatId);
 
-        console.log(`Starting window video export (${formatId}): ${totalFrames} frames (${startFrame}-${endFrame}) at ${fps} fps, ${width}x${height}`);
+        const winSpeedInfo = playbackSpeed !== 1
+            ? ` (${playbackSpeed}x playback speed${frameStep > 1 ? `, capped at ${MAX_OUTPUT_FPS} fps, step ${frameStep.toFixed(3)}` : ''})`
+            : '';
+        console.log(`Starting window video export (${formatId}): ${totalFrames} output frames from ${totalSourceFrames} source (${startFrame}-${endFrame}) at ${fps} fps${winSpeedInfo}, ${width}x${height}`);
 
         const savedFrame = par.frame;
         const savedPaused = par.paused;
@@ -721,7 +745,7 @@ export class VideoExportManager {
         let audioDuration = null;
         let originalFps = fps;
 
-        if (this.exportAudio) {
+        if (this.exportAudio && playbackSpeed === 1) {
             for (const entry of Object.values(NodeMan.list)) {
                 const node = entry.data;
                 if (node.videoData && node.videoData.audioHandler &&
@@ -736,6 +760,8 @@ export class VideoExportManager {
                     }
                 }
             }
+        } else if (this.exportAudio && playbackSpeed !== 1) {
+            console.log(`Audio export skipped: playback speed ${playbackSpeed}x would desync from video`);
         }
 
         const waitForPaint = () => new Promise(resolve => {
@@ -768,7 +794,7 @@ export class VideoExportManager {
                     break;
                 }
 
-                const frame = startFrame + i;
+                const frame = Math.min(startFrame + Math.round(i * frameStep), endFrame);
                 par.frame = frame;
                 if (GlobalDateTimeNode) GlobalDateTimeNode.update(frame);
 
@@ -817,7 +843,8 @@ export class VideoExportManager {
                 );
 
                 const { getExportPrefix } = await import("./utils");
-                const filename = `${getExportPrefix()}_window_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
+                const speedSuffix = playbackSpeed !== 1 ? `_${playbackSpeed}x` : '';
+                const filename = `${getExportPrefix()}_window${speedSuffix}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;

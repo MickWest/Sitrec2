@@ -46,10 +46,10 @@ export const TEST_REGISTRY = [
 
     { id: 'docker-smoke', name: 'Docker Smoke', group: 'Docker', file: 'docker-smoke.test.js', grep: 'loads and renders without errors', snapshot: 'docker-smoke-snapshot', url: '?action=new&frame=10' },
 
-    { id: 'nitf-nc', name: 'NITF-NC', group: 'NITF', file: 'nitf-decode.test.js', grep: 'NC uncompressed', snapshot: 'nitf-nc-snapshot' },
-    { id: 'nitf-c3', name: 'NITF-C3', group: 'NITF', file: 'nitf-decode.test.js', grep: 'C3 JPEG', snapshot: 'nitf-c3-snapshot' },
-    { id: 'nitf-c8', name: 'NITF-C8', group: 'NITF', file: 'nitf-decode.test.js', grep: 'C8 JPEG 2000', snapshot: 'nitf-c8-snapshot' },
-    { id: 'nitf-nsif', name: 'NITF-NSIF', group: 'NITF', file: 'nitf-decode.test.js', grep: 'NSIF file', snapshot: 'nitf-nsif-snapshot' },
+    { id: 'nitf-nc', name: 'NITF-NC', group: 'NITF', file: 'nitf-decode.test.js', grep: 'NC uncompressed' },
+    { id: 'nitf-c3', name: 'NITF-C3', group: 'NITF', file: 'nitf-decode.test.js', grep: 'C3 JPEG' },
+    { id: 'nitf-c8', name: 'NITF-C8', group: 'NITF', file: 'nitf-decode.test.js', grep: 'C8 JPEG 2000' },
+    { id: 'nitf-nsif', name: 'NITF-NSIF', group: 'NITF', file: 'nitf-decode.test.js', grep: 'NSIF file' },
 ];
 
 export function getTestById(id) {
