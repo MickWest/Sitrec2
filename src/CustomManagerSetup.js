@@ -547,7 +547,17 @@ export const setupMethods = {
                     .name(label)
                     .listen()
                     .onChange(handler);
-                this[ctrlField].setValue(wn[prop]);
+                // setValueQuietly: don't fire onChange. This refresh fires
+                // when tracksChanged dispatches (e.g. mid-sitch-load when
+                // imported tracks finish loading). A regular .setValue here
+                // would invoke onTargetSourceChange → fetchWindForAltitude
+                // → _fillFromManual against targetWind's *constructor*
+                // defaults rather than its modDeserialize-restored values,
+                // baking a stale wind grid into the field. Trackbacks via
+                // _reconcileWindTrackSources in finishDeserialization push
+                // through any actual source change once everything's
+                // settled.
+                this[ctrlField].setValueQuietly(wn[prop]);
             };
             reattach("_windSourceCtrl", "source",
                 wn.sourceSeparate ? "Target Wind Source" : "Wind Source",
