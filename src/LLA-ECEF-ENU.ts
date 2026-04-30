@@ -568,6 +568,26 @@ export function LLAToECEF(lat: number, lon: number, alt: number = 0, radius?: nu
     return LLAToECEFRadians(lat * _DEG_TO_RAD, lon * _DEG_TO_RAD, alt, radius);
 }
 
+// Allocation-free LLA→ECEF for tight loops. Writes into target instead of
+// returning a new Vector3. Use this in per-vertex tile geometry builders to
+// avoid GC pressure that would otherwise come from one Vector3 per vertex.
+export function LLAToECEFInto(lat: number, lon: number, alt: number, target: Vector3): Vector3 {
+    return LLAToECEFRadiansInto(lat * _DEG_TO_RAD, lon * _DEG_TO_RAD, alt, target);
+}
+
+export function LLAToECEFRadiansInto(lat: number, lon: number, alt: number, target: Vector3): Vector3 {
+    _updateSitConstants();
+    const cos_lat = Math.cos(lat);
+    const sin_lat = Math.sin(lat);
+    const cos_lon = Math.cos(lon);
+    const sin_lon = Math.sin(lon);
+    const N = Globals.equatorRadius / Math.sqrt(1 - _llaecef_e2 * sin_lat * sin_lat);
+    target.x = (N + alt) * cos_lat * cos_lon;
+    target.y = (N + alt) * cos_lat * sin_lon;
+    target.z = (_llaecef_ratio * N + alt) * sin_lat;
+    return target;
+}
+
 // vector input version
 export function LLAVToECEF(lla: Vector3, radius?: number): Vector3 {
     assert(radius === undefined, "undexpected radius in LLAVToECEF")

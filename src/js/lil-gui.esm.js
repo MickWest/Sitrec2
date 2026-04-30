@@ -522,7 +522,14 @@ class BooleanController extends Controller {
     }
 
     updateDisplay() {
-        this.$input.checked = this.getValue();
+        // Skip DOM write when the displayed value is unchanged. .listen()
+        // calls updateDisplay every frame; on slower hardware the DOM setter
+        // can dominate frame time. See lil-gui-extras.updateListeners.
+        const value = this.getValue();
+        if ( value !== this._lastDisplayedChecked ) {
+            this.$input.checked = value;
+            this._lastDisplayedChecked = value;
+        }
         return this;
     }
 
@@ -724,11 +731,16 @@ class ColorController extends Controller {
     }
 
     updateDisplay() {
-        this.$input.value = this._format.toHexString( this.getValue(), this._rgbScale );
-        if ( !this._textFocused ) {
-            this.$text.value = this.$input.value.substring( 1 );
+        // Skip DOM writes when displayed color is unchanged.
+        const hex = this._format.toHexString( this.getValue(), this._rgbScale );
+        if ( hex !== this._lastDisplayedHex ) {
+            this.$input.value = hex;
+            if ( !this._textFocused ) {
+                this.$text.value = hex.substring( 1 );
+            }
+            this.$display.style.backgroundColor = hex;
+            this._lastDisplayedHex = hex;
         }
-        this.$display.style.backgroundColor = this.$input.value;
         return this;
     }
 
@@ -887,12 +899,22 @@ class NumberController extends Controller {
             let percent = ( value - this._min ) / ( this._max - this._min );
             percent = Math.max( 0, Math.min( percent, 1 ) );
 
-            this.$fill.style.width = percent * 100 + '%';
+            // Skip layout-triggering style write when width is unchanged.
+            // .listen() runs this every frame; on slow GPUs the style setter
+            // is a major frame-time cost.
+            if ( percent !== this._lastDisplayedPercent ) {
+                this.$fill.style.width = percent * 100 + '%';
+                this._lastDisplayedPercent = percent;
+            }
 
         }
 
         if ( !this._inputFocused ) {
-            this.$input.value = this._decimals === undefined ? value : value.toFixed( this._decimals );
+            const text = this._decimals === undefined ? value : value.toFixed( this._decimals );
+            if ( text !== this._lastDisplayedText ) {
+                this.$input.value = text;
+                this._lastDisplayedText = text;
+            }
         }
 
         return this;
@@ -1580,9 +1602,12 @@ class OptionController extends Controller {
 
     updateDisplay() {
         const value = this.getValue();
-        const index = this._values.indexOf( value );
-        this.$select.selectedIndex = index;
-        this.$display.innerHTML = index === -1 ? value : this._names[ index ];
+        if ( value !== this._lastDisplayedValue ) {
+            const index = this._values.indexOf( value );
+            this.$select.selectedIndex = index;
+            this.$display.innerHTML = index === -1 ? value : this._names[ index ];
+            this._lastDisplayedValue = value;
+        }
         return this;
     }
 
@@ -1621,7 +1646,11 @@ class StringController extends Controller {
     }
 
     updateDisplay() {
-        this.$input.value = this.getValue();
+        const value = this.getValue();
+        if ( value !== this._lastDisplayedValue ) {
+            this.$input.value = value;
+            this._lastDisplayedValue = value;
+        }
         return this;
     }
 

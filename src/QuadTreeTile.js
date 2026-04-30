@@ -1,6 +1,6 @@
 import {assert} from "./assert";
 import {boxMark, DebugArrowAB, removeDebugArrow} from "./threeExt";
-import {LLAToECEF, wgs84} from "./LLA-ECEF-ENU";
+import {LLAToECEF, LLAToECEFInto, wgs84} from "./LLA-ECEF-ENU";
 import {GlobalScene} from "./LocalFrame";
 import {Globals} from "./Globals";
 import {EventManager} from "./CEventManager";
@@ -17,8 +17,14 @@ import {
     MeshStandardMaterial,
     NearestFilter,
     PlaneGeometry,
-    Sphere
+    Sphere,
+    Vector3
 } from "three";
+
+// Module-level scratch Vector3 reused by per-vertex tile-builder loops to avoid
+// allocating one Vector3 per vertex per tile (a major source of GC pressure
+// during camera motion / subdivision).
+const _vertexScratch = new Vector3();
 import {globalMipmapGenerator} from "./MipmapGenerator";
 import {fastComputeVertexNormals} from "./FastComputeVertexNormals";
 import {fastComputeVertexNormalsAsync} from "./FastComputeVertexNormalsAsync";
@@ -474,10 +480,25 @@ export class QuadTreeTile {
     }
 
     // Apply Web Mercator elevation data to geometry vertices asynchronously
-    async applyWebMercatorElevation(geometry, nPosition, elevationTile, elevationSize, 
+    async applyWebMercatorElevation(geometry, nPosition, elevationTile, elevationSize,
                                      tileBaseX, tileBaseY, numTiles, lonScale, lonOffset, latScale,
                                      elevationZoom, tileZ, tileOffsetX, tileOffsetY, tileFractionX, tileFractionY,
                                      tileCenter, abortSignal) {
+        // Sample the EGM96 geoid at the 4 tile corners once; per-vertex sea-level
+        // values are bilinearly interpolated from these. The geoid varies smoothly
+        // (sub-metre across a tile), so this is visually identical to per-vertex
+        // lookup but ~64x cheaper for a 256-vertex tile.
+        const lonW = (tileBaseX * lonScale) + lonOffset;
+        const lonE = ((tileBaseX + 1) * lonScale) + lonOffset;
+        const latN = Math.atan(Math.sinh(Math.PI * (1 - 2 * tileBaseY / numTiles))) * 180 / Math.PI;
+        const latS = Math.atan(Math.sinh(Math.PI * (1 - 2 * (tileBaseY + 1) / numTiles))) * 180 / Math.PI;
+        const geoidCorners = {
+            nw: meanSeaLevelOffset(latN, lonW),
+            ne: meanSeaLevelOffset(latN, lonE),
+            sw: meanSeaLevelOffset(latS, lonW),
+            se: meanSeaLevelOffset(latS, lonE),
+        };
+
         // Apply elevation data directly to vertices
         for (let i = 0; i < geometry.attributes.position.count; i++) {
             // Check if this operation was aborted (tile switched or cancelled)
@@ -551,25 +572,23 @@ export class QuadTreeTile {
             }
 
             // Clamp to geoid sea level to avoid z-fighting with ocean tiles
-            const seaLevel = meanSeaLevelOffset(lat, lon);
+            const seaLevel = interpolateGeoidOffset(geoidCorners, xTileFraction, yTileFraction);
             if (elevation < seaLevel) elevation = seaLevel;
 
             if (elevation > this.highestAltitude) {
                 this.highestAltitude = elevation;
             }
 
-            // Convert to ECEF coordinates
-            const vertexECEF = LLAToECEF(lat, lon, elevation);
+            // Convert to ECEF coordinates and translate to tile-local space.
+            // In-place into _vertexScratch to avoid per-vertex Vector3 allocation.
+            LLAToECEFInto(lat, lon, elevation, _vertexScratch).sub(tileCenter);
 
-            // Subtract the center of the tile for relative positioning
-            const vertex = vertexECEF.sub(tileCenter);
-
-            assert(!isNaN(vertex.x), 'vertex.x is NaN in QuadTreeTile.js i=' + i);
-            assert(!isNaN(vertex.y), 'vertex.y is NaN in QuadTreeTile.js');
-            assert(!isNaN(vertex.z), 'vertex.z is NaN in QuadTreeTile.js');
+            assert(!isNaN(_vertexScratch.x), 'vertex.x is NaN in QuadTreeTile.js i=' + i);
+            assert(!isNaN(_vertexScratch.y), 'vertex.y is NaN in QuadTreeTile.js');
+            assert(!isNaN(_vertexScratch.z), 'vertex.z is NaN in QuadTreeTile.js');
 
             // Set the vertex position in tile space
-            geometry.attributes.position.setXYZ(i, vertex.x, vertex.y, vertex.z);
+            geometry.attributes.position.setXYZ(i, _vertexScratch.x, _vertexScratch.y, _vertexScratch.z);
         }
     }
 
@@ -899,6 +918,9 @@ export class QuadTreeTile {
         const yTile = this.y;
         const zoomTile = this.z;
 
+        // Sample the geoid at tile corners once; bilinearly interpolated per vertex.
+        // Identical visual result to per-vertex lookup, ~64x cheaper.
+        const geoidCorners = geoidCorrectionForTile(this.map.options.mapProjection, zoomTile, xTile, yTile);
 
         for (let i = 0; i < geometry.attributes.position.count; i++) {
 
@@ -930,7 +952,7 @@ export class QuadTreeTile {
             let elevation = this.map.getElevationInterpolated(lat, lon, zoomTile);
 
             // clamp to geoid sea level to avoid z-fighting with ocean tiles
-            const seaLevel = meanSeaLevelOffset(lat, lon);
+            const seaLevel = interpolateGeoidOffset(geoidCorners, xTileFraction, yTileFraction);
             if (elevation < seaLevel) elevation = seaLevel;
 
             if (elevation > this.highestAltitude) {
@@ -939,18 +961,15 @@ export class QuadTreeTile {
 
             // elevation = Math.random()*100000
 
-            // convert that to ECEF
-            const vertexECEF = LLAToECEF(lat, lon, elevation)
+            // Convert to ECEF and translate to tile-local space; in-place to avoid GC.
+            LLAToECEFInto(lat, lon, elevation, _vertexScratch).sub(tileCenter);
 
-            // subtract the center of the tile
-            const vertex = vertexECEF.sub(tileCenter)
-
-            assert(!isNaN(vertex.x), 'vertex.x is NaN in QuadTreeMap.js i=' + i)
-            assert(!isNaN(vertex.y), 'vertex.y is NaN in QuadTreeMap.js')
-            assert(!isNaN(vertex.z), 'vertex.z is NaN in QuadTreeMap.js')
+            assert(!isNaN(_vertexScratch.x), 'vertex.x is NaN in QuadTreeMap.js i=' + i)
+            assert(!isNaN(_vertexScratch.y), 'vertex.y is NaN in QuadTreeMap.js')
+            assert(!isNaN(_vertexScratch.z), 'vertex.z is NaN in QuadTreeMap.js')
 
             // set the vertex position in tile space
-            geometry.attributes.position.setXYZ(i, vertex.x, vertex.y, vertex.z);
+            geometry.attributes.position.setXYZ(i, _vertexScratch.x, _vertexScratch.y, _vertexScratch.z);
         }
 
         // Generate elevation color texture if needed (using interpolated elevation data)
@@ -1069,6 +1088,9 @@ export class QuadTreeTile {
         const yTile = this.y;
         const zoomTile = this.z;
 
+        // Sample the geoid at tile corners once; bilinearly interpolated per vertex.
+        const geoidCorners = geoidCorrectionForTile(this.map.options.mapProjection, zoomTile, xTile, yTile);
+
         for (let i = 0; i < geometry.attributes.position.count; i++) {
             const xIndex = i % nPosition;
             const yIndex = Math.floor(i / nPosition);
@@ -1119,21 +1141,21 @@ export class QuadTreeTile {
             }
 
             // Clamp to geoid sea level to avoid z-fighting with ocean tiles
-            const seaLevel = meanSeaLevelOffset(lat, lon);
+            const seaLevel = interpolateGeoidOffset(geoidCorners, xTileFraction, yTileFraction);
             if (elevation < seaLevel) elevation = seaLevel;
 
             if (elevation > this.highestAltitude) {
                 this.highestAltitude = elevation;
             }
 
-            const vertexECEF = LLAToECEF(lat, lon, elevation);
-            const vertex = vertexECEF.sub(tileCenter);
+            // Convert to ECEF and translate to tile-local space; in-place to avoid GC.
+            LLAToECEFInto(lat, lon, elevation, _vertexScratch).sub(tileCenter);
 
-            assert(!isNaN(vertex.x), 'vertex.x is NaN in QuadTreeTile.js i=' + i);
-            assert(!isNaN(vertex.y), 'vertex.y is NaN in QuadTreeTile.js');
-            assert(!isNaN(vertex.z), 'vertex.z is NaN in QuadTreeTile.js');
+            assert(!isNaN(_vertexScratch.x), 'vertex.x is NaN in QuadTreeTile.js i=' + i);
+            assert(!isNaN(_vertexScratch.y), 'vertex.y is NaN in QuadTreeTile.js');
+            assert(!isNaN(_vertexScratch.z), 'vertex.z is NaN in QuadTreeTile.js');
 
-            geometry.attributes.position.setXYZ(i, vertex.x, vertex.y, vertex.z);
+            geometry.attributes.position.setXYZ(i, _vertexScratch.x, _vertexScratch.y, _vertexScratch.z);
         }
 
         this.generateElevationColorTexture(geometry, elevationTile, elevationSize, tileOffsetX, tileOffsetY, tileFractionX, tileFractionY, elevationZoom).catch(error => {

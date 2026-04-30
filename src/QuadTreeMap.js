@@ -418,6 +418,10 @@ export class QuadTreeMap {
         ));
         camera.viewFrustum = frustum;
 
+        // Camera forward is constant across all tiles in this pass — compute it
+        // once here instead of once per visible tile inside calculateTileVisibility.
+        camera.getWorldDirection(_cameraForward);
+
         // PASS 1: Debug logging (view-specific)
         if (Globals.showTileStats) {
            this.logDebugStats(tileLayers, view.id);
@@ -597,10 +601,11 @@ export class QuadTreeMap {
         const frustumIntersects = camera.viewFrustum.intersectsSphere(worldSphere);
 
         if (frustumIntersects || isNearCamera) {
-            // Check if sphere center is behind the camera
-            const cameraForward = camera.getWorldDirection(_cameraForward);
+            // Check if sphere center is behind the camera. _cameraForward is
+            // populated once per subdivideTilesViewSpecific pass at the call site
+            // — it's constant across tiles in a single pass.
             const toSphere = _toSphere.copy(worldSphere.center).sub(camera.position);
-            const projectionOnForward = toSphere.dot(cameraForward);
+            const projectionOnForward = toSphere.dot(_cameraForward);
 
             // If center is behind camera OR tile is near camera (regardless of frustum),
             // mark as visible but scale screen size by FOV to avoid excessive subdivision
