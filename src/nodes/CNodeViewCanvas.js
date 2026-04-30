@@ -167,14 +167,22 @@ class CNodeViewCanvas2D extends CNodeViewCanvas {
     // It will only re-scale if canvas dimensions have actually changed
     ensureContextScaled() {
         if (!this.widthPx || !this.heightPx) return;
-        
+
         const requiredWidth = this.widthPx * this.devicePixelRatio;
         const requiredHeight = this.heightPx * this.devicePixelRatio;
-        
+
         if (this.canvas.width !== requiredWidth || this.canvas.height !== requiredHeight) {
             this.canvas.width = requiredWidth;
             this.canvas.height = requiredHeight;
             this.ctx.scale(this.devicePixelRatio, this.devicePixelRatio);
+            // Setting canvas.width clears the backing store. Mark the editor
+            // dirty so the next editor.update() repaints — without this,
+            // resizing the panel via the corner handle blanks the graph
+            // (the user's resize path bypasses adjustSize's `changed`
+            // detection because setFromDiv has already synced widthPx
+            // to div.clientWidth before adjustSize runs, so editor.dirty
+            // never gets set on the adjustSize path either).
+            if (this.editor) this.editor.dirty = true;
         }
     }
 
