@@ -13,7 +13,6 @@ import {
     setLayerMaskRecursive
 } from "../threeExt";
 import {ECEFToLLAVD_radii, ECEFToLLAVD_Sphere, getLST, raDecToAzElRADIANS, wgs84} from "../LLA-ECEF-ENU";
-import {getLocalUpVector} from "../SphericalMath";
 // npm install three-text2d --save-dev
 // https://github.com/gamestdio/three-text2d
 //import { MeshText2D, textAlign } from 'three-text2d'
@@ -883,11 +882,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         const observer = this.getObserverFromCameraPos(cameraPos);
         const storeState = options.storeState ?? true;
 
+        // Per-view re-syncs (storeState:false) only need to update Sun and Moon —
+        // they are the only bodies where topocentric parallax is visually
+        // significant. The other planets keep the canonical positions written by
+        // the per-frame storeState:true pass, saving ~6 ephemeris evaluations
+        // per view per frame.
         for (const [name, planet] of Object.entries(this.planets.planetSprites)) {
-            // When storeState is false we still move/scale the shared Sun and Moon
-            // meshes for the current render camera, but we leave the canonical
-            // ephemeris values alone so arrows/debug readouts do not depend on
-            // whichever view happened to render last.
+            if (!storeState && name !== "Sun" && name !== "Moon") continue;
             this.planets.updatePlanetSprite(
                 name,
                 planet.sprite,
