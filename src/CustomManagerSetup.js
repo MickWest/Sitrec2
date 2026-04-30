@@ -454,18 +454,25 @@ export const setupMethods = {
 
             const tdId = resolveTrackSource(sourceKey);
             if (tdId) {
+                // Track-driven: targetWind reads its from/knots from the
+                // track per frame. The wind field also fetches so the
+                // global grid reflects this single source — picking a
+                // sonde track means "show me what this station reports,"
+                // not "leave the previous field intact." Falls through
+                // to the fetch pipeline below.
                 if (targetWind) targetWind.trackSource = tdId;
-                return; // track-driven: no fetch
+            } else {
+                if (targetWind) targetWind.trackSource = null;
             }
-            if (targetWind) targetWind.trackSource = null;
-            // atmospheric / manual: auto-show + fetch pipeline.
+            // atmospheric / manual / track: auto-show + fetch pipeline.
             const autoShowSources = ["gfs", "uwyo", "igra2", "manual-soundings"];
-            if (autoShowSources.includes(sourceKey)
+            const isTrack = !!tdId;
+            if ((autoShowSources.includes(sourceKey) || isTrack)
                 && !this._autoShownWindSources.has(sourceKey)
                 && !par.windShow) {
                 par.windShow = true;
             }
-            if (autoShowSources.includes(sourceKey)) {
+            if (autoShowSources.includes(sourceKey) || isTrack) {
                 this._autoShownWindSources.add(sourceKey);
             }
             await this._loadWindForCurrentSource();

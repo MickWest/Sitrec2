@@ -30,6 +30,8 @@ import {
     compassFromDeg,
     windDirFromBearing,
 } from "./WindHelpers";
+import {isTrackSourceKey, trackDataIdFromSourceKey} from "./WindSources";
+import {MISB} from "../MISBUtils";
 
 // Re-export so existing importers that reach into CNodeDisplayWindField keep working.
 export {
@@ -1301,6 +1303,8 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                 await this._fillFromOpenMeteo(altFt);
             } else if (this.source === "manual") {
                 this._fillFromManual(altFt);
+            } else if (isTrackSourceKey(this.source)) {
+                this._fillFromTrackSource(altFt);
             } else {
                 throw new Error(`Unknown wind source: ${this.source}`);
             }
@@ -1513,6 +1517,57 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.windLevel = `${Math.round(altFt)}ft`;
         const altLabel = altFt < 300 ? "Surface" : `${altFt.toLocaleString()} ft`;
         this.statusText = `Manual ${Math.round(tw.from)}° ${Math.round(tw.knots)} kn @ ${altLabel}`;
+    }
+
+    // Wind field from a single MISB track that carries WindDirection/
+    // WindSpeed columns (e.g. an imported sonde track). The track has one
+    // wind sample per row; we read the row that maps to the current
+    // playback frame and build a uniform / IDW-anchored grid from that
+    // single (dir, knots) value — i.e. the field shows "what this one
+    // station is reporting right now."
+    //
+    // Picking a track source means "treat this as the single source of
+    // truth," so the field is intentionally one-directional. Frame
+    // changes refresh the field via update() since the track's wind
+    // varies row-to-row (sonde ascent profile).
+    _fillFromTrackSource(altFt) {
+        const trackId = trackDataIdFromSourceKey(this.source);
+        if (!trackId || !NodeMan.exists(trackId)) {
+            throw new Error(`Track source not found: ${trackId}`);
+        }
+        const td = NodeMan.get(trackId);
+        const misb = td?.misb;
+        if (!Array.isArray(misb) || misb.length === 0) {
+            throw new Error(`Track ${trackId} has no MISB data`);
+        }
+        const f = Sit.currentFrame ?? 0;
+        const denom = Math.max(1, (Sit.frames ?? 1) - 1);
+        const slotF = (f / denom) * (misb.length - 1);
+        const slot = Math.max(0, Math.min(misb.length - 1, Math.round(slotF)));
+        const row = misb[slot];
+        const dir = row?.[MISB.WindDirection];
+        const spd = row?.[MISB.WindSpeed];
+        if (typeof dir !== "number" || !Number.isFinite(dir)
+            || typeof spd !== "number" || !Number.isFinite(spd)) {
+            throw new Error(`Track ${trackId} missing wind data at frame ${f}`);
+        }
+
+        const {u, v} = fromDirSpeedKnotsToUV(dir, spd);
+        const points = this._windNodePositions();
+        if (points.length === 0) {
+            this._buildUniformGrid(u, v, "Track");
+        } else {
+            const samples = points.map(pt => ({lat: pt.lat, lon: pt.lon, u, v}));
+            this._buildGridFromSamples(samples, "Track");
+        }
+        this.windLevel = `${Math.round(altFt)}ft`;
+        const altLabel = altFt < 300 ? "Surface" : `${altFt.toLocaleString()} ft`;
+        const shortName = td.shortName ?? trackId;
+        this.statusText = `${shortName} ${Math.round(dir)}° ${Math.round(spd)} kn @ ${altLabel}`;
+        // Remember the (frame → wind) snapshot so update() can detect when
+        // the track row's wind has changed enough to warrant a refresh.
+        this._trackLastDir = dir;
+        this._trackLastSpd = spd;
     }
 
     // ── Find relevant wind nodes' positions (lat/lon/alt) ───────────
@@ -2173,6 +2228,37 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                     ref.lat, ref.lon) * 111;
                 if (driftKm > this.nearbyRadiusKm * 0.5) {
                     this.rebuildStreamlines();
+                }
+            }
+        }
+
+        // Track-driven source: if the underlying MISB row's wind has
+        // changed enough vs the last fetch, refresh. Sonde tracks vary
+        // wind row-by-row as the balloon climbs; without this hook the
+        // field would freeze at whatever was current when the user
+        // first picked the source. Threshold avoids a rebuild every
+        // frame for track jitter — same intent as the altitude-lock
+        // 50 ft snap below.
+        if (isTrackSourceKey(this.source) && this.windU && !this.fetching) {
+            const trackId = trackDataIdFromSourceKey(this.source);
+            if (trackId && NodeMan.exists(trackId)) {
+                const td = NodeMan.get(trackId);
+                const misb = td?.misb;
+                if (Array.isArray(misb) && misb.length > 0) {
+                    const denom = Math.max(1, (Sit.frames ?? 1) - 1);
+                    const slotF = (frame / denom) * (misb.length - 1);
+                    const slot = Math.max(0, Math.min(misb.length - 1, Math.round(slotF)));
+                    const row = misb[slot];
+                    const dir = row?.[MISB.WindDirection];
+                    const spd = row?.[MISB.WindSpeed];
+                    if (typeof dir === "number" && Number.isFinite(dir)
+                        && typeof spd === "number" && Number.isFinite(spd)) {
+                        const dDir = Math.abs((dir - (this._trackLastDir ?? dir) + 540) % 360 - 180);
+                        const dSpd = Math.abs(spd - (this._trackLastSpd ?? spd));
+                        if (dDir > 2 || dSpd > 1) {
+                            this.fetchWindForAltitude(this.windAltFt);
+                        }
+                    }
                 }
             }
         }
