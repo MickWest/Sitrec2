@@ -1982,15 +1982,19 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // rest of the sitch finishes deserializing (dependent nodes like
         // CNodeAtmosphericProfile / targetTrack may not exist yet at this
         // point in the restore pass).
+        //
+        // CustomManagerSerialize.finishDeserialization triggers the actual
+        // fetch via this flag. A naive setTimeout(0) here would race against
+        // `await waitForPendingActions()` calls inside the deserialize loop
+        // (rAF runs in the same task tier as setTimeout(0)) and read stale
+        // values from later-deserialized nodes such as targetWind — e.g.
+        // _fillFromManual would see targetWind's constructor default 0 kn
+        // and produce an empty streamline mesh.
         if (this.source !== "gfs") {
             this.windLevel = v.windLevel ?? `${Math.round(this.windAltFt)}ft`;
             if (this.visible) {
                 this.statusText = "Reloading...";
-                setTimeout(() => {
-                    this.fetchWindForAltitude(this.windAltFt).catch(err => {
-                        console.warn("Non-GFS wind reload failed:", err);
-                    });
-                }, 0);
+                this._needsPostDeserializeFetch = true;
             } else {
                 this.statusText = "Not loaded";
             }
@@ -2021,11 +2025,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                 this.statusText = savedLevels.length > 0
                     ? `Reloading 0/${savedLevels.length} wind levels…`
                     : "Reloading wind…";
-                setTimeout(() => {
-                    this._reloadGFSAfterDeserialize(savedLevels).catch(err => {
-                        console.warn("GFS wind reload failed:", err);
-                    });
-                }, 0);
+                // Deferred to finishDeserialization for the same reason as
+                // the non-GFS branch above — see comment there.
+                this._needsPostDeserializeReloadGFS = savedLevels;
             }
             return;
         }

@@ -653,8 +653,12 @@ export const setupMethods = {
         // the data load when streamlines are turned on for the first time
         // (no windU yet). A previous failed load (windU still null) gets
         // retried automatically here instead of showing nothing forever.
+        // Same retry path also covers the case where windU exists but the
+        // last rebuildStreamlines produced empty geometry (e.g. it ran on
+        // 0-knot stale wind values), so linesMesh is null — the setter
+        // would otherwise no-op forever.
         windFolder.add(par, "windShow").name("Show Wind Lines").listen().onChange(async (v) => {
-            if (v && !wn.windU) {
+            if (v && (!wn.windU || !wn.linesMesh)) {
                 await this._loadWindForCurrentSource();
                 setRenderOne(true);
             }

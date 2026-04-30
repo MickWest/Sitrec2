@@ -1163,6 +1163,23 @@ export const serializeMethods = {
         // refresh from the node's transient statusText.
         if (NodeMan.exists("windField")) {
             const windNode = NodeMan.get("windField");
+            // Trigger any deferred reload now that every other node has
+            // been deserialized — see CNodeDisplayWindField.modDeserialize.
+            // Manual / sounding sources read live values from targetWind,
+            // localWind, atmospheric profiles, etc., and would otherwise
+            // race the deserialize loop's awaits.
+            if (windNode._needsPostDeserializeFetch) {
+                windNode._needsPostDeserializeFetch = false;
+                windNode.fetchWindForAltitude(windNode.windAltFt).catch(err => {
+                    console.warn("Non-GFS wind reload failed:", err);
+                });
+            } else if (Array.isArray(windNode._needsPostDeserializeReloadGFS)) {
+                const savedLevels = windNode._needsPostDeserializeReloadGFS;
+                windNode._needsPostDeserializeReloadGFS = null;
+                windNode._reloadGFSAfterDeserialize(savedLevels).catch(err => {
+                    console.warn("GFS wind reload failed:", err);
+                });
+            }
             if (windNode.statusText) par.windStatus = windNode.statusText;
         }
 
