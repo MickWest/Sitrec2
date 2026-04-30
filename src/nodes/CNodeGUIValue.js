@@ -309,14 +309,7 @@ export class CNodeGUIValue extends CNodeGUIConstant {
         }
         if (this.value !== v.value) {
             this.value = v.value
-            // setValueQuietly: skip the controller's onChange cascade.
-            // modDeserialize fires during sitch load while other nodes
-            // haven't yet been deserialized, so any onChange that crosses
-            // node boundaries (e.g. "altitude changed → reposition camera
-            // from cameraTrack") would read constructor defaults instead
-            // of saved values. The recalculateCascade() below propagates
-            // the new value through the graph the right way.
-            this.guiEntry.setValueQuietly(this.value)
+            this.guiEntry.setValue(this.value)
             this.recalculateCascade()
         }
     }
