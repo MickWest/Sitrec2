@@ -372,6 +372,12 @@ export class CNodeDisplayTrack extends CNode3DGroup {
     updateContrail() {
         if (this.contrail && !this.contrailNode) {
             const inputs = {track: this.in.track};
+            // Prefer the windField (altitude-aware, source-driven). The
+            // legacy targetWind stays wired as a fallback so a saved sitch
+            // without an active windField still renders drift+spread.
+            if (NodeMan.exists("windField")) {
+                inputs.windField = NodeMan.get("windField");
+            }
             if (NodeMan.exists("targetWind")) {
                 inputs.wind = NodeMan.get("targetWind");
             }

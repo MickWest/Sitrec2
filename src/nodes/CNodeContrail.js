@@ -3,8 +3,9 @@ import * as THREE from "three";
 import {GlobalDateTimeNode, setRenderOne, Sit} from "../Globals";
 import {dispose} from "../threeExt";
 import {V3} from "../threeUtils";
-import {getLocalUpVector} from "../SphericalMath";
+import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {ECEFToLLAVD_radii, RLLAToECEF_radii} from "../LLA-ECEF-ENU";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {radians} from "../utils";
 import * as LAYER from "../LayerMasks";
 
@@ -18,7 +19,14 @@ export class CNodeContrail extends CNode3DGroup {
         super(v);
 
         this.input("track");
-        this.optionalInputs(["wind", "dataTrack"]);
+        // `windField` (CNodeDisplayWindField) is the preferred wind source —
+        // it knows the user-selected wind data (manual / GFS / soundings /
+        // openmeteo / track-driven) and supports per-altitude sampling so the
+        // contrail reflects wind variation along its length and at its actual
+        // flight altitude. `wind` (a CNodeWind such as `targetWind`) is the
+        // legacy fallback used when no windField is wired or when the field
+        // has no data at the sampled location.
+        this.optionalInputs(["wind", "windField", "dataTrack"]);
 
         this.duration = v.duration ?? 100;         // seconds of trail
         this.sampleInterval = v.sampleInterval ?? 5; // seconds between samples
@@ -134,11 +142,41 @@ export class CNodeContrail extends CNode3DGroup {
         return RLLAToECEF_radii(radians(lla.x), radians(lla.y), targetAlt);
     }
 
+    // Resolve a per-frame ECEF wind vector at `pos`, sampling the windField
+    // at the contrail's altitude when available so a long contrail bends with
+    // wind variation along its length. Falls back to the legacy `wind` input
+    // (a CNodeWind, typically `targetWind`) when the field has no data here
+    // — old saves without windField wired keep working unchanged.
+    //
+    // `trackAltHae` is height above the WGS-84 ellipsoid (what
+    // ECEFToLLAVD_radii returns); the wind field samples in MSL-meters so we
+    // subtract the geoid offset before sampling.
+    _windAt(pos, frame, trackAltHae) {
+        const windField = this.in.windField;
+        if (windField && windField.windU) {
+            const lla = ECEFToLLAVD_radii(pos);
+            if (Number.isFinite(lla.x) && Number.isFinite(lla.y)) {
+                const altMsl = (Number.isFinite(trackAltHae) ? trackAltHae : lla.z)
+                    - meanSeaLevelOffset(lla.x, lla.y);
+                const uv = windField.sampleWindAtAltitude(lla.x, lla.y, altMsl);
+                if (uv && Number.isFinite(uv.u) && Number.isFinite(uv.v)) {
+                    const east = getLocalEastVector(pos);
+                    const north = getLocalNorthVector(pos);
+                    return east.multiplyScalar(uv.u)
+                        .add(north.multiplyScalar(uv.v))
+                        .divideScalar(Sit.fps);
+                }
+            }
+        }
+        if (this.in.wind) return this.in.wind.getValueFrame(frame, pos);
+        return null;
+    }
+
     rebuildRibbon(frame) {
         this.removeMesh();
 
-        const wind = this.in.wind;
         const fps = Sit.fps;
+        const hasWind = !!(this.in.wind || (this.in.windField && this.in.windField.windU));
 
         // Collect sample points with elapsed time and original track altitude
         const samples = [];
@@ -154,9 +192,9 @@ export class CNodeContrail extends CNode3DGroup {
             const trackAlt = ECEFToLLAVD_radii(pos).z;
 
             // Apply wind drift computed at this point's location (not a shared reference)
-            if (wind) {
-                const windPerFrame = wind.getValueFrame(frame, pos);
-                pos.add(windPerFrame.multiplyScalar(t * fps));
+            if (hasWind) {
+                const windPerFrame = this._windAt(pos, frame, trackAlt);
+                if (windPerFrame) pos.add(windPerFrame.multiplyScalar(t * fps));
             }
 
             samples.push({pos, elapsed: t, trackAlt});
@@ -265,10 +303,15 @@ export class CNodeContrail extends CNode3DGroup {
             // Spread half-width in wind direction (computed locally at this point)
             const spreadHW = this.spread * elapsed / 2;
 
+            // Sample wind at the contrail sample's flight altitude so a
+            // long ribbon spreading across regions with different winds-
+            // aloft tracks each region's actual wind, not a single
+            // column-average value.
+            const windVec = (hasWind && spreadHW > 0)
+                ? this._windAt(p, frame, trackAlt) : null;
+
             let leftOffset, rightOffset;
-            if (wind && spreadHW > 0) {
-                // Compute local horizontal wind direction at this point
-                const windVec = wind.getValueFrame(frame, p);
+            if (windVec) {
                 let localWindDir = windVec.clone().sub(up.clone().multiplyScalar(windVec.dot(up)));
                 if (localWindDir.lengthSq() > 1e-10) {
                     localWindDir.normalize();
