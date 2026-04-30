@@ -79,7 +79,11 @@ export class CNodeGUIColor extends CNodeGUIConstant {
     modDeserialize(v) {
         super.modDeserialize(v);
         this.value = new Color(v.value);
-        this.guiEntry.setValue(this.value)
+        // setValueQuietly: skip onChange. recalculateCascade() below
+        // propagates the new value the right way; firing onChange here
+        // also runs any user-supplied onChange against partially-restored
+        // peer nodes. Same pattern as CNodeGUIValue.modDeserialize.
+        this.guiEntry.setValueQuietly(this.value)
         this.recalculateCascade()
     }
 
