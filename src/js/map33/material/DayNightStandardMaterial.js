@@ -46,12 +46,14 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
             `#include <common>
 attribute vec3 barycentric;
 varying vec3 vBarycentric;
-varying vec3 vWorldPositionDN;`
+varying vec3 vWorldPositionDN;
+varying vec2 vDNUv;`
         );
 
         const vertexInjection =
             `vWorldPositionDN = (modelMatrix * vec4(transformed, 1.0)).xyz;
-vBarycentric = barycentric;`;
+vBarycentric = barycentric;
+vDNUv = uv;`;
 
         if (shader.vertexShader.includes('#include <worldpos_vertex>')) {
             shader.vertexShader = shader.vertexShader.replace(
@@ -80,7 +82,8 @@ uniform float tileOutputGamma;
 uniform bool showBuildingEdges;
 uniform bool showTileEdges;
 varying vec3 vWorldPositionDN;
-varying vec3 vBarycentric;`
+varying vec3 vBarycentric;
+varying vec2 vDNUv;`
         );
 
         // After the full PBR pipeline (including dithering), darken fragments
@@ -106,8 +109,8 @@ if (showTileEdges) {
     // derivative trick used by the building-edges path above (which uses
     // barycentric coords for per-triangle edges); here we use the tile UV
     // for per-tile boundaries.
-    vec2 uvD = fwidth(vUv);
-    vec2 distToEdge = min(vUv, vec2(1.0) - vUv);
+    vec2 uvD = fwidth(vDNUv);
+    vec2 distToEdge = min(vDNUv, vec2(1.0) - vDNUv);
     float pxFromEdge = min(distToEdge.x / max(uvD.x, 1e-7),
                            distToEdge.y / max(uvD.y, 1e-7));
     float borderFactor = 1.0 - smoothstep(1.0, 2.0, pxFromEdge);
