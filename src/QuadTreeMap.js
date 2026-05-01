@@ -8,8 +8,8 @@ import {assert} from "./assert";
 import "./threeExt";
 import {EventManager} from "./CEventManager";
 
-// Reusable Vector3 objects to avoid garbage collection pressure
-// These are reused across all tile visibility calculations
+// Reusable Vector3 objects to avoid garbage collection pressure.
+// Reused across all tile visibility calculations within a single pass.
 const _cameraPositionClone = new Vector3();
 
 // Tile subdivision treats a slightly-wider frustum than the render frustum as
@@ -24,6 +24,14 @@ const SUBDIVISION_FOV_DILATION = 1.15;
 // per-tile geometric error: at zoom z, tile spans this/2^z meters at the
 // equator, scaled by cos(lat) at higher latitudes.
 const EARTH_CIRCUMFERENCE_M = 40075016.686;
+
+// Hysteresis: only merge children back to parent when SSE drops well below
+// the subdivide threshold. This leaves a dead band [target*factor, target]
+// where neither subdivide nor merge fires, preventing flicker as a tracked
+// camera oscillates around the boundary. 0.5 = "merge only after SSE drops
+// by a full zoom level's worth of detail." Smaller = stickier, larger = less
+// memory but more flicker.
+const MERGE_HYSTERESIS_FACTOR = 0.5;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // QuadTreeMap is the base class of a QuadTreeMapTexture and a QuadTreeMapElevation
@@ -516,6 +524,14 @@ export class QuadTreeMap {
             // Determine if subdivision is needed
             const shouldSubdivide = this.shouldSubdivideTile(tile, visibility, errorTargetPixels);
 
+            // Hysteresis: a tile that no longer warrants subdivision (sse <=
+            // target) only merges its children once SSE has dropped well
+            // below the threshold. The dead band (target*factor, target]
+            // keeps the tree stable while a tracked camera oscillates.
+            // An invisible tile (sse=0) always satisfies the merge condition.
+            const shouldMerge = !shouldSubdivide
+                && visibility.screenSpaceError < errorTargetPixels * MERGE_HYSTERESIS_FACTOR;
+
             if (shouldSubdivide && isActiveInView && tile.z < this.maxZoom) {
                 // RACE CONDITION FIX: Defer subdivision while parent tile is loading
                 if (isTextureMap && tile.isLoading) {
@@ -534,8 +550,8 @@ export class QuadTreeMap {
                 continue;
             }
 
-            // Check for merging children back to parent
-            if (!shouldSubdivide && hasChildren) {
+            // Check for merging children back to parent (gated by hysteresis)
+            if (shouldMerge && hasChildren) {
                 if (this.mergeChildrenIfPossible(tile, tileLayers) && diag) diag.merged++;
             }
         }
