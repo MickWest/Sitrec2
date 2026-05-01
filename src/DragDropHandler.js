@@ -7,6 +7,7 @@ import {getLocalSouthVector, getLocalUpVector} from "./SphericalMath";
 import {SITREC_DEV_DOMAIN, SITREC_DOMAIN} from "./configUtils";
 
 import {EventManager} from "./CEventManager";
+import {hideProgress, initProgress, updateProgress} from "./CProgressIndicator";
 import {MP4_DEMUXER_EXTENSIONS, WEBAUDIO_SUPPORTED_EXTENSIONS} from "./AudioFormats";
 import {ViewMan} from "./CViewManager";
 import {quickFetch} from "./quickFetch";
@@ -343,11 +344,36 @@ class CDragDropHandler {
         // otherwise we load and then parse the file with the FileManager
         // and then decide what to do with it based on the file extension
 
+        // Show a progress indicator while we read the file into memory. Big
+        // .ts videos (~100 MB+) and other large dropped files can take several
+        // seconds to read off disk, and previously the UI gave no feedback —
+        // it just sat there looking frozen. Mirrors the pattern NITFParser
+        // already uses (see CProgressIndicator). The threshold filter avoids
+        // flashing the indicator for small files that read in <100 ms.
+        const SHOW_PROGRESS_BYTES = 4 * 1024 * 1024; // 4 MB
+        const showProgress = file.size > SHOW_PROGRESS_BYTES;
+        if (showProgress) {
+            initProgress({title: 'Loading file', filename: file.name});
+            updateProgress({status: 'Reading file...', loaded: 0, total: file.size});
+        }
+
         let promise = new Promise((resolve, reject) => {
             let reader = new FileReader();
+            if (showProgress) {
+                reader.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        updateProgress({loaded: e.loaded, total: e.total});
+                    }
+                };
+            }
             reader.readAsArrayBuffer(file);
             reader.onloadend = () => {
+                if (showProgress) hideProgress();
                 this.queueResult(file.name, reader.result, null);
+            };
+            reader.onerror = () => {
+                if (showProgress) hideProgress();
+                reject(reader.error);
             };
         });
 

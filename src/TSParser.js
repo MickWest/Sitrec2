@@ -1,4 +1,5 @@
 import {showError} from "./showError";
+import {hideProgress, initProgress, updateProgress} from "./CProgressIndicator";
 
 /**
  * Transport Stream (TS) Parser
@@ -14,13 +15,24 @@ export class TSParser {
      * @param {Function} parseAssetCallback - Callback function to parse extracted streams
      * @returns {Promise} Promise that resolves to array of parsed streams
      */
-    static parseTSFile(filename, id, buffer, parseAssetCallback) {
+    static async parseTSFile(filename, id, buffer, parseAssetCallback) {
+        // Show a progress indicator covering the synchronous extraction phase.
+        // For a 700 MB .ts file the per-packet scan can run ~10 seconds; without
+        // an indicator the UI looks frozen between FileReader completion and the
+        // video decoder taking over. The DragDropHandler's own indicator covers
+        // the upstream FileReader read; this one covers the parse step.
+        const shortName = filename.split('/').pop();
+        initProgress({title: 'Parsing transport stream', filename: shortName});
+        updateProgress({status: 'Extracting streams...', loaded: 0, total: buffer.byteLength});
         try {
-            const streams = TSParser.extractTSStreams(buffer);
+            const streams = await TSParser.extractTSStreamsAsync(buffer);
 
             if (streams.length === 0) {
-                return Promise.resolve([]);
+                hideProgress();
+                return [];
             }
+
+            updateProgress({status: 'Decoding substreams...', percent: 100});
 
             // Create promises for each extracted stream
             const streamPromises = streams.map(stream => {
@@ -30,20 +42,27 @@ export class TSParser {
             });
 
             // Wait for all streams to be processed
-            return Promise.all(streamPromises);
+            const results = await Promise.all(streamPromises);
+            hideProgress();
+            return results;
 
         } catch (error) {
+            hideProgress();
             showError('Error parsing TS file:', error);
-            return Promise.reject(error);
+            throw error;
         }
     }
 
     /**
-     * Extract streams from TS buffer using proper PSI parsing
+     * Extract streams from TS buffer using proper PSI parsing.
+     * Async + yields periodically so big files don't lock the UI for the
+     * full duration of the per-packet scan (~10 s on a 700 MB .ts on the
+     * main thread). Updates the shared progress indicator if one is open;
+     * the caller controls the surrounding initProgress / hideProgress.
      * @param {ArrayBuffer} buffer - The TS file buffer
-     * @returns {Array} Array of extracted streams
+     * @returns {Promise<Array>} Array of extracted streams
      */
-    static extractTSStreams(buffer) {
+    static async extractTSStreamsAsync(buffer) {
         try {
             // Use the new detailed analysis to get stream information
             const analysis = TSParser.probeTransportStreamBufferDetailed(buffer);
@@ -88,7 +107,19 @@ export class TSParser {
 
             // Extract payload data for each elementary stream
             const packetSize = 188;
+            // Yield to the event loop every ~100K packets (~18 MB scanned).
+            // At ~100 ns per packet that's ~10 ms of work between yields —
+            // close enough to a 60 fps frame budget that the UI stays
+            // responsive and the progress bar can repaint.
+            const YIELD_INTERVAL = 100000;
+            let nextYieldOffset = YIELD_INTERVAL * packetSize;
+            const totalBytes = uint8Array.length;
             for (let offset = 0; offset < uint8Array.length - packetSize; offset += packetSize) {
+                if (offset >= nextYieldOffset) {
+                    nextYieldOffset += YIELD_INTERVAL * packetSize;
+                    updateProgress({status: 'Extracting streams...', loaded: offset, total: totalBytes});
+                    await new Promise(r => setTimeout(r, 0));
+                }
                 // Check for sync byte (0x47)
                 if (uint8Array[offset] !== 0x47) {
                     // Try to find next sync byte
