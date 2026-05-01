@@ -62,14 +62,17 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
 
 
         EventManager.addEventListener("elevationChanged", () => {
-            if (this.useAGL) {
-
-                // WHY DOES THIS NOT ADJSUT THE ALTITUDE BASED ON THE NEW ELEVATION?
-
+            // Two terrain-dependent altitude paths need refreshing when terrain changes:
+            //   useAGL          — raw KLV/CSV altitudes interpreted as AGL (column-driven)
+            //   altitudeLockAGL — display-track-driven AGL lock that writes through to the
+            //                     data track (see CNodeDisplayTrack altitudeLock GUI)
+            // The previous gate covered only useAGL, leaving altitudeLockAGL tracks frozen
+            // against whatever incomplete terrain state existed at first recalculate. That
+            // produced a load-order race: if elevation tiles for the track region weren't
+            // built yet, the baked-in ground altitude could be ~150 m too low and stay there.
+            if (this.useAGL || this.altitudeLockAGL) {
                 this.makeArrayForTrackDisplay();
-
-                // CHECK IF THIS IS RECREATING THE DISPLAY TRACKS
-                this.recalculateCascade()
+                this.recalculateCascade();
             }
         });
     }
