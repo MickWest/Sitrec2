@@ -189,7 +189,13 @@ export const parseMethods = {
 
                 for (const x of parsedResult) {
                     this.remove(x.filename);
-                    const originalData = x.convertedBuffer || result;
+                    // For multi-stream extracts (e.g. .ts → h264/aac/klv), prefer the
+                    // substream's own raw bytes for `original` over the parent archive
+                    // `result`. Using `result` would attach a full archive-sized copy
+                    // to every substream entry — for a 100 MB .ts with 3 streams that
+                    // wastes ~300 MB. The substream's own bytes are also what a user
+                    // expects when downloading a single extracted stream.
+                    const originalData = x.convertedBuffer || x.streamData || result;
                     this.add(x.filename, x.parsed, originalData);
                     const fileManagerEntry = this.list[x.filename];
                     fileManagerEntry.dynamicLink = !isMultiple;
@@ -968,7 +974,16 @@ export const parseMethods = {
         if (filename.toLowerCase().endsWith('.ts')) {
             return TSParser.parseTSFile(filename, id, buffer, (streamFilename, streamId, streamData, streamMetadata) => {
                 console.log("Detected TS Stream: " + streamFilename + " for id: " + streamId + "");
-                return this.parseAsset(streamFilename, streamId, streamData, streamMetadata);
+                return this.parseAsset(streamFilename, streamId, streamData, streamMetadata)
+                    .then(parsedSubstream => {
+                        // Tag the parsed result with the substream's raw demuxed bytes
+                        // so parseResult can use these as `original` instead of the full
+                        // archive buffer. Skips arrays (nested multi-stream) defensively.
+                        if (parsedSubstream && !Array.isArray(parsedSubstream)) {
+                            parsedSubstream.streamData = streamData;
+                        }
+                        return parsedSubstream;
+                    });
             });
         }
 
