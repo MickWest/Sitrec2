@@ -66,6 +66,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             uniform float nearPlane;
             uniform float farPlane;
             uniform bool useDayNight;
+            uniform bool showTileEdges;
             
             varying vec2 vUv;
             varying vec3 vNormal;
@@ -113,9 +114,23 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                     finalColor = textureColor;
                 }
                 
+                // Magenta border around each tile (debug overlay). Uses screen-
+                // space derivatives of vUv to get a constant 2-pixel-wide line
+                // regardless of zoom. Mirrors the building-edges trick in
+                // DayNightStandardMaterial — there it's per-triangle from
+                // barycentric coords; here it's per-tile from the 0..1 UV.
+                if (showTileEdges) {
+                    vec2 uvD = fwidth(vUv);
+                    vec2 distToEdge = min(vUv, vec2(1.0) - vUv);
+                    float pxFromEdge = min(distToEdge.x / max(uvD.x, 1e-7),
+                                           distToEdge.y / max(uvD.y, 1e-7));
+                    float borderFactor = 1.0 - smoothstep(1.0, 2.0, pxFromEdge);
+                    finalColor.rgb = mix(finalColor.rgb, vec3(1.0, 0.0, 1.0), borderFactor);
+                }
+
                 // Set alpha based on transparency parameter
                 finalColor.a = transparency;
-                
+
                 // Convert sRGB-space output to linear to match standard materials.
                 // The copy-to-screen shader applies sRGB encoding, so this round-trips
                 // back to the original sRGB values while keeping the RT consistently linear.
@@ -128,9 +143,10 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 gl_FragDepthEXT = z * 0.5 + 0.5;
             }
         `,
-        // Enable depth writing extension
+        // Enable depth writing + derivatives (fwidth, used by tile-edge overlay).
         extensions: {
-            fragDepth: true
+            fragDepth: true,
+            derivatives: true
         }
     });
     

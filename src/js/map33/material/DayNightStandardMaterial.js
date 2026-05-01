@@ -31,6 +31,7 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
             sunAmbientIntensity: sharedUniforms.sunAmbientIntensity,
             tileOutputGamma: {value: this.tileOutputGamma},
             showBuildingEdges: sharedUniforms.showBuildingEdges,
+            showTileEdges: sharedUniforms.showTileEdges,
         };
 
         this.onBeforeCompile = this._onBeforeCompile.bind(this);
@@ -77,6 +78,7 @@ uniform float sunGlobalTotal;
 uniform float sunAmbientIntensity;
 uniform float tileOutputGamma;
 uniform bool showBuildingEdges;
+uniform bool showTileEdges;
 varying vec3 vWorldPositionDN;
 varying vec3 vBarycentric;`
         );
@@ -95,6 +97,21 @@ if (showBuildingEdges) {
     float edgeFactor = min(min(a3.x, a3.y), a3.z);
     vec3 edgeColor = vec3(0.25);
     gl_FragColor.rgb = mix(edgeColor, gl_FragColor.rgb, edgeFactor);
+}
+if (showTileEdges) {
+    // Magenta 2-pixel border around each tile, anti-aliased.
+    // vUv runs 0..1 across the tile; fwidth(vUv) gives UV change per pixel,
+    // so dividing distance-to-edge by that yields pixel distance to the
+    // nearest tile edge regardless of zoom. This is the same screen-space
+    // derivative trick used by the building-edges path above (which uses
+    // barycentric coords for per-triangle edges); here we use the tile UV
+    // for per-tile boundaries.
+    vec2 uvD = fwidth(vUv);
+    vec2 distToEdge = min(vUv, vec2(1.0) - vUv);
+    float pxFromEdge = min(distToEdge.x / max(uvD.x, 1e-7),
+                           distToEdge.y / max(uvD.y, 1e-7));
+    float borderFactor = 1.0 - smoothstep(1.0, 2.0, pxFromEdge);
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.0, 1.0), borderFactor);
 }
 if (useDayNight) {
     vec3 globalNormal = normalize(vWorldPositionDN - earthCenter);

@@ -132,6 +132,7 @@ export const serializeMethods = {
                     showBuildings: terrainModel.showBuildings,
                     buildingsSource: terrainModel.buildingsSource,
                     showBuildingEdges: terrainModel.showBuildingEdges,
+                    showTileEdges: terrainModel.showTileEdges,
                     showOceanSurface: terrainModel.showOceanSurface,
                 }
             }
@@ -215,6 +216,7 @@ export const serializeMethods = {
                     showBuildings: terrainModel.showBuildings,
                     buildingsSource: terrainModel.buildingsSource,
                     showBuildingEdges: terrainModel.showBuildingEdges,
+                    showTileEdges: terrainModel.showTileEdges,
                     showOceanSurface: terrainModel.showOceanSurface,
                 }
             }

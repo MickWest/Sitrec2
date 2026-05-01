@@ -1,5 +1,6 @@
 import {CNode} from "./CNode";
 import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {assert} from "../assert";
 import {configParams} from "../runtimeConfig";
 import {isLocal, isServerless, SITREC_APP, SITREC_TERRAIN} from "../configUtils";
@@ -672,6 +673,17 @@ export class CNodeTerrainUI extends CNode {
                     this.buildingsNode.setShowEdges(v);
                 }
             }).tooltip(t("terrainUI.buildingEdges.tooltip"));
+
+            // Magenta border around each terrain/imagery tile. Useful for
+            // debugging tile boundaries / coverage / per-zoom subdivision.
+            // Drawn by DayNightStandardMaterial via a UV-edge shader chunk
+            // (mirrors the building-edges barycentric trick, but per-tile).
+            this.showTileEdges = v.showTileEdges ?? false;
+            sharedUniforms.showTileEdges.value = this.showTileEdges;
+            this.gui.add(this, "showTileEdges").name("Tile Edges").onChange(v => {
+                sharedUniforms.showTileEdges.value = v;
+                setRenderOne(true);
+            }).tooltip("Outline each terrain tile with a 2px magenta border");
 
             if (hasGoogle) {
                 this.gui.add(this, "showOceanSurface").name(t("terrainUI.oceanSurface.label")).onChange(() => {
