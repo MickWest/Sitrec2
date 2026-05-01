@@ -323,18 +323,20 @@ export class VideoDecodeWorkerManager {
         if (this.busy) return false;
         this.busy = true;
 
+        // rawChunkDataArray entries are fresh-allocated buffers from chunk.copyTo()
+        // in CVideoWebCodecBase._requestGroupViaWorker, so we can transfer them
+        // directly without an extra slice() copy.
         const transferList = [];
         const chunkDataArray = [];
         for (let i = 0; i < rawChunkDataArray.length; i++) {
             const raw = rawChunkDataArray[i];
-            const copy = raw.slice(0);
             chunkDataArray.push({
                 type: chunks[i].type,
                 timestamp: chunks[i].timestamp,
                 duration: chunks[i].duration,
-                data: copy,
+                data: raw,
             });
-            transferList.push(copy);
+            transferList.push(raw);
         }
 
         this.worker.postMessage({

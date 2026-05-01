@@ -356,7 +356,6 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
     startWithDemuxer(demuxer) {
         this.initializeCommonVariables();
         this.nextRequest = null;
-        this.rawChunkData = [];
 
         this.demuxFrame = 0;
 
@@ -565,10 +564,8 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
     _addChunkToGroups(chunk, demuxer) {
         chunk.frameNumber = this.demuxFrame++;
         this.chunks.push(chunk);
-
-        const rawBuf = new ArrayBuffer(chunk.byteLength);
-        chunk.copyTo(rawBuf);
-        this.rawChunkData.push(rawBuf);
+        // No rawChunkData retention — bytes are extracted on demand at decode
+        // time via chunk.copyTo() in CVideoWebCodecBase._requestGroupViaWorker.
 
         if (chunk.type === "key") {
             this.groups.push({
