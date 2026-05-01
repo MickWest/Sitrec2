@@ -38,6 +38,14 @@ const testDataDefault = [
     { id: "bledsoe", name: "bledsoe", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/15857/BledsoeZoom/20250623_153507.js&frame=10" },
     { id: "mosul", name: "mosul", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Mosul%20Orb/20250707_055311.js&frame=62"},
     { id: "nightsky-permalink", name: "nightsky permalink", url: "?sitch=nightsky&data=~(olat~51.48~olon~-3.16~lat~34.376627662040825~lon~-84.00309157040817~alt~36971.33215490772~startTime~%272023-02-28T00*3a45*3a41.276Z~az~-177.37058519694682~el~7.572727018255932~fov~48.170999999999985~roll~0~p~(x~-12526146.672264077~y~95667.1964429412~z~-1873477.710260879)~u~(x~0.05837430502341399~y~0.7414944410493608~z~0.6684148669845169)~q~(x~-0.39473570622715626~y~-0.6187577123399634~z~0.053388772167075584~w~0.6771057928091114)~f~526~pd~true~ssa~true~sfr~false~sfb~true~ssn~true~spd~29.3~rehostedFiles~(~%27https*3a*2f*2fsitrec.s3.us-west-2.amazonaws.com*2f15857*2fG6-1-6a5ed9b876ea212544084f48a933bcae.txt~%27https*3a*2f*2fsitrec.s3.us-west-2.amazonaws.com*2f15857*2fN230FR-track-press_alt_uncorrected*2520*25281*2529-fef762b490d1e988d0811bfb68a42273.kml)~rhs~true)_", timeout: 120000 },
+    // demo-truck: KLV-driven sitch at Cheyenne, WY. Exercises the AGL-locked
+    // MISB target track over real terrain (with the truck driving under a
+    // bridge). Regression target: the load-order race where elevationAtLL
+    // returned an incomplete-terrain altitude and the truck was rendered
+    // ~150 m underground. Covers both Fix 1 (CNodeMISBData listener gate)
+    // and Fix 3 (per-frame elevation cache + serialization). Local mirror
+    // caps below this region's required zoom, so use live tiles.
+    { id: "demo-truck", name: "demo truck", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/1/Demo%20Truck%20With%203D%20buildings%20and%20video%20on%20Ground/20260307_002836.js&frame=660", localTerrain: false, timeout: 180000 },
 ];
 
 

@@ -10,6 +10,7 @@ import {CGeoJSON} from "../geoJSONUtils";
 import {isLocal} from "../configUtils"
 import stringify from "json-stringify-pretty-compact";
 import {Vector3} from "three";
+import {LLAToECEF, ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 
 export class CNodeTrackFromMISB extends CNodeTrack {
     constructor(v) {
@@ -25,6 +26,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
 //        console.log("CNodeTrackFromMISB:constructor(): columns[2] = ",this._columns[2])
 
         this.input("misb")
+        this.optionalInputs(["terrain"])
 
         this.frameRelativeTime = v.frameRelativeTime ?? false; // if true, the start time is fixed to the first time calculated
 
@@ -33,6 +35,13 @@ export class CNodeTrackFromMISB extends CNodeTrack {
 
         this.addInput("startTime",GlobalDateTimeNode)
         this.recalculate()
+
+        // Note: no separate elevationChanged listener here. CNodeMISBData (the
+        // upstream data node) already listens for that event and triggers a
+        // recalculateCascade for AGL tracks — which calls our recalculate(),
+        // which calls getPointBelowCached, which auto-detects stale cache
+        // entries via elevationTileHasHigherZoom and re-samples them. Adding a
+        // listener here would just double every cascade.
 
         this.exportable = exportable;
         if (this.exportable) {
@@ -68,6 +77,58 @@ export class CNodeTrackFromMISB extends CNodeTrack {
 
             this.timeArray.push(misb.getTime(i));
             this.validArray.push(misb.isValid(i));
+        }
+    }
+
+    // Pick the terrain node we'll cache against. Optional input wins; otherwise
+    // fall back to the global TerrainModel. Returns null if no terrain available
+    // — callers must handle that (the recalculate loop falls back to the
+    // existing per-vertex elevationAtLL path in that case).
+    _resolveTerrainNode() {
+        return this.in.terrain ?? NodeMan.get("TerrainModel", false) ?? null;
+    }
+
+    // Per-frame AGL offset: altitudeLockAGL takes precedence (display-driven
+    // override). Otherwise use the per-frame interpolated raw column value as
+    // an AGL height (the useAGL=true case). For useAGL we have to pass the
+    // *interpolated* offset in to the cache lookup, so we compute it inline.
+    _aglOffsetForFrame(misb, slot, fraction) {
+        if (misb.altitudeLockAGL && misb.altitudeLock !== undefined && misb.altitudeLock !== -1) {
+            return misb.altitudeLock;
+        }
+        if (misb.useAGL) {
+            // Read the column value directly. Don't go through getRawAlt — that
+            // pre-bakes terrain via uncached elevationAtLL, which is what the
+            // cached path is meant to replace.
+            const a0 = Number(misb.misb[slot][misb.altCol]);
+            const a1 = Number(misb.misb[slot + 1][misb.altCol]);
+            return interpolate(a0, a1, fraction);
+        }
+        return 0; // not used for non-AGL paths
+    }
+
+    modSerialize() {
+        const result = {
+            ...super.modSerialize(),
+        };
+        // Persist the elevation cache so a sitch that's already been viewed at
+        // high zoom hands out correct ground altitudes on first reload, with
+        // zero dependence on tile-build timing. Sparse-by-construction: only
+        // frames that have been queried have entries.
+        const elevCache = this.serializeElevationCache();
+        if (elevCache) result.elevationCache = elevCache;
+        return result;
+    }
+
+    modDeserialize(v) {
+        super.modDeserialize(v);
+        if (v.elevationCache !== undefined) {
+            this.deserializeElevationCache(v.elevationCache);
+            // No explicit recalculateCascade here. The constructor's recalculate
+            // already populated this.array from current terrain; the upstream
+            // CNodeMISBData listener will fire a cascade when terrain settles
+            // (or has already), and that cascade re-runs our recalculate which
+            // hits the now-restored cache entries via getPointBelowCached.
         }
     }
 
@@ -310,6 +371,22 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         const _e2 = (eqR * eqR - polR * polR) / (eqR * eqR);
         const _ratio = (polR * polR) / (eqR * eqR);
 
+        // Resolve a terrain node once if we'll need it. AGL paths route through
+        // the inherited per-frame elevation cache (CNodeTrack.getPointBelowCached)
+        // for two reasons: (1) lookups are O(1) hash hits after the cache fills,
+        // and (2) the cache is serialized in modSerialize, so reloading a sitch
+        // gives correct ground altitudes immediately — eliminating the load-order
+        // race where elevationAtLL() returned a too-low value because terrain
+        // tiles for the track region hadn't built yet at first recalculate.
+        const useAGLPath = (misb.useAGL || misb.altitudeLockAGL);
+        const terrainNode = useAGLPath ? this._resolveTerrainNode() : null;
+
+        // If frame count changed (e.g., Sit.frames updated), drop a stale cache
+        // rather than risk frame-vs-cache index drift.
+        if (this.elevationCache && this.elevationCache.length !== Sit.frames) {
+            this.elevationCache = null;
+        }
+
         for (var f=0;f<Sit.frames;f++) {
             var msNow = msStart + Math.floor(frameTime*1000)
             // advance the slot if needed
@@ -360,36 +437,43 @@ export class CNodeTrackFromMISB extends CNodeTrack {
 
             const lat = interpolate(this.latArray[slot], this.latArray[slot +1], fraction);
             const lon = interpolate(this.lonArray[slot], this.lonArray[slot +1], fraction);
-            // SensorTrueAltitude is MSL (orthometric); convert to HAE for ECEF (h = H + N)
-            const altMSL = misb.adjustAlt(interpolate(this.rawAltArray[slot], this.rawAltArray[slot +1], fraction), lat, lon);
-            const alt = altMSL + meanSeaLevelOffset(lat, lon);
 
+            let pos;
+            let alt;
+            if (useAGLPath && terrainNode) {
+                // Cached AGL path. Probe the cache to get the ground point at
+                // (lat, lon) plus the per-frame AGL offset. The cache hands out
+                // monotonic-upgrade values (always the highest-zoom terrain seen),
+                // and is persisted across saves — so this branch is deterministic
+                // even on a cold reload before any terrain tile finishes building.
+                const aglOffset = this._aglOffsetForFrame(misb, slot, fraction);
+                const probe = LLAToECEF(lat, lon, 0);
+                pos = this.getPointBelowCached(terrainNode, probe, aglOffset, f);
+                // Recover HAE altitude for diagnostics / lla[] export.
+                const lla = ECEFToLLAVD_radii(pos);
+                alt = lla.z;
+            } else {
+                // Non-AGL path (or terrain not yet available). MSL altitude from
+                // the column data, converted to HAE via geoid offset. Inlined
+                // ECEF math to keep this hot loop tight for KML/aircraft tracks.
+                // SensorTrueAltitude is MSL (orthometric); convert to HAE (h = H + N).
+                const altMSL = misb.adjustAlt(interpolate(this.rawAltArray[slot], this.rawAltArray[slot +1], fraction), lat, lon);
+                alt = altMSL + meanSeaLevelOffset(lat, lon);
 
-            //const pos = LLAToECEF(lat, lon, alt)
+                const rLat = lat * Math.PI / 180
+                const rLon = lon * Math.PI / 180
+                const cosLat = Math.cos(rLat)
+                const sinLat = Math.sin(rLat)
+                const cosLon = Math.cos(rLon)
+                const sinLon = Math.sin(rLon)
+                const N = eqR / Math.sqrt(1 - _e2 * sinLat * sinLat);
 
-            // expanded LLAToECEF out for speed (ellipsoid-aware)
-            const rLat = lat * Math.PI / 180
-            const rLon = lon * Math.PI / 180
-            const cosLat = Math.cos(rLat)
-            const sinLat = Math.sin(rLat)
-            const cosLon = Math.cos(rLon)
-            const sinLon = Math.sin(rLon)
-            const N = eqR / Math.sqrt(1 - _e2 * sinLat * sinLat);
+                const ecefX = (N + alt) * cosLat * cosLon;
+                const ecefY = (N + alt) * cosLat * sinLon;
+                const ecefZ = (_ratio * N + alt) * sinLat;
 
-            // convert LLA to ECEF using ellipsoid model
-            const ecefX = (N + alt) * cosLat * cosLon;
-            const ecefY = (N + alt) * cosLat * sinLon;
-            const ecefZ = (_ratio * N + alt) * sinLat;
-
-            // convert ECEF to ENU
-            // const ecef = new Vector3(ecefX, ecefY, ecefZ);
-            // const enu = ecef.clone().sub((originECEF)).applyMatrix3(mECEF2ENU)
-            // // and store as ECEF
-            // const pos = new Vector3(enu.x, enu.z, -enu.y)
-
-            // Final transformation in one step
-
-            const pos = new Vector3(ecefX, ecefY, ecefZ );
+                pos = new Vector3(ecefX, ecefY, ecefZ);
+            }
             // const posY = pos.y;
             // pos.y = pos.z;
             // pos.z = -posY;
