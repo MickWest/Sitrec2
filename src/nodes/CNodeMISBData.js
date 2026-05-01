@@ -61,19 +61,28 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         }
 
 
+        // Two terrain-dependent altitude paths need refreshing when terrain changes:
+        //   useAGL          — raw KLV/CSV altitudes interpreted as AGL (column-driven)
+        //   altitudeLockAGL — display-track-driven AGL lock that writes through to the
+        //                     data track (see CNodeDisplayTrack altitudeLock GUI)
+        // The previous gate covered only useAGL, leaving altitudeLockAGL tracks frozen
+        // against whatever incomplete terrain state existed at first recalculate.
+        //
+        // Coalesce multiple elevationChanged events within a single frame into one
+        // cascade. Terrain tiles often settle in bursts (a dozen events over a few
+        // frames as new tiles complete), and the full recalculateCascade through
+        // the dependency graph is ~45 ms per call — running it for every tile
+        // burst makes playback visibly jerky. One cascade per frame is plenty
+        // since the per-frame visual update can't be finer than that anyway.
         EventManager.addEventListener("elevationChanged", () => {
-            // Two terrain-dependent altitude paths need refreshing when terrain changes:
-            //   useAGL          — raw KLV/CSV altitudes interpreted as AGL (column-driven)
-            //   altitudeLockAGL — display-track-driven AGL lock that writes through to the
-            //                     data track (see CNodeDisplayTrack altitudeLock GUI)
-            // The previous gate covered only useAGL, leaving altitudeLockAGL tracks frozen
-            // against whatever incomplete terrain state existed at first recalculate. That
-            // produced a load-order race: if elevation tiles for the track region weren't
-            // built yet, the baked-in ground altitude could be ~150 m too low and stay there.
-            if (this.useAGL || this.altitudeLockAGL) {
+            if (!(this.useAGL || this.altitudeLockAGL)) return;
+            if (this._elevRefreshScheduled) return;
+            this._elevRefreshScheduled = true;
+            requestAnimationFrame(() => {
+                this._elevRefreshScheduled = false;
                 this.makeArrayForTrackDisplay();
                 this.recalculateCascade();
-            }
+            });
         });
     }
 
