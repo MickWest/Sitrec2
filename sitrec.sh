@@ -91,6 +91,12 @@ case "${1:-help}" in
         ;;
     pull)
         echo "[sitrec] Pulling latest image and restarting..."
+        # Always re-pin docker-compose.yml to :latest before pulling, so that
+        # `pull` reliably means "get the newest version" regardless of any
+        # prior `versions <X>` selection that pinned an older tag. Without
+        # this, pull would re-fetch the same older tag in a loop.
+        sed -i.bak "s|image: ${IMAGE}:.*|image: ${IMAGE}:latest|" docker-compose.yml
+        rm -f docker-compose.yml.bak
         $COMPOSE pull
         $COMPOSE down
         $COMPOSE up -d
