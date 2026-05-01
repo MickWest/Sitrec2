@@ -6,6 +6,7 @@ import {parseSingleCoordinate} from "../CoordinateParser";
 import {EventManager} from "../CEventManager";
 import {f2m} from "../utils";
 import {adjustHeightAboveGround, adjustHeightHAE} from "../threeExt";
+import {isAltitudeLockActive} from "../AltitudeLock";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 
 export class CNodeOSDDataSeriesTrack extends CNodeTrack {
@@ -173,7 +174,7 @@ export class CNodeOSDDataSeriesTrack extends CNodeTrack {
         }
 
         this.isGroundRelative = !hasAltitude;
-        if (this.altitudeLock !== undefined && this.altitudeLock >= 0) {
+        if (isAltitudeLockActive(this)) {
             const lockFn = (this.altitudeLockAGL !== false) ? adjustHeightAboveGround : adjustHeightHAE;
             for (let f = 0; f < this.frames; f++) {
                 this.array[f].position = lockFn(this.array[f].position, this.altitudeLock);

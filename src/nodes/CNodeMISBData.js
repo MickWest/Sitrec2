@@ -11,6 +11,7 @@ import {EventManager} from "../CEventManager";
 import {elevationAtLL} from "../threeExt";
 import {parsePartialDateTime} from "../ParseUtils";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
+import {isAGLLockActive, isAltitudeLockActive} from "../AltitudeLock";
 import {t} from "../i18n";
 
 //export const MISBFields = Object.keys(MISB).length;
@@ -503,15 +504,11 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
 
     }
 
-    // True iff the track's altitude is locked to the ground (terrain-relative)
-    // AND the lock is currently active. The GUI uses altitudeLock = -1 as the
-    // "off" sentinel, so the mode flag (altitudeLockAGL) alone isn't enough —
-    // a freshly-loaded track defaults to altitudeLockAGL=true with the lock
-    // disabled, which is NOT terrain-dependent.
+    // True iff the track's altitude is locked to the ground AND the lock is
+    // currently active. Delegates to the shared free function so the same
+    // semantics are used by other track classes that have these fields.
     isAGLLockActive() {
-        return this.altitudeLockAGL
-            && this.altitudeLock !== undefined
-            && this.altitudeLock >= 0;
+        return isAGLLockActive(this);
     }
 
     // True iff this track's positions depend on terrain elevation. Either the
@@ -521,7 +518,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
     }
 
     adjustAlt(a, lat, lon) {
-        if (this.altitudeLock !== undefined && this.altitudeLock !== -1) {
+        if (isAltitudeLockActive(this)) {
             if (this.altitudeLockAGL && lat !== undefined && lon !== undefined) {
                 return elevationAtLL(lat, lon) + this.altitudeLock;
             }

@@ -8,6 +8,7 @@ import {ECEFToLLAVD_radii, LLAVToECEF} from "../LLA-ECEF-ENU";
 import {adjustHeightAboveGround, adjustHeightHAE, pointAbove} from "../threeExt";
 import {EventManager} from "../CEventManager";
 import {conformControlPointsToAltitudeLock} from "./trackElevationUtils";
+import {isAGLLockActive, isAltitudeLockActive} from "../AltitudeLock";
 
 // a node wrapper for varioius spline editors
 export class CNodeSplineEditor extends CNodeTrack {
@@ -75,7 +76,7 @@ export class CNodeSplineEditor extends CNodeTrack {
         }
 
         EventManager.addEventListener("elevationChanged", () => {
-            if (this.altitudeLock !== undefined && this.altitudeLock >= 0 && this.altitudeLockAGL) {
+            if (isAGLLockActive(this)) {
                 this.syncControlPointsToAltitudeLock();
                 this.recalculateCascade();
             }
@@ -227,7 +228,7 @@ export class CNodeSplineEditor extends CNodeTrack {
     }
 
     syncControlPointsToAltitudeLock() {
-        if (!this.splineEditor || this.altitudeLock === undefined || this.altitudeLock < 0) {
+        if (!this.splineEditor || !isAltitudeLockActive(this)) {
             return false;
         }
 
@@ -253,7 +254,7 @@ export class CNodeSplineEditor extends CNodeTrack {
     }
     
     applyAltitudeLock(position, frame) {
-        if (this.altitudeLock !== undefined && this.altitudeLock >= 0) {
+        if (isAltitudeLockActive(this)) {
             if (this.altitudeLockAGL === false) {
                 return adjustHeightHAE(position, this.altitudeLock);
             }
