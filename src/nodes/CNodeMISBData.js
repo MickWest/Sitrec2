@@ -1,5 +1,5 @@
 import {LLAToECEF} from "../LLA-ECEF-ENU";
-import {FileManager, NodeMan, Sit} from "../Globals";
+import {FileManager, Globals, NodeMan, Sit} from "../Globals";
 import {MISB, MISBFields} from "../MISBUtils";
 import {CNodeEmptyArray} from "./CNodeArray";
 import {saveAs} from "file-saver";
@@ -80,10 +80,19 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             if (!this.isTerrainDependent()) return;
             if (this._elevRefreshScheduled) return;
             this._elevRefreshScheduled = true;
+            // Bump pendingActions so the regression test framework's
+            // waitForSceneToSettle (and any other "wait until idle" gate)
+            // blocks until the rAF-scheduled cascade has actually run.
+            // Without this, terrain tiles can finish loading + the scene
+            // can mark itself "settled" while a cascade is still queued,
+            // and the screenshot lands on stale track positions — the
+            // visible camera angle then varies between runs.
+            Globals.pendingActions++;
             requestAnimationFrame(() => {
                 this._elevRefreshScheduled = false;
                 this.makeArrayForTrackDisplay();
                 this.recalculateCascade();
+                Globals.pendingActions--;
             });
         });
     }
