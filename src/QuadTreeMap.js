@@ -10,9 +10,20 @@ import {EventManager} from "./CEventManager";
 
 // Reusable Vector3 objects to avoid garbage collection pressure
 // These are reused across all tile visibility calculations
-const _cameraForward = new Vector3();
-const _toSphere = new Vector3();
 const _cameraPositionClone = new Vector3();
+
+// Tile subdivision treats a slightly-wider frustum than the render frustum as
+// "eligible for high LOD" — this is the preload margin for camera pan/track.
+// 1.15 = 15% wider FOV in both axes. Replaces the old `isNearCamera` radial
+// bypass, which was over-eagerly subdividing tiles directly under the camera
+// (a sphere-radius-based test triggers for huge low-zoom tiles even when the
+// camera is looking far away in a completely different direction).
+const SUBDIVISION_FOV_DILATION = 1.15;
+
+// Earth circumference at the equator (Web Mercator reference). Used for
+// per-tile geometric error: at zoom z, tile spans this/2^z meters at the
+// equator, scaled by cos(lat) at higher latitudes.
+const EARTH_CIRCUMFERENCE_M = 40075016.686;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // QuadTreeMap is the base class of a QuadTreeMapTexture and a QuadTreeMapElevation
@@ -381,9 +392,11 @@ export class QuadTreeMap {
      * so deferring just means "try again next frame when parent might be ready".
      * 
      * @param {Object} view - The view containing camera and viewport info
-     * @param {number} subdivideSize - Screen size threshold for subdivision (default: 2000)
+     * @param {number} errorTargetPixels - Refine while screen-space error per
+     *     texel exceeds this many pixels. ~1.5 for texture, ~4 for elevation.
+     *     A texel covering >1px on screen is "too coarse" and triggers refine.
      */
-    subdivideTilesViewSpecific(view, subdivideSize = 2000) {
+    subdivideTilesViewSpecific(view, errorTargetPixels = 1.5) {
         // Skip subdivision for flat elevation maps
         if (this.constructor.name === 'QuadTreeMapElevation' && this.options.elevationType === "Flat") {
             return;
@@ -410,17 +423,47 @@ export class QuadTreeMap {
         const tileLayers = view.tileLayers;
         const isTextureMap = this.constructor.name === 'QuadTreeMapTexture';
 
-        // Setup camera frustum for visibility checks
+        // Setup camera frustums for visibility checks. We build two:
+        //   viewFrustum    — strict frustum that matches what will be rendered
+        //   dilatedFrustum — slightly-wider frustum used as a preload margin
+        //                    so tiles the user is about to pan to stay refined
+        // The dilated frustum replaces the old `isNearCamera` radial bypass,
+        // which was creating a column of high-LOD tiles directly under the
+        // camera regardless of look direction.
         camera.updateMatrixWorld();
-        const frustum = new Frustum();
-        frustum.setFromProjectionMatrix(new Matrix4().multiplyMatrices(
+        const viewProjection = new Matrix4().multiplyMatrices(
             camera.projectionMatrix, camera.matrixWorldInverse
-        ));
-        camera.viewFrustum = frustum;
+        );
+        camera.viewFrustum = new Frustum().setFromProjectionMatrix(viewProjection);
 
-        // Camera forward is constant across all tiles in this pass — compute it
-        // once here instead of once per visible tile inside calculateTileVisibility.
-        camera.getWorldDirection(_cameraForward);
+        // Widen FOV by SUBDIVISION_FOV_DILATION for the subdivision frustum.
+        // In a perspective projection, m[0]=f/aspect and m[5]=f where
+        // f=1/tan(fov/2); dividing both by k widens the horizontal & vertical
+        // FOV by factor k, leaving near/far planes untouched.
+        const dilatedProj = camera.projectionMatrix.clone();
+        dilatedProj.elements[0] /= SUBDIVISION_FOV_DILATION;
+        dilatedProj.elements[5] /= SUBDIVISION_FOV_DILATION;
+        camera.dilatedFrustum = new Frustum().setFromProjectionMatrix(
+            new Matrix4().multiplyMatrices(dilatedProj, camera.matrixWorldInverse)
+        );
+
+        // Stash the per-pass viewport height (in pixels) on the camera so the
+        // visibility check can compute screen-space error in real pixel units.
+        // Fallback to 1080 if the view hasn't sized itself yet (early frames).
+        camera._viewportHeightPx = view.heightPx || 1080;
+
+        // Per-pass diagnostics. Cheap to populate; only allocated when stats
+        // are enabled. Surfaced via logSubdivisionDiag() below.
+        const diag = Globals.showTileStats ? {
+            inStrictFrustum: 0,
+            inDilatedMargin: 0,
+            cameraInsideSphere: 0,
+            horizonOccluded: 0,
+            outOfFrustum: 0,
+            forcedRoot: 0,
+            subdivided: 0,
+            merged: 0,
+        } : null;
 
         // PASS 1: Debug logging (view-specific)
         if (Globals.showTileStats) {
@@ -459,7 +502,7 @@ export class QuadTreeMap {
 
             // Calculate visibility and screen size
             // This is expensive, so we only do it after early exit checks
-            const visibility = this.calculateTileVisibility(tile, camera);
+            const visibility = this.calculateTileVisibility(tile, camera, diag);
 
             // OPTIMIZATION #7: Early exit for invisible tiles without children
             // If tile is not visible and has no children to merge, skip further processing
@@ -471,7 +514,7 @@ export class QuadTreeMap {
             }
 
             // Determine if subdivision is needed
-            const shouldSubdivide = this.shouldSubdivideTile(tile, visibility, subdivideSize);
+            const shouldSubdivide = this.shouldSubdivideTile(tile, visibility, errorTargetPixels);
 
             if (shouldSubdivide && isActiveInView && tile.z < this.maxZoom) {
                 // RACE CONDITION FIX: Defer subdivision while parent tile is loading
@@ -493,7 +536,7 @@ export class QuadTreeMap {
 
             // Check for merging children back to parent
             if (!shouldSubdivide && hasChildren) {
-                this.mergeChildrenIfPossible(tile, tileLayers);
+                if (this.mergeChildrenIfPossible(tile, tileLayers) && diag) diag.merged++;
             }
         }
 
@@ -501,6 +544,32 @@ export class QuadTreeMap {
         // Children created here will be processed on the NEXT frame, not this one.
         for (const tile of tilesToSubdivide) {
             this.subdivideTile(tile, tileLayers, isTextureMap);
+        }
+        if (diag) {
+            diag.subdivided = tilesToSubdivide.length;
+            this.logSubdivisionDiag(diag, view.id);
+        }
+    }
+
+    /**
+     * Log per-pass subdivision diagnostics. Only called when Globals.showTileStats
+     * is enabled. Logs only when something interesting changed (subdivisions,
+     * merges, or culled-tile counts shifted by >5%) to keep the console quiet.
+     */
+    logSubdivisionDiag(diag, viewId) {
+        const viewKey = viewId || 'View';
+        if (!this._lastSubdivisionDiag) this._lastSubdivisionDiag = new Map();
+        const last = this._lastSubdivisionDiag.get(viewKey);
+
+        const interesting = diag.subdivided > 0 || diag.merged > 0
+            || !last
+            || Math.abs(diag.outOfFrustum   - last.outOfFrustum)   > Math.max(5, last.outOfFrustum   * 0.05)
+            || Math.abs(diag.inDilatedMargin - last.inDilatedMargin) > Math.max(2, last.inDilatedMargin * 0.05)
+            || Math.abs(diag.inStrictFrustum - last.inStrictFrustum) > Math.max(5, last.inStrictFrustum * 0.05);
+
+        if (interesting) {
+            debugLog(`[${viewKey}/${this.constructor.name}] strict=${diag.inStrictFrustum} margin=${diag.inDilatedMargin} insideSphere=${diag.cameraInsideSphere} horizon=${diag.horizonOccluded} outFrustum=${diag.outOfFrustum} forcedRoot=${diag.forcedRoot} +sub=${diag.subdivided} +merge=${diag.merged}`);
+            this._lastSubdivisionDiag.set(viewKey, { ...diag });
         }
     }
 
@@ -579,98 +648,83 @@ export class QuadTreeMap {
     }
 
     /**
-     * Calculate visibility and screen size for a tile
+     * Calculate visibility and screen size for a tile.
+     *
+     * Eligibility gate is the dilated frustum (subdivision preload margin),
+     * not a radial near-camera test — the latter caused massive over-subdivision
+     * directly under the camera regardless of look direction. Anything outside
+     * the dilated frustum returns visible=false and is not refined.
+     *
+     * Phase 2 will replace the screenFraction*1024 heuristic with proper SSE
+     * (geometricError * screenHeight / (distance * 2 * tan(fov/2))).
      */
-    calculateTileVisibility(tile, camera) {
+    calculateTileVisibility(tile, camera, diag = null) {
         const worldSphere = tile.getWorldSphere();
-        let screenSize = 0;
+        let screenSpaceError = 0;
         let visible = false;
-        let actuallyVisible = false;
 
         const radius = worldSphere.radius;
         const distance = camera.position.distanceTo(worldSphere.center);
         const closestDistance = Math.max(0, distance - radius);
 
-        // CRITICAL: Check if camera is close to the tile BEFORE frustum check.
-        // A tile directly underneath/behind the camera won't intersect the view frustum,
-        // but it still needs high-res textures because it's nearby and could come into view.
-        // Use a generous threshold - within 2x the tile's radius.
-        const isNearCamera = closestDistance < radius * 2;
+        const inDilated = camera.dilatedFrustum.intersectsSphere(worldSphere);
+        const inStrict  = camera.viewFrustum.intersectsSphere(worldSphere);
 
-        // Check frustum intersection
-        const frustumIntersects = camera.viewFrustum.intersectsSphere(worldSphere);
+        if (inDilated) {
+            // Screen-space error in pixels = geometric error (meters per texel
+            // at this tile's zoom and latitude) projected to screen pixels.
+            // Distance is camera-to-sphere-center, clamped so an inside-the-
+            // sphere camera doesn't produce a divide-by-zero.
+            const cosLat = Math.cos(tile._centerLatRad || 0);
+            const tileSpanMeters = (EARTH_CIRCUMFERENCE_M * cosLat) / Math.pow(2, tile.z);
+            const metersPerTexel = tileSpanMeters / 256;
+            const fovRad = camera.getEffectiveFOV() * Math.PI / 180;
+            const viewportHeightPx = camera._viewportHeightPx || 1080;
+            const projDistance = Math.max(distance, radius * 0.1);
+            screenSpaceError = (metersPerTexel * viewportHeightPx) /
+                               (projDistance * 2 * Math.tan(fovRad / 2));
 
-        if (frustumIntersects || isNearCamera) {
-            // Check if sphere center is behind the camera. _cameraForward is
-            // populated once per subdivideTilesViewSpecific pass at the call site
-            // — it's constant across tiles in a single pass.
-            const toSphere = _toSphere.copy(worldSphere.center).sub(camera.position);
-            const projectionOnForward = toSphere.dot(_cameraForward);
-
-            // If center is behind camera OR tile is near camera (regardless of frustum),
-            // mark as visible but scale screen size by FOV to avoid excessive subdivision
-            // with narrow FOV cameras (e.g. satellite views with FOV=0.01°).
-            if (projectionOnForward < 0 || (isNearCamera && !frustumIntersects)) {
-                // Scale screenSize by FOV relative to a 30° baseline.
-                // With FOV=30°, screenSize=1,000,000 (original behavior).
-                // With FOV=0.01°, screenSize=333 (below typical thresholds, preventing
-                // massive subdivision of off-frustum tiles in satellite views).
-                const fovDeg = camera.getEffectiveFOV();
-                const fovFactor = Math.min(1, fovDeg / 30);
-                screenSize = 1000000 * fovFactor;
+            if (closestDistance < radius * 0.1) {
+                // Camera is essentially inside the bounding sphere — obviously
+                // visible, skip the horizon check.
                 visible = true;
-                actuallyVisible = true;
+                if (diag) diag.cameraInsideSphere++;
             } else {
-                // Normal case: center is in front of camera and in frustum
-                // If camera is inside or very close to the bounding sphere,
-                // skip horizon checks - the tile is obviously visible
-                if (closestDistance < radius * 0.1) {
-                    const fov = camera.getEffectiveFOV() * Math.PI / 180;
-                    const height = 2 * Math.tan(fov / 2) * distance;
-                    const screenFraction = (2 * radius) / height;
-                    screenSize = screenFraction * 1024;
+                // Cull below-horizon and globe-occluded tiles for distant cases.
+                const cameraAltitude = altitudeAboveSphere(_cameraPositionClone.copy(camera.position));
+                const horizon = distanceToHorizon(cameraAltitude);
+
+                if (horizon > closestDistance ||
+                    hiddenByGlobe(cameraAltitude, closestDistance) <= tile.highestAltitude) {
                     visible = true;
-                    actuallyVisible = true;
-                } else {
-                    // Perform horizon and globe occlusion checks for distant tiles
-                    const cameraAltitude = altitudeAboveSphere(_cameraPositionClone.copy(camera.position));
-                    const horizon = distanceToHorizon(cameraAltitude);
-
-                    // Check if visible over horizon
-                    if (horizon > closestDistance ||
-                        hiddenByGlobe(cameraAltitude, closestDistance) <= tile.highestAltitude) {
-
-                        const fov = camera.getEffectiveFOV() * Math.PI / 180;
-                        const height = 2 * Math.tan(fov / 2) * distance;
-                        const screenFraction = (2 * radius) / height;
-                        screenSize = screenFraction * 1024;
-                        visible = true;
-                        actuallyVisible = true;
+                    if (diag) {
+                        if (inStrict) diag.inStrictFrustum++;
+                        else diag.inDilatedMargin++;
                     }
+                } else if (diag) {
+                    diag.horizonOccluded++;
                 }
             }
+        } else if (diag) {
+            diag.outOfFrustum++;
         }
 
-        // Force subdivision for first 3 zoom levels
-        if (tile.z < 3) {
-            screenSize = 10000000000;
+        // Force load of the first 3 zoom levels for the texture map only,
+        // so the lazy-load fallback always has *some* parent texture to
+        // resample from while higher-zoom tiles fetch. Elevation root tiles
+        // are skipped — they're useless at any camera position where SSE
+        // wouldn't already refine them.
+        if (tile.z < 3 && this.constructor.name === 'QuadTreeMapTexture') {
+            screenSpaceError = Math.max(screenSpaceError, Number.POSITIVE_INFINITY);
             visible = true;
-            // For low zoom tiles that cover large areas, also enable lazy loading
-            // These tiles are always "visible" in the sense that they provide texture data
-            actuallyVisible = true;
-        }
-
-        // IMPORTANT: If a tile is visible (will be rendered), it should be eligible for lazy loading.
-        // The distinction between visible and actuallyVisible was causing tiles to stay at low resolution.
-        if (visible) {
-            actuallyVisible = true;
+            if (diag) diag.forcedRoot++;
         }
 
         return {
-            screenSize,
+            screenSpaceError,
             visible,
-            actuallyVisible,
-            frustumIntersects
+            actuallyVisible: visible,
+            frustumIntersects: inStrict,
         };
     }
 
@@ -709,9 +763,13 @@ export class QuadTreeMap {
     }
 
     /**
-     * Determine if a tile should be subdivided
+     * Determine if a tile should be subdivided.
+     *
+     * Refines while the tile's screen-space error (meters-per-texel projected
+     * to screen pixels) exceeds the per-pixel error target. Lower target →
+     * sharper imagery and more tiles; higher target → coarser and faster.
      */
-    shouldSubdivideTile(tile, visibility, subdivideSize) {
+    shouldSubdivideTile(tile, visibility, errorTargetPixels) {
 
         // don't subdivide if this is a dead branch (i.e. child tile gave a loading error)
         if (tile.isDeadBranch) {
@@ -723,8 +781,8 @@ export class QuadTreeMap {
         if (tile.z >= effectiveMaxZoom) {
             return false;
         }
-        
-        return visibility.visible && visibility.screenSize > subdivideSize;
+
+        return visibility.visible && visibility.screenSpaceError > errorTargetPixels;
     }
 
     /**
@@ -792,7 +850,7 @@ export class QuadTreeMap {
 
 
         const children = this.getChildren(tile);
-        if (!children) return;
+        if (!children) return false;
 
         const allChildrenActiveInView = children.every(child =>
             child && (child.tileLayers & tileLayers)
@@ -805,7 +863,9 @@ export class QuadTreeMap {
                     this.deactivateBranch(child, tileLayers, true);
                 }
             });
+            return true;
         }
+        return false;
     }
 
     deactivateBranch(tile, layerMask = 0, instant = false) {

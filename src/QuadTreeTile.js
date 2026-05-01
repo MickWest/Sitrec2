@@ -203,6 +203,11 @@ export class QuadTreeTile {
 
         // create a bounding sphere centered at the center of the tile with the radius
         this.worldSphere = new Sphere(center, radius);
+
+        // Cache center latitude in radians for screen-space-error math.
+        // (Only the latitude is needed — meters-per-texel scales by cos(lat).)
+        this._centerLatRad = ((latSW + latNW) * 0.5) * Math.PI / 180;
+
         return this.worldSphere;
 
         // if (!tile.mesh.geometry.boundingSphere) {

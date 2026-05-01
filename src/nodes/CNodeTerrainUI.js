@@ -85,9 +85,14 @@ export class CNodeTerrainUI extends CNode {
         this.layer = v.layer ?? null;
 
 
-        // Default subdivision sizes (can be overridden by mapTypes)
-        this.elevationSubSize = 4000; // 2000 * 1.414;
-        this.textureSubSize = 2000;
+        // Default screen-space-error targets in pixels. A texel covering more
+        // than this many screen pixels triggers refinement. Lower → sharper +
+        // more tiles; higher → coarser + faster. Texture is held tighter than
+        // elevation since elevation errors mainly affect silhouettes.
+        // (Old "subdivideSize" units were a fudged screenFraction*1024 metric;
+        // these are real pixels.) Map sources can override via mapDef.errorTargetPixels.
+        this.elevationErrorTarget = 4.0;
+        this.textureErrorTarget = 1.5;
 
         this.adjustable = v.adjustable ?? true;
 
@@ -208,7 +213,9 @@ export class CNodeTerrainUI extends CNode {
                     tileSize: 256,
                     attribution: "Powered by Esri",
                     termsURL: "https://www.esri.com/en-us/legal/terms/data-attributions",
-                    textureSubSize: 500,
+                    // Local Esri imagery: texels are pre-baked at modest zoom,
+                    // so allow finer screen-space error before refining further.
+                    errorTargetPixels: 0.5,
                 },
 
 
@@ -1460,9 +1467,11 @@ export class CNodeTerrainUI extends CNode {
                 // subdivide the elevation first so elevation requests will come before textures
                 // this makes it more likely that the elevation will be ready when the texture is ready to make a tile.
                 if (this.terrainNode.elevationMap !== undefined) {
+                    // Higher elevationDetail → smaller error target → more refinement.
+                    const elevationTarget = this.elevationErrorTarget / this.elevationDetail;
                     for (const view of views) {
                         if (view && view.visible) {
-                            this.terrainNode.elevationMap.subdivideTilesViewSpecific(view, this.elevationSubSize / this.elevationDetail);
+                            this.terrainNode.elevationMap.subdivideTilesViewSpecific(view, elevationTarget);
                         }
                     }
                 }
@@ -1470,11 +1479,12 @@ export class CNodeTerrainUI extends CNode {
                 // For texture maps, call subdivideTilesViewSpecific separately for each view
                 if (this.terrainNode.maps[this.mapType].map !== undefined) {
                     const mapDef = this.mapSources[this.mapType];
-                    const textureSubSize = mapDef?.textureSubSize ?? this.textureSubSize;
+                    const baseTarget = mapDef?.errorTargetPixels ?? this.textureErrorTarget;
+                    const textureTarget = baseTarget / this.textureDetail;
 
                     for (const view of views) {
                         if (view && view.visible) {
-                            this.terrainNode.maps[this.mapType].map.subdivideTilesViewSpecific(view, textureSubSize / this.textureDetail);
+                            this.terrainNode.maps[this.mapType].map.subdivideTilesViewSpecific(view, textureTarget);
                         }
                     }
                 }
