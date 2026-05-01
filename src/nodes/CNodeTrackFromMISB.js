@@ -93,7 +93,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
     // an AGL height (the useAGL=true case). For useAGL we have to pass the
     // *interpolated* offset in to the cache lookup, so we compute it inline.
     _aglOffsetForFrame(misb, slot, fraction) {
-        if (misb.altitudeLockAGL && misb.altitudeLock !== undefined && misb.altitudeLock !== -1) {
+        if (misb.isAGLLockActive()) {
             return misb.altitudeLock;
         }
         if (misb.useAGL) {
@@ -378,7 +378,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         // gives correct ground altitudes immediately — eliminating the load-order
         // race where elevationAtLL() returned a too-low value because terrain
         // tiles for the track region hadn't built yet at first recalculate.
-        const useAGLPath = (misb.useAGL || misb.altitudeLockAGL);
+        const useAGLPath = misb.isTerrainDependent();
         const terrainNode = useAGLPath ? this._resolveTerrainNode() : null;
 
         // If frame count changed (e.g., Sit.frames updated), drop a stale cache

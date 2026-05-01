@@ -65,6 +65,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         //   useAGL          — raw KLV/CSV altitudes interpreted as AGL (column-driven)
         //   altitudeLockAGL — display-track-driven AGL lock that writes through to the
         //                     data track (see CNodeDisplayTrack altitudeLock GUI)
+        //   note altitudeLockAGL only applies when altitudeLock >= 0, as a altitudeLock = -1 will disable it
         // The previous gate covered only useAGL, leaving altitudeLockAGL tracks frozen
         // against whatever incomplete terrain state existed at first recalculate.
         //
@@ -75,7 +76,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         // burst makes playback visibly jerky. One cascade per frame is plenty
         // since the per-frame visual update can't be finer than that anyway.
         EventManager.addEventListener("elevationChanged", () => {
-            if (!(this.useAGL || this.altitudeLockAGL)) return;
+            if (!this.isTerrainDependent()) return;
             if (this._elevRefreshScheduled) return;
             this._elevRefreshScheduled = true;
             requestAnimationFrame(() => {
@@ -500,6 +501,23 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         return alt;
 
 
+    }
+
+    // True iff the track's altitude is locked to the ground (terrain-relative)
+    // AND the lock is currently active. The GUI uses altitudeLock = -1 as the
+    // "off" sentinel, so the mode flag (altitudeLockAGL) alone isn't enough —
+    // a freshly-loaded track defaults to altitudeLockAGL=true with the lock
+    // disabled, which is NOT terrain-dependent.
+    isAGLLockActive() {
+        return this.altitudeLockAGL
+            && this.altitudeLock !== undefined
+            && this.altitudeLock >= 0;
+    }
+
+    // True iff this track's positions depend on terrain elevation. Either the
+    // raw altitudes are AGL (column-driven), or the AGL lock is active.
+    isTerrainDependent() {
+        return this.useAGL || this.isAGLLockActive();
     }
 
     adjustAlt(a, lat, lon) {
