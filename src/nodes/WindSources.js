@@ -5,8 +5,8 @@
 //   - CNodeDisplayWindField.js — branches inside fetchWindForAltitude
 //   - CNodeCompassUI.js — internal key → compass-label string
 //
-// Keeping them in sync was error-prone. Anyone adding a source now only
-// updates this array.
+// Keeping them in sync was error-prone. Anyone adding a built-in source now
+// only updates this array.
 //
 // Fields:
 //   key      — internal identifier used in this.source and save files
@@ -15,6 +15,8 @@
 //   autoLoad — 'uwyo' / 'igra2' / null — which sounding source, if any,
 //              auto-fetches when this source is selected and no profiles
 //              of that kind are already loaded
+
+import {Globals} from "../Globals";
 
 export const WIND_SOURCES = [
     { key: "gfs",              label: "GFS (NOAA)",       short: "GFS",              autoLoad: null },
@@ -25,28 +27,51 @@ export const WIND_SOURCES = [
     { key: "manual",           label: "Manual",           short: "Manual",           autoLoad: null },
 ];
 
+// Reserved key for the env-var-defined custom source (CUSTOM_WIND_URL,
+// served via customWindProxy.php). Resolved at call time because Globals.env
+// is populated after this module's top-level code runs.
+export const CUSTOM_WIND_KEY = "custom";
+
+function getCustomWindSource() {
+    if (!Globals.env?.SITREC_USE_CUSTOM_WIND) return null;
+    const label = Globals.env.SITREC_CUSTOM_WIND_MENU_NAME || "Custom Wind";
+    return {
+        key: CUSTOM_WIND_KEY,
+        label,
+        short: label,
+        autoLoad: null,
+    };
+}
+
+// Built-ins + the optional env-defined custom source. Use this rather than
+// iterating WIND_SOURCES directly when building dropdowns or doing key lookups.
+export function getWindSources() {
+    const custom = getCustomWindSource();
+    return custom ? [...WIND_SOURCES, custom] : WIND_SOURCES;
+}
+
 export const DEFAULT_WIND_SOURCE_KEY = "manual";
 
 export function windSourceByKey(key) {
-    return WIND_SOURCES.find(s => s.key === key) ?? null;
+    return getWindSources().find(s => s.key === key) ?? null;
 }
 
 export function windSourceByLabel(label) {
-    return WIND_SOURCES.find(s => s.label === label) ?? null;
+    return getWindSources().find(s => s.label === label) ?? null;
 }
 
 // { label: key, ... } — convenient for lil-gui's dropdown that takes an
 // object whose keys are displayed and values are stored.
 export function windSourceLabelsToKeys() {
     const out = {};
-    for (const s of WIND_SOURCES) out[s.label] = s.key;
+    for (const s of getWindSources()) out[s.label] = s.key;
     return out;
 }
 
 // { key: short, ... } — used by the compass widget.
 export function windSourceShortLabels() {
     const out = {};
-    for (const s of WIND_SOURCES) out[s.key] = s.short;
+    for (const s of getWindSources()) out[s.key] = s.short;
     return out;
 }
 
@@ -77,7 +102,7 @@ export function trackDataIdFromSourceKey(key) {
 // "track:TrackData_<shortName>" internal key.
 export function windSourceLabelsToKeysWithTracks(trackEntries = []) {
     const out = {};
-    for (const s of WIND_SOURCES) out[s.label] = s.key;
+    for (const s of getWindSources()) out[s.label] = s.key;
     for (const entry of trackEntries) {
         out[`Track: ${entry.shortName}`] = trackSourceKey(entry.trackDataId);
     }

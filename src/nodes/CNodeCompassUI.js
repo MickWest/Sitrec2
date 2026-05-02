@@ -9,9 +9,6 @@ import {arModeManager} from "../ARMode";
 
 import {windSourceShortLabels} from "./WindSources";
 
-// Internal source key → short label shown under the compass.
-const WIND_SOURCE_LABELS = windSourceShortLabels();
-
 export class   CNodeCompassUI extends CNodeViewUI {
 
     constructor(v) {
@@ -380,7 +377,8 @@ export class   CNodeCompassUI extends CNodeViewUI {
         // Wind source label (small, attribution-style, under the compass rose)
         this.removeText("windSource");
         if (windField && currentWindSourceKey) {
-            const label = WIND_SOURCE_LABELS[currentWindSourceKey] ?? currentWindSourceKey;
+            const labels = windSourceShortLabels();
+            const label = labels[currentWindSourceKey] ?? currentWindSourceKey;
             this.addText("windSource", "Wind: " + label, 50, 97, 7, "#aaaaaa", "center", "Arial");
         }
 

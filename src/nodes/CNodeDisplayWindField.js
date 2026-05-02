@@ -4,30 +4,26 @@
 
 import {CNode3DGroup} from "./CNode3DGroup";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
-import {DebugArrowAB, DebugArrows, removeDebugArrow} from "../threeExt";
-import {getLocalNorthVector, getLocalEastVector} from "../SphericalMath";
+import {DebugArrowAB, removeDebugArrow} from "../threeExt";
+import {getLocalEastVector, getLocalNorthVector} from "../SphericalMath";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
-import {FileManager, GlobalDateTimeNode, Globals, NodeMan, Sit, Units} from "../Globals";
+import {FileManager, GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit, Units} from "../Globals";
 import {mouseInView, mouseToView} from "../ViewUtils";
 import {ViewMan} from "../CViewManager";
 import pako from "pako";
 import * as LAYER from "../LayerMasks";
-import {
-    BufferAttribute, BufferGeometry, LineSegments,
-    ShaderMaterial, Vector3,
-} from "three";
-import {setRenderOne} from "../Globals";
+import {BufferAttribute, BufferGeometry, LineSegments, ShaderMaterial, Vector3,} from "three";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {
-    WIND_LEVEL_TABLE,
     bracketingLevels,
-    levelToAltFeet,
-    sampleJSONGrid,
-    fromDirSpeedToUV,
+    compassFromDeg,
     fromDirSpeedKnotsToUV,
+    fromDirSpeedToUV,
     fromUVToDirKnots,
     greatCircleDistanceDeg,
-    compassFromDeg,
+    levelToAltFeet,
+    sampleJSONGrid,
+    WIND_LEVEL_TABLE,
     windDirFromBearing,
 } from "./WindHelpers";
 import {isTrackSourceKey, trackDataIdFromSourceKey} from "./WindSources";
@@ -326,8 +322,8 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             return {u: sumU / totalW, v: sumV / totalW};
         }
 
-        // GFS: cached pressure-level grids, bracket-then-blend.
-        if (this.source === "gfs" && this._lastDateCycle) {
+        // GFS / Custom: cached pressure-level grids, bracket-then-blend.
+        if (this._isGridSource() && this._lastDateCycle) {
             const [dateStr, hour] = this._lastDateCycle.split("_");
             const {lo, hi, t} = bracketingLevels(altFt);
             const jsonLo = this._levelCache[`${dateStr}_${hour}_${lo.level}`];
@@ -1201,12 +1197,19 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             `(LOD0: ${lodCounts[0] / 2}, LOD1: ${lodCounts[1] / 2}, LOD2: ${lodCounts[2] / 2})`);
     }
 
-    // True when both bracketing GFS pressure levels for `altFt` are already
+    // True when this.source is a grid-based source (GFS or env-defined custom)
+    // — both share the bracket/blend pipeline, level cache, and FileManager
+    // persistence, and are mutually substitutable across that surface.
+    _isGridSource() {
+        return this.source === "gfs" || this.source === "custom";
+    }
+
+    // True when both bracketing pressure levels for `altFt` are already
     // resident (in _levelCache or in FileManager via _loadedWindFiles).
     // The altitude-slider live-update path uses this to decide whether it can
     // safely re-fetch on every drag tick without hitting the network.
     hasGFSBracketCached(altFt) {
-        if (this.source !== "gfs") return false;
+        if (!this._isGridSource()) return false;
         const dateNode = GlobalDateTimeNode;
         const dateNow = dateNode?.dateNow ?? new Date();
         const dateStr = dateNow.toISOString().slice(0, 10).replace(/-/g, "");
@@ -1245,10 +1248,17 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             }
         }
 
-        const url = `sitrecServer/windProxy.php?date=${dateStr}&hour=${hour}&level=${level}`;
-        // The proxy shells out to fetch_wind.py which pulls a GRIB2 slice from
-        // NOMADS/AWS — can take 10–20s on a cold cache. 60s covers the worst
-        // case without letting a stalled proxy hang the UI indefinitely.
+        // Custom env-defined sources go through customWindProxy.php, which
+        // substitutes date/hour/level into CUSTOM_WIND_URL. Both proxies
+        // return the same earth.nullschool-format JSON, so the rest of the
+        // bracket/blend pipeline doesn't care which one served the data.
+        const proxy = this.source === "custom"
+            ? "customWindProxy.php"
+            : "windProxy.php";
+        const url = `sitrecServer/${proxy}?date=${dateStr}&hour=${hour}&level=${level}`;
+        // The GFS proxy shells out to fetch_wind.py which pulls a GRIB2 slice
+        // from NOMADS/AWS — can take 10–20s on a cold cache. 60s covers the
+        // worst case without letting a stalled proxy hang the UI indefinitely.
         const ctrl = new AbortController();
         const to = setTimeout(() => ctrl.abort(), 60000);
         let resp;
@@ -1293,8 +1303,8 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         const ranSource = this.source;
 
         try {
-            if (this.source === "gfs") {
-                await this._fillFromGFS(altFt);
+            if (this.source === "gfs" || this.source === "custom") {
+                await this._fillFromGridSource(altFt);
             } else if (this.source === "uwyo"
                     || this.source === "igra2"
                     || this.source === "manual-soundings") {
@@ -1341,8 +1351,14 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         }
     }
 
-    // ── GFS: global pressure-level grids ────────────────────────────
-    async _fillFromGFS(altFt) {
+    // ── Pressure-level grid sources (GFS or env-defined custom) ─────
+    //
+    // Both share the earth.nullschool JSON shape and the bracket/blend
+    // pipeline. The only differences — proxy URL and status label — are
+    // resolved by `this.source`: _fetchLevel routes to windProxy.php or
+    // customWindProxy.php, and the status string falls back to the JSON's
+    // own `source` field (set server-side by the custom endpoint's upstream).
+    async _fillFromGridSource(altFt) {
         const dateNode = GlobalDateTimeNode;
         const dateNow = dateNode?.dateNow ?? new Date();
         const dateStr = dateNow.toISOString().slice(0, 10).replace(/-/g, "");
@@ -1367,12 +1383,13 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             blendedV[i] = Math.round(((1 - t) * jsonLo.v[i] + t * jsonHi.v[i]) * 100) / 100;
         }
 
+        const defaultSourceName = this.source === "custom" ? "Custom" : "GFS";
         const blended = {
             ...jsonLo,
             u: blendedU,
             v: blendedV,
             level: `${Math.round(altFt)}ft`,
-            source: jsonLo.source ?? "GFS",
+            source: jsonLo.source ?? defaultSourceName,
             _loLevel: lo.level,
             _hiLevel: hi.level,
             _blendT: t,
@@ -1384,7 +1401,8 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this._storeWindFiles(jsonLo, jsonHi, needTwo, dateStr, hour);
 
         const altLabel = altFt < 300 ? "Surface" : `${altFt.toLocaleString()} ft`;
-        this.statusText = `GFS ${jsonLo.refTime?.slice(0, 10) ?? dateStr} ${altLabel}`;
+        const statusName = blended.source;
+        this.statusText = `${statusName} ${jsonLo.refTime?.slice(0, 10) ?? dateStr} ${altLabel}`;
     }
 
     // ── Soundings (UWYO / IGRA2 / Manual): IDW from loaded profiles ─
@@ -1702,7 +1720,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // ── Sample wind at a specific (lat,lon,altMeters) per-source ────
     // Returns {u,v} in m/s, or null. Used to drive target/local winds.
     async sampleAtLLA(lat, lon, altM) {
-        if (this.source === "gfs") {
+        if (this._isGridSource()) {
             return await this._sampleGFSAtLLA(lat, lon, altM);
         }
         if (this.source === "uwyo"
@@ -1782,7 +1800,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // Sources that may hit the network during sampleAtLLA get a
         // progress status. GFS reuses the level cache from the display
         // fetch; openmeteo may trigger fresh per-point fetches.
-        const hitsNetwork = this.source === "openmeteo" || this.source === "gfs";
+        const hitsNetwork = this.source === "openmeteo" || this._isGridSource();
         const originalStatus = this.statusText;
         try {
             const positions = this._windNodePositions();
@@ -1915,11 +1933,12 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     }
 
     modSerialize() {
-        // Only GFS writes files we can rehydrate from. Other sources are
-        // recomputed on load (see modDeserialize), so skip the _storeWindFile
-        // path for them — it would tag the file with the wrong source and
-        // confuse a later GFS activation.
-        if (this.source === "gfs"
+        // Only grid sources (GFS / custom) write files we can rehydrate from.
+        // Other sources are recomputed on load (see modDeserialize), so skip
+        // the _storeWindFile path for them — it would tag the file with the
+        // wrong source and confuse a later grid-source activation.
+        const isGrid = this._isGridSource();
+        if (isGrid
             && this._lastWindJSON
             && (!this._windFileIds || this._windFileIds.length === 0)) {
             this._storeWindFile();
@@ -1928,7 +1947,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // Serialize the full catalog (level/date/hour per file id) so reload
         // restores every level we'd fetched, not just the active blend. This
         // lets altitude scrubbing skip the network entirely.
-        const loadedWindFiles = this.source === "gfs"
+        const loadedWindFiles = isGrid
             ? Array.from(this._loadedWindFiles.entries()).map(([fileId, meta]) => ({fileId, ...meta}))
             : [];
 
@@ -1939,9 +1958,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             sourceSeparate: this.sourceSeparate,
             windAltFt: this.windAltFt,
             windLevel: this.windLevel,
-            windFileIds: this.source === "gfs" ? (this._windFileIds ?? []) : [],
+            windFileIds: isGrid ? (this._windFileIds ?? []) : [],
             loadedWindFiles,
-            hasWindData: this.source === "gfs" && !!this._lastWindJSON,
+            hasWindData: isGrid && !!this._lastWindJSON,
             // GUI / behaviour state — single source of truth for save/load.
             // These used to live in par.* and were synced post-deserialize;
             // they're now persisted by the node directly.
@@ -2032,11 +2051,11 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             );
         }
 
-        // Non-GFS sources don't persist grids — they're recomputed on demand.
-        // If the saved sitch had the wind field visible, re-fetch after the
-        // rest of the sitch finishes deserializing (dependent nodes like
-        // CNodeAtmosphericProfile / targetTrack may not exist yet at this
-        // point in the restore pass).
+        // Non-grid sources don't persist file blobs — they're recomputed on
+        // demand. If the saved sitch had the wind field visible, re-fetch
+        // after the rest of the sitch finishes deserializing (dependent
+        // nodes like CNodeAtmosphericProfile / targetTrack may not exist
+        // yet at this point in the restore pass).
         //
         // CustomManagerSerialize.finishDeserialization triggers the actual
         // fetch via this flag. A naive setTimeout(0) here would race against
@@ -2045,7 +2064,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // values from later-deserialized nodes such as targetWind — e.g.
         // _fillFromManual would see targetWind's constructor default 0 kn
         // and produce an empty streamline mesh.
-        if (this.source !== "gfs") {
+        if (!this._isGridSource()) {
             this.windLevel = v.windLevel ?? `${Math.round(this.windAltFt)}ft`;
             if (this.visible) {
                 this.statusText = "Reloading...";
@@ -2114,7 +2133,8 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         setRenderOne(true);
 
         const altLabel = this.windAltFt < 300 ? "Surface" : `${this.windAltFt.toLocaleString()} ft`;
-        this.statusText = `GFS ${jsons[0].refTime ?? "?"} ${altLabel}`;
+        const statusName = jsons[0].source ?? (this.source === "custom" ? "Custom" : "GFS");
+        this.statusText = `${statusName} ${jsons[0].refTime ?? "?"} ${altLabel}`;
         console.log("Wind data restored from saved files");
     }
 
