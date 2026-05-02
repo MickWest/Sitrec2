@@ -125,11 +125,30 @@ a {
     text-align: left;
     padding-left: 5px;
     background: #1f1f1f;    // same as --background-color
+    // Prevent long file/track names from wrapping to a second line.
+    // The default lil-gui rule uses white-space:pre on .controller > .name,
+    // but that selector misses .name inside FunctionController buttons, so
+    // long button labels wrapped. Nowrap + ellipsis truncates instead.
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
-    
+
 .lil-gui button {
     text-align: left;
     background: #1f1f1f;
+    // Constrain children (the .name div) so text-overflow:ellipsis can engage.
+    overflow: hidden;
+}
+
+// Folder titles (e.g. track-name folders nested in File/Export/Resources)
+// have no nowrap rule in lil-gui's stylesheet. Force single-line display.
+// Root titles already use width:auto so they shrink-wrap to content; inner
+// folders inherit the menu's fixed width and will truncate with ellipsis.
+.lil-gui .title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .lil-gui.transition > .children {
