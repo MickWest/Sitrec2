@@ -60,6 +60,7 @@ import {findColumn, stripDuplicateTimes} from "./ParseUtils";
 import {SITREC_SERVER} from "./configUtils";
 import {TSParser} from "./TSParser";
 import {NITFParser} from "./NITFParser";
+import {sniffFileType} from "./sniffFileType";
 import {showError} from "./showError";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {projectedBoundsToWGS84} from "./proj4Loader";
@@ -971,7 +972,13 @@ export const parseMethods = {
     },
 
     parseAsset(filename, id, buffer, metadata = null) {
-        if (filename.toLowerCase().endsWith('.ts')) {
+        // Content-sniff once, up front. We trust content over filename:
+        // a `.mpg` that's actually a TS stream needs the TS demuxer, not the
+        // MP4 video pipeline. sniffedExt is null when no signature matched
+        // (typical for text formats — those still dispatch on filename below).
+        const sniffedExt = sniffFileType(buffer);
+
+        if (filename.toLowerCase().endsWith('.ts') || sniffedExt === 'ts') {
             return TSParser.parseTSFile(filename, id, buffer, (streamFilename, streamId, streamData, streamMetadata) => {
                 console.log("Detected TS Stream: " + streamFilename + " for id: " + streamId + "");
                 return this.parseAsset(streamFilename, streamId, streamData, streamMetadata)
@@ -1095,7 +1102,12 @@ export const parseMethods = {
                 });
         } else {
 
-            var fileExt = this.deriveExtension(filename);
+            // Prefer content-sniffed type when one was detected — the filename
+            // extension is just a hint and may be wrong (e.g. a `.mpg` that's
+            // really H.264 in MP4, or a `.bin` that's a PNG). Fall back to the
+            // filename extension for text formats and anything the sniffer
+            // doesn't recognize.
+            var fileExt = sniffedExt || this.deriveExtension(filename);
 
             var parsed;
             var prom;

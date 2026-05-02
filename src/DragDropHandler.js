@@ -14,9 +14,13 @@ import {quickFetch} from "./quickFetch";
 import {isResolvableSitrecReference, resolveURLForFetch} from "./SitrecObjectResolver";
 import {convertTiffBufferToBlobURL} from "./TIFFUtils";
 import {extractJPEGImportMetadata} from "./EXIFUtils";
+import {sniffFileType} from "./sniffFileType";
 
 // Image file extensions
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'jp2', 'j2k', 'jpx', 'jpc', 'j2c'];
+
+// Sniffer outputs that mean "this is an image" (matches IMAGE_EXTENSIONS shape).
+const SNIFFED_IMAGE_TYPES = new Set(['png', 'jpg', 'gif', 'webp', 'tif', 'jp2', 'heic']);
 
 // The DragDropHandler is more like the local client file handler, with rehosting, and parsing
 class CDragDropHandler {
@@ -283,8 +287,28 @@ class CDragDropHandler {
 
         EventManager.dispatchEvent("fileDropped", {})
 
-        // Check if it's an image file - ask user how to use it
-        if (this.isImageFile(file.name)) {
+        // Peek at the first few KB of the file to detect its real type from
+        // contents rather than trusting the filename extension or browser MIME.
+        // The classic case this fixes: a `.mpg` file that's actually an MPEG
+        // transport stream — the browser reports `file.type = "video/mpeg"`
+        // (extension-derived), so without sniffing it would be sent straight
+        // into the MP4 video pipeline and fail. With sniffing, we route it
+        // through FileManager.parseAsset where TSParser can demux it.
+        let sniffedType = null;
+        try {
+            const headBuf = await file.slice(0, 4096).arrayBuffer();
+            sniffedType = sniffFileType(headBuf);
+        } catch (e) {
+            // File too small or unreadable — fall back to extension/MIME.
+        }
+
+        // Image routing: only show the image-choice dialog if the filename
+        // looks like an image AND (sniffer agrees OR sniffer found nothing).
+        // A `.png` whose contents are actually a ZIP shouldn't trigger the
+        // "use as video / use as overlay" dialog.
+        const looksLikeImage = this.isImageFile(file.name) &&
+            (sniffedType === null || SNIFFED_IMAGE_TYPES.has(sniffedType));
+        if (looksLikeImage) {
             // If video node exists and has alwaysReplace, skip dialog and load as video
             if (NodeMan.exists("video") && NodeMan.get("video").alwaysReplace) {
                 console.log("Loading image as video source (alwaysReplace): " + file.name);
@@ -320,8 +344,10 @@ class CDragDropHandler {
         // if it's a video or audio file, that's handled differently
         // as we might (in the future) want to stream it
         // NOTE: .ts files (MPEG Transport Stream) are NOT treated as video here
-        // because they need special parsing in FileManager to extract multiple streams
-        const isTSFile = /\.(ts|m2ts|mts)$/i.test(file.name);
+        // because they need special parsing in FileManager to extract multiple streams.
+        // We also catch TS contents under any extension via the sniffer — e.g.
+        // a `.mpg` file that's really an MPEG transport stream.
+        const isTSFile = /\.(ts|m2ts|mts)$/i.test(file.name) || sniffedType === 'ts';
         const allAudioExtensions = [...WEBAUDIO_SUPPORTED_EXTENSIONS, ...MP4_DEMUXER_EXTENSIONS];
         const audioExtPattern = new RegExp(`\\.(${allAudioExtensions.join('|')})$`, 'i');
         const isAudioFile = audioExtPattern.test(file.name) || file.type.startsWith("audio");
