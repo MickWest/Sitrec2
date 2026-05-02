@@ -1,5 +1,5 @@
 import {wgs84} from "./LLA-ECEF-ENU";
-import {Frustum, Matrix4, Vector3} from "three";
+import {Frustum, Matrix4, Sphere, Vector3} from "three";
 import {debugLog, Globals} from "./Globals";
 import {isLocal} from "./configUtils";
 import {altitudeAboveSphere, distanceToHorizon, hiddenByGlobe} from "./SphericalMath";
@@ -8,17 +8,18 @@ import {assert} from "./assert";
 import "./threeExt";
 import {EventManager} from "./CEventManager";
 
-// Reusable Vector3 objects to avoid garbage collection pressure.
+// Reusable scratch objects to avoid garbage collection pressure.
 // Reused across all tile visibility calculations within a single pass.
 const _cameraPositionClone = new Vector3();
+const _cullingSphere = new Sphere();
 
 // Tile subdivision treats a slightly-wider frustum than the render frustum as
 // "eligible for high LOD" — this is the preload margin for camera pan/track.
-// 1.15 = 15% wider FOV in both axes. Replaces the old `isNearCamera` radial
+// 1.10 = 10% wider FOV in both axes. Replaces the old `isNearCamera` radial
 // bypass, which was over-eagerly subdividing tiles directly under the camera
 // (a sphere-radius-based test triggers for huge low-zoom tiles even when the
 // camera is looking far away in a completely different direction).
-const SUBDIVISION_FOV_DILATION = 1.15;
+const SUBDIVISION_FOV_DILATION = 1.10;
 
 // Earth circumference at the equator (Web Mercator reference). Used for
 // per-tile geometric error: at zoom z, tile spans this/2^z meters at the
@@ -679,12 +680,71 @@ export class QuadTreeMap {
         let screenSpaceError = 0;
         let visible = false;
 
+        // Estimate the tile's terrain altitude (max elevation, in metres above
+        // the WGS84 ellipsoid). The cached worldSphere is built from corners
+        // at alt=0, so its centre sits at sea level — fine for low-elevation
+        // sitches but catastrophic for elevated terrain (Wyoming, Sierras,
+        // Andes): the sphere centre ends up radially below the actual mesh
+        // by the elevation, putting it well off the camera's gaze axis. The
+        // frustum check then misses the truck-area tiles entirely and only
+        // hits tiles where the camera ray exits the planet at sea level —
+        // 2-5 km behind the actual ground intersection.
+        //
+        // Bootstrap: walk up the parent chain to find the nearest ancestor
+        // with loaded elevation. Coarse tiles (z<10) have radii of km, so
+        // their sphere reaches the camera ray even when centred at sea
+        // level — they load their elevation first, then their descendants
+        // inherit the estimate via this walk. No global default needed.
+        let terrainAlt = tile.highestAltitude || 0;
+        if (terrainAlt === 0) {
+            let p = tile.parent;
+            while (p) {
+                if (p.highestAltitude > 0) {
+                    terrainAlt = p.highestAltitude;
+                    break;
+                }
+                p = p.parent;
+            }
+        }
+
+        // Build the actual culling sphere: shift the centre radially outward
+        // by the full estimated terrain altitude. We do NOT enlarge the
+        // radius — terrain elevation variance within a single tile is small
+        // (tens of metres even in mountainous areas) compared to the tile's
+        // horizontal extent, so the sea-level corner radius already covers it.
+        //
+        // Earlier attempts grew the radius to enclose both sea level AND the
+        // highest terrain, which made the sphere ~10× larger than the actual
+        // tile mesh. That caused wildly off-axis spheres to pass the frustum
+        // check, yielding subdivision over an area ~30× wider than the
+        // visible cone for narrow-FOV cameras (a Predator gimbal at ~1.9°
+        // FOV ended up subdividing a ~30° cone).
+        //
+        // Trade-off: in a tile with large local relief (e.g. a z=14 tile
+        // spanning a Sierra valley-to-peak), the parent-walk's highestAltitude
+        // estimate is conservative on the high side, so the sphere may miss
+        // the lowest valley terrain. That's a much smaller failure than the
+        // alternative.
+        let cx = worldSphere.center.x;
+        let cy = worldSphere.center.y;
+        let cz = worldSphere.center.z;
         const radius = worldSphere.radius;
-        const distance = camera.position.distanceTo(worldSphere.center);
+        if (terrainAlt > 0) {
+            const r = Math.sqrt(cx * cx + cy * cy + cz * cz);
+            const scale = (r + terrainAlt) / r;
+            cx *= scale; cy *= scale; cz *= scale;
+        }
+        _cullingSphere.center.set(cx, cy, cz);
+        _cullingSphere.radius = radius;
+
+        const dx = camera.position.x - cx;
+        const dy = camera.position.y - cy;
+        const dz = camera.position.z - cz;
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
         const closestDistance = Math.max(0, distance - radius);
 
-        const inDilated = camera.dilatedFrustum.intersectsSphere(worldSphere);
-        const inStrict  = camera.viewFrustum.intersectsSphere(worldSphere);
+        const inDilated = camera.dilatedFrustum.intersectsSphere(_cullingSphere);
+        const inStrict  = camera.viewFrustum.intersectsSphere(_cullingSphere);
 
         if (inDilated) {
             // Screen-space error in pixels = geometric error (meters per texel
