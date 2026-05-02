@@ -206,8 +206,13 @@ export const materialMethods = {
             return material;
         }).catch((error) => {
             // add it to the badUrls set to avoid retrying
-            // but not if aborted
-            if (error.message !== "Aborted") {
+            // but not if aborted, and silently for ESRI placeholder tiles
+            // (expected condition for tiles beyond the available zoom level)
+            if (error.message === "Aborted") {
+                // no-op
+            } else if (error.message === "PlaceholderTile") {
+                badTextureUrls.add(url);
+            } else {
                 console.warn(`Failed to load texture for tile ${this.key()} from URL: ${url}`, error);
                 badTextureUrls.add(url);
             }

@@ -15,6 +15,37 @@ const requestQueue = [];
 let activeRequests = 0;
 const MAX_CONCURRENT_REQUESTS = 5;
 
+// ESRI World Imagery's "Map Data Not Yet Available" placeholder tile is
+// returned with HTTP 200 OK for any tile beyond the available zoom level
+// for that area. The bytes are identical for every placeholder request
+// (verified with SHA-256 against multiple out-of-coverage tiles, 2026).
+//
+// Detection by SIZE is unreliable — real ocean tiles can be smaller than
+// the placeholder (e.g. tile 12/603/1900 is 1652 bytes vs the placeholder
+// at 2521 bytes). And ETag isn't accessible from JS — ESRI doesn't include
+// `Access-Control-Expose-Headers: ETag` in its CORS headers, so
+// `response.headers.get('ETag')` returns null.
+//
+// So we identify by content fingerprint: SHA-256 of the blob bytes. To
+// avoid hashing every tile fetched, we gate on size === placeholder size
+// first; only candidates of the exact placeholder size get hashed and
+// compared. This adds zero overhead to ~99.9% of fetches.
+const ESRI_WORLD_IMAGERY_URL_PATTERN = /\/World_Imagery\/MapServer\/tile\//i;
+const ESRI_PLACEHOLDER_SIZE = 2521;
+const ESRI_PLACEHOLDER_SHA256 =
+    '9eafd300d61393184a4abc1d458564cfd1cd9b6f9c4e9c74687045c0a0e5b858';
+
+async function isLikelyEsriPlaceholderTile(url, blob) {
+    if (!ESRI_WORLD_IMAGERY_URL_PATTERN.test(url)) return false;
+    if (blob.size !== ESRI_PLACEHOLDER_SIZE) return false;
+    const buf = await blob.arrayBuffer();
+    const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+    const hashHex = Array.from(new Uint8Array(hashBuf))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+    return hashHex === ESRI_PLACEHOLDER_SHA256;
+}
+
 function processQueue() {
   // Process the next request if we have capacity
   if (activeRequests < MAX_CONCURRENT_REQUESTS && requestQueue.length > 0) {
@@ -72,6 +103,17 @@ export function loadTextureWithRetries(url, maxRetries = 0, delay = 100, current
             throw new Error(`HTTP ${status}`);
           }
           return response.blob();
+        })
+        .then(async blob => {
+          // ESRI World Imagery returns a placeholder JPEG with HTTP 200 OK for
+          // out-of-coverage tiles. Treat it as a load failure so the existing
+          // dead-branch path leaves the parent's higher-resolution texture
+          // visible instead of showing the "Map Data Not Yet Available" image.
+          if (await isLikelyEsriPlaceholderTile(currentUrl, blob)) {
+            logNetwork(currentUrl, 'placeholder');
+            throw new Error('PlaceholderTile');
+          }
+          return blob;
         })
         .then(blob => {
           // Create an Image element (same as Three.js TextureLoader) rather than

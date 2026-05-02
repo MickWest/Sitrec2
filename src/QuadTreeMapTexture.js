@@ -669,6 +669,14 @@ class QuadTreeMapTexture extends QuadTreeMap {
 
         // Track the async texture loading (normal path or fallback if parent data unavailable)
         const materialPromise = tile.applyMaterial().catch(error => {
+            // ESRI placeholder ("Map Data Not Yet Available") for tiles beyond
+            // the available zoom level for an area. Expected condition, not an
+            // error — silently mark dead so further refinement stops.
+            if (error.message === 'PlaceholderTile') {
+                tile.isLoading = false;
+                tile.isDeadBranch = true;
+                return;
+            }
             // Don't log abort errors or cancellation errors - they're expected when tiles are cancelled
             if (error.message !== 'Aborted' && error.message !== 'Tile is being cancelled') {
 

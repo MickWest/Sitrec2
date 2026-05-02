@@ -596,9 +596,11 @@ export class CNodeTerrainUI extends CNode {
 
             this.textureDetailController = this.gui.add(this, "textureDetail", 0.1, 3, 0.1)
                 .tooltip(t("terrainUI.textureDetail.tooltip"))
+                .onChange(() => this.requestSubdivisionPass())
 
             this.elevationDetailController = this.gui.add(this, "elevationDetail", 0.1, 3, 0.1)
                 .tooltip(t("terrainUI.elevationDetail.tooltip"))
+                .onChange(() => this.requestSubdivisionPass())
 
             this.disableDynamicSubdivisionController = this.gui.add(this, "disableDynamicSubdivision").name(t("terrainUI.disableDynamicSubdivision.label"))
                 .tooltip(t("terrainUI.disableDynamicSubdivision.tooltip"))
@@ -1386,6 +1388,23 @@ export class CNodeTerrainUI extends CNode {
             // for dynamic maps, they are async anyway
             this.terrainNode.reloadMap(this.mapType)
         }
+
+        // Subdivision is normally gated on camera movement (a fingerprint hash
+        // of camera state). When the user clicks Refresh, changes Max Details,
+        // or adjusts a detail slider while the camera is stationary, the gate
+        // never opens and the new state never gets applied. Force a pass.
+        this.requestSubdivisionPass();
+    }
+
+    /**
+     * Force the next CNodeTerrainUI.update() to run a subdivision pass even if
+     * the cameras haven't moved. Use after any UI/state change that should
+     * cause tiles to re-evaluate (refresh, detail sliders, source change).
+     */
+    requestSubdivisionPass() {
+        this._lastCameraFingerprint = null;        // guarantees mismatch next tick
+        this._subdivGraceFrames = 120;             // ~4s of subdivision passes
+        setRenderOne(true);                        // also kick a render so the result is visible
     }
 
     flagForRecalculation() {
