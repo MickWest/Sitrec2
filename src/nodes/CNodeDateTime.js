@@ -11,6 +11,7 @@ import {updateFrameSlider} from "./CNodeFrameSlider";
 import {getOffsetFromDateTimeString} from "../DateTimeUtils";
 import {EventManager} from "../CEventManager";
 import {t} from "../i18n";
+import {showTimingAnalysis} from "../showTimingAnalysis";
 
 const timeZoneOffsets = {
     "IDLW UTC-12": -12,     // International Date Line West
@@ -306,10 +307,19 @@ export class CNodeDateTime extends CNode {
             .tooltip(t("dateTime.bFrame.tooltip"))
 
 
-        this.dateTimeFolder.add(Sit, "fps",1,120,0.01).name(t("dateTime.videoFps.label")).listen().onChange((v) => {
+        this.dateTimeFolder.add(Sit, "fps",1,120,0.01).name(t("dateTime.videoFps.label")).listen().onFinishChange((v) => {
             this.changedFrames()
         })
             .tooltip(t("dateTime.videoFps.tooltip"))
+
+        // Timing Analysis button — generates a detailed report of video PTS,
+        // KLV intervals, gaps, drift, and GPS-velocity consistency. Only
+        // useful when there's a MISB data node in the sitch; the handler
+        // looks one up at click time so the button appears regardless and
+        // shows a helpful message if no MISB is present.
+        this._runTimingAnalysis = () => this._timingAnalysisAction();
+        this.dateTimeFolder.add(this, "_runTimingAnalysis").name("Timing Analysis...");
+
         this.update(0);
 
         this.lastFrames = Sit.frames;
@@ -390,6 +400,29 @@ export class CNodeDateTime extends CNode {
         
         const totalSeconds = hours * 3600 + minutes * 60 + seconds + milliseconds / 1000;
         return Math.round(totalSeconds * Sit.fps);
+    }
+
+    // Click handler for the "Timing Analysis..." button. Walks NodeMan to
+    // find a CNodeMISBDataTrack, asks it to generate the report, and shows
+    // it in a modal with Copy/Download buttons.
+    _timingAnalysisAction() {
+        let misbNode = null;
+        NodeMan.iterate((k, n) => {
+            if (!misbNode && n.constructor && n.constructor.name === "CNodeMISBDataTrack") {
+                misbNode = n;
+            }
+        });
+        if (!misbNode || typeof misbNode.generateTimingAnalysis !== "function") {
+            showTimingAnalysis(
+                "No MISB data node loaded in this sitch.\n\n" +
+                "The Timing Analysis report requires a MISB/KLV data source.\n" +
+                "Load a sitch with a .ts file or KLV-bearing .mp4 to enable it."
+            );
+            return;
+        }
+        const report = misbNode.generateTimingAnalysis();
+        const safeName = (Sit.name || "sitch").replace(/[^a-z0-9_-]/gi, "_");
+        showTimingAnalysis(report, `sitrec-timing-${safeName}.txt`);
     }
 
     changedFrames() {

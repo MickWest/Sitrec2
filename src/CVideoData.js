@@ -140,6 +140,16 @@ export class CVideoData {
         return null;
     }
 
+    // Per-frame Presentation Time Stamp in milliseconds, relative to start of stream.
+    // Default returns null meaning "no real per-frame timing available — caller
+    // should fall back to nominal frame_index/fps". Subclasses with access to
+    // container-level PTS (e.g. WebCodec MP4/H.264) override this to return the
+    // actual decoded frame timestamp, which is what makes long-clip MISB/KLV
+    // sync drift-free.
+    getFrameTimeMs(frame) {
+        return null;
+    }
+
     isFrameLoaded(frame) {
         const img = this.imageCache[frame];
         return img && img.width > 0 && img.height > 0;

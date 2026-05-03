@@ -1150,7 +1150,20 @@ export const parseMethods = {
                     dataType = "dat";
                     break;
                 case "klv": {
-                    const klvMisb = parseKLVFile(buffer);
+                    // When this KLV substream comes from Sitrec's TS demuxer
+                    // (drag-and-drop of a .ts/.mpg file), the metadata
+                    // bundle carries pesEntries: a per-PES PTS map from
+                    // the original PCR-locked timeline. Threading those
+                    // into parseKLVFile lets each MISB record retain its
+                    // PES PTS, which is the MISB ST 0604 anchor used to
+                    // pair KLV records to specific video frames. For KLV
+                    // loaded from a flat .klv file (no TS context), this
+                    // is null and the parser falls back to its existing
+                    // behavior — Tag-2 UnixTimeStamp as the only anchor.
+                    const pesEntries = metadata?.pesEntries || null;
+                    const videoFirstPESus = (metadata && typeof metadata.videoFirstPESus === "number")
+                        ? metadata.videoFirstPESus : null;
+                    const klvMisb = parseKLVFile(buffer, pesEntries, videoFirstPESus);
                     if (klvMisb === undefined) {
                         console.warn(`parseAsset: KLV parsing failed for "${filename}", skipping file`);
                         parsed = null;

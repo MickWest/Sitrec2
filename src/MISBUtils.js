@@ -390,9 +390,9 @@ for(const standard of standards) {
 // so we have an 11 byte key????
 
 
-export function parseKLVFile(data) {
+export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null) {
     console.log(`parseKLVFile: Received data type: ${data.constructor.name}, byteLength: ${data.byteLength}`);
-    
+
     // Convert to Uint8Array for processing
     let uint8Data;
     if (data instanceof ArrayBuffer) {
@@ -405,10 +405,14 @@ export function parseKLVFile(data) {
         showError('parseKLVFile: Unsupported data type');
         return;
     }
-    
+
     // Validate and extract complete KLV packets
     // KLV structure: Key (variable, often 16 bytes for universal keys) + Length (BER encoded) + Value
     const validPackets = [];
+    // Per-record byte offset (start of the key) in the input substream.
+    // Used to pair each KLV record to its source PES packet's PTS, when
+    // pesEntries are provided by the TS demuxer.
+    const validPacketOffsets = [];
     let offset = 0;
     let packetCount = 0;
     let skippedIncomplete = 0;
@@ -477,8 +481,9 @@ export function parseKLVFile(data) {
         // Extract complete packet (key + length + value)
         const completePacket = uint8Data.slice(packetStart, packetEnd);
         validPackets.push(completePacket);
+        validPacketOffsets.push(packetStart);
         packetCount++;
-        
+
         offset = packetEnd;
     }
     
@@ -534,6 +539,80 @@ export function parseKLVFile(data) {
             const formattedDate = date.toLocaleString();
         }
 
+    }
+
+    // Pair each parsed record with its source PES packet's PTS, if the TS
+    // demuxer supplied PES entries. We walk both sequences in order
+    // (validPacketOffsets is monotonic by construction; pesEntries is
+    // monotonic by accumulator) so the pairing is O(n+m).
+    if (pesEntries && pesEntries.length > 0) {
+        let pesPTSus = null;
+        // If we know the video's first PES PTS on the same PCR clock,
+        // shift KLV PTS values onto the same origin as the (downstream-
+        // normalized-to-0) video framePTSus. Any genuine cross-stream
+        // offset in the source TS becomes a constant offset in the KLV
+        // array, which is the correct preservation of the encoder's
+        // intent. If no video reference is available (KLV-only or non-TS
+        // path), normalize KLV to its own first record — at-start
+        // alignment without cross-stream calibration.
+        const originUs = (videoFirstPESus !== null) ? videoFirstPESus : pesEntries[0].ptsUs;
+        if (pesEntries.length === n) {
+            // Common synchronous-mode case: one KLV PES per decoded record.
+            // 1:1 pairing by index — robust to whatever internal packet
+            // structure the byte scanner counted (wrapper + LS pairs, etc.).
+            pesPTSus = pesEntries.map(e => e.ptsUs - originUs);
+        } else if (validPacketOffsets.length === n) {
+            // The byte scanner found exactly as many "valid packets" as the
+            // decoder returned records — pair by byte offset within the
+            // substream, walking both arrays in order.
+            pesPTSus = new Array(n);
+            let pesIdx = 0;
+            for (let i = 0; i < n; i++) {
+                const recordStart = validPacketOffsets[i];
+                while (pesIdx < pesEntries.length - 1 &&
+                       pesEntries[pesIdx + 1].offset <= recordStart) {
+                    pesIdx++;
+                }
+                pesPTSus[i] = (pesEntries[pesIdx].offset <= recordStart)
+                    ? pesEntries[pesIdx].ptsUs - originUs
+                    : null;
+            }
+        } else {
+            // Mismatch we can't reconcile cleanly — e.g., KLV decoder
+            // returned fewer records than the byte scanner found packets,
+            // and the count doesn't match the PES count either. Pair by
+            // best-effort byte offset using the ratio of decoded-records
+            // to scanner-packets, falling back to PES boundaries.
+            console.warn(`parseKLVFile: pesEntries (${pesEntries.length}) doesn't match decoded records (${n}) ` +
+                `and validPacketOffsets (${validPacketOffsets.length}) doesn't either. ` +
+                `Attempting interpolated pairing.`);
+            pesPTSus = new Array(n);
+            // Map decoded record i to its proportional position in the
+            // scanned-packets array, then look up by byte offset.
+            const ratio = validPacketOffsets.length / n;
+            let pesIdx = 0;
+            for (let i = 0; i < n; i++) {
+                const packetIdx = Math.floor(i * ratio);
+                const recordStart = validPacketOffsets[Math.min(packetIdx, validPacketOffsets.length - 1)];
+                while (pesIdx < pesEntries.length - 1 &&
+                       pesEntries[pesIdx + 1].offset <= recordStart) {
+                    pesIdx++;
+                }
+                pesPTSus[i] = (pesEntries[pesIdx].offset <= recordStart)
+                    ? pesEntries[pesIdx].ptsUs - originUs
+                    : null;
+            }
+        }
+        if (pesPTSus) {
+            MISBArray.pesPTSus = pesPTSus;
+            const nonNull = pesPTSus.filter(v => v !== null).length;
+            const firstPTS = pesPTSus.find(v => v !== null);
+            const lastPTS = [...pesPTSus].reverse().find(v => v !== null);
+            if (firstPTS !== undefined && lastPTS !== undefined) {
+                console.log(`parseKLVFile: paired ${nonNull}/${n} records with PES PTS ` +
+                    `(range ${(firstPTS/1e6).toFixed(3)}s – ${(lastPTS/1e6).toFixed(3)}s)`);
+            }
+        }
     }
 
     return MISBArray;

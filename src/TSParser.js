@@ -34,11 +34,38 @@ export class TSParser {
 
             updateProgress({status: 'Decoding substreams...', percent: 100});
 
+            // Find the video stream's first PES PTS on the original PCR
+            // clock. Per MISB ST 0604, KLV PES PTS values are on the same
+            // PCR axis as video PES PTS — so by subtracting this value at
+            // KLV-parse time, we put the two streams on a common origin.
+            // The video pipeline downstream normalizes its own framePTSus
+            // to start at 0, so KLV-shifted-by-videoFirstPES sits on the
+            // same axis as the normalized video PTS. Any cross-stream
+            // offset present in the source TS (e.g. KLV started before or
+            // after video on the PCR clock) is preserved as a constant
+            // offset in the KLV time array — exactly what the encoder
+            // recorded.
+            let videoFirstPESus = null;
+            for (const s of streams) {
+                const isVideo = s.codec_type === "video"
+                    || s.type === "h264" || s.type === "hevc"
+                    || s.type === "mpeg2video" || s.type === "mpeg1video";
+                if (isVideo && Array.isArray(s.pesEntries) && s.pesEntries.length > 0) {
+                    videoFirstPESus = s.pesEntries[0].ptsUs;
+                    console.log(`extractTSStreams: cross-stream PCR origin: video first PES = ${(videoFirstPESus/1e6).toFixed(3)}s`);
+                    break;
+                }
+            }
+
             // Create promises for each extracted stream
             const streamPromises = streams.map(stream => {
                 const streamFilename = filename + "_" + stream.type + "_" + stream.pid + "." + stream.extension;
-                // Pass stream metadata along with the data
-                return parseAssetCallback(streamFilename, id, stream.data, stream);
+                // Augment with cross-stream PCR origin so metadata streams
+                // (KLV) can align themselves to the video timeline.
+                const metadata = videoFirstPESus !== null
+                    ? Object.assign({}, stream, { videoFirstPESus })
+                    : stream;
+                return parseAssetCallback(streamFilename, id, stream.data, metadata);
             });
 
             // Wait for all streams to be processed
@@ -75,6 +102,19 @@ export class TSParser {
             const streams = [];
             const uint8Array = new Uint8Array(buffer);
             const streamData = new Map(); // PID -> accumulated data
+            // PID -> array of { offset, ptsUs } entries for each PES start
+            // seen on that stream. The MISB standard (ST 0604) defines
+            // synchronous-mode metadata as KLV PES packets with PTS values
+            // on the same PCR-locked timeline as video PTS. By recording
+            // the per-PES PTS here at the demux boundary, we preserve the
+            // per-frame metadata→video association that would otherwise be
+            // lost when KLV is exported as a flat byte stream.
+            const streamPESEntries = new Map();
+            // Running per-PID byte count of accumulated payload (used to
+            // compute offsetInSubstream when a PES start lands in this
+            // packet — the offset must reflect what's been pushed *before*
+            // this packet's payload is appended).
+            const streamAccLen = new Map();
             
             // Get elementary stream PIDs and their types from analysis
             const elementaryStreams = new Map(); // PID -> stream info
@@ -165,13 +205,14 @@ export class TSParser {
                 // When PAYLOAD_UNIT_START_INDICATOR is set, this packet starts a new PES packet
                 // We need to skip the PES header to get the actual elementary stream data
                 let pesHeaderSkip = 0;
+                let pesPtsUs = null;  // populated below if this PES has a PTS
                 if (payloadUnitStartIndicator) {
                     // Check for PES start code: 0x00 0x00 0x01
                     if (offset + payloadStart + 3 <= uint8Array.length &&
                         uint8Array[offset + payloadStart] === 0x00 &&
                         uint8Array[offset + payloadStart + 1] === 0x00 &&
                         uint8Array[offset + payloadStart + 2] === 0x01) {
-                        
+
                         const streamId = uint8Array[offset + payloadStart + 3];
                         // Check if this is a video stream (0xE0-0xEF) or private stream
                         if ((streamId >= 0xE0 && streamId <= 0xEF) || (streamId >= 0xBD && streamId <= 0xFF)) {
@@ -181,6 +222,27 @@ export class TSParser {
                                 const pesDataLength = uint8Array[offset + payloadStart + 8];
                                 // Standard PES header: 6 (start_code + stream_id + length) + 3 (mandatory fields) + pesDataLength (optional)
                                 pesHeaderSkip = 9 + pesDataLength;
+
+                                // Parse PTS from PES header if PTS_DTS_flags
+                                // indicate it's present (bit 7 of byte 7).
+                                // PTS is in 33-bit @ 90 kHz units; we convert
+                                // to microseconds for consistency with
+                                // framePTSus on the video side.
+                                const pesFlags = uint8Array[offset + payloadStart + 7];
+                                if ((pesFlags & 0x80) && offset + payloadStart + 14 <= uint8Array.length) {
+                                    const p0 = uint8Array[offset + payloadStart + 9];
+                                    const p1 = uint8Array[offset + payloadStart + 10];
+                                    const p2 = uint8Array[offset + payloadStart + 11];
+                                    const p3 = uint8Array[offset + payloadStart + 12];
+                                    const p4 = uint8Array[offset + payloadStart + 13];
+                                    const ptsTicks =
+                                        ((p0 & 0x0E) * (1 << 29)) +   // 33-bit math safe in JS doubles
+                                        (p1 * (1 << 22)) +
+                                        ((p2 & 0xFE) * (1 << 14)) +
+                                        (p3 * (1 << 7)) +
+                                        ((p4 & 0xFE) >> 1);
+                                    pesPtsUs = (ptsTicks * 1000) / 90;  // 90 kHz → µs
+                                }
                             }
                         }
                     }
@@ -189,14 +251,28 @@ export class TSParser {
                 // Extract payload data, skipping PES header if present
                 const dataStart = offset + payloadStart + pesHeaderSkip;
                 const dataEnd = offset + packetSize;
-                
+
                 if (dataStart < dataEnd) {
                     const payloadData = uint8Array.slice(dataStart, dataEnd);
                     if (payloadData.length > 0) {
                         if (!streamData.has(pid)) {
                             streamData.set(pid, []);
+                            streamAccLen.set(pid, 0);
+                            streamPESEntries.set(pid, []);
+                        }
+                        // Record the PES PTS at the substream offset where
+                        // this packet's payload begins (= accumulated bytes
+                        // pushed before this packet). KLV records lying on
+                        // or after this offset belong to this PES until the
+                        // next PES boundary.
+                        if (pesPtsUs !== null) {
+                            streamPESEntries.get(pid).push({
+                                offset: streamAccLen.get(pid),
+                                ptsUs: pesPtsUs,
+                            });
                         }
                         streamData.get(pid).push(payloadData);
+                        streamAccLen.set(pid, streamAccLen.get(pid) + payloadData.length);
                     }
                 }
             }
@@ -272,6 +348,8 @@ export class TSParser {
                 // Using .buffer directly can include extra data if the Uint8Array is a view
                 const arrayBuffer = finalData.buffer.slice(finalData.byteOffset, finalData.byteOffset + finalData.byteLength);
 
+                const pesEntriesForStream = streamPESEntries.get(pid) || [];
+                console.log(`extractTSStreams: PID ${pid} (${streamInfo.codec_name}) — captured ${pesEntriesForStream.length} PES PTS entries`);
                 streams.push({
                     pid: pid,
                     type: streamInfo.codec_name,
@@ -282,7 +360,12 @@ export class TSParser {
                     descriptors: streamInfo.descriptors,
                     fps: streamInfo.fps,
                     width: streamInfo.width,
-                    height: streamInfo.height
+                    height: streamInfo.height,
+                    // PES PTS map for this substream — preserves the per-
+                    // PES synchronous-mode timing the MISB ST 0604 standard
+                    // defines, so downstream code can pair KLV records to
+                    // video frames by PTS rather than by Tag-2 wall-clock.
+                    pesEntries: pesEntriesForStream,
                 });
             }
 

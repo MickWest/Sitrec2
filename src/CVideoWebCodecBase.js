@@ -727,6 +727,19 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
         videoFrame.close();
     }
 
+    // Real per-frame PTS in milliseconds, indexed by display-order frame number.
+    // framePTSus is built in buildTimestampMap and accounts for B-frame reorder
+    // (chunks[] itself is in decode order, so chunks[frame].timestamp would be
+    // wrong for streams with B-frames). This is the authoritative time-into-
+    // stream for each frame and is what KLV/MISB lookups should use.
+    getFrameTimeMs(frame) {
+        if (!this.framePTSus) return null;
+        const idx = Math.floor(frame);
+        if (idx < 0 || idx >= this.framePTSus.length) return null;
+        const us = this.framePTSus[idx];
+        return typeof us === "number" ? us / 1000 : null;
+    }
+
     handleGroupComplete() {
         if (this.groupsPending === 0) {
             if (this.nextRequest != null) {
@@ -749,6 +762,16 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
 
     buildTimestampMap() {
         this.timestampToChunkIndex = new Map();
+        // framePTSus[displayFrameIndex] = presentation timestamp in microseconds.
+        // Pre-fill from decode-order chunk timestamps so that orphan frames at
+        // the start (delta frames before the first keyframe — common in
+        // re-muxed TS→MP4 streams) still get a non-null entry. The per-group
+        // sort below overwrites those with display-order-correct values for
+        // every frame inside a group.
+        this.framePTSus = new Array(this.chunks.length);
+        for (let i = 0; i < this.chunks.length; i++) {
+            this.framePTSus[i] = this.chunks[i].timestamp;
+        }
 
         for (let g = 0; g < this.groups.length; g++) {
             const group = this.groups[g];
@@ -771,6 +794,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
             timestamps.sort((a, b) => a - b);
             for (let i = 0; i < timestamps.length; i++) {
                 this.timestampToChunkIndex.set(timestamps[i], group.frame + i);
+                this.framePTSus[group.frame + i] = timestamps[i];
             }
         }
     }

@@ -387,13 +387,84 @@ export class CNodeTrackFromMISB extends CNodeTrack {
             this.elevationCache = null;
         }
 
+        // PES-PTS-based KLV lookup (MISB ST 0604 synchronous-mode pairing).
+        // When the KLV substream came through Sitrec's TS demuxer, every
+        // KLV record retains the PES PTS the encoder stamped on it, on the
+        // same PCR-locked timeline as the video frame PTS values. Pairing
+        // by PES PTS gives the per-frame association the standard intends
+        // — eliminates wall-clock vs. encoder-clock divergence entirely,
+        // including the gap-stretch issue that affects this kind of file.
+        // Falls back to the wall-clock-based lookup when either side lacks
+        // PES timing (KLV from a flat .klv file, image-source video, etc.).
+        let usePESPTS = false;
+        let pesTimeArray = null;
+        const videoView = NodeMan.get("video", false);
+        const videoData = videoView?.videoData;
+        const ptsAvailable = videoData &&
+            typeof videoData.getFrameTimeMs === "function" &&
+            videoData.getFrameTimeMs(0) !== null;
+        if (ptsAvailable && this.in.misb.hasRecordPTS && this.in.misb.hasRecordPTS()) {
+            // KLV pesPTSus is already shifted to share the video's PCR
+            // origin (parseKLVFile subtracts videoFirstPESus when the TS
+            // demuxer provides it). So values are "ms since first video
+            // frame on the PCR clock," matching the normalized
+            // framePTSus axis. Negative values are valid — they indicate
+            // KLV records emitted *before* video frame 0, which the
+            // binary search handles correctly.
+            pesTimeArray = new Array(points);
+            for (let i = 0; i < points; i++) {
+                const us = this.in.misb.misb.pesPTSus[i];
+                pesTimeArray[i] = (typeof us === "number") ? us / 1000 : null;
+            }
+            // Require monotonically increasing PES PTS values for binary
+            // search to work. If any are null/non-monotonic, abandon the
+            // PES path and fall back to wall-clock.
+            let monotonic = true;
+            for (let i = 1; i < points; i++) {
+                if (pesTimeArray[i] === null || pesTimeArray[i-1] === null ||
+                    pesTimeArray[i] < pesTimeArray[i-1]) {
+                    monotonic = false; break;
+                }
+            }
+            if (monotonic) {
+                usePESPTS = true;
+                console.log(`CNodeTrackFromMISB(${this.id}): using MISB ST 0604 PES PTS pairing for ${points} records (klv span ${(pesTimeArray[points-1]/1000).toFixed(3)}s)`);
+            } else {
+                console.warn(`CNodeTrackFromMISB(${this.id}): PES PTS not monotonic; falling back to wall-clock lookup`);
+            }
+        }
+
+        // Reference array used by the binary search / interpolation. Either
+        // the existing UnixTimeStamp-based timeArray (wall-clock path) or
+        // the PES-PTS-derived array (synchronous-mode path).
+        const lookupTimes = usePESPTS ? pesTimeArray : this.timeArray;
+
+        // Cache the first video PTS for relative-to-stream-start computation
+        // in PES mode. framePTSus is already normalized to start at 0 in the
+        // WebCodec pipeline, but we subtract explicitly to be safe against
+        // any future change.
+        const videoFirstPTSus = (usePESPTS && videoData.framePTSus) ? videoData.framePTSus[0] : 0;
+
         for (var f=0;f<Sit.frames;f++) {
-            var msNow = msStart + Math.floor(frameTime*1000)
+            // For PES-PTS mode, msNow is the video frame's PTS in ms,
+            // relative to the first frame — same origin as pesTimeArray.
+            // For wall-clock mode it's the synthesized msStart + frame_time.
+            var msNow;
+            if (usePESPTS) {
+                const us = videoData.framePTSus[f];
+                if (typeof us === "number") {
+                    msNow = (us - videoFirstPTSus) / 1000;
+                } else {
+                    msNow = msStart + Math.floor(frameTime * 1000);
+                }
+            } else {
+                msNow = msStart + Math.floor(frameTime*1000);
+            }
             // advance the slot if needed
             while (slot < points-1) {
                 // we need at least two good consecutive slots
                 if (this.validArray[slot] && this.validArray[slot+1]) {
-                    const nextDataTime = this.timeArray[slot + 1];
+                    const nextDataTime = lookupTimes[slot + 1];
                     if (nextDataTime > msNow) {
                         break
                     }
@@ -406,7 +477,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
               if (slot < points-1) {
                   // for the in-range slots, check the time is increasing
                   // which means the data is good and we can interpolate
-                  assert(this.timeArray[slot + 1] > this.timeArray[slot], "Time data is not increasing slot =" + slot + " time=" + this.timeArray[slot] + " next time=" + misb.getTime(slot + 1));
+                  assert(lookupTimes[slot + 1] > lookupTimes[slot], "Time data is not increasing slot =" + slot + " time=" + lookupTimes[slot] + " next time=" + lookupTimes[slot+1]);
               } else {
                   // use the last two slots and interpolate (extrapolate) the position
                   slot = points - 2
@@ -428,10 +499,10 @@ export class CNodeTrackFromMISB extends CNodeTrack {
             assert(this.validArray[slot+1], "slot+1 " + (slot+1) + " is not valid, id=" + this.id)
 
 
-            assert(this.timeArray[slot+1] > this.timeArray[slot], "Time data is not increasing slot =" + slot + " time=" + this.timeArray[slot] + " next time=" + this.timeArray[slot+1]);
+            assert(lookupTimes[slot+1] > lookupTimes[slot], "Time data is not increasing slot =" + slot + " time=" + lookupTimes[slot] + " next time=" + lookupTimes[slot+1]);
 
            // assert(slot < points, "not enough data, or a bug in your code - Time wrong? id=" + this.id)
-            const fraction = (msNow - this.timeArray[slot]) / (this.timeArray[slot + 1] - this.timeArray[slot])
+            const fraction = (msNow - lookupTimes[slot]) / (lookupTimes[slot + 1] - lookupTimes[slot])
 
      //       assert(fraction >= 0 && fraction <= 1, "CNodeTrackFromMISB:recalculate(): fraction out of range: " + fraction + " slot = " + slot + " msNow = " + msNow + " timeArray[slot] = " + this.timeArray[slot] + " timeArray[slot+1] = " + this.timeArray[slot+1] + " id=" + this.id)
 
