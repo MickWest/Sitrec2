@@ -1277,19 +1277,6 @@ export class CNodeView3D extends CNodeViewCanvas {
                     height = this.heightPx;
                 }
 
-                // Apply user-controlled performance render scale to the offscreen
-                // render targets so the dominant per-pixel work shrinks as a single
-                // squared multiplier (e.g. 0.5 = 1/4 cost). The canvas backing
-                // store is also scaled via setPixelRatio(); the final blit handles
-                // the upscale to display pixels.
-                {
-                    const rs = getEffectiveRenderScale();
-                    if (rs !== 1) {
-                        width = Math.max(1, Math.floor(width * rs));
-                        height = Math.max(1, Math.floor(height * rs));
-                    }
-                }
-
                 // When matchVideoAspect is on, adjust the camera to show exactly
                 // the video's aspect ratio. Two cases:
                 // - Letterbox (video wider): preserve hFOV, narrow vFOV, reduce height
@@ -1373,35 +1360,52 @@ export class CNodeView3D extends CNodeViewCanvas {
                     this._lastSyncedRendererHeight = height;
                 }
 
+                // Apply user-controlled performance render scale to the offscreen
+                // render targets only. The renderer's canvas backing store is
+                // shrunk separately via setPixelRatio() in setupRenderer; we must
+                // NOT pass scaled dims to renderer.setSize() here because three.js
+                // multiplies by pixelRatio internally — that would double-scale
+                // and leave the look view's GL viewport mismatched with its
+                // canvas.style dimensions.
+                let rtWidth = width;
+                let rtHeight = height;
+                {
+                    const rs = getEffectiveRenderScale();
+                    if (rs !== 1) {
+                        rtWidth = Math.max(1, Math.floor(width * rs));
+                        rtHeight = Math.max(1, Math.floor(height * rs));
+                    }
+                }
+
                 // Resize render targets to match final renderer dimensions
                 // Note: renderer.setSize() is deferred 100ms, but widthPx/heightPx are current
                 // So render targets use the current dimensions and will match once renderer catches up
                 // Deduping prevents redundant GPU memory allocations during resize gestures
-                if (width !== this.lastRenderTargetWidth || height !== this.lastRenderTargetHeight) {
+                if (rtWidth !== this.lastRenderTargetWidth || rtHeight !== this.lastRenderTargetHeight) {
 
-                    this.renderTargetAntiAliased.setSize(width, height);
+                    this.renderTargetAntiAliased.setSize(rtWidth, rtHeight);
                     if (this.effectsEnabled || this.useLookViewHDR) {
-                        this.renderTargetA.setSize(width, height);
-                        this.renderTargetB.setSize(width, height);
+                        this.renderTargetA.setSize(rtWidth, rtHeight);
+                        this.renderTargetB.setSize(rtWidth, rtHeight);
                     }
-                    this.lastRenderTargetWidth = width;
-                    this.lastRenderTargetHeight = height;
+                    this.lastRenderTargetWidth = rtWidth;
+                    this.lastRenderTargetHeight = rtHeight;
 
                     // CRITICAL: Update canvas dimensions to match render target
                     // Otherwise canvas stays at init size and render target render at wrong resolution
                     if (this.in.canvasWidth !== undefined) {
-                        this.canvas.width = width;
-                        this.canvas.height = height;
+                        this.canvas.width = rtWidth;
+                        this.canvas.height = rtHeight;
                     }
                 }
 
                 currentRenderTarget = this.renderTargetAntiAliased;
                 this.renderer.setRenderTarget(currentRenderTarget);
                 const useAtmosphereHDR = this.useLookViewHDR && this.atmosphereEnabled && this.atmosphereHDR && this.hdrToneMappingPass !== null;
-                
+
                 // ALWAYS store render target height for use right before rendering
                 // Must be set every frame, not just on resize, or it will have stale values
-                this._rtHeightForFocalLength = height;
+                this._rtHeightForFocalLength = rtHeight;
                 
                 // [DBG] Clear background
                 if (Globals.renderDebugFlags.dbg_clearBackground) {
