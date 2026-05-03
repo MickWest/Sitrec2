@@ -3,6 +3,28 @@ import {LineMaterial} from "three/addons/lines/LineMaterial.js";
 import {Color} from "three";
 import {getEffectiveMSAASamples, getEffectiveRenderScale} from "./Globals";
 
+// Defensive accessors — under jest's node-smoke test, the Globals module
+// is stubbed with a Proxy whose values may be non-numeric or throw when
+// called. Wrap in try/catch and validate the result is a finite number;
+// fall back to safe defaults (MSAA=4, renderScale=1) so CHelper's
+// module-init-time makeMatLine() calls don't break the smoke test.
+const safeMSAA = () => {
+    try {
+        const v = getEffectiveMSAASamples();
+        return (typeof v === 'number' && isFinite(v)) ? v : 4;
+    } catch (e) {
+        return 4;
+    }
+};
+const safeRenderScale = () => {
+    try {
+        const v = getEffectiveRenderScale();
+        return (typeof v === 'number' && isFinite(v)) ? v : 1;
+    } catch (e) {
+        return 1;
+    }
+};
+
 // LineMaterial is a ShaderMaterial — Three.js does not apply color management
 // to its uniforms. Since the copy-to-screen shader applies sRGB encoding, we
 // must pre-linearize colors so the round-trip (linearize here + encode in copy
@@ -43,9 +65,9 @@ function makeMatLine(color, linewidth = 2, dashed = false) {
             // (the gap source at low renderScale). Requires MSAA>0 to actually
             // produce sub-pixel coverage; we toggle it dynamically based on
             // current settings so it's a no-op when MSAA is off.
-            alphaToCoverage: getEffectiveMSAASamples() > 0,
+            alphaToCoverage: safeMSAA() > 0,
         })
-        const rs = getEffectiveRenderScale();
+        const rs = safeRenderScale();
         const dpr = (window.devicePixelRatio || 1) * rs;
         lineMaterial.resolution.set(window.innerWidth * dpr, window.innerHeight * dpr)
         matLines[key] = lineMaterial
@@ -85,7 +107,7 @@ function updateMatLineResolution(windowWidth, windowHeight) {
 // stale and lines that were created with MSAA=0 (alphaToCoverage off) keep
 // dropping sub-pixel fragments after the user enables MSAA.
 function refreshMatLineAlphaToCoverage() {
-    const enabled = getEffectiveMSAASamples() > 0;
+    const enabled = safeMSAA() > 0;
     Object.keys(matLines).forEach(key => {
         const m = matLines[key];
         if (m.alphaToCoverage !== enabled) {
