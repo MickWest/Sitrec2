@@ -69,6 +69,7 @@ import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
 import {parseObjectInput as parseObjectInputUtil} from "./utils/parseObjectInput";
 import {initializeSettings, SettingsSaver} from "./SettingsManager";
+import {refreshMatLineAlphaToCoverage, updateMatLineResolution} from "./MatLines";
 import {CNodeCurveEditor2} from "./nodes/CNodeCurveEdit2";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
 import {CNodeNotes} from "./nodes/CNodeNotes";
@@ -120,13 +121,16 @@ import {serializeMethods} from "./CustomManagerSerialize";
 
 // Bulk knob set for the Performance Preset dropdown. Tuned for integrated GPUs
 // and 16 GB hi-DPI laptops: render-scale shrinks the squared per-pixel work,
-// MSAA-off removes a multisample resolve, and lower terrain detail/segments
-// cut both CPU traversal and GPU vertex work.
+// reduced MSAA cuts the multisample resolve, and lower terrain detail/segments
+// cut both CPU traversal and GPU vertex work. Fast keeps MSAA=2 because at
+// renderScale 0.7 the MSAA buffer is only ~24% of native pixels (cheap), and
+// it lets the LineMaterial alphaToCoverage path fill sub-pixel line coverage
+// — without it the cyan LOS lines drop fragments and look broken at low res.
 const PERFORMANCE_PRESETS = {
     Quality:  { renderScale: 1,    msaaSamples: 4, fpsLimit: 60, tileSegments: 64, maxDetails: 25 },
     Balanced: { renderScale: 0.85, msaaSamples: 4, fpsLimit: 30, tileSegments: 32, maxDetails: 20 },
-    Fast:     { renderScale: 0.7,  msaaSamples: 0, fpsLimit: 30, tileSegments: 16, maxDetails: 15 },
-    Potato:   { renderScale: 0.5,  msaaSamples: 0, fpsLimit: 20, tileSegments: 16, maxDetails: 10 },
+    Fast:     { renderScale: 0.7,  msaaSamples: 2, fpsLimit: 30, tileSegments: 16, maxDetails: 15 },
+    Potato:   { renderScale: 0.5,  msaaSamples: 2, fpsLimit: 20, tileSegments: 16, maxDetails: 10 },
 };
 
 export function applyPerformancePreset(name) {
@@ -144,6 +148,15 @@ export function applyRenderPerformanceSettings() {
             node.applyPerformanceSettings();
         }
     });
+    // Push the new effective render-target resolution into every pooled
+    // LineMaterial so Line2 widths render at correct fb pixel sizes (otherwise
+    // lines under-cover sub-pixel triangles at low renderScale → visible gaps).
+    const lineDPR = (window.devicePixelRatio || 1) * (Globals.settings?.renderScale ?? 1);
+    updateMatLineResolution(window.innerWidth * lineDPR, window.innerHeight * lineDPR);
+    // And flip alphaToCoverage so the fragment-shader smoothstep AA branch
+    // runs whenever MSAA is on (and stays off when MSAA=0, where it'd be a
+    // no-op that costs a recompile).
+    refreshMatLineAlphaToCoverage();
     // Also refresh terrain so a tileSegments/maxDetails change in a preset
     // takes effect immediately rather than waiting for the next pan.
     const terrainUI = NodeMan.get("terrainUI", false);
