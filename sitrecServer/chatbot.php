@@ -239,6 +239,34 @@ if ($continueSession && $toolResults && isset($_SESSION['chatbot_pending'])) {
     );
     
     if (!empty($result['apiCalls'])) {
+        // Loop guard: if the LLM is re-issuing exactly the same fn+args we just sent it
+        // a successful result for, drop the duplicate calls and stop continuing. Without
+        // this, a model that ignores [Tool Results] semantics will burn through the
+        // continuation budget repeating itself.
+        $priorCallSig = [];
+        foreach ($toolResults as $tr) {
+            $priorCallSig[] = $tr['fn'] . '|' . json_encode($tr['args'] ?? null);
+        }
+        $filteredCalls = [];
+        $droppedDuplicates = [];
+        foreach ($result['apiCalls'] as $call) {
+            $sig = $call['fn'] . '|' . json_encode($call['args'] ?? null);
+            if (in_array($sig, $priorCallSig, true)) {
+                $droppedDuplicates[] = $call['fn'];
+            } else {
+                $filteredCalls[] = $call;
+            }
+        }
+        $result['apiCalls'] = $filteredCalls;
+        if (!empty($droppedDuplicates)) {
+            $result['debug']['droppedDuplicateCalls'] = $droppedDuplicates;
+            if (empty($result['text'])) {
+                $result['text'] = "Done.";
+            }
+        }
+    }
+
+    if (!empty($result['apiCalls'])) {
         $newRemaining = $pendingState['remainingIterations'] - 1;
         if ($newRemaining > 0) {
             $_SESSION['chatbot_pending'] = [
@@ -582,12 +610,13 @@ Sitrec is a Situation Recreation application written by Mick West. It can:
 - Calculate and display lines of sight and traverse paths
 The primary use is for resolving UAP sightings and other events by showing what was in the sky at a given time.
 
-CAMERA POINTING vs LOCKING:
-- "point at" / "look at" = one-shot pointing (camera stays still after). Use pointCameraAtNamedObject (planets/Sun/Moon) or pointCameraAtRaDec (stars/deep-sky).
-- "lock on" / "track" / "follow" = continuous tracking (camera follows the object as time changes). Use lockCameraOnObject (planets/Sun/Moon) or lockCameraOnRaDec (stars/deep-sky by RA/Dec).
-- "unlock" / "stop tracking" = stop any active lock. Use unlockCamera.
-- When the user says "lock on to M45" or "track Orion", look up the RA/Dec and use lockCameraOnRaDec. Common objects: M45 (Pleiades) RA=3h47m Dec=+24d07m, Orion (Betelgeuse) RA=5h55m Dec=+7d24m, Polaris RA=2h32m Dec=+89d16m, Sirius RA=6h45m Dec=-16d43m.
-- RA is in hours (0-24), Dec is in degrees (-90 to +90). Both accept decimal or sexagesimal ("3h47m", "3:47", "+24d07m").
+CAMERA POINTING vs LOCKING (read carefully — these are NOT interchangeable):
+- "point at" / "look at" / "show me" / "aim at" = ONE-SHOT pointing. Camera moves once and stays still. MUST use pointCameraAtNamedObject (planets/Sun/Moon) or pointCameraAtRaDec (stars/deep-sky). NEVER use a lock* function for these phrases.
+- "lock on" / "lock onto" / "track" / "follow" / "keep on" = CONTINUOUS tracking. Camera follows the object as time advances. MUST use lockCameraOnObject (planets/Sun/Moon) or lockCameraOnRaDec (stars/deep-sky). NEVER use a point* function for these phrases.
+- "unlock" / "stop tracking" / "release" = stop any active lock. Use unlockCamera.
+- Picking the wrong family (point vs lock) is a serious error. If the user says "point" but you call lock*, the camera will track the target instead of staying still — that is wrong. When in doubt, default to point*.
+- For stars/asterisms/constellations/galaxies/nebulae the user names that you don't have coordinates memorized for, recall the RA/Dec from your knowledge and call the appropriate RaDec variant. Examples: M45 (Pleiades) RA=3h47m Dec=+24d07m; Orion (Betelgeuse) RA=5h55m Dec=+7d24m; Polaris RA=2h32m Dec=+89d16m; Sirius RA=6h45m Dec=-16d43m; Phoenix constellation (center) RA=1h00m Dec=-48d00m.
+- RA is in hours (0-24), Dec is in degrees (-90 to +90). Both pointCameraAtRaDec and lockCameraOnRaDec accept decimal or sexagesimal ("3h47m", "3:47", "+24d07m"). Double-check the sign on Dec — southern-sky objects (Phoenix, Sirius, etc.) have NEGATIVE declination.
 
 SATELLITE LOADING:
 - "load satellites" or general satellite requests → use satellitesLoadLEO
@@ -617,7 +646,13 @@ When the user asks you to DO something (set, change, move, show, hide, point, go
 - When the user uses a keyword that likely matches a control (like "frustum", "LOS", "labels"), TRY IT - the flexible matching will find the right control.
 - Only say you don't know if you truly have no idea what the user is asking for.
 
-CRITICAL RULE - MUST FOLLOW: When the user requests an action (like "load sats"), you MUST call the appropriate function. Do NOT just respond with text like "Loading..." - you must actually invoke the function tool. Even if you see the same request in the history, you MUST call the function again. The conversation history does NOT mean the action persists - each request requires a new function call.
+CRITICAL RULE - MUST FOLLOW: When the user makes a NEW request for an action (like "load sats"), you MUST call the appropriate function. Do NOT just respond with text like "Loading..." - you must actually invoke the function tool. If the user repeats a previous request as a NEW user message, call the function again — the conversation history alone does not mean the action persists.
+
+HOW TO READ "[Tool Results]" MESSAGES (CRITICAL — read carefully):
+- A user-role message that begins with "[Tool Results]" is NOT a new user request. It is a system-generated report of what happened when you previously called a tool. Treat it as informational only.
+- When you see "[Tool Results]\nTool X returned: {\"success\":true,...}", that means the action you requested already succeeded. DO NOT call X again. Your job in the very next turn is to respond with brief confirmation TEXT (one sentence, no tool calls) — for example "Pointed at the Phoenix asterism." or "Done."
+- When you see "[Tool Results]\nTool X returned: {\"success\":false,\"error\":\"...\"}", the action failed. You may either (a) try a corrected call (different args) ONCE, or (b) respond with a brief text apology explaining the failure. Do not retry with the SAME args — that will just fail the same way.
+- NEVER emit the same fn + args combination as the most recent tool call you see in the history. That is always wrong: either it already succeeded (so respond with text) or it already failed (so try different args or give up with text).
 
 If the user confirms with "yes", "ok", "sure", "do it", etc., EXECUTE the action you proposed by calling the function.
 

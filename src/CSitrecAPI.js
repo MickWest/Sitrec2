@@ -125,15 +125,19 @@ class CSitrecAPI {
             },
 
             pointCameraAtRaDec: {
-                doc: "Set the camera orientation based on Right Ascension and Declination. Use for looking at stars and other fixed sky objects (not planets or the Sun).",
+                doc: "Set the camera orientation (one-shot, no tracking) based on Right Ascension and Declination. Use for looking at stars and other fixed sky objects (not planets or the Sun). RA can be decimal hours (e.g. 3.79) or sexagesimal ('3h47m' or '03:47:00'). Dec can be decimal degrees (e.g. 24.12) or sexagesimal ('+24d07m' or '24:07:00').",
                 params: {
-                    ra: "Right Ascension in hours (float)",
-                    dec: "Declination in degrees (float)",
+                    ra: "Right Ascension — decimal hours or sexagesimal string (e.g. 5.92 or '5h55m')",
+                    dec: "Declination — decimal degrees or sexagesimal string (e.g. 7.41 or '+7d24m')",
                 },
                 fn: (v) => {
                     const camera = NodeMan.get("lookCamera");
                     if (!camera) return { success: false, error: "lookCamera node not found" };
-                    camera.setFromRaDec(v.ra, v.dec);
+                    const ra = parseRA(v.ra);
+                    const dec = parseDec(v.dec);
+                    if (ra === null) return { success: false, error: `Could not parse RA '${v.ra}'. Use decimal hours (e.g. 3.79) or sexagesimal (e.g. '3h47m10s').` };
+                    if (dec === null) return { success: false, error: `Could not parse Dec '${v.dec}'. Use decimal degrees (e.g. 24.12) or sexagesimal (e.g. '+24d07m00s').` };
+                    camera.setFromRaDec(ra, dec);
                     return { success: true };
                 }
             },

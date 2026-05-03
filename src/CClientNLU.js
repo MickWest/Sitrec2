@@ -756,8 +756,9 @@ class CClientNLU {
                 if (pointCoords) {
                     return sitrecAPI.call("pointCameraAtRaDec", pointCoords);
                 }
-                // Fall through to named object (will return a helpful error)
-                return sitrecAPI.call("pointCameraAtNamedObject", {object: target});
+                // Unknown to local handlers — let the LLM resolve it (e.g. asterisms,
+                // constellation features, free-form sky objects) and call pointCameraAtRaDec.
+                return {success: false, error: `Unknown object '${target}'`, needsLLM: true};
             }
 
             case "LOCK_ON": {
@@ -773,8 +774,8 @@ class CClientNLU {
                 if (lockCoords) {
                     return sitrecAPI.call("lockCameraOnRaDec", lockCoords);
                 }
-                // Fall through to named object lock (will return a helpful error)
-                return sitrecAPI.call("lockCameraOnObject", {object: target});
+                // Unknown to local handlers — let the LLM resolve it and call lockCameraOnRaDec.
+                return {success: false, error: `Unknown object '${target}'`, needsLLM: true};
             }
 
             case "UNLOCK":
