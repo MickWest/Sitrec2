@@ -127,10 +127,10 @@ import {serializeMethods} from "./CustomManagerSerialize";
 // it lets the LineMaterial alphaToCoverage path fill sub-pixel line coverage
 // — without it the cyan LOS lines drop fragments and look broken at low res.
 const PERFORMANCE_PRESETS = {
-    Quality:  { renderScale: 1,    msaaSamples: 4, fpsLimit: 60, tileSegments: 64, maxDetails: 25 },
-    Balanced: { renderScale: 0.85, msaaSamples: 4, fpsLimit: 30, tileSegments: 32, maxDetails: 20 },
-    Fast:     { renderScale: 0.7,  msaaSamples: 2, fpsLimit: 30, tileSegments: 16, maxDetails: 15 },
-    Potato:   { renderScale: 0.5,  msaaSamples: 2, fpsLimit: 20, tileSegments: 16, maxDetails: 10 },
+    Quality:  { renderScale: 1,    msaaSamples: 4, fpsLimit: 60, tileSegments: 64, maxDetails: 25, videoMaxSize: "None" },
+    Balanced: { renderScale: 0.85, msaaSamples: 2, fpsLimit: 30, tileSegments: 32, maxDetails: 20, videoMaxSize: "720P" },
+    Fast:     { renderScale: 0.7,  msaaSamples: 0, fpsLimit: 30, tileSegments: 16, maxDetails: 15, videoMaxSize: "480P" },
+    Potato:   { renderScale: 0.5,  msaaSamples: 0, fpsLimit: 20, tileSegments: 16, maxDetails: 10, videoMaxSize: "360P" },
 };
 
 export function applyPerformancePreset(name) {
@@ -450,8 +450,78 @@ export class CCustomManager {
             })
             .listen();
 
-        // Add Max Details slider
-        settingsFolder.add(Globals.settings, "maxDetails", 5, 30, 1)
+        // Bulk preset that drives the render-perf knobs in Performance Tweaks
+        // below. Selecting Custom is also what every individual onChange does,
+        // so the preset just shows "Custom" once any sub-setting is hand-tuned.
+        settingsFolder.add(Globals.settings, "performancePreset",
+            ["Quality", "Balanced", "Fast", "Potato", "Custom"])
+            .name(t("custom.settings.performancePreset.label"))
+            .tooltip(t("custom.settings.performancePreset.tooltip"))
+            .onChange((value) => {
+                applyPerformancePreset(value);
+                applyRenderPerformanceSettings();
+                this.saveGlobalSettings(true);
+            })
+            .listen();
+
+        // The five individual knobs the preset controls. Grouped into a
+        // closed sub-folder so the preset stays the front-door control and
+        // the tweaks only show up when the user opens the folder.
+        const tweaksFolder = settingsFolder.addFolder("Performance Tweaks").close();
+
+        // Render Scale: scales offscreen render targets + canvas pixel ratio.
+        // Squared cost: 0.5 = ~1/4 GPU pixel work. Largest single perf knob.
+        tweaksFolder.add(Globals.settings, "renderScale", {
+            "100% (Native)": 1,
+            "85%": 0.85,
+            "70%": 0.7,
+            "50% (Half)": 0.5,
+            "35% (Quarter)": 0.35,
+        })
+            .name(t("custom.settings.renderScale.label"))
+            .tooltip(t("custom.settings.renderScale.tooltip"))
+            .onChange(() => {
+                Globals.settings.performancePreset = "Custom";
+                applyRenderPerformanceSettings();
+                this.saveGlobalSettings(true);
+            })
+            .listen();
+
+        // MSAA samples on the offscreen render target. 0 = disabled (fastest).
+        tweaksFolder.add(Globals.settings, "msaaSamples", {
+            "Off (fastest)": 0,
+            "2x": 2,
+            "4x (default)": 4,
+            "8x": 8,
+        })
+            .name(t("custom.settings.msaaSamples.label"))
+            .tooltip(t("custom.settings.msaaSamples.tooltip"))
+            .onChange(() => {
+                Globals.settings.performancePreset = "Custom";
+                applyRenderPerformanceSettings();
+                this.saveGlobalSettings(true);
+            })
+            .listen();
+
+        // Tile Segments — terrain mesh resolution per tile.
+        tweaksFolder.add(Globals.settings, "tileSegments", [8, 16, 32, 64, 128])
+            .name(t("custom.settings.tileSegments.label"))
+            .tooltip(t("custom.settings.tileSegments.tooltip"))
+            .onFinishChange(() => {
+                Globals.settings.performancePreset = "Custom";
+                // When selection is finalized, force immediate save and refresh terrain
+                this.saveGlobalSettings(true);
+
+                // Refresh terrain with new mesh resolution
+                const terrainUI = NodeMan.get("terrainUI", false);
+                if (terrainUI) {
+                    terrainUI.doRefresh();
+                }
+            })
+            .listen();
+
+        // Max Details — terrain detail level cap.
+        tweaksFolder.add(Globals.settings, "maxDetails", 5, 30, 1)
             .name(t("custom.settings.maxDetails.label"))
             .tooltip(t("custom.settings.maxDetails.tooltip"))
             .onChange((value) => {
@@ -475,8 +545,8 @@ export class CCustomManager {
             })
             .listen();
 
-        // Add FPS Limit dropdown - dropdown doesn't need onFinishChange, immediate save is fine
-        settingsFolder.add(Globals.settings, "fpsLimit", [60, 30, 20, 15])
+        // FPS Limit — caps the requestAnimationFrame loop.
+        tweaksFolder.add(Globals.settings, "fpsLimit", [60, 30, 20, 15])
             .name(t("custom.settings.fpsLimit.label"))
             .tooltip(t("custom.settings.fpsLimit.tooltip"))
             .onChange(() => {
@@ -485,76 +555,14 @@ export class CCustomManager {
             })
             .listen();
 
-        // Render Scale: scales offscreen render targets + canvas pixel ratio.
-        // Squared cost: 0.5 = ~1/4 GPU pixel work. Largest single perf knob.
-        settingsFolder.add(Globals.settings, "renderScale", {
-            "100% (Native)": 1,
-            "85%": 0.85,
-            "70%": 0.7,
-            "50% (Half)": 0.5,
-            "35% (Quarter)": 0.35,
-        })
-            .name(t("custom.settings.renderScale.label"))
-            .tooltip(t("custom.settings.renderScale.tooltip"))
-            .onChange(() => {
-                Globals.settings.performancePreset = "Custom";
-                applyRenderPerformanceSettings();
-                this.saveGlobalSettings(true);
-            })
-            .listen();
-
-        // MSAA samples on the offscreen render target. 0 = disabled (fastest).
-        settingsFolder.add(Globals.settings, "msaaSamples", {
-            "Off (fastest)": 0,
-            "2x": 2,
-            "4x (default)": 4,
-            "8x": 8,
-        })
-            .name(t("custom.settings.msaaSamples.label"))
-            .tooltip(t("custom.settings.msaaSamples.tooltip"))
-            .onChange(() => {
-                Globals.settings.performancePreset = "Custom";
-                applyRenderPerformanceSettings();
-                this.saveGlobalSettings(true);
-            })
-            .listen();
-
-        // Bulk preset that drives the render-perf knobs above. Selecting Custom
-        // is also what every individual onChange does, so the preset just shows
-        // "Custom" once any sub-setting is hand-tuned.
-        settingsFolder.add(Globals.settings, "performancePreset",
-            ["Quality", "Balanced", "Fast", "Potato", "Custom"])
-            .name(t("custom.settings.performancePreset.label"))
-            .tooltip(t("custom.settings.performancePreset.tooltip"))
-            .onChange((value) => {
-                applyPerformancePreset(value);
-                applyRenderPerformanceSettings();
-                this.saveGlobalSettings(true);
-            })
-            .listen();
-
-        // Add Tile Segments dropdown
-        settingsFolder.add(Globals.settings, "tileSegments", [8, 16, 32, 64, 128])
-            .name(t("custom.settings.tileSegments.label"))
-            .tooltip(t("custom.settings.tileSegments.tooltip"))
-            .onFinishChange(() => {
-                Globals.settings.performancePreset = "Custom";
-                // When selection is finalized, force immediate save and refresh terrain
-                this.saveGlobalSettings(true);
-
-                // Refresh terrain with new mesh resolution
-                const terrainUI = NodeMan.get("terrainUI", false);
-                if (terrainUI) {
-                    terrainUI.doRefresh();
-                }
-            })
-            .listen();
-
-        // Add Max Resolution dropdown - dropdown doesn't need onFinishChange
-        settingsFolder.add(Globals.settings, "videoMaxSize", ["None", "1080P", "720P", "480P", "360P"])
+        // Max Resolution — caps the per-frame video texture size used for
+        // motion analysis / tracking. Now preset-controlled, so changes flip
+        // performancePreset to Custom like the other tweaks.
+        tweaksFolder.add(Globals.settings, "videoMaxSize", ["None", "1080P", "720P", "480P", "360P"])
             .name(t("custom.settings.maxResolution.label"))
             .tooltip(t("custom.settings.maxResolution.tooltip"))
             .onChange(() => {
+                Globals.settings.performancePreset = "Custom";
                 this.saveGlobalSettings(true);
             })
             .listen();

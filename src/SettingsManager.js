@@ -319,18 +319,24 @@ export async function initializeSettings() {
     // Initialize Globals.settings with defaults
     if (!Globals.settings) {
         Globals.settings = {
-            maxDetails: 20, // Default value
-            fpsLimit: 30, // Frame rate limit (60, 30, 20, or 15)
-            tileSegments: 32, // Tile mesh resolution (16-256)
-            videoMaxSize: "720P", // Video frame max size (None, 1080P, 720P, 480P, 360P)
+            // Defaults below intentionally match the "Balanced" performance
+            // preset (see PERFORMANCE_PRESETS in CustomSupport.js) so that
+            // performancePreset: "Balanced" is consistent on first load.
+            // If you change either, change both — otherwise the preset
+            // dropdown will display "Balanced" while the actual knob values
+            // belong to a different preset.
+            maxDetails: 20,         // matches Balanced
+            fpsLimit: 30,           // matches Balanced
+            tileSegments: 32,       // matches Balanced
+            videoMaxSize: "720P",   // matches Balanced (None / 1080P / 720P / 480P / 360P)
+            renderScale: 0.85,      // matches Balanced (0.25–1, 1=native)
+            msaaSamples: 2,         // matches Balanced (0, 2, 4, 8)
+            performancePreset: "Balanced",
             lastBuildingRotation: 0, // Last building rotation in radians (persists across sessions)
             chatModel: "", // AI chat model in "provider:model" format (empty = use first available)
             centerSidebar: false, // Enable center sidebar between split views
             showAttribution: true, // Show map/elevation data source attribution overlay
             language: "en", // UI language
-            renderScale: 1, // Multiplier on devicePixelRatio + render target sizes (1=native, 0.5=quarter pixels)
-            msaaSamples: 4, // MSAA samples on offscreen render targets (0, 2, 4, 8). 0 disables MSAA.
-            performancePreset: "Quality", // Quality, Balanced, Fast, Potato, or Custom (matches the renderScale=1 / msaa=4 defaults below)
         };
     }
 
