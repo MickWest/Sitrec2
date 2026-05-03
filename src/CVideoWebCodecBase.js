@@ -275,6 +275,40 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
                 group.loaded = false;
                 this.groupsPending = Math.max(0, this.groupsPending - 1);
                 this._activeGroupMap.delete(groupId);
+
+                // Per-group corruption vs. stream-wide codec failure: if
+                // we've already successfully decoded other groups, the
+                // decoder is fundamentally working — this group is just
+                // corrupt. Re-trying it in hardware/software a few times
+                // produces multiple "consecutive errors," which the
+                // cascade interprets as a stream-wide failure and marks
+                // every remaining group permanently failed. That throws
+                // away valid playback for the rest of the stream over
+                // one bad group. Detect this case: if ≥1 other group has
+                // already loaded successfully, treat repeated retries of
+                // *this* group as a per-group artifact, mark it
+                // permanently failed, and skip the cascade. Genuine
+                // codec mismatches (every group fails from the start)
+                // still escalate normally because no group will ever
+                // have loaded.
+                if (this.groups) {
+                    const otherLoaded = this.groups.filter(g => g !== group && g.loaded).length;
+                    if (otherLoaded >= 1 && group._decodeFailures >= 2) {
+                        const groupIdx = this.groups.indexOf(group);
+                        console.warn(`[Video] Group ${groupId} (idx ${groupIdx}/${this.groups.length}, frame ${group.frame}, length ${group.length}) ` +
+                            `failed to decode after ${group._decodeFailures} attempts. ` +
+                            `${otherLoaded} other groups loaded successfully — decoder works in general, this group is corrupt. ` +
+                            `Marking permanently failed; rest of stream stays playable.`);
+                        group._permanentlyFailed = true;
+                        // Don't increment _consecutiveGroupErrors: same-
+                        // group retries shouldn't escalate to stream-wide
+                        // failure. Reset it too — any earlier increments
+                        // from this group's retries shouldn't carry over.
+                        this._consecutiveGroupErrors = 0;
+                        this.handleGroupComplete();
+                        return;
+                    }
+                }
             }
         } else {
             // Generic decoder error (not group-specific) — informational only, don't count as group failure
