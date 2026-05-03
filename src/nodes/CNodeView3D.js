@@ -165,7 +165,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         this.background = v.background ?? new Color(0x000000);
 
         // Ensure background is always a Color object (may be string, array, hex, or Color)
-        if (this.background instanceof Array) {
+        if (Array.isArray(this.background)) {
             this.background = new Color(this.background[0], this.background[1], this.background[2])
         } else if (!this.background.isColor) {
             this.background = new Color(this.background);

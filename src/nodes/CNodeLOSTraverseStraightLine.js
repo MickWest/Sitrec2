@@ -137,8 +137,8 @@ export class CNodeLOSTraverseStraightLineFixed extends CNodeTrack {
         let startDistance = this.in.startDist.v(0)
         var position, startPosition;
         var oldDistance;
-        let perFrameMotion = this.in.speed.v(f) / this.fps
         for (var f = 0; f < this.frames; f++) {
+            let perFrameMotion = this.in.speed.v(f) / this.fps
 
             const los = this.in.LOS.v(f)
 

@@ -1050,7 +1050,7 @@ export function initViews() {
         labelOriginalVideo.setVisible(true)
     }
 
-    if (1 || !isLocal) {
+    if (!isLocal) {
         const labelMainView = new CNodeViewUI({id: "labelMainView", overlayView: ViewMan.list.mainView.data});
         labelMainView.addText("videolabel1", "WORK IN PROGRESS", 45, 90, 3, "#f0f00020")
         labelMainView.addText("videolabel2", "RESULTS MAY VARY", 45, 95, 3, "#f0f00020")

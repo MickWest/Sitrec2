@@ -344,10 +344,6 @@ export class CNodeDateTime extends CNode {
     }
 
 
-    getTimeZoneOffset() {
-        return (timeZoneOffsets[this.timeZoneName] ?? 0);
-    }
-
     adjustDaysInMonth() {
         if (this.guiDay === undefined) return;
         let days = 31;

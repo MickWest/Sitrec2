@@ -73,7 +73,7 @@ class CDraggableLine extends CDraggable {
     constructor(point1, point2, radius, callback, type=DRAGLINE_FREE) {
         super();
         this.point1 = point1
-        this.point1 = point1
+        this.point2 = point2
         this.radius = radius
         this.callback = callback
         this.type = type;

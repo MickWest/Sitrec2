@@ -336,10 +336,4 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
             this.rebuild();
         }
     }
-
-
-    dispose() {
-        this.removeCircles();
-        super.dispose();
-    }
 }

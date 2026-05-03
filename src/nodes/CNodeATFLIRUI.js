@@ -47,7 +47,7 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
             if (par.rng > 0)
                 this.text = value.toFixed(1) + " RNG";
             else
-                this.txt = ""
+                this.text = ""
         })
 
         if (par.Vc === undefined)
@@ -56,7 +56,7 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
             if (par.Vc !== 0)
                 this.text = value.toFixed() + " Vc";
             else
-                this.txt = ""
+                this.text = ""
         })
 
 

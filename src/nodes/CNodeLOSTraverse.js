@@ -49,7 +49,7 @@ export class CNodeLOSTraverse extends CNodeTrack {
 
 
             if (this.in.VcMPH !== undefined)
-                end = start + metersFromMiles(this.in.VcMPH.v(f)) / 60 / 60 / this.fps * this.frames
+                end = start + metersFromMiles(this.in.VcMPH.v(0)) / 60 / 60 / this.fps * this.frames
 
             let dist = start
             const distStep = (end - start) / (this.frames - 1)

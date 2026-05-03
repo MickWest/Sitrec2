@@ -250,9 +250,9 @@ export class CVideoWebCodecData extends CVideoData {
                     // so check for NV
                     let buffer = new Uint8Array(videoFrame.allocationSize());
 
-                    videoFrame.copyTo(buffer).then(
-                        this.frameCache[frameNumber] = buffer
-                    );
+                    videoFrame.copyTo(buffer).then(() => {
+                        this.frameCache[frameNumber] = buffer;
+                    });
                 }
             },
             error: e => showError(e),

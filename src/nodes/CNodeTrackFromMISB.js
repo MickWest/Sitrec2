@@ -217,7 +217,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
             }
         }
         const geo = new CGeoJSON();
-        name = "";
+        let name = "";
         NodeMan.iterate((key, node) => {
             if (node instanceof CNodeTrackFromMISB) {
                 name += node.id + "_";

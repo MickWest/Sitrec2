@@ -64,7 +64,7 @@ export class CNodeControllerAzElZoom extends CNodeController {
         let south = north.clone().negate()
         let east = V3().crossVectors(up, south)
 
-        length = 100000;
+        // length = 100000;
         // DebugArrow("local East",east,camera.position,length,"#FF8080")
         // DebugArrow("local Up",up,camera.position,length,"#80FF90")
         // DebugArrow("local South",south,camera.position,length,"#8080FF")
@@ -535,13 +535,13 @@ export class CNodeControllerCustomAzEl extends CNodeControllerAzElZoom {
         const elSmooth = this.in.elSmooth ? this.in.elSmooth.v0 : 200;
 
         if (this.azFile !== undefined) {
-            assert(this.frames = Sit.frames, "CNodeControllerCustomAzEl: frames not set right");
+            assert(this.frames === Sit.frames, "CNodeControllerCustomAzEl: frames not set right");
             this.azArrayRaw = ExpandKeyframes(this.azFile, this.frames, 0, this.azCol);
             this.azArray = RollingAverage(this.azArrayRaw, azSmooth);
         }
 
         if (this.elFile !== undefined) {
-            assert(this.frames = Sit.frames, "CNodeControllerCustomAzEl: frames not set right");
+            assert(this.frames === Sit.frames, "CNodeControllerCustomAzEl: frames not set right");
             this.elArrayRaw = ExpandKeyframes(this.elFile, this.frames, 0, this.elCol);
             this.elArray = RollingAverage(this.elArrayRaw, elSmooth);
         }
@@ -604,7 +604,7 @@ export class CNodeControllerCustomHeading extends CNodeController {
         const headingSmooth = this.in.headingSmooth ? this.in.headingSmooth.v0 : 200;
 
         if (this.headingFile !== undefined) {
-            assert(this.frames = Sit.frames, "CNodeControllerCustomHeading: frames not set right");
+            assert(this.frames === Sit.frames, "CNodeControllerCustomHeading: frames not set right");
             this.headingArrayRaw = ExpandKeyframes(this.headingFile, this.frames, 0, this.headingCol);
             this.headingArray = RollingAverage(this.headingArrayRaw, headingSmooth);
         }

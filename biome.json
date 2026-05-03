@@ -9,7 +9,13 @@
 			"!src/js/mp4-decode/**",
 			"!src/js/opencv.js",
 			"!src/js/lil-gui.esm.js",
-			"!src/workers/**"
+			"!src/js/jsfeat.js",
+			"!src/js/uPlot/**",
+			"!src/workers/**",
+			"!tools/three.js/**",
+			"!tools/IRBalloon/chart.umd.min.js",
+			"!**/*.min.js",
+			"!.fleet/**"
 		]
 	},
 	"javascript": {
@@ -25,7 +31,41 @@
 		"rules": {
 			"recommended": true,
 			"correctness": {
-				"noUndeclaredVariables": "error"
+				"noUndeclaredVariables": "error",
+				"noConstructorReturn": "error",
+				"noSetterReturn": "error",
+				"noStringCaseMismatch": "error",
+				"noSwitchDeclarations": "error",
+				"noUnreachableSuper": "error",
+				"noVoidTypeReturn": "error",
+				"useIsNan": "error",
+				"useValidTypeof": "error",
+				"noInvalidUseBeforeDeclaration": "error"
+			},
+			"suspicious": {
+				"noConstantBinaryExpressions": "error",
+				"noDuplicateElseIf": "error",
+				"noFallthroughSwitchClause": "error",
+				"noMisleadingCharacterClass": "error",
+				"noOctalEscape": "error",
+				"noUnsafeNegation": "error",
+				"noAssignInExpressions": "warn",
+				"noConfusingLabels": "error",
+				"noPrototypeBuiltins": "warn",
+				"useDefaultSwitchClauseLast": "warn",
+				"useGetterReturn": "error",
+				"noEmptyBlockStatements": "off",
+				"noExportsInTest": "off",
+				"noShadowRestrictedNames": "error",
+				"noSparseArray": "error",
+				"noClassAssign": "error",
+				"noFunctionAssign": "error",
+				"noImportAssign": "error",
+				"noControlCharactersInRegex": "error",
+				"noCompareNegZero": "error",
+				"noAsyncPromiseExecutor": "error",
+				"useIsArray": "error",
+				"useNumberToFixedDigitsArgument": "error"
 			}
 		}
 	}

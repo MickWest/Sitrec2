@@ -962,7 +962,7 @@ class MetaBezierCurveEditor {
             if (d <= 10) {
                 // if we've already got a selected point, then only select a new one if it's a control point
                 // this avoids control points being "hidden" by their curve points.
-                if (!this.selectedPoint || (i & 1 === 1)) {
+                if (!this.selectedPoint || (i & 1) === 1) {
                     this.selectedPoint = this.curve.ps[i];
                     this.selectedPointIndex = i;
                 }
