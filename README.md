@@ -14,9 +14,11 @@ My goal here is to create a tool to effectively analyze UAP/UFO cases, and to sh
 - [The Custom Sitch Tool - Drag and Drop Sitches](docs/CustomSitchTool.md)
 - [Local Custom Sitches - JSON-based sitch definitions for advanced setups](docs/LocalCustomSitches.md)
 - [Loading and Filtering Tracks - Formats, importing, filtering, and display](docs/Tracks.md)
+- [Wind in Sitrec - Wind menu, atmospheric data sources, streamlines](docs/Wind.md)
 - [Saving and Loading Sitches - Server saves and local folder workflow](docs/SavingAndLoading.md)
 - [Custom Models and 3D Objects - Add your own planes](docs/CustomModels.md)
 - [Camera Modes - Normal (Az/El) and Satellite (quaternion) view modes](docs/satcam.md)
+- [Recreating Gimbal - Walkthrough: build a Gimbal sitch from scratch via drag-and-drop](docs/gimbal-recreate.md)
 - [Recreating Starlink Situations - Horizon Flares](docs/Starlink.md)
 - [GIS, Geodesy, and Altitude - Understanding altitude datums and coordinate systems](docs/GIS.md)
 - [What's New](docs/WhatsNew.md)
@@ -31,6 +33,8 @@ My goal here is to create a tool to effectively analyze UAP/UFO cases, and to sh
 - [Settings Manager Architecture - Server/cookie fallback and sanitization](docs/dev/SettingsManager.md)
 - [Dynamic GUI Mirroring - API for mirrored GUI controls](docs/dev/dynamic-gui-mirroring.md)
 - [MISB Timing & Sync - Per-frame KLV/video alignment in TS-sourced files](docs/dev/misb-timing.md)
+- [Traverse Methods - How LOS + physical assumptions resolve target positions per frame](docs/TraverseMethods.md)
+- [Wind Internals - Data flow, file formats, and atmospheric data sources](docs/Wind-Internals.md)
 
 
 ### Legacy documentation
