@@ -9,6 +9,8 @@ import {raDec2Celestial} from "../CelestialMath";
 import {Frame2Az, Frame2El} from "../JetUtils";
 import {
     CustomManager,
+    getEffectiveMSAASamples,
+    getEffectiveRenderScale,
     GlobalDateTimeNode,
     Globals,
     guiMenus,
@@ -1074,7 +1076,8 @@ export class CNodeView3D extends CNodeViewCanvas {
             }
         };
 
-        this.renderer.setPixelRatio(this.in.canvasWidth ? 1 : window.devicePixelRatio);
+        const basePixelRatio = this.in.canvasWidth ? 1 : window.devicePixelRatio;
+        this.renderer.setPixelRatio(basePixelRatio * getEffectiveRenderScale());
         this.renderer.setSize(this.widthDiv, this.heightDiv, false);
         this.renderer.outputColorSpace = SRGBColorSpace;
 
@@ -1120,39 +1123,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             }
         }
 
-        const renderTargetType = this.useLookViewHDR ? HalfFloatType : UnsignedByteType;
-        const aaSamples = this.useLookViewHDR ? 0 : 4;
-
-        // Per-view render targets to avoid thrashing GPU memory in split-screen mode
-        // Each view maintains its own render targets instead of sharing globals
-        this.renderTargetAntiAliased = new WebGLRenderTarget(256, 256, {
-            format: RGBAFormat,
-            type: renderTargetType,
-            colorSpace: LinearSRGBColorSpace,
-            minFilter: NearestFilter,
-            magFilter: NearestFilter,
-            samples: aaSamples, // Number of samples for MSAA
-        });
-
-        this.renderTargetA = new WebGLRenderTarget(256, 256, {
-            minFilter: NearestFilter,
-            magFilter: NearestFilter,
-            format: RGBAFormat,
-            type: renderTargetType,
-            colorSpace: LinearSRGBColorSpace,
-        });
-
-        this.renderTargetB = new WebGLRenderTarget(256, 256, {
-            minFilter: NearestFilter,
-            magFilter: NearestFilter,
-            format: RGBAFormat,
-            type: renderTargetType,
-            colorSpace: LinearSRGBColorSpace,
-        });
-
-        // Track last dimensions to avoid redundant setSize() calls
-        this.lastRenderTargetWidth = 256;
-        this.lastRenderTargetHeight = 256;
+        this.createRenderTargets();
 
         // Ensure GlobalScene and this.camera are defined
         if (!GlobalScene || !this.camera) {
@@ -1304,6 +1275,19 @@ export class CNodeView3D extends CNodeViewCanvas {
                 } else {
                     width = this.widthPx;
                     height = this.heightPx;
+                }
+
+                // Apply user-controlled performance render scale to the offscreen
+                // render targets so the dominant per-pixel work shrinks as a single
+                // squared multiplier (e.g. 0.5 = 1/4 cost). The canvas backing
+                // store is also scaled via setPixelRatio(); the final blit handles
+                // the upscale to display pixels.
+                {
+                    const rs = getEffectiveRenderScale();
+                    if (rs !== 1) {
+                        width = Math.max(1, Math.floor(width * rs));
+                        height = Math.max(1, Math.floor(height * rs));
+                    }
                 }
 
                 // When matchVideoAspect is on, adjust the camera to show exactly
@@ -2100,10 +2084,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             this.xrActive = false;
         }
         
-        // Dispose render targets
-        if (this.renderTargetAntiAliased) this.renderTargetAntiAliased.dispose();
-        if (this.renderTargetA) this.renderTargetA.dispose();
-        if (this.renderTargetB) this.renderTargetB.dispose();
+        this.disposeRenderTargets();
 
         // Dispose shader materials and geometry
         if (this.copyMaterial) this.copyMaterial.dispose();
@@ -2122,6 +2103,67 @@ export class CNodeView3D extends CNodeViewCanvas {
         if (this.composer !== undefined) this.composer.dispose();
         this.composer = null;
 
+    }
+
+    createRenderTargets() {
+        const renderTargetType = this.useLookViewHDR ? HalfFloatType : UnsignedByteType;
+        const aaSamples = this.useLookViewHDR ? 0 : getEffectiveMSAASamples();
+
+        // Per-view render targets to avoid thrashing GPU memory in split-screen mode
+        // Each view maintains its own render targets instead of sharing globals
+        this.renderTargetAntiAliased = new WebGLRenderTarget(256, 256, {
+            format: RGBAFormat,
+            type: renderTargetType,
+            colorSpace: LinearSRGBColorSpace,
+            minFilter: NearestFilter,
+            magFilter: NearestFilter,
+            samples: aaSamples,
+        });
+
+        this.renderTargetA = new WebGLRenderTarget(256, 256, {
+            minFilter: NearestFilter,
+            magFilter: NearestFilter,
+            format: RGBAFormat,
+            type: renderTargetType,
+            colorSpace: LinearSRGBColorSpace,
+        });
+
+        this.renderTargetB = new WebGLRenderTarget(256, 256, {
+            minFilter: NearestFilter,
+            magFilter: NearestFilter,
+            format: RGBAFormat,
+            type: renderTargetType,
+            colorSpace: LinearSRGBColorSpace,
+        });
+
+        // Reset cached dims so the next frame's size-sync re-applies setSize()
+        // (otherwise the new 256x256 targets stay tiny until the canvas resizes).
+        this.lastRenderTargetWidth = 256;
+        this.lastRenderTargetHeight = 256;
+    }
+
+    disposeRenderTargets() {
+        if (this.renderTargetAntiAliased) this.renderTargetAntiAliased.dispose();
+        if (this.renderTargetA) this.renderTargetA.dispose();
+        if (this.renderTargetB) this.renderTargetB.dispose();
+        this.renderTargetAntiAliased = null;
+        this.renderTargetA = null;
+        this.renderTargetB = null;
+    }
+
+    // Apply user performance settings (renderScale + msaaSamples) live without
+    // tearing down the WebGL context. renderScale is picked up automatically by
+    // setPixelRatio + the per-frame render-target sizing path; msaaSamples
+    // requires fresh render targets because samples is fixed at construction.
+    applyPerformanceSettings() {
+        if (!this.renderer) return;
+        const basePixelRatio = this.in.canvasWidth ? 1 : window.devicePixelRatio;
+        this.renderer.setPixelRatio(basePixelRatio * getEffectiveRenderScale());
+        // Recreate offscreen render targets so MSAA changes take effect; sizes
+        // will be reapplied on the next render frame's size-sync block.
+        this.disposeRenderTargets();
+        this.createRenderTargets();
+        setRenderOne(true);
     }
 
     // todo - change to nodes, so we can add and remove them

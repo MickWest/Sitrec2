@@ -108,6 +108,31 @@ function sanitizeSettings($settings) {
         // Clamp to valid range (16-256)
         $sanitized['tileSegments'] = max(16, min(256, $tileSegments));
     }
+
+    if (isset($settings['renderScale'])) {
+        $rs = floatval($settings['renderScale']);
+        $allowed = [1.0, 0.85, 0.7, 0.5, 0.35];
+        $best = 1.0; $bestErr = INF;
+        foreach ($allowed as $v) {
+            $err = abs($v - $rs);
+            if ($err < $bestErr) { $bestErr = $err; $best = $v; }
+        }
+        $sanitized['renderScale'] = $best;
+    }
+
+    if (isset($settings['msaaSamples'])) {
+        $s = intval($settings['msaaSamples']);
+        if (in_array($s, [0, 2, 4, 8])) {
+            $sanitized['msaaSamples'] = $s;
+        }
+    }
+
+    if (isset($settings['performancePreset'])) {
+        $p = strval($settings['performancePreset']);
+        if (in_array($p, ['Quality', 'Balanced', 'Fast', 'Potato', 'Custom'])) {
+            $sanitized['performancePreset'] = $p;
+        }
+    }
     
     if (isset($settings['chatModel'])) {
         $chatModel = strval($settings['chatModel']);

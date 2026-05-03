@@ -56,6 +56,26 @@ export function setGPUMemoryMonitor(monitor) {
     Globals.GPUMemoryMonitor = monitor;
 }
 
+// Returns the user's render-scale multiplier from settings, clamped to [0.25, 1].
+// Used to scale both the renderer pixel ratio and the offscreen render target
+// dimensions, giving a single knob for hi-DPI / slow-GPU users to trade visual
+// fidelity for fps. Returns 1 when settings are not yet initialised.
+export function getEffectiveRenderScale() {
+    const rs = Globals.settings && Globals.settings.renderScale;
+    if (typeof rs !== 'number' || !isFinite(rs)) return 1;
+    return Math.max(0.25, Math.min(1, rs));
+}
+
+// Returns the configured MSAA sample count for offscreen render targets.
+// 0 disables multisampling. Default is 4 to preserve previous behaviour when
+// settings are absent.
+export function getEffectiveMSAASamples() {
+    const s = Globals.settings && Globals.settings.msaaSamples;
+    if (typeof s !== 'number' || !isFinite(s)) return 4;
+    if (s <= 0) return 0;
+    return Math.max(0, Math.min(8, Math.round(s)));
+}
+
 export function setSitchEstablished(bool) {
     Globals.sitchEstablished = bool;
 }

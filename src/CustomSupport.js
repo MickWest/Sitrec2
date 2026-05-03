@@ -118,6 +118,40 @@ import {mirrorMethods} from "./CustomManagerMirror";
 import {menuMethods} from "./CustomManagerMenus";
 import {serializeMethods} from "./CustomManagerSerialize";
 
+// Bulk knob set for the Performance Preset dropdown. Tuned for integrated GPUs
+// and 16 GB hi-DPI laptops: render-scale shrinks the squared per-pixel work,
+// MSAA-off removes a multisample resolve, and lower terrain detail/segments
+// cut both CPU traversal and GPU vertex work.
+const PERFORMANCE_PRESETS = {
+    Quality:  { renderScale: 1,    msaaSamples: 4, fpsLimit: 60, tileSegments: 64, maxDetails: 25 },
+    Balanced: { renderScale: 0.85, msaaSamples: 4, fpsLimit: 30, tileSegments: 32, maxDetails: 20 },
+    Fast:     { renderScale: 0.7,  msaaSamples: 0, fpsLimit: 30, tileSegments: 16, maxDetails: 15 },
+    Potato:   { renderScale: 0.5,  msaaSamples: 0, fpsLimit: 20, tileSegments: 16, maxDetails: 10 },
+};
+
+export function applyPerformancePreset(name) {
+    const p = PERFORMANCE_PRESETS[name];
+    if (!p) return; // "Custom" or unknown — leave settings alone
+    Object.assign(Globals.settings, p);
+}
+
+// Push the current renderScale + msaaSamples into every CNodeView3D so changes
+// take effect without reloading the page. The renderer keeps its WebGL context;
+// only the offscreen render targets are recreated (cheap).
+export function applyRenderPerformanceSettings() {
+    NodeMan.iterate((id, node) => {
+        if (typeof node?.applyPerformanceSettings === "function") {
+            node.applyPerformanceSettings();
+        }
+    });
+    // Also refresh terrain so a tileSegments/maxDetails change in a preset
+    // takes effect immediately rather than waiting for the next pan.
+    const terrainUI = NodeMan.get("terrainUI", false);
+    if (terrainUI && typeof terrainUI.doRefresh === "function") {
+        terrainUI.doRefresh();
+    }
+}
+
 export class CCustomManager {
     constructor() {
         // Listen for GUI order change events to refresh mirrors
@@ -413,6 +447,9 @@ export class CCustomManager {
                 Globals.settings.maxDetails = newValue;
             })
             .onFinishChange(() => {
+                // Flip preset to Custom only on release so dragging the slider
+                // doesn't write the preset string on every frame of the gesture.
+                Globals.settings.performancePreset = "Custom";
                 // When we release the slider, force immediate save and recalculate everything
                 this.saveGlobalSettings(true);
 
@@ -430,6 +467,55 @@ export class CCustomManager {
             .name(t("custom.settings.fpsLimit.label"))
             .tooltip(t("custom.settings.fpsLimit.tooltip"))
             .onChange(() => {
+                Globals.settings.performancePreset = "Custom";
+                this.saveGlobalSettings(true);
+            })
+            .listen();
+
+        // Render Scale: scales offscreen render targets + canvas pixel ratio.
+        // Squared cost: 0.5 = ~1/4 GPU pixel work. Largest single perf knob.
+        settingsFolder.add(Globals.settings, "renderScale", {
+            "100% (Native)": 1,
+            "85%": 0.85,
+            "70%": 0.7,
+            "50% (Half)": 0.5,
+            "35% (Quarter)": 0.35,
+        })
+            .name(t("custom.settings.renderScale.label"))
+            .tooltip(t("custom.settings.renderScale.tooltip"))
+            .onChange(() => {
+                Globals.settings.performancePreset = "Custom";
+                applyRenderPerformanceSettings();
+                this.saveGlobalSettings(true);
+            })
+            .listen();
+
+        // MSAA samples on the offscreen render target. 0 = disabled (fastest).
+        settingsFolder.add(Globals.settings, "msaaSamples", {
+            "Off (fastest)": 0,
+            "2x": 2,
+            "4x (default)": 4,
+            "8x": 8,
+        })
+            .name(t("custom.settings.msaaSamples.label"))
+            .tooltip(t("custom.settings.msaaSamples.tooltip"))
+            .onChange(() => {
+                Globals.settings.performancePreset = "Custom";
+                applyRenderPerformanceSettings();
+                this.saveGlobalSettings(true);
+            })
+            .listen();
+
+        // Bulk preset that drives the render-perf knobs above. Selecting Custom
+        // is also what every individual onChange does, so the preset just shows
+        // "Custom" once any sub-setting is hand-tuned.
+        settingsFolder.add(Globals.settings, "performancePreset",
+            ["Quality", "Balanced", "Fast", "Potato", "Custom"])
+            .name(t("custom.settings.performancePreset.label"))
+            .tooltip(t("custom.settings.performancePreset.tooltip"))
+            .onChange((value) => {
+                applyPerformancePreset(value);
+                applyRenderPerformanceSettings();
                 this.saveGlobalSettings(true);
             })
             .listen();
@@ -439,6 +525,7 @@ export class CCustomManager {
             .name(t("custom.settings.tileSegments.label"))
             .tooltip(t("custom.settings.tileSegments.tooltip"))
             .onFinishChange(() => {
+                Globals.settings.performancePreset = "Custom";
                 // When selection is finalized, force immediate save and refresh terrain
                 this.saveGlobalSettings(true);
 

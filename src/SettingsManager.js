@@ -58,6 +58,32 @@ export function sanitizeSettings(settings) {
         // Clamp to valid range (must be power of 2 or common value between 16 and 256)
         sanitized.tileSegments = Math.max(16, Math.min(256, Math.round(tileSegments)));
     }
+
+    if (settings.renderScale !== undefined) {
+        const allowed = [1, 0.85, 0.7, 0.5, 0.35];
+        const rs = Number(settings.renderScale);
+        // Snap to nearest allowed step; default to 1 if out of range
+        if (Number.isFinite(rs)) {
+            let best = 1, bestErr = Infinity;
+            for (const v of allowed) {
+                const err = Math.abs(v - rs);
+                if (err < bestErr) { bestErr = err; best = v; }
+            }
+            sanitized.renderScale = best;
+        }
+    }
+
+    if (settings.msaaSamples !== undefined) {
+        const allowed = [0, 2, 4, 8];
+        const s = Math.round(Number(settings.msaaSamples));
+        if (allowed.includes(s)) sanitized.msaaSamples = s;
+    }
+
+    if (settings.performancePreset !== undefined) {
+        const allowed = ["Quality", "Balanced", "Fast", "Potato", "Custom"];
+        const p = String(settings.performancePreset);
+        if (allowed.includes(p)) sanitized.performancePreset = p;
+    }
     
     if (settings.videoMaxSize !== undefined) {
         const videoMaxSize = String(settings.videoMaxSize);
@@ -302,6 +328,9 @@ export async function initializeSettings() {
             centerSidebar: false, // Enable center sidebar between split views
             showAttribution: true, // Show map/elevation data source attribution overlay
             language: "en", // UI language
+            renderScale: 1, // Multiplier on devicePixelRatio + render target sizes (1=native, 0.5=quarter pixels)
+            msaaSamples: 4, // MSAA samples on offscreen render targets (0, 2, 4, 8). 0 disables MSAA.
+            performancePreset: "Quality", // Quality, Balanced, Fast, Potato, or Custom (matches the renderScale=1 / msaa=4 defaults below)
         };
     }
 
