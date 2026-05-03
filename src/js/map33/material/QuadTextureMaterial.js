@@ -172,8 +172,12 @@ export function loadTextureWithRetries(url, maxRetries = 0, delay = 100, current
                   .catch(reject);
             }, delay);
           } else {
-            console.log(`Failed to load ${currentUrl} after ${maxRetries} attempts`);
-            logNetwork(currentUrl, 'failed');
+            // PlaceholderTile is an expected "tile not available" signal from
+            // ESRI — already logged as 'placeholder' above; don't add console noise.
+            if (err.message !== 'PlaceholderTile') {
+              console.log(`Failed to load ${currentUrl} after ${maxRetries} attempts`);
+              logNetwork(currentUrl, 'failed');
+            }
             reject(err);
             processQueue();
           }
