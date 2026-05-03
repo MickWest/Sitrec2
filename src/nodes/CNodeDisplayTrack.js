@@ -1,5 +1,5 @@
 //
-import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {getEffectiveMSAASamples, getEffectiveRenderScale, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {dispose, patchMaterialForLinearOutput} from "../threeExt";
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
 import {LineMaterial} from "three/addons/lines/LineMaterial.js";
@@ -416,6 +416,23 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         super.dispose();
     }
 
+    // Called by CCustomManager.applyRenderPerformanceSettings() so the per-
+    // track LineMaterial picks up live changes to renderScale (resolution)
+    // and msaaSamples (alphaToCoverage). Without this the track Line2 keeps
+    // its construction-time resolution and gaps reappear after the user
+    // toggles between presets.
+    applyPerformanceSettings() {
+        if (this.trackLine && this.trackLine.material && this.trackLine.material.resolution) {
+            const lineDPR = (window.devicePixelRatio || 1) * getEffectiveRenderScale();
+            this.trackLine.material.resolution.set(window.innerWidth * lineDPR, window.innerHeight * lineDPR);
+            const wantATC = getEffectiveMSAASamples() > 0;
+            if (this.trackLine.material.alphaToCoverage !== wantATC) {
+                this.trackLine.material.alphaToCoverage = wantATC;
+                this.trackLine.material.needsUpdate = true;
+            }
+        }
+    }
+
     modSerialize() {
 
         const result = {
@@ -667,7 +684,13 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
             //resolution:  // to be set by this.renderer, eventually
             dashed: false,
-            alphaToCoverage: false, // haivng this as true gives little end-of-segment artifacts
+            // Enabled when MSAA>0 so the LineMaterial fragment shader's
+            // smoothstep analytic-AA branch fills sub-pixel coverage and
+            // eliminates the gaps that appear when renderScale shrinks the
+            // rasterised line triangle below 1 fb pixel. Toggled live in
+            // applyRenderPerformanceSettings; original "off" was to avoid
+            // small end-of-segment artifacts, which only show with MSAA.
+            alphaToCoverage: getEffectiveMSAASamples() > 0,
 
    //         depthTest: true,
    //         depthWrite: true,
@@ -675,10 +698,13 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
         });
 
-        const dpr = window.devicePixelRatio || 1;
-        const w = window.innerWidth * dpr;
-        const h = window.innerHeight * dpr;
-        matLineTrack.resolution.set(w, h);
+        // Resolution must reflect the actual offscreen render target the line
+        // will draw into, not the device backbuffer. With renderScale<1 the RT
+        // is smaller, so a stale window-DPR resolution leaves the line shader
+        // computing widths in clip-space using the wrong denominator → lines
+        // come out at fractional fb pixels and rasterise with gaps.
+        const lineDPR = (window.devicePixelRatio || 1) * getEffectiveRenderScale();
+        matLineTrack.resolution.set(window.innerWidth * lineDPR, window.innerHeight * lineDPR);
 
         this.trackLine = new Line2(this.trackGeometry, matLineTrack);
 

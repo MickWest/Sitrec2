@@ -5,6 +5,7 @@
 // Uses Line2/LineMaterial for thick, visible lines (same as CNodeDisplayTrack).
 
 import {CNode} from "./CNode";
+import {getEffectiveMSAASamples, getEffectiveRenderScale} from "../Globals";
 import {Group, Vector3, Color} from "three";
 import {Line2} from "three/addons/lines/Line2.js";
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
@@ -101,11 +102,15 @@ export class CNodeDisplaySondeWind extends CNode {
         geometry.setPositions(positions);
         geometry.setColors(colors);
 
-        var dpr = window.devicePixelRatio || 1;
+        var dpr = (window.devicePixelRatio || 1) * getEffectiveRenderScale();
         var material = new LineMaterial({
             vertexColors: true,
             linewidth: this.lineWidth,
             depthWrite: false,
+            // See CNodeDisplayTrack note: this is needed so the analytic-AA
+            // branch in LineMaterial fills sub-pixel coverage at low render
+            // scale. Toggled live from applyPerformanceSettings.
+            alphaToCoverage: getEffectiveMSAASamples() > 0,
         });
         material.resolution.set(window.innerWidth * dpr, window.innerHeight * dpr);
 

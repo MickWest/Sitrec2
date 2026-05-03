@@ -3,6 +3,7 @@
 
 import {
     EarthRadiusMiles,
+    getEffectiveRenderScale,
     Globals,
     gui,
     guiMenus,
@@ -984,7 +985,11 @@ export function updateSize(force) {
         lastContentWidth = contentWidth;
         lastContentHeight = contentHeight;
 
-        updateMatLineResolution(windowWidth*2, windowHeight*2)
+        // Match the actual render-target size so LineMaterial's shader maps
+        // pixel-width uniforms to real fb pixels. Stale resolution → lines
+        // render at sub-pixel widths and drop fragments at low renderScale.
+        const lineDPR = (window.devicePixelRatio || 1) * getEffectiveRenderScale();
+        updateMatLineResolution(windowWidth * lineDPR, windowHeight * lineDPR)
 
         const scale = window.innerWidth / 1920
 

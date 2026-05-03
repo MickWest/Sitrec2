@@ -1,6 +1,7 @@
 // Factory for line materials, which need to be updated on resize.
 import {LineMaterial} from "three/addons/lines/LineMaterial.js";
 import {Color} from "three";
+import {getEffectiveMSAASamples, getEffectiveRenderScale} from "./Globals";
 
 // LineMaterial is a ShaderMaterial — Three.js does not apply color management
 // to its uniforms. Since the copy-to-screen shader applies sRGB encoding, we
@@ -36,8 +37,17 @@ function makeMatLine(color, linewidth = 2, dashed = false) {
             color: linearizeColor(color),
             linewidth: linewidth,
             dashed: dashed,
+            // alphaToCoverage activates the smoothstep analytic-AA branch in
+            // LineMaterial's fragment shader, which is what fills sub-pixel
+            // coverage when the rasterized triangle is < 1 fb pixel wide
+            // (the gap source at low renderScale). Requires MSAA>0 to actually
+            // produce sub-pixel coverage; we toggle it dynamically based on
+            // current settings so it's a no-op when MSAA is off.
+            alphaToCoverage: getEffectiveMSAASamples() > 0,
         })
-        lineMaterial.resolution.set(window.innerWidth, window.innerHeight)
+        const rs = getEffectiveRenderScale();
+        const dpr = (window.devicePixelRatio || 1) * rs;
+        lineMaterial.resolution.set(window.innerWidth * dpr, window.innerHeight * dpr)
         matLines[key] = lineMaterial
         matLines[key].usageCount = 0;
     }
@@ -69,5 +79,21 @@ function updateMatLineResolution(windowWidth, windowHeight) {
     Object.keys(matLines).forEach(key => matLines[key].resolution.set(windowWidth, windowHeight))
 }
 
-export {updateMatLineResolution};
+// Push the current MSAA-derived alphaToCoverage flag into every pooled line
+// material. Called from CCustomManager.applyRenderPerformanceSettings() when
+// the user changes MSAA — without this, the materials' shader define stays
+// stale and lines that were created with MSAA=0 (alphaToCoverage off) keep
+// dropping sub-pixel fragments after the user enables MSAA.
+function refreshMatLineAlphaToCoverage() {
+    const enabled = getEffectiveMSAASamples() > 0;
+    Object.keys(matLines).forEach(key => {
+        const m = matLines[key];
+        if (m.alphaToCoverage !== enabled) {
+            m.alphaToCoverage = enabled;
+            m.needsUpdate = true;
+        }
+    });
+}
+
+export {updateMatLineResolution, refreshMatLineAlphaToCoverage};
 export {makeMatLine};

@@ -22,7 +22,7 @@ import {
     WireframeGeometry
 } from "three";
 
-import {Globals, NodeMan, setRenderOne, Synth3DManager} from './Globals';
+import {getEffectiveRenderScale, Globals, NodeMan, setRenderOne, Synth3DManager} from './Globals';
 import {par} from "./par";
 import {showError} from "./showError";
 
@@ -739,7 +739,8 @@ export class CDisplayLine {
         this.geometry.setPositions(line_points);
         this.geometry.setColors(line_colors);
 
-        this.material.resolution.set(window.innerWidth, window.innerHeight)
+        const lineDPR = (window.devicePixelRatio || 1) * getEffectiveRenderScale();
+        this.material.resolution.set(window.innerWidth * lineDPR, window.innerHeight * lineDPR)
         this.line = new Line2(this.geometry, this.material);
         this.line.computeLineDistances();
         this.line.scale.set(1, 1, 1);
