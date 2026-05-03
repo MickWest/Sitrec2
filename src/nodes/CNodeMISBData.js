@@ -342,7 +342,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             if (!uniformKlv) {
                 push("  • KLV stream has gaps. Track positions during gap periods will");
                 push("    show linearly-interpolated values between bracketing records.");
-                push("    No automatic correction is appropriate; the data is what it is.");
+                push("    No automatic correction is appropriate");
             }
             if (cfrVideo && Math.abs(spanDiff || 0) > 0.5 && uniformKlv) {
                 push("  • Span mismatch with uniform KLV — uniform clock-rate error.");

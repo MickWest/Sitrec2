@@ -30,6 +30,7 @@ My goal here is to create a tool to effectively analyze UAP/UFO cases, and to sh
 - [Adding New Settings - Developer checklist for new user settings](docs/dev/ADDING_NEW_SETTINGS.md)
 - [Settings Manager Architecture - Server/cookie fallback and sanitization](docs/dev/SettingsManager.md)
 - [Dynamic GUI Mirroring - API for mirrored GUI controls](docs/dev/dynamic-gui-mirroring.md)
+- [MISB Timing & Sync - Per-frame KLV/video alignment in TS-sourced files](docs/dev/misb-timing.md)
 
 
 ### Legacy documentation
