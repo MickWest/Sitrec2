@@ -1802,7 +1802,7 @@ export class CFileManager extends CManager {
      * @param {string} [id] - Unique identifier for storage (defaults to filename)
      * @returns {Promise<{filename: string, parsed: *, dataType: string}>} Parsed asset data
      */
-    loadAsset(filename, id) {
+    loadAsset(filename, id, metadataOverride = null) {
 
         assert(filename, "Filename is undefined or null");
 
@@ -1995,6 +1995,15 @@ export class CFileManager extends CManager {
             Globals.pendingActions++;
 
             if (resolvedFilename.toLowerCase().endsWith(".ts")) {
+                // Legacy backwards-compat path: a sitch saved before unified
+                // substream persistence references the parent TS in loadedFiles.
+                // Re-demux live to capture PES PTS fresh — substream sidecars
+                // aren't available, but the live demux produces equivalent
+                // pesPTSus[] data inside parseKLVFile via the streamMetadata
+                // callback in TSParser.parseTSFile. Re-saving this sitch under
+                // the new code will produce a sidecar-backed format that
+                // doesn't need to re-fetch the (potentially huge) parent TS.
+                console.warn(`[loadAsset] Legacy TS-in-loadedFiles path for ${resolvedFilename}. Re-saving will switch to substream + sidecar persistence.`);
                 return bufferPromise
                     .then(arrayBuffer => {
                         console.log(`Special handling for .TS file load: ${resolvedFilename} (id: ${id})`);
@@ -2018,7 +2027,11 @@ export class CFileManager extends CManager {
                 .then(arrayBuffer => {
                     // always store the original
                     original = arrayBuffer;
-                    return this.parseAsset(resolvedFilename, id, arrayBuffer);
+                    // metadataOverride lets callers (e.g. sitch reload) supply
+                    // PES timing fetched from a `.pts.json` sidecar so the KLV
+                    // pairing logic in parseKLVFile reconstructs pesPTSus[]
+                    // without re-demuxing the parent TS.
+                    return this.parseAsset(resolvedFilename, id, arrayBuffer, metadataOverride);
                 })
                 .then(parsedAsset => {
                     // Multi-entry parser results: zip/KMZ (one entry per file),
@@ -2113,7 +2126,7 @@ export class CFileManager extends CManager {
                             {path: normalizedWorkingFolderPath, reusedExisting: true});
                     }
                     LoadingManager.completeLoading(loadingId);
-                    return this.parseResult(filename, arrayBuffer, null).then(result => {
+                    return this.parseResult(filename, arrayBuffer, null, {metadataOverride}).then(result => {
                         // parseResult keys entries by filename, but loadAsset's
                         // contract (matched by the URL-fetch path above) is
                         // that callers can look up the entry by the `id` they

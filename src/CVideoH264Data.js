@@ -1,4 +1,4 @@
-import {Sit} from "./Globals";
+import {FileManager, Sit} from "./Globals";
 import {assert} from "./assert";
 import {loadImage} from "./utils";
 import {CVideoWebCodecBase} from "./CVideoWebCodecBase";
@@ -201,13 +201,41 @@ export class CVideoH264Data extends CVideoWebCodecBase {
 
             let h264Buffer;
 
-            // Get the H.264 data from either file or buffer
+            // Get the H.264 data from drop file, in-memory buffer, or URL.
+            // The URL path is used by sitch reload (loadVideoFromEntry) when
+            // videoFile points at a `.h264` substream — the unified TS
+            // persistence model. Without it, loadVideoFromEntry routes to
+            // CVideoMp4Data which fails on raw H.264 (no MP4 container).
             if (v.dropFile) {
-                // Read the dropped file
                 const arrayBuffer = await this.readFileAsArrayBuffer(v.dropFile);
                 h264Buffer = arrayBuffer;
             } else if (v.buffer) {
                 h264Buffer = v.buffer;
+            } else if (v.file !== undefined) {
+                console.log(`[CVideoH264Data] Loading video file via URL: ${v.file}`);
+                this._markStatus?.("fetching remote file");
+                let result;
+                try {
+                    result = await FileManager.loadAsset(v.file, "video");
+                } catch (fetchErr) {
+                    // Legacy sitches reference a substream URL that isn't on
+                    // the server (only the parent .ts is persisted). The
+                    // loadedFiles dispatch re-demuxes that .ts and uploads
+                    // the substream via uploadFile; this URL pre-fetch is
+                    // optional. Bail silently — no error dialog — and let
+                    // the upload path complete the load.
+                    console.warn(`[CVideoH264Data] URL fetch failed for ${v.file}; deferring to loadedFiles dispatch:`, fetchErr?.message || fetchErr);
+                    if (errorCallback) errorCallback(fetchErr);
+                    return;
+                }
+                if (!result || !result.parsed) {
+                    console.warn(`[CVideoH264Data] URL fetch returned empty for ${v.file}; deferring to loadedFiles dispatch`);
+                    if (errorCallback) errorCallback(new Error(`Empty result for ${v.file}`));
+                    return;
+                }
+                h264Buffer = result.parsed;
+                this.videoDroppedData = h264Buffer;
+                FileManager.disposeRemove("video");
             } else {
                 throw new Error("No H.264 data available");
             }

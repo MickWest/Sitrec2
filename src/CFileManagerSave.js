@@ -924,6 +924,41 @@ export const saveMethods = {
     },
 
     /**
+     * Build a `<filename>.pts.json` sidecar buffer for a TS-extracted substream
+     * carrying its MISB ST 0604 PES timing data. Returns null if the entry has
+     * no PES timing (non-TS substreams, async-mode KLV without per-PES PTS, etc.).
+     *
+     * The sidecar persists raw `pesEntries[]` (pre-pairing) plus `videoFirstPESus`
+     * — the canonical input to `parseKLVFile`'s pairing logic. We persist the
+     * pre-pairing form so future parser fixes still benefit; the post-pairing
+     * `pesPTSus[]` is recomputable on reload from these values + the substream
+     * bytes (which round-trip exactly).
+     *
+     * @param {Object} fileEntry — a FileManager.list[id] entry
+     * @returns {ArrayBuffer|null}
+     */
+    _makePesSidecarBuffer(fileEntry) {
+        if (!fileEntry || !Array.isArray(fileEntry.pesEntries) || fileEntry.pesEntries.length === 0) {
+            return null;
+        }
+        const sidecar = {
+            version: 1,
+            kind: "klv-pes-pts",
+            videoFirstPESus: typeof fileEntry.videoFirstPESus === "number" ? fileEntry.videoFirstPESus : null,
+            pesEntries: fileEntry.pesEntries,
+        };
+        const json = JSON.stringify(sidecar);
+        return new TextEncoder().encode(json).buffer;
+    },
+
+    /**
+     * Sidecar URL convention: append `.pts.json` to the substream filename.
+     */
+    _sidecarFilename(substreamFilename) {
+        return substreamFilename + ".pts.json";
+    },
+
+    /**
      * Copy dynamic/imported assets into the working folder for local saves.
      * Local-copy paths are stored in `localStaticURL` and used only for local serialization.
      * @param {FileSystemDirectoryHandle} directoryHandle
@@ -998,6 +1033,16 @@ export const saveMethods = {
                 await this.writeWorkingFolderFile(chosenPath, fileEntry.original, directoryHandle);
             }
             fileEntry.localStaticURL = chosenPath;
+
+            // For TS-extracted substreams: also write `<path>.pts.json` carrying
+            // MISB ST 0604 PES timing. Reload reads this sidecar to reconstruct
+            // pesPTSus[] without re-demuxing the (dropped) parent TS.
+            const sidecarBuffer = this._makePesSidecarBuffer(fileEntry);
+            if (sidecarBuffer) {
+                const sidecarPath = this._sidecarFilename(chosenPath);
+                await this.writeWorkingFolderFile(sidecarPath, sidecarBuffer, directoryHandle);
+                fileEntry.localPesSidecarURL = sidecarPath;
+            }
 
             if (fileEntry.dataType === "videoImage" && NodeMan.exists("video")) {
                 const videoNode = NodeMan.get("video");
@@ -1114,7 +1159,7 @@ export const saveMethods = {
                 const rehostPromise = this.rehoster.rehostFile(rehostFilename, f.original).then((staticURL) => {
                     console.log("AS PROMISED: " + staticURL)
                     fileEntry.staticURL = staticURL;
-                    
+
                     if (fileEntry.dataType === "videoImage" && NodeMan.exists("video")) {
                         const videoNode = NodeMan.get("video");
                         const videoEntry = videoNode.videos?.find(v => v.imageFileID === fileKey);
@@ -1132,6 +1177,25 @@ export const saveMethods = {
                 })
                 console.log("Pushing rehost promise for " + rehostFilename);
                 rehostPromises.push(rehostPromise)
+
+                // For TS-extracted substreams: rehost a `<filename>.pts.json`
+                // sidecar carrying MISB ST 0604 PES timing. Load-time fetches
+                // this in parallel with the substream and threads the contents
+                // into parseKLVFile so pesPTSus[] is reconstructed without
+                // re-demuxing the (now-dropped) parent TS.
+                const sidecarBuffer = this._makePesSidecarBuffer(fileEntry);
+                if (sidecarBuffer) {
+                    const sidecarFilename = this._sidecarFilename(rehostFilename);
+                    const sidecarPromise = this.rehoster.rehostFile(sidecarFilename, sidecarBuffer)
+                        .then((sidecarURL) => {
+                            console.log(`[rehostDynamicLinks] PES sidecar uploaded: ${sidecarURL}`);
+                            fileEntry.pesSidecarStaticURL = sidecarURL;
+                        }).catch((error) => {
+                            console.error("PES sidecar rehost failed for " + sidecarFilename + ":", error);
+                            throw error;
+                        });
+                    rehostPromises.push(sidecarPromise);
+                }
             }
         })
         return Promise.all(rehostPromises);

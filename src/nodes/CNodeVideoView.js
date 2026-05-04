@@ -38,6 +38,7 @@ import {CustomManager, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../G
 import {CMouseHandler} from "../CMouseHandler";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CVideoMp4Data} from "../CVideoMp4Data";
+import {CVideoH264Data} from "../CVideoH264Data";
 import {CVideoAudioOnly} from "../CVideoAudioOnly";
 import {CVideoImageData} from "../CVideoImageData";
 import {isAudioOnlyFormat} from "../AudioFormats";
@@ -270,9 +271,22 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             this.videoData = new CVideoAudioOnly({ id: videoDataId, filename: fileName, videoSpeed: this.videoSpeed },
                 this.loadedCallback.bind(this), this.errorCallback.bind(this))
         } else {
-            console.log(`[VideoNew] Using CVideoMp4Data for video[${videoIndex}]`);
-            this.videoData = new CVideoMp4Data({ id: videoDataId, file: fileName, videoSpeed: this.videoSpeed },
-                this.loadedCallback.bind(this), this.errorCallback.bind(this))
+            // Pick the right codec class by filename extension. Without this,
+            // a sitch saved with a `.h264` substream as videoFile (the unified
+            // TS persistence model) routes to CVideoMp4Data which fails on
+            // raw H.264 (no MP4 container) and shows an error dialog before
+            // the upload-path fallback kicks in. Routing by extension here
+            // avoids that wasted attempt.
+            const ext = (getFileExtension(fileName) || "").toLowerCase();
+            if (ext === "h264" || ext === "dad") {
+                console.log(`[VideoNew] Using CVideoH264Data for video[${videoIndex}]`);
+                this.videoData = new CVideoH264Data({ id: videoDataId, file: fileName, videoSpeed: this.videoSpeed },
+                    this.loadedCallback.bind(this), this.errorCallback.bind(this));
+            } else {
+                console.log(`[VideoNew] Using CVideoMp4Data for video[${videoIndex}]`);
+                this.videoData = new CVideoMp4Data({ id: videoDataId, file: fileName, videoSpeed: this.videoSpeed },
+                    this.loadedCallback.bind(this), this.errorCallback.bind(this))
+            }
         }
 
         console.log(`[VideoNew] Created videoData for video[${videoIndex}]: imageCache.length=${this.videoData?.imageCache?.length}`);

@@ -160,12 +160,36 @@ export const parseMethods = {
 
     parseResult(filename, result, newStaticURL, options = {}) {
         console.log("parseResult: Parsing " + filename);
-        return this.parseAsset(filename, filename, result)
+        // metadataOverride lets the working-folder reload path (which routes
+        // single-file substream loads through parseResult) supply PES timing
+        // captured from a sidecar so parseKLVFile reconstructs pesPTSus[]
+        // without re-demuxing a parent TS. The URL-fetch path passes
+        // metadata directly to parseAsset; the working-folder path passes
+        // it through here.
+        const metadataOverride = options.metadataOverride || null;
+        return this.parseAsset(filename, filename, result, metadataOverride)
             .then(async parsedResult => {
                 let changesSerializedState = false;
 
                 let isMultiple = false;
                 if (!Array.isArray(parsedResult)) {
+                    // Single-file load. If metadataOverride was supplied (sidecar
+                    // reload case), attach its fields to the parsed result so
+                    // the substream loop below captures pesEntries onto the
+                    // FileManager entry — needed so a future re-save can emit
+                    // a sidecar again, completing the round-trip durably.
+                    if (parsedResult && metadataOverride && Array.isArray(metadataOverride.pesEntries)) {
+                        parsedResult.pesEntries = metadataOverride.pesEntries;
+                        parsedResult.videoFirstPESus = metadataOverride.videoFirstPESus;
+                        // tsParentFilename isn't in the live-demux metadata but
+                        // is carried in the sidecar reload's loadedFilesMetadata —
+                        // pull from there if available so the entry's tsParentFilename
+                        // stays accurate across save/reload cycles.
+                        const lfm = this.loadedFilesMetadata?.[filename];
+                        if (lfm?.tsParentFilename) {
+                            parsedResult.tsParentFilename = lfm.tsParentFilename;
+                        }
+                    }
                     parsedResult = [parsedResult];
                 } else {
                     const isConverted = parsedResult.length > 0 && parsedResult[0].nitfConverted;
@@ -188,6 +212,7 @@ export const parseMethods = {
                     isMultiple = !isConverted;
                 }
 
+                let isTSArchive = false;
                 for (const x of parsedResult) {
                     this.remove(x.filename);
                     // For multi-stream extracts (e.g. .ts → h264/aac/klv), prefer the
@@ -199,11 +224,32 @@ export const parseMethods = {
                     const originalData = x.convertedBuffer || x.streamData || result;
                     this.add(x.filename, x.parsed, originalData);
                     const fileManagerEntry = this.list[x.filename];
-                    fileManagerEntry.dynamicLink = !isMultiple;
+                    // TS substreams are now the canonical persisted form (parent TS is
+                    // dropped after demux). Mark them dynamicLink=true so the rehost
+                    // loops upload them as independent assets.
+                    const isTSSubstream = !!(x.pesEntries || x.tsParentFilename);
+                    fileManagerEntry.dynamicLink = isTSSubstream ? true : !isMultiple;
                     fileManagerEntry.filename = x.filename;
                     fileManagerEntry.staticURL = newStaticURL;
                     fileManagerEntry.dataType = x.dataType;
                     fileManagerEntry.isMultiple = isMultiple;
+
+                    if (isTSSubstream) {
+                        // Stash the per-substream PES timing data captured during TS
+                        // demux. Used at save time to emit a `<filename>.pts.json`
+                        // sidecar so a reload can reconstruct pesPTSus[] without
+                        // re-demuxing the (now-released) parent TS bytes.
+                        if (Array.isArray(x.pesEntries)) {
+                            fileManagerEntry.pesEntries = x.pesEntries;
+                        }
+                        if (typeof x.videoFirstPESus === "number") {
+                            fileManagerEntry.videoFirstPESus = x.videoFirstPESus;
+                        }
+                        if (x.tsParentFilename) {
+                            fileManagerEntry.tsParentFilename = x.tsParentFilename;
+                            isTSArchive = true;
+                        }
+                    }
 
                     if (x.parsed && x.parsed.autoSelectAsCamera) {
                         fileManagerEntry.autoSelectAsCamera = true;
@@ -219,6 +265,24 @@ export const parseMethods = {
                         NodeMan.unsuspendRecalculate();
                     }
                 }
+
+                // For TS archives: substreams have been extracted into independent
+                // FileManager entries with their own bytes and PES sidecar metadata.
+                // Release the parent TS buffer (potentially hundreds of MB) and mark
+                // it skipSerialization=true so neither rehost path uploads it. The
+                // canonical persisted form is now the substreams + their .pts.json
+                // sidecars, which is enough to round-trip pesPTSus[] without the
+                // parent TS being present on reload.
+                if (isTSArchive) {
+                    const archiveEntry = this.list[filename];
+                    if (archiveEntry) {
+                        archiveEntry.original = null;
+                        archiveEntry.skipSerialization = true;
+                        archiveEntry.tsParentDropped = true;
+                        console.log(`parseResult: dropped parent TS bytes for ${filename}; substreams persist independently`);
+                    }
+                }
+
                 console.log("parseResult: DONE Parse " + filename);
                 setRenderOne(true);
                 EventManager.dispatchEvent("filesParsed", {filename});
@@ -730,6 +794,26 @@ export const parseMethods = {
 
                 const videoNode = NodeMan.get("video");
 
+                // Skip if the video node already SUCCESSFULLY loaded this file
+                // via the separate videoFile/videos[] reload path. Without
+                // this, sitch reload would upload the same h264/aac substream
+                // twice. But a legacy sitch's loadVideoFromEntry path can fail
+                // (substream URL doesn't exist on the server — only the parent
+                // .ts is persisted) and then this loadedFiles dispatch needs
+                // to actually do the load via uploadFile. So check both that
+                // the filename matches AND that the existing videoData is in
+                // a healthy state (no error, has frames or is still loading).
+                const matchesByFilename =
+                    videoNode.fileName === filename ||
+                    (Array.isArray(videoNode.videos) && videoNode.videos.some(v => v.fileName === filename));
+                const existingLoadOk = videoNode.videoData
+                    && !videoNode.videoData.error
+                    && (videoNode.videoData.frames > 0 || videoNode.videoData.h264Data || videoNode.videoData.videoDroppedData);
+                if (matchesByFilename && existingLoadOk) {
+                    console.log(`Video ${filename} already loaded via videoFile path; skipping redundant upload`);
+                    return false;
+                }
+
                 if (fileExt === "h264" || fileExt === "dad") {
                     console.log("H.264 stream detected, attempting to load with specialized handler");
                     const blob = new Blob([parsedFile], { type: 'video/h264' });
@@ -988,6 +1072,16 @@ export const parseMethods = {
                         // archive buffer. Skips arrays (nested multi-stream) defensively.
                         if (parsedSubstream && !Array.isArray(parsedSubstream)) {
                             parsedSubstream.streamData = streamData;
+                            // Forward MISB ST 0604 PES timing so parseResult can stash
+                            // it on the FileManager entry for save-time sidecar emission.
+                            // Live demux already consumed pesEntries inside parseKLVFile;
+                            // we keep them here so the round-trip can reconstruct without
+                            // re-demuxing the parent TS.
+                            if (streamMetadata && Array.isArray(streamMetadata.pesEntries)) {
+                                parsedSubstream.pesEntries = streamMetadata.pesEntries;
+                                parsedSubstream.videoFirstPESus = streamMetadata.videoFirstPESus;
+                                parsedSubstream.tsParentFilename = filename;
+                            }
                         }
                         return parsedSubstream;
                     });

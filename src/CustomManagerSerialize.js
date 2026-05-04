@@ -47,6 +47,8 @@ import {configParams} from "./runtimeConfig";
 import {showError} from "./showError";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
+import {isResolvableSitrecReference} from "./SitrecObjectResolver";
+import {fileSystemFetch} from "./fileSystemFetch";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
 import {parseObjectInput as parseObjectInputUtil} from "./utils/parseObjectInput";
 import {initializeSettings, SettingsSaver} from "./SettingsManager";
@@ -237,32 +239,35 @@ export const serializeMethods = {
                     continue;
                 }
 
-                // initial check for isMultiple is to skip synthetic files
-                // that are generated from .TS or (TODO) .ZIP  uploads
-                if (!file.isMultiple) {
-                    if (!shouldSerializeLoadedFileEntry(id, file, activeTrackSourceFileIDs)) {
-                        console.log("Skipping orphaned track source file from serialization:", id, file.filename);
-                        continue;
-                    }
-                    if (local) {
-                        // if we are saving locally, then we don't need to rehost the files
-                        // so use localStaticURL if available, otherwise original filename
-                        files[id] = file.localStaticURL || file.filename
+                // The previous `!file.isMultiple` filter skipped TS-extracted
+                // substreams on the assumption that the parent TS would be
+                // re-uploaded and re-demuxed on load. Under the unified
+                // persistence model the parent TS is dropped (skipSerialization
+                // above) and substreams are the canonical persisted form, so
+                // they MUST be included here. The skipSerialization gate above
+                // catches the parent TS archive entry.
+                if (!shouldSerializeLoadedFileEntry(id, file, activeTrackSourceFileIDs)) {
+                    console.log("Skipping orphaned track source file from serialization:", id, file.filename);
+                    continue;
+                }
+                if (local) {
+                    // if we are saving locally, then we don't need to rehost the files
+                    // so use localStaticURL if available, otherwise original filename
+                    files[id] = file.localStaticURL || file.filename
+                } else {
+                    // Only include files that have been successfully rehosted
+                    if (file.staticURL) {
+                        files[id] = file.staticURL
+                    } else if (!file.dynamicLink) {
+                        // For non-dynamic links (external static URLs), use filename directly
+                        // Note: External static URLs should have staticURL = filename set at load time,
+                        // so this is primarily a defensive fallback
+                        console.error("No static link, falling back to filename", id, file.filename);
+                        files[id] = file.filename
                     } else {
-                        // Only include files that have been successfully rehosted
-                        if (file.staticURL) {
-                            files[id] = file.staticURL
-                        } else if (!file.dynamicLink) {
-                            // For non-dynamic links (external static URLs), use filename directly
-                            // Note: External static URLs should have staticURL = filename set at load time,
-                            // so this is primarily a defensive fallback
-                            console.error("No static link, falling back to filename", id, file.filename);
-                            files[id] = file.filename
-                        } else {
-                            console.warn("File not rehosted but should be - skipping:", id, file.filename);
-                        }
-                        // else: skip files without staticURL - they weren't rehosted
+                        console.warn("File not rehosted but should be - skipping:", id, file.filename);
                     }
+                    // else: skip files without staticURL - they weren't rehosted
                 }
             }
             out.loadedFiles = files;
@@ -279,6 +284,25 @@ export const serializeMethods = {
                     filesMetadata[id] = { dataType: file.dataType };
                 } else if (file.isTLE && file.tleMerged) {
                     filesMetadata[id] = { dataType: file.dataType, tleAction: "merge" };
+                }
+
+                // PES timing sidecar reference for TS-extracted substreams.
+                // Reload fetches the sidecar in parallel and threads pesEntries
+                // into parseKLVFile so pesPTSus[] is reconstructed without
+                // re-demuxing the (dropped) parent TS. The local and server
+                // save paths each set their own URL; pick whichever is present.
+                const sidecarURL = local
+                    ? (file.localPesSidecarURL || null)
+                    : (file.pesSidecarStaticURL || null);
+                if (sidecarURL) {
+                    if (!filesMetadata[id]) filesMetadata[id] = {};
+                    filesMetadata[id].pesSidecarURL = sidecarURL;
+                    if (typeof file.videoFirstPESus === "number") {
+                        filesMetadata[id].videoFirstPESus = file.videoFirstPESus;
+                    }
+                    if (file.tsParentFilename) {
+                        filesMetadata[id].tsParentFilename = file.tsParentFilename;
+                    }
                 }
             }
 
@@ -583,51 +607,12 @@ export const serializeMethods = {
             }
 
             // Save the stringified sitch using localStaticURL paths when present.
-            let str = this.getCustomSitchString(true);
-
-            // special handling for local save of a sitch with a dropped TS file
-            // which will give us something like:
-            // "videoFile" : "falls.ts_h264_273.h264",
-            //     "loadedFiles" : {
-            //     "IAUCSN" : "https://local.metabunk.org/sitrec/data/nightsky/IAU-CSN.txt",
-            //         "BSC5" : "https://local.metabunk.org/sitrec/data/nightsky/sitrec_bsc_lite.bin",
-            //         "constellationsLines" : "https://local.metabunk.org/sitrec/data/nightsky/constellations.lines.json",
-            //         "constellations" : "https://local.metabunk.org/sitrec/data/nightsky/constellations.json",
-            //         "falls.ts_h264_273.h264" : "falls.ts_h264_273.h264",
-            //         "falls.ts_klv_4096.klv" : "falls.ts_klv_4096.klv",
-            //         "falls.ts_ecm_4099.ecm" : "falls.ts_ecm_4099.ecm",
-            //         "falls.ts_emm_4097.emm" : "falls.ts_emm_4097.emm",
-            //         "falls.ts_klv_4098.klv" : "falls.ts_klv_4098.klv",
-            //         "falls.ts_ecm_4100.ecm" : "falls.ts_ecm_4100.ecm",
-            //         "data/models/MQ9-clean.glb" : "https://local.metabunk.org/sitrec/data/models/MQ9-clean.glb"
-            // },
-            // what we will need to do is make the videoFile point to the original TS file
-            // and remove the other extracted TS files from loadedFiles
-
-
-            const sitchObj = JSON.parse(str);
-            if (sitchObj.videoFile && sitchObj.videoFile.endsWith(".h264")) {
-                const baseName = sitchObj.videoFile.replace(/_(h264|klv|ecm|emm)_\d+\.(h264|klv|ecm|emm)$/, "");
-                console.log("Local save: detected TS video file, adjusting loadedFiles for base TS:", baseName);
-                // Remove all extracted TS files from loadedFiles
-                for (const fileId in sitchObj.loadedFiles) {
-                    if (fileId.startsWith(baseName)) {
-                        console.log("  Removing extracted TS file from loadedFiles:", fileId);
-                        delete sitchObj.loadedFiles[fileId];
-                    }
-                }
-                // delete the sitchObj.videoFile entry
-                delete sitchObj.videoFile;
-
-                // we add back the base TS file to loadedFiles
-                // to force it to reload it and extract the streams again
-                sitchObj.loadedFiles[baseName] = baseName;
-                console.log("  Added base TS file to loadedFiles:", baseName);
-
-            }
-
-            // re-stringify
-            str = JSON.stringify(sitchObj, null, 2);
+            // Under the unified persistence model, TS substreams are persisted
+            // independently with .pts.json sidecars carrying MISB ST 0604 PES
+            // timing — so no special TS rewriting is needed here. Reload
+            // fetches the substreams + sidecars and reconstructs pesPTSus[]
+            // without ever re-demuxing the parent TS.
+            const str = this.getCustomSitchString(true);
 
             const blob = new Blob([str]);
             const filename = name + ".json";
@@ -755,6 +740,50 @@ export const serializeMethods = {
 
 
 
+    /**
+     * Fetch and parse a `.pts.json` sidecar for a TS-extracted substream.
+     * Returns `{pesEntries, videoFirstPESus}` ready to pass as the metadata
+     * override to `FileManager.loadAsset`, or null if the sidecar is empty
+     * or malformed.
+     *
+     * The sidecar URL may be:
+     *   - a sitrec://obj-ref → resolve and HTTP fetch
+     *   - an absolute http(s) URL → HTTP fetch
+     *   - a working-folder relative path (e.g. "Truck.ts_klv.klv.pts.json")
+     *     → read via FileManager.readWorkingFolderFile (matches how the
+     *       substream itself loads — see loadAsset working-folder branch)
+     */
+    async _fetchPesSidecar(sidecarURL) {
+        let text;
+        if (isResolvableSitrecReference(sidecarURL)) {
+            const resolved = await resolveURLForFetch(sidecarURL);
+            const response = await fileSystemFetch(resolved);
+            if (!response.ok) {
+                throw new Error(`Sidecar fetch returned ${response.status} for ${sidecarURL}`);
+            }
+            text = await response.text();
+        } else if (sidecarURL.startsWith("http://") || sidecarURL.startsWith("https://")) {
+            const response = await fileSystemFetch(sidecarURL);
+            if (!response.ok) {
+                throw new Error(`Sidecar fetch returned ${response.status} for ${sidecarURL}`);
+            }
+            text = await response.text();
+        } else {
+            // Working-folder relative path. The substream loaded the same way
+            // (loadAsset → readWorkingFolderFile), so symmetric resolution.
+            const buffer = await FileManager.readWorkingFolderFile(sidecarURL);
+            text = new TextDecoder().decode(buffer);
+        }
+        const sidecar = JSON.parse(text);
+        if (!sidecar || !Array.isArray(sidecar.pesEntries) || sidecar.pesEntries.length === 0) {
+            return null;
+        }
+        return {
+            pesEntries: sidecar.pesEntries,
+            videoFirstPESus: typeof sidecar.videoFirstPESus === "number" ? sidecar.videoFirstPESus : null,
+        };
+    },
+
     // after setting up a custom scene, call this to perform the mods
     // i.e. load the files, and then apply the mods
     deserialize(sitchData) {
@@ -802,7 +831,22 @@ export const serializeMethods = {
             }
             // load the files as if they have been drag-and-dropped in
             for (let id in sitchData.loadedFiles) {
-                loadingPromises.push(FileManager.loadAsset(Sit.loadedFiles[id], id).then(
+                const sidecarMeta = sitchData.loadedFilesMetadata?.[id];
+                const sidecarURL = sidecarMeta?.pesSidecarURL;
+                // For TS-extracted substreams: fetch the .pts.json sidecar in
+                // parallel with the substream itself, then thread the parsed
+                // pesEntries + videoFirstPESus into loadAsset's metadataOverride.
+                // parseKLVFile uses these to reconstruct pesPTSus[] without
+                // the parent TS being present. If the sidecar fetch fails the
+                // load still proceeds (without PES sync) — UnixTimeStamp
+                // wall-clock fallback in CNodeTrackFromMISB takes over.
+                const overridePromise = sidecarURL
+                    ? this._fetchPesSidecar(sidecarURL).catch(err => {
+                        console.warn(`PES sidecar fetch failed for ${id} (${sidecarURL}):`, err);
+                        return null;
+                    })
+                    : Promise.resolve(null);
+                loadingPromises.push(overridePromise.then(metadataOverride => FileManager.loadAsset(Sit.loadedFiles[id], id, metadataOverride)).then(
                     (parsedResult) => {
                         Globals.dontAutoZoom = true;
 
