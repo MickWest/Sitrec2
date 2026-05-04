@@ -300,7 +300,13 @@ let windowFocused = typeof document !== "undefined" ? document.hasFocus() : true
 function shouldSleepAnimationLoop() {
     return shouldSleepRenderLoopState({
         hidden: document.hidden,
-        focused: windowFocused,
+        // MCP-driven sessions: the SitrecBridge extension navigates and
+        // queries the page from a Claude Code instance running in another
+        // window. The Sitrec tab is intentionally not focused, but we still
+        // want the render loop alive so terrain LOD subdivision, video
+        // decoding, and other paused-but-active work proceeds. Treat the
+        // MCP flag as "focused enough" to skip the paused+unfocused sleep.
+        focused: windowFocused || !!window._mcpDebug,
         paused: par.paused,
         renderOne: par.renderOne,
         nodeList: NodeMan?.list,
@@ -309,7 +315,7 @@ function shouldSleepAnimationLoop() {
 
 function wakeAnimationLoop() {
     if (document.hidden) return;
-    if (par.paused && !windowFocused) return;
+    if (par.paused && !windowFocused && !window._mcpDebug) return;
     scheduleAnimationLoop(0);
 }
 
