@@ -264,6 +264,14 @@ export class CNode3DObject extends CNode3DGroup {
             .tooltip(t("nodes3dObject.forceAboveSurface.tooltip"))
             .isCommon = true;
 
+        const visibleController = this.gui.add(this, "visible").name("Visible").listen().onChange((v) => {
+            this.show(v);
+            setRenderOne(true);
+        })
+            .tooltip("Toggle visibility of this object in the 3D scene")
+            .moveToFirst();
+        visibleController.isCommon = true;
+
         // Add export to KML button
        this.gui.add(this, "exportToKML").name(t("nodes3dObject.exportToKML.label"))
             .tooltip(t("nodes3dObject.exportToKML.tooltip"))
@@ -974,7 +982,9 @@ export class CNode3DObject extends CNode3DGroup {
         this.rebuildMaterial();
         this.rebuild();
 
-
+        // Apply restored visibility to the group/label, since the base
+        // modDeserialize only sets this.visible without invoking show().
+        this.show(this.visible);
 
     }
 
