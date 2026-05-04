@@ -39,6 +39,7 @@ import {glareSphere, targetSphere} from "../JetStuffVars";
 import {jetPitchFromFrame} from "../JetUtils";
 import {t} from "../i18n";
 import {raDec2Celestial} from "../CelestialMath";
+import {findRootTrack} from "../FindRootTrack";
 // NOTE: ChangedPR / UIChangedAz intentionally NOT imported. They are used only
 // inside the legacy "GIMBAL SPECIFIC, NOT USED" dragMode>0 code path below.
 // Importing from ../JetStuff creates a circular dependency
@@ -779,9 +780,24 @@ export const mouseMethods = {
                 return false;
             };
 
+            // Skip CNode3D objects whose position is driven from the same root
+            // track as this view's camera — the camera is effectively coincident
+            // with them so they shouldn't be pickable from inside.
+            const cameraRootTrack = this.cameraNode ? findRootTrack(this.cameraNode) : null;
+            const sharesCameraRootTrack = (obj) => {
+                if (!cameraRootTrack) return false;
+                const objectID = this.findObjectID(obj);
+                if (!objectID) return false;
+                const node = NodeMan.get(objectID, false);
+                if (!node) return false;
+                return findRootTrack(node) === cameraRootTrack;
+            };
+
             // Filter out objects marked to ignore context menu (overlays, clouds, sprites)
+            // and objects locked to the camera's own position track.
             const intersects = allIntersects.filter(intersect =>
                 !shouldIgnoreContextMenu(intersect.object)
+                && !sharesCameraRootTrack(intersect.object)
             );
 
             if (intersects.length > 0) {
