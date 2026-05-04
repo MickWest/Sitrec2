@@ -12,6 +12,7 @@ type NodeList = Record<string, NodeListEntry> | undefined | null;
 
 type SleepAnimationLoopArgs = {
     hidden: boolean;
+    focused: boolean;
     paused: boolean;
     renderOne: boolean | number | undefined;
     nodeList: NodeList;
@@ -32,8 +33,14 @@ export function hasPausedBackgroundWork(nodeList: NodeList): boolean {
     return false;
 }
 
-export function shouldSleepAnimationLoop({hidden, paused, renderOne, nodeList}: SleepAnimationLoopArgs): boolean {
+export function shouldSleepAnimationLoop({hidden, focused, paused, renderOne, nodeList}: SleepAnimationLoopArgs): boolean {
     if (hidden) {
+        return true;
+    }
+
+    // Paused + window unfocused: user isn't viewing playback or interacting,
+    // so skip background updates too (e.g. terrain tile loading can wait).
+    if (paused && !focused) {
         return true;
     }
 

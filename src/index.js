@@ -292,9 +292,15 @@ function scheduleAnimationLoop(delay = 0) {
     }, Math.max(0, delay));
 }
 
+// Tracks window focus so we can pause the loop when paused AND the user is
+// looking at another window. Blur alone doesn't pause (the user may still be
+// watching playback in a partially-visible window), but blur+paused does.
+let windowFocused = typeof document !== "undefined" ? document.hasFocus() : true;
+
 function shouldSleepAnimationLoop() {
     return shouldSleepRenderLoopState({
         hidden: document.hidden,
+        focused: windowFocused,
         paused: par.paused,
         renderOne: par.renderOne,
         nodeList: NodeMan?.list,
@@ -302,9 +308,9 @@ function shouldSleepAnimationLoop() {
 }
 
 function wakeAnimationLoop() {
-    if (!document.hidden) {
-        scheduleAnimationLoop(0);
-    }
+    if (document.hidden) return;
+    if (par.paused && !windowFocused) return;
+    scheduleAnimationLoop(0);
 }
 
 globalThis.__sitrecWakeRenderLoop = wakeAnimationLoop;
@@ -317,6 +323,20 @@ document.addEventListener("visibilitychange", () => {
 
     setRenderOne(true);
     wakeAnimationLoop();
+});
+
+window.addEventListener("blur", () => {
+    windowFocused = false;
+    // Don't clear the timer: if playing, the loop should continue. If paused,
+    // the next animate tick observes shouldSleepAnimationLoop() and self-suspends.
+});
+
+window.addEventListener("focus", () => {
+    windowFocused = true;
+    if (!document.hidden) {
+        setRenderOne(true);
+        wakeAnimationLoop();
+    }
 });
 
 // Adaptive frame rate control
