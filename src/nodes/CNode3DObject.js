@@ -304,6 +304,11 @@ export class CNode3DObject extends CNode3DGroup {
         if (v.label !== undefined) {
             this.addLabel(v.label)
         }
+
+        // Apply initial visibility (e.g. v.visible:false) to the group/label.
+        // CNode super sets this.visible from v.visible but never propagates
+        // it to this.group.visible.
+        this.show(this.visible);
     }
 
 

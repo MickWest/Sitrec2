@@ -848,6 +848,18 @@ class CTrackManager extends CManager {
                 layers: LAYER.MASK_TARGET,
                 label: shortName,
             });
+        } else if (trackOb.trackIndex !== 0) {
+            // Center / supplementary tracks (e.g. MISB FrameCenter): the
+            // platform model belongs on the primary track, so give the center
+            // a small invisible reference sphere instead of duplicating it.
+            trackOb.displayTargetSphere = new CNode3DObject({
+                id: sphereId + "_ob",
+                object: "sphere",
+                radius: 2,
+                color: trackColor,
+                label: shortName,
+                visible: false,
+            });
         } else if (getEnv("DEFAULT_PLATFORM_MODEL", process.env.DEFAULT_PLATFORM_MODEL) && trackOb.trackFileName.endsWith(".klv")) {
 
             // check if in the ModelFiles object, and use it if available
