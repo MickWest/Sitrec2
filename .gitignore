@@ -40,3 +40,4 @@ tests/__image_snapshots__/
 *_Good.png
 AGENTS.md
 /tests_regression/snapshots-diffs/
+/tests_regression/snapshots-baseline/
