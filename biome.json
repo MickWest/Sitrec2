@@ -4,18 +4,18 @@
 	"files": {
 		"includes": [
 			"**",
-			"!src/js/misb.js-main/**",
+			"!src/js/misb.js-main",
 			"!src/js/mp4box.all.js",
-			"!src/js/mp4-decode/**",
+			"!src/js/mp4-decode",
 			"!src/js/opencv.js",
 			"!src/js/lil-gui.esm.js",
 			"!src/js/jsfeat.js",
-			"!src/js/uPlot/**",
-			"!src/workers/**",
-			"!tools/three.js/**",
+			"!src/js/uPlot",
+			"!src/workers",
+			"!tools/three.js",
 			"!tools/IRBalloon/chart.umd.min.js",
 			"!**/*.min.js",
-			"!.fleet/**"
+			"!.fleet"
 		]
 	},
 	"javascript": {
