@@ -766,9 +766,14 @@ export const mouseMethods = {
         const mouseRay = screenToNDC(this, mouseX, mouseY);
         
         if (this.camera && mouseInViewOnly(this, mouseX, mouseY)) {
-            // First, check for 3D objects using raycasting (they have priority over tracks)
+            // First, check for 3D objects using raycasting (they have priority over tracks).
+            // Match the raycaster's layers to the camera's so we never pick objects
+            // the camera couldn't render (Three.js raycaster does test layers, but defaults to layer 0 only).
+            const prevRaycasterMask = this.raycaster.layers.mask;
+            this.raycaster.layers.mask = this.camera.layers.mask;
             this.raycaster.setFromCamera(mouseRay, this.camera);
             const allIntersects = this.raycaster.intersectObjects(this.scene.children, true);
+            this.raycaster.layers.mask = prevRaycasterMask;
 
             // Helper to check if object or any parent has ignoreContextMenu
             const shouldIgnoreContextMenu = (obj) => {
@@ -793,11 +798,35 @@ export const mouseMethods = {
                 return findRootTrack(node) === cameraRootTrack;
             };
 
-            // Filter out objects marked to ignore context menu (overlays, clouds, sprites)
-            // and objects locked to the camera's own position track.
+            // Skip objects the renderer would not have drawn last frame:
+            // any ancestor with visible===false blocks rendering (mirrors
+            // WebGLRenderer.projectObject), and Three.js's raycaster ignores
+            // .visible entirely so we have to walk this ourselves.
+            // Also consult the per-view _renderHiddenNodeIDs populated by
+            // CustomSupport.preRenderUpdate — those nodes are hidden for the
+            // render but their .visible is restored by postRenderUpdate
+            // before the user's right-click event reaches us.
+            const renderHiddenNodeIDs = this._renderHiddenNodeIDs;
+            const wasRendered = (obj) => {
+                let cur = obj;
+                while (cur) {
+                    if (cur.visible === false) return false;
+                    cur = cur.parent;
+                }
+                if (renderHiddenNodeIDs && renderHiddenNodeIDs.size > 0) {
+                    const objectID = this.findObjectID(obj);
+                    if (objectID && renderHiddenNodeIDs.has(objectID)) return false;
+                }
+                return true;
+            };
+
+            // Filter out objects marked to ignore context menu (overlays, clouds, sprites),
+            // objects locked to the camera's own position track, and anything not actually
+            // rendered in this view.
             const intersects = allIntersects.filter(intersect =>
                 !shouldIgnoreContextMenu(intersect.object)
                 && !sharesCameraRootTrack(intersect.object)
+                && wasRendered(intersect.object)
             );
 
             if (intersects.length > 0) {

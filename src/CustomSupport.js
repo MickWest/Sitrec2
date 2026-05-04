@@ -1431,6 +1431,11 @@ export class CCustomManager {
     preRenderUpdate(view) {
         if (!Sit.isCustom) return;
 
+        // Track which CNode3DObjects we hide for this view's render so the
+        // right-click picker can ignore them even after postRenderUpdate
+        // restores .visible.
+        view._renderHiddenNodeIDs = new Set();
+
         //
         // infoDiv.style.display = 'block';
         // infoDiv.innerHTML = "Look Camera<br>"
@@ -1478,12 +1483,13 @@ export class CCustomManager {
             // is it derived from CNode3D?
             if (node instanceof CNode3DObject) {
                 const ob = node._object;
-                disableIfNearCameraTrack(node, ob, view.camera)
+                if (disableIfNearCameraTrack(node, ob, view.camera)) {
+                    view._renderHiddenNodeIDs.add(node.id);
+                }
 
                 // This is for when we set the target object to follow one of the other object tracks, like a KML track
                 // we don't want two objects in the same spot.
                 if (ob !== tob) {
-                    const targetObjectDist = ob.position.distanceTo(tob.position);
                     if (tob.customOldVisible === undefined) {
 
                         // removed this assert as it was sometimes triggering on the first frame
@@ -1495,6 +1501,7 @@ export class CCustomManager {
 
                             tob.customOldVisible = tob.visible;
                             tob.visible = false;
+                            view._renderHiddenNodeIDs.add(targetObject.id);
                         }
                     }
                 }
@@ -1641,6 +1648,7 @@ function disableIfNearCameraTrack(node, ob, camera) {
     } else {
         ob.customOldVisible = undefined;
     }
+    return shouldHide;
 }
 
 function restoreIfDisabled(ob) {
