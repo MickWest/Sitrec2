@@ -399,6 +399,12 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
         if (this._needsRecalculate) {
             this._needsRecalculate = false;
             this.recalculate();
+        } else if (this.array && this.array.length < this.in.source.frames) {
+            // The source track grew (e.g. MISB frame data finished loading
+            // after this smoothed track was first recalculated) and the
+            // recalculate cascade did not mark us dirty. Self-heal by
+            // rebuilding now that we've been asked for a frame past the end.
+            this.recalculate();
         }
         let pos;
         if (this.method === "none" || this.method === "moving" || this.method === "movingPolyEdge" || this.method === "sliding" || this.method === "savgol" || this.method === "spline") {
