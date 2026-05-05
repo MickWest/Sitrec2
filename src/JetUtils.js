@@ -77,11 +77,18 @@ export function getHumanHorizonFromPitchRollAzEl(jetPitch, jetRoll, az, el) {
 // }
 }
 
+// Render-loop wake-ups (setRenderOne / par.frame setter) can tick the loop
+// during sitch setup, before SetupGimbal creates azSources/el. Treat the
+// nodes as not-yet-ready and return the current par.az/par.el so the early
+// updateFrame() pass is a no-op until the real nodes exist — matches the
+// pattern in getGlareAngleFromFrame below.
 export function Frame2Az(frame) {
+    if (!NodeMan.exists("azSources")) return par.az ?? 0;
     return NodeMan.get("azSources").v(frame)
 }
 
 export function Frame2El(frame) {
+    if (!NodeMan.exists("el")) return par.el ?? 0;
     return NodeMan.get("el").v(frame)
 }
 
