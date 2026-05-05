@@ -1097,8 +1097,12 @@ const en = {
             tooltip: "Master toggle - enable or disable all video info displays",
         },
         frameCounter: {
-            label: "Frame Counter",
-            tooltip: "Show the current frame number",
+            label: "Frame Number",
+            tooltip: "Show the current frame number (virtual frame when video is patched)",
+        },
+        sourceFrame: {
+            label: "Source Frame Number",
+            tooltip: "Show the underlying decoded source frame number (differs from Frame Number during held bursts when video is patched)",
         },
         offsetFrame: {
             label: "Offset Frame",

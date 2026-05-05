@@ -45,6 +45,23 @@ Example entry format:
 
 ---
 
+## Version 2.49.0 (2026-05-05)
+
+### New Features
+- **Patched-video timeline (`CVideoPatchedData`)**: TS-sourced H.264 video with dropped-frame bursts is now wrapped in a virtual-frame timeline that synthesizes "held" copies of the most recent decoded frame to bridge gaps. KLV/RTC stays unaltered; the sim no longer accelerates through dropped-frame bursts (it pauses on the held image while camera position keeps advancing at honest wall-clock pace). Held frames render with a 60-px red square in the top-right corner during debugging.
+- **Source Frame Number** readout in Video / Video Info Display: new VID showing the underlying decoded source frame number — diverges from the renamed "Frame Number" during held bursts when video is patched.
+- **Frame patching block** in the Timing Analysis report: source/virtual frame counts, held-frame totals, longest hold, and a top-10 patches table with src(N→N+1) range, virtual range, held frames, held ms, and src gap ms (cross-references with the Video PTS Jumps table).
+
+### Improvements
+- Renamed "Frame Counter" Video Info Display item to **"Frame Number"** (en/it/ja/zh) for clarity. The displayed value is the virtual frame when video is patched.
+- Manual-tracking keyframes (`CNodeTrackingOverlay`) now persist as source-indexed frame numbers (`frameSpace: "source"`), so saves are stable across patching toggles and `Sit.fps` changes; UI now prevents placing keyframes on synthesized held frames.
+- Auto-tracker (`CObjectTracking.runFastTrackingLoop`) skips held frames during processing — identical pixels would yield the same template-match result; the prior tracked position is carried forward.
+- Timing Analysis "Video Timing" section now reads the underlying source PTS when wrapped, so dropped-frame bursts remain visible instead of being smoothed by the wrapper's uniform virtual array. Section header changes to "(source PTS — pre-virtualization)" when patching is active.
+- Tier-1 KLV pairing log tagged `[wrapped]` when patching is active.
+- New developer documentation: `docs/dev/misb-timing.md` §12 covering the algorithm, wrap predicate, source/virtual contract, held-frame rule, stabilization key collapse, migration, and code map.
+
+---
+
 ## Version 2.48.4 (2026-05-05)
 
 ### Improvements

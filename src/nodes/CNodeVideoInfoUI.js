@@ -15,6 +15,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
 
         this.showInfo = v.showInfo ?? true;
         this.showFrameCounter = v.showFrameCounter ?? false;
+        this.showSourceFrame = v.showSourceFrame ?? false;
         this.showOffsetFrame = v.showOffsetFrame ?? false;
         this.offsetFrameValue = v.offsetFrameValue ?? 0;
         this.showTimecode = v.showTimecode ?? false;
@@ -29,6 +30,8 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
 
         this.frameCounterX = v.frameCounterX ?? DEFAULT_X;
         this.frameCounterY = v.frameCounterY ?? DEFAULT_Y;
+        this.sourceFrameX = v.sourceFrameX ?? DEFAULT_X;
+        this.sourceFrameY = v.sourceFrameY ?? DEFAULT_Y;
         this.offsetFrameX = v.offsetFrameX ?? DEFAULT_X;
         this.offsetFrameY = v.offsetFrameY ?? DEFAULT_Y;
         this.timecodeX = v.timecodeX ?? DEFAULT_X;
@@ -50,6 +53,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
 
         this.addSimpleSerial("showInfo");
         this.addSimpleSerial("showFrameCounter");
+        this.addSimpleSerial("showSourceFrame");
         this.addSimpleSerial("showOffsetFrame");
         this.addSimpleSerial("offsetFrameValue");
         this.addSimpleSerial("showTimecode");
@@ -63,6 +67,8 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         this.addSimpleSerial("fontSize");
         this.addSimpleSerial("frameCounterX");
         this.addSimpleSerial("frameCounterY");
+        this.addSimpleSerial("sourceFrameX");
+        this.addSimpleSerial("sourceFrameY");
         this.addSimpleSerial("offsetFrameX");
         this.addSimpleSerial("offsetFrameY");
         this.addSimpleSerial("timecodeX");
@@ -111,7 +117,8 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
     }
 
     hasAnyInfoItem() {
-        return this.showFrameCounter || this.showOffsetFrame || this.showTimecode || this.showTimestamp ||
+        return this.showFrameCounter || this.showSourceFrame || this.showOffsetFrame ||
+            this.showTimecode || this.showTimestamp ||
             this.showDateLocal || this.showTimeLocal || this.showDateTimeLocal ||
             this.showDateUTC || this.showTimeUTC || this.showDateTimeUTC;
     }
@@ -138,13 +145,14 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
     }
 
     getAllItemIds() {
-        return ['frameCounter', 'offsetFrame', 'timecode', 'timestamp', 'dateLocal', 'timeLocal',
+        return ['frameCounter', 'sourceFrame', 'offsetFrame', 'timecode', 'timestamp', 'dateLocal', 'timeLocal',
             'dateTimeLocal', 'dateUTC', 'timeUTC', 'dateTimeUTC'];
     }
 
     getShowProp(id) {
         const map = {
             frameCounter: 'showFrameCounter',
+            sourceFrame: 'showSourceFrame',
             offsetFrame: 'showOffsetFrame',
             timecode: 'showTimecode',
             timestamp: 'showTimestamp',
@@ -242,6 +250,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         };
 
         addBbox('frameCounter', this.showFrameCounter, this._frameCounterBbox);
+        addBbox('sourceFrame', this.showSourceFrame, this._sourceFrameBbox);
         addBbox('offsetFrame', this.showOffsetFrame, this._offsetFrameBbox);
         addBbox('timecode', this.showTimecode, this._timecodeBbox);
         addBbox('timestamp', this.showTimestamp, this._timestampBbox);
@@ -272,6 +281,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
     getElementPos(id) {
         const map = {
             frameCounter: ['frameCounterX', 'frameCounterY'],
+            sourceFrame: ['sourceFrameX', 'sourceFrameY'],
             offsetFrame: ['offsetFrameX', 'offsetFrameY'],
             timecode: ['timecodeX', 'timecodeY'],
             timestamp: ['timestampX', 'timestampY'],
@@ -600,6 +610,37 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
             this._frameCounterBbox = { x: bgX, y: bgY, w: bgW, h: bgH };
         }
 
+        if (this.showSourceFrame) {
+            // Source frame number: when the videoData is a CVideoPatchedData
+            // wrapper, this differs from par.frame during held bursts (the
+            // virtual timeline pads gaps with held copies of the same source
+            // frame). When not wrapped, source == virtual, so we just show
+            // the same number — keeps the readout meaningful regardless of
+            // whether patching is active.
+            const videoView = this.in.relativeTo;
+            const videoData = videoView?.videoData;
+            const sourceFrameIdx = (videoData && typeof videoData.virtualToSource === "function")
+                ? videoData.virtualToSource(Math.floor(par.frame))
+                : Math.floor(par.frame);
+            const text = `${sourceFrameIdx}`;
+            const x = this.videoPx(this.sourceFrameX);
+            const y = this.videoPy(this.sourceFrameY);
+            const metrics = c.measureText(text);
+            const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+            const vPad = textHeight * 0.05;
+            const bgX = x - metrics.width / 2 - padding;
+            const bgY = y - metrics.actualBoundingBoxAscent - padding - vPad;
+            const bgW = metrics.width + padding * 2;
+            const bgH = textHeight + padding * 2 + vPad * 2;
+
+            c.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            c.fillRect(bgX, bgY, bgW, bgH);
+            c.fillStyle = '#FFFFFF';
+            c.fillText(text, x, y);
+
+            this._sourceFrameBbox = { x: bgX, y: bgY, w: bgW, h: bgH };
+        }
+
         if (this.showOffsetFrame) {
             const text = `${Math.floor(par.frame) + this.offsetFrameValue}`;
             const x = this.videoPx(this.offsetFrameX);
@@ -906,6 +947,11 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
             .tooltip(t("videoInfo.frameCounter.tooltip"))
             .listen()
             .onChange(v => { if (v) this.positionItemToAvoidOverlaps('frameCounter'); this.updateVisibility(); });
+
+        folder.add(this, "showSourceFrame").name(t("videoInfo.sourceFrame.label"))
+            .tooltip(t("videoInfo.sourceFrame.tooltip"))
+            .listen()
+            .onChange(v => { if (v) this.positionItemToAvoidOverlaps('sourceFrame'); this.updateVisibility(); });
 
         folder.add(this, "showOffsetFrame").name(t("videoInfo.offsetFrame.label"))
             .tooltip(t("videoInfo.offsetFrame.tooltip"))

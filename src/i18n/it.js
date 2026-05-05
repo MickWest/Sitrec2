@@ -1086,8 +1086,12 @@ const it = {
             tooltip: "Controllo principale - abilita o disabilita tutte le visualizzazioni di informazioni video",
         },
         frameCounter: {
-            label: "Contatore Fotogrammi",
-            tooltip: "Mostra il numero del fotogramma corrente",
+            label: "Numero Fotogramma",
+            tooltip: "Mostra il numero del fotogramma corrente (fotogramma virtuale quando il video è ricalibrato)",
+        },
+        sourceFrame: {
+            label: "Numero Fotogramma Sorgente",
+            tooltip: "Mostra il numero del fotogramma sorgente decodificato (differisce dal Numero Fotogramma durante le pause quando il video è ricalibrato)",
         },
         offsetFrame: {
             label: "Fotogramma con Offset",

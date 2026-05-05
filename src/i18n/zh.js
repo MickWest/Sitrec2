@@ -1086,8 +1086,12 @@ const zh = {
             tooltip: "主开关 - 启用或禁用所有视频信息显示",
         },
         frameCounter: {
-            label: "帧计数器",
-            tooltip: "显示当前帧号",
+            label: "帧号",
+            tooltip: "显示当前帧号（视频经过补丁处理时为虚拟帧）",
+        },
+        sourceFrame: {
+            label: "源帧号",
+            tooltip: "显示底层解码的源帧号（视频经过补丁处理时，在保持帧期间与帧号不同）",
         },
         offsetFrame: {
             label: "偏移帧",
