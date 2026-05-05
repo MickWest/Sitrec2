@@ -402,13 +402,17 @@ export class CNodeDateTime extends CNode {
     // find a CNodeMISBDataTrack, asks it to generate the report, and shows
     // it in a modal with Copy/Download buttons.
     _timingAnalysisAction() {
-        let misbNode = null;
+        // Collect every MISB data node so multi-stream KLV (e.g. async + sync
+        // PES variants on different PIDs) shows up in the report. Prefer the
+        // one with PES PTS data for the full analysis since that one carries
+        // the MISB ST 0604 sync anchor.
+        const misbNodes = [];
         NodeMan.iterate((k, n) => {
-            if (!misbNode && n.constructor && n.constructor.name === "CNodeMISBDataTrack") {
-                misbNode = n;
+            if (n.constructor && n.constructor.name === "CNodeMISBDataTrack") {
+                misbNodes.push(n);
             }
         });
-        if (!misbNode || typeof misbNode.generateTimingAnalysis !== "function") {
+        if (misbNodes.length === 0) {
             showTimingAnalysis(
                 "No MISB data node loaded in this sitch.\n\n" +
                 "The Timing Analysis report requires a MISB/KLV data source.\n" +
@@ -416,7 +420,28 @@ export class CNodeDateTime extends CNode {
             );
             return;
         }
-        const report = misbNode.generateTimingAnalysis();
+        const withPES = misbNodes.find(n => typeof n.hasRecordPTS === "function" && n.hasRecordPTS());
+        const misbNode = withPES || misbNodes[0];
+
+        // Build a sibling summary so the report names every loaded MISB
+        // stream and which one was analyzed — important when multiple KLV
+        // PIDs exist and only one has PES PTS.
+        let prelude = "";
+        if (misbNodes.length > 1) {
+            prelude += "MULTIPLE MISB DATA NODES LOADED\n";
+            prelude += "─".repeat(60) + "\n";
+            for (const n of misbNodes) {
+                const has = (typeof n.hasRecordPTS === "function" && n.hasRecordPTS()) ? "yes" : "no";
+                const len = (n.misb && n.misb.length) ? n.misb.length : 0;
+                const tag = (n === misbNode) ? "  ← ANALYZED" : "";
+                prelude += `  ${n.id}\n`;
+                prelude += `    records: ${len}, hasRecordPTS: ${has}${tag}\n`;
+            }
+            prelude += "\n  The node with PES PTS (sync-mode KLV) is preferred when\n";
+            prelude += "  available. Other nodes are loaded but not analyzed here.\n\n";
+        }
+
+        const report = prelude + misbNode.generateTimingAnalysis();
         const safeName = (Sit.name || "sitch").replace(/[^a-z0-9_-]/gi, "_");
         showTimingAnalysis(report, `sitrec-timing-${safeName}.txt`);
     }

@@ -169,6 +169,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         // Video PTS stats (only if video is loaded).
         let videoSpanS = null, videoFrameCount = 0;
         let ptsMin = null, ptsMax = null, ptsMean = null, ptsStddev = null;
+        let videoIntervals = null;
         if (hasPTS) {
             videoFrameCount = videoData.framePTSus.length;
             videoSpanS = (videoData.framePTSus[videoFrameCount - 1] - videoData.framePTSus[0]) / 1000 / 1000;
@@ -180,11 +181,12 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
                 if (dt < ptsMin) ptsMin = dt;
                 if (dt > ptsMax) ptsMax = dt;
                 sum += dt;
-                pIntervals.push(dt);
+                pIntervals.push({ idx: i, dt, t: (videoData.framePTSus[i] - videoData.framePTSus[0]) / 1000 / 1000 });
             }
             ptsMean = sum / pIntervals.length;
-            const sq = pIntervals.reduce((a, x) => a + (x - ptsMean) * (x - ptsMean), 0);
+            const sq = pIntervals.reduce((a, x) => a + (x.dt - ptsMean) * (x.dt - ptsMean), 0);
             ptsStddev = Math.sqrt(sq / pIntervals.length);
+            videoIntervals = pIntervals;
         }
 
         // Headline assessment.
@@ -215,6 +217,8 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         push("VIDEO TIMING (PTS from container)");
         push(sectionBreak);
         if (hasPTS) {
+            const realPTS = (typeof videoData.hasRealFramePTS === "function")
+                ? videoData.hasRealFramePTS() : "(unknown)";
             push(pad("Frames:", videoFrameCount));
             push(pad("Span:", fmtS(videoSpanS)));
             push(pad("Mean interval:", `${fmtMs(ptsMean)} (= ${(1000 / ptsMean).toFixed(4)} fps)`));
@@ -222,6 +226,26 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             push(pad("Min interval:", fmtMs(ptsMin)));
             push(pad("Max interval:", fmtMs(ptsMax)));
             push(pad("Verdict:", cfrVideo ? "Constant frame rate (CFR) — reliable" : "Variable frame rate — non-uniform"));
+            push(pad("Frame PTS source:", realPTS === true
+                ? "real PES PTS (TSParser pesEntries[]) — honors dropped frames"
+                : realPTS === false
+                    ? "synthetic uniform (i × frameDuration) — DROPPED FRAMES INVISIBLE"
+                    : String(realPTS)));
+
+            // Per-frame outliers — anything significantly off the median interval
+            // is a video-side gap or PTS jump worth flagging.
+            const vidGapThresh = Math.max(1, ptsMean * 1.5);
+            const vidGaps = videoIntervals.filter(g => g.dt > vidGapThresh);
+            if (vidGaps.length > 0) {
+                push("");
+                push(`  Video PTS jumps (interval > ${vidGapThresh.toFixed(0)} ms): ${vidGaps.length}`);
+                push("    frame     pts-time      gap (ms)");
+                push("    ──────    ──────────    ────────");
+                for (const g of vidGaps.slice(0, 20)) {
+                    push(`    ${String(g.idx).padStart(6)}    ${g.t.toFixed(2).padStart(10)} s   ${g.dt.toFixed(0).padStart(8)}`);
+                }
+                if (vidGaps.length > 20) push(`    … and ${vidGaps.length - 20} more`);
+            }
         } else {
             push("  (video not loaded)");
         }
@@ -261,20 +285,188 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         }
         push("");
 
+        // ── KLV PES PTS TIMING ────────────────────────────────────────
+        // PES PTS is the synchronous-mode anchor on the same axis as video
+        // PTS. If gaps appear here too, the camera really paused on the
+        // PCR-locked clock; if they only appear in UnixTimeStamp, the camera
+        // is fabricating wall-clock timestamps during sensor reconfiguration.
+        push("KLV PES PTS AVAILABILITY (MISB ST 0604 sync anchor)");
+        push(sectionBreak);
+        const pesArr = this.misb && this.misb.pesPTSus;
+        const pesIsArray = Array.isArray(pesArr);
+        const pesLen = pesIsArray ? pesArr.length : 0;
+        const pesNonNull = pesIsArray ? pesArr.filter(v => v !== null && v !== undefined).length : 0;
+        push(pad("hasRecordPTS():", String(this.hasRecordPTS())));
+        push(pad("misb.pesPTSus is Array:", String(pesIsArray)));
+        push(pad("misb.pesPTSus length:", `${pesLen} (vs record count = ${len})`));
+        push(pad("Non-null entries:", `${pesNonNull} / ${pesLen}`));
+        push(pad("misb constructor:", this.misb && this.misb.constructor ? this.misb.constructor.name : "(none)"));
+        // Walk FileManager looking for any entry whose .data refers to this misb,
+        // or whose stashed pesEntries / tsParentFilename are visible.
+        try {
+            const list = (typeof FileManager !== "undefined") ? (FileManager.list ?? {}) : {};
+            let matched = null;
+            for (const [k, e] of Object.entries(list)) {
+                if (!e) continue;
+                if (e.data === this.misb || (e.data && e.data.data === this.misb) || (e.data && e.data.misb === this.misb)) {
+                    matched = { key: k, entry: e };
+                    break;
+                }
+            }
+            if (matched) {
+                const e = matched.entry;
+                push(pad("FileManager key:", matched.key));
+                push(pad("FileManager .filename:", e.filename || "(unknown)"));
+                push(pad("FileManager .dataType:", e.dataType || "(unknown)"));
+                push(pad("FileManager .tsParentFilename:", e.tsParentFilename || "(none — not from TS demux)"));
+                push(pad("FileManager .pesEntries:", Array.isArray(e.pesEntries) ? `array, length ${e.pesEntries.length}` : "(absent)"));
+                push(pad("FileManager .videoFirstPESus:", typeof e.videoFirstPESus === "number" ? `${e.videoFirstPESus.toFixed(0)} µs` : "(absent)"));
+            } else {
+                push("  (no FileManager entry refers to this misb)");
+                // Fall back: list any KLV-typed entries so we can at least see what got loaded.
+                const klvKeys = Object.entries(list)
+                    .filter(([_, e]) => e && (e.dataType === "klv" || e.dataType === "trackfile"))
+                    .map(([k, _]) => k);
+                if (klvKeys.length > 0) {
+                    push(pad("Loaded KLV/track keys:", klvKeys.slice(0, 5).join(", ") + (klvKeys.length > 5 ? ` (+${klvKeys.length - 5})` : "")));
+                }
+            }
+        } catch (e) {
+            push(`  (FileManager probe failed: ${e.message})`);
+        }
+        push("");
+
+        const hasPesPTS = this.hasRecordPTS();
+        let pesIntervals = null;
+        let pesGaps = null;
+        let pesSpanS = null;
+        if (hasPesPTS) {
+            const pes = this.misb.pesPTSus;
+            pesSpanS = (pes[lastValid] - pes[firstValid]) / 1e6;
+            pesIntervals = [];
+            let pesMin = Infinity, pesMax = 0, pesSum = 0, pesCount = 0;
+            for (let i = firstValid + 1; i <= lastValid; i++) {
+                const dt = (pes[i] - pes[i - 1]) / 1000; // ms
+                if (!isFinite(dt)) continue;
+                pesIntervals.push({ idx: i, dt, t: (pes[i] - pes[firstValid]) / 1e6 });
+                if (dt < pesMin) pesMin = dt;
+                if (dt > pesMax) pesMax = dt;
+                pesSum += dt;
+                pesCount++;
+            }
+            const pesMean = pesCount > 0 ? pesSum / pesCount : 0;
+            const pesSq = pesIntervals.reduce((a, x) => a + (x.dt - pesMean) * (x.dt - pesMean), 0);
+            const pesStddev = pesCount > 0 ? Math.sqrt(pesSq / pesCount) : 0;
+            const pesCv = pesMean > 0 ? pesStddev / pesMean : 0;
+
+            push("KLV PES PTS TIMING (synchronous-mode PCR anchor)");
+            push(sectionBreak);
+            push(pad("Records:", klvRecords));
+            push(pad("Span:", fmtS(pesSpanS)));
+            push(pad("Mean interval:", `${fmtMs(pesMean)} (= ${(1000 / pesMean).toFixed(4)} eff. fps)`));
+            push(pad("Stddev:", fmtMs(pesStddev)));
+            push(pad("Min interval:", fmtMs(pesMin)));
+            push(pad("Max interval:", fmtMs(pesMax)));
+            push(pad("Coeff. of variation:", `${fmtPct(pesCv)} ${pesCv > 0.05 ? "(FAIL: >5%)" : "(ok)"}`));
+            if (videoSpanS !== null) {
+                const pesVsVid = pesSpanS - videoSpanS;
+                push(pad("Span vs Video:", `${pesVsVid >= 0 ? "+" : ""}${pesVsVid.toFixed(3)} s (PES − Video)`));
+            }
+            push(pad("Span vs UnixTime:", `${(pesSpanS - klvSpanS) >= 0 ? "+" : ""}${(pesSpanS - klvSpanS).toFixed(3)} s (PES − UTS)`));
+            push("");
+
+            const pesGapThresh = Math.max(100, pesMean * 3);
+            pesGaps = pesIntervals.filter(g => g.dt > pesGapThresh);
+            push(`KLV PES PTS GAPS (intervals > ${pesGapThresh.toFixed(0)} ms)`);
+            push(sectionBreak);
+            if (pesGaps.length === 0) {
+                push("  None — PES PTS stream is contiguous on the PCR clock.");
+                push("  → If KLV (UnixTimeStamp) gaps exist, those gaps are wall-clock");
+                push("    fabrications by the camera; the metadata stream itself was");
+                push("    contiguous on the synchronous-mode timeline.");
+            } else {
+                const pesGapSum = pesGaps.reduce((a, g) => a + (g.dt - pesMean), 0);
+                push(`  ${pesGaps.length} gaps detected, ${(pesGapSum / 1000).toFixed(2)} s of "missing" emissions:`);
+                push("");
+                push("    record    pes-time      gap (ms)");
+                push("    ──────    ──────────    ────────");
+                for (const g of pesGaps.slice(0, 50)) {
+                    push(`    ${String(g.idx).padStart(6)}    ${g.t.toFixed(2).padStart(10)} s   ${g.dt.toFixed(0).padStart(8)}`);
+                }
+                if (pesGaps.length > 50) push(`    … and ${pesGaps.length - 50} more`);
+            }
+            push("");
+        }
+
         // ── QUARTILE DRIFT ─────────────────────────────────────────────
         if (hasPTS) {
             push("CUMULATIVE DRIFT (KLV vs. Video PTS at quartile points)");
             push(sectionBreak);
-            push("    point     video-time     klv-time      diff");
-            push("    ─────     ──────────     ──────────    ────");
+            const headerCols = hasPesPTS
+                ? "    point     video-time     uts-time     pes-time      uts-diff    pes-diff"
+                : "    point     video-time     klv-time      diff";
+            push(headerCols);
+            push(hasPesPTS
+                ? "    ─────     ──────────     ──────────   ──────────    ────────    ────────"
+                : "    ─────     ──────────     ──────────    ────");
+            const pes = hasPesPTS ? this.misb.pesPTSus : null;
             for (const q of [0.25, 0.5, 0.75, 1.0]) {
                 const f = Math.floor((videoFrameCount - 1) * q);
                 const k = firstValid + Math.floor((klvRecords - 1) * q);
                 const vidT = (videoData.framePTSus[f] - videoData.framePTSus[0]) / 1000 / 1000;
                 const klvT = (this.getTime(k) - this.getTime(firstValid)) / 1000;
                 const diff = klvT - vidT;
-                push(`    q=${q.toFixed(2)}  ${vidT.toFixed(3).padStart(10)} s  ${klvT.toFixed(3).padStart(10)} s  ${(diff >= 0 ? "+" : "")}${diff.toFixed(3)} s`);
+                if (hasPesPTS) {
+                    const pesT = (pes[k] - pes[firstValid]) / 1e6;
+                    const pesDiff = pesT - vidT;
+                    push(`    q=${q.toFixed(2)}  ${vidT.toFixed(3).padStart(10)} s  ${klvT.toFixed(3).padStart(10)} s ${pesT.toFixed(3).padStart(10)} s  ${(diff >= 0 ? "+" : "")}${diff.toFixed(3)} s  ${(pesDiff >= 0 ? "+" : "")}${pesDiff.toFixed(3)} s`);
+                } else {
+                    push(`    q=${q.toFixed(2)}  ${vidT.toFixed(3).padStart(10)} s  ${klvT.toFixed(3).padStart(10)} s  ${(diff >= 0 ? "+" : "")}${diff.toFixed(3)} s`);
+                }
             }
+            push("");
+
+            // Drift decomposition: separate the smooth clock-skew portion from
+            // the discontinuous gap-jump portion. The naive approach of fitting
+            // a line over all gap-free samples is contaminated, because every
+            // sample AFTER a gap inherits the gap's cumulative shift in its
+            // diff value. To get a clean clock-rate ratio we fit only over
+            // the prefix BEFORE the first gap.
+            push("DRIFT DECOMPOSITION");
+            push(sectionBreak);
+            const firstGapIdx = gaps.length > 0 ? Math.min(...gaps.map(g => g.idx)) : (lastValid + 1);
+            const skewEnd = Math.min(firstGapIdx, lastValid + 1);
+            // Pair record i with the proportionally-i-th video frame (same
+            // pairing used by the CUMULATIVE DRIFT table). Pairing by t_uts
+            // would self-align and zero out the slope.
+            const klvCount = klvRecords;
+            let sX = 0, sY = 0, sXX = 0, sXY = 0, n = 0;
+            for (let i = firstValid + 1; i < skewEnd; i++) {
+                const t_uts = (this.getTime(i) - this.getTime(firstValid)) / 1000;
+                const fIdx = Math.min(videoFrameCount - 1,
+                    Math.round((i - firstValid) * (videoFrameCount - 1) / (klvCount - 1)));
+                const t_vid = (videoData.framePTSus[fIdx] - videoData.framePTSus[0]) / 1000 / 1000;
+                const diff = t_uts - t_vid;
+                sX += t_vid; sY += diff; sXX += t_vid * t_vid; sXY += t_vid * diff;
+                n++;
+            }
+            const denom = n * sXX - sX * sX;
+            const slope = (n >= 2 && denom > 0) ? (n * sXY - sX * sY) / denom : 0;
+            const intercept = n > 0 ? (sY - slope * sX) / n : 0;
+            const skewPpm = slope * 1e6;
+            const cumGap = gaps.reduce((a, g) => a + (g.dt - klvIntervalMean), 0) / 1000;
+            const observedTotal = klvSpanS - videoSpanS;
+            const linearAtEnd = intercept + slope * videoSpanS;
+            const residual = observedTotal - cumGap - linearAtEnd;
+            const fitRangeS = (skewEnd > firstValid + 1)
+                ? `${((this.getTime(skewEnd - 1) - this.getTime(firstValid)) / 1000).toFixed(0)} s`
+                : "n/a";
+            push(pad("Skew fit range:", `0 s → ${fitRangeS} (pre-first-gap, ${n} samples)`));
+            push(pad("Linear clock skew:", `${slope >= 0 ? "+" : ""}${(slope * 1000).toFixed(3)} ms/s (${skewPpm >= 0 ? "+" : ""}${skewPpm.toFixed(0)} ppm)`));
+            push(pad("Skew at end of run:", `${linearAtEnd >= 0 ? "+" : ""}${linearAtEnd.toFixed(3)} s (extrapolated)`));
+            push(pad("Cumulative gap time:", `${cumGap >= 0 ? "+" : ""}${cumGap.toFixed(3)} s (${gaps.length} gaps)`));
+            push(pad("Observed end drift:", `${observedTotal >= 0 ? "+" : ""}${observedTotal.toFixed(3)} s (KLV − Video span)`));
+            push(pad("Unexplained residual:", `${residual >= 0 ? "+" : ""}${residual.toFixed(3)} s`));
             push("");
         }
 
