@@ -304,7 +304,7 @@ class CTrackManager extends CManager {
         return true;
     }
 
-    makeTrackFromMISBData(sourceFile, dataID, trackID, columns, guiFolder = null) {
+    makeTrackFromMISBData(sourceFile, dataID, trackID, columns, guiFolder = null, trackIndex = 0) {
         const fileInfo = FileManager.getInfo(sourceFile);
         const frameRelativeTime = (fileInfo.dataType === "CUSTOM_FLL");
 
@@ -384,11 +384,17 @@ class CTrackManager extends CManager {
             desc: "Edge Fit Window",
         }, guiFolder);
 
+        // Center / supplementary tracks (trackIndex !== 0) are target reference
+        // points, not flight paths — smoothing introduces lag relative to the
+        // raw KLV positions, which shows up as drift in look-view alignment.
+        // Default them to "none" so they pass through the unsmoothed positions.
+        const defaultMethod = trackIndex === 0 ? "spline" : "none";
+
         return new CNodeSmoothedPositionTrack({
             id: trackID,
             source: trackID + "_unsmoothed",
             dataTrack: dataID,
-            method: "spline",  // 2/20/26 - changed from "moving" to "spline" as the default, as the moving average was not giving good results for some tracks, and the spline is much better, and not much more expensive to calculate
+            method: defaultMethod,
             window: trackID + "_smoothValue",
             tension: trackID + "_tensionValue",
             intervals: trackID + "_intervalsValue",
@@ -407,7 +413,7 @@ class CTrackManager extends CManager {
             return false;
         }
 
-        return this.makeTrackFromMISBData(sourceFile, dataID, trackID, columns, guiFolder);
+        return this.makeTrackFromMISBData(sourceFile, dataID, trackID, columns, guiFolder, trackIndex);
     }
 
 
@@ -558,7 +564,7 @@ class CTrackManager extends CManager {
                         GlobalDateTimeNode.syncStartTimeTrack();
                     }
 
-                    this.makeTrackFromMISBData(trackFileName, trackDataID, trackID, undefined, guiFolder);
+                    this.makeTrackFromMISBData(trackFileName, trackDataID, trackID, undefined, guiFolder, trackIndex);
 
                     const trackNode = NodeMan.get(trackID);
                     const trackDataNode = NodeMan.get(trackDataID);

@@ -332,8 +332,23 @@ export class CVideoH264Data extends CVideoWebCodecBase {
                 console.log("📺 Common frame rates: 24 (cinema), 25 (PAL), 29.97/30 (NTSC), 50/60 (high frame rate)");
             }
 
-            const encodedChunks = H264Decoder.createEncodedVideoChunks(nalUnits, fps);
-            console.log(`Created ${encodedChunks.length} video chunks`);
+            // Retrieve per-frame PES PTS captured by TSParser, if this h264 substream
+            // came from a TS demux. Without this, every chunk gets a synthetic uniform
+            // i × frameDuration timestamp — which is wrong whenever the source had
+            // dropped frames, since the decoder treats N missing frames as a single
+            // frame transition. With real PTS, KLV-to-video pairing stays drift-free
+            // through video-side frame loss.
+            let videoPesPtsUs = null;
+            const fileKey = v.file || this.filename;
+            const fileEntry = (fileKey && FileManager.list) ? FileManager.list[fileKey] : null;
+            if (fileEntry && Array.isArray(fileEntry.pesEntries) && fileEntry.pesEntries.length > 0) {
+                videoPesPtsUs = fileEntry.pesEntries.map(e => e.ptsUs);
+                console.log(`[CVideoH264Data] using ${videoPesPtsUs.length} per-frame PES PTS values from FileManager entry ${fileKey}`);
+            }
+
+            const encodedChunks = H264Decoder.createEncodedVideoChunks(nalUnits, fps, videoPesPtsUs);
+            this.framePTSFromPES = (videoPesPtsUs !== null && encodedChunks.length === videoPesPtsUs.length);
+            console.log(`Created ${encodedChunks.length} video chunks (framePTSFromPES=${this.framePTSFromPES})`);
 
             // Diagnostic: Check for orphaned frames before first keyframe
             this.diagnosticCheckFrameStructure(encodedChunks);

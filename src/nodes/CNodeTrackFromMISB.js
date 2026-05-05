@@ -400,9 +400,17 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         let pesTimeArray = null;
         const videoView = NodeMan.get("video", false);
         const videoData = videoView?.videoData;
+        // Two conditions for PES PTS pairing to be valid:
+        //   1. The video's framePTSus is real (from PES headers) — not synthetic
+        //      uniform i × frameDuration. Synthetic stamps lie about dropped-frame
+        //      timing, which silently corrupts pairing past the first frame loss.
+        //   2. The KLV records have PES PTS too (from a TS-demuxed sync-mode source).
+        // Without (1) we'd be matching real KLV PCR timestamps to a fake video
+        // timeline; without (2) we have no per-record PCR anchor on the KLV side.
         const ptsAvailable = videoData &&
             typeof videoData.getFrameTimeMs === "function" &&
-            videoData.getFrameTimeMs(0) !== null;
+            videoData.getFrameTimeMs(0) !== null &&
+            (typeof videoData.hasRealFramePTS !== "function" || videoData.hasRealFramePTS());
         if (ptsAvailable && this.in.misb.hasRecordPTS && this.in.misb.hasRecordPTS()) {
             // KLV pesPTSus is already shifted to share the video's PCR
             // origin (parseKLVFile subtracts videoFirstPESus when the TS
@@ -445,15 +453,40 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         // any future change.
         const videoFirstPTSus = (usePESPTS && videoData.framePTSus) ? videoData.framePTSus[0] : 0;
 
+        // Use real per-frame video PTS in the wall-clock path too, when available.
+        // Without this, msNow advances at synthetic frame/fps rate even when the
+        // video had dropped-frame jumps (real PTS is non-uniform). Looking up KLV
+        // by synthetic time then mis-pairs frames after every burst — which
+        // visually presents as the sim lagging the video by the cumulative
+        // dropped-frame interval. With real PTS, msNow advances with real PCR
+        // time even when the KLV has no PES PTS.
+        const useRealVideoPTSForWallClock = !usePESPTS &&
+            videoData &&
+            typeof videoData.hasRealFramePTS === "function" &&
+            videoData.hasRealFramePTS() &&
+            Array.isArray(videoData.framePTSus);
+        const wallClockVideoFirstPTSus = useRealVideoPTSForWallClock ? videoData.framePTSus[0] : 0;
+        if (useRealVideoPTSForWallClock) {
+            console.log(`CNodeTrackFromMISB(${this.id}): using real video PTS for wall-clock pairing (KLV has no PES PTS, video does)`);
+        }
+
         for (var f=0;f<Sit.frames;f++) {
             // For PES-PTS mode, msNow is the video frame's PTS in ms,
             // relative to the first frame — same origin as pesTimeArray.
-            // For wall-clock mode it's the synthesized msStart + frame_time.
+            // For wall-clock mode it's msStart + real-video-PTS-since-start
+            // (or synthesized frame_time if real PTS unavailable).
             var msNow;
             if (usePESPTS) {
                 const us = videoData.framePTSus[f];
                 if (typeof us === "number") {
                     msNow = (us - videoFirstPTSus) / 1000;
+                } else {
+                    msNow = msStart + Math.floor(frameTime * 1000);
+                }
+            } else if (useRealVideoPTSForWallClock) {
+                const us = videoData.framePTSus[f];
+                if (typeof us === "number") {
+                    msNow = msStart + (us - wallClockVideoFirstPTSus) / 1000;
                 } else {
                     msNow = msStart + Math.floor(frameTime * 1000);
                 }

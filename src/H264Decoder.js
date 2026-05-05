@@ -298,30 +298,42 @@ export class H264Decoder {
     }
 
     /**
-     * Create EncodedVideoChunk objects from NAL units with proper frame aggregation
+     * Create EncodedVideoChunk objects from NAL units with proper frame aggregation.
+     *
+     * When pesPtsUs is provided AND its length matches the parsed frame count,
+     * each chunk's timestamp is the real per-frame PES PTS captured by TSParser
+     * — preserving recording-time gaps caused by dropped/missing frames. Without
+     * it (or on length mismatch) we fall back to synthetic uniform i × frameDuration
+     * timestamps, which are wrong for any stream that lost frames mid-recording.
      */
-    static createEncodedVideoChunks(nalUnits, fps) {
+    static createEncodedVideoChunks(nalUnits, fps, pesPtsUs = null) {
         const chunks = [];
         const frameDuration = 1000000 / fps; // Duration in microseconds
 
         // Group NAL units into frames
         const frames = this.groupNALUnitsIntoFrames(nalUnits);
-        //console.log(`Grouped ${nalUnits.length} NAL units into ${frames.length} frames`);
 
-        // Assign presentation timestamps in display order
-        // For streams without B-frames, this will be the same as decode order
-        // For streams with B-frames, we need to handle reordering
+        // Decide whether to use real per-frame PES PTS or synthetic uniform stamps.
+        // Real PTS is used only when caller supplied an array AND its length matches
+        // the parsed frame count exactly. Any mismatch falls back to synthetic with
+        // a warning, since misaligned PTS pairing is worse than uniform-but-wrong.
+        let useRealPTS = false;
+        if (Array.isArray(pesPtsUs) && pesPtsUs.length === frames.length) {
+            useRealPTS = true;
+            console.log(`H264Decoder.createEncodedVideoChunks: using ${pesPtsUs.length} real per-frame PES PTS values`);
+        } else if (Array.isArray(pesPtsUs) && pesPtsUs.length > 0) {
+            console.warn(`H264Decoder.createEncodedVideoChunks: pesPtsUs length ${pesPtsUs.length} != frame count ${frames.length}; falling back to synthetic timestamps`);
+        }
+
         for (let i = 0; i < frames.length; i++) {
             const frame = frames[i];
             if (frame.nalUnits.length === 0) continue;
 
             // Create aggregated frame data
             const frameData = this.createAggregatedFrame(frame.nalUnits);
-            
-            // Use frame index as presentation timestamp to ensure display order matches decode order
-            // This prevents frame reordering issues in the decoder output
-            const presentationTimestamp = i * frameDuration;
-            
+
+            const presentationTimestamp = useRealPTS ? pesPtsUs[i] : (i * frameDuration);
+
             chunks.push(new EncodedVideoChunk({
                 type: frame.type,
                 timestamp: presentationTimestamp,

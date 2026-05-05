@@ -774,6 +774,14 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
         return typeof us === "number" ? us / 1000 : null;
     }
 
+    // True only when chunks were stamped with real PES PTS values (set by
+    // CVideoH264Data.initializeCaching when TSParser supplied per-frame entries).
+    // CVideoMp4Data also gets real PTS via mp4box.js, so we default true here
+    // and let CVideoH264Data downgrade to false when its source had no PES PTS.
+    hasRealFramePTS() {
+        return this.framePTSFromPES !== false;
+    }
+
     handleGroupComplete() {
         if (this.groupsPending === 0) {
             if (this.nextRequest != null) {

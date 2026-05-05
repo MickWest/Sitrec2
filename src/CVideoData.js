@@ -150,6 +150,15 @@ export class CVideoData {
         return null;
     }
 
+    // True when framePTSus[] contains real per-frame PTS captured from PES /
+    // container metadata (i.e. honors recording-time gaps from dropped frames).
+    // False when timestamps are synthetic uniform i × frameDuration, which
+    // pretend every frame is at its nominal slot regardless of frame loss.
+    // Track-pairing code uses this to decide whether to trust framePTSus.
+    hasRealFramePTS() {
+        return false;
+    }
+
     isFrameLoaded(frame) {
         const img = this.imageCache[frame];
         return img && img.width > 0 && img.height > 0;
