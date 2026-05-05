@@ -189,20 +189,43 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             videoIntervals = pIntervals;
         }
 
+        // Compute gap detection up-front so the headline, verdict, and
+        // recommendations can all distinguish real stream gaps (discrete
+        // emission pauses) from high CV without gaps (UnixTimeStamp
+        // write-time scatter while emission cadence stays clean).
+        const gapThresholdMs = Math.max(100, klvIntervalMean * 3);
+        const gaps = intervals.filter(g => g.dt > gapThresholdMs);
+        const hasRealGaps = gaps.length > 0;
+        const highCv = klvCv >= 0.05;
+
         // Headline assessment.
         const cfrVideo = (ptsStddev !== null && ptsStddev < 0.05);
-        const uniformKlv = (klvCv < 0.05 && klvMax < 5 * klvIntervalMean);
+        const uniformKlv = !hasRealGaps && !highCv;
         const spanDiff = (videoSpanS !== null) ? (klvSpanS - videoSpanS) : null;
+        const klvHasPES = this.hasRecordPTS();
 
-        if (cfrVideo && uniformKlv && Math.abs(spanDiff) < 0.5) {
+        if (cfrVideo && uniformKlv && Math.abs(spanDiff || 0) < 0.5) {
             push("✓ Video and KLV are well-aligned — no timing issues detected.");
-        } else if (cfrVideo && !uniformKlv) {
-            push("⚠ KLV stream has gaps or discontinuities. Video clock is reliable.");
+        } else if (hasRealGaps) {
+            push(`⚠ KLV stream has ${gaps.length} discrete gap${gaps.length === 1 ? "" : "s"} (intervals > ${gapThresholdMs.toFixed(0)} ms).`);
             push("  Track positions are correct where KLV is contiguous; expect");
             push("  brief stale/interpolated values during gap periods.");
-        } else if (!cfrVideo) {
+        } else if (highCv && klvHasPES) {
+            push(`ℹ KLV UnixTimeStamp intervals scatter widely (CV ${(klvCv * 100).toFixed(2)}%) but PES PTS is clean.`);
+            push("  Sync uses PES PTS, which is uniform on the PCR clock. The UTS");
+            push("  scatter doesn't affect display. Possible causes vary (write-time");
+            push("  vs sample-time stamping, RTC behavior, etc.) and aren't determined");
+            push("  by this report alone.");
+        } else if (highCv) {
+            push(`⚠ KLV UnixTimeStamp intervals scatter widely (CV ${(klvCv * 100).toFixed(2)}%) and no PES PTS is available.`);
+            push("  Sync falls back to UTS lookup; per-record pairing carries the");
+            push("  scatter magnitude as its uncertainty. Usually below the visual");
+            push("  threshold; cause not diagnosable from this report alone.");
+        }
+        if (!cfrVideo) {
             push("⚠ Video has variable frame rate (PTS not uniform).");
-        } else if (Math.abs(spanDiff) > 0.5) {
+        }
+        if (Math.abs(spanDiff || 0) > 0.5 && !hasRealGaps) {
             push(`⚠ KLV span and video span differ by ${spanDiff.toFixed(2)} s.`);
         }
         push("");
@@ -252,6 +275,12 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         push("");
 
         // ── KLV TIMING ─────────────────────────────────────────────────
+        // UnixTimeStamp (MISB ST 0601 Tag 2) is the wall-clock value the
+        // camera wrote inside each KLV record. PES PTS (next section, when
+        // available) is the encoder-emitted PCR-locked timestamp. They can
+        // disagree in shape even when both clocks are accurate, because each
+        // is captured at a different point in the camera's pipeline; this
+        // report describes what the data shows rather than diagnosing why.
         push("KLV TIMING (UnixTimeStamp intervals)");
         push(sectionBreak);
         push(pad("Records:", klvRecords));
@@ -260,18 +289,43 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         push(pad("Stddev:", fmtMs(klvStddev)));
         push(pad("Min interval:", fmtMs(klvMin)));
         push(pad("Max interval:", fmtMs(klvMax)));
-        push(pad("Coeff. of variation:", `${fmtPct(klvCv)} ${klvCv > 0.05 ? "(FAIL: >5%)" : "(ok)"}`));
-        push(pad("Max/mean ratio:", `${(klvMax / klvIntervalMean).toFixed(1)}× ${klvMax > 5 * klvIntervalMean ? "(FAIL: >5×)" : "(ok)"}`));
-        push(pad("Verdict:", uniformKlv ? "Uniform — no gaps detected" : "Non-uniform — gaps or discontinuities present"));
+        push(pad("Coeff. of variation:", `${fmtPct(klvCv)} (stddev / mean) ${klvCv > 0.05 ? "(>5%, scattered)" : "(<5%, tight)"}`));
+        push(pad("Max/mean ratio:", `${(klvMax / klvIntervalMean).toFixed(1)}× ${klvMax > 5 * klvIntervalMean ? "(>5×, gap likely)" : "(<5×, no gap)"}`));
+        // Verdict distinguishes three observable states: uniform, real gaps
+        // (any individual interval > gapThresholdMs), and scattered intervals
+        // (high CV but no individual interval over the threshold). Cause of
+        // the latter — write-time stamping, RTC behavior, etc. — is not
+        // diagnosable from the report; we just describe what the data shows.
+        let klvVerdict;
+        if (!hasRealGaps && !highCv) {
+            klvVerdict = "Uniform — tight intervals, no gaps";
+        } else if (hasRealGaps && highCv) {
+            klvVerdict = `Has gaps (${gaps.length}, max ${klvMax.toFixed(0)} ms) AND scattered intervals`;
+        } else if (hasRealGaps) {
+            klvVerdict = `Has ${gaps.length} gap${gaps.length === 1 ? "" : "s"} (max ${klvMax.toFixed(0)} ms)`;
+        } else {
+            // High CV without any individual interval crossing the threshold.
+            klvVerdict = `Scattered intervals (CV ${(klvCv * 100).toFixed(1)}%, max ${klvMax.toFixed(0)} ms < gap threshold)`;
+        }
+        push(pad("Verdict:", klvVerdict));
         push("");
 
         // ── KLV GAPS ───────────────────────────────────────────────────
-        const gapThresholdMs = Math.max(100, klvIntervalMean * 3);
-        const gaps = intervals.filter(g => g.dt > gapThresholdMs);
         push(`KLV GAPS (intervals > ${gapThresholdMs.toFixed(0)} ms)`);
         push(sectionBreak);
         if (gaps.length === 0) {
-            push("  None — KLV stream is contiguous.");
+            if (highCv) {
+                push("  None — no individual interval exceeds the gap threshold,");
+                push(`  but UTS values scatter widely (CV ${(klvCv * 100).toFixed(2)}%).`);
+                push("  Possible explanations include write-time vs sample-time stamping,");
+                push("  per-record processing delay variation, or RTC behavior — this");
+                push("  report can't distinguish among them.");
+                push("  Compare to KLV PES PTS TIMING below: if that section's CV is");
+                push("  low, the encoder-side emission cadence is clean and sync uses");
+                push("  PES PTS as the anchor regardless of the UTS scatter.");
+            } else {
+                push("  None — KLV stream is contiguous.");
+            }
         } else {
             const gapSum = gaps.reduce((a, g) => a + (g.dt - klvIntervalMean), 0);
             push(`  ${gaps.length} gaps detected, ${(gapSum / 1000).toFixed(2)} s of "missing" emissions:`);
@@ -398,9 +452,13 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             push(sectionBreak);
             if (pesGaps.length === 0) {
                 push("  None — PES PTS stream is contiguous on the PCR clock.");
-                push("  → If KLV (UnixTimeStamp) gaps exist, those gaps are wall-clock");
-                push("    fabrications by the camera; the metadata stream itself was");
-                push("    contiguous on the synchronous-mode timeline.");
+                push("  → If KLV (UnixTimeStamp) intervals show gaps or high scatter,");
+                push("    the encoder-side emission was uninterrupted regardless: the");
+                push("    differences live in the UnixTimeStamp values written into");
+                push("    successive records, not between record emissions. Possible");
+                push("    causes include write-time scatter, RTC steps, or stream");
+                push("    selection differences — distinguishing them needs more info");
+                push("    than this report has.");
             } else {
                 const pesGapSum = pesGaps.reduce((a, g) => a + (g.dt - pesMean), 0);
                 push(`  ${pesGaps.length} gaps detected, ${(pesGapSum / 1000).toFixed(2)} s of "missing" emissions:`);
@@ -548,18 +606,30 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         if (cfrVideo && uniformKlv && Math.abs(spanDiff || 0) < 0.5) {
             push("  No action needed.");
         } else {
-            if (!uniformKlv) {
-                push("  • KLV stream has gaps. Track positions during gap periods will");
-                push("    show linearly-interpolated values between bracketing records.");
-                push("    No automatic correction is appropriate");
+            if (hasRealGaps) {
+                push("  • KLV stream has gap discontinuities. Track positions during gap");
+                push("    periods will show linearly-interpolated values between bracketing");
+                push("    records. No automatic correction is appropriate.");
             }
-            if (cfrVideo && Math.abs(spanDiff || 0) > 0.5 && uniformKlv) {
-                push("  • Span mismatch with uniform KLV — uniform clock-rate error.");
+            if (highCv && !hasRealGaps && klvHasPES) {
+                push("  • UnixTimeStamp interval scatter is high but PES PTS is uniform.");
+                push("    Sync uses PES PTS, so the UTS scatter doesn't affect display.");
+                push("    No action needed.");
+            }
+            if (highCv && !hasRealGaps && !klvHasPES) {
+                push("  • UnixTimeStamp interval scatter is high and no PES PTS is");
+                push("    available. Sync uses UTS lookup; per-record pairing carries");
+                push("    the scatter as its uncertainty. Magnitude is typically below");
+                push("    the visual-sync threshold.");
+            }
+            if (cfrVideo && Math.abs(spanDiff || 0) > 0.5 && !hasRealGaps && !highCv) {
+                push("  • Span mismatch with uniform KLV — likely uniform clock-rate error.");
                 push("    Consider applying KLV-derived fps via the Time menu.");
             }
             if (!cfrVideo) {
                 push("  • Variable-rate video. Use video PTS for frame timing rather");
-                push("    than relying on Sit.fps.");
+                push("    than relying on Sit.fps. (Sitrec does this automatically when");
+                push("    framePTSus is real.)");
             }
         }
 

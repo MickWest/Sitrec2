@@ -619,7 +619,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
     }
 
-    errorCallback() {
+    errorCallback(err, isDeferral = false) {
         if (this.videoData?._loadingId) {
             VideoLoadingManager.completeLoading(this.videoData._loadingId);
         }
@@ -633,16 +633,23 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (this.overlay) {
             this.overlay.removeText("videoLoading")
             this.showOverlay();
-            this.overlay.addText("videoError", "Error Loading", 50, 45, 5, "#f0f000", "center")
-            this.overlay.addText("videoErrorName", this.fileName, 50, 55, 1.5, "#f0f000", "center")
+            if (isDeferral) {
+                // The first attempt expectedly bailed (e.g. a URL pre-fetch on a
+                // sitch reload that's about to be served via uploadFile from the
+                // loadedFiles dispatch). Showing "Error Loading" here scares the
+                // user when nothing is actually wrong — keep the LOADING text
+                // until the deferred path either completes or genuinely fails.
+                this.overlay.addText("videoLoading", "LOADING", 50, 50, 5, "#f0f000");
+            } else {
+                this.overlay.addText("videoError", "Error Loading", 50, 45, 5, "#f0f000", "center")
+                this.overlay.addText("videoErrorName", this.fileName, 50, 55, 1.5, "#f0f000", "center")
+            }
         }
 
         // If we are in a restore sequence, an error means we should probably skip this video
         // and try to load the rest, rather than stalling the entire chain.
-        if (this.pendingVideoRestore) {
+        if (this.pendingVideoRestore && !isDeferral) {
             console.warn(`[VideoRestore] Error loading video "${this.fileName}", skipping and continuing restore...`);
-            // Add a small delay so the user might see the error momentarily (optional), 
-            // or just proceed immediately. For robustness, proceed.
             this.skipCurrentVideoRestore();
         }
     }

@@ -425,7 +425,11 @@ export class CNodeDateTime extends CNode {
 
         // Build a sibling summary so the report names every loaded MISB
         // stream and which one was analyzed — important when multiple KLV
-        // PIDs exist and only one has PES PTS.
+        // PIDs exist (e.g. an async-mode UTS-only stream alongside a
+        // sync-mode PES-PTS stream) and they have different gap profiles.
+        // Per-node we also report gap count and max-interval so neither
+        // stream's pattern is hidden by picking only one for the deep
+        // analysis below.
         let prelude = "";
         if (misbNodes.length > 1) {
             prelude += "MULTIPLE MISB DATA NODES LOADED\n";
@@ -434,11 +438,40 @@ export class CNodeDateTime extends CNode {
                 const has = (typeof n.hasRecordPTS === "function" && n.hasRecordPTS()) ? "yes" : "no";
                 const len = (n.misb && n.misb.length) ? n.misb.length : 0;
                 const tag = (n === misbNode) ? "  ← ANALYZED" : "";
+                // Quick gap survey using the same threshold the deep analysis
+                // uses (3× mean, min 100 ms). Skip if too few records or no
+                // valid time accessor.
+                let gapInfo = "";
+                try {
+                    if (len >= 2 && typeof n.isValid === "function" && typeof n.getTime === "function") {
+                        let firstValid = -1, lastValid = -1;
+                        for (let i = 0; i < len; i++) if (n.isValid(i)) { firstValid = i; break; }
+                        for (let i = len - 1; i >= 0; i--) if (n.isValid(i)) { lastValid = i; break; }
+                        if (firstValid >= 0 && lastValid > firstValid) {
+                            const spanMs = n.getTime(lastValid) - n.getTime(firstValid);
+                            const meanMs = spanMs / (lastValid - firstValid);
+                            const threshMs = Math.max(100, meanMs * 3);
+                            let gapCount = 0, maxIntervalMs = 0;
+                            for (let i = firstValid + 1; i <= lastValid; i++) {
+                                if (!n.isValid(i) || !n.isValid(i - 1)) continue;
+                                const dt = n.getTime(i) - n.getTime(i - 1);
+                                if (dt > maxIntervalMs) maxIntervalMs = dt;
+                                if (dt > threshMs) gapCount++;
+                            }
+                            gapInfo = `, gaps(>${threshMs.toFixed(0)} ms): ${gapCount}, max-interval: ${maxIntervalMs.toFixed(0)} ms`;
+                        }
+                    }
+                } catch (e) {
+                    gapInfo = ` (gap survey failed: ${e.message})`;
+                }
                 prelude += `  ${n.id}\n`;
-                prelude += `    records: ${len}, hasRecordPTS: ${has}${tag}\n`;
+                prelude += `    records: ${len}, hasRecordPTS: ${has}${gapInfo}${tag}\n`;
             }
-            prelude += "\n  The node with PES PTS (sync-mode KLV) is preferred when\n";
-            prelude += "  available. Other nodes are loaded but not analyzed here.\n\n";
+            prelude += "\n  Sync-mode (hasRecordPTS=yes) is preferred for the deep analysis\n";
+            prelude += "  below because PES PTS gives PCR-locked per-record timing.\n";
+            prelude += "  Async-mode siblings may emit at a different rate and have a\n";
+            prelude += "  different gap pattern — both are reported here so neither is\n";
+            prelude += "  hidden by the choice of analyzed node.\n\n";
         }
 
         const report = prelude + misbNode.generateTimingAnalysis();

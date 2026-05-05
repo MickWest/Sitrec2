@@ -229,34 +229,36 @@ export class CNodeView3D extends CNodeViewCanvas {
 
         if (Globals.canVR && this.id === "lookView") {
 
-            // Setup WebXR - only on lookView
-            this.renderer.xr.enabled = true;
-            
-            // Increase XR framebuffer resolution for better quality
-            // Values > 1.0 increase resolution (improves sharpness but costs performance)
-            // Default is 1.0, common values are 1.2-1.5 for Quest, up to 2.0 for high-end
+            // WebXR plumbing for lookView. We DON'T set xr.enabled=true here:
+            // when IWER (Immersive Web Emulation Runtime) is installed for
+            // local-host VR testing, it provides a mock XRDevice and paints
+            // its emulator UI (concentric circles + status text) onto the
+            // canvas as soon as renderer.xr is enabled. The user sees that
+            // overlay in the video view's canvas region during sitch reload
+            // even though no XR session is active. Defer xr.enabled until
+            // startXR() actually wants a session.
             this.renderer.xr.setFramebufferScaleFactor(1.5);
-            
+
             this.xrSession = null;
-            this.xrActive = false; // Track whether we're currently in an XR session
+            this.xrActive = false;
 
             // Bind event handlers
             this.onXRSessionStarted = this.onXRSessionStarted.bind(this);
             this.onXRSessionEnded = this.onXRSessionEnded.bind(this);
             this.renderXR = this.renderXR.bind(this);
 
-            // Add hidden VRButton (needed for XR session management)
+            // Add hidden VRButton (needed for XR session management).
             if (!document.getElementById('VRButton')) {
                 const xrButton = VRButton.createButton(this.renderer);
                 xrButton.style.cssText = 'position:absolute;left:-9999px;visibility:hidden;';
                 document.body.appendChild(xrButton);
             }
 
-            // Monitor XR session state
+            // Monitor XR session state — listeners attach without xr.enabled.
             this.renderer.xr.addEventListener('sessionstart', this.onXRSessionStarted);
             this.renderer.xr.addEventListener('sessionend', this.onXRSessionEnded);
-            
-            console.log("WebXR enabled for lookView - use 'Start VR/XR' menu item");
+
+            console.log("WebXR plumbing ready for lookView (xr.enabled deferred until 'Start VR/XR')");
         }
     }
 
@@ -266,6 +268,12 @@ export class CNodeView3D extends CNodeViewCanvas {
      * Useful for testing with Immersive Web Emulator
      */
     startXR() {
+        // Enable xr now that the user actually wants a session. We defer
+        // this from constructor time so IWER (or any future XR runtime) can't
+        // paint its emulator UI onto our canvas before a session is requested.
+        if (this.renderer && !this.renderer.xr.enabled) {
+            this.renderer.xr.enabled = true;
+        }
         const vrButton = document.getElementById('VRButton');
         if (vrButton) {
             vrButton.click();

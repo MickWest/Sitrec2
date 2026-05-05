@@ -2232,6 +2232,15 @@ export class CFileManager extends CManager {
                                 result[0].id = id;
                             }
                         }
+                        // Match the URL-fetch branch's return shape: a single-
+                        // element parseResult (one substream, not a multi-stream
+                        // archive) returns the bare {filename, parsed, dataType}
+                        // object so callers like CVideoH264Data that expect
+                        // result.parsed don't trip on the array shape and bail
+                        // through their error path.
+                        if (Array.isArray(result) && result.length === 1) {
+                            return result[0];
+                        }
                         return result;
                     });
                 })

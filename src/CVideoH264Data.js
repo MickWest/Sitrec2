@@ -225,12 +225,19 @@ export class CVideoH264Data extends CVideoWebCodecBase {
                     // optional. Bail silently — no error dialog — and let
                     // the upload path complete the load.
                     console.warn(`[CVideoH264Data] URL fetch failed for ${v.file}; deferring to loadedFiles dispatch:`, fetchErr?.message || fetchErr);
-                    if (errorCallback) errorCallback(fetchErr);
+                    if (errorCallback) errorCallback(fetchErr, /* isDeferral= */ true);
                     return;
+                }
+                // loadAsset may return either {filename, parsed} (URL-fetch
+                // path) or an array of those (parseResult multi-substream).
+                // Working-folder reads of single substreams now unwrap to
+                // single, but be defensive about both shapes.
+                if (Array.isArray(result) && result.length === 1) {
+                    result = result[0];
                 }
                 if (!result || !result.parsed) {
                     console.warn(`[CVideoH264Data] URL fetch returned empty for ${v.file}; deferring to loadedFiles dispatch`);
-                    if (errorCallback) errorCallback(new Error(`Empty result for ${v.file}`));
+                    if (errorCallback) errorCallback(new Error(`Empty result for ${v.file}`), /* isDeferral= */ true);
                     return;
                 }
                 h264Buffer = result.parsed;
