@@ -45,6 +45,13 @@ Example entry format:
 
 ---
 
+## Version 2.48.3 (2026-05-05)
+
+### Bug Fixes
+- Fixed a race condition that could fire a "Missing Managed object azSources" assert during Gimbal sitch load when the render loop ticked before legacy gimbal nodes were created
+
+---
+
 ## Version 2.45.22 (2026-04-29)
 
 ### Bug Fixes
