@@ -45,6 +45,12 @@ Example entry format:
 
 ---
 
+## Version 2.49.1 (2026-05-05)
+
+### Bug Fixes
+- Fixed crash loading some MISB-bearing `.TS` files where the encoder used the ST 0601 "out-of-range / unknown" sentinel for corner-point tags 82–87 (Frame Center / Footprint Corners "Full"). The parser now records such tags with a `null` value and continues, instead of throwing and discarding the rest of the packet (including the checksum and any tags after 82). Sparse `null` cells in the exported CSV for those columns are normal and reflect frames where the source encoder genuinely had no footprint solution.
+- Added a defensive guard in `st0601` parse so packets that bail before reaching the checksum tag (for any reason) return their partial values rather than NPE'ing on the unguarded checksum lookup.
+
 ## Version 2.49.0 (2026-05-05)
 
 ### New Features

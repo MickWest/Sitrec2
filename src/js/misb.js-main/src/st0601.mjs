@@ -101,8 +101,18 @@ export function parse(buffer, options = {}) {
 				contentLength
 			); // read content after key and length
 
-			const parsed =
+			let parsed =
 				options.value !== false ? convert(key, valueBuffer, options) : { key };
+
+			// Per-tag converters return `null` when the encoded value is the
+			// ST 0601 "out-of-range / unknown" sentinel (e.g. 0x80000000 for
+			// the int32 corner-point tags 82–87). Treat that as "tag present
+			// but value unknown" so the parse loop keeps going — otherwise
+			// the unguarded `parsed.value` access below crashes the whole
+			// packet, taking the checksum tag with it.
+			if (parsed === null) {
+				parsed = { key, value: null };
+			}
 
 			if (typeof parsed.value === "string")
 				parsed.value = parsed.value.replace(/[^\x20-\x7E]+/g, "");
@@ -156,6 +166,12 @@ export function parse(buffer, options = {}) {
 	}
 
 	const checksum = values.find((klv) => klv.key === 1);
+	if (!checksum) {
+		// Parse loop bailed before the checksum tag was reached. Return what
+		// we got rather than NPE'ing on the unguarded `checksum.value` access
+		// below — same tolerance philosophy as the bad-checksum branch.
+		return values;
+	}
 	const checksumValue =
 		checksum.value !== undefined ? checksum.value : checksum.packet.readUInt16BE(0);
 	if (!klv.isChecksumValid(packet.subarray(0, parsedLength), checksumValue)) {
