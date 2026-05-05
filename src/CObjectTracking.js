@@ -252,11 +252,24 @@ class ObjectTracker {
         const targetRenderInterval = 40; // ms
         let lastRenderTime = performance.now();
 
+        const wrapperHasHolds = typeof videoData.isHeldFrame === "function";
+
         for (let frame = startFrame; frame <= bFrame; frame++) {
             if (!this.tracking) break;
 
             // Set current frame
             par.frame = frame;
+
+            // Skip held (synthesized duplicate) frames: identical pixels as
+            // the prior canonical V, so template-matching would produce the
+            // same answer at the same wall-clock budget. Carry the previous
+            // tracked position forward so any consumer reading
+            // trackedPositions.get(frame) sees a value, but skip the work.
+            if (wrapperHasHolds && videoData.isHeldFrame(frame)) {
+                const prev = this.trackedPositions.get(frame - 1);
+                if (prev) this.trackedPositions.set(frame, {x: prev.x, y: prev.y});
+                continue;
+            }
 
             // Wait for video frame to be loaded (with timeout)
             videoData.getImage(frame);

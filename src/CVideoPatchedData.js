@@ -227,15 +227,38 @@ export class CVideoPatchedData extends CVideoData {
     getPatchStats() {
         const sourceFrames = this.source ? this.source.frames : 0;
         const heldFrames = this.frames - sourceFrames;
-        let longestRun = 0, currentRun = 0;
+        // Identify each contiguous held run as a "patch": a span of virtual
+        // frames [vStart..vEnd] whose underlying source frame is
+        // sourceFrame, sandwiched by canonical frames at vStart-1 and
+        // vEnd+1. patches[].sourceGap describes the dropped source slots
+        // the patch fills (between source frames sourceFrame and
+        // sourceFrame+1).
+        const patches = [];
+        let currentRun = 0;
         for (let V = 1; V < this.map.length; V++) {
             if (this.map[V] === this.map[V - 1]) {
                 currentRun++;
-                if (currentRun > longestRun) longestRun = currentRun;
             } else {
+                if (currentRun > 0) {
+                    patches.push({
+                        sourceFrame: this.map[V - 1],
+                        vStart: V - currentRun,
+                        vEnd: V - 1,
+                        length: currentRun,
+                    });
+                }
                 currentRun = 0;
             }
         }
+        if (currentRun > 0) {
+            patches.push({
+                sourceFrame: this.map[this.map.length - 1],
+                vStart: this.map.length - currentRun,
+                vEnd: this.map.length - 1,
+                length: currentRun,
+            });
+        }
+        const longestRun = patches.reduce((m, p) => Math.max(m, p.length), 0);
         return {
             sourceFrames,
             virtualFrames: this.frames,
@@ -244,6 +267,7 @@ export class CVideoPatchedData extends CVideoData {
             longestHoldMs: longestRun * 1000 / this.fps,
             fps: this.fps,
             fillMode: this.fillMode,
+            patches,
         };
     }
 

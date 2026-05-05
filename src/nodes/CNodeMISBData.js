@@ -116,7 +116,13 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         // Gather video / KLV / Sit state.
         const videoView = NodeMan.get("video", false);
         const videoData = videoView?.videoData;
-        const hasPTS = videoData && Array.isArray(videoData.framePTSus) && videoData.framePTSus.length > 0;
+        // When wrapped in CVideoPatchedData, the wrapper's framePTSus is the
+        // synthesized uniform virtual timeline; for diagnostic analysis we
+        // want the underlying source PTS so dropped-frame bursts remain
+        // visible in the Video Timing section.
+        const ptsArr = videoData?.source?.framePTSus || videoData?.framePTSus;
+        const isWrapped = videoData && typeof videoData.getPatchStats === "function";
+        const hasPTS = Array.isArray(ptsArr) && ptsArr.length > 0;
         const len = this.misb ? this.misb.length : 0;
 
         push("=== Sitrec MISB Timing Analysis ===");
@@ -166,22 +172,25 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         const klvStddev = klvCount > 0 ? Math.sqrt(klvSumSq / klvCount) : 0;
         const klvCv = klvIntervalMean > 0 ? klvStddev / klvIntervalMean : 0;
 
-        // Video PTS stats (only if video is loaded).
+        // Video PTS stats (only if video is loaded). ptsArr was set above to
+        // the *source's* framePTSus when wrapped, so the interval analysis
+        // here surfaces dropped-frame bursts instead of the wrapper's
+        // uniform virtual timeline (which would always read as perfect CFR).
         let videoSpanS = null, videoFrameCount = 0;
         let ptsMin = null, ptsMax = null, ptsMean = null, ptsStddev = null;
         let videoIntervals = null;
-        if (hasPTS) {
-            videoFrameCount = videoData.framePTSus.length;
-            videoSpanS = (videoData.framePTSus[videoFrameCount - 1] - videoData.framePTSus[0]) / 1000 / 1000;
+        if (ptsArr && ptsArr.length > 0) {
+            videoFrameCount = ptsArr.length;
+            videoSpanS = (ptsArr[videoFrameCount - 1] - ptsArr[0]) / 1000 / 1000;
             ptsMin = Infinity; ptsMax = 0;
             let sum = 0;
             const pIntervals = [];
             for (let i = 1; i < videoFrameCount; i++) {
-                const dt = (videoData.framePTSus[i] - videoData.framePTSus[i - 1]) / 1000;
+                const dt = (ptsArr[i] - ptsArr[i - 1]) / 1000;
                 if (dt < ptsMin) ptsMin = dt;
                 if (dt > ptsMax) ptsMax = dt;
                 sum += dt;
-                pIntervals.push({ idx: i, dt, t: (videoData.framePTSus[i] - videoData.framePTSus[0]) / 1000 / 1000 });
+                pIntervals.push({ idx: i, dt, t: (ptsArr[i] - ptsArr[0]) / 1000 / 1000 });
             }
             ptsMean = sum / pIntervals.length;
             const sq = pIntervals.reduce((a, x) => a + (x.dt - ptsMean) * (x.dt - ptsMean), 0);
@@ -237,7 +246,9 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         push("");
 
         // ── VIDEO TIMING ───────────────────────────────────────────────
-        push("VIDEO TIMING (PTS from container)");
+        push(isWrapped
+            ? "VIDEO TIMING (source PTS — pre-virtualization)"
+            : "VIDEO TIMING (PTS from container)");
         push(sectionBreak);
         if (hasPTS) {
             const realPTS = (typeof videoData.hasRealFramePTS === "function")
@@ -254,6 +265,49 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
                 : realPTS === false
                     ? "synthetic uniform (i × frameDuration) — DROPPED FRAMES INVISIBLE"
                     : String(realPTS)));
+
+            // Patch layer (CVideoPatchedData) — reports whether the video is
+            // wrapped in a virtual-frame timeline and how many held slots
+            // were synthesized to fill dropped-frame bursts. See
+            // docs/dev/misb-timing.md.
+            if (videoData && typeof videoData.getPatchStats === "function") {
+                const ps = videoData.getPatchStats();
+                push(pad("Frame patching:", `WRAPPED (fillMode=${ps.fillMode})`));
+                push(pad("  source frames:", ps.sourceFrames));
+                push(pad("  virtual frames:", ps.virtualFrames));
+                push(pad("  held frames:", `${ps.heldFrames} (${(ps.heldFrames * 100 / ps.virtualFrames).toFixed(2)}%)`));
+                push(pad("  longest hold:", `${ps.longestHoldFrames} f (${ps.longestHoldMs.toFixed(0)} ms)`));
+                push(pad("  total patches:", ps.patches.length));
+                if (ps.patches.length > 0) {
+                    push("");
+                    const top = [...ps.patches].sort((a, b) => b.length - a.length).slice(0, 10);
+                    const showAll = ps.patches.length <= 10;
+                    push(showAll
+                        ? `  PATCHES (all ${ps.patches.length}, by size):`
+                        : `  TOP 10 PATCHES (of ${ps.patches.length}, by size):`);
+                    // src gap = PCR interval between two consecutive source
+                    // frames (matches the PTS Jumps table); held ms = the
+                    // virtual time we actually synthesize, ≈ src gap − one
+                    // frame duration (the canonical step that would have
+                    // existed without a drop).
+                    push("    #     src(N→N+1)        virtual range          held f   held ms   src gap ms");
+                    push("    ───   ─────────────     ──────────────────     ──────   ───────   ──────────");
+                    const srcPTS = videoData.source && Array.isArray(videoData.source.framePTSus)
+                        ? videoData.source.framePTSus : null;
+                    for (let i = 0; i < top.length; i++) {
+                        const p = top[i];
+                        const heldMs = (p.length * 1000 / ps.fps).toFixed(0);
+                        const srcGap = srcPTS && p.sourceFrame + 1 < srcPTS.length
+                            ? ((srcPTS[p.sourceFrame + 1] - srcPTS[p.sourceFrame]) / 1000).toFixed(0)
+                            : "n/a";
+                        const srcSpan = `${p.sourceFrame} → ${p.sourceFrame + 1}`.padEnd(13);
+                        const virSpan = `${p.vStart}..${p.vEnd}`.padEnd(18);
+                        push(`    ${String(i + 1).padStart(3)}   ${srcSpan}     ${virSpan}     ${String(p.length).padStart(6)}   ${heldMs.padStart(7)}   ${srcGap.padStart(10)}`);
+                    }
+                }
+            } else {
+                push(pad("Frame patching:", "not wrapped"));
+            }
 
             // Per-frame outliers — anything significantly off the median interval
             // is a video-side gap or PTS jump worth flagging.
@@ -488,7 +542,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             for (const q of [0.25, 0.5, 0.75, 1.0]) {
                 const f = Math.floor((videoFrameCount - 1) * q);
                 const k = firstValid + Math.floor((klvRecords - 1) * q);
-                const vidT = (videoData.framePTSus[f] - videoData.framePTSus[0]) / 1000 / 1000;
+                const vidT = (ptsArr[f] - ptsArr[0]) / 1000 / 1000;
                 const klvT = (this.getTime(k) - this.getTime(firstValid)) / 1000;
                 const diff = klvT - vidT;
                 if (hasPesPTS) {
@@ -520,7 +574,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
                 const t_uts = (this.getTime(i) - this.getTime(firstValid)) / 1000;
                 const fIdx = Math.min(videoFrameCount - 1,
                     Math.round((i - firstValid) * (videoFrameCount - 1) / (klvCount - 1)));
-                const t_vid = (videoData.framePTSus[fIdx] - videoData.framePTSus[0]) / 1000 / 1000;
+                const t_vid = (ptsArr[fIdx] - ptsArr[0]) / 1000 / 1000;
                 const diff = t_uts - t_vid;
                 sX += t_vid; sY += diff; sXX += t_vid * t_vid; sXY += t_vid * diff;
                 n++;

@@ -436,7 +436,8 @@ export class CNodeTrackFromMISB extends CNodeTrack {
             }
             if (monotonic) {
                 usePESPTS = true;
-                console.log(`CNodeTrackFromMISB(${this.id}): using MISB ST 0604 PES PTS pairing for ${points} records (klv span ${(pesTimeArray[points-1]/1000).toFixed(3)}s)`);
+                const wrappedTag = (videoData && typeof videoData.getPatchStats === "function") ? " [wrapped]" : "";
+                console.log(`CNodeTrackFromMISB(${this.id}): using MISB ST 0604 PES PTS pairing${wrappedTag} for ${points} records (klv span ${(pesTimeArray[points-1]/1000).toFixed(3)}s)`);
             } else {
                 console.warn(`CNodeTrackFromMISB(${this.id}): PES PTS not monotonic; falling back to wall-clock lookup`);
             }

@@ -1218,6 +1218,18 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
              // we disable the default action
                 e.preventDefault();
 
+            // Forbid placing keyframes on a held (synthesized) virtual frame.
+            // Held frames have no unique pixels — they reuse the bracketing
+            // real source frame — so a keyframe authored there would collapse
+            // onto the canonical V at save time and lose information. Force
+            // the user to scrub to a real frame instead.
+            const videoData = this.overlayView?.videoData;
+            if (videoData && videoData.isHeldFrame && videoData.isHeldFrame(par.frame)) {
+                const sourceV = videoData.sourceToVirtual(videoData.virtualToSource(par.frame));
+                console.warn(`[TrackingOverlay] frame ${par.frame} is a held (duplicate) frame; scrub to frame ${sourceV} or the next real frame to place a keyframe.`);
+                return;
+            }
+
             // interate over keyframes and find if there is one at this frame
             let found = false;
             for (const k of this.keyframes) {
@@ -1300,14 +1312,23 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
     }
 
     modSerialize() {
+        // Persist keyframe frame numbers as source-indexed when the
+        // videoData is a CVideoPatchedData wrapper, so saves are stable
+        // across patching toggles, fps changes, and re-imports of the same
+        // source TS. frameSpace flag distinguishes new-format saves from
+        // legacy saves where source/virtual were the same axis.
+        const videoData = this.overlayView?.videoData;
+        const useSource = videoData && typeof videoData.virtualToSource === "function";
+        const toSource = useSource ? (V) => videoData.virtualToSource(V) : (V) => V;
         return {
             ...super.modSerialize(),
             curveType: this.curveType,
+            frameSpace: useSource ? "source" : "virtual",
             keyframes: this.keyframes.map(k => {
                 return {
                     x: k.x,
                     y: k.y,
-                    frame: k.frame
+                    frame: toSource(k.frame)
                 }
             })
         }
@@ -1325,6 +1346,12 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         if (v.curveType !== undefined) {
             this.curveType = v.curveType;
         }
+        // frameSpace marks whether saved frame numbers are source-indexed
+        // (new format, set by modSerialize when wrapping is active) or
+        // virtual/legacy. We stash it and apply the source->virtual
+        // translation once the video has loaded — the wrapper doesn't
+        // exist yet at deserialize time.
+        this._savedFrameSpace = v.frameSpace || "virtual";
         this.keyframes = v.keyframes.map(k => {
             const newKeyframe = this.add(new CNodeVideoTrackKeyframe({
                 view: this,
@@ -1359,6 +1386,16 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
         const onVideoLoaded = () => {
             EventManager.removeEventListener("videoLoaded", onVideoLoaded);
+            // Translate saved source-indexed frame numbers to virtual now
+            // that the wrapper exists. For legacy saves (frameSpace
+            // undefined / "virtual") we leave them alone.
+            const videoData = this.overlayView?.videoData;
+            if (this._savedFrameSpace === "source" &&
+                videoData && typeof videoData.sourceToVirtual === "function") {
+                for (const k of this.keyframes) {
+                    k.frame = videoData.sourceToVirtual(k.frame);
+                }
+            }
             this.recalculateCascade();
         };
         EventManager.addEventListener("videoLoaded", onVideoLoaded);

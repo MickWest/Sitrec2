@@ -463,6 +463,14 @@ The pipeline preserves the synchronous-mode timing data the MISB ST 0604
 standard provides, and falls back gracefully for files where that data
 isn't available.
 
+> Since late-2026 the pipeline can additionally **invert** the sync
+> strategy for files with dropped-frame bursts: instead of advancing the
+> sim clock at the gappy decoded-video rate (which makes the sim
+> accelerate through bursts), wrap the source `CVideoData` in a
+> `CVideoPatchedData` decorator that presents a uniform-cadence virtual
+> timeline whose held slots reuse the most recent decoded frame. KLV
+> stays unaltered. See **§12** for the full design.
+
 ```
                 ┌─────────────────────────────────┐
                 │   .ts file (drag & drop)        │
@@ -874,3 +882,157 @@ KLV side.
 - **STANAG 4609** — NATO standard wrapping the MISB suite for ISR video
 - **ISO/IEC 13818-1 §2.12.4** — "Use of PES packets to transport metadata"
   (the underlying MPEG-TS mechanism MISB ST 0604 builds on)
+
+---
+
+## 12. Frame patching: virtualized timeline (`CVideoPatchedData`)
+
+The Tier-1 pairing of §6c is *correct* about KLV-to-video association on
+the PCR axis but creates a second-order problem in playback: when the
+decoded-video timeline has dropped-frame bursts, the sim advances at the
+gappy rate. `Sit.frames` is the count of *decoded* frames and `Sit.fps`
+is nominal, so a 100-second PCR span with 300 missing video frames out
+of 3,000 plays back in 90 seconds of wall time. KLV (paired correctly
+against PCR via Tier 1) appears to *speed up* through the bursts.
+
+**The inversion.** Don't retime KLV; retime the video. Wrap the source
+`CVideoData` in a `CVideoPatchedData` decorator that synthesizes a
+uniform-cadence virtual timeline. Held slots reuse the most recent real
+decoded frame. KLV/UTS/PES values stay exactly as authored.
+
+```
+PCR axis (real)        ──┬──┬──┬──┬───────────┬──┬──┬──→
+                         │  │  │  │           │  │  │
+source.framePTSus[]      0  1  2  3           7  8  9
+                                  └──gap──────┘
+                                  (frames 4,5,6 missing)
+
+virtual timeline       ──┬──┬──┬──┬──┬──┬──┬──┬──┬──┬──→
+                         │  │  │  │  │  │  │  │  │  │
+patched.framePTSus[V]    0  1  2  3  4  5  6  7  8  9
+                         │  │  │  │  │  │  │  │  │  │
+patched.virtualToSource  0  1  2  3  3  3  3  4  5  6
+                                  ↑──held run─↑
+```
+
+Every virtual frame `V` has `framePTSus[V] = T0 + V × (1e6/Sit.fps)` —
+linear, on the *original* PCR origin `T0 = source.framePTSus[0]`. So
+`framePTSus[V] − framePTSus[0] = V × frameDuration`, identical to
+`V × 1000/Sit.fps`. Tier-1 pairing in `CNodeTrackFromMISB` continues to
+work *without modification*: `msNow` advances at honest wall-clock rate;
+KLV's `pesPTSus[]` (already shifted by `videoFirstPESus`) is on the same
+axis. Held bursts on the source produce held image runs in the wrapper
+while the camera position interpolates smoothly across the gap from the
+unaltered KLV.
+
+### 12a. Algorithm
+
+```
+T0 = source.framePTSus[0]
+TN = source.framePTSus[source.frames - 1]
+frameDuration = 1e6 / Sit.fps
+halfStep = frameDuration / 2
+
+for V = 0, 1, 2, … (until targetPTS > TN + halfStep):
+    targetPTS = T0 + V × frameDuration
+    advance S forward while source.framePTSus[S+1] ≤ targetPTS + halfStep
+    map[V] = S
+    virtualPTSus[V] = targetPTS
+```
+
+Accumulator-style — never `round((TN−T0)/frameDuration)`, which drifts
+on long clips because intervals aren't exact multiples of nominal
+`frameDuration` (PCR jitter, 29.97 vs 30 fps, accumulated skew). Walks
+source forward once.
+
+### 12b. Wrap predicate
+
+`shouldWrap(source, fps)` iff:
+1. `source.hasRealFramePTS()` is true.
+2. There exists at least one interval ≥ **1.9 × nominal frameDuration**.
+
+The 1.9× threshold (not the diagnostic 1.5×) — genuine dropped frames
+are ≥ 2× by definition; B-frame reorder and rate-control jitter can
+produce 1.3–1.7× legitimately. Sliver below 2× absorbs minor clock skew.
+
+### 12c. Source vs. virtual indexing — the persistence contract
+
+Two distinct frame-index spaces, with a sharp persistence boundary:
+
+| Surface | Index space |
+|---|---|
+| `par.frame` during playback | virtual |
+| `Sit.frames`, `Sit.videoFrames` | virtual count |
+| `videoData.framePTSus[V]` consumed by Tier-1 pairing | virtual |
+| Scrubber UI position | virtual |
+| Saved JSON: tracking keyframes, bookmarks | **source** |
+| URL `?frame=N`, MCP `sitrec_set_frame(N)` | **source** |
+| Timing Analysis report frame numbers | source |
+
+**Why split.** Source-indexed storage is stable across re-import,
+patching toggles, and `Sit.fps` changes — a tracking keyframe authored
+against specific pixels follows those pixels rather than a wall-clock
+slot. Virtual-indexed runtime is what makes scrubbing feel uniform and
+makes Tier-1 pairing align with KLV by construction.
+
+The wrapper exposes both directions:
+
+- `wrapper.virtualToSource(V) → S` = `map[V]`
+- `wrapper.sourceToVirtual(S) → V` = the *first* virtual slot for source
+  frame `S` (the canonical V; held duplicates collapse onto it).
+
+`CNodeTrackingOverlay.modSerialize` calls `virtualToSource` on every
+keyframe and emits `frameSpace: "source"`. `modDeserialize` waits on
+`videoLoaded`, then translates source→virtual via `sourceToVirtual`.
+
+### 12d. Held-frame keyframe rule (option a)
+
+Manual-tracking UI **forbids** placing keyframes on held virtual frames.
+Held frames have no unique pixels, so a keyframe authored there would
+collapse onto the canonical V at save time and lose information.
+Ctrl-click placement on a held frame logs a warning and does nothing.
+Existing keyframes interact as usual — interpolation between
+canonical-V keyframes that bracket a held burst gives smooth pixel
+motion across the gap, paired against KLV at the correct wall-clock
+moment for each held V.
+
+### 12e. Stabilization key collapse
+
+`videoData.setStabilizationData(map<frame, xy>, …)` on the wrapper
+**canonicalizes** keys: every input frame (including held V's) maps to
+its canonical virtual slot, last-write-wins on collisions. This
+prevents adjacent held V's from generating different shifts on
+identical pixels, which would otherwise produce visible jitter.
+`CObjectTracking.runFastTrackingLoop` skips held V's entirely (carrying
+the prior tracked position forward) — template matching on identical
+pixels is wasted work.
+
+### 12f. Migration
+
+- **Saves with `frameSpace: "source"`** — translate source→virtual on
+  load. New format.
+- **Saves with no `frameSpace`** — assumed virtual (legacy synthetic-
+  uniform space was equivalent). Keyframes load at their saved indices.
+  For files that *would* now be wrapped, this is slightly off through
+  bursts; resaving the sitch upgrades it to the new format.
+
+### 12g. Diagnostic surfacing
+
+The Timing Analysis report's Video Timing section gains a "Frame
+patching" block reporting source frame count, virtual frame count, held
+frame count and percent, and longest hold. The Tier-1 pairing log line
+prints `[wrapped]` when `videoData.getPatchStats` is available. During
+debugging, held frames are returned with a 60-px red square in the top-
+right corner (`DEBUG_HELD_MARKER` flag in `CVideoPatchedData.js`).
+
+### 12h. Where to look in the code
+
+| File | Role |
+|---|---|
+| `src/CVideoPatchedData.js` | The decorator class: mapping algorithm, source/virtual translation, held detection, stabilization-key canonicalization, held marker, `shouldWrap` predicate, `getPatchStats` |
+| `src/Globals.js` | `useVideoPatching` flag (default true) |
+| `src/nodes/CNodeVideoView.js` | Wrap decision in `loadedCallback` once `framePTSus[]` is populated; updates `Sit.videoFrames` and runs `updateSitFrames()` inline |
+| `src/nodes/CNodeTrackingOverlay.js` | Source/virtual save/load translation; held-frame placement guard |
+| `src/CObjectTracking.js` | Held-frame skip in `runFastTrackingLoop` |
+| `src/nodes/CNodeMISBData.js` | "Frame patching" block in Timing Analysis report |
+| `tests/CVideoPatchedData.test.js` | Unit tests for the mapping algorithm |
