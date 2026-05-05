@@ -132,7 +132,12 @@ function warnMissingKey(key) {
 export function t(key, options = undefined) {
     initI18n();
 
-    if (!i18next.exists(key, options)) {
+    // Don't warn when caller passed an explicit defaultValue — that's the
+    // i18next-idiomatic way to say "this key may be missing, use this
+    // fallback." Dynamic per-node label paths like "nodeLabels.<id>" hit
+    // this hundreds of times during sitch reload (one per per-track GUI
+    // control) and otherwise drown out the rest of the console.
+    if (!i18next.exists(key, options) && (!options || options.defaultValue === undefined)) {
         warnMissingKey(key);
     }
 

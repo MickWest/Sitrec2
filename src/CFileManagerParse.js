@@ -1213,6 +1213,26 @@ export const parseMethods = {
             switch (fileExt.toLowerCase()) {
                 case "txt": {
                     var text = decoder.decode(buffer);
+                    // Sidecar carrying MISB ST 0604 PES PTS data — written
+                    // alongside TS-extracted substreams as `<filename>.pts.txt`.
+                    // The content is JSON; the .txt extension just keeps it out
+                    // of the .json sitch/track loader paths. The actual consumer
+                    // (CustomManagerSerialize._fetchPesSidecar) fetches the URL
+                    // directly via the saved sidecarURL — this branch only
+                    // handles the case where one is dropped standalone, in
+                    // which case we recognize it and mark it as a non-track.
+                    if (filename.toLowerCase().endsWith(".pts.txt") || /^\s*\{[^}]*"kind"\s*:\s*"klv-pes-pts"/.test(text)) {
+                        try {
+                            const jsonParsed = JSON.parse(text);
+                            if (jsonParsed && jsonParsed.kind === "klv-pes-pts") {
+                                parsed = jsonParsed;
+                                dataType = "pts-sidecar";
+                                break;
+                            }
+                        } catch (e) {
+                            // Not parseable JSON — fall through to normal .txt handling.
+                        }
+                    }
                     const txtType = detectTXTType(text);
                     if (txtType === "PBA") {
                         text = extractPBACSV(text);
@@ -1456,7 +1476,15 @@ export const parseMethods = {
                 }
                 case "json": {
                     const jsonParsed = JSON.parse(decoder.decode(buffer));
-                    if (jsonParsed.isASitchFile) {
+                    if (jsonParsed && jsonParsed.kind === "klv-pes-pts") {
+                        // PES PTS sidecar emitted by older saves (since renamed
+                        // to .pts.txt). Loader fetches the URL directly via
+                        // _fetchPesSidecar; if one is dropped on the page
+                        // standalone, mark it as a non-track non-sitch so the
+                        // generic .json track-import path doesn't run.
+                        dataType = "pts-sidecar";
+                        parsed = jsonParsed;
+                    } else if (jsonParsed.isASitchFile) {
                         dataType = "sitch";
                         parsed = buffer;
                     } else if (isFlightClubJSON(jsonParsed)) {
@@ -1478,6 +1506,21 @@ export const parseMethods = {
                     dataType = "video";
                     parsed = buffer;
                     console.log("Parsed H.264 stream: " + filename + " (" + buffer.byteLength + " bytes)");
+                    // Forward any PES timing the caller supplied (TS-demux substream
+                    // callback or sidecar reload). Returned via the wrapper so the
+                    // URL-fetch loadAsset path can stash them onto the FileManager
+                    // entry — same effect parseResult achieves through the substream
+                    // loop. Without this, video-side pesEntries are silently dropped
+                    // on URL reloads, leaving framePTSus[] synthetic.
+                    if (metadata && Array.isArray(metadata.pesEntries) && metadata.pesEntries.length > 0) {
+                        return Promise.resolve({
+                            filename: filename,
+                            parsed: parsed,
+                            dataType: dataType,
+                            pesEntries: metadata.pesEntries,
+                            videoFirstPESus: typeof metadata.videoFirstPESus === "number" ? metadata.videoFirstPESus : null,
+                        });
+                    }
                     break;
 
                 case "m2v":

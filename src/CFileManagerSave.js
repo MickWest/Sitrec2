@@ -952,10 +952,18 @@ export const saveMethods = {
     },
 
     /**
-     * Sidecar URL convention: append `.pts.json` to the substream filename.
+     * Sidecar URL convention: append `.pts.txt` to the substream filename.
+     *
+     * The content is JSON internally, but the file extension is .txt so a
+     * stray sidecar dropped on the page (or sitting next to .json sitch
+     * saves in a directory listing) doesn't get routed through Sitrec's
+     * .json-loader path and confused with a sitch / track file. Old saves
+     * persisted these as `.pts.json`; the loader still accepts that older
+     * URL and the parser still recognizes the `klv-pes-pts` kind in either
+     * extension to defend against either-way confusion.
      */
     _sidecarFilename(substreamFilename) {
-        return substreamFilename + ".pts.json";
+        return substreamFilename + ".pts.txt";
     },
 
     /**
