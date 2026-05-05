@@ -41,12 +41,14 @@ import {CVideoMp4Data} from "../CVideoMp4Data";
 import {CVideoH264Data} from "../CVideoH264Data";
 import {CVideoAudioOnly} from "../CVideoAudioOnly";
 import {CVideoImageData} from "../CVideoImageData";
+import {CVideoPatchedData} from "../CVideoPatchedData";
 import {isAudioOnlyFormat} from "../AudioFormats";
 import {getFileExtension} from "../utils";
 import {assert} from "../assert";
 import {EventManager} from "../CEventManager";
 import {getFlowAlignRotation} from "../FlowAlignment";
 import {VideoLoadingManager} from "../CVideoLoadingManager";
+import {updateSitFrames} from "../UpdateSitFrames";
 import {CNodeGridOverlay} from "./CNodeGridOverlay";
 import {
     checkVideoEncodingSupport,
@@ -382,13 +384,33 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
         this.videoLoadPending = false;
 
-        const vd = videoData;
+        let vd = videoData;
         console.log(`[VideoLoaded] ========== Video Load Complete ==========`);
         console.log(`[VideoLoaded]   filename: "${vd?.filename}"`);
         console.log(`[VideoLoaded]   dimensions: ${vd?.videoWidth}x${vd?.videoHeight}`);
         console.log(`[VideoLoaded]   frames: ${vd?.frames}, groups: ${vd?.groups?.length}, chunks: ${vd?.chunks?.length}`);
         console.log(`[VideoLoaded]   imageCache: length=${vd?.imageCache?.length}, type=${vd?.imageCache?.constructor?.name}`);
         console.log(`[VideoLoaded]   this.videos.length: ${this.videos.length}, pendingRestore: ${!!this.pendingVideoRestore}`);
+
+        // Wrap dropped-frame video with a uniform-cadence virtual timeline so
+        // KLV/RTC pairing stays drift-free without re-timing the unaltered
+        // KLV stream. See docs/dev/misb-timing.md.
+        if (Globals.useVideoPatching && Sit.fps && CVideoPatchedData.shouldWrap(vd, Sit.fps)) {
+            const sourceFrames = vd.frames;
+            const patched = new CVideoPatchedData(vd, {fps: Sit.fps, fillMode: "hold"});
+            const stats = patched.getPatchStats();
+            console.log(`[VideoPatch] wrapping: source=${sourceFrames} virtual=${patched.frames} held=${stats.heldFrames} longestHold=${stats.longestHoldFrames}f (${Math.round(stats.longestHoldMs)}ms)`);
+            const idx = this.videos.findIndex(v => v.videoData === vd);
+            if (idx >= 0) this.videos[idx].videoData = patched;
+            this.videoData = patched;
+            vd = patched;
+            // The source video class already wrote Sit.videoFrames = sourceFrames.
+            // Overwrite with the virtual count and re-run updateSitFrames so
+            // Sit.frames is the virtual count BEFORE any recalc cascade runs
+            // (otherwise CNodeTrackFromMISB asserts on Sit.frames === undefined).
+            Sit.videoFrames = patched.frames;
+            updateSitFrames();
+        }
 
         // if we loaded from a mod or custom
         // then we might want to set the frame nubmer

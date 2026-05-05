@@ -31,6 +31,7 @@ export const Globals = {
     testUserID: 0, // Admin-only: operate as this user ID when > 1
     sitchDirty: false, // true when user has made meaningful changes (not just camera/frame)
     hasByokKeys: false, // true when the user has at least one BYOK LLM API key stored in IndexedDB
+    useVideoPatching: true, // wrap dropped-frame video with CVideoPatchedData (see docs/dev/misb-timing.md)
 
     // Granular render debug flags - shared across ALL views
     renderDebugFlags: {
