@@ -332,18 +332,81 @@ export class CVideoH264Data extends CVideoWebCodecBase {
                 console.log("📺 Common frame rates: 24 (cinema), 25 (PAL), 29.97/30 (NTSC), 50/60 (high frame rate)");
             }
 
+            // Yield once before reading pesEntries so any pending late-attach
+            // microtask (CFileManager.loadAsset's dedup-branch .then() that
+            // attaches PES timing supplied by a subsequent caller) has a
+            // chance to run. Without this yield, an entry with no pesEntries
+            // at the moment we're called can be populated 1 tick later — and
+            // we'd already have built chunks with synthetic timestamps that
+            // can't be retroactively fixed.
+            await Promise.resolve();
+
             // Retrieve per-frame PES PTS captured by TSParser, if this h264 substream
             // came from a TS demux. Without this, every chunk gets a synthetic uniform
             // i × frameDuration timestamp — which is wrong whenever the source had
             // dropped frames, since the decoder treats N missing frames as a single
             // frame transition. With real PTS, KLV-to-video pairing stays drift-free
             // through video-side frame loss.
+            //
+            // Three places these can come from, tried in priority order:
+            //   1. FileManager entry already has pesEntries (live demux of a fresh
+            //      .ts/.mpg drop, or another loader supplied metadataOverride).
+            //   2. loadedFilesMetadata advertises a sidecar URL — restoreVideo path
+            //      bypasses the deserialize's loadedFiles loop, so the sitch-side
+            //      sidecar fetch never ran. Fetch it now ourselves.
+            //   3. None — fall back to synthetic uniform timestamps (legitimate for
+            //      image-source video, raw .h264 with no TS context, etc.).
             let videoPesPtsUs = null;
             const fileKey = v.file || this.filename;
             const fileEntry = (fileKey && FileManager.list) ? FileManager.list[fileKey] : null;
             if (fileEntry && Array.isArray(fileEntry.pesEntries) && fileEntry.pesEntries.length > 0) {
                 videoPesPtsUs = fileEntry.pesEntries.map(e => e.ptsUs);
                 console.log(`[CVideoH264Data] using ${videoPesPtsUs.length} per-frame PES PTS values from FileManager entry ${fileKey}`);
+            } else {
+                // Self-fetch the sidecar when the videos[]/restoreVideo path
+                // delivered us — no deserialize loop ran for this asset, so
+                // metadataOverride was never supplied on its way in.
+                const lfm = (typeof FileManager !== "undefined" && FileManager.loadedFilesMetadata)
+                    ? FileManager.loadedFilesMetadata : null;
+                const sidecarMeta = lfm && fileKey ? lfm[fileKey] : null;
+                const sidecarURL = sidecarMeta?.pesSidecarURL;
+                if (sidecarURL) {
+                    try {
+                        let text;
+                        if (sidecarURL.startsWith("http://") || sidecarURL.startsWith("https://")) {
+                            const resp = await fetch(sidecarURL);
+                            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                            text = await resp.text();
+                        } else {
+                            // Working-folder relative path
+                            const buf = await FileManager.readWorkingFolderFile(sidecarURL);
+                            text = new TextDecoder().decode(buf);
+                        }
+                        const sidecar = JSON.parse(text);
+                        if (sidecar && Array.isArray(sidecar.pesEntries) && sidecar.pesEntries.length > 0) {
+                            videoPesPtsUs = sidecar.pesEntries.map(e => e.ptsUs);
+                            // Stash on the FileManager entry too so subsequent
+                            // re-saves emit a sidecar without re-demuxing.
+                            if (fileEntry) {
+                                fileEntry.pesEntries = sidecar.pesEntries;
+                                if (typeof sidecar.videoFirstPESus === "number") {
+                                    fileEntry.videoFirstPESus = sidecar.videoFirstPESus;
+                                }
+                            }
+                            console.log(`[CVideoH264Data] self-fetched sidecar for ${fileKey} (${videoPesPtsUs.length} entries)`);
+                        }
+                    } catch (e) {
+                        console.warn(`[CVideoH264Data] sidecar self-fetch failed for ${fileKey} (${sidecarURL}): ${e.message}`);
+                    }
+                }
+                if (videoPesPtsUs === null) {
+                    // Not having pesEntries can be legitimate (image-source video,
+                    // raw .h264 with no TS context) or a bug (race lost, sidecar
+                    // failed). Log enough to tell the difference next time.
+                    const sidecarHint = (typeof FileManager !== "undefined" && FileManager.pesSidecarFailures && FileManager.pesSidecarFailures[fileKey])
+                        ? ` (sidecar fetch FAILED earlier — see [PES sidecar] error)` : "";
+                    console.warn(`[CVideoH264Data] no per-frame PES PTS available for ${fileKey}; chunks will use synthetic uniform timestamps${sidecarHint}`);
+                }
             }
 
             const encodedChunks = H264Decoder.createEncodedVideoChunks(nalUnits, fps, videoPesPtsUs);

@@ -296,6 +296,23 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         const pesIsArray = Array.isArray(pesArr);
         const pesLen = pesIsArray ? pesArr.length : 0;
         const pesNonNull = pesIsArray ? pesArr.filter(v => v !== null && v !== undefined).length : 0;
+        // Surface sidecar fetch failures recorded by the deserialize loop. If
+        // the sitch's loadedFilesMetadata advertised a sidecar URL but the
+        // fetch failed, sync silently degrades to synthetic without anything
+        // in the analysis that screams. Print here and bail loud.
+        if (typeof FileManager !== "undefined" && FileManager.pesSidecarFailures) {
+            const failures = Object.entries(FileManager.pesSidecarFailures);
+            if (failures.length > 0) {
+                push("  ⚠ PES SIDECAR FETCH FAILED for the following entries during sitch reload:");
+                for (const [fid, info] of failures) {
+                    push(`     - ${fid}`);
+                    push(`         url: ${info.url}`);
+                    push(`         error: ${info.error}`);
+                }
+                push("    (Sync will fall back to synthetic timestamps; the file's pesPTSus will be missing.)");
+                push("");
+            }
+        }
         push(pad("hasRecordPTS():", String(this.hasRecordPTS())));
         push(pad("misb.pesPTSus is Array:", String(pesIsArray)));
         push(pad("misb.pesPTSus length:", `${pesLen} (vs record count = ${len})`));

@@ -842,7 +842,16 @@ export const serializeMethods = {
                 // wall-clock fallback in CNodeTrackFromMISB takes over.
                 const overridePromise = sidecarURL
                     ? this._fetchPesSidecar(sidecarURL).catch(err => {
-                        console.warn(`PES sidecar fetch failed for ${id} (${sidecarURL}):`, err);
+                        // Sidecar failure ⇒ silent sync degradation. Make this
+                        // loud at load time AND record it on FileManager so the
+                        // Timing Analysis report can surface "the override was
+                        // expected but never arrived."
+                        console.error(`[PES sidecar] FAILED for ${id} (${sidecarURL}):`, err);
+                        if (!FileManager.pesSidecarFailures) FileManager.pesSidecarFailures = {};
+                        FileManager.pesSidecarFailures[id] = {
+                            url: sidecarURL,
+                            error: err && err.message ? err.message : String(err),
+                        };
                         return null;
                     })
                     : Promise.resolve(null);

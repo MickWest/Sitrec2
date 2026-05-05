@@ -1846,6 +1846,47 @@ export class CFileManager extends CManager {
                     this.list[id].staticURL = this.list[parsedAsset.id].staticURL;
                     this.list[id].dataType = this.list[parsedAsset.id].dataType;
                     this.list[id].filename = filename;
+                    // Propagate PES timing too. Both entries point at the same
+                    // buffer — pesEntries is metadata about that buffer and
+                    // should be reachable by either lookup key. Without this,
+                    // CVideoH264Data looking up by the substream filename
+                    // would miss the timing data that lives only on the
+                    // deserialize's id-keyed entry.
+                    const src = this.list[parsedAsset.id];
+                    if (Array.isArray(src.pesEntries) && src.pesEntries.length > 0) {
+                        this.list[id].pesEntries = src.pesEntries;
+                    }
+                    if (typeof src.videoFirstPESus === "number") {
+                        this.list[id].videoFirstPESus = src.videoFirstPESus;
+                    }
+                    if (src.tsParentFilename) {
+                        this.list[id].tsParentFilename = src.tsParentFilename;
+                    }
+                }
+                // Late-arriving metadataOverride: when the in-flight load was
+                // started without PES timing and a subsequent caller (e.g. the
+                // sitch-reload deserialize) supplies pesEntries from a sidecar,
+                // attach them to *every* FileManager entry pointing at this
+                // buffer (the new id-keyed one and the original loader's
+                // entry). Different consumers index by different keys; both
+                // need the timing data.
+                if (metadataOverride && Array.isArray(metadataOverride.pesEntries) && metadataOverride.pesEntries.length > 0) {
+                    const candidates = [];
+                    if (this.list[id]) candidates.push(this.list[id]);
+                    if (parsedAsset.id !== id && this.list[parsedAsset.id]) candidates.push(this.list[parsedAsset.id]);
+                    let attached = 0;
+                    for (const entry of candidates) {
+                        if (!Array.isArray(entry.pesEntries) || entry.pesEntries.length === 0) {
+                            entry.pesEntries = metadataOverride.pesEntries;
+                            if (typeof metadataOverride.videoFirstPESus === "number") {
+                                entry.videoFirstPESus = metadataOverride.videoFirstPESus;
+                            }
+                            attached++;
+                        }
+                    }
+                    if (attached > 0) {
+                        console.log(`[loadAsset] late-attached ${metadataOverride.pesEntries.length} PES PTS entries to ${attached} dedup'd entry(ies) for ${filename}`);
+                    }
                 }
                 return {filename: filename, parsed: this.list[id].data};
             });
@@ -1868,6 +1909,33 @@ export class CFileManager extends CManager {
             this.list[id].staticURL = this.list[existingId].staticURL;
             this.list[id].dataType = this.list[existingId].dataType;
             this.list[id].filename = filename;
+            // Propagate PES timing too — same buffer, same metadata. Without
+            // this, a working-folder reload that lands the substream under
+            // one id (e.g. "video") would leave the deserialize's later
+            // loadAsset(filename, "Bex-...") with an entry that has no
+            // pesEntries even though the data is identical.
+            const src = this.list[existingId];
+            if (Array.isArray(src.pesEntries) && src.pesEntries.length > 0) {
+                this.list[id].pesEntries = src.pesEntries;
+            }
+            if (typeof src.videoFirstPESus === "number") {
+                this.list[id].videoFirstPESus = src.videoFirstPESus;
+            }
+            if (src.tsParentFilename) {
+                this.list[id].tsParentFilename = src.tsParentFilename;
+            }
+            // If this caller supplied a metadataOverride (e.g. sidecar reload)
+            // and neither entry has pesEntries yet, apply it now.
+            if (metadataOverride && Array.isArray(metadataOverride.pesEntries) && metadataOverride.pesEntries.length > 0) {
+                for (const entry of [this.list[id], this.list[existingId]]) {
+                    if (!Array.isArray(entry.pesEntries) || entry.pesEntries.length === 0) {
+                        entry.pesEntries = metadataOverride.pesEntries;
+                        if (typeof metadataOverride.videoFirstPESus === "number") {
+                            entry.videoFirstPESus = metadataOverride.videoFirstPESus;
+                        }
+                    }
+                }
+            }
             return Promise.resolve({filename: filename, parsed: this.list[id].data});
         }
 
@@ -2067,6 +2135,18 @@ export class CFileManager extends CManager {
                     this.list[id].dynamicLink = dynamicLink;
                     this.list[id].staticURL = null;
                     this.list[id].dataType = parsedAsset.dataType;
+                    // Stash PES timing the parser surfaced via the wrapper (TS
+                    // substream sidecar reload of h264/aac/klv assets). This
+                    // matches what parseResult's substream loop does for the
+                    // working-folder path; without it, the URL-fetch path
+                    // drops video-side pesEntries on the floor and the H.264
+                    // chunk pipeline ends up with synthetic uniform timestamps.
+                    if (Array.isArray(parsedAsset.pesEntries) && parsedAsset.pesEntries.length > 0) {
+                        this.list[id].pesEntries = parsedAsset.pesEntries;
+                        if (typeof parsedAsset.videoFirstPESus === "number") {
+                            this.list[id].videoFirstPESus = parsedAsset.videoFirstPESus;
+                        }
+                    }
                     if (isHttpOrHttps(resolvedFilename) && !dynamicLink) {
                         // if it's a URL, and it's not a dynamic link, then we can store the URL as the static URL
                         // indicating we don't want to rehost this later.
