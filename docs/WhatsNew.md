@@ -45,10 +45,191 @@ Example entry format:
 
 ---
 
+## Version 2.48.4 (2026-05-05)
+
+### Improvements
+- Backfilled WhatsNew.md changelog entries for versions 2.45.23 through 2.48.2
+
+---
+
 ## Version 2.48.3 (2026-05-05)
 
 ### Bug Fixes
 - Fixed a race condition that could fire a "Missing Managed object azSources" assert during Gimbal sitch load when the render loop ticked before legacy gimbal nodes were created
+
+---
+
+## Version 2.48.2 (2026-05-05)
+
+### Improvements
+- Timing analysis report wording neutralized; multi-node prelude includes per-stream gap counts and max-interval
+
+### Bug Fixes
+- Fixed spurious "Error Loading" overlay flash on substream deferral during reload
+- Deferred WebXR runtime activation until "Start VR/XR" is clicked, so emulator UI no longer paints into the look view at load time
+
+---
+
+## Version 2.48.1 (2026-05-05)
+
+### Improvements
+- PES PTS round-trip across save/reload now closes remaining gaps
+- Quieter console output; PTS sidecar files renamed to `.pts.txt`
+
+---
+
+## Version 2.48.0 (2026-05-04)
+
+### New Features
+- KLV-to-video sync via real PES PTS through the H.264 chunk pipeline
+- Timing analysis report with PES PTS, drift decomposition, and multi-node coverage
+- "Visible" checkbox on 3D object submenus
+- Chatbot LLM fallback for unknown sky targets
+
+### Improvements
+- Default MISB center tracks render as an invisible 2 m sphere
+- Right-click picking now skips render-hidden and camera-locked objects
+- Render loop pauses when paused AND the window is unfocused (still kept alive for MCP-driven sessions)
+- CNodeSmoothedPositionTrack self-heals when its source grows
+- TS substreams and PES timing sidecars persist across save/reload; parent TS bytes are no longer retained
+- Suppressed noisy log for ESRI placeholder tiles
+- Expanded Biome rules; 17 latent bugs flagged by the new checks were fixed
+
+### Bug Fixes
+- Chatbot duplicate-call loop guard
+
+---
+
+## Version 2.47.4 (2026-05-03)
+
+### New Features
+- Performance Tweaks folder with `videoMaxSize` preset and a "Balanced" default
+
+---
+
+## Version 2.47.3 (2026-05-02)
+
+### Bug Fixes
+- Fixed node-smoke test breakage in MatLines `getEffectiveMSAASamples` calls
+
+---
+
+## Version 2.47.2 (2026-05-02)
+
+### Bug Fixes
+- Fixed Line2 gaps at low renderScale via correct resolution and alphaToCoverage
+- Fixed lookView mis-sized render at low renderScale
+
+---
+
+## Version 2.47.1 (2026-05-02)
+
+### New Features
+- Performance preset settings: `renderScale` and `msaaSamples`
+
+### Improvements
+- README now links previously-unlisted user and technical docs
+
+---
+
+## Version 2.47.0 (2026-05-02)
+
+### New Features
+- Framework for custom wind sources
+- MISB ST 0604 PES-PTS sync for TS-sourced KLV
+
+### Improvements
+- Tolerates per-group decode failure when other groups loaded
+- Prevented lil-gui menu names and titles from wrapping
+- Added `docs/dev/misb-timing.md` technical reference
+
+---
+
+## Version 2.46.1 (2026-05-01)
+
+### Improvements
+- File-type detection now sniffs contents, not just the extension
+
+---
+
+## Version 2.46.0 (2026-05-01)
+
+### New Features
+- Tile edges debug overlay in the Terrain UI
+
+### Improvements
+- Tile LOD replaced with frustum-dilated screen-space error
+- Tile subdivision: bounding sphere shifts to actual terrain altitude
+- Tile subdivision: merge hysteresis prevents tracking flicker
+- ESRI placeholder tiles are detected; refresh / detail-slider gating fixed
+- Server-side settings allowlist now includes `language`
+
+### Bug Fixes
+- Fixed shader compile error breaking 3D buildings on untextured tiles
+
+---
+
+## Version 2.45.29 (2026-05-01)
+
+### New Features
+- Progress indicator for large dropped files and TS parsing
+
+### Improvements
+- `sitrec.sh` now always re-pins to `:latest` first when pulling
+
+---
+
+## Version 2.45.28 (2026-05-01)
+
+### Improvements
+- MISB tracks cache per-frame elevation and persist it across saves
+- Coalesced MISB AGL terrain-refresh cascades for fewer redundant recomputes
+- Reduced per-frame work in lil-gui and terrain tile builders
+- Sun and moon positions now update only per-viewer
+
+### Bug Fixes
+- Fixed AGL-locked MISB tracks frozen at stale terrain altitude
+
+---
+
+## Version 2.45.27 (2026-04-30)
+
+### Bug Fixes
+- Fixed graph canvas blanking on panel resize
+
+---
+
+## Version 2.45.26 (2026-04-30)
+
+### Improvements
+- Contrails now sample the wind field at altitude
+- Track-derived wind sources fetch the wind field
+
+### Bug Fixes
+- Fixed wind grid filled with stale defaults during sitch deserialize
+- Fixed wind lines/arrows not appearing after load on manual sitches
+
+---
+
+## Version 2.45.25 (2026-04-29)
+
+### Improvements
+- Help menu now links Wind, Traverse, and Gimbal documentation
+- Deprecated LocalCustomSitches
+
+---
+
+## Version 2.45.24 (2026-04-29)
+
+### Improvements
+- Documented versions 2.45.14 through 2.45.22 in WhatsNew.md
+
+---
+
+## Version 2.45.23 (2026-04-29)
+
+### Improvements
+- Internal documentation and regression-test stability improvements (loadAsset multi-entry parser docs; NITF test per-worker port)
 
 ---
 
