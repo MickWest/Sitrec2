@@ -121,7 +121,7 @@ export class CNodeViewCanvas extends CNodeView {
         if (!this._pendingCanvasResize) {
             return;
         }
-        
+
         // Scale canvas backing store by devicePixelRatio for high DPI displays
         // Logical dimensions (widthPx, heightPx) stay the same for coordinate calculations
         // Physical canvas size is scaled for better resolution
@@ -135,8 +135,24 @@ export class CNodeViewCanvas extends CNodeView {
                 this._contextScaled = true;
             }
         }
-        
+
         this._pendingCanvasResize = false;
+    }
+
+    // Force the canvas backing store and 2D context scale transform to be
+    // re-established on the next render, even if widthPx/heightPx have not
+    // changed. Used after a WebGL context loss: the GPU crash silently wipes
+    // the 2D context's transform state but leaves canvas.width/height intact,
+    // so the normal "only resize when dimensions change" gate in adjustSize /
+    // ensureContextScaled never re-applies ctx.scale(dpr, dpr) — drawings
+    // then render unscaled into a DPR-sized backing store and CSS displays
+    // them at half size on a 2× DPR display. Setting canvas.width = 0 here
+    // forces the next applyPendingResize / ensureContextScaled to take the
+    // size-changed branch and re-scale the context.
+    forceContextRescale() {
+        if (this.canvas) this.canvas.width = 0;
+        this._pendingCanvasResize = true;
+        this._contextScaled = false;
     }
 
 }

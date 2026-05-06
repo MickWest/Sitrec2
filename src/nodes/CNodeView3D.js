@@ -1089,15 +1089,9 @@ export class CNodeView3D extends CNodeViewCanvas {
         this.renderer.setSize(this.widthDiv, this.heightDiv, false);
         this.renderer.outputColorSpace = SRGBColorSpace;
 
-        // Log WebGL context loss so regression tests can detect it.
-        // Use warn (not error) to avoid triggering the test's console-error assertion.
-        this.canvas.addEventListener('webglcontextlost', (e) => {
-            console.warn(`[WebGL] Context LOST on view "${this.id}"`);
-        });
-        this.canvas.addEventListener('webglcontextrestored', () => {
-            console.warn(`[WebGL] Context restored on view "${this.id}"`);
-        });
-        
+        // WebGL context-loss handlers are installed below (after render-target
+        // setup) so the restore path can re-create everything in one place.
+
         // Initialize GPU Memory Monitor on the first renderer created (only in local/dev mode)
         if (isLocal) {
             if (!Globals.GPUMemoryMonitor) {
@@ -1182,23 +1176,81 @@ export class CNodeView3D extends CNodeViewCanvas {
         });
 
 
-        // 4. Set up the event listeners on your renderer
-        this.renderer.domElement.addEventListener('webglcontextlost', event => {
-            event.preventDefault();
-            console.warn('CNodeView3D WebGL context lost');
+        // WebGL context-loss recovery.
+        //
+        // Without preventDefault on `webglcontextlost`, the browser will not
+        // fire `webglcontextrestored` and the only way out is a page reload.
+        // With preventDefault + the restore handler below, we can survive an
+        // organic GPU-process death (typically VRAM pressure on long sessions)
+        // and re-establish renderer state without losing the loaded sitch.
+        //
+        // What goes wrong if recovery is incomplete:
+        // - render targets hold dead GL textures/framebuffers; the next render
+        //   binds them and produces undefined behaviour or a blank screen
+        // - the renderer's pixel ratio and canvas size get reset to defaults,
+        //   surfacing as the "video at half size" symptom we saw on Cheyenne
+        // - pinned-program metadata (the __pinned hack on usedTimes) leaks
+        //   onto programs whose GL-side counterparts are gone
+        this.canvas.addEventListener('webglcontextlost', (e) => {
+            e.preventDefault();
+            Globals.contextLost = true;
+            console.warn(`[WebGL] Context LOST on view "${this.id}"`);
+            // Drop JS-side render-target handles; their GL backing is gone.
+            // The restore handler will recreate them. Until then, renderCanvas
+            // short-circuits on Globals.contextLost so no GL calls are issued.
+            this.disposeRenderTargets();
+            // Clear program-pin metadata: Three.js's program list is wiped on
+            // context loss, so __pinned would otherwise dangle.
+            if (this.renderer.info?.programs) {
+                for (const p of this.renderer.info.programs) p.__pinned = false;
+            }
         }, false);
 
-        this.renderer.domElement.addEventListener('webglcontextrestored', () => {
-            console.log('CNodeView3D WebGL context restored');
-            // get the terrain UI node and call doRefresh which will re-create the terrain
-            // should be very quick, as all the data is already loaded
+        this.canvas.addEventListener('webglcontextrestored', () => {
+            console.warn(`[WebGL] Context restored on view "${this.id}"`);
+            Globals.contextLost = false;
+            // Re-establish per-view renderer state: setPixelRatio + recreate
+            // render targets. applyPerformanceSettings already does both.
+            this.applyPerformanceSettings();
+            // Invalidate the per-frame size-sync dedupe cache so the next
+            // render's size-sync block re-applies setSize unconditionally.
+            this._lastSyncedRendererWidth = undefined;
+            this._lastSyncedRendererHeight = undefined;
+
+            // Force every 2D-canvas view to re-establish its DPR scale
+            // transform. The GPU process crash silently wipes the 2D
+            // context's transform state but leaves canvas.width/height in
+            // place, so adjustSize/ensureContextScaled's "only re-scale
+            // when dimensions change" gate never trips. Without this,
+            // overlay views (compass, time, tile-stats, video) draw
+            // unscaled into a DPR-sized backing store and CSS displays
+            // them at half size on a 2× DPR display — exactly the symptom
+            // the user reports persists across context loss until a
+            // window resize fixes it. forceContextRescale invalidates the
+            // canvas state so the next render picks up a fresh scale.
+            ViewMan.iterate((id, view) => {
+                if (typeof view.forceContextRescale === "function") {
+                    view.forceContextRescale();
+                }
+            });
+
+            // Trigger the SAME global resize path that a real window-resize
+            // event takes. updateSize(true) calls updateWH on every view,
+            // updateMatLineResolution (LineMaterial pixel-width uniform),
+            // ViewMan.updateSize, infoDiv font size, chart sizes, and
+            // setRenderOne. Note: the 2D-canvas half-size recovery is
+            // handled by forceContextRescale above, not by this call —
+            // updateSize alone doesn't trigger it because widthPx hasn't
+            // changed (the window is the same size; only the GL context
+            // died). Dynamic import avoids a static circular dependency
+            // between JetStuff.js and CNodeView3D.js.
+            import('../JetStuff').then(m => m.updateSize(true)).catch(err => {
+                console.error('[WebGL] updateSize after restore failed:', err);
+            });
+            // Refresh terrain so its tile textures are re-uploaded; data is
+            // already in CPU memory so this is fast.
             const terrainNode = NodeMan.get("terrainUI", false);
-            if (terrainNode) {
-                console.log("Calling terrainNode.doRefresh()");
-                terrainNode.doRefresh();
-            }
-
-
+            if (terrainNode) terrainNode.doRefresh();
         }, false);
 
     }
@@ -2216,6 +2268,19 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     renderCanvas(frame) {
+        // Skip the entire render path while the WebGL context is lost.
+        // The webglcontextrestored handler will recreate render targets,
+        // reset the renderer size/pixel ratio, refresh terrain, and call
+        // setRenderOne(true) to kick rendering back on. Render targets are
+        // disposed during loss, so attempting to render here would bind nulls.
+        if (Globals.contextLost) return;
+        if (this.renderer && this.renderer.getContext().isContextLost()) {
+            // Defensive: catches forced loss (forceContextLoss in tests) where
+            // the event may not have fired yet on this view.
+            Globals.contextLost = true;
+            return;
+        }
+
         this.updateIsIR();
 
         super.renderCanvas(frame)

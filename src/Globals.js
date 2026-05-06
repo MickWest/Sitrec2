@@ -32,6 +32,7 @@ export const Globals = {
     sitchDirty: false, // true when user has made meaningful changes (not just camera/frame)
     hasByokKeys: false, // true when the user has at least one BYOK LLM API key stored in IndexedDB
     useVideoPatching: true, // wrap dropped-frame video with CVideoPatchedData (see docs/dev/misb-timing.md)
+    contextLost: false, // true while the WebGL context is lost; render loop short-circuits, restored handler re-establishes renderer state
 
     // Granular render debug flags - shared across ALL views
     renderDebugFlags: {

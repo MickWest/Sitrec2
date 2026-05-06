@@ -99,6 +99,11 @@ import {imageQueueManager} from "./js/get-pixels-mick";
 import {disposeGimbalChart} from "./JetChart";
 import {CNode} from "./nodes/CNode";
 import {DragDropHandler} from "./DragDropHandler";
+// Side-effect import: registers event listeners that watch for video +
+// KLV finishing to load and offer the user a frame-rate-choice dialog
+// when the file's labeled fps disagrees with the KLV-UTS-derived rate.
+// See FpsMismatchDialog.js for the rationale and detection logic.
+import "./FpsMismatchDialog";
 import {CGuiMenuBar, setupHelpSearch} from "./lil-gui-extras";
 import {assert} from "./assert";
 import {CNodeFactory} from "./nodes/CNodeFactory";
@@ -792,6 +797,51 @@ if (isLocal) {
     guiMenus.debug.add(Globals, 'showTileStats')
         .name('Tile Stats')
         .tooltip('Show tile statistics for subdivision and loading');
+
+    // Manual WebGL context-loss trigger. Calls WEBGL_lose_context.loseContext()
+    // on every 3D view's renderer; the browser then fires webglcontextlost
+    // synchronously and webglcontextrestored after a short delay. The
+    // recovery handlers in CNodeView3D dispose render targets, re-establish
+    // pixel ratio, force every 2D-canvas view to re-scale its context, and
+    // refresh terrain. Use this to verify recovery without waiting for
+    // organic GPU pressure (which only happens on long Cheyenne-style
+    // sessions). Cached per-renderer because re-getExtension across
+    // restores can return null in some browsers.
+    const contextLossControl = {
+        forceContextLoss: function() {
+            let count = 0;
+            ViewMan.iterate((id, view) => {
+                if (!view.renderer) return;
+                const gl = view.renderer.getContext();
+                if (!gl) return;
+                if (!view._loseContextExt) {
+                    view._loseContextExt = gl.getExtension('WEBGL_lose_context');
+                }
+                const ext = view._loseContextExt;
+                if (!ext) {
+                    console.warn(`[ForceContextLoss] WEBGL_lose_context not available on view "${id}"`);
+                    return;
+                }
+                console.warn(`[ForceContextLoss] Losing context on view "${id}"`);
+                ext.loseContext();
+                // Schedule restore so we exercise the full lost→restored
+                // cycle. The browser would eventually restore on its own,
+                // but timing varies by browser; this makes the test
+                // deterministic. 1s delay matches the typical organic gap.
+                setTimeout(() => {
+                    if (ext && typeof ext.restoreContext === 'function') {
+                        console.warn(`[ForceContextLoss] Restoring context on view "${id}"`);
+                        ext.restoreContext();
+                    }
+                }, 1000);
+                count++;
+            });
+            console.warn(`[ForceContextLoss] Triggered loss on ${count} renderer(s); restore in ~1s`);
+        }
+    };
+    guiMenus.debug.add(contextLossControl, 'forceContextLoss')
+        .name('Force GL Context Loss')
+        .tooltip('Force WebGL context loss on all 3D views, then restore after 1s. Tests the recovery path that handles organic GPU-process crashes.');
     
 //    console.log("Visual Profiler controls added to Debug menu (local mode only)");
 } else {

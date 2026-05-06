@@ -255,11 +255,45 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
                 ? videoData.hasRealFramePTS() : "(unknown)";
             push(pad("Frames:", videoFrameCount));
             push(pad("Span:", fmtS(videoSpanS)));
-            push(pad("Mean interval:", `${fmtMs(ptsMean)} (= ${(1000 / ptsMean).toFixed(4)} fps)`));
+            push(pad("Mean interval:", `${fmtMs(ptsMean)} (= ${(1000 / ptsMean).toFixed(4)} fps in PCR clock)`));
             push(pad("Stddev:", fmtMs(ptsStddev)));
             push(pad("Min interval:", fmtMs(ptsMin)));
             push(pad("Max interval:", fmtMs(ptsMax)));
             push(pad("Verdict:", cfrVideo ? "Constant frame rate (CFR) — reliable" : "Variable frame rate — non-uniform"));
+
+            // Real-world frame-rate estimate from KLV UnixTimeStamp.
+            // The PES-derived fps above is *labeled* fps — it's just
+            // 90000 / (encoder's per-frame PTS increment). When the
+            // encoder is configured for one output framerate but the
+            // camera feeds it a different rate (a known ffmpeg /
+            // tactical-encoder footgun: e.g. `-r 27 -i 30fps_source`
+            // without an `fps=27` filter writes every 30 fps frame
+            // with 27 fps PTS spacing), PES-PTS-derived fps tells you
+            // the encoder's *configured* rate, not the real one.
+            //
+            // Hardware clock drift can't produce >10% rate mismatch;
+            // even an unconditioned crystal is bounded to ~100 ppm
+            // (0.01 %). 10% mismatch is mechanically a PTS-cadence
+            // misconfiguration, not a clock running off-rate.
+            //
+            // KLV UnixTimeStamp is filled by the encoder reading a
+            // separate real-time RTC at record commit, with no
+            // per-frame increment parameter to misconfigure, so its
+            // span is the trustworthy real-time anchor. The right
+            // Sit.fps is frameCount / klvUtsSpanS — frames per real
+            // second — because the video plays back at real-world
+            // pace and Sitrec's frame counter needs to match.
+            // Skip when KLV UTS is too scattered to trust (high CV).
+            if (klvSpanS > 0 && videoFrameCount > 0 && klvCv < 0.5) {
+                const realFps = videoFrameCount / klvSpanS;
+                const labeledFps = 1000 / ptsMean;
+                const fpsDelta = Math.abs(realFps - labeledFps) / Math.max(realFps, 1e-6);
+                push(pad("Real-time fps (from KLV UTS):", `${realFps.toFixed(4)} fps`));
+                if (fpsDelta > 0.01) {
+                    push(pad("  Labeled vs real fps gap:", `${(fpsDelta * 100).toFixed(2)}% — encoder is writing PTS at the wrong cadence`));
+                    push(pad("  Recommended Sit.fps:", `${realFps.toFixed(0)} (use real-time fps from KLV UTS)`));
+                }
+            }
             push(pad("Frame PTS source:", realPTS === true
                 ? "real PES PTS (TSParser pesEntries[]) — honors dropped frames"
                 : realPTS === false
@@ -643,6 +677,24 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         }
         push("");
 
+        // ── FIELD COVERAGE (per-tag presence over the stream) ─────────
+        // Diagnoses cases like "angles look correct but the platform
+        // marker stops moving 40% of the way through" — that pattern
+        // means the platform-position tags are populated only in part
+        // of the stream while the angle/corner-point tags are present
+        // throughout, so the position track ends at its last valid
+        // record while the angles continue. Per-tag presence stats
+        // make this immediately visible without browser debugging.
+        push("FIELD COVERAGE (key navigation tags)");
+        push(sectionBreak);
+        try {
+            const coverage = this._analyzeFieldCoverage(firstValid, lastValid);
+            for (const line of coverage) push(line);
+        } catch (e) {
+            push(`  (field coverage analysis failed: ${e.message})`);
+        }
+        push("");
+
         // ── EVENT CORRELATIONS WITH KLV GAPS ──────────────────────────
         push("EVENT CORRELATIONS WITH KLV GAPS");
         push(sectionBreak);
@@ -685,6 +737,33 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
                 push("    than relying on Sit.fps. (Sitrec does this automatically when");
                 push("    framePTSus is real.)");
             }
+            // Encoder PTS-cadence-mismatch driven Sit.fps recommendation.
+            // When the encoder is configured for one fps but the camera
+            // feeds it a different rate (without resampling), PES PTS
+            // values are written at the configured cadence while frames
+            // arrive at the camera's real cadence. Since clock drift
+            // cannot exceed ~100 ppm on real hardware, any >1% gap
+            // between labeled and real fps must be a PTS-cadence
+            // misconfiguration. The KLV UTS span is the trustworthy
+            // real-time reference (filled from a real-time RTC, no
+            // per-frame increment to misconfigure). Sit.fps must equal
+            // real fps for the platform track to span the full timeline.
+            if (videoSpanS !== null && klvSpanS > 0 && videoFrameCount > 0 && klvCv < 0.5) {
+                const realFps = videoFrameCount / klvSpanS;
+                const labeledFps = videoSpanS > 0 ? videoFrameCount / videoSpanS : null;
+                const gap = labeledFps ? Math.abs(realFps - labeledFps) / Math.max(realFps, 1e-6) : 0;
+                const sitFpsDelta = Math.abs(realFps - Sit.fps) / Math.max(realFps, 1e-6);
+                if (gap > 0.01 && sitFpsDelta > 0.01) {
+                    push(`  • Encoder PTS-cadence mismatch detected (${(gap * 100).toFixed(1)}% gap). PES-labeled fps is ${labeledFps.toFixed(2)},`);
+                    push(`    real-time fps from KLV UTS is ${realFps.toFixed(2)}, current Sit.fps is ${Sit.fps.toFixed(2)}.`);
+                    push(`    The encoder is writing PTS values at ${labeledFps.toFixed(0)} fps cadence while frames arrive at`);
+                    push(`    ${realFps.toFixed(0)} fps (a known ffmpeg ’-r N without fps filter’ footgun, or a similar`);
+                    push(`    misconfiguration). The PCR oscillator itself is fine; only the per-frame PTS`);
+                    push(`    increment is wrong. Set Sit.fps to ${Math.round(realFps)} so the platform track aligns to`);
+                    push(`    real-time playback. Without this, the platform marker reaches end-of-track at`);
+                    push(`    Sitrec frame ${Math.round(Sit.fps * klvSpanS)} of ${videoFrameCount} instead of ${Math.round(realFps * klvSpanS)}.`);
+                }
+            }
         }
 
         return lines.join("\n");
@@ -696,6 +775,403 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
     // with whatever is causing the gap. Useful for diagnosing sensor-mode
     // events (laser rangefinder firing, designator activation, target lock
     // changes) that produce telemetry hiccups.
+    // Per-tag presence histogram for the navigation-relevant subset of
+    // MISB fields. For each tag we report: count of populated records,
+    // coverage % of the stream, the first and last record where the tag
+    // is populated, and a coverage *shape* classification:
+    //   FULL         — populated in ≥99% of records (incl. trailing/leading gaps ≤1%)
+    //   EARLY-ONLY   — present from start, drops out, never resumes (last < 95% of stream)
+    //   LATE-ONLY    — starts late, present through end (first > 5% of stream)
+    //   GAP-MIDDLE   — present at both ends but missing some middle range
+    //   SPARSE       — populated in <50% of records, scattered
+    //   ABSENT       — never populated
+    // The "EARLY-ONLY" classification specifically catches the
+    // "platform marker stops moving partway through" symptom: tags
+    // 13/14/15 (Sensor Lat/Lon/Alt) populated only for part of the
+    // stream while corner-point and angle tags are populated
+    // throughout. Knowing the cutoff record index/time tells you
+    // exactly where the platform GPS data ran out.
+    _analyzeFieldCoverage(firstValid, lastValid) {
+        const lines = [];
+        if (!this.misb || this.misb.length === 0) {
+            lines.push("  No MISB data.");
+            return lines;
+        }
+
+        // Curated set of tags whose presence/absence directly affects
+        // visible track rendering. Group labels mirror the user's
+        // mental model (platform vs sensor pointing vs corners).
+        const groups = [
+            ["Platform position",  [13, 14, 15]],          // Sensor Lat/Lon/Alt
+            ["Platform attitude",  [5, 6, 7]],             // Heading/Pitch/Roll
+            ["Sensor pointing",    [16, 17, 18, 19, 20]],  // HFOV/VFOV/Az/El/Roll
+            ["Frame center",       [23, 24, 25]],          // FC Lat/Lon/Elev
+            ["Corner points (Full)", [82, 83, 84, 85, 86, 87, 88, 89]],
+            ["Corner offsets",     [26, 27, 28, 29, 30, 31, 32, 33]],
+            ["Slant/Target",       [21, 22, 40, 41, 42]],
+        ];
+
+        const indexToName = {};
+        for (const k in MISB) {
+            // Prefer the first name we see for each numeric tag; the
+            // MISB constants have a couple of aliases (TrackID==59 vs
+            // PlatformCallSign), and we want the canonical one.
+            if (indexToName[MISB[k]] === undefined) indexToName[MISB[k]] = k;
+        }
+
+        const N = lastValid - firstValid + 1;
+
+        const isPopulated = (v) => v !== null && v !== undefined && v !== "";
+
+        const classify = (count, firstIdx, lastIdx) => {
+            if (count === 0) return "ABSENT";
+            const cov = count / N;
+            const firstFrac = (firstIdx - firstValid) / Math.max(1, N - 1);
+            const lastFrac = (lastIdx - firstValid) / Math.max(1, N - 1);
+            if (cov >= 0.99) return "FULL";
+            if (firstFrac <= 0.05 && lastFrac < 0.95) return "EARLY-ONLY";
+            if (firstFrac > 0.05 && lastFrac >= 0.95) return "LATE-ONLY";
+            if (cov >= 0.5 && firstFrac <= 0.05 && lastFrac >= 0.95) return "GAP-MIDDLE";
+            if (cov < 0.5) return "SPARSE";
+            return "PARTIAL";
+        };
+
+        // Time-of-record helper: PES PTS first if available, else
+        // UnixTimeStamp delta from firstValid. We want the user-facing
+        // time not raw record index.
+        const hasPES = this.hasRecordPTS();
+        const pesArr = this.misb && this.misb.pesPTSus;
+        const timeOfIdx = (i) => {
+            if (hasPES && Array.isArray(pesArr) && pesArr[i] != null && pesArr[firstValid] != null) {
+                return (pesArr[i] - pesArr[firstValid]) / 1e6;
+            }
+            return (this.getTime(i) - this.getTime(firstValid)) / 1000;
+        };
+
+        lines.push(`  Analyzed window: records ${firstValid}–${lastValid} (${N} records)`);
+        lines.push(`  Time anchor: ${hasPES ? "PES PTS" : "UnixTimeStamp"}`);
+        lines.push("");
+        lines.push("    tag  name                              count    cov%  first→last (s)         shape");
+        lines.push("    ───  ────────────────────────────────  ───────  ────  ─────────────────────  ───────────");
+
+        const flagged = [];
+        for (const [groupLabel, tags] of groups) {
+            lines.push(`  [${groupLabel}]`);
+            for (const tag of tags) {
+                let count = 0;
+                let firstIdx = -1;
+                let lastIdx = -1;
+                for (let i = firstValid; i <= lastValid; i++) {
+                    const row = this.misb[i];
+                    if (!row) continue;
+                    if (isPopulated(row[tag])) {
+                        count++;
+                        if (firstIdx < 0) firstIdx = i;
+                        lastIdx = i;
+                    }
+                }
+                const cov = count / N;
+                const shape = classify(count, firstIdx, lastIdx);
+                const name = (indexToName[tag] || `Tag${tag}`).slice(0, 32);
+                if (count === 0) {
+                    lines.push(`    ${String(tag).padStart(3)}  ${name.padEnd(32)}  ${String(count).padStart(7)}  ${"  -".padStart(4)}  ${"-".padStart(21)}  ${shape}`);
+                } else {
+                    const tFirst = timeOfIdx(firstIdx);
+                    const tLast = timeOfIdx(lastIdx);
+                    const range = `${tFirst.toFixed(1).padStart(7)} → ${tLast.toFixed(1).padStart(7)}`;
+                    lines.push(`    ${String(tag).padStart(3)}  ${name.padEnd(32)}  ${String(count).padStart(7)}  ${(cov * 100).toFixed(1).padStart(4)}  ${range}  ${shape}`);
+                }
+                if (shape === "EARLY-ONLY" || shape === "LATE-ONLY" || shape === "GAP-MIDDLE" || (shape === "SPARSE" && count > 0)) {
+                    flagged.push({ tag, name, shape, count, cov, firstIdx, lastIdx, tFirst: timeOfIdx(firstIdx), tLast: timeOfIdx(lastIdx) });
+                }
+            }
+        }
+
+        if (flagged.length > 0) {
+            lines.push("");
+            lines.push("  Flagged coverage anomalies:");
+            for (const f of flagged) {
+                if (f.shape === "EARLY-ONLY") {
+                    lines.push(`  • ${f.name} (tag ${f.tag}): present only in first ${(f.cov * 100).toFixed(1)}% of stream — ends at record ${f.lastIdx} (t=${f.tLast.toFixed(1)}s).`);
+                    lines.push("    The track using this tag will stop updating at that point while");
+                    lines.push("    other tracks (using continuously-populated tags) keep moving.");
+                } else if (f.shape === "LATE-ONLY") {
+                    lines.push(`  • ${f.name} (tag ${f.tag}): doesn't start until record ${f.firstIdx} (t=${f.tFirst.toFixed(1)}s).`);
+                } else if (f.shape === "GAP-MIDDLE") {
+                    lines.push(`  • ${f.name} (tag ${f.tag}): missing in middle of stream — coverage ${(f.cov * 100).toFixed(1)}%.`);
+                } else if (f.shape === "SPARSE") {
+                    lines.push(`  • ${f.name} (tag ${f.tag}): sparse — only ${f.count} records (${(f.cov * 100).toFixed(1)}%).`);
+                }
+            }
+        }
+
+        // ── Stuck-value detection ──────────────────────────────────────
+        // Distinct from coverage: a tag can be 100% populated yet still
+        // be useless if its value freezes at a constant for a long run.
+        // The classic GPS-loss pattern is "encoder keeps emitting but
+        // pads with the last valid lat/lon" — coverage stays FULL, the
+        // track marker visibly stops moving, and Sitrec interpolates
+        // nothing because consecutive records carry the same value.
+        // We scan the platform-position triple (13/14/15) and frame-
+        // center triple (23/24/25) for runs where ALL three components
+        // hold within a tight epsilon for many consecutive records.
+        const stuckGroups = [
+            ["Platform position", [13, 14, 15], [1e-7, 1e-7, 0.5]],   // ~1 cm lat/lon, 50 cm alt
+            ["Frame center",      [23, 24, 25], [1e-7, 1e-7, 0.5]],
+        ];
+
+        const stuckRuns = [];
+        // A run is "interesting" if it lasts at least 1 second OR
+        // 1% of the stream (whichever is larger). Below that we'd be
+        // surfacing every momentary stationary hover.
+        const minRunRecords = Math.max(30, Math.floor(N * 0.01));
+
+        for (const [groupLabel, tags, eps] of stuckGroups) {
+            let runStart = -1;
+            let runLen = 0;
+            const finalize = (endIdx) => {
+                if (runStart >= 0 && runLen >= minRunRecords) {
+                    const refRow = this.misb[runStart];
+                    const v = tags.map(t => refRow ? refRow[t] : null);
+                    stuckRuns.push({
+                        groupLabel,
+                        tags,
+                        startIdx: runStart,
+                        endIdx,
+                        len: runLen,
+                        tStart: timeOfIdx(runStart),
+                        tEnd: timeOfIdx(endIdx),
+                        values: v,
+                    });
+                }
+                runStart = -1;
+                runLen = 0;
+            };
+            for (let i = firstValid + 1; i <= lastValid; i++) {
+                const cur = this.misb[i];
+                const prev = this.misb[i - 1];
+                if (!cur || !prev) { finalize(i - 1); continue; }
+                let stuck = true;
+                for (let k = 0; k < tags.length; k++) {
+                    const a = prev[tags[k]];
+                    const b = cur[tags[k]];
+                    if (a == null || b == null) { stuck = false; break; }
+                    if (Math.abs(Number(b) - Number(a)) > eps[k]) { stuck = false; break; }
+                }
+                if (stuck) {
+                    if (runStart < 0) {
+                        runStart = i - 1;
+                        runLen = 2;
+                    } else {
+                        runLen++;
+                    }
+                } else {
+                    finalize(i - 1);
+                }
+            }
+            finalize(lastValid);
+        }
+
+        if (stuckRuns.length > 0) {
+            lines.push("");
+            lines.push("  Stuck-value runs (coverage is FULL but the value is frozen):");
+            for (const r of stuckRuns) {
+                const dur = r.tEnd - r.tStart;
+                const lat = r.values[0]; const lon = r.values[1]; const alt = r.values[2];
+                const valStr = (lat != null && lon != null)
+                    ? `(${Number(lat).toFixed(6)}, ${Number(lon).toFixed(6)}${alt != null ? ", " + Number(alt).toFixed(1) + "m" : ""})`
+                    : "(values null)";
+                lines.push(`  • ${r.groupLabel}: frozen for ${r.len} records (${dur.toFixed(1)}s) starting at record ${r.startIdx} (t=${r.tStart.toFixed(1)}s).`);
+                lines.push(`      Stuck at ${valStr} until record ${r.endIdx} (t=${r.tEnd.toFixed(1)}s).`);
+            }
+            lines.push("");
+            lines.push("  Frozen runs typically mean the encoder lost its GPS / nav source");
+            lines.push("  and is padding records with the last-known value to keep the");
+            lines.push("  KLV stream's structural cadence intact. The track will visibly");
+            lines.push("  stop moving even though records keep arriving and the angle");
+            lines.push("  tags (which come from a different sensor — usually the IMU)");
+            lines.push("  continue updating normally.");
+        } else {
+            // Only mention the absence if we actually had populated data
+            // to look at — silent pass otherwise.
+            const anyChecked = stuckGroups.some(([_, tags]) =>
+                this.misb[firstValid] && tags.every(t => this.misb[firstValid][t] != null));
+            if (anyChecked) {
+                lines.push("");
+                lines.push("  ✓ No stuck-value runs detected in platform position or frame center.");
+            }
+        }
+
+        // ── Stationary-period detection (motion-based, not value-based) ─
+        // Looser cousin of the bit-frozen detector above. Catches the
+        // case where the platform value isn't bit-identical between
+        // records (e.g. GPS-noise dithering, last-fix-with-low-bit
+        // jitter, encoder applying a microscopic velocity model to a
+        // dead source) but the platform clearly isn't moving — total
+        // displacement over many seconds stays inside a tight envelope.
+        //
+        // A real flying platform that's holding a tight orbit will move
+        // tens to hundreds of meters per second; a platform that's
+        // genuinely stopped reads inside the GPS noise floor (~5–15 m
+        // horizontal, larger vertical). 25 m radius over a 5-second
+        // window distinguishes the two cleanly while leaving GPS
+        // jitter alone.
+        const haversineM = (lat1, lon1, lat2, lon2) => {
+            const R = 6371000;
+            const toRad = Math.PI / 180;
+            const dLat = (lat2 - lat1) * toRad;
+            const dLon = (lon2 - lon1) * toRad;
+            const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
+            return 2 * R * Math.asin(Math.sqrt(a));
+        };
+
+        const stationaryThresholdM = 25;
+        const minStationarySeconds = 5;
+
+        // Walk forward; for each starting record where the platform
+        // position is populated, find the longest run from that point
+        // where every subsequent record's position is within
+        // stationaryThresholdM of the run's anchor. Then jump past it.
+        const stationaryRuns = [];
+        {
+            let i = firstValid;
+            while (i <= lastValid) {
+                const anchor = this.misb[i];
+                if (!anchor || anchor[13] == null || anchor[14] == null) { i++; continue; }
+                const aLat = Number(anchor[13]);
+                const aLon = Number(anchor[14]);
+                let j = i + 1;
+                let maxDist = 0;
+                while (j <= lastValid) {
+                    const r = this.misb[j];
+                    if (!r || r[13] == null || r[14] == null) break;
+                    const d = haversineM(aLat, aLon, Number(r[13]), Number(r[14]));
+                    if (d > stationaryThresholdM) break;
+                    if (d > maxDist) maxDist = d;
+                    j++;
+                }
+                const tStart = timeOfIdx(i);
+                const tEnd = timeOfIdx(j - 1);
+                const dur = tEnd - tStart;
+                if (dur >= minStationarySeconds && (j - i) >= 30) {
+                    stationaryRuns.push({
+                        startIdx: i,
+                        endIdx: j - 1,
+                        len: j - i,
+                        tStart, tEnd, dur,
+                        anchorLat: aLat,
+                        anchorLon: aLon,
+                        maxDist,
+                    });
+                    // Jump forward past this run so a 30-min stationary
+                    // hold doesn't generate hundreds of overlapping
+                    // sub-runs as the anchor advances by 1.
+                    i = j;
+                } else {
+                    i++;
+                }
+            }
+        }
+
+        if (stationaryRuns.length > 0) {
+            lines.push("");
+            lines.push("  Stationary periods (platform stays within 25 m over multi-second window):");
+            for (const r of stationaryRuns) {
+                lines.push(`  • Stopped for ${r.dur.toFixed(1)}s (${r.len} records) starting at record ${r.startIdx} (t=${r.tStart.toFixed(1)}s).`);
+                lines.push(`      Anchor: (${r.anchorLat.toFixed(6)}, ${r.anchorLon.toFixed(6)}). Max wander in window: ${r.maxDist.toFixed(1)} m.`);
+                lines.push(`      Resumes / ends at record ${r.endIdx} (t=${r.tEnd.toFixed(1)}s).`);
+            }
+            lines.push("");
+            lines.push("  A flying platform that goes stationary for several seconds is");
+            lines.push("  unusual unless landed or in a tight hover. Combined with full");
+            lines.push("  tag coverage and no bit-frozen run, this typically means the");
+            lines.push("  encoder is applying micro-jitter to a dead GPS feed — the");
+            lines.push("  values change every record but the platform isn't actually");
+            lines.push("  moving in the world. The reported position usually fixates");
+            lines.push("  near the platform's last known fix or a configured home base.");
+        }
+
+        // ── Sample values (quartile snapshots for OSD comparison) ──────
+        // When the user reports "the rendered position doesn't match the
+        // OSD", neither coverage nor stuck-value detection helps — both
+        // can pass while the values themselves are wrong. Print actual
+        // platform & frame-center coordinates at five time points so the
+        // user can pause the video at those PES PTS times, read the OSD,
+        // and compare directly. Also surface per-tag velocity statistics
+        // (real-velocity, computed against the inferred GPS update rate)
+        // and the bounding box of all populated platform positions so an
+        // implausible spread (e.g. half the world) is obvious at a glance.
+        const SAMPLE_FRACTIONS = [0.0, 0.25, 0.5, 0.75, 1.0];
+        const samplePoints = SAMPLE_FRACTIONS.map(f =>
+            Math.min(lastValid, firstValid + Math.floor(f * (lastValid - firstValid))));
+
+        lines.push("");
+        lines.push("  Sample values at quartile points (compare these to the OSD):");
+        lines.push("    t (s)    record   plat lat       plat lon       plat alt (m)   center lat    center lon");
+        for (let k = 0; k < samplePoints.length; k++) {
+            const idx = samplePoints[k];
+            const row = this.misb[idx];
+            if (!row) continue;
+            const t = timeOfIdx(idx);
+            const fmt = (v, w = 12, prec = 6) => v == null
+                ? "-".padStart(w)
+                : Number(v).toFixed(prec).padStart(w);
+            lines.push(`    ${t.toFixed(1).padStart(5)}    ${String(idx).padStart(6)}   ${fmt(row[13])}   ${fmt(row[14])}   ${fmt(row[15], 12, 1)}   ${fmt(row[23])}  ${fmt(row[24])}`);
+        }
+
+        // Bounding-box check: if the platform's reported lat or lon
+        // spans more than 5° (~550 km), or wraps around 0/180, it's
+        // either a multi-leg flight (rare for a single video) or
+        // there's a sign/offset bug in one of the values.
+        let minLat = Infinity, maxLat = -Infinity;
+        let minLon = Infinity, maxLon = -Infinity;
+        let minAlt = Infinity, maxAlt = -Infinity;
+        let popCount = 0;
+        for (let i = firstValid; i <= lastValid; i++) {
+            const row = this.misb[i];
+            if (!row) continue;
+            const lat = Number(row[13]);
+            const lon = Number(row[14]);
+            const alt = Number(row[15]);
+            if (isFinite(lat) && isFinite(lon)) {
+                if (lat < minLat) minLat = lat;
+                if (lat > maxLat) maxLat = lat;
+                if (lon < minLon) minLon = lon;
+                if (lon > maxLon) maxLon = lon;
+                if (isFinite(alt)) {
+                    if (alt < minAlt) minAlt = alt;
+                    if (alt > maxAlt) maxAlt = alt;
+                }
+                popCount++;
+            }
+        }
+        if (popCount > 0) {
+            lines.push("");
+            const latSpan = maxLat - minLat;
+            const lonSpan = maxLon - minLon;
+            const altSpan = (isFinite(minAlt) && isFinite(maxAlt)) ? (maxAlt - minAlt) : null;
+            lines.push(`  Platform position bounding box (over ${popCount} records):`);
+            lines.push(`    latitude  ${minLat.toFixed(6)} → ${maxLat.toFixed(6)}  (span ${latSpan.toFixed(6)}° ≈ ${(latSpan * 111000).toFixed(0)} m)`);
+            lines.push(`    longitude ${minLon.toFixed(6)} → ${maxLon.toFixed(6)}  (span ${lonSpan.toFixed(6)}° ≈ ${(lonSpan * 111000 * Math.cos((minLat + maxLat) / 2 * Math.PI / 180)).toFixed(0)} m)`);
+            if (altSpan !== null) {
+                lines.push(`    altitude  ${minAlt.toFixed(1)} → ${maxAlt.toFixed(1)} m  (span ${altSpan.toFixed(1)} m)`);
+            }
+            if (latSpan > 5 || lonSpan > 5) {
+                lines.push("    ⚠ Bounding box >5° — suspect a sign/offset bug in one of");
+                lines.push("      the lat or lon values, or a stream that splices multiple");
+                lines.push("      flights together.");
+            }
+            if (Math.abs(minLat) < 0.01 && Math.abs(maxLat) < 0.01 && Math.abs(minLon) < 0.01 && Math.abs(maxLon) < 0.01) {
+                lines.push("    ⚠ All positions cluster near (0,0) — the platform is");
+                lines.push("      either being parsed with the wrong scaling factor or");
+                lines.push("      the source is filling the tags with zero/null.");
+            }
+        }
+
+        return lines;
+    }
+
     _analyzeGapCorrelations(gaps) {
         const lines = [];
         if (!gaps || gaps.length === 0) {
@@ -980,13 +1456,59 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         lines.push(`  Max velocity:       ${maxV.toFixed(2)} m/s`);
         lines.push("");
 
-        // Flag samples that are >5× median AND > 50 m/s in absolute terms.
-        // This catches teleports / bad timestamps without flagging benign
-        // small absolute jumps from stationary platforms.
-        const threshold = Math.max(median * 5, 50);
+        // Detect the "slow GPS source padded to fast KLV cadence"
+        // pattern. Signature: a high fraction of inter-record steps
+        // have ~0 displacement (held value) interleaved with periodic
+        // "jump" steps where the encoder ingested a fresh fix. This
+        // produces alarming-looking per-record velocities (each jump
+        // covers the full inter-update distance in one KLV interval)
+        // even though the platform's *true* velocity is moderate.
+        // Without this section, the suspicious-velocity table flags
+        // hundreds of normal-aircraft samples as "teleports".
+        const zeroDistSamples = samples.filter(s => s.distM < 0.5);  // <0.5 m = quantization noise
+        const zeroDistFrac = zeroDistSamples.length / samples.length;
+        if (zeroDistFrac > 0.4) {
+            // Estimate the real GPS update period: groups of held
+            // records separated by jumps. Walk through samples and
+            // measure intervals between non-zero-displacement steps.
+            const jumpIntervals = [];
+            let lastJumpI = null;
+            for (const s of samples) {
+                if (s.distM >= 0.5) {
+                    if (lastJumpI !== null) jumpIntervals.push(s.i - lastJumpI);
+                    lastJumpI = s.i;
+                }
+            }
+            if (jumpIntervals.length >= 5) {
+                const sortedJ = [...jumpIntervals].sort((a, b) => a - b);
+                const medJump = sortedJ[Math.floor(sortedJ.length / 2)];
+                const jumpDists = samples.filter(s => s.distM >= 0.5).map(s => s.distM);
+                const sortedD = [...jumpDists].sort((a, b) => a - b);
+                const medJumpDist = sortedD[Math.floor(sortedD.length / 2)];
+                // Real GPS rate = KLV rate / records-per-jump
+                const klvHz = klvMeanIntervalMs > 0 ? 1000 / klvMeanIntervalMs : null;
+                const gpsHz = klvHz ? klvHz / medJump : null;
+                const realVel = (medJumpDist / medJump) / (klvMeanIntervalMs / 1000);
+                lines.push(`  ▣ Slow-GPS-padded-to-fast-KLV pattern detected:`);
+                lines.push(`      ${(zeroDistFrac * 100).toFixed(1)}% of inter-record steps have ~0 m displacement.`);
+                lines.push(`      Median jump every ${medJump} records → ~${gpsHz ? gpsHz.toFixed(1) : "?"} Hz GPS source padded to ~${klvHz ? klvHz.toFixed(1) : "?"} Hz KLV cadence.`);
+                lines.push(`      Median jump distance: ${medJumpDist.toFixed(1)} m → real platform velocity ≈ ${realVel.toFixed(1)} m/s.`);
+                lines.push(`      The per-record velocities below are inflated by ${medJump}×; the underlying motion is normal.`);
+                lines.push("");
+            }
+        }
+
+        // Flag samples that are >5× median AND > 500 m/s in absolute terms.
+        // 500 m/s ≈ Mach 1.5 — well above any normal flying platform
+        // (commercial aircraft cruise ~250 m/s, fighters in afterburner
+        // ~600 m/s). The earlier 50 m/s threshold was too aggressive:
+        // it flagged routine aircraft motion as suspicious. Real bad-
+        // timestamp / teleport glitches are typically hundreds to
+        // thousands of m/s and stand out clearly above 500.
+        const threshold = Math.max(median * 5, 500);
         const suspicious = samples.filter(s => s.vMps > threshold);
         if (suspicious.length === 0) {
-            lines.push("  ✓ No suspicious velocity spikes (no records with v > 5× median AND > 50 m/s).");
+            lines.push("  ✓ No suspicious velocity spikes (no records with v > 5× median AND > 500 m/s).");
         } else {
             lines.push(`  ⚠ ${suspicious.length} suspicious velocity samples (v > ${threshold.toFixed(0)} m/s):`);
             lines.push("");

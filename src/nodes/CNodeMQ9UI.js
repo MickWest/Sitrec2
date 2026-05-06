@@ -30,7 +30,11 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         this.gridRows = 30;
         this.gridTexts = [];
 
-        // Display mode indices for cycling (0 = MGRS, 1 = Lat/Long decimal, 2 = Lat/Long DMS)
+        // Display mode indices for cycling
+        // 0 = MGRS
+        // 1 = Lat/Long decimal degrees
+        // 2 = Lat/Long DMS (DD°MM'SS.S")
+        // 3 = Lat/Long DM (DD°MM.MMM') — degrees & decimal minutes
         this.acftPosMode = v.acftPosMode ?? 0;
         this.targetPosMode = v.targetPosMode ?? 0;
         // Altitude mode (0 = MSL, 1 = HAT)
@@ -196,11 +200,11 @@ export class   CNodeMQ9UI extends CNodeViewUI {
     cycleDisplayMode(group) {
         switch (group) {
             case 'acftPos':
-                // Cycle: 0=MGRS, 1=Decimal, 2=DMS
-                this.acftPosMode = (this.acftPosMode + 1) % 3;
+                // Cycle: 0=MGRS, 1=Decimal, 2=DMS, 3=DM
+                this.acftPosMode = (this.acftPosMode + 1) % 4;
                 break;
             case 'targetPos':
-                this.targetPosMode = (this.targetPosMode + 1) % 3;
+                this.targetPosMode = (this.targetPosMode + 1) % 4;
                 break;
             case 'acftAlt':
                 // Cycle: 0=MSL, 1=HAT
@@ -244,6 +248,27 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         const min = Math.floor(minFloat);
         const sec = (minFloat - min) * 60;
         return `${deg}°${min.toString().padStart(2, '0')}'${sec.toFixed(1).padStart(4, '0')}"${dir}`;
+    }
+
+    // Format latitude in DM (degrees + decimal minutes): DD°MM.MMM'N/S
+    // 3 decimal places of minutes ≈ 0.1 m precision — matches DMS
+    // (0.1″ ≈ 0.001′). Common in nav (NMEA, marine GPS, ICAO flight
+    // plans). Width ≈ same as DMS so it fits the same grid columns.
+    formatLatDM(lat) {
+        const dir = lat >= 0 ? 'N' : 'S';
+        lat = Math.abs(lat);
+        const deg = Math.floor(lat);
+        const minFloat = (lat - deg) * 60;
+        return `${deg.toString().padStart(2, '0')}°${minFloat.toFixed(3).padStart(6, '0')}'${dir}`;
+    }
+
+    // Format longitude in DM: DD°MM.MMM'E/W (no leading zero on degrees)
+    formatLonDM(lon) {
+        const dir = lon >= 0 ? 'E' : 'W';
+        lon = Math.abs(lon);
+        const deg = Math.floor(lon);
+        const minFloat = (lon - deg) * 60;
+        return `${deg}°${minFloat.toFixed(3).padStart(6, '0')}'${dir}`;
     }
 
     // Format distance based on mode (0=M, 1=KM, 2=NM)
@@ -315,10 +340,14 @@ export class   CNodeMQ9UI extends CNodeViewUI {
             // Decimal degrees: lat on line 1, lon on line 2
             this.acftZone.text = `${lla.x.toFixed(5)}`;
             this.acftEasting.text = `${lla.y.toFixed(5)}`;
-        } else {
+        } else if (this.acftPosMode === 2) {
             // DMS format: DD°MM'SS.S"N/S for lat, DDD°MM'SS.S"E/W for lon
             this.acftZone.text = this.formatLatDMS(lla.x);
             this.acftEasting.text = this.formatLonDMS(lla.y);
+        } else {
+            // DM format: DD°MM.MMM'N/S for lat, DDD°MM.MMM'E/W for lon
+            this.acftZone.text = this.formatLatDM(lla.x);
+            this.acftEasting.text = this.formatLonDM(lla.y);
         }
 
         // Format ACFT altitude based on display mode
@@ -385,10 +414,14 @@ export class   CNodeMQ9UI extends CNodeViewUI {
                 // Decimal degrees
                 this.targetZone.text = `${targetLLA.x.toFixed(5)}`;
                 this.targetEasting.text = `${targetLLA.y.toFixed(5)}`;
-            } else {
+            } else if (this.targetPosMode === 2) {
                 // DMS format
                 this.targetZone.text = this.formatLatDMS(targetLLA.x);
                 this.targetEasting.text = this.formatLonDMS(targetLLA.y);
+            } else {
+                // DM format (degrees + decimal minutes)
+                this.targetZone.text = this.formatLatDM(targetLLA.x);
+                this.targetEasting.text = this.formatLonDM(targetLLA.y);
             }
 
             // Bearing from camera to target
