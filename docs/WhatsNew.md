@@ -45,6 +45,14 @@ Example entry format:
 
 ---
 
+## Version 2.49.2 (2026-05-05)
+
+### Bug Fixes
+- Fixed camera look-direction drift on TS-sourced sitches with two derived tracks (platform + Center) when the encoder's KLV `UnixTimeStamp` clock is severely skewed against PCR. The Center track now carries the source MISB's PCR-anchored per-record timing (`pesPTSus[]`) the same way the platform track does, so both tracks use synchronous-mode (PES PTS) sync instead of the Center silently falling back to the broken `UnixTimeStamp` clock. Symptom on the file that motivated this fix: 333 s recording, platform position correct end-to-end, gimbal aim up to 33 s out of phase by end-of-run. Now both stay locked to video.
+
+### Documentation
+- `docs/dev/misb-timing.md`: expanded §1 into a four-layer "chain of clocks" diagram (PCR → PCR-relative microseconds → Sitrec timeline → wall-clock label) with new subsections for `Sit.fps`-driven timeline (§1e) and `Sit.startTime` (§1f). Added §5g pitfall documenting the derived-track `pesPTSus` forwarding contract any future `toMISB(N)` paths must honor. Renumbered the multi-PID KLV section to §5h.
+
 ## Version 2.49.1 (2026-05-05)
 
 ### Bug Fixes

@@ -128,6 +128,14 @@ export class CTrackFileMISB extends CTrackFile {
 
         if (trackIndex === 1 && this._hasCenter()) {
             const centerMisb = [];
+            // Forward the source MISB's pesPTSus (PCR-anchored per-record
+            // timing) into the derived Center track, applying the same
+            // index filter we apply to the rows. Without this, hasRecordPTS()
+            // returns false on the Center node and sync falls back to
+            // UnixTimeStamp — which can drift severely from PES PTS on
+            // mis-encoded files.
+            const sourcePES = Array.isArray(this.data.pesPTSus) ? this.data.pesPTSus : null;
+            const centerPES = sourcePES ? [] : null;
             for (let i = 0; i < this.data.length; i++) {
                 const row = this.data[i];
                 const centerLat = row[MISB.FrameCenterLatitude];
@@ -143,11 +151,13 @@ export class CTrackFileMISB extends CTrackFile {
                 newRow[MISB.SensorLongitude] = centerLon;
                 newRow[MISB.SensorTrueAltitude] = centerElev ?? 0;
                 centerMisb.push(newRow);
+                if (centerPES) centerPES.push(sourcePES[i]);
             }
             if (centerMisb.length === 0) {
                 console.warn("CTrackFileMISB.toMISB: No valid center track points");
                 return false;
             }
+            if (centerPES) centerMisb.pesPTSus = centerPES;
             return centerMisb;
         }
 

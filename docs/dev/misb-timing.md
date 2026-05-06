@@ -182,23 +182,73 @@ debugging a sync issue in a TS-sourced sitch.
 
 ## 1. The clocks involved
 
-A MISB MPEG-TS stream has **three** distinct time references. Conflating them
-is the source of essentially every sync bug we've seen.
+Sitrec touches **a chain of clocks**, four conceptual layers from the stream
+on disk up to what physics evaluates against. The point of the chain is that
+each layer derives from the one above by a well-defined construction;
+conflating layers — or letting a layer get its alignment from the wrong
+parent — is the source of essentially every sync bug we've seen.
 
 ```
-   ┌──────────────────────────────────────────────────────────┐
-   │  MPEG-TS multiplex                                       │
-   │                                                          │
-   │   ┌──────────┐   ┌────────────┐   ┌──────────────────┐   │
-   │   │   PCR    │←──┤ Video PES  │   │  KLV PES         │   │
-   │   │ (90 kHz) │   │  PTS       │   │  PES PTS         │   │
-   │   │          │←──┴────────────┘   └──────────────────┘   │
-   │   │          │←─────── KLV record  ┌──────────────────┐  │
-   │   │          │         payload     │  KLV Tag 2:      │  │
-   │   │          │         contains──→ │  UnixTimeStamp   │  │
-   │   └──────────┘                     └──────────────────┘  │
-   └──────────────────────────────────────────────────────────┘
+   ┌─────────────────────────────────────────────────────────────────────┐
+   │  Layer 0: MPEG-TS stream-level (per file, baked at encode time)     │
+   │                                                                     │
+   │   ┌──────────┐   ┌────────────┐   ┌──────────────────┐              │
+   │   │   PCR    │←──┤ Video PES  │   │  KLV PES         │              │
+   │   │ (90 kHz) │   │  PTS       │   │  PES PTS         │              │
+   │   │          │←──┴────────────┘   └──────────────────┘              │
+   │   │          │←─────── KLV record  ┌──────────────────┐             │
+   │   │          │         payload     │  KLV Tag 2:      │             │
+   │   │          │         contains──→ │  UnixTimeStamp   │             │
+   │   └──────────┘                     └──────────────────┘             │
+   └─────────────────────────────────────────────────────────────────────┘
+                                  ↓ TSParser captures pesEntries[]
+                                  ↓ parseKLVFile shifts by -videoFirstPESus
+   ┌─────────────────────────────────────────────────────────────────────┐
+   │  Layer 1: PCR-relative microseconds (per substream, normalized)     │
+   │                                                                     │
+   │   videoData.framePTSus[i]    ←   first video frame at t=0           │
+   │   misb.pesPTSus[j]           ←   same axis (negative values OK if   │
+   │                                  KLV started before video)         │
+   │                                                                     │
+   │   Both arrays land on a SHARED axis: "PCR-µs since first video      │
+   │   frame." This is the only layer where cross-stream sync is exact.  │
+   └─────────────────────────────────────────────────────────────────────┘
+                                  ↓ Sit.fps re-samples PCR uniformly
+   ┌─────────────────────────────────────────────────────────────────────┐
+   │  Layer 2: Sitrec timeline (the "real time" physics evaluates at)    │
+   │                                                                     │
+   │   par.frame ∈ [0 … Sit.frames-1]   ←  the scrubber position         │
+   │   physics_seconds  =  par.frame / Sit.fps                           │
+   │                                                                     │
+   │   Each timeline tick asks every source: "what value applies at      │
+   │   PCR-µs = par.frame × 1e6/Sit.fps?" Video picks the closest        │
+   │   framePTSus[i]; KLV interpolates between bracketing pesPTSus[j].   │
+   │   They arrive coherent because both live on Layer 1.                │
+   └─────────────────────────────────────────────────────────────────────┘
+                                  ↓ Sit.startTime adds a UTC label
+   ┌─────────────────────────────────────────────────────────────────────┐
+   │  Layer 3: Wall-clock display (decorative — does NOT drive sync)     │
+   │                                                                     │
+   │   displayed_UTC  =  Sit.startTime + par.frame / Sit.fps             │
+   │                                                                     │
+   │   Used for: scrubber date label, sun position in night-sky scene,   │
+   │   ADS-B / TLE / ephemeris correlation — places where the *real*     │
+   │   physical world enters. NOT used for KLV-to-video pairing.         │
+   └─────────────────────────────────────────────────────────────────────┘
 ```
+
+The TL;DR: **the PCR clock is the master.** Layer 1 is just PCR with a
+chosen origin and unit. Layer 2 is a uniform sampling of Layer 1. Layer 3
+is a UTC label glued onto Layer 2; it answers "what was the wall-clock at
+this point in the recording?" but doesn't define when video and KLV align —
+that's settled at Layer 1 by construction (MISB ST 0604 guarantees the
+encoder stamped both PES streams from the same PCR).
+
+`UnixTimeStamp` (KLV Tag 2) is *also* a wall-clock claim, but it lives
+inside the record payload rather than on any of these layers. Treat it as
+metadata-the-encoder-thought-was-true, not as a sync anchor — it's used
+only when Layer 1 timing is unavailable (asynchronous-mode KLV, MP4
+sources, flat-file `.klv`).
 
 ### 1a. PCR (Program Clock Reference)
 - 90 kHz tick counter embedded in TS adaptation fields.
@@ -231,6 +281,49 @@ is the source of essentially every sync bug we've seen.
 - **Honest only when the camera's clock is GPS-disciplined and uninterrupted.**
   Free-running RTCs drift; sensor-blanking events can introduce gaps where
   the timestamp on either side doesn't reflect uniformly elapsed wall-clock.
+- We have seen real files where UnixTimeStamp runs at clock skews up to
+  -100,000 ppm (-9.9%, i.e., the Tag 2 clock advances 90 s for every 100 s
+  of PCR). At that magnitude it's not RTC drift, it's the encoder writing
+  Tag 2 from the wrong source (a counter scaled by a wrong rational, a
+  different oscillator entirely, etc.). PCR-anchored Tier-1 pairing is
+  unaffected; UnixTimeStamp-only pairing on such files is impossible.
+
+### 1e. Sitrec timeline clock (Layer 2 in the chain)
+- Not a stream-level construct — Sitrec's own *internal* clock, expressed
+  in `par.frame` (an integer) at rate `Sit.fps` (typically 12, 24, 30, or
+  60 fps depending on the sitch).
+- Defines the rate at which physics, animations, the node graph, and the
+  scrubber UI advance.
+- Aligned to PCR at construction time: timeline frame `N` ↔ PCR-µs
+  `N × 1e6 / Sit.fps` (with the origin pinned to first video frame).
+- All time-indexed lookups (video frame selection, KLV interpolation) are
+  driven from this layer. The downsample from source rates (e.g., 27.003
+  fps video, variable-rate KLV) to `Sit.fps` is done at lookup time, not
+  at decode time — the source arrays keep their full resolution, the
+  timeline just samples them uniformly.
+- Independent of Sit.fps choice: increasing Sit.fps makes the timeline
+  finer (more lookups per PCR second, smoother interpolation) but doesn't
+  change *what time* any given timeline frame represents. PCR alignment
+  is preserved at any Sit.fps.
+
+### 1f. `Sit.startTime` (Layer 3 — wall-clock display label)
+- A single UTC value attached to the sitch: "what wall-clock moment is
+  par.frame = 0?"
+- Computed at sitch construction. For TS-sourced sitches, derived from
+  the first KLV record's UnixTimeStamp minus its `pesPTSus[0]` shift
+  (so frame 0 displays the wall-clock the encoder claimed for the first
+  video PCR moment). For sitches without KLV, set from container metadata
+  or user input.
+- **Decorative for sync purposes.** The displayed scrubber date is
+  `Sit.startTime + par.frame / Sit.fps`; if Sit.startTime is wrong by a
+  minute, the scrubber's date label is wrong by a minute and the sun's
+  azimuth in the night-sky scene is wrong, but video and KLV stay
+  perfectly aligned with each other (they're on PCR, not on Sit.startTime).
+- Where Sit.startTime *does* matter: anywhere Sitrec talks to the real
+  physical world by absolute UTC. That's solar/lunar ephemerides, TLE
+  satellite propagation, ADS-B aircraft track timestamps, weather data,
+  and any external dataset with its own UTC. Wrong Sit.startTime →
+  correct internal sync, wrong external sync.
 
 ---
 
@@ -444,7 +537,35 @@ successfully, the right behavior is to mark only the corrupt group
 permanently failed and keep the rest of the stream playable
 (`CVideoWebCodecBase._onWorkerError` handles this distinction).
 
-### 5g. "There's only one KLV stream"
+### 5g. "Derived tracks inherit their parent's PES PTS"
+A subtle one. When Sitrec splits a single MISB stream into multiple tracks
+— most commonly the platform track (sensor LLA, MISB tags 13/14/15) and
+the Center track (frame-center LLA, tags 23/24/25) — the platform side
+returns the source `data` array directly, so its `pesPTSus` property
+travels along automatically. The Center side, however, builds a *fresh*
+array (`new Array(MISBFields).fill(null)` per row, with selected fields
+copied), and that fresh array has no `pesPTSus` property by default.
+
+The result on a healthy file is invisible: KLV UnixTimeStamps and PES
+PTS values agree closely, so falling back to UnixTimeStamp pairing on the
+Center track produces near-identical results. On files with severe
+UnixTimeStamp skew (see §1d), the platform track stays PCR-locked while
+the Center track drifts up to several seconds *per minute of recording*
+on the broken UTS clock. Camera position is correct; camera look-direction
+is up to tens of seconds out of phase. Visually: scrub to anywhere late
+in the run, the platform is in the right spot but it's pointing at where
+the gimbal was looking many seconds ago.
+
+The fix (`CTrackFileMISB.toMISB(trackIndex=1)`) builds a parallel
+`centerPesPTSus` array alongside the row copy, applying the same
+filter-by-valid-center predicate, then attaches it to the returned array
+as `centerMisb.pesPTSus = centerPesPTSus`. After this, `hasRecordPTS()`
+is true on both nodes and Tier-1 pairing runs for both. Any future
+`toMISB(N)` paths that synthesize derived arrays must apply the same
+forwarding pattern, or the derived track silently regresses to UTS
+pairing on encoder-broken clocks.
+
+### 5h. "There's only one KLV stream"
 Some MISB-compliant transmitters emit **two** KLV streams in the same TS:
 an asynchronous one (no PES PTS, timing carried by Tag 2 UnixTimeStamp
 inside the payload) and a synchronous one (PES PTS present, locked to
@@ -649,7 +770,7 @@ matters lives in the dump itself.
 The handler iterates *all* CNodeMISBDataTrack nodes in NodeMan and:
 1. Lists every loaded MISB data node with its record count and
    `hasRecordPTS()` flag (matters when the file has multiple KLV
-   PIDs — see §5g, §8f).
+   PIDs — see §5h, §8f).
 2. Picks the first one with `hasRecordPTS() === true` for the deep
    analysis, falling back to the first node otherwise.
 
@@ -858,6 +979,7 @@ KLV side.
 | `src/TSParser.js`                     | TS demux, per-PES PTS capture (per PID), cross-stream origin |
 | `src/H264Decoder.js`                  | `createEncodedVideoChunks(nalUnits, fps, pesPtsUs?)` — uses real PES PTS when supplied |
 | `src/MISBUtils.js`                    | `parseKLVFile()` pairs records to PES PTS             |
+| `src/TrackFiles/CTrackFileMISB.js`    | `toMISB(trackIndex)` splits a single MISB stream into platform vs. Center derived tracks; **must forward `pesPTSus[]`** to derived arrays so Tier-1 pairing applies to both — see §5g |
 | `src/CFileManagerParse.js`            | Threads pesEntries + videoFirstPESus into parseKLVFile and stashes them on FileManager entries (also for video substreams, used by CVideoH264Data) |
 | `src/CVideoData.js`                   | `getFrameTimeMs()` and `hasRealFramePTS()` virtuals  |
 | `src/CVideoH264Data.js`               | Reads pesEntries off FileManager entry and threads through createEncodedVideoChunks; sets `framePTSFromPES` |
