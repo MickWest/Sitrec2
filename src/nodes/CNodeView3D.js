@@ -1193,11 +1193,11 @@ export class CNodeView3D extends CNodeViewCanvas {
         //   onto programs whose GL-side counterparts are gone
         this.canvas.addEventListener('webglcontextlost', (e) => {
             e.preventDefault();
-            Globals.contextLost = true;
+            this.contextLost = true;
             console.warn(`[WebGL] Context LOST on view "${this.id}"`);
             // Drop JS-side render-target handles; their GL backing is gone.
             // The restore handler will recreate them. Until then, renderCanvas
-            // short-circuits on Globals.contextLost so no GL calls are issued.
+            // short-circuits on this.contextLost so no GL calls are issued.
             this.disposeRenderTargets();
             // Clear program-pin metadata: Three.js's program list is wiped on
             // context loss, so __pinned would otherwise dangle.
@@ -1208,7 +1208,7 @@ export class CNodeView3D extends CNodeViewCanvas {
 
         this.canvas.addEventListener('webglcontextrestored', () => {
             console.warn(`[WebGL] Context restored on view "${this.id}"`);
-            Globals.contextLost = false;
+            this.contextLost = false;
             // Re-establish per-view renderer state: setPixelRatio + recreate
             // render targets. applyPerformanceSettings already does both.
             this.applyPerformanceSettings();
@@ -2273,11 +2273,11 @@ export class CNodeView3D extends CNodeViewCanvas {
         // reset the renderer size/pixel ratio, refresh terrain, and call
         // setRenderOne(true) to kick rendering back on. Render targets are
         // disposed during loss, so attempting to render here would bind nulls.
-        if (Globals.contextLost) return;
+        if (this.contextLost) return;
         if (this.renderer && this.renderer.getContext().isContextLost()) {
             // Defensive: catches forced loss (forceContextLoss in tests) where
             // the event may not have fired yet on this view.
-            Globals.contextLost = true;
+            this.contextLost = true;
             return;
         }
 

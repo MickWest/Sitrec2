@@ -45,6 +45,11 @@ Example entry format:
 
 ---
 
+## Version 2.50.2 (2026-05-07)
+
+### Bug Fixes
+- **Blank screen on sitch reload (per-view WebGL context-loss flag)**: reloading a saved sitch sometimes left every viewport black with only the 2D overlays drawing. Root cause: a single shared `Globals.contextLost` flag, mutated by every view's `webglcontextlost` listener. `CNodeView3D.dispose()` calls `forceContextLoss()` to release the dying view's GL context — by design — which fires an async `webglcontextlost` event on the disposed canvas. The (still-attached) listener latched the **shared** global flag to `true`. By the time the event landed, the new sitch was already set up; no matching `webglcontextrestored` ever fired (canvas dead), so the global flag stayed `true` and `renderCanvas()` early-exited on every view forever. Each view actually has its own canvas, renderer, and GL context — so the flag is now per-view (`this.contextLost`), matching the real per-context isolation enforced by Three.js. A disposed view's lost-event no longer poisons healthy peers.
+
 ## Version 2.50.1 (2026-05-06)
 
 ### Bug Fixes
