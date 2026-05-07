@@ -45,7 +45,12 @@ Example entry format:
 
 ---
 
-## Version 2.50.4 (2026-05-07)
+## Version 2.50.5 (2026-05-07)
+
+### Improvements
+- **GPU Memory Monitor: per-view authoritative GL counters**: two new rows show `mainView (tex/geo/prog)` and `lookView (tex/geo/prog)` — Three.js's `info.memory.textures`, `info.memory.geometries`, and `info.programs.length`. These are the GL-side counts, not the scene-traversal estimates. If these climb during pan and *return to baseline* after pause, the underlying disposes are landing correctly and any persistent OS-VRAM growth is in Chrome's GPU-process pool (not directly fixable from JS). If they stay elevated after pause, it's a real leak in our code. Lets users distinguish "leak" from "slow GC" without guessing.
+- **GPU Memory Monitor: "Force Render (drain dispose queue)" button**: triggers a synchronous render + `gl.flush()` on each view and logs before/after `info.memory` to console. Three.js's dispose model is event-based — `texture.dispose()` queues a deletion that the renderer processes on next render. After heavy pan + pause, hundreds of disposes can sit in the queue. Clicking this drains them deterministically; the before/after delta shows how much memory was waiting on the queue.
+- **GPU Memory Monitor: numbers update even when the menu is closed**: previously `updateGUI()` early-returned when the debug folder was collapsed, leaving stale "0 MB" until the user opened the panel. Now updates run unconditionally (cheap, no observable cost) so opening the panel mid-session shows current values rather than the last-captured-while-open snapshot.
 
 ### Improvements
 - **GPU Memory Monitor: 4× more accurate texture accounting**: the monitor was hardcoded against an old Three.js format-constant table — `RGBAFormat=1023` mapped (incorrectly) to `RedFormat`, charging every RGBA texture at 1 byte/pixel instead of 4. Switched to imported named constants (`RGBAFormat`, `RGFormat`, etc.) and added per-channel-type adjustment for `HalfFloatType` / `FloatType`. On the Orbit Stress Test sitch the same scene that previously read 28 MB now reads ~120 MB; gigabyte-scale pressure on heavy sitches is no longer hidden behind a broken counter.

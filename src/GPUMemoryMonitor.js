@@ -670,7 +670,17 @@ class GPUMemoryMonitor {
             average: '0 MB',
             tiles: '0',
             matCache: '0',
+            // Three.js's authoritative GL-side counters. info.memory tracks
+            // textures + geometries actually live in the GL context — if
+            // these climb while our scene-traversal estimates stay flat,
+            // we have a true leak (disposed Three.js objects whose GL
+            // handles weren't actually deleted). info.programs tracks
+            // compiled shader programs — these are cached forever inside
+            // the renderer and never freed except by renderer.dispose().
+            mvGL: '0 / 0 / 0',
+            lvGL: '0 / 0 / 0',
             pruneInactive: () => this.pruneAllInactiveTiles(),
+            forceRender: () => this.forceRenderPass(),
             reset: () => this.reset()
         };
 
@@ -682,7 +692,10 @@ class GPUMemoryMonitor {
         this.guiFolder.add(this.displayControls, 'average').name(t("gpuMonitor.average")).listen().disable().perm();
         this.guiFolder.add(this.displayControls, 'tiles').name('Active tiles').listen().disable().perm();
         this.guiFolder.add(this.displayControls, 'matCache').name('Material cache').listen().disable().perm();
+        this.guiFolder.add(this.displayControls, 'mvGL').name('mainView (tex/geo/prog)').listen().disable().perm();
+        this.guiFolder.add(this.displayControls, 'lvGL').name('lookView (tex/geo/prog)').listen().disable().perm();
         this.guiFolder.add(this.displayControls, 'pruneInactive').name('Prune Inactive Tiles').perm();
+        this.guiFolder.add(this.displayControls, 'forceRender').name('Force Render (drain dispose queue)').perm();
         this.guiFolder.add(this.displayControls, 'reset').name(t("gpuMonitor.reset")).perm();
         
         this.enabled = true;
@@ -696,10 +709,10 @@ class GPUMemoryMonitor {
             return;
         }
 
-        if ((this.guiDebugMenu && this.guiDebugMenu._closed) || this.guiFolder._closed) {
-            return;
-        }
-        
+        // Don't gate on folder/menu closed — the user expects the displayed
+        // numbers to reflect current state when they open the menu, not the
+        // last value captured while it was open. updateGUI is cheap.
+
         const stats = this.getStats();
         this.displayControls.total = stats.total;
         this.displayControls.geometries = stats.geometries;
@@ -713,6 +726,26 @@ class GPUMemoryMonitor {
             this.displayControls.tiles = `${cacheCounts.activeTiles} (${cacheCounts.totalTiles} total)`;
             this.displayControls.matCache = String(cacheCounts.matCacheSize);
         }
+
+        // Per-view authoritative Three.js GL counters. The "tex/geo/prog"
+        // numbers are what Three.js's WebGLRenderer believes is live in
+        // the GL context. If these climb while our scene/cache estimates
+        // stay flat, the leak is in disposed-but-still-allocated GL state.
+        try {
+            const NodeMan = (typeof window !== "undefined" && window.NodeMan) || globalThis.NodeMan;
+            if (NodeMan) {
+                for (const id of ["mainView", "lookView"]) {
+                    const v = NodeMan.get(id, false);
+                    if (!v?.renderer) continue;
+                    const info = v.renderer.info;
+                    const tex = info?.memory?.textures ?? 0;
+                    const geo = info?.memory?.geometries ?? 0;
+                    const prog = info?.programs?.length ?? 0;
+                    const key = id === "mainView" ? "mvGL" : "lvGL";
+                    this.displayControls[key] = `${tex} / ${geo} / ${prog}`;
+                }
+            }
+        } catch (e) { /* ignore */ }
 
         // Note: .listen() on GUI controllers handles automatic updates
         // so updateDisplay() is no longer needed here
@@ -748,6 +781,46 @@ class GPUMemoryMonitor {
             return { totalTiles, activeTiles, matCacheSize };
         } catch (e) {
             return null;
+        }
+    }
+
+    // Three.js disposes are asynchronous: `texture.dispose()` queues a
+    // 'dispose' event that the WebGLTextures helper handles on the NEXT
+    // render. If the user pauses after a heavy pan, hundreds of disposes
+    // sit in the queue waiting for a render that may never come (paused
+    // animation loops can short-circuit before reaching renderCanvas).
+    // This forces both views to render once + flushes the GL command
+    // buffer, draining the queue. Diagnostic value: if VRAM drops after
+    // clicking this, our prune is correct but the queue wasn't draining.
+    forceRenderPass() {
+        try {
+            const NodeMan = (typeof window !== "undefined" && window.NodeMan) || globalThis.NodeMan;
+            if (!NodeMan) return;
+            const before = {};
+            for (const id of ["mainView", "lookView"]) {
+                const v = NodeMan.get(id, false);
+                if (!v?.renderer) continue;
+                before[id] = {
+                    tex: v.renderer.info.memory.textures,
+                    geo: v.renderer.info.memory.geometries,
+                };
+                if (v.scene && v.camera) {
+                    v.renderer.render(v.scene, v.camera);
+                }
+                v.renderer.getContext().flush();
+            }
+            const after = {};
+            for (const id of ["mainView", "lookView"]) {
+                const v = NodeMan.get(id, false);
+                if (!v?.renderer) continue;
+                after[id] = {
+                    tex: v.renderer.info.memory.textures,
+                    geo: v.renderer.info.memory.geometries,
+                };
+            }
+            console.log("[GPUMemoryMonitor] Force render before/after:", JSON.stringify({before, after}));
+        } catch (e) {
+            console.warn("[GPUMemoryMonitor] forceRenderPass failed:", e);
         }
     }
 
