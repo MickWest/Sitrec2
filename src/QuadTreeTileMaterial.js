@@ -40,6 +40,21 @@ export function clearMaterialCacheImpl() {
     console.log('Material cache cleared');
 }
 
+// Targeted single-entry eviction. Used by tile-prune to free a material
+// the moment its owning tile is destroyed, instead of letting it leak in
+// the cache until the next clearMaterialCache() (which only fires on sitch
+// reload). Idempotent — safe to call with a key that's already gone.
+export function removeMaterialByCacheKeyImpl(cacheKey) {
+    if (!cacheKey) return;
+    const material = materialCache.get(cacheKey);
+    if (material) {
+        material.getMap()?.dispose();
+        material.dispose();
+        materialCache.delete(cacheKey);
+    }
+    textureLoadPromises.delete(cacheKey);
+}
+
 export function removeMaterialFromCacheImpl(url) {
     const keysToDelete = [];
     materialCache.forEach((material, cacheKey) => {
@@ -153,12 +168,14 @@ export const materialMethods = {
 
         // Check if we already have a cached material for this cache key
         if (materialCache.has(cacheKey)) {
+            this.materialCacheKey = cacheKey;
             return Promise.resolve(materialCache.get(cacheKey));
         }
 
         // Check if we're already loading this material to prevent concurrent loads
         if (textureLoadPromises.has(cacheKey)) {
 //            console.log(`QuadTreeTile: Waiting for concurrent texture load: ${cacheKey}`);
+            this.materialCacheKey = cacheKey;
             return textureLoadPromises.get(cacheKey);
         }
 
@@ -199,6 +216,8 @@ export const materialMethods = {
             const material = createTerrainDayNightMaterial(finalTexture, 0.3, false, transparency);
             // Cache the material for future use
             materialCache.set(cacheKey, material);
+            // Record the key on the tile so prune can evict the cache entry
+            this.materialCacheKey = cacheKey;
             // Clean up the promise cache once loading is complete
             textureLoadPromises.delete(cacheKey);
             // Clear the abort controller since loading is complete
@@ -242,12 +261,14 @@ export const materialMethods = {
 
         // Check if we already have the final material cached
         if (materialCache.has(materialCacheKey)) {
+            this.materialCacheKey = materialCacheKey;
             return materialCache.get(materialCacheKey);
         }
 
         // Check if we're already building this specific material
         if (textureLoadPromises.has(materialCacheKey)) {
 //            console.log(`QuadTreeTile: Waiting for concurrent static mipmap material build: z${this.z}`);
+            this.materialCacheKey = materialCacheKey;
             return textureLoadPromises.get(materialCacheKey);
         }
 
@@ -320,6 +341,7 @@ export const materialMethods = {
 
                 // Cache the final material
                 materialCache.set(materialCacheKey, material);
+                this.materialCacheKey = materialCacheKey;
                 // Clean up the promise cache once building is complete
                 textureLoadPromises.delete(materialCacheKey);
                 // Clear the abort controller since loading is complete

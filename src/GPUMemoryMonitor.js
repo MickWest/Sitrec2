@@ -603,6 +603,9 @@ class GPUMemoryMonitor {
             textures: '0 MB',
             peak: '0 MB',
             average: '0 MB',
+            tiles: '0',
+            matCache: '0',
+            pruneInactive: () => this.pruneAllInactiveTiles(),
             reset: () => this.reset()
         };
 
@@ -612,6 +615,9 @@ class GPUMemoryMonitor {
         this.guiFolder.add(this.displayControls, 'textures').name(t("gpuMonitor.textures")).listen().disable().perm();
         this.guiFolder.add(this.displayControls, 'peak').name(t("gpuMonitor.peak")).listen().disable().perm();
         this.guiFolder.add(this.displayControls, 'average').name(t("gpuMonitor.average")).listen().disable().perm();
+        this.guiFolder.add(this.displayControls, 'tiles').name('Active tiles').listen().disable().perm();
+        this.guiFolder.add(this.displayControls, 'matCache').name('Material cache').listen().disable().perm();
+        this.guiFolder.add(this.displayControls, 'pruneInactive').name('Prune Inactive Tiles').perm();
         this.guiFolder.add(this.displayControls, 'reset').name(t("gpuMonitor.reset")).perm();
         
         this.enabled = true;
@@ -635,9 +641,75 @@ class GPUMemoryMonitor {
         this.displayControls.textures = stats.textures;
         this.displayControls.peak = this.getMemoryString(this.getPeakMemory());
         this.displayControls.average = this.getMemoryString(this.getAverageMemory());
-        
+
+        // Tile + material-cache totals across all loaded terrain maps.
+        const cacheCounts = this.collectTerrainCacheCounts();
+        if (cacheCounts) {
+            this.displayControls.tiles = `${cacheCounts.activeTiles} (${cacheCounts.totalTiles} total)`;
+            this.displayControls.matCache = String(cacheCounts.matCacheSize);
+        }
+
         // Note: .listen() on GUI controllers handles automatic updates
         // so updateDisplay() is no longer needed here
+    }
+
+    // Walk all loaded terrain texture-maps and sum up tile counts. Returns
+    // null if no terrain is loaded yet (very early in sitch setup).
+    collectTerrainCacheCounts() {
+        try {
+            const NodeMan = (typeof window !== "undefined" && window.NodeMan) || globalThis.NodeMan;
+            if (!NodeMan) return null;
+            const terrain = NodeMan.get("TerrainModel", false);
+            if (!terrain || !terrain.maps) return null;
+            let totalTiles = 0;
+            let activeTiles = 0;
+            let firstTile = null;
+            const mapKeys = Object.keys(terrain.maps);
+            for (const key of mapKeys) {
+                const m = terrain.maps[key]?.map;
+                if (!m?.tileCache) continue;
+                for (const z in m.tileCache) {
+                    for (const x in m.tileCache[z]) {
+                        for (const y in m.tileCache[z][x]) {
+                            const tile = m.tileCache[z][x][y];
+                            totalTiles++;
+                            if (tile.tileLayers !== 0) activeTiles++;
+                            if (!firstTile) firstTile = tile;
+                        }
+                    }
+                }
+            }
+            const matCacheSize = firstTile?.constructor?.getMaterialCacheStats?.()?.size ?? 0;
+            return { totalTiles, activeTiles, matCacheSize };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Force-prune every inactive tile across all loaded terrain maps,
+    // bypassing the all-4-siblings-inactive rule. Used as a manual circuit
+    // breaker when GPU memory pressure builds faster than the timeout-based
+    // pruner can keep up.
+    pruneAllInactiveTiles() {
+        try {
+            const NodeMan = (typeof window !== "undefined" && window.NodeMan) || globalThis.NodeMan;
+            if (!NodeMan) return;
+            const terrain = NodeMan.get("TerrainModel", false);
+            if (!terrain || !terrain.maps) return;
+            let totalPruned = 0;
+            for (const key of Object.keys(terrain.maps)) {
+                const m = terrain.maps[key]?.map;
+                if (!m || typeof m.pruneAllInactive !== "function") continue;
+                totalPruned += m.pruneAllInactive();
+            }
+            // Elevation map too — same prune entrypoint.
+            if (terrain.elevationMap && typeof terrain.elevationMap.pruneAllInactive === "function") {
+                totalPruned += terrain.elevationMap.pruneAllInactive();
+            }
+            console.log(`[GPUMemoryMonitor] Force-pruned ${totalPruned} inactive tiles`);
+        } catch (e) {
+            console.warn("[GPUMemoryMonitor] pruneAllInactiveTiles failed:", e);
+        }
     }
     
     /**

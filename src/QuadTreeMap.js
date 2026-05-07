@@ -7,6 +7,7 @@ import * as LAYER from "./LayerMasks";
 import {assert} from "./assert";
 import "./threeExt";
 import {EventManager} from "./CEventManager";
+import {removeMaterialByCacheKeyImpl} from "./QuadTreeTileMaterial";
 
 // Reusable scratch objects to avoid garbage collection pressure.
 // Reused across all tile visibility calculations within a single pass.
@@ -55,7 +56,12 @@ export class QuadTreeMap {
         this.maxZoom = options.maxZoom ?? 15; // default max zoom level
         this.minZoom = options.minZoom ?? 0; // default min zoom level
         this.lastLoggedStats = new Map(); // Track last logged stats per view to reduce console spam
-        this.inactiveTileTimeout = 100000; // Time in ms before pruning inactive tiles (100 seconds)
+        // Base timeout (ms) before pruning inactive tiles. Read via the getter
+        // below, which scales it down at high maxDetails — at zoom 22+ the
+        // working set explodes (4× tiles per zoom level), so a 100 s leash
+        // means tile creation can outpace pruning indefinitely. The effective
+        // timeout interpolates 100 s @ md=15 down to 5 s @ md=23.
+        this.inactiveTileTimeout = 100000;
         this.currentStats = new Map(); // Store current stats per view for debug display
         this.parentTiles = new Set(); // Track tiles that have children for efficient iteration
         this._tileStateGeneration = 0; // Generation counter for areaCoveredByDescendants cache
@@ -276,6 +282,53 @@ export class QuadTreeMap {
      * OPTIMIZATION: Combines all three operations into a single forEachTile() iteration
      * to reduce overhead from 3 iterations to 1 (67% reduction in tile iterations)
      */
+    // Force-prune every inactive tile (tileLayers === 0) regardless of the
+    // normal all-4-siblings rule. Used by the GPU Memory Monitor's manual
+    // circuit-breaker button. Returns the count pruned.
+    pruneAllInactive() {
+        const tilesToPrune = [];
+        for (const tile of this.allTiles) {
+            // Only individual leaves — don't prune parents that still have
+            // children (pruning a parent strands its child references).
+            if (tile.tileLayers === 0 && !tile.children) {
+                tilesToPrune.push(tile);
+            }
+        }
+        let prunedCount = 0;
+        tilesToPrune.forEach(child => {
+            if (!child) return;
+            if (child.mesh) {
+                this.scene.remove(child.mesh);
+                if (child.mesh.geometry) child.mesh.geometry.dispose();
+                if (child.materialCacheKey && !child.materialCacheKey.startsWith('static_')) {
+                    removeMaterialByCacheKeyImpl(child.materialCacheKey);
+                } else if (child.mesh.material && !child.materialCacheKey) {
+                    child.mesh.getMap()?.dispose();
+                    child.mesh.material.dispose();
+                }
+            }
+            if (child.skirtMesh) {
+                this.scene.remove(child.skirtMesh);
+                if (child.skirtMesh.geometry) child.skirtMesh.geometry.dispose();
+                if (child.skirtMesh.material) child.skirtMesh.material.dispose();
+            }
+            child.cancelPendingLoads();
+            this.deleteTile(child.x, child.y, child.z);
+            prunedCount++;
+        });
+        return prunedCount;
+    }
+
+    // Effective timeout, scaled down for high maxDetails so tile creation
+    // can't outrun pruning. 100 s at md=15 → 5 s at md=23.
+    getEffectiveInactiveTileTimeout() {
+        const md = Globals.settings?.maxDetails;
+        if (typeof md !== "number" || md <= 15) return this.inactiveTileTimeout;
+        if (md >= 23) return 5000;
+        // Linear interp from 100 s (md=15) to 5 s (md=23).
+        return Math.round(this.inactiveTileTimeout - ((md - 15) / 8) * (this.inactiveTileTimeout - 5000));
+    }
+
     subdivideTilesGeneral() {
         // Skip subdivision for flat elevation maps
         if (this.constructor.name === 'QuadTreeMapElevation' && this.options.elevationType === "Flat") {
@@ -283,6 +336,7 @@ export class QuadTreeMap {
         }
 
         const now = Date.now();
+        const effectiveTimeout = this.getEffectiveInactiveTileTimeout();
         let prunedCount = 0;
         
         // Collect tiles to prune (can't delete during iteration)
@@ -305,7 +359,7 @@ export class QuadTreeMap {
                     const child = children[i];
                     if (!child) continue; // null/false children are prunable
                     if (child.tileLayers !== 0 || child.children !== null || !child.inactiveSince ||
-                        now - child.inactiveSince < this.inactiveTileTimeout) {
+                        now - child.inactiveSince < effectiveTimeout) {
                         allChildrenPrunable = false;
                         break;
                     }
@@ -356,7 +410,19 @@ export class QuadTreeMap {
             if (child.mesh) {
                 this.scene.remove(child.mesh);
                 if (child.mesh.geometry) child.mesh.geometry.dispose();
-                if (child.mesh.material) {
+                // Free this tile's material+texture and evict its
+                // materialCache entry. Without this, the cache (keyed by
+                // tile-coords-bearing URL) grew monotonically with every
+                // unique tile the camera ever revealed — the actual
+                // VRAM-leak driver during long orbit/pan sessions.
+                // Static-shared keys are pinned for the session: multiple
+                // tiles share them, so disposing on one tile's prune would
+                // break the others. Skip those.
+                if (child.materialCacheKey && !child.materialCacheKey.startsWith('static_')) {
+                    removeMaterialByCacheKeyImpl(child.materialCacheKey);
+                } else if (child.mesh.material && !child.materialCacheKey) {
+                    // Pre-eviction tiles (or non-cached materials) — fall back
+                    // to inline disposal of whatever the mesh is using.
                     child.mesh.getMap()?.dispose();
                     child.mesh.material.dispose();
                 }
@@ -369,7 +435,7 @@ export class QuadTreeMap {
 
             // Cancel any pending loads
             child.cancelPendingLoads();
-            
+
             // Remove from cache
             this.deleteTile(child.x, child.y, child.z);
             prunedCount++;

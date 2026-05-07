@@ -38,6 +38,7 @@ import {
     getMaterialCacheStatsImpl,
     logCacheStatsImpl,
     materialMethods,
+    removeMaterialByCacheKeyImpl,
     removeMaterialFromCacheImpl,
 } from "./QuadTreeTileMaterial";
 
@@ -2070,5 +2071,6 @@ Object.assign(QuadTreeTile.prototype, materialMethods);
 // Preserve the QuadTreeTile.* cache statics for external callers.
 QuadTreeTile.clearMaterialCache = clearMaterialCacheImpl;
 QuadTreeTile.removeMaterialFromCache = removeMaterialFromCacheImpl;
+QuadTreeTile.removeMaterialByCacheKey = removeMaterialByCacheKeyImpl;
 QuadTreeTile.getMaterialCacheStats = getMaterialCacheStatsImpl;
 QuadTreeTile.logCacheStats = logCacheStatsImpl;
