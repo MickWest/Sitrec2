@@ -45,6 +45,11 @@ Example entry format:
 
 ---
 
+## Version 2.50.1 (2026-05-06)
+
+### Bug Fixes
+- Fixed `lookView` rendering off-center after switching the **Performance Preset** dropdown when side-by-side mode is active. Two callsites that resize the WebGL renderer for `canvasWidth`-mode views (`deferredResizeWebGL` and the per-frame size-sync block) were computing different widths for the same canvas — the per-frame block applied the side-by-side 0.7 reduction, the debounced one didn't. After a preset change, `terrainUI.doRefresh()` triggered the debounced path, which set the renderer's internal `_width` to the larger value and updated only its own dedup state. The per-frame block then skipped its own `setSize` because its independent dedup said "no change", leaving the GL viewport extending past the canvas drawingBuffer — the centered Earth rendered into pixels outside the visible canvas region and shifted off-center. `deferredResizeWebGL` now mirrors the side-by-side reduction and keeps both dedup variables in sync.
+
 ## Version 2.50.0 (2026-05-06)
 
 ### New Features

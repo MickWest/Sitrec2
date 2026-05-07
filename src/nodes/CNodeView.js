@@ -610,11 +610,30 @@ class CNodeView extends CNode {
                 var width = Math.floor(long * this.widthPx / this.heightPx);
             }
 
+            // Side-by-side resolution reduction must mirror the per-frame
+            // size-sync block in CNodeView3D.renderCanvas — otherwise the two
+            // paths set the renderer to different sizes for the same canvas.
+            // The per-frame block writes canvas.width = rtWidth (with the 0.7
+            // factor), while three.js's internal _width stays at the value
+            // last setSize'd here (without 0.7). Result: GL viewport (= _width
+            // × pixelRatio) extends past the canvas drawingBuffer and
+            // canvasWidth-mode views (e.g. lookView) render off-center.
+            if (ViewMan.isSideBySideMode()) {
+                const sideBySideResolutionScale = 0.7;
+                width = Math.floor(width * sideBySideResolutionScale);
+                height = Math.floor(height * sideBySideResolutionScale);
+            }
+
             // Only call setSize() if dimensions actually changed (avoids redundant WebGL calls)
             if (width !== this._lastRendererWidth || height !== this._lastRendererHeight) {
                 this.renderer.setSize(width, height, false);
                 this._lastRendererWidth = width;
                 this._lastRendererHeight = height;
+                // Keep the per-frame size-sync's dedup state aligned so the
+                // next render doesn't skip its own setSize believing the
+                // renderer is already at the per-frame computed width.
+                this._lastSyncedRendererWidth = width;
+                this._lastSyncedRendererHeight = height;
             }
         } else {
             // Normal mode: resize to match container dimensions
