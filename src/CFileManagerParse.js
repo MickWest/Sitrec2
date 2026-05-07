@@ -1585,15 +1585,12 @@ export const parseMethods = {
     },
 
     deriveExtension(filename) {
-        var fileExt;
-        if (filename.startsWith(SITREC_SERVER + "proxy.php")) {
-            fileExt = "txt";
-        } else if (filename.startsWith(SITREC_SERVER + "proxyStarlink.php")) {
-            fileExt = "txt";
-        } else {
-            fileExt = getFileExtension(filename);
+        // Match by path so a sitch saved against one server (e.g. www.metabunk.org)
+        // still parses correctly when reloaded against another (e.g. local.metabunk.org).
+        if (/\/proxy\.php(\?|$)/.test(filename) || /\/proxyStarlink\.php(\?|$)/.test(filename)) {
+            return "txt";
         }
-        return fileExt;
+        return getFileExtension(filename);
     },
 
     detectTrackFile(filename, data) {

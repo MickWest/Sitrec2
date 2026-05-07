@@ -45,6 +45,24 @@ Example entry format:
 
 ---
 
+## Version 2.50.0 (2026-05-06)
+
+### New Features
+- **Frame-rate mismatch dialog**: when a loaded video's labeled frame rate disagrees with the rate measured from KLV `UnixTimeStamp` by more than 1%, a modal now offers three candidates (recommended real-time fps from KLV UTS, PES-PTS-derived fps, current Sit.fps) with rationale. Recommended button rounds to standard rates (24 / 25 / 29.97 / 30 / …) so it reads "30 fps" instead of "29.9603 fps". Catches the "ffmpeg `-r N` without an `fps` filter" footgun and similar tactical-encoder PTS-cadence misconfigurations where the platform track silently ends partway through the video timeline.
+- **WebGL context-loss recovery**: GPU-process crashes (browser tab backgrounded too long, driver hiccup, etc.) now recover gracefully instead of leaving Sitrec with a black canvas. `CNodeView3D` disposes render targets and re-applies pixel ratio + size on `webglcontextrestored`; `CNodeViewCanvas.forceContextRescale()` invalidates the 2D backing store + scale transform on every overlay view, fixing the half-size video / overlay symptom that persisted because GPU crashes silently wipe the 2D ctx scale transform without firing any standard event. Adds a Debug → Force GL Context Loss button (local-only) for deterministic recovery testing.
+- **MQ9UI degrees + decimal minutes (DM) coordinate format**: the ACFT and target position rows now cycle MGRS / decimal / DMS / **DM** (DD°MM.MMM'). Three decimal places of minutes match the existing DMS sub-meter precision.
+
+### Improvements
+- **Timing Analysis report (CNodeMISBData) — anonymized**: the report is now paste-safe to share in any thread or bug tracker. Removed: generation timestamp, sitch name, MISB node id (often a tail number like `TrackData_CG2314`), `Sit.startTime`, KLV UnixTimeStamp absolute values, FileManager filenames (often encode capture date/time), and `videoFirstPESus`. All numeric-statistical signal (record counts, intervals, spans-since-stream-start, CV, gap counts, coverage, distance spans) is preserved.
+- **Timing Analysis report — new diagnostics**: per-tag FIELD COVERAGE histogram with FULL / EARLY-ONLY / LATE-ONLY / GAP-MIDDLE / SPARSE / ABSENT classification; stuck-value detector for encoder GPS-loss padding (bit-identical lat/lon runs); stationary-period detector for platforms holding within 25 m for multi-second windows; sample values at quartile points + bounding-box for direct OSD-vs-rendered comparison; slow-GPS-padded-to-fast-KLV pattern detection that distinguishes real-platform velocity spikes from per-record artifacts of slow GPS padded into a fast KLV cadence; encoder PTS-cadence-mismatch detection that flags labeled fps as wrong when KLV UTS span disagrees with PES PTS span (no real hardware drifts >100 ppm).
+- **Suspicious-velocity threshold raised** 50 → 500 m/s in MISB analysis. The 50 m/s threshold flagged routine aircraft motion as bogus.
+- **Shared FPS-analysis helpers**: `computeMisbSpans` and `computeFpsAnalysis` now live in `MISBUtils.js` so the timing-analysis report and the frame-rate mismatch dialog use one implementation.
+
+### Bug Fixes
+- **Saved sitches now load across deployments**: a sitch saved on `www.metabunk.org` and reloaded on `local.metabunk.org` (or any other Sitrec deployment) no longer crashes during night-sky setup. The TLE-extension detector previously matched only the *current* deployment's `proxy.php` URL via full-prefix comparison; cross-deployment URLs fell through to the default file-extension parser, which read `.php` from the proxy URL and stored the bytes as a raw `ArrayBuffer`, causing `CTLEData` to assert at construction. Now matches by URL path (`/proxy.php`, `/proxyStarlink.php`).
+- **TLE merge/replace dialog no longer reappears on saved sitch reload**: the saved sitch already encodes the user's chosen final state — every TLE present in the save is meant to coexist — so deserialization defaults to "merge" when no explicit action was recorded. Fixes the dialog appearing for older saves predating `tleAction` metadata, and for first-loaded TLEs that were never marked `tleMerged`.
+- **Time anchor in coverage report** now correctly reads `this.misb.pesPTSus` (was checking `this.pesPTSus`, a non-existent property on the wrapper).
+
 ## Version 2.49.2 (2026-05-05)
 
 ### Bug Fixes

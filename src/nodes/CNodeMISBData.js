@@ -1,6 +1,6 @@
 import {LLAToECEF} from "../LLA-ECEF-ENU";
-import {FileManager, GlobalDateTimeNode, Globals, NodeMan, Sit} from "../Globals";
-import {MISB, MISBFields} from "../MISBUtils";
+import {FileManager, Globals, NodeMan, Sit} from "../Globals";
+import {MISB, MISBFields, computeMisbSpans, computeFpsAnalysis} from "../MISBUtils";
 import {decodeMISBTransition, MISBValueDecoders} from "../MISBValueDecoders";
 import {CNodeEmptyArray} from "./CNodeArray";
 import {saveAs} from "file-saver";
@@ -125,10 +125,27 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         const hasPTS = Array.isArray(ptsArr) && ptsArr.length > 0;
         const len = this.misb ? this.misb.length : 0;
 
+        // Anonymous header. The report is intended to be paste-safe in
+        // any thread / bug tracker, so we deliberately omit anything that
+        // could identify the file's flight time, location, platform tail
+        // number, mission ID, or operating unit. That includes:
+        //   - Generation timestamp (today's date, narrows down session)
+        //   - Sit.name (often contains user-set descriptive text)
+        //   - MISB node id (frequently contains a tail number, e.g.
+        //     TrackData_CG2314, TrackData_N97826)
+        //   - Sit.startTime / KLV UnixTimeStamp absolute values (the
+        //     wall-clock moment of capture)
+        //   - FileManager filenames (often contain date/time stamps in
+        //     the encoder's filename convention, e.g.
+        //     Livefeed_1_20260503_221555Z_000500.ts)
+        //   - videoFirstPESus (PCR origin offset; could be cross-
+        //     referenced)
+        // Numeric-statistical signal (record counts, intervals, spans
+        // in *seconds since stream start*, CV, gap counts, percent
+        // coverage, distance spans in metres) is preserved because
+        // none of it is tied to absolute time / location / identity.
         push("=== Sitrec MISB Timing Analysis ===");
-        push(`Generated:        ${new Date().toISOString()}`);
-        push(`Sitch:            ${Sit.name || "(unnamed)"}`);
-        push(`MISB Data Node:   ${this.id}`);
+        push(`Build:            ${process.env.BUILD_VERSION_STRING || "unknown"}`);
         push("");
 
         // ── SUMMARY ────────────────────────────────────────────────────
@@ -242,7 +259,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         push(`  KLV records:       ${klvRecords} (${klvSpanS.toFixed(3)} s)`);
         if (videoSpanS !== null) push(`  Span difference:   ${(klvSpanS - videoSpanS > 0 ? "+" : "")}${(klvSpanS - videoSpanS).toFixed(3)} s (KLV − Video)`);
         push(`  Sit.fps:           ${Sit.fps.toFixed(4)}`);
-        push(`  Sit.startTime:     ${new Date(GlobalDateTimeNode.getStartTimeValue()).toISOString()}`);
+        // Sit.startTime omitted: would reveal absolute capture time.
         push("");
 
         // ── VIDEO TIMING ───────────────────────────────────────────────
@@ -261,37 +278,21 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             push(pad("Max interval:", fmtMs(ptsMax)));
             push(pad("Verdict:", cfrVideo ? "Constant frame rate (CFR) — reliable" : "Variable frame rate — non-uniform"));
 
-            // Real-world frame-rate estimate from KLV UnixTimeStamp.
-            // The PES-derived fps above is *labeled* fps — it's just
-            // 90000 / (encoder's per-frame PTS increment). When the
-            // encoder is configured for one output framerate but the
-            // camera feeds it a different rate (a known ffmpeg /
-            // tactical-encoder footgun: e.g. `-r 27 -i 30fps_source`
-            // without an `fps=27` filter writes every 30 fps frame
-            // with 27 fps PTS spacing), PES-PTS-derived fps tells you
-            // the encoder's *configured* rate, not the real one.
-            //
-            // Hardware clock drift can't produce >10% rate mismatch;
-            // even an unconditioned crystal is bounded to ~100 ppm
-            // (0.01 %). 10% mismatch is mechanically a PTS-cadence
-            // misconfiguration, not a clock running off-rate.
-            //
-            // KLV UnixTimeStamp is filled by the encoder reading a
-            // separate real-time RTC at record commit, with no
-            // per-frame increment parameter to misconfigure, so its
-            // span is the trustworthy real-time anchor. The right
-            // Sit.fps is frameCount / klvUtsSpanS — frames per real
-            // second — because the video plays back at real-world
-            // pace and Sitrec's frame counter needs to match.
+            // Real-world frame-rate estimate via shared computeFpsAnalysis
+            // helper (see MISBUtils.js for the full rationale and math).
             // Skip when KLV UTS is too scattered to trust (high CV).
-            if (klvSpanS > 0 && videoFrameCount > 0 && klvCv < 0.5) {
-                const realFps = videoFrameCount / klvSpanS;
-                const labeledFps = 1000 / ptsMean;
-                const fpsDelta = Math.abs(realFps - labeledFps) / Math.max(realFps, 1e-6);
-                push(pad("Real-time fps (from KLV UTS):", `${realFps.toFixed(4)} fps`));
-                if (fpsDelta > 0.01) {
-                    push(pad("  Labeled vs real fps gap:", `${(fpsDelta * 100).toFixed(2)}% — encoder is writing PTS at the wrong cadence`));
-                    push(pad("  Recommended Sit.fps:", `${realFps.toFixed(0)} (use real-time fps from KLV UTS)`));
+            const _spans = klvCv < 0.5 ? computeMisbSpans(this.misb) : null;
+            const _fps = _spans && _spans.pesSpanS > 0 ? computeFpsAnalysis({
+                videoFrameCount,
+                videoPesSpanS: videoSpanS,
+                klvUtsSpanS: _spans.utsSpanS,
+                klvPesSpanS: _spans.pesSpanS,
+            }) : { valid: false };
+            if (_fps.valid) {
+                push(pad("Real-time fps (from KLV UTS):", `${_fps.realFps.toFixed(4)} fps`));
+                if (_fps.fpsGap > 0.01) {
+                    push(pad("  Labeled vs real fps gap:", `${(_fps.fpsGap * 100).toFixed(2)}% — encoder is writing PTS at the wrong cadence`));
+                    push(pad("  Recommended Sit.fps:", `${_fps.realFps.toFixed(0)} (use real-time fps from KLV UTS)`));
                 }
             }
             push(pad("Frame PTS source:", realPTS === true
@@ -441,16 +442,12 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         // Surface sidecar fetch failures recorded by the deserialize loop. If
         // the sitch's loadedFilesMetadata advertised a sidecar URL but the
         // fetch failed, sync silently degrades to synthetic without anything
-        // in the analysis that screams. Print here and bail loud.
+        // in the analysis that screams. Print *count* only, never URLs or
+        // file IDs (URLs may contain origin/path identifying the source).
         if (typeof FileManager !== "undefined" && FileManager.pesSidecarFailures) {
             const failures = Object.entries(FileManager.pesSidecarFailures);
             if (failures.length > 0) {
-                push("  ⚠ PES SIDECAR FETCH FAILED for the following entries during sitch reload:");
-                for (const [fid, info] of failures) {
-                    push(`     - ${fid}`);
-                    push(`         url: ${info.url}`);
-                    push(`         error: ${info.error}`);
-                }
+                push(`  ⚠ PES SIDECAR FETCH FAILED for ${failures.length} entries during sitch reload.`);
                 push("    (Sync will fall back to synthetic timestamps; the file's pesPTSus will be missing.)");
                 push("");
             }
@@ -459,9 +456,13 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         push(pad("misb.pesPTSus is Array:", String(pesIsArray)));
         push(pad("misb.pesPTSus length:", `${pesLen} (vs record count = ${len})`));
         push(pad("Non-null entries:", `${pesNonNull} / ${pesLen}`));
-        push(pad("misb constructor:", this.misb && this.misb.constructor ? this.misb.constructor.name : "(none)"));
-        // Walk FileManager looking for any entry whose .data refers to this misb,
-        // or whose stashed pesEntries / tsParentFilename are visible.
+        // misb constructor name omitted — class names like "Array" or
+        // "CTrackFileMISB" aren't identifying themselves but they don't
+        // affect the timing diagnosis either, and keeping the report
+        // tightly anonymous matters more.
+        // Walk FileManager looking for any entry whose .data refers to
+        // this misb, but emit only structural booleans — never any
+        // filenames, keys, or absolute PCR offsets.
         try {
             const list = (typeof FileManager !== "undefined") ? (FileManager.list ?? {}) : {};
             let matched = null;
@@ -474,20 +475,16 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             }
             if (matched) {
                 const e = matched.entry;
-                push(pad("FileManager key:", matched.key));
-                push(pad("FileManager .filename:", e.filename || "(unknown)"));
-                push(pad("FileManager .dataType:", e.dataType || "(unknown)"));
-                push(pad("FileManager .tsParentFilename:", e.tsParentFilename || "(none — not from TS demux)"));
-                push(pad("FileManager .pesEntries:", Array.isArray(e.pesEntries) ? `array, length ${e.pesEntries.length}` : "(absent)"));
-                push(pad("FileManager .videoFirstPESus:", typeof e.videoFirstPESus === "number" ? `${e.videoFirstPESus.toFixed(0)} µs` : "(absent)"));
+                push(pad("FileManager match:", "yes"));
+                push(pad("Has .tsParentFilename:", e.tsParentFilename ? "yes (TS-demuxed)" : "no"));
+                push(pad("Has .pesEntries:", Array.isArray(e.pesEntries) ? `yes (length ${e.pesEntries.length})` : "no"));
+                push(pad("Has .videoFirstPESus:", typeof e.videoFirstPESus === "number" ? "yes" : "no"));
             } else {
                 push("  (no FileManager entry refers to this misb)");
-                // Fall back: list any KLV-typed entries so we can at least see what got loaded.
-                const klvKeys = Object.entries(list)
-                    .filter(([_, e]) => e && (e.dataType === "klv" || e.dataType === "trackfile"))
-                    .map(([k, _]) => k);
-                if (klvKeys.length > 0) {
-                    push(pad("Loaded KLV/track keys:", klvKeys.slice(0, 5).join(", ") + (klvKeys.length > 5 ? ` (+${klvKeys.length - 5})` : "")));
+                const klvCount = Object.values(list)
+                    .filter(e => e && (e.dataType === "klv" || e.dataType === "trackfile")).length;
+                if (klvCount > 0) {
+                    push(pad("Loaded KLV/track entries:", `${klvCount} total`));
                 }
             }
         } catch (e) {
@@ -738,31 +735,25 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
                 push("    framePTSus is real.)");
             }
             // Encoder PTS-cadence-mismatch driven Sit.fps recommendation.
-            // When the encoder is configured for one fps but the camera
-            // feeds it a different rate (without resampling), PES PTS
-            // values are written at the configured cadence while frames
-            // arrive at the camera's real cadence. Since clock drift
-            // cannot exceed ~100 ppm on real hardware, any >1% gap
-            // between labeled and real fps must be a PTS-cadence
-            // misconfiguration. The KLV UTS span is the trustworthy
-            // real-time reference (filled from a real-time RTC, no
-            // per-frame increment to misconfigure). Sit.fps must equal
-            // real fps for the platform track to span the full timeline.
-            if (videoSpanS !== null && klvSpanS > 0 && videoFrameCount > 0 && klvCv < 0.5) {
-                const realFps = videoFrameCount / klvSpanS;
-                const labeledFps = videoSpanS > 0 ? videoFrameCount / videoSpanS : null;
-                const gap = labeledFps ? Math.abs(realFps - labeledFps) / Math.max(realFps, 1e-6) : 0;
-                const sitFpsDelta = Math.abs(realFps - Sit.fps) / Math.max(realFps, 1e-6);
-                if (gap > 0.01 && sitFpsDelta > 0.01) {
-                    push(`  • Encoder PTS-cadence mismatch detected (${(gap * 100).toFixed(1)}% gap). PES-labeled fps is ${labeledFps.toFixed(2)},`);
-                    push(`    real-time fps from KLV UTS is ${realFps.toFixed(2)}, current Sit.fps is ${Sit.fps.toFixed(2)}.`);
-                    push(`    The encoder is writing PTS values at ${labeledFps.toFixed(0)} fps cadence while frames arrive at`);
-                    push(`    ${realFps.toFixed(0)} fps (a known ffmpeg ’-r N without fps filter’ footgun, or a similar`);
-                    push(`    misconfiguration). The PCR oscillator itself is fine; only the per-frame PTS`);
-                    push(`    increment is wrong. Set Sit.fps to ${Math.round(realFps)} so the platform track aligns to`);
-                    push(`    real-time playback. Without this, the platform marker reaches end-of-track at`);
-                    push(`    Sitrec frame ${Math.round(Sit.fps * klvSpanS)} of ${videoFrameCount} instead of ${Math.round(realFps * klvSpanS)}.`);
-                }
+            // Same shared helper as the VIDEO TIMING section above.
+            const _recSpans = klvCv < 0.5 ? computeMisbSpans(this.misb) : null;
+            const _recFps = _recSpans && _recSpans.pesSpanS > 0 ? computeFpsAnalysis({
+                videoFrameCount,
+                videoPesSpanS: videoSpanS,
+                klvUtsSpanS: _recSpans.utsSpanS,
+                klvPesSpanS: _recSpans.pesSpanS,
+                currentSitFps: Sit.fps,
+            }) : { valid: false };
+            if (_recFps.valid && _recFps.fpsGap > 0.01 && _recFps.sitFpsDelta > 0.01) {
+                const { pcrFps: labeledFps, realFps, fpsGap } = _recFps;
+                push(`  • Encoder PTS-cadence mismatch detected (${(fpsGap * 100).toFixed(1)}% gap). PES-labeled fps is ${labeledFps.toFixed(2)},`);
+                push(`    real-time fps from KLV UTS is ${realFps.toFixed(2)}, current Sit.fps is ${Sit.fps.toFixed(2)}.`);
+                push(`    The encoder is writing PTS values at ${labeledFps.toFixed(0)} fps cadence while frames arrive at`);
+                push(`    ${realFps.toFixed(0)} fps (a known ffmpeg ’-r N without fps filter’ footgun, or a similar`);
+                push(`    misconfiguration). The PCR oscillator itself is fine; only the per-frame PTS`);
+                push(`    increment is wrong. Set Sit.fps to ${Math.round(realFps)} so the platform track aligns to`);
+                push(`    real-time playback. Without this, the platform marker reaches end-of-track at`);
+                push(`    Sitrec frame ${Math.round(Sit.fps * klvSpanS)} of ${videoFrameCount} instead of ${Math.round(realFps * klvSpanS)}.`);
             }
         }
 
@@ -977,12 +968,8 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             lines.push("  Stuck-value runs (coverage is FULL but the value is frozen):");
             for (const r of stuckRuns) {
                 const dur = r.tEnd - r.tStart;
-                const lat = r.values[0]; const lon = r.values[1]; const alt = r.values[2];
-                const valStr = (lat != null && lon != null)
-                    ? `(${Number(lat).toFixed(6)}, ${Number(lon).toFixed(6)}${alt != null ? ", " + Number(alt).toFixed(1) + "m" : ""})`
-                    : "(values null)";
                 lines.push(`  • ${r.groupLabel}: frozen for ${r.len} records (${dur.toFixed(1)}s) starting at record ${r.startIdx} (t=${r.tStart.toFixed(1)}s).`);
-                lines.push(`      Stuck at ${valStr} until record ${r.endIdx} (t=${r.tEnd.toFixed(1)}s).`);
+                lines.push(`      Frozen until record ${r.endIdx} (t=${r.tEnd.toFixed(1)}s).`);
             }
             lines.push("");
             lines.push("  Frozen runs typically mean the encoder lost its GPS / nav source");
@@ -1079,8 +1066,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             lines.push("  Stationary periods (platform stays within 25 m over multi-second window):");
             for (const r of stationaryRuns) {
                 lines.push(`  • Stopped for ${r.dur.toFixed(1)}s (${r.len} records) starting at record ${r.startIdx} (t=${r.tStart.toFixed(1)}s).`);
-                lines.push(`      Anchor: (${r.anchorLat.toFixed(6)}, ${r.anchorLon.toFixed(6)}). Max wander in window: ${r.maxDist.toFixed(1)} m.`);
-                lines.push(`      Resumes / ends at record ${r.endIdx} (t=${r.tEnd.toFixed(1)}s).`);
+                lines.push(`      Max wander in window: ${r.maxDist.toFixed(1)} m. Resumes / ends at record ${r.endIdx} (t=${r.tEnd.toFixed(1)}s).`);
             }
             lines.push("");
             lines.push("  A flying platform that goes stationary for several seconds is");
@@ -1092,38 +1078,18 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             lines.push("  near the platform's last known fix or a configured home base.");
         }
 
-        // ── Sample values (quartile snapshots for OSD comparison) ──────
-        // When the user reports "the rendered position doesn't match the
-        // OSD", neither coverage nor stuck-value detection helps — both
-        // can pass while the values themselves are wrong. Print actual
-        // platform & frame-center coordinates at five time points so the
-        // user can pause the video at those PES PTS times, read the OSD,
-        // and compare directly. Also surface per-tag velocity statistics
-        // (real-velocity, computed against the inferred GPS update rate)
-        // and the bounding box of all populated platform positions so an
-        // implausible spread (e.g. half the world) is obvious at a glance.
-        const SAMPLE_FRACTIONS = [0.0, 0.25, 0.5, 0.75, 1.0];
-        const samplePoints = SAMPLE_FRACTIONS.map(f =>
-            Math.min(lastValid, firstValid + Math.floor(f * (lastValid - firstValid))));
-
-        lines.push("");
-        lines.push("  Sample values at quartile points (compare these to the OSD):");
-        lines.push("    t (s)    record   plat lat       plat lon       plat alt (m)   center lat    center lon");
-        for (let k = 0; k < samplePoints.length; k++) {
-            const idx = samplePoints[k];
-            const row = this.misb[idx];
-            if (!row) continue;
-            const t = timeOfIdx(idx);
-            const fmt = (v, w = 12, prec = 6) => v == null
-                ? "-".padStart(w)
-                : Number(v).toFixed(prec).padStart(w);
-            lines.push(`    ${t.toFixed(1).padStart(5)}    ${String(idx).padStart(6)}   ${fmt(row[13])}   ${fmt(row[14])}   ${fmt(row[15], 12, 1)}   ${fmt(row[23])}  ${fmt(row[24])}`);
-        }
-
-        // Bounding-box check: if the platform's reported lat or lon
-        // spans more than 5° (~550 km), or wraps around 0/180, it's
-        // either a multi-leg flight (rare for a single video) or
-        // there's a sign/offset bug in one of the values.
+        // ── Position-spread health check (no coordinates emitted) ──────
+        // Reports the *extent* of platform motion across the stream as a
+        // bounding-box span in metres, and flags two failure modes:
+        //   1. extent > 5° (~550 km) → likely sign/offset/decode bug
+        //      or a stream that splices multiple flights
+        //   2. extent ~0 with all positions near the equator → tags
+        //      being decoded with the wrong scaling factor or the
+        //      source is filling lat/lon with zero/null
+        // We deliberately do NOT print actual coordinates: this report
+        // gets pasted into bug threads and the file's location is
+        // identifying information that shouldn't be in shared logs.
+        // Spread alone is enough to spot decode bugs.
         let minLat = Infinity, maxLat = -Infinity;
         let minLon = Infinity, maxLon = -Infinity;
         let minAlt = Infinity, maxAlt = -Infinity;
@@ -1151,14 +1117,17 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             const latSpan = maxLat - minLat;
             const lonSpan = maxLon - minLon;
             const altSpan = (isFinite(minAlt) && isFinite(maxAlt)) ? (maxAlt - minAlt) : null;
-            lines.push(`  Platform position bounding box (over ${popCount} records):`);
-            lines.push(`    latitude  ${minLat.toFixed(6)} → ${maxLat.toFixed(6)}  (span ${latSpan.toFixed(6)}° ≈ ${(latSpan * 111000).toFixed(0)} m)`);
-            lines.push(`    longitude ${minLon.toFixed(6)} → ${maxLon.toFixed(6)}  (span ${lonSpan.toFixed(6)}° ≈ ${(lonSpan * 111000 * Math.cos((minLat + maxLat) / 2 * Math.PI / 180)).toFixed(0)} m)`);
+            const midLat = (minLat + maxLat) / 2;
+            const latM = latSpan * 111000;
+            const lonM = lonSpan * 111000 * Math.cos(midLat * Math.PI / 180);
+            lines.push(`  Platform position spread (over ${popCount} records):`);
+            lines.push(`    latitude  span: ≈ ${latM.toFixed(0)} m`);
+            lines.push(`    longitude span: ≈ ${lonM.toFixed(0)} m`);
             if (altSpan !== null) {
-                lines.push(`    altitude  ${minAlt.toFixed(1)} → ${maxAlt.toFixed(1)} m  (span ${altSpan.toFixed(1)} m)`);
+                lines.push(`    altitude  span: ${altSpan.toFixed(1)} m`);
             }
             if (latSpan > 5 || lonSpan > 5) {
-                lines.push("    ⚠ Bounding box >5° — suspect a sign/offset bug in one of");
+                lines.push("    ⚠ Spread > 5° — suspect a sign/offset bug in one of");
                 lines.push("      the lat or lon values, or a stream that splices multiple");
                 lines.push("      flights together.");
             }

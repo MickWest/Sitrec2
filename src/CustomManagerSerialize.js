@@ -920,9 +920,16 @@ export const serializeMethods = {
                                 // different names and break saved mod IDs.
                                 trackOptions.shortNames = metadata.shortNames;
                             }
-                            // Pass TLE merge/replace action to skip the choice dialog on reload
+                            // Pass TLE merge/replace action to skip the choice dialog on reload.
+                            // The saved sitch already encodes the user's chosen final state —
+                            // every TLE present in the save is meant to coexist — so default
+                            // to "merge" whenever no explicit action was recorded (e.g. older
+                            // saves predating tleAction metadata, or first-loaded TLEs that
+                            // were never marked tleMerged). Scoped to TLE files only.
                             if (metadata?.tleAction) {
                                 trackOptions.tleAction = metadata.tleAction;
+                            } else if (FileManager.list[fileID]?.dataType === "tle") {
+                                trackOptions.tleAction = "merge";
                             }
                             FileManager.handleParsedFile(fileID, parsedFile, trackOptions);
                         }

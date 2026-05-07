@@ -25,6 +25,7 @@
 import { EventManager } from "./CEventManager";
 import { Sit, NodeMan } from "./Globals";
 import { updateSitFrames } from "./UpdateSitFrames";
+import { computeMisbSpans, computeFpsAnalysis } from "./MISBUtils";
 
 let _videoReady = false;
 let _videoData = null;
@@ -71,23 +72,8 @@ function findMISBNode() {
     return found;
 }
 
-// Walk the misb array and compute the UnixTimeStamp span. Skip
-// records with null timestamps; if fewer than 2 valid records exist,
-// return null (insufficient data for a real-time anchor).
-function computeKlvUtsSpanSeconds(misb) {
-    let firstT = null;
-    let lastT = null;
-    for (let i = 0; i < misb.length; i++) {
-        const row = misb[i];
-        if (!row) continue;
-        const t = row[2]; // MISB.UnixTimeStamp = 2 (microseconds since Unix epoch)
-        if (t == null) continue;
-        if (firstT === null) firstT = t;
-        lastT = t;
-    }
-    if (firstT === null || lastT === null || lastT <= firstT) return null;
-    return (lastT - firstT) / 1e6;
-}
+// computeMisbSpans + computeFpsAnalysis live in MISBUtils.js so the
+// timing-analysis report and this dialog share a single implementation.
 
 function tryShow() {
     if (_shownForCurrentFile) return;
@@ -99,29 +85,36 @@ function tryShow() {
     const misbNode = findMISBNode();
     if (!misbNode) return; // KLV not parsed yet, retry on next event
 
-    const klvUtsSpan = computeKlvUtsSpanSeconds(misbNode.misb);
-    if (klvUtsSpan == null) return;
+    const klvSpans = computeMisbSpans(misbNode.misb);
+    if (klvSpans == null || !(klvSpans.pesSpanS > 0)) return;
 
-    const realFps = frames / klvUtsSpan;
-    const labeledFps = Sit.fps;
+    if (!_videoData.framePTSus || _videoData.framePTSus.length < 2) return;
+    const ptsArr = _videoData.framePTSus;
+    const videoPesSpan = (ptsArr[ptsArr.length - 1] - ptsArr[0]) / 1e6;
 
-    // Three fps candidates:
-    //   real    — frames / klvUtsSpan          (recommended, real-time)
-    //   labeled — current Sit.fps              (whatever the video class auto-set)
-    //   pcr     — frames / videoSpanS_seconds  (PES-PTS-derived, if available)
-    let pcrFps = null;
-    if (_videoData.framePTSus && _videoData.framePTSus.length >= 2) {
-        const ptsArr = _videoData.framePTSus;
-        const span = (ptsArr[ptsArr.length - 1] - ptsArr[0]) / 1e6;
-        if (span > 0) pcrFps = ptsArr.length / span;
-    }
+    const fpsAnalysis = computeFpsAnalysis({
+        videoFrameCount: frames,
+        videoPesSpanS: videoPesSpan,
+        klvUtsSpanS: klvSpans.utsSpanS,
+        klvPesSpanS: klvSpans.pesSpanS,
+        currentSitFps: Sit.fps,
+    });
+    if (!fpsAnalysis.valid) return;
 
-    // No-op if all three agree within 1 %; nothing to ask the user.
-    const gap = Math.abs(realFps - labeledFps) / Math.max(realFps, 1e-6);
-    if (gap < 0.01) return;
+    // Compare to *current* Sit.fps, not pcrFps — what matters is
+    // whether Sitrec is using the right fps, not whether two
+    // measurements agree.
+    if (fpsAnalysis.sitFpsDelta < 0.01) return;
 
     _shownForCurrentFile = true;
-    showFpsChoiceDialog({ frames, klvUtsSpan, realFps, labeledFps, pcrFps })
+    const labeledFps = Sit.fps;
+    showFpsChoiceDialog({
+        frames,
+        klvUtsSpan: klvSpans.utsSpanS,
+        realFps: fpsAnalysis.realFps,
+        labeledFps,
+        pcrFps: fpsAnalysis.pcrFps,
+    })
         .then((chosen) => {
             if (chosen != null && chosen > 0 && chosen !== Sit.fps) {
                 console.log(`[FpsMismatchDialog] User chose Sit.fps = ${chosen} (was ${Sit.fps})`);

@@ -279,6 +279,94 @@ const misbTagInfo = [
 // but some words, like "of" are not, and there might be use confusion
 // all LS Names are unique regardless of case
 
+// Walk a MISB array and compute the UnixTimeStamp + pesPTSus spans
+// over the same index range (first/last records where both are
+// populated, when pesPTSus exists at all). Returns spans in seconds.
+// Used by the timing-analysis report and the fps-mismatch dialog —
+// the apples-to-apples spans are essential for measuring the encoder
+// PCR-vs-real-clock rate ratio without mixing different time ranges.
+//
+// Returns: { utsSpanS, pesSpanS } | null
+//   utsSpanS: real-time wall-clock span (always present if valid)
+//   pesSpanS: encoder PCR-clock span over the SAME records (null if
+//             the misb has no pesPTSus array — async-mode KLV)
+//   null:    fewer than 2 records have a populated UTS
+export function computeMisbSpans(misb) {
+    if (!misb || misb.length < 2) return null;
+    const pesArr = misb.pesPTSus;
+    const havePes = Array.isArray(pesArr);
+    let firstUts = null, lastUts = null;
+    let firstPes = null, lastPes = null;
+    for (let i = 0; i < misb.length; i++) {
+        const row = misb[i];
+        if (!row) continue;
+        const uts = row[2]; // MISB.UnixTimeStamp = 2 (µs since Unix epoch)
+        const pes = havePes ? pesArr[i] : null;
+        if (uts == null) continue;
+        // For PES-vs-real ratio we need both populated; require both
+        // here so first/last align on identical records.
+        if (havePes && pes == null) continue;
+        if (firstUts === null) { firstUts = uts; firstPes = pes; }
+        lastUts = uts;
+        lastPes = pes;
+    }
+    if (firstUts === null || lastUts === null || lastUts <= firstUts) return null;
+    return {
+        utsSpanS: (lastUts - firstUts) / 1e6,
+        pesSpanS: (havePes && firstPes != null && lastPes != null && lastPes > firstPes)
+            ? (lastPes - firstPes) / 1e6 : null,
+    };
+}
+
+// Encoder PTS-cadence-mismatch analysis. Compares the labeled video
+// frame rate (frames per encoder PCR-second) with the real-world rate
+// (frames per real-second) using the encoder's PCR-vs-real-clock ratio
+// measured from the KLV stream. Catches the "ffmpeg -r N without an
+// fps filter" footgun (and similar tactical-encoder misconfigurations)
+// where PES PTS values are written at one cadence while frames are
+// captured at another — the platform track ends partway through the
+// video timeline because Sit.fps is left at the labeled rate.
+//
+// The math: real_fps = pcr_fps × (klvPesSpan / klvUtsSpan). The naive
+// formula `videoFrameCount / klvUtsSpan` mixes time ranges (KLV often
+// pre-rolls a few seconds before first decoded video frame) and gives
+// wrong fps for normally-synchronised files.
+//
+// Caller provides the four measurements; we return all derived
+// quantities so callers can format / threshold as needed.
+//
+// Args:
+//   videoFrameCount  — total decoded video frames
+//   videoPesSpanS    — span of video PES PTS values, in seconds
+//   klvUtsSpanS      — span of KLV UnixTimeStamp values, in seconds
+//   klvPesSpanS      — span of KLV pesPTSus over the same record range
+//                      (null if KLV is async-mode without PES PTS)
+//   currentSitFps    — optional, for reporting "current vs real" delta
+//
+// Returns: { valid, pcrFps, realFps, ratePesOverReal, fpsGap, sitFpsDelta }
+//   valid:           false if inputs are missing/invalid
+//   pcrFps:          frames per PCR-second (= the labeled fps)
+//   realFps:         frames per real-second (= pcrFps × rate)
+//   ratePesOverReal: klvPesSpan / klvUtsSpan (1.0 if no PES; ~1.0 normally)
+//   fpsGap:          |realFps − pcrFps| / realFps
+//   sitFpsDelta:     |realFps − currentSitFps| / realFps (NaN if no current)
+export function computeFpsAnalysis({ videoFrameCount, videoPesSpanS, klvUtsSpanS, klvPesSpanS, currentSitFps } = {}) {
+    if (!(videoFrameCount > 1) || !(videoPesSpanS > 0) || !(klvUtsSpanS > 0)) {
+        return { valid: false };
+    }
+    const pcrFps = videoFrameCount / videoPesSpanS;
+    // Without KLV PES PTS we can't measure the rate ratio independently,
+    // so we have to assume PCR == real and accept that we can't *detect*
+    // a PTS-cadence misconfiguration in async-mode KLV files.
+    const ratePesOverReal = (klvPesSpanS > 0) ? (klvPesSpanS / klvUtsSpanS) : 1.0;
+    const realFps = pcrFps * ratePesOverReal;
+    const fpsGap = Math.abs(realFps - pcrFps) / Math.max(realFps, 1e-6);
+    const sitFpsDelta = (currentSitFps > 0)
+        ? Math.abs(realFps - currentSitFps) / Math.max(realFps, 1e-6)
+        : NaN;
+    return { valid: true, pcrFps, realFps, ratePesOverReal, fpsGap, sitFpsDelta };
+}
+
 export function parseMISB1CSV(csv) {
     const rows = csv.length;
     console.log("MISB CSV rows = "+rows);

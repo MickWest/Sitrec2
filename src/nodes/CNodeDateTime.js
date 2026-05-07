@@ -430,17 +430,20 @@ export class CNodeDateTime extends CNode {
         // Per-node we also report gap count and max-interval so neither
         // stream's pattern is hidden by picking only one for the deep
         // analysis below.
+        // Anonymous prelude: the report is paste-safe, so we replace
+        // node ids (which often carry tail numbers like CG2314 / N97826)
+        // with positional labels (Stream 1, Stream 2, ...). The diagnostic
+        // signal — record counts, PES PTS availability, gap counts, max
+        // interval — is preserved.
         let prelude = "";
         if (misbNodes.length > 1) {
-            prelude += "MULTIPLE MISB DATA NODES LOADED\n";
+            prelude += "MULTIPLE MISB DATA STREAMS LOADED\n";
             prelude += "─".repeat(60) + "\n";
-            for (const n of misbNodes) {
+            for (let si = 0; si < misbNodes.length; si++) {
+                const n = misbNodes[si];
                 const has = (typeof n.hasRecordPTS === "function" && n.hasRecordPTS()) ? "yes" : "no";
                 const len = (n.misb && n.misb.length) ? n.misb.length : 0;
                 const tag = (n === misbNode) ? "  ← ANALYZED" : "";
-                // Quick gap survey using the same threshold the deep analysis
-                // uses (3× mean, min 100 ms). Skip if too few records or no
-                // valid time accessor.
                 let gapInfo = "";
                 try {
                     if (len >= 2 && typeof n.isValid === "function" && typeof n.getTime === "function") {
@@ -464,7 +467,7 @@ export class CNodeDateTime extends CNode {
                 } catch (e) {
                     gapInfo = ` (gap survey failed: ${e.message})`;
                 }
-                prelude += `  ${n.id}\n`;
+                prelude += `  Stream ${si + 1}\n`;
                 prelude += `    records: ${len}, hasRecordPTS: ${has}${gapInfo}${tag}\n`;
             }
             prelude += "\n  Sync-mode (hasRecordPTS=yes) is preferred for the deep analysis\n";
@@ -475,8 +478,9 @@ export class CNodeDateTime extends CNode {
         }
 
         const report = prelude + misbNode.generateTimingAnalysis();
-        const safeName = (Sit.name || "sitch").replace(/[^a-z0-9_-]/gi, "_");
-        showTimingAnalysis(report, `sitrec-timing-${safeName}.txt`);
+        // Generic download filename — never include sitch name (may
+        // contain platform / mission text the user wrote).
+        showTimingAnalysis(report, "sitrec-timing-analysis.txt");
     }
 
     changedFrames() {
