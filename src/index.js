@@ -792,11 +792,13 @@ if (isLocal) {
     guiMenus.debug.add(profilerControl, 'enabled')
         .name('Visual Profiler')
         .onChange(() => profilerControl.update())
-        .tooltip('Toggle the visual profiler display. Shows timing of code segments with a flame-graph-like visualization. Canvas is removed when disabled.');
-    
+        .tooltip('Toggle the visual profiler display. Shows timing of code segments with a flame-graph-like visualization. Canvas is removed when disabled.')
+        .perm();
+
     guiMenus.debug.add(Globals, 'showTileStats')
         .name('Tile Stats')
-        .tooltip('Show tile statistics for subdivision and loading');
+        .tooltip('Show tile statistics for subdivision and loading')
+        .perm();
 
     // Manual WebGL context-loss trigger. Calls WEBGL_lose_context.loseContext()
     // on every 3D view's renderer; the browser then fires webglcontextlost
@@ -841,7 +843,8 @@ if (isLocal) {
     };
     guiMenus.debug.add(contextLossControl, 'forceContextLoss')
         .name('Force GL Context Loss')
-        .tooltip('Force WebGL context loss on all 3D views, then restore after 1s. Tests the recovery path that handles organic GPU-process crashes.');
+        .tooltip('Force WebGL context loss on all 3D views, then restore after 1s. Tests the recovery path that handles organic GPU-process crashes.')
+        .perm();
     
 //    console.log("Visual Profiler controls added to Debug menu (local mode only)");
 } else {

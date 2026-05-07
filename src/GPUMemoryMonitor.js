@@ -41,6 +41,17 @@ class GPUMemoryMonitor {
     setScene(scene) {
         this.scene = scene;
     }
+
+    // Re-attach to a live renderer after a sitch reload. Without this the
+    // monitor keeps a reference to the previous sitch's renderer, which has
+    // had forceContextLoss() called on it during disposeEverything() — so
+    // info.memory falls back to a dead renderer and reads ~0.
+    setRenderer(renderer) {
+        this.renderer = renderer;
+        this.gpuExtension = null;
+        this.detectedGPUMemory = 0;
+        this.initGPUExtension();
+    }
     
     initGPUExtension() {
         try {
@@ -194,6 +205,22 @@ class GPUMemoryMonitor {
                                     this.addTextureSize(mat[texType], textureMap);
                                 }
                             });
+                            // ShaderMaterial: textures live in uniforms, not on the
+                            // material itself. Terrain tiles and sky/star shaders
+                            // are all here, so without this the monitor under-reports
+                            // by orders of magnitude on any 3D-heavy sitch.
+                            if (mat.uniforms) {
+                                for (const u of Object.values(mat.uniforms)) {
+                                    const v = u && u.value;
+                                    if (v && v.isTexture) {
+                                        this.addTextureSize(v, textureMap);
+                                    } else if (Array.isArray(v)) {
+                                        for (const item of v) {
+                                            if (item && item.isTexture) this.addTextureSize(item, textureMap);
+                                        }
+                                    }
+                                }
+                            }
                         });
                     }
                 });
@@ -566,8 +593,8 @@ class GPUMemoryMonitor {
         }
         
         this.guiDebugMenu = guiMenus.debug;
-        this.guiFolder = guiMenus.debug.addFolder('GPU Memory Monitor');
-        
+        this.guiFolder = guiMenus.debug.addFolder('GPU Memory Monitor').perm();
+
         // Add display object for stats
         this.displayControls = {
             enabled: true,
@@ -578,14 +605,14 @@ class GPUMemoryMonitor {
             average: '0 MB',
             reset: () => this.reset()
         };
-        
-        this.guiFolder.add(this.displayControls, 'enabled').name(t("gpuMonitor.enabled"));
-        this.guiFolder.add(this.displayControls, 'total').name(t("gpuMonitor.total")).listen().disable();
-        this.guiFolder.add(this.displayControls, 'geometries').name(t("gpuMonitor.geometries")).listen().disable();
-        this.guiFolder.add(this.displayControls, 'textures').name(t("gpuMonitor.textures")).listen().disable();
-        this.guiFolder.add(this.displayControls, 'peak').name(t("gpuMonitor.peak")).listen().disable();
-        this.guiFolder.add(this.displayControls, 'average').name(t("gpuMonitor.average")).listen().disable();
-        this.guiFolder.add(this.displayControls, 'reset').name(t("gpuMonitor.reset"));
+
+        this.guiFolder.add(this.displayControls, 'enabled').name(t("gpuMonitor.enabled")).perm();
+        this.guiFolder.add(this.displayControls, 'total').name(t("gpuMonitor.total")).listen().disable().perm();
+        this.guiFolder.add(this.displayControls, 'geometries').name(t("gpuMonitor.geometries")).listen().disable().perm();
+        this.guiFolder.add(this.displayControls, 'textures').name(t("gpuMonitor.textures")).listen().disable().perm();
+        this.guiFolder.add(this.displayControls, 'peak').name(t("gpuMonitor.peak")).listen().disable().perm();
+        this.guiFolder.add(this.displayControls, 'average').name(t("gpuMonitor.average")).listen().disable().perm();
+        this.guiFolder.add(this.displayControls, 'reset').name(t("gpuMonitor.reset")).perm();
         
         this.enabled = true;
     }

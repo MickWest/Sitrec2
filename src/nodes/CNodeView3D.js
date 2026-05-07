@@ -193,7 +193,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         // Only add debug GUI if this is the first mainView and help menu exists
         if (isLocal && this.id === "mainView" && guiMenus && guiMenus.help && !guiMenus.help._renderDebugFolderAdded) {
             const debugFolder = guiMenus.debug.addFolder("Render Debug");
-            
+
             // Add controls for global render debug flags (affects ALL views)
             debugFolder.add(Globals.renderDebugFlags, "dbg_clearBackground").name(t("view3d.debug.clearBackground")).onChange(() => setRenderOne(true));
             debugFolder.add(Globals.renderDebugFlags, "dbg_renderSky").name(t("view3d.debug.renderSky")).onChange(() => setRenderOne(true));
@@ -206,7 +206,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             debugFolder.add(Globals.renderDebugFlags, "dbg_sRGBOutputEncoding").name(t("view3d.debug.sRGBOutputEncoding")).onChange(() => setRenderOne(true));
 
             debugFolder.add(Globals, "tileDelay", 0, 5, 0.01).name(t("view3d.debug.tileLoadDelay")).onChange(() => setRenderOne(true));
-            
+
             // Add renderSky sub-folder
             const skyFolder = debugFolder.addFolder("Sky Steps");
             skyFolder.add(Globals.renderDebugFlags, "dbg_updateStarScales").name(t("view3d.debug.updateStarScales")).onChange(() => setRenderOne(true));
@@ -214,7 +214,17 @@ export class CNodeView3D extends CNodeViewCanvas {
             skyFolder.add(Globals.renderDebugFlags, "dbg_renderNightSky").name(t("view3d.debug.renderNightSky")).onChange(() => setRenderOne(true));
             skyFolder.add(Globals.renderDebugFlags, "dbg_renderFullscreenQuad").name(t("view3d.debug.renderFullscreenQuad")).onChange(() => setRenderOne(true));
             skyFolder.add(Globals.renderDebugFlags, "dbg_renderSunSky").name(t("view3d.debug.renderSunSky")).onChange(() => setRenderOne(true));
-            
+
+            // Mark folder + all children permanent so they survive
+            // disposeEverything()'s menuBar.destroy(false) on every sitch
+            // reload. Without this the controls vanish after File → Load
+            // (URL-loads happen pre-disposal so the issue doesn't show).
+            const permAll = (node) => {
+                if (typeof node.perm === "function") node.perm();
+                if (node.children) node.children.forEach(permAll);
+            };
+            permAll(debugFolder);
+
             // Mark that we've added the render debug folder to avoid duplicates
             guiMenus.help._renderDebugFolderAdded = true;
         }
@@ -1092,23 +1102,23 @@ export class CNodeView3D extends CNodeViewCanvas {
         // WebGL context-loss handlers are installed below (after render-target
         // setup) so the restore path can re-create everything in one place.
 
-        // Initialize GPU Memory Monitor on the first renderer created (only in local/dev mode)
-        if (isLocal) {
+        // Bind GPU Memory Monitor to mainView's renderer (canonical reference).
+        // Sitches like gimbal create multiple CNodeView3Ds (podBack, podsEye,
+        // …); without picking a specific view, "last one wins" leaves the
+        // monitor bound to whichever view happened to construct last.
+        // Re-attach on every sitch reload — disposeEverything() calls
+        // forceContextLoss() on the previous renderer.
+        if (isLocal && this.id === "mainView") {
             if (!Globals.GPUMemoryMonitor) {
-//                console.log("[CNodeView3D] Creating new GPU Memory Monitor");
                 try {
                     const monitor = new GPUMemoryMonitor(this.renderer, GlobalScene);
                     setGPUMemoryMonitor(monitor);
-                    // console.log("✓ GPU Memory Monitor initialized successfully");
-                    
-                    // Make it globally accessible for testing
                     window._gpuMonitor = monitor;
-                    // console.log("✓ Monitor available as: window._gpuMonitor or window.Globals.GPUMemoryMonitor");
                 } catch (e) {
                     console.error("[CNodeView3D] Error initializing GPU Memory Monitor:", e);
                 }
             } else {
-                // Update scene reference if it changed
+                Globals.GPUMemoryMonitor.setRenderer(this.renderer);
                 Globals.GPUMemoryMonitor.setScene(GlobalScene);
             }
         }
