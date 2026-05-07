@@ -651,7 +651,11 @@ export class QuadTreeTile {
         }
     }
 
-    // Dispose of this tile's resources (but keep materials in cache for reuse)
+    // Dispose of this tile's resources, including its materialCache entry.
+    // Symmetric with the prune path in QuadTreeMap.subdivideTilesGeneral —
+    // both paths must drop the cache entry alongside disposing the material,
+    // otherwise materialCache accumulates disposed-but-cached handles that
+    // a future tile requesting the same URL would unwittingly receive.
     dispose() {
         // Remove debug geometry first
         this.removeDebugGeometry();
@@ -662,13 +666,20 @@ export class QuadTreeTile {
                 this.mesh.parent.remove(this.mesh);
             }
 
-            // Dispose geometry (but not material since it's cached)
+            // Dispose geometry
             if (this.mesh.geometry) {
                 this.mesh.geometry.dispose();
             }
 
-            // Note: We don't dispose the material here since it's cached
-            // and may be used by other tiles. Use static methods to manage cache.
+            // Free material + texture AND evict the cache entry. Static
+            // cache keys are session-shared across tiles, so leave those
+            // for the bulk clearMaterialCache() teardown.
+            if (this.materialCacheKey && !this.materialCacheKey.startsWith('static_')) {
+                QuadTreeTile.removeMaterialByCacheKey(this.materialCacheKey);
+            } else if (this.mesh.material) {
+                this.mesh.getMap()?.dispose();
+                this.mesh.material.dispose();
+            }
 
             this.mesh = undefined;
         }

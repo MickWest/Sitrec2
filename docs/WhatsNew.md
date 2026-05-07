@@ -45,6 +45,17 @@ Example entry format:
 
 ---
 
+## Version 2.50.4 (2026-05-07)
+
+### Improvements
+- **GPU Memory Monitor: 4× more accurate texture accounting**: the monitor was hardcoded against an old Three.js format-constant table — `RGBAFormat=1023` mapped (incorrectly) to `RedFormat`, charging every RGBA texture at 1 byte/pixel instead of 4. Switched to imported named constants (`RGBAFormat`, `RGFormat`, etc.) and added per-channel-type adjustment for `HalfFloatType` / `FloatType`. On the Orbit Stress Test sitch the same scene that previously read 28 MB now reads ~120 MB; gigabyte-scale pressure on heavy sitches is no longer hidden behind a broken counter.
+- **GPU Memory Monitor: multi-scene + render-target accounting**: previously walked only `GlobalScene`. Now also traverses `GlobalNightSkyScene` / `GlobalDaySkyScene` / `GlobalSunSkyScene` (NightSky alone owns the 117k-star sprite atlas) and per-view render targets (anti-aliased + HDR + post-process passes), which on a 4K display can be 100+ MB per view before any tile loads. Idle reading on the orbit sitch went from 28 MB → 455 MB on the same scene state — same VRAM, accurate measurement.
+- **GPU mipmap multiplier applied correctly**: previous code only counted mipmaps when `texture.mipmaps[]` was non-empty (almost never — Three.js generates mipmaps on the GPU via `generateMipmap()`, which doesn't populate the JS array). Now applies the 4/3 mipmap-chain multiplier when `generateMipmaps !== false`, matching real GPU usage.
+
+### Bug Fixes
+- **`QuadTreeMapTexture.clean()` now evicts disposed materials from `materialCache`**: previously disposed each tile's material+texture inline but left the cache entry pointing at the disposed handle. After a map-source change (e.g. user switches terrain provider), any subsequent tile re-requesting the same URL would receive a use-after-dispose material. Now routes through `removeMaterialByCacheKey` so the cache and the GL state stay synchronized.
+- **`QuadTreeTile.dispose()` now evicts the cache entry**: symmetric with the regular prune path. Currently has no in-tree callers (so the bug was latent), but any future code that calls it would have leaked a cache entry per tile.
+
 ## Version 2.50.3 (2026-05-07)
 
 ### Improvements

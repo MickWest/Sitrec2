@@ -151,13 +151,19 @@ class QuadTreeMapTexture extends QuadTreeMap {
             if (tile.mesh !== undefined) {
                 this.scene.remove(tile.mesh)
                 tile.mesh.geometry.dispose();
-                
-                // Dispose the texture if it exists
-                tile.mesh.getMap()?.dispose();
-                
-                tile.mesh.material.dispose()
+
+                // Free this tile's material+texture AND evict the cache entry.
+                // Previously this disposed the material in place but left a
+                // disposed handle in materialCache — any subsequent tile
+                // requesting the same URL would receive a use-after-dispose.
+                if (tile.materialCacheKey && !tile.materialCacheKey.startsWith('static_')) {
+                    QuadTreeTile.removeMaterialByCacheKey(tile.materialCacheKey);
+                } else if (tile.mesh.material) {
+                    tile.mesh.getMap()?.dispose();
+                    tile.mesh.material.dispose();
+                }
             }
-            
+
             // Clean up skirt mesh
             if (tile.skirtMesh !== undefined) {
                 this.scene.remove(tile.skirtMesh);

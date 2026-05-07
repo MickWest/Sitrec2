@@ -1,6 +1,16 @@
 // GPU Memory Monitor - Track WebGL/VRAM usage in real-time
 // Displays texture, geometry, and total memory consumption
 // Only active in local/dev mode - zero overhead in production
+import {
+    AlphaFormat,
+    DepthFormat,
+    DepthStencilFormat,
+    HalfFloatType,
+    RedFormat,
+    RGBAFormat,
+    RGFormat,
+    UnsignedByteType,
+} from "three";
 import {t} from "./i18n";
 
 class GPUMemoryMonitor {
@@ -184,53 +194,104 @@ class GPUMemoryMonitor {
      */
     calculateTextureMemory() {
         let totalMemory = 0;
-        
+
         try {
-            // Traverse through the scene and calculate texture sizes
-            if (this.scene) {
-                const textureMap = new Map();
-                const textureTypes = [
-                    'map', 'normalMap', 'roughnessMap', 'metalnessMap', 
-                    'aoMap', 'emissiveMap', 'displacementMap', 'bumpMap',
-                    'alphaMap', 'envMap', 'lightMap'
-                ];
-                
-                this.scene.traverse(obj => {
+            const textureMap = new Map();
+            const textureTypes = [
+                'map', 'normalMap', 'roughnessMap', 'metalnessMap',
+                'aoMap', 'emissiveMap', 'displacementMap', 'bumpMap',
+                'alphaMap', 'envMap', 'lightMap'
+            ];
+
+            // Traverse the main scene + the auxiliary sky scenes. These hold
+            // significant texture memory (NightSky has the entire star
+            // catalogue's sprite atlas; DaySky/SunSky have gradient/sun
+            // textures). Without them the monitor undercounts heavily on any
+            // sitch that uses the sky.
+            const scenesToWalk = [this.scene];
+            for (const name of ["GlobalNightSkyScene", "GlobalDaySkyScene", "GlobalSunSkyScene"]) {
+                const s = (typeof window !== "undefined" && window[name]) || globalThis[name];
+                if (s && s !== this.scene) scenesToWalk.push(s);
+            }
+
+            const visit = (mat) => {
+                textureTypes.forEach(texType => {
+                    if (mat[texType]) this.addTextureSize(mat[texType], textureMap);
+                });
+                // ShaderMaterial: textures live in uniforms, not on the
+                // material itself. Terrain tiles and sky/star shaders are
+                // all here, so without this the monitor under-reports by
+                // orders of magnitude on any 3D-heavy sitch.
+                if (mat.uniforms) {
+                    for (const u of Object.values(mat.uniforms)) {
+                        const v = u && u.value;
+                        if (v && v.isTexture) {
+                            this.addTextureSize(v, textureMap);
+                        } else if (Array.isArray(v)) {
+                            for (const item of v) {
+                                if (item && item.isTexture) this.addTextureSize(item, textureMap);
+                            }
+                        }
+                    }
+                }
+            };
+
+            for (const scene of scenesToWalk) {
+                if (!scene) continue;
+                scene.traverse(obj => {
                     if (obj.material) {
                         const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-                        materials.forEach(mat => {
-                            // Check all common texture properties
-                            textureTypes.forEach(texType => {
-                                if (mat[texType]) {
-                                    this.addTextureSize(mat[texType], textureMap);
-                                }
-                            });
-                            // ShaderMaterial: textures live in uniforms, not on the
-                            // material itself. Terrain tiles and sky/star shaders
-                            // are all here, so without this the monitor under-reports
-                            // by orders of magnitude on any 3D-heavy sitch.
-                            if (mat.uniforms) {
-                                for (const u of Object.values(mat.uniforms)) {
-                                    const v = u && u.value;
-                                    if (v && v.isTexture) {
-                                        this.addTextureSize(v, textureMap);
-                                    } else if (Array.isArray(v)) {
-                                        for (const item of v) {
-                                            if (item && item.isTexture) this.addTextureSize(item, textureMap);
-                                        }
-                                    }
-                                }
-                            }
-                        });
+                        materials.forEach(mat => mat && visit(mat));
                     }
                 });
-                
-                // Sum up all tracked textures
-                for (const [tex, size] of textureMap.entries()) {
-                    totalMemory += size;
-                }
             }
-            
+
+            // Per-view render targets aren't reachable via scene.traverse
+            // (they're owned directly by the view, not any mesh material).
+            // On a 4K display these dwarf the scene texture budget — a single
+            // 1920×1080 anti-aliased+HDR render target can be 16 MB; multiply
+            // by 4-6 RTs per view × 2 views and you're at 100-200 MB before
+            // any tile loads.
+            try {
+                const NodeMan = (typeof window !== "undefined" && window.NodeMan) || globalThis.NodeMan;
+                if (NodeMan) {
+                    const rtFields = [
+                        "renderTargetAntiAliased",
+                        "renderTargetHDR",
+                        "renderTargetSky",
+                        "renderTargetMain",
+                        "renderTargetScene",
+                        "renderTargetTone",
+                        "renderTargetCopy",
+                        "renderTargetEffects",
+                    ];
+                    for (const id of ["mainView", "lookView"]) {
+                        const v = NodeMan.get(id, false);
+                        if (!v) continue;
+                        for (const k of Object.keys(v)) {
+                            const rt = v[k];
+                            if (rt && rt.isWebGLRenderTarget) {
+                                if (textureMap.has(rt.texture)) continue;
+                                const w = rt.width || 0;
+                                const h = rt.height || 0;
+                                if (w > 0 && h > 0) {
+                                    const samples = Math.max(1, rt.samples ?? 0);
+                                    // Color attachment + depth + (multisample resolve)
+                                    const sz = w * h * 4 * samples;
+                                    textureMap.set(rt.texture, sz);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                // Render-target accounting is best-effort.
+            }
+
+            // Sum up all tracked textures (deduped by texture object across
+            // all scenes + render targets).
+            for (const [, size] of textureMap.entries()) totalMemory += size;
+
             return totalMemory;
         } catch (e) {
             // Silently ignore - this is only used in dev mode anyway
@@ -274,31 +335,35 @@ class GPUMemoryMonitor {
             }
             
             if (width > 0 && height > 0) {
-                // Determine bytes per pixel based on format
+                // Bytes-per-pixel from the format. Use Three.js's named
+                // constants — they migrated numeric values multiple times
+                // (e.g. RGBAFormat moved 1023 → other in some releases) so
+                // hardcoded magic numbers silently miscount across versions.
+                // The previous version mapped 1023 to RedFormat (1 BPP), so
+                // every RGBAFormat=1023 texture was undercounted 4×.
                 let bytesPerPixel = 4; // Default RGBA
-                
-                if (texture.format) {
-                    // Three.js format constants
-                    if (texture.format === 1024) { // RGBFormat
-                        bytesPerPixel = 3;
-                    } else if (texture.format === 1026) { // LuminanceFormat
-                        bytesPerPixel = 1;
-                    } else if (texture.format === 1027) { // LuminanceAlphaFormat
-                        bytesPerPixel = 2;
-                    } else if (texture.format === 1023) { // RedFormat
-                        bytesPerPixel = 1;
-                    }
-                    // Handle other common formats
-                    else if (texture.format === 1025) { // RGFormat (if exists)
-                        bytesPerPixel = 2;
-                    }
+                if (texture.format === RGBAFormat) bytesPerPixel = 4;
+                else if (texture.format === RGFormat) bytesPerPixel = 2;
+                else if (texture.format === RedFormat) bytesPerPixel = 1;
+                else if (texture.format === AlphaFormat) bytesPerPixel = 1;
+                else if (texture.format === DepthFormat) bytesPerPixel = 2;
+                else if (texture.format === DepthStencilFormat) bytesPerPixel = 4;
+
+                // Float / half-float textures double the per-channel cost.
+                if (texture.type === HalfFloatType) bytesPerPixel *= 2;
+                else if (texture.type !== undefined && texture.type !== UnsignedByteType) {
+                    // FloatType (1015), UnsignedShort, etc. — assume 2-4× expansion.
+                    // Conservative 2× is closer than ignoring it entirely.
+                    bytesPerPixel *= 2;
                 }
-                
-                // Calculate base size
+
+                // Base size
                 size = width * height * bytesPerPixel;
-                
-                // Account for mipmaps (roughly 1/3 extra memory)
-                if (texture.mipmaps && texture.mipmaps.length > 0) {
+
+                // GPU mipmap chain ≈ 4/3 of base level. Three.js's `mipmaps`
+                // array is empty for most textures (mipmaps are GPU-generated
+                // via `generateMipmap()`), so check `generateMipmaps` too.
+                if (texture.generateMipmaps !== false || (texture.mipmaps && texture.mipmaps.length > 0)) {
                     size *= 1.33;
                 }
             }
