@@ -41,3 +41,4 @@ tests/__image_snapshots__/
 AGENTS.md
 /tests_regression/snapshots-diffs/
 /tests_regression/snapshots-baseline/
+/analysis/
