@@ -35,6 +35,18 @@ function linearizeColor(srgb) {
     return c;
 }
 
+// LineMaterial's alphaToCoverage path emits a smoothstep alpha which the GPU
+// then quantizes into MSAA-sample-mask coverage. For a sub-pixel-wide line to
+// render solidly, the quantization needs enough levels — empirically MSAA=4
+// (5 levels including 0) is smooth, MSAA=2 (3 levels) shows periodic gaps,
+// and MSAA=0 collapses to a hard α<0.5 discard. So when MSAA<4 we clamp the
+// line to at least 1 fb-pixel; the rasterized triangle is then always ≥1 px
+// wide and its center always passes the discard threshold. Quality preset
+// (MSAA=4) keeps the originally-requested sub-pixel widths.
+function getEffectiveLinewidth(linewidth) {
+    return safeMSAA() >= 4 ? linewidth : Math.max(1, linewidth);
+}
+
 const matLines = {} // collection of line materials that need updating on resize
 // we make one entry per unique material
 function makeMatLine(color, linewidth = 2, dashed = false) {
@@ -57,7 +69,7 @@ function makeMatLine(color, linewidth = 2, dashed = false) {
 //        console.warn("LEAK?: Creating new line material for key: ", key)
         const lineMaterial = new LineMaterial({
             color: linearizeColor(color),
-            linewidth: linewidth,
+            linewidth: getEffectiveLinewidth(linewidth),
             dashed: dashed,
             // alphaToCoverage activates the smoothstep analytic-AA branch in
             // LineMaterial's fragment shader, which is what fills sub-pixel
@@ -67,6 +79,9 @@ function makeMatLine(color, linewidth = 2, dashed = false) {
             // current settings so it's a no-op when MSAA is off.
             alphaToCoverage: safeMSAA() > 0,
         })
+        // Stash the requested width so refreshMatLineAlphaToCoverage can
+        // restore it (or re-clamp it) when MSAA toggles at runtime.
+        lineMaterial.userData.originalLinewidth = linewidth;
         const rs = safeRenderScale();
         const dpr = (window.devicePixelRatio || 1) * rs;
         lineMaterial.resolution.set(window.innerWidth * dpr, window.innerHeight * dpr)
@@ -113,6 +128,15 @@ function refreshMatLineAlphaToCoverage() {
         if (m.alphaToCoverage !== enabled) {
             m.alphaToCoverage = enabled;
             m.needsUpdate = true;
+        }
+        // Re-clamp linewidth too. getEffectiveLinewidth bumps sub-pixel
+        // requested widths to ≥ 1 fb-pixel whenever MSAA<4 — at fewer samples
+        // alphaToCoverage's sample-mask quantization is too coarse to fade
+        // a sub-pixel line smoothly and visible periodic gaps appear.
+        // linewidth is a plain uniform so no recompile.
+        const want = getEffectiveLinewidth(m.userData.originalLinewidth);
+        if (m.linewidth !== want) {
+            m.linewidth = want;
         }
     });
 }
