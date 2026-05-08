@@ -122,10 +122,10 @@ import {serializeMethods} from "./CustomManagerSerialize";
 // Bulk knob set for the Performance Preset dropdown. Tuned for integrated GPUs
 // and 16 GB hi-DPI laptops: render-scale shrinks the squared per-pixel work,
 // reduced MSAA cuts the multisample resolve, and lower terrain detail/segments
-// cut both CPU traversal and GPU vertex work. Fast keeps MSAA=2 because at
-// renderScale 0.7 the MSAA buffer is only ~24% of native pixels (cheap), and
-// it lets the LineMaterial alphaToCoverage path fill sub-pixel line coverage
-// — without it the cyan LOS lines drop fragments and look broken at low res.
+// cut both CPU traversal and GPU vertex work. Only Quality keeps MSAA=4, which
+// is the threshold at which LineMaterial's alphaToCoverage path can fade a
+// sub-pixel-wide line smoothly. Below that, MatLines.js clamps linewidth to
+// ≥1 fb-pixel so LOS / track lines stay solid instead of dashing at low MSAA.
 const PERFORMANCE_PRESETS = {
     Quality:  { renderScale: 1,    msaaSamples: 4, fpsLimit: 60, tileSegments: 64, maxDetails: 25, videoMaxSize: "None" },
     Balanced: { renderScale: 0.85, msaaSamples: 2, fpsLimit: 30, tileSegments: 32, maxDetails: 20, videoMaxSize: "720P" },
