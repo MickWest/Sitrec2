@@ -4,6 +4,7 @@ import {getCV, loadOpenCV} from "./openCVLoader";
 import {getJsfeat, loadJsfeat} from "./jsfeatLoader";
 import {interpolatePosition} from "./CVideoData";
 import {EventManager} from "./CEventManager";
+import {KeyMan} from "./KeyBoardHandler";
 import {createVideoExporter, DefaultVideoFormat, getBestFormatForResolution, getVideoExtension} from "./VideoExporter";
 import {drawVideoWatermark, ExportProgressWidget, getExportPrefix} from "./utils";
 import {drawAttributionOnCanvas} from "./AttributionOverlay";
@@ -14,6 +15,47 @@ let cv = null;
 
 // Auto Tracking - Automatic object tracking using OpenCV template matching or centroid tracking
 // This is distinct from Manual Tracking (CNodeTrackingOverlay) which requires manual keyframe placement
+
+// Separable Gaussian blur on a Float32Array luma plane. Used by peak tracking
+// to suppress noise and emphasise features near the chosen size scale.
+function gaussianBlur1D(luma, w, h, sigma) {
+    const radius = Math.max(1, Math.ceil(sigma * 3));
+    const size = radius * 2 + 1;
+    const kernel = new Float32Array(size);
+    const denom = 2 * sigma * sigma;
+    let sum = 0;
+    for (let i = 0; i < size; i++) {
+        const x = i - radius;
+        kernel[i] = Math.exp(-(x * x) / denom);
+        sum += kernel[i];
+    }
+    for (let i = 0; i < size; i++) kernel[i] /= sum;
+
+    const tmp = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            let v = 0;
+            for (let k = -radius; k <= radius; k++) {
+                const xx = x + k < 0 ? 0 : x + k >= w ? w - 1 : x + k;
+                v += luma[y * w + xx] * kernel[k + radius];
+            }
+            tmp[y * w + x] = v;
+        }
+    }
+    const out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            let v = 0;
+            for (let k = -radius; k <= radius; k++) {
+                const yy = y + k < 0 ? 0 : y + k >= h ? h - 1 : y + k;
+                v += tmp[yy * w + x] * kernel[k + radius];
+            }
+            out[y * w + x] = v;
+        }
+    }
+    return out;
+}
+
 class ObjectTracker {
     constructor(videoView) {
         this.videoView = videoView;
@@ -38,16 +80,28 @@ class ObjectTracker {
         this.tracker = null;
         this.trackerType = 'CSRT';
 
-        // Centroid tracking for bright spots (stars, etc)
-        this.centerOnBright = false;
-        // Centroid tracking for dark spots
-        this.centerOnDark = false;
-        this.brightnessThreshold = 128;  // 0-255, pixels above/below this are considered "bright"/"dark"
+        // Hold-key loops: ' (advance & track at fps) and ; (rewind & delete keyframes)
+        this.holdLoopActive = false;
+
+        this.brightnessThreshold = 128;  // 0-255, used by centerOnBright/centerOnDark methods
+
+        // Feature size in image pixels — Gaussian sigma applied before peak
+        // detection. Higher = smoother / larger features, smaller noise
+        // suppressed. Range 2..20 in the GUI.
+        this.featureSize = 4;
+        this.featureSizePreview = false;
 
         // Search radius - how far from previous position to search for template match
         this.searchRadius = 50;  // pixels
 
-        // Tracking method: 'template' (OpenCV template matching) or 'opticalflow' (jsfeat Lucas-Kanade)
+        // Tracking method:
+        //   'template'        — OpenCV template matching (default)
+        //   'opticalflow'     — jsfeat Lucas-Kanade
+        //   'centerOnBright'  — brightness-weighted centroid above threshold
+        //   'centerOnDark'    — brightness-weighted centroid below threshold
+        //   'highPeak'        — local-maximum peak (blob-shaped, motion-extrapolated)
+        //   'lowPeak'         — local-minimum peak (dark blob)
+        //   'sam2'            — server-side SAM2 segmentation
         this.trackingMethod = 'template';
 
         // Maximum number of keyframes to display (0 = none, 100 = all)
@@ -169,6 +223,9 @@ class ObjectTracker {
         
         EventManager.addEventListener("keydown", (data) => {
             if (!this.enabled) return;
+            // Ignore OS auto-repeat — hold loops start once on first keydown
+            // and run until KeyMan reports the key released.
+            if (data.event?.repeat) return;
             const key = data.key.toLowerCase();
             if (key === 'backspace' || key === 'delete') {
                 const x = mouse.x;
@@ -181,8 +238,92 @@ class ObjectTracker {
                     this.updateSliderStatus();
                     setRenderOne(true);
                 }
+            } else if ((key === "'" || key === ";")
+                && !this.holdLoopActive && !this.tracking) {
+                this.holdLoopActive = true;
+                this.runHoldLoop(key === "'" ? 'forward' : 'backward');
             }
         });
+    }
+
+    // Hold-key playback used to combine auto and manual tracking:
+    //   '  : advance frame-by-frame at video fps, running the tracker on
+    //        each new frame. Lets the user step into the track and verify
+    //        each step before committing.
+    //   ;  : step backward at video fps, deleting any tracked keyframe at
+    //        each frame. Lets the user rewind through a bad auto-track
+    //        section, then re-anchor manually.
+    async runHoldLoop(direction) {
+        const videoData = this.videoView?.videoData;
+        if (!videoData) { this.holdLoopActive = false; return; }
+
+        const fps = Sit.fps || 30;
+        const targetInterval = 1000 / fps;
+        const lastFrame = Sit.bFrame ?? (Sit.frames - 1);
+        const firstFrame = Sit.aFrame ?? 0;
+        const heldKey = direction === 'forward' ? "'" : ";";
+
+        const savedPaused = par.paused;
+        par.paused = true;
+
+        // Forward mode runs the actual tracking algorithm. Re-init the
+        // template/keypoints from the current position so a fresh hold press
+        // (after the user has e.g. just placed a manual keyframe) starts
+        // matching from there, not from a stale earlier feature.
+        if (direction === 'forward') {
+            this.tracking = true;
+            this.initializeTracker();
+            Globals.justVideoAnalysis = true;
+        }
+
+        try {
+            while (KeyMan.isKeyHeld(heldKey)) {
+                const tickStart = performance.now();
+                const cur = Math.floor(par.frame);
+
+                if (direction === 'forward') {
+                    const nf = cur + 1;
+                    if (nf > lastFrame) break;
+                    par.frame = nf;
+                    videoData.getImage(nf);
+                    await videoData.waitForFrame(nf, 5000);
+                    if (!KeyMan.isKeyHeld(heldKey)) break;
+                    // force=true so we re-run the algorithm even if the new
+                    // frame already has a stale stored position.
+                    this.trackFrame(nf, true);
+                } else {
+                    // Delete any keyframe at the current frame, then step back.
+                    this.trackedPositions.delete(cur);
+                    this.manualKeyframes.delete(cur);
+                    const nf = cur - 1;
+                    if (nf < firstFrame) break;
+                    par.frame = nf;
+                    videoData.getImage(nf);
+                    await videoData.waitForFrame(nf, 5000);
+                    // Snap the cursor to whatever interpolated position remains
+                    // (or leave it where it was if the track is now empty).
+                    const ip = this.getInterpolatedPosition(nf);
+                    if (ip) { this.trackX = ip.x; this.trackY = ip.y; }
+                }
+
+                if (this.videoView?.renderCanvas) {
+                    this.videoView.renderCanvas(par.frame);
+                }
+                this.updateSliderStatus();
+
+                const elapsed = performance.now() - tickStart;
+                const sleep = Math.max(0, targetInterval - elapsed);
+                await new Promise(r => setTimeout(r, sleep));
+            }
+        } finally {
+            if (direction === 'forward') {
+                this.tracking = false;
+                Globals.justVideoAnalysis = false;
+            }
+            par.paused = savedPaused;
+            this.holdLoopActive = false;
+            setRenderOne(true);
+        }
     }
     
     getImageDimensions() {
@@ -535,19 +676,38 @@ class ObjectTracker {
         return null;
     }
 
-    trackFrame(frame) {
+    trackFrame(frame, force = false) {
         if (!this.tracking || !this.enabled) return;
 
         frame = Math.floor(frame);
 
-        if (this.trackedPositions.has(frame)) {
+        // Skip already-tracked frames in the full-speed loop. The ' hold-loop
+        // passes force=true so the user can deliberately re-run tracking over
+        // a stale section (e.g. a stuck auto-track that wrote the same dud
+        // position across many frames).
+        if (!force && this.trackedPositions.has(frame)) {
             const pos = this.trackedPositions.get(frame);
             this.trackX = pos.x;
             this.trackY = pos.y;
             return;
         }
 
-        const prevPos = this.getInterpolatedPosition(frame - 1);
+        // Seed selection:
+        //   force=true (' hold-loop): use current cursor position so a freshly-
+        //     placed manual keyframe drives the algorithm, not stale stored data.
+        //   peak methods: use motion-extrapolated prediction from the last two
+        //     tracked frames so a moving feature is followed even when the
+        //     stored position at frame-1 is also stale.
+        //   other methods: use the interpolated position at frame-1.
+        const isPeak = (this.trackingMethod === 'highPeak' || this.trackingMethod === 'lowPeak');
+        let prevPos;
+        if (force) {
+            prevPos = {x: this.trackX, y: this.trackY};
+        } else if (isPeak) {
+            prevPos = this.predictPosition(frame) ?? this.getInterpolatedPosition(frame - 1);
+        } else {
+            prevPos = this.getInterpolatedPosition(frame - 1);
+        }
         if (!prevPos) return;
 
         const videoData = this.videoView?.videoData;
@@ -563,16 +723,166 @@ class ObjectTracker {
         // into image coords for the algorithm, then converts the algorithm's
         // output back to tracker coords.
         this.runAlgorithm(frame, currImage, prevPos, (img, pp) => {
-            if (this.centerOnBright) {
-                this.trackBrightCentroid(frame, img, pp);
-            } else if (this.centerOnDark) {
-                this.trackDarkCentroid(frame, img, pp);
-            } else if (this.trackingMethod === 'opticalflow') {
-                this.trackOpticalFlow(frame, img, pp, videoData);
-            } else {
-                this.trackTemplateMatch(frame, img, pp, videoData);
+            switch (this.trackingMethod) {
+                case 'centerOnBright':
+                    this.trackBrightCentroid(frame, img, pp);
+                    break;
+                case 'centerOnDark':
+                    this.trackDarkCentroid(frame, img, pp);
+                    break;
+                case 'highPeak':
+                    this.trackPeak(frame, img, pp, true);
+                    break;
+                case 'lowPeak':
+                    this.trackPeak(frame, img, pp, false);
+                    break;
+                case 'opticalflow':
+                    this.trackOpticalFlow(frame, img, pp, videoData);
+                    break;
+                case 'template':
+                default:
+                    this.trackTemplateMatch(frame, img, pp, videoData);
+                    break;
             }
         });
+    }
+
+    // Linear extrapolation from the two most recent tracked positions before
+    // the given frame. Returns null if no prior positions exist; the single
+    // prior position if only one exists. Used to seed peak-tracking so a fast-
+    // moving feature is followed instead of latched to the stale position at
+    // frame-1 (which is what trips up bright-centroid in dim sections).
+    predictPosition(frame) {
+        const priors = Array.from(this.trackedPositions.keys())
+            .filter(f => f < frame)
+            .sort((a, b) => a - b);
+        if (priors.length === 0) return null;
+        const recent = priors[priors.length - 1];
+        if (priors.length === 1) return this.trackedPositions.get(recent);
+        const older = priors[priors.length - 2];
+        const p1 = this.trackedPositions.get(older);
+        const p2 = this.trackedPositions.get(recent);
+        const dt = recent - older;
+        if (dt <= 0) return p2;
+        return {
+            x: p2.x + (p2.x - p1.x) * (frame - recent) / dt,
+            y: p2.y + (p2.y - p1.y) * (frame - recent) / dt,
+        };
+    }
+
+    trackPeak(frame, currImage, prevPos, isHigh) {
+        const peak = this.findLocalPeak(
+            currImage, prevPos.x, prevPos.y,
+            this.searchRadius, this.featureSize, isHigh
+        );
+        if (peak) {
+            this.trackX = peak.x;
+            this.trackY = peak.y;
+        } else {
+            this.trackX = prevPos.x;
+            this.trackY = prevPos.y;
+        }
+        this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
+        this.updateSliderStatus();
+    }
+
+    // Find a local peak (max if isHigh, min if !isHigh) in a search ROI.
+    // - Gaussian-blurs with sigma=featureSize to suppress noise and emphasise
+    //   features of approximately that scale.
+    // - Rejects line-like ridges via Hessian eigenvalue ratio (Harris-style).
+    // - Relative-brightness gate: peak's *original* luminance must sit in the
+    //   top 5% (high) or bottom 5% (low) of the ROI's pixels. This adapts to
+    //   per-frame lighting where a fixed brightnessThreshold can't.
+    // - Among qualifying peaks, picks the one with the largest *blurred*
+    //   response — the blurred peak value already combines brightness and
+    //   spatial extent (a wider/brighter blob retains more of its peak after
+    //   blur than a sharp pixel-noise spike), so this approximates
+    //   "brightest+largest" without measuring extent separately.
+    // Returns {x, y} in IMAGE coords, or null if no qualifying peak.
+    findLocalPeak(image, centerX, centerY, searchRadius, sigma, isHigh) {
+        const imgW = image.width || image.videoWidth;
+        const imgH = image.height || image.videoHeight;
+        const minX = Math.max(0, Math.floor(centerX - searchRadius));
+        const maxX = Math.min(imgW - 1, Math.ceil(centerX + searchRadius));
+        const minY = Math.max(0, Math.floor(centerY - searchRadius));
+        const maxY = Math.min(imgH - 1, Math.ceil(centerY + searchRadius));
+        const roiW = maxX - minX + 1;
+        const roiH = maxY - minY + 1;
+        if (roiW < 5 || roiH < 5) return null;
+
+        const luma = this.extractGrayROI(image, minX, minY, roiW, roiH);
+        const blurred = sigma > 0.3 ? gaussianBlur1D(luma, roiW, roiH, sigma) : luma;
+        const threshold = this.percentileLuma(luma, isHigh ? 0.95 : 0.05);
+
+        let best = null;
+        for (let y = 1; y < roiH - 1; y++) {
+            for (let x = 1; x < roiW - 1; x++) {
+                const v = blurred[y * roiW + x];
+                // Strict 3x3 neighborhood peak (ties broken upper-left).
+                let isPeak = true;
+                for (let dy = -1; dy <= 1 && isPeak; dy++) {
+                    for (let dx = -1; dx <= 1 && isPeak; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        const nv = blurred[(y + dy) * roiW + (x + dx)];
+                        if (isHigh ? nv >= v : nv <= v) {
+                            if (nv === v && (dy < 0 || (dy === 0 && dx < 0))) isPeak = false;
+                            else if (nv !== v) isPeak = false;
+                        }
+                    }
+                }
+                if (!isPeak) continue;
+
+                // Relative-brightness gate (on the *original* ROI).
+                const orig = luma[y * roiW + x];
+                if (isHigh ? orig < threshold : orig > threshold) continue;
+
+                // Hessian for blob-vs-line discrimination.
+                const hxx = blurred[y * roiW + (x + 1)] - 2 * v + blurred[y * roiW + (x - 1)];
+                const hyy = blurred[(y + 1) * roiW + x] - 2 * v + blurred[(y - 1) * roiW + x];
+                const hxy = (blurred[(y + 1) * roiW + (x + 1)]
+                           - blurred[(y + 1) * roiW + (x - 1)]
+                           - blurred[(y - 1) * roiW + (x + 1)]
+                           + blurred[(y - 1) * roiW + (x - 1)]) / 4;
+                const det = hxx * hyy - hxy * hxy;
+                const trace = hxx + hyy;
+                if ((isHigh ? trace >= 0 : trace <= 0)) continue;
+                if (det <= 0) continue;
+                if ((trace * trace) / det > 12) continue;
+
+                // "Brightest + largest" → highest |blurred| score wins.
+                const score = isHigh ? v : -v;
+                if (best === null || score > best.score) {
+                    best = {x: x + minX, y: y + minY, score};
+                }
+            }
+        }
+        return best ? {x: best.x, y: best.y} : null;
+    }
+
+    // Stride-sampled percentile of a Float32Array, avoids sorting the full
+    // luma plane on every frame. Stride scaled to give ~1024 samples max.
+    percentileLuma(luma, p) {
+        const stride = Math.max(1, Math.floor(luma.length / 1024));
+        const sample = [];
+        for (let i = 0; i < luma.length; i += stride) sample.push(luma[i]);
+        sample.sort((a, b) => a - b);
+        const idx = Math.max(0, Math.min(sample.length - 1, Math.floor(sample.length * p)));
+        return sample[idx];
+    }
+
+    extractGrayROI(image, minX, minY, roiW, roiH) {
+        const canvas = document.createElement('canvas');
+        canvas.width = roiW;
+        canvas.height = roiH;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(image, minX, minY, roiW, roiH, 0, 0, roiW, roiH);
+        const imgData = ctx.getImageData(0, 0, roiW, roiH);
+        const luma = new Float32Array(roiW * roiH);
+        for (let i = 0; i < roiW * roiH; i++) {
+            const k = i * 4;
+            luma[i] = 0.299 * imgData.data[k] + 0.587 * imgData.data[k + 1] + 0.114 * imgData.data[k + 2];
+        }
+        return luma;
     }
 
     runAlgorithm(frame, currImage, prevPos, fn) {
@@ -891,7 +1201,100 @@ class ObjectTracker {
         tempCtx.putImageData(imageData, 0, 0);
         ctx.drawImage(tempCanvas, 0, 0, width, height);
     }
-    
+
+    // Live preview of the High/Low Peak detector while the Feature Size slider
+    // is being dragged. Scans a window around the current cursor for both
+    // local maxima and local minima at the chosen sigma; high peaks render
+    // green, low peaks render red. Lets the user pick a sigma where the
+    // intended feature shows up cleanly without flooding the frame with noise.
+    renderFeatureSizePreview(ctx, width, height) {
+        const videoData = this.videoView?.videoData;
+        if (!videoData) return;
+        const frame = Math.floor(par.frame);
+        const image = videoData.getImage(frame);
+        if (!image || !image.width) return;
+
+        const imgW = image.width || image.videoWidth;
+        const imgH = image.height || image.videoHeight;
+        const origW = videoData.originalVideoWidth || imgW;
+        const origH = videoData.originalVideoHeight || imgH;
+
+        // Center the preview window on the cursor (in image coords).
+        const sx = imgW / origW, sy = imgH / origH;
+        const cx = this.trackX * sx;
+        const cy = this.trackY * sy;
+        // 3× searchRadius window — enough to see candidate features without
+        // running peak detection over the whole frame each slider tick.
+        const r = (this.searchRadius * sx) * 3;
+        const minX = Math.max(0, Math.floor(cx - r));
+        const maxX = Math.min(imgW - 1, Math.ceil(cx + r));
+        const minY = Math.max(0, Math.floor(cy - r));
+        const maxY = Math.min(imgH - 1, Math.ceil(cy + r));
+        const roiW = maxX - minX + 1;
+        const roiH = maxY - minY + 1;
+        if (roiW < 5 || roiH < 5) return;
+
+        const luma = this.extractGrayROI(image, minX, minY, roiW, roiH);
+        const sigma = Math.max(0.3, this.featureSize);
+        const blurred = sigma > 0.3 ? gaussianBlur1D(luma, roiW, roiH, sigma) : luma;
+        const highThresh = this.percentileLuma(luma, 0.95);
+        const lowThresh = this.percentileLuma(luma, 0.05);
+
+        // Collect both polarities so the user sees high (green) and low (red)
+        // candidates simultaneously while sliding. Each polarity is gated by
+        // the same relative-brightness percentile the picker uses, so what
+        // you see is what'd actually be selected.
+        const draw = (isHigh, color) => {
+            const thresh = isHigh ? highThresh : lowThresh;
+            ctx.fillStyle = color;
+            for (let y = 1; y < roiH - 1; y++) {
+                for (let x = 1; x < roiW - 1; x++) {
+                    const v = blurred[y * roiW + x];
+                    let isPeak = true;
+                    for (let dy = -1; dy <= 1 && isPeak; dy++) {
+                        for (let dx = -1; dx <= 1 && isPeak; dx++) {
+                            if (dx === 0 && dy === 0) continue;
+                            const nv = blurred[(y + dy) * roiW + (x + dx)];
+                            if (isHigh ? nv >= v : nv <= v) {
+                                if (nv === v && (dy < 0 || (dy === 0 && dx < 0))) isPeak = false;
+                                else if (nv !== v) isPeak = false;
+                            }
+                        }
+                    }
+                    if (!isPeak) continue;
+
+                    // Same relative-brightness gate the picker uses.
+                    const orig = luma[y * roiW + x];
+                    if (isHigh ? orig < thresh : orig > thresh) continue;
+
+                    const hxx = blurred[y * roiW + (x + 1)] - 2 * v + blurred[y * roiW + (x - 1)];
+                    const hyy = blurred[(y + 1) * roiW + x] - 2 * v + blurred[(y - 1) * roiW + x];
+                    const hxy = (blurred[(y + 1) * roiW + (x + 1)]
+                               - blurred[(y + 1) * roiW + (x - 1)]
+                               - blurred[(y - 1) * roiW + (x + 1)]
+                               + blurred[(y - 1) * roiW + (x - 1)]) / 4;
+                    const det = hxx * hyy - hxy * hxy;
+                    const trace = hxx + hyy;
+                    if ((isHigh ? trace >= 0 : trace <= 0)) continue;
+                    if (det <= 0) continue;
+                    if ((trace * trace) / det > 12) continue;
+
+                    // Convert image coords back to original-video coords, then
+                    // to canvas. Reusing the existing video→canvas helper keeps
+                    // the marker aligned with the actual on-screen feature.
+                    const ox = (x + minX) * origW / imgW;
+                    const oy = (y + minY) * origH / imgH;
+                    const [px, py] = this.videoView.videoToCanvasCoordsOriginal(ox, oy);
+                    ctx.beginPath();
+                    ctx.arc(px, py, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        };
+        draw(true, 'rgba(0, 255, 0, 0.85)');
+        draw(false, 'rgba(255, 0, 0, 0.85)');
+    }
+
     renderOverlay(frame) {
         if (!this.enabled || !this.overlay) return;
 
@@ -909,6 +1312,11 @@ class ObjectTracker {
         if (this.thresholdPreview) {
             this.renderThresholdPreview(ctx, width, height);
             return;
+        }
+
+        if (this.featureSizePreview) {
+            this.renderFeatureSizePreview(ctx, width, height);
+            // fall through so the cursor and existing-keyframe markers still draw
         }
 
         // Check if video dimensions have changed (e.g., new video loaded)
@@ -1183,8 +1591,9 @@ function toggleStartTracking() {
         return;
     }
 
-    // Centroid mode doesn't need external libraries
-    if (objectTracker.centerOnBright || objectTracker.centerOnDark) {
+    // Pure-JS methods don't need external libraries
+    const noLibMethods = ['centerOnBright', 'centerOnDark', 'highPeak', 'lowPeak'];
+    if (noLibMethods.includes(objectTracker.trackingMethod)) {
         objectTracker.startTracking();
         if (startMenuItem) startMenuItem.name(t("tracking.start.stopLabel"));
         setRenderOne(true);
@@ -1711,6 +2120,7 @@ export function addObjectTrackingMenu() {
     trackingFolder.add(stabilizeCentersParams, 'stabilizeCenters')
         .name(t("tracking.stabilizeCenters.label"))
         .tooltip(t("tracking.stabilizeCenters.tooltip"))
+        .listen()
         .perm();
 
     trackingFolder.add(menuActions, 'renderStabilized')
@@ -1736,6 +2146,7 @@ export function addObjectTrackingMenu() {
     radiusController = trackingFolder.add(radiusParams, 'trackRadius', 10, 100, 1)
         .name(t("tracking.trackRadius.label"))
         .tooltip(t("tracking.trackRadius.tooltip"))
+        .listen()
         .perm();
 
     const searchRadiusParams = {
@@ -1751,11 +2162,16 @@ export function addObjectTrackingMenu() {
     trackingFolder.add(searchRadiusParams, 'searchRadius', 20, 300, 1)
         .name(t("tracking.searchRadius.label"))
         .tooltip(t("tracking.searchRadius.tooltip"))
+        .listen()
         .perm();
 
     const trackingMethodOptions = {
         'Template Match': 'template',
         'Optical Flow': 'opticalflow',
+        'Center on Bright': 'centerOnBright',
+        'Center on Dark': 'centerOnDark',
+        'High Peak': 'highPeak',
+        'Low Peak': 'lowPeak',
         ...(isLocal ? {'SAM2 (Meta)': 'sam2'} : {}),
     };
     
@@ -1778,45 +2194,38 @@ export function addObjectTrackingMenu() {
     trackingFolder.add(trackingMethodParams, 'trackingMethod', Object.keys(trackingMethodOptions))
         .name(t("tracking.trackingMethod.label"))
         .tooltip(t("tracking.trackingMethod.tooltip"))
+        .listen()
         .perm();
 
-    const centerOnBrightParams = {
-        get centerOnBright() { return objectTracker?.centerOnBright ?? false; },
-        set centerOnBright(v) {
+    // Feature Size: Gaussian sigma in image pixels for the High Peak / Low Peak
+    // methods. Sliding shows a peak-marker preview overlay so the user can see
+    // which features the algorithm currently treats as blobs.
+    const featureSizeParams = {
+        get featureSize() { return objectTracker?.featureSize ?? 1.5; },
+        set featureSize(v) {
             if (objectTracker) {
-                objectTracker.centerOnBright = v;
-                if (v) objectTracker.centerOnDark = false;
-                // Clear track when switching modes to avoid confusion
-                if (objectTracker.tracking) {
-                    objectTracker.clearTrack();
-                }
+                objectTracker.featureSize = v;
                 setRenderOne(true);
             }
         }
     };
 
-    trackingFolder.add(centerOnBrightParams, 'centerOnBright')
-        .name(t("tracking.centerOnBright.label"))
-        .tooltip(t("tracking.centerOnBright.tooltip"))
-        .perm();
-
-    const centerOnDarkParams = {
-        get centerOnDark() { return objectTracker?.centerOnDark ?? false; },
-        set centerOnDark(v) {
+    trackingFolder.add(featureSizeParams, 'featureSize', 2, 20, 0.1)
+        .name("Feature Size")
+        .tooltip("Gaussian blur sigma (px) for High/Low Peak detection. Higher = smoother / larger features. Slide to preview detected peaks.")
+        .onChange(() => {
             if (objectTracker) {
-                objectTracker.centerOnDark = v;
-                if (v) objectTracker.centerOnBright = false;
-                if (objectTracker.tracking) {
-                    objectTracker.clearTrack();
-                }
+                objectTracker.featureSizePreview = true;
                 setRenderOne(true);
             }
-        }
-    };
-
-    trackingFolder.add(centerOnDarkParams, 'centerOnDark')
-        .name(t("tracking.centerOnDark.label"))
-        .tooltip(t("tracking.centerOnDark.tooltip"))
+        })
+        .onFinishChange(() => {
+            if (objectTracker) {
+                objectTracker.featureSizePreview = false;
+                setRenderOne(true);
+            }
+        })
+        .listen()
         .perm();
 
     const brightnessParams = {
@@ -1844,6 +2253,7 @@ export function addObjectTrackingMenu() {
                 setRenderOne(true);
             }
         })
+        .listen()
         .perm();
 
     const showMaxKeyframesParams = {
@@ -1858,6 +2268,7 @@ export function addObjectTrackingMenu() {
 
     trackingFolder.add(showMaxKeyframesParams, 'showMaxKeyframes', 0, 100, 1)
         .name("Show N Keyframes")
+        .listen()
         .perm();
 }
 
@@ -1882,12 +2293,15 @@ export function serializeAutoTracking() {
         trackY: objectTracker.trackY,
         trackRadius: objectTracker.trackRadius,
         searchRadius: objectTracker.searchRadius,
-        centerOnBright: objectTracker.centerOnBright,
-        centerOnDark: objectTracker.centerOnDark,
         brightnessThreshold: objectTracker.brightnessThreshold,
+        featureSize: objectTracker.featureSize,
         trackingMethod: objectTracker.trackingMethod,
         showMaxKeyframes: objectTracker.showMaxKeyframes,
         trackedPositions: Array.from(objectTracker.trackedPositions.entries()),
+        // Which frames were placed manually (vs auto-tracked) — drives the
+        // keyframe overlay (magenta circles) and the "delete keyframe under
+        // cursor" hit-test.
+        manualKeyframes: Array.from(objectTracker.manualKeyframes),
         stabilizationEnabled: videoData?.stabilizationEnabled ?? false,
         stabilizationDirectOffset: videoData?.stabilizationDirectOffset ?? false,
         stabilizeCenters: videoData?.stabilizeCenters ?? true,
@@ -1934,17 +2348,27 @@ export async function deserializeAutoTracking(data) {
     objectTracker.trackY = data.trackY ?? 0;
     objectTracker.trackRadius = data.trackRadius ?? 30;
     objectTracker.searchRadius = data.searchRadius ?? 50;
-    objectTracker.centerOnBright = data.centerOnBright ?? false;
-    objectTracker.centerOnDark = data.centerOnDark ?? false;
     objectTracker.brightnessThreshold = data.brightnessThreshold ?? 128;
-    objectTracker.trackingMethod = data.trackingMethod ?? 'template';
+    objectTracker.featureSize = data.featureSize ?? 1.5;
     objectTracker.showMaxKeyframes = data.showMaxKeyframes ?? 20;
+    // Legacy migration: pre-2.50.7 saves used separate centerOnBright/Dark
+    // checkboxes. Map them onto the unified trackingMethod dropdown.
+    if (data.trackingMethod) {
+        objectTracker.trackingMethod = data.trackingMethod;
+    } else if (data.centerOnBright) {
+        objectTracker.trackingMethod = 'centerOnBright';
+    } else if (data.centerOnDark) {
+        objectTracker.trackingMethod = 'centerOnDark';
+    } else {
+        objectTracker.trackingMethod = 'template';
+    }
 
     if (data.trackedPositions) {
         objectTracker.trackedPositions = new Map(
             data.trackedPositions.map(([f, p]) => [f, {x: p.x, y: p.y}])
         );
     }
+    objectTracker.manualKeyframes = new Set(data.manualKeyframes ?? []);
 
     // Tracker tracks the original video size for the "video changed?" check
     const origW = videoData.originalVideoWidth || videoData.videoWidth || 0;
