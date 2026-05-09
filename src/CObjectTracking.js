@@ -107,7 +107,7 @@ class ObjectTracker {
             if (this.enabled) {
                 const x = mouse.x;
                 const y = mouse.y;
-                const [vX, vY] = this.videoView.canvasToVideoCoords(x, y);
+                const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(x, y);
                 
                 const clickedKeyframe = this.findClickedKeyframe(vX, vY);
                 if (clickedKeyframe !== null) {
@@ -128,7 +128,7 @@ class ObjectTracker {
             if (this.enabled && this.isDragging) {
                 const x = mouse.x;
                 const y = mouse.y;
-                const [vX, vY] = this.videoView.canvasToVideoCoords(x, y);
+                const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(x, y);
                 
                 const dx = vX - this.lastMouseX;
                 const dy = vY - this.lastMouseY;
@@ -173,7 +173,7 @@ class ObjectTracker {
             if (key === 'backspace' || key === 'delete') {
                 const x = mouse.x;
                 const y = mouse.y;
-                const [vX, vY] = this.videoView.canvasToVideoCoords(x, y);
+                const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(x, y);
                 const clickedKeyframe = this.findClickedKeyframe(vX, vY);
                 if (clickedKeyframe !== null) {
                     this.trackedPositions.delete(clickedKeyframe);
@@ -186,13 +186,40 @@ class ObjectTracker {
     }
     
     getImageDimensions() {
+        // Returns the source video's *original* dimensions — the canonical
+        // reference for tracker positions. This is stable across resolution
+        // changes from the videoMaxSize quality preset, so positions saved at
+        // one preset render correctly under any other.
         const videoData = this.videoView?.videoData;
         if (!videoData) return {width: 1920, height: 1080};
-        // Get dimensions from videoData properties without requesting a specific frame
         return {
-            width: videoData.videoWidth || 1920,
-            height: videoData.videoHeight || 1080,
+            width: videoData.originalVideoWidth || videoData.videoWidth || 1920,
+            height: videoData.originalVideoHeight || videoData.videoHeight || 1080,
         };
+    }
+
+    // Scale a tracker-coord (original-video) point to actual decoded image
+    // coords for pixel-level operations on a specific image.
+    trackerToImage(p, image) {
+        const vd = this.videoView?.videoData;
+        const origW = vd?.originalVideoWidth;
+        const origH = vd?.originalVideoHeight;
+        if (!origW || !origH) return {x: p.x, y: p.y};
+        const w = image?.width || image?.videoWidth || vd?.videoWidth || origW;
+        const h = image?.height || image?.videoHeight || vd?.videoHeight || origH;
+        return {x: p.x * w / origW, y: p.y * h / origH};
+    }
+
+    // Inverse of trackerToImage — for converting an algorithm result back to
+    // tracker (original-video) coords before storing.
+    imageToTracker(p, image) {
+        const vd = this.videoView?.videoData;
+        const origW = vd?.originalVideoWidth;
+        const origH = vd?.originalVideoHeight;
+        if (!origW || !origH) return {x: p.x, y: p.y};
+        const w = image?.width || image?.videoWidth || vd?.videoWidth || origW;
+        const h = image?.height || image?.videoHeight || vd?.videoHeight || origH;
+        return {x: p.x * origW / w, y: p.y * origH / h};
     }
     
     showOverlay() {
@@ -344,10 +371,13 @@ class ObjectTracker {
     }
 
     findClickedKeyframe(vX, vY) {
-        // 5 screen pixels converted to video pixels via the canvas-to-video scale
+        // 5 screen pixels converted to *original-video* coords (the space
+        // tracker positions live in). sWidth is the displayed video width;
+        // scale through originalVideoWidth so it matches stored positions.
         const view = this.videoView;
         view.getSourceAndDestCoords();
-        const clickRadius = 5 * view.sWidth / view.dWidth;
+        const origW = view.originalVideoWidth || view.videoWidth || view.sWidth || 1;
+        const clickRadius = 5 * origW / view.dWidth;
         for (const frame of this.manualKeyframes) {
             const pos = this.trackedPositions.get(frame);
             if (pos) {
@@ -527,14 +557,54 @@ class ObjectTracker {
 
         if (!currImage || !currImage.width) return;
 
-        if (this.centerOnBright) {
-            this.trackBrightCentroid(frame, currImage, prevPos);
-        } else if (this.centerOnDark) {
-            this.trackDarkCentroid(frame, currImage, prevPos);
-        } else if (this.trackingMethod === 'opticalflow') {
-            this.trackOpticalFlow(frame, currImage, prevPos, videoData);
-        } else {
-            this.trackTemplateMatch(frame, currImage, prevPos, videoData);
+        // Algorithms operate in actual decoded image coords (pixel-level ops).
+        // Tracker positions live in original-video coords. Scale at the
+        // boundary: the wrapper converts prevPos and trackRadius/searchRadius
+        // into image coords for the algorithm, then converts the algorithm's
+        // output back to tracker coords.
+        this.runAlgorithm(frame, currImage, prevPos, (img, pp) => {
+            if (this.centerOnBright) {
+                this.trackBrightCentroid(frame, img, pp);
+            } else if (this.centerOnDark) {
+                this.trackDarkCentroid(frame, img, pp);
+            } else if (this.trackingMethod === 'opticalflow') {
+                this.trackOpticalFlow(frame, img, pp, videoData);
+            } else {
+                this.trackTemplateMatch(frame, img, pp, videoData);
+            }
+        });
+    }
+
+    runAlgorithm(frame, currImage, prevPos, fn) {
+        const vd = this.videoView?.videoData;
+        const origW = vd?.originalVideoWidth, origH = vd?.originalVideoHeight;
+        if (!origW || !origH) {
+            // No reference resolution available — algorithm coords match
+            // tracker coords. Pass through.
+            fn(currImage, prevPos);
+            return;
+        }
+        const w = currImage.width || currImage.videoWidth;
+        const h = currImage.height || currImage.videoHeight;
+        if (!w || !h) { fn(currImage, prevPos); return; }
+        const sx = w / origW, sy = h / origH;
+
+        // Scale prevPos and radii into image coords
+        const ip = {x: prevPos.x * sx, y: prevPos.y * sy};
+        const trackRadiusTracker = this.trackRadius;
+        const searchRadiusTracker = this.searchRadius;
+        this.trackRadius = trackRadiusTracker * sx;
+        this.searchRadius = searchRadiusTracker * sx;
+        try {
+            fn(currImage, ip);
+        } finally {
+            this.trackRadius = trackRadiusTracker;
+            this.searchRadius = searchRadiusTracker;
+            // Algorithm wrote trackX/Y and trackedPositions[frame] in image
+            // coords; map both back to tracker coords.
+            this.trackX = this.trackX * origW / w;
+            this.trackY = this.trackY * origH / h;
+            this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
         }
     }
 
@@ -892,11 +962,11 @@ class ObjectTracker {
         };
 
         const stabOffset = getStabOffset(frame);
-        const [cx, cy] = this.videoView.videoToCanvasCoords(this.trackX + stabOffset.x, this.trackY + stabOffset.y);
-        
+        const [cx, cy] = this.videoView.videoToCanvasCoordsOriginal(this.trackX + stabOffset.x, this.trackY + stabOffset.y);
+
         const {dWidth} = this.videoView;
-        const videoWidth = this.videoView.videoWidth || 1;
-        const canvasRadius = this.trackRadius * dWidth / videoWidth;
+        const refW = this.videoView.originalVideoWidth || this.videoView.videoWidth || 1;
+        const canvasRadius = this.trackRadius * dWidth / refW;
         
         ctx.strokeStyle = this.tracking ? '#00ff00' : '#ffff00';
         ctx.lineWidth = 2;
@@ -930,7 +1000,7 @@ class ObjectTracker {
             for (const f of sortedFrames) {
                 const pos = this.trackedPositions.get(f);
                 const offset = getStabOffset(f);
-                const [px, py] = this.videoView.videoToCanvasCoords(pos.x + offset.x, pos.y + offset.y);
+                const [px, py] = this.videoView.videoToCanvasCoordsOriginal(pos.x + offset.x, pos.y + offset.y);
                 if (!started) {
                     ctx.moveTo(px, py);
                     started = true;
@@ -952,7 +1022,7 @@ class ObjectTracker {
             const pos = this.trackedPositions.get(f);
             if (pos) {
                 const offset = getStabOffset(f);
-                const [kx, ky] = this.videoView.videoToCanvasCoords(pos.x + offset.x, pos.y + offset.y);
+                const [kx, ky] = this.videoView.videoToCanvasCoordsOriginal(pos.x + offset.x, pos.y + offset.y);
                 ctx.strokeStyle = '#ff00ff';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
@@ -1802,7 +1872,12 @@ export function serializeAutoTracking() {
     const videoView = objectTracker.videoView;
     const videoData = videoView?.videoData;
 
+    // Positions are already in original-video coords (the runtime contract),
+    // so no scaling is needed at serialize time.
     return {
+        coordSpace: "original",
+        referenceVideoWidth: videoData?.originalVideoWidth ?? null,
+        referenceVideoHeight: videoData?.originalVideoHeight ?? null,
         trackX: objectTracker.trackX,
         trackY: objectTracker.trackY,
         trackRadius: objectTracker.trackRadius,
@@ -1812,9 +1887,7 @@ export function serializeAutoTracking() {
         brightnessThreshold: objectTracker.brightnessThreshold,
         trackingMethod: objectTracker.trackingMethod,
         showMaxKeyframes: objectTracker.showMaxKeyframes,
-        // Convert Map to array of [frame, {x,y}] pairs
         trackedPositions: Array.from(objectTracker.trackedPositions.entries()),
-        // Stabilization state
         stabilizationEnabled: videoData?.stabilizationEnabled ?? false,
         stabilizationDirectOffset: videoData?.stabilizationDirectOffset ?? false,
         stabilizeCenters: videoData?.stabilizeCenters ?? true,
@@ -1826,6 +1899,16 @@ export async function deserializeAutoTracking(data) {
 
     const videoView = NodeMan.get("video", false);
     if (!videoView) return;
+
+    // Tracker positions, stabilization data, and stabilization reference point
+    // all live in the source video's *original* coordinate space (referenced to
+    // videoData.originalVideoWidth × originalVideoHeight). Boundary code scales
+    // to the actual decoded image dimensions only where pixels are touched
+    // (renderOverlay, getStabilizedImage, tracking algorithms). This keeps
+    // saves immune to the videoMaxSize quality preset and avoids the load-time
+    // race where videoData.videoWidth reads as the pre-resize value.
+    const videoData = videoView.videoData;
+    if (!videoData) return;
 
     // Create and enable the tracker
     if (!objectTracker) {
@@ -1846,7 +1929,7 @@ export async function deserializeAutoTracking(data) {
         };
     }
 
-    // Restore tracker state
+    // Restore tracker state (positions stored in original-video coords)
     objectTracker.trackX = data.trackX ?? 0;
     objectTracker.trackY = data.trackY ?? 0;
     objectTracker.trackRadius = data.trackRadius ?? 30;
@@ -1857,36 +1940,32 @@ export async function deserializeAutoTracking(data) {
     objectTracker.trackingMethod = data.trackingMethod ?? 'template';
     objectTracker.showMaxKeyframes = data.showMaxKeyframes ?? 20;
 
-    // Restore tracked positions
     if (data.trackedPositions) {
-        objectTracker.trackedPositions = new Map(data.trackedPositions);
+        objectTracker.trackedPositions = new Map(
+            data.trackedPositions.map(([f, p]) => [f, {x: p.x, y: p.y}])
+        );
     }
 
-    // Initialize lastVideoWidth/Height so renderOverlay doesn't think the video changed
-    // and clear our just-restored tracked positions
-    const dims = objectTracker.getImageDimensions();
-    if (dims.width > 0 && dims.height > 0) {
-        objectTracker.lastVideoWidth = dims.width;
-        objectTracker.lastVideoHeight = dims.height;
-    }
+    // Tracker tracks the original video size for the "video changed?" check
+    const origW = videoData.originalVideoWidth || videoData.videoWidth || 0;
+    const origH = videoData.originalVideoHeight || videoData.videoHeight || 0;
+    objectTracker.lastVideoWidth = origW;
+    objectTracker.lastVideoHeight = origH;
 
     // Restore stabilization if there's tracking data
     if (data.stabilizationEnabled && objectTracker.trackedPositions.size > 0) {
-        const videoData = videoView.videoData;
-        if (videoData) {
-            const firstFrame = Math.min(...objectTracker.trackedPositions.keys());
-            const referencePoint = objectTracker.trackedPositions.get(firstFrame);
-            if (referencePoint) {
-                videoData.stabilizeCenters = data.stabilizeCenters ?? true;
-                videoData.setStabilizationData(
-                    objectTracker.trackedPositions,
-                    referencePoint,
-                    data.stabilizationDirectOffset ?? false
-                );
-                videoData.setStabilizationEnabled(true);
-                if (stabilizeToggleMenuItem) {
-                    stabilizeToggleMenuItem.name(t("tracking.stabilizeToggle.disableLabel"));
-                }
+        const firstFrame = Math.min(...objectTracker.trackedPositions.keys());
+        const referencePoint = objectTracker.trackedPositions.get(firstFrame);
+        if (referencePoint) {
+            videoData.stabilizeCenters = data.stabilizeCenters ?? true;
+            videoData.setStabilizationData(
+                objectTracker.trackedPositions,
+                referencePoint,
+                data.stabilizationDirectOffset ?? false
+            );
+            videoData.setStabilizationEnabled(true);
+            if (stabilizeToggleMenuItem) {
+                stabilizeToggleMenuItem.name(t("tracking.stabilizeToggle.disableLabel"));
             }
         }
     }

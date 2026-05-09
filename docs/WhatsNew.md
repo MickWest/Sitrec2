@@ -45,6 +45,11 @@ Example entry format:
 
 ---
 
+## Version 2.50.6 (2026-05-08)
+
+### Bug Fixes
+- **Auto-tracking + stabilization survive save/reload across quality presets**: a saved sitch with auto-track + stabilization would come back broken on reload — at best the stabilization toggle was off; at worst (legacy saves) the stabilized image flew off-screen to the upper-left and the track-point cursor drifted right of the actual feature. Two compounding bugs: (1) `finishDeserialization` ran `deserializeAutoTracking` synchronously while the video's `loadVideoFromEntry` was still async-loading, so the stabilization branch silently no-op'd because `videoData` was null. (2) Tracker positions were stored in **decoded-image coordinates** that depend on the `videoMaxSize` quality preset (854×480 at Fast vs 1920×1080 at Quality) — a track captured under one preset became geometrically wrong under any other. Migrated tracker runtime to use the source video's *original* coordinate space (referenced to `originalVideoWidth`/`originalVideoHeight`, which is stable across presets). Boundary code scales to the actual decoded image only where pixels are touched: `getStabilizedImage` (CVideoData), `renderOverlay` (CObjectTracking), and tracking-algorithm I/O via a new `runAlgorithm` wrapper. Reload race fixed by re-applying `Sit.autoTracking` from `CNodeVideoView.continueVideoRestore` once the video is actually loaded. New saves carry an explicit `coordSpace: "original"` tag so future round-trips are deterministic; legacy saves are accepted as-is (they were already in original-video coords by accident of how the metadata `videoWidth` reads pre-resize).
+
 ## Version 2.50.5 (2026-05-07)
 
 ### Improvements

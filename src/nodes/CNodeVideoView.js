@@ -496,6 +496,21 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             // Ensure video selector is updated after GUI is ready
             // (guiMenus.view might not exist yet during early restore)
             this.ensureVideoSelectorUpdated();
+
+            // Re-apply auto-tracking once videoData is available.
+            // finishDeserialization runs deserializeAutoTracking before the
+            // async video load completes, so it bails out early on the first
+            // pass (no videoData → can't scale positions, can't apply
+            // stabilization). Run it now that the video has decoded.
+            // Re-apply auto-tracking once the video is fully loaded.
+            // finishDeserialization runs deserializeAutoTracking before the
+            // async video load completes, so it bails out early on the first
+            // pass (no videoData).
+            if (Sit.autoTracking?.trackedPositions?.length > 0) {
+                import("../CObjectTracking").then(m => {
+                    m.deserializeAutoTracking(Sit.autoTracking);
+                });
+            }
         }
     }
 

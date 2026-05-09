@@ -267,9 +267,28 @@ export class CVideoData {
         }
 
         // Use source frame's stabilization offset when using substitute image
-        const trackPos = interpolatePosition(this.stabilizationData, sf);
+        let trackPos = interpolatePosition(this.stabilizationData, sf);
         if (!trackPos) {
             return originalImage;
+        }
+        let refPoint = this.stabilizationReferencePoint;
+
+        // Stabilization positions live in original-video coordinates
+        // (referenced to originalVideoWidth/Height). The image we're shifting
+        // is at the actual decoded resolution after the videoMaxSize quality
+        // preset, so scale positions to image coords before computing shifts.
+        // Direct-offset mode (motion analysis) bypasses this — the offsets are
+        // already deltas in the displayed image space.
+        if (!this.stabilizationDirectOffset
+            && this.originalVideoWidth && this.originalVideoHeight) {
+            const w = originalImage.width || originalImage.videoWidth || this.originalVideoWidth;
+            const h = originalImage.height || originalImage.videoHeight || this.originalVideoHeight;
+            const sx = w / this.originalVideoWidth;
+            const sy = h / this.originalVideoHeight;
+            trackPos = {x: trackPos.x * sx, y: trackPos.y * sy};
+            if (refPoint) {
+                refPoint = {x: refPoint.x * sx, y: refPoint.y * sy};
+            }
         }
 
         // Calculate shift based on mode
@@ -286,8 +305,8 @@ export class CVideoData {
             shiftY = h / 2 - trackPos.y;
         } else {
             // Point tracking mode: shift to keep tracked point at reference position
-            shiftX = this.stabilizationReferencePoint.x - trackPos.x;
-            shiftY = this.stabilizationReferencePoint.y - trackPos.y;
+            shiftX = refPoint.x - trackPos.x;
+            shiftY = refPoint.y - trackPos.y;
         }
 
         // Create shifted image
