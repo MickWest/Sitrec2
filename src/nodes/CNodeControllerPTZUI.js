@@ -612,7 +612,18 @@ export class CNodeControllerCustomHeading extends CNodeController {
 
 
     getValueFrame(f) {
-        return this.headingArray[f]
+        // headingArray is only populated once setHeadingFile() has loaded a
+        // file. Before that, fall back to the manual heading value (the
+        // fallback input is jetHeadingManual, a GUIValue) so the data graph
+        // still produces a valid number — otherwise readers like
+        // CNodeJetTrack.recalculate crash on `undefined[0]`.
+        if (this.headingArray) return this.headingArray[f];
+        if (this.fallback) {
+            return this.fallback.getValueFrame
+                ? this.fallback.getValueFrame(f)
+                : (this.fallback.value ?? 0);
+        }
+        return 0;
     }
 
     apply(f, objectNode) {
