@@ -1688,6 +1688,7 @@ async function initializeOnce() {
     // live here so we don't end up with duplicate husks after destroy(false).
     addGUIFolder("wind", "Wind", "physics");
     addGUIFolder("gimbalAnalysis", "Gimbal Analysis", "physics");
+    addGUIFolder("simpleFlightSim", "Simple Flight Sim", "physics");
 
     // addGUIMenu("missile", "Missile").tooltip("Homing missile parameters\nControls for the missile simulation including mass, thrust, air resistance, and burn time");
 

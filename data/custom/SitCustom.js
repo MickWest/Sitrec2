@@ -312,22 +312,39 @@ sitch = {
     // so the absolute ground speed will vary with the wind
     jetTAS: {
         // note, no units. This is a legacy value that is in knots
-        kind: "GUIValue", value: 500, start: 0, end: 1000, step: 1, desc: "TAS", gui: "physics", // unitType: "speed",
+        kind: "GUIValue", value: 500, start: 0, end: 1000, step: 1, desc: "TAS", gui: "simpleFlightSim", // unitType: "speed",
         elastic: true, elasticMin: 5, elasticMax: 1000
     },
 
     // turnRate should really be derived from the bank angle, but we'll use it for now
     turnRate: {
         kind: "GUIValue", value: 0, start: -10, end: 10, step: 0.001,
-        desc: "Turn Rate", gui: "physics",
+        desc: "Turn Rate", gui: "simpleFlightSim",
         quietLink: "totalTurn", linkMath: "$turnRate * $frames / $fps"
     },
 
     totalTurn: {
         kind: "GUIValue", value: 0, start: -360, end: 360, step: 0.1,
-        desc: "Total Turn", gui: "physics", tooltip: "amount of turn over the entire sitch",
+        desc: "Total Turn", gui: "simpleFlightSim", tooltip: "amount of turn over the entire sitch (constant-rate approximation)",
         link: "turnRate", linkMath: "$totalTurn / ($frames / $fps)",
         inheritVisibility: "turnRate"
+    },
+
+    // Racetrack pattern parameters for the JetTrack:
+    //   legLength=0 (default): track turns at the constant turnRate above (no racetrack).
+    //   legLength>0: track flies straight for legLength seconds, then makes a 180° turn,
+    //     ramping up over transitionTime, holding turnRate, ramping down for the same time.
+    //     Repeats indefinitely → racetrack pattern.
+    legLength: {
+        kind: "GUIValue", value: 0, start: 0, end: 600, step: 0.1,
+        desc: "Leg Length", gui: "simpleFlightSim",
+        tooltip: "Seconds of straight flight between 180° turns (0 disables the racetrack pattern)"
+    },
+
+    transitionTime: {
+        kind: "GUIValue", value: 3, start: 0, end: 10, step: 0.1,
+        desc: "Transition Time", gui: "simpleFlightSim",
+        tooltip: "Seconds to ramp the turn rate from 0 to the full Turn Rate at the start and end of each 180° turn"
     },
 
 
@@ -346,7 +363,7 @@ sitch = {
     // When B changes, A is updated, and the propagation (from A)
 
 
-    jetHeadingManual: {kind: "GUIValue", value: 0, start: 0, end: 360, step: 0.1, desc: "Jet Heading", gui: "physics"},
+    jetHeadingManual: {kind: "GUIValue", value: 0, start: 0, end: 360, step: 0.1, desc: "Jet Heading", gui: "simpleFlightSim"},
 
     customHeadingSmooth: {
         kind: "GUIValue",
@@ -373,7 +390,7 @@ sitch = {
             custom: "customHeadingController",
         },
         desc: "Turn Rate Control",
-        gui: "physics",
+        gui: "simpleFlightSim",
         tooltip: "Control how the turn rate is determined\nManual means you control the turn rate directly\nAutomatic means the turn rate is automatically calculated based on the TAS and wind"
     },
 
@@ -384,6 +401,8 @@ sitch = {
         kind: "JetTrack",
         speed: "jetTAS",
         turnRate: "turnRate",
+        legLength: "legLength",
+        transitionTime: "transitionTime",
         wind: "localWind",
         heading: "jetHeading",
         origin: "fixedCameraPosition",

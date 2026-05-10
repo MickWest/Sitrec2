@@ -267,9 +267,21 @@ export class CNodeControllerObjectTilt extends CNodeController {
 
                         const bankAngle = Math.atan(angularVelocity * speed / 9.77468)
 
-                        // and rotate the model about fwd by the bank angle
-                        const m = new Matrix4()
-                        m.makeRotationAxis(fwd, bankAngle)
+                        // Re-orient the object using the *smoothed* forward
+                        // direction so the subsequent bank rotation around
+                        // `fwd` is a pure roll. Without this, the earlier
+                        // `lookAt(rawNext)` aligned -Z to the raw track and
+                        // we'd be rotating around a different axis, leaking
+                        // a pitch component (visible as nose-down during
+                        // racetrack ramp-in / ramp-out, where the 200-frame
+                        // smoothing window lags 10°+ behind the raw heading).
+                        // Using smoothed direction for both the alignment and
+                        // the rotation axis keeps banking a pure roll.
+                        object.position.copy(currentPos)
+                        object.up = objectNode.getUpVector(object.position)
+                        object.lookAt(currentPos.clone().add(fwd))
+                        object.position.copy(oldPos)
+
                         object.rotateOnWorldAxis(fwd, bankAngle);
 
                         if (this.in.angleOfAttack !== undefined) {

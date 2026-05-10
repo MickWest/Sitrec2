@@ -29,7 +29,7 @@ export class CNodeJetTrack extends CNodeTrack {
         }
 
         this.requireInputs(["speed", "turnRate", "wind", "heading", "origin"])
-        this.optionalInputs(["terrain"]);
+        this.optionalInputs(["terrain", "legLength", "transitionTime"]);
         this.isNumber = false;
 
         this.agl = v.agl ?? 0;
@@ -50,6 +50,18 @@ export class CNodeJetTrack extends CNodeTrack {
         this.array = []
         this.elevationCache = null; // flush cache for fresh terrain queries
 
+        // Racetrack-pattern parameters. legLength=0 disables the pattern and
+        // the supplied turnRate node is used directly per frame (legacy behaviour).
+        // When legLength > 0:
+        //   - fly straight for legSec at turnRate=0
+        //   - ramp turnRate 0 → fullRate over transSec     (rampDeg = fullRate*transSec/2)
+        //   - hold at fullRate for the remainder of a 180° turn (constantDeg = 180-2·rampDeg)
+        //   - ramp turnRate fullRate → 0 over transSec
+        //   - cycle: leg + (transSec + constantSec + transSec)
+        // Result: a clean 180° racetrack U-turn with smooth bank-in/out.
+        const legSec = this.in.legLength?.getValueFrame(0) ?? 0;
+        const transSec = Math.max(0, this.in.transitionTime?.getValueFrame(0) ?? 0);
+        const racetrackMode = legSec > 0;
 
         const headingNode = this.in.heading.getRoot()
 
@@ -102,6 +114,10 @@ export class CNodeJetTrack extends CNodeTrack {
             // get the angle we rotate around the up axis this frame
             let turnRate = this.in.turnRate.getValueFrame(f)
 
+            if (racetrackMode) {
+                turnRate = this.racetrackTurnRate(f, turnRate, legSec, transSec);
+            }
+
             if (headingNode.forceHeadingPerFrame) {
                 // if we are using a custom heading file, then calculate the angle change
                 turnRate = (headingNode.getValueFrame(f) - jetHeading) * Sit.fps;
@@ -132,6 +148,39 @@ export class CNodeJetTrack extends CNodeTrack {
 
         }
         assert(this.frames == this.array.length, "frames length mismatch");
+    }
+
+    // Compute the effective turn rate at frame f for the racetrack pattern,
+    // given the current "full" turn rate (from the turnRate input) and the
+    // straight-leg + transition durations. Handles direction sign (left vs
+    // right turn) by carrying the sign of fullRate through every phase.
+    racetrackTurnRate(f, fullRate, legSec, transSec) {
+        const fullAbs = Math.abs(fullRate);
+        if (fullAbs < 1e-9) return 0;            // no turn requested — straight forever
+        const sign = Math.sign(fullRate);
+        const rampDeg = fullAbs * transSec / 2;  // each linear ramp covers half its time × full rate
+        const constantDeg = Math.max(0, 180 - 2 * rampDeg);
+        const constantSec = constantDeg / fullAbs;
+        const turnSec = transSec + constantSec + transSec;
+        const cycleSec = legSec + turnSec;
+        if (cycleSec <= 0) return fullRate;
+
+        const t = f / Sit.fps;
+        const cycleT = t % cycleSec;
+
+        if (cycleT < legSec) return 0;
+        const turnT = cycleT - legSec;
+        if (transSec > 0 && turnT < transSec) {
+            return sign * fullAbs * (turnT / transSec);
+        }
+        if (turnT < transSec + constantSec) {
+            return fullRate;
+        }
+        if (transSec > 0 && turnT < turnSec) {
+            const t2 = turnT - transSec - constantSec;
+            return sign * fullAbs * (1 - t2 / transSec);
+        }
+        return 0;
     }
 
     onElevationChanged() {
