@@ -124,6 +124,7 @@ import {
     toggleMotionAnalysis
 } from "./CMotionAnalysisUI";
 import {addObjectTrackingMenu, resetObjectTracking} from "./CObjectTracking";
+import {resetHorizonExtractor} from "./CHorizonExtractor";
 import {addTextExtractionMenu} from "./CTextExtraction";
 import {QuadTreeTile} from "./QuadTreeTile";
 import {initI18n, t} from "./i18n";
@@ -2555,6 +2556,7 @@ function disposeEverything() {
     // reset motion analysis state (must be after NodeMan.disposeAll since it references the video node)
     resetMotionAnalysis();
     resetObjectTracking();
+    resetHorizonExtractor();
 
     // dispose of any remaining GUI, except for the permanent folders and items
     Globals.menuBar.destroy(false);

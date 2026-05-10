@@ -25,6 +25,7 @@ import {
     withTestUser
 } from "./Globals";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
+import {setupHorizonExtractorMenu} from "./CHorizonExtractor";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {GlobalScene} from "./LocalFrame";
@@ -1534,6 +1535,8 @@ export const setupMethods = {
         this.setupVideoInfoMenu();
 
         this.setupOSDDataSeriesController();
+
+        setupHorizonExtractorMenu();
 
         this.setupSimpleFlightSim();
 
