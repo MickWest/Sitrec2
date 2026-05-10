@@ -159,6 +159,16 @@ export const setupMethods = {
         if (lookCamera && ptzController) {
             lookCamera.postApplyControllers = () => {
                 if (!ptzController.enabled && !Globals.deserializing) {
+                    // When "Roll View with Bank" is on, CameraBankRollController
+                    // is actively writing ptz.roll = -bankAngle each frame so
+                    // trackToTrackController can pick it up on the next pass.
+                    // syncFromCamera would extract whatever roll the camera
+                    // currently has (set by *last* frame's ptz.roll) and write
+                    // it back over our value — silently undoing the bank write
+                    // every frame and pinning the slider at a stale value.
+                    // Skip the sync while bank-roll is on so our write persists.
+                    const bankRollOn = NodeMan.list.lookCameraBankRoll?.data?.value;
+                    if (bankRollOn) return;
                     ptzController.syncFromCamera(lookCamera.camera);
                 }
             };
@@ -1524,6 +1534,8 @@ export const setupMethods = {
         this.setupVideoInfoMenu();
 
         this.setupOSDDataSeriesController();
+
+        this.setupSimpleFlightSim();
 
         // Orbit camera - orbits around a selected target track at a given radius and period
         if (!NodeMan.exists("orbitCameraPosition") && NodeMan.exists("fixedCameraPosition")) {

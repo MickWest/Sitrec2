@@ -267,28 +267,23 @@ export class CNodeControllerObjectTilt extends CNodeController {
 
                         const bankAngle = Math.atan(angularVelocity * speed / 9.77468)
 
-                        // Re-orient the object using the *smoothed* forward
-                        // direction so the subsequent bank rotation around
-                        // `fwd` is a pure roll. Without this, the earlier
-                        // `lookAt(rawNext)` aligned -Z to the raw track and
-                        // we'd be rotating around a different axis, leaking
-                        // a pitch component (visible as nose-down during
-                        // racetrack ramp-in / ramp-out, where the 200-frame
-                        // smoothing window lags 10°+ behind the raw heading).
-                        // Using smoothed direction for both the alignment and
-                        // the rotation axis keeps banking a pure roll.
-                        object.position.copy(currentPos)
-                        object.up = objectNode.getUpVector(object.position)
-                        object.lookAt(currentPos.clone().add(fwd))
-                        object.position.copy(oldPos)
-
-                        object.rotateOnWorldAxis(fwd, bankAngle);
+                        // Use the *raw* track direction (which the earlier
+                        // `lookAt(next)` aligned the model with) for the bank
+                        // rotation axis. The smoothed direction we used to
+                        // compute angularVelocity above can lag the raw track
+                        // by 10–20° during racetrack ramps because we double-
+                        // smooth (the controller's internal 200-frame sliding
+                        // window stacks on top of cameraTrackSwitchSmooth).
+                        // Banking around the same axis the model is already
+                        // aligned with is a pure roll AND keeps body-on-track.
+                        const rawFwd = next.clone().sub(currentPos).normalize()
+                        object.rotateOnWorldAxis(rawFwd, bankAngle);
 
                         if (this.in.angleOfAttack !== undefined) {
                             const aoa = this.in.angleOfAttack.v(f)
                             const aoaRad = radians(aoa)
                             const up = getLocalUpVector(object.position)
-                            const left = up.cross(fwd)
+                            const left = up.cross(rawFwd)
                             object.rotateOnWorldAxis(left, -aoaRad)
                         }
 

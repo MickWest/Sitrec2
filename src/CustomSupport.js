@@ -82,7 +82,8 @@ import {CNodeControllerCelestial} from "./nodes/CNodeControllerVarious";
 import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
 import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
 import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
-import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
+import {CNodeGUIFlag, CNodeGUIValue} from "./nodes/CNodeGUIValue";
+import {CNodeControllerCameraBankRoll} from "./nodes/CNodeControllerCameraBankRoll";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry} from "./trackSourceUtils";
 import {encodeShareParam, resolveURLForFetch, toShareableCustomValue} from "./SitrecObjectResolver";
@@ -817,6 +818,79 @@ export class CCustomManager {
             new CNodeOSDDataSeriesController({
                 id: "osdDataSeriesController",
             });
+        }
+    }
+
+    // Per-sitch wiring for the Simple Flight Sim folder. Creates the
+    // racetrack-pattern controls (legLength, transitionTime) and the
+    // optional bank-roll flag for the look camera, then wires them into
+    // the existing flight-sim JetTrack and lookCamera. Idempotent — safe
+    // to re-run on every sitch load (NodeMan.exists guards).
+    setupSimpleFlightSim() {
+        if (!guiMenus.simpleFlightSim) return;
+        const folder = guiMenus.simpleFlightSim;
+
+        if (!NodeMan.exists("legLength")) {
+            new CNodeGUIValue({
+                id: "legLength",
+                value: 0,
+                start: 0,
+                end: 600,
+                step: 0.1,
+                desc: "Leg Length",
+                tooltip: "Seconds of straight flight between 180° turns (0 disables the racetrack pattern)",
+            }, folder);
+        }
+        if (!NodeMan.exists("transitionTime")) {
+            new CNodeGUIValue({
+                id: "transitionTime",
+                value: 3,
+                start: 0,
+                end: 10,
+                step: 0.1,
+                desc: "Transition Time",
+                tooltip: "Seconds to ramp the turn rate from 0 to the full Turn Rate at the start and end of each 180° turn",
+            }, folder);
+        }
+
+        // Wire racetrack inputs into the JetTrack. JetTrack was constructed
+        // before these nodes existed (sitch object processed first), so
+        // optionalInputs left them undefined — patch them in now.
+        if (NodeMan.exists("flightSimCameraPosition")) {
+            const jt = NodeMan.get("flightSimCameraPosition");
+            const legLengthNode = NodeMan.get("legLength");
+            const transitionNode = NodeMan.get("transitionTime");
+            const wiredNew = jt.in.legLength !== legLengthNode || jt.in.transitionTime !== transitionNode;
+            if (jt.in.legLength !== legLengthNode) {
+                jt.addMoreInputs({legLength: legLengthNode});
+            }
+            if (jt.in.transitionTime !== transitionNode) {
+                jt.addMoreInputs({transitionTime: transitionNode});
+            }
+            // Re-run recalc so the new inputs take effect immediately.
+            if (wiredNew) jt.recalculate();
+        }
+
+        // Optional bank-roll for the look camera so the rendered horizon
+        // tilts with the simulated aircraft's bank.
+        if (!NodeMan.exists("lookCameraBankRoll")) {
+            new CNodeGUIFlag({
+                id: "lookCameraBankRoll",
+                value: false,
+                desc: "Roll View with Bank",
+                tooltip: "When using the flight-sim camera, roll the look camera by the bank angle so the horizon tilts as if you were the pilot",
+            }, folder);
+        }
+
+        if (NodeMan.exists("lookCamera")
+            && NodeMan.exists("cameraTrackSwitchSmooth")
+            && !NodeMan.exists("cameraBankRollController")) {
+            const ctrl = new CNodeControllerCameraBankRoll({
+                id: "cameraBankRollController",
+                track: "cameraTrackSwitchSmooth",
+                enabled: "lookCameraBankRoll",
+            });
+            NodeMan.get("lookCamera").addControllerNode(ctrl);
         }
     }
 

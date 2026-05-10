@@ -807,14 +807,14 @@ class CTrackManager extends CManager {
         })
 
         // Display the shorter segment of the track that matches the Sitch duration
-        // using a thicker line and a brighter color
+        // (slightly brighter than the full-data track but same thinness)
         trackOb.trackDisplayNode = new CNodeDisplayTrack({
             id: "TrackDisplay_" + shortName,
             track: "Track_" + shortName,
             dataTrack: "TrackData_" + shortName,
             dataTrackDisplay: "TrackDisplayData_" + shortName,
             color: "colorTrack_" + shortName,
-            width: 2,
+            width: 1,
             //  toGround: 1, // spacing for lines to ground
             extendToGround: isSonde, // balloon tracks show wall to ground
             ignoreAB: true,
@@ -1451,7 +1451,7 @@ class CTrackManager extends CManager {
      * @param {boolean} options.editMode - Whether to start in edit mode (default: true)
      * @param {string} options.curveType - Type of curve: "linear", "catmull", "chordal", "centripetal" (default: "chordal")
      * @param {number} options.color - Track color as hex (default: 0xffff00)
-     * @param {number} options.lineWidth - Track line width (default: 2)
+     * @param {number} options.lineWidth - Track line width (default: 1)
      * @param {number} options.startFrame - Frame number for the initial point (default: 0)
      * @returns {Object} The created track object
      */
@@ -1461,7 +1461,7 @@ class CTrackManager extends CManager {
         const curveType = options.curveType || "chordal";
         const editMode = options.editMode !== undefined ? options.editMode : true;
         const colorHex = options.color || 0xffff00;
-        const lineWidth = options.lineWidth || 2;
+        const lineWidth = options.lineWidth || 1;
         const startFrame = options.startFrame !== undefined ? options.startFrame : 0;
         
         // Use provided shortName or generate unique short name for display (like "synth_01_d")
@@ -1945,7 +1945,7 @@ class CTrackManager extends CManager {
                         (Math.round(trackOb.trackColor.r * 255) << 16) |
                         (Math.round(trackOb.trackColor.g * 255) << 8) |
                         Math.round(trackOb.trackColor.b * 255) : 0xffff00,
-                    lineWidth: trackOb.displayTrack?.width || 2,
+                    lineWidth: trackOb.displayTrack?.width || 1,
                     positions: positions,
                     objectData: objectData,
                     elevationCache: elevationCacheData,

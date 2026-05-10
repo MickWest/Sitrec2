@@ -330,22 +330,10 @@ sitch = {
         inheritVisibility: "turnRate"
     },
 
-    // Racetrack pattern parameters for the JetTrack:
-    //   legLength=0 (default): track turns at the constant turnRate above (no racetrack).
-    //   legLength>0: track flies straight for legLength seconds, then makes a 180° turn,
-    //     ramping up over transitionTime, holding turnRate, ramping down for the same time.
-    //     Repeats indefinitely → racetrack pattern.
-    legLength: {
-        kind: "GUIValue", value: 0, start: 0, end: 600, step: 0.1,
-        desc: "Leg Length", gui: "simpleFlightSim",
-        tooltip: "Seconds of straight flight between 180° turns (0 disables the racetrack pattern)"
-    },
-
-    transitionTime: {
-        kind: "GUIValue", value: 3, start: 0, end: 10, step: 0.1,
-        desc: "Transition Time", gui: "simpleFlightSim",
-        tooltip: "Seconds to ramp the turn rate from 0 to the full Turn Rate at the start and end of each 180° turn"
-    },
+    // legLength, transitionTime (racetrack pattern controls) and the
+    // bank-roll flag are created and wired by CCustomManager.setupSimpleFlightSim()
+    // in CustomSupport.js — keeping new utility/tool nodes out of SitCustom
+    // per the project convention.
 
 
 
@@ -396,13 +384,13 @@ sitch = {
 
 
 
-    // Track of a jet with some simple physics
+    // Track of a jet with some simple physics. legLength + transitionTime
+    // (racetrack pattern) are wired in by CCustomManager.setupSimpleFlightSim()
+    // after the JetTrack is constructed.
     flightSimCameraPosition: {
         kind: "JetTrack",
         speed: "jetTAS",
         turnRate: "turnRate",
-        legLength: "legLength",
-        transitionTime: "transitionTime",
         wind: "localWind",
         heading: "jetHeading",
         origin: "fixedCameraPosition",
@@ -457,14 +445,14 @@ sitch = {
         kind: "DisplayTrack",
         track: "cameraTrackSwitchSmooth",
         color: "#FFFFFF",
-        width: 2,
+        width: 1,
     },
 
     satelliteDisplayTrack: {
         kind: "DisplayTrack",
         track: "satelliteTrack",
         color: "#FFFFFF",
-        width: 2,
+        width: 1,
         minWallStep: 20000,          // min distance in meters between wall segments
         trackDisplayStep: 300,      // number of frames between track points
     },
@@ -473,7 +461,7 @@ sitch = {
         kind: "DisplayTrack",
         track: "satelliteTrack2",
         color: "#FFFF00",
-        width: 2,
+        width: 1,
         minWallStep: 20000,          // min distance in meters between wall segments
         trackDisplayStep: 300,      // number of frames between track points
         force: true,

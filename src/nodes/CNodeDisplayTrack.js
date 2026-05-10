@@ -198,47 +198,6 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                 setRenderOne(true)
             })
 
-            // Contrail toggle and duration
-            this.guiFolder.add(this, "contrail").name(t("displayTrack.contrail.label")).tooltip(t("displayTrack.contrail.tooltip")).listen().onChange(() => {
-                this.updateContrail();
-                setRenderOne(true);
-            })
-            this.guiContrailDuration = this.guiFolder.add(this, "contrailDuration", 2, 5000, 1)
-                .name(t("displayTrack.contrailSecs.label")).tooltip(t("displayTrack.contrailSecs.tooltip")).listen().onChange(() => {
-                    if (this.contrailNode) {
-                        this.contrailNode.duration = this.contrailDuration;
-                    }
-                    setRenderOne(true);
-                })
-            this.guiFolder.add(this, "contrailWidth", 10, 200, 1)
-                .name(t("displayTrack.contrailWidth.label")).tooltip(t("displayTrack.contrailWidth.tooltip")).listen().onChange(() => {
-                    if (this.contrailNode) {
-                        this.contrailNode.ribbonWidth = this.contrailWidth;
-                    }
-                    setRenderOne(true);
-                })
-            this.guiFolder.add(this, "contrailInitialWidth", 0, 100, 1)
-                .name(t("displayTrack.contrailInitialWidth.label")).tooltip(t("displayTrack.contrailInitialWidth.tooltip")).listen().onChange(() => {
-                    if (this.contrailNode) {
-                        this.contrailNode.initialWidth = this.contrailInitialWidth;
-                    }
-                    setRenderOne(true);
-                })
-            this.guiFolder.add(this, "contrailRampDistance", 0, 2000, 10)
-                .name(t("displayTrack.contrailRamp.label")).tooltip(t("displayTrack.contrailRamp.tooltip")).listen().onChange(() => {
-                    if (this.contrailNode) {
-                        this.contrailNode.rampDistance = this.contrailRampDistance;
-                    }
-                    setRenderOne(true);
-                })
-            this.guiFolder.add(this, "contrailSpread", 0, 20, 0.01)
-                .name(t("displayTrack.contrailSpread.label")).tooltip(t("displayTrack.contrailSpread.tooltip")).listen().onChange(() => {
-                    if (this.contrailNode) {
-                        this.contrailNode.spread = this.contrailSpread;
-                    }
-                    setRenderOne(true);
-                })
-
             // color picker for the line color, with optional linked data track
             this.guiLineColor = this.guiFolder.addColor(this, "lineColor").name(t("displayTrack.lineColor.label")).tooltip(t("displayTrack.lineColor.tooltip")).onChange(() => {
 
@@ -252,6 +211,67 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                     this.in.dataTrackDisplay.recalculate()
                 }
             })
+
+            // Line width in pixels. Drives `this.in.width.value` (a
+            // CNodeConstant's actual stored field — `v0` is a getter-only
+            // shortcut for `v(0)` and can't be slider-bound). Rebuilds the
+            // line material via recalculate() when changed.
+            if (this.in.width !== undefined && this.in.width.value !== undefined) {
+                this.guiLineWidth = this.guiFolder.add(this.in.width, "value", 0.5, 10, 0.1)
+                    .name(t("displayTrack.lineWidth.label", {defaultValue: "Line Width"}))
+                    .tooltip(t("displayTrack.lineWidth.tooltip", {defaultValue: "Track line width in pixels"}))
+                    .listen()
+                    .onChange(() => {
+                        this.recalculate()
+                        if (this.in.dataTrackDisplay !== undefined) {
+                            this.in.dataTrackDisplay.recalculate()
+                        }
+                        setRenderOne(true)
+                    });
+            }
+
+            // Contrail controls collapsed into a sub-folder so the main track
+            // folder isn't cluttered by 6 contrail-only sliders.
+            const contrailFolder = this.guiFolder.addFolder(t("displayTrack.contrail.label")).close();
+            contrailFolder.add(this, "contrail").name(t("displayTrack.contrail.label")).tooltip(t("displayTrack.contrail.tooltip")).listen().onChange(() => {
+                this.updateContrail();
+                setRenderOne(true);
+            })
+            this.guiContrailDuration = contrailFolder.add(this, "contrailDuration", 2, 5000, 1)
+                .name(t("displayTrack.contrailSecs.label")).tooltip(t("displayTrack.contrailSecs.tooltip")).listen().onChange(() => {
+                    if (this.contrailNode) {
+                        this.contrailNode.duration = this.contrailDuration;
+                    }
+                    setRenderOne(true);
+                })
+            contrailFolder.add(this, "contrailWidth", 10, 200, 1)
+                .name(t("displayTrack.contrailWidth.label")).tooltip(t("displayTrack.contrailWidth.tooltip")).listen().onChange(() => {
+                    if (this.contrailNode) {
+                        this.contrailNode.ribbonWidth = this.contrailWidth;
+                    }
+                    setRenderOne(true);
+                })
+            contrailFolder.add(this, "contrailInitialWidth", 0, 100, 1)
+                .name(t("displayTrack.contrailInitialWidth.label")).tooltip(t("displayTrack.contrailInitialWidth.tooltip")).listen().onChange(() => {
+                    if (this.contrailNode) {
+                        this.contrailNode.initialWidth = this.contrailInitialWidth;
+                    }
+                    setRenderOne(true);
+                })
+            contrailFolder.add(this, "contrailRampDistance", 0, 2000, 10)
+                .name(t("displayTrack.contrailRamp.label")).tooltip(t("displayTrack.contrailRamp.tooltip")).listen().onChange(() => {
+                    if (this.contrailNode) {
+                        this.contrailNode.rampDistance = this.contrailRampDistance;
+                    }
+                    setRenderOne(true);
+                })
+            contrailFolder.add(this, "contrailSpread", 0, 20, 0.01)
+                .name(t("displayTrack.contrailSpread.label")).tooltip(t("displayTrack.contrailSpread.tooltip")).listen().onChange(() => {
+                    if (this.contrailNode) {
+                        this.contrailNode.spread = this.contrailSpread;
+                    }
+                    setRenderOne(true);
+                })
 
             // color picker for the polygon/drop color
             this.guiPolyColor = this.guiFolder.addColor(this, "polyColor").name(t("displayTrack.polyColor.label")).tooltip(t("displayTrack.polyColor.tooltip")).onChange(() => {
@@ -670,10 +690,15 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
 //        var material1 = this.in.color.v(0)
 
+        // Line width in pixels. The previous code multiplied by 3 here to
+        // hide rasterisation jaggies, but the LineMaterial shader does its
+        // own analytic-AA via alphaToCoverage when MSAA is on, and the
+        // renderer already clamps to ≥1 fb-pixel — so the multiplier just
+        // made every track 3× thicker than the configured width without
+        // giving the user a way to undo it. Render at the configured value.
         var width = 1
         if (this.in.width !== undefined)
             width = this.in.width.v0
-        width *= 3;  // thicker lines reduce apparent jaggedness through shader smoothing
 
         var matLineTrack = new LineMaterial({
 
