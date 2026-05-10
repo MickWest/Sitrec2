@@ -1,6 +1,7 @@
 import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
 import {EventManager} from "./CEventManager";
+import {CNode} from "./nodes/CNode";
 
 // Manual horizon-angle extractor. The user enables this and a cross overlay
 // appears on the video view. They drag the cross center to position it on
@@ -522,6 +523,25 @@ class HorizonExtractor {
     }
 }
 
+// Data-graph node exposing the horizon extractor's per-frame angle (degrees,
+// CW-positive in screen space — matches aircraft bank-angle sign for a pilot
+// view: right-bank → horizon tilts CW → positive). Used by CNodeTurnRateBS
+// to derive a "From Bank" turn-rate source for the Simple Flight Sim. When
+// no keyframes exist the node returns 0 (straight & level).
+export class CNodeHorizonAngle extends CNode {
+    constructor(v) {
+        super(v);
+        this.frames = v.frames ?? Sit.frames ?? 0;
+        this.isNumber = true;
+    }
+
+    getValueFrame(f) {
+        if (!horizonExtractor) return 0;
+        const s = horizonExtractor.getHorizonAt(f);
+        return s ? s.angle : 0;
+    }
+}
+
 // Module-level state (mirrors the ObjectTracker pattern). `horizonExtractor`
 // is created lazily on first menu-action. `renderHooked` is module-level
 // (not on the instance) so resetHorizonExtractor() can clear it and the
@@ -534,6 +554,29 @@ let enableMenuItem = null;
 let horizonFolder = null;
 
 export function getHorizonExtractor() { return horizonExtractor; }
+
+// Sitch-JSON round-trip. localStorage gives a session-survives-reload
+// guarantee, but a saved sitch should also embed its keyframes so a
+// shared/reloaded URL reproduces the analyst's work. Wired into
+// CustomManagerSerialize (out.horizonExtractor = serializeHorizonExtractor()
+// on save; deserializeHorizonExtractor(data.horizonExtractor) on load).
+export function serializeHorizonExtractor() {
+    if (!horizonExtractor || horizonExtractor.keyframes.size === 0) return null;
+    return {
+        keyframes: Array.from(horizonExtractor.keyframes.entries()),
+    };
+}
+
+export function deserializeHorizonExtractor(data) {
+    if (!data || !Array.isArray(data.keyframes)) return;
+    const videoView = NodeMan.get("video", false);
+    if (!videoView) return;
+    if (!horizonExtractor) horizonExtractor = new HorizonExtractor(videoView);
+    horizonExtractor.keyframes = new Map(data.keyframes);
+    horizonExtractor.showHint = false; // returning user has prior work
+    horizonExtractor.saveToStorage();
+    setRenderOne(true);
+}
 
 // Called from index.js disposeAll() path (alongside resetObjectTracking)
 // on every sitch reload so we don't leak handler closures or render-hook

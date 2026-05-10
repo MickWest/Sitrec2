@@ -84,6 +84,8 @@ import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
 import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
 import {CNodeGUIFlag, CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {CNodeControllerCameraBankRoll} from "./nodes/CNodeControllerCameraBankRoll";
+import {CNodeTurnRateBS} from "./nodes/CNodeTurnRateBS";
+import {CNodeHorizonAngle} from "./CHorizonExtractor";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry} from "./trackSourceUtils";
 import {encodeShareParam, resolveURLForFetch, toShareableCustomValue} from "./SitrecObjectResolver";
@@ -91,6 +93,7 @@ import {getEnvBool} from "./envUtils";
 import {CNodeFloodSim} from "./nodes/CNodeFloodSim";
 import {CNodeOrbitTrack} from "./nodes/CNodeOrbitTrack";
 import {CNodeTrackSwitch} from "./nodes/CNodeTrackSwitch";
+import {CNodeSwitch} from "./nodes/CNodeSwitch";
 import {getNearbyWeatherBalloons, importSoundingDialog} from "./SondeFetch";
 import {WIND_SOURCES, windSourceLabelsToKeys, windSourceByKey} from "./nodes/WindSources";
 import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
@@ -891,6 +894,51 @@ export class CCustomManager {
                 enabled: "lookCameraBankRoll",
             });
             NodeMan.get("lookCamera").addControllerNode(ctrl);
+        }
+
+        // "Turn Rate Source" switch — Custom (the existing turnRate slider)
+        // or "From Bank" (g·tan(bank)/V using the horizon-extractor angle).
+        // Wire it so the JetTrack reads the switch's output, not the raw
+        // GUIValue, so changing the dropdown actually swaps the source
+        // without touching anyone else's references.
+        if (!NodeMan.exists("horizonAngle")) {
+            new CNodeHorizonAngle({id: "horizonAngle"});
+        }
+        if (!NodeMan.exists("turnRateFromBank")
+            && NodeMan.exists("jetTAS") && NodeMan.exists("horizonAngle")) {
+            new CNodeTurnRateBS({
+                id: "turnRateFromBank",
+                inputs: {
+                    speed: "jetTAS",
+                    bank: "horizonAngle",
+                },
+            });
+        }
+        if (!NodeMan.exists("turnRateSource")
+            && NodeMan.exists("turnRate") && NodeMan.exists("turnRateFromBank")) {
+            new CNodeSwitch({
+                id: "turnRateSource",
+                inputs: {
+                    "Custom": "turnRate",
+                    "From Bank": "turnRateFromBank",
+                },
+                default: "Custom",
+                desc: "Turn Rate Source",
+            }, folder);
+        }
+
+        // Rewire the JetTrack's turnRate input to read from the switch.
+        // addInput asserts the input doesn't already exist, so we have to
+        // removeInput first. Idempotent: if already pointing at the switch,
+        // we do nothing.
+        if (NodeMan.exists("flightSimCameraPosition") && NodeMan.exists("turnRateSource")) {
+            const jt = NodeMan.get("flightSimCameraPosition");
+            const src = NodeMan.get("turnRateSource");
+            if (jt.in.turnRate !== src) {
+                jt.removeInput("turnRate");
+                jt.addInput("turnRate", src);
+                jt.recalculate();
+            }
         }
     }
 

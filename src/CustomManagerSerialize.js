@@ -58,6 +58,7 @@ import {CNodeNotes} from "./nodes/CNodeNotes";
 import {createCustomModalWithCopy, saveFilePrompted, saveFileToDirectory, saveFileToHandle} from "./FileUtils";
 import {deserializeMotionAnalysis, serializeMotionAnalysis} from "./CMotionAnalysisUI";
 import {deserializeAutoTracking, serializeAutoTracking} from "./CObjectTracking";
+import {deserializeHorizonExtractor, serializeHorizonExtractor} from "./CHorizonExtractor";
 import {getCursorPositionFromTopView} from "./mouseMoveView";
 import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightSidebar} from "./PageStructure";
 import {CNodeControllerCelestial} from "./nodes/CNodeControllerVarious";
@@ -518,6 +519,11 @@ export const serializeMethods = {
         // Fall back to Sit.autoTracking (from previous load) if the objectTracker
         // is no longer active but previously-serialized data exists
         out.autoTracking = serializeAutoTracking() ?? Sit.autoTracking ?? null
+
+        // Horizon extractor keyframes — manual horizon-angle markups.
+        // Falls back to Sit.horizonExtractor (from previous load) if the
+        // extractor is no longer instantiated but old data exists.
+        out.horizonExtractor = serializeHorizonExtractor() ?? Sit.horizonExtractor ?? null
 
         // Serialize sub sitches
         out.subSitchesData = this.serializeSubSitches()
@@ -1295,6 +1301,10 @@ export const serializeMethods = {
 
         if (sitchData.autoTracking) {
             await deserializeAutoTracking(sitchData.autoTracking);
+        }
+
+        if (sitchData.horizonExtractor) {
+            deserializeHorizonExtractor(sitchData.horizonExtractor);
         }
 
         if (sitchData.subSitchesData) {
