@@ -45,6 +45,16 @@ Example entry format:
 
 ---
 
+## Version 2.54.0 (2026-05-11)
+
+### New Features
+- **Atmospheric refraction for celestial rendering**: bends apparent positions of the Sun, Moon, planets, stars, constellation lines, and satellites toward the observer's zenith using Saemundsson's formula. Refraction runs per-vertex in the shader for the Sun/Moon so their disks flatten correctly near the horizon; CPU-side bends keep the picker, labels, and ground arrows aligned with the rendered dots. New GUI controls (Stellarium-style defaults: 1010 hPa, 10 °C) serialize with the sitch — `Sit.refractionEnabled`, `refractionPressure`, `refractionTemp`.
+- **Asterism Style dropdown** (Celestial menu): switches between the existing d3-celestial asterisms (default) and Astrometry.net's constellation line set, so the rendered night sky can be visually matched against Astrometry.net plate-solve plots. The new dataset is derived from Astrometry.net's `catalogs/stellarium-constellations.c` (BSD-3-Clause); the ThirdPartyNotices generator gains a `DATA_FILES` section attributing the new file plus the previously-uncredited d3-celestial constellation files, IAU-CSN, and BSC5.
+- **Levels Midpoint slider** (Video → Video Adjustments): Photoshop-style gamma curve for video midtones — `output = input^(1/midpoint)`. Range 0.1–5.0, default 1.0; >1 brightens midtones, <1 darkens them, while pure black/white are preserved. Implemented via a cached 256-entry LUT and an offscreen canvas in the per-frame pixel pipeline (CSS `ctx.filter` has no native gamma), applied after echo accumulation and before brightness/contrast/blur so it acts as a base tone adjustment. Reset by "Reset Video Adjustments".
+
+### Bug Fixes
+- **Track and LOS lines stay visible at lower MSAA levels**: `LineMaterial`'s `alphaToCoverage` path emits a smoothstep alpha that the GPU quantizes into MSAA-sample-mask coverage. With MSAA=4 (5 levels) sub-pixel-wide lines faded smoothly, but MSAA=2 (3 levels) showed periodic gaps and MSAA=0's α<0.5 discard made lines disappear. At MSAA<4, line width is now clamped to at least 1 framebuffer-pixel — the rasterized triangle is always ≥1 px wide and its center passes the discard threshold. The clamp updates on the fly when MSAA toggles at runtime (the requested width is stashed in `userData.originalLinewidth` so Quality preset, which uses MSAA=4, keeps the originally-requested widths).
+
 ## Version 2.53.2 (2026-05-11)
 
 ### Bug Fixes
