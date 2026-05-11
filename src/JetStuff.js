@@ -1212,13 +1212,18 @@ export function CommonJetStuff() {
         return;
     }
     // only gimbal uses this
-    AddSpeedGraph("LOSTraverseSelect","Traverse Speed",0,360,0.6,0,-1,0.25,
-        [
-        {x: 716, x2:725, color: "#FF00ff40"},
-        {x: 813,x2:828, color: "#ff00ff40"},
-        {x: 861,x2:943, color: "#ff00ff40"},
-        {x: 978,x2:984, color: "#ff00ff40"},
-    ])
+    AddSpeedGraph({
+        source: "LOSTraverseSelect",
+        caption: "Traverse Speed",
+        minY: 0, maxY: 360,
+        left: 0.6, top: 0, width: -1, height: 0.25,
+        lines: [
+            {x: 716, x2: 725, color: "#FF00ff40"},
+            {x: 813, x2: 828, color: "#ff00ff40"},
+            {x: 861, x2: 943, color: "#ff00ff40"},
+            {x: 978, x2: 984, color: "#ff00ff40"},
+        ],
+    })
     AddAltitudeGraph(10000, 45000)
 
     if (Sit.showGimbalCharts || Sit.name === "gimbal") {

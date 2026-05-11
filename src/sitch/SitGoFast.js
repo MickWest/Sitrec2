@@ -597,7 +597,12 @@ export const SitGoFast = {
             ]
         )
 
-        AddSpeedGraph("LOSTraverseSelect","Target Speed",0,250,0.62,0,-1,0.3)
+        AddSpeedGraph({
+            source: "LOSTraverseSelect",
+            caption: "Target Speed",
+            minY: 0, maxY: 250,
+            left: 0.62, top: 0, width: -1, height: 0.3,
+        })
         //       AddAltitudeGraph(10000, 45000)
 
         const gridSquaresGround = 200

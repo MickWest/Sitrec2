@@ -1273,20 +1273,18 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
 
         case "speedGraph":
             SSLog();
-            const speedGraph = AddSpeedGraph(
-                data.track ?? "targetTrack",
-                data.label ?? "Speed",
-                data.min ?? 0,
-                data.max ?? 100,
-                data.left ?? 0,
-                data.top ?? 0,
-                data.width ?? 0.2,
-                data.height ?? 0.25,
-                undefined,
-                data.dynamicY ?? false,
-
-
-            );
+            const speedGraph = AddSpeedGraph({
+                source: data.track ?? "targetTrack",
+                caption: data.label ?? "Speed",
+                minY: data.min ?? 0,
+                maxY: data.max ?? 100,
+                left: data.left ?? 0,
+                top: data.top ?? 0,
+                width: data.width ?? 0.2,
+                height: data.height ?? 0.25,
+                dynamicY: data.dynamicY ?? false,
+                wind: data.wind ?? undefined,
+            });
             if (data.visible === false) {
                 speedGraph.editorView.hide();
             }

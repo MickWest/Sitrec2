@@ -776,9 +776,14 @@ export const SitAguadilla = {
 
         })
 
-        AddSpeedGraph("LOSTraverseSelectSmoothed","Target", 0, 200, 0,0,0.6250,0.30)
-   //     AddSpeedGraph("jetTrackSmooth","Plane", 150, 240, 0,0.15,0.6250,0.15)
-   //     AddSpeedGraph("groundSplineEditor", "Ground", 0, 300,0,0.30,0.6250,0.15)
+        AddSpeedGraph({
+            source: "LOSTraverseSelectSmoothed",
+            caption: "Target",
+            minY: 0, maxY: 200,
+            left: 0, top: 0, width: 0.6250, height: 0.30,
+        })
+   //     AddSpeedGraph({source: "jetTrackSmooth", caption: "Plane", minY: 150, maxY: 240, left: 0, top: 0.15, width: 0.6250, height: 0.15})
+   //     AddSpeedGraph({source: "groundSplineEditor", caption: "Ground", minY: 0, maxY: 300, left: 0, top: 0.30, width: 0.6250, height: 0.15})
 
 
         const lookCamera = NodeMan.get("lookCamera").camera;

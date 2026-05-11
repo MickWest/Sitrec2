@@ -78,6 +78,7 @@ import {
     windSourceByKey,
     windSourceLabelsToKeysWithTracks,
 } from "./nodes/WindSources";
+import {estimateWindFromConstantAirspeed} from "./WindFromConstantAirspeed";
 import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
 import {CNodeSAPage} from "./nodes/CNodeSAPage";
 import {
@@ -864,6 +865,84 @@ export const setupMethods = {
             par.windStatus = this._windNode.statusText;
         };
         windFolder.add({refresh}, "refresh").name("Refresh Wind Data");
+
+        // Fit local wind from a constant-airspeed camera assumption. Solves
+        // for the single horizontal wind vector that minimizes airspeed
+        // standard deviation across the track, then writes it into
+        // localWind.from/knots. Switches the local source to "manual" so the
+        // fit actually takes effect — track/atmospheric sources would
+        // otherwise overwrite from/knots each frame.
+        const fitLocalFromConstantCamera = () => {
+            const localWind = NodeMan.exists("localWind") ? NodeMan.get("localWind") : null;
+            if (!localWind) {
+                par.windStatus = "Fit failed: no localWind node";
+                return;
+            }
+            // Order: prefer the smoothed switch in the custom sitch (noise
+            // suppression sharpens the fit), then the raw switch, then the
+            // legacy single-purpose ids used by SitGimbal / SitAguadilla.
+            let track = null;
+            let trackId = null;
+            for (const id of ["cameraTrackSwitchSmooth", "cameraTrackSwitch", "jetTrack", "cameraTrack"]) {
+                if (NodeMan.exists(id)) {
+                    const cand = NodeMan.get(id);
+                    if (cand && typeof cand.p === "function") {
+                        track = cand;
+                        trackId = id;
+                        break;
+                    }
+                }
+            }
+            if (!track) {
+                par.windStatus = "Fit failed: no camera track";
+                return;
+            }
+
+            par.windStatus = "Fitting wind…";
+            const result = estimateWindFromConstantAirspeed(track);
+            if (!result) {
+                par.windStatus = "Fit failed: not enough samples";
+                return;
+            }
+
+            // Flip the local source to manual so the new from/knots stick.
+            // In shared mode (sourceSeparate=false) the source field drives
+            // both pipelines, so we change wn.source; in separate mode we
+            // only touch wn.sourceLocal.
+            if (wn.sourceSeparate) {
+                wn.sourceLocal = "manual";
+                localWind.trackSource = null;
+                if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.updateDisplay();
+            } else {
+                wn.source = "manual";
+                wn.sourceLocal = "manual";
+                localWind.trackSource = null;
+                if (NodeMan.exists("targetWind")) {
+                    NodeMan.get("targetWind").trackSource = null;
+                }
+                if (this._windSourceCtrl) this._windSourceCtrl.updateDisplay();
+                if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.updateDisplay();
+            }
+
+            localWind.from = Math.round(result.from);
+            localWind.knots = Math.round(result.knots);
+            if (localWind.guiFrom) localWind.guiFrom.updateDisplay();
+            if (localWind.guiKnots) localWind.guiKnots.updateDisplay();
+            localWind.recalculateCascade();
+
+            // Rebuild the wind grid from the new manual values, matching the
+            // behavior of CNodeWind's onManualWindEdit closure.
+            if (NodeMan.exists("windField")) {
+                const wf = NodeMan.get("windField");
+                if (wf.source === "manual" && wf.windU) {
+                    wf.fetchWindForAltitude(wf.windAltFt);
+                }
+            }
+
+            par.windStatus = `Local wind: ${localWind.from}° / ${localWind.knots} kt (σ=${result.finalCostKnots.toFixed(1)} kt, ${trackId})`;
+        };
+        windFolder.add({fitLocalFromConstantCamera}, "fitLocalFromConstantCamera")
+            .name("Local from Constant Camera");
 
         // ── Sounding-loader controls (used by UWYO/IGRA2 sources) ──
         // `balloonCount` drives how many nearby soundings auto-load. Manual

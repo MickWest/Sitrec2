@@ -155,7 +155,19 @@ export function AddTailAngleGraph(mungeInputs, windowParams={}, editorParams={})
     addGenericJetGraph("tailAngleGraph", "Tail Angle", mungeInputs, windowParams, editorParams, mungeFunction);
 }
 
-export function AddSpeedGraph(source, caption, minY = 0, maxY = 1000, left = 0.60, top = 0, width = -1, height = 0.25, lines=[], dynamicY = false) {
+export function AddSpeedGraph(v) {
+
+    const source = v.source;
+    const caption = v.caption;
+    const minY = v.minY ?? 0;
+    const maxY = v.maxY ?? 1000;
+    const left = v.left ?? 0.60;
+    const top = v.top ?? 0;
+    const width = v.width ?? -1;
+    const height = v.height ?? 0.25;
+    const lines = v.lines ?? [];
+    const dynamicY = v.dynamicY ?? false;
+    const wind = v.wind ?? "targetWind";
 
     let maybeGlare = {};
 
@@ -224,7 +236,7 @@ export function AddSpeedGraph(source, caption, minY = 0, maxY = 1000, left = 0.6
                 // Munge node to convert a traverse track to speed
                 source: new CNodeMunge({
                     id: "mungeHorizontalAirSpeed"+source,
-                    inputs: {source: source, wind: "targetWind"},
+                    inputs: {source: source, wind: wind},
                     munge: function (f) {
                         if (f === 0) f = 1;
                         let move = this.in.source.p(f)
