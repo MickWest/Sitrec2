@@ -54,7 +54,7 @@ export function addFiltersToVideoNode(videoNode) {
         guiVideoNoiseFolder.onOpenClose(() => setRenderOne(true));
     }
 
-    let brightness, contrast, blur, greyscale, hue, invert, saturate, enableVideoEffects, convolutionFilter;
+    let brightness, contrast, levelsMidpoint, blur, greyscale, hue, invert, saturate, enableVideoEffects, convolutionFilter;
     let sharpenAmount, edgeDetectThreshold, embossDepth;
     let echoMin, echoMax, echoFrames, fullABEcho, fullABEchoOpacity, fullABBlend, fullABExposure;
     let showCache, elaJpegQuality, elaErrorScale, elaOpacity, elaExpandMethod, elaContrastClipPercent;
@@ -90,6 +90,7 @@ export function addFiltersToVideoNode(videoNode) {
         resetFilters: () => {
             videoNode.inputs.brightness.value = 1;
             videoNode.inputs.contrast.value = 1;
+            if (videoNode.inputs.levelsMidpoint) videoNode.inputs.levelsMidpoint.value = 1;
             videoNode.inputs.blur.value = 0;
             videoNode.inputs.greyscale.value = 0;
             videoNode.inputs.hue.value = 0;
@@ -134,6 +135,7 @@ export function addFiltersToVideoNode(videoNode) {
     if (!NodeMan.exists("videoBrightness")) {
         brightness = new CNodeGUIValue({ id: "videoBrightness", value: 1, start: 0, end: 5, step: 0.01, desc: "Brightness", tip: "Brightness multiplier (1 = normal)" }, guiVideoEffectsFolder),
             contrast = new CNodeGUIValue({ id: "videoContrast", value: 1, start: 0, end: 5, step: 0.01, desc: "Contrast", tip: "Contrast multiplier (1 = normal)" }, guiVideoEffectsFolder),
+            levelsMidpoint = new CNodeGUIValue({ id: "videoLevelsMidpoint", value: 1, start: 0.1, end: 5, step: 0.01, desc: "Levels Midpoint", tip: "Gamma curve for midtones, like Photoshop's Levels midpoint slider (1 = normal, >1 brightens midtones, <1 darkens)" }, guiVideoEffectsFolder),
             blur = new CNodeGUIValue({ id: "videoBlur", value: 0, start: 0, end: 50, step: 0.05, desc: "Blur Src Px", tip: "Gaussian blur radius in source pixels (0 = none)" }, guiVideoEffectsFolder),
             greyscale = new CNodeGUIValue({ id: "videoGreyscale", value: 0, start: 0, end: 1, step: 0.01, desc: "Greyscale", tip: "Greyscale mix (0 = color, 1 = fully grey)" }, guiVideoEffectsFolder),
             hue = new CNodeGUIValue({ id: "videoHue", value: 0, start: 0, end: 360, step: 1, desc: "Hue Rotate", tip: "Rotate the hue of the video in degrees" }, guiVideoEffectsFolder),
@@ -246,6 +248,7 @@ export function addFiltersToVideoNode(videoNode) {
     } else {
         brightness = NodeMan.get("videoBrightness");
         contrast = NodeMan.get("videoContrast");
+        levelsMidpoint = NodeMan.get("videoLevelsMidpoint");
         blur = NodeMan.get("videoBlur");
         greyscale = NodeMan.get("videoGreyscale");
         hue = NodeMan.get("videoHue");
@@ -294,6 +297,7 @@ export function addFiltersToVideoNode(videoNode) {
     videoNode.addMoreInputs({
         brightness: brightness,
         contrast: contrast,
+        levelsMidpoint: levelsMidpoint,
         blur: blur,
         greyscale: greyscale,
         hue: hue,
@@ -661,6 +665,60 @@ export function applySourcePixelFilterToImage(image, filterString, videoView) {
     ctx.drawImage(image, 0, 0, width, height);
     ctx.filter = 'none';
     return videoView._sourceFilterCanvas;
+}
+
+// Photoshop-style "Levels Midpoint" / gamma curve: output = input^(1/midpoint).
+// midpoint > 1 brightens midtones, < 1 darkens them; black/white are preserved.
+// Uses a cached 256-entry LUT to skip 4M+ Math.pow calls per HD frame.
+export function applyLevelsMidpointToImage(image, midpoint, videoView) {
+    if (!midpoint || midpoint === 1) return image;
+
+    const width = image.width;
+    const height = image.height;
+
+    if (!videoView._levelsMidpointCanvas ||
+        videoView._levelsMidpointCanvas.width !== width ||
+        videoView._levelsMidpointCanvas.height !== height) {
+        videoView._levelsMidpointCanvas = document.createElement('canvas');
+        videoView._levelsMidpointCanvas.width = width;
+        videoView._levelsMidpointCanvas.height = height;
+        videoView._levelsMidpointCtx = videoView._levelsMidpointCanvas.getContext('2d', { willReadFrequently: true });
+        videoView._levelsLastMidpoint = undefined;
+        videoView._levelsLastImage = undefined;
+        videoView._levelsMidpointLUT = null;
+    }
+
+    if (videoView._levelsLastImage === image && videoView._levelsLastMidpoint === midpoint) {
+        return videoView._levelsMidpointCanvas;
+    }
+
+    if (videoView._levelsMidpointLUT === null || videoView._levelsLastMidpoint !== midpoint) {
+        const lut = new Uint8ClampedArray(256);
+        const invGamma = 1 / midpoint;
+        for (let i = 0; i < 256; i++) {
+            lut[i] = Math.round(Math.pow(i / 255, invGamma) * 255);
+        }
+        videoView._levelsMidpointLUT = lut;
+    }
+
+    const ctx = videoView._levelsMidpointCtx;
+    ctx.drawImage(image, 0, 0, width, height);
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+    const lut = videoView._levelsMidpointLUT;
+
+    for (let i = 0; i < data.length; i += 4) {
+        data[i] = lut[data[i]];
+        data[i + 1] = lut[data[i + 1]];
+        data[i + 2] = lut[data[i + 2]];
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+    videoView._levelsLastImage = image;
+    videoView._levelsLastMidpoint = midpoint;
+
+    return videoView._levelsMidpointCanvas;
 }
 
 export function applyELAOutputExpansion(pixels, width, height, method, clipPercent) {

@@ -32,8 +32,6 @@
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
 import {par} from "../par";
 import {quickToggle} from "../KeyBoardHandler";
-import {CNodeGUIFlag, CNodeGUIValue} from "./CNodeGUIValue";
-import {CNodeConstant} from "./CNode";
 import {CustomManager, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {CMouseHandler} from "../CMouseHandler";
 import {CNodeViewUI} from "./CNodeViewUI";
@@ -49,13 +47,6 @@ import {EventManager} from "../CEventManager";
 import {getFlowAlignRotation} from "../FlowAlignment";
 import {VideoLoadingManager} from "../CVideoLoadingManager";
 import {updateSitFrames} from "../UpdateSitFrames";
-import {CNodeGridOverlay} from "./CNodeGridOverlay";
-import {
-    checkVideoEncodingSupport,
-    createVideoExporter,
-    getBestFormatForResolution,
-    getVideoExtension
-} from "../VideoExporter";
 import {applyImportedImageMetadata, extractJPEGImportMetadata} from "../EXIFUtils";
 import {EXIFInfoPanel} from "../EXIFInfoPanel";
 import {isResolvableSitrecReference, resolveURLForFetch} from "../SitrecObjectResolver";
@@ -64,6 +55,7 @@ import {
     addFiltersToVideoNode,
     applyConvolutionToImage,
     applyEchoEffect,
+    applyLevelsMidpointToImage,
     applySourcePixelFilterToImage,
     clearEchoCache,
     guiVideoEffectsFolder,
@@ -81,7 +73,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         // these no longer work with the new rendering pipeline
         // TODO: reimplement them as effects?
-        this.optionalInputs(["brightness", "contrast", "blur", "greyscale", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
+        this.optionalInputs(["brightness", "contrast", "levelsMidpoint", "blur", "greyscale", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
         //
 
         //  if (this.overlayView === undefined)
@@ -1360,6 +1352,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 } else if (this._echoPixelCache) {
                     clearEchoCache(this);
                 }
+            }
+
+            if (effectsEnabled && this.in.levelsMidpoint && this.in.levelsMidpoint.v0 !== 1) {
+                sourceImage = applyLevelsMidpointToImage(sourceImage, this.in.levelsMidpoint.v0, this);
             }
 
             const blurPx = effectsEnabled ? (this.in.blur?.v0 ?? 0) : 0;
