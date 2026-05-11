@@ -550,25 +550,39 @@ let horizonFolder = null;
 export function getHorizonExtractor() { return horizonExtractor; }
 
 // Sitch-JSON round-trip. localStorage gives a session-survives-reload
-// guarantee, but a saved sitch should also embed its keyframes so a
-// shared/reloaded URL reproduces the analyst's work. Wired into
-// CustomManagerSerialize (out.horizonExtractor = serializeHorizonExtractor()
-// on save; deserializeHorizonExtractor(data.horizonExtractor) on load).
+// guarantee, but a saved sitch should also embed its keyframes and the
+// overlay's enabled state so a shared/reloaded URL reproduces the
+// analyst's work. Wired into CustomManagerSerialize
+// (out.horizonExtractor = serializeHorizonExtractor() on save;
+// deserializeHorizonExtractor(data.horizonExtractor) on load).
 export function serializeHorizonExtractor() {
-    if (!horizonExtractor || horizonExtractor.keyframes.size === 0) return null;
+    if (!horizonExtractor) return null;
+    // Nothing meaningful to save if the overlay is off and there are no
+    // keyframes — keeps shared sitches clean.
+    if (!horizonExtractor.enabled && horizonExtractor.keyframes.size === 0) return null;
     return {
+        enabled: horizonExtractor.enabled,
         keyframes: Array.from(horizonExtractor.keyframes.entries()),
     };
 }
 
 export function deserializeHorizonExtractor(data) {
-    if (!data || !Array.isArray(data.keyframes)) return;
+    if (!data) return;
     const videoView = NodeMan.get("video", false);
     if (!videoView) return;
     if (!horizonExtractor) horizonExtractor = new HorizonExtractor(videoView);
-    horizonExtractor.keyframes = new Map(data.keyframes);
-    horizonExtractor.showHint = false; // returning user has prior work
-    horizonExtractor.saveToStorage();
+    if (Array.isArray(data.keyframes)) {
+        horizonExtractor.keyframes = new Map(data.keyframes);
+        horizonExtractor.showHint = false; // returning user has prior work
+        horizonExtractor.saveToStorage();
+    }
+    // The menu is built before deserialize runs, so the "Enable…" item
+    // exists with its default label; flip it to "Disable…" to match the
+    // restored state. Old saves without an `enabled` field stay off.
+    if (data.enabled && !horizonExtractor.enabled) {
+        horizonExtractor.enable();
+        if (enableMenuItem) enableMenuItem.name("Disable Horizon Extractor");
+    }
     setRenderOne(true);
 }
 

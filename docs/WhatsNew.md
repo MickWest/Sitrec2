@@ -45,6 +45,11 @@ Example entry format:
 
 ---
 
+## Version 2.53.2 (2026-05-11)
+
+### Bug Fixes
+- **Horizon Extractor enabled state now serializes**: enabling the overlay, saving the sitch, and reloading previously dropped the enabled state — the overlay came back off. `serializeHorizonExtractor` now writes the `enabled` flag alongside `keyframes`, `deserializeHorizonExtractor` restores it (auto-enabling the overlay and flipping the menu item to "Disable Horizon Extractor"), and the "nothing to save" early-return now requires *both* an empty keyframe set *and* the overlay being off (previously dropped the enabled state when no keyframes existed yet). Old saves without an `enabled` field continue to load with the overlay off.
+
 ## Version 2.53.1 (2026-05-11)
 
 ### Bug Fixes
