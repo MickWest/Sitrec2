@@ -45,6 +45,11 @@ Example entry format:
 
 ---
 
+## Version 2.53.1 (2026-05-11)
+
+### Bug Fixes
+- **Horizon Extractor → Bank sign flipped**: the "Horizon Extractor" turn-rate source in Simple Flight Sim was driving bank in the wrong direction. A right bank rotates the aircraft CW (viewed from behind), so the world — and the horizon — appears to rotate CCW from the aircraft's POV. The horizon-extractor angle is CW-positive in screen space, so the bank signal must be its negation: `bank = -horizon`. The aircraft now turns in the same direction as the visible horizon tilt.
+
 ## Version 2.53.0 (2026-05-11)
 
 ### New Features

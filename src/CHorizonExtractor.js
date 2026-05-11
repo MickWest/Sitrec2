@@ -513,11 +513,15 @@ class HorizonExtractor {
     }
 }
 
-// Data-graph node exposing the horizon extractor's per-frame angle (degrees,
-// CW-positive in screen space — matches aircraft bank-angle sign for a pilot
-// view: right-bank → horizon tilts CW → positive). Used by CNodeTurnRateBS
-// to derive a "From Bank" turn-rate source for the Simple Flight Sim. When
-// no keyframes exist the node returns 0 (straight & level).
+// Data-graph node exposing the horizon extractor's per-frame angle as a
+// bank-angle signal (degrees, positive = right wing down). Used by
+// CNodeTurnRateBS to derive a "From Bank" turn-rate source for the Simple
+// Flight Sim. When no keyframes exist the node returns 0 (straight & level).
+//
+// Sign convention: a right bank rotates the aircraft CW (viewed from
+// behind), so the world — including the horizon — appears to rotate CCW
+// from the aircraft's POV. Horizon angle is CW-positive in screen space,
+// so bank = -horizon.
 export class CNodeHorizonAngle extends CNode {
     constructor(v) {
         super(v);
@@ -528,7 +532,7 @@ export class CNodeHorizonAngle extends CNode {
     getValueFrame(f) {
         if (!horizonExtractor) return 0;
         const s = horizonExtractor.getHorizonAt(f);
-        return s ? s.angle : 0;
+        return s ? -s.angle : 0;
     }
 }
 
