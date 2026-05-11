@@ -815,6 +815,12 @@ const en = {
         displayRange: { label: "Display Range (km)", tooltip: "Satellites beyond this distance will not have their names or arrows displayed" },
         equatorialGrid: { label: "Equatorial Grid", tooltip: "Show the celestial equatorial coordinate grid" },
         constellationLines: { label: "Constellation Lines", tooltip: "Show lines connecting stars in constellations" },
+        constellationStyle: {
+            label: "Asterism Style",
+            tooltip: "Which set of stick-figure lines to draw between stars",
+            optionD3: "d3-celestial (default)",
+            optionAstrometry: "Astrometry.net",
+        },
         renderStars: { label: "Render Stars", tooltip: "Show stars in the night sky" },
         equatorialGridLook: { label: "Equatorial Grid in Look View", tooltip: "Show the equatorial grid in the look/camera view" },
         flareRegionLook: { label: "Flare Region in Look View", tooltip: "Show the flare region cone in the look camera view" },

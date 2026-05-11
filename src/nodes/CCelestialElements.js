@@ -89,16 +89,17 @@ export class CCelestialElements {
     /**
      * Adds constellation lines to scene
      * Loads constellation data from GeoJSON and renders line segments connecting stars
-     * 
+     *
      * @param {Scene} scene Three.js scene to add constellation lines to
+     * @param {string} [dataKey="constellationsLines"] FileManager key for the asterism dataset
      */
-    addConstellationLines(scene) {
+    addConstellationLines(scene, dataKey = "constellationsLines") {
         // Use a single material for all line segments (more efficient)
         const material = new LineBasicMaterial({color: 0x808080});
 
-        const constellationsLines = FileManager.get("constellationsLines");
+        const constellationsLines = FileManager.get(dataKey);
         if (!constellationsLines) {
-            console.warn("CCelestialElements: constellationsLines data not found in FileManager");
+            console.warn(`CCelestialElements: ${dataKey} data not found in FileManager`);
             return;
         }
 
@@ -164,8 +165,23 @@ export class CCelestialElements {
     }
 
     /**
+     * Removes only the constellation lines (leaves the grid intact).
+     * Used when switching between asterism datasets at runtime.
+     *
+     * @param {Scene} scene Three.js scene to remove from
+     */
+    clearConstellationLines(scene) {
+        for (const line of this.constellationLines) {
+            scene.remove(line);
+            if (line.geometry) line.geometry.dispose();
+            if (line.material) line.material.dispose();
+        }
+        this.constellationLines = [];
+    }
+
+    /**
      * Removes all celestial elements from scene
-     * 
+     *
      * @param {Scene} scene Three.js scene to remove from
      */
     dispose(scene) {
@@ -177,12 +193,6 @@ export class CCelestialElements {
         }
         this.celestialGridLines = [];
 
-        // Remove constellation lines
-        for (const line of this.constellationLines) {
-            scene.remove(line);
-            if (line.geometry) line.geometry.dispose();
-            if (line.material) line.material.dispose();
-        }
-        this.constellationLines = [];
+        this.clearConstellationLines(scene);
     }
 }

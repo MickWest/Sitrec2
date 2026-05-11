@@ -613,7 +613,27 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             this.updateVis()
         }).name(t("nightSky.constellationLines.label")).tooltip(t("nightSky.constellationLines.tooltip"))
         this.addSimpleSerial("showConstellations")
-        this.celestialElements.addConstellationLines(this.constellationsGroup)
+
+        // Asterism style: which dataset draws the constellation lines.
+        // Values map to FileManager keys registered in ExtraFiles.js.
+        this.constellationStyle = (v.constellationStyle !== undefined) ? v.constellationStyle : "d3celestial";
+        const constellationStyleOptions = {};
+        constellationStyleOptions[t("nightSky.constellationStyle.optionD3")] = "d3celestial";
+        constellationStyleOptions[t("nightSky.constellationStyle.optionAstrometry")] = "astrometry";
+        this.celestialGUI.add(this, "constellationStyle", constellationStyleOptions).listen().onChange(() => {
+            this.celestialElements.clearConstellationLines(this.constellationsGroup);
+            this.celestialElements.addConstellationLines(
+                this.constellationsGroup,
+                this.constellationStyle === "astrometry" ? "constellationsLinesAstrometry" : "constellationsLines"
+            );
+            setRenderOne(true);
+        }).name(t("nightSky.constellationStyle.label")).tooltip(t("nightSky.constellationStyle.tooltip"))
+        this.addSimpleSerial("constellationStyle")
+
+        this.celestialElements.addConstellationLines(
+            this.constellationsGroup,
+            this.constellationStyle === "astrometry" ? "constellationsLinesAstrometry" : "constellationsLines"
+        )
 
         this.showStars = (v.showStars !== undefined) ? v.showStars : true;
         this.celestialGUI.add(this, "showStars").listen().onChange(() => {

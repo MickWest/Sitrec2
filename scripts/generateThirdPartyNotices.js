@@ -382,6 +382,55 @@ The tutorial code has been substantially modified for use as a FLIR
 ];
 
 // ---------------------------------------------------------------------------
+// Bundled data files (catalogs, asterism definitions, etc.)
+// These are not source code and have separate provenance/licensing.
+// ---------------------------------------------------------------------------
+
+const DATA_FILES = [
+    {
+        name: "d3-celestial constellations data",
+        version: "n/a",
+        license: "BSD-3-Clause",
+        copyright: "Copyright (c) 2015, Olaf Frohn",
+        repository: "https://github.com/ofrohn/d3-celestial",
+        notes: "Constellation line and metadata GeoJSON (data/nightsky/constellations.lines.json, data/nightsky/constellations.json).",
+    },
+    {
+        name: "Astrometry.net asterism lines",
+        version: "n/a",
+        license: "BSD-3-Clause",
+        copyright: "Copyright (c) 2006-2015, Astrometry.net Developers",
+        repository: "https://github.com/dstndstn/astrometry.net",
+        notes: "Constellation/asterism line dataset (data/nightsky/constellations.lines.astrometry.json). Derived from catalogs/stellarium-constellations.c via scripts/convertAstrometryConstellations.js. Upstream asterism conventions originate from Stellarium's default 'Western' skyculture; redistributed by Astrometry.net under BSD-3-Clause.",
+    },
+    {
+        name: "IAU Catalog of Star Names (IAU-CSN)",
+        version: "n/a",
+        license: "Public Domain",
+        copyright: "International Astronomical Union Working Group on Star Names (WGSN)",
+        repository: "https://www.iau.org/public/themes/naming_stars/",
+        notes: "Reference catalog of officially-approved IAU star names (data/nightsky/IAU-CSN.txt).",
+        licenseTextOverride: `The IAU Catalog of Star Names is a public reference document maintained by
+the International Astronomical Union (IAU) Working Group on Star Names. It
+lists star names officially approved by the IAU and is freely usable.
+See: https://www.iau.org/public/themes/naming_stars/`,
+    },
+    {
+        name: "Yale Bright Star Catalog (BSC5)",
+        version: "5th Revised",
+        license: "Public Domain",
+        copyright: "Hoffleit, D. & Warren, W.H., Yale University Observatory",
+        repository: "http://tdc-www.harvard.edu/catalogs/bsc5.html",
+        notes: "Bright Star Catalog, derived/repacked for Sitrec as data/nightsky/sitrec_bsc_lite.bin.",
+        licenseTextOverride: `The Yale Bright Star Catalog (BSC5) is a public-domain stellar catalog
+originally compiled by Dorrit Hoffleit and Wayne H. Warren Jr. at Yale
+University Observatory and distributed via NASA ADC / Harvard CDS.
+The data are facts (stellar positions, magnitudes, etc.) and are not
+subject to copyright restrictions.`,
+    },
+];
+
+// ---------------------------------------------------------------------------
 // Optional/separate components (not in the main webpack bundle)
 // ---------------------------------------------------------------------------
 
@@ -626,6 +675,10 @@ function collectVendoredDeps() {
     return collectEntries(VENDORED_LIBRARIES);
 }
 
+function collectDataFiles() {
+    return collectEntries(DATA_FILES);
+}
+
 function collectOptionalDeps() {
     return collectEntries(OPTIONAL_COMPONENTS);
 }
@@ -664,12 +717,19 @@ function generate() {
     const vendored = collectVendoredDeps();
     console.log(`  Found ${vendored.length} vendored libraries.`);
 
+    console.log("Collecting bundled data files...");
+    const dataFiles = collectDataFiles();
+    console.log(`  Found ${dataFiles.length} data files.`);
+
     console.log("Collecting optional components...");
     const optional = collectOptionalDeps();
     console.log(`  Found ${optional.length} optional components.`);
 
     // Combine bundled deps and sort alphabetically
     const bundledDeps = [...npmDeps, ...vendored].sort((a, b) =>
+        a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+    );
+    const dataFileDeps = dataFiles.sort((a, b) =>
         a.name.toLowerCase().localeCompare(b.name.toLowerCase())
     );
     const optionalDeps = optional.sort((a, b) =>
@@ -705,6 +765,23 @@ function generate() {
     appendEntries(lines, bundledDeps);
     lines.push(SEPARATOR);
 
+    if (dataFileDeps.length > 0) {
+        lines.push("");
+        lines.push("");
+        lines.push("=".repeat(57));
+        lines.push("BUNDLED DATA FILES");
+        lines.push("=".repeat(57));
+        lines.push("");
+        lines.push("The following data files (astronomical catalogs, asterism");
+        lines.push("definitions, etc.) are bundled with Sitrec. They are not");
+        lines.push("source code; many contain factual data not subject to");
+        lines.push("copyright. Provenance and license/attribution are recorded");
+        lines.push("below.");
+        lines.push("");
+        appendEntries(lines, dataFileDeps);
+        lines.push(SEPARATOR);
+    }
+
     if (optionalDeps.length > 0) {
         lines.push("");
         lines.push("");
@@ -720,7 +797,7 @@ function generate() {
         lines.push(SEPARATOR);
     }
 
-    const allDeps = [...bundledDeps, ...optionalDeps];
+    const allDeps = [...bundledDeps, ...dataFileDeps, ...optionalDeps];
     const content = lines.join("\n");
     fs.writeFileSync(OUTPUT, content, "utf-8");
     console.log(`\nWrote ${OUTPUT} (${allDeps.length} entries, ${content.length} bytes)`);
