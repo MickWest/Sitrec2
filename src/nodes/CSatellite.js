@@ -2,7 +2,7 @@ import {Color} from "three";
 import {V3} from "../threeUtils";
 import {LLAToECEFRadians} from "../LLA-ECEF-ENU";
 import {SITREC_SERVER} from "../configUtils";
-import {FileManager, GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne} from "../Globals";
+import {FileManager, GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
 import {EventManager} from "../CEventManager";
 import * as satellite from 'satellite.js';
@@ -17,6 +17,7 @@ import {saveAs} from "file-saver";
 import {showError} from "../showError";
 import {CPointLightCloud} from "./CPointLightCloud";
 import {t} from "../i18n";
+import {applyRefractionFromObserver, REFRACTION_DEFAULTS} from "../atmosphere/refraction";
 
 /**
  * CSatellite handles all satellite-related functionality
@@ -1020,6 +1021,20 @@ export class CSatellite {
 
         const lookPos = options.lookCameraPos || V3(0, 0, 0);
 
+        // Build a single refraction opts object outside the loop. Atmospheric
+        // refraction lifts a satellite's apparent direction toward the
+        // observer's zenith — we apply it after interpolating the geometric
+        // ECEF position so the dot, label and picker all see the same shifted
+        // position.
+        const refractionEnabled = Sit.refractionEnabled !== undefined
+            ? !!Sit.refractionEnabled
+            : REFRACTION_DEFAULTS.enabled;
+        const refractionOpts = {
+            enabled: refractionEnabled,
+            pressureHPa: Sit.refractionPressure ?? REFRACTION_DEFAULTS.pressureHPa,
+            tempC: Sit.refractionTemp ?? REFRACTION_DEFAULTS.tempC,
+        };
+
         // When the camera is riding a satellite (e.g. ISS), hide that satellite
         // AND any co-located objects (docked spacecraft with separate TLE entries).
         // Matched by proximity alone (<500m). At orbital altitudes no independent
@@ -1086,12 +1101,24 @@ export class CSatellite {
                     var t = (timeMS - satData.timeA) / (satData.timeB - satData.timeA);
                     satData.ecef.lerpVectors(satData.ecefA, satData.ecefB, t);
 
-                    this.lightCloud.setPosition(i, satData.ecef.x, satData.ecef.y, satData.ecef.z);
+                    // Apparent (refraction-corrected) sightline from the
+                    // observer — used only for rendering and picking. The
+                    // physical satData.ecef stays geometric so flare
+                    // reflection, Earth-shadow, ground arrows and co-location
+                    // checks still see the real satellite location.
+                    if (!satData.ecefApparent) satData.ecefApparent = satData.ecef.clone();
+                    if (refractionEnabled) {
+                        applyRefractionFromObserver(satData.ecef, lookPos, refractionOpts, satData.ecefApparent);
+                    } else {
+                        satData.ecefApparent.copy(satData.ecef);
+                    }
+
+                    this.lightCloud.setPosition(i, satData.ecefApparent.x, satData.ecefApparent.y, satData.ecefApparent.z);
                     satData.invalidPosition = false;
                     satData.currentPosition = satData.ecef.clone();
 
                     if (satData.spriteText) {
-                        satData.spriteText.position.set(satData.ecef.x, satData.ecef.y, satData.ecef.z);
+                        satData.spriteText.position.set(satData.ecefApparent.x, satData.ecefApparent.y, satData.ecefApparent.z);
                     }
 
                     let arrowsDrawn = false;

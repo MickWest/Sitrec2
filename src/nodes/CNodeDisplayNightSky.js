@@ -48,6 +48,14 @@ import * as Astronomy from "astronomy-engine";
 // Star field rendering system
 import {CStarField} from "./CStarField";
 import {CCelestialElements} from "./CCelestialElements";
+import {
+    refractionUniforms,
+    refractionOptsFromUniforms,
+    applyRefractionECI,
+    zenithECEFFromLatLon,
+    zenithECIFromLatLonGMST,
+    REFRACTION_DEFAULTS,
+} from "../atmosphere/refraction";
 import {CPlanets} from "./CPlanets";
 import {CSatellite} from "./CSatellite";
 import {EventManager} from "../CEventManager";
@@ -513,6 +521,20 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         guiMenus.view.add(Sit, "lockStarPlanetBrightness").name(t("nightSky.lockStarPlanetBrightness.label")).listen()
             .tooltip(t("nightSky.lockStarPlanetBrightness.tooltip"))
 
+        if (Sit.refractionEnabled === undefined) Sit.refractionEnabled = REFRACTION_DEFAULTS.enabled;
+        if (Sit.refractionPressure === undefined) Sit.refractionPressure = REFRACTION_DEFAULTS.pressureHPa;
+        if (Sit.refractionTemp === undefined) Sit.refractionTemp = REFRACTION_DEFAULTS.tempC;
+
+        guiMenus.view.add(Sit, "refractionEnabled").name("Atmospheric Refraction").listen()
+            .tooltip("Bend Sun/Moon/planet/star apparent positions toward zenith via Saemundsson's formula")
+            .onChange(() => setRenderOne(true));
+        guiMenus.view.add(Sit, "refractionPressure", 800, 1100, 1).name("Refraction Pressure (hPa)").listen()
+            .tooltip("Atmospheric pressure used for refraction. Stellarium default: 1010 hPa")
+            .onChange(() => setRenderOne(true));
+        guiMenus.view.add(Sit, "refractionTemp", -40, 50, 1).name("Refraction Temperature (°C)").listen()
+            .tooltip("Air temperature used for refraction. Stellarium default: 10 °C")
+            .onChange(() => setRenderOne(true));
+
         satGUI.add(Sit, "satScale", 0, 50, 0.01).name(t("nightSky.satBrightness.label")).listen()
             .tooltip(t("nightSky.satBrightness.tooltip"))
 
@@ -878,9 +900,37 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         return new Astronomy.Observer(cameraLLA.x, cameraLLA.y, cameraLLA.z);
     }
 
+    _updateRefractionUniforms(observer, gmstDeg) {
+        // Use geodetic zenith (perpendicular to the local WGS84 horizon),
+        // not the geocentric direction from Earth centre — refraction is
+        // symmetric about the local vertical, and the CPU bend in
+        // CPlanets._refractionOpts also uses geodetic, so both must agree
+        // or the rendered Sun/Moon disk drifts away from the cached
+        // apparent center used by the picker (~11.5 arcmin at 45° lat).
+        const latRad = radians(observer.latitude);
+        const lonRad = radians(observer.longitude);
+        zenithECEFFromLatLon(latRad, lonRad, refractionUniforms.uZenithECEF.value);
+        zenithECIFromLatLonGMST(latRad, lonRad, gmstDeg, refractionUniforms.uZenithECI.value);
+        const enabled = Sit.refractionEnabled !== undefined
+            ? !!Sit.refractionEnabled
+            : REFRACTION_DEFAULTS.enabled;
+        refractionUniforms.uRefractionEnabled.value = enabled ? 1.0 : 0.0;
+        refractionUniforms.uRefractionPress.value = Sit.refractionPressure ?? REFRACTION_DEFAULTS.pressureHPa;
+        refractionUniforms.uRefractionTemp.value = Sit.refractionTemp ?? REFRACTION_DEFAULTS.tempC;
+    }
+
     syncPlanetSpritesToObserver(cameraPos, date = this.in.startTime.dateNow, options = {}) {
         const observer = this.getObserverFromCameraPos(cameraPos);
         const storeState = options.storeState ?? true;
+
+        // Refraction uniforms (used by the star/line/Sun/Moon vertex shaders
+        // shared across the celestial scene) must reflect the camera that
+        // is about to render. renderSky() calls us per-view, so updating here
+        // gives each view its own zenith uniform — without this the look
+        // camera's zenith would leak into main/VR views and bend objects in
+        // the wrong direction near the horizon.
+        const gmstDeg = getSiderealTime(date, 0);
+        this._updateRefractionUniforms(observer, gmstDeg);
 
         // Per-view re-syncs (storeState:false) only need to update Sun and Moon —
         // they are the only bodies where topocentric parallax is visually
@@ -943,8 +993,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
 
         // Keep the canonical ephemeris state tied to the look camera because the
-        // celestial arrows/debug tools are anchored there. Individual views will
-        // resync the shared Sun/Moon meshes to their own cameras during renderSky().
+        // celestial arrows/debug tools are anchored there. syncPlanetSpritesToObserver
+        // refreshes the refraction uniforms internally, so we don't need to
+        // bind them separately here. Individual views will resync the shared
+        // Sun/Moon meshes — and the uniforms — to their own cameras during
+        // renderSky().
         const observer = this.syncPlanetSpritesToObserver(this.camera.position, nowDate, {storeState: true});
         for (const [name] of Object.entries(this.planets.planetSprites)) {
             const planetData = this.planets.planetSprites[name];
@@ -1418,6 +1471,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         if (this[flagName]) {
             const ecefDir = getCelestialDirectionFromRaDec(ra, dec, date)
+            // Arrows are visual pointers at the rendered disk, so refract the
+            // direction to match where the user sees the body. The geometric
+            // ecefDir is still used below for Sun/Moon physics (toSun, shadow
+            // origin, flare region) — those must stay unrefracted.
+            if (refractionUniforms.uRefractionEnabled.value > 0.5) {
+                applyRefractionECI(ecefDir, refractionUniforms.uZenithECEF.value, refractionOptsFromUniforms());
+            }
             this[obName].updateDirection(ecefDir)
         }
 

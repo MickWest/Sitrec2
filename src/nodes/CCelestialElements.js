@@ -16,6 +16,7 @@
 import {BufferGeometry, Line, LineBasicMaterial, LineSegments, MathUtils, Vector3} from "three";
 import {FileManager} from "../Globals";
 import {raDec2Celestial} from "../CelestialMath";
+import {installRefractionOnMaterial} from "../atmosphere/refraction";
 
 export class CCelestialElements {
     /**
@@ -43,6 +44,8 @@ export class CCelestialElements {
     addCelestialSphereLines(scene, gap = 15, color = 0x808080) {
         const material = new LineBasicMaterial({color: color});
         const materialWhite = new LineBasicMaterial({color: "#FF00FF"}); // Reference line (0° RA or poles)
+        installRefractionOnMaterial(material);
+        installRefractionOnMaterial(materialWhite);
         const segments = 100; // Number of segments per line
 
         // Helper function to create a single line
@@ -95,6 +98,7 @@ export class CCelestialElements {
     addConstellationLines(scene) {
         // Use a single material for all line segments (more efficient)
         const material = new LineBasicMaterial({color: 0x808080});
+        installRefractionOnMaterial(material);
 
         const constellationsLines = FileManager.get("constellationsLines");
         if (!constellationsLines) {

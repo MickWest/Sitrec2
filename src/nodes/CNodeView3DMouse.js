@@ -39,6 +39,7 @@ import {glareSphere, targetSphere} from "../JetStuffVars";
 import {jetPitchFromFrame} from "../JetUtils";
 import {t} from "../i18n";
 import {raDec2Celestial} from "../CelestialMath";
+import {applyRefractionECI, refractionUniforms, refractionOptsFromUniforms} from "../atmosphere/refraction";
 import {findRootTrack} from "../FindRootTrack";
 // NOTE: ChangedPR / UIChangedAz intentionally NOT imported. They are used only
 // inside the legacy "GIMBAL SPECIFIC, NOT USED" dragMode>0 code path below.
@@ -535,9 +536,19 @@ export const mouseMethods = {
             for (const [planetName, planetData] of Object.entries(nightSkyNode.planets.planetSprites)) {
                 if (!planetData.sprite || !planetData.sprite.visible) continue;
 
-                // Get planet position and project to screen coordinates
+                // Use the stored apparent equatorial position rather than
+                // sprite.getWorldPosition(): for Sun/Moon, mesh.position is
+                // the geometric center while the rendered disk is lifted by
+                // the per-vertex refraction shader. planetData.equatorial
+                // holds the apparent center so the picker hits the visible
+                // disk. Falls back to getWorldPosition() if not yet stored.
                 const planetWorldPos = new Vector3();
-                planetData.sprite.getWorldPosition(planetWorldPos);
+                if (planetData.equatorial) {
+                    planetWorldPos.copy(planetData.equatorial)
+                        .applyMatrix4(nightSkyNode.celestialSphere.matrix);
+                } else {
+                    planetData.sprite.getWorldPosition(planetWorldPos);
+                }
 
                 // Skip planets occluded by the Earth
                 occlusionRay.direction.copy(planetWorldPos).normalize();
@@ -601,7 +612,10 @@ export const mouseMethods = {
             for (const satData of nightSkyNode.TLEData.satData) {
                 if (!satData.visible || !satData.ecef) continue;
 
-                const satPos = satData.ecef.clone();
+                // Project the rendered (apparent) position so the picker
+                // hits the dot the user sees. ecefApparent equals ecef when
+                // refraction is disabled.
+                const satPos = (satData.ecefApparent || satData.ecef).clone();
 
                 // Project satellite position to screen
                 const projected = satPos.clone().project(this.camera);
@@ -647,9 +661,11 @@ export const mouseMethods = {
             const date = GlobalDateTimeNode.dateNow;
             const maxPixelDistance = 15;
             let closestStarDistance = maxPixelDistance;
-            
+            const refractApplies = refractionUniforms.uRefractionEnabled.value > 0.5;
+            const refractOpts = refractApplies ? refractionOptsFromUniforms() : null;
+
             console.log(`Checking ${Object.keys(nightSkyNode.starField.commonNames).length} named stars (pixel threshold: ${maxPixelDistance}px)`);
-            
+
             for (const HR in nightSkyNode.starField.commonNames) {
                 const n = HR - 1;
                 const starName = nightSkyNode.starField.commonNames[HR];
@@ -659,6 +675,9 @@ export const mouseMethods = {
                 const mag = nightSkyNode.starField.getStarMagnitude(n);
                 
                 const pos = raDec2Celestial(ra, dec, 100);
+                if (refractApplies) {
+                    applyRefractionECI(pos, refractionUniforms.uZenithECI.value, refractOpts);
+                }
                 pos.applyMatrix4(nightSkyNode.celestialSphere.matrix);
 
                 // Skip stars occluded by the Earth
