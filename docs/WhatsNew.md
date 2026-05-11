@@ -45,6 +45,11 @@ Example entry format:
 
 ---
 
+## Version 2.54.1 (2026-05-11)
+
+### Bug Fixes
+- **KML polygons with pretty-printed coordinates now load**: `CTrackFileKML.extractCoordinates` was splitting the `<coordinates>` text on a single literal space character, but the KML 2.2 spec separates tuples by *any* whitespace (space, tab, CR, LF). Files that exported one coordinate per line — common from Google Earth, GIS tools, and hand-written KML — produced 7 empty tokens between each real tuple, which `Number("")` silently coerced to `0` (the middle field), leaving `[NaN, 0, NaN]` rows interleaved with the real ones. The track that should have had N frames came out with ≈8N frames, most of them NaN, and the cascade of `trackPoint has NaNs` asserts in `CNodeDisplayTrack.recalculate` / `makeTrackWall` blocked rendering. Now splits on `/\s+/`, filters empty tokens, defaults missing altitude to 0 (for 2D tuples), and drops any tuple that doesn't yield three valid numbers. The existing "polygon → display track with cap" pseudo-building path is unchanged — these polygons just couldn't reach it before.
+
 ## Version 2.54.0 (2026-05-11)
 
 ### New Features

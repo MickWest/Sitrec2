@@ -419,14 +419,18 @@ export class CTrackFileKML extends CTrackFile {
             return [];
         }
         const coordStr = obj.coordinates["#text"]
-        const coordStrClean = coordStr.trim()
-        const coords = coordStrClean.split(' ')
+        // KML 2.2 spec: coordinate tuples are separated by any whitespace
+        // (space, tab, CR, LF). Splitting on a single space breaks on
+        // pretty-printed KML where each tuple is on its own line.
+        const coords = coordStr.split(/\s+/).filter(s => s.length > 0)
         const coordArray = []
         for (let i = 0; i < coords.length; i++) {
             const c = coords[i].split(',')
+            if (c.length < 2) continue;
             const lon = Number(c[0])
             const lat = Number(c[1])
-            const alt = Number(c[2])
+            const alt = c.length >= 3 ? Number(c[2]) : 0
+            if (isNaN(lat) || isNaN(lon) || isNaN(alt)) continue;
             coordArray.push([lat, lon, alt])
         }
         return coordArray;
