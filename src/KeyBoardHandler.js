@@ -3,6 +3,7 @@ import {par} from "./par";
 import {closeFullscreen, openFullscreen} from "./utils";
 import {Vector3} from "three";
 import {EventManager} from "./CEventManager";
+import {KeyframeRegistry} from "./CKeyframeRegistry";
 
 /* Usage examples
 
@@ -417,19 +418,42 @@ export function initKeyboard() {
                 }
                 break;
 
-            // single step
+            // , / .  → single-step back/forward
+            // < / >  (Shift+, / Shift+.) → previous / next registered keyframe.
+            // The registry is the union of all tools that have published
+            // keyframes (e.g. horizon extractor). If no provider yields a
+            // bracketing frame, do nothing — feels less surprising than
+            // silently falling back to single-step.
             case 'Comma':
-                par.frame = Math.floor(par.frame-1);
-                if (par.frame < 0) par.frame = 0;
-                par.paused = true;
-                setRenderOne(2);
+                if (e.shiftKey) {
+                    const prev = KeyframeRegistry.prevFrame(Math.floor(par.frame));
+                    if (prev !== undefined) {
+                        par.frame = prev;
+                        par.paused = true;
+                        setRenderOne(2);
+                    }
+                } else {
+                    par.frame = Math.floor(par.frame-1);
+                    if (par.frame < 0) par.frame = 0;
+                    par.paused = true;
+                    setRenderOne(2);
+                }
                 break;
 
             case 'Period':
-                par.frame = Math.floor(par.frame+1);
-                if (par.frame > Sit.frames - 1) par.frame = Sit.frames - 1;
-                par.paused = true;
-                setRenderOne(2);
+                if (e.shiftKey) {
+                    const next = KeyframeRegistry.nextFrame(Math.floor(par.frame));
+                    if (next !== undefined) {
+                        par.frame = next;
+                        par.paused = true;
+                        setRenderOne(2);
+                    }
+                } else {
+                    par.frame = Math.floor(par.frame+1);
+                    if (par.frame > Sit.frames - 1) par.frame = Sit.frames - 1;
+                    par.paused = true;
+                    setRenderOne(2);
+                }
                 break;
 
             // Delete key triggers delete for currently editing object

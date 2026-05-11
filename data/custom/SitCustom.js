@@ -953,8 +953,11 @@ sitch = {
         min:0, max:1000,
         left: 0.25, top:0, width: .15, height:-1,
         dynamicY: true,
-
         // need to specify wind here
+
+
+        wind: "localWind",
+        force: true
 
     },
 

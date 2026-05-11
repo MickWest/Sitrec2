@@ -3,6 +3,7 @@ import {GlobalDateTimeNode, NodeMan, setRenderOne, Sit} from "../Globals";
 import {CNode} from "./CNode";
 import {getControlsContainer} from "../PageStructure";
 import {EventManager} from "../CEventManager";
+import {KeyframeRegistry} from "../CKeyframeRegistry";
 
 export class CNodeFrameSlider extends CNode {
     constructor(v) {
@@ -55,6 +56,16 @@ export class CNodeFrameSlider extends CNode {
         this.statusOverlayOffset = 2;
         this.lastStatusOverlay = null;
         this.groupOverlay = null;
+
+        // Keyframe-marker state. Yellow diamonds are drawn at frames
+        // published by the KeyframeRegistry, and hovering or clicking one
+        // navigates to that frame. Hover state is tracked so the cursor
+        // changes and the canvas can capture the click (otherwise the
+        // range input below would consume it and snap to a nearby pixel).
+        this.keyframeFrames = [];
+        this.lastKeyframeSignature = "";
+        this.hoveringKeyframe = null;
+        this.lastHoveringKeyframe = null;
 
         this.setupFrameSlider();
     }
@@ -350,9 +361,12 @@ export class CNodeFrameSlider extends CNode {
                 };
                 
                 const nearLimit = getNearLimit(mouseX, mouseY);
-                
-                // Enable pointer events on canvas only when near a limit
-                if (nearLimit) {
+                const nearKF = this.getNearKeyframe(mouseX, mouseY);
+
+                // Enable pointer events on canvas when near a limit OR a
+                // keyframe diamond — both need to capture the click so the
+                // range input below doesn't get snapped to the cursor pixel.
+                if (nearLimit || nearKF !== null) {
                     this.canvas.style.pointerEvents = 'auto';
                 } else {
                     this.canvas.style.pointerEvents = 'none';
@@ -571,7 +585,23 @@ export class CNodeFrameSlider extends CNode {
         this.canvas.addEventListener('mousedown', (event) => {
             const mousePos = getMousePos(event);
             const nearLimit = getNearLimit(mousePos.x, mousePos.y);
-            
+
+            // Keyframe click takes precedence over the range input but yields
+            // to A/B limit grabs (which are positionally distinct anyway).
+            // We jump par.frame, mark a redraw, and consume the event so the
+            // slider underneath doesn't snap to the cursor pixel instead.
+            const nearKF = this.getNearKeyframe(mousePos.x, mousePos.y);
+            if (!nearLimit && nearKF !== null) {
+                par.paused = true;
+                this.setFrame(nearKF);
+                this.updatePlayPauseButton();
+                this.needsCanvasRedraw = true;
+                setRenderOne(true);
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+
             if (nearLimit === 'A') {
                 this.draggingALimit = true;
                 isDragging = true;
@@ -611,19 +641,26 @@ export class CNodeFrameSlider extends CNode {
                 const mousePos = getMousePos(event);
                 // Update cursor and hover state based on proximity to limits
                 const nearLimit = getNearLimit(mousePos.x, mousePos.y);
+                const nearKF = (nearLimit) ? null : this.getNearKeyframe(mousePos.x, mousePos.y);
                 const newHoveringA = (nearLimit === 'A');
                 const newHoveringB = (nearLimit === 'B');
-                
-                // Mark for redraw if hover state changed
-                if (newHoveringA !== this.hoveringALimit || newHoveringB !== this.hoveringBLimit) {
+
+                // Mark for redraw if any hover state changed (A/B colours
+                // brighten on hover; keyframe diamond also brightens).
+                if (newHoveringA !== this.hoveringALimit
+                    || newHoveringB !== this.hoveringBLimit
+                    || nearKF !== this.hoveringKeyframe) {
                     this.needsCanvasRedraw = true;
                 }
-                
+
                 this.hoveringALimit = newHoveringA;
                 this.hoveringBLimit = newHoveringB;
-                
+                this.hoveringKeyframe = nearKF;
+
                 if (nearLimit) {
                     this.canvas.style.cursor = 'ew-resize';
+                } else if (nearKF !== null) {
+                    this.canvas.style.cursor = 'pointer';
                 } else {
                     this.canvas.style.cursor = 'default';
                 }
@@ -686,11 +723,12 @@ export class CNodeFrameSlider extends CNode {
 
         // Mouse leave event (only reset hover states, don't stop dragging)
         this.canvas.addEventListener('mouseleave', (event) => {
-            if (this.hoveringALimit || this.hoveringBLimit) {
+            if (this.hoveringALimit || this.hoveringBLimit || this.hoveringKeyframe !== null) {
                 this.needsCanvasRedraw = true;
             }
             this.hoveringALimit = false;
             this.hoveringBLimit = false;
+            this.hoveringKeyframe = null;
             // Don't stop dragging on mouse leave - let global mouse up handle it
         });
 
@@ -947,16 +985,27 @@ export class CNodeFrameSlider extends CNode {
         const bFrameChanged = (Sit.bFrame !== this.lastBFrame);
         const hoverStateChanged = (
             this.hoveringALimit !== this.lastHoveringALimit ||
-            this.hoveringBLimit !== this.lastHoveringBLimit
+            this.hoveringBLimit !== this.lastHoveringBLimit ||
+            this.hoveringKeyframe !== this.lastHoveringKeyframe
         );
         const dragStateChanged = (
             this.draggingALimit !== this.lastDraggingALimit ||
             this.draggingBLimit !== this.lastDraggingBLimit
         );
 
+        // Poll the registry once per redraw check and only invalidate when
+        // the keyframe set actually changed (length + first + middle + last).
+        // This keeps the slider responsive without redrawing on every tick.
+        const kfSig = KeyframeRegistry.signature();
+        const keyframesChanged = (kfSig !== this.lastKeyframeSignature);
+        if (keyframesChanged) {
+            this.keyframeFrames = KeyframeRegistry.getAllFrames();
+            this.lastKeyframeSignature = kfSig;
+        }
+
         // Only redraw if something changed or explicitly marked for redraw
-        if (!this.needsCanvasRedraw && !sizeChanged && !aFrameChanged && !bFrameChanged && 
-            !hoverStateChanged && !dragStateChanged) {
+        if (!this.needsCanvasRedraw && !sizeChanged && !aFrameChanged && !bFrameChanged &&
+            !hoverStateChanged && !dragStateChanged && !keyframesChanged) {
             return; // Skip expensive canvas operations
         }
 
@@ -967,6 +1016,7 @@ export class CNodeFrameSlider extends CNode {
         this.lastBFrame = Sit.bFrame;
         this.lastHoveringALimit = this.hoveringALimit;
         this.lastHoveringBLimit = this.hoveringBLimit;
+        this.lastHoveringKeyframe = this.hoveringKeyframe;
         this.lastDraggingALimit = this.draggingALimit;
         this.lastDraggingBLimit = this.draggingBLimit;
         this.needsCanvasRedraw = false;
@@ -1093,7 +1143,79 @@ export class CNodeFrameSlider extends CNode {
         ctx.arc(bPixel, 6, bHandleRadius, 0, 2 * Math.PI);
         ctx.fill();
 
+        // Draw keyframe diamonds last so they sit on top of A/B lines. They
+        // live at the bottom of the slider strip (clear of the white range-
+        // input thumb in the middle and the A/B handles at the top), and the
+        // one under the cursor is brightened. A dark stroke gives definition
+        // against the bright fill on light or busy backgrounds.
+        if (this.keyframeFrames && this.keyframeFrames.length > 0 && Sit.frames > 0) {
+            const yKF = this.canvas.height - 5;
+            for (const f of this.keyframeFrames) {
+                if (f < 0 || f > Sit.frames) continue;
+                const x = padding + (drawableWidth * f / Sit.frames);
+                const hovered = (this.hoveringKeyframe === f);
+                this.drawDiamond(ctx, x, yKF, hovered ? 5 : 4,
+                    hovered ? '#ffff66' : '#ffcc00',
+                    'rgba(0, 0, 0, 0.85)');
+            }
+        }
+    }
 
+    // Draw a yellow keyframe diamond. Used for slider markers; centralised
+    // so any future caller (mini-map, scrub bar, etc.) draws consistently.
+    drawDiamond(ctx, x, y, halfSize, fill, stroke) {
+        ctx.beginPath();
+        ctx.moveTo(x, y - halfSize);
+        ctx.lineTo(x + halfSize, y);
+        ctx.lineTo(x, y + halfSize);
+        ctx.lineTo(x - halfSize, y);
+        ctx.closePath();
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = stroke;
+        ctx.stroke();
+    }
+
+    // Returns the frame number of the nearest keyframe diamond to the given
+    // canvas-space mouse coordinates, or null if no diamond is within reach.
+    // We look at horizontal distance only (diamonds are short), with a
+    // moderate vertical band that lets the user click slightly above the
+    // diamond without missing — a pure square hit-box is hard to land on.
+    getNearKeyframe(mouseX, mouseY) {
+        if (!this.keyframeFrames || this.keyframeFrames.length === 0) return null;
+        if (!Sit.frames) return null;
+
+        const padding = 5;
+        const drawableWidth = this.canvas.offsetWidth - (2 * padding);
+        const yKF = this.canvas.height - 5;
+
+        // Don't intercept clicks that land on the slider thumb area —
+        // dragging the playhead remains the primary action there.
+        const currentFramePixel = padding + (drawableWidth * par.frame / Sit.frames);
+        const thumbHalfWidth = 7;
+        const overThumb = (Math.abs(mouseX - currentFramePixel) <= thumbHalfWidth);
+
+        // Keyframe diamonds occupy the lower half of the slider strip.
+        // Keep the y-band tight so we don't shadow A/B handle clicks above.
+        const vBand = 9;
+        if (Math.abs(mouseY - yKF) > vBand) return null;
+
+        const xTolerance = 6;
+        let bestFrame = null;
+        let bestDist = xTolerance + 1;
+        for (const f of this.keyframeFrames) {
+            const x = padding + (drawableWidth * f / Sit.frames);
+            const dx = Math.abs(mouseX - x);
+            if (dx <= xTolerance && dx < bestDist) {
+                // Lose the contest if the playhead thumb is over this exact
+                // diamond — let the user grab the thumb in that case.
+                if (overThumb && Math.abs(x - currentFramePixel) <= thumbHalfWidth) continue;
+                bestDist = dx;
+                bestFrame = f;
+            }
+        }
+        return bestFrame;
     }
 
     updateFrameSlider() {

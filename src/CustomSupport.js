@@ -896,33 +896,52 @@ export class CCustomManager {
             NodeMan.get("lookCamera").addControllerNode(ctrl);
         }
 
-        // "Turn Rate Source" switch — Custom (the existing turnRate slider)
-        // or "From Bank" (g·tan(bank)/V using the horizon-extractor angle).
-        // Wire it so the JetTrack reads the switch's output, not the raw
-        // GUIValue, so changing the dropdown actually swaps the source
-        // without touching anyone else's references.
+        // Consolidated "Turn Rate Source" dropdown. Selects which signal
+        // drives the JetTrack's turn rate input:
+        //   Manual Turn Rate   → the user's Turn Rate slider directly
+        //   Manual Bank        → g·tan(bank)/V using a manual Bank slider
+        //   Horizon Extractor  → g·tan(bank)/V using the horizon-extractor angle
+        // Conditional future options (Turn Rate File <name>, Bank File <name>)
+        // will plug into the same switch when the data-file infrastructure
+        // lands. The switch is the only thing JetTrack reads — swapping
+        // options swaps sources without touching downstream consumers.
         if (!NodeMan.exists("horizonAngle")) {
             new CNodeHorizonAngle({id: "horizonAngle"});
+        }
+        if (!NodeMan.exists("jetBank")) {
+            new CNodeGUIValue({
+                id: "jetBank",
+                value: 0, start: -60, end: 60, step: 0.1,
+                desc: "Manual Bank",
+                tooltip: "Manual bank angle in degrees (positive = right wing down). Used by the Manual Bank source via g·tan(bank)/V.",
+            }, folder);
         }
         if (!NodeMan.exists("turnRateFromBank")
             && NodeMan.exists("jetTAS") && NodeMan.exists("horizonAngle")) {
             new CNodeTurnRateBS({
                 id: "turnRateFromBank",
-                inputs: {
-                    speed: "jetTAS",
-                    bank: "horizonAngle",
-                },
+                inputs: {speed: "jetTAS", bank: "horizonAngle"},
+            });
+        }
+        if (!NodeMan.exists("turnRateFromManualBank")
+            && NodeMan.exists("jetTAS") && NodeMan.exists("jetBank")) {
+            new CNodeTurnRateBS({
+                id: "turnRateFromManualBank",
+                inputs: {speed: "jetTAS", bank: "jetBank"},
             });
         }
         if (!NodeMan.exists("turnRateSource")
-            && NodeMan.exists("turnRate") && NodeMan.exists("turnRateFromBank")) {
+            && NodeMan.exists("turnRate")
+            && NodeMan.exists("turnRateFromBank")
+            && NodeMan.exists("turnRateFromManualBank")) {
             new CNodeSwitch({
                 id: "turnRateSource",
                 inputs: {
-                    "Custom": "turnRate",
-                    "From Bank": "turnRateFromBank",
+                    "Manual Turn Rate": "turnRate",
+                    "Manual Bank": "turnRateFromManualBank",
+                    "Horizon Extractor": "turnRateFromBank",
                 },
-                default: "Custom",
+                default: "Manual Turn Rate",
                 desc: "Turn Rate Source",
             }, folder);
         }
@@ -939,6 +958,58 @@ export class CCustomManager {
                 jt.addInput("turnRate", src);
                 jt.recalculate();
             }
+        }
+
+        // Racetrack-pattern controls (Leg Length, Transition Time) only make
+        // sense for the constant Manual Turn Rate source — every other source
+        // already encodes a real per-frame turn rate. Hide them when the
+        // user picks anything else, and recalculate the JetTrack so the
+        // straight legacy "use turnRate directly" path kicks in immediately.
+        // Drive visibility through the node's `.visible` field rather than
+        // calling `.guiEntry.hide()` directly: CNodeGUIValue.update() syncs
+        // the gui's _hidden flag back to `this.visible` every frame, so a
+        // bare guiEntry.hide() gets reverted on the very next render tick.
+        const applyRacetrackVisibility = () => {
+            const trs = NodeMan.get("turnRateSource", false);
+            const legNode = NodeMan.get("legLength", false);
+            const transNode = NodeMan.get("transitionTime", false);
+            if (!trs || !legNode || !transNode) return;
+            const showRacetrack = (trs.choice === "Manual Turn Rate");
+            if (showRacetrack) {
+                legNode.show();
+                transNode.show();
+            } else {
+                legNode.hide();
+                transNode.hide();
+            }
+        };
+        applyRacetrackVisibility();
+        const trsNode = NodeMan.get("turnRateSource", false);
+        // Guard against re-wrapping on a second setupSimpleFlightSim() call
+        // for the same switch — each call would otherwise chain another
+        // layer of onChange wrappers around the previous one.
+        if (trsNode && !trsNode._racetrackVisibilityWired) {
+            trsNode._racetrackVisibilityWired = true;
+            // CNodeSwitch fires Switch.choiceChanged.<id> on every choice
+            // change, including the quiet ones from modDeserialize. That's
+            // the only signal that catches the post-deserialize state
+            // change — onChangeCallback alone only covers interactive picks.
+            EventManager.addEventListener("Switch.choiceChanged.turnRateSource", () => {
+                applyRacetrackVisibility();
+                const jt = NodeMan.get("flightSimCameraPosition", false);
+                if (jt) jt.recalculate();
+            });
+        }
+
+        // The pre-existing jetHeading switch is labelled "Turn Rate Control"
+        // in SitCustom.js, which is genuinely confusing because it actually
+        // controls the *heading* source (manual angle or a per-frame file).
+        // Rename its slider label so it reads as what it does. The "*"
+        // prefix CNodeSwitch adds on local builds is preserved.
+        const jh = NodeMan.get("jetHeading", false);
+        if (jh?.controller) {
+            const star = jh.controller._name?.startsWith("*") ? "*" : "";
+            jh.controller.name(star + "Heading Source");
         }
     }
 

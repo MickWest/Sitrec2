@@ -380,6 +380,14 @@ class CNodeSwitch extends CNode {
             this.inputs[this.choice].show()
             this.inputs[this.choice].showActiveSources()
         }
+
+        // Fire a side-channel event for listeners that need to react to a
+        // choice change regardless of whether it was interactive or quiet
+        // (selectOption / selectOptionQuietly / modDeserialize all land here).
+        // Distinct from "Switch.onChange." which only fires on user-driven
+        // interactive changes — listeners that want THE moment-of-truth on
+        // choice want this one.
+        EventManager.dispatchEvent("Switch.choiceChanged." + this.id, this.choice);
     }
 
 

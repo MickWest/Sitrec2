@@ -52,16 +52,24 @@ export class CNodeJetTrack extends CNodeTrack {
 
         // Racetrack-pattern parameters. legLength=0 disables the pattern and
         // the supplied turnRate node is used directly per frame (legacy behaviour).
-        // When legLength > 0:
+        // When legLength > 0 AND the turn rate source is the manual slider:
         //   - fly straight for legSec at turnRate=0
         //   - ramp turnRate 0 → fullRate over transSec     (rampDeg = fullRate*transSec/2)
         //   - hold at fullRate for the remainder of a 180° turn (constantDeg = 180-2·rampDeg)
         //   - ramp turnRate fullRate → 0 over transSec
         //   - cycle: leg + (transSec + constantSec + transSec)
         // Result: a clean 180° racetrack U-turn with smooth bank-in/out.
+        //
+        // Per-frame sources (Manual Bank, Horizon Extractor, future files)
+        // already encode the real turn rate they want — racetrack would
+        // overwrite that with a synthetic pattern keyed to the constant
+        // |turnRate|, which is meaningless when the rate varies frame to
+        // frame. So in those modes we bypass the rewrite entirely.
         const legSec = this.in.legLength?.getValueFrame(0) ?? 0;
         const transSec = Math.max(0, this.in.transitionTime?.getValueFrame(0) ?? 0);
-        const racetrackMode = legSec > 0;
+        const trs = NodeMan.get("turnRateSource", false);
+        const sourceIsManual = !trs || trs.choice === "Manual Turn Rate";
+        const racetrackMode = sourceIsManual && legSec > 0;
 
         const headingNode = this.in.heading.getRoot()
 

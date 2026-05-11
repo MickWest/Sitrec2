@@ -2,6 +2,7 @@ import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
 import {EventManager} from "./CEventManager";
 import {CNode} from "./nodes/CNode";
+import {KeyframeRegistry} from "./CKeyframeRegistry";
 
 // Manual horizon-angle extractor. The user enables this and a cross overlay
 // appears on the video view. They drag the cross center to position it on
@@ -45,11 +46,6 @@ class HorizonExtractor {
         this.dragOffsetX = 0;
         this.dragOffsetY = 0;
 
-        // Step size in frames for keyboard navigation. Sensible default for a
-        // 30 fps video: half a second between checkpoints means an analyst
-        // can scrub a 9000-frame clip with ~600 stops and let interpolation
-        // fill in. Exposed in the menu folder.
-        this.stepFrames = 15;
         // Show the on-screen onboarding hint until the user has interacted
         // (committed any keyframe). Avoids permanent screen clutter while
         // still helping the first-time user.
@@ -59,6 +55,13 @@ class HorizonExtractor {
         this.hookKeyboardHandler();
         this.loadFromStorage();
         if (this.keyframes.size > 0) this.showHint = false;
+
+        // Publish our keyframes to the slider/navigation registry. Single
+        // registration on construction; the callback is invoked lazily, so
+        // there's no need to re-register when keyframes change.
+        KeyframeRegistry.register('horizon', {
+            getFrames: () => this.keyframes.keys(),
+        });
     }
 
     storageKey() {
@@ -172,9 +175,10 @@ class HorizonExtractor {
     showOverlay() { if (this.overlay) this.overlay.style.display = 'block'; }
     hideOverlay() { if (this.overlay) this.overlay.style.display = 'none'; }
 
-    // Step playback by N frames or jump to neighbouring keyframes. Wired
-    // to ←/→ (step), Shift+←/→ (single frame), J/K (jump prev/next keyframe)
-    // when the overlay is enabled.
+    // Jump to neighbouring keyframes (J/K) when the overlay is enabled.
+    // Arrow keys are intentionally NOT bound here — they belong to whatever
+    // the global keymap uses them for (or nothing). Frame stepping is
+    // covered by `,` / `.` globally; keyframe nav by `<` / `>`.
     hookKeyboardHandler() {
         EventManager.addEventListener("keydown", (data) => {
             if (!this.enabled) return;
@@ -183,17 +187,7 @@ class HorizonExtractor {
             // filters this for the main keydown dispatch, but be defensive).
             if (ev?.target?.tagName === "INPUT" || ev?.target?.tagName === "TEXTAREA") return;
             const key = data.key?.toLowerCase();
-            const last = Sit?.frames ? Sit.frames - 1 : Math.max(0, par.frame);
-            const step = ev?.shiftKey ? 1 : this.stepFrames;
-            if (data.keyCode === "ArrowLeft") {
-                par.frame = Math.max(0, Math.floor(par.frame) - step);
-                ev?.preventDefault?.();
-                setRenderOne(true);
-            } else if (data.keyCode === "ArrowRight") {
-                par.frame = Math.min(last, Math.floor(par.frame) + step);
-                ev?.preventDefault?.();
-                setRenderOne(true);
-            } else if (key === "j") {
+            if (key === "j") {
                 // Jump to previous keyframe (strict <)
                 const cur = Math.floor(par.frame);
                 const prev = Array.from(this.keyframes.keys())
@@ -355,9 +349,14 @@ class HorizonExtractor {
         setRenderOne(true);
     }
 
-    // Linear interpolation between bracketing keyframes; linear extrapolation
-    // from the nearest two outside the keyframe range. Angle interpolation
-    // takes the shortest-arc path (handles wrap at ±180°).
+    // Linear interpolation between bracketing keyframes. Outside the
+    // keyframe range, hold the nearest keyframe (no extrapolation): the
+    // analyst hasn't marked the horizon there yet, so the safest assumption
+    // is that the cross stays where it was last known. Extrapolating
+    // linearly past the ends can push the cross off-screen by thousands of
+    // pixels for distant frames (e.g. 1144 → 2433 with a small drift
+    // produces ~3000px of extrapolation), making the overlay invisible.
+    // Angle interpolation takes the shortest-arc path (handles wrap at ±180°).
     getHorizonAt(frame) {
         if (this.keyframes.size === 0) return null;
         const frames = Array.from(this.keyframes.keys()).sort((a, b) => a - b);
@@ -372,16 +371,8 @@ class HorizonExtractor {
         if (prev !== null && next !== null) {
             return this.lerpKeyframes(prev, next, frame);
         }
-        if (prev === null) {
-            // Before first keyframe; extrapolate from the first two if we
-            // have them, else hold.
-            if (frames.length >= 2) return this.lerpKeyframes(frames[0], frames[1], frame);
-            return {...this.keyframes.get(frames[0])};
-        }
-        // After last
-        if (frames.length >= 2) {
-            return this.lerpKeyframes(frames[frames.length - 2], frames[frames.length - 1], frame);
-        }
+        // Outside the keyframe range — hold the nearest.
+        if (prev === null) return {...this.keyframes.get(frames[0])};
         return {...this.keyframes.get(prev)};
     }
 
@@ -503,8 +494,7 @@ class HorizonExtractor {
                 "• Drag the magenta centre to position the cross",
                 "• Drag a cyan handle to rotate; horizontal line = horizon",
                 "• Each move/rotate writes a keyframe at the current frame",
-                "• ← / → step " + this.stepFrames + " frames    Shift+← / → step 1",
-                "• J / K jump to previous / next keyframe",
+                "• , / . step one frame    < / > jump prev/next keyframe",
                 "• Shift+click centre to delete current keyframe",
             ];
             ctx.font = '12px monospace';
@@ -586,6 +576,7 @@ export function resetHorizonExtractor() {
         horizonExtractor.disable();
         horizonExtractor = null;
     }
+    KeyframeRegistry.unregister('horizon');
     renderHooked = false;
     enableMenuItem = null;
     horizonFolder = null;
@@ -644,18 +635,6 @@ export function setupHorizonExtractorMenu() {
 
     enableMenuItem = horizonFolder.add(actions, "enable").name("Enable Horizon Extractor")
         .tooltip("Toggle the horizon-cross overlay on the video view");
-
-    // Step size for ←/→ keyboard navigation. Wired to the singleton via a
-    // proxy object so it survives the (lazy) extractor instantiation.
-    const stepProxy = {
-        get stepFrames() { return ensureExtractor()?.stepFrames ?? 15; },
-        set stepFrames(v) {
-            const he = ensureExtractor();
-            if (he) he.stepFrames = Math.max(1, Math.floor(v));
-        },
-    };
-    horizonFolder.add(stepProxy, "stepFrames", 1, 120, 1).name("Step Frames")
-        .tooltip("How many frames the ← / → keys move when the overlay is enabled (Shift+arrow always steps 1)");
 
     horizonFolder.add(actions, "deleteCurrent").name("Delete Keyframe at Current Frame")
         .tooltip("Remove the keyframe at the current playback frame, if any (Shift+click on the cross centre does the same)");
