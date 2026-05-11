@@ -45,6 +45,14 @@ Example entry format:
 
 ---
 
+## Version 2.53.0 (2026-05-11)
+
+### New Features
+- **"Local from Constant Camera" wind fit** (Physics → Wind Data): button that solves for the local wind vector best explaining the camera track's ground-velocity variation, under the assumption that the camera is flying at approximately constant true airspeed. Geometry: in a local horizontal frame, ground velocity = air velocity + wind velocity — if airspeed is constant, the ground-velocity points trace a circle of that radius around the wind vector. Seeds from the heading at peak ground speed flipped 180° and `(max−min)/2` magnitude, then refines with a small genetic algorithm scored on airspeed standard deviation. Switches the local wind source to Manual so the fit actually takes effect — track or atmospheric sources would otherwise overwrite `from`/`knots` each frame. Track lookup covers the custom sitch's `cameraTrackSwitchSmooth` / `cameraTrackSwitch` as well as the legacy `jetTrack` / `cameraTrack`. Reports the resulting wind plus standard-deviation residual in the status line, e.g. `Local wind: 285° / 12 kt (σ=0.9 kt, cameraTrackSwitchSmooth)`.
+
+### Improvements
+- **`AddSpeedGraph` takes options object plus new `wind` parameter** (default `"targetWind"`): the speed-graph helper used by sitches now takes named fields instead of nine positional arguments, mirroring `AddValueGraph`. The new `wind` parameter routes the horizontal-air-speed series through any wind node, so a camera/airspeed graph can be charted against the local wind. All call sites (`JetStuff`, `SituationSetup`, `SitGoFast`, `SitAguadilla`) updated.
+
 ## Version 2.52.0 (2026-05-10)
 
 ### New Features
