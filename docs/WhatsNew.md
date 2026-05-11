@@ -49,6 +49,7 @@ Example entry format:
 
 ### Bug Fixes
 - **Horizon Extractor → Bank sign flipped**: the "Horizon Extractor" turn-rate source in Simple Flight Sim was driving bank in the wrong direction. A right bank rotates the aircraft CW (viewed from behind), so the world — and the horizon — appears to rotate CCW from the aircraft's POV. The horizon-extractor angle is CW-positive in screen space, so the bank signal must be its negation: `bank = -horizon`. The aircraft now turns in the same direction as the visible horizon tilt.
+- **`CNodeGUIFlag` now serializes its value**: the flag class extended `CNodeConstant` directly and inherited only the base `CNode.modSerialize()`, which doesn't capture `value`. Every `CNodeGUIFlag` checkbox — including "Roll View with Bank" — was therefore failing to round-trip through save/load and reverted to its constructor default each time. Added `modSerialize`/`modDeserialize` mirroring the `CNodeGUIValue` pattern.
 
 ## Version 2.53.0 (2026-05-11)
 

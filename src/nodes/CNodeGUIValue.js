@@ -426,6 +426,22 @@ export class CNodeGUIFlag extends CNodeConstant {
         if (v.tip) this.guiEntry.tooltip(v.tip);
         if (v.tooltip) this.guiEntry.tooltip(v.tooltip);
     }
+
+    modSerialize() {
+        return {
+            ...super.modSerialize(),
+            value: this.value,
+        }
+    }
+
+    modDeserialize(v) {
+        super.modDeserialize(v);
+        if (v.value !== undefined && this.value !== v.value) {
+            this.value = v.value;
+            this.guiEntry.setValue(this.value);
+            this.recalculateCascade();
+        }
+    }
 }
 
 export function makeCNodeGUIFlag(id, value, desc, guiMenu, change) {
