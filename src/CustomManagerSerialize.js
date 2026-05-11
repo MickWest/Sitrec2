@@ -437,6 +437,9 @@ export const serializeMethods = {
             "aFrame",
             "bFrame",
             "ignores",
+            "refractionEnabled",
+            "refractionPressure",
+            "refractionTemp",
         ]
 
         const globalsNeeded = [

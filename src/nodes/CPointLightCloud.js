@@ -72,6 +72,7 @@ import {
 import {CNode3D} from "./CNode3D";
 import {NodeMan} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
+import {refractionUniforms, REFRACTION_VERTEX_GLSL} from "../atmosphere/refraction";
 
 /**
  * GPU-accelerated point light cloud renderer for stars, satellites, and similar objects.
@@ -206,36 +207,43 @@ export class CPointLightCloud extends CNode3D {
                float sizeRatio = clamp(desiredSize / minPointSize, 0.0, 1.0);
                vAlpha = sizeRatio * sizeRatio;`;
 
+        const useRefraction = this.mode === 'celestial';
+
         const vertexShader = `
             attribute float brightness;
             ${usesPerPointColor ? 'attribute vec3 color;' : ''}
-            
+
             uniform float baseScale;
             uniform float minPointSize;
             uniform float maxPointSize;
             uniform float cameraFOV;
             ${this.useDistanceAttenuation ? 'uniform float distanceReference;' : ''}
             ${!usesPerPointColor ? 'uniform vec3 uColor;' : ''}
-            
+
             varying vec3 vColor;
             varying float vAlpha;
             varying float vBrightness;
             ${this.useLogDepth ? 'varying float vDepth;' : ''}
-            
+
+            ${useRefraction ? REFRACTION_VERTEX_GLSL : ''}
+
             void main() {
                 if (brightness <= 0.0) {
                     gl_Position = vec4(0.0);
                     gl_PointSize = 0.0;
                     return;
                 }
-                
+
                 ${usesPerPointColor ? 'vColor = color;' : 'vColor = uColor;'}
                 vBrightness = brightness;
-                
-                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+
+                ${useRefraction
+                    ? 'vec3 refractedPos = applyRefractionECI_chunk(position);'
+                    : 'vec3 refractedPos = position;'}
+                vec4 mvPosition = modelViewMatrix * vec4(refractedPos, 1.0);
                 gl_Position = projectionMatrix * mvPosition;
                 ${this.useLogDepth ? 'vDepth = gl_Position.w;' : ''}
-                
+
                 float effectiveBrightness = brightness;
                 ${distanceAttenuationCalc}
                 ${sizeCalc}
@@ -279,6 +287,14 @@ export class CPointLightCloud extends CNode3D {
             cameraFOV: { value: 45 },
             uRadius: { value: this.uRadius },
         };
+
+        if (useRefraction) {
+            uniforms.uRefractionEnabled = refractionUniforms.uRefractionEnabled;
+            uniforms.uZenithECI = refractionUniforms.uZenithECI;
+            uniforms.uZenithECEF = refractionUniforms.uZenithECEF;
+            uniforms.uRefractionPress = refractionUniforms.uRefractionPress;
+            uniforms.uRefractionTemp = refractionUniforms.uRefractionTemp;
+        }
 
         if (!usesPerPointColor) {
             const color = new Color(this.singleColor);

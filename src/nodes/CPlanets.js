@@ -17,6 +17,8 @@
  */
 
 import {
+    BufferAttribute,
+    BufferGeometry,
     CircleGeometry,
     Matrix4,
     Mesh,
@@ -30,7 +32,14 @@ import {
     Vector3
 } from "three";
 import {Sit} from "../Globals";
-import {raDec2Celestial} from "../CelestialMath";
+import {raDec2Celestial, getSiderealTime} from "../CelestialMath";
+import {
+    applyRefractionECI,
+    zenithECIFromLatLonGMST,
+    refractionUniforms,
+    REFRACTION_VERTEX_GLSL,
+    REFRACTION_DEFAULTS,
+} from "../atmosphere/refraction";
 import {SITREC_APP} from "../configUtils";
 import {assert} from "../assert";
 import {radians} from "../utils";
@@ -62,6 +71,14 @@ export class CPlanets {
         // Stores all planet sprite data
         // Structure: { planetName: { sprite, daySkySprite, ra, dec, mag, equatorial, color } }
         this.planetSprites = {};
+
+        this._zenithECI = new Vector3(0, 0, 1);
+        // Reused per call to avoid per-frame allocation.
+        this._refractionOptsCache = {
+            enabled: REFRACTION_DEFAULTS.enabled,
+            pressureHPa: REFRACTION_DEFAULTS.pressureHPa,
+            tempC: REFRACTION_DEFAULTS.tempC,
+        };
         
         // Preloaded textures for efficiency
         this.textures = {
@@ -102,14 +119,26 @@ export class CPlanets {
                 observerDirection: { value: new Vector3(0, 0, -1) },
                 skyColor: { value: new Vector3(0, 0, 0) },
                 skyBrightness: { value: 0.0 },
+                uRefractionEnabled: refractionUniforms.uRefractionEnabled,
+                uZenithECI: refractionUniforms.uZenithECI,
+                uZenithECEF: refractionUniforms.uZenithECEF,
+                uRefractionPress: refractionUniforms.uRefractionPress,
+                uRefractionTemp: refractionUniforms.uRefractionTemp,
             },
             vertexShader: `
                 varying vec3 vNormal;
                 varying vec2 vUv;
+                ${REFRACTION_VERTEX_GLSL}
                 void main() {
                     vUv = uv;
                     vNormal = normalize(normal);
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    // Refract each sphere vertex in world space — bottom of the
+                    // disk gets lifted more than the top near the horizon, so
+                    // the rendered Moon flattens vertically the way the real
+                    // sky does.
+                    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+                    worldPos.xyz = applyRefractionECEF_chunk(worldPos.xyz);
+                    gl_Position = projectionMatrix * viewMatrix * worldPos;
                 }
             `,
             fragmentShader: `
@@ -167,17 +196,81 @@ export class CPlanets {
     }
 
     _createSunMaterial() {
-        return new MeshBasicMaterial({
-            color: 0xfff27a,
-            // Treat the Sun as a sky-background disk so nearer bodies like the Moon
-            // can reliably occult it without precision issues on the sky sphere.
+        // ShaderMaterial so each vertex gets refracted individually — the
+        // Sun's lower limb lifts more than the upper one near the horizon,
+        // producing the characteristic vertical squash. Same color the prior
+        // MeshBasicMaterial used (0xfff27a).
+        return new ShaderMaterial({
+            uniforms: {
+                uColor: {value: new Vector3(1.0, 0.9490, 0.4784)},
+                uRefractionEnabled: refractionUniforms.uRefractionEnabled,
+                uZenithECI: refractionUniforms.uZenithECI,
+                uZenithECEF: refractionUniforms.uZenithECEF,
+                uRefractionPress: refractionUniforms.uRefractionPress,
+                uRefractionTemp: refractionUniforms.uRefractionTemp,
+            },
+            vertexShader: `
+                ${REFRACTION_VERTEX_GLSL}
+                void main() {
+                    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+                    worldPos.xyz = applyRefractionECEF_chunk(worldPos.xyz);
+                    gl_Position = projectionMatrix * viewMatrix * worldPos;
+                }
+            `,
+            fragmentShader: `
+                uniform vec3 uColor;
+                void main() {
+                    gl_FragColor = vec4(uColor, 1.0);
+                }
+            `,
             depthWrite: false,
             depthTest: false,
         });
     }
 
+    // Build a unit-radius (0.5) disk made of N horizontal strips. Used for
+    // the Sun so per-vertex refraction can flatten it vertically near the
+    // horizon. Vertices are placed exactly on the circle (no internal grid),
+    // so 32 strips approximate a circle with 64 boundary vertices.
+    _buildSunStripGeometry(radius = 0.5, strips = 32) {
+        const geom = new BufferGeometry();
+        const positionsArr = new Float32Array((strips + 1) * 2 * 3);
+        const uvsArr = new Float32Array((strips + 1) * 2 * 2);
+        const indices = [];
+        for (let i = 0; i <= strips; i++) {
+            const t = i / strips;
+            const y = -radius + 2 * radius * t;
+            const x = Math.sqrt(Math.max(0, radius * radius - y * y));
+            const base = i * 6;
+            positionsArr[base + 0] = -x;
+            positionsArr[base + 1] = y;
+            positionsArr[base + 2] = 0;
+            positionsArr[base + 3] = x;
+            positionsArr[base + 4] = y;
+            positionsArr[base + 5] = 0;
+            const uvBase = i * 4;
+            uvsArr[uvBase + 0] = 0.0;
+            uvsArr[uvBase + 1] = t;
+            uvsArr[uvBase + 2] = 1.0;
+            uvsArr[uvBase + 3] = t;
+        }
+        for (let i = 0; i < strips; i++) {
+            const v = i * 2;
+            indices.push(v, v + 1, v + 3);
+            indices.push(v, v + 3, v + 2);
+        }
+        geom.setAttribute('position', new BufferAttribute(positionsArr, 3));
+        geom.setAttribute('uv', new BufferAttribute(uvsArr, 2));
+        geom.setIndex(indices);
+        return geom;
+    }
+
     _createSunDisk() {
-        return new Mesh(new CircleGeometry(0.5, 64), this._createSunMaterial());
+        const mesh = new Mesh(this._buildSunStripGeometry(0.5, 32), this._createSunMaterial());
+        // Vertex shader refraction can lift the visible disk above
+        // mesh.position near the horizon — see Moon mesh comment.
+        mesh.frustumCulled = false;
+        return mesh;
     }
 
     _getTopocentricDistanceMeters(body, date, observer, aberration = true) {
@@ -345,13 +438,18 @@ export class CPlanets {
                 this.moonMesh = new Mesh(moonGeometry, this.moonMaterial);
                 this.moonMesh.renderOrder = 2;
                 this.moonMesh.visible = !dayScene;
+                // Per-vertex shader refraction can lift the visible disk by
+                // up to ~0.5° relative to mesh.position, so the geometric
+                // bounds aren't a reliable cull predicate near the horizon.
+                this.moonMesh.frustumCulled = false;
                 scene.add(this.moonMesh);
-                
+
                 if (dayScene) {
                     this.moonDayMaterial = this._createMoonMaterial();
                     const moonDayGeometry = new SphereGeometry(1, 32, 32);
                     this.moonDayMesh = new Mesh(moonDayGeometry, this.moonDayMaterial);
                     this.moonDayMesh.renderOrder = 2;
+                    this.moonDayMesh.frustumCulled = false;
                     dayScene.add(this.moonDayMesh);
                 }
                 
@@ -386,23 +484,53 @@ export class CPlanets {
         }
     }
 
+    // Build the refraction options block from current Sit settings and, as a
+    // side effect, refresh this._zenithECI for the given observer/date so a
+    // single computation feeds both the Moon and any subsequent planets in
+    // the same sync pass.
+    _refractionOpts(date, observer) {
+        if (date && observer) {
+            zenithECIFromLatLonGMST(
+                radians(observer.latitude),
+                radians(observer.longitude),
+                getSiderealTime(date, 0),
+                this._zenithECI,
+            );
+        }
+        const opts = this._refractionOptsCache;
+        opts.enabled = Sit.refractionEnabled !== undefined
+            ? !!Sit.refractionEnabled
+            : REFRACTION_DEFAULTS.enabled;
+        opts.pressureHPa = Sit.refractionPressure ?? REFRACTION_DEFAULTS.pressureHPa;
+        opts.tempC = Sit.refractionTemp ?? REFRACTION_DEFAULTS.tempC;
+        return opts;
+    }
+
     updateMoonMesh(date, observer, options = {}) {
         if (!this.moonMesh) return;
         const storeState = options.storeState ?? true;
-        
+
         // Topocentric center direction for the Moon. This sets where the Moon
         // appears in the sky for the current observer and naturally captures
         // topocentric viewing geometry.
         const celestialInfo = Astronomy.Equator("Moon", date, observer, false, true);
         const axisInfo = Astronomy.RotationAxis("Moon", date);
-        
+
         const ra = (celestialInfo.ra) / 24 * 2 * Math.PI;
         const dec = radians(celestialInfo.dec);
-        const equatorial = raDec2Celestial(ra, dec, this.sphereRadius);
-        
+        const equatorialGeometric = raDec2Celestial(ra, dec, this.sphereRadius);
+
+        // The Moon mesh sits at its geometric position; per-vertex refraction
+        // happens in the vertex shader so the disk flattens correctly near the
+        // horizon. We still compute an apparent center for the planetSprites
+        // map (used by sky-overlay labels) so labels track the visible disk.
+        const refractOpts = options.refractionOpts ?? this._refractionOpts(date, observer);
+        const zenithECI = options.zenithECI ?? this._zenithECI;
+        const equatorial = applyRefractionECI(equatorialGeometric.clone(), zenithECI, refractOpts);
+
         const moonAngularDiameter = this._getAngularDiameterRad("Moon", date, observer, 1737400);
         const moonRadius = Math.tan(moonAngularDiameter / 2) * this.sphereRadius;
-        
+
         // Drive the lunar terminator from the physical Moon-center -> Sun vector.
         // This keeps the lighting basis in the same inertial frame as the Moon's
         // body rotation and avoids the small topocentric bias from observer -> Sun.
@@ -416,15 +544,18 @@ export class CPlanets {
         const {east, north, primeMeridian} = this._getMoonBodyAxes(axisInfo);
         const rotMatrix = new Matrix4();
         rotMatrix.makeBasis(east, north, primeMeridian);
-        
-        this.moonMesh.position.set(equatorial.x, equatorial.y, equatorial.z);
+
+        // Use the geometric (un-refracted) center; the moon vertex shader
+        // applies refraction per vertex so the visible disk position and
+        // shape are both correct.
+        this.moonMesh.position.set(equatorialGeometric.x, equatorialGeometric.y, equatorialGeometric.z);
         this.moonMesh.scale.set(moonRadius, moonRadius, moonRadius);
         this.moonMesh.setRotationFromMatrix(rotMatrix);
-        
+
         // Convert the Sun direction into Moon-local space for lighting.
         const invRotMatrix = rotMatrix.clone().invert();
         const sunInMoonLocal = sunDir.clone().applyMatrix4(invRotMatrix);
-        const observerInMoonLocal = equatorial.clone().normalize().negate().applyMatrix4(invRotMatrix).normalize();
+        const observerInMoonLocal = equatorialGeometric.clone().normalize().negate().applyMatrix4(invRotMatrix).normalize();
         
         this.moonMaterial.uniforms.sunDirection.value.copy(sunInMoonLocal);
         this.moonMaterial.uniforms.observerDirection.value.copy(observerInMoonLocal);
@@ -437,10 +568,15 @@ export class CPlanets {
             this.moonDayMaterial.uniforms.observerDirection.value.copy(observerInMoonLocal);
         }
         
-        if (storeState && this.planetSprites["Moon"]) {
-            this.planetSprites["Moon"].ra = ra;
-            this.planetSprites["Moon"].dec = dec;
+        // Apparent center always tracks the most recent sync — picker /
+        // overlay labels use it, and per-view re-syncs (storeState:false)
+        // need this to reflect the rendering view's observer.
+        if (this.planetSprites["Moon"]) {
             this.planetSprites["Moon"].equatorial = equatorial;
+            if (storeState) {
+                this.planetSprites["Moon"].ra = ra;
+                this.planetSprites["Moon"].dec = dec;
+            }
         }
     }
 
@@ -483,17 +619,24 @@ export class CPlanets {
     updatePlanetSprite(planet, sprite, date, observer, daySkySprite = undefined, options = {}) {
         const storeState = options.storeState ?? true;
         if (planet === "Moon") {
-            this.updateMoonMesh(date, observer, {storeState});
+            this.updateMoonMesh(date, observer, {
+                storeState,
+                refractionOpts: options.refractionOpts,
+                zenithECI: options.zenithECI,
+            });
             return;
         }
         
         const celestialInfo = Astronomy.Equator(planet, date, observer, false, true);
         const illumination = Astronomy.Illumination(planet, date);
-        
+
         const ra = (celestialInfo.ra) / 24 * 2 * Math.PI;
         const dec = radians(celestialInfo.dec);
         const mag = illumination.mag;
-        const equatorial = raDec2Celestial(ra, dec, this.sphereRadius);
+        const equatorialGeometric = raDec2Celestial(ra, dec, this.sphereRadius);
+        const refractOpts = options.refractionOpts ?? this._refractionOpts(date, observer);
+        const zenithECI = options.zenithECI ?? this._zenithECI;
+        const equatorial = applyRefractionECI(equatorialGeometric.clone(), zenithECI, refractOpts);
 
         let color = "#FFFFFF";
         if (this.planetSprites[planet] !== undefined) {
@@ -513,7 +656,10 @@ export class CPlanets {
         }
 
         if (planet === "Sun") {
-            const sunPosition = equatorial.clone().normalize().multiplyScalar(this.sunSphereRadius);
+            // Sun mesh is placed at its geometric center so the per-vertex
+            // refraction in the Sun shader produces the correct apparent
+            // shape (lower limb lifts more than upper near the horizon).
+            const sunPosition = equatorialGeometric.clone().normalize().multiplyScalar(this.sunSphereRadius);
             if (sprite.isMesh) {
                 this._orientDiskTowardOrigin(sprite, sunPosition);
                 sprite.scale.set(scale, scale, 1);
@@ -551,14 +697,20 @@ export class CPlanets {
                 color: color,
                 daySkySprite: daySkySprite,
             };
-        } else if (storeState) {
-            this.planetSprites[planet].ra = ra;
-            this.planetSprites[planet].dec = dec;
-            this.planetSprites[planet].mag = mag;
+        } else {
+            // Apparent center always tracks the latest sync — needed for
+            // picker / overlay labels regardless of storeState (the Sun
+            // re-syncs every view, so this would otherwise stay pinned to
+            // the look camera's apparent center).
             this.planetSprites[planet].equatorial = equatorial;
-            this.planetSprites[planet].color = color;
-            if (daySkySprite) {
-                this.planetSprites[planet].daySkySprite = daySkySprite;
+            if (storeState) {
+                this.planetSprites[planet].ra = ra;
+                this.planetSprites[planet].dec = dec;
+                this.planetSprites[planet].mag = mag;
+                this.planetSprites[planet].color = color;
+                if (daySkySprite) {
+                    this.planetSprites[planet].daySkySprite = daySkySprite;
+                }
             }
         }
     }

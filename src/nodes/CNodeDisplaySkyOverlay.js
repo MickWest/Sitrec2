@@ -3,6 +3,7 @@
 import {CNodeViewUI} from "./CNodeViewUI";
 import {GlobalDateTimeNode, guiShowHide, NodeMan, setRenderOne, Sit} from "../Globals";
 import {getCelestialDirectionFromRaDec, raDec2Celestial} from "../CelestialMath";
+import {applyRefractionECI, refractionUniforms, refractionOptsFromUniforms} from "../atmosphere/refraction";
 import {wgs84} from "../LLA-ECEF-ENU";
 import {intersectSphere2, V3} from "../threeUtils";
 import {Ray, Raycaster, Sphere, Vector3} from "three";
@@ -150,6 +151,8 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
         if (!this.onlyLabelPlanets) {
             this.ctx.fillStyle = "#ffffff" + alphaHex;
+            const refractApplies = refractionUniforms.uRefractionEnabled.value > 0.5;
+            const refractOpts = refractApplies ? refractionOptsFromUniforms() : null;
             for (var HR in this.nightSky.starField.commonNames) {
                 const n = HR - 1
 
@@ -161,7 +164,17 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 const ra = this.nightSky.starField.getStarRA(n)
                 const dec = this.nightSky.starField.getStarDEC(n)
 
-                const starDirection = getCelestialDirectionFromRaDec(ra, dec, date)
+                const pos = raDec2Celestial(ra, dec, 100)
+                if (refractApplies) {
+                    applyRefractionECI(pos, refractionUniforms.uZenithECI.value, refractOpts);
+                }
+
+                // Earth-occlude using the *apparent* sightline so a star
+                // refracted into view from below the horizon doesn't get
+                // its label suppressed while the rendered dot is visible.
+                const starDirection = refractApplies
+                    ? pos.clone().applyMatrix4(this.nightSky.celestialSphere.matrix).normalize()
+                    : getCelestialDirectionFromRaDec(ra, dec, date)
 
                 const ray = new Ray(actualCameraPosition, starDirection)
                 const target0 = V3()
@@ -169,8 +182,6 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 if (intersectSphere2(ray, earthSphere, target0, target1)) {
                     continue
                 }
-
-                const pos = raDec2Celestial(ra, dec, 100)
                 pos.applyMatrix4(this.nightSky.celestialSphere.matrix)
                 pos.project(camera)
 
@@ -253,16 +264,21 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             if (satellites.labelLit && !sat.isLit) continue;
             if (isMainView && satellites.labelLookVisible && !sat.visibleInLook) continue;
 
+            // arrowRange is a physical-range filter, so use the geometric
+            // satellite position. Screen projection and Earth-occlusion use
+            // the apparent position so the label tracks the rendered dot
+            // when refraction lifts a sub-horizon satellite into view.
+            const satRender = sat.ecefApparent || sat.ecef;
             const distSq = sat.ecef.distanceToSquared(cameraPos);
             if (!sat.userFiltered && distSq >= arrowRangeSq) continue;
 
-            const viewPos = sat.ecef.clone().applyMatrix4(camera.matrixWorldInverse);
+            const viewPos = satRender.clone().applyMatrix4(camera.matrixWorldInverse);
             if (viewPos.z >= 0) continue;
-            
-            const satScreenPos = sat.ecef.clone().project(camera);
+
+            const satScreenPos = satRender.clone().project(camera);
             const isInsideFrustum = satScreenPos.x >= -1 && satScreenPos.x <= 1 &&
                 satScreenPos.y >= -1 && satScreenPos.y <= 1;
-            
+
             if (!isInsideFrustum) {
                 if (satScreenPos.x < -1) {
                     const zoomedX = satScreenPos.x * this.zoom - this._panShiftX;
@@ -276,8 +292,8 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 }
             }
 
-            const camToSat = sat.ecef.clone().sub(cameraPos);
-            const distToSat = Math.sqrt(distSq);
+            const camToSat = satRender.clone().sub(cameraPos);
+            const distToSat = camToSat.length();
             raycaster.set(cameraPos, camToSat.normalize());
             const isOccluded = intersectSphere2(raycaster.ray, earthSphere, hitPoint, hitPoint2)
                 && hitPoint.distanceTo(cameraPos) < distToSat;
