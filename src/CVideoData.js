@@ -185,60 +185,10 @@ export class CVideoData {
     // directOffset: if true, trackingData contains direct pixel offsets to apply
     //               if false, trackingData contains tracked positions to center on referencePoint
     setStabilizationData(trackingData, referencePoint, directOffset = false) {
-        this.stabilizationData = this.filterSpikes(new Map(trackingData));
+        this.stabilizationData = new Map(trackingData);
         this.stabilizationReferencePoint = referencePoint;
         this.stabilizationDirectOffset = directOffset;
         this.stabilizedImageCache = [];
-    }
-
-    filterSpikes(data) {
-        const frames = Array.from(data.keys()).sort((a, b) => a - b);
-        if (frames.length < 5) return data;
-
-        const filtered = new Map(data);
-        const threshold = 10;
-
-        const dist = (a, b) => {
-            if (!a || !b) return 0;
-            return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
-        };
-
-        const lerp = (p1, p2, t) => ({
-            x: p1.x + (p2.x - p1.x) * t,
-            y: p1.y + (p2.y - p1.y) * t
-        });
-
-        for (let i = 1; i < frames.length - 1; i++) {
-            const f = frames[i];
-            const prevF = frames[i - 1];
-            const pos = data.get(f);
-            const prevPos = data.get(prevF);
-
-            for (let windowSize = 1; windowSize <= 3; windowSize++) {
-                if (i + windowSize >= frames.length) break;
-                const nextF = frames[i + windowSize];
-                const nextPos = data.get(nextF);
-                if (!prevPos || !pos || !nextPos) continue;
-
-                const expected = lerp(prevPos, nextPos, (f - prevF) / (nextF - prevF));
-                const deviation = dist(pos, expected);
-                const baseline = dist(prevPos, nextPos) / (nextF - prevF);
-                const avgMotion = Math.max(baseline, 1);
-
-                if (deviation > threshold && deviation > avgMotion * 3) {
-                    for (let j = 0; j < windowSize; j++) {
-                        if (i + j < frames.length) {
-                            const interpF = frames[i + j];
-                            const t = (interpF - prevF) / (nextF - prevF);
-                            filtered.set(interpF, lerp(prevPos, nextPos, t));
-                        }
-                    }
-                    i += windowSize - 1;
-                    break;
-                }
-            }
-        }
-        return filtered;
     }
 
     // Enable/disable stabilization
