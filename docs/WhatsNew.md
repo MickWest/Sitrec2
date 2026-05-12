@@ -45,6 +45,11 @@ Example entry format:
 
 ---
 
+## Version 2.54.2 (2026-05-11)
+
+### Bug Fixes
+- **CPA time and camera framing restored for multi-aircraft KML drops**: dropping a KML containing two distinct aircraft (e.g. an FR24 export with two `<Folder>` tracks) was leaving the playhead at the first sample of track 0 instead of advancing to the closest point of approach, and leaving the main camera over the second track's bounding-box centre — typically hundreds of km from where the flights actually pass each other. The CPA guard in `TrackManager.centerOnTrack` used `trackIndex === 0` as a proxy for "primary, not supplementary"; correct for MISB where index>0 is a co-located FrameCenter target, wrong for KML where every track is its own flight. Replaced the proxy with an explicit `isSupplementaryTrack(trackIndex)` hook on `CTrackFile` (default `trackIndex > 0`, preserving MISB behaviour); `CTrackFileKML` overrides it to return `false`. CPA now also repositions the main camera above the midpoint of the two flights at the closest-approach moment, with a framing margin that scales with their separation.
+
 ## Version 2.54.1 (2026-05-11)
 
 ### Bug Fixes
