@@ -45,6 +45,11 @@ Example entry format:
 
 ---
 
+## Version 2.54.3 (2026-05-12)
+
+### Bug Fixes
+- **Video stabilization no longer drifts off precisely-tracked objects**: pressing *Stabilize* after Auto-Tracking would leave the tracked object drifting around the centre by up to its own width, even though the on-screen tracking cursor stayed glued to the object on every frame. `CVideoData.setStabilizationData` was running every tracked point through a spike filter that replaced any point deviating more than 10 px and more than 3× neighbour motion from a linear interpolation of its neighbours — a heuristic meant to catch OpenCV outliers but indistinguishable from genuine non-linear motion (a thrown ball, a turning aircraft). The on-screen cursor read from the raw `trackedPositions`, while stabilization read from the *filtered* copy, so the two visibly disagreed at every modified frame. The filter has been removed; stabilization now uses the tracking data verbatim, matching what the cursor displays.
+
 ## Version 2.54.2 (2026-05-11)
 
 ### Bug Fixes
