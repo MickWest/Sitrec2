@@ -141,6 +141,11 @@ export class CTrackFileKML extends CTrackFile {
         return 1;
     }
 
+    // KML tracks are always distinct aircraft, never FrameCenter-style supplementaries.
+    isSupplementaryTrack(_trackIndex) {
+        return false;
+    }
+
     extractObjects() {
         this.extractKMLObjectsInternal(this.data);
     }

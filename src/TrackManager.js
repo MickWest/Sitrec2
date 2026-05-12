@@ -1019,9 +1019,16 @@ class CTrackManager extends CManager {
 
 
             // If this is not the first track, then find the time of the closest intersection.
-            // Skip for supplementary tracks (trackIndex > 0) like center tracks from the same file.
+            // Skip for supplementary tracks (e.g. MISB FrameCenter) where index>0 is a
+            // co-located reference, not a distinct flight. The track file decides; KML
+            // overrides to say every track is distinct, so multi-aircraft KML drops
+            // trigger CPA against track 0.
             const track0 = TrackManager.getByIndex(0);
-            if (track0 !== trackOb && trackIndex === 0) {
+            const trackFile = FileManager.get(trackOb.trackFileName);
+            const isSupplementary = trackFile
+                ? trackFile.isSupplementaryTrack(trackIndex)
+                : trackIndex > 0;
+            if (track0 !== trackOb && !isSupplementary) {
                 let time = closestIntersectionTime(track0.trackDataNode, trackOb.trackDataNode);
 //                console.log("Closest intersection time: ", time);
 
@@ -1031,6 +1038,36 @@ class CTrackManager extends CManager {
 
                 GlobalDateTimeNode.setStartDateTime(time);
                 GlobalDateTimeNode.recalculateCascade();
+
+                // Reposition the camera at the CPA: above the midpoint of the two
+                // tracks, looking down at it. Without this, the camera is left at
+                // wherever the just-loaded track's bbox put it — which can be hundreds
+                // of km from the CPA for geographically separated flights.
+                if (Sit.centerOnLoadedTracks && (!Globals.dontAutoZoom || forceCenter) && (!Globals.sitchEstablished || forceCenter)) {
+                    const p0 = track0.trackDataNode.getPositionAtTime(time);
+                    const p1 = trackOb.trackDataNode.getPositionAtTime(time);
+                    if (p0 && p1) {
+                        const cpaMidpoint = p0.clone().add(p1).multiplyScalar(0.5);
+                        const cpaGround = pointOnSphereBelow(cpaMidpoint);
+                        const cpaSeparation = p0.distanceTo(p1);
+                        const cpaAltitude = cpaMidpoint.clone().sub(cpaGround).length();
+                        const hfovCPA = mainView.getHFOV();
+                        // Frame both aircraft plus a margin; minimum 1 km so we never
+                        // get a useless tight-zoom at exact-overlap CPAs.
+                        const frameSize = Math.max(cpaSeparation * 2.5, cpaAltitude * 1.4, 1000);
+                        const cameraHeight = frameSize / (2 * Math.tan(hfovCPA / 2));
+                        const upCPA = getLocalUpVector(cpaGround);
+                        const southCPA = getLocalSouthVector(cpaGround);
+                        const cpaCamPos = cpaMidpoint.clone()
+                            .add(upCPA.clone().multiplyScalar(cameraHeight * 0.5))
+                            .add(southCPA.clone().multiplyScalar(cameraHeight));
+                        mainCamera.position.copy(cpaCamPos);
+                        mainCamera.up.copy(upCPA);
+                        mainCamera.lookAt(cpaMidpoint);
+                        mainCameraNode.snapshotCamera();
+                    }
+                }
+
                 setRenderOne(true);
 
                 // and make the 2nd track the target track if we have a targetTrackSwitch

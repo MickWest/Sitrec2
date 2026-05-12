@@ -83,4 +83,15 @@ export class CTrackFile {
     getTrackCount() {
         throw new Error("getTrackCount must be implemented by subclass");
     }
+
+    // True when the track at `trackIndex` is a "supplementary" reference track that
+    // shares a flight/sensor with track 0 — e.g. a MISB FrameCenter target track
+    // co-located with its camera. Such tracks should NOT participate in
+    // closest-point-of-approach time selection or other primary-track-only behaviour.
+    // Default: any non-first track in a multi-track file is treated as supplementary.
+    // Subclasses (e.g. CTrackFileKML, where every track is a distinct aircraft)
+    // should override.
+    isSupplementaryTrack(trackIndex) {
+        return trackIndex > 0;
+    }
 }
