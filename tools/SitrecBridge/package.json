@@ -17,6 +17,9 @@
   "devDependencies": {
     "esbuild": "^0.25.0"
   },
+  "overrides": {
+    "ip-address": "^10.2.0"
+  },
   "engines": {
     "node": ">=18"
   }

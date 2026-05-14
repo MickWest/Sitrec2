@@ -45,6 +45,11 @@ Example entry format:
 
 ---
 
+## Version 2.54.4 (2026-05-14)
+
+### Improvements
+- **Security: bumped `express-rate-limit` 8.3.1 → 8.5.2 in root and added `ip-address ^10.2.0` override in SitrecBridge**, picking up the fix for the medium-severity XSS in `ip-address` Address6 HTML-emitting methods (Dependabot alerts #111, #112). The vulnerable code path was only reachable through transitive deps, but lockfiles now pin the patched version explicitly.
+
 ## Version 2.54.3 (2026-05-12)
 
 ### Bug Fixes
