@@ -45,6 +45,11 @@ Example entry format:
 
 ---
 
+## Version 2.54.5 (2026-05-14)
+
+### Improvements
+- **Atmospheric refraction now defaults to off**: the celestial-bending feature added in 2.54.0 was enabled out-of-the-box, which silently shifted Sun, Moon, planet, star, constellation-line, and satellite positions toward the zenith on first load — surprising users who hadn't yet noticed the new Atmospheric Refraction toggle in the View menu. The default is flipped to off so the rendered sky matches the unrefracted celestial coordinates unless the user explicitly enables it. Existing custom sitches that already serialized `refractionEnabled: true` keep their setting; only sitches without the field (built-in sitches, anything saved before 2.54.0) pick up the new default.
+
 ## Version 2.54.4 (2026-05-14)
 
 ### Improvements

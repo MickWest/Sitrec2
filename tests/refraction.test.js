@@ -103,7 +103,7 @@ describe('applyRefractionECI (direction bending)', () => {
     test('horizon direction is lifted toward zenith', () => {
         const v = new Vector3(100, 0, 0); // horizon, 100m sphere
         const before = v.clone();
-        applyRefractionECI(v, zenith);
+        applyRefractionECI(v, zenith, {enabled: true});
         // Length preserved
         expect(v.length()).toBeCloseTo(100, 4);
         // Lifted toward zenith — z should increase
@@ -156,7 +156,7 @@ describe('applyRefractionFromObserver (satellites)', () => {
         // (alt ~ 0° from observer's local horizon).
         const sat = new Vector3(6371000, 1000000, 0);
         const before = sat.clone();
-        const out = applyRefractionFromObserver(sat.clone(), obs);
+        const out = applyRefractionFromObserver(sat.clone(), obs, {enabled: true});
         // Apparent direction lifts toward zenith (+X). y-component should
         // shrink slightly, x-component grows.
         expect(out.x).toBeGreaterThan(before.x);
@@ -169,7 +169,7 @@ describe('applyRefractionFromObserver (satellites)', () => {
 
     test('shift magnitude at horizon is order ~0.5° at 1000 km', () => {
         const sat = new Vector3(6371000, 1000000, 0);
-        const out = applyRefractionFromObserver(sat.clone(), obs);
+        const out = applyRefractionFromObserver(sat.clone(), obs, {enabled: true});
         // angular shift = asin(crossMag / dist)
         const dir = sat.clone().sub(obs).normalize();
         const dirOut = out.clone().sub(obs).normalize();
