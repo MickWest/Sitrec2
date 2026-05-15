@@ -217,6 +217,15 @@ export class CTrackFileMISB extends CTrackFile {
         return 1;
     }
 
+    // Multi-TrackID files (e.g. ASTERIX CAT-048 PCAPs) carry one aircraft
+    // per TrackID — none of them is "supplementary" to another. Only a
+    // single-aircraft file with a co-located FrameCenter track has a
+    // supplementary index-1 entry (which keeps the default behaviour).
+    isSupplementaryTrack(trackIndex) {
+        if (this._getUniqueTrackIDs()) return false;
+        return super.isSupplementaryTrack(trackIndex);
+    }
+
     extractObjects() {
     }
 }

@@ -83,6 +83,14 @@ export function sniffFileType(buffer) {
     // MPEG-1/2 video elementary stream: 00 00 01 B3 sequence header
     if (u8[0] === 0x00 && u8[1] === 0x00 && u8[2] === 0x01 && u8[3] === 0xB3) return "m2v";
 
+    // libpcap (classic + nanosecond, both endians). pcapng (0a 0d 0d 0a)
+    // shares the same downstream parser; we mark it "pcap" too.
+    if ((u8[0] === 0xD4 && u8[1] === 0xC3 && u8[2] === 0xB2 && u8[3] === 0xA1) ||
+        (u8[0] === 0xA1 && u8[1] === 0xB2 && u8[2] === 0xC3 && u8[3] === 0xD4) ||
+        (u8[0] === 0x4D && u8[1] === 0x3C && u8[2] === 0xB2 && u8[3] === 0xA1) ||
+        (u8[0] === 0xA1 && u8[1] === 0xB2 && u8[2] === 0x3C && u8[3] === 0x4D) ||
+        (u8[0] === 0x0A && u8[1] === 0x0D && u8[2] === 0x0D && u8[3] === 0x0A)) return "pcap";
+
     return null;
 }
 

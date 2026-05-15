@@ -61,6 +61,7 @@ import {SITREC_SERVER} from "./configUtils";
 import {TSParser} from "./TSParser";
 import {NITFParser} from "./NITFParser";
 import {sniffFileType} from "./sniffFileType";
+import {parseASTERIXBuffer, isPCAP, looksLikeASTERIX} from "./utils/ParseASTERIX";
 import {showError} from "./showError";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {projectedBoundsToWGS84} from "./proj4Loader";
@@ -1454,6 +1455,28 @@ export const parseMethods = {
                     dataType = "model";
                     parsed = buffer;
                     break;
+                case "pcap":
+                case "pcapng":
+                case "raw": {
+                    // libpcap captures of ASTERIX UDP multicast, or a raw
+                    // ASTERIX byte stream. For .raw we have to content-sniff
+                    // because the extension is generic; if it doesn't look
+                    // like ASTERIX we fall through to the unknown branch.
+                    const isAsterixPcap = (fileExt === "pcap" || fileExt === "pcapng") && isPCAP(buffer);
+                    const isAsterixRaw = fileExt === "raw" && looksLikeASTERIX(buffer);
+                    if (isAsterixPcap || isAsterixRaw) {
+                        const misb = parseASTERIXBuffer(buffer);
+                        if (misb && misb.length > 0) {
+                            parsed = new CTrackFileMISB(misb);
+                            dataType = "trackfile";
+                            break;
+                        }
+                    }
+                    console.warn(`parseAsset: ${filename} has extension .${fileExt} but no recognized payload`);
+                    dataType = "unknown";
+                    parsed = buffer;
+                    break;
+                }
                 case "bin":
                     dataType = "bin";
                     parsed = buffer;

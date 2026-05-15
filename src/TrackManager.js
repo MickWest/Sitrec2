@@ -854,10 +854,13 @@ class CTrackManager extends CManager {
                 layers: LAYER.MASK_TARGET,
                 label: shortName,
             });
-        } else if (trackOb.trackIndex !== 0) {
+        } else if (trackOb.trackIndex !== 0
+                   && FileManager.get(trackOb.trackFileName)?.isSupplementaryTrack?.(trackOb.trackIndex)) {
             // Center / supplementary tracks (e.g. MISB FrameCenter): the
             // platform model belongs on the primary track, so give the center
             // a small invisible reference sphere instead of duplicating it.
+            // Multi-aircraft files (KML, ASTERIX PCAP) override
+            // isSupplementaryTrack to keep each track visible.
             trackOb.displayTargetSphere = new CNode3DObject({
                 id: sphereId + "_ob",
                 object: "sphere",
