@@ -1,7 +1,7 @@
 // ASTERIX radar data parser.
 //
 // Supports drag-and-drop of:
-//   • libpcap (.pcap) captures of UDP multicast carrying ASTERIX
+//   • libpcap/pcapng (.pcap/.pcapng) captures of UDP multicast carrying ASTERIX
 //   • raw ASTERIX streams (.raw / concatenated CAT records, no framing)
 //
 // Decodes CAT-048 (Mode-S monoradar target reports) and CAT-062 (system
@@ -62,25 +62,104 @@ function readFSPEC(u8, off, end) {
 
 // ---------- PCAP framing ----------
 
+const PCAPNG_SHB = 0x0A0D0D0A;
+
+function readU16(u8, off, little) {
+    return little ? (u8[off] | (u8[off + 1] << 8)) : ((u8[off] << 8) | u8[off + 1]);
+}
+
+function readU32(u8, off, little) {
+    return little
+        ? ((u8[off] | (u8[off + 1] << 8) | (u8[off + 2] << 16) | (u8[off + 3] << 24)) >>> 0)
+        : (((u8[off] << 24) | (u8[off + 1] << 16) | (u8[off + 2] << 8) | u8[off + 3]) >>> 0);
+}
+
+function extractUDPFromEthernet(u8, off, pktEnd) {
+    // Ethernet II: 14 bytes. EtherType at 12..13. 0x0800 = IPv4.
+    if (pktEnd - off < 14 || u8[off + 12] !== 0x08 || u8[off + 13] !== 0x00) return null;
+    const ipOff = off + 14;
+    const ihl = (u8[ipOff] & 0x0F) * 4;
+    const proto = u8[ipOff + 9];
+    if (proto !== 17 || ipOff + ihl + 8 > pktEnd) return null; // UDP
+    const udpOff = ipOff + ihl;
+    const udpLen = (u8[udpOff + 4] << 8) | u8[udpOff + 5];
+    const dataOff = udpOff + 8;
+    const dataLen = Math.max(0, udpLen - 8);
+    if (dataOff + dataLen > pktEnd || dataLen === 0) return null;
+    return u8.subarray(dataOff, dataOff + dataLen);
+}
+
+function parsePCAPNG(u8) {
+    if (u8.length < 28 || u32BE(u8, 0) !== PCAPNG_SHB) return null;
+    const byteOrderMagicBE = u32BE(u8, 8);
+    let little;
+    if (byteOrderMagicBE === 0x4D3C2B1A) little = true;
+    else if (byteOrderMagicBE === 0x1A2B3C4D) little = false;
+    else return null;
+
+    const out = [];
+    const linkTypes = new Map();
+    let off = 0;
+    while (off + 12 <= u8.length) {
+        const blockType = readU32(u8, off, little);
+        const blockLen = readU32(u8, off + 4, little);
+        if (blockLen < 12 || off + blockLen > u8.length) break;
+        const bodyOff = off + 8;
+        const bodyEnd = off + blockLen - 4;
+
+        if (blockType === 0x00000001 && bodyOff + 8 <= bodyEnd) {
+            // Interface Description Block. LinkType 1 is Ethernet.
+            const ifaceId = linkTypes.size;
+            linkTypes.set(ifaceId, readU16(u8, bodyOff, little));
+        } else if (blockType === 0x00000006 && bodyOff + 20 <= bodyEnd) {
+            // Enhanced Packet Block.
+            const ifaceId = readU32(u8, bodyOff, little);
+            if ((linkTypes.get(ifaceId) ?? 1) === 1) {
+                const tsHigh = readU32(u8, bodyOff + 4, little);
+                const tsLow = readU32(u8, bodyOff + 8, little);
+                const capLen = readU32(u8, bodyOff + 12, little);
+                const pktOff = bodyOff + 20;
+                if (pktOff + capLen <= bodyEnd) {
+                    const payload = extractUDPFromEthernet(u8, pktOff, pktOff + capLen);
+                    if (payload) {
+                        const ts = tsHigh * 0x100000000 + tsLow; // default pcapng resolution is microseconds
+                        out.push({tsSec: Math.floor(ts / 1000000), tsUsec: ts % 1000000, payload});
+                    }
+                }
+            }
+        } else if (blockType === 0x00000003 && bodyOff + 4 <= bodyEnd) {
+            // Simple Packet Block. It has no timestamp; keep imported rows near epoch 0
+            // rather than dropping otherwise valid ASTERIX payloads.
+            const capLen = Math.min(readU32(u8, bodyOff, little), bodyEnd - (bodyOff + 4));
+            const pktOff = bodyOff + 4;
+            const payload = extractUDPFromEthernet(u8, pktOff, pktOff + capLen);
+            if (payload) out.push({tsSec: 0, tsUsec: 0, payload});
+        }
+
+        off += blockLen;
+    }
+
+    return out;
+}
+
 // Returns array of {tsSec, tsUsec, payload: Uint8Array} for each UDP packet
 // in a classic-libpcap or pcapng file. Strips Ethernet + IPv4 + UDP headers.
 // Skips records that aren't IPv4/UDP/Ethernet. Returns null if not a PCAP.
 function parsePCAP(buffer) {
     const u8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
     if (u8.length < 24) return null;
+    if (u32BE(u8, 0) === PCAPNG_SHB) return parsePCAPNG(u8);
 
     const m = (u8[0] << 24) | (u8[1] << 16) | (u8[2] << 8) | u8[3];
     let little;
+    let nsResolution = false;
     if (m === (0xd4c3b2a1 | 0)) little = true;        // little-endian classic
     else if (m === (0xa1b2c3d4 | 0)) little = false;  // big-endian classic
-    else if (m === (0x4d3cb2a1 | 0)) little = true;   // nanosecond little
-    else if (m === (0xa1b23c4d | 0)) little = false;  // nanosecond big
+    else if (m === (0x4d3cb2a1 | 0)) { little = true; nsResolution = true; }   // nanosecond little
+    else if (m === (0xa1b23c4d | 0)) { little = false; nsResolution = true; }  // nanosecond big
     else return null;
 
-    const r16 = (off) => little ? (u8[off] | (u8[off + 1] << 8)) : ((u8[off] << 8) | u8[off + 1]);
-    const r32 = (off) => little
-        ? ((u8[off] | (u8[off + 1] << 8) | (u8[off + 2] << 16) | (u8[off + 3] << 24)) >>> 0)
-        : (((u8[off] << 24) | (u8[off + 1] << 16) | (u8[off + 2] << 8) | u8[off + 3]) >>> 0);
+    const r32 = (off) => readU32(u8, off, little);
 
     const network = r32(20);
     // 1 = LINKTYPE_ETHERNET (covers all our samples). Other link types could
@@ -94,30 +173,20 @@ function parsePCAP(buffer) {
     let off = 24;
     while (off + 16 <= u8.length) {
         const tsSec = r32(off);
-        const tsUsec = r32(off + 4);
+        const tsFrac = r32(off + 4);
         const inclLen = r32(off + 8);
         // const origLen = r32(off + 12);
         off += 16;
         if (off + inclLen > u8.length) break;
 
         const pktEnd = off + inclLen;
-        // Ethernet II: 14 bytes. EtherType at 12..13. 0x0800 = IPv4.
-        if (inclLen >= 14 && u8[off + 12] === 0x08 && u8[off + 13] === 0x00) {
-            const ipOff = off + 14;
-            const ihl = (u8[ipOff] & 0x0F) * 4;
-            const proto = u8[ipOff + 9];
-            if (proto === 17 && ipOff + ihl + 8 <= pktEnd) {  // UDP
-                const udpOff = ipOff + ihl;
-                const udpLen = (u8[udpOff + 4] << 8) | u8[udpOff + 5];
-                const dataOff = udpOff + 8;
-                const dataLen = Math.max(0, udpLen - 8);
-                if (dataOff + dataLen <= pktEnd && dataLen > 0) {
-                    out.push({
-                        tsSec, tsUsec,
-                        payload: u8.subarray(dataOff, dataOff + dataLen),
-                    });
-                }
-            }
+        const payload = extractUDPFromEthernet(u8, off, pktEnd);
+        if (payload) {
+            out.push({
+                tsSec,
+                tsUsec: nsResolution ? Math.floor(tsFrac / 1000) : tsFrac,
+                payload,
+            });
         }
         off = pktEnd;
     }
@@ -390,13 +459,11 @@ function decodeCAT048(body) {
 //   FRN 35 I062/SP  Special Purpose                explicit (1 + N)
 //
 // Because CAT-062 has many compound fields whose sub-item lengths must
-// match the spec exactly, mis-parsing one item desynchronises everything
-// after it. We decode the position fields (I062/105 and /380 callsign)
-// using the prefix of the UAP — once we've consumed the position we don't
-// need later fields, so we stop walking even though there may be more
-// data after.
+// match the spec exactly, most late fields are skipped. We do consume enough
+// of I062/380 to reach I062/040, because the track number is the stable
+// identifier when callsign is missing.
 
-const CAT062_PREFIX = [
+const CAT062_FIELDS = [
     {name: "010", kind: "fixed", len: 2},
     {name: "spare", kind: "fixed", len: 0},  // FRN 2 is spare; never present
     {name: "015", kind: "fixed", len: 1},
@@ -407,19 +474,74 @@ const CAT062_PREFIX = [
     {name: "210", kind: "fixed", len: 2},
     {name: "060", kind: "fixed", len: 2},
     {name: "245", kind: "fixed", len: 7},
+    {name: "380", kind: "compound380"},
+    {name: "040", kind: "fixed", len: 2},
 ];
+
+function consumeCAT062Field(spec, u8, off, end) {
+    if (spec.kind === "fixed") {
+        if (off + spec.len > end) return null;
+        return {data: u8.subarray(off, off + spec.len), next: off + spec.len};
+    }
+    if (spec.kind === "compound380") {
+        const firstPrimary = off;
+        if (off >= end) return null;
+        const primaries = [];
+        while (off < end) {
+            const b = u8[off++];
+            primaries.push(b);
+            if ((b & 1) === 0) break;
+        }
+        if (primaries.length === 0 || (primaries[primaries.length - 1] & 1) !== 0) return null;
+
+        const fixedLens = [
+            3, 6, 2, 2, 2, 2, 2,
+            1, null, 2, 2, 7, 2, 2,
+            2, 2, 2, 2, 1, null, 1,
+            6, 2, 1, null, 2, 2, 2,
+        ];
+        const present = [];
+        for (const primary of primaries) {
+            for (let bit = 7; bit >= 1; bit--) present.push(((primary >> bit) & 1) === 1);
+        }
+        for (let i = 0; i < present.length && i < fixedLens.length; i++) {
+            if (!present[i]) continue;
+            let len = fixedLens[i];
+            if (i === 8) { // TID: REP + REP*15
+                if (off >= end) return null;
+                len = 1 + u8[off] * 15;
+            } else if (i === 19) { // MET: primary + selected 2-octet values
+                if (off >= end) return null;
+                const met = u8[off];
+                len = 1;
+                if (met & 0x80) len += 2;
+                if (met & 0x40) len += 2;
+                if (met & 0x20) len += 2;
+                if (met & 0x10) len += 2;
+            } else if (i === 24) { // MB: REP + REP*8
+                if (off >= end) return null;
+                len = 1 + u8[off] * 8;
+            }
+            if (off + len > end) return null;
+            off += len;
+        }
+        return {data: u8.subarray(firstPrimary, off), next: off};
+    }
+    return null;
+}
 
 function decodeCAT062(body) {
     const fs = readFSPEC(body, 0, body.length);
     let off = fs.next;
     const out = {};
-    for (let i = 0; i < CAT062_PREFIX.length && i < fs.bits.length; i++) {
+    for (let i = 0; i < CAT062_FIELDS.length && i < fs.bits.length; i++) {
         if (!fs.bits[i]) continue;
-        const spec = CAT062_PREFIX[i];
+        const spec = CAT062_FIELDS[i];
         if (spec.len === 0) continue;
-        if (off + spec.len > body.length) return out;
-        const d = body.subarray(off, off + spec.len);
-        off += spec.len;
+        const r = consumeCAT062Field(spec, body, off, body.length);
+        if (!r) return out;
+        const d = r.data;
+        off = r.next;
         if (spec.name === "010") { out.sac = d[0]; out.sic = d[1]; }
         else if (spec.name === "070") out.todSec = u24BE(d, 0) / 128;
         else if (spec.name === "105") {
@@ -438,6 +560,7 @@ function decodeCAT062(body) {
             // padded with low bytes 0 → trailing space which trim() drops).
             out.callsign = decodeCallsign(padded);
         }
+        else if (spec.name === "040") out.trackNumber = u16BE(d, 0);
     }
     return out;
 }
@@ -488,7 +611,7 @@ export function parseASTERIXBuffer(buffer) {
     }
 
     const rows = [];
-    let radarRef = DEFAULT_RADAR;
+    let lastRadarName = DEFAULT_RADAR.name;
     let counts = {cat048: 0, cat034: 0, cat062: 0, cat065: 0, other: 0, points: 0};
     const seenRadars = new Set();
 
@@ -497,9 +620,10 @@ export function parseASTERIXBuffer(buffer) {
             counts.cat048++;
             const m = decodeCAT048(rec.body);
             const key = `${m.sac}_${m.sic}`;
+            const radarRef = SAC_SIC_RADAR[key] || DEFAULT_RADAR;
             if (m.sac !== undefined) {
                 seenRadars.add(key);
-                if (SAC_SIC_RADAR[key]) radarRef = SAC_SIC_RADAR[key];
+                lastRadarName = radarRef.name;
             }
 
             if (m.rhoNm === undefined || m.thetaDeg === undefined) return;
@@ -571,7 +695,10 @@ export function parseASTERIXBuffer(buffer) {
             const m = decodeCAT062(rec.body);
             if (m.lat === undefined || m.lon === undefined) return;
             const trackID = m.callsign && m.callsign.length > 0
-                ? "C" + m.callsign : "C" + (m.sac ?? "?") + "_" + (m.sic ?? "?");
+                ? "C" + m.callsign
+                : (m.trackNumber !== undefined
+                    ? "T" + (m.sac ?? "?") + "_" + (m.sic ?? "?") + "_" + m.trackNumber
+                    : "C" + (m.sac ?? "?") + "_" + (m.sic ?? "?"));
             let timeMs = baseTimeMs;
             if (m.todSec !== undefined && baseTimeMs !== null) {
                 const dayMs = 86400 * 1000;
@@ -686,7 +813,7 @@ export function parseASTERIXBuffer(buffer) {
     console.log(`ASTERIX: parsed CAT048=${counts.cat048} CAT034=${counts.cat034} ` +
                 `CAT062=${counts.cat062} CAT065=${counts.cat065} other=${counts.other} ` +
                 `→ ${counts.points} positions (${dropped} duplicate-time dropped) ` +
-                `across ${seenRadars.size} radar(s) (reference: ${radarRef.name})`);
+                `across ${seenRadars.size} radar(s) (last reference: ${lastRadarName})`);
 
     return rows;
 }
@@ -696,7 +823,8 @@ export function isPCAP(buffer) {
     if (u8.length < 4) return false;
     const m = (u8[0] << 24) | (u8[1] << 16) | (u8[2] << 8) | u8[3];
     return m === (0xd4c3b2a1 | 0) || m === (0xa1b2c3d4 | 0) ||
-           m === (0x4d3cb2a1 | 0) || m === (0xa1b23c4d | 0);
+           m === (0x4d3cb2a1 | 0) || m === (0xa1b23c4d | 0) ||
+           m === (PCAPNG_SHB | 0);
 }
 
 // Cheap heuristic: a raw ASTERIX stream starts with a CAT byte (1..255)
