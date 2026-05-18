@@ -47,7 +47,7 @@ export class   SplineEditor extends PointEditor{
         }));
         this.spline.mesh.castShadow = true;
 
-        this.spline.mesh.layers.mask = LAYER.MASK_HELPERS;
+        this.spline.mesh.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
 
         this.scene.add(this.spline.mesh);
 

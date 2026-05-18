@@ -854,6 +854,16 @@ class CNode {
         return this;
     }
 
+    // Hook used by markMaximumVisibleDepth during recalculateCascade. Return
+    // false to short-circuit a cascade that arrived through `fromInput`,
+    // stopping both this node's recalc and any further descent through its
+    // outputs. Default is to always propagate. CNodeSwitch overrides this so
+    // changes to non-selected options don't drag the entire downstream graph
+    // along on every spline-point pointermove.
+    shouldRecalculateOnInputChange(fromInput) {
+        return true;
+    }
+
 }
 
 
@@ -868,11 +878,22 @@ function clearDepth(node) {
 // mark the depth of this node and all its children
 // a child can exist in multiple generations
 // and we only want to recalculate it at the deepest level
-function markMaximumVisibleDepth(node, depth) {
+//
+// `parent` is the node we descended from (null at the cascade root). A node
+// can veto being reached through a specific input by returning false from
+// `shouldRecalculateOnInputChange(parent)` — used by CNodeSwitch to stop a
+// change to an *inactive* option from cascading through to everything
+// downstream of the switch (which would otherwise re-run unrelated jet-graph
+// munge functions, motion analysis, etc. on every dragged spline point).
+function markMaximumVisibleDepth(node, depth, parent = null) {
     if ( !node.visible ) return; // skip hidden nodes
+    if (parent !== null && node.shouldRecalculateOnInputChange
+        && !node.shouldRecalculateOnInputChange(parent)) {
+        return;
+    }
     node.depth = Math.max(depth, node.depth);
     node.outputs.forEach(child => {
-        markMaximumVisibleDepth(child, depth + 1)
+        markMaximumVisibleDepth(child, depth + 1, node)
     })
 }
 

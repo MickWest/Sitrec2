@@ -51,7 +51,7 @@ export class PointEditorWidget extends EventDispatcher {
         this.group = new Group();
         
         this.raycaster = new Raycaster();
-        this.raycaster.layers.mask = LAYER.MASK_HELPERS;
+        this.raycaster.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.pointer = new Vector2();
         
         this.isDragging = false;
@@ -66,6 +66,7 @@ export class PointEditorWidget extends EventDispatcher {
         
         this.activeDragMode = null; // 'horizontal' or 'vertical'
         this.draggedHandle = null; // which handle was hit on pointerdown
+        this.activeView = null;    // CNodeView3D that owns the active press (mainView or lookView)
         
         this.handles = {
             disc: null,
@@ -97,7 +98,7 @@ export class PointEditorWidget extends EventDispatcher {
         
         this.handles.disc = new Mesh(discGeometry, discMaterial);
         this.handles.disc.userData.type = 'horizontal';
-        this.handles.disc.layers.mask = LAYER.MASK_HELPERS;
+        this.handles.disc.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.group.add(this.handles.disc);
         
         const arrowMaterial = new MeshBasicMaterial({
@@ -110,11 +111,11 @@ export class PointEditorWidget extends EventDispatcher {
         
         this.handles.arrowUp = createArrowGeometry();
         this.handles.arrowUp.userData.type = 'vertical_up';
-        this.handles.arrowUp.layers.mask = LAYER.MASK_HELPERS;
+        this.handles.arrowUp.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.handles.arrowUp.traverse(child => {
             if (child.isMesh) {
                 child.material = arrowMaterial;
-                child.layers.mask = LAYER.MASK_HELPERS;
+                child.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 child.userData.type = 'vertical_up';
             }
         });
@@ -122,11 +123,11 @@ export class PointEditorWidget extends EventDispatcher {
         
         this.handles.arrowDown = createArrowGeometry();
         this.handles.arrowDown.userData.type = 'vertical_down';
-        this.handles.arrowDown.layers.mask = LAYER.MASK_HELPERS;
+        this.handles.arrowDown.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.handles.arrowDown.traverse(child => {
             if (child.isMesh) {
                 child.material = arrowMaterial;
-                child.layers.mask = LAYER.MASK_HELPERS;
+                child.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
                 child.userData.type = 'vertical_down';
             }
         });
@@ -189,11 +190,11 @@ export class PointEditorWidget extends EventDispatcher {
         if (!this.object || !view || !view.pixelsToMeters) {
             return;
         }
-        
-        if (view.id !== "mainView") {
-            return;
-        }
-        
+
+        // Scale per-view: see updateCubeScales for the timing rationale —
+        // the render loop calls this once per view immediately before rendering
+        // that view, so the gizmo lands at the correct screen-pixel size in
+        // each view despite being a single shared Object3D.
         const discPixelSize = 40;
         const arrowPixelSize = 30;
         
@@ -207,22 +208,48 @@ export class PointEditorWidget extends EventDispatcher {
     }
     
     setupRaycasterForEvent(event) {
-        const view = ViewMan.get("mainView");
-        
+        // While a press is active, stay locked to the view it started in —
+        // the drag plane (setupHorizontalDragPlane) was built from that camera's
+        // ray, so swapping cameras mid-drag would yield wrong plane intersections.
+        // For hover/pointerdown, pick whichever editing-capable view the cursor
+        // is over (mainView preferred, then lookView).
+        let view = null;
+        if (this.isPointerDown && this.activeView) {
+            view = this.activeView;
+        } else {
+            for (const id of ["mainView", "lookView"]) {
+                const v = ViewMan.get(id, false);
+                if (v && mouseInViewOnly(v, event.clientX, event.clientY)) {
+                    view = v;
+                    break;
+                }
+            }
+        }
+
         if (!view) {
             return false;
         }
-        
-        if (!mouseInViewOnly(view, event.clientX, event.clientY)) {
-            return false;
-        }
-        
+
+        // Rescale handles for THIS view's pixel space before raycasting. The
+        // per-render scale ends up at whichever view rendered last, so between
+        // frames the handles may be sized for the wrong camera and clicks miss.
+        // Force matrixWorld too — raycasting reads matrixWorld and Three.js
+        // only rebuilds it during render.
+        this.updateHandleScales(view);
+        this.group.updateMatrixWorld(true);
+
         const [px, py] = mouseToViewNormalized(view, event.clientX, event.clientY);
         this.pointer.x = px;
         this.pointer.y = py;
-        
-        this.raycaster.setFromCamera(this.pointer, this.camera);
-        
+        this.raycaster.setFromCamera(this.pointer, view.camera);
+
+        // Remember which view this press belongs to so subsequent move events stay anchored.
+        // (isPointerDown is set AFTER this call in onPointerDown, so on the very first call
+        // of a press we still take the search branch above — that's where activeView gets set.)
+        if (!this.isPointerDown) {
+            this.activeView = view;
+        }
+
         return true;
     }
     
@@ -258,6 +285,16 @@ export class PointEditorWidget extends EventDispatcher {
         this.dragStartWorld.copy(this.object.position);
         this.dragStartLocalUp.copy(getLocalUpVector(this.object.position));
         
+        // Dispatch dragging-changed at pointerdown — not at first move — so
+        // the listener can disable ALL views' camera controls BEFORE the next
+        // pointermove fires. The lookView (or mainView) canvas captured this
+        // pointer on its handleMouseDown and would otherwise orbit its camera
+        // on the very first move event, before the existing dispatch in
+        // onPointerMove had a chance to flip enabled=false. That one-frame
+        // orbit was what made the dragged point appear to "flash away."
+        this.isDragging = true;
+        this.dispatchEvent({ type: 'dragging-changed', value: true });
+
         if (dragType === 'horizontal') {
             this.activeDragMode = 'horizontal';
             this.setupHorizontalDragPlane();
@@ -381,8 +418,9 @@ export class PointEditorWidget extends EventDispatcher {
         this.isDragging = false;
         this.activeDragMode = null;
         this.draggedHandle = null;
+        this.activeView = null;
         this.dragStartIntersect.set(0, 0, 0);
-        
+
         if (wasDragging) {
             this.dispatchEvent({ type: 'dragging-changed', value: false });
         }

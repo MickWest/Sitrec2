@@ -235,8 +235,9 @@ export const menuMethods = {
      * @param {number} mouseX - Screen X coordinate
      * @param {number} mouseY - Screen Y coordinate
      * @param {Vector3} groundPoint - The 3D point where the ground was clicked (in ECEF coordinates)
+     * @param {string} [sourceViewID] - ID of the view that triggered the menu (e.g. "mainView", "lookView")
      */
-    showGroundContextMenu(mouseX, mouseY, groundPoint) {
+    showGroundContextMenu(mouseX, mouseY, groundPoint, sourceViewID) {
         // Check if we're in track editing mode
         if (Globals.editingTrack) {
             this.showTrackEditingMenu(mouseX, mouseY, groundPoint);
@@ -350,7 +351,8 @@ export const menuMethods = {
                     startPoint: groundPoint,
                     name: "New Track",
                     editMode: true,
-                    startFrame: par.frame
+                    startFrame: par.frame,
+                    showInLook: sourceViewID === "lookView",
                 });
                 this.groundContextMenu = null;
                 menu.destroy();
@@ -378,7 +380,8 @@ export const menuMethods = {
                     objectID: objectID,
                     editMode: true,
                     color: 0x808080, // grey
-                    startFrame: par.frame
+                    startFrame: par.frame,
+                    showInLook: sourceViewID === "lookView",
                 });
 
 

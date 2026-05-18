@@ -391,6 +391,20 @@ class CNodeSwitch extends CNode {
     }
 
 
+    // A switch passes through only the currently-selected input. A change to
+    // any *other* input cannot affect the switch's output, so cascading
+    // through to downstream consumers is pure waste — and gets very expensive
+    // when those consumers are the jet-graph munge chain, motion-analysis
+    // graphs, etc. This is what made dragging a freshly-created synthetic
+    // track point feel heavy in the custom sitch: the new track was wired
+    // into cameraTrackSwitch / targetTrackSwitch / zoomToTrack as a
+    // selectable option, even though the switch was still pointing at the
+    // original track.
+    shouldRecalculateOnInputChange(fromInput) {
+        if (this.choice === null) return false;
+        return this.inputs[this.choice] === fromInput;
+    }
+
     // For a switch, we override both getValue and getValueFrame
     // to pass through to the selected input
     // so that input can handle the number of frames

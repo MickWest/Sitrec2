@@ -983,7 +983,7 @@ export const mouseMethods = {
                     if (Sit.isCustom) {
                         // Get the first intersection point (closest to camera)
                         const groundPoint = intersects[0].point;
-                        CustomManager.showGroundContextMenu(mouseX, mouseY, groundPoint);
+                        CustomManager.showGroundContextMenu(mouseX, mouseY, groundPoint, this.id);
                         return;
                     }
                 }

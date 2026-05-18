@@ -57,7 +57,18 @@ export class PointEditor {
         this.transformControl.addEventListener('change', () => setRenderOne());
         this.transformControl.addEventListener('dragging-changed', (event) => {
             controls.enabled = !event.value;
-            
+
+            // The widget can now be dragged from either main or look view, so
+            // we must also gate the other views' camera controls — otherwise
+            // a drag started in lookView would orbit the look camera while
+            // the user thinks they're moving the point. Toggle every visible
+            // 3D view's controls in lockstep with mainView's.
+            ViewMan.iterate((id, v) => {
+                if (v && v.controls && v.controls !== controls) {
+                    v.controls.enabled = !event.value;
+                }
+            });
+
             if (event.value) {
                 // Drag started - capture state
                 this.stateBeforeDrag = this.captureState();
@@ -98,7 +109,7 @@ export class PointEditor {
             depthWrite: false
         });
         this.positionIndicatorCone = new Mesh(coneGeometry, coneMaterial);
-        this.positionIndicatorCone.layers.mask = LAYER.MASK_HELPERS;
+        this.positionIndicatorCone.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.positionIndicatorCone.visible = false; // Hidden by default
         this.scene.add(this.positionIndicatorCone);
 
@@ -120,6 +131,7 @@ export class PointEditor {
             position: `pointEditor_measure_${uniqueId}`,
             color: "#00FF00",
             text: "AGL",
+            layers: LAYER.MASK_MAIN | LAYER.MASK_LOOK,
         });
         
         // Initially hide the measurement
@@ -329,27 +341,29 @@ export class PointEditor {
      * Returns true if the mouse is in the main view and raycaster is ready, false otherwise
      */
     setupRaycasterForEvent(event) {
-        const view = ViewMan.get("mainView");
-        
-        // Robust check: if mainView doesn't exist, do nothing
-        if (!view) {
-            return false;
+        // Try mainView first, then lookView — clicks/hovers in either view should
+        // be able to interact with the editing controls. Each view supplies its
+        // own camera so the raycaster's ray comes out of the correct viewpoint.
+        for (const id of ["mainView", "lookView"]) {
+            const view = ViewMan.get(id, false);
+            if (!view) continue;
+            if (!mouseInViewOnly(view, event.clientX, event.clientY)) continue;
+
+            // Rescale the cubes for THIS view's pixel space before raycasting.
+            // The per-render scale is whichever view rendered last (typically
+            // lookView), so without this the raycaster would miss the cubes in
+            // mainView between frames. Force matrixWorld too — raycasting reads
+            // matrixWorld and Three.js only rebuilds it during render.
+            this.updateCubeScales(view);
+            for (const cube of this.splineHelperObjects) cube.updateMatrixWorld();
+
+            const [px, py] = mouseToViewNormalized(view, event.clientX, event.clientY);
+            this.pointer.x = px;
+            this.pointer.y = py;
+            this.raycaster.setFromCamera(this.pointer, view.camera);
+            return true;
         }
-
-        // Check if mouse is within the main view bounds
-        if (!mouseInViewOnly(view, event.clientX, event.clientY)) {
-            return false;
-        }
-
-        // Convert to view-normalized coordinates
-        const [px, py] = mouseToViewNormalized(view, event.clientX, event.clientY);
-        this.pointer.x = px;
-        this.pointer.y = py;
-
-        // Set up raycaster with the normalized coordinates
-        this.raycaster.setFromCamera(this.pointer, this.camera);
-        
-        return true;
+        return false;
     }
 
     /**
@@ -483,7 +497,7 @@ export class PointEditor {
 
         object.castShadow = true;
         object.receiveShadow = true;
-        object.layers.mask = LAYER.MASK_HELPERS;
+        object.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
         this.scene.add(object);
 
         return object;
@@ -707,13 +721,13 @@ export class PointEditor {
         if (!view || !view.pixelsToMeters) {
             return;
         }
-        
-        if (view.id !== "mainView") {
-            return;
-        }
-        
+
+        // Scale per-view: updateTrackPositionIndicator() is invoked inside each
+        // view's render method right before its renderTargetAndEffects call, so
+        // setting the scale here for mainView, then again for lookView, lets the
+        // same cubes appear at the correct pixel size in both views in one frame.
         const cubePixelSize = 20;
-        
+
         for (let cube of this.splineHelperObjects) {
             const cubeMeters = view.pixelsToMeters(cube.position, cubePixelSize);
             cube.scale.set(cubeMeters, cubeMeters, cubeMeters);

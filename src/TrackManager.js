@@ -1493,6 +1493,7 @@ class CTrackManager extends CManager {
      * @param {number} options.color - Track color as hex (default: 0xffff00)
      * @param {number} options.lineWidth - Track line width (default: 1)
      * @param {number} options.startFrame - Frame number for the initial point (default: 0)
+     * @param {boolean} options.showInLook - Whether the track should also render in the look view (default: false)
      * @returns {Object} The created track object
      */
     addSyntheticTrack(options) {
@@ -1503,6 +1504,7 @@ class CTrackManager extends CManager {
         const colorHex = options.color || 0xffff00;
         const lineWidth = options.lineWidth || 1;
         const startFrame = options.startFrame !== undefined ? options.startFrame : 0;
+        const showInLook = !!options.showInLook;
         
         // Use provided shortName or generate unique short name for display (like "synth_01_d")
         const shortName = options.shortName || `synth_${String(trackNumber + 1).padStart(2, '0')}_d`;
@@ -1773,7 +1775,19 @@ class CTrackManager extends CManager {
             splineEditor.setEnable(true);
             Globals.editingTrack = trackOb;
         }
-        
+
+        // Show-in-look-view toggle. Synthetic tracks default to MASK_HELPERS
+        // (main view only); enabling this adds the LOOK layer bit so the
+        // displayTrack renders in the look view too.
+        trackOb.showInLook = showInLook;
+        if (showInLook) {
+            displayTrack.setLayerBit(LAYER.LOOK, true);
+        }
+        guiFolder.add(trackOb, "showInLook").name(t("misc.showInLookView.label")).listen().onChange((value) => {
+            displayTrack.setLayerBit(LAYER.LOOK, value);
+            setRenderOne(true);
+        });
+
         // Add delete button to the folder
         const dummy = {
             deleteTrack: () => {
@@ -1979,6 +1993,7 @@ class CTrackManager extends CManager {
                     editMode: trackOb.editMode,
                     constantSpeed: trackOb.constantSpeed,
                     extrapolateTrack: trackOb.extrapolateTrack,
+                    showInLook: !!trackOb.showInLook,
                     altitudeLock: trackOb.altitudeLock,
                     altitudeLockAGL: trackOb.altitudeLockAGL,
                     color: trackOb.trackColor ? 
@@ -2053,6 +2068,7 @@ class CTrackManager extends CManager {
                     editMode: false, // Will be restored by mods
                     color: trackData.color,
                     lineWidth: trackData.lineWidth,
+                    showInLook: !!trackData.showInLook,
                     // Preserve the original IDs so mods can be applied correctly
                     trackID: trackData.trackID,
                     displayTrackID: trackData.displayTrackID,
