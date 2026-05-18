@@ -321,6 +321,14 @@ const en = {
             label: "Brightness Threshold",
             tooltip: "Brightness threshold (0-255). Used in Center on Bright/Dark modes",
         },
+        trackingColor: {
+            label: "Tracking Color",
+            tooltip: "Target color for Center on Color mode. Pixels within Color Distance of this color contribute to the centroid",
+        },
+        colorDistance: {
+            label: "Color Distance",
+            tooltip: "Max RGB Euclidean distance (0-442) a pixel may be from Tracking Color and still contribute. Used in Center on Color mode",
+        },
         status: {
             loadingJsfeat: "Loading jsfeat...",
             loadingOpenCv: "Loading OpenCV...",
@@ -711,6 +719,7 @@ const en = {
             showCompassElevation: { label: "Show Compass Elevation", tooltip: "Show compass elevation (angle above the local ground plane) in addition to bearing (azimuth)" },
             filterTracks: { label: "Filter Tracks", tooltip: "Show/hide tracks based on altitude, direction, or frustum intersection" },
             removeAllTracks: { label: "Remove All Tracks", tooltip: "Remove all tracks from the scene\nThis will not remove the objects, just the tracks\nYou can add them back later by dragging and dropping the files again" },
+            addTrackFromCameraLOS: { label: "Track from Camera LOS", tooltip: "Create a two-point synthetic track along the current camera's line of sight.\nFirst point is at the camera, second point is where the LOS hits the ground,\nor 300 miles along the LOS if it does not hit the ground." },
         },
         objects: {
             globalScale: { label: "Global Scale", tooltip: "Scale factor applied to all 3D objects in the scene - useful for finding things. Set back to 1 for real size" },

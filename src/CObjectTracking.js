@@ -10,6 +10,7 @@ import {drawVideoWatermark, ExportProgressWidget, getExportPrefix} from "./utils
 import {drawAttributionOnCanvas} from "./AttributionOverlay";
 import {isLocal} from "./configUtils";
 import {t} from "./i18n";
+import {Color} from "three";
 
 let cv = null;
 
@@ -85,6 +86,14 @@ class ObjectTracker {
 
         this.brightnessThreshold = 128;  // 0-255, used by centerOnBright/centerOnDark methods
 
+        // Used by centerOnColor: target color (Three.js Color) and the maximum
+        // RGB Euclidean distance (0..441) a pixel may be from that color and
+        // still contribute to the centroid. The weight is (distance - colorDistance),
+        // so pixels closer to the target color dominate, exactly mirroring the
+        // (brightness - threshold) weight used by Center on Bright.
+        this.trackingColor = new Color(0xff0000);
+        this.colorDistance = 80;
+
         // Feature size in image pixels — Gaussian sigma applied before peak
         // detection. Higher = smoother / larger features, smaller noise
         // suppressed. Range 2..20 in the GUI.
@@ -99,6 +108,7 @@ class ObjectTracker {
         //   'opticalflow'     — jsfeat Lucas-Kanade
         //   'centerOnBright'  — brightness-weighted centroid above threshold
         //   'centerOnDark'    — brightness-weighted centroid below threshold
+        //   'centerOnColor'   — color-similarity-weighted centroid within colorDistance
         //   'highPeak'        — local-maximum peak (blob-shaped, motion-extrapolated)
         //   'lowPeak'         — local-minimum peak (dark blob)
         //   'sam2'            — server-side SAM2 segmentation
@@ -532,9 +542,12 @@ class ObjectTracker {
         return null;
     }
 
-    // Calculate centroid (center of mass) of bright pixels within radius
-    // Returns {x, y} or null if no bright pixels found
-    calculateBrightCentroid(image, centerX, centerY, radius) {
+    // Generic weighted-centroid pass. Returns {x, y} in image coordinates
+    // (weighted by `weightFn(r, g, b)`) or null if no pixel contributed.
+    // weightFn must return 0 for "ignore", positive for "include with weight".
+    // Used by all three centroid methods (bright, dark, color) so the ROI
+    // extraction, circular gate, and centroid math live in one place.
+    calculateWeightedCentroid(image, centerX, centerY, radius, weightFn) {
         const imgWidth = image.width || image.videoWidth;
         const imgHeight = image.height || image.videoHeight;
 
@@ -554,126 +567,82 @@ class ObjectTracker {
         const ctx = canvas.getContext('2d');
         ctx.drawImage(image, 0, 0, imgWidth, imgHeight);
 
-        // Only get pixels from the ROI rectangle
         const imageData = ctx.getImageData(minX, minY, roiWidth, roiHeight);
         const data = imageData.data;
 
-        let totalBrightness = 0;
+        let totalWeight = 0;
         let weightedX = 0;
         let weightedY = 0;
         let pixelCount = 0;
 
         const radiusSquared = radius * radius;
 
-        // Scan pixels within the circular region
-        // Note: coordinates are relative to ROI, need to convert to image coordinates
         for (let roiY = 0; roiY < roiHeight; roiY++) {
             for (let roiX = 0; roiX < roiWidth; roiX++) {
-                // Convert ROI coordinates to image coordinates
                 const imgX = minX + roiX;
                 const imgY = minY + roiY;
 
-                // Check if pixel is within circular radius
+                // Circular gate (the ROI rectangle is larger than the disk)
                 const dx = imgX - centerX;
                 const dy = imgY - centerY;
                 if (dx * dx + dy * dy > radiusSquared) continue;
 
-                // Index into the ROI data (not full image)
                 const index = (roiY * roiWidth + roiX) * 4;
-                const r = data[index];
-                const g = data[index + 1];
-                const b = data[index + 2];
-
-                // Calculate brightness (luminance)
-                const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
-
-                if (brightness > this.brightnessThreshold) {
-                    // Weight by brightness for better centering on bright core
-                    const weight = brightness - this.brightnessThreshold;
-                    totalBrightness += weight;
-                    weightedX += imgX * weight;
-                    weightedY += imgY * weight;
+                const w = weightFn(data[index], data[index + 1], data[index + 2]);
+                if (w > 0) {
+                    totalWeight += w;
+                    weightedX += imgX * w;
+                    weightedY += imgY * w;
                     pixelCount++;
                 }
             }
         }
 
-        // Calculate centroid
-        if (totalBrightness > 0 && pixelCount > 0) {
+        if (totalWeight > 0 && pixelCount > 0) {
             return {
-                x: weightedX / totalBrightness,
-                y: weightedY / totalBrightness
+                x: weightedX / totalWeight,
+                y: weightedY / totalWeight,
             };
         }
-
         return null;
     }
 
-    // Calculate centroid (center of mass) of dark pixels within radius
-    // Returns {x, y} or null if no dark pixels found
+    // Centroid weight rules — each one returns 0 for "skip" or a positive
+    // weight that biases the centroid toward the most-matching pixels.
+    _brightWeight(r, g, b) {
+        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+        return brightness > this.brightnessThreshold ? brightness - this.brightnessThreshold : 0;
+    }
+
+    _darkWeight(r, g, b) {
+        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+        return brightness < this.brightnessThreshold ? this.brightnessThreshold - brightness : 0;
+    }
+
+    _colorWeight(r, g, b) {
+        const tr = this.trackingColor.r * 255;
+        const tg = this.trackingColor.g * 255;
+        const tb = this.trackingColor.b * 255;
+        const dr = r - tr, dg = g - tg, db = b - tb;
+        const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+        return dist < this.colorDistance ? this.colorDistance - dist : 0;
+    }
+
+    // Thin wrappers — preserved so existing call sites keep working.
+    // Each just supplies the appropriate weight rule.
+    calculateBrightCentroid(image, centerX, centerY, radius) {
+        return this.calculateWeightedCentroid(image, centerX, centerY, radius,
+            (r, g, b) => this._brightWeight(r, g, b));
+    }
+
     calculateDarkCentroid(image, centerX, centerY, radius) {
-        const imgWidth = image.width || image.videoWidth;
-        const imgHeight = image.height || image.videoHeight;
+        return this.calculateWeightedCentroid(image, centerX, centerY, radius,
+            (r, g, b) => this._darkWeight(r, g, b));
+    }
 
-        const minX = Math.max(0, Math.floor(centerX - radius));
-        const maxX = Math.min(imgWidth - 1, Math.ceil(centerX + radius));
-        const minY = Math.max(0, Math.floor(centerY - radius));
-        const maxY = Math.min(imgHeight - 1, Math.ceil(centerY + radius));
-
-        const roiWidth = maxX - minX + 1;
-        const roiHeight = maxY - minY + 1;
-
-        const canvas = document.createElement('canvas');
-        canvas.width = imgWidth;
-        canvas.height = imgHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(image, 0, 0, imgWidth, imgHeight);
-
-        const imageData = ctx.getImageData(minX, minY, roiWidth, roiHeight);
-        const data = imageData.data;
-
-        let totalDarkness = 0;
-        let weightedX = 0;
-        let weightedY = 0;
-        let pixelCount = 0;
-
-        const radiusSquared = radius * radius;
-
-        for (let roiY = 0; roiY < roiHeight; roiY++) {
-            for (let roiX = 0; roiX < roiWidth; roiX++) {
-                const imgX = minX + roiX;
-                const imgY = minY + roiY;
-
-                const dx = imgX - centerX;
-                const dy = imgY - centerY;
-                if (dx * dx + dy * dy > radiusSquared) continue;
-
-                const index = (roiY * roiWidth + roiX) * 4;
-                const r = data[index];
-                const g = data[index + 1];
-                const b = data[index + 2];
-
-                const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
-
-                if (brightness < this.brightnessThreshold) {
-                    // Weight by darkness (inverse brightness) for better centering on dark core
-                    const weight = this.brightnessThreshold - brightness;
-                    totalDarkness += weight;
-                    weightedX += imgX * weight;
-                    weightedY += imgY * weight;
-                    pixelCount++;
-                }
-            }
-        }
-
-        if (totalDarkness > 0 && pixelCount > 0) {
-            return {
-                x: weightedX / totalDarkness,
-                y: weightedY / totalDarkness
-            };
-        }
-
-        return null;
+    calculateColorCentroid(image, centerX, centerY, radius) {
+        return this.calculateWeightedCentroid(image, centerX, centerY, radius,
+            (r, g, b) => this._colorWeight(r, g, b));
     }
 
     trackFrame(frame, force = false) {
@@ -729,6 +698,9 @@ class ObjectTracker {
                     break;
                 case 'centerOnDark':
                     this.trackDarkCentroid(frame, img, pp);
+                    break;
+                case 'centerOnColor':
+                    this.trackColorCentroid(frame, img, pp);
                     break;
                 case 'highPeak':
                     this.trackPeak(frame, img, pp, true);
@@ -918,9 +890,11 @@ class ObjectTracker {
         }
     }
 
-    trackBrightCentroid(frame, currImage, prevPos) {
-        const centroid = this.calculateBrightCentroid(currImage, prevPos.x, prevPos.y, this.trackRadius);
-
+    // Shared "compute centroid → commit position" wrapper for all three
+    // centroid-based methods. Falls back to the previous position when no
+    // pixel passed the weight rule, matching the legacy behavior.
+    _trackCentroid(frame, currImage, prevPos, calcFn) {
+        const centroid = calcFn.call(this, currImage, prevPos.x, prevPos.y, this.trackRadius);
         if (centroid) {
             this.trackX = centroid.x;
             this.trackY = centroid.y;
@@ -928,24 +902,20 @@ class ObjectTracker {
             this.trackX = prevPos.x;
             this.trackY = prevPos.y;
         }
-
         this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
         this.updateSliderStatus();
     }
 
+    trackBrightCentroid(frame, currImage, prevPos) {
+        this._trackCentroid(frame, currImage, prevPos, this.calculateBrightCentroid);
+    }
+
     trackDarkCentroid(frame, currImage, prevPos) {
-        const centroid = this.calculateDarkCentroid(currImage, prevPos.x, prevPos.y, this.trackRadius);
+        this._trackCentroid(frame, currImage, prevPos, this.calculateDarkCentroid);
+    }
 
-        if (centroid) {
-            this.trackX = centroid.x;
-            this.trackY = centroid.y;
-        } else {
-            this.trackX = prevPos.x;
-            this.trackY = prevPos.y;
-        }
-
-        this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
-        this.updateSliderStatus();
+    trackColorCentroid(frame, currImage, prevPos) {
+        this._trackCentroid(frame, currImage, prevPos, this.calculateColorCentroid);
     }
 
     trackTemplateMatch(frame, currImage, prevPos, videoData) {
@@ -1161,43 +1131,52 @@ class ObjectTracker {
         this.updateSliderStatus();
     }
     
+    // Returns the per-pixel weight function used by the centroid algorithm
+    // for the current tracking method, or null if the method has no weight
+    // rule (template/optical flow/peak/sam2 — no preview to draw).
+    _currentWeightFn() {
+        switch (this.trackingMethod) {
+            case 'centerOnBright': return (r, g, b) => this._brightWeight(r, g, b);
+            case 'centerOnDark':   return (r, g, b) => this._darkWeight(r, g, b);
+            case 'centerOnColor':  return (r, g, b) => this._colorWeight(r, g, b);
+            default:               return null;
+        }
+    }
+
     renderThresholdPreview(ctx, width, height) {
         const videoData = this.videoView?.videoData;
         if (!videoData) return;
-        
+
         const frame = Math.floor(par.frame);
         const image = videoData.getImage(frame);
         if (!image || !image.width) return;
-        
+
+        // Pick the weight rule for whichever centroid method is active.
+        // Pixels with weight > 0 light up white (i.e. they'd contribute to the
+        // centroid), everything else goes black — so the preview shows exactly
+        // the pixel set the algorithm would consider.
+        const weightFn = this._currentWeightFn();
+        if (!weightFn) return;
+
         const imgWidth = image.width || image.videoWidth;
         const imgHeight = image.height || image.videoHeight;
-        
+
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = imgWidth;
         tempCanvas.height = imgHeight;
         const tempCtx = tempCanvas.getContext('2d');
         tempCtx.drawImage(image, 0, 0, imgWidth, imgHeight);
-        
+
         const imageData = tempCtx.getImageData(0, 0, imgWidth, imgHeight);
         const data = imageData.data;
-        
+
         for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
-            
-            if (brightness > this.brightnessThreshold) {
-                data[i] = 255;
-                data[i + 1] = 255;
-                data[i + 2] = 255;
-            } else {
-                data[i] = 0;
-                data[i + 1] = 0;
-                data[i + 2] = 0;
-            }
+            const on = weightFn(data[i], data[i + 1], data[i + 2]) > 0 ? 255 : 0;
+            data[i]     = on;
+            data[i + 1] = on;
+            data[i + 2] = on;
         }
-        
+
         tempCtx.putImageData(imageData, 0, 0);
         ctx.drawImage(tempCanvas, 0, 0, width, height);
     }
@@ -1451,6 +1430,12 @@ class ObjectTracker {
     clearTrack() {
         this.trackedPositions.clear();
         this.manualKeyframes.clear();
+        // Recenter the cursor to the middle of the (original-coords) video so
+        // a freshly-cleared track has a sane seed point. The current frame
+        // gets that center as its sole keyframe.
+        const {width, height} = this.getImageDimensions();
+        this.trackX = width / 2;
+        this.trackY = height / 2;
         const frame = Math.floor(par.frame);
         this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
         this.updateSliderStatus();
@@ -1592,7 +1577,7 @@ function toggleStartTracking() {
     }
 
     // Pure-JS methods don't need external libraries
-    const noLibMethods = ['centerOnBright', 'centerOnDark', 'highPeak', 'lowPeak'];
+    const noLibMethods = ['centerOnBright', 'centerOnDark', 'centerOnColor', 'highPeak', 'lowPeak'];
     if (noLibMethods.includes(objectTracker.trackingMethod)) {
         objectTracker.startTracking();
         if (startMenuItem) startMenuItem.name(t("tracking.start.stopLabel"));
@@ -2170,6 +2155,7 @@ export function addObjectTrackingMenu() {
         'Optical Flow': 'opticalflow',
         'Center on Bright': 'centerOnBright',
         'Center on Dark': 'centerOnDark',
+        'Center on Color': 'centerOnColor',
         'High Peak': 'highPeak',
         'Low Peak': 'lowPeak',
         ...(isLocal ? {'SAM2 (Meta)': 'sam2'} : {}),
@@ -2256,6 +2242,71 @@ export function addObjectTrackingMenu() {
         .listen()
         .perm();
 
+    // Center on Color controls. Same getter/setter shape as the brightness
+    // threshold so listen() can keep the GUI in sync if the tracker is
+    // created or replaced after the menu is built.
+    const colorParams = {
+        get trackingColor() { return objectTracker?.trackingColor ?? new Color(0xff0000); },
+        set trackingColor(v) {
+            if (objectTracker) {
+                if (v instanceof Color) {
+                    objectTracker.trackingColor.copy(v);
+                } else {
+                    objectTracker.trackingColor = new Color(v);
+                }
+                setRenderOne(true);
+            }
+        }
+    };
+
+    trackingFolder.addColor(colorParams, 'trackingColor')
+        .name(t("tracking.trackingColor.label"))
+        .tooltip(t("tracking.trackingColor.tooltip"))
+        .onChange(() => {
+            if (objectTracker) {
+                objectTracker.thresholdPreview = true;
+                setRenderOne(true);
+            }
+        })
+        .onFinishChange(() => {
+            if (objectTracker) {
+                objectTracker.thresholdPreview = false;
+                setRenderOne(true);
+            }
+        })
+        .listen()
+        .perm();
+
+    const colorDistanceParams = {
+        get colorDistance() { return objectTracker?.colorDistance ?? 80; },
+        set colorDistance(v) {
+            if (objectTracker) {
+                objectTracker.colorDistance = v;
+                setRenderOne(true);
+            }
+        }
+    };
+
+    // Max RGB Euclidean distance is sqrt(3) * 255 ≈ 441; rounded to 442 so the
+    // slider can hit "everything matches" exactly.
+    trackingFolder.add(colorDistanceParams, 'colorDistance', 0, 442, 1)
+        .name(t("tracking.colorDistance.label"))
+        .tooltip(t("tracking.colorDistance.tooltip"))
+        .onChange(() => {
+            if (objectTracker) {
+                objectTracker.thresholdPreview = true;
+                setRenderOne(true);
+            }
+        })
+        .onFinishChange(() => {
+            if (objectTracker) {
+                objectTracker.thresholdPreview = false;
+                setRenderOne(true);
+            }
+        })
+        .listen()
+        .perm();
+
     const showMaxKeyframesParams = {
         get showMaxKeyframes() { return objectTracker?.showMaxKeyframes ?? 20; },
         set showMaxKeyframes(v) {
@@ -2294,6 +2345,8 @@ export function serializeAutoTracking() {
         trackRadius: objectTracker.trackRadius,
         searchRadius: objectTracker.searchRadius,
         brightnessThreshold: objectTracker.brightnessThreshold,
+        trackingColor: "#" + objectTracker.trackingColor.getHexString(),
+        colorDistance: objectTracker.colorDistance,
         featureSize: objectTracker.featureSize,
         trackingMethod: objectTracker.trackingMethod,
         showMaxKeyframes: objectTracker.showMaxKeyframes,
@@ -2349,6 +2402,10 @@ export async function deserializeAutoTracking(data) {
     objectTracker.trackRadius = data.trackRadius ?? 30;
     objectTracker.searchRadius = data.searchRadius ?? 50;
     objectTracker.brightnessThreshold = data.brightnessThreshold ?? 128;
+    if (data.trackingColor !== undefined) {
+        objectTracker.trackingColor = new Color(data.trackingColor);
+    }
+    objectTracker.colorDistance = data.colorDistance ?? 80;
     objectTracker.featureSize = data.featureSize ?? 1.5;
     objectTracker.showMaxKeyframes = data.showMaxKeyframes ?? 20;
     // Legacy migration: pre-2.50.7 saves used separate centerOnBright/Dark

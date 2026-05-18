@@ -58,7 +58,7 @@ import {ViewMan} from "./CViewManager";
 import {EventManager} from "./CEventManager";
 import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
-import {DebugArrowAB, elevationAtLL} from "./threeExt";
+import {DebugArrowAB, elevationAtLL, intersectSurface} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
@@ -111,7 +111,7 @@ import {
     gimbalStepTrackLOSNodes,
     gimbalStepTraverse,
 } from "./GimbalCustomSetup";
-import {Color} from "three";
+import {Color, Vector3} from "three";
 
 // Mixin modules — these files export objects of methods that are merged into
 // CCustomManager.prototype at the bottom of this file. Splitting the class
@@ -1114,6 +1114,39 @@ export class CCustomManager {
 
     async filterTracks() {
         await showPostLoadFilterDialog();
+    }
+
+    addTrackFromCameraLOS() {
+        const cameraNode = NodeMan.get("lookCamera", false) || NodeMan.get("mainCamera", false);
+        if (!cameraNode || !cameraNode.camera) {
+            console.warn("addTrackFromCameraLOS: no camera node found");
+            return;
+        }
+
+        const camera = cameraNode.camera;
+        camera.updateMatrixWorld();
+
+        const start = camera.position.clone();
+        const forward = new Vector3();
+        camera.getWorldDirection(forward);
+
+        // 300 statute miles in meters
+        const FAR_DISTANCE = 300 * 1609.344;
+        const surfaceHit = intersectSurface(start, forward);
+        const end = surfaceHit ?? start.clone().add(forward.clone().multiplyScalar(FAR_DISTANCE));
+
+        const lastFrame = Math.max(0, (Sit.frames ?? 1) - 1);
+        TrackManager.addSyntheticTrack({
+            name: "Camera LOS",
+            curveType: "linear",
+            editMode: false,
+            color: 0xff00ff,
+            initialPoints: [
+                [0,         start.x, start.y, start.z],
+                [lastFrame, end.x,   end.y,   end.z],
+            ],
+        });
+        setRenderOne(true);
     }
 
     calculateBestPairs() {

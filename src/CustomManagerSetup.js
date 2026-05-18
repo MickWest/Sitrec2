@@ -1238,6 +1238,11 @@ export const setupMethods = {
             .moveToFirst()
             .tooltip(t("custom.showHide.filterTracks.tooltip"))
 
+        guiMenus.contents.add(this, "addTrackFromCameraLOS")
+            .name(t("custom.showHide.addTrackFromCameraLOS.label"))
+            .moveToFirst()
+            .tooltip(t("custom.showHide.addTrackFromCameraLOS.tooltip"))
+
         guiMenus.contents.add(this, "removeAllTracks")
             .name(t("custom.showHide.removeAllTracks.label"))
             .moveToFirst()
