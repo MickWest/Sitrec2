@@ -49,6 +49,67 @@ import {findRootTrack} from "../FindRootTrack";
 // UIChangedAz to a non-cyclic module or use a lazy require at call site.
 
 export const mouseMethods = {
+    // Raycast the terrain (with a globe-sphere fallback) and snap
+    // cursorSprite.position + controls.target to the hit point. Honours focus
+    // tracks the same way the old per-mousemove path did. Used by onMouseMove
+    // (only when something needs continuous updates) and onMouseDown (so every
+    // click sees a fresh cursor position).
+    _refreshCursorFromMouse(mouseRay, options = {}) {
+        this.raycaster.setFromCamera(mouseRay, this.camera);
+
+        let target;
+        let targetIsTerrain = false;
+
+        if (NodeMan.exists("TerrainModel")) {
+            const terrainNode = NodeMan.get("TerrainModel");
+            const firstIntersect = terrainNode.getClosestIntersect(this.raycaster);
+            if (firstIntersect) {
+                target = firstIntersect.point.clone();
+                targetIsTerrain = true;
+            }
+        }
+        if (target === undefined) {
+            const possibleTarget = V3();
+            const dragSphere = new Sphere(earthCenterECEF(), Globals.equatorRadius);
+            if (this.raycaster.ray.intersectSphere(dragSphere, possibleTarget)) {
+                target = possibleTarget.clone();
+            }
+        }
+
+        const focusTrackActive = options.focusTrackActive
+            ?? (this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName));
+        let scrubbedFocusTrack = false;
+
+        if (focusTrackActive) {
+            const focusTrackNode = NodeMan.get(this.focusTrackName);
+            const closestFrame = focusTrackNode.closestFrameToRay(this.raycaster.ray);
+            target = focusTrackNode.p(closestFrame);
+            targetIsTerrain = false;
+
+            // Holding command/windows scrubs along the track.
+            if (isKeyHeld("meta")) {
+                par.frame = closestFrame;
+                scrubbedFocusTrack = true;
+                setRenderOne(true);
+            }
+        }
+
+        if (target === undefined) return;
+
+        this.cursorSprite.position.copy(target);
+
+        if (this.controls && (!focusTrackActive || scrubbedFocusTrack)) {
+            this.controls.target = target;
+            this.controls.targetIsTerrain = targetIsTerrain;
+        }
+
+        if (this.showLOSArrow) {
+            DebugArrowAB("LOS from Mouse", this.camera.position, target, 0xffff00, true, GlobalScene, 0);
+        }
+
+        setRenderOne(true);
+    },
+
     onMouseUp() {
         if (!this.mouseEnabled) return;
         this.dragMode = DRAG.NONE;
@@ -62,7 +123,14 @@ export const mouseMethods = {
         // Convert screen coordinates to NDC for raycasting
         const mouseRay = screenToNDC(this, mouseX, mouseY);
 
-        // this.cursorSprite.position
+        // Refresh cursorSprite.position / controls.target from the current mouse
+        // ray before any downstream code reads them. onMouseMove no longer does
+        // this every move, so click-time consumers (middle-click spline insert
+        // below, CameraControls.handleMouseDown's cursorLLA label, and the
+        // orbit pivot for the drag that's about to start) need a fresh hit here.
+        if (this.camera && mouseInViewOnly(this, mouseX, mouseY)) {
+            this._refreshCursorFromMouse(mouseRay);
+        }
 
         if (event.button === 1 && this.camera) {
             console.log("Center Click")
@@ -92,15 +160,6 @@ export const mouseMethods = {
         this.mouseDown = true;
 //        console.log(this.id+"Mouse Down = "+this.mouseDown+ " Drag mode = "+this.dragMode)
 
-        // TODO, here I've hard-coded a check for mainView
-        // but we might want similar controls in other views
-        if (this.id === "mainView" && this.camera && mouseInViewOnly(this, mouseX, mouseY)) {
-            this.raycaster.setFromCamera(mouseRay, this.camera);
-            var intersects = this.raycaster.intersectObjects(this.scene.children, true);
-
-            // debugText = ""
-
-        }
         if (this.dragMode === 0 && this.controls && mouseInViewOnly(this, mouseX, mouseY)) {
 //            console.log ("Click re-Enabled "+this.id)
             // debugger
@@ -180,71 +239,25 @@ export const mouseMethods = {
             }
         } else if (this.visible && this.camera && mouseInViewOnly(this, mouseX, mouseY)) {
 
-            // moving mouse around ANY view with a camera
-
-            this.raycaster.setFromCamera(mouseRay, this.camera);
-
-            var closestPoint = V3()
-            var found = false;
-            if (NodeMan.exists("TerrainModel")) {
-                let terrainNode = NodeMan.get("TerrainModel")
-                const firstIntersect = terrainNode.getClosestIntersect(this.raycaster)
-                if (firstIntersect) {
-                    closestPoint.copy(firstIntersect.point)
-                    found = true;
-                }
+            // moving mouse around ANY view with a camera.
+            //
+            // The cursor raycast is only useful for things that read it each
+            // frame: the LOS debug arrow, focus-track snapping, and held
+            // position keys (C=camera, X=target, L=lock-all) that drive
+            // CNodePositionLLA.update() via getCursorPositionFromTopView().
+            // Everything else (orbit pivot, cursorLLA label, spline editors)
+            // reads on mouseDown — refreshed there instead. Skipping the
+            // raycast also skips setRenderOne(true), avoiding a full-scene
+            // redraw on every hover when nothing visible depends on it.
+            const focusTrackActive =
+                this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
+            const positionKeyHeld =
+                isKeyHeld('c') || isKeyHeld('x') || isKeyHeld('l');
+            if (!this.showLOSArrow && !focusTrackActive && !positionKeyHeld) {
+                return;
             }
 
-            let target;
-            let targetIsTerrain = false;
-
-            if (found) {
-                targetIsTerrain = true;
-                target = closestPoint.clone();
-            } else {
-                var possibleTarget = V3()
-                this.raycaster.setFromCamera(mouseRay, this.camera);
-                const dragSphere = new Sphere(earthCenterECEF(), Globals.equatorRadius /* + f2m(this.defaultTargetHeight) */)
-                if (this.raycaster.ray.intersectSphere(dragSphere, possibleTarget)) {
-                    target = possibleTarget.clone()
-                }
-            }
-
-            const focusTrackActive = this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
-            let scrubbedFocusTrack = false;
-
-            // If a focus track is active then keep the cursor snapped to that track.
-            // Avoid hover-driven camera retargeting here because it can temporarily desync
-            // tiles culling from the final camera target for this frame.
-            if (focusTrackActive) {
-                const focusTrackNode = NodeMan.get(this.focusTrackName);
-                const closestFrame = focusTrackNode.closestFrameToRay(this.raycaster.ray);
-
-                target = focusTrackNode.p(closestFrame);
-                targetIsTerrain = false;
-
-                // Holding command/windows allows explicit scrub along the track.
-                if (isKeyHeld("meta")) {
-                    par.frame = closestFrame;
-                    scrubbedFocusTrack = true;
-                    setRenderOne(true);
-                }
-            }
-
-
-            if (target !== undefined) {
-                this.cursorSprite.position.copy(target)
-
-                if (this.controls && (!focusTrackActive || scrubbedFocusTrack)) {
-                    this.controls.target = target
-                    this.controls.targetIsTerrain = targetIsTerrain;
-                }
-
-                if (this.showLOSArrow) {
-                    DebugArrowAB("LOS from Mouse", this.camera.position, target, 0xffff00, true, GlobalScene, 0)
-                }
-                setRenderOne(true);
-            }
+            this._refreshCursorFromMouse(mouseRay, { focusTrackActive });
 
             // here we are just mouseing over the globe viewport
             // but the mouse it up

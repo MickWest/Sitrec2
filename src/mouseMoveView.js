@@ -6,6 +6,7 @@ import {V2} from "./threeUtils";
 import {ViewMan} from "./CViewManager";
 import {mouseInViewOnly} from "./ViewUtils";
 import {setRenderOne} from "./Globals";
+import {EventManager} from "./CEventManager";
 
 let mouseDragView
 let mouseDown = false
@@ -62,6 +63,17 @@ export function SetupMouseHandler() {
     document.addEventListener( 'dblclick', onDocumentDoubleClick, false );
     document.addEventListener( 'wheel', onDocumentWheel, false );
 
+    // Initial press of a position-LLA key (C=camera, X=target, L=lock-all)
+    // needs an immediate cursor refresh — onMouseMove only raycasts while one
+    // of these keys is already held, so a tap with no mouse motion would
+    // otherwise read whatever cursor position was last cached on mouseDown.
+    EventManager.addEventListener("keydown", ({key}) => {
+        if (key !== 'c' && key !== 'x' && key !== 'l') return;
+        const view = getTopViewWithCursor();
+        if (view && view.camera && view._refreshCursorFromMouse) {
+            view._refreshCursorFromMouse(screenToNDC(view, mouseX, mouseY));
+        }
+    });
 }
 
 export function onDocumentWheel(event) {
