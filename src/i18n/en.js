@@ -723,6 +723,7 @@ const en = {
         },
         objects: {
             globalScale: { label: "Global Scale", tooltip: "Scale factor applied to all 3D objects in the scene - useful for finding things. Set back to 1 for real size" },
+            removeAllBuildings: { label: "Remove all Buildings", tooltip: "Delete every synthetic building from the scene.\nClouds and ground overlays are not affected." },
         },
         admin: {
             dashboard: { label: "Admin Dashboard", tooltip: "Open the admin dashboard" },

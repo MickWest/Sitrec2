@@ -1252,6 +1252,10 @@ export const setupMethods = {
         // guiMenus.physics.add(this, "calculateBestPairs").name("Calculate Best Pairs");
 
 
+        guiMenus.objects.add(this, "removeAllBuildings")
+            .name(t("custom.objects.removeAllBuildings.label"))
+            .tooltip(t("custom.objects.removeAllBuildings.tooltip"))
+
         if (Globals.objectScale === undefined)
             Globals.objectScale = 1.0;
         guiMenus.objects.add(Globals, "objectScale", 1, 50, 0.01)

@@ -66,8 +66,29 @@ export class CNodeFrameSlider extends CNode {
         this.lastKeyframeSignature = "";
         this.hoveringKeyframe = null;
         this.lastHoveringKeyframe = null;
+        // One-shot frame to snap to on the first 'input' tick after a
+        // mousedown that landed near a keyframe diamond. Null otherwise.
+        this.pendingKeyframeSnap = null;
 
         this.setupFrameSlider();
+    }
+
+    // Mouse/touch position relative to the canvas. Shared by every
+    // pointer handler in this class so canvas-relative coords are
+    // computed in exactly one place.
+    getMousePos(event) {
+        const rect = this.canvas.getBoundingClientRect();
+        const clientX = event.clientX !== undefined ? event.clientX : (event.touches && event.touches[0] ? event.touches[0].clientX : 0);
+        const clientY = event.clientY !== undefined ? event.clientY : (event.touches && event.touches[0] ? event.touches[0].clientY : 0);
+        return {x: clientX - rect.left, y: clientY - rect.top};
+    }
+
+    // No-op-guarded write so we only schedule a redraw when the hovered
+    // keyframe actually changed. Called from both mousemove paths.
+    setHoveredKeyframe(nearKF) {
+        if (this.hoveringKeyframe === nearKF) return;
+        this.hoveringKeyframe = nearKF;
+        this.needsCanvasRedraw = true;
     }
 
     setupFrameSlider() {
@@ -310,9 +331,7 @@ export class CNodeFrameSlider extends CNode {
         // Add mouse move listener to the slider container to manage pointer events
         this.sliderContainer.addEventListener('mousemove', (event) => {
             if (!this.draggingALimit && !this.draggingBLimit) {
-                const rect = this.canvas.getBoundingClientRect();
-                const mouseX = event.clientX - rect.left;
-                const mouseY = event.clientY - rect.top;
+                const {x: mouseX, y: mouseY} = this.getMousePos(event);
                 
                 // Helper functions (duplicated here for scope)
                 const frameToPixel = (frame) => {
@@ -363,14 +382,14 @@ export class CNodeFrameSlider extends CNode {
                 const nearLimit = getNearLimit(mouseX, mouseY);
                 const nearKF = this.getNearKeyframe(mouseX, mouseY);
 
-                // Enable pointer events on canvas when near a limit OR a
-                // keyframe diamond — both need to capture the click so the
-                // range input below doesn't get snapped to the cursor pixel.
-                if (nearLimit || nearKF !== null) {
-                    this.canvas.style.pointerEvents = 'auto';
-                } else {
-                    this.canvas.style.pointerEvents = 'none';
-                }
+                // Keyframe clicks flow through to the native range input so
+                // its own drag state machine owns the interaction; only the
+                // A/B limits steal pointer events.
+                this.canvas.style.pointerEvents = nearLimit ? 'auto' : 'none';
+
+                // Hover detection lives here because the canvas is
+                // pointer-events:none over keyframes.
+                this.setHoveredKeyframe(nearKF);
             }
         });
 
@@ -380,9 +399,20 @@ export class CNodeFrameSlider extends CNode {
             const frame = parseInt(this.sliderInput.value, 10);
             lastMouseX = event.clientX;
             this.showFrameDisplay(frame, event.clientX);
+
+            // Arm a one-shot snap to the keyframe under the cursor; the
+            // first 'input' event will apply it before the native drag
+            // proceeds, so the rest of the drag is byte-identical to a
+            // click on bare track.
+            const {x, y} = this.getMousePos(event);
+            this.pendingKeyframeSnap = this.getNearKeyframe(x, y);
         });
 
         this.sliderInput.addEventListener('input', () => {
+            if (this.pendingKeyframeSnap !== null) {
+                this.sliderInput.value = this.pendingKeyframeSnap;
+                this.pendingKeyframeSnap = null;
+            }
             const frame = parseInt(this.sliderInput.value, 10);
             newFrame(frame);
             sliderDragging = true;
@@ -512,17 +542,8 @@ export class CNodeFrameSlider extends CNode {
         let isDragging = false;
         let dragStartX = 0;
 
-        // Helper function to get mouse/touch position relative to canvas
-        const getMousePos = (event) => {
-            const rect = this.canvas.getBoundingClientRect();
-            // Support both mouse and touch events
-            const clientX = event.clientX !== undefined ? event.clientX : (event.touches && event.touches[0] ? event.touches[0].clientX : 0);
-            const clientY = event.clientY !== undefined ? event.clientY : (event.touches && event.touches[0] ? event.touches[0].clientY : 0);
-            return {
-                x: clientX - rect.left,
-                y: clientY - rect.top
-            };
-        };
+        // Local alias so existing call sites stay terse.
+        const getMousePos = (event) => this.getMousePos(event);
 
         // Helper function to convert pixel position to frame number
         const pixelToFrame = (x) => {
@@ -586,21 +607,9 @@ export class CNodeFrameSlider extends CNode {
             const mousePos = getMousePos(event);
             const nearLimit = getNearLimit(mousePos.x, mousePos.y);
 
-            // Keyframe click takes precedence over the range input but yields
-            // to A/B limit grabs (which are positionally distinct anyway).
-            // We jump par.frame, mark a redraw, and consume the event so the
-            // slider underneath doesn't snap to the cursor pixel instead.
-            const nearKF = this.getNearKeyframe(mousePos.x, mousePos.y);
-            if (!nearLimit && nearKF !== null) {
-                par.paused = true;
-                this.setFrame(nearKF);
-                this.updatePlayPauseButton();
-                this.needsCanvasRedraw = true;
-                setRenderOne(true);
-                event.preventDefault();
-                event.stopPropagation();
-                return;
-            }
+            // Keyframe clicks are handled in the sliderInput's own mousedown/
+            // input listeners now — see _pendingKeyframeSnap. The canvas
+            // only intercepts A/B limit grabs.
 
             if (nearLimit === 'A') {
                 this.draggingALimit = true;
@@ -645,17 +654,13 @@ export class CNodeFrameSlider extends CNode {
                 const newHoveringA = (nearLimit === 'A');
                 const newHoveringB = (nearLimit === 'B');
 
-                // Mark for redraw if any hover state changed (A/B colours
-                // brighten on hover; keyframe diamond also brightens).
-                if (newHoveringA !== this.hoveringALimit
-                    || newHoveringB !== this.hoveringBLimit
-                    || nearKF !== this.hoveringKeyframe) {
+                // A/B colours brighten on hover; redraw on any change.
+                if (newHoveringA !== this.hoveringALimit || newHoveringB !== this.hoveringBLimit) {
                     this.needsCanvasRedraw = true;
                 }
-
                 this.hoveringALimit = newHoveringA;
                 this.hoveringBLimit = newHoveringB;
-                this.hoveringKeyframe = nearKF;
+                this.setHoveredKeyframe(nearKF);
 
                 if (nearLimit) {
                     this.canvas.style.cursor = 'ew-resize';
@@ -671,10 +676,10 @@ export class CNodeFrameSlider extends CNode {
         const globalMouseMove = (event) => {
             if (isDragging) {
                 const mousePos = getMousePos(event);
-                const newFrame = Math.max(0, Math.min(Sit.frames - 1, pixelToFrame(mousePos.x)));
-                
+                const newFrameValue = Math.max(0, Math.min(Sit.frames - 1, pixelToFrame(mousePos.x)));
+
                 if (this.draggingALimit) {
-                    const clampedFrame = Math.min(newFrame, Sit.bFrame - 1);
+                    const clampedFrame = Math.min(newFrameValue, Sit.bFrame - 1);
                     Sit.aFrame = clampedFrame;
                     par._frameOverride = clampedFrame;
                     GlobalDateTimeNode.liveMode = false;
@@ -682,7 +687,7 @@ export class CNodeFrameSlider extends CNode {
                     setRenderOne(true);
                     this.updateFrameDisplay(clampedFrame, event.clientX);
                 } else if (this.draggingBLimit) {
-                    const clampedFrame = Math.max(newFrame, Sit.aFrame + 1);
+                    const clampedFrame = Math.max(newFrameValue, Sit.aFrame + 1);
                     Sit.bFrame = clampedFrame;
                     par._frameOverride = clampedFrame;
                     GlobalDateTimeNode.liveMode = false;

@@ -491,19 +491,27 @@ export class C3DSynthManager extends CManager {
     }
     
     /**
-     * Clear all buildings, clouds, and overlays
+     * Remove every building. Snapshots IDs first because removeBuilding
+     * mutates this.list, which would otherwise corrupt iteration.
      */
-    clear() {
+    removeAllBuildings() {
         const buildingIds = Object.keys(this.list);
         buildingIds.forEach(id => {
             this.removeBuilding(id);
         });
-        
+    }
+
+    /**
+     * Clear all buildings, clouds, and overlays
+     */
+    clear() {
+        this.removeAllBuildings();
+
         const cloudsIds = Object.keys(this.cloudsList);
         cloudsIds.forEach(id => {
             this.removeClouds(id);
         });
-        
+
         const overlayIds = Object.keys(this.overlaysList);
         overlayIds.forEach(id => {
             this.removeOverlay(id);

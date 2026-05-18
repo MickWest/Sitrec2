@@ -1116,6 +1116,11 @@ export class CCustomManager {
         await showPostLoadFilterDialog();
     }
 
+    removeAllBuildings() {
+        Synth3DManager.removeAllBuildings();
+        setRenderOne(true);
+    }
+
     addTrackFromCameraLOS() {
         const cameraNode = NodeMan.get("lookCamera", false) || NodeMan.get("mainCamera", false);
         if (!cameraNode || !cameraNode.camera) {
