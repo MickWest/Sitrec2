@@ -232,16 +232,25 @@ export class CNodeWind extends CNode {
         if (this.originTrack !== undefined) {
             const newPosition = this.originTrack.p(0);
             assert(newPosition.x !== undefined, "Wind origin track did not return a valid position");
-            if (!newPosition.equals(this.position)) {
-                // force TWO recalculate cycles to ensure it propogates through the system
-                this.extraRecalculate = 2;
+
+            // Only re-arm the cascade when the *originTrack's* frame-0
+            // position actually changes (e.g. user swaps the origin track).
+            // Comparing against this.position would re-arm every frame,
+            // because consumer nodes (CNodeJetTrack, CNodeLOSTraverse...)
+            // legitimately overwrite this.position each frame with the
+            // current target/jet position — wind values are unchanged but
+            // this.position is, so the previous comparison fought a battle
+            // it could never win.
+            if (!this.appliedOriginTrackP0 || !newPosition.equals(this.appliedOriginTrackP0)) {
+                this.appliedOriginTrackP0 = newPosition.clone();
                 this.setPosition(newPosition);
+                // Force TWO recalculate cycles so the new frame-of-reference
+                // propagates through dependent nodes.
+                this.extraRecalculate = 2;
             }
 
             if (this.extraRecalculate) {
                 this.extraRecalculate--;
-                // changing the frame of reference of the wind will change dependent nodes
-                // so we need to recalculate them
                 this.recalculateCascade();
             }
         }
