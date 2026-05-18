@@ -45,6 +45,15 @@ Example entry format:
 
 ---
 
+## Version 2.55.0 (2026-05-17)
+
+### New Features
+- **ASTERIX CAT-048 / CAT-062 PCAP import**: drag-and-drop a libpcap or pcapng capture of an ASTERIX UDP multicast (or a raw ASTERIX byte stream) and Sitrec parses it into MISB rows consumed by the existing TrackManager. CAT-048 target reports are projected from radar polar coordinates to WGS-84 using a per-SAC/SIC reference table (default Zagreb LDZA for the Croatia Control sample captures); CAT-062 system tracks use the in-message WGS-84 position directly. Because a single snapshot PCAP usually carries each aircraft once — below the track system's 2-point minimum — the parser emits a 4-second velocity-projected sibling plus phantom bookend rows aligned to the sitch's integer-ms boundaries so every aircraft stays visible across the entire playback timeline. pcapng captures share the same Ethernet/IPv4/UDP extraction path as classic pcap. For CAT-062 the parser walks the I062/380 compound to extract the I062/040 track number and synthesizes `T<sac>_<sic>_<trackNumber>` when the callsign is missing, so distinct tracks from one radar no longer collapse together; CAT-048 now looks up `radarRef` per record (with a DEFAULT_RADAR fallback) instead of stickily reusing the last known radar across unknowns. Sample captures live in `test-data/TEST-Radar/` and verify against the README's published ground-truth for DLH65A (Mode-S 0x3C660C, FL330, 434 kt) to within 1%.
+
+### Bug Fixes
+- **Edit Mask paints instead of panning the video**: in Motion Analysis → Masking, clicking and dragging the video with **Edit Mask** enabled used to both paint the mask *and* pan the video, because the mask-overlay canvas has `pointer-events: none` and the video view's underlying `CMouseHandler` fired its left-drag pan handler in parallel with the overlay's document-level paint handler. `CNodeVideoView`'s drag handler now early-returns when the motion-analysis mask overlay reports `editing === true`, mirroring the existing guard for tracking-overlay control drags. Right-drag (frame scrub) and middle-drag (zoom) are unaffected.
+- **Multi-aircraft MISB files render all aircraft**: `TrackManager.makeMotionTrack` previously created a 2 m invisible sphere whenever `trackIndex !== 0`, on the assumption that index > 0 always meant a MISB FrameCenter co-located reference. The gate now consults `isSupplementaryTrack()`, which `CTrackFileMISB` overrides to return `false` for files containing multiple distinct TrackIDs (e.g. an ASTERIX drop with 42 aircraft, where only the first would otherwise be visible).
+
 ## Version 2.54.5 (2026-05-14)
 
 ### Improvements

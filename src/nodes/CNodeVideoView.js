@@ -740,6 +740,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         return trackingOverlay.draggable.some(d => d.dragging);
     }
 
+    // Check if the motion-analysis mask overlay is currently in paint-edit mode
+    _isMaskEditing() {
+        const maskOverlay = NodeMan.get("motionMaskOverlay", false);
+        return maskOverlay !== undefined && maskOverlay.editing === true;
+    }
+
     setupMouseHandler() {
         this.mouse = new CMouseHandler(this, {
 
@@ -774,6 +780,11 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 // Don't pan if a tracking overlay control point is being dragged
                 if (this._isOverlayDragging()) {
                     this.canvas.style.cursor = 'grabbing';
+                    return;
+                }
+
+                // Don't pan while painting the motion-analysis mask — left-drag paints instead
+                if (this._isMaskEditing()) {
                     return;
                 }
 
