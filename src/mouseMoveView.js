@@ -6,7 +6,6 @@ import {V2} from "./threeUtils";
 import {ViewMan} from "./CViewManager";
 import {mouseInViewOnly} from "./ViewUtils";
 import {setRenderOne} from "./Globals";
-import {EventManager} from "./CEventManager";
 
 let mouseDragView
 let mouseDown = false
@@ -67,13 +66,22 @@ export function SetupMouseHandler() {
     // needs an immediate cursor refresh — onMouseMove only raycasts while one
     // of these keys is already held, so a tap with no mouse motion would
     // otherwise read whatever cursor position was last cached on mouseDown.
-    EventManager.addEventListener("keydown", ({key}) => {
+    //
+    // Registered as a DOM listener (not via EventManager) so it survives
+    // EventManager.removeAll() on sitch reload — this is page-global setup,
+    // not per-sitch state.
+    document.addEventListener('keydown', (e) => {
+        if (e.repeat) return;
+        if (e.ctrlKey || e.metaKey) return;
+        const key = e.key.toLowerCase();
         if (key !== 'c' && key !== 'x' && key !== 'l') return;
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
         const view = getTopViewWithCursor();
         if (view && view.camera && view._refreshCursorFromMouse) {
             view._refreshCursorFromMouse(screenToNDC(view, mouseX, mouseY));
         }
-    });
+    }, false);
 }
 
 export function onDocumentWheel(event) {
