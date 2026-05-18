@@ -174,6 +174,28 @@ export const setupMethods = {
                     ptzController.syncFromCamera(lookCamera.camera);
                 }
             };
+
+            // Camera Heading: "To Target" -> "Use Angles" should preserve the
+            // current camera orientation, mirroring how syncModeTransition
+            // preserves orientation when toggling PTZ Satellite mode. The
+            // per-frame sync in postApplyControllers above keeps ptz angles
+            // warm while "To Target" drives the camera, but that's not enough
+            // on its own: between the last "To Target" frame and the first
+            // "Use Angles" frame the camera *position* can shift (any moving
+            // track), which makes the previous-frame's az/el slightly wrong
+            // against the new local frame. Capture orientation at the moment
+            // of switch so the transition is exact in both normal and
+            // satellite (near-vertical) cases — syncFromCamera handles both.
+            // Use choiceChanged (not onChange) so the same fix-up also fires
+            // for programmatic switches (e.g. TrackManager auto-selecting).
+            EventManager.addEventListener("Switch.choiceChanged.CameraLOSController", (choice) => {
+                if (choice !== "Use Angles") return;
+                if (Globals.deserializing) return;
+                lookCamera.camera.updateMatrixWorld();
+                ptzController.syncFromCamera(lookCamera.camera);
+                ptzController.refresh();
+                setRenderOne(true);
+            });
         }
 
         // if (Sit.canMod) {
