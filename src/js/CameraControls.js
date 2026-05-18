@@ -252,6 +252,14 @@ class CameraMapControls {
 			return;
 		}
 
+		// Refresh this.target (and cursorSprite) from the current mouse position
+		// so the zoom-toward-cursor anchor sphere below is sized to where the
+		// mouse actually is, not to the last clicked point. onMouseMove no
+		// longer keeps controls.target warm on hover.
+		if (this.view && this.view._refreshCursorFromMouse) {
+			this.view._refreshCursorFromMouse(mouseToNDC(this.view, event.clientX, event.clientY));
+		}
+
 		const ndc = mouseToNDC(this.view, event.clientX, event.clientY);
 		const raycaster = new Raycaster();
 		raycaster.setFromCamera(ndc, this.camera);
