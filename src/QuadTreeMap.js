@@ -477,22 +477,12 @@ export class QuadTreeMap {
             return;
         }
 
-        // debug code - check for holes in the map
-        // the root tile covers the whole world, so if it's not active, then check if it's covered by the descendants
-        if (isLocal) {
-            if (this.constructor.name === 'QuadTreeMapTexture') {
-                const rootTile = this.getTile(0, 0, 0);
-
-                if (!(rootTile.mesh.layers.mask & view.tileLayers)) {
-                    if (!this.areaCoveredByDescendants(rootTile, view.tileLayers)) {
-                        this.dumpChildren(rootTile);
-                        console.log(this.areaCoveredByDescendants(rootTile, view.tileLayers));
-                        // root tile is not active in this view - so check area coverage
-                        assert(0, "Root tile area is not covered!");
-                    }
-                }
-            }
-        }
+        // Whole-world coverage check used to assert here. Now relaxed: with
+        // the per-view leaf-deactivation in PASS 3 below, out-of-frustum
+        // leaves are intentionally deactivated and their (non-visible) area
+        // becomes uncovered — that's the point. Visible-area coverage is
+        // guaranteed by the subdivision pass keeping in-frustum tiles
+        // active. World-wide coverage was an over-strict invariant.
 
         const camera = view.cameraNode.camera;
         const tileLayers = view.tileLayers;
@@ -579,9 +569,65 @@ export class QuadTreeMap {
             // This is expensive, so we only do it after early exit checks
             const visibility = this.calculateTileVisibility(tile, camera, diag);
 
-            // OPTIMIZATION #7: Early exit for invisible tiles without children
-            // If tile is not visible and has no children to merge, skip further processing
-            if (!visibility.visible && !hasChildren) continue;
+            // OPTIMIZATION #7: Early exit for invisible tiles without children.
+            // Now also DEACTIVATES the leaf if it's currently flagged for this
+            // view. Without this, a tile that was once visible (and got
+            // subdivided to a leaf) keeps its tile.tileLayers bit set forever
+            // after the camera pans away — its mesh.layers.mask still has
+            // this view's bit so the renderer keeps drawing it, even though
+            // the per-tile WebGL frustum cull doesn't reject all such tiles
+            // (especially coarse-zoom tiles whose bounding spheres are
+            // hundreds of km in radius). For narrow-FOV cameras like a
+            // 6° look view, this stale fan-out accounted for ~70% of
+            // "active" tiles in the original buggy build — ~580 of 841
+            // active tiles were entirely outside the camera frustum.
+            //
+            // Coverage of the visible area is preserved: tiles in the
+            // frustum stay active; out-of-frustum leaves have nothing to
+            // render at, so leaving their area uncovered is harmless. As
+            // the camera pans into a previously-out-of-frustum area, the
+            // normal subdivision pass repopulates from coarser ancestors
+            // (which remain in the tile cache; deactivation only clears
+            // the per-view bit, not the underlying data).
+            if (!visibility.visible && !hasChildren) {
+                if (isActiveInView) {
+                    this.deactivateTile(tile, tileLayers, true);
+                }
+                continue;
+            }
+
+            // Surgical reactivation: when this tile is visible (its area
+            // matters to this view) and it has children, scan the children
+            // for ones that are now in the frustum but currently deactivated
+            // — they were either never active in this view, or got cleared
+            // by the leaf-deactivate branch above when the camera was
+            // elsewhere. Activate them in place. We deliberately do NOT
+            // reactivate the parent itself: doing so would land it in
+            // shouldSubdivide territory below and re-trigger subdivideTile,
+            // which calls activateTile on ALL 4 children — including the
+            // out-of-frustum ones we just deactivated — and the next
+            // frame's leaf-deactivate would clear them again. That's the
+            // thrash. Per-child activation avoids it because we only ever
+            // bring the in-frustum children online; out-of-frustum
+            // siblings stay deactivated and the cycle terminates.
+            if (visibility.visible && hasChildren) {
+                for (const child of tile.children) {
+                    if (!child) continue;
+                    if ((child.tileLayers & tileLayers) !== 0) continue;
+                    // Skip z<3 children: calculateTileVisibility force-returns
+                    // visible=true for tile.z<3 (SSE=infinity to keep root
+                    // tiles loaded as fallback for lazy resampling), so an
+                    // unconditional activation here would re-activate z=0/1/2
+                    // every frame. They were intentionally deactivated by
+                    // deactivateParentsWithLoadedChildren once their
+                    // descendants covered the world — we keep them that way.
+                    if (child.z < 3) continue;
+                    const childVis = this.calculateTileVisibility(child, camera, null);
+                    if (childVis.visible) {
+                        this.activateTile(child.x, child.y, child.z, tileLayers);
+                    }
+                }
+            }
 
             // Handle lazy loading for visible tiles using parent data
             if (isTextureMap && visibility.actuallyVisible) {
@@ -599,7 +645,16 @@ export class QuadTreeMap {
             const shouldMerge = !shouldSubdivide
                 && visibility.screenSpaceError < errorTargetPixels * MERGE_HYSTERESIS_FACTOR;
 
-            if (shouldSubdivide && isActiveInView && tile.z < this.maxZoom) {
+            if (shouldSubdivide && isActiveInView && tile.z < this.maxZoom && !hasChildren) {
+                // Only push LEAVES to subdivide. Tiles that already have
+                // children skip this path because subdivideTile would call
+                // activateTile on ALL 4 children — including ones we
+                // intentionally deactivated (out-of-frustum). The surgical
+                // reactivation above already handles per-child activation
+                // for parents-with-children. Deeper refinement is driven by
+                // the children themselves on subsequent passes (they become
+                // leaves in the eyes of this gate once activated).
+                //
                 // RACE CONDITION FIX: Defer subdivision while parent tile is loading
                 if (isTextureMap && tile.isLoading) {
                     if (!tile.subdivisionDeferredFrames) {
