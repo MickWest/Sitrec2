@@ -1671,23 +1671,26 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // }
 
                 // "Main Use Look Layers" debug toggle: apply lookView's
-                // culling to TERRAIN ONLY for this render, leaving the camera
+                // culling to TERRAIN and 3D BUILDINGS (Google Photorealistic /
+                // Cesium OSM 3D Tiles) for this render, leaving the camera
                 // mask at mainView's normal value so non-terrain helpers
                 // (camera frustum, debug arrows, tracks, etc.) still render
                 // in mainView.
                 //
-                // Terrain tile masks carry separate MASK_MAIN and MASK_LOOK
-                // bits (typical: 0b00011000 = both set). Simply ANDing the
-                // tile mask with lookView's camera mask strips MASK_MAIN,
-                // which then fails mainView's camera-mask test entirely —
-                // so we'd see no terrain at all. Instead: ask "would
-                // lookView render this tile?" (origMask & lookMask) and if
-                // yes, force the tile mask to mainView's mask so it passes
-                // mainView's filter; if no, hide it. The original masks are
-                // saved and restored in the finally block so lookView's own
-                // render later this frame sees the unmodified state.
-                // Tile-edges are baked into the terrain shader so they
-                // follow automatically.
+                // Tile/mesh masks carry separate MASK_MAIN and MASK_LOOK
+                // bits (terrain typical: 0b00011000 = both set; the
+                // buildings node maintains a separate PerViewTiles subtree
+                // per view, masked MASK_MAIN or MASK_LOOK respectively).
+                // Simply ANDing the mesh mask with lookView's camera mask
+                // strips MASK_MAIN, which then fails mainView's camera-mask
+                // test entirely — so we'd see nothing. Instead: ask
+                // "would lookView render this mesh?" (origMask & lookMask)
+                // and if yes, force the mesh mask to mainView's mask so it
+                // passes mainView's filter; if no, hide it. The original
+                // masks are saved and restored in the finally block so
+                // lookView's own render later this frame sees the
+                // unmodified state. Tile-edges are baked into the terrain
+                // shader so they follow automatically.
                 if (Globals.renderDebugFlags.dbg_mainViewUseLookLayers && this.id === "mainView") {
                     const lookView = ViewMan.get("lookView", false);
                     const terrainNode = NodeMan.get("TerrainModel", false);
@@ -1695,13 +1698,23 @@ export class CNodeView3D extends CNodeViewCanvas {
                         const lookMask = lookView.camera.layers.mask;
                         const mainMask = this.camera.layers.mask;
                         const savedMasks = [];
-                        terrainNode.getGroup().traverse(obj => {
-                            if (obj.isMesh) {
-                                const orig = obj.layers.mask;
-                                savedMasks.push({obj, mask: orig});
-                                obj.layers.mask = (orig & lookMask) ? mainMask : 0;
-                            }
-                        });
+                        const rewriteGroup = (group) => {
+                            if (!group) return;
+                            group.traverse(obj => {
+                                if (obj.isMesh) {
+                                    const orig = obj.layers.mask;
+                                    savedMasks.push({obj, mask: orig});
+                                    obj.layers.mask = (orig & lookMask) ? mainMask : 0;
+                                }
+                            });
+                        };
+                        rewriteGroup(terrainNode.getGroup());
+                        // 3D Buildings group hangs off the TerrainUI node and
+                        // is itself a CNode-managed group on GlobalScene. The
+                        // node holds two PerViewTiles subtrees (one for each
+                        // view, masked respectively), so the same predicate
+                        // picks out lookView's subset.
+                        rewriteGroup(terrainNode.UI?.buildingsNode?.group);
                         restoreTerrainMasks = () => {
                             for (const {obj, mask} of savedMasks) obj.layers.mask = mask;
                         };
