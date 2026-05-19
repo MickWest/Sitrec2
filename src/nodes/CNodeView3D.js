@@ -1587,6 +1587,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // Hoist declarations needed by the finally block below
                 let oldLayers = this.camera.layers.mask;
                 let nightSkyForRestore = null;
+                let restoreTerrainMasks = null;
                 try {
 
                 // [DBG] Render sky
@@ -1669,10 +1670,41 @@ export class CNodeView3D extends CNodeViewCanvas {
                 //     this.camera.layers.mask = this.layers;
                 // }
 
+                // "Main Use Look Layers" debug toggle: apply lookView's
+                // culling to TERRAIN ONLY for this render, leaving the camera
+                // mask at mainView's normal value so non-terrain helpers
+                // (camera frustum, debug arrows, tracks, etc.) still render
+                // in mainView.
+                //
+                // Terrain tile masks carry separate MASK_MAIN and MASK_LOOK
+                // bits (typical: 0b00011000 = both set). Simply ANDing the
+                // tile mask with lookView's camera mask strips MASK_MAIN,
+                // which then fails mainView's camera-mask test entirely —
+                // so we'd see no terrain at all. Instead: ask "would
+                // lookView render this tile?" (origMask & lookMask) and if
+                // yes, force the tile mask to mainView's mask so it passes
+                // mainView's filter; if no, hide it. The original masks are
+                // saved and restored in the finally block so lookView's own
+                // render later this frame sees the unmodified state.
+                // Tile-edges are baked into the terrain shader so they
+                // follow automatically.
                 if (Globals.renderDebugFlags.dbg_mainViewUseLookLayers && this.id === "mainView") {
                     const lookView = ViewMan.get("lookView", false);
-                    if (lookView) {
-                        this.camera.layers.mask = lookView.camera.layers.mask;
+                    const terrainNode = NodeMan.get("TerrainModel", false);
+                    if (lookView && terrainNode) {
+                        const lookMask = lookView.camera.layers.mask;
+                        const mainMask = this.camera.layers.mask;
+                        const savedMasks = [];
+                        terrainNode.getGroup().traverse(obj => {
+                            if (obj.isMesh) {
+                                const orig = obj.layers.mask;
+                                savedMasks.push({obj, mask: orig});
+                                obj.layers.mask = (orig & lookMask) ? mainMask : 0;
+                            }
+                        });
+                        restoreTerrainMasks = () => {
+                            for (const {obj, mask} of savedMasks) obj.layers.mask = mask;
+                        };
                     }
                 }
 
@@ -1719,6 +1751,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     }
 
                     this.camera.layers.mask = oldLayers;
+                    if (restoreTerrainMasks) restoreTerrainMasks();
 
                     if (this.fovOverride !== undefined) {
                         this.camera.fov = oldFOV;
