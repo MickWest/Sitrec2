@@ -475,6 +475,11 @@ export class CNodeTerrainUI extends CNode {
             this.log("Elevation type changed to " + v + " so unloading the elevation map")
             this.terrainNode.reloadMap(this.mapType)
             this.updateAttribution();
+            // Force a subdivision/render pass — when paused with no camera
+            // motion, the camera-fingerprint gate would otherwise block the
+            // new tiles from loading until the user nudges the view. Same
+            // reason doRefresh() calls this for the Refresh button.
+            this.requestSubdivisionPass();
         })
 
 
@@ -495,6 +500,11 @@ export class CNodeTerrainUI extends CNode {
             // do this async, as we might need to wait for the capabilities to be loaded
             this.setMapType(v).then(() => {
                 this.terrainNode.loadMapTexture(v)
+                // Force a subdivision/render pass after the async texture
+                // load resolves — same reason as the elevationType handler
+                // above and doRefresh(): when paused, the camera-fingerprint
+                // gate blocks any new tile work until the camera moves.
+                this.requestSubdivisionPass();
             })
             this.updateAttribution();
             this.terrainNode.updateGreySphereVisibility();
