@@ -1484,6 +1484,20 @@ export class CNodeTerrainUI extends CNode {
                 this._subdivGraceFrames--;
             }
 
+            // Keep grace alive briefly whenever the texture map has dirty
+            // parents pending coverage re-check. This catches the case where
+            // textures finish loading AFTER the camera-driven grace expired:
+            // setTileLayerMask invalidates coverage and adds ancestors to
+            // _dirtyParents, but without a subdivision pass running to
+            // process them, the parents stay active alongside their loaded
+            // children — z-fighting in the visible area. A short extra
+            // grace (just enough for deactivateParentsWithLoadedChildren to
+            // walk the set once) clears the backlog.
+            const textureMap = this.terrainNode.maps[this.mapType]?.map;
+            if (textureMap?._dirtyParents?.size > 0 && this._subdivGraceFrames < 5) {
+                this._subdivGraceFrames = 5;
+            }
+
             if (this._subdivGraceFrames > 0) {
                 // Prepare each view's camera with effective zoom + pan for accurate LOD.
                 // This ensures tile subdivision uses the actual rendered FOV and direction.

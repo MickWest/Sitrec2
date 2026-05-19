@@ -274,6 +274,58 @@ class QuadTreeMapTexture extends QuadTreeMap {
         return result;
     }
 
+    // Variant of areaCoveredByDescendants that ignores out-of-frustum children
+    // (per the supplied camera). Used to enforce REPLACE-refinement invariant 1
+    // — "child active ⟹ parent hidden" — when out-of-frustum siblings are
+    // intentionally inactive: the strict areaCoveredByDescendants would leave
+    // the parent active to "cover" the invisible gap, but that parent's mesh
+    // then z-fights with the in-frustum active children in the visible
+    // overlap. Out-of-frustum gaps aren't visible, so they don't count.
+    //
+    // No caching here: result depends on camera which can change every frame.
+    visibleAreaCoveredByDescendants(tile, tileLayerMask, camera) {
+        if (!tile.children) return false;
+
+        // Track whether at least one child is visible. If no children are
+        // visible (e.g. parent is in-frustum but all 4 children's bounding
+        // spheres are outside, which can happen at the edge of the camera
+        // cone for low-zoom tiles), the parent itself is what's covering the
+        // visible portion — don't deactivate it.
+        let anyChildVisible = false;
+
+        for (let i = 0; i < 4; i++) {
+            const child = tile.children[i];
+            if (!child) continue;
+
+            // Skip children whose own area isn't visible to the camera —
+            // they don't need to cover anything because nothing renders there.
+            const childVis = this.calculateTileVisibility(child, camera, null);
+            if (!childVis.visible) continue;
+            anyChildVisible = true;
+
+            // Visible child: must be rendering, or its descendants must cover.
+            if (!child.loaded
+                || !child.added
+                || !child.mesh.visible
+                || !(child.mesh.layers.mask & tileLayerMask)
+                || !child.mesh.material
+                || !child.mesh.material.uniforms?.map
+                || child.mesh.material.wireframe
+                || !child.geometryReady
+                || !child.mesh.parent
+            ) {
+                if (!this.visibleAreaCoveredByDescendants(child, tileLayerMask, camera)) {
+                    return false;
+                }
+            }
+        }
+
+        // If no child was in-frustum, the parent is the only thing covering
+        // its own visible area — keep it active.
+        if (!anyChildVisible) return false;
+        return true;
+    }
+
     // Covered if EITHER
     // 1) all 4 children are loaded and visible
     // OR

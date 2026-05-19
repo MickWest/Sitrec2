@@ -540,7 +540,7 @@ export class QuadTreeMap {
 
         // PASS 2: Deactivate parent tiles whose children are fully loaded (texture maps only, view-specific)
         if (isTextureMap) {
-            this.deactivateParentsWithLoadedChildren(tileLayers);
+            this.deactivateParentsWithLoadedChildren(tileLayers, camera);
         }
 
         // PASS 3: Process each tile for subdivision/merging and lazy loading
@@ -596,21 +596,43 @@ export class QuadTreeMap {
                 continue;
             }
 
-            // Surgical reactivation: when this tile is visible (its area
-            // matters to this view) and it has children, scan the children
-            // for ones that are now in the frustum but currently deactivated
-            // — they were either never active in this view, or got cleared
-            // by the leaf-deactivate branch above when the camera was
-            // elsewhere. Activate them in place. We deliberately do NOT
-            // reactivate the parent itself: doing so would land it in
-            // shouldSubdivide territory below and re-trigger subdivideTile,
-            // which calls activateTile on ALL 4 children — including the
-            // out-of-frustum ones we just deactivated — and the next
-            // frame's leaf-deactivate would clear them again. That's the
-            // thrash. Per-child activation avoids it because we only ever
-            // bring the in-frustum children online; out-of-frustum
-            // siblings stay deactivated and the cycle terminates.
-            if (visibility.visible && hasChildren) {
+            // Handle lazy loading for visible tiles using parent data
+            if (isTextureMap && visibility.actuallyVisible) {
+                this.triggerLazyLoadIfNeeded(tile, tileLayers);
+            }
+
+            // Determine if subdivision is needed
+            const shouldSubdivide = this.shouldSubdivideTile(tile, visibility, errorTargetPixels);
+
+            // Surgical reactivation: when this tile is visible AND this view's
+            // cascade WANTS to refine past this level (shouldSubdivide), scan
+            // its children for ones that are in the frustum but currently
+            // inactive in this view, and activate them in place. The
+            // shouldSubdivide gate is essential: without it, surgical would
+            // activate one zoom level deeper than this view actually wants
+            // (whenever another view created children we didn't need), which
+            // causes the cross-view leak — lookView's deeper subdivision
+            // bleeds into mainView's active set because mainView's surgical
+            // sees the children as visible and inactive.
+            //
+            // We deliberately do NOT reactivate the parent itself: doing so
+            // would land it in the shouldSubdivide push path below and
+            // re-trigger subdivideTile, which calls activateTile on ALL 4
+            // children — including the out-of-frustum ones we intentionally
+            // deactivated — and the next frame's leaf-deactivate would
+            // clear them again. Per-child activation avoids that thrash.
+            // Surgical fires when either:
+            //   (a) this view's cascade wants to refine past this level
+            //       (shouldSubdivide — the normal "going deeper" case), OR
+            //   (b) this tile already has some active descendant in this view
+            //       but other siblings are inactive (invariant 1 violation,
+            //       typically left over from zoom-out into the SSE dead band
+            //       where neither subdivide nor merge fires). Completing the
+            //       partial subdivision lets the next deactivateParents pass
+            //       see "all visible children covering" and hide the parent,
+            //       resolving the violation without needing a deeper cascade.
+            const hasActiveDescendant = hasChildren && this.hasAnyActiveDescendantForView(tile, tileLayers);
+            if (visibility.visible && hasChildren && (shouldSubdivide || hasActiveDescendant)) {
                 for (const child of tile.children) {
                     if (!child) continue;
                     if ((child.tileLayers & tileLayers) !== 0) continue;
@@ -623,19 +645,20 @@ export class QuadTreeMap {
                     // descendants covered the world — we keep them that way.
                     if (child.z < 3) continue;
                     const childVis = this.calculateTileVisibility(child, camera, null);
-                    if (childVis.visible) {
-                        this.activateTile(child.x, child.y, child.z, tileLayers);
-                    }
+                    if (!childVis.visible) continue;
+                    // INVARIANT 1: don't reactivate a tile that already has
+                    // active descendants. If its grandchildren (or deeper)
+                    // are rendering, this intermediate level should stay
+                    // hidden. Without this guard, deactivateParents
+                    // deactivates a parent (correctly, because children
+                    // cover) and then surgical reactivation immediately
+                    // re-activates it (because its own parent is iterating
+                    // children) — they fight each frame, producing the
+                    // z-fighting violations.
+                    if (this.hasAnyActiveDescendantForView(child, tileLayers)) continue;
+                    this.activateTile(child.x, child.y, child.z, tileLayers);
                 }
             }
-
-            // Handle lazy loading for visible tiles using parent data
-            if (isTextureMap && visibility.actuallyVisible) {
-                this.triggerLazyLoadIfNeeded(tile, tileLayers);
-            }
-
-            // Determine if subdivision is needed
-            const shouldSubdivide = this.shouldSubdivideTile(tile, visibility, errorTargetPixels);
 
             // Hysteresis: a tile that no longer warrants subdivision (sse <=
             // target) only merges its children once SSE has dropped well
@@ -762,16 +785,39 @@ export class QuadTreeMap {
      * OPTIMIZATION: Only iterates over tiles that have children (tracked in parentTiles Set)
      * instead of all tiles. With 100 tiles, typically only 10-25 are parents (75-90% reduction).
      */
-    deactivateParentsWithLoadedChildren(tileLayers) {
-        if (this._dirtyParents.size === 0) return;
+    // True if any descendant (immediate child or deeper) has the given view's
+    // bit set in tileLayers. Used by surgical reactivation in
+    // subdivideTilesViewSpecific to enforce REPLACE-refinement invariant 1
+    // (active descendant ⟹ ancestor hidden) — without it, the surgical
+    // would re-activate a parent that deactivateParentsWithLoadedChildren
+    // just hid, undoing the work each frame. Recursion depth is bounded by
+    // tree depth (~15 levels max).
+    hasAnyActiveDescendantForView(tile, tileLayers) {
+        if (!tile.children) return false;
+        for (const child of tile.children) {
+            if (!child) continue;
+            if ((child.tileLayers & tileLayers) !== 0) return true;
+            if (this.hasAnyActiveDescendantForView(child, tileLayers)) return true;
+        }
+        return false;
+    }
 
-        // Process only parents whose children changed state.
-        // Copy to array since deactivateTile may trigger further invalidations.
-        const toCheck = [...this._dirtyParents];
+    deactivateParentsWithLoadedChildren(tileLayers, camera = null) {
+        // Iterate the full parentTiles set rather than just `_dirtyParents`.
+        // Dirty tracking is layer-mask-change driven, so a parent that got
+        // processed while its children were still loading never gets re-
+        // marked dirty when the children finish (loading completion doesn't
+        // flip a layer mask). That left ~62 stale parents active alongside
+        // their loaded children, producing the z-fight visualization the
+        // user reported. visibleAreaCoveredByDescendants below handles the
+        // still-loading case correctly via its anyChildVisible gate, so the
+        // full-set iteration is safe — it just catches missed dirty entries.
+        // Cost: parentTiles is typically 25% of total tiles (~90 calls per
+        // pass on a 360-tile scene), and each call is cheap (4 children ×
+        // sphere-frustum + horizon test).
         this._dirtyParents.clear();
 
-        for (let i = 0; i < toCheck.length; i++) {
-            const tile = toCheck[i];
+        for (const tile of this.parentTiles) {
             if (!tile.children) continue;       // already pruned
             if (tile.z >= this.maxZoom) continue;
             if (tile.isLoading) continue;
@@ -779,7 +825,16 @@ export class QuadTreeMap {
             // Only check if tile is still active in this view
             if (!(tile.tileLayers & tileLayers)) continue;
 
-            if (this.areaCoveredByDescendants(tile, tileLayers)) {
+            // Use the visibility-aware coverage check when camera is provided.
+            // Without it, the strict areaCoveredByDescendants would refuse to
+            // deactivate any parent that has even one out-of-frustum-inactive
+            // sibling, leaving the parent rendering alongside in-frustum
+            // active children (the z-fighting case). Passing the camera lets
+            // the check ignore children whose own area isn't visible.
+            const covered = camera
+                ? this.visibleAreaCoveredByDescendants(tile, tileLayers, camera)
+                : this.areaCoveredByDescendants(tile, tileLayers);
+            if (covered) {
                 this.deactivateTile(tile, tileLayers, true);
             }
         }
@@ -1037,23 +1092,24 @@ export class QuadTreeMap {
     }
 
     /**
-     * Merge children back to parent if they're all active in this view
+     * Merge children back to parent if at least one child is currently active
+     * in this view. The strict "all 4 children active" check was correct in
+     * the original design but breaks once the leaf-deactivate pass starts
+     * intentionally clearing out-of-frustum children: with some children
+     * already deactivated, the merge would never fire, leaving over-detailed
+     * tiles active forever (the "zoom out doesn't collapse" bug). Relaxing
+     * to "any child active" is safe because the inactive siblings have no
+     * coverage we'd be losing — they were already out-of-frustum-deactivated.
      */
     mergeChildrenIfPossible(tile, tileLayers) {
-
-        // THIS NEEDS TO CONSIDER ALL THE DESCENDANTS, NOT JUST THE IMMEDIATE CHILDREN
-        // AND DEACTIVE THEM ALL
-        // also fixe where it's not finding any elevation data!!!!!
-
-
         const children = this.getChildren(tile);
         if (!children) return false;
 
-        const allChildrenActiveInView = children.every(child =>
+        const anyChildActiveInView = children.some(child =>
             child && (child.tileLayers & tileLayers)
         );
 
-        if (allChildrenActiveInView) {
+        if (anyChildActiveInView) {
             this.activateTile(tile.x, tile.y, tile.z, tileLayers);
             children.forEach(child => {
                 if (child) {
