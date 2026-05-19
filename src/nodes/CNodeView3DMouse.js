@@ -24,7 +24,7 @@ import {
 } from "../Globals";
 import {Sphere, Vector3} from "three";
 import {par} from "../par";
-import {DRAG, screenToNDC} from "../mouseMoveView";
+import {DRAG, getMousePosition, screenToNDC} from "../mouseMoveView";
 import {mouseInViewOnly} from "../ViewUtils";
 import {DebugArrowAB} from "../threeExt";
 import {CNode3DObject} from "./CNode3DObject";
@@ -108,6 +108,37 @@ export const mouseMethods = {
         }
 
         setRenderOne(true);
+    },
+
+    // Coalesce per-pointermove cursor refreshes to one per animation frame.
+    // Browsers dispatch pointermove at up to ~120 Hz; we don't need to raycast
+    // the terrain that often — the cursor only matters for the next render,
+    // which happens at rAF cadence anyway. Per-event work in onMouseMove
+    // becomes "record the latest position + arm rAF"; the actual raycast runs
+    // once per frame using the freshest mouse position read out of
+    // mouseMoveView at fire time. Gate conditions (visible/camera/in-view,
+    // focusTrack, position-key-held, showLOSArrow) are re-evaluated at fire
+    // time in case the user released the key or the view changed state
+    // between the schedule and the rAF tick.
+    //
+    // Only the onMouseMove path uses this. mouseDown / wheel / keydown
+    // synchronous callers still hit _refreshCursorFromMouse directly because
+    // they need a fresh result *before* their own logic continues (orbit
+    // pivot, zoom anchor, position-LLA tap).
+    _scheduleDeferredCursorRefresh() {
+        if (this._cursorRefreshRafId !== undefined) return;
+        this._cursorRefreshRafId = requestAnimationFrame(() => {
+            this._cursorRefreshRafId = undefined;
+            if (!this.visible || !this.camera || !this.mouseEnabled) return;
+            const focusTrackActive =
+                this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
+            const positionKeyHeld =
+                isKeyHeld('c') || isKeyHeld('x') || isKeyHeld('l');
+            if (!this.showLOSArrow && !focusTrackActive && !positionKeyHeld) return;
+            const {x, y} = getMousePosition();
+            if (!mouseInViewOnly(this, x, y)) return;
+            this._refreshCursorFromMouse(screenToNDC(this, x, y), { focusTrackActive });
+        });
     },
 
     onMouseUp() {
@@ -257,7 +288,11 @@ export const mouseMethods = {
                 return;
             }
 
-            this._refreshCursorFromMouse(mouseRay, { focusTrackActive });
+            // Defer the actual raycast to the next animation frame so multiple
+            // pointermoves that arrive within one frame coalesce into one
+            // refresh. The handler reads the latest mouseX/mouseY out of
+            // mouseMoveView at fire time, so we don't capture stale coords.
+            this._scheduleDeferredCursorRefresh();
 
             // here we are just mouseing over the globe viewport
             // but the mouse it up
