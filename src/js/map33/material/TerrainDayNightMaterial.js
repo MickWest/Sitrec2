@@ -121,11 +121,33 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 // barycentric coords; here it's per-tile from the 0..1 UV.
                 if (showTileEdges) {
                     vec2 uvD = fwidth(vUv);
-                    vec2 distToEdge = min(vUv, vec2(1.0) - vUv);
-                    float pxFromEdge = min(distToEdge.x / max(uvD.x, 1e-7),
-                                           distToEdge.y / max(uvD.y, 1e-7));
-                    float borderFactor = 1.0 - smoothstep(0.5, 1.0, pxFromEdge);
-                    finalColor.rgb = mix(finalColor.rgb, vec3(1.0, 0.0, 1.0), borderFactor);
+                    // Two guards on rendering the magenta border:
+                    //
+                    // (1) max(uvD) < 0.5 — skip sub-pixel tiles. uvD is the
+                    //     UV change per screen pixel; uvD > ~0.5 means the
+                    //     tile spans less than 2 screen pixels, so the whole
+                    //     tile is within the smoothstep range and renders
+                    //     solid magenta. Triggered by lookView's high-zoom
+                    //     tiles being shown through mainView's wider-FOV
+                    //     camera in the "Main Use Look Layers" debug.
+                    //
+                    // (2) min(uvD) > 1e-5 — skip skirt geometry. Skirts share
+                    //     this material with the tile, but their UVs are
+                    //     constant along one axis (the skirt is extruded
+                    //     downward from a tile edge, so vUv.y stays at 0 or 1
+                    //     across the entire skirt). That makes uvD on that
+                    //     axis essentially zero → distToEdge/uvD on that
+                    //     axis is 0 → pxFromEdge clamps to 0 everywhere on
+                    //     the skirt → the whole skirt renders solid magenta.
+                    //     A non-degenerate tile mesh has uvD non-zero on
+                    //     both axes.
+                    if (max(uvD.x, uvD.y) < 0.5 && min(uvD.x, uvD.y) > 1e-5) {
+                        vec2 distToEdge = min(vUv, vec2(1.0) - vUv);
+                        float pxFromEdge = min(distToEdge.x / max(uvD.x, 1e-7),
+                                               distToEdge.y / max(uvD.y, 1e-7));
+                        float borderFactor = 1.0 - smoothstep(0.5, 1.0, pxFromEdge);
+                        finalColor.rgb = mix(finalColor.rgb, vec3(1.0, 0.0, 1.0), borderFactor);
+                    }
                 }
 
                 // Set alpha based on transparency parameter

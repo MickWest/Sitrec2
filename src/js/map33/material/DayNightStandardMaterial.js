@@ -109,12 +109,23 @@ if (showTileEdges) {
     // derivative trick used by the building-edges path above (which uses
     // barycentric coords for per-triangle edges); here we use the tile UV
     // for per-tile boundaries.
+    //
+    // The max(uvD) < 0.5 guard skips sub-pixel tiles (where the whole tile
+    // is essentially within the edge-fade range and would render solid
+    // magenta). Triggered most visibly by the "Main Use Look Layers" debug
+    // toggle showing lookView's high-zoom tiles through mainView's wider
+    // FOV camera.
     vec2 uvD = fwidth(vDNUv);
-    vec2 distToEdge = min(vDNUv, vec2(1.0) - vDNUv);
-    float pxFromEdge = min(distToEdge.x / max(uvD.x, 1e-7),
-                           distToEdge.y / max(uvD.y, 1e-7));
-    float borderFactor = 1.0 - smoothstep(0.5, 1.0, pxFromEdge);
-    gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.0, 1.0), borderFactor);
+    // min(uvD) > 1e-5 also guards against skirt geometry, whose UV stays
+    // constant along one axis (the skirt is extruded down from a tile edge)
+    // and would otherwise render solid magenta because pxFromEdge clamps to 0.
+    if (max(uvD.x, uvD.y) < 0.5 && min(uvD.x, uvD.y) > 1e-5) {
+        vec2 distToEdge = min(vDNUv, vec2(1.0) - vDNUv);
+        float pxFromEdge = min(distToEdge.x / max(uvD.x, 1e-7),
+                               distToEdge.y / max(uvD.y, 1e-7));
+        float borderFactor = 1.0 - smoothstep(0.5, 1.0, pxFromEdge);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.0, 1.0), borderFactor);
+    }
 }
 if (useDayNight) {
     vec3 globalNormal = normalize(vWorldPositionDN - earthCenter);
