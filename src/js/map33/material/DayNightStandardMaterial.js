@@ -102,7 +102,7 @@ if (showBuildingEdges) {
     gl_FragColor.rgb = mix(edgeColor, gl_FragColor.rgb, edgeFactor);
 }
 if (showTileEdges) {
-    // Magenta 2-pixel border around each tile, anti-aliased.
+    // Magenta ~1-pixel border around each tile, anti-aliased.
     // vUv runs 0..1 across the tile; fwidth(vUv) gives UV change per pixel,
     // so dividing distance-to-edge by that yields pixel distance to the
     // nearest tile edge regardless of zoom. This is the same screen-space
@@ -113,7 +113,7 @@ if (showTileEdges) {
     vec2 distToEdge = min(vDNUv, vec2(1.0) - vDNUv);
     float pxFromEdge = min(distToEdge.x / max(uvD.x, 1e-7),
                            distToEdge.y / max(uvD.y, 1e-7));
-    float borderFactor = 1.0 - smoothstep(1.0, 2.0, pxFromEdge);
+    float borderFactor = 1.0 - smoothstep(0.5, 1.0, pxFromEdge);
     gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.0, 1.0), borderFactor);
 }
 if (useDayNight) {

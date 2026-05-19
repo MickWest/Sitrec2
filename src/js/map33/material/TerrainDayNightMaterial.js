@@ -115,7 +115,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 }
                 
                 // Magenta border around each tile (debug overlay). Uses screen-
-                // space derivatives of vUv to get a constant 2-pixel-wide line
+                // space derivatives of vUv to get a constant ~1-pixel-wide line
                 // regardless of zoom. Mirrors the building-edges trick in
                 // DayNightStandardMaterial — there it's per-triangle from
                 // barycentric coords; here it's per-tile from the 0..1 UV.
@@ -124,7 +124,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                     vec2 distToEdge = min(vUv, vec2(1.0) - vUv);
                     float pxFromEdge = min(distToEdge.x / max(uvD.x, 1e-7),
                                            distToEdge.y / max(uvD.y, 1e-7));
-                    float borderFactor = 1.0 - smoothstep(1.0, 2.0, pxFromEdge);
+                    float borderFactor = 1.0 - smoothstep(0.5, 1.0, pxFromEdge);
                     finalColor.rgb = mix(finalColor.rgb, vec3(1.0, 0.0, 1.0), borderFactor);
                 }
 

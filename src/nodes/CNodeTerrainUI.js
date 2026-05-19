@@ -692,7 +692,7 @@ export class CNodeTerrainUI extends CNode {
             this.gui.add(this, "showTileEdges").name("Tile Edges").onChange(v => {
                 sharedUniforms.showTileEdges.value = v;
                 setRenderOne(true);
-            }).tooltip("Outline each terrain tile with a 2px magenta border");
+            }).tooltip("Outline each terrain tile with a 1px magenta border");
 
             if (hasGoogle) {
                 this.gui.add(this, "showOceanSurface").name(t("terrainUI.oceanSurface.label")).onChange(() => {
