@@ -1071,15 +1071,33 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         // Use capture phase to run before the global context menu blocker in index.js
         document.addEventListener('contextmenu', this.onContextMenuBound, { capture: true });
         
+        // While the overlay is hidden we skip every per-tile event response
+        // and just mark _overlayDirty. show(true) does a full buildMesh().
+        // Without this, dragging a target with X held thrashes through
+        // tileVisibilityChanged / tileChanged events as the terrain quad-tree
+        // re-subdivides, and each one calls createOverlayTileFromTerrainTile
+        // (very expensive) even though nothing is on screen to render.
         EventManager.addEventListener("terrainLoaded", () => {
+            if (!this.visible) { this._overlayDirty = true; return; }
             this.updateMesh();
         });
-        
+
         this.onTileVisibilityChangedBound = this.onTileVisibilityChanged.bind(this);
         this.onTileChangedBound = this.onTileChanged.bind(this);
-        
+
         EventManager.addEventListener("tileVisibilityChanged", this.onTileVisibilityChangedBound);
         EventManager.addEventListener("tileChanged", this.onTileChangedBound);
+    }
+
+    show(visible = true) {
+        const wasVisible = this.visible;
+        super.show(visible);
+        if (visible && !wasVisible && this._overlayDirty) {
+            this._overlayDirty = false;
+            // Drops any stale tile meshes built before we went hidden and
+            // rebuilds against the current terrain quad-tree state.
+            this.buildMesh();
+        }
     }
     
     getTerrainMap() {
@@ -1105,6 +1123,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
 
     onTileVisibilityChanged({tile, oldMask, newMask}) {
         if (this.altitude > 0) return;
+        if (!this.visible) { this._overlayDirty = true; return; }
         const terrainMap = this.getTerrainMap();
         if (!terrainMap || tile.map !== terrainMap) return;
 
@@ -1134,6 +1153,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
     
     onTileChanged(tile) {
         if (this.altitude > 0) return;
+        if (!this.visible) { this._overlayDirty = true; return; }
         const terrainMap = this.getTerrainMap();
         if (!terrainMap || tile.map !== terrainMap) return;
         const mapProjection = terrainMap.options?.mapProjection;
