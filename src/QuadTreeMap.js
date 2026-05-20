@@ -1,6 +1,7 @@
 import {wgs84} from "./LLA-ECEF-ENU";
 import {Frustum, Matrix4, Sphere, Vector3} from "three";
 import {computeActiveTileHash, debugLog, Globals, tileBoundsModeForView} from "./Globals";
+import {buildDilatedProjectionMatrix, buildFrustumShape, createFrustumShape} from "./QuadTreeCullingBounds";
 import {isLocal} from "./configUtils";
 import {altitudeAboveSphere, distanceToHorizon, hiddenByGlobe} from "./SphericalMath";
 import * as LAYER from "./LayerMasks";
@@ -519,6 +520,20 @@ export class QuadTreeMap {
         // Fallback to 1080 if the view hasn't sized itself yet (early frames).
         camera._viewportHeightPx = view.heightPx || 1080;
 
+        // V5 Phase 3: build the FrustumShape (planes + 8 world-space points)
+        // required by NASA's OBB.intersectsFrustum. One shape per (view,
+        // strict|dilated) pair, allocated lazily on the camera and reused
+        // across passes. Only the OBB narrow-phase consumes these; sphere
+        // mode still hits camera.viewFrustum/dilatedFrustum directly.
+        if (tileBoundsModeForView(view.id) === "obb") {
+            if (!camera._viewFrustumShape) camera._viewFrustumShape = createFrustumShape();
+            if (!camera._dilatedFrustumShape) camera._dilatedFrustumShape = createFrustumShape();
+            if (!camera._dilatedProjMatScratch) camera._dilatedProjMatScratch = new Matrix4();
+            buildFrustumShape(camera._viewFrustumShape, camera, camera.projectionMatrix);
+            buildDilatedProjectionMatrix(camera, SUBDIVISION_FOV_DILATION, camera._dilatedProjMatScratch);
+            buildFrustumShape(camera._dilatedFrustumShape, camera, camera._dilatedProjMatScratch);
+        }
+
         // Per-pass diagnostics. Cheap to populate; only allocated when stats
         // are enabled. Surfaced via logSubdivisionDiag() below.
         const diag = Globals.showTileStats ? {
@@ -1009,8 +1024,28 @@ export class QuadTreeMap {
         const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
         const closestDistance = Math.max(0, distance - radius);
 
-        const inDilated = camera.dilatedFrustum.intersectsSphere(_cullingSphere);
-        const inStrict  = camera.viewFrustum.intersectsSphere(_cullingSphere);
+        let inDilated = camera.dilatedFrustum.intersectsSphere(_cullingSphere);
+        let inStrict  = camera.viewFrustum.intersectsSphere(_cullingSphere);
+
+        // V5 Phase 3: OBB narrow phase. Only runs when (a) options.mode is
+        // "obb", (b) we have an OBB (null for z<3), and (c) we are NOT inside
+        // a coverageSphereOnly recursion (deactivateParents coverage check
+        // forces sphere-only to keep cost down). Can only NARROW the
+        // accept set — never widen it — by rejecting tiles whose huge
+        // sphere passes broad-phase but whose actual OBB is off-axis.
+        if (_v5Mode === "obb" && options?.coverageMode !== "coverageSphereOnly") {
+            const _obb = tile.cullingState?.obb;
+            if (_obb) {
+                if (inDilated && camera._dilatedFrustumShape && !_obb.intersectsFrustum(camera._dilatedFrustumShape)) {
+                    inDilated = false;
+                    if (diag) diag.obbRejectedDilated++;
+                }
+                if (inStrict && camera._viewFrustumShape && !_obb.intersectsFrustum(camera._viewFrustumShape)) {
+                    inStrict = false;
+                    if (diag) diag.obbRejectedStrict++;
+                }
+            }
+        }
 
         if (inDilated) {
             // Screen-space error in pixels = geometric error (meters per texel
@@ -1022,7 +1057,17 @@ export class QuadTreeMap {
             const metersPerTexel = tileSpanMeters / 256;
             const fovRad = camera.getEffectiveFOV() * Math.PI / 180;
             const viewportHeightPx = camera._viewportHeightPx || 1080;
-            const projDistance = Math.max(distance, radius * 0.1);
+            // V5 Phase 3: in obb mode, SSE distance comes from
+            // OBB.distanceToPoint (camera→nearest-OBB-edge) — tighter than
+            // sphere-center distance for elevated terrain and narrow FOVs.
+            // Fallback to sphere-center distance when OBB is null (z<3).
+            let _lodDistance;
+            if (_v5Mode === "obb" && tile.cullingState?.obb && options?.coverageMode !== "coverageSphereOnly") {
+                _lodDistance = Math.max(tile.cullingState.obb.distanceToPoint(camera.position), radius * 0.1);
+            } else {
+                _lodDistance = Math.max(distance, radius * 0.1);
+            }
+            const projDistance = _lodDistance;
             screenSpaceError = (metersPerTexel * viewportHeightPx) /
                                (projDistance * 2 * Math.tan(fovRad / 2));
 
