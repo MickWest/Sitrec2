@@ -1,6 +1,6 @@
 import {wgs84} from "./LLA-ECEF-ENU";
 import {Frustum, Matrix4, Sphere, Vector3} from "three";
-import {computeActiveTileHash, debugLog, Globals} from "./Globals";
+import {computeActiveTileHash, debugLog, Globals, tileBoundsModeForView} from "./Globals";
 import {isLocal} from "./configUtils";
 import {altitudeAboveSphere, distanceToHorizon, hiddenByGlobe} from "./SphericalMath";
 import * as LAYER from "./LayerMasks";
@@ -540,9 +540,19 @@ export class QuadTreeMap {
             this.currentStats.clear();
         }
 
+        // V5 Phase 0.1.c: per-pass options object carrying view/mode/layer
+        // context. calculateTileVisibility currently ignores `options.mode`
+        // (legacy behavior); future phases will branch on it.
+        const _v5Options = {
+            viewId: view.id,
+            tileLayers,
+            mode: tileBoundsModeForView(view.id),
+            coverageMode: "main",
+        };
+
         // PASS 2: Deactivate parent tiles whose children are fully loaded (texture maps only, view-specific)
         if (isTextureMap) {
-            this.deactivateParentsWithLoadedChildren(tileLayers, camera);
+            this.deactivateParentsWithLoadedChildren(tileLayers, camera, _v5Options);
         }
 
         // PASS 3: Process each tile for subdivision/merging and lazy loading
@@ -568,8 +578,28 @@ export class QuadTreeMap {
             if (!isActiveInView && !hasChildren) continue;
 
             // Calculate visibility and screen size
-            // This is expensive, so we only do it after early exit checks
-            const visibility = this.calculateTileVisibility(tile, camera, diag);
+            // This is expensive, so we only do it after early exit checks.
+            //
+            // V5 Phase 0.1.c: try/catch with per-view auto-fallback to
+            // "legacy" mode if the visibility function ever throws. Mirrors
+            // the prior-session bug where a ReferenceError halted the pass
+            // mid-tile. The catch logs once per (view, map) and reverts
+            // the per-view tileBoundsMode to legacy so the cascade keeps
+            // moving on subsequent frames.
+            let visibility;
+            try {
+                visibility = this.calculateTileVisibility(tile, camera, _v5Options, diag);
+            } catch (err) {
+                if (!Globals._cullErrorReportedByView) Globals._cullErrorReportedByView = {};
+                const errKey = `${view.id}/${isTextureMap ? "texture" : "elevation"}`;
+                if (!Globals._cullErrorReportedByView[errKey]) {
+                    Globals._cullErrorReportedByView[errKey] = true;
+                    console.error(`[QuadTreeMap/${errKey}] visibility threw; reverting to legacy`, err);
+                    Globals.tileBoundsMode[view.id] = "legacy";
+                }
+                // Minimal fallback so the cascade still has a result this pass.
+                visibility = { screenSpaceError: 0, visible: tile.z < 3, actuallyVisible: tile.z < 3, frustumIntersects: false };
+            }
 
             // OPTIMIZATION #7: Early exit for invisible tiles without children.
             // Now also DEACTIVATES the leaf if it's currently flagged for this
@@ -646,7 +676,7 @@ export class QuadTreeMap {
                     // deactivateParentsWithLoadedChildren once their
                     // descendants covered the world — we keep them that way.
                     if (child.z < 3) continue;
-                    const childVis = this.calculateTileVisibility(child, camera, null);
+                    const childVis = this.calculateTileVisibility(child, camera, _v5Options, null);
                     if (!childVis.visible) continue;
                     // INVARIANT 1: don't reactivate a tile that already has
                     // active descendants. If its grandchildren (or deeper)
@@ -832,7 +862,7 @@ export class QuadTreeMap {
         return false;
     }
 
-    deactivateParentsWithLoadedChildren(tileLayers, camera = null) {
+    deactivateParentsWithLoadedChildren(tileLayers, camera = null, options = null) {
         // Iterate the full parentTiles set rather than just `_dirtyParents`.
         // Dirty tracking is layer-mask-change driven, so a parent that got
         // processed while its children were still loading never gets re-
@@ -861,8 +891,14 @@ export class QuadTreeMap {
             // sibling, leaving the parent rendering alongside in-frustum
             // active children (the z-fighting case). Passing the camera lets
             // the check ignore children whose own area isn't visible.
+            // V5 Phase 0.1.c: thread options into the coverage recursion,
+            // forcing coverageMode:"coverageSphereOnly" so future phases'
+            // OBB narrow-phase doesn't fire inside this scan.
+            const _v5CoverageOptions = options
+                ? { ...options, coverageMode: "coverageSphereOnly" }
+                : null;
             const covered = camera
-                ? this.visibleAreaCoveredByDescendants(tile, tileLayers, camera)
+                ? this.visibleAreaCoveredByDescendants(tile, tileLayers, camera, _v5CoverageOptions)
                 : this.areaCoveredByDescendants(tile, tileLayers);
             if (covered) {
                 this.deactivateTile(tile, tileLayers, true);
@@ -881,7 +917,11 @@ export class QuadTreeMap {
      * Phase 2 will replace the screenFraction*1024 heuristic with proper SSE
      * (geometricError * screenHeight / (distance * 2 * tan(fov/2))).
      */
-    calculateTileVisibility(tile, camera, diag = null) {
+    calculateTileVisibility(tile, camera, options = null, diag = null) {
+        // V5 Phase 0.1.c: options carries per-pass view/mode/layer context.
+        // Currently legacy-only — options.mode is ignored. Future phases
+        // (2/3) will branch on it. Lenient null-default avoids breaking any
+        // caller that hasn't been updated yet.
         const worldSphere = tile.getWorldSphere();
         let screenSpaceError = 0;
         let visible = false;

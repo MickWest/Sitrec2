@@ -283,8 +283,18 @@ class QuadTreeMapTexture extends QuadTreeMap {
     // overlap. Out-of-frustum gaps aren't visible, so they don't count.
     //
     // No caching here: result depends on camera which can change every frame.
-    visibleAreaCoveredByDescendants(tile, tileLayerMask, camera) {
+    visibleAreaCoveredByDescendants(tile, tileLayerMask, camera, options = null) {
         if (!tile.children) return false;
+
+        // V5 Phase 0.1.c: forward the coverage-mode options into the
+        // recursive visibility calls. Callers that don't supply options
+        // (e.g. legacy direct invocations) get a synthesised bag.
+        const _v5CoverageOptions = options ?? {
+            viewId: "coverage",
+            tileLayers: tileLayerMask,
+            mode: "legacy",
+            coverageMode: "coverageSphereOnly",
+        };
 
         // Track whether at least one child is visible. If no children are
         // visible (e.g. parent is in-frustum but all 4 children's bounding
@@ -299,7 +309,7 @@ class QuadTreeMapTexture extends QuadTreeMap {
 
             // Skip children whose own area isn't visible to the camera —
             // they don't need to cover anything because nothing renders there.
-            const childVis = this.calculateTileVisibility(child, camera, null);
+            const childVis = this.calculateTileVisibility(child, camera, _v5CoverageOptions, null);
             if (!childVis.visible) continue;
             anyChildVisible = true;
 
@@ -314,7 +324,7 @@ class QuadTreeMapTexture extends QuadTreeMap {
                 || !child.geometryReady
                 || !child.mesh.parent
             ) {
-                if (!this.visibleAreaCoveredByDescendants(child, tileLayerMask, camera)) {
+                if (!this.visibleAreaCoveredByDescendants(child, tileLayerMask, camera, _v5CoverageOptions)) {
                     return false;
                 }
             }
