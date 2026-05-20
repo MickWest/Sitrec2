@@ -1019,8 +1019,17 @@ export class QuadTreeMap {
         // legacy semantics; V5 narrow-phase logic doesn't belong here.
         let cx, cy, cz, radius;
         const _v5Mode = options?.mode;
+        // Use V5 measured-bounds sphere only when (a) we're in V5 mode AND
+        // (b) not in coverage recursion AND (c) the tile actually has
+        // measured bounds. For unmeasured tiles the V5 default bounds
+        // (-1500..+10000m) inflate the sphere far beyond the legacy
+        // sea-level sphere — that makes off-axis ancestors and ocean tiles
+        // spuriously pass the frustum test, the deactivation pass can't
+        // keep up, and parents stay rendering alongside loaded
+        // descendants (visible as a "tile mosaic" over open water).
         const _v5UseMeasured = (_v5Mode === "sphere" || _v5Mode === "obb")
-            && options?.coverageMode !== "coverageSphereOnly";
+            && options?.coverageMode !== "coverageSphereOnly"
+            && tile.altitudeBounds?.measured === true;
         if (_v5UseMeasured) {
             const state = tile.ensureCullingState();
             const s = state.sphere;
@@ -1063,7 +1072,12 @@ export class QuadTreeMap {
         // forces sphere-only to keep cost down). Can only NARROW the
         // accept set — never widen it — by rejecting tiles whose huge
         // sphere passes broad-phase but whose actual OBB is off-axis.
-        if (_v5Mode === "obb" && options?.coverageMode !== "coverageSphereOnly") {
+        // OBB narrow phase only runs on measured tiles. Unmeasured OBBs are
+        // built from the same fat default bounds as the sphere — using them
+        // to reject tiles can produce false negatives on the root chain.
+        if (_v5Mode === "obb"
+            && options?.coverageMode !== "coverageSphereOnly"
+            && tile.altitudeBounds?.measured === true) {
             const _obb = tile.cullingState?.obb;
             if (_obb) {
                 if (inDilated && camera._dilatedFrustumShape && !_obb.intersectsFrustum(camera._dilatedFrustumShape)) {
@@ -1092,7 +1106,10 @@ export class QuadTreeMap {
             // sphere-center distance for elevated terrain and narrow FOVs.
             // Fallback to sphere-center distance when OBB is null (z<3).
             let _lodDistance;
-            if (_v5Mode === "obb" && tile.cullingState?.obb && options?.coverageMode !== "coverageSphereOnly") {
+            if (_v5Mode === "obb"
+                && tile.cullingState?.obb
+                && options?.coverageMode !== "coverageSphereOnly"
+                && tile.altitudeBounds?.measured === true) {
                 _lodDistance = Math.max(tile.cullingState.obb.distanceToPoint(camera.position), radius * 0.1);
             } else {
                 _lodDistance = Math.max(distance, radius * 0.1);
