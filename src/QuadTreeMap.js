@@ -1,5 +1,6 @@
 import {wgs84} from "./LLA-ECEF-ENU";
 import {Frustum, Matrix4, Sphere, Vector3} from "three";
+import {par} from "./par";
 import {computeActiveTileHash, debugLog, Globals, tileBoundsModeForView} from "./Globals";
 import {buildDilatedProjectionMatrix, buildFrustumShape, createFrustumShape} from "./QuadTreeCullingBounds";
 import {isLocal} from "./configUtils";
@@ -479,6 +480,24 @@ export class QuadTreeMap {
         }
         // V5 Phase 0.1.b: per-pass timing for budget warn.
         const _v5CullStartMs = performance.now();
+
+        // V5 Phase 3.1: per-frame counter reset. Without this, rejection counts
+        // (obbRejectedStrict, sphereRejected, etc.) grow monotonically and MCP
+        // probes can't A/B-compare adjacent frames. activeTileHash/cullSelfTimeMs
+        // already use last-write-wins so they don't need resetting.
+        const _v5StatsBagEarly = Globals.tileCullStats?.[view.id];
+        if (_v5StatsBagEarly) {
+            const _v5FrameTick = Math.floor(par?.frame ?? 0);
+            if (_v5StatsBagEarly._lastFrameTick !== _v5FrameTick) {
+                for (const k of Object.keys(_v5StatsBagEarly)) {
+                    if (typeof _v5StatsBagEarly[k] !== "number") continue;
+                    if (k === "activeTileHash" || k === "cullSelfTimeMs") continue;
+                    if (k.startsWith("_")) continue;
+                    _v5StatsBagEarly[k] = 0;
+                }
+                _v5StatsBagEarly._lastFrameTick = _v5FrameTick;
+            }
+        }
 
         // Whole-world coverage check used to assert here. Now relaxed: with
         // the per-view leaf-deactivation in PASS 3 below, out-of-frustum

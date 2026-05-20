@@ -139,20 +139,24 @@ if (typeof window !== "undefined") {
     window.__sitrecTileCullStats = Globals.tileCullStats;
 }
 
-// FNV-1a 32-bit hash of the active z/x/y triples for a layer mask. Same
-// digest formula used by Playwright fixtures and MCP procedures.
+// FNV-1a 32-bit hash of the active z/x/y triples for a layer mask. Order
+// independent (tiles sorted by z, then x, then y before hashing). z/x/y
+// are folded as three separate 32-bit inputs because at z=18 both x and y
+// can exceed 18 bits — packing them via bit shifts (z<<24)^(x<<12)^y would
+// alias y into x's and z's bit ranges and collide distinct sets.
 export function computeActiveTileHash(allTiles, layerMask) {
     let h = 0x811c9dc5;
     const tiles = [];
     for (const t of allTiles) {
         if ((t.tileLayers || 0) & layerMask) {
-            tiles.push((t.z << 24) ^ (t.x << 12) ^ t.y);
+            tiles.push([t.z, t.x, t.y]);
         }
     }
-    tiles.sort((a, b) => a - b);
-    for (const v of tiles) {
-        h ^= v;
-        h = Math.imul(h, 0x01000193) | 0;
+    tiles.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    for (const triple of tiles) {
+        h ^= triple[0]; h = Math.imul(h, 0x01000193) | 0;
+        h ^= triple[1]; h = Math.imul(h, 0x01000193) | 0;
+        h ^= triple[2]; h = Math.imul(h, 0x01000193) | 0;
     }
     return h >>> 0;
 }
