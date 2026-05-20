@@ -1,5 +1,6 @@
 import {CNodeController} from "./CNodeController";
 import {NodeMan, Sit} from "../Globals";
+import {par} from "../par";
 import {V3} from "../threeUtils";
 import {getLocalUpVector} from "../SphericalMath";
 import {CNodeSmoothedPositionTrack} from "./CNodeSmoothedPositionTrack";
@@ -41,6 +42,15 @@ export class CNodeControllerCameraBankRoll extends CNodeController {
     apply(f, objectNode) {
         if (this.in.enabled !== undefined && !this.in.enabled.getValueFrame(f)) return;
         if (f < 0) return;
+
+        // We write into `ptzAngles.roll` (or `.rotation`) as a side channel for
+        // the next controller pass to consume. That makes the call non-pure:
+        // anything that walks the timeline by calling `camera.update(f)` at
+        // arbitrary frames (CNodeLOSFromCamera does this for every LOS sample)
+        // would leave the slot holding bank-for-some-other-frame, which then
+        // pollutes the live render until the next live-frame apply rewrites it.
+        // Skip non-live calls so this controller stays a no-op for queries.
+        if (f !== par.frame) return;
 
         const ptz = NodeMan.list.ptzAngles?.data;
         if (!ptz || ptz.roll === undefined) return;
