@@ -2,6 +2,7 @@ import {assert} from "./assert";
 import {
     GLOBAL_UNMEASURED_MAX_ALT_M,
     GLOBAL_UNMEASURED_MIN_ALT_M,
+    inheritBoundsFromParent,
 } from "./QuadTreeCullingBounds";
 import {boxMark, DebugArrowAB, removeDebugArrow} from "./threeExt";
 import {LLAToECEF, LLAToECEFInto, wgs84} from "./LLA-ECEF-ENU";
@@ -17,6 +18,8 @@ import {
     BufferGeometry,
     CanvasTexture,
     Float32BufferAttribute,
+    LineBasicMaterial,
+    LineSegments,
     Mesh,
     MeshStandardMaterial,
     NearestFilter,
@@ -169,6 +172,26 @@ export class QuadTreeTile {
         // Tree structure: parent and children references
         this.parent = null; // Reference to parent tile (null if root)
         this.children = null; // Array of four child tiles [child1, child2, child3, child4] or null if no children
+    }
+
+    /**
+     * V5: attach to a parent tile and inherit its altitude bounds (with slack).
+     * Call this from tile-creation sites instead of setting `tile.parent` directly,
+     * so the child's `altitudeBounds` starts from the parent's measured/inherited
+     * range rather than the much-wider global default. Without this seeding the
+     * V5 sphere/OBB for the child would be conservatively fat and cause the
+     * ocean-mosaic z-fighting symptom this commit chain fixed.
+     */
+    linkToParent(parent) {
+        this.parent = parent;
+        if (!parent) return;
+        const inherited = inheritBoundsFromParent(parent.altitudeBounds);
+        if (inherited.source !== "global" && !this.altitudeBounds.measured) {
+            inherited.generation = this.altitudeBounds.generation + 1;
+            this.altitudeBounds = inherited;
+            this.cullingState.generation = -1;
+            this.cullingState.visibilityCache = null;
+        }
     }
 
     // Getter and setter for tileLayers to track changes
@@ -391,6 +414,85 @@ export class QuadTreeTile {
         state.generation = this.altitudeBounds.generation;
         state.visibilityCache = null;
         return state;
+    }
+
+    /**
+     * V5 debug overlay: render this tile's OBB as 12 line segments, colored by
+     * the source of its altitudeBounds. Green = self-measured, yellow =
+     * inherited from ancestor, red = global default. Toggled via
+     * `Globals.showTileOBB` from CustomSupport's Performance Tweaks folder.
+     * No-op when the flag is off, when z<3 (no OBB built), or when the tile
+     * has no current cullingState.obb yet.
+     */
+    _updateOBBDebug() {
+        const wantDebug = Globals.showTileOBB && this.z >= 3 && this.cullingState?.obb;
+        if (!wantDebug) {
+            this._disposeOBBDebug();
+            return;
+        }
+        const obb = this.cullingState.obb;
+        const m = obb.box.min, M = obb.box.max;
+        // 8 local-space corners ordered so the edge list below indexes the
+        // standard box-edge topology.
+        const localCorners = [
+            [m.x, m.y, m.z], [M.x, m.y, m.z], [m.x, M.y, m.z], [M.x, M.y, m.z],
+            [m.x, m.y, M.z], [M.x, m.y, M.z], [m.x, M.y, M.z], [M.x, M.y, M.z],
+        ];
+        const _v = QuadTreeTile._obbDebugScratch ||= new Vector3();
+        const worldCorners = localCorners.map(c => {
+            _v.set(c[0], c[1], c[2]).applyMatrix4(obb.transform);
+            return [_v.x, _v.y, _v.z];
+        });
+        // 4 bottom edges, 4 top edges, 4 vertical edges = 12 edges = 24 vertices.
+        const edges = [
+            [0,1],[1,3],[3,2],[2,0],
+            [4,5],[5,7],[7,6],[6,4],
+            [0,4],[1,5],[2,6],[3,7],
+        ];
+        const positions = new Float32Array(edges.length * 2 * 3);
+        let i = 0;
+        for (const [a, b] of edges) {
+            positions[i++] = worldCorners[a][0];
+            positions[i++] = worldCorners[a][1];
+            positions[i++] = worldCorners[a][2];
+            positions[i++] = worldCorners[b][0];
+            positions[i++] = worldCorners[b][1];
+            positions[i++] = worldCorners[b][2];
+        }
+        const src = this.altitudeBounds?.source;
+        const colorHex = src === "renderedGeometry" ? 0x00ff00
+            : src === "elevationData" ? 0x00ff88
+            : src === "inherited" ? 0xffff00
+            : 0xff0000;
+        if (!this._obbDebugLines) {
+            const geom = new BufferGeometry();
+            geom.setAttribute("position", new Float32BufferAttribute(positions, 3));
+            const mat = new LineBasicMaterial({color: colorHex, depthTest: true, depthWrite: false});
+            this._obbDebugLines = new LineSegments(geom, mat);
+            // Helpers layer (bit 0); both mainView (0x69) and lookView (0x51)
+            // include this bit so the overlay shows in both viewports.
+            this._obbDebugLines.layers.mask = 0x1;
+            this._obbDebugLines.frustumCulled = false;
+            this._obbDebugLines.renderOrder = 999;
+            GlobalScene.add(this._obbDebugLines);
+        } else {
+            const attr = this._obbDebugLines.geometry.getAttribute("position");
+            attr.array.set(positions);
+            attr.needsUpdate = true;
+            this._obbDebugLines.material.color.setHex(colorHex);
+        }
+    }
+
+    /**
+     * Remove and free this tile's OBB debug overlay (if any). Called when the
+     * flag is toggled off and from tile-disposal paths.
+     */
+    _disposeOBBDebug() {
+        if (!this._obbDebugLines) return;
+        GlobalScene.remove(this._obbDebugLines);
+        this._obbDebugLines.geometry?.dispose();
+        this._obbDebugLines.material?.dispose();
+        this._obbDebugLines = null;
     }
 
 
@@ -829,6 +931,9 @@ export class QuadTreeTile {
             this.activeIndicator.material.dispose();
             this.activeIndicator = undefined;
         }
+
+        // V5 OBB debug overlay
+        this._disposeOBBDebug();
     }
 
     // Dispose of this tile's resources, including its materialCache entry.

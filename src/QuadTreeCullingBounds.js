@@ -39,18 +39,36 @@ const FALLBACK_GRID_LARGE = 5;
 export {OBB};
 
 // ----- inheritance (V5 §3.1) -----
-
+//
+// A freshly-spawned child inherits its parent's bounds with a slack pad.
+// If the parent has measured (or inherited-from-measured) bounds, the child
+// gets parent.min - INHERITED_MIN_SLACK_M to parent.max + INHERITED_MAX_SLACK_M.
+// That's typically far tighter than the global default (-1500..+10000 m),
+// which is the whole point of inheritance — V5 sphere/OBB are only useful
+// when the bounds reflect actual terrain.
+//
+// We do NOT clamp to global defaults here (the V4 code did, which made
+// inheritance a no-op). The slack alone is enough margin for elevation
+// variance within a tile that's smaller than its parent. The `source` field
+// records that these bounds came from inheritance, so calculateTileVisibility
+// can opt into V5 geometry for them.
 export function inheritBoundsFromParent(parentAltitudeBounds) {
-    const parentMeasured = !!parentAltitudeBounds?.measured;
-    const inheritedMin = parentMeasured
-        ? parentAltitudeBounds.min - INHERITED_MIN_SLACK_M
-        : GLOBAL_UNMEASURED_MIN_ALT_M;
-    const inheritedMax = parentMeasured
-        ? parentAltitudeBounds.max + INHERITED_MAX_SLACK_M
-        : GLOBAL_UNMEASURED_MAX_ALT_M;
+    const parentUseful = parentAltitudeBounds
+        && parentAltitudeBounds.source !== "global"
+        && parentAltitudeBounds.min !== undefined
+        && parentAltitudeBounds.max !== undefined;
+    if (!parentUseful) {
+        return {
+            min: GLOBAL_UNMEASURED_MIN_ALT_M,
+            max: GLOBAL_UNMEASURED_MAX_ALT_M,
+            source: "global",
+            measured: false,
+            generation: 0,
+        };
+    }
     return {
-        min: Math.min(inheritedMin, GLOBAL_UNMEASURED_MIN_ALT_M),
-        max: Math.max(inheritedMax, GLOBAL_UNMEASURED_MAX_ALT_M),
+        min: parentAltitudeBounds.min - INHERITED_MIN_SLACK_M,
+        max: parentAltitudeBounds.max + INHERITED_MAX_SLACK_M,
         source: "inherited",
         measured: false,
         generation: 0,

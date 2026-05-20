@@ -72,10 +72,13 @@ export class QuadTreeMapElevation extends QuadTreeMap {
             tile = new QuadTreeTile(this, z, x, y);
             this.setTile(x, y, z, tile);
             
-            // Set up parent relationship in tree structure
+            // Set up parent relationship in tree structure.
+            // linkToParent (V5) also seeds the child's altitudeBounds from the
+            // parent + slack so V5 sphere/OBB start with useful bounds rather
+            // than the global default fat range.
             const parent = this.getParent(tile);
             if (parent) {
-                tile.parent = parent;
+                tile.linkToParent(parent);
                 // Note: children array is set up in subdivideTile when all 4 children are created
             }
             

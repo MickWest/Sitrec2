@@ -30,29 +30,42 @@ import {
 } from "../src/QuadTreeCullingBounds";
 
 describe("inheritBoundsFromParent", () => {
-    test("no parent → global defaults", () => {
+    test("no parent → global defaults, source=global", () => {
         const b = inheritBoundsFromParent(null);
         expect(b.min).toBe(GLOBAL_UNMEASURED_MIN_ALT_M);
         expect(b.max).toBe(GLOBAL_UNMEASURED_MAX_ALT_M);
+        expect(b.source).toBe("global");
+        expect(b.measured).toBe(false);
+    });
+    test("parent with source=global → global defaults", () => {
+        const b = inheritBoundsFromParent({min: -1500, max: 10000, source: "global", measured: false});
+        expect(b.min).toBe(GLOBAL_UNMEASURED_MIN_ALT_M);
+        expect(b.max).toBe(GLOBAL_UNMEASURED_MAX_ALT_M);
+        expect(b.source).toBe("global");
+    });
+    test("measured low-relief parent → tighter than global, source=inherited", () => {
+        const b = inheritBoundsFromParent({min: 0, max: 200, source: "renderedGeometry", measured: true});
+        expect(b.min).toBe(0 - INHERITED_MIN_SLACK_M);
+        expect(b.max).toBe(200 + INHERITED_MAX_SLACK_M);
         expect(b.source).toBe("inherited");
         expect(b.measured).toBe(false);
     });
-    test("unmeasured parent → global defaults", () => {
-        const b = inheritBoundsFromParent({min: -200, max: 3000, measured: false});
-        expect(b.min).toBe(GLOBAL_UNMEASURED_MIN_ALT_M);
-        expect(b.max).toBe(GLOBAL_UNMEASURED_MAX_ALT_M);
-    });
-    test("measured low-relief parent → clamps to global ceiling", () => {
-        const b = inheritBoundsFromParent({min: 0, max: 200, measured: true});
-        expect(b.max).toBe(GLOBAL_UNMEASURED_MAX_ALT_M);
-    });
-    test("measured high-relief parent → expands above global", () => {
-        const b = inheritBoundsFromParent({min: 0, max: 12000, measured: true});
+    test("measured high-relief parent → bounds + slack, no global clamp", () => {
+        const b = inheritBoundsFromParent({min: 0, max: 12000, source: "renderedGeometry", measured: true});
         expect(b.max).toBe(12000 + INHERITED_MAX_SLACK_M);
+        expect(b.source).toBe("inherited");
     });
-    test("measured deep-trench parent → expands below global", () => {
-        const b = inheritBoundsFromParent({min: -3000, max: 0, measured: true});
+    test("measured deep-trench parent → expands below + slack", () => {
+        const b = inheritBoundsFromParent({min: -3000, max: 0, source: "renderedGeometry", measured: true});
         expect(b.min).toBe(-3000 - INHERITED_MIN_SLACK_M);
+        expect(b.max).toBe(0 + INHERITED_MAX_SLACK_M);
+    });
+    test("inherited parent (not directly measured) still propagates", () => {
+        // A child of an inherited tile should keep inheriting the chain
+        const b = inheritBoundsFromParent({min: -500, max: 2000, source: "inherited", measured: false});
+        expect(b.min).toBe(-500 - INHERITED_MIN_SLACK_M);
+        expect(b.max).toBe(2000 + INHERITED_MAX_SLACK_M);
+        expect(b.source).toBe("inherited");
     });
 });
 

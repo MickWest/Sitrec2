@@ -785,6 +785,18 @@ export class QuadTreeMap {
                 console.warn(`[QuadTreeMap/${view.id}] cull ${_v5SelfMs.toFixed(2)}ms exceeds ${Globals.tileCullBudgetMs}ms budget`);
             }
         }
+
+        // V5 debug overlay: refresh per-tile OBB line visualizations. Gated on
+        // Globals.showTileOBB inside _updateOBBDebug. Only runs on the texture
+        // map (once per view), since the texture and elevation maps share the
+        // same OBB geometry and we don't want to render duplicates. When the
+        // flag is off, the call is a cheap no-op that also removes any stale
+        // debug objects.
+        if (isTextureMap) {
+            for (const tile of this.allTiles) {
+                tile._updateOBBDebug();
+            }
+        }
     }
 
     /**
@@ -917,6 +929,29 @@ export class QuadTreeMap {
                 : this.areaCoveredByDescendants(tile, tileLayers);
             if (covered) {
                 this.deactivateTile(tile, tileLayers, true);
+                continue;
+            }
+
+            // REPLACE-refinement invariant (V5): even if coverage isn't full,
+            // a parent must NOT render alongside any of its already-rendering
+            // children. The coverage check above is satisfied by "all visible
+            // children cover" — but in some scenarios (e.g. a culling
+            // algorithm rejected one off-axis child, leaving 3 siblings
+            // rendering and 1 leaf-deactivated), the coverage call returns
+            // false yet 3 children are mid-render. The parent rendering on
+            // top of those 3 produces z-fighting. Choose missing-tile-in-
+            // rejected-area over z-fight: deactivate the parent the moment
+            // any child is actively rendering in this view.
+            const anyChildRendering = tile.children.some(c =>
+                c
+                && (c.tileLayers & tileLayers) !== 0
+                && c.loaded
+                && c.added
+                && c.mesh
+                && (c.mesh.layers.mask & tileLayers) !== 0
+            );
+            if (anyChildRendering) {
+                this.deactivateTile(tile, tileLayers, true);
             }
         }
     }
@@ -1000,14 +1035,15 @@ export class QuadTreeMap {
         // legacy semantics; V5 narrow-phase logic doesn't belong here.
         let cx, cy, cz, radius;
         const _v5Mode = options?.mode;
-        // Use V5 measured-bounds sphere only when (a) we're in V5 mode AND
-        // (b) not in coverage recursion AND (c) the tile actually has
-        // measured bounds. For unmeasured tiles the V5 default bounds
-        // (-1500..+10000m) inflate the sphere far beyond the legacy
-        // sea-level sphere — that makes off-axis ancestors and ocean tiles
-        // spuriously pass the frustum test, the deactivation pass can't
-        // keep up, and parents stay rendering alongside loaded
-        // descendants (visible as a "tile mosaic" over open water).
+        // Use V5 measured-bounds sphere only when the tile has measured its
+        // OWN geometry. Inherited bounds (source==="inherited") cover a
+        // ±slack range around the parent's measurement — that produces a
+        // bounding volume positioned at midAlt above the actual mesh, which
+        // makes OBB.intersectsFrustum spuriously reject off-axis ocean
+        // children. The leaf-deactivation that follows then orphans the
+        // parent (3 of 4 children rendering, coverage check fails because
+        // 1 child was leaf-deactivated, parent stays active → ocean mosaic
+        // z-fight). Stick with legacy sphere until the tile itself measures.
         const _v5UseMeasured = (_v5Mode === "sphere" || _v5Mode === "obb")
             && options?.coverageMode !== "coverageSphereOnly"
             && tile.altitudeBounds?.measured === true;
@@ -1053,9 +1089,9 @@ export class QuadTreeMap {
         // forces sphere-only to keep cost down). Can only NARROW the
         // accept set — never widen it — by rejecting tiles whose huge
         // sphere passes broad-phase but whose actual OBB is off-axis.
-        // OBB narrow phase only runs on measured tiles. Unmeasured OBBs are
-        // built from the same fat default bounds as the sphere — using them
-        // to reject tiles can produce false negatives on the root chain.
+        // OBB narrow phase only runs on tiles with their OWN measured bounds.
+        // Inherited bounds produce a fat OBB that false-rejects off-axis
+        // children (see _v5UseMeasured rationale above).
         if (_v5Mode === "obb"
             && options?.coverageMode !== "coverageSphereOnly"
             && tile.altitudeBounds?.measured === true) {

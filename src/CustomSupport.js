@@ -571,13 +571,13 @@ export class CCustomManager {
                 .name("Tile Culling (look)")
                 .tooltip("Tile bounding mode for lookView.")
                 .listen();
-            tweaksFolder.add(Globals, "enableReachCull")
-                .name("Enable Reach Cull")
-                .tooltip("Cascade-aware frustum-max-reach cull. Default on in legacy/metrics, off in sphere/obb.")
-                .listen();
+            // Reach Cull is a V5 Phase 4 placeholder — Globals.enableReachCull
+            // exists for the URL parser and stats counter, but no code in the
+            // cull pipeline reads it yet. Hide the GUI control until Phase 4
+            // ships so users don't toggle a no-op.
             tweaksFolder.add(Globals, "showTileOBB")
                 .name("Show Tile OBB")
-                .tooltip("Debug overlay: render each active tile's OBB as line segments. Green = measured, yellow = inherited, red = global/fallback.")
+                .tooltip("Debug overlay: render each tile's OBB as line segments. Green = measured, yellow = inherited (from a measured ancestor), red = global default.")
                 .listen();
         }
 
