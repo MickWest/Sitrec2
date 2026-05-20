@@ -559,6 +559,28 @@ export class CCustomManager {
             })
             .listen();
 
+        // V5 OBB tile-culling controls (Phase 0.1.b). Per-view modes so we
+        // can graduate mainView and lookView independently. Changes take
+        // effect at the next subdivideTilesViewSpecific call. The Show Tile
+        // OBB debug toggle is wired in Phase 3+ but visible here now.
+        const TBM_OPTIONS = { Legacy: "legacy", Metrics: "metrics", Sphere: "sphere", OBB: "obb" };
+        tweaksFolder.add(Globals.tileBoundsMode, "mainView", TBM_OPTIONS)
+            .name("Tile Culling (main)")
+            .tooltip("Tile bounding mode for mainView. Legacy = current sea-level sphere. Metrics = collect new bounds + counters without rendering changes. Sphere = use measured sphere. OBB = sphere broad-phase + OBB narrow-phase.")
+            .listen();
+        tweaksFolder.add(Globals.tileBoundsMode, "lookView", TBM_OPTIONS)
+            .name("Tile Culling (look)")
+            .tooltip("Tile bounding mode for lookView. Defaults to Legacy until the narrow-FOV path is validated.")
+            .listen();
+        tweaksFolder.add(Globals, "enableReachCull")
+            .name("Enable Reach Cull")
+            .tooltip("Cascade-aware frustum-max-reach cull. Default on in legacy/metrics, off in sphere/obb.")
+            .listen();
+        tweaksFolder.add(Globals, "showTileOBB")
+            .name("Show Tile OBB")
+            .tooltip("Debug overlay: render each active tile's OBB as line segments. Green = measured, yellow = inherited, red = global/fallback.")
+            .listen();
+
         // Max Resolution — caps the per-frame video texture size used for
         // motion analysis / tracking. Now preset-controlled, so changes flip
         // performancePreset to Custom like the other tweaks.

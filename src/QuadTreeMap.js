@@ -1,6 +1,6 @@
 import {wgs84} from "./LLA-ECEF-ENU";
 import {Frustum, Matrix4, Sphere, Vector3} from "three";
-import {debugLog, Globals} from "./Globals";
+import {computeActiveTileHash, debugLog, Globals} from "./Globals";
 import {isLocal} from "./configUtils";
 import {altitudeAboveSphere, distanceToHorizon, hiddenByGlobe} from "./SphericalMath";
 import * as LAYER from "./LayerMasks";
@@ -476,6 +476,8 @@ export class QuadTreeMap {
         if (this.constructor.name === 'QuadTreeMapElevation' && this.options.elevationType === "Flat") {
             return;
         }
+        // V5 Phase 0.1.b: per-pass timing for budget warn.
+        const _v5CullStartMs = performance.now();
 
         // Whole-world coverage check used to assert here. Now relaxed: with
         // the per-view leaf-deactivation in PASS 3 below, out-of-frustum
@@ -709,6 +711,34 @@ export class QuadTreeMap {
         if (diag) {
             diag.subdivided = tilesToSubdivide.length;
             this.logSubdivisionDiag(diag, view.id);
+        }
+
+        // V5 Phase 0.1.b: per-pass timing + per-map activeTileHash writes.
+        // Last-write-wins per (view, map) for cullSelfTimeMs to avoid a
+        // sticky peak that locks the budget warn. activeTileHash recorded
+        // per map (texture vs elevation) so MCP procedures can compare
+        // independently across mode flips.
+        const _v5StatsBag = Globals.tileCullStats?.[view.id];
+        if (_v5StatsBag) {
+            const _v5SelfMs = performance.now() - _v5CullStartMs;
+            const _v5MapKind = isTextureMap ? "texture" : "elevation";
+            if (!_v5StatsBag.cullSelfTimeMsPerMap) {
+                _v5StatsBag.cullSelfTimeMsPerMap = {texture: 0, elevation: 0};
+            }
+            _v5StatsBag.cullSelfTimeMsPerMap[_v5MapKind] = _v5SelfMs;
+            _v5StatsBag.cullSelfTimeMs = Math.max(
+                _v5StatsBag.cullSelfTimeMsPerMap.texture,
+                _v5StatsBag.cullSelfTimeMsPerMap.elevation,
+            );
+            if (!_v5StatsBag.activeTileHashPerMap) {
+                _v5StatsBag.activeTileHashPerMap = {texture: 0, elevation: 0};
+            }
+            _v5StatsBag.activeTileHashPerMap[_v5MapKind] = computeActiveTileHash(this.allTiles, tileLayers);
+            // Legacy single-value field: texture-map hash drives visible content.
+            _v5StatsBag.activeTileHash = _v5StatsBag.activeTileHashPerMap.texture;
+            if (_v5SelfMs > Globals.tileCullBudgetMs && Globals.showTileStats) {
+                console.warn(`[QuadTreeMap/${view.id}] cull ${_v5SelfMs.toFixed(2)}ms exceeds ${Globals.tileCullBudgetMs}ms budget`);
+            }
         }
     }
 
