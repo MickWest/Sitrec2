@@ -15,6 +15,9 @@ A host-side Claude session (no `SITREC_BRIDGE_PAIRED_ORIGIN` set) becomes a **fa
 
 Use `sitrec_status` to see this server's `pairedOrigin`, `boundPort`, and whether the extension is connected. If your tab's origin doesn't match any paired server, an explicit error tells you which origin the server is paired to.
 
+### Deferred tool discovery
+Some Codex sessions expose only a subset of SitrecBridge tools at first. If `sitrec_eval`, `sitrec_api_call`, or another expected `sitrec_*` tool is missing from the callable namespace, run tool discovery/search for the missing tool name (for example, search `sitrec_bridge sitrec_eval sitrec_api_call`). The bridge may already advertise the tool, but Codex has not lazy-loaded its schema yet.
+
 ### Multi-tab support within a paired origin
 Multiple Sitrec tabs at the *same* origin (e.g. two `localhost:8080` tabs) share one MCP server. Use `sitrec_list_tabs` to see all open Sitrec tabs with their IDs, URLs, and origins. Pass the `tab` parameter on any tool to target a specific tab:
 
@@ -269,6 +272,111 @@ const folder = NodeMan.get("Track_XXX_GUI").metaTrack.guiFolder;
 const ctrl = folder.controllers.find(c => c.property === 'visible');
 ctrl.setValue(false); // triggers onChange callbacks
 ```
+
+### Agent-coded runtime additions
+
+When asked to add something to the live scene, prefer Sitrec's existing managers, menus, and API paths over raw Three.js meshes. Raw meshes can render, but they will not serialize, show in menus, participate in edit modes, or clean up like native Sitrec objects.
+
+Good order of operations:
+- Use `sitrec_api_call` for public API operations such as `addObjectAtLLA`, `setObjectGeometry`, and `setObjectDimensions`.
+- Use `sitrec_eval` for advanced manager/menu paths that are not public API functions yet.
+- If a feature normally comes from a context menu, invoke the same context-menu path and call its controller action. This preserves normal creation behavior, undo wiring, GUI folders, edit mode, and serialization.
+- Before opening a context menu to create a building, clouds, ground overlay, feature, or similar object, close any active edit menu/edit mode. The ground context menu intentionally does nothing while a building/clouds/overlay edit menu is open.
+- After configuring an agent-created object, close its edit mode/menu unless the user explicitly asked to keep editing it. Leaving the edit menu open can block the next context-menu creation.
+- After mutating runtime objects directly, set `par.renderOne = true` and take a JPEG screenshot to verify.
+
+Some imported managers are module globals but are not exposed as `window` properties. For example, `Synth3DManager` may be usable inside application modules but not directly visible to `sitrec_eval`. In that case, drive it through an exposed path such as `CustomManager.showGroundContextMenu(...)`.
+
+Reusable cleanup helper for MCP snippets:
+```js
+function closeAgentEditMenus() {
+    if (Globals.editingBuilding?.setEditMode) Globals.editingBuilding.setEditMode(false);
+    if (Globals.editingClouds?.setEditMode) Globals.editingClouds.setEditMode(false);
+    if (Globals.editingOverlay?.setEditMode) Globals.editingOverlay.setEditMode(false);
+
+    for (const key of ["groundContextMenu", "buildingEditMenu", "cloudsEditMenu", "overlayEditMenu"]) {
+        if (CustomManager[key]?.destroy) CustomManager[key].destroy();
+        CustomManager[key] = null;
+    }
+}
+```
+
+### Creating synthetic buildings
+
+The right-click "Add Building" command creates a native `CNodeSynthBuilding` through `Synth3DManager.createBuildingAtPoint(groundPoint)`. From MCP, create the same building by opening the ground context menu at an ECEF point and calling the `addBuilding` controller. The new building is usually available as `Globals.editingBuilding`.
+
+Example: create a 1 km x 1 km x 1 km synthetic building centered at a lat/lon:
+```js
+(() => {
+    const centerLat = 33.15;
+    const centerLon = -118.46;
+    const size = 1000; // meters
+    const half = size / 2;
+    const metersPerDegLat = 111320;
+    const metersPerDegLon = 111320 * Math.cos(centerLat * Math.PI / 180);
+    const dLat = half / metersPerDegLat;
+    const dLon = half / metersPerDegLon;
+
+    function closeAgentEditMenus() {
+        if (Globals.editingBuilding?.setEditMode) Globals.editingBuilding.setEditMode(false);
+        if (Globals.editingClouds?.setEditMode) Globals.editingClouds.setEditMode(false);
+        if (Globals.editingOverlay?.setEditMode) Globals.editingOverlay.setEditMode(false);
+
+        for (const key of ["groundContextMenu", "buildingEditMenu", "cloudsEditMenu", "overlayEditMenu"]) {
+            if (CustomManager[key]?.destroy) CustomManager[key].destroy();
+            CustomManager[key] = null;
+        }
+    }
+
+    // Use a local WGS84 conversion because LLAToECEF is not always exposed to sitrec_eval.
+    const a = 6378137.0;
+    const f = 1 / 298.257223563;
+    const e2 = f * (2 - f);
+    const toRad = d => d * Math.PI / 180;
+    function llaToVec(lat, lon, alt = 0) {
+        const phi = toRad(lat), lam = toRad(lon);
+        const sinPhi = Math.sin(phi), cosPhi = Math.cos(phi);
+        const N = a / Math.sqrt(1 - e2 * sinPhi * sinPhi);
+        const x = (N + alt) * cosPhi * Math.cos(lam);
+        const y = (N + alt) * cosPhi * Math.sin(lam);
+        const z = (N * (1 - e2) + alt) * sinPhi;
+        return NodeMan.get("mainCamera").camera.position.clone().set(x, y, z);
+    }
+
+    closeAgentEditMenus();
+    const groundPoint = llaToVec(centerLat, centerLon, 0);
+    CustomManager.showGroundContextMenu(100, 100, groundPoint, "mainView");
+    const menu = CustomManager.groundContextMenu;
+    const ctrl = menu?.controllers.find(c => c.property === "addBuilding");
+    if (!ctrl?.object?.addBuilding) return { success: false, error: "Add Building controller not found" };
+
+    ctrl.object.addBuilding();
+    const building = Globals.editingBuilding;
+    if (!building) return { success: false, error: "Building was not created" };
+
+    building.name = "1km Synthetic Building";
+    building.cornerLatLons = [
+        { lat: centerLat - dLat, lon: centerLon - dLon },
+        { lat: centerLat + dLat, lon: centerLon - dLon },
+        { lat: centerLat + dLat, lon: centerLon + dLon },
+        { lat: centerLat - dLat, lon: centerLon + dLon },
+    ];
+    building.roofAGL = size;
+    building.rooflineHeightAGL = 0;
+    building.ridgelineInset = 0;
+    building.roofEaves = 0;
+    building.recalculateVerticesFromTerrain();
+    building.buildMesh();
+    building.updateGUIControllers();
+    building.setEditMode(false);
+    closeAgentEditMenus();
+    par.renderOne = true;
+
+    return { success: true, id: building.buildingID, serialized: building.serialize() };
+})()
+```
+
+For synthetic buildings, edit `cornerLatLons`, `roofAGL`, `rooflineHeightAGL`, `ridgelineInset`, and `roofEaves`, then call `recalculateVerticesFromTerrain()`, `buildMesh()`, and `updateGUIControllers()`. This keeps the building terrain-relative, editable, and serializable.
 
 ### Haversine distance (for finding nearest tracks)
 ```js

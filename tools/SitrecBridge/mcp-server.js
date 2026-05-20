@@ -41,6 +41,7 @@ const __dirname = dirname(__filename);
 const WS_PORT = parseInt(process.env.SITREC_BRIDGE_PORT || "9780", 10);
 const WS_HOST = process.env.SITREC_BRIDGE_HOST || "127.0.0.1"; // Localhost only — avoids macOS firewall EPERM on 0.0.0.0; override with 0.0.0.0 in Docker
 const SITREC_CWD = process.cwd(); // Used to auto-match this MCP session to the correct Sitrec tab
+const STARTED_AT = Date.now();
 
 // Origin this server is paired to (e.g., "http://localhost:8081"). Set by
 // `wt sandbox` for sandbox containers; null for host fallback servers.
@@ -235,6 +236,8 @@ function finishExtensionSetup(ws) {
             protocolVersion: PROTOCOL_VERSION,
             pairedOrigin: PAIRED_ORIGIN,
             boundPort,
+            cwd: SITREC_CWD,
+            startedAt: STARTED_AT,
         }));
     } catch (e) {
         log("Could not read source manifest for version check:", e.message);
@@ -285,6 +288,8 @@ function handleExtensionMessage(raw) {
                     serverPid: process.pid,
                     pairedOrigin: PAIRED_ORIGIN,
                     boundPort,
+                    cwd: SITREC_CWD,
+                    startedAt: STARTED_AT,
                 }));
             }
             return;

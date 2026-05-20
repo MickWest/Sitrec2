@@ -12,9 +12,10 @@ const MCP_PORT_MIN = 9780;
 const MCP_PORT_MAX = 9799;
 const KEEPALIVE_ALARM_NAME = "sitrec-bridge-keepalive";
 const KEEPALIVE_ALARM_PERIOD_MIN = 0.5; // 30 seconds, minimum Chrome allows
+const FALLBACK_PRUNE_DELAY_MS = 750;
 
 // Connection state, keyed by port number.
-//   { ws, pairedOrigin, serverPid, sourceVersion, port }
+//   { ws, pairedOrigin, serverPid, sourceVersion, port, cwd, startedAt, lastSeenAt }
 const connections = new Map();
 
 // Tabs we know are running Sitrec, keyed by Chrome tab ID.
@@ -24,6 +25,8 @@ const knownSitrecTabs = new Map();
 let currentCommand = null;       // Currently executing MCP command
 let commandHistory = [];
 const MAX_HISTORY = 8;
+let preferredFallbackPort = null;
+let fallbackPruneTimer = null;
 
 // -- URL helpers ------------------------------------------------------------
 
@@ -59,7 +62,29 @@ function isSitrecUrl(url) {
 
 // -- Connection management --------------------------------------------------
 
-function probePort(port) {
+async function hasPortListener(port) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 400);
+    try {
+        // A plain HTTP request to a WebSocket server normally gets a non-2xx
+        // response, but it still proves something is listening. Closed ports
+        // fail quietly here, avoiding Chrome's noisy WebSocket refusal logs.
+        await fetch(`http://127.0.0.1:${port}/`, {
+            mode: "no-cors",
+            cache: "no-store",
+            signal: controller.signal,
+        });
+        return true;
+    } catch {
+        return false;
+    } finally {
+        clearTimeout(t);
+    }
+}
+
+async function probePort(port) {
+    if (!await hasPortListener(port)) return false;
+
     return new Promise((resolve) => {
         let settled = false;
         let ws;
@@ -112,6 +137,9 @@ async function connectToPort(port) {
         pairedOrigin: null,
         serverPid: null,
         sourceVersion: null,
+        cwd: null,
+        startedAt: null,
+        lastSeenAt: Date.now(),
         port,
     };
     connections.set(port, conn);
@@ -137,7 +165,11 @@ async function connectToPort(port) {
                 conn.sourceVersion = msg.sourceVersion || null;
                 conn.serverPid = msg.serverPid || null;
                 conn.pairedOrigin = msg.pairedOrigin || null;
+                conn.cwd = msg.cwd || null;
+                conn.startedAt = msg.startedAt || null;
+                conn.lastSeenAt = Date.now();
                 console.log(`[SitrecBridge:${port}] Connected — pairedOrigin=${conn.pairedOrigin || "(fallback)"} pid=${conn.serverPid}`);
+                if (!conn.pairedOrigin) scheduleFallbackPrune();
                 updatePopupState();
                 return;
             }
@@ -145,6 +177,10 @@ async function connectToPort(port) {
             if (msg.type === "pong") {
                 conn.serverPid = msg.serverPid || conn.serverPid;
                 if (msg.pairedOrigin !== undefined) conn.pairedOrigin = msg.pairedOrigin;
+                conn.cwd = msg.cwd || conn.cwd;
+                conn.startedAt = msg.startedAt || conn.startedAt;
+                conn.lastSeenAt = Date.now();
+                if (!conn.pairedOrigin) scheduleFallbackPrune();
                 updatePopupState();
                 return;
             }
@@ -163,6 +199,7 @@ async function connectToPort(port) {
         if (connections.get(port)?.ws === ws) {
             console.log(`[SitrecBridge:${port}] Disconnected`);
             connections.delete(port);
+            if (preferredFallbackPort === port) preferredFallbackPort = null;
             updatePopupState();
         } else {
             console.log(`[SitrecBridge:${port}] Stale socket closed (replaced)`);
@@ -181,9 +218,48 @@ async function scanForServers() {
         probes.push(connectToPort(port));
     }
     await Promise.all(probes);
+    scheduleFallbackPrune();
     const found = [...connections.keys()];
     console.log(`[SitrecBridge] scan complete — connected ports: ${found.join(",") || "(none)"}`);
     updatePopupState();
+}
+
+function fallbackRank(conn) {
+    // Prefer the server that most recently handled a command. Otherwise prefer
+    // the newest server process; this is usually the currently opened agent
+    // session after a cleanup/reconnect.
+    if (preferredFallbackPort && conn.port === preferredFallbackPort) return Number.MAX_SAFE_INTEGER;
+    return Number(conn.startedAt || conn.lastSeenAt || 0);
+}
+
+function pruneFallbackConnections() {
+    const fallbackConns = [...connections.values()].filter((conn) =>
+        !conn.pairedOrigin &&
+        (conn.serverPid || conn.sourceVersion || conn.startedAt) &&
+        conn.ws &&
+        (conn.ws.readyState === WebSocket.OPEN || conn.ws.readyState === WebSocket.CONNECTING)
+    );
+
+    if (fallbackConns.length <= 1) return;
+
+    fallbackConns.sort((a, b) => {
+        const byRank = fallbackRank(b) - fallbackRank(a);
+        return byRank || b.port - a.port;
+    });
+
+    const keep = fallbackConns[0];
+    preferredFallbackPort = keep.port;
+
+    console.log(`[SitrecBridge] Active host-fallback connection is :${keep.port}; ${fallbackConns.length - 1} duplicate fallback connection(s) kept idle`);
+}
+
+function scheduleFallbackPrune() {
+    if (fallbackPruneTimer) clearTimeout(fallbackPruneTimer);
+    fallbackPruneTimer = setTimeout(() => {
+        fallbackPruneTimer = null;
+        pruneFallbackConnections();
+        updatePopupState();
+    }, FALLBACK_PRUNE_DELAY_MS);
 }
 
 function sendToServer(port, msg) {
@@ -346,6 +422,11 @@ function trackCommandEnd(ok) {
 
 async function handleServerMessage(port, msg) {
     const { id, action, params, _cwd } = msg;
+    const conn = connections.get(port);
+    if (conn && !conn.pairedOrigin) {
+        preferredFallbackPort = port;
+        scheduleFallbackPrune();
+    }
 
     if (action === "reload") {
         trackCommandStart(action, params, _cwd, null, port);
@@ -561,15 +642,26 @@ function buildPopupState() {
         tabList.push({ id: tabId, url: info.url || "", origin: info.origin, buildDir: info.buildDir || null });
     }
     const connList = [];
+    pruneFallbackConnections();
     for (const [port, conn] of connections) {
+        if (!conn.pairedOrigin && preferredFallbackPort && port !== preferredFallbackPort) {
+            continue;
+        }
         connList.push({
             port,
             pairedOrigin: conn.pairedOrigin,
             serverPid: conn.serverPid,
             sourceVersion: conn.sourceVersion,
+            cwd: conn.cwd,
+            startedAt: conn.startedAt,
+            lastSeenAt: conn.lastSeenAt,
             connected: !!(conn.ws && conn.ws.readyState === WebSocket.OPEN),
         });
     }
+    connList.sort((a, b) => {
+        if (!!a.pairedOrigin !== !!b.pairedOrigin) return a.pairedOrigin ? -1 : 1;
+        return b.port - a.port;
+    });
     return {
         connections: connList,
         knownTabs: tabList,
