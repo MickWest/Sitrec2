@@ -83,6 +83,7 @@ function getMaxFileSizeMB($userInfo = null) {
 function getGoogle3DRootDailyLimitForGroups($userGroups) {
     $dailyLimits = [
         3 => 1000000, // Admin: effectively unlimited
+        2 => 30,      // Registered (baseline, same as Verified)
         9 => 30,      // Verified (baseline)
         14 => 60,     // Meta Members (2x baseline)
         19 => 120,    // Sitrec Plus (4x baseline)
@@ -101,6 +102,7 @@ function getCesiumOSM3DBytesDailyLimitForGroups($userGroups) {
     $dailyLimitBytes = intdiv(1024 * 1024 * 1024, 30); // 1 GiB / 30 days per day (baseline)
     $dailyLimits = [
         3 => 1000000000000,             // Admin: effectively unlimited
+        2 => $dailyLimitBytes,          // Registered (baseline ~35.8 MB/day, same as Verified)
         9 => $dailyLimitBytes,          // Verified (baseline ~35.8 MB/day)
         14 => $dailyLimitBytes * 2,     // Meta Members (2x baseline)
         19 => $dailyLimitBytes * 4,     // Sitrec Plus (4x baseline)
@@ -143,7 +145,7 @@ if (isset($_GET['getuser'])) {
     $userInfo = getUserInfo();
     $user_id = $userInfo['user_id'] ?? 0;
     $userGroups = is_array($userInfo['user_groups'] ?? null) ? $userInfo['user_groups'] : [];
-    $allowed3DBuildingGroups = [3, 9, 14, 19]; // Admin, Verified, Sitrec Members, Sitrec Plus
+    $allowed3DBuildingGroups = [3, 2, 9, 14, 19]; // Admin, Registered, Verified, Sitrec Members, Sitrec Plus
     $has3DBuildingGroup = count(array_intersect($userGroups, $allowed3DBuildingGroups)) > 0;
 
     $response = [

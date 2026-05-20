@@ -45,6 +45,13 @@ Example entry format:
 
 ---
 
+## Version 2.56.1 (2026-05-20)
+
+### Improvements
+- **3D Buildings access expanded to Registered and Verified users**: the Cesium OSM and Google Photorealistic 3D Buildings sources were previously gated to Admin, Sitrec Members, and Sitrec Plus only. Registered (group 2) and Verified (group 9) users are now in the allowlist with a baseline daily quota of 30 Google 3D root sessions and ~35.8 MB of Cesium OSM bytes per day. Members and Plus tiers have been re-laddered to 2× and 4× the baseline respectively (Members: 60 root / ~72 MB; Plus: 120 root / ~143 MB). The client `CNodeTerrainUI` allowlist mirror was updated to match the server, so the Show Buildings toggle now appears for the newly-eligible groups even before the server's `canUse3DBuildings` field is read.
+- **AI Chatbot tier ladder rebuilt**: added a new Sitrec Plus (group 19) tier with the same premium model set as Sitrec Members (GPT-4o, Claude Sonnet 4, Llama 3.3 70B) but 10× the rate limit (200/min, 1000/hr). Upgraded Registered (group 2) to match Verified (group 9) — GPT-4o Mini and Llama 3.3 70B at 10/min, 50/hr, replacing the prior Llama 3.1 8B / 5/min basic tier.
+- **Tile-usage daily-quota drift fix**: `tile_usage.php`'s `$TILE_DAILY_LIMITS` table previously listed only Admin, Members, and Plus, with Plus quotas equal to Members. It now mirrors the rehost.php tier ladder exactly (Registered/Verified at baseline, Members at 2×, Plus at 4×) and carries a header comment cross-referencing the rehost.php tables to prevent future drift.
+
 ## Version 2.56.0 (2026-05-20)
 
 ### New Features

@@ -37,7 +37,7 @@ if ($userId <= 0) {
 // - google_3d_root is controlled primarily by DAILY limits below.
 // - google_3d_tiles and cesium_osm_3d_tiles are tracked for audit but
 //   effectively not hourly-limited here.
-// Groups: admin=3, registered=2, verified=9, sitrec=14
+// Groups: admin=3, registered=2, verified=9, sitrec=14, sitrec-plus=19
 // Services: mapbox, maptiler, aws, osm, eox, esri, google_3d_root,
 //           google_3d_tiles, cesium_osm_3d_tiles, cesium_osm_3d_bytes, other
 $UNLIMITED_TILE_RATE = 1000000000;
@@ -138,19 +138,30 @@ $DEFAULT_LIMITS = [
 ];
 
 // Daily limits by user group. This enforces Google 3D root/session requests.
-$CESIUM_OSM_DAILY_BYTES_LIMIT = intdiv(1024 * 1024 * 1024, 30); // 1 GiB / 30 days per day
+// Keep this table in sync with getGoogle3DRootDailyLimitForGroups() and
+// getCesiumOSM3DBytesDailyLimitForGroups() in rehost.php — both files
+// duplicate the same tier ladder (baseline / 2x / 4x).
+$CESIUM_OSM_DAILY_BYTES_LIMIT = intdiv(1024 * 1024 * 1024, 30); // 1 GiB / 30 days per day (baseline)
 $TILE_DAILY_LIMITS = [
-    3 => [ // admin
+    3 => [ // admin: effectively unlimited
         'google_3d_root' => 1000000,
         'cesium_osm_3d_bytes' => 1000000000000,
     ],
-    14 => [ // Meta Members
+    2 => [ // Registered (baseline, same as Verified)
         'google_3d_root' => 30,
         'cesium_osm_3d_bytes' => $CESIUM_OSM_DAILY_BYTES_LIMIT,
     ],
-    19 => [ // Sitrec Plus
+    9 => [ // Verified (baseline)
         'google_3d_root' => 30,
         'cesium_osm_3d_bytes' => $CESIUM_OSM_DAILY_BYTES_LIMIT,
+    ],
+    14 => [ // Meta Members (2x baseline)
+        'google_3d_root' => 60,
+        'cesium_osm_3d_bytes' => $CESIUM_OSM_DAILY_BYTES_LIMIT * 2,
+    ],
+    19 => [ // Sitrec Plus (4x baseline)
+        'google_3d_root' => 120,
+        'cesium_osm_3d_bytes' => $CESIUM_OSM_DAILY_BYTES_LIMIT * 4,
     ],
 ];
 

@@ -50,8 +50,9 @@ $MODEL_PERMISSIONS = [
         ['provider' => 'openai', 'model' => 'gpt-4o-mini', 'label' => 'GPT-4o Mini'],
         ['provider' => 'groq', 'model' => 'llama-3.3-70b-versatile', 'label' => 'Llama 3.3 70B (Groq)'],
     ],
-    2 => [ // registered - basic models
-        ['provider' => 'groq', 'model' => 'llama-3.1-8b-instant', 'label' => 'Llama 3.1 8B (Groq)'],
+    2 => [ // registered - same as verified
+        ['provider' => 'openai', 'model' => 'gpt-4o-mini', 'label' => 'GPT-4o Mini'],
+        ['provider' => 'groq', 'model' => 'llama-3.3-70b-versatile', 'label' => 'Llama 3.3 70B (Groq)'],
     ],
 ];
 
@@ -109,7 +110,7 @@ $RATE_LIMITS = [
     19 => ['minute' => 200, 'hour' => 1000],        // sitrec-plus - 10x sitrec
     14 => ['minute' => 20, 'hour' => 100],          // sitrec - premium
     9 => ['minute' => 10, 'hour' => 50],            // verified - mid tier
-    2 => ['minute' => 5, 'hour' => 20],             // registered - basic
+    2 => ['minute' => 10, 'hour' => 50],            // registered - same as verified
 ];
 $RATE_LIMIT_DIR = sys_get_temp_dir() . '/sitrec_ratelimit/';
 $AI_LOG_FILE = sys_get_temp_dir() . '/sitrec_ai_requests.json';
