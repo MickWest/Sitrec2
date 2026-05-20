@@ -971,14 +971,34 @@ export class QuadTreeMap {
         // estimate is conservative on the high side, so the sphere may miss
         // the lowest valley terrain. That's a much smaller failure than the
         // alternative.
-        let cx = worldSphere.center.x;
-        let cy = worldSphere.center.y;
-        let cz = worldSphere.center.z;
-        const radius = worldSphere.radius;
-        if (terrainAlt > 0) {
-            const r = Math.sqrt(cx * cx + cy * cy + cz * cz);
-            const scale = (r + terrainAlt) / r;
-            cx *= scale; cy *= scale; cz *= scale;
+        // V5 Phase 2: in sphere/obb mode, use the measured-bounds sphere
+        // from cullingState. In legacy/metrics mode, keep the old altitude-
+        // shifted sea-level sphere so behavior stays identical.
+        let cx, cy, cz, radius;
+        const _v5Mode = options?.mode;
+        if (_v5Mode === "sphere" || _v5Mode === "obb") {
+            const state = tile.ensureCullingState();
+            const s = state.sphere;
+            cx = s.center.x; cy = s.center.y; cz = s.center.z;
+            radius = s.radius;
+            if (diag) {
+                const src = tile.altitudeBounds?.source;
+                if (src === "renderedGeometry") diag.renderedBoundsUsed++;
+                else if (src === "inherited") diag.inheritedBoundsUsed++;
+                else if (src === "elevationData") diag.elevationDataBoundsUsed++;
+                else diag.unmeasuredBoundsUsed++;
+                if (state.localFrame?.polarFallbackUsed) diag.polarFallbackUsed++;
+            }
+        } else {
+            cx = worldSphere.center.x;
+            cy = worldSphere.center.y;
+            cz = worldSphere.center.z;
+            radius = worldSphere.radius;
+            if (terrainAlt > 0) {
+                const r = Math.sqrt(cx * cx + cy * cy + cz * cz);
+                const scale = (r + terrainAlt) / r;
+                cx *= scale; cy *= scale; cz *= scale;
+            }
         }
         _cullingSphere.center.set(cx, cy, cz);
         _cullingSphere.radius = radius;

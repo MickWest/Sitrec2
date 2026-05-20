@@ -280,7 +280,20 @@ export class QuadTreeTile {
     _markSkirtCommitted(skirtDepth = 0) {
         if (this._measurement && !this._measurement.aborted) {
             this._measurement.skirtCommitted = true;
-            if (skirtDepth > 0) this._measurement.min -= skirtDepth;
+            // V5 NOTE: skirtDepth intentionally NOT subtracted from min.
+            // The skirt extends downward from the main mesh's outer edge by
+            // `tile.size * 0.1` — for a z=0 tile that's ~26 km, which would
+            // explode the bounding sphere's vertical extent and cause
+            // catastrophic over-subdivision in sphere/obb modes. The skirt
+            // sits below the visible mesh surface and is never directly
+            // exposed to the camera (it's covered by the parent surface at
+            // its edge), so leaving it out of culling bounds is safe.
+            //
+            // skirtDepth is accepted for API symmetry with the V5 plan but
+            // currently has no effect. If a future case proves a camera
+            // can see skirt-below-horizon, reintroduce subtraction with a
+            // per-tile (not skirt-depth-driven) inflation.
+            void skirtDepth;
         }
     }
 
