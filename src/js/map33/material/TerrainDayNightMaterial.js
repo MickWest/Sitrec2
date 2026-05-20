@@ -131,12 +131,21 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 // V5 shadows: sample the directional-light shadow map. When
                 // no shadow casters cover this fragment, getShadowMask()=1.0
                 // so the day color is unchanged. Where covered, the mask drops
-                // toward 0 and darkens the day-side terrain. Night side stays
-                // at ambient (shadows aren't meaningful in cast-light absence).
+                // toward 0 and darkens ONLY the direct-sun contribution; the
+                // ambient term stays unattenuated so raising Ambient Intensity
+                // washes shadows out the same way it washes out building dark
+                // sides (which already do this via PBR).
+                //
+                // terrainShading is the surface-normal-to-sun modulation —
+                // it's meaningful only for the directional component. Ambient
+                // is omnidirectional, so it bypasses terrainShading. This
+                // makes terrain-in-shadow match a building's dark side at the
+                // same ambient level (both = albedo × ambient).
                 float shadowMask = getShadowMask();
+                float ambient = sunAmbientIntensity;
+                float directLight = max(0.0, sunGlobalTotal - ambient);
 
-                // Calculate day color with terrain shading
-                vec4 dayColor = textureColor * sunGlobalTotal * terrainShading * shadowMask;
+                vec4 dayColor = textureColor * (ambient + directLight * terrainShading * shadowMask);
                 
                 // Calculate night color (flat texture with ambient lighting, no terrain shading)
                 vec4 nightColor = textureColor * sunAmbientIntensity;
