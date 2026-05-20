@@ -663,7 +663,7 @@ export class CNodeTerrainUI extends CNode {
         this.oceanSurfaceNextRefreshAtMs = 0;
 
         // Determine available building sources based on API keys and user permission.
-        const allowed3DBuildingGroups = [3, 14, 19]; // Admin, Sitrec Members, Sitrec Plus
+        const allowed3DBuildingGroups = [3, 9, 14, 19]; // Admin, Verified, Sitrec Members, Sitrec Plus
         const userGroups = Array.isArray(Globals.userData?.userGroups) ? Globals.userData.userGroups : [];
         const hasGroupPermission = userGroups.some(group => allowed3DBuildingGroups.includes(group));
         this.canUse3DBuildings = Globals.userData?.canUse3DBuildings ?? hasGroupPermission;
