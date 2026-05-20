@@ -22,6 +22,7 @@ import {
 import {CNodeArray} from "./nodes/CNodeArray";
 import {fileSystemFetch} from "./fileSystemFetch";
 import JSZip from "jszip";
+import {ImageSetExporter} from "./ExportImageSet";
 import {
     CTrackFile,
     CTrackFileJSON,
@@ -233,6 +234,7 @@ export class CFileManager extends CManager {
             }
 
             this.setupResourcesMenu();
+            this.setupImageSetExportMenu();
         }
     }
 
@@ -2292,6 +2294,19 @@ export class CFileManager extends CManager {
     // instead of each showing their own dialog.
     _tleDialogPromise = null;
 
+
+    /**
+     * Set up the File > Export > Image Set submenu under the existing Export folder.
+     * Call once after guiMenus.file is available.
+     */
+    setupImageSetExportMenu() {
+        if (!guiMenus.file) return;
+        if (this.exportFolder === undefined) {
+            this.exportFolder = this.guiFolder.addFolder("Export").perm().close();
+        }
+        this.imageSetExporter = new ImageSetExporter();
+        this.imageSetExporter.setupMenu(this.exportFolder);
+    }
 
     /**
      * Set up the File > Export > Resources submenu under the existing Export folder.
