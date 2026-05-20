@@ -8,6 +8,24 @@ export function incrementMainLoopCount() {
 };
 
 export const Globals = {
+    // V5 shadows: true when at least one CNodeView3D has effective shadows on.
+    // Read by load-model handlers, terrain construction, and the per-frame
+    // sun-propagation throttle for fast defaults-off short-circuits.
+    shadowsEnabled: false,
+    // Mirrored from CNodeLighting.terrainReceivesShadow so per-tile mesh
+    // construction (QuadTreeTile.buildMesh) can decide receive-shadow without
+    // a NodeMan lookup that would create circular imports.
+    terrainReceivesShadow: false,
+
+    // Defaults-off invariant verification counters (see v5 plan §0). Each
+    // counter MUST stay at 0 after sitch boot when no view has shadows on.
+    shadowDiagCounters: {
+        viewSunCreations: 0,
+        shadowMapAllocations: 0,
+        materialNeedsUpdateWrites: 0,
+        materialModeApplications: 0,
+    },
+
     // Earth model radii — updated by updateEarthRadii() in LLA-ECEF-ENU.js.
     // Both default to wgs84.RADIUS so legacy code is unaffected until a sitch loads.
     // useEllipsoid=false → both equal wgs84.RADIUS (degenerate sphere).

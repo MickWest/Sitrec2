@@ -654,6 +654,17 @@ export class CNodeTerrainUI extends CNode {
         // 3D Buildings support
         this.buildingsSource = v.buildingsSource ?? "google-photorealistic";
         this.buildingsNode = null;
+        // V5 material modes for buildings: "photo" / "flat" / "halfPhoto".
+        // Mode change applies to future tile loads only.
+        this.buildingsMaterialMode = v.buildingsMaterialMode ?? "photo";
+        // lil-gui addColor requires a defined hex; default keyed to source
+        // family (warm concrete for photogrammetric, neutral for OSM). The
+        // plugin still treats this as "unset" only if explicitly null at
+        // construction; here we just give the picker a starting value.
+        this.buildingsFlatColor = v.buildingsFlatColor
+            ?? (this.buildingsSource === "google-photorealistic" ? 0xc0b8a8 : 0xb8b4ac);
+        this.addSimpleSerial("buildingsMaterialMode");
+        this.addSimpleSerial("buildingsFlatColor");
         this.showOceanSurface = v.showOceanSurface ?? false;
         this.oceanSurfaceDatum = OCEAN_SURFACE_FIXED_DATUM;
         this.oceanSurfaceGroup = null;
@@ -719,6 +730,31 @@ export class CNodeTerrainUI extends CNode {
                     }
                 }).tooltip(t("terrainUI.buildingsSource.tooltip"));
             }
+
+            // V5 material modes dropdown. Photo is the default (no override).
+            // Flat strips the texture; Half-photo dims it for cleaner shadows.
+            const materialModesKV = {};
+            materialModesKV[t("terrainUI.buildingMaterial.modes.photo")] = "photo";
+            materialModesKV[t("terrainUI.buildingMaterial.modes.flat")] = "flat";
+            materialModesKV[t("terrainUI.buildingMaterial.modes.halfPhoto")] = "halfPhoto";
+            this.gui.add(this, "buildingsMaterialMode", materialModesKV)
+                .name(t("terrainUI.buildingMaterial.label"))
+                .tooltip(t("terrainUI.buildingMaterial.tooltip"))
+                .listen()
+                .onChange(mode => {
+                    if (this.buildingsNode) {
+                        this.buildingsNode.setMaterialMode(mode, this.buildingsFlatColor);
+                    }
+                });
+            this.gui.addColor(this, "buildingsFlatColor")
+                .name(t("terrainUI.buildingFlatColor.label"))
+                .tooltip(t("terrainUI.buildingFlatColor.tooltip"))
+                .listen()
+                .onChange(c => {
+                    if (this.buildingsNode) {
+                        this.buildingsNode.setMaterialMode(this.buildingsMaterialMode, c);
+                    }
+                });
         }
 
         // Ellipsoid Earth Model toggle (moved here from global settings)
@@ -938,6 +974,8 @@ export class CNodeTerrainUI extends CNode {
                 source: this.buildingsSource,
                 cesiumIonToken: cesiumToken,
                 googleApiKey: googleKey,
+                materialMode: this.buildingsMaterialMode,
+                flatColor: this.buildingsFlatColor,
             });
             this.buildingsNode.setShowEdges(this.showBuildingEdges);
         } else if (!show && this.buildingsNode) {

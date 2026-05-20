@@ -9,6 +9,7 @@ import {ExportProgressWidget, getExportPrefix, openFullscreen, closeFullscreen} 
 import {radians} from "./mathUtils";
 import {targetSphere} from "./JetStuffVars";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
+import {forceShadowRefreshForExport} from "./nodes/CNodeView3D";
 
 // Max output width for the Fullscreen variant. Inputs wider than this are
 // downscaled (preserving aspect) before PNG encoding.
@@ -221,6 +222,13 @@ export class ImageSetExporter {
                     camera.lookAt(target);
                     camera.updateMatrix();
                     camera.updateMatrixWorld(true);
+                    // V5 shadows: each shot is a near-instant pose change; the
+                    // §3.8 angular/time throttle would happily skip a shadow
+                    // update for tiny deltas. Force-fresh for every captured
+                    // pose so exported images have correct shadows.
+                    if (Globals.shadowsEnabled) {
+                        forceShadowRefreshForExport(view);
+                    }
                     view.renderCanvas(par.frame);
                 };
 

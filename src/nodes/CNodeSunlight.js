@@ -173,9 +173,64 @@ export class CNodeSunlight extends CNode {
             // }
         }
 
+        // V5 shadows: deferred-first-apply. CNodeLighting builds Globals.sunLight
+        // at (0,7000,0) — we only get the real ~60000-unit position after the
+        // first calculateSunAt call above. Trigger applyShadowConfig now so any
+        // sitch with shadowsEnabled saved-on can wire up before the next render.
+        const lighting = NodeMan.get("lighting", false);
+        if (lighting && lighting._pendingFirstShadowConfig) {
+            lighting._pendingFirstShadowConfig = false;
+            lighting.applyShadowConfig({reason: "firstApply"});
+        }
+
+        // V5 shadows: per-frame throttled invalidation. Gated on
+        // Globals.shadowsEnabled so this is a single boolean check when off.
+        if (Globals.shadowsEnabled) {
+            propagateSunAndThrottle(performance.now());
+        }
     }
 
 }
+
+// V5 shadows: per-view throttled shadow invalidation. Walks all CNodeView3D
+// instances whose effective shadows are on; flags shadow.needsUpdate=true at
+// most once per minInterval ms, and only when sun direction has moved at least
+// minAngleDeg. Per-view state ensures lookView and mainView throttles don't
+// stamp on each other.
+const _tmpSunDir = new Vector3();
+function propagateSunAndThrottle(now) {
+    const lighting = NodeMan.get("lighting", false);
+    if (!lighting) return;
+    const minInterval = lighting.shadowUpdateMinIntervalMs ?? 50;
+    const minAngleDeg = lighting.shadowUpdateAngleThreshold ?? 0.25;
+
+    NodeMan.iterate((id, node) => {
+        if (node.constructor.name !== "CNodeView3D") return;
+        if (typeof node.areShadowsEffective !== "function") return;
+        if (!node.areShadowsEffective() || !node.viewSun) return;
+
+        if (!node._lastShadowSunDir) {
+            node._lastShadowSunDir = new Vector3();
+            node._lastShadowUpdateMs = 0;
+        }
+
+        const dt = now - node._lastShadowUpdateMs;
+        if (dt < minInterval && node._lastShadowUpdateMs !== 0) return;
+
+        const curDir = _tmpSunDir.copy(Globals.sunLight.position).normalize();
+        const firstUpdate = node._lastShadowUpdateMs === 0;
+        const angleDeg = firstUpdate
+            ? Infinity
+            : (curDir.angleTo(node._lastShadowSunDir) * 180) / Math.PI;
+
+        if (firstUpdate || angleDeg >= minAngleDeg) {
+            node.viewSun.shadow.needsUpdate = true;
+            node._lastShadowSunDir.copy(curDir);
+            node._lastShadowUpdateMs = now;
+        }
+    });
+}
+
 
 // a simple model of the brightness of the sun
 // as a function of the angle above the horizon

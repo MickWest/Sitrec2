@@ -29,6 +29,7 @@ import {GPUMemoryMonitor} from "../GPUMemoryMonitor";
 import {
     Camera,
     Color,
+    DirectionalLight,
     FogExp2,
     Group,
     HalfFloatType,
@@ -37,6 +38,7 @@ import {
     Mesh,
     NearestFilter,
     NormalBlending,
+    PCFShadowMap,
     PerspectiveCamera,
     PlaneGeometry,
     Raycaster,
@@ -82,6 +84,7 @@ import {fixXRLayerMasks, renderCelestialScene, renderFullscreenQuadStereo} from 
 import {waitForExportFrameSettled} from "../ExportFrameSettler";
 import {t} from "../i18n";
 import {mouseMethods} from "./CNodeView3DMouse";
+import {cloneTerrainDayNightMaterialForView} from "../js/map33/material/TerrainDayNightMaterial";
 
 
 function linearToSrgb(color) {
@@ -124,6 +127,43 @@ export class CNodeView3D extends CNodeViewCanvas {
         this.atmosphereHDR = atmosphereDef.hdr ?? true;
         this.atmosphereExposure = atmosphereDef.exposure ?? 1.0;
         this.requestLookViewHDR = this.id === "lookView";
+
+        // V5 shadows: per-view toggle. Off by default; serialised.
+        // The viewSun is lazy-allocated on first transition to effective-on.
+        this.shadowsEnabled = v.shadowsEnabled ?? false;
+        this.allowMobileShadows = v.allowMobileShadows ?? false;
+        this.addSimpleSerial("shadowsEnabled");
+        this.addSimpleSerial("allowMobileShadows");
+        this.viewSun = null;
+        this._didEverEnableShadows = false;
+
+        if (this.id === "mainView" || this.id === "lookView") {
+            const viewLabel = this.id === "mainView"
+                ? t("view3d.shadowsEnabled.mainLabel")
+                : t("view3d.shadowsEnabled.lookLabel");
+            guiMenus.lighting.add(this, "shadowsEnabled")
+                .name(viewLabel)
+                .tooltip(t("view3d.shadowsEnabled.tooltip"))
+                .listen()
+                .onChange(() => {
+                    const lighting = NodeMan.get("lighting", false);
+                    if (lighting) lighting.applyShadowConfig({reason: "viewToggle"});
+                    else this.applyShadowRendererConfig({transitioned: true});
+                });
+            if (Globals.isMobile) {
+                const mobileLabel = this.id === "mainView"
+                    ? t("view3d.allowMobileShadows.mainLabel")
+                    : t("view3d.allowMobileShadows.lookLabel");
+                guiMenus.lighting.add(this, "allowMobileShadows")
+                    .name(mobileLabel)
+                    .tooltip(t("view3d.allowMobileShadows.tooltip"))
+                    .listen()
+                    .onChange(() => {
+                        const lighting = NodeMan.get("lighting", false);
+                        if (lighting) lighting.applyShadowConfig({reason: "mobileToggle"});
+                    });
+            }
+        }
 
         this.northUp = v.northUp ?? false;
         if (this.id === "lookView") {
@@ -825,9 +865,14 @@ export class CNodeView3D extends CNodeViewCanvas {
         // This will render twice (once per eye) with proper camera offsets for VR
         // Note: We skip post-processing effects in XR mode for performance
         const atmosphereFogState = this.pushLookViewAtmosphereFog();
+        let _restoreShadowScopeXR = null;
+        if (Globals.shadowsEnabled) {
+            _restoreShadowScopeXR = this._enterShadowRenderScope();
+        }
         try {
             this.renderer.render(GlobalScene, this.xrCamera);
         } finally {
+            if (_restoreShadowScopeXR) _restoreShadowScopeXR();
             this.popLookViewAtmosphereFog(atmosphereFogState);
         }
 
@@ -971,6 +1016,300 @@ export class CNodeView3D extends CNodeViewCanvas {
         }
 
         return this._atmosphereSkyColor;
+    }
+
+    // V5 shadows: effective gate. shadowsEnabled is the user toggle; mobile
+    // gets auto-disabled unless allowMobileShadows is also set.
+    areShadowsEffective() {
+        if (!this.shadowsEnabled) return false;
+        if (Globals.isMobile && !this.allowMobileShadows) return false;
+        if (this.id !== "mainView" && this.id !== "lookView") return false;
+        return true;
+    }
+
+    // V5 shadows: lazy viewSun + per-view renderer.shadowMap.enabled flip.
+    // Called from CNodeLighting.applyShadowConfig on transition or knob change.
+    // §0 short-circuit: when this view is off, has never been on, and the
+    // renderer's shadowMap is off, returns immediately with zero side effects.
+    applyShadowRendererConfig({transitioned = false} = {}) {
+        if (!this.renderer) return;
+
+        const effective = this.areShadowsEffective();
+        if (!effective
+            && !this.renderer.shadowMap.enabled
+            && !transitioned
+            && !this._didEverEnableShadows) {
+            return;
+        }
+
+        // Lazy-create viewSun on first effective-on.
+        if (effective && !this.viewSun) {
+            this._lazyCreateViewSun();
+        }
+
+        // Push tunable updates to existing viewSun (size, bias, frustum).
+        if (this.viewSun) {
+            this._applyShadowTunablesToViewSun();
+        }
+
+        const want = effective;
+        if (this.renderer.shadowMap.enabled !== want) {
+            this.renderer.shadowMap.enabled = want;
+            this._pendingMaterialRefresh = true;
+        }
+        if (want && this.renderer.shadowMap.type !== PCFShadowMap) {
+            this.renderer.shadowMap.type = PCFShadowMap;
+        }
+
+        // Reset throttle on OFF→ON so the next frame fires immediately.
+        if (transitioned && want) {
+            this._lastShadowSunDir = null;
+            this._lastShadowUpdateMs = 0;
+        }
+    }
+
+    // Push lighting-node tunables into the viewSun. Allocates a shadow map of
+    // the configured size; safe to call repeatedly (Three.js disposes the old
+    // texture lazily when mapSize changes by re-creating the render target on
+    // next render).
+    _applyShadowTunablesToViewSun() {
+        const lighting = NodeMan.get("lighting", false);
+        if (!lighting || !this.viewSun) return;
+        const size = lighting.shadowMapSize ?? 1024;
+        if (this.viewSun.shadow.mapSize.x !== size) {
+            this.viewSun.shadow.mapSize.set(size, size);
+            // Dispose old render target so the next render reallocates at the
+            // new size (Three.js doesn't auto-resize an existing one).
+            if (this.viewSun.shadow.map) {
+                this.viewSun.shadow.map.dispose();
+                this.viewSun.shadow.map = null;
+                Globals.shadowDiagCounters.shadowMapAllocations++;
+            }
+        }
+        this.viewSun.shadow.bias = lighting.shadowBias ?? -0.0005;
+        this.viewSun.shadow.normalBias = lighting.shadowNormalBias ?? 5;
+        // Seed the frustum at the user's shadowRadius so first-render produces
+        // a valid projection matrix even before _enterShadowRenderScope runs.
+        this._applyShadowFrustum(lighting.shadowRadius ?? 1000);
+    }
+
+    // Compute (anchor, extent) for the shadow frustum:
+    //   anchor: world point the user is looking at (ray-sphere intersection
+    //           of the camera forward with the WGS84 earth sphere). Falls
+    //           back to camera.position when the camera doesn't intersect
+    //           ground (e.g. looking at the sky).
+    //   extent: ortho half-width sized to cover the camera's visible
+    //           footprint at the anchor distance (FOV × distance), clamped
+    //           by the user's shadowRadius setting which acts as an upper
+    //           bound (texel density floor).
+    // This replaces the prior camera-anchored ±shadowRadius approach which
+    // produced "shadows vanish when zoomed out" because visible buildings
+    // sat outside the fixed ±1000m frustum once the camera was more than
+    // shadowRadius away from them.
+    // Anchor at the camera, auto-size the extent based on FOV/zoom and a
+    // scene-scale heuristic. We don't bounds-fit casters because Sitrec's
+    // Cesium-OSM tile meshes pack entire city blocks into a single mesh
+    // with km-scale bounding boxes — those would inflate any bbox union to
+    // useless extents. Camera-anchored with a sized extent is simpler and
+    // robust; the user controls the upper bound via Shadow tweaks → Shadow
+    // radius.
+    _computeShadowAnchorAndExtent() {
+        const lighting = NodeMan.get("lighting", false);
+        const userMaxR = lighting?.shadowRadius ?? 1000;
+        if (!this._shadowAnchorScratch) this._shadowAnchorScratch = new Vector3();
+        const anchor = this._shadowAnchorScratch.copy(this.camera.position);
+
+        // Auto-size: a perspective-camera scene at a "comfortable scene
+        // distance" (heuristic = userMaxR × 2) subtends some FOV-dependent
+        // footprint. Use that to scale the ortho extent, then clamp.
+        const fovRad = this.camera.fov * Math.PI / 180;
+        const zoom = this.camera.zoom || 1;
+        const aspect = this.camera.aspect || 1;
+        const sceneDist = userMaxR * 2;
+        const halfHeight = (Math.tan(fovRad / 2) * sceneDist) / zoom;
+        const halfWidth = halfHeight * aspect;
+        let extent = Math.max(halfWidth, halfHeight, userMaxR);
+        // Hard cap so we don't grow without bound (zoomed-out wide-FOV views).
+        extent = Math.min(extent, userMaxR * 10);
+        return {anchor, extent};
+    }
+
+    // Apply ortho frustum bounds + depth range to viewSun's shadow camera
+    // using the dynamically-computed extent. Stores the active extent on the
+    // view so callers can mirror it when offsetting the shadow camera along
+    // the sun ray.
+    _applyShadowFrustum(extent) {
+        if (!this.viewSun) return;
+        const cam = this.viewSun.shadow.camera;
+        cam.left = -extent;
+        cam.right = extent;
+        cam.top = extent;
+        cam.bottom = -extent;
+        // The shadow camera sits 10×extent away along the sun ray; pad ±3×extent
+        // for caster/receiver depth (a typical building is much smaller than
+        // extent, so this is generous).
+        const dist = extent * 10;
+        cam.near = Math.max(1, dist - extent * 3);
+        cam.far = dist + extent * 3;
+        cam.updateProjectionMatrix();
+        this._activeShadowExtent = extent;
+    }
+
+    // V5 shadows: render-scoped sun swap. Called from renderTargetAndEffects()
+    // when Globals.shadowsEnabled. Returns a restore function; even if the
+    // render throws, the finally block reverses all state.
+    _enterShadowRenderScope() {
+        const prevSunVisible = Globals.sunLight.visible;
+        const otherSuns = [];
+
+        // Hide every viewSun first.
+        NodeMan.iterate((id, node) => {
+            if (node.constructor.name !== "CNodeView3D") return;
+            if (node.viewSun) {
+                otherSuns.push({node, wasVisible: node.viewSun.visible});
+                node.viewSun.visible = false;
+            }
+        });
+
+        // ALWAYS use this view's viewSun (lazy-creating if it doesn't exist
+        // yet) and ALWAYS keep its castShadow flag true while Globals.shadowsEnabled.
+        // The per-view shadowsEnabled toggle is expressed via shadow.intensity:
+        //   effective → intensity = 1 (full shadow contribution)
+        //   not effective → intensity = 0 (light still in shadow array, but
+        //   the shader's shadow term multiplies by 0 → no visible shadow)
+        // This keeps WebGLLights' state.directional / state.directionalShadow
+        // counts STABLE across toggle transitions, so compiled shaders never
+        // mismatch the runtime uniforms upload. Without this stability we'd
+        // hit "Cannot read properties of undefined (reading 'shadowIntensity')"
+        // when a material compiled with NUM_DIR_LIGHT_SHADOWS=1 was rendered
+        // with state.directionalShadow.length=0 (or vice-versa).
+        if (!this.viewSun) {
+            this._lazyCreateViewSun();
+        }
+        const effective = this.areShadowsEffective();
+        Globals.sunLight.visible = false;
+        this.viewSun.visible = true;
+        this.viewSun.castShadow = true;
+        this.viewSun.shadow.intensity = effective ? 1 : 0;
+        this.viewSun.intensity = Globals.sunLight.intensity;
+        this.viewSun.color.copy(Globals.sunLight.color);
+        const sunDir = Globals.sunLight.position;
+        const sunLen = sunDir.length() || 60000;
+        // Compute the anchor (ground point the camera is looking at) and the
+        // extent (size of the ortho frustum needed to cover the visible
+        // footprint). Apply the frustum BEFORE positioning the light so we
+        // can use the computed extent to scale the sun-ray offset.
+        const {anchor, extent} = this._computeShadowAnchorAndExtent();
+        this._applyShadowFrustum(extent);
+        const k = (extent * 10) / sunLen;
+        const newSunX = anchor.x + sunDir.x * k;
+        const newSunY = anchor.y + sunDir.y * k;
+        const newSunZ = anchor.z + sunDir.z * k;
+        // Compose an "invalidation state" key: any change to the shadow
+        // camera's effective configuration must trigger a fresh depth-pass
+        // render. Without this, zooming/FOV-changing/aspect-changing the view
+        // would leave a stale depth map sampled by the new screen footprint
+        // — exactly the "zoom out → shadows in wrong place / vanish" bug.
+        const stateKey = newSunX + "|" + newSunY + "|" + newSunZ
+            + "|" + extent
+            + "|" + this.camera.fov
+            + "|" + (this.camera.aspect || 1)
+            + "|" + (this.camera.zoom || 1);
+        if (this._lastShadowStateKey !== stateKey) {
+            this.viewSun.shadow.needsUpdate = true;
+            this._lastShadowStateKey = stateKey;
+        }
+        this.viewSun.position.set(newSunX, newSunY, newSunZ);
+        this.viewSun.target.position.copy(anchor);
+        this.viewSun.target.updateMatrixWorld();
+        if (this._exportForceFrustumRefit) {
+            this.viewSun.shadow.needsUpdate = true;
+            this._exportForceFrustumRefit = false;
+        }
+
+        // Per-view terrain material swap. Three.js's ShaderMaterial does NOT
+        // clone uniforms into materialProperties — it points materialProperties.
+        // uniforms AT material.uniforms directly. When both renderers use the
+        // same terrain material, each renderer's setupLights writes its own
+        // lights state into material.uniforms.directionalLightShadows.value
+        // (and directionalShadowMatrix.value). Last-writer-wins corruption.
+        //
+        // Fix: swap each terrain mesh.material to a per-view clone of the
+        // canonical material. The clone has fresh, independent lights
+        // uniforms but SHARES every non-lights uniform by reference so live
+        // values (Globals.sunLight.position, sharedUniforms.*, the tile
+        // texture) still update everywhere.
+        //
+        // This must happen BEFORE renderer.render() — onBeforeRender is too
+        // late, because Three pulls renderItem.material from the render list
+        // before object.onBeforeRender fires.
+        const swapList = this._terrainMaterialSwapList ??= [];
+        swapList.length = 0;
+        const viewId = this.id;
+        NodeMan.iterate((id, node) => {
+            if (node.constructor.name !== "CNodeTerrain" || !node.group) return;
+            node.group.traverse(mesh => {
+                if (!mesh.isMesh || !mesh.material) return;
+                if (!mesh.material.userData?.isTerrainDayNight) return;
+                if (mesh.material.userData?.isPerViewClone) return; // already a clone
+                let perView = mesh._terrainPerViewMaterials;
+                if (!perView) {
+                    perView = mesh._terrainPerViewMaterials = new Map();
+                }
+                let clone = perView.get(viewId);
+                if (!clone) {
+                    clone = cloneTerrainDayNightMaterialForView(mesh.material);
+                    perView.set(viewId, clone);
+                }
+                swapList.push({mesh, orig: mesh.material});
+                mesh.material = clone;
+            });
+        });
+
+        return () => {
+            // Restore canonical terrain materials FIRST so that the next
+            // view's swap sees the canonical material (and can install its
+            // own clone). If we restored after viewSun toggling, a transient
+            // window with cloned-but-stale material could leak.
+            for (const {mesh, orig} of swapList) {
+                mesh.material = orig;
+            }
+            swapList.length = 0;
+            if (this.viewSun) this.viewSun.visible = false;
+            for (const {node, wasVisible} of otherSuns) {
+                if (node.viewSun) node.viewSun.visible = wasVisible;
+            }
+            Globals.sunLight.visible = prevSunVisible;
+        };
+    }
+
+    // Extracted from applyShadowRendererConfig so the swap path can lazily
+    // create a viewSun for views that never had shadows toggled on but are
+    // now being rendered inside Globals.shadowsEnabled scope (because another
+    // view does have shadows on).
+    _lazyCreateViewSun() {
+        if (this.viewSun) return;
+        this.viewSun = new DirectionalLight(0xFFFFFF, 0);
+        this.viewSun.visible = false;
+        this.viewSun.castShadow = true;
+        this.viewSun.shadow.autoUpdate = false;
+        this.viewSun.shadow.intensity = 1;
+        this.viewSun.layers.mask = LAYER.MASK_LIGHTING;
+        // Restrict THIS view's shadow camera to casters on THIS view's layer
+        // so we don't pick up the OTHER view's separate-LOD copies of the same
+        // buildings — those are different meshes at near-identical world
+        // positions, and rendering both into the same depth map produces
+        // z-fighting / fattened shadow silhouettes. Without this restriction
+        // mainView's shadow map was contaminated by lookView's building tiles
+        // (and vice-versa).
+        const myLayer = (this.id === "lookView") ? LAYER.MASK_LOOK : LAYER.MASK_MAIN;
+        this.viewSun.shadow.camera.layers.mask = myLayer;
+        this._applyShadowTunablesToViewSun();
+        GlobalScene.add(this.viewSun);
+        this.viewSun.target.position.set(0, 0, 0);
+        GlobalScene.add(this.viewSun.target);
+        Globals.shadowDiagCounters.viewSunCreations++;
+        this._didEverEnableShadows = true;
     }
 
     pushLookViewAtmosphereFog() {
@@ -1731,6 +2070,10 @@ export class CNodeView3D extends CNodeViewCanvas {
                 }
 
                 const atmosphereFogState = this.pushLookViewAtmosphereFog();
+                let _restoreShadowScope = null;
+                if (Globals.shadowsEnabled) {
+                    _restoreShadowScope = this._enterShadowRenderScope();
+                }
                 try {
                     // [DBG] Render main scene
                     if (Globals.renderDebugFlags.dbg_renderMainScene) {
@@ -1745,6 +2088,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                         this.renderer.render(GlobalScene, this.camera);
                     }
                 } finally {
+                    if (_restoreShadowScope) _restoreShadowScope();
                     this.popLookViewAtmosphereFog(atmosphereFogState);
                 }
 
@@ -2156,6 +2500,14 @@ export class CNodeView3D extends CNodeViewCanvas {
         if (v.atmosphereVisibilityKm !== undefined) this.atmosphereVisibilityKm = v.atmosphereVisibilityKm
         if (v.atmosphereHDR !== undefined) this.atmosphereHDR = v.atmosphereHDR
         if (v.atmosphereExposure !== undefined) this.atmosphereExposure = v.atmosphereExposure
+        // V5 shadows: shadowsEnabled is restored via addSimpleSerial. If the
+        // user saved a sitch with shadows on, we need to re-trigger
+        // applyShadowConfig so the lighting node's deferred-first-apply gate
+        // can flip Globals.shadowsEnabled and lazy-create the viewSun.
+        const lighting = NodeMan.get("lighting", false);
+        if (lighting) {
+            lighting._pendingFirstShadowConfig = true;
+        }
     }
 
     dispose() {
@@ -2521,3 +2873,14 @@ export class CNodeView3D extends CNodeViewCanvas {
 
 // Install mouse / pick / context-menu prototype methods.
 Object.assign(CNodeView3D.prototype, mouseMethods);
+
+// V5 shadows: force a shadow re-render at the next render of `view`, bypassing
+// the §3.8 throttle. Used by Image Set / video exporters where each shot needs
+// a fresh shadow regardless of how small the camera/sun delta was.
+export function forceShadowRefreshForExport(view) {
+    if (!view) return;
+    if (view.viewSun && view.viewSun.shadow) {
+        view.viewSun.shadow.needsUpdate = true;
+        view._exportForceFrustumRefit = true;
+    }
+}

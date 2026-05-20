@@ -766,6 +766,18 @@ const en = {
         atmoVisibility: { label: "Atmo Visibility (km)", tooltip: "Distance where atmospheric contrast drops to about 50% (smaller = thicker atmosphere)" },
         atmoHDR: { label: "Atmo HDR", tooltip: "Physically-based HDR fog/tone mapping for bright sun reflections through haze" },
         atmoExposure: { label: "Atmo Exposure", tooltip: "HDR atmosphere tone-mapping exposure multiplier for highlight rolloff" },
+        shadowsEnabled: {
+            label: "Shadows",
+            mainLabel: "Shadows in Main View",
+            lookLabel: "Shadows in Look View",
+            tooltip: "Per-view shadow rendering. Off by default; enabling triggers per-view depth-pass shadow rendering on this view's renderer.",
+        },
+        allowMobileShadows: {
+            label: "Allow on mobile",
+            mainLabel: "Allow Main View shadows on mobile",
+            lookLabel: "Allow Look View shadows on mobile",
+            tooltip: "Override mobile auto-disable. Shadows are expensive; expect reduced frame rate.",
+        },
         startXR: { label: "Start VR/XR", tooltip: "Start WebXR session for testing (works with Immersive Web Emulator)" },
         effects: { label: "Effects", tooltip: "Enable/Disable All Effects" },
         focusTrack: { label: "Focus Track", tooltip: "Select a track to make the camera look at it and rotate around it" },
@@ -1231,6 +1243,19 @@ const en = {
         buildingsSource: {
             label: "Buildings Source",
             tooltip: "Data source for 3D building tiles",
+        },
+        buildingMaterial: {
+            label: "Building Material",
+            tooltip: "Applies to newly loaded tiles. Toggle Buildings off/on to force re-apply on already-loaded tiles.",
+            modes: {
+                photo: "Photo",
+                flat: "Flat",
+                halfPhoto: "Half-photo",
+            },
+        },
+        buildingFlatColor: {
+            label: "Building Flat Colour",
+            tooltip: "Base colour used when Material = Flat. Default per source: warm concrete for photogrammetric, neutral for OSM.",
         },
         useEllipsoid: {
             label: "Use Ellipsoid Earth Model",
@@ -1711,6 +1736,38 @@ const en = {
         noCityLights: {
             label: "No City Lights on Globe",
             tooltip: "If true, then don't render the city lights on the globe.",
+        },
+        shadowTweaks: {
+            label: "Shadow tweaks",
+            tooltip: "Per-view shadow tunables. Most users won't need to touch these.",
+        },
+        shadowMapSize: {
+            label: "Shadow map size",
+            tooltip: "Resolution of the depth texture used for shadow rendering. Larger = sharper shadows, more GPU memory.",
+        },
+        shadowRadius: {
+            label: "Shadow radius (m)",
+            tooltip: "Half-extent of the orthographic shadow frustum. Origin-centred unless bounds-fitting is active.",
+        },
+        shadowBias: {
+            label: "Shadow bias",
+            tooltip: "Depth offset (NDC). Negative values push shadow surface toward the light. Avoids shadow acne; too negative causes Peter-Pan (detached shadows).",
+        },
+        shadowNormalBias: {
+            label: "Shadow normal bias",
+            tooltip: "Surface-normal offset (world units). Typically ~1 texel at the shadow camera scale.",
+        },
+        shadowUpdateInterval: {
+            label: "Shadow update interval (ms)",
+            tooltip: "Minimum time between shadow re-renders. Lower = smoother but more GPU cost.",
+        },
+        shadowUpdateAngle: {
+            label: "Shadow update angle (°)",
+            tooltip: "Sun-direction change required to trigger a shadow re-render. Lower = smoother during slow time movement.",
+        },
+        terrainReceivesShadow: {
+            label: "Terrain receives shadows",
+            tooltip: "Allow terrain meshes to be darkened by cast shadows. Off by default; flipping on adds a shadow sample per terrain pixel.",
         },
     },
     helpFunctions: {

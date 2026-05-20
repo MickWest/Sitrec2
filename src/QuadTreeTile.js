@@ -2081,10 +2081,23 @@ export class QuadTreeTile {
         this.mesh = new Mesh(this.geometry, tileMaterial)
 //        console.log(`buildMesh: ${this.key()} - mesh created with layers.mask=${this.mesh.layers.mask.toString(2)} (${this.mesh.layers.mask})`);
 
+        // V5 shadows: terrain is a receiver only when the user opts in via the
+        // Lighting menu's "Terrain receives shadows" toggle. Skirts are NEVER
+        // receivers (degenerate UVs/normals → seam artifacts) and NEVER casters.
+        // We read from Globals.terrainReceivesShadow which mirrors the lighting
+        // node's field; this avoids a NodeMan circular import here.
+        if (Globals.shadowsEnabled) {
+            this.mesh.castShadow = false;
+            this.mesh.receiveShadow = !!Globals.terrainReceivesShadow;
+        }
+
         // Build and create skirt mesh
         this.buildSkirtGeometry();
         // Create skirt mesh with the same material as the main tile initially
         this.skirtMesh = new Mesh(this.skirtGeometry, tileMaterial);
+        // V5 shadows: skirts always opt out.
+        this.skirtMesh.castShadow = false;
+        this.skirtMesh.receiveShadow = false;
 //        console.log(`buildMesh: ${this.key()} - skirtMesh created with layers.mask=${this.skirtMesh.layers.mask.toString(2)} (${this.skirtMesh.layers.mask})`);
     }
 

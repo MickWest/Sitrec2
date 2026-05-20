@@ -1,4 +1,4 @@
-import {Color, ShaderMaterial, Vector3} from "three";
+import {Color, ShaderMaterial, UniformsLib, UniformsUtils, Vector3} from "three";
 import {sharedUniforms} from "./SharedUniforms";
 import {Globals} from "../../../Globals";
 
@@ -14,44 +14,69 @@ import {Globals} from "../../../Globals";
  * @returns {ShaderMaterial} The custom shader material
  */
 export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 0.3, doubleSided = false, transparency = 1) {
-    const material = new ShaderMaterial({
-        uniforms: {
-            map: { value: texture },
-            sunDirection: { value: Globals.sunLight.position }, // reference, so normalize before use
+    // V5 shadows: merge Three.js's lights/shadows uniforms so a single
+    // DirectionalLight's shadow map can darken this material. Without
+    // UniformsLib.lights + the shadow chunks below, ShaderMaterial.lights=true
+    // would have no effect — receiveShadow=true on the mesh is meaningless if
+    // the fragment shader never samples the shadow map.
+    // Merge built-in lights uniforms (needed by shadowmap chunks) with our
+    // own. After merge we replace shared-reference uniforms (map texture,
+    // sunDirection, sharedUniforms.*) with the live references so the rest of
+    // Sitrec's update path keeps working.
+    const mergedUniforms = UniformsUtils.merge([
+        UniformsLib.lights,
+        {
+            map: { value: null },
+            sunDirection: { value: new Vector3() },
             earthCenter: { value: new Vector3(0, 0, 0) },
             terrainShadingStrength: { value: terrainShadingStrength },
             transparency: { value: transparency },
-            // Required by Three.js when ShaderMaterial.fog = true
             fogColor: { value: new Color(0xffffff) },
             fogNear: { value: 1 },
             fogFar: { value: 1000 },
             fogDensity: { value: 0.00025 },
-            ...sharedUniforms,
         },
+    ]);
+    mergedUniforms.map.value = texture;
+    mergedUniforms.sunDirection = { value: Globals.sunLight.position };
+    for (const k of Object.keys(sharedUniforms)) {
+        mergedUniforms[k] = sharedUniforms[k];
+    }
+    const material = new ShaderMaterial({
+        uniforms: mergedUniforms,
         side: doubleSided ? 2 : 0, // 2 = DoubleSide, 0 = FrontSide
         transparent: transparency < 1,
         fog: true,
+        lights: true,
         vertexShader: `
             varying vec2 vUv;
             varying vec3 vNormal;
             varying vec3 vWorldPosition;
             varying vec4 vPosition;
+            #include <common>
             #include <fog_pars_vertex>
-            
+            #include <shadowmap_pars_vertex>
+
             void main() {
                 vUv = uv;
-                
+
                 // Transform normal to world space for local terrain shading
                 vNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
-                
+
                 // Get world position for calculating global normal
                 vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
-                
+
                 // Calculate position for depth
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
                 vPosition = projectionMatrix * mvPosition;
                 #include <fog_vertex>
-                
+                // shadowmap_pars_vertex expects vNormal/transformed/objectNormal
+                // identifiers. We inline a minimal worldpos pass for the
+                // shadowmap_vertex chunk to consume.
+                vec3 transformedNormal = vNormal;
+                vec4 worldPosition = vec4(vWorldPosition, 1.0);
+                #include <shadowmap_vertex>
+
                 gl_Position = vPosition;
             }
         `,
@@ -67,12 +92,17 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             uniform float farPlane;
             uniform bool useDayNight;
             uniform bool showTileEdges;
-            
+
             varying vec2 vUv;
             varying vec3 vNormal;
             varying vec3 vWorldPosition;
             varying vec4 vPosition;
+            #include <common>
+            #include <packing>
             #include <fog_pars_fragment>
+            #include <lights_pars_begin>
+            #include <shadowmap_pars_fragment>
+            #include <shadowmask_pars_fragment>
             
             void main() {
                 // Get the base texture color
@@ -98,8 +128,15 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 // - Surfaces facing away get 0.7 (70% brightness)
                 float terrainShading = mix(1.0 - terrainShadingStrength, 1.0, localIntensity * 0.5 + 0.5);
                 
+                // V5 shadows: sample the directional-light shadow map. When
+                // no shadow casters cover this fragment, getShadowMask()=1.0
+                // so the day color is unchanged. Where covered, the mask drops
+                // toward 0 and darkens the day-side terrain. Night side stays
+                // at ambient (shadows aren't meaningful in cast-light absence).
+                float shadowMask = getShadowMask();
+
                 // Calculate day color with terrain shading
-                vec4 dayColor = textureColor * sunGlobalTotal * terrainShading;
+                vec4 dayColor = textureColor * sunGlobalTotal * terrainShading * shadowMask;
                 
                 // Calculate night color (flat texture with ambient lighting, no terrain shading)
                 vec4 nightColor = textureColor * sunAmbientIntensity;
@@ -171,6 +208,58 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             derivatives: true
         }
     });
-    
+
+    // Tag so consumers can identify a TerrainDayNight material for per-view cloning.
+    material.userData.isTerrainDayNight = true;
     return material;
+}
+
+/**
+ * Build a per-view clone of a TerrainDayNightMaterial.
+ *
+ * Why this is needed: Three.js's WebGLRenderer points
+ * materialProperties.uniforms AT the material's own uniforms object (no
+ * clone for ShaderMaterial). When BOTH renderers (mainView, lookView) use
+ * the same terrain material, each renderer's setupLights() phase writes
+ * its own lights state INTO material.uniforms.directionalShadowMatrix.value
+ * (and the directionalLightShadows array). Last writer wins. The view that
+ * rendered LAST has the right uniforms; the other ends up sampling the
+ * wrong shadow camera/matrix.
+ *
+ * The fix is to give each view its own ShaderMaterial instance — and
+ * therefore its own uniforms — while keeping every non-lights uniform
+ * SHARED BY REFERENCE so live updates (Globals.sunLight.position,
+ * sharedUniforms.*, the tile texture) still propagate to all views.
+ */
+export function cloneTerrainDayNightMaterialForView(orig) {
+    // Fresh lights uniforms — each view gets its own arrays for
+    // directionalLights / directionalLightShadows / directionalShadowMap /
+    // directionalShadowMatrix / etc. These are what Three.js's setupLights
+    // mutates; keeping them independent is the whole point of the clone.
+    const freshLights = UniformsUtils.merge([UniformsLib.lights]);
+
+    // Start from the fresh lights uniforms, then overlay non-lights
+    // uniforms from `orig` BY REFERENCE so live values stay synced.
+    const uniforms = {};
+    for (const k of Object.keys(freshLights)) {
+        uniforms[k] = freshLights[k];
+    }
+    for (const k of Object.keys(orig.uniforms)) {
+        if (k in freshLights) continue; // skip lights — keep ours
+        uniforms[k] = orig.uniforms[k]; // SHARED REFERENCE
+    }
+
+    const clone = new ShaderMaterial({
+        uniforms,
+        vertexShader: orig.vertexShader,
+        fragmentShader: orig.fragmentShader,
+        side: orig.side,
+        transparent: orig.transparent,
+        fog: orig.fog,
+        lights: true,
+        extensions: orig.extensions ? {...orig.extensions} : undefined,
+    });
+    clone.userData.isTerrainDayNight = true;
+    clone.userData.isPerViewClone = true;
+    return clone;
 }

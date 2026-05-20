@@ -8,9 +8,9 @@
 // competing for budget.
 
 import {CNode} from "./CNode";
-import {NodeMan} from "../Globals";
+import {Globals, NodeMan} from "../Globals";
 import {GlobalScene} from "../LocalFrame";
-import {Group} from "three";
+import {DoubleSide, Group} from "three";
 import * as LAYER from "../LayerMasks";
 import {TilesRenderer} from "3d-tiles-renderer";
 import {GLTFExtensionsPlugin, TilesFadePlugin} from "3d-tiles-renderer/plugins";
@@ -40,8 +40,11 @@ class PerViewTiles {
      * @param {string|null} cesiumIonToken
      * @param {string|null} googleApiKey
      * @param {Object|null} googleSharedState
+     * @param {string} materialMode
+     * @param {number|null} flatColor
      */
-    constructor(parentGroup, layerMask, source, cesiumIonToken, googleApiKey, googleSharedState) {
+    constructor(parentGroup, layerMask, source, cesiumIonToken, googleApiKey, googleSharedState,
+                materialMode = "photo", flatColor = null) {
         this.renderer = new TilesRenderer();
         // Monotonic counter used by export settling to detect LOD visibility churn.
         this.visibilityVersion = 0;
@@ -66,7 +69,8 @@ class PerViewTiles {
             }));
         }
 
-        this.renderer.registerPlugin(new TilesDayNightPlugin({source}));
+        this.dayNightPlugin = new TilesDayNightPlugin({source, materialMode, flatColor});
+        this.renderer.registerPlugin(this.dayNightPlugin);
         this.edgesPlugin = new TilesEdgesPlugin();
         this.renderer.registerPlugin(this.edgesPlugin);
         // Fade plugin smooths LOD transitions so parent/child tile swaps are less abrupt in exports.
@@ -82,6 +86,11 @@ class PerViewTiles {
         this._onTileVisibilityChange = () => {
             this.visibilityVersion++;
             this.lastVisibilityChangeAt = performance.now();
+            // V5 shadows: caster set may have changed; bypass the throttle.
+            if (Globals.shadowsEnabled) {
+                const vs = this._viewSunFromMask(layerMask);
+                if (vs) vs.shadow.needsUpdate = true;
+            }
         };
         this.renderer.addEventListener("tile-visibility-change", this._onTileVisibilityChange);
 
@@ -93,10 +102,49 @@ class PerViewTiles {
                 if (child.isMesh || child.isLine || child.isPoints) {
                     child.layers.mask = layerMask;
                 }
+                // V5 shadows: opt tile meshes in to cast/receive ONLY when
+                // shadows are currently active. Defaults-off invariant: when
+                // off this branch is a single boolean check + no writes.
+                if (Globals.shadowsEnabled) {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                        // OSM building tiles have inconsistent face winding —
+                        // some roofs face inward, walls outward. Three.js's
+                        // default shadow pass uses shadowSide=BackSide which
+                        // skips outward-facing roof triangles, creating a gap
+                        // between the building base and the cast shadow.
+                        // DoubleSide makes both sides cast.
+                        if (child.material) {
+                            if (Array.isArray(child.material)) {
+                                for (const m of child.material) m.shadowSide = DoubleSide;
+                            } else {
+                                child.material.shadowSide = DoubleSide;
+                            }
+                        }
+                    } else if (child.isLine || child.isPoints) {
+                        child.castShadow = false;
+                    }
+                }
             });
+            // Also notify the throttle that the caster set changed.
+            const pendingViewSun = this._viewSunFromMask(layerMask);
+            if (pendingViewSun) pendingViewSun.shadow.needsUpdate = true;
         });
 
         parentGroup.add(this.renderer.group);
+    }
+
+    // Return the viewSun matching this PerViewTiles' layer mask (if any).
+    // Used to flag shadow-update on tile load + tile-visibility-change.
+    _viewSunFromMask(layerMask) {
+        let found = null;
+        NodeMan.iterate((id, node) => {
+            if (node.constructor.name !== "CNodeView3D") return;
+            if (!node.viewSun || !node.areShadowsEffective?.()) return;
+            if ((node.camera.layers.mask & layerMask) !== 0) found = node.viewSun;
+        });
+        return found;
     }
 
     update(view) {
@@ -134,6 +182,9 @@ export class CNodeBuildings3DTiles extends CNode {
         this.source = v.source ?? "cesium-osm"; // "cesium-osm" or "google-photorealistic"
         this.cesiumIonToken = v.cesiumIonToken ?? null;
         this.googleApiKey = v.googleApiKey ?? null;
+        // V5 material modes: "photo" (default), "flat", "halfPhoto".
+        this.materialMode = v.materialMode ?? "photo";
+        this.flatColor = v.flatColor ?? null;
 
         this.group = new Group();
         this.group.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
@@ -179,7 +230,8 @@ export class CNodeBuildings3DTiles extends CNode {
         for (const {id, mask} of viewConfigs) {
             this._perView[id] = new PerViewTiles(
                 this.group, mask, activeSource,
-                this.cesiumIonToken, this.googleApiKey, googleSharedState
+                this.cesiumIonToken, this.googleApiKey, googleSharedState,
+                this.materialMode, this.flatColor
             );
         }
 
@@ -198,6 +250,34 @@ export class CNodeBuildings3DTiles extends CNode {
         this._initialized = false;
     }
 
+    // V5 shadows: walk already-loaded tile meshes and flip cast/receiveShadow.
+    // §0 invariant: if shadows have never been on AND aren't on now, no traversal.
+    refreshShadowFlags() {
+        if (!Globals.shadowsEnabled && !this._didEverEnableShadows) return;
+        if (Globals.shadowsEnabled) this._didEverEnableShadows = true;
+        const want = Globals.shadowsEnabled;
+        for (const pv of Object.values(this._perView)) {
+            if (!pv.renderer || typeof pv.renderer.forEachLoadedModel !== "function") continue;
+            pv.renderer.forEachLoadedModel(scene => {
+                scene.traverse(child => {
+                    if (child.isMesh) {
+                        child.castShadow = want;
+                        child.receiveShadow = want;
+                        if (want && child.material) {
+                            if (Array.isArray(child.material)) {
+                                for (const m of child.material) m.shadowSide = DoubleSide;
+                            } else {
+                                child.material.shadowSide = DoubleSide;
+                            }
+                        }
+                    } else if (child.isLine || child.isPoints) {
+                        child.castShadow = false;
+                    }
+                });
+            });
+        }
+    }
+
     // Toggle shader-based wireframe edge rendering on all tile meshes.
     // Edges only apply to OSM buildings — Google Photorealistic tiles are
     // terrain imagery where wireframe edges are not meaningful.
@@ -207,6 +287,19 @@ export class CNodeBuildings3DTiles extends CNode {
         const firstPv = Object.values(this._perView)[0];
         if (firstPv?.edgesPlugin) {
             firstPv.edgesPlugin.setVisible(effective);
+        }
+    }
+
+    // V5 material modes. Updates plugin state for FUTURE tile loads only.
+    // To re-style already-loaded tiles the user must toggle buildings off/on
+    // (re-walking loaded tiles would orphan TilesFadePlugin entries).
+    setMaterialMode(mode, flatColor) {
+        this.materialMode = mode ?? "photo";
+        if (flatColor !== undefined) this.flatColor = flatColor;
+        for (const pv of Object.values(this._perView)) {
+            if (pv.dayNightPlugin?.setMaterialMode) {
+                pv.dayNightPlugin.setMaterialMode(this.materialMode, this.flatColor);
+            }
         }
     }
 

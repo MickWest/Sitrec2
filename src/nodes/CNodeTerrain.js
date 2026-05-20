@@ -237,6 +237,34 @@ export class CNodeTerrain extends CNode {
         this.createDebugTextDisplay();
     }
 
+    // V5 shadows: walk loaded terrain tile meshes and set receiveShadow to
+    // match Globals.shadowsEnabled && Globals.terrainReceivesShadow. Skirts
+    // always stay off (set at construction in QuadTreeTile.buildMesh).
+    // §0 invariant: when shadows have never been on AND aren't on now,
+    // returns immediately with no traversal.
+    refreshShadowFlags() {
+        const want = !!(Globals.shadowsEnabled && Globals.terrainReceivesShadow);
+        if (!want && !this._didEverEnableShadows) return;
+        if (want) this._didEverEnableShadows = true;
+        if (!this.group) return;
+        this.group.traverse(obj => {
+            if (!obj.isMesh) return;
+            // Skirts have receiveShadow=false written at construction; we
+            // re-write them all to want here, then sweep skirts back off via
+            // QuadTreeMap if available.
+            obj.receiveShadow = want;
+        });
+        // Walk known QuadTreeMap tiles to disable skirts (cleanest path).
+        if (this.map && typeof this.map.forEachTile === "function") {
+            this.map.forEachTile(tile => {
+                if (tile.skirtMesh) {
+                    tile.skirtMesh.castShadow = false;
+                    tile.skirtMesh.receiveShadow = false;
+                }
+            });
+        }
+    }
+
     update(f) {
         super.update(f);
        this.createDebugTextDisplay()

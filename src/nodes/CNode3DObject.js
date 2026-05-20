@@ -319,6 +319,23 @@ export class CNode3DObject extends CNode3DGroup {
         return {position: this.group.position.clone()};
     }
 
+    // V5 shadows: walk this object's mesh subtree and flip cast/receiveShadow
+    // to match the current Globals.shadowsEnabled. §0 invariant: when shadows
+    // have never been on and aren't on now, early-return with no traversal.
+    refreshShadowFlags() {
+        if (!Globals.shadowsEnabled && !this._didEverEnableShadows) return;
+        if (Globals.shadowsEnabled) this._didEverEnableShadows = true;
+        const want = Globals.shadowsEnabled;
+        const root = this.group ?? this.object;
+        if (!root) return;
+        root.traverse(child => {
+            if (child.isMesh) {
+                child.castShadow = want;
+                child.receiveShadow = want;
+            }
+        });
+    }
+
     show(visible=true) {
         super.show(visible);
         if (this.label !== undefined) {
