@@ -24,7 +24,7 @@ function getApiKeyForProvider($provider) {
 }
 
 // Model permissions by user group
-// Groups: admin=3, registered=2, verified=9, sitrec=14
+// Groups: admin=3, registered=2, verified=9, sitrec=14, sitrec-plus=19
 $MODEL_PERMISSIONS = [
     3 => [ // admin - all models
         ['provider' => 'openai', 'model' => 'gpt-4o', 'label' => 'GPT-4o'],
@@ -35,6 +35,11 @@ $MODEL_PERMISSIONS = [
         ['provider' => 'groq', 'model' => 'llama-3.3-70b-versatile', 'label' => 'Llama 3.3 70B (Groq)'],
         ['provider' => 'groq', 'model' => 'llama-3.1-8b-instant', 'label' => 'Llama 3.1 8B (Groq)'],
         ['provider' => 'grok', 'model' => 'grok-2-latest', 'label' => 'Grok 2'],
+    ],
+    19 => [ // sitrec-plus - same models as sitrec, 10x rate limits
+        ['provider' => 'openai', 'model' => 'gpt-4o', 'label' => 'GPT-4o'],
+        ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-20250514', 'label' => 'Claude Sonnet 4'],
+        ['provider' => 'groq', 'model' => 'llama-3.3-70b-versatile', 'label' => 'Llama 3.3 70B (Groq)'],
     ],
     14 => [ // sitrec - premium models
         ['provider' => 'openai', 'model' => 'gpt-4o', 'label' => 'GPT-4o'],
@@ -58,7 +63,7 @@ function getAvailableModels($userGroups) {
     $seen = [];
     
     // Collect models from all user groups (higher privilege groups first)
-    $groupOrder = [3, 14, 9, 2]; // admin, sitrec, verified, registered
+    $groupOrder = [3, 19, 14, 9, 2]; // admin, sitrec-plus, sitrec, verified, registered
     foreach ($groupOrder as $group) {
         if (in_array($group, $userGroups) && isset($MODEL_PERMISSIONS[$group])) {
             foreach ($MODEL_PERMISSIONS[$group] as $model) {
@@ -98,9 +103,10 @@ if (isset($_GET['fetchModels'])) {
 }
 
 // Rate limiting configuration by user group
-// Groups: admin=3, registered=2, verified=9, sitrec=14
+// Groups: admin=3, registered=2, verified=9, sitrec=14, sitrec-plus=19
 $RATE_LIMITS = [
     3 => ['minute' => 1000000, 'hour' => 1000000],  // admin - effectively unlimited
+    19 => ['minute' => 200, 'hour' => 1000],        // sitrec-plus - 10x sitrec
     14 => ['minute' => 20, 'hour' => 100],          // sitrec - premium
     9 => ['minute' => 10, 'hour' => 50],            // verified - mid tier
     2 => ['minute' => 5, 'hour' => 20],             // registered - basic
