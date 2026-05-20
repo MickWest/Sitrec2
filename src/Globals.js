@@ -37,7 +37,7 @@ export const Globals = {
     // yet — calculateTileVisibility hasn't been refactored to consult these.
     // Defaults to "legacy" until measured-bounds pipeline (Phase 1+) and
     // sphere/obb modes (Phase 2+/3) ship.
-    tileBoundsMode: { mainView: "legacy", lookView: "legacy" },
+    tileBoundsMode: { mainView: "obb", lookView: "obb" },
     enableReachCull: true,
     tileCullBudgetMs: 4,
     showTileOBB: false,

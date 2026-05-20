@@ -613,27 +613,8 @@ export class QuadTreeMap {
 
             // Calculate visibility and screen size
             // This is expensive, so we only do it after early exit checks.
-            //
-            // V5 Phase 0.1.c: try/catch with per-view auto-fallback to
-            // "legacy" mode if the visibility function ever throws. Mirrors
-            // the prior-session bug where a ReferenceError halted the pass
-            // mid-tile. The catch logs once per (view, map) and reverts
-            // the per-view tileBoundsMode to legacy so the cascade keeps
-            // moving on subsequent frames.
-            let visibility;
-            try {
-                visibility = this.calculateTileVisibility(tile, camera, _v5Options, diag);
-            } catch (err) {
-                if (!Globals._cullErrorReportedByView) Globals._cullErrorReportedByView = {};
-                const errKey = `${view.id}/${isTextureMap ? "texture" : "elevation"}`;
-                if (!Globals._cullErrorReportedByView[errKey]) {
-                    Globals._cullErrorReportedByView[errKey] = true;
-                    console.error(`[QuadTreeMap/${errKey}] visibility threw; reverting to legacy`, err);
-                    Globals.tileBoundsMode[view.id] = "legacy";
-                }
-                // Minimal fallback so the cascade still has a result this pass.
-                visibility = { screenSpaceError: 0, visible: tile.z < 3, actuallyVisible: tile.z < 3, frustumIntersects: false };
-            }
+            // Errors propagate — silent fallback to legacy was hiding real bugs.
+            const visibility = this.calculateTileVisibility(tile, camera, _v5Options, diag);
 
             // OPTIMIZATION #7: Early exit for invisible tiles without children.
             // Now also DEACTIVATES the leaf if it's currently flagged for this
