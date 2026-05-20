@@ -1,4 +1,8 @@
 import {assert} from "./assert";
+import {
+    GLOBAL_UNMEASURED_MAX_ALT_M,
+    GLOBAL_UNMEASURED_MIN_ALT_M,
+} from "./QuadTreeCullingBounds";
 import {boxMark, DebugArrowAB, removeDebugArrow} from "./threeExt";
 import {LLAToECEF, LLAToECEFInto, wgs84} from "./LLA-ECEF-ENU";
 import {GlobalScene} from "./LocalFrame";
@@ -132,6 +136,24 @@ export class QuadTreeTile {
         this.isLoadingElevation = false // Track if this tile is currently loading elevation data
         this.isCancelling = false // Track if this tile is currently being cancelled
         this.highestAltitude = 0;
+        // V5 Phase 1.0: input/output bounds tracking. Pure data — no
+        // current visibility path reads these; ensureCullingState() (added
+        // below) lazily builds the sphere/OBB on demand. Future phases
+        // (1.1 measurement, 2/3 sphere/OBB rendering) consume these.
+        this.altitudeBounds = {
+            min: GLOBAL_UNMEASURED_MIN_ALT_M,
+            max: GLOBAL_UNMEASURED_MAX_ALT_M,
+            source: "global",
+            measured: false,
+            generation: 0,
+        };
+        this.cullingState = {
+            sphere: null,
+            obb: null,
+            localFrame: null,
+            generation: -1,
+            visibilityCache: null,
+        };
         this.usingParentData = false; // Track if this tile is using resampled parent texture/elevation
         this.needsHighResLoad = false; // Track if this tile needs to load high-res data when visible
 
@@ -217,6 +239,71 @@ export class QuadTreeTile {
         // const worldSphere = tile.mesh.geometry.boundingSphere.clone();
         // worldSphere.applyMatrix4(tile.mesh.matrixWorld);
         // return worldSphere;
+    }
+
+    /**
+     * V5 Phase 1.0: lazily build the measured-bounds sphere + OBB from the
+     * current altitudeBounds. Cheap to call repeatedly because the
+     * generation tag ensures the underlying build functions only run when
+     * altitudeBounds actually changes.
+     *
+     * Not yet consulted by calculateTileVisibility (default mode is
+     * "legacy"). Phase 2 (sphere mode) and Phase 3 (obb mode) call this.
+     */
+    ensureCullingState() {
+        const state = this.cullingState;
+        if (state.generation === this.altitudeBounds.generation && state.sphere && (state.obb || this.z < 3)) {
+            return state;
+        }
+        const {
+            buildCullingOBB,
+            buildCullingSphere,
+            buildFallbackPointSet,
+            buildLocalFrame,
+            maxPointsFor,
+        } = require("./QuadTreeCullingBounds");
+
+        const tileBounds = {
+            z: this.z, x: this.x, y: this.y,
+            mapProjection: this.map.options.mapProjection,
+        };
+        const pointPoolSize = Math.max(1, maxPointsFor(this.z));
+        if (!QuadTreeTile._scratchPoints || QuadTreeTile._scratchPoints.length < pointPoolSize) {
+            QuadTreeTile._scratchPoints = [];
+            const {Vector3: _V3} = require("three");
+            for (let i = 0; i < pointPoolSize; i++) QuadTreeTile._scratchPoints.push(new _V3());
+        }
+        const points = QuadTreeTile._scratchPoints;
+        const count = buildFallbackPointSet(tileBounds, this.altitudeBounds, {points});
+
+        if (count > 0) {
+            state.sphere = buildCullingSphere(points, count);
+
+            const latC = 0.5 * (
+                this.map.options.mapProjection.getNorthLatitude(this.y, this.z) +
+                this.map.options.mapProjection.getNorthLatitude(this.y + 1, this.z)
+            );
+            const lonC = 0.5 * (
+                this.map.options.mapProjection.getLeftLongitude(this.x, this.z) +
+                this.map.options.mapProjection.getLeftLongitude(this.x + 1, this.z)
+            );
+            const midAlt = 0.5 * (this.altitudeBounds.min + this.altitudeBounds.max);
+            const {Vector3: _V3} = require("three");
+            const origin = new _V3();
+            require("./LLA-ECEF-ENU").LLAToECEFInto(latC, lonC, midAlt, origin);
+            const latRad = latC * Math.PI / 180;
+            const lonRad = lonC * Math.PI / 180;
+            state.localFrame = buildLocalFrame(origin, latRad, lonRad);
+            state.obb = (this.z < 3) ? null : buildCullingOBB(points, count, state.localFrame, origin);
+            state._obbOriginECEF = origin;
+        } else {
+            state.sphere = this.getWorldSphere().clone();
+            state.obb = null;
+            state.localFrame = null;
+        }
+        state.generation = this.altitudeBounds.generation;
+        state.visibilityCache = null;
+        return state;
     }
 
 
