@@ -242,6 +242,80 @@ export class QuadTreeTile {
     }
 
     /**
+     * V5 Phase 1.1/1.2: begin a transactional measurement of the rendered
+     * geometry's min/max altitude. Called at the top of each recalc path;
+     * subsequent vertex iterations call _addRenderedVertex. The skirt
+     * geometry (updateSkirtGeometry) calls _markSkirtCommitted with the
+     * per-tile skirtDepth so the committed min covers the skirt extent.
+     * Commit lands at the end of the recalc path IF main vertex count
+     * matches expectedMain AND skirt has committed.
+     *
+     * Crucially: commit does NOT do a recursive forward refresh of
+     * descendant inherited bounds. An earlier implementation walked the
+     * entire active subtree on every commit; on the Zoomm detail test
+     * sitch that walk caused millions of object allocations per cascade
+     * and capped maxZ at 12 (regression confirmed by bisect). Inherited
+     * bounds remain conservative without refresh because they clamp to
+     * GLOBAL_UNMEASURED_MAX_ALT_M until the descendant measures itself.
+     */
+    beginRenderedBoundsMeasurement(expectedMainVertices) {
+        this._measurement = {
+            min: Infinity,
+            max: -Infinity,
+            mainCount: 0,
+            expectedMain: expectedMainVertices,
+            skirtCommitted: false,
+            aborted: false,
+        };
+    }
+
+    _addRenderedVertex(elevation) {
+        const m = this._measurement;
+        if (!m || m.aborted) return;
+        if (elevation < m.min) m.min = elevation;
+        if (elevation > m.max) m.max = elevation;
+        m.mainCount++;
+    }
+
+    _markSkirtCommitted(skirtDepth = 0) {
+        if (this._measurement && !this._measurement.aborted) {
+            this._measurement.skirtCommitted = true;
+            if (skirtDepth > 0) this._measurement.min -= skirtDepth;
+        }
+    }
+
+    _abortRenderedBounds() {
+        if (this._measurement) this._measurement.aborted = true;
+        this._measurement = null;
+    }
+
+    _commitRenderedBounds() {
+        const m = this._measurement;
+        if (!m || m.aborted) { this._measurement = null; return false; }
+        if (m.mainCount !== m.expectedMain || !m.skirtCommitted) {
+            this._measurement = null;
+            return false;
+        }
+        if (!isFinite(m.min) || !isFinite(m.max) || m.min > m.max) {
+            this._measurement = null;
+            return false;
+        }
+        this.altitudeBounds = {
+            min: m.min,
+            max: m.max,
+            source: "renderedGeometry",
+            measured: true,
+            generation: this.altitudeBounds.generation + 1,
+        };
+        this.cullingState.generation = -1;
+        this.cullingState.visibilityCache = null;
+        this._measurement = null;
+        // V5 Phase 1.1: NO recursive forward refresh of inherited
+        // descendants — see method-level comment above for why.
+        return true;
+    }
+
+    /**
      * V5 Phase 1.0: lazily build the measured-bounds sphere + OBB from the
      * current altitudeBounds. Cheap to call repeatedly because the
      * generation tag ensures the underlying build functions only run when
@@ -570,6 +644,10 @@ export class QuadTreeTile {
         // Don't compute vertex normals - use our fake normals for consistent lighting
         this.skirtGeometry.computeBoundingBox();
         this.skirtGeometry.computeBoundingSphere();
+
+        // V5 Phase 1.2: tell the bounds measurement (if any) about the
+        // skirt extent. Safe to call when no measurement is in progress.
+        this._markSkirtCommitted(skirtDepth);
     }
 
     // Apply Web Mercator elevation data to geometry vertices asynchronously
@@ -671,6 +749,8 @@ export class QuadTreeTile {
             if (elevation > this.highestAltitude) {
                 this.highestAltitude = elevation;
             }
+            // V5 Phase 1.2: feed the transactional measurement when active.
+            this._addRenderedVertex(elevation);
 
             // Convert to ECEF coordinates and translate to tile-local space.
             // In-place into _vertexScratch to avoid per-vertex Vector3 allocation.
@@ -1026,6 +1106,9 @@ export class QuadTreeTile {
         // Identical visual result to per-vertex lookup, ~64x cheaper.
         const geoidCorners = geoidCorrectionForTile(this.map.options.mapProjection, zoomTile, xTile, yTile);
 
+        // V5 Phase 1.2: begin transactional bounds measurement.
+        this.beginRenderedBoundsMeasurement(geometry.attributes.position.count);
+
         for (let i = 0; i < geometry.attributes.position.count; i++) {
 
             const xIndex = i % nPosition
@@ -1062,6 +1145,8 @@ export class QuadTreeTile {
             if (elevation > this.highestAltitude) {
                 this.highestAltitude = elevation;
             }
+            // V5 Phase 1.2: feed measurement.
+            this._addRenderedVertex(elevation);
 
             // elevation = Math.random()*100000
 
@@ -1095,7 +1180,11 @@ export class QuadTreeTile {
         // Update skirt geometry to match the new main tile geometry
         if (this.skirtMesh && this.skirtGeometry) {
             this.updateSkirtGeometry();
+        } else if (this._measurement) {
+            this._markSkirtCommitted();
         }
+        // V5 Phase 1.2: commit transactional measurement.
+        this._commitRenderedBounds();
     }
 
 
@@ -1182,11 +1271,17 @@ export class QuadTreeTile {
         }
 
         if (!elevationTile || !elevationTile.elevation) {
+            // Fallback to legacy path runs its own measurement; we
+            // haven't started one yet, so nothing to abort.
             return this.recalculateCurveOld(radius);
         }
 
         const nPosition = Math.sqrt(geometry.attributes.position.count);
         const elevationSize = Math.sqrt(elevationTile.elevation.length);
+
+        // V5 Phase 1.2: begin measurement now that we know we'll complete
+        // the vertex loop.
+        this.beginRenderedBoundsMeasurement(geometry.attributes.position.count);
 
         const xTile = this.x;
         const yTile = this.y;
@@ -1251,6 +1346,8 @@ export class QuadTreeTile {
             if (elevation > this.highestAltitude) {
                 this.highestAltitude = elevation;
             }
+            // V5 Phase 1.2: feed measurement.
+            this._addRenderedVertex(elevation);
 
             // Convert to ECEF and translate to tile-local space; in-place to avoid GC.
             LLAToECEFInto(lat, lon, elevation, _vertexScratch).sub(tileCenter);
@@ -1276,8 +1373,12 @@ export class QuadTreeTile {
 
         if (this.skirtMesh && this.skirtGeometry) {
             this.updateSkirtGeometry();
+        } else if (this._measurement) {
+            this._markSkirtCommitted();
         }
-        
+        // V5 Phase 1.2: commit measurement.
+        this._commitRenderedBounds();
+
         EventManager.dispatchEvent("tileChanged", this);
     }
 
@@ -1299,6 +1400,9 @@ export class QuadTreeTile {
 
         // Get dimensions
         const nPosition = Math.sqrt(geometry.attributes.position.count); // size of side of mesh in points
+
+        // V5 Phase 1.2: begin transactional measurement (flat → all zeros).
+        this.beginRenderedBoundsMeasurement(geometry.attributes.position.count);
 
         // Apply flat elevation (0) to all vertices
         for (let i = 0; i < geometry.attributes.position.count; i++) {
@@ -1323,6 +1427,8 @@ export class QuadTreeTile {
 
             // Use flat elevation (0)
             const elevation = 0;
+            // V5 Phase 1.2: feed measurement.
+            this._addRenderedVertex(elevation);
 
             // Convert to ECEF coordinates
             const vertexECEF = LLAToECEF(lat, lon, elevation);
@@ -1351,7 +1457,11 @@ export class QuadTreeTile {
         // Update skirt geometry to match the new main tile geometry
         if (this.skirtMesh && this.skirtGeometry) {
             this.updateSkirtGeometry();
+        } else if (this._measurement) {
+            this._markSkirtCommitted();
         }
+        // V5 Phase 1.2: commit measurement.
+        this._commitRenderedBounds();
 
         if (skipNormalComputation) {
             return;
@@ -1449,14 +1559,24 @@ export class QuadTreeTile {
         // Create abort controller for elevation computation (allows cancellation if tile is switched)
         this.elevationAbortController = new AbortController();
 
+        // V5 Phase 1.2: begin transactional measurement before the inner
+        // vertex pass starts. applyWebMercatorElevation calls
+        // _addRenderedVertex per vertex.
+        this.beginRenderedBoundsMeasurement(geometry.attributes.position.count);
+
         // Apply elevation and then run texture generation and normal computation in parallel
         await this.applyWebMercatorElevation(
-            geometry, nPosition, elevationTile, elevationSize, 
+            geometry, nPosition, elevationTile, elevationSize,
             tileBaseX, tileBaseY, numTiles, lonScale, lonOffset, latScale,
             elevationZoom, this.z, tileOffsetX, tileOffsetY, tileFractionX, tileFractionY,
             tileCenter, this.elevationAbortController.signal
         );
-        
+
+        // V5 Phase 1.2: abort measurement if the vertex pass was cancelled.
+        if (this.elevationAbortController?.signal.aborted) {
+            this._abortRenderedBounds();
+        }
+
         // Clear the abort controller after elevation is complete
         this.elevationAbortController = null;
 
@@ -1479,7 +1599,11 @@ export class QuadTreeTile {
         // Update skirt geometry to match the new main tile geometry
         if (this.skirtMesh && this.skirtGeometry) {
             this.updateSkirtGeometry();
+        } else if (this._measurement) {
+            this._markSkirtCommitted();
         }
+        // V5 Phase 1.2: commit measurement.
+        this._commitRenderedBounds();
 
         // Performance logging
         const endTime = performance.now();
