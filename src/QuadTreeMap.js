@@ -1008,9 +1008,20 @@ export class QuadTreeMap {
         // V5 Phase 2: in sphere/obb mode, use the measured-bounds sphere
         // from cullingState. In legacy/metrics mode, keep the old altitude-
         // shifted sea-level sphere so behavior stays identical.
+        //
+        // Coverage-recursion gate: when called from visibleAreaCoveredByDescendants
+        // (coverageMode==="coverageSphereOnly"), force the legacy sphere even
+        // in sphere/obb mode. The V5 sphere for unmeasured tiles covers
+        // -1500..+10000m altitude — far fatter than legacy's sea-level sphere
+        // — and that fatness causes off-axis children to spuriously pass the
+        // coverage frustum check, leaving their parents active alongside
+        // loaded descendants (z-fighting). The coverage check has always run
+        // legacy semantics; V5 narrow-phase logic doesn't belong here.
         let cx, cy, cz, radius;
         const _v5Mode = options?.mode;
-        if (_v5Mode === "sphere" || _v5Mode === "obb") {
+        const _v5UseMeasured = (_v5Mode === "sphere" || _v5Mode === "obb")
+            && options?.coverageMode !== "coverageSphereOnly";
+        if (_v5UseMeasured) {
             const state = tile.ensureCullingState();
             const s = state.sphere;
             cx = s.center.x; cy = s.center.y; cz = s.center.z;
