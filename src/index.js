@@ -42,6 +42,7 @@ import {
     setUnits,
     setupGUIGlobals,
     setupGUIjetTweaks,
+    applyTileBoundsModeFromUrl,
     Sit,
     SitchMan,
     TrackManager,
@@ -528,6 +529,10 @@ urlParams = new URLSearchParams(queryString);
 setGlobalURLParams(urlParams)
 
 Globals.regression = urlParams.get("regression") === "1";
+
+// V5 Phase 0.1.a: parse tileBoundsMode + enableReachCull URL params before
+// any sitch loads so the first subdivide pass sees the requested mode.
+applyTileBoundsModeFromUrl();
 
 const hasExplicitStartupRequest = isNewSitchAction
     || !!urlParams.get("sitch")

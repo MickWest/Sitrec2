@@ -33,6 +33,15 @@ export const Globals = {
     hasByokKeys: false, // true when the user has at least one BYOK LLM API key stored in IndexedDB
     useVideoPatching: true, // wrap dropped-frame video with CVideoPatchedData (see docs/dev/misb-timing.md)
 
+    // V5 OBB tile-culling flags (Phase 0.1.a). Pure data, no behavior change
+    // yet — calculateTileVisibility hasn't been refactored to consult these.
+    // Defaults to "legacy" until measured-bounds pipeline (Phase 1+) and
+    // sphere/obb modes (Phase 2+/3) ship.
+    tileBoundsMode: { mainView: "legacy", lookView: "legacy" },
+    enableReachCull: true,
+    tileCullBudgetMs: 4,
+    showTileOBB: false,
+
     // Granular render debug flags - shared across ALL views
     renderDebugFlags: {
         dbg_clearBackground: true,
@@ -79,6 +88,101 @@ export function getEffectiveMSAASamples() {
 
 export function setSitchEstablished(bool) {
     Globals.sitchEstablished = bool;
+}
+
+// --- V5 OBB tile-culling stats (Phase 0.1.a) ---
+// One bag per view; counters bump from the subdivide pass (Phase 0.1.b
+// onward). activeTileHash is an FNV-1a digest of the set of active z/x/y
+// triples, used by MCP procedures to assert tile-set stability across mode
+// flips. reset() zeros every numeric field for A/B comparison. The
+// `tileCullStats` object on Globals is mirrored to
+// window.__sitrecTileCullStats for MCP `sitrec_eval` access.
+function makeTileCullStatsBag() {
+    return {
+        sphereRejected: 0,
+        obbRejectedDilated: 0,
+        obbRejectedStrict: 0,
+        reachRejected: 0,
+        unmeasuredBoundsUsed: 0,
+        inheritedBoundsUsed: 0,
+        elevationDataBoundsUsed: 0,
+        renderedBoundsUsed: 0,
+        visCacheHits: 0,
+        visCacheMisses: 0,
+        polarFallbackUsed: 0,
+        activeTerrainMeshes: 0,
+        activeTileHash: 0,
+        cullSelfTimeMs: 0,
+        inStrictFrustum: 0,
+        inDilatedMargin: 0,
+        cameraInsideSphere: 0,
+        horizonOccluded: 0,
+        outOfFrustum: 0,
+        forcedRoot: 0,
+        subdivided: 0,
+        merged: 0,
+    };
+}
+
+Globals.tileCullStats = {
+    mainView: makeTileCullStatsBag(),
+    lookView: makeTileCullStatsBag(),
+    reset() {
+        for (const view of ["mainView", "lookView"]) {
+            const bag = this[view];
+            for (const k of Object.keys(bag)) if (typeof bag[k] === "number") bag[k] = 0;
+        }
+    },
+};
+
+if (typeof window !== "undefined") {
+    window.__sitrecTileCullStats = Globals.tileCullStats;
+}
+
+// FNV-1a 32-bit hash of the active z/x/y triples for a layer mask. Same
+// digest formula used by Playwright fixtures and MCP procedures.
+export function computeActiveTileHash(allTiles, layerMask) {
+    let h = 0x811c9dc5;
+    const tiles = [];
+    for (const t of allTiles) {
+        if ((t.tileLayers || 0) & layerMask) {
+            tiles.push((t.z << 24) ^ (t.x << 12) ^ t.y);
+        }
+    }
+    tiles.sort((a, b) => a - b);
+    for (const v of tiles) {
+        h ^= v;
+        h = Math.imul(h, 0x01000193) | 0;
+    }
+    return h >>> 0;
+}
+
+// URL parsing for `?tileBoundsMode=obb`, `?tileBoundsModeMain=sphere`,
+// `?tileBoundsModeLook=legacy`, `?enableReachCull=0|1`. Called from index.js
+// during boot so the first subdivide pass sees the requested mode.
+const TILE_BOUNDS_MODES = new Set(["legacy", "metrics", "sphere", "obb"]);
+export function applyTileBoundsModeFromUrl() {
+    if (typeof location === "undefined") return;
+    const params = new URLSearchParams(location.search);
+    const both = params.get("tileBoundsMode");
+    if (both && TILE_BOUNDS_MODES.has(both)) {
+        Globals.tileBoundsMode.mainView = both;
+        Globals.tileBoundsMode.lookView = both;
+    }
+    const main = params.get("tileBoundsModeMain");
+    if (main && TILE_BOUNDS_MODES.has(main)) Globals.tileBoundsMode.mainView = main;
+    const look = params.get("tileBoundsModeLook");
+    if (look && TILE_BOUNDS_MODES.has(look)) Globals.tileBoundsMode.lookView = look;
+    const reach = params.get("enableReachCull");
+    if (reach === "0" || reach === "false") Globals.enableReachCull = false;
+    else if (reach === "1" || reach === "true") Globals.enableReachCull = true;
+}
+
+// Map a view id to the per-view tile-bounds mode. Coerces unknown views to
+// "legacy" so a typo never silently disables culling.
+export function tileBoundsModeForView(viewId) {
+    const mode = Globals.tileBoundsMode?.[viewId];
+    return TILE_BOUNDS_MODES.has(mode) ? mode : "legacy";
 }
 
 // Returns testUserID if set by admin, otherwise real userID
