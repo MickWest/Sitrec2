@@ -2618,6 +2618,9 @@ export class CNodeView3D extends CNodeViewCanvas {
                 horizonHazeBand: {value: 0.03},
                 horizonElevationScale: {value: 12.0},
                 betaExtinction: {value: 0.00005},
+                rayleighScaleHeightM: {value: 8000.0},
+                aerosolScaleHeightM: {value: 1500.0},
+                atmosphereTopM: {value: 100000.0},
                 visibilityKm: {value: 50.0},
                 maxOpticalDepth: {value: 12.0},
                 ditherStrength: {value: 1.0 / 255.0},
@@ -2650,6 +2653,9 @@ export class CNodeView3D extends CNodeViewCanvas {
             uniform float horizonHazeBand;
             uniform float horizonElevationScale;
             uniform float betaExtinction;
+            uniform float rayleighScaleHeightM;
+            uniform float aerosolScaleHeightM;
+            uniform float atmosphereTopM;
             uniform float visibilityKm;
             uniform float maxOpticalDepth;
             uniform float ditherStrength;
@@ -2711,6 +2717,46 @@ export class CNodeView3D extends CNodeViewCanvas {
                 return horizonDistance;
             }
 
+            float rayHeightAtDistance(vec3 dir, float distanceMeters) {
+                float radius = 6378137.0;
+                float observerRadius = radius + max(cameraAltitudeM, 0.0);
+                float upDot = dot(dir, upWorld);
+                float r = sqrt(max(
+                    observerRadius * observerRadius +
+                    distanceMeters * distanceMeters +
+                    2.0 * observerRadius * distanceMeters * upDot,
+                    radius * radius
+                ));
+                return max(r - radius, 0.0);
+            }
+
+            float atmospherePathMeters(vec3 dir, float rayMeters) {
+                float maxDistance = min(rayMeters, distanceScale);
+                float segment = maxDistance / 8.0;
+                float opticalMeters = 0.0;
+
+                for (int i = 0; i < 8; ++i) {
+                    float s = (float(i) + 0.5) * segment;
+                    float h = rayHeightAtDistance(dir, s);
+                    float rayleighDensity = exp(-h / rayleighScaleHeightM);
+                    float aerosolDensity = exp(-h / aerosolScaleHeightM);
+                    float density = mix(rayleighDensity, aerosolDensity, 0.45);
+                    density *= smoothstep(atmosphereTopM, atmosphereTopM * 0.75, h);
+                    opticalMeters += density * segment;
+                }
+
+                return opticalMeters;
+            }
+
+            vec3 aerialInscatterColor(vec3 sky, vec3 dir) {
+                float altitudeT = smoothstep(12000.0, 120000.0, cameraAltitudeM);
+                float downT = smoothstep(0.0, 0.5, -dot(dir, upWorld));
+                float limbT = altitudeT * (1.0 - smoothstep(0.02, 0.20, abs(dot(dir, upWorld))));
+                vec3 brightHaze = max(coolHorizon, vec3(0.70, 0.76, 0.78));
+                vec3 limbHaze = max(coolHorizon, vec3(0.18, 0.42, 0.95));
+                return mix(mix(sky, brightHaze, altitudeT * downT), limbHaze, limbT);
+            }
+
             void main() {
                 vec3 dirCamera;
                 vec3 dir = viewDirection(dirCamera);
@@ -2718,6 +2764,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 vec4 scene = texture2D(tDiffuse, vUv);
 
                 float distanceNorm = texture2D(tDistance, vUv).r;
+                bool hasSceneDistance = distanceNorm < 1.0 - 1e-4;
                 float rayMeters = distanceNorm * distanceScale;
                 float analyticGroundMeters = earthSurfaceRayDistance(dir);
 
@@ -2726,12 +2773,23 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // the horizon, use the line-of-sight air mass to the Earth
                 // surface/horizon as a conservative lower bound for terrain haze.
                 float horizonWeight = 1.0 - smoothstep(0.03, 0.25, abs(dot(dir, upWorld)));
-                rayMeters = mix(rayMeters, max(rayMeters, analyticGroundMeters), horizonWeight);
+                if (hasSceneDistance) {
+                    rayMeters = mix(rayMeters, max(rayMeters, analyticGroundMeters), horizonWeight);
+                } else {
+                    float sceneSkyDelta = length(scene.rgb - sky);
+                    if (sceneSkyDelta < 0.03) {
+                        gl_FragColor = scene;
+                        return;
+                    }
+                    rayMeters = analyticGroundMeters;
+                }
 
-                float tau = min(betaExtinction * rayMeters, maxOpticalDepth);
+                float opticalMeters = atmospherePathMeters(dir, rayMeters);
+                float tau = min(betaExtinction * opticalMeters, maxOpticalDepth);
                 float transmittance = exp(-tau);
 
-                vec3 color = scene.rgb * transmittance + sky * (1.0 - transmittance);
+                vec3 airlight = aerialInscatterColor(sky, dir);
+                vec3 color = scene.rgb * transmittance + airlight * (1.0 - transmittance);
                 color += vec3(hashDither(gl_FragCoord.xy) * ditherStrength);
                 color = clamp(color, vec3(0.0), vec3(1.0));
                 gl_FragColor = vec4(color, scene.a);

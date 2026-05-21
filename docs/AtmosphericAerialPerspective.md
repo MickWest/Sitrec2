@@ -52,6 +52,17 @@ The distance prepass writes normalized view-ray distance into a render target ra
 
 For terrain and 3D tile views near the horizon, the pass also computes an analytic Earth-surface/horizon distance from the camera altitude and view direction. This is used as a conservative lower bound on the air mass when the lightweight distance prepass under-reports terrain distance because production terrain shaders use custom positioning. The intent is physical: a nearly horizontal sightline through tens of kilometers of low-altitude air should accumulate the optical depth implied by the visibility input, even if a render-engine detail fails to provide an exact terrain hit distance.
 
+For high-altitude and near-space views, the aerial-perspective pass separates background sky radiance from finite-path terrain airlight. The sky can become dark because little atmosphere remains above the camera to scatter sunlight into the camera, while the ground remains bright because it is still directly illuminated by the Sun. Terrain haze is therefore based on an approximate height-integrated optical path through an exponential atmosphere, not on raw geometric distance through vacuum and not on the dark space-facing sky color.
+
+The current high-altitude approximation samples density along the view ray using representative Rayleigh and aerosol scale heights:
+
+```text
+optical_meters = integral(exp(-height / scale_height) ds)
+tau = beta_extinction_surface * optical_meters
+```
+
+This keeps nadir-looking ground bright from high altitude, while tangent and limb views still accumulate much more atmosphere and form a hazy blue/white transition.
+
 ## How To Use
 
 Enable Lighting -> Effects -> Atmosphere, then enable Horizon Haze and/or Sky Gradient in the look view's Effects controls.
@@ -74,7 +85,7 @@ This is an analytic first step, not a full multiple-scattering atmosphere:
 
 - Rayleigh and Mie scattering are approximated by the existing sky-gradient color model.
 - Extinction is currently wavelength-neutral in the aerial-perspective composite.
-- Aerosol density is not yet height-integrated.
+- Rayleigh/aerosol density integration is a compact screen-space approximation, not a full spectral multiple-scattering solution.
 - Clouds, humidity layers, and weather-specific visibility profiles are not yet modeled.
 - Transparent objects and overlays may not participate exactly like opaque terrain/buildings.
 
