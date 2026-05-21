@@ -8,7 +8,7 @@
 // competing for budget.
 
 import {CNode} from "./CNode";
-import {Globals, NodeMan} from "../Globals";
+import {Globals, markShadowCastersDirty, NodeMan} from "../Globals";
 import {GlobalScene} from "../LocalFrame";
 import {DoubleSide, Group} from "three";
 import * as LAYER from "../LayerMasks";
@@ -86,11 +86,7 @@ class PerViewTiles {
         this._onTileVisibilityChange = () => {
             this.visibilityVersion++;
             this.lastVisibilityChangeAt = performance.now();
-            // V5 shadows: caster set may have changed; bypass the throttle.
-            if (Globals.shadowsEnabled) {
-                const vs = this._viewSunFromMask(layerMask);
-                if (vs) vs.shadow.needsUpdate = true;
-            }
+            markShadowCastersDirty(`3dTiles:${source}:visibility`);
         };
         this.renderer.addEventListener("tile-visibility-change", this._onTileVisibilityChange);
 
@@ -136,23 +132,10 @@ class PerViewTiles {
                 }
             });
             // Also notify the throttle that the caster set changed.
-            const pendingViewSun = this._viewSunFromMask(layerMask);
-            if (pendingViewSun) pendingViewSun.shadow.needsUpdate = true;
+            markShadowCastersDirty(`3dTiles:${source}:load-model`);
         });
 
         parentGroup.add(this.renderer.group);
-    }
-
-    // Return the viewSun matching this PerViewTiles' layer mask (if any).
-    // Used to flag shadow-update on tile load + tile-visibility-change.
-    _viewSunFromMask(layerMask) {
-        let found = null;
-        NodeMan.iterate((id, node) => {
-            if (node.constructor.name !== "CNodeView3D") return;
-            if (!node.viewSun || !node.areShadowsEffective?.()) return;
-            if ((node.camera.layers.mask & layerMask) !== 0) found = node.viewSun;
-        });
-        return found;
     }
 
     update(view) {
@@ -251,6 +234,9 @@ export class CNodeBuildings3DTiles extends CNode {
     }
 
     disposeTilesRenderers() {
+        if (Object.keys(this._perView).length > 0) {
+            markShadowCastersDirty(`${this.id}:disposeTilesRenderers`);
+        }
         for (const pv of Object.values(this._perView)) {
             pv.dispose(this.group);
         }
@@ -293,6 +279,7 @@ export class CNodeBuildings3DTiles extends CNode {
                 });
             });
         }
+        markShadowCastersDirty(`${this.id}:refreshShadowFlags`);
     }
 
     // Toggle shader-based wireframe edge rendering on all tile meshes.

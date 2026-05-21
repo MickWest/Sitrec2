@@ -24,7 +24,10 @@ export const Globals = {
         shadowMapAllocations: 0,
         materialNeedsUpdateWrites: 0,
         materialModeApplications: 0,
+        shadowCasterInvalidations: 0,
     },
+    shadowCastersDirtyVersion: 0,
+    lastShadowCastersDirtyReason: null,
 
     // Earth model radii — updated by updateEarthRadii() in LLA-ECEF-ENU.js.
     // Both default to wgs84.RADIUS so legacy code is unaffected until a sitch loads.
@@ -338,6 +341,25 @@ export function setRenderOne(value=true) {
         par.renderOne = value;
         globalThis.__sitrecWakeRenderLoop?.();
     }
+}
+
+export function markShadowCastersDirty(reason = "shadow caster changed") {
+    if (!Globals.shadowsEnabled || Globals.disposing) return;
+
+    Globals.shadowCastersDirtyVersion++;
+    Globals.lastShadowCastersDirtyReason = reason;
+    Globals.shadowDiagCounters.shadowCasterInvalidations++;
+
+    if (NodeMan?.iterate) {
+        NodeMan.iterate((id, node) => {
+            if (node.constructor.name !== "CNodeView3D") return;
+            if (node.viewSun?.shadow) {
+                node.viewSun.shadow.needsUpdate = true;
+            }
+        });
+    }
+
+    setRenderOne(true);
 }
 
 

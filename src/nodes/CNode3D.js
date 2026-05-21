@@ -1,5 +1,5 @@
 import {CNode} from "./CNode";
-import {guiShowHide, mainLoopCount, NodeFactory, setRenderOne} from "../Globals";
+import {Globals, guiShowHide, mainLoopCount, markShadowCastersDirty, NodeFactory, setRenderOne} from "../Globals";
 import {par} from "../par";
 import {assert} from "../assert";
 import {normalizeLayerType} from "../utils";
@@ -20,6 +20,56 @@ export class CNode3D extends CNode {
     update(f) {
         super.update(f);
         this.applyControllers(f);
+        this.noteShadowCasterState("transform");
+    }
+
+    hasVisibleShadowCaster() {
+        if (!this._object?.traverse || !this._object.visible) return false;
+
+        let found = false;
+        this._object.traverse(child => {
+            if (found) return;
+            if (child.visible !== false && child.castShadow === true) {
+                found = true;
+            }
+        });
+        return found;
+    }
+
+    noteShadowCasterState(reason = "shadow caster state") {
+        if (!Globals.shadowsEnabled || !this._object) return;
+
+        const hasCaster = this.hasVisibleShadowCaster();
+        if (!hasCaster) {
+            if (this._lastShadowCasterActive) {
+                markShadowCastersDirty(`${this.id}:${reason}:removed`);
+            }
+            this._lastShadowCasterActive = false;
+            this._lastShadowCasterMatrixWorld = null;
+            return;
+        }
+
+        this._object.updateMatrixWorld(true);
+        const elements = this._object.matrixWorld.elements;
+        let previous = this._lastShadowCasterMatrixWorld;
+        if (!previous) {
+            previous = this._lastShadowCasterMatrixWorld = new Array(16);
+            for (let i = 0; i < 16; i++) previous[i] = elements[i];
+            this._lastShadowCasterActive = true;
+            markShadowCastersDirty(`${this.id}:${reason}:added`);
+            return;
+        }
+
+        let changed = !this._lastShadowCasterActive;
+        for (let i = 0; i < 16 && !changed; i++) {
+            changed = Math.abs(previous[i] - elements[i]) > 1e-7;
+        }
+
+        if (changed) {
+            for (let i = 0; i < 16; i++) previous[i] = elements[i];
+            markShadowCastersDirty(`${this.id}:${reason}`);
+        }
+        this._lastShadowCasterActive = true;
     }
 
     // get the MSL altitude of the origin of the object (or group)

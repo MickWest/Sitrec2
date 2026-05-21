@@ -26,7 +26,7 @@ import {getLocalUpVector} from "../SphericalMath";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {screenToNDC} from "../mouseMoveView";
 import {ViewMan} from "../CViewManager";
-import {CustomManager, Globals, guiMenus, setRenderOne, Synth3DManager, UndoManager} from "../Globals";
+import {CustomManager, Globals, guiMenus, markShadowCastersDirty, setRenderOne, Synth3DManager, UndoManager} from "../Globals";
 import {mouseInViewOnly} from "../ViewUtils";
 import {getPointBelow, patchMaterialForLinearOutput, pointAbove} from "../threeExt";
 import {EventManager} from "../CEventManager";
@@ -140,6 +140,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         const want = Globals.shadowsEnabled;
         this.solidMesh.castShadow = want;
         this.solidMesh.receiveShadow = want;
+        this.noteShadowCasterState("refreshShadowFlags");
     }
     
     /**
@@ -974,6 +975,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         this.solidMesh.position.copy(this.meshLocalOrigin);
         this.refreshShadowFlags();
         this.group.add(this.solidMesh);
+        markShadowCastersDirty(`${this.id}:buildMesh`);
 
         // Create wireframe from edges
         const edgeGeometry = new BufferGeometry();
@@ -1772,6 +1774,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
      * Dispose of resources
      */
     dispose() {
+        const hadCaster = this.solidMesh?.castShadow === true;
         // Remove event listeners
         document.removeEventListener('pointerdown', this.onPointerDownBound);
         document.removeEventListener('pointermove', this.onPointerMoveBound);
@@ -1826,6 +1829,9 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             this.wireframe.geometry.dispose();
             this.wireframe.material.dispose();
             this.wireframe = null;
+        }
+        if (hadCaster) {
+            markShadowCastersDirty(`${this.id}:dispose`);
         }
         
         // Remove GUI folder

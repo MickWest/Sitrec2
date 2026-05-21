@@ -52,7 +52,7 @@ import {
     WebGLCubeRenderTarget,
     WireframeGeometry
 } from "three";
-import {FileManager, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {FileManager, Globals, guiMenus, markShadowCastersDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {assert} from "../assert";
 import {
     DebugArrowAB,
@@ -334,6 +334,7 @@ export class CNode3DObject extends CNode3DGroup {
                 child.receiveShadow = want;
             }
         });
+        this.noteShadowCasterState("refreshShadowFlags");
     }
 
     show(visible=true) {
@@ -1294,6 +1295,7 @@ export class CNode3DObject extends CNode3DGroup {
                         this.applyMaterialToModel();
                         this.rebuildBoundingBox();
                         console.log("ADDED TO SCENE : ", model.file);
+                        this.noteShadowCasterState("model-loaded");
                         setRenderOne(true);
 
                     }
@@ -1403,6 +1405,7 @@ export class CNode3DObject extends CNode3DGroup {
         this.recalculate()
 
         this.rebuildBoundingBox();
+        this.noteShadowCasterState("rebuild");
 
     }
 
@@ -1999,6 +2002,7 @@ export class CNode3DObject extends CNode3DGroup {
     }
 
     destroyObject() {
+        const hadCaster = this.hasVisibleShadowCaster?.() || this._lastShadowCasterActive;
         if (this.object) {
             this.object.geometry.dispose();
             this.object.material.dispose();
@@ -2020,6 +2024,10 @@ export class CNode3DObject extends CNode3DGroup {
             this.model = undefined
         }
 
+        if (hadCaster) {
+            markShadowCastersDirty(`${this.id}:destroyObject`);
+        }
+        this.noteShadowCasterState("destroyObject");
     }
 
     destroyLights() {
@@ -2334,6 +2342,7 @@ export class CNode3DObject extends CNode3DGroup {
         super.recalculate();
         const scale = this.in.size.v0 * Globals.objectScale * this.getModelLengthScale();
         this.group.scale.setScalar(scale);
+        this.noteShadowCasterState("scale");
 
         // update the root track if any input changes (which is what triggers a recalculate)
         // this is using in CustomSupport/preRenderUpdate()

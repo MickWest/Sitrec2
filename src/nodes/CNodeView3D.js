@@ -1219,7 +1219,8 @@ export class CNodeView3D extends CNodeViewCanvas {
             + "|" + extent
             + "|" + this.camera.fov
             + "|" + (this.camera.aspect || 1)
-            + "|" + (this.camera.zoom || 1);
+            + "|" + (this.camera.zoom || 1)
+            + "|" + (Globals.shadowCastersDirtyVersion || 0);
         if (this._lastShadowStateKey !== stateKey) {
             this.viewSun.shadow.needsUpdate = true;
             this._lastShadowStateKey = stateKey;

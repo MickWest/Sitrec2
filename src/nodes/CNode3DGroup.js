@@ -62,6 +62,7 @@ export class CNode3DGroup extends CNode3D {
     show(visible=true) {
         super.show(visible);
         this.group.visible = visible
+        this.noteShadowCasterState?.("visibility");
     }
 
     update(f) {
@@ -127,5 +128,3 @@ export class CNode3DGroup extends CNode3D {
 
 
 }
-
-
