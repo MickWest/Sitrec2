@@ -2,7 +2,7 @@ import {MeshStandardMaterial, ShaderChunk, Vector3} from "three";
 import {sharedUniforms} from "./SharedUniforms";
 import {Globals} from "../../../Globals";
 
-const CACHE_KEY = "DayNightStandardMaterial.v6sitrecdirectshadow";
+const CACHE_KEY = "DayNightStandardMaterial.v7stableshadow";
 
 // MeshStandardMaterial subclass that uses the PBR pipeline for textures,
 // vertex colors, and normal-based shading from the scene's sun directional
@@ -67,26 +67,29 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
         // photogrammetric mesh, so the road-receives-shadow case is
         // exactly what fails.
         //
-        // Fix: pass a verified-good ECEF world position through to the
-        // fragment shader, then replace Three's directional direct-light
-        // shadow lookup with one that derives its receiver coordinate from
-        // that world position and the fragment normal.
+        // Fix: pass both verified-good ECEF world position and tile-local
+        // position through to the fragment shader, then replace Three's
+        // directional direct-light shadow lookup with one that derives its
+        // receiver coordinate from a CPU-composed local-to-shadow matrix.
         shader.vertexShader = shader.vertexShader.replace(
             '#include <common>',
             `#include <common>
 attribute vec3 barycentric;
 varying vec3 vBarycentric;
 varying vec3 vWorldPositionDN;
+varying vec3 vLocalPositionDN;
 varying vec2 vDNUv;`
         );
 
         const vertexInjectionAfterWorldPos =
             `vWorldPositionDN = worldPosition.xyz;
+vLocalPositionDN = transformed;
 vBarycentric = barycentric;
 vDNUv = uv;`;
 
         const vertexInjectionFallback =
             `vWorldPositionDN = (modelMatrix * vec4(transformed, 1.0)).xyz;
+vLocalPositionDN = transformed;
 vBarycentric = barycentric;
 vDNUv = uv;`;
 
@@ -117,10 +120,12 @@ uniform float tileOutputGamma;
 uniform bool showBuildingEdges;
 uniform bool showTileEdges;
 varying vec3 vWorldPositionDN;
+varying vec3 vLocalPositionDN;
 varying vec3 vBarycentric;
 varying vec2 vDNUv;
 ${this.useSitrecShadowCoords ? `#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
-uniform mat4 directionalShadowMatrix[ NUM_DIR_LIGHT_SHADOWS ];
+uniform mat4 sitrecDirectionalShadowMatrix[ NUM_DIR_LIGHT_SHADOWS ];
+uniform mat4 sitrecDirectionalShadowWorldMatrix[ NUM_DIR_LIGHT_SHADOWS ];
 #endif` : ``}`
         );
 
@@ -131,7 +136,9 @@ uniform mat4 directionalShadowMatrix[ NUM_DIR_LIGHT_SHADOWS ];
             const sitrecLightsFragmentBegin = ShaderChunk.lights_fragment_begin.replace(
                 'directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowIntensity, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;',
                 `vec3 sitrecShadowWorldNormal = inverseTransformDirection( normal, viewMatrix );
-			vec4 sitrecShadowCoord = directionalShadowMatrix[ i ] * vec4( vWorldPositionDN + sitrecShadowWorldNormal * directionalLightShadow.shadowNormalBias, 1.0 );
+			vec4 sitrecShadowCoord =
+				sitrecDirectionalShadowMatrix[ i ] * vec4( vLocalPositionDN, 1.0 )
+				+ sitrecDirectionalShadowWorldMatrix[ i ] * vec4( sitrecShadowWorldNormal * directionalLightShadow.shadowNormalBias, 0.0 );
 			directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowIntensity, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, sitrecShadowCoord ) : 1.0;`
             );
             shader.fragmentShader = shader.fragmentShader.replace(

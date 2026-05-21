@@ -85,6 +85,7 @@ import {waitForExportFrameSettled} from "../ExportFrameSettler";
 import {t} from "../i18n";
 import {mouseMethods} from "./CNodeView3DMouse";
 import {cloneTerrainDayNightMaterialForView} from "../js/map33/material/TerrainDayNightMaterial";
+import {installStableShadowReceivers, setStableShadowReceiverLight} from "../StableShadowReceiver";
 
 
 function linearToSrgb(color) {
@@ -1230,6 +1231,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             this.viewSun.shadow.needsUpdate = true;
             this._exportForceFrustumRefit = false;
         }
+        const previousStableShadowLight = setStableShadowReceiverLight(this.viewSun);
 
         // Per-view terrain material swap. Three.js's ShaderMaterial does NOT
         // clone uniforms into materialProperties — it points materialProperties.
@@ -1269,6 +1271,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 mesh.material = clone;
             });
         });
+        installStableShadowReceivers(GlobalScene);
 
         return () => {
             // Restore canonical terrain materials FIRST so that the next
@@ -1284,6 +1287,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 if (node.viewSun) node.viewSun.visible = wasVisible;
             }
             Globals.sunLight.visible = prevSunVisible;
+            setStableShadowReceiverLight(previousStableShadowLight);
         };
     }
 

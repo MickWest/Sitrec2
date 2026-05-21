@@ -70,10 +70,12 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
                 vPosition = projectionMatrix * mvPosition;
                 #include <fog_vertex>
-                // shadowmap_pars_vertex expects vNormal/transformed/objectNormal
-                // identifiers. We inline a minimal worldpos pass for the
-                // shadowmap_vertex chunk to consume.
-                vec3 transformedNormal = vNormal;
+                // shadowmap_pars_vertex expects transformed/transformedNormal
+                // identifiers. transformed stays in tile-local coordinates
+                // so Sitrec's stable receiver patch can avoid ECEF-scale
+                // float math when projecting into the shadow map.
+                vec3 transformed = position;
+                vec3 transformedNormal = normalMatrix * normal;
                 vec4 worldPosition = vec4(vWorldPosition, 1.0);
                 #include <shadowmap_vertex>
 
