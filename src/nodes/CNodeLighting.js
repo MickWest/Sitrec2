@@ -24,8 +24,13 @@ export class CNodeLighting extends CNode {
 
         // V5 shadow tunables (defaults-off; only read when any view has shadows on).
         this.shadowMapSize = v.shadowMapSize ?? 2048;
-        // Default 1000m radius keeps building shadows sharp at 2048² (~1m/texel).
-        // Larger radius covers more distant casters/receivers but blurs detail.
+        // Minimum half-width of the shadow frustum. The actual extent
+        // auto-fits to the visible footprint (FOV × distance-to-ground), so
+        // shadowRadius only kicks in when the view is so tight that the
+        // computed extent would be smaller — it guarantees a usable patch
+        // of shadow for close-up cameras. At 2048² and 1000m extent the
+        // texel density is ~1m; raise this if you want a larger guaranteed
+        // patch, lower it for sharper close-ups.
         this.shadowRadius = v.shadowRadius ?? 1000;
         this.shadowBias = v.shadowBias ?? -0.0005;
         this.shadowNormalBias = v.shadowNormalBias ?? 1;

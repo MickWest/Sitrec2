@@ -1100,43 +1100,100 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     // Compute (anchor, extent) for the shadow frustum:
-    //   anchor: world point the user is looking at (ray-sphere intersection
+    //   anchor: ground point the camera is looking at (ray-sphere intersection
     //           of the camera forward with the WGS84 earth sphere). Falls
-    //           back to camera.position when the camera doesn't intersect
-    //           ground (e.g. looking at the sky).
-    //   extent: ortho half-width sized to cover the camera's visible
-    //           footprint at the anchor distance (FOV × distance), clamped
-    //           by the user's shadowRadius setting which acts as an upper
-    //           bound (texel density floor).
-    // This replaces the prior camera-anchored ±shadowRadius approach which
-    // produced "shadows vanish when zoomed out" because visible buildings
-    // sat outside the fixed ±1000m frustum once the camera was more than
-    // shadowRadius away from them.
-    // Anchor at the camera, auto-size the extent based on FOV/zoom and a
-    // scene-scale heuristic. We don't bounds-fit casters because Sitrec's
-    // Cesium-OSM tile meshes pack entire city blocks into a single mesh
-    // with km-scale bounding boxes — those would inflate any bbox union to
-    // useless extents. Camera-anchored with a sized extent is simpler and
-    // robust; the user controls the upper bound via Shadow tweaks → Shadow
-    // radius.
+    //           back to camera.position when the forward ray misses ground
+    //           (e.g. looking at the sky).
+    //   extent: ortho half-width sized to cover the camera's visible footprint
+    //           at the anchor distance (tan(fov/2) × dist × safety), floored
+    //           at the user's shadowRadius setting so close-up scenes still
+    //           get a usable patch of shadow, and capped to prevent absurd
+    //           values when looking nearly parallel to the ground.
+    // This works at every scale: a street-level camera focuses a tight patch
+    // on the building in front, a 6000-ft helicopter view focuses on the
+    // skyscrapers it's actually looking at, and an ISS-altitude 0.1°-FOV
+    // shot focuses on the few-hundred-metre patch the narrow cone hits.
     _computeShadowAnchorAndExtent() {
         const lighting = NodeMan.get("lighting", false);
-        const userMaxR = lighting?.shadowRadius ?? 1000;
+        const userMinR = lighting?.shadowRadius ?? 1000;
         if (!this._shadowAnchorScratch) this._shadowAnchorScratch = new Vector3();
-        const anchor = this._shadowAnchorScratch.copy(this.camera.position);
+        if (!this._shadowRayDir) this._shadowRayDir = new Vector3();
 
-        // Auto-size: a perspective-camera scene at a "comfortable scene
-        // distance" (heuristic = userMaxR × 2) subtends some FOV-dependent
-        // footprint. Use that to scale the ortho extent, then clamp.
+        const anchor = this._shadowAnchorScratch;
+        const camPos = this.camera.position;
+        const dir = this._shadowRayDir;
+        this.camera.getWorldDirection(dir);
+
+        // Anchor: where the view center hits the ground. We can't use a
+        // fixed-radius equatorial sphere here (Globals.equatorRadius is the
+        // WGS84 equatorial radius; at mid-latitudes the actual geocentric
+        // surface is several km below it, so a camera flying a couple of
+        // km above the real ground sits MATHEMATICALLY INSIDE that sphere
+        // and any ray-sphere intersection is meaningless).
+        //
+        // Instead, compute the geocentric ellipsoid radius at the camera's
+        // own latitude and intersect with a sphere of that radius. This
+        // tracks the real ellipsoid surface within the sub-degree of
+        // latitude variation covered by a single view.
+        const camLen = camPos.length();
+        let groundRadius;
+        if (camLen > 1) {
+            const sinLat = camPos.z / camLen;
+            const cosLatSq = 1 - sinLat * sinLat;
+            const a = wgs84.RADIUS;
+            const b = wgs84.POLAR_RADIUS;
+            groundRadius = 1 / Math.sqrt(cosLatSq / (a * a) + (sinLat * sinLat) / (b * b));
+        } else {
+            groundRadius = wgs84.RADIUS;
+        }
+
+        // Solve |camPos + t * dir|^2 = groundRadius^2 for the smallest
+        // positive t. (We need positive — negative t would put the anchor
+        // behind the camera, which happens when looking up at the sky.)
+        const B = camPos.dot(dir);                          // dir is unit
+        const C = camLen * camLen - groundRadius * groundRadius;
+        const disc = B * B - C;
+        let dist;
+        if (disc >= 0) {
+            const sqrtDisc = Math.sqrt(disc);
+            const t0 = -B - sqrtDisc;
+            const t1 = -B + sqrtDisc;
+            // Smallest positive t: ground entry along the forward ray.
+            let t = -1;
+            if (t0 > 1e-3) t = t0;
+            else if (t1 > 1e-3) t = t1;
+            if (t > 0) {
+                anchor.set(camPos.x + dir.x * t, camPos.y + dir.y * t, camPos.z + dir.z * t);
+                dist = t;
+            }
+        }
+        if (dist === undefined) {
+            // Camera looking at the sky — no ground hit. Keep anchor at the
+            // camera and use userMinR as the "scene distance" so we still
+            // produce a sensible (small) frustum around the camera.
+            anchor.copy(camPos);
+            dist = userMinR;
+        }
+
+        // Size the ortho frustum from the visible footprint at the anchor.
+        // Multiply by a safety factor to cover:
+        //   - oblique viewing (tilted cameras see an elongated ground patch
+        //     larger than the FOV cone at the anchor)
+        //   - casters/receivers just outside the strict viewport whose
+        //     shadows should still fall into the visible area
         const fovRad = this.camera.fov * Math.PI / 180;
         const zoom = this.camera.zoom || 1;
         const aspect = this.camera.aspect || 1;
-        const sceneDist = userMaxR * 2;
-        const halfHeight = (Math.tan(fovRad / 2) * sceneDist) / zoom;
+        const halfHeight = (Math.tan(fovRad / 2) * dist) / zoom;
         const halfWidth = halfHeight * aspect;
-        let extent = Math.max(halfWidth, halfHeight, userMaxR);
-        // Hard cap so we don't grow without bound (zoomed-out wide-FOV views).
-        extent = Math.min(extent, userMaxR * 10);
+        const SAFETY = 2.5;
+        let extent = Math.max(halfWidth, halfHeight) * SAFETY;
+        // Floor at userMinR so close-up scenes still get a usable patch.
+        extent = Math.max(extent, userMinR);
+        // Upper cap so wide-FOV near-horizontal views don't blow up the
+        // shadow camera's working depths (extent feeds dist=extent*10 below).
+        // 100 km is wider than any realistic visible ground patch.
+        extent = Math.min(extent, 100000);
         return {anchor, extent};
     }
 
