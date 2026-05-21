@@ -30,6 +30,7 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
             useDayNight: sharedUniforms.useDayNight,
             sunGlobalTotal: sharedUniforms.sunGlobalTotal,
             sunAmbientIntensity: sharedUniforms.sunAmbientIntensity,
+            sunNightAmbientIntensity: sharedUniforms.sunNightAmbientIntensity,
             tileOutputGamma: {value: this.tileOutputGamma},
             showBuildingEdges: sharedUniforms.showBuildingEdges,
             showTileEdges: sharedUniforms.showTileEdges,
@@ -117,6 +118,7 @@ uniform vec3 earthCenter;
 uniform bool useDayNight;
 uniform float sunGlobalTotal;
 uniform float sunAmbientIntensity;
+uniform float sunNightAmbientIntensity;
 uniform float tileOutputGamma;
 uniform bool showBuildingEdges;
 uniform bool showTileEdges;
@@ -195,8 +197,10 @@ if (useDayNight) {
     float globalIntensity = max(dot(globalNormal, sunNorm), -0.1);
     float dayFactor = smoothstep(-0.1, 0.1, globalIntensity);
     // gl_FragColor already includes PBR lighting, including ambient.
-    // Normalize ambient against total global light to avoid over-darkening.
-    float normalizedAmbient = sunAmbientIntensity / max(sunGlobalTotal, 0.0001);
+    // Normalize fixed ambient against total global light to avoid over-darkening.
+    // Sun scattering is excluded here: it lifts local shadow floors on the
+    // daylight side, but should not brighten the planet's dark hemisphere.
+    float normalizedAmbient = sunNightAmbientIntensity / max(sunGlobalTotal, 0.0001);
     float nightAttenuation = clamp(normalizedAmbient, 0.35, 1.0);
     gl_FragColor.rgb *= mix(nightAttenuation, 1.0, dayFactor);
 }

@@ -276,6 +276,10 @@ export class CNodeLighting extends CNode {
             + this.getEffectiveSunIntensity() * this.getEffectiveSunScattering();
     }
 
+    getNightAmbientIntensity() {
+        return this.ambientIntensity;
+    }
+
     getEffectiveSunTotal() {
         return this.getEffectiveSunIntensity() + this.getEffectiveAmbientIntensity();
     }

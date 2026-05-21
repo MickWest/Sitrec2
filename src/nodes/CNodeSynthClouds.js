@@ -269,6 +269,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
                 uniform vec3 sunDirection;
                 uniform vec3 earthCenter;
                 uniform float sunAmbientIntensity;
+                uniform float sunNightAmbientIntensity;
                 varying vec2 vUv;
                 varying float vDepth;
                 varying vec3 vWorldPosition;
@@ -281,7 +282,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
                     vec3 globalNormal = normalize(vWorldPosition - earthCenter);
                     float globalIntensity = max(dot(globalNormal, sunDirection), -0.1);
                     float dayFactor = smoothstep(-0.1, 0.1, globalIntensity);
-                    float lighting = mix(sunAmbientIntensity, 1.0, dayFactor);
+                    float lighting = mix(sunNightAmbientIntensity, 1.0, dayFactor);
                     vec3 litColor = texColor.rgb * color * lighting + emissive;
                     gl_FragColor = vec4(litColor, alpha);
 

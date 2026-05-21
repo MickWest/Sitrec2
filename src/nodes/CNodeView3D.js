@@ -762,6 +762,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             // the actual light that reaches building backs and shaded terrain.
             sharedUniforms.sunGlobalTotal.value = lightingNode.getEffectiveSunTotal();
             sharedUniforms.sunAmbientIntensity.value = lightingNode.getEffectiveAmbientIntensity();
+            sharedUniforms.sunNightAmbientIntensity.value = lightingNode.getNightAmbientIntensity();
             sharedUniforms.useDayNight.value = !lightingNode.noMainLighting;
         }
         
@@ -1869,6 +1870,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // floors use the same ambient seen by shaded geometry.
                 sharedUniforms.sunGlobalTotal.value = lightingNode.getEffectiveSunTotal();
                 sharedUniforms.sunAmbientIntensity.value = lightingNode.getEffectiveAmbientIntensity();
+                sharedUniforms.sunNightAmbientIntensity.value = lightingNode.getNightAmbientIntensity();
 
 
                 // update the sun node, which controls the global scene lighting

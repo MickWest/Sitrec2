@@ -90,6 +90,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             uniform float transparency;
             uniform float sunGlobalTotal;
             uniform float sunAmbientIntensity;
+            uniform float sunNightAmbientIntensity;
             uniform float nearPlane;
             uniform float farPlane;
             uniform bool useDayNight;
@@ -150,8 +151,10 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
 
                 vec4 dayColor = textureColor * (ambient + directLight * terrainShading * shadowMask);
                 
-                // Calculate night color (flat texture with ambient lighting, no terrain shading)
-                vec4 nightColor = textureColor * sunAmbientIntensity;
+                // Calculate night color from fixed ambient only. Daylight sun
+                // scattering belongs in local shadow floors, not the dark
+                // hemisphere.
+                vec4 nightColor = textureColor * sunNightAmbientIntensity;
                 
                 // Blend between night and day based on global position
                 vec4 finalColor;

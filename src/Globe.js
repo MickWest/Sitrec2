@@ -147,6 +147,7 @@ export function createSphereDayNight(radius, radius1, segments) {
         uniform vec3 sunDirection;
         uniform float sunGlobalTotal;
         uniform float sunAmbientIntensity;
+        uniform float sunNightAmbientIntensity;
         uniform float nearPlane;
         uniform float farPlane;
         uniform bool useDayNight;
@@ -169,7 +170,7 @@ export function createSphereDayNight(radius, radius1, segments) {
             if (nightLoaded) {
                 nightColor = texture2D(nightTexture, vUv) * 0.5;  
             } else {
-                nightColor =  texture2D(dayTexture, vUv) * sunAmbientIntensity;
+                nightColor =  texture2D(dayTexture, vUv) * sunNightAmbientIntensity;
             }
             
             // clear alpha channel

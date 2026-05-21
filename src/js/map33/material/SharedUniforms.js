@@ -6,6 +6,7 @@ export const sharedUniforms = {
     useDayNight: {value: true},
     sunGlobalTotal: {value: 1.0},
     sunAmbientIntensity: {value: 0.5},
+    sunNightAmbientIntensity: {value: 0.5},
     showBuildingEdges: {value: false},
     showTileEdges: {value: false},
     // ... other shared uniforms
