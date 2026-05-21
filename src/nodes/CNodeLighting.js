@@ -202,6 +202,10 @@ export class CNodeLighting extends CNode {
                     && typeof node.refreshShadowFlags === "function") {
                     node.refreshShadowFlags();
                 }
+                if (ctor === "CNodeSynthBuilding"
+                    && typeof node.refreshShadowFlags === "function") {
+                    node.refreshShadowFlags();
+                }
                 if (ctor === "CNodeTerrain"
                     && typeof node.refreshShadowFlags === "function") {
                     node.refreshShadowFlags();

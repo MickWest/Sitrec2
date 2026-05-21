@@ -128,6 +128,19 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         // Create GUI folder (hidden until edit mode)
         this.createGUIFolder();
     }
+
+    // V5 shadows: synthetic buildings rebuild their solid mesh frequently
+    // during editing, so keep shadow flags tied to the current global shadow
+    // state whenever a mesh is created or the lighting toggles.
+    refreshShadowFlags() {
+        if (!Globals.shadowsEnabled && !this._didEverEnableShadows) return;
+        if (Globals.shadowsEnabled) this._didEverEnableShadows = true;
+        if (!this.solidMesh) return;
+
+        const want = Globals.shadowsEnabled;
+        this.solidMesh.castShadow = want;
+        this.solidMesh.receiveShadow = want;
+    }
     
     /**
      * Load geometry from vertices and faces arrays
@@ -959,6 +972,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         this.solidMesh.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
         // Position mesh at local origin to place it correctly in world space
         this.solidMesh.position.copy(this.meshLocalOrigin);
+        this.refreshShadowFlags();
         this.group.add(this.solidMesh);
 
         // Create wireframe from edges
