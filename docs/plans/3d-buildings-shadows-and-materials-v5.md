@@ -621,7 +621,7 @@ Tile-visibility-change → also call `viewSun.shadow.needsUpdate = true` (bypass
 **Lighting menu** (`CNodeLighting`):
 - Collapsed sub-folder `Shadow tweaks`:
   - `Shadow map size` — dropdown {1024, 2048, 4096}.
-  - `Shadow radius (m)` — slider 500-50000.
+  - `Shadow radius (m)` — slider 50-50000.
   - `Shadow bias` — number.
   - `Shadow normal bias` — number.
   - `Shadow update interval (ms)` — slider 16-500.

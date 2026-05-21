@@ -1,4 +1,4 @@
-import {Globals, guiMenus, NodeMan, Sit, setRenderOne} from "../Globals";
+import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {AmbientLight, DirectionalLight} from "three";
 import {GlobalScene} from "../LocalFrame";
 import {CNode} from "./CNode";
@@ -104,7 +104,7 @@ export class CNodeLighting extends CNode {
                 .name(t("lighting.shadowMapSize.label"))
                 .tooltip(t("lighting.shadowMapSize.tooltip"))
                 .onChange(() => this.applyShadowConfig({reason: "shadowMapSize"}));
-            sf.add(this, "shadowRadius", 500, 5000, 100)
+            sf.add(this, "shadowRadius", 50, 5000, 100)
                 .name(t("lighting.shadowRadius.label"))
                 .tooltip(t("lighting.shadowRadius.tooltip"))
                 .listen()
