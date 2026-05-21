@@ -1085,6 +1085,13 @@ export class CNodeView3D extends CNodeViewCanvas {
                 this.viewSun.shadow.map = null;
                 Globals.shadowDiagCounters.shadowMapAllocations++;
             }
+            // Force a shadow-pass render next frame. Without this, autoUpdate
+            // is false AND the _lastShadowStateKey gate in _enterShadowRenderScope
+            // doesn't notice the size change (it keys off camera/sun position,
+            // not map resolution), so the freshly-nulled shadow.map never gets
+            // repopulated until the user moves the camera — leaving receivers
+            // sampling from a missing texture and the scene appearing blank.
+            this.viewSun.shadow.needsUpdate = true;
         }
         this.viewSun.shadow.bias = lighting.shadowBias ?? -0.0005;
         this.viewSun.shadow.normalBias = lighting.shadowNormalBias ?? 5;
