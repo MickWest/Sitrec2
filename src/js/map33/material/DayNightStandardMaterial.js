@@ -41,18 +41,36 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
         Object.assign(shader.uniforms, this._dayNightUniforms);
 
         // --- Vertex shader: pass world position and barycentric coords ---
-        // V5 shadows: Three's stock <shadowmap_vertex> uses a `worldPosition`
-        // local that comes out near tile-local origin for Google
-        // Photorealistic 3D Tiles (likely a TilesRenderer or fade-wrap
-        // interaction that shifts what gets fed to <worldpos_vertex>). The
-        // resulting vDirectionalShadowCoord is dominated by the matrix
-        // translation column, lands far outside [0,1], and getShadowMask()
-        // returns 1.0 unconditionally — no visible shadow reception.
+        // V5 shadows: Three's stock <shadowmap_vertex> chunk poisons
+        // vDirectionalShadowCoord with NaN for geometries that lack a
+        // 'normal' vertex attribute — which Google Photorealistic 3D Tiles
+        // do (their BufferGeometry has only position, uv, barycentric).
         //
-        // Fix: compute our OWN shadow receiver coord from the
-        // verified-good ECEF position (vWorldPositionDN, computed via
-        // modelMatrix * transformed below) and sample the shadow map from
-        // that in the fragment shader, bypassing Three's broken stock path.
+        // Chain of failure:
+        //   1. WebGL feeds (0,0,0) for the missing 'normal' attribute.
+        //   2. <defaultnormal_vertex>: transformedNormal = normalMatrix * (0,0,0) = (0,0,0).
+        //   3. <shadowmap_vertex>:
+        //        shadowWorldNormal = inverseTransformDirection(transformedNormal, viewMatrix)
+        //        which is normalize(vec3(0,0,0)) = NaN.
+        //   4. shadowWorldPosition = worldPosition + NaN * shadowNormalBias = NaN.
+        //      (NaN * 0 is also NaN per IEEE 754, so just zeroing
+        //      shadowNormalBias doesn't rescue this.)
+        //   5. vDirectionalShadowCoord = directionalShadowMatrix * NaN = NaN.
+        //   6. After /w, frustum/depth comparisons all fail; getShadow()
+        //      falls through and returns 1.0 — no visible shadow reception.
+        //
+        // The CesiumOSMBuildings case happens to look mostly OK only
+        // because building shadows are normally observed on terrain
+        // (which has its own shader and normals), not on the buildings
+        // themselves. Google PR has roads and buildings in a single
+        // photogrammetric mesh, so the road-receives-shadow case is
+        // exactly what fails.
+        //
+        // Fix: compute our own shadow receiver coord from vWorldPositionDN
+        // (the verified-good ECEF position from modelMatrix * transformed)
+        // and sample the shadow map from that in the fragment shader,
+        // bypassing the NaN-poisoned stock path entirely. Mirrors what
+        // TerrainDayNightMaterial already does for terrain.
         shader.vertexShader = shader.vertexShader.replace(
             '#include <common>',
             `#include <common>
@@ -162,14 +180,15 @@ if (useDayNight) {
     gl_FragColor.rgb *= mix(nightAttenuation, 1.0, dayFactor);
 }
 // V5 shadows: explicit shadow attenuation using a Sitrec-owned receiver
-// coord. We bypass Three's stock vDirectionalShadowCoord (which lands
-// outside [0,1] for these meshes — see the long comment in the vertex
-// shader above) and sample directly with vSitrecShadowCoord, computed
-// from the verified-good ECEF world position. We also bypass
-// getShadowMask() and getShadow() because both rely on Three's broken
-// coord, and call texture(sampler2DShadow, ...) ourselves with manual
-// frustum + bias handling. This mirrors what TerrainDayNightMaterial
-// does for terrain shadows, but in PBR space for buildings.
+// coord. We bypass Three's stock vDirectionalShadowCoord (NaN-poisoned
+// because tile geometry lacks the 'normal' attribute — see vertex
+// shader comment above for the full chain) and sample directly with
+// vSitrecShadowCoord, computed from the verified-good ECEF world
+// position. We also bypass getShadowMask() and getShadow() because
+// both rely on Three's NaN coord, and call texture(sampler2DShadow,
+// ...) ourselves with manual frustum + bias handling. This mirrors
+// what TerrainDayNightMaterial does for terrain shadows, but in PBR
+// space for buildings.
 #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
 {
     vec3 sp = vSitrecShadowCoord.xyz / vSitrecShadowCoord.w;
