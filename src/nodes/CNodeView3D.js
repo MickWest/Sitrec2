@@ -1147,30 +1147,34 @@ export class CNodeView3D extends CNodeViewCanvas {
             groundRadius = wgs84.RADIUS;
         }
 
-        // Solve |camPos + t * dir|^2 = groundRadius^2 for the smallest
-        // positive t. (We need positive — negative t would put the anchor
-        // behind the camera, which happens when looking up at the sky.)
+        // Solve |camPos + t * dir|^2 = groundRadius^2 for the near
+        // intersection root t0 = -B - sqrt(disc). Only t0 is ever useful —
+        // it's the entry point ahead of the camera along the forward ray.
+        // The far root t1 = -B + sqrt(disc) is the exit point on the
+        // OPPOSITE SIDE of the planet, ~12,700 km away, which is nonsense as
+        // a shadow anchor. We must never fall through to t1, even when t0
+        // is negative.
         const B = camPos.dot(dir);                          // dir is unit
         const C = camLen * camLen - groundRadius * groundRadius;
         const disc = B * B - C;
         let dist;
         if (disc >= 0) {
-            const sqrtDisc = Math.sqrt(disc);
-            const t0 = -B - sqrtDisc;
-            const t1 = -B + sqrtDisc;
-            // Smallest positive t: ground entry along the forward ray.
-            let t = -1;
-            if (t0 > 1e-3) t = t0;
-            else if (t1 > 1e-3) t = t1;
-            if (t > 0) {
-                anchor.set(camPos.x + dir.x * t, camPos.y + dir.y * t, camPos.z + dir.z * t);
-                dist = t;
-            }
+            const t0 = -B - Math.sqrt(disc);
+            if (t0 > 1e-3) dist = t0;
         }
-        if (dist === undefined) {
-            // Camera looking at the sky — no ground hit. Keep anchor at the
-            // camera and use userMinR as the "scene distance" so we still
-            // produce a sensible (small) frustum around the camera.
+        if (dist !== undefined) {
+            anchor.set(camPos.x + dir.x * dist, camPos.y + dir.y * dist, camPos.z + dir.z * dist);
+        } else {
+            // No usable forward ground hit. Two cases land here:
+            //   1. Camera looking up at the sky (disc < 0).
+            //   2. Camera sitting AT or BELOW the WGS84 ellipsoid surface
+            //      (t0 ≤ 0). Geoid undulation can put real-world street
+            //      level a few metres below the ellipsoid, so a walking-
+            //      around camera at MSL ground level commonly has HAE ≈ -1
+            //      to -50 m.
+            // Anchor at the camera position; the extent floor (userMinR)
+            // then gives a sensible local frustum that covers nearby
+            // buildings and street.
             anchor.copy(camPos);
             dist = userMinR;
         }
