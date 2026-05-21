@@ -1737,17 +1737,21 @@ const en = {
             label: "No City Lights on Globe",
             tooltip: "If true, then don't render the city lights on the globe.",
         },
+        shadowsEnabled: {
+            label: "Shadows",
+            tooltip: "Master shadow toggle. Off by default; enabling activates per-view depth-pass shadow rendering for whichever views also have their own shadow flag on (see Shadow tweaks).",
+        },
         shadowTweaks: {
             label: "Shadow tweaks",
-            tooltip: "Per-view shadow tunables. Most users won't need to touch these.",
+            tooltip: "Per-view shadow tunables and view/terrain toggles. Most users won't need to touch the sliders.",
         },
         shadowMapSize: {
             label: "Shadow map size",
             tooltip: "Resolution of the depth texture used for shadow rendering. Larger = sharper shadows, more GPU memory.",
         },
         shadowRadius: {
-            label: "Shadow radius (m)",
-            tooltip: "Half-extent of the orthographic shadow frustum. Origin-centred unless bounds-fitting is active.",
+            label: "Shadow min radius (m)",
+            tooltip: "Minimum half-width of the shadow frustum. The frustum auto-fits to the visible footprint (FOV × distance-to-look-at-ground), so this only kicks in when a tight view would otherwise produce an extent below this value. Acts as a floor for close-up scenes so they still get a usable shadow patch.",
         },
         shadowBias: {
             label: "Shadow bias",

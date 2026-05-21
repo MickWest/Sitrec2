@@ -28,15 +28,20 @@ export class CNodeLighting extends CNode {
         // auto-fits to the visible footprint (FOV × distance-to-ground), so
         // shadowRadius only kicks in when the view is so tight that the
         // computed extent would be smaller — it guarantees a usable patch
-        // of shadow for close-up cameras. At 2048² and 1000m extent the
-        // texel density is ~1m; raise this if you want a larger guaranteed
-        // patch, lower it for sharper close-ups.
-        this.shadowRadius = v.shadowRadius ?? 1000;
+        // of shadow for close-up cameras. At 2048² and 300m extent the
+        // texel density is ~0.3m; raise for a larger guaranteed close-up
+        // patch, lower for sharper close-ups.
+        this.shadowRadius = v.shadowRadius ?? 300;
         this.shadowBias = v.shadowBias ?? -0.0005;
         this.shadowNormalBias = v.shadowNormalBias ?? 1;
         this.shadowUpdateMinIntervalMs = v.shadowUpdateMinIntervalMs ?? 50;
         this.shadowUpdateAngleThreshold = v.shadowUpdateAngleThreshold ?? 0.25;
-        this.terrainReceivesShadow = v.terrainReceivesShadow ?? false;
+        this.terrainReceivesShadow = v.terrainReceivesShadow ?? true;
+        // User-facing master shadow toggle. Distinct from Globals.shadowsEnabled,
+        // which is a derived state set by applyShadowConfig (true only when this
+        // master is on AND at least one CNodeView3D has its per-view shadowsEnabled
+        // flag set too). Default off so existing/imported sitches stay quiet.
+        this.shadowsEnabled = v.shadowsEnabled ?? false;
         // Mirror to Globals so per-tile construction can read without a
         // NodeMan lookup (avoids circular import in QuadTreeTile.js).
         Globals.terrainReceivesShadow = this.terrainReceivesShadow;
@@ -48,6 +53,7 @@ export class CNodeLighting extends CNode {
         this.addSimpleSerial("shadowUpdateMinIntervalMs");
         this.addSimpleSerial("shadowUpdateAngleThreshold");
         this.addSimpleSerial("terrainReceivesShadow");
+        this.addSimpleSerial("shadowsEnabled");
 
         // First applyShadowConfig must wait for CNodeSunlight.update() to position
         // the sun at its real ~60000-unit magnitude; at construction the sun is
@@ -100,53 +106,78 @@ export class CNodeLighting extends CNode {
         Globals.sunLight.position.set(0,7000,0);  // sun is along the y axis
         GlobalScene.add(Globals.sunLight);
 
-        // Shadow tweaks subfolder — collapsed; controls only meaningful when
-        // a view has shadows on, but always visible so users can tune them.
+        // Master shadow toggle — top-level, sits ABOVE the Shadow tweaks
+        // folder. When this is off, no view renders shadows regardless of
+        // its own per-view flag. When on, each view's per-view flag (inside
+        // Shadow tweaks below) decides whether THAT view renders shadows.
+        if (this.gui) {
+            this.gui.add(this, "shadowsEnabled")
+                .name(t("lighting.shadowsEnabled.label"))
+                .tooltip(t("lighting.shadowsEnabled.tooltip"))
+                .listen()
+                .onChange(() => this.applyShadowConfig({reason: "masterToggle"}));
+        }
+
+        // Shadow tweaks subfolder — collapsed by default. Holds the
+        // per-view shadow toggles, terrain-receives-shadows toggle, and
+        // the tunable sliders.
+        //
+        // Order: per-view toggles → terrain toggle → sliders. View toggles
+        // are added by CNodeView3D when it constructs (after this node);
+        // we defer adding the terrain toggle and sliders via a microtask
+        // so they land after the views' toggles in the lil-gui child list.
+        this.shadowTweaksFolder = null;
         if (this.gui && this.gui.addFolder) {
             const sf = this.gui.addFolder(t("lighting.shadowTweaks.label")).close();
+            this.shadowTweaksFolder = sf;
             sf.tooltip?.(t("lighting.shadowTweaks.tooltip"));
-            sf.add(this, "shadowMapSize", {1024: 1024, 2048: 2048, 4096: 4096})
-                .name(t("lighting.shadowMapSize.label"))
-                .tooltip(t("lighting.shadowMapSize.tooltip"))
-                .onChange(() => this.applyShadowConfig({reason: "shadowMapSize"}));
-            sf.add(this, "shadowRadius", 50, 5000, 100)
-                .name(t("lighting.shadowRadius.label"))
-                .tooltip(t("lighting.shadowRadius.tooltip"))
-                .listen()
-                .onChange(() => this.applyShadowConfig({reason: "shadowRadius"}));
-            sf.add(this, "shadowBias", -0.01, 0.01, 0.00001)
-                .name(t("lighting.shadowBias.label"))
-                .tooltip(t("lighting.shadowBias.tooltip"))
-                .listen()
-                .onChange(() => this.applyShadowConfig({reason: "shadowBias"}));
-            sf.add(this, "shadowNormalBias", 0, 50, 0.1)
-                .name(t("lighting.shadowNormalBias.label"))
-                .tooltip(t("lighting.shadowNormalBias.tooltip"))
-                .listen()
-                .onChange(() => this.applyShadowConfig({reason: "shadowNormalBias"}));
-            sf.add(this, "shadowUpdateMinIntervalMs", 16, 500, 1)
-                .name(t("lighting.shadowUpdateInterval.label"))
-                .tooltip(t("lighting.shadowUpdateInterval.tooltip"))
-                .listen();
-            sf.add(this, "shadowUpdateAngleThreshold", 0.05, 5.0, 0.05)
-                .name(t("lighting.shadowUpdateAngle.label"))
-                .tooltip(t("lighting.shadowUpdateAngle.tooltip"))
-                .listen();
+
+            setTimeout(() => {
+                if (!this.shadowTweaksFolder) return;
+                sf.add(this, "terrainReceivesShadow")
+                    .name(t("lighting.terrainReceivesShadow.label"))
+                    .tooltip(t("lighting.terrainReceivesShadow.tooltip"))
+                    .listen()
+                    .onChange(() => {
+                        Globals.terrainReceivesShadow = this.terrainReceivesShadow;
+                        NodeMan.iterate((id, node) => {
+                            if (node.constructor.name === "CNodeTerrain"
+                                && typeof node.refreshShadowFlags === "function") {
+                                node.refreshShadowFlags();
+                            }
+                        });
+                        setRenderOne(true);
+                    });
+
+                sf.add(this, "shadowMapSize", {1024: 1024, 2048: 2048, 4096: 4096})
+                    .name(t("lighting.shadowMapSize.label"))
+                    .tooltip(t("lighting.shadowMapSize.tooltip"))
+                    .onChange(() => this.applyShadowConfig({reason: "shadowMapSize"}));
+                sf.add(this, "shadowRadius", 50, 2000, 50)
+                    .name(t("lighting.shadowRadius.label"))
+                    .tooltip(t("lighting.shadowRadius.tooltip"))
+                    .listen()
+                    .onChange(() => this.applyShadowConfig({reason: "shadowRadius"}));
+                sf.add(this, "shadowBias", -0.01, 0.01, 0.00001)
+                    .name(t("lighting.shadowBias.label"))
+                    .tooltip(t("lighting.shadowBias.tooltip"))
+                    .listen()
+                    .onChange(() => this.applyShadowConfig({reason: "shadowBias"}));
+                sf.add(this, "shadowNormalBias", 0, 50, 0.1)
+                    .name(t("lighting.shadowNormalBias.label"))
+                    .tooltip(t("lighting.shadowNormalBias.tooltip"))
+                    .listen()
+                    .onChange(() => this.applyShadowConfig({reason: "shadowNormalBias"}));
+                sf.add(this, "shadowUpdateMinIntervalMs", 16, 500, 1)
+                    .name(t("lighting.shadowUpdateInterval.label"))
+                    .tooltip(t("lighting.shadowUpdateInterval.tooltip"))
+                    .listen();
+                sf.add(this, "shadowUpdateAngleThreshold", 0.05, 5.0, 0.05)
+                    .name(t("lighting.shadowUpdateAngle.label"))
+                    .tooltip(t("lighting.shadowUpdateAngle.tooltip"))
+                    .listen();
+            }, 0);
         }
-        this.gui.add(this, "terrainReceivesShadow")
-            .name(t("lighting.terrainReceivesShadow.label"))
-            .tooltip(t("lighting.terrainReceivesShadow.tooltip"))
-            .listen()
-            .onChange(() => {
-                Globals.terrainReceivesShadow = this.terrainReceivesShadow;
-                NodeMan.iterate((id, node) => {
-                    if (node.constructor.name === "CNodeTerrain"
-                        && typeof node.refreshShadowFlags === "function") {
-                        node.refreshShadowFlags();
-                    }
-                });
-                setRenderOne(true);
-            });
 
         this.recalculate();
 

@@ -3,9 +3,7 @@ import {showError} from "../showError";
 import {createVideoExporter, DefaultVideoFormat, getBestFormatForResolution, getVideoExtension} from "../VideoExporter";
 import {drawVideoWatermark, ExportProgressWidget} from "../utils";
 import {drawAttributionOnCanvas} from "../AttributionOverlay";
-import {earthCenterECEF, XYZ2EA, XYZJ2PR} from "../SphericalMath";
 import {wgs84} from "../LLA-ECEF-ENU";
-import {raDec2Celestial} from "../CelestialMath";
 import {Frame2Az, Frame2El} from "../JetUtils";
 import {
     CustomManager,
@@ -18,13 +16,10 @@ import {
     NodeMan,
     setGPUMemoryMonitor,
     setRenderOne,
-    Sit,
-    Synth3DManager,
-    TrackManager
+    Sit
 } from "../Globals";
-import {isKeyHeld} from "../KeyBoardHandler";
 import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame";
-import {DRAG, screenToNDC} from "../mouseMoveView";
+import {DRAG} from "../mouseMoveView";
 import {GPUMemoryMonitor} from "../GPUMemoryMonitor";
 import {
     Camera,
@@ -45,7 +40,6 @@ import {
     RGBAFormat,
     Scene,
     ShaderMaterial,
-    Sphere,
     Sprite,
     SpriteMaterial,
     SRGBColorSpace,
@@ -55,31 +49,22 @@ import {
     WebGLRenderer,
     WebGLRenderTarget
 } from "three";
-import {
-    DebugArrowAB,
-    forceFilterChange,
-    scaleArrows,
-    scaleBuildingHandles,
-    updateTrackPositionIndicator
-} from "../threeExt";
+import {forceFilterChange, scaleArrows, scaleBuildingHandles, updateTrackPositionIndicator} from "../threeExt";
 import {CNodeViewCanvas} from "./CNodeViewCanvas";
 import {CNode} from "./CNode";
 import {getCameraNode} from "./CNodeCamera";
-import {CNode3DObject} from "./CNode3DObject";
 import {CNodeEffect} from "./CNodeEffect";
 import {assert} from "../assert";
-import {intersectSphere2, V3} from "../threeUtils";
+import {V3} from "../threeUtils";
 import {ACESFilmicToneMappingShader} from "../shaders/ACESFilmicToneMappingShader";
 import {ShaderPass} from "three/addons/postprocessing/ShaderPass.js";
 import {isLocal, SITREC_APP} from "../configUtils"
 import {VRButton} from 'three/addons/webxr/VRButton.js';
-import {mouseInViewOnly} from "../ViewUtils";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {CameraMapControls} from "../js/CameraControls";
 import {ViewMan} from "../CViewManager";
 import * as LAYER from "../LayerMasks";
 import {globalProfiler} from "../VisualProfiler";
-import {FeatureManager} from "../CFeatureManager";
 import {fixXRLayerMasks, renderCelestialScene, renderFullscreenQuadStereo} from "../CXRRenderer";
 import {waitForExportFrameSettled} from "../ExportFrameSettler";
 import {t} from "../i18n";
@@ -129,9 +114,12 @@ export class CNodeView3D extends CNodeViewCanvas {
         this.atmosphereExposure = atmosphereDef.exposure ?? 1.0;
         this.requestLookViewHDR = this.id === "lookView";
 
-        // V5 shadows: per-view toggle. Off by default; serialised.
+        // V5 shadows: per-view toggle. On by default; serialised. Gated
+        // by the lighting node's master shadows flag (lighting.shadowsEnabled)
+        // — see areShadowsEffective() — so enabling this alone does nothing
+        // until the master toggle is also on.
         // The viewSun is lazy-allocated on first transition to effective-on.
-        this.shadowsEnabled = v.shadowsEnabled ?? false;
+        this.shadowsEnabled = v.shadowsEnabled ?? true;
         this.allowMobileShadows = v.allowMobileShadows ?? false;
         this.addSimpleSerial("shadowsEnabled");
         this.addSimpleSerial("allowMobileShadows");
@@ -142,7 +130,13 @@ export class CNodeView3D extends CNodeViewCanvas {
             const viewLabel = this.id === "mainView"
                 ? t("view3d.shadowsEnabled.mainLabel")
                 : t("view3d.shadowsEnabled.lookLabel");
-            guiMenus.lighting.add(this, "shadowsEnabled")
+            // Prefer the Shadow tweaks subfolder on the lighting node so the
+            // per-view toggle sits next to the terrain toggle and tunables;
+            // fall back to the bare Lighting menu if the lighting node or
+            // folder isn't available (sitches without a lighting node).
+            const lightingNode = NodeMan.get("lighting", false);
+            const targetMenu = lightingNode?.shadowTweaksFolder ?? guiMenus.lighting;
+            targetMenu.add(this, "shadowsEnabled")
                 .name(viewLabel)
                 .tooltip(t("view3d.shadowsEnabled.tooltip"))
                 .listen()
@@ -1017,9 +1011,12 @@ export class CNodeView3D extends CNodeViewCanvas {
         return this._atmosphereSkyColor;
     }
 
-    // V5 shadows: effective gate. shadowsEnabled is the user toggle; mobile
-    // gets auto-disabled unless allowMobileShadows is also set.
+    // V5 shadows: effective gate. Requires BOTH the lighting master and
+    // this view's per-view flag. Mobile gets auto-disabled unless
+    // allowMobileShadows is also set.
     areShadowsEffective() {
+        const lighting = NodeMan.get("lighting", false);
+        if (lighting && !lighting.shadowsEnabled) return false;
         if (!this.shadowsEnabled) return false;
         if (Globals.isMobile && !this.allowMobileShadows) return false;
         if (this.id !== "mainView" && this.id !== "lookView") return false;
