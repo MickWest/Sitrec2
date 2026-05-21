@@ -7,11 +7,12 @@ import {
     guiMenus,
     markSitchDirty,
     NodeMan,
+    setNewSitchObject,
     Sit,
     SitchMan,
+    Synth3DManager,
     TrackManager,
     UndoManager,
-    setNewSitchObject,
     withTestUser,
 } from "./Globals";
 import {isLocal, isServerless, SITREC_SERVER} from "./configUtils";
@@ -553,6 +554,154 @@ class CSitrecAPI {
                     } catch (e) {
                         return { success: false, error: e.message };
                     }
+                }
+            },
+
+            listSynthElements: {
+                doc: "List native synthetic scene elements managed by Synth3DManager. Types are building, clouds, overlay, or all.",
+                params: {
+                    type: "Element type: building, clouds, overlay, or all (string, optional, defaults to all)",
+                    includeSerialized: "Include full serialized state for each element (bool, optional, defaults to true)"
+                },
+                fn: (v = {}) => this._listSynthElements(v.type || "all", v.includeSerialized !== false)
+            },
+
+            getSynthElement: {
+                doc: "Inspect a native synthetic scene element by type and ID.",
+                params: {
+                    type: "Element type: building, clouds, or overlay (string)",
+                    id: "Element ID, e.g. synthBuilding_1, synthClouds_1, or groundOverlay_1 (string)"
+                },
+                fn: (v) => {
+                    const element = this._getSynthElement(v.type, v.id);
+                    if (!element) return { success: false, error: `Synth ${v.type} '${v.id}' not found` };
+                    return { success: true, type: this._normalizeSynthType(v.type), id: this._getSynthElementID(element), element: this._serializeSynthElement(element) };
+                }
+            },
+
+            createSynthBuilding: {
+                doc: "Create a native synthetic building without opening context menus or edit UI. Prefer this for agent-generated buildings. Provide either cornerLatLons or center lat/lon plus width/depth/height.",
+                params: {
+                    id: "Building ID (string, optional)",
+                    name: "Building name (string, optional)",
+                    lat: "Center latitude in degrees (float, required unless cornerLatLons is provided)",
+                    lon: "Center longitude in degrees (float, required unless cornerLatLons is provided)",
+                    width: "Width in meters east-west before heading rotation (float, optional, defaults to 15)",
+                    depth: "Depth in meters north-south before heading rotation (float, optional, defaults to width)",
+                    height: "Roof height above highest ground point in meters (float, optional, defaults to roofAGL or 4)",
+                    headingDeg: "Clockwise heading in degrees for width/depth rectangle (float, optional, defaults to 0)",
+                    cornerLatLons: "Array of four {lat, lon} building footprint corners (array, optional)",
+                    roofAGL: "Roof height above highest ground point in meters (float, optional)",
+                    rooflineHeightAGL: "Additional ridgeline height above roof edge in meters (float, optional)",
+                    ridgelineInset: "Distance to inset ridgeline ends in meters (float, optional)",
+                    roofEaves: "Roof eave extension in meters (float, optional)",
+                    wallColor: "Wall color as hex string or number (string, optional)",
+                    roofColor: "Roof color as hex string or number (string, optional)",
+                    opacity: "Material opacity 0..1 (float, optional)",
+                    transparent: "Material transparency flag (bool, optional)",
+                    visible: "Visibility flag (bool, optional)",
+                    editMode: "Leave building in edit mode after creation (bool, optional, defaults to false)"
+                },
+                fn: (v) => this._createSynthBuilding(v)
+            },
+
+            createSynthBuildings: {
+                doc: "Batch-create native synthetic buildings in one API call. Each item accepts createSynthBuilding parameters. Much faster than context-menu creation loops.",
+                params: {
+                    buildings: "Array of building parameter objects accepted by createSynthBuilding (array)",
+                    editMode: "Default editMode for all buildings unless overridden per item (bool, optional, defaults to false)"
+                },
+                fn: (v) => {
+                    if (!Array.isArray(v.buildings)) return { success: false, error: "buildings must be an array" };
+                    const results = v.buildings.map((building) => this._createSynthBuilding({
+                        editMode: v.editMode === true,
+                        ...building
+                    }));
+                    const failed = results.filter(r => !r.success);
+                    return { success: failed.length === 0, count: results.length, failed: failed.length, buildings: results };
+                }
+            },
+
+            createSynthClouds: {
+                doc: "Create a native synthetic cloud layer without opening context menus or edit UI.",
+                params: {
+                    id: "Cloud layer ID (string, optional)",
+                    name: "Cloud layer name (string, optional)",
+                    centerLat: "Center latitude in degrees (float, optional; lat is also accepted)",
+                    centerLon: "Center longitude in degrees (float, optional; lon is also accepted)",
+                    lat: "Alias for centerLat (float, optional)",
+                    lon: "Alias for centerLon (float, optional)",
+                    altitude: "Altitude in meters (float, optional)",
+                    radius: "Cloud disk radius in meters (float, optional)",
+                    depth: "Cloud layer depth in meters (float, optional)",
+                    cloudSize: "Cloud sprite size in meters (float, optional)",
+                    density: "Cloud density (float, optional)",
+                    opacity: "Cloud opacity 0..1 (float, optional)",
+                    brightness: "Cloud brightness multiplier (float, optional)",
+                    seed: "Random seed (number, optional)",
+                    feather: "Edge feather distance in meters (float, optional)",
+                    editMode: "Leave clouds in edit mode after creation (bool, optional, defaults to false)"
+                },
+                fn: (v) => this._createSynthClouds(v)
+            },
+
+            createSynthOverlay: {
+                doc: "Create a native ground overlay without opening context menus or edit UI. Provide north/south/east/west bounds, or center lat/lon plus width/depth.",
+                params: {
+                    id: "Overlay ID (string, optional)",
+                    name: "Overlay name (string, optional)",
+                    north: "North latitude bound in degrees (float, optional)",
+                    south: "South latitude bound in degrees (float, optional)",
+                    east: "East longitude bound in degrees (float, optional)",
+                    west: "West longitude bound in degrees (float, optional)",
+                    lat: "Center latitude in degrees when using width/depth (float, optional)",
+                    lon: "Center longitude in degrees when using width/depth (float, optional)",
+                    width: "Overlay width in meters when using center lat/lon (float, optional)",
+                    depth: "Overlay depth in meters when using center lat/lon (float, optional)",
+                    rotation: "Overlay rotation in degrees/radians as used by ground overlays (float, optional)",
+                    imageURL: "Overlay image URL (string, optional)",
+                    opacity: "Overlay opacity 0..1 (float, optional)",
+                    altitude: "Overlay altitude in meters (float, optional)",
+                    visible: "Visibility flag (bool, optional)",
+                    editMode: "Leave overlay in edit mode after creation (bool, optional, defaults to false)"
+                },
+                fn: (v) => this._createSynthOverlay(v)
+            },
+
+            updateSynthElement: {
+                doc: "Modify a native synthetic building, cloud layer, or ground overlay, then rebuild/update its mesh and GUI controllers.",
+                params: {
+                    type: "Element type: building, clouds, or overlay (string)",
+                    id: "Element ID (string)",
+                    patch: "Properties to update (object). Buildings accept cornerLatLons, roofAGL/height, rooflineHeightAGL, ridgelineInset, roofEaves, material/color/visibility. Clouds and overlays accept their serialized fields."
+                },
+                fn: (v) => this._updateSynthElement(v.type, v.id, v.patch || {})
+            },
+
+            deleteSynthElement: {
+                doc: "Delete a native synthetic building, cloud layer, or ground overlay by type and ID.",
+                params: {
+                    type: "Element type: building, clouds, or overlay (string)",
+                    id: "Element ID (string)"
+                },
+                fn: (v) => this._deleteSynthElement(v.type, v.id)
+            },
+
+            deleteSynthElements: {
+                doc: "Delete multiple native synthetic elements. Pass an elements array of {type, id}, or pass type plus ids.",
+                params: {
+                    elements: "Array of {type, id} objects (array, optional)",
+                    type: "Element type used with ids: building, clouds, or overlay (string, optional)",
+                    ids: "Array of IDs used with type (array, optional)"
+                },
+                fn: (v) => {
+                    const elements = Array.isArray(v.elements)
+                        ? v.elements
+                        : (Array.isArray(v.ids) ? v.ids.map(id => ({ type: v.type, id })) : []);
+                    if (elements.length === 0) return { success: false, error: "Pass elements or type plus ids" };
+                    const results = elements.map(e => this._deleteSynthElement(e.type, e.id));
+                    const failed = results.filter(r => !r.success);
+                    return { success: failed.length === 0, count: results.length, failed: failed.length, results };
                 }
             },
 
@@ -2211,6 +2360,343 @@ class CSitrecAPI {
         }
     }
 
+    _normalizeSynthType(type) {
+        const t = String(type || "").toLowerCase();
+        if (["building", "buildings", "synthbuilding", "synthbuildings"].includes(t)) return "building";
+        if (["cloud", "clouds", "synthclouds", "cloudlayer", "cloudlayers"].includes(t)) return "clouds";
+        if (["overlay", "overlays", "groundoverlay", "groundoverlays"].includes(t)) return "overlay";
+        if (t === "all" || t === "") return "all";
+        return null;
+    }
+
+    _requireSynthManager() {
+        if (!Synth3DManager) {
+            throw new Error("Synth3DManager is not available");
+        }
+    }
+
+    _getSynthElement(type, id) {
+        this._requireSynthManager();
+        const normalized = this._normalizeSynthType(type);
+        if (normalized === "building") return Synth3DManager.getBuilding(id);
+        if (normalized === "clouds") return Synth3DManager.getClouds(id);
+        if (normalized === "overlay") return Synth3DManager.getOverlay(id);
+        return null;
+    }
+
+    _getSynthElementID(element) {
+        return element?.buildingID || element?.cloudsID || element?.overlayID || element?.id || null;
+    }
+
+    _serializeSynthElement(element) {
+        if (!element) return null;
+        const serialized = element.serialize ? element.serialize() : { ...element };
+        return {
+            ...serialized,
+            id: serialized.id || this._getSynthElementID(element),
+            editMode: element.editMode === true,
+        };
+    }
+
+    _closeSynthEditMenus() {
+        if (Globals.editingBuilding?.setEditMode) Globals.editingBuilding.setEditMode(false);
+        if (Globals.editingClouds?.setEditMode) Globals.editingClouds.setEditMode(false);
+        if (Globals.editingOverlay?.setEditMode) Globals.editingOverlay.setEditMode(false);
+
+        for (const key of ["groundContextMenu", "buildingEditMenu", "cloudsEditMenu", "overlayEditMenu"]) {
+            if (CustomManager[key]?.destroy) CustomManager[key].destroy();
+            CustomManager[key] = null;
+        }
+    }
+
+    _metersToLatLonOffset(lat, northMeters, eastMeters) {
+        const metersPerDegLat = 111320;
+        const metersPerDegLon = 111320 * Math.cos(Number(lat) * Math.PI / 180);
+        return {
+            dLat: northMeters / metersPerDegLat,
+            dLon: eastMeters / metersPerDegLon,
+        };
+    }
+
+    _buildingCornersFromCenter({lat, lon, width = 15, depth = width, headingDeg = 0}) {
+        if (lat === undefined || lon === undefined) {
+            throw new Error("lat and lon are required when cornerLatLons is not provided");
+        }
+        const centerLat = Number(lat);
+        const centerLon = Number(lon);
+        const halfWidth = Number(width) / 2;
+        const halfDepth = Number(depth) / 2;
+        const heading = Number(headingDeg || 0) * Math.PI / 180;
+        const cos = Math.cos(heading);
+        const sin = Math.sin(heading);
+
+        return [
+            [-halfDepth, -halfWidth],
+            [ halfDepth, -halfWidth],
+            [ halfDepth,  halfWidth],
+            [-halfDepth,  halfWidth],
+        ].map(([north, east]) => {
+            const rotatedNorth = north * cos - east * sin;
+            const rotatedEast = north * sin + east * cos;
+            const {dLat, dLon} = this._metersToLatLonOffset(centerLat, rotatedNorth, rotatedEast);
+            return {lat: centerLat + dLat, lon: centerLon + dLon};
+        });
+    }
+
+    _overlayBoundsFromCenter({lat, lon, width = 1000, depth = width}) {
+        if (lat === undefined || lon === undefined) {
+            throw new Error("lat and lon are required when overlay bounds are not provided");
+        }
+        const centerLat = Number(lat);
+        const centerLon = Number(lon);
+        const northSouth = this._metersToLatLonOffset(centerLat, Number(depth) / 2, 0).dLat;
+        const eastWest = this._metersToLatLonOffset(centerLat, 0, Number(width) / 2).dLon;
+        return {
+            north: centerLat + northSouth,
+            south: centerLat - northSouth,
+            east: centerLon + eastWest,
+            west: centerLon - eastWest,
+        };
+    }
+
+    _listSynthElements(type = "all", includeSerialized = true) {
+        this._requireSynthManager();
+        const normalized = this._normalizeSynthType(type);
+        if (!normalized) return { success: false, error: `Unknown synth type '${type}'` };
+
+        const collect = (kind) => {
+            const items = [];
+            if (kind === "building") {
+                Synth3DManager.iterate((id, building) => {
+                    items.push(includeSerialized ? this._serializeSynthElement(building) : {id, name: building.name, visible: building.visible});
+                });
+            } else if (kind === "clouds") {
+                Synth3DManager.iterateClouds((id, clouds) => {
+                    items.push(includeSerialized ? this._serializeSynthElement(clouds) : {id, name: clouds.name, visible: clouds.visible});
+                });
+            } else if (kind === "overlay") {
+                Synth3DManager.iterateOverlays((id, overlay) => {
+                    items.push(includeSerialized ? this._serializeSynthElement(overlay) : {id, name: overlay.name, visible: overlay.visible});
+                });
+            }
+            return items;
+        };
+
+        if (normalized !== "all") {
+            const elements = collect(normalized);
+            return { success: true, type: normalized, count: elements.length, elements };
+        }
+
+        const buildings = collect("building");
+        const clouds = collect("clouds");
+        const overlays = collect("overlay");
+        return {
+            success: true,
+            count: buildings.length + clouds.length + overlays.length,
+            buildings,
+            clouds,
+            overlays,
+        };
+    }
+
+    _setVisibilityIfProvided(element, visible) {
+        if (visible === undefined) return;
+        if (element.show) element.show(visible);
+        else element.visible = visible;
+    }
+
+    _createSynthBuilding(v = {}) {
+        try {
+            this._requireSynthManager();
+            this._closeSynthEditMenus();
+            const cornerLatLons = Array.isArray(v.cornerLatLons)
+                ? v.cornerLatLons.map(c => ({lat: Number(c.lat), lon: Number(c.lon)}))
+                : this._buildingCornersFromCenter(v);
+
+            const building = Synth3DManager.addBuilding({
+                id: v.id,
+                name: v.name,
+                visible: v.visible,
+                cornerLatLons,
+                roofAGL: Number(v.roofAGL ?? v.height ?? 4),
+                rooflineHeightAGL: Number(v.rooflineHeightAGL ?? 0),
+                ridgelineInset: Number(v.ridgelineInset ?? 0),
+                roofEaves: Number(v.roofEaves ?? 0),
+                material: v.material,
+                wallColor: v.wallColor ?? v.color,
+                roofColor: v.roofColor,
+                opacity: v.opacity,
+                transparent: v.transparent,
+                depthTest: v.depthTest,
+                wireframe: v.wireframe,
+            });
+            this._setVisibilityIfProvided(building, v.visible);
+            if (v.editMode === true) building.setEditMode(true);
+            else this._closeSynthEditMenus();
+            par.renderOne = true;
+            return { success: true, type: "building", id: building.buildingID, element: this._serializeSynthElement(building) };
+        } catch (e) {
+            return { success: false, error: e.message ?? String(e) };
+        }
+    }
+
+    _createSynthClouds(v = {}) {
+        try {
+            this._requireSynthManager();
+            this._closeSynthEditMenus();
+            const centerLat = v.centerLat ?? v.lat;
+            const centerLon = v.centerLon ?? v.lon;
+            if (centerLat === undefined || centerLon === undefined) {
+                return { success: false, error: "centerLat/centerLon or lat/lon are required" };
+            }
+            const clouds = Synth3DManager.addClouds({
+                ...v,
+                centerLat: Number(centerLat),
+                centerLon: Number(centerLon),
+            });
+            this._setVisibilityIfProvided(clouds, v.visible);
+            if (v.editMode === true) clouds.setEditMode(true);
+            else this._closeSynthEditMenus();
+            par.renderOne = true;
+            return { success: true, type: "clouds", id: clouds.cloudsID, element: this._serializeSynthElement(clouds) };
+        } catch (e) {
+            return { success: false, error: e.message ?? String(e) };
+        }
+    }
+
+    _createSynthOverlay(v = {}) {
+        try {
+            this._requireSynthManager();
+            this._closeSynthEditMenus();
+            const hasBounds = v.north !== undefined && v.south !== undefined && v.east !== undefined && v.west !== undefined;
+            const bounds = hasBounds ? {
+                north: Number(v.north),
+                south: Number(v.south),
+                east: Number(v.east),
+                west: Number(v.west),
+            } : this._overlayBoundsFromCenter(v);
+
+            const overlay = Synth3DManager.addOverlay({
+                ...v,
+                ...bounds,
+                rotation: Number(v.rotation ?? 0),
+            });
+            this._setVisibilityIfProvided(overlay, v.visible);
+            if (v.editMode === true) overlay.setEditMode(true);
+            else this._closeSynthEditMenus();
+            par.renderOne = true;
+            return { success: true, type: "overlay", id: overlay.overlayID, element: this._serializeSynthElement(overlay) };
+        } catch (e) {
+            return { success: false, error: e.message ?? String(e) };
+        }
+    }
+
+    _updateSynthElement(type, id, patch = {}) {
+        try {
+            this._requireSynthManager();
+            const normalized = this._normalizeSynthType(type);
+            const element = this._getSynthElement(normalized, id);
+            if (!element) return { success: false, error: `Synth ${type} '${id}' not found` };
+
+            if (normalized === "building") {
+                if (Array.isArray(patch.cornerLatLons)) {
+                    element.cornerLatLons = patch.cornerLatLons.map(c => ({lat: Number(c.lat), lon: Number(c.lon)}));
+                } else if (patch.lat !== undefined || patch.lon !== undefined || patch.width !== undefined || patch.depth !== undefined || patch.headingDeg !== undefined) {
+                    const serialized = element.serialize();
+                    const corners = serialized.cornerLatLons || [];
+                    const centerLat = patch.lat ?? (corners.reduce((sum, c) => sum + c.lat, 0) / Math.max(corners.length, 1));
+                    const centerLon = patch.lon ?? (corners.reduce((sum, c) => sum + c.lon, 0) / Math.max(corners.length, 1));
+                    if (patch.width === undefined && patch.depth === undefined && patch.size === undefined && patch.headingDeg === undefined && corners.length === 4) {
+                        const oldCenterLat = corners.reduce((sum, c) => sum + c.lat, 0) / corners.length;
+                        const oldCenterLon = corners.reduce((sum, c) => sum + c.lon, 0) / corners.length;
+                        element.cornerLatLons = corners.map(c => ({
+                            lat: c.lat + centerLat - oldCenterLat,
+                            lon: c.lon + centerLon - oldCenterLon,
+                        }));
+                    } else {
+                        element.cornerLatLons = this._buildingCornersFromCenter({
+                            lat: centerLat,
+                            lon: centerLon,
+                            width: patch.width ?? patch.size ?? 15,
+                            depth: patch.depth ?? patch.width ?? patch.size ?? 15,
+                            headingDeg: patch.headingDeg ?? 0,
+                        });
+                    }
+                }
+
+                const directFields = ["name", "rooflineHeightAGL", "ridgelineInset", "roofEaves", "materialOpacity", "materialTransparent", "materialDepthTest", "materialWireframe"];
+                directFields.forEach(field => {
+                    if (patch[field] !== undefined) element[field] = patch[field];
+                });
+                if (patch.roofAGL !== undefined || patch.height !== undefined) element.roofAGL = Number(patch.roofAGL ?? patch.height);
+                if (patch.material !== undefined) element.materialType = patch.material;
+                if (patch.wallColor !== undefined || patch.color !== undefined) element.wallColor = patch.wallColor ?? patch.color;
+                if (patch.roofColor !== undefined) element.roofColor = patch.roofColor;
+                if (patch.opacity !== undefined) element.materialOpacity = Number(patch.opacity);
+                if (patch.transparent !== undefined) element.materialTransparent = patch.transparent;
+                if (patch.depthTest !== undefined) element.materialDepthTest = patch.depthTest;
+                if (patch.wireframe !== undefined) element.materialWireframe = patch.wireframe;
+                this._setVisibilityIfProvided(element, patch.visible);
+                element.recalculateVerticesFromTerrain();
+                element.buildMesh();
+                element.updateGUIControllers();
+            } else if (normalized === "clouds") {
+                Object.assign(element, patch);
+                if (patch.lat !== undefined) element.centerLat = patch.lat;
+                if (patch.lon !== undefined) element.centerLon = patch.lon;
+                this._setVisibilityIfProvided(element, patch.visible);
+                element.buildCloudMesh();
+                element.updateGUIControllers();
+            } else if (normalized === "overlay") {
+                const boundsPatch = (patch.north !== undefined || patch.south !== undefined || patch.east !== undefined || patch.west !== undefined)
+                    ? {}
+                    : ((patch.lat !== undefined || patch.lon !== undefined || patch.width !== undefined || patch.depth !== undefined) ? this._overlayBoundsFromCenter({
+                        lat: patch.lat ?? (element.north + element.south) / 2,
+                        lon: patch.lon ?? (element.east + element.west) / 2,
+                        width: patch.width,
+                        depth: patch.depth,
+                    }) : {});
+                Object.assign(element, patch, boundsPatch);
+                this._setVisibilityIfProvided(element, patch.visible);
+                element.updateMesh();
+                element.updateGUIControllers();
+            } else {
+                return { success: false, error: `Unknown synth type '${type}'` };
+            }
+
+            if (patch.editMode === true && element.setEditMode) element.setEditMode(true);
+            if (patch.editMode === false && element.setEditMode) element.setEditMode(false);
+            par.renderOne = true;
+            return { success: true, type: normalized, id: this._getSynthElementID(element), element: this._serializeSynthElement(element) };
+        } catch (e) {
+            return { success: false, error: e.message ?? String(e) };
+        }
+    }
+
+    _deleteSynthElement(type, id) {
+        try {
+            this._requireSynthManager();
+            const normalized = this._normalizeSynthType(type);
+            if (normalized === "building") {
+                if (!Synth3DManager.getBuilding(id)) return { success: false, type: normalized, id, error: "Building not found" };
+                Synth3DManager.removeBuilding(id);
+            } else if (normalized === "clouds") {
+                if (!Synth3DManager.getClouds(id)) return { success: false, type: normalized, id, error: "Cloud layer not found" };
+                Synth3DManager.removeClouds(id);
+            } else if (normalized === "overlay") {
+                if (!Synth3DManager.getOverlay(id)) return { success: false, type: normalized, id, error: "Overlay not found" };
+                Synth3DManager.removeOverlay(id);
+            } else {
+                return { success: false, error: `Unknown synth type '${type}'` };
+            }
+            this._closeSynthEditMenus();
+            par.renderOne = true;
+            return { success: true, type: normalized, id };
+        } catch (e) {
+            return { success: false, type, id, error: e.message ?? String(e) };
+        }
+    }
+
     getDocumentation() {
         return Object.entries(this.api).reduce((acc, [key, value]) => {
             let paramsString = Object.entries(value.params || {})
@@ -2294,6 +2780,8 @@ class CSitrecAPI {
             "listObjectFolders",
             "listAvailableModels",
             "listAvailableGeometries",
+            "listSynthElements",
+            "getSynthElement",
             "gotoLLA",
             "play",
             "pause",

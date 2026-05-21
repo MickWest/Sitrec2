@@ -137,7 +137,7 @@ Visibility in 3D views is controlled by layer bit masks, not `node.visible`.
 
 ## Sitrec API (sitrecAPI)
 
-72 functions accessible via `window.sitrecAPI.call(fn, args)`. Type coercion is automatic (strings -> numbers).
+Functions accessible via `window.sitrecAPI.call(fn, args)`. Type coercion is automatic (strings -> numbers). Use `sitrec_api_list` for the complete current list.
 
 ### Camera & Navigation
 - `gotoLLA({lat, lon, alt})` — move camera position
@@ -172,6 +172,16 @@ Visibility in 3D views is controlled by layer bit masks, not `node.visible`.
 - `setObjectModel({object, model})`, `setAllObjectsModel({model})`
 - `setObjectGeometry({object, geometry})`, `setAllObjectsGeometry({geometry})`
 - `setObjectDimensions({object, width, height, depth})`
+
+### Synthetic Scene Elements
+- `listSynthElements({type, includeSerialized})` — list synthetic `building`, `clouds`, `overlay`, or `all`
+- `getSynthElement({type, id})` — inspect serialized native synth element state
+- `createSynthBuilding({lat, lon, width, depth, height, headingDeg, name})` — create native `CNodeSynthBuilding` without context-menu/edit UI
+- `createSynthBuildings({buildings})` — batch-create buildings in one call; preferred for rings/grids/large generated sets
+- `createSynthClouds({centerLat, centerLon, altitude, radius, ...})` — create native synthetic cloud layer
+- `createSynthOverlay({lat, lon, width, depth, imageURL, ...})` or bounds `{north, south, east, west}` — create native ground overlay
+- `updateSynthElement({type, id, patch})` — modify and rebuild a synthetic element
+- `deleteSynthElement({type, id})`, `deleteSynthElements({elements})` — remove synthetic elements
 
 ### Menu Controls
 - `listMenus()`, `listMenuControls({menu})`
@@ -278,7 +288,7 @@ ctrl.setValue(false); // triggers onChange callbacks
 When asked to add something to the live scene, prefer Sitrec's existing managers, menus, and API paths over raw Three.js meshes. Raw meshes can render, but they will not serialize, show in menus, participate in edit modes, or clean up like native Sitrec objects.
 
 Good order of operations:
-- Use `sitrec_api_call` for public API operations such as `addObjectAtLLA`, `setObjectGeometry`, and `setObjectDimensions`.
+- Use `sitrec_api_call` for public API operations such as `addObjectAtLLA`, `setObjectGeometry`, `setObjectDimensions`, `createSynthBuilding`, `createSynthBuildings`, `createSynthClouds`, `createSynthOverlay`, `listSynthElements`, `getSynthElement`, `updateSynthElement`, and `deleteSynthElement`.
 - Use `sitrec_eval` for advanced manager/menu paths that are not public API functions yet.
 - If a feature normally comes from a context menu, invoke the same context-menu path and call its controller action. This preserves normal creation behavior, undo wiring, GUI folders, edit mode, and serialization.
 - Before opening a context menu to create a building, clouds, ground overlay, feature, or similar object, close any active edit menu/edit mode. The ground context menu intentionally does nothing while a building/clouds/overlay edit menu is open.
@@ -303,80 +313,25 @@ function closeAgentEditMenus() {
 
 ### Creating synthetic buildings
 
-The right-click "Add Building" command creates a native `CNodeSynthBuilding` through `Synth3DManager.createBuildingAtPoint(groundPoint)`. From MCP, create the same building by opening the ground context menu at an ECEF point and calling the `addBuilding` controller. The new building is usually available as `Globals.editingBuilding`.
+Use `sitrec_api_call` with `createSynthBuilding` or `createSynthBuildings` for generated buildings. These call `Synth3DManager` directly, create native serializable `CNodeSynthBuilding` nodes, skip context menus/edit UI by default, and render once. Only use the older right-click/context-menu path as a fallback if the public API is unavailable in an older build.
 
 Example: create a 1 km x 1 km x 1 km synthetic building centered at a lat/lon:
-```js
-(() => {
-    const centerLat = 33.15;
-    const centerLon = -118.46;
-    const size = 1000; // meters
-    const half = size / 2;
-    const metersPerDegLat = 111320;
-    const metersPerDegLon = 111320 * Math.cos(centerLat * Math.PI / 180);
-    const dLat = half / metersPerDegLat;
-    const dLon = half / metersPerDegLon;
-
-    function closeAgentEditMenus() {
-        if (Globals.editingBuilding?.setEditMode) Globals.editingBuilding.setEditMode(false);
-        if (Globals.editingClouds?.setEditMode) Globals.editingClouds.setEditMode(false);
-        if (Globals.editingOverlay?.setEditMode) Globals.editingOverlay.setEditMode(false);
-
-        for (const key of ["groundContextMenu", "buildingEditMenu", "cloudsEditMenu", "overlayEditMenu"]) {
-            if (CustomManager[key]?.destroy) CustomManager[key].destroy();
-            CustomManager[key] = null;
-        }
-    }
-
-    // Use a local WGS84 conversion because LLAToECEF is not always exposed to sitrec_eval.
-    const a = 6378137.0;
-    const f = 1 / 298.257223563;
-    const e2 = f * (2 - f);
-    const toRad = d => d * Math.PI / 180;
-    function llaToVec(lat, lon, alt = 0) {
-        const phi = toRad(lat), lam = toRad(lon);
-        const sinPhi = Math.sin(phi), cosPhi = Math.cos(phi);
-        const N = a / Math.sqrt(1 - e2 * sinPhi * sinPhi);
-        const x = (N + alt) * cosPhi * Math.cos(lam);
-        const y = (N + alt) * cosPhi * Math.sin(lam);
-        const z = (N * (1 - e2) + alt) * sinPhi;
-        return NodeMan.get("mainCamera").camera.position.clone().set(x, y, z);
-    }
-
-    closeAgentEditMenus();
-    const groundPoint = llaToVec(centerLat, centerLon, 0);
-    CustomManager.showGroundContextMenu(100, 100, groundPoint, "mainView");
-    const menu = CustomManager.groundContextMenu;
-    const ctrl = menu?.controllers.find(c => c.property === "addBuilding");
-    if (!ctrl?.object?.addBuilding) return { success: false, error: "Add Building controller not found" };
-
-    ctrl.object.addBuilding();
-    const building = Globals.editingBuilding;
-    if (!building) return { success: false, error: "Building was not created" };
-
-    building.name = "1km Synthetic Building";
-    building.cornerLatLons = [
-        { lat: centerLat - dLat, lon: centerLon - dLon },
-        { lat: centerLat + dLat, lon: centerLon - dLon },
-        { lat: centerLat + dLat, lon: centerLon + dLon },
-        { lat: centerLat - dLat, lon: centerLon + dLon },
-    ];
-    building.roofAGL = size;
-    building.rooflineHeightAGL = 0;
-    building.ridgelineInset = 0;
-    building.roofEaves = 0;
-    building.recalculateVerticesFromTerrain();
-    building.buildMesh();
-    building.updateGUIControllers();
-    building.setEditMode(false);
-    closeAgentEditMenus();
-    par.renderOne = true;
-
-    return { success: true, id: building.buildingID, serialized: building.serialize() };
-})()
+```json
+{
+  "fn": "createSynthBuilding",
+  "args": {
+    "lat": 33.15,
+    "lon": -118.46,
+    "width": 1000,
+    "depth": 1000,
+    "height": 1000,
+    "name": "1km Synthetic Building",
+    "editMode": false
+  }
+}
 ```
 
-For synthetic buildings, edit `cornerLatLons`, `roofAGL`, `rooflineHeightAGL`, `ridgelineInset`, and `roofEaves`, then call `recalculateVerticesFromTerrain()`, `buildMesh()`, and `updateGUIControllers()`. This keeps the building terrain-relative, editable, and serializable.
+To create many buildings, use one `createSynthBuildings({buildings: [...]})` call instead of looping over context menus. To modify an existing building, use `updateSynthElement({type: "building", id, patch})`; the API updates `cornerLatLons`, `roofAGL`/`height`, `rooflineHeightAGL`, `ridgelineInset`, `roofEaves`, colors/material fields, visibility, and rebuilds the mesh.
 
 ### Haversine distance (for finding nearest tracks)
 ```js

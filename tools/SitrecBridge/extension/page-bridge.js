@@ -45,7 +45,7 @@ function isSitrecReady() {
  * Safely serialize a value, handling Three.js objects, circular refs, etc.
  */
 function safeSerialize(val, depth = 0) {
-    if (depth > 4) return "[max depth]";
+    if (depth > 7) return "[max depth]";
     if (val === undefined) return undefined;
     if (val === null) return null;
     if (typeof val === "number" || typeof val === "boolean" || typeof val === "string") return val;
