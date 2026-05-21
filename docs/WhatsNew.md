@@ -45,6 +45,13 @@ Example entry format:
 
 ---
 
+## Version 2.57.1 (2026-05-21)
+
+### Bug Fixes
+- **Shadows no longer vanish at long distance**: the shadow frustum was anchored at `camera.position` (despite the comment claiming it tracked the ground point) and clamped to a 1 km radius, so any visible casters more than ~1 km from the camera's nadir fell outside the frustum and silently produced no shadow when the camera climbed above ~6000 ft. The anchor now solves the camera-forward ray against a sphere of the geocentric ellipsoid radius at the camera's own latitude (not the equatorial radius, which sits ~4.5 km above mid-latitude ground and put any near-surface camera mathematically inside it). Extent auto-fits the visible footprint with `shadowRadius` acting as the floor instead of the ceiling, so the system works seamlessly from walking-street up to ISS-altitude / 0.1° FOV.
+- **Shadows render at street level**: at heights near WGS84 zero (geoid undulation puts real ground a few metres below the ellipsoid in many regions, so a walking-around camera commonly has HAE ≈ -1 m), the previous code fell through from the negative near-root to the far-root of the ray-ellipsoid intersection — a point ~12 700 km away through the opposite side of the planet — and the extent saturated to the 100 km cap, blacking out the scene. The far root is now rejected entirely; when the near root is negative the anchor stays at the camera and the `shadowRadius` floor builds a sane local frustum.
+- **Zoom-to-ground stops at the actual ground, not a phantom 300 m above it**: two related root causes. (a) When the mouse-to-ground raycast missed the terrain mesh, the controls and synth-object code all fell back to a sphere of `Globals.equatorRadius`; at mid-latitudes a near-surface camera is mathematically inside that sphere, so `Ray.intersectSphere` returned the far-side exit point ~1900 km through the planet, which then became `controls.target`. The fallback now uses the local geocentric ellipsoid radius and only accepts the near positive root. (b) The QuadTree subdivision pass's surgical reactivation skipped any child at `z<3` — a rule meant only for texture maps (where `calculateTileVisibility` force-returns `visible=true` with `SSE=infinity` for `z<3` to keep root tiles loaded as resample fallbacks). Elevation maps get no such force-root, so the skip stranded `mainView` at zoom-0 whenever another view had created the z=1/2 children first, and the resulting zoom-0 elevation interpolation baked +173 m into Santa Monica terrain vertices, producing a phantom ground at HAE +310 m. The skip is now gated on `isTextureMap` so each view can independently subdivide elevation down to its needed LOD.
+
 ## Version 2.57.0 (2026-05-21)
 
 ### New Features
