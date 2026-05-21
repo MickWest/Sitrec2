@@ -1,0 +1,57 @@
+import {Vector3} from "three";
+import {NodeMan} from "./Globals";
+import {wgs84} from "./LLA-ECEF-ENU";
+
+// Cast a Raycaster's ray at "the ground," in order of preference:
+//
+//   1. The actual terrain mesh, when a TerrainModel node exists.
+//   2. A sphere matching the geocentric ellipsoid radius at the CAMERA'S
+//      OWN latitude. NOT Globals.equatorRadius — at mid-latitudes the
+//      WGS84 equatorial-radius sphere sits several kilometres above the
+//      real ground, so a camera near street level is mathematically
+//      INSIDE it. From inside a sphere, Three.js's Ray.intersectSphere
+//      returns the far exit point ~12,700 km away through the opposite
+//      side of the planet, which then poisons orbit/zoom anchors and any
+//      other "where is the ground here?" query. The geocentric ellipsoid
+//      radius at the camera's latitude keeps the sphere right at local
+//      ground level so a cleanly forward-going ray hits the near side.
+//   3. Returns null if neither hit succeeds (terrain miss + ray going
+//      away from the local ground, e.g. looking up at the sky).
+//
+// Returns {point, isTerrain} or null. point is a freshly allocated
+// Vector3 the caller can keep.
+export function raycastLocalGround(raycaster) {
+    if (NodeMan.exists("TerrainModel")) {
+        const terrainNode = NodeMan.get("TerrainModel");
+        const hit = terrainNode.getClosestIntersect(raycaster);
+        if (hit) {
+            return {point: hit.point.clone(), isTerrain: true};
+        }
+    }
+
+    const o = raycaster.ray.origin;
+    const camLen = o.length();
+    if (camLen < 1) return null;
+
+    const sinLat = o.z / camLen;
+    const cosLatSq = 1 - sinLat * sinLat;
+    const a = wgs84.RADIUS;
+    const b = wgs84.POLAR_RADIUS;
+    const groundRadius = 1 / Math.sqrt(cosLatSq / (a * a) + (sinLat * sinLat) / (b * b));
+
+    const d = raycaster.ray.direction;
+    const B = o.dot(d);
+    const C = camLen * camLen - groundRadius * groundRadius;
+    const disc = B * B - C;
+    if (disc < 0) return null;
+
+    // Only the near root is meaningful. The far root is the exit on the
+    // opposite side of the planet — never a valid ground anchor.
+    const t0 = -B - Math.sqrt(disc);
+    if (t0 <= 0) return null;
+
+    return {
+        point: new Vector3(o.x + d.x * t0, o.y + d.y * t0, o.z + d.z * t0),
+        isTerrain: false,
+    };
+}

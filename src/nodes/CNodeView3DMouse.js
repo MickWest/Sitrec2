@@ -41,6 +41,7 @@ import {t} from "../i18n";
 import {raDec2Celestial} from "../CelestialMath";
 import {applyRefractionECI, refractionUniforms, refractionOptsFromUniforms} from "../atmosphere/refraction";
 import {findRootTrack} from "../FindRootTrack";
+import {raycastLocalGround} from "../raycastGround";
 // NOTE: ChangedPR / UIChangedAz intentionally NOT imported. They are used only
 // inside the legacy "GIMBAL SPECIFIC, NOT USED" dragMode>0 code path below.
 // Importing from ../JetStuff creates a circular dependency
@@ -57,24 +58,9 @@ export const mouseMethods = {
     _refreshCursorFromMouse(mouseRay, options = {}) {
         this.raycaster.setFromCamera(mouseRay, this.camera);
 
-        let target;
-        let targetIsTerrain = false;
-
-        if (NodeMan.exists("TerrainModel")) {
-            const terrainNode = NodeMan.get("TerrainModel");
-            const firstIntersect = terrainNode.getClosestIntersect(this.raycaster);
-            if (firstIntersect) {
-                target = firstIntersect.point.clone();
-                targetIsTerrain = true;
-            }
-        }
-        if (target === undefined) {
-            const possibleTarget = V3();
-            const dragSphere = new Sphere(earthCenterECEF(), Globals.equatorRadius);
-            if (this.raycaster.ray.intersectSphere(dragSphere, possibleTarget)) {
-                target = possibleTarget.clone();
-            }
-        }
+        const hit = raycastLocalGround(this.raycaster);
+        let target = hit?.point;
+        let targetIsTerrain = hit?.isTerrain ?? false;
 
         const focusTrackActive = options.focusTrackActive
             ?? (this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName));

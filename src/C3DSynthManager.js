@@ -13,6 +13,7 @@ import {earthCenterECEF, getLocalUpVector} from "./SphericalMath";
 import {Sphere, Vector3} from "three";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {f2m} from "./utils";
+import {raycastLocalGround} from "./raycastGround";
 
 export class C3DSynthManager extends CManager {
     constructor() {
@@ -160,38 +161,9 @@ export class C3DSynthManager extends CManager {
      * Get ground intersection point from mouse position
      */
     getGroundPoint(view, mouseX, mouseY) {
-        // Convert screen coordinates to NDC for raycasting
         const mouseRay = screenToNDC(view, mouseX, mouseY);
-
         view.raycaster.setFromCamera(mouseRay, view.camera);
-        
-        // Try to intersect with terrain first
-        let closestPoint = V3();
-        let found = false;
-        
-        if (NodeMan.exists("TerrainModel")) {
-            const terrainNode = NodeMan.get("TerrainModel");
-            const firstIntersect = terrainNode.getClosestIntersect(view.raycaster);
-            if (firstIntersect) {
-                closestPoint.copy(firstIntersect.point);
-                found = true;
-            }
-        }
-        
-        // If terrain intersection found, return it
-        if (found) {
-            return closestPoint.clone();
-        }
-        
-        // Fallback: intersect with ellipsoid ground approximation
-        const groundSphere = new Sphere(earthCenterECEF(), Globals.equatorRadius);
-        const intersectPoint = new Vector3();
-        
-        if (view.raycaster.ray.intersectSphere(groundSphere, intersectPoint)) {
-            return intersectPoint;
-        }
-        
-        return null;
+        return raycastLocalGround(view.raycaster)?.point ?? null;
     }
     
     /**

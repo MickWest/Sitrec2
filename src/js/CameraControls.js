@@ -23,6 +23,7 @@ import {getCursorPositionFromTopView, getTopViewWithCursor, onDocumentMouseMove}
 import {isKeyHeld} from "../KeyBoardHandler";
 import {isLocal} from "../configUtils"
 import {mouseInViewOnly, mouseToNDC, mouseToView} from "../ViewUtils";
+import {raycastLocalGround} from "../raycastGround";
 import {CNodeMeasureAB} from "../nodes/CNodeLabels3D";
 import {CNodePositionXYZ} from "../nodes/CNodePositionLLA";
 import {GlobalScene} from "../LocalFrame";
@@ -538,33 +539,10 @@ class CameraMapControls {
 		// Set up raycaster from camera
 		this.view.raycaster.setFromCamera(mouseRay, this.camera);
 
-		let found = false;
-		let targetPoint = null;
-
-		// Try terrain intersection first
-		if (NodeMan.exists("TerrainModel")) {
-			const terrainNode = NodeMan.get("TerrainModel");
-			const firstIntersect = terrainNode.getClosestIntersect(this.view.raycaster);
-			if (firstIntersect) {
-				targetPoint = firstIntersect.point.clone();
-				this.targetIsTerrain = true;
-				found = true;
-			}
-		}
-
-		// Fall back to globe sphere intersection
-		if (!found) {
-			const possibleTarget = new Vector3();
-			const dragSphere = new Sphere(earthCenterECEF(), Globals.equatorRadius);
-			if (this.view.raycaster.ray.intersectSphere(dragSphere, possibleTarget)) {
-				targetPoint = possibleTarget.clone();
-				this.targetIsTerrain = false;
-				found = true;
-			}
-		}
-
-		if (found && targetPoint) {
-			this.target = targetPoint;
+		const hit = raycastLocalGround(this.view.raycaster);
+		if (hit) {
+			this.target = hit.point;
+			this.targetIsTerrain = hit.isTerrain;
 		}
 	}
 

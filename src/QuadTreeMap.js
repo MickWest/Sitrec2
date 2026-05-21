@@ -683,14 +683,26 @@ export class QuadTreeMap {
                 for (const child of tile.children) {
                     if (!child) continue;
                     if ((child.tileLayers & tileLayers) !== 0) continue;
-                    // Skip z<3 children: calculateTileVisibility force-returns
-                    // visible=true for tile.z<3 (SSE=infinity to keep root
-                    // tiles loaded as fallback for lazy resampling), so an
+                    // Texture-only: skip z<3 children. calculateTileVisibility
+                    // force-returns visible=true with SSE=infinity for z<3
+                    // ONLY when constructor.name === 'QuadTreeMapTexture' (see
+                    // the force-root block in calculateTileVisibility), to
+                    // keep root tiles loaded as a resample fallback. An
                     // unconditional activation here would re-activate z=0/1/2
-                    // every frame. They were intentionally deactivated by
-                    // deactivateParentsWithLoadedChildren once their
-                    // descendants covered the world — we keep them that way.
-                    if (child.z < 3) continue;
+                    // every frame for texture maps; deactivateParentsWithLoadedChildren
+                    // already intentionally deactivates them once descendants
+                    // cover the world.
+                    //
+                    // Elevation maps get NO such force-root, so applying this
+                    // skip to them would strand mainView at z=0 whenever
+                    // another view (e.g. lookView) created the z=1/2 children
+                    // first — mainView's surgical reactivation here is the
+                    // only way it can claim those children, and once skipped
+                    // it has no other path to refine past them. That produced
+                    // the "phantom +310 m ground at lat 34" bug when lookView
+                    // had a 120° FOV that depressed its SSE below the
+                    // subdivision threshold past z=1.
+                    if (isTextureMap && child.z < 3) continue;
                     const childVis = this.calculateTileVisibility(child, camera, _v5Options, null);
                     if (!childVis.visible) continue;
                     // INVARIANT 1: don't reactivate a tile that already has
