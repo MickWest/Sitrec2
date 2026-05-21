@@ -81,15 +81,16 @@ varying vec3 vLocalPositionDN;
 varying vec2 vDNUv;`
         );
 
-        const vertexInjectionAfterWorldPos =
-            `vWorldPositionDN = worldPosition.xyz;
-vLocalPositionDN = transformed;
-vBarycentric = barycentric;
-vDNUv = uv;`;
-
-        const vertexInjectionFallback =
-            `vWorldPositionDN = (modelMatrix * vec4(transformed, 1.0)).xyz;
-vLocalPositionDN = transformed;
+        const vertexInjection =
+            `vec4 sitrecLocalPositionDN = vec4(transformed, 1.0);
+#ifdef USE_BATCHING
+sitrecLocalPositionDN = batchingMatrix * sitrecLocalPositionDN;
+#endif
+#ifdef USE_INSTANCING
+sitrecLocalPositionDN = instanceMatrix * sitrecLocalPositionDN;
+#endif
+vWorldPositionDN = (modelMatrix * sitrecLocalPositionDN).xyz;
+vLocalPositionDN = sitrecLocalPositionDN.xyz;
 vBarycentric = barycentric;
 vDNUv = uv;`;
 
@@ -97,13 +98,13 @@ vDNUv = uv;`;
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <worldpos_vertex>',
                 `#include <worldpos_vertex>
-${vertexInjectionAfterWorldPos}`
+${vertexInjection}`
             );
         } else {
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <project_vertex>',
                 `#include <project_vertex>
-${vertexInjectionFallback}`
+${vertexInjection}`
             );
         }
 
