@@ -236,6 +236,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         this._atmosphereBlueZenith = new Color(0.28, 0.62, 1.0);
         this._atmosphereHazeColorSRGB = new Color(this.background);
         this._atmosphereHazeColorLinear = new Color(this.background);
+        this._aerialPerspectiveSkyColor = new Color(this.background);
         this._sunDirScratch = new Vector3();
         this._scratchVec = new Vector3();
 
@@ -1064,7 +1065,7 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     get effectiveSkyGradient() {
-        if (!this.skyGradient) return false;
+        if (!this.skyGradient && !this.atmosphereHaze) return false;
         if (!this.atmosphereEnabled) return false;
         if (Globals.isMobile && !this.allowMobileSkyGradient) return false;
         if (this.id !== "lookView") return false;
@@ -1072,6 +1073,85 @@ export class CNodeView3D extends CNodeViewCanvas {
         if (this.isXRPresenting()) return false;
         if (GlobalDaySkyScene !== undefined) return false;
         return true;
+    }
+
+    get effectiveAerialPerspective() {
+        if (!this.atmosphereHaze && !this.skyGradient) return false;
+        if (!this.atmosphereEnabled) return false;
+        if (this.id !== "lookView") return false;
+        if (this.isIR) return false;
+        if (this.isXRPresenting()) return false;
+        if (GlobalDaySkyScene !== undefined) return false;
+        return true;
+    }
+
+    populateAtmosphereRayUniforms(uniforms, {linear = false} = {}) {
+        const sunNode = NodeMan.get("theSun", false);
+        const visT = Math.max(0, Math.min(1, (50 - this.atmosphereVisibilityKm) / 45));
+        const blueBoost = 0.35 + 0.25 * visT;
+        let skyColor = this.getAtmosphereSkyColor();
+        this._atmosphereZenithColor.copy(skyColor).lerp(this._atmosphereBlueZenith, blueBoost);
+
+        const assignColor = (uniform, color) => {
+            uniform.value.copy(color);
+            if (linear) uniform.value.convertSRGBToLinear();
+        };
+        assignColor(uniforms.zenithColor, this._atmosphereZenithColor);
+
+        const haze = sunNode?.calculateHazeColors
+            ? sunNode.calculateHazeColors(this.camera.position, undefined, {
+                visibilityKm: this.atmosphereVisibilityKm,
+                sunAngle: Globals.sunAngle,
+            })
+            : null;
+        if (haze) {
+            assignColor(uniforms.coolHorizon, haze.cool);
+            assignColor(uniforms.warmHorizon, haze.warm);
+            uniforms.warmStrength.value = haze.warmStrength;
+        } else {
+            this._aerialPerspectiveSkyColor.copy(this.getAtmosphereHazeColorSRGB());
+            assignColor(uniforms.coolHorizon, this._aerialPerspectiveSkyColor);
+            assignColor(uniforms.warmHorizon, this._aerialPerspectiveSkyColor);
+            uniforms.warmStrength.value = 0;
+        }
+
+        const e = this.camera.matrixWorld.elements;
+        uniforms.cameraWorldX.value.set(e[0], e[1], e[2]).normalize();
+        uniforms.cameraWorldY.value.set(e[4], e[5], e[6]).normalize();
+        uniforms.cameraWorldZ.value.set(e[8], e[9], e[10]).normalize();
+
+        const cameraWorldPosition = this._scratchVec.setFromMatrixPosition(this.camera.matrixWorld);
+        const upWorld = getLocalUpVector(cameraWorldPosition).normalize();
+        uniforms.upWorld.value.copy(upWorld);
+        uniforms.upCamera.value.set(
+            upWorld.dot(uniforms.cameraWorldX.value),
+            upWorld.dot(uniforms.cameraWorldY.value),
+            upWorld.dot(uniforms.cameraWorldZ.value),
+        ).normalize();
+
+        uniforms.cameraTanHalfFov.value = Math.tan(this.camera.fov * Math.PI / 360);
+        uniforms.cameraAspect.value = this.camera.aspect;
+        const cameraLLA = ECEFToLLAVD_radii(cameraWorldPosition);
+        const cameraAltM = Math.max(cameraLLA.z, 0);
+        uniforms.horizonDip.value = Math.min(Math.sqrt(2 * cameraAltM / wgs84.RADIUS), 0.08);
+        uniforms.horizonHazeBand.value = 0.015 + 0.04 * visT;
+        if (uniforms.cameraAltitudeM) {
+            uniforms.cameraAltitudeM.value = cameraAltM;
+        }
+
+        const sunPos = Globals.sunLight?.position;
+        if (sunPos) {
+            const sunDirWorld = this._sunDirScratch.copy(sunPos).sub(cameraWorldPosition).normalize();
+            this._scratchVec.copy(upWorld).multiplyScalar(sunDirWorld.dot(upWorld));
+            const horiz = uniforms.sunDirHoriz.value.copy(sunDirWorld).sub(this._scratchVec);
+            if (horiz.lengthSq() > 1e-8) {
+                horiz.normalize();
+            } else {
+                horiz.set(1, 0, 0);
+            }
+        } else {
+            uniforms.sunDirHoriz.value.set(1, 0, 0);
+        }
     }
 
     // V5 shadows: effective gate. Requires BOTH the lighting master and
@@ -1445,6 +1525,10 @@ export class CNodeView3D extends CNodeViewCanvas {
 
     pushLookViewAtmosphereFog() {
         if (this.id !== "lookView" || !this.atmosphereEnabled || !this.scene) {
+            return null;
+        }
+
+        if (this.effectiveAerialPerspective) {
             return null;
         }
 
@@ -1929,7 +2013,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 if (rtWidth !== this.lastRenderTargetWidth || rtHeight !== this.lastRenderTargetHeight) {
 
                     this.renderTargetAntiAliased.setSize(rtWidth, rtHeight);
-                    if (this.effectsEnabled || this.useLookViewHDR) {
+                    if (this.effectsEnabled || this.useLookViewHDR || this.effectiveAerialPerspective) {
                         this.renderTargetA.setSize(rtWidth, rtHeight);
                         this.renderTargetB.setSize(rtWidth, rtHeight);
                     }
@@ -1944,9 +2028,13 @@ export class CNodeView3D extends CNodeViewCanvas {
                     }
                 }
 
-                currentRenderTarget = this.renderTargetAntiAliased;
+                currentRenderTarget = this.effectiveAerialPerspective ? this.renderTargetA : this.renderTargetAntiAliased;
                 this.renderer.setRenderTarget(currentRenderTarget);
                 const useAtmosphereHDR = this.useLookViewHDR && this.atmosphereEnabled && this.atmosphereHDR && this.hdrToneMappingPass !== null;
+                if (!this.effectiveAerialPerspective && this._aerialPerspectiveWasActive) {
+                    this.disposeAerialPerspectiveResources();
+                }
+                this._aerialPerspectiveWasActive = this.effectiveAerialPerspective;
 
                 // ALWAYS store render target height for use right before rendering
                 // Must be set every frame, not just on resize, or it will have stale values
@@ -2253,6 +2341,30 @@ export class CNodeView3D extends CNodeViewCanvas {
                     }
                 }
 
+                if (this.effectiveAerialPerspective) {
+                    if (globalProfiler) globalProfiler.push('#8dd3c7', 'aerialPerspective');
+
+                    const betaExtinction = 3.912 / Math.max(1000, this.atmosphereVisibilityKm * 1000);
+                    const distanceScale = Math.min(1000000, 12.0 / betaExtinction);
+                    const depthTarget = this.renderAerialPerspectiveDepth(rtWidth, rtHeight, distanceScale);
+                    const aerialPass = this._ensureAerialPerspectiveMaterial();
+                    const u = aerialPass.uniforms;
+                    this.populateAtmosphereRayUniforms(u, {linear: true});
+                    u.tDiffuse.value = currentRenderTarget.texture;
+                    u.tDistance.value = depthTarget.texture;
+                    u.distanceScale.value = distanceScale;
+                    u.visibilityKm.value = this.atmosphereVisibilityKm;
+                    u.betaExtinction.value = betaExtinction;
+
+                    const aerialTarget = currentRenderTarget === this.renderTargetA ? this.renderTargetB : this.renderTargetA;
+                    this.renderer.setRenderTarget(aerialTarget);
+                    this.fullscreenQuad.material = aerialPass;
+                    this.renderer.render(this.fullscreenQuad, this.fullscreenQuadCamera);
+                    currentRenderTarget = aerialTarget;
+
+                    if (globalProfiler) globalProfiler.pop();
+                }
+
                 if (this.effectsEnabled) {
 
                     // Profile: Effects passes
@@ -2479,6 +2591,243 @@ export class CNodeView3D extends CNodeViewCanvas {
         return this.skyGradientMaterial;
     }
 
+    _ensureAerialPerspectiveMaterial() {
+        if (this.aerialPerspectiveMaterial !== undefined && this.aerialPerspectiveMaterial !== null) {
+            return this.aerialPerspectiveMaterial;
+        }
+
+        this.aerialPerspectiveMaterial = new ShaderMaterial({
+            uniforms: {
+                tDiffuse: {value: null},
+                tDistance: {value: null},
+                zenithColor: {value: new Color(0, 0, 0)},
+                coolHorizon: {value: new Color(0, 0, 0)},
+                warmHorizon: {value: new Color(0, 0, 0)},
+                warmStrength: {value: 0.0},
+                cameraWorldX: {value: new Vector3(1, 0, 0)},
+                cameraWorldY: {value: new Vector3(0, 1, 0)},
+                cameraWorldZ: {value: new Vector3(0, 0, 1)},
+                upCamera: {value: new Vector3(0, 1, 0)},
+                upWorld: {value: new Vector3(0, 1, 0)},
+                sunDirHoriz: {value: new Vector3(1, 0, 0)},
+                cameraAltitudeM: {value: 0.0},
+                distanceScale: {value: 200000.0},
+                cameraTanHalfFov: {value: 1.0},
+                cameraAspect: {value: 1.0},
+                horizonDip: {value: 0.0},
+                horizonHazeBand: {value: 0.03},
+                horizonElevationScale: {value: 12.0},
+                betaExtinction: {value: 0.00005},
+                visibilityKm: {value: 50.0},
+                maxOpticalDepth: {value: 12.0},
+                ditherStrength: {value: 1.0 / 255.0},
+            },
+            vertexShader: /* glsl */`
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = vec4(position, 1.0);
+            }
+        `,
+            fragmentShader: /* glsl */`
+            uniform sampler2D tDiffuse;
+            uniform sampler2D tDistance;
+            uniform vec3 zenithColor;
+            uniform vec3 coolHorizon;
+            uniform vec3 warmHorizon;
+            uniform float warmStrength;
+            uniform vec3 cameraWorldX;
+            uniform vec3 cameraWorldY;
+            uniform vec3 cameraWorldZ;
+            uniform vec3 upCamera;
+            uniform vec3 upWorld;
+            uniform vec3 sunDirHoriz;
+            uniform float cameraAltitudeM;
+            uniform float distanceScale;
+            uniform float cameraTanHalfFov;
+            uniform float cameraAspect;
+            uniform float horizonDip;
+            uniform float horizonHazeBand;
+            uniform float horizonElevationScale;
+            uniform float betaExtinction;
+            uniform float visibilityKm;
+            uniform float maxOpticalDepth;
+            uniform float ditherStrength;
+            varying vec2 vUv;
+
+            float hashDither(vec2 p) {
+                float h = fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+                return h - 0.5;
+            }
+
+            vec3 viewDirection(out vec3 dirCamera) {
+                vec2 ndc = vUv * 2.0 - 1.0;
+                dirCamera = normalize(vec3(
+                    ndc.x * cameraAspect * cameraTanHalfFov,
+                    ndc.y * cameraTanHalfFov,
+                    -1.0
+                ));
+                return normalize(
+                    cameraWorldX * dirCamera.x +
+                    cameraWorldY * dirCamera.y +
+                    cameraWorldZ * dirCamera.z
+                );
+            }
+
+            vec3 atmosphereSkyRadiance(vec3 dir, vec3 dirCamera) {
+                float upDot = dot(dirCamera, upCamera);
+                float horizonDistance = upDot + horizonDip;
+                float h = clamp((horizonDistance - horizonHazeBand) * horizonElevationScale, 0.0, 1.0);
+                float t = smoothstep(0.0, 1.0, h);
+
+                vec3 horizProj = dir - upWorld * dot(dir, upWorld);
+                float horizLen = length(horizProj);
+                vec3 horizonColor;
+                if (horizLen > 1e-4) {
+                    vec3 dirHoriz = horizProj / horizLen;
+                    float sunAlignment = clamp(dot(dirHoriz, sunDirHoriz), 0.0, 1.0);
+                    horizonColor = mix(coolHorizon, warmHorizon, sunAlignment * warmStrength);
+                } else {
+                    horizonColor = coolHorizon;
+                }
+
+                return mix(horizonColor, zenithColor, t);
+            }
+
+            float earthSurfaceRayDistance(vec3 dir) {
+                float upDot = dot(dir, upWorld);
+                float radius = 6378137.0;
+                float observerRadius = radius + max(cameraAltitudeM, 0.0);
+                float b = observerRadius * upDot;
+                float c = observerRadius * observerRadius - radius * radius;
+                float disc = b * b - c;
+
+                if (disc >= 0.0) {
+                    float t = -b - sqrt(disc);
+                    if (t > 0.0) return t;
+                }
+
+                float horizonDistance = sqrt(max(observerRadius * observerRadius - radius * radius, 0.0));
+                return horizonDistance;
+            }
+
+            void main() {
+                vec3 dirCamera;
+                vec3 dir = viewDirection(dirCamera);
+                vec3 sky = atmosphereSkyRadiance(dir, dirCamera);
+                vec4 scene = texture2D(tDiffuse, vUv);
+
+                float distanceNorm = texture2D(tDistance, vUv).r;
+                float rayMeters = distanceNorm * distanceScale;
+                float analyticGroundMeters = earthSurfaceRayDistance(dir);
+
+                // Terrain/3D tile override materials can under-report distance
+                // when their production shaders apply custom positioning. Near
+                // the horizon, use the line-of-sight air mass to the Earth
+                // surface/horizon as a conservative lower bound for terrain haze.
+                float horizonWeight = 1.0 - smoothstep(0.03, 0.25, abs(dot(dir, upWorld)));
+                rayMeters = mix(rayMeters, max(rayMeters, analyticGroundMeters), horizonWeight);
+
+                float tau = min(betaExtinction * rayMeters, maxOpticalDepth);
+                float transmittance = exp(-tau);
+
+                vec3 color = scene.rgb * transmittance + sky * (1.0 - transmittance);
+                color += vec3(hashDither(gl_FragCoord.xy) * ditherStrength);
+                color = clamp(color, vec3(0.0), vec3(1.0));
+                gl_FragColor = vec4(color, scene.a);
+            }
+        `,
+            depthTest: false,
+            depthWrite: false
+        });
+
+        return this.aerialPerspectiveMaterial;
+    }
+
+    _ensureAerialPerspectiveDepthResources(width, height) {
+        if (!this.aerialPerspectiveDepthTarget) {
+            this.aerialPerspectiveDepthTarget = new WebGLRenderTarget(width, height, {
+                minFilter: NearestFilter,
+                magFilter: NearestFilter,
+                format: RGBAFormat,
+                type: this.useLookViewHDR ? HalfFloatType : UnsignedByteType,
+                depthBuffer: true,
+                colorSpace: LinearSRGBColorSpace,
+            });
+        } else if (
+            this.aerialPerspectiveDepthTarget.width !== width ||
+            this.aerialPerspectiveDepthTarget.height !== height
+        ) {
+            this.aerialPerspectiveDepthTarget.setSize(width, height);
+        }
+
+        if (!this.aerialPerspectiveDepthMaterial) {
+            this.aerialPerspectiveDepthMaterial = new ShaderMaterial({
+                uniforms: {
+                    distanceScale: {value: 200000.0},
+                },
+                vertexShader: /* glsl */`
+                    uniform float distanceScale;
+                    varying float vDistanceNorm;
+
+                    void main() {
+                        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                        vDistanceNorm = clamp(length(mvPosition.xyz) / distanceScale, 0.0, 1.0);
+                        gl_Position = projectionMatrix * mvPosition;
+                    }
+                `,
+                fragmentShader: /* glsl */`
+                    varying float vDistanceNorm;
+
+                    void main() {
+                        gl_FragColor = vec4(vDistanceNorm, 0.0, 0.0, 1.0);
+                    }
+                `,
+            });
+        }
+
+        return this.aerialPerspectiveDepthTarget;
+    }
+
+    renderAerialPerspectiveDepth(width, height, distanceScale) {
+        const depthTarget = this._ensureAerialPerspectiveDepthResources(width, height);
+        const previousOverride = GlobalScene.overrideMaterial;
+        const previousAutoClear = this.renderer.autoClear;
+        const previousClearColor = this._aerialPerspectiveSkyColor.copy(this.renderer.getClearColor(this._aerialPerspectiveSkyColor));
+        const previousClearAlpha = this.renderer.getClearAlpha();
+
+        this.aerialPerspectiveDepthMaterial.uniforms.distanceScale.value = distanceScale;
+        GlobalScene.overrideMaterial = this.aerialPerspectiveDepthMaterial;
+        this.renderer.autoClear = true;
+        this.renderer.setRenderTarget(depthTarget);
+        this.renderer.setClearColor(0xffffff, 1);
+        this.renderer.clear(true, true, true);
+        try {
+            this.renderer.render(GlobalScene, this.camera);
+        } finally {
+            GlobalScene.overrideMaterial = previousOverride;
+            this.renderer.autoClear = previousAutoClear;
+            this.renderer.setClearColor(previousClearColor, previousClearAlpha);
+        }
+
+        return depthTarget;
+    }
+
+    disposeAerialPerspectiveResources() {
+        if (this.aerialPerspectiveMaterial) {
+            this.aerialPerspectiveMaterial.dispose();
+            this.aerialPerspectiveMaterial = null;
+        }
+        if (this.aerialPerspectiveDepthMaterial) {
+            this.aerialPerspectiveDepthMaterial.dispose();
+            this.aerialPerspectiveDepthMaterial = null;
+        }
+        if (this.aerialPerspectiveDepthTarget) {
+            this.aerialPerspectiveDepthTarget.dispose();
+            this.aerialPerspectiveDepthTarget = null;
+        }
+    }
+
     updateSkyUniforms(skyColor, skyOpacity) {
         //     console.log("updateSkyUniforms: skyColor = "+skyColor+" skyOpacity = "+skyOpacity)
         this.skyFlatMaterial.uniforms.color.value = skyColor;
@@ -2578,60 +2927,8 @@ export class CNodeView3D extends CNodeViewCanvas {
 
                 if (useGradient) {
                     const u = skyMat.uniforms;
-                    const visT = Math.max(0, Math.min(1, (50 - this.atmosphereVisibilityKm) / 45));
-                    const blueBoost = 0.35 + 0.25 * visT;
-                    this._atmosphereZenithColor.copy(skyColor).lerp(this._atmosphereBlueZenith, blueBoost);
-                    u.zenithColor.value.copy(this._atmosphereZenithColor);
-
-                    const sunNode = NodeMan.get("theSun", false);
-                    const haze = sunNode?.calculateHazeColors
-                        ? sunNode.calculateHazeColors(this.camera.position, undefined, {
-                            visibilityKm: this.atmosphereVisibilityKm,
-                            sunAngle: Globals.sunAngle,
-                        })
-                        : null;
-                    if (haze) {
-                        u.coolHorizon.value.copy(haze.cool);
-                        u.warmHorizon.value.copy(haze.warm);
-                        u.warmStrength.value = haze.warmStrength;
-                    } else {
-                        u.coolHorizon.value.copy(this.getAtmosphereHazeColorSRGB());
-                        u.warmHorizon.value.copy(u.coolHorizon.value);
-                        u.warmStrength.value = 0;
-                    }
+                    this.populateAtmosphereRayUniforms(u);
                     u.opacity.value = skyOpacity;
-
-                    const e = this.camera.matrixWorld.elements;
-                    u.cameraWorldX.value.set(e[0], e[1], e[2]).normalize();
-                    u.cameraWorldY.value.set(e[4], e[5], e[6]).normalize();
-                    u.cameraWorldZ.value.set(e[8], e[9], e[10]).normalize();
-                    u.cameraWorldPosition.value.setFromMatrixPosition(this.camera.matrixWorld);
-                    u.upWorld.value.copy(getLocalUpVector(u.cameraWorldPosition.value)).normalize();
-                    u.upCamera.value.set(
-                        u.upWorld.value.dot(u.cameraWorldX.value),
-                        u.upWorld.value.dot(u.cameraWorldY.value),
-                        u.upWorld.value.dot(u.cameraWorldZ.value),
-                    ).normalize();
-                    u.cameraTanHalfFov.value = Math.tan(this.camera.fov * Math.PI / 360);
-                    u.cameraAspect.value = this.camera.aspect;
-                    const cameraLLA = ECEFToLLAVD_radii(u.cameraWorldPosition.value);
-                    const cameraAltM = Math.max(cameraLLA.z, 0);
-                    u.horizonDip.value = Math.min(Math.sqrt(2 * cameraAltM / wgs84.RADIUS), 0.08);
-                    u.horizonHazeBand.value = 0.015 + 0.04 * visT;
-
-                    const sunPos = Globals.sunLight?.position;
-                    if (sunPos) {
-                        const sunDirWorld = this._sunDirScratch.copy(sunPos).sub(u.cameraWorldPosition.value).normalize();
-                        const vertical = this._scratchVec.copy(u.upWorld.value).multiplyScalar(sunDirWorld.dot(u.upWorld.value));
-                        const horiz = u.sunDirHoriz.value.copy(sunDirWorld).sub(vertical);
-                        if (horiz.lengthSq() > 1e-8) {
-                            horiz.normalize();
-                        } else {
-                            horiz.set(1, 0, 0);
-                        }
-                    } else {
-                        u.sunDirHoriz.value.set(1, 0, 0);
-                    }
                 } else {
                     this.updateSkyUniforms(skyColor, skyOpacity);
                 }
@@ -2932,6 +3229,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         this.renderTargetAntiAliased = null;
         this.renderTargetA = null;
         this.renderTargetB = null;
+        this.disposeAerialPerspectiveResources();
     }
 
     // Apply user performance settings (renderScale + msaaSamples) live without
