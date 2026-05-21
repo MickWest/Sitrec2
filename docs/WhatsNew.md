@@ -45,6 +45,26 @@ Example entry format:
 
 ---
 
+## Version 2.57.0 (2026-05-21)
+
+### New Features
+- **3D Buildings: optional per-view cast shadows + building material modes**: independent shadow toggles for `mainView` and `lookView` (Lighting menu → *Shadows in Main View* / *Shadows in Look View*), each with its own `DirectionalLight` and shadow map so the two views render with their own LODs and casters instead of stomping on a shared shadow camera. A new *Shadow tweaks* subfolder exposes shadow map size, shadow radius (50 m – 5000 m), shadow bias, normal bias, and update throttle. *Terrain receives shadows* toggle gates whether the ground darkens under buildings. Buildings get a new *Building Material* dropdown — **Photo** (original Google/OSM textures), **Flat** (single user-picked colour, no textures), and **Half-photo** (blend) — so users can trade photo realism for clean shadow geometry. Default is off and the existing no-shadows render path is unchanged. Synthetic buildings cast shadows alongside Google Photorealistic and Cesium OSM tiles.
+
+### Improvements
+- **Shadow casting works on Google Photorealistic 3D Tiles**: rebuilt the shadow-receiver coordinate path inside `DayNightStandardMaterial` after discovering Three's stock `<shadowmap_vertex>` chunk produced NaN-poisoned shadow coords for Google PR meshes (the photogrammetric BufferGeometry has no `normal` attribute, WebGL defaults it to zero, and `inverseTransformDirection(normalize(0))` propagates NaN through `vDirectionalShadowCoord`). The new Sitrec-owned `vSitrecShadowCoord = directionalShadowMatrix[0] * vec4(vWorldPositionDN, 1.0)` bypasses the broken stock path and samples the directional shadow map directly in the fragment shader.
+- **OSM vs Google PR `shadowSide` split**: OSM building tiles have inconsistent face winding so keep `shadowSide=DoubleSide` to close the base-of-building shadow gap, but Google Photorealistic meshes are consistent and `DoubleSide` actively corrupted their self-shadow reception (back-face depths leaked into the depth map). The flag is now gated on `source === "cesium-osm"`.
+- **Ambient passes through terrain shadows**: `TerrainDayNightMaterial` was attenuating the whole `dayColor` (ambient + direct) by `shadowMask`, so shadowed terrain went pitch-black at ambient=0 and was much darker than building dark sides at higher ambients. Now mirrors `MeshStandardMaterial`'s PBR behaviour — shadow only attenuates the direct-sun contribution, ambient passes through unmodulated — and `terrainShading` (surface-normal modulation) is no longer applied to ambient.
+- **Shadow radius slider re-ranged 50 m – 5000 m**: lower bound dropped from the old default so users can produce super-sharp shadows over a narrow area; upper bound capped from 50 km to 5 km since 50 km frustums produce useless texel density and aren't a realistic configuration. *Use effective ambient for shadow floors* keeps the shadow darkening consistent with the current ambient intensity.
+- **Shadows invalidate when casters or map size change**: changing `shadowMapSize` used to clear the screen until the next camera move (the old shadow render target was disposed but the `_lastShadowStateKey` gate keyed off camera/sun position, not map resolution); now sets `shadow.needsUpdate = true` so the next render reallocates. Shadows also invalidate when casters are added/removed instead of waiting for the throttle.
+- **Bridge improvements**: SitrecBridge tooling updates.
+- **API improvements for synthetic object creation**: cleaner programmatic creation of synthetic objects via the bridge/eval API.
+
+### Bug Fixes
+- **Fixed Google PR building shadow receiver**: photogrammetric ground tiles now correctly receive cast shadows from buildings and their own geometry.
+- **3D Tiles stay visible when shadows are off**: the off-by-default render path was unintentionally hiding tile meshes in some configurations; the off invariant is now strictly enforced.
+- **Sun scattering is skipped on the night side**: the atmospheric scattering pass was running on geometry past the terminator and adding an unwanted glow to night-side terrain.
+- **Stabilised shadow receiver coordinates**: floating-point precision issues at ECEF scale were causing micro-jitter on the receiver coord between frames; the receiver coord is now derived consistently from `vWorldPositionDN`.
+
 ## Version 2.56.1 (2026-05-20)
 
 ### Improvements
