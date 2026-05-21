@@ -97,6 +97,7 @@ class PerViewTiles {
         this.renderer.group.layers.mask = layerMask;
 
         // Set layer mask on all tile meshes as they load
+        const useDoubleSideShadow = (source === "cesium-osm");
         this.renderer.addEventListener('load-model', ({scene}) => {
             scene.traverse(child => {
                 if (child.isMesh || child.isLine || child.isPoints) {
@@ -115,7 +116,14 @@ class PerViewTiles {
                         // skips outward-facing roof triangles, creating a gap
                         // between the building base and the cast shadow.
                         // DoubleSide makes both sides cast.
-                        if (child.material) {
+                        //
+                        // Google Photorealistic tiles are photogrammetric
+                        // meshes with consistent winding — they DON'T need
+                        // DoubleSide, and applying it actually breaks self-
+                        // shadow reception (the back-face depths corrupt the
+                        // depth map for ground triangles in a building's
+                        // shadow). Use shadowSide=DoubleSide ONLY for OSM.
+                        if (useDoubleSideShadow && child.material) {
                             if (Array.isArray(child.material)) {
                                 for (const m of child.material) m.shadowSide = DoubleSide;
                             } else {
@@ -256,6 +264,7 @@ export class CNodeBuildings3DTiles extends CNode {
         if (!Globals.shadowsEnabled && !this._didEverEnableShadows) return;
         if (Globals.shadowsEnabled) this._didEverEnableShadows = true;
         const want = Globals.shadowsEnabled;
+        const useDoubleSideShadow = (this._activeSource === "cesium-osm");
         for (const pv of Object.values(this._perView)) {
             if (!pv.renderer || typeof pv.renderer.forEachLoadedModel !== "function") continue;
             pv.renderer.forEachLoadedModel(scene => {
@@ -263,11 +272,19 @@ export class CNodeBuildings3DTiles extends CNode {
                     if (child.isMesh) {
                         child.castShadow = want;
                         child.receiveShadow = want;
-                        if (want && child.material) {
+                        if (want && useDoubleSideShadow && child.material) {
                             if (Array.isArray(child.material)) {
                                 for (const m of child.material) m.shadowSide = DoubleSide;
                             } else {
                                 child.material.shadowSide = DoubleSide;
+                            }
+                        } else if (want && !useDoubleSideShadow && child.material) {
+                            // Clear DoubleSide if we previously had it (e.g.
+                            // after source switch from OSM to Google).
+                            if (Array.isArray(child.material)) {
+                                for (const m of child.material) m.shadowSide = null;
+                            } else {
+                                child.material.shadowSide = null;
                             }
                         }
                     } else if (child.isLine || child.isPoints) {
