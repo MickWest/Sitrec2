@@ -2,7 +2,7 @@ import {MeshStandardMaterial, Vector3} from "three";
 import {sharedUniforms} from "./SharedUniforms";
 import {Globals} from "../../../Globals";
 
-const CACHE_KEY = "DayNightStandardMaterial";
+const CACHE_KEY = "DayNightStandardMaterial.v5sitrecshadow";
 
 // MeshStandardMaterial subclass that uses the PBR pipeline for textures,
 // vertex colors, and normal-based shading from the scene's sun directional
@@ -41,19 +41,39 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
         Object.assign(shader.uniforms, this._dayNightUniforms);
 
         // --- Vertex shader: pass world position and barycentric coords ---
+        // V5 shadows: Three's stock <shadowmap_vertex> uses a `worldPosition`
+        // local that comes out near tile-local origin for Google
+        // Photorealistic 3D Tiles (likely a TilesRenderer or fade-wrap
+        // interaction that shifts what gets fed to <worldpos_vertex>). The
+        // resulting vDirectionalShadowCoord is dominated by the matrix
+        // translation column, lands far outside [0,1], and getShadowMask()
+        // returns 1.0 unconditionally — no visible shadow reception.
+        //
+        // Fix: compute our OWN shadow receiver coord from the
+        // verified-good ECEF position (vWorldPositionDN, computed via
+        // modelMatrix * transformed below) and sample the shadow map from
+        // that in the fragment shader, bypassing Three's broken stock path.
         shader.vertexShader = shader.vertexShader.replace(
             '#include <common>',
             `#include <common>
 attribute vec3 barycentric;
 varying vec3 vBarycentric;
 varying vec3 vWorldPositionDN;
-varying vec2 vDNUv;`
+varying vec2 vDNUv;
+#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+varying vec4 vSitrecShadowCoord;
+#endif`
         );
 
         const vertexInjection =
             `vWorldPositionDN = (modelMatrix * vec4(transformed, 1.0)).xyz;
 vBarycentric = barycentric;
-vDNUv = uv;`;
+vDNUv = uv;
+#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+// Compute receiver coord from the verified-good ECEF world position.
+// directionalShadowMatrix[0] is declared by <shadowmap_pars_vertex>.
+vSitrecShadowCoord = directionalShadowMatrix[ 0 ] * vec4( vWorldPositionDN, 1.0 );
+#endif`;
 
         if (shader.vertexShader.includes('#include <worldpos_vertex>')) {
             shader.vertexShader = shader.vertexShader.replace(
@@ -83,7 +103,10 @@ uniform bool showBuildingEdges;
 uniform bool showTileEdges;
 varying vec3 vWorldPositionDN;
 varying vec3 vBarycentric;
-varying vec2 vDNUv;`
+varying vec2 vDNUv;
+#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+varying vec4 vSitrecShadowCoord;
+#endif`
         );
 
         // After the full PBR pipeline (including dithering), darken fragments
@@ -138,6 +161,36 @@ if (useDayNight) {
     float nightAttenuation = clamp(normalizedAmbient, 0.35, 1.0);
     gl_FragColor.rgb *= mix(nightAttenuation, 1.0, dayFactor);
 }
+// V5 shadows: explicit shadow attenuation using a Sitrec-owned receiver
+// coord. We bypass Three's stock vDirectionalShadowCoord (which lands
+// outside [0,1] for these meshes — see the long comment in the vertex
+// shader above) and sample directly with vSitrecShadowCoord, computed
+// from the verified-good ECEF world position. We also bypass
+// getShadowMask() and getShadow() because both rely on Three's broken
+// coord, and call texture(sampler2DShadow, ...) ourselves with manual
+// frustum + bias handling. This mirrors what TerrainDayNightMaterial
+// does for terrain shadows, but in PBR space for buildings.
+#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+{
+    vec3 sp = vSitrecShadowCoord.xyz / vSitrecShadowCoord.w;
+    float shadowMask = 1.0;
+    if ( sp.x >= 0.0 && sp.x <= 1.0 && sp.y >= 0.0 && sp.y <= 1.0 && sp.z <= 1.0 ) {
+        float bias = directionalLightShadows[ 0 ].shadowBias;
+        // sampler2DShadow comparison: returns 0..1 (PCF-filtered).
+        float cmp = texture( directionalShadowMap[ 0 ], vec3( sp.xy, sp.z + bias ) );
+        shadowMask = mix( 1.0, cmp, directionalLightShadows[ 0 ].shadowIntensity );
+    }
+    // Attenuate toward the ambient floor in shadow, same approach as
+    // TerrainDayNightMaterial: occluded fragments fall to ambient-only
+    // (~ambient/total of full brightness), lit fragments stay at 1.0.
+    // Floor is clamped to 0.35 so even noMainLighting / low-ambient
+    // sitches keep some readability in shadow.
+    float ambient = sunAmbientIntensity;
+    float total = max( sunGlobalTotal, 0.0001 );
+    float shadowFloor = clamp( ambient / total, 0.35, 1.0 );
+    gl_FragColor.rgb *= mix( shadowFloor, 1.0, shadowMask );
+}
+#endif
 if (abs(tileOutputGamma - 1.0) > 0.0001) {
     gl_FragColor.rgb = pow(max(gl_FragColor.rgb, vec3(0.0)), vec3(tileOutputGamma));
 }`
