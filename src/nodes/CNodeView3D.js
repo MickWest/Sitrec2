@@ -756,14 +756,11 @@ export class CNodeView3D extends CNodeViewCanvas {
         if (lightingNode) {
             lightingNode.recalculate(false); // false = not main view for lighting purposes
             
-            // Update sun-related uniforms (use effective values that respect ambientOnly)
-            const effectiveSunIntensity = lightingNode.getEffectiveSunIntensity();
-            const effectiveSunScattering = lightingNode.getEffectiveSunScattering();
-            sharedUniforms.sunGlobalTotal.value =
-                effectiveSunIntensity
-                + effectiveSunIntensity * effectiveSunScattering
-                + lightingNode.ambientIntensity;
-            sharedUniforms.sunAmbientIntensity.value = lightingNode.ambientIntensity;
+            // Update sun-related uniforms. The ambient bucket includes both
+            // fixed ambient and daylight sun scattering, so shadow floors match
+            // the actual light that reaches building backs and shaded terrain.
+            sharedUniforms.sunGlobalTotal.value = lightingNode.getEffectiveSunTotal();
+            sharedUniforms.sunAmbientIntensity.value = lightingNode.getEffectiveAmbientIntensity();
             sharedUniforms.useDayNight.value = !lightingNode.noMainLighting;
         }
         
@@ -1862,15 +1859,11 @@ export class CNodeView3D extends CNodeViewCanvas {
 
 
 
-                // Use effective values that respect ambientOnly flag
-                const effectiveSunIntensity = lightingNode.getEffectiveSunIntensity();
-                const effectiveSunScattering = lightingNode.getEffectiveSunScattering();
-                sharedUniforms.sunGlobalTotal.value =
-                    effectiveSunIntensity
-                    + effectiveSunIntensity * effectiveSunScattering
-                    + lightingNode.ambientIntensity;
-
-                sharedUniforms.sunAmbientIntensity.value = lightingNode.ambientIntensity;
+                // Use effective values that respect ambientOnly. The ambient
+                // bucket includes daylight sun scattering so shader shadow
+                // floors use the same ambient seen by shaded geometry.
+                sharedUniforms.sunGlobalTotal.value = lightingNode.getEffectiveSunTotal();
+                sharedUniforms.sunAmbientIntensity.value = lightingNode.getEffectiveAmbientIntensity();
 
 
                 // update the sun node, which controls the global scene lighting

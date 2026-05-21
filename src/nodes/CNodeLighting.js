@@ -267,6 +267,15 @@ export class CNodeLighting extends CNode {
         return this.ambientOnly ? 0 : this.sunScattering;
     }
 
+    getEffectiveAmbientIntensity() {
+        return this.ambientIntensity
+            + this.getEffectiveSunIntensity() * this.getEffectiveSunScattering();
+    }
+
+    getEffectiveSunTotal() {
+        return this.getEffectiveSunIntensity() + this.getEffectiveAmbientIntensity();
+    }
+
     setIR(on) {
         if (on) {
             Globals.IRAmbientLight.visible = true;

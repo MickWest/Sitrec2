@@ -132,7 +132,8 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 // no shadow casters cover this fragment, getShadowMask()=1.0
                 // so the day color is unchanged. Where covered, the mask drops
                 // toward 0 and darkens ONLY the direct-sun contribution; the
-                // ambient term stays unattenuated so raising Ambient Intensity
+                // ambient term stays unattenuated so raising the effective
+                // ambient (Ambient Intensity plus daylight Sun Scattering)
                 // washes shadows out the same way it washes out building dark
                 // sides (which already do this via PBR).
                 //
