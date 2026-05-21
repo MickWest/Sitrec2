@@ -1,8 +1,8 @@
-import {MeshStandardMaterial, Vector3} from "three";
+import {MeshStandardMaterial, ShaderChunk, Vector3} from "three";
 import {sharedUniforms} from "./SharedUniforms";
 import {Globals} from "../../../Globals";
 
-const CACHE_KEY = "DayNightStandardMaterial.v5sitrecshadow";
+const CACHE_KEY = "DayNightStandardMaterial.v6sitrecdirectshadow";
 
 // MeshStandardMaterial subclass that uses the PBR pipeline for textures,
 // vertex colors, and normal-based shading from the scene's sun directional
@@ -17,11 +17,12 @@ const CACHE_KEY = "DayNightStandardMaterial.v5sitrecshadow";
 export class DayNightStandardMaterial extends MeshStandardMaterial {
 
     constructor(parameters) {
-        const {tileOutputGamma = 1.0, ...materialParameters} = parameters ?? {};
+        const {tileOutputGamma = 1.0, useSitrecShadowCoords = false, ...materialParameters} = parameters ?? {};
         super(materialParameters);
 
         this.flatShading = true;
         this.tileOutputGamma = tileOutputGamma;
+        this.useSitrecShadowCoords = useSitrecShadowCoords;
 
         this._dayNightUniforms = {
             sunDirection: {value: Globals.sunLight.position},
@@ -66,48 +67,44 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
         // photogrammetric mesh, so the road-receives-shadow case is
         // exactly what fails.
         //
-        // Fix: compute our own shadow receiver coord from vWorldPositionDN
-        // (the verified-good ECEF position from modelMatrix * transformed)
-        // and sample the shadow map from that in the fragment shader,
-        // bypassing the NaN-poisoned stock path entirely. Mirrors what
-        // TerrainDayNightMaterial already does for terrain.
+        // Fix: pass a verified-good ECEF world position through to the
+        // fragment shader, then replace Three's directional direct-light
+        // shadow lookup with one that derives its receiver coordinate from
+        // that world position and the fragment normal.
         shader.vertexShader = shader.vertexShader.replace(
             '#include <common>',
             `#include <common>
 attribute vec3 barycentric;
 varying vec3 vBarycentric;
 varying vec3 vWorldPositionDN;
-varying vec2 vDNUv;
-#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
-varying vec4 vSitrecShadowCoord;
-#endif`
+varying vec2 vDNUv;`
         );
 
-        const vertexInjection =
+        const vertexInjectionAfterWorldPos =
+            `vWorldPositionDN = worldPosition.xyz;
+vBarycentric = barycentric;
+vDNUv = uv;`;
+
+        const vertexInjectionFallback =
             `vWorldPositionDN = (modelMatrix * vec4(transformed, 1.0)).xyz;
 vBarycentric = barycentric;
-vDNUv = uv;
-#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
-// Compute receiver coord from the verified-good ECEF world position.
-// directionalShadowMatrix[0] is declared by <shadowmap_pars_vertex>.
-vSitrecShadowCoord = directionalShadowMatrix[ 0 ] * vec4( vWorldPositionDN, 1.0 );
-#endif`;
+vDNUv = uv;`;
 
         if (shader.vertexShader.includes('#include <worldpos_vertex>')) {
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <worldpos_vertex>',
                 `#include <worldpos_vertex>
-${vertexInjection}`
+${vertexInjectionAfterWorldPos}`
             );
         } else {
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <project_vertex>',
                 `#include <project_vertex>
-${vertexInjection}`
+${vertexInjectionFallback}`
             );
         }
 
-        // --- Fragment shader: darken night side ---
+        // --- Fragment shader: darken night side and use Sitrec shadow coords ---
         shader.fragmentShader = shader.fragmentShader.replace(
             '#include <common>',
             `#include <common>
@@ -122,10 +119,26 @@ uniform bool showTileEdges;
 varying vec3 vWorldPositionDN;
 varying vec3 vBarycentric;
 varying vec2 vDNUv;
-#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
-varying vec4 vSitrecShadowCoord;
-#endif`
+${this.useSitrecShadowCoords ? `#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+uniform mat4 directionalShadowMatrix[ NUM_DIR_LIGHT_SHADOWS ];
+#endif` : ``}`
         );
+
+        if (this.useSitrecShadowCoords) {
+            // Google PR tiles can lack vertex normals, making Three's stock
+            // vDirectionalShadowCoord NaN. Replace the include with a patched
+            // copy of the chunk so only direct sunlight is attenuated.
+            const sitrecLightsFragmentBegin = ShaderChunk.lights_fragment_begin.replace(
+                'directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowIntensity, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;',
+                `vec3 sitrecShadowWorldNormal = inverseTransformDirection( normal, viewMatrix );
+			vec4 sitrecShadowCoord = directionalShadowMatrix[ i ] * vec4( vWorldPositionDN + sitrecShadowWorldNormal * directionalLightShadow.shadowNormalBias, 1.0 );
+			directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowIntensity, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, sitrecShadowCoord ) : 1.0;`
+            );
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <lights_fragment_begin>',
+                sitrecLightsFragmentBegin
+            );
+        }
 
         // After the full PBR pipeline (including dithering), darken fragments
         // that are on the night side of the earth based on global position.
@@ -179,37 +192,6 @@ if (useDayNight) {
     float nightAttenuation = clamp(normalizedAmbient, 0.35, 1.0);
     gl_FragColor.rgb *= mix(nightAttenuation, 1.0, dayFactor);
 }
-// V5 shadows: explicit shadow attenuation using a Sitrec-owned receiver
-// coord. We bypass Three's stock vDirectionalShadowCoord (NaN-poisoned
-// because tile geometry lacks the 'normal' attribute — see vertex
-// shader comment above for the full chain) and sample directly with
-// vSitrecShadowCoord, computed from the verified-good ECEF world
-// position. We also bypass getShadowMask() and getShadow() because
-// both rely on Three's NaN coord, and call texture(sampler2DShadow,
-// ...) ourselves with manual frustum + bias handling. This mirrors
-// what TerrainDayNightMaterial does for terrain shadows, but in PBR
-// space for buildings.
-#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
-{
-    vec3 sp = vSitrecShadowCoord.xyz / vSitrecShadowCoord.w;
-    float shadowMask = 1.0;
-    if ( sp.x >= 0.0 && sp.x <= 1.0 && sp.y >= 0.0 && sp.y <= 1.0 && sp.z <= 1.0 ) {
-        float bias = directionalLightShadows[ 0 ].shadowBias;
-        // sampler2DShadow comparison: returns 0..1 (PCF-filtered).
-        float cmp = texture( directionalShadowMap[ 0 ], vec3( sp.xy, sp.z + bias ) );
-        shadowMask = mix( 1.0, cmp, directionalLightShadows[ 0 ].shadowIntensity );
-    }
-    // Attenuate toward the ambient floor in shadow, same approach as
-    // TerrainDayNightMaterial: occluded fragments fall to ambient-only
-    // (~ambient/total of full brightness), lit fragments stay at 1.0.
-    // Floor is clamped to 0.35 so even noMainLighting / low-ambient
-    // sitches keep some readability in shadow.
-    float ambient = sunAmbientIntensity;
-    float total = max( sunGlobalTotal, 0.0001 );
-    float shadowFloor = clamp( ambient / total, 0.35, 1.0 );
-    gl_FragColor.rgb *= mix( shadowFloor, 1.0, shadowMask );
-}
-#endif
 if (abs(tileOutputGamma - 1.0) > 0.0001) {
     gl_FragColor.rgb = pow(max(gl_FragColor.rgb, vec3(0.0)), vec3(tileOutputGamma));
 }`
@@ -227,16 +209,20 @@ if (abs(tileOutputGamma - 1.0) > 0.0001) {
         super.copy(source);
         this.flatShading = true;
         this.setTileOutputGamma(source.tileOutputGamma ?? 1.0);
+        this.useSitrecShadowCoords = source.useSitrecShadowCoords ?? this.useSitrecShadowCoords ?? false;
         this.onBeforeCompile = this._onBeforeCompile.bind(this);
         return this;
     }
 
     customProgramCacheKey() {
-        return CACHE_KEY;
+        return `${CACHE_KEY}.${this.useSitrecShadowCoords ? "sitrec" : "stock"}`;
     }
 
     static fromMaterial(source, options = {}) {
-        const mat = new DayNightStandardMaterial({tileOutputGamma: options.tileOutputGamma ?? 1.0});
+        const mat = new DayNightStandardMaterial({
+            tileOutputGamma: options.tileOutputGamma ?? 1.0,
+            useSitrecShadowCoords: options.useSitrecShadowCoords ?? false,
+        });
 
         if (source.isMeshStandardMaterial) {
             mat.copy(source);

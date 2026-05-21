@@ -39,7 +39,10 @@ export class TilesDayNightPlugin {
                 if (original[ORIGINAL_MATERIAL]) return; // already replaced
 
                 const tileOutputGamma = this.source === "google-photorealistic" ? this.googleTileOutputGamma : 1.0;
-                const replacement = DayNightStandardMaterial.fromMaterial(original, {tileOutputGamma});
+                const replacement = DayNightStandardMaterial.fromMaterial(original, {
+                    tileOutputGamma,
+                    useSitrecShadowCoords: this.source === "google-photorealistic",
+                });
                 if (this.materialMode !== "photo") {
                     this.applyMaterialMode(replacement, original);
                 }
