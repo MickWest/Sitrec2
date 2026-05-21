@@ -5,7 +5,7 @@ import {GlobalDateTimeNode, Globals, NodeMan} from "../Globals";
 import {getCelestialDirection} from "../CelestialMath";
 import {degrees} from "../utils";
 import {altitudeHAE, getLocalUpVector} from "../SphericalMath";
-import {Color, Vector3} from "three";
+import {Color, MathUtils, Vector3} from "three";
 
 // will exist as a singleton node: "theSun"
 export class CNodeSunlight extends CNode {
@@ -127,6 +127,55 @@ export class CNodeSunlight extends CNode {
         const blue = new Vector3(0.53,0.81,0.92)
         blue.multiplyScalar(sunTotal)
         return new Color(blue.x, blue.y, blue.z)
+    }
+
+    calculateHazeColor(position, date, opts = {}, target = new Color()) {
+        const sky = this.calculateSkyColor(position, date);
+        const sunTotal = this.calculateSkyBrightness(position, date);
+        const visKm = Math.max(0.001, opts.visibilityKm ?? 50);
+
+        const t = MathUtils.clamp(
+            (Math.log(visKm) - Math.log(5)) / (Math.log(100) - Math.log(5)),
+            0,
+            1
+        );
+        const desat = 0.95 - 0.65 * t;
+        const lum = 0.70 * sunTotal + 0.15;
+
+        target.setRGB(
+            sky.r * (1 - desat) + lum * desat,
+            sky.g * (1 - desat) + lum * desat,
+            sky.b * (1 - desat) + lum * desat
+        );
+        return target;
+    }
+
+    calculateHazeColors(position, date, opts = {}, out = undefined) {
+        if (out === undefined) {
+            if (!this._hazeOut) {
+                this._hazeOut = {
+                    cool: new Color(),
+                    warm: new Color(),
+                    warmStrength: 0,
+                };
+            }
+            out = this._hazeOut;
+        }
+
+        this.calculateHazeColor(position, date, opts, out.cool);
+
+        const sunAngle = opts.sunAngle ?? Globals.sunAngle ?? 90;
+        const sunTotal = this.calculateSkyBrightness(position, date);
+        if (sunAngle < 12 && sunAngle > -8) {
+            const w = MathUtils.clamp((12 - sunAngle) / 20, 0, 1);
+            const floor = Math.max(sunTotal, 0.15);
+            out.warm.setRGB(1.00 * floor, 0.69 * floor, 0.48 * floor);
+            out.warmStrength = w;
+        } else {
+            out.warm.copy(out.cool);
+            out.warmStrength = 0;
+        }
+        return out;
     }
 
     // this is a simple function to calculate the opacity of the sky
@@ -264,5 +313,3 @@ function brightnessOfSun(angle,dropRegion) {
         return minBrightness + (maxBrightness - minBrightness) * dropOffFactor;
     }
 }
-
-
