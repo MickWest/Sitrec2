@@ -187,12 +187,6 @@ export class CNodeView3D extends CNodeViewCanvas {
                 setRenderOne(true);
             }).tooltip(t("view3d.atmoExposure.tooltip"));
 
-            guiTweaks.add(this, "atmosphereHaze")
-                .name(t("view3d.atmosphereHaze.label", {defaultValue: "Horizon Haze"}))
-                .listen()
-                .onChange(() => setRenderOne(true))
-                .tooltip(t("view3d.atmosphereHaze.tooltip", {defaultValue: "Fog asymptote uses pale horizon color rather than zenith blue"}));
-
             guiTweaks.add(this, "skyGradient")
                 .name(t("view3d.skyGradient.label", {defaultValue: "Sky Gradient"}))
                 .listen()
@@ -1064,10 +1058,14 @@ export class CNodeView3D extends CNodeViewCanvas {
         return this.renderer?.xr?.isPresenting ?? (this.renderer?.xr?.getSession?.() != null);
     }
 
+    get effectiveAtmosphereHaze() {
+        return this.atmosphereEnabled;
+    }
+
     get effectiveSkyGradient() {
-        if (!this.skyGradient && !this.atmosphereHaze) return false;
+        if (!this.skyGradient && !this.effectiveAtmosphereHaze) return false;
         if (!this.atmosphereEnabled) return false;
-        if (Globals.isMobile && !this.allowMobileSkyGradient) return false;
+        if (Globals.isMobile && !this.effectiveAtmosphereHaze && !this.allowMobileSkyGradient) return false;
         if (this.id !== "lookView") return false;
         if (this.isIR) return false;
         if (this.isXRPresenting()) return false;
@@ -1076,7 +1074,7 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     get effectiveAerialPerspective() {
-        if (!this.atmosphereHaze && !this.skyGradient) return false;
+        if (!this.effectiveAtmosphereHaze && !this.skyGradient) return false;
         if (!this.atmosphereEnabled) return false;
         if (this.id !== "lookView") return false;
         if (this.isIR) return false;
@@ -1532,7 +1530,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             return null;
         }
 
-        if (this.atmosphereHaze || this.skyGradient) {
+        if (this.effectiveAtmosphereHaze || this.skyGradient) {
             this._lookViewFog.color.copy(this.getAtmosphereHazeColorLinear());
         } else {
             // Preserve the legacy color-space behavior for existing sitches.
@@ -2344,8 +2342,8 @@ export class CNodeView3D extends CNodeViewCanvas {
                 if (this.effectiveAerialPerspective) {
                     if (globalProfiler) globalProfiler.push('#8dd3c7', 'aerialPerspective');
 
-                    const betaExtinction = 3.912 / Math.max(1000, this.atmosphereVisibilityKm * 1000);
-                    const distanceScale = Math.min(1000000, 12.0 / betaExtinction);
+                    const betaExtinction = 3.912 / Math.max(1, this.atmosphereVisibilityKm * 1000);
+                    const distanceScale = 1000000;
                     const depthTarget = this.renderAerialPerspectiveDepth(rtWidth, rtHeight, distanceScale);
                     const aerialPass = this._ensureAerialPerspectiveMaterial();
                     const u = aerialPass.uniforms;
@@ -2717,6 +2715,26 @@ export class CNodeView3D extends CNodeViewCanvas {
                 return horizonDistance;
             }
 
+            float atmosphereBoundaryRayDistance(vec3 dir) {
+                float upDot = dot(dir, upWorld);
+                float radius = 6378137.0;
+                float topRadius = radius + atmosphereTopM;
+                float observerRadius = radius + max(cameraAltitudeM, 0.0);
+                float b = observerRadius * upDot;
+                float c = observerRadius * observerRadius - topRadius * topRadius;
+                float disc = b * b - c;
+
+                if (disc >= 0.0) {
+                    float root = sqrt(disc);
+                    float tFar = -b + root;
+                    if (tFar > 0.0) return tFar;
+                    float tNear = -b - root;
+                    if (tNear > 0.0) return tNear;
+                }
+
+                return 0.0;
+            }
+
             float rayHeightAtDistance(vec3 dir, float distanceMeters) {
                 float radius = 6378137.0;
                 float observerRadius = radius + max(cameraAltitudeM, 0.0);
@@ -2731,12 +2749,21 @@ export class CNodeView3D extends CNodeViewCanvas {
             }
 
             float atmospherePathMeters(vec3 dir, float rayMeters) {
-                float maxDistance = min(rayMeters, distanceScale);
-                float segment = maxDistance / 8.0;
+                float maxDistance = min(rayMeters, 4000000.0);
                 float opticalMeters = 0.0;
 
-                for (int i = 0; i < 8; ++i) {
-                    float s = (float(i) + 0.5) * segment;
+                // Bias samples toward the far end of the ray. Long oblique
+                // Earth views can spend hundreds of km in thin air and then
+                // cross the dense lower atmosphere close to the terrain. Uniform
+                // samples miss that layer, leaving high-contrast dark texels as
+                // speckles on distant buildings.
+                for (int i = 0; i < 16; ++i) {
+                    float q0 = float(i) / 16.0;
+                    float q1 = float(i + 1) / 16.0;
+                    float s0 = maxDistance * (1.0 - (1.0 - q0) * (1.0 - q0));
+                    float s1 = maxDistance * (1.0 - (1.0 - q1) * (1.0 - q1));
+                    float s = 0.5 * (s0 + s1);
+                    float segment = s1 - s0;
                     float h = rayHeightAtDistance(dir, s);
                     float rayleighDensity = exp(-h / rayleighScaleHeightM);
                     float aerosolDensity = exp(-h / aerosolScaleHeightM);
@@ -2748,13 +2775,14 @@ export class CNodeView3D extends CNodeViewCanvas {
                 return opticalMeters;
             }
 
-            vec3 aerialInscatterColor(vec3 sky, vec3 dir) {
+            vec3 aerialInscatterColor(vec3 sky, vec3 dir, float surfaceT) {
                 float altitudeT = smoothstep(12000.0, 120000.0, cameraAltitudeM);
                 float downT = smoothstep(0.0, 0.5, -dot(dir, upWorld));
-                float limbT = altitudeT * (1.0 - smoothstep(0.02, 0.20, abs(dot(dir, upWorld))));
+                float limbT = altitudeT * (1.0 - smoothstep(0.02, 0.20, abs(dot(dir, upWorld)))) * (1.0 - surfaceT);
                 vec3 brightHaze = max(coolHorizon, vec3(0.70, 0.76, 0.78));
                 vec3 limbHaze = max(coolHorizon, vec3(0.18, 0.42, 0.95));
-                return mix(mix(sky, brightHaze, altitudeT * downT), limbHaze, limbT);
+                float terrainAirlightT = surfaceT * altitudeT * max(downT, 0.65);
+                return mix(mix(sky, brightHaze, terrainAirlightT), limbHaze, limbT);
             }
 
             void main() {
@@ -2767,6 +2795,20 @@ export class CNodeView3D extends CNodeViewCanvas {
                 bool hasSceneDistance = distanceNorm < 1.0 - 1e-4;
                 float rayMeters = distanceNorm * distanceScale;
                 float analyticGroundMeters = earthSurfaceRayDistance(dir);
+                float sceneSkyDelta = length(scene.rgb - sky);
+                float downViewT = smoothstep(0.25, 0.75, -dot(dir, upWorld));
+                float slantViewT = 1.0 - downViewT;
+                float slantCorrectionT = smoothstep(0.15, 0.85, slantViewT);
+
+                // Some photogrammetry/3D-tile fragments can survive in the
+                // color pass while the lightweight override-distance pass gives
+                // them a zero-ish/under-reported distance at high camera
+                // altitudes. Blend toward the analytic Earth distance only for
+                // shallow slant views. A continuous angle weight avoids visible
+                // popping as the camera tilt changes.
+                if (hasSceneDistance && cameraAltitudeM > 10000.0 && sceneSkyDelta > 0.03) {
+                    rayMeters = mix(rayMeters, max(rayMeters, analyticGroundMeters), slantCorrectionT);
+                }
 
                 // Terrain/3D tile override materials can under-report distance
                 // when their production shaders apply custom positioning. Near
@@ -2776,9 +2818,16 @@ export class CNodeView3D extends CNodeViewCanvas {
                 if (hasSceneDistance) {
                     rayMeters = mix(rayMeters, max(rayMeters, analyticGroundMeters), horizonWeight);
                 } else {
-                    float sceneSkyDelta = length(scene.rgb - sky);
-                    if (sceneSkyDelta < 0.03) {
-                        gl_FragColor = scene;
+                    if (sceneSkyDelta < 0.005 && dot(dir, upWorld) > -0.02) {
+                        float skyRayMeters = atmosphereBoundaryRayDistance(dir);
+                        float skyOpticalMeters = atmospherePathMeters(dir, skyRayMeters);
+                        float skyTau = min(betaExtinction * skyOpticalMeters, maxOpticalDepth);
+                        float skyAirT = 1.0 - exp(-skyTau);
+                        vec3 skyAirlight = aerialInscatterColor(sky, dir, 0.0);
+                        vec3 skyColor = mix(scene.rgb, skyAirlight, skyAirT);
+                        skyColor += vec3(hashDither(gl_FragCoord.xy) * ditherStrength);
+                        skyColor = clamp(skyColor, vec3(0.0), vec3(1.0));
+                        gl_FragColor = vec4(skyColor, scene.a);
                         return;
                     }
                     rayMeters = analyticGroundMeters;
@@ -2787,12 +2836,35 @@ export class CNodeView3D extends CNodeViewCanvas {
                 float opticalMeters = atmospherePathMeters(dir, rayMeters);
                 float tau = min(betaExtinction * opticalMeters, maxOpticalDepth);
                 float transmittance = exp(-tau);
+                float altitudeT = smoothstep(12000.0, 120000.0, cameraAltitudeM);
+                float longRangeT = altitudeT * slantViewT * smoothstep(100000.0, 600000.0, analyticGroundMeters);
+                transmittance = min(transmittance, 1.0 - 0.45 * longRangeT);
 
-                vec3 airlight = aerialInscatterColor(sky, dir);
-                vec3 color = scene.rgb * transmittance + airlight * (1.0 - transmittance);
+                float sourceLuma = dot(scene.rgb, vec3(0.2126, 0.7152, 0.0722));
+                float surfaceT = smoothstep(0.005, 0.08, sceneSkyDelta);
+                surfaceT = max(surfaceT, (1.0 - smoothstep(0.02, 0.18, sourceLuma)) * longRangeT);
+                vec3 airlight = aerialInscatterColor(sky, dir, surfaceT);
+                float distantSurfaceT = longRangeT * surfaceT;
+                float hazeAmount = 1.0 - transmittance;
+
+                // Aerial perspective must never expand terrain contrast. For
+                // medium/high altitude nadir views, first reduce distant tile
+                // texture contrast in proportion to the accumulated airlight,
+                // then apply the physical extinction/inscatter mix below.
+                vec3 neutralSurface = vec3(sourceLuma);
+                float contrastCompressionT = distantSurfaceT * smoothstep(0.04, 0.45, hazeAmount);
+                vec3 surfaceColor = mix(scene.rgb, neutralSurface, contrastCompressionT * 0.45);
+
+                // Some 3D tile fragments have unreliable or missing depth and
+                // arrive as near-black pixels. When the air column says the
+                // surface should already be veiled, fade those out rather than
+                // preserving them as speckles.
+                float sourceDarkT = (1.0 - smoothstep(0.02, 0.20, sourceLuma)) * distantSurfaceT * smoothstep(0.08, 0.35, hazeAmount);
+                surfaceColor = mix(surfaceColor, airlight, sourceDarkT);
+                vec3 color = surfaceColor * transmittance + airlight * (1.0 - transmittance);
                 color += vec3(hashDither(gl_FragCoord.xy) * ditherStrength);
                 color = clamp(color, vec3(0.0), vec3(1.0));
-                gl_FragColor = vec4(color, scene.a);
+                gl_FragColor = vec4(color, 1.0);
             }
         `,
             depthTest: false,
@@ -3141,7 +3213,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             atmosphereVisibilityKm: this.atmosphereVisibilityKm,
             atmosphereHDR: this.atmosphereHDR,
             atmosphereExposure: this.atmosphereExposure,
-            atmosphereHaze: this.atmosphereHaze,
+            atmosphereHaze: this.effectiveAtmosphereHaze,
             skyGradient: this.skyGradient,
             allowMobileSkyGradient: this.allowMobileSkyGradient,
         }

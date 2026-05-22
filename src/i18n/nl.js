@@ -1669,9 +1669,9 @@ const nl = {
             label: "Alleen omgevingslicht",
             tooltip: "Indien ingeschakeld, wordt alleen omgevingslicht gebruikt, geen zonlicht",
         },
-        atmosphere: {
-            label: "Atmosfeer",
-            tooltip: "Indien ingeschakeld, wordt de atmosfeer gerenderd.\nUitschakelen om overdag de sterren te zien",
+        daylightSky: {
+            label: "Daglichthemel",
+            tooltip: "De daglichthemel (blauw) renderen.\nUitschakelen om de bijdrage van de daglichthemel te verwijderen — handig om overdag sterren te zien of om nachthemelobjecten te debuggen.",
         },
         noMainLighting: {
             label: "Geen belichting in hoofdweergave",

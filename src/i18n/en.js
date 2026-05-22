@@ -762,7 +762,7 @@ const en = {
     },
     view3d: {
         northUp: { label: "Look View North Up", tooltip: "Set the look view to be north up, instead of world up.\nfor Satellite views and similar, looking straight down.\nDoes not apply in PTZ mode" },
-        atmosphere: { label: "Atmosphere", tooltip: "Distance attenuation that blends terrain and 3D objects toward the current sky color" },
+        atmosphere: { label: "Atmosphere", tooltip: "Render the atmosperic-based sky and physically based aerial haze. Distant terrain and objects fade through the same line-of-sight atmosphere model as the sky." },
         atmoVisibility: { label: "Atmo Visibility (km)", tooltip: "Distance where atmospheric contrast drops to about 50% (smaller = thicker atmosphere)" },
         atmoHDR: { label: "Atmo HDR", tooltip: "Physically-based HDR fog/tone mapping for bright sun reflections through haze" },
         atmoExposure: { label: "Atmo Exposure", tooltip: "HDR atmosphere tone-mapping exposure multiplier for highlight rolloff" },
@@ -1725,9 +1725,9 @@ const en = {
             label: "Ambient Only",
             tooltip: "If true, then only ambient light is used, no sunlight",
         },
-        atmosphere: {
-            label: "Atmosphere",
-            tooltip: "If true, then the atmosphere is rendered.\nSet to false to see the stars in daytime",
+        daylightSky: {
+            label: "Daylight Sky",
+            tooltip: "Render the daylight (blue) sky\nTurn off to remove the daylight sky contribution, useful for seeing stars in daylight or debugging night-sky objects.",
         },
         noMainLighting: {
             label: "No Lighting in Main View",

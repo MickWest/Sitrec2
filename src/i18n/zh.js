@@ -1673,9 +1673,9 @@ const zh = {
             label: "仅环境光",
             tooltip: "如果为真，则仅使用环境光，不使用太阳光",
         },
-        atmosphere: {
-            label: "大气",
-            tooltip: "如果为真，则渲染大气。\n设为假可在白天看到星星",
+        daylightSky: {
+            label: "日光天空",
+            tooltip: "渲染日光（蓝色）天空。\n关闭以移除日光天空的贡献，便于在白天观察星星或调试夜空对象。",
         },
         noMainLighting: {
             label: "主视图无光照",

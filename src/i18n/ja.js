@@ -1673,9 +1673,9 @@ const ja = {
             label: "環境光のみ",
             tooltip: "有効時、環境光のみが使用され、太陽光は使用されません",
         },
-        atmosphere: {
-            label: "大気",
-            tooltip: "有効時、大気がレンダリングされます。\n昼間に星を見るにはfalseに設定",
+        daylightSky: {
+            label: "昼空",
+            tooltip: "昼空（青空）をレンダリングします。\nオフにすると昼空の寄与が除去され、昼間に星を見たり、夜空オブジェクトのデバッグに便利です。",
         },
         noMainLighting: {
             label: "メインビューのライティングなし",

@@ -77,8 +77,8 @@ export class CNodeLighting extends CNode {
             .tooltip(t("lighting.sceneExposure.tooltip"));
         this.addGUIBoolean("ambientOnly", t("lighting.ambientOnly.label"))
             .tooltip(t("lighting.ambientOnly.tooltip"));
-        this.addGUIBoolean("atmosphere", t("lighting.atmosphere.label"))
-            .tooltip(t("lighting.atmosphere.tooltip"));
+        this.addGUIBoolean("atmosphere", t("lighting.daylightSky.label"))
+            .tooltip(t("lighting.daylightSky.tooltip"));
         this.addGUIBoolean("noMainLighting", t("lighting.noMainLighting.label"))
             .tooltip(t("lighting.noMainLighting.tooltip"));
         this.addGUIBoolean("noCityLights", t("lighting.noCityLights.label"))

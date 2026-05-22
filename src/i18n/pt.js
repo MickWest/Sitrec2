@@ -1669,9 +1669,9 @@ const pt = {
             label: "Apenas Ambiente",
             tooltip: "Se verdadeiro, apenas a luz ambiente é usada, sem luz solar",
         },
-        atmosphere: {
-            label: "Atmosfera",
-            tooltip: "Se verdadeiro, a atmosfera é renderizada.\nDefina como falso para ver as estrelas durante o dia",
+        daylightSky: {
+            label: "Céu diurno",
+            tooltip: "Renderiza o céu diurno (azul).\nDesativar para remover a contribuição do céu diurno — útil para ver as estrelas durante o dia ou depurar objetos do céu noturno.",
         },
         noMainLighting: {
             label: "Sem Iluminação na Visualização Principal",

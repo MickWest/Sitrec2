@@ -1669,9 +1669,9 @@ const de = {
             label: "Nur Umgebungslicht",
             tooltip: "Wenn aktiviert, wird nur Umgebungslicht verwendet, kein Sonnenlicht",
         },
-        atmosphere: {
-            label: "Atmosphäre",
-            tooltip: "Wenn aktiviert, wird die Atmosphäre gerendert.\nAuf Falsch setzen, um die Sterne am Tag zu sehen",
+        daylightSky: {
+            label: "Tageshimmel",
+            tooltip: "Den (blauen) Tageshimmel rendern.\nAusschalten, um den Beitrag des Tageshimmels zu entfernen — nützlich, um Sterne bei Tageslicht zu sehen oder Nachthimmel-Objekte zu debuggen.",
         },
         noMainLighting: {
             label: "Keine Beleuchtung in Hauptansicht",

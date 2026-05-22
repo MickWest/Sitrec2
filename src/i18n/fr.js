@@ -1669,9 +1669,9 @@ const fr = {
             label: "Ambiant uniquement",
             tooltip: "Si vrai, seule la lumière ambiante est utilisée, pas de lumière du soleil",
         },
-        atmosphere: {
-            label: "Atmosphère",
-            tooltip: "Si vrai, l'atmosphère est rendue.\nDésactiver pour voir les étoiles en journée",
+        daylightSky: {
+            label: "Ciel diurne",
+            tooltip: "Affiche le ciel diurne (bleu).\nDésactiver pour supprimer la contribution du ciel diurne — utile pour voir les étoiles en journée ou pour déboguer les objets du ciel nocturne.",
         },
         noMainLighting: {
             label: "Pas d'éclairage dans la vue principale",

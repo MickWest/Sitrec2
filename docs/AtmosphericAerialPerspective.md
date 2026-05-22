@@ -1,6 +1,6 @@
 # Atmospheric Aerial Perspective
 
-Sitrec's look-view atmosphere uses aerial perspective when Atmosphere is enabled and either Horizon Haze or Sky Gradient is enabled. The goal is that distant terrain, buildings, and the sky behind them are derived from the same line-of-sight atmosphere model rather than from separate, hand-matched colors.
+Sitrec's look-view atmosphere uses aerial perspective whenever Atmosphere is enabled. Horizon haze is part of the atmosphere model rather than a separate optional effect. The goal is that distant terrain, buildings, and the sky behind them are derived from the same line-of-sight atmosphere model rather than from separate, hand-matched colors.
 
 ## Physical Basis
 
@@ -41,7 +41,6 @@ The pass is intentionally disabled unless it is needed:
 
 - view is `lookView`
 - Atmosphere is enabled
-- Horizon Haze or Sky Gradient is enabled
 - IR mode is off
 - XR mode is off
 - the legacy `GlobalDaySkyScene` path is not active
@@ -65,7 +64,7 @@ This keeps nadir-looking ground bright from high altitude, while tangent and lim
 
 ## How To Use
 
-Enable Lighting -> Effects -> Atmosphere, then enable Horizon Haze and/or Sky Gradient in the look view's Effects controls.
+Enable Lighting -> Effects -> Atmosphere. Horizon haze is always active with Atmosphere; Sky Gradient remains a separate control for the visible sky gradient presentation.
 
 Use Atmo Visibility as meteorological visibility in kilometers:
 
