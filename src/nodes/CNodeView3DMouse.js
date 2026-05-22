@@ -119,7 +119,8 @@ export const mouseMethods = {
             const focusTrackActive =
                 this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
             const positionKeyHeld =
-                isKeyHeld('c') || isKeyHeld('x') || isKeyHeld('l');
+                isKeyHeld('c') || isKeyHeld('x') || isKeyHeld('l')
+                || isKeyHeld('v') || isKeyHeld('b');
             if (!this.showLOSArrow && !focusTrackActive && !positionKeyHeld) return;
             const {x, y} = getMousePosition();
             if (!mouseInViewOnly(this, x, y)) return;
@@ -260,16 +261,19 @@ export const mouseMethods = {
             //
             // The cursor raycast is only useful for things that read it each
             // frame: the LOS debug arrow, focus-track snapping, and held
-            // position keys (C=camera, X=target, L=lock-all) that drive
-            // CNodePositionLLA.update() via getCursorPositionFromTopView().
-            // Everything else (orbit pivot, cursorLLA label, spline editors)
-            // reads on mouseDown — refreshed there instead. Skipping the
-            // raycast also skips setRenderOne(true), avoiding a full-scene
-            // redraw on every hover when nothing visible depends on it.
+            // position keys — C=camera, X=target, L=lock-all (drive
+            // CNodePositionLLA.update() via getCursorPositionFromTopView()),
+            // V/B (drive globalMeasureState start/end via
+            // CameraControls.updateMeasureArrow). Everything else (orbit
+            // pivot, cursorLLA label, spline editors) reads on mouseDown
+            // — refreshed there instead. Skipping the raycast also skips
+            // setRenderOne(true), avoiding a full-scene redraw on every
+            // hover when nothing visible depends on it.
             const focusTrackActive =
                 this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
             const positionKeyHeld =
-                isKeyHeld('c') || isKeyHeld('x') || isKeyHeld('l');
+                isKeyHeld('c') || isKeyHeld('x') || isKeyHeld('l')
+                || isKeyHeld('v') || isKeyHeld('b');
             if (!this.showLOSArrow && !focusTrackActive && !positionKeyHeld) {
                 return;
             }
