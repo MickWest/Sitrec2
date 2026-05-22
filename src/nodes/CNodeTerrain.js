@@ -1,7 +1,7 @@
 import {CNode} from "./CNode";
 import {pointAbove} from "../threeExt";
 import {cos, radians} from "../utils";
-import {Globals, NodeMan, Sit} from "../Globals";
+import {Globals, markShadowCastersDirty, NodeMan, Sit} from "../Globals";
 import {ECEFToLLAVD_radii, RLLAToECEF_radii, RLLAToECEFV_Sphere} from "../LLA-ECEF-ENU";
 import {setAltitudeHAE} from "../SphericalMath";
 import {BufferGeometry, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, Raycaster} from "three";
@@ -237,8 +237,8 @@ export class CNodeTerrain extends CNode {
         this.createDebugTextDisplay();
     }
 
-    // V5 shadows: walk loaded terrain tile meshes and set receiveShadow to
-    // match Globals.shadowsEnabled && Globals.terrainReceivesShadow. Skirts
+    // V5 shadows: walk loaded terrain tile meshes and set cast/receiveShadow
+    // to match Globals.shadowsEnabled && Globals.terrainReceivesShadow. Skirts
     // always stay off (set at construction in QuadTreeTile.buildMesh).
     // §0 invariant: when shadows have never been on AND aren't on now,
     // returns immediately with no traversal.
@@ -247,21 +247,29 @@ export class CNodeTerrain extends CNode {
         if (!want && !this._didEverEnableShadows) return;
         if (want) this._didEverEnableShadows = true;
         if (!this.group) return;
+        let changedCasterState = false;
         this.group.traverse(obj => {
             if (!obj.isMesh) return;
-            // Skirts have receiveShadow=false written at construction; we
-            // re-write them all to want here, then sweep skirts back off via
-            // QuadTreeMap if available.
+            // Skirts have castShadow/receiveShadow=false written at construction;
+            // re-write all meshes to want here, then sweep skirts back off via
+            // the active texture QuadTreeMap if available.
+            if (obj.castShadow !== want) changedCasterState = true;
+            obj.castShadow = want;
             obj.receiveShadow = want;
         });
         // Walk known QuadTreeMap tiles to disable skirts (cleanest path).
-        if (this.map && typeof this.map.forEachTile === "function") {
-            this.map.forEachTile(tile => {
+        const textureMap = this.maps?.[this.UI?.mapType]?.map;
+        if (textureMap && typeof textureMap.forEachTile === "function") {
+            textureMap.forEachTile(tile => {
                 if (tile.skirtMesh) {
+                    if (tile.skirtMesh.castShadow) changedCasterState = true;
                     tile.skirtMesh.castShadow = false;
                     tile.skirtMesh.receiveShadow = false;
                 }
             });
+        }
+        if (changedCasterState) {
+            markShadowCastersDirty(`${this.id}:refreshShadowFlags`);
         }
     }
 
@@ -910,6 +918,5 @@ export class CNodeTerrain extends CNode {
         return this.elevationMap.tileHasHigherZoom(z, x, y);
     }
 }
-
 
 

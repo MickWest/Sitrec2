@@ -7,7 +7,7 @@ import {
 import {boxMark, DebugArrowAB, removeDebugArrow} from "./threeExt";
 import {LLAToECEF, LLAToECEFInto, wgs84} from "./LLA-ECEF-ENU";
 import {GlobalScene} from "./LocalFrame";
-import {Globals} from "./Globals";
+import {Globals, markShadowCastersDirty} from "./Globals";
 import {EventManager} from "./CEventManager";
 import {getLocalDownVector, getLocalNorthVector, getLocalUpVector, pointOnSphereBelow} from "./SphericalMath";
 import {loadTextureWithRetries} from "./js/map33/material/QuadTextureMaterial";
@@ -2081,14 +2081,18 @@ export class QuadTreeTile {
         this.mesh = new Mesh(this.geometry, tileMaterial)
 //        console.log(`buildMesh: ${this.key()} - mesh created with layers.mask=${this.mesh.layers.mask.toString(2)} (${this.mesh.layers.mask})`);
 
-        // V5 shadows: terrain is a receiver only when the user opts in via the
+        // V5 shadows: terrain casts and receives when the user opts in via the
         // Lighting menu's "Terrain receives shadows" toggle. Skirts are NEVER
-        // receivers (degenerate UVs/normals → seam artifacts) and NEVER casters.
+        // receivers (degenerate UVs/normals -> seam artifacts) and NEVER casters.
         // We read from Globals.terrainReceivesShadow which mirrors the lighting
         // node's field; this avoids a NodeMan circular import here.
         if (Globals.shadowsEnabled) {
-            this.mesh.castShadow = false;
-            this.mesh.receiveShadow = !!Globals.terrainReceivesShadow;
+            const terrainShadows = !!Globals.terrainReceivesShadow;
+            this.mesh.castShadow = terrainShadows;
+            this.mesh.receiveShadow = terrainShadows;
+            if (terrainShadows) {
+                markShadowCastersDirty(`terrain tile ${this.key()}:buildMesh`);
+            }
         }
 
         // Build and create skirt mesh
