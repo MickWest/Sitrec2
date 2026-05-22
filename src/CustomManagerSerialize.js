@@ -1098,25 +1098,80 @@ export const serializeMethods = {
         }
 
         const mappings = Object.entries(rootMap);
-        if (mappings.length === 0) {
-            return;
+        if (mappings.length > 0) {
+            const originalKeys = Object.keys(mods);
+            for (const oldId of originalKeys) {
+                let newId = oldId;
+                for (const [oldRoot, newRoot] of mappings) {
+                    if (newId.includes(oldRoot)) {
+                        newId = newId.replaceAll(oldRoot, newRoot);
+                    }
+                }
+                if (newId !== oldId) {
+                    if (mods[newId] === undefined) {
+                        mods[newId] = mods[oldId];
+                    }
+                    delete mods[oldId];
+                    console.warn(`CustomSupport: remapped legacy mod id '${oldId}' -> '${newId}'`);
+                }
+            }
         }
 
-        const originalKeys = Object.keys(mods);
-        for (const oldId of originalKeys) {
-            let newId = oldId;
-            for (const [oldRoot, newRoot] of mappings) {
-                if (newId.includes(oldRoot)) {
-                    newId = newId.replaceAll(oldRoot, newRoot);
-                }
+        // Orphan-root heuristic for pre-metadata saves where no switch references
+        // the track. The `<X>_ob` sphere ID is a unique marker for a track-derived
+        // node; if X doesn't match any current track shortName and there is exactly
+        // one current track unclaimed by mods, pair them. Then targeted-remap only
+        // mod keys whose substituted form resolves to an existing node, so we don't
+        // accidentally rewrite unrelated keys when the legacy root is a common word
+        // (e.g. an old CSV parser returning "null").
+        // Use menuText: the source of truth for the `<X>_ob` sphere ID is
+        // `trackOb.menuText ?? shortName` (see TrackManager.makeMotionTrack).
+        // trackOb.shortName is not set; the local shortName variable in
+        // addTracks becomes menuText on the persisted CMetaTrack instance.
+        const currentShortNames = new Set();
+        TrackManager.iterate((id, track) => {
+            const name = track?.menuText ?? track?.shortName;
+            if (name) currentShortNames.add(name);
+        });
+
+        const resolvedOldRoots = new Set(Object.keys(rootMap));
+        const resolvedNewRoots = new Set(Object.values(rootMap));
+
+        const orphanRoots = new Set();
+        for (const key of Object.keys(mods)) {
+            const m = key.match(/^(.+?)_ob(?:_.*)?$/);
+            if (!m) continue;
+            const root = m[1];
+            if (currentShortNames.has(root)) continue;
+            if (resolvedOldRoots.has(root)) continue;
+            if (NodeMan.exists(root + "_ob")) continue;
+            orphanRoots.add(root);
+        }
+
+        if (orphanRoots.size === 0) return;
+
+        const unclaimed = [];
+        for (const sn of currentShortNames) {
+            if (resolvedNewRoots.has(sn)) continue;
+            if (mods[sn + "_ob"] !== undefined) continue;
+            if (!NodeMan.exists(sn + "_ob")) continue;
+            unclaimed.push(sn);
+        }
+
+        if (orphanRoots.size !== 1 || unclaimed.length !== 1) return;
+
+        const oldRoot = [...orphanRoots][0];
+        const newRoot = unclaimed[0];
+        for (const oldId of Object.keys(mods)) {
+            if (!oldId.includes(oldRoot)) continue;
+            const newId = oldId.replaceAll(oldRoot, newRoot);
+            if (newId === oldId) continue;
+            if (!NodeMan.exists(newId)) continue;
+            if (mods[newId] === undefined) {
+                mods[newId] = mods[oldId];
             }
-            if (newId !== oldId) {
-                if (mods[newId] === undefined) {
-                    mods[newId] = mods[oldId];
-                }
-                delete mods[oldId];
-                console.warn(`CustomSupport: remapped legacy mod id '${oldId}' -> '${newId}'`);
-            }
+            delete mods[oldId];
+            console.warn(`CustomSupport: orphan-root remap '${oldId}' -> '${newId}'`);
         }
     },
 

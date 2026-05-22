@@ -337,16 +337,24 @@ export class CNodeControllerObjectTilt extends CNodeController {
                         break;
 
                     case "frontpointing":
-                        object.lookAt(next)
+                        // The unconditional pre-switch lookAt(next) already
+                        // oriented the object using currentPos (and wind
+                        // subtraction when this.in.wind is present). Repeating
+                        // lookAt here would use the restored oldPos and aim
+                        // along (next - oldPos), which tilts the model when
+                        // ground clamping has moved oldPos away from
+                        // currentPos. Just flush matrices.
                         object.updateMatrix()
                         object.updateMatrixWorld()
                         break;
 
                     case "frontpointingwind":
-                        if (this.in.wind !== undefined) {
-                            next.sub(this.in.wind.v(f))
-                        }
-                        object.lookAt(next)
+                        // Same reasoning as "frontpointing": the pre-switch
+                        // lookAt already subtracted wind (via getValueFrame
+                        // with the track position) and ran lookAt from
+                        // currentPos. The legacy code here called
+                        // this.in.wind.v(f) without a position and lookAt
+                        // from oldPos, both of which are wrong now.
                         object.updateMatrix()
                         object.updateMatrixWorld()
                         break;
