@@ -339,28 +339,102 @@ let motionTrackCounter = 0;
 let createTrackMenuItem = null;
 let exportMotionMenuItem = null;
 
+// Lock so concurrent callers (e.g. both pano export menu items clicked in
+// quick succession) coalesce onto a single analysis pass and just report
+// progress, instead of each running their own polling loop and racing the
+// par.frame / Globals.justVideoAnalysis state.
+let analysisInProgress = null;
+
+function countCompleteInRange() {
+    if (!motionAnalyzer) return 0;
+    const aFrame = Sit.aFrame || 0;
+    const bFrame = Sit.bFrame ?? (Sit.frames - 1);
+    let n = 0;
+    for (let f = aFrame; f <= bFrame; f++) {
+        const c = motionAnalyzer.resultCache.get(f);
+        if (c && !c.incomplete) n++;
+    }
+    return n;
+}
+
 async function analyzeAllFrames(progressCallback) {
     if (!motionAnalyzer) return false;
-    
+
     const aFrame = Sit.aFrame || 0;
     const bFrame = Sit.bFrame ?? (Sit.frames - 1);
     const totalFrames = bFrame - aFrame + 1;
-    
-    const savedPaused = par.paused;
-    Globals.justVideoAnalysis = true;
-    par.paused = false;
-    
-    while (!motionAnalyzer.isCacheFull()) {
-        const analyzed = motionAnalyzer.resultCache.size;
-        if (progressCallback) {
-            progressCallback(analyzed, totalFrames);
+
+    // If another caller is already driving an analysis pass, just observe its
+    // progress through our own callback and return when it finishes.
+    if (analysisInProgress) {
+        while (analysisInProgress && !motionAnalyzer.isCacheFull()) {
+            if (progressCallback) progressCallback(countCompleteInRange(), totalFrames);
+            await new Promise(r => setTimeout(r, 100));
         }
-        await new Promise(r => setTimeout(r, 100));
+        if (progressCallback) progressCallback(countCompleteInRange(), totalFrames);
+        return motionAnalyzer.isCacheFull();
     }
-    
-    par.paused = savedPaused;
-    Globals.justVideoAnalysis = false;
-    return true;
+
+    const videoData = motionAnalyzer.videoView?.videoData;
+    if (!videoData) return false;
+
+    const savedPaused = par.paused;
+    const savedFrame = par.frame;
+    Globals.justVideoAnalysis = true;
+    par.paused = true; // We drive frame advance ourselves below.
+
+    let resolveDone;
+    analysisInProgress = new Promise(r => (resolveDone = r));
+
+    try {
+        const skip = Math.max(1, Math.round(motionAnalyzer.params.frameSkip));
+
+        // Preload the prev-context frames so the first `skip` frames of the
+        // range can compute optical flow. Without this, analyze() marks them
+        // incomplete (or skips them entirely when the play loop never visits
+        // pre-aFrame frames), and isCacheFull() can never become true.
+        for (let f = Math.max(0, aFrame - skip); f < aFrame; f++) {
+            videoData.getImage(f);
+        }
+        for (let f = Math.max(0, aFrame - skip); f < aFrame; f++) {
+            await videoData.waitForFrame(f, 5000);
+        }
+
+        // Two passes: the first walks every frame in order (so the analyzer's
+        // frameBuffer is warm); the second retries anything still incomplete.
+        const MAX_PASSES = 3;
+        for (let pass = 0; pass < MAX_PASSES; pass++) {
+            let stillMissing = 0;
+            for (let f = aFrame; f <= bFrame; f++) {
+                const cached = motionAnalyzer.resultCache.get(f);
+                if (cached && !cached.incomplete) continue;
+
+                videoData.getImage(f);
+                await videoData.waitForFrame(f, 5000);
+                par.frame = f;
+                GlobalDateTimeNode.update(f);
+                motionAnalyzer.analyze(f);
+
+                const after = motionAnalyzer.resultCache.get(f);
+                if (!after || after.incomplete) stillMissing++;
+
+                if (f % 5 === 0) {
+                    if (progressCallback) progressCallback(countCompleteInRange(), totalFrames);
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+            if (progressCallback) progressCallback(countCompleteInRange(), totalFrames);
+            if (stillMissing === 0) break;
+        }
+
+        return motionAnalyzer.isCacheFull();
+    } finally {
+        par.paused = savedPaused;
+        par.frame = savedFrame;
+        Globals.justVideoAnalysis = false;
+        resolveDone();
+        analysisInProgress = null;
+    }
 }
 
 async function createTrackFromMotion() {
