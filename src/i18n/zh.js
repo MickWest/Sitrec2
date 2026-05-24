@@ -91,6 +91,7 @@ const zh = {
         help: {
             title: "帮助",
             tooltip: "文档链接和其他帮助资源",
+            whatsNew: "最新动态",
             documentation: {
                 title: "文档",
                 localTooltip: "文档链接（本地）",
@@ -98,6 +99,7 @@ const zh = {
                 githubLinkLabel: "{{name}}（Github）",
                 about: "关于 Sitrec",
                 whatsNew: "最新动态",
+                whatsNewDetails: "最新动态（详细）",
                 uiBasics: "用户界面基础",
                 savingLoading: "保存和加载情景",
                 customSitch: "如何设置情景",

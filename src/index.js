@@ -1724,6 +1724,25 @@ async function initializeOnce() {
         .tooltip(t("menus.debug.tooltip"));
 
     const localDocsEnabled = getEnvBool("LOCAL_DOCS", process.env.LOCAL_DOCS);
+
+    function addDocLink(parent, nameKey, file) {
+        const translatedName = t(nameKey);
+        if (localDocsEnabled) {
+            return parent.addExternalLink(translatedName, "./"+file+".html").perm().tooltip(translatedName);
+        } else {
+            return parent.addExternalLink(
+                t("menus.help.documentation.githubLinkLabel", {name: translatedName}),
+                "https://github.com/MickWest/sitrec2/blob/main/"+file+".md"
+            ).perm();
+        }
+    }
+
+    // Top-level "What's New" link (concise, user-facing release notes) — sits
+    // directly under the Help menu, above the Documentation folder, so casual
+    // users see release notes without drilling in. The long-form engineering
+    // changelog (WhatsNew-Details) lives inside Documentation below.
+    addDocLink(guiMenus.help, "menus.help.whatsNew", "docs/WhatsNew");
+
     const docs = addTranslatedGUIFolder("doumentation", "menus.help.documentation.title", "help")
         .tooltip(localDocsEnabled
             ? t("menus.help.documentation.localTooltip")
@@ -1732,15 +1751,7 @@ async function initializeOnce() {
 
 
     function addHelpLink(nameKey, file) {
-        const translatedName = t(nameKey);
-        if (localDocsEnabled) {
-            return docs.addExternalLink(translatedName, "./"+file+".html").perm().tooltip(translatedName);
-        } else {
-            return docs.addExternalLink(
-                t("menus.help.documentation.githubLinkLabel", {name: translatedName}),
-                "https://github.com/MickWest/sitrec2/blob/main/"+file+".md"
-            ).perm();
-        }
+        return addDocLink(docs, nameKey, file);
     }
 
     // When you add a new user-facing doc under docs/, link it here and add a
@@ -1748,7 +1759,7 @@ async function initializeOnce() {
     // architecture/plan docs (docs/dev/, docs/plans/, *Internals.md, *Plan.md)
     // and other developer-only references should NOT be linked.
     addHelpLink("menus.help.documentation.about", "README")
-    addHelpLink("menus.help.documentation.whatsNew", "docs/WhatsNew")
+    addHelpLink("menus.help.documentation.whatsNewDetails", "docs/WhatsNew-Details")
     addHelpLink("menus.help.documentation.uiBasics", "docs/UserInterface")
     addHelpLink("menus.help.documentation.savingLoading", "docs/SavingAndLoading")
     addHelpLink("menus.help.documentation.customSitch", "docs/CustomSitchTool")

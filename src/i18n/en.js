@@ -91,6 +91,7 @@ const en = {
         help: {
             title: "Help",
             tooltip: "Links to the documentation and other help resources",
+            whatsNew: "What's New",
             documentation: {
                 title: "Documentation",
                 localTooltip: "Links to the documentation (local)",
@@ -98,6 +99,7 @@ const en = {
                 githubLinkLabel: "{{name}} (Github)",
                 about: "About Sitrec",
                 whatsNew: "What's New",
+                whatsNewDetails: "What's New (Details)",
                 uiBasics: "User Interface Basics",
                 savingLoading: "Saving and Loading Sitches",
                 customSitch: "How to set up a sitch",
@@ -227,6 +229,10 @@ const en = {
         videoFormat: {
             label: "Video Format",
             tooltip: "Select the output video format",
+        },
+        renderSource: {
+            label: "Render Source Video",
+            tooltip: "Render the source video from A to B at the original resolution and framerate, with Video Adjustments applied",
         },
         renderViewport: {
             label: "Render Viewport Video",

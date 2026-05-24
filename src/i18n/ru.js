@@ -91,6 +91,7 @@ const ru = {
         help: {
             title: "Справка",
             tooltip: "Ссылки на документацию и другие справочные ресурсы",
+            whatsNew: "Что нового",
             documentation: {
                 title: "Документация",
                 localTooltip: "Ссылки на документацию (локальная)",
@@ -98,6 +99,7 @@ const ru = {
                 githubLinkLabel: "{{name}} (Github)",
                 about: "О Sitrec",
                 whatsNew: "Что нового",
+                whatsNewDetails: "Что нового (Подробности)",
                 uiBasics: "Основы интерфейса",
                 savingLoading: "Сохранение и загрузка ситуаций",
                 customSitch: "Как настроить ситуацию",

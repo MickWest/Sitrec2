@@ -91,6 +91,7 @@ const ja = {
         help: {
             title: "ヘルプ",
             tooltip: "ドキュメントやその他のヘルプリソースへのリンク",
+            whatsNew: "新機能",
             documentation: {
                 title: "ドキュメント",
                 localTooltip: "ドキュメントへのリンク（ローカル）",
@@ -98,6 +99,7 @@ const ja = {
                 githubLinkLabel: "{{name}} (Github)",
                 about: "Sitrecについて",
                 whatsNew: "新機能",
+                whatsNewDetails: "新機能（詳細）",
                 uiBasics: "ユーザーインターフェースの基本",
                 savingLoading: "状況の保存と読み込み",
                 customSitch: "状況のセットアップ方法",

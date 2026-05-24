@@ -91,6 +91,7 @@ const pt = {
         help: {
             title: "Ajuda",
             tooltip: "Links para a documentação e outros recursos de ajuda",
+            whatsNew: "Novidades",
             documentation: {
                 title: "Documentação",
                 localTooltip: "Links para a documentação (local)",
@@ -98,6 +99,7 @@ const pt = {
                 githubLinkLabel: "{{name}} (Github)",
                 about: "Sobre o Sitrec",
                 whatsNew: "Novidades",
+                whatsNewDetails: "Novidades (Detalhes)",
                 uiBasics: "Noções Básicas da Interface",
                 savingLoading: "Salvando e Carregando Sitches",
                 customSitch: "Como configurar um sitch",
