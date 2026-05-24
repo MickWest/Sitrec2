@@ -1873,6 +1873,11 @@ function getStabilizationBounds() {
     return { minX, maxX, minY, maxY };
 }
 
+// Controls whether the "Render Stabilized Video" exports include the
+// Video Info Display readouts (frame counters, timestamps, etc.) and the
+// OSD Tracker data series. Toggled from the Auto Tracking menu.
+let includeVideoInfoOnExport = false;
+
 async function renderStabilizedVideo(expanded = false) {
     if (!objectTracker || !objectTracker.enabled) {
         alert("Please enable tracking first and track an object before rendering.");
@@ -1999,6 +2004,21 @@ async function renderStabilizedVideo(expanded = false) {
             drawVideoWatermark(compositeCtx, width);
             drawAttributionOnCanvas(compositeCtx, width, height);
 
+            if (includeVideoInfoOnExport) {
+                // Reuse the live Video Info Display draw path so anything
+                // enabled in the Video Info Display menu (frame counter,
+                // timecode, dates) AND any visible OSD Tracker data series
+                // is composited into the export at native resolution.
+                const videoInfo = NodeMan.get("videoInfo", false);
+                if (videoInfo && typeof videoInfo.drawInfoToContext === "function") {
+                    videoInfo.drawInfoToContext(
+                        compositeCtx, width, height,
+                        { x: 0, y: 0, w: width, h: height },
+                        frame
+                    );
+                }
+            }
+
             await exporter.addFrame(compositeCanvas, i);
 
             if (i % 10 === 0) {
@@ -2116,6 +2136,16 @@ export function addObjectTrackingMenu() {
     trackingFolder.add(menuActions, 'renderStabilizedExpanded')
         .name(t("tracking.renderStabilizedExpanded.label"))
         .tooltip(t("tracking.renderStabilizedExpanded.tooltip"))
+        .perm();
+
+    const includeInfoParams = {
+        get includeVideoInfo() { return includeVideoInfoOnExport; },
+        set includeVideoInfo(v) { includeVideoInfoOnExport = v; },
+    };
+    trackingFolder.add(includeInfoParams, 'includeVideoInfo')
+        .name(t("tracking.includeVideoInfo.label"))
+        .tooltip(t("tracking.includeVideoInfo.tooltip"))
+        .listen()
         .perm();
 
     const radiusParams = {

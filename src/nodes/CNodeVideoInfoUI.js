@@ -578,7 +578,14 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
 
         super.renderCanvas(frame);
 
-        const c = this.ctx;
+        this.drawInfoToContext(this.ctx, this.widthPx, this.heightPx, rect, frame);
+    }
+
+    // Draws every enabled Video Info Display item plus the OSD Data Series
+    // readouts into an arbitrary 2D context. Used both by the live overlay
+    // (this.renderCanvas) and by the stabilized-video exporter, so the
+    // exported video shows the same overlays the user configured in the UI.
+    drawInfoToContext(c, widthPx, heightPx, rect, frame) {
         const fps = Sit.fps || 30;
         const totalSeconds = (Sit.frames || 1) / fps;
         const showHours = totalSeconds >= 3600;
@@ -590,10 +597,9 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
 
         const padding = Math.round(6 * rect.h / referenceHeight);
 
-        if (this.showFrameCounter) {
-            const text = `${Math.floor(par.frame)}`;
-            const x = this.videoPx(this.frameCounterX);
-            const y = this.videoPy(this.frameCounterY);
+        const drawTextWithBg = (text, pctX, pctY) => {
+            const x = (pctX / 100) * widthPx;
+            const y = (pctY / 100) * heightPx;
             const metrics = c.measureText(text);
             const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
             const vPad = textHeight * 0.05;
@@ -607,7 +613,11 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
             c.fillStyle = '#FFFFFF';
             c.fillText(text, x, y);
 
-            this._frameCounterBbox = { x: bgX, y: bgY, w: bgW, h: bgH };
+            return { x: bgX, y: bgY, w: bgW, h: bgH };
+        };
+
+        if (this.showFrameCounter) {
+            this._frameCounterBbox = drawTextWithBg(`${Math.floor(par.frame)}`, this.frameCounterX, this.frameCounterY);
         }
 
         if (this.showSourceFrame) {
@@ -622,137 +632,62 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
             const sourceFrameIdx = (videoData && typeof videoData.virtualToSource === "function")
                 ? videoData.virtualToSource(Math.floor(par.frame))
                 : Math.floor(par.frame);
-            const text = `${sourceFrameIdx}`;
-            const x = this.videoPx(this.sourceFrameX);
-            const y = this.videoPy(this.sourceFrameY);
-            const metrics = c.measureText(text);
-            const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
-            const vPad = textHeight * 0.05;
-            const bgX = x - metrics.width / 2 - padding;
-            const bgY = y - metrics.actualBoundingBoxAscent - padding - vPad;
-            const bgW = metrics.width + padding * 2;
-            const bgH = textHeight + padding * 2 + vPad * 2;
-
-            c.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            c.fillRect(bgX, bgY, bgW, bgH);
-            c.fillStyle = '#FFFFFF';
-            c.fillText(text, x, y);
-
-            this._sourceFrameBbox = { x: bgX, y: bgY, w: bgW, h: bgH };
+            this._sourceFrameBbox = drawTextWithBg(`${sourceFrameIdx}`, this.sourceFrameX, this.sourceFrameY);
         }
 
         if (this.showOffsetFrame) {
-            const text = `${Math.floor(par.frame) + this.offsetFrameValue}`;
-            const x = this.videoPx(this.offsetFrameX);
-            const y = this.videoPy(this.offsetFrameY);
-            const metrics = c.measureText(text);
-            const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
-            const vPad = textHeight * 0.05;
-            const bgX = x - metrics.width / 2 - padding;
-            const bgY = y - metrics.actualBoundingBoxAscent - padding - vPad;
-            const bgW = metrics.width + padding * 2;
-            const bgH = textHeight + padding * 2 + vPad * 2;
-
-            c.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            c.fillRect(bgX, bgY, bgW, bgH);
-            c.fillStyle = '#FFFFFF';
-            c.fillText(text, x, y);
-
-            this._offsetFrameBbox = { x: bgX, y: bgY, w: bgW, h: bgH };
+            this._offsetFrameBbox = drawTextWithBg(`${Math.floor(par.frame) + this.offsetFrameValue}`, this.offsetFrameX, this.offsetFrameY);
         }
 
         if (this.showTimecode) {
-            const text = this.formatTimecode(par.frame, fps, showHours);
-            const x = this.videoPx(this.timecodeX);
-            const y = this.videoPy(this.timecodeY);
-            const metrics = c.measureText(text);
-            const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
-            const vPad = textHeight * 0.05;
-            const bgX = x - metrics.width / 2 - padding;
-            const bgY = y - metrics.actualBoundingBoxAscent - padding - vPad;
-            const bgW = metrics.width + padding * 2;
-            const bgH = textHeight + padding * 2 + vPad * 2;
-
-            c.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            c.fillRect(bgX, bgY, bgW, bgH);
-            c.fillStyle = '#FFFFFF';
-            c.fillText(text, x, y);
-
-            this._timecodeBbox = { x: bgX, y: bgY, w: bgW, h: bgH };
+            this._timecodeBbox = drawTextWithBg(this.formatTimecode(par.frame, fps, showHours), this.timecodeX, this.timecodeY);
         }
 
         if (this.showTimestamp) {
-            const text = this.formatTimestamp(par.frame, fps, showHours);
-            const x = this.videoPx(this.timestampX);
-            const y = this.videoPy(this.timestampY);
-            const metrics = c.measureText(text);
-            const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
-            const vPad = textHeight * 0.05;
-            const bgX = x - metrics.width / 2 - padding;
-            const bgY = y - metrics.actualBoundingBoxAscent - padding - vPad;
-            const bgW = metrics.width + padding * 2;
-            const bgH = textHeight + padding * 2 + vPad * 2;
-
-            c.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            c.fillRect(bgX, bgY, bgW, bgH);
-            c.fillStyle = '#FFFFFF';
-            c.fillText(text, x, y);
-
-            this._timestampBbox = { x: bgX, y: bgY, w: bgW, h: bgH };
+            this._timestampBbox = drawTextWithBg(this.formatTimestamp(par.frame, fps, showHours), this.timestampX, this.timestampY);
         }
 
         const nowDate = GlobalDateTimeNode?.dateNow;
         if (nowDate) {
             if (this.showDateLocal) {
-                const text = this.formatDateLocal(nowDate);
-                this._dateLocalBbox = this.renderInfoElement(c, text, this.dateLocalX, this.dateLocalY, scaledFontSize, padding);
+                this._dateLocalBbox = drawTextWithBg(this.formatDateLocal(nowDate), this.dateLocalX, this.dateLocalY);
             }
-
             if (this.showTimeLocal) {
-                const text = this.formatTimeLocal(nowDate);
-                this._timeLocalBbox = this.renderInfoElement(c, text, this.timeLocalX, this.timeLocalY, scaledFontSize, padding);
+                this._timeLocalBbox = drawTextWithBg(this.formatTimeLocal(nowDate), this.timeLocalX, this.timeLocalY);
             }
-
             if (this.showDateTimeLocal) {
-                const text = this.formatDateTimeLocal(nowDate);
-                this._dateTimeLocalBbox = this.renderInfoElement(c, text, this.dateTimeLocalX, this.dateTimeLocalY, scaledFontSize, padding);
+                this._dateTimeLocalBbox = drawTextWithBg(this.formatDateTimeLocal(nowDate), this.dateTimeLocalX, this.dateTimeLocalY);
             }
-
             if (this.showDateUTC) {
-                const text = this.formatDateUTC(nowDate);
-                this._dateUTCBbox = this.renderInfoElement(c, text, this.dateUTCX, this.dateUTCY, scaledFontSize, padding);
+                this._dateUTCBbox = drawTextWithBg(this.formatDateUTC(nowDate), this.dateUTCX, this.dateUTCY);
             }
-
             if (this.showTimeUTC) {
-                const text = this.formatTimeUTC(nowDate);
-                this._timeUTCBbox = this.renderInfoElement(c, text, this.timeUTCX, this.timeUTCY, scaledFontSize, padding);
+                this._timeUTCBbox = drawTextWithBg(this.formatTimeUTC(nowDate), this.timeUTCX, this.timeUTCY);
             }
-
             if (this.showDateTimeUTC) {
-                const text = this.formatDateTimeUTC(nowDate);
-                this._dateTimeUTCBbox = this.renderInfoElement(c, text, this.dateTimeUTCX, this.dateTimeUTCY, scaledFontSize, padding);
+                this._dateTimeUTCBbox = drawTextWithBg(this.formatDateTimeUTC(nowDate), this.dateTimeUTCX, this.dateTimeUTCY);
             }
         }
-        
-        this.renderOSDDataSeries(c, scaledFontSize, padding);
+
+        this.drawOSDDataSeries(c, widthPx, heightPx, padding);
     }
-    
-    renderOSDDataSeries(c, scaledFontSize, padding) {
+
+    drawOSDDataSeries(c, widthPx, heightPx, padding) {
         const controller = NodeMan.get("osdDataSeriesController", false);
         if (!controller) return;
-        
+
         this._osdDataSeriesBboxes = {};
-        
+
         const frame = Math.floor(par.frame);
-        
+
         for (let i = 0; i < controller.tracks.length; i++) {
             const track = controller.tracks[i];
             if (!track.show) continue;
-            
+
             let text;
             let isEditing = controller.isEditing() && controller.getEditingTrack() === track;
             let isKeyframe = false;
-            
+
             let direction = 0;
             let cursorPos = -1;
             if (isEditing) {
@@ -765,13 +700,13 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
                 isKeyframe = displayInfo.isKeyframe;
                 direction = displayInfo.direction;
             }
-            
+
             const indicator = (isKeyframe && !isEditing)
                 ? (direction > 0 ? "▲" : direction < 0 ? "▼" : "=")
                 : null;
-            
-            const x = this.videoPx(track.x);
-            const y = this.videoPy(track.y);
+
+            const x = (track.x / 100) * widthPx;
+            const y = (track.y / 100) * heightPx;
             const metrics = c.measureText(text);
             // Always use "0" as the minimum height reference so the box
             // doesn't shrink for short glyphs like "-" or ".".
@@ -790,7 +725,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
             const bgY = y - boxAscent - padding - vPad;
             const bgW = boxWidth + padding * 2 + indicatorWidth;
             const bgH = textHeight + padding * 2 + vPad * 2;
-            
+
             if (track.lock) {
                 c.fillStyle = 'rgba(80, 80, 80, 0.7)';
             } else if (isEditing && isKeyframe) {
@@ -803,16 +738,16 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
                 c.fillStyle = 'rgba(0, 60, 100, 0.6)';
             }
             c.fillRect(bgX, bgY, bgW, bgH);
-            
+
             if (isEditing) {
                 c.strokeStyle = isKeyframe ? '#00FF00' : '#00AAFF';
                 c.lineWidth = 2;
                 c.strokeRect(bgX, bgY, bgW, bgH);
             }
-            
+
             c.fillStyle = track.lock ? '#BFBFBF' : '#FFFFFF';
             c.fillText(text, x, y);
-            
+
             if (cursorPos >= 0) {
                 const cursorVisible = Math.floor((Date.now() - controller.cursorBlinkEpoch) / 530) % 2 === 0;
                 if (cursorVisible) {
@@ -830,7 +765,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
                 }
                 this.ensureCursorBlink(controller);
             }
-            
+
             if (indicator) {
                 const indicatorColor = direction > 0 ? '#00FF00' : direction < 0 ? '#FF4444' : '#FFFF00';
                 c.fillStyle = indicatorColor;
@@ -839,7 +774,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
                 c.fillText(indicator, indicatorX, y);
                 c.textAlign = 'center';
             }
-            
+
             this._osdDataSeriesBboxes[`osdDataSeries_${i}`] = { x: bgX, y: bgY, w: bgW, h: bgH };
         }
     }
@@ -854,25 +789,6 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
             }
             setRenderOne();
         }, 530);
-    }
-
-    renderInfoElement(c, text, pctX, pctY, fontSize, padding) {
-        const x = this.videoPx(pctX);
-        const y = this.videoPy(pctY);
-        const metrics = c.measureText(text);
-        const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
-        const vPad = textHeight * 0.05;
-        const bgX = x - metrics.width / 2 - padding;
-        const bgY = y - metrics.actualBoundingBoxAscent - padding - vPad;
-        const bgW = metrics.width + padding * 2;
-        const bgH = textHeight + padding * 2 + vPad * 2;
-
-        c.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        c.fillRect(bgX, bgY, bgW, bgH);
-        c.fillStyle = '#FFFFFF';
-        c.fillText(text, x, y);
-
-        return { x: bgX, y: bgY, w: bgW, h: bgH };
     }
 
     getLocalDate(date) {

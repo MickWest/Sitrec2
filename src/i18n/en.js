@@ -297,6 +297,10 @@ const en = {
             label: "Render Stabilized Expanded",
             tooltip: "Export stabilized video with expanded canvas so no pixels are lost",
         },
+        includeVideoInfo: {
+            label: "Include Video Info Display",
+            tooltip: "Composite the Video Info Display (frame counter, timecode, dates) and any visible OSD Tracker readouts onto the rendered stabilized video",
+        },
         trackRadius: {
             label: "Track Radius",
             tooltip: "Size of the template to match (object size)",
