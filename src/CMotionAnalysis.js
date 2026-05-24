@@ -156,6 +156,9 @@ export const MOTION_TECHNIQUES = {
     AFFINE_RANSAC: 'Affine RANSAC',
 };
 
+const DUPLICATE_IDENTICAL_RATIO = 0.93;
+const DUPLICATE_MEAN_ABS_DIFF = 0.15;
+
 export class MotionAnalyzer {
     constructor(videoView) {
         this.videoView = videoView;
@@ -188,6 +191,7 @@ export class MotionAnalyzer {
             minConsensusConfidence: 0.1,
             linearityThreshold: 0.9,
             spacingThreshold: 0.5,
+            skipDuplicateFrames: true,
         };
         
         this.frameBuffer = [];
@@ -216,6 +220,8 @@ export class MotionAnalyzer {
         this.autoMaskCloseToTarget = 140;
         
         this.resultCache = new Map();
+        this.duplicateFrameCache = new Map();
+        this.suspendAnalysis = false;
         this.lastAFrame = null;
         this.lastBFrame = null;
         this.lastVideoDataId = null;
@@ -233,11 +239,323 @@ export class MotionAnalyzer {
     invalidateCache() {
         console.log("invalidateCache called, technique=" + this.params.technique);
         this.resultCache.clear();
+        this.duplicateFrameCache.clear();
         this.frameBuffer = [];
         this.staticHistory.clear();
         this.angleHistory = [];
         this.smoothedDirection = {x: 0, y: 0, angle: 0, magnitude: 0, confidence: 0, rotation: 0};
         this.lastFlowData = null;
+    }
+
+    makeZeroMotionFlowData(isDuplicateFrame = false) {
+        return {
+            vectors: [],
+            consensus: {dx: 0, dy: 0, confidence: 1, inlierCount: 0, duplicateFrame: isDuplicateFrame},
+            isGoodFrame: true,
+            duplicateFrame: isDuplicateFrame,
+        };
+    }
+
+    getZeroMotionDirection() {
+        return {x: 0, y: 0, angle: 0, magnitude: 0, confidence: 1, rotation: 0};
+    }
+
+    compareGrayForDuplicate(grayA, grayB) {
+        if (!grayA || !grayB || grayA.rows !== grayB.rows || grayA.cols !== grayB.cols) {
+            return {isDuplicate: false, identicalRatio: 0, meanAbsDiff: Infinity};
+        }
+
+        const a = grayA.data;
+        const b = grayB.data;
+        const n = Math.min(a.length, b.length);
+        if (n === 0) return {isDuplicate: false, identicalRatio: 0, meanAbsDiff: Infinity};
+
+        const stride = Math.max(1, Math.floor(n / 50000));
+        let identical = 0;
+        let totalDiff = 0;
+        let samples = 0;
+        for (let i = 0; i < n; i += stride) {
+            const diff = Math.abs(a[i] - b[i]);
+            if (diff === 0) identical++;
+            totalDiff += diff;
+            samples++;
+        }
+
+        const identicalRatio = identical / samples;
+        const meanAbsDiff = totalDiff / samples;
+        return {
+            isDuplicate: identicalRatio >= DUPLICATE_IDENTICAL_RATIO && meanAbsDiff <= DUPLICATE_MEAN_ABS_DIFF,
+            identicalRatio,
+            meanAbsDiff,
+        };
+    }
+
+    detectDuplicateFrame(frame, gray) {
+        if (!this.params.skipDuplicateFrames || frame <= 0) {
+            return {isDuplicate: false, identicalRatio: 0, meanAbsDiff: Infinity};
+        }
+
+        const cached = this.duplicateFrameCache.get(frame);
+        if (cached) return cached;
+
+        const videoData = this.videoView?.videoData;
+        const prevImage = videoData?.getImage(frame - 1);
+        if (!prevImage || !prevImage.width || !prevImage.height) {
+            const result = {isDuplicate: false, identicalRatio: 0, meanAbsDiff: Infinity};
+            this.duplicateFrameCache.set(frame, result);
+            return result;
+        }
+
+        const {gray: prevGray} = imageToGrayscale(prevImage, this.params.blurSize);
+        const result = this.compareGrayForDuplicate(prevGray, gray);
+        prevGray.delete();
+        this.duplicateFrameCache.set(frame, result);
+        return result;
+    }
+
+    async buildDuplicateFrameMap(startFrame, endFrame, progressCallback = null, beforeFrameCallback = null) {
+        if (!this.params.skipDuplicateFrames) return;
+
+        const videoData = this.videoView?.videoData;
+        if (!videoData) return;
+
+        let prevGray = null;
+        let prevFrame = Math.max(0, startFrame - 1);
+        if (prevFrame < startFrame) {
+            beforeFrameCallback?.(prevFrame);
+            videoData.getImage(prevFrame);
+            await videoData.waitForFrame?.(prevFrame, 5000);
+            const prevImage = videoData.getImageNoPurge?.(prevFrame) || videoData.getImage(prevFrame);
+            if (prevImage?.width && prevImage?.height) {
+                prevGray = imageToGrayscale(prevImage, this.params.blurSize).gray;
+            }
+        }
+
+        const total = endFrame - startFrame + 1;
+        for (let f = startFrame; f <= endFrame; f++) {
+            beforeFrameCallback?.(f);
+            videoData.getImage(f);
+            await videoData.waitForFrame?.(f, 5000);
+            const image = videoData.getImageNoPurge?.(f) || videoData.getImage(f);
+
+            if (!image?.width || !image?.height) {
+                this.duplicateFrameCache.set(f, {isDuplicate: false, identicalRatio: 0, meanAbsDiff: Infinity});
+                continue;
+            }
+
+            const {gray} = imageToGrayscale(image, this.params.blurSize);
+            const result = prevGray
+                ? this.compareGrayForDuplicate(prevGray, gray)
+                : {isDuplicate: false, identicalRatio: 0, meanAbsDiff: Infinity};
+            this.duplicateFrameCache.set(f, result);
+
+            if (prevGray) prevGray.delete();
+            prevGray = gray;
+
+            if (progressCallback && ((f - startFrame) % 5 === 0 || f === endFrame)) {
+                progressCallback(f - startFrame + 1, total);
+                await new Promise(r => setTimeout(r, 0));
+            }
+        }
+
+        if (prevGray) prevGray.delete();
+    }
+
+    hasDuplicateFrameMapForRange(startFrame, endFrame) {
+        if (!this.params.skipDuplicateFrames) return true;
+        for (let f = Math.max(1, startFrame); f <= endFrame; f++) {
+            if (!this.duplicateFrameCache.has(f)) return false;
+        }
+        return true;
+    }
+
+    cacheZeroMotionFrame(frame, imgWidth, imgHeight, duplicateInfo = null) {
+        const flowData = this.makeZeroMotionFlowData(!!duplicateInfo?.isDuplicate);
+        if (duplicateInfo) {
+            flowData.duplicateInfo = duplicateInfo;
+        }
+        const zeroDirection = this.getZeroMotionDirection();
+        this.lastFlowData = flowData;
+        this.resultCache.set(frame, {
+            flowData,
+            smoothedDirection: zeroDirection,
+            angleHistory: [...this.angleHistory],
+            imgWidth,
+            imgHeight,
+        });
+    }
+
+    getPriorAnalysisFrame(frame, skipFrames) {
+        if (!this.params.skipDuplicateFrames) return frame - skipFrames;
+
+        let remaining = skipFrames;
+        for (let f = frame - 1; f >= 0; f--) {
+            const duplicateInfo = this.duplicateFrameCache.get(f);
+            if (duplicateInfo?.isDuplicate) continue;
+            remaining--;
+            if (remaining === 0) return f;
+        }
+        return -1;
+    }
+
+    async fillBadNonDuplicateMotionGap(frame, beforeFrameCallback = null) {
+        if (!this.params.skipDuplicateFrames) return;
+
+        const duplicateInfo = this.duplicateFrameCache.get(frame);
+        if (duplicateInfo?.isDuplicate) return;
+
+        const cached = this.resultCache.get(frame);
+        if (!cached || cached.incomplete) return;
+        if (cached.flowData?.isGoodFrame && !cached.flowData?.syntheticFrame && cached.flowData?.lastSegmentConsensus) return;
+
+        const savedFrameSkip = this.params.frameSkip;
+        let adjacent;
+        try {
+            this.params.frameSkip = 1;
+            const sourceFrames = this.getTrackletSourceFrames(frame, 1);
+            const videoData = this.videoView?.videoData;
+            if (sourceFrames && videoData) {
+                for (const sourceFrame of sourceFrames) {
+                    beforeFrameCallback?.(sourceFrame);
+                    videoData.getImage(sourceFrame);
+                }
+                for (const sourceFrame of sourceFrames) {
+                    beforeFrameCallback?.(sourceFrame);
+                    await videoData.waitForFrame?.(sourceFrame, 5000);
+                }
+            }
+            adjacent = this.computeLinearTracklet(frame, cached.imgWidth, cached.imgHeight, 1, beforeFrameCallback);
+        } finally {
+            this.params.frameSkip = savedFrameSkip;
+        }
+
+        if (!adjacent?.consensus) return;
+
+        const adjacentFlowData = {
+            vectors: adjacent.flowVectors,
+            consensus: adjacent.consensus,
+            lastSegmentConsensus: adjacent.lastSegmentConsensus ?? adjacent.consensus,
+            isGoodFrame: true,
+            adjacentFallbackFrame: true,
+        };
+        const adjacentDirection = {
+            x: adjacent.consensus.dx,
+            y: adjacent.consensus.dy,
+            angle: Math.atan2(adjacent.consensus.dy, adjacent.consensus.dx),
+            magnitude: Math.sqrt(adjacent.consensus.dx * adjacent.consensus.dx + adjacent.consensus.dy * adjacent.consensus.dy),
+            confidence: adjacent.consensus.confidence ?? 0,
+            rotation: 0,
+        };
+
+        this.resultCache.set(frame, {
+            ...cached,
+            flowData: adjacentFlowData,
+            smoothedDirection: adjacentDirection,
+        });
+    }
+
+    async fillBadNonDuplicateMotionGaps(startFrame, endFrame, beforeFrameCallback = null, progressCallback = null) {
+        if (!this.params.skipDuplicateFrames) return;
+
+        const total = endFrame - startFrame + 1;
+        for (let f = startFrame; f <= endFrame; f++) {
+            await this.fillBadNonDuplicateMotionGap(f, beforeFrameCallback);
+            if (progressCallback && ((f - startFrame) % 5 === 0 || f === endFrame)) {
+                progressCallback(f - startFrame + 1, total);
+                await new Promise(r => setTimeout(r, 0));
+            }
+        }
+
+        const goodFrames = [];
+        for (let f = startFrame; f <= endFrame; f++) {
+            const duplicateInfo = this.duplicateFrameCache.get(f);
+            const cached = this.resultCache.get(f);
+            const cons = cached?.flowData?.consensus;
+            if (duplicateInfo?.isDuplicate) continue;
+            if (cached?.flowData?.isGoodFrame && cons) {
+                goodFrames.push(f);
+            }
+        }
+        if (goodFrames.length === 0) return;
+
+        for (let f = startFrame; f <= endFrame; f++) {
+            const duplicateInfo = this.duplicateFrameCache.get(f);
+            if (duplicateInfo?.isDuplicate) continue;
+
+            const cached = this.resultCache.get(f);
+            if (cached?.flowData?.isGoodFrame && cached.flowData.consensus) continue;
+            if (!cached || cached.incomplete) continue;
+
+            let prevGood = null;
+            let nextGood = null;
+            for (const gf of goodFrames) {
+                if (gf < f) prevGood = gf;
+                if (gf > f) {
+                    nextGood = gf;
+                    break;
+                }
+            }
+
+            let dx = 0, dy = 0, confidence = 0;
+            let lastDx = 0, lastDy = 0, lastConfidence = 0;
+            if (prevGood !== null && nextGood !== null) {
+                const prevFlow = this.resultCache.get(prevGood).flowData;
+                const nextFlow = this.resultCache.get(nextGood).flowData;
+                const prev = prevFlow.consensus;
+                const next = nextFlow.consensus;
+                const prevLast = prevFlow.lastSegmentConsensus ?? prev;
+                const nextLast = nextFlow.lastSegmentConsensus ?? next;
+                const t = (f - prevGood) / (nextGood - prevGood);
+                dx = prev.dx + t * (next.dx - prev.dx);
+                dy = prev.dy + t * (next.dy - prev.dy);
+                confidence = Math.min(prev.confidence ?? 0, next.confidence ?? 0) * 0.5;
+                lastDx = prevLast.dx + t * (nextLast.dx - prevLast.dx);
+                lastDy = prevLast.dy + t * (nextLast.dy - prevLast.dy);
+                lastConfidence = Math.min(prevLast.confidence ?? 0, nextLast.confidence ?? 0) * 0.5;
+            } else if (prevGood !== null) {
+                const prevFlow = this.resultCache.get(prevGood).flowData;
+                const prev = prevFlow.consensus;
+                const prevLast = prevFlow.lastSegmentConsensus ?? prev;
+                dx = prev.dx;
+                dy = prev.dy;
+                confidence = (prev.confidence ?? 0) * 0.5;
+                lastDx = prevLast.dx;
+                lastDy = prevLast.dy;
+                lastConfidence = (prevLast.confidence ?? 0) * 0.5;
+            } else if (nextGood !== null) {
+                const nextFlow = this.resultCache.get(nextGood).flowData;
+                const next = nextFlow.consensus;
+                const nextLast = nextFlow.lastSegmentConsensus ?? next;
+                dx = next.dx;
+                dy = next.dy;
+                confidence = (next.confidence ?? 0) * 0.5;
+                lastDx = nextLast.dx;
+                lastDy = nextLast.dy;
+                lastConfidence = (nextLast.confidence ?? 0) * 0.5;
+            }
+
+            const syntheticFlowData = {
+                vectors: [],
+                consensus: {dx, dy, confidence, inlierCount: 0, synthetic: true},
+                lastSegmentConsensus: {dx: lastDx, dy: lastDy, confidence: lastConfidence, inlierCount: 0, synthetic: true},
+                isGoodFrame: true,
+                syntheticFrame: true,
+            };
+            const syntheticDirection = {
+                x: dx,
+                y: dy,
+                angle: Math.atan2(dy, dx),
+                magnitude: Math.sqrt(dx * dx + dy * dy),
+                confidence,
+                rotation: 0,
+            };
+
+            this.resultCache.set(f, {
+                ...cached,
+                flowData: syntheticFlowData,
+                smoothedDirection: syntheticDirection,
+            });
+        }
     }
 
     getCacheStatusArray() {
@@ -265,22 +583,36 @@ export class MotionAnalyzer {
         return true;
     }
 
-    getMotionDataForAllFrames() {
+    // gapFill=true: smooth-curve mode (default). Frames flagged !isGoodFrame
+    //   are interpolated from their nearest good neighbours — appropriate for
+    //   velocity tracks and motion visualization where occasional bad frames
+    //   shouldn't introduce visible discontinuities.
+    // gapFill=false: frame-accurate mode. Trust the measured per-frame
+    //   consensus even when isGoodFrame=false, because a genuinely stationary
+    //   scene legitimately produces near-zero motion that fails the
+    //   minVectorCount / minConsensusConfidence quality threshold. Used by
+    //   panorama assembly and video stabilization, which need each frame's
+    //   actual offset — zero must stay zero, not get blended with neighbours.
+    getMotionDataForAllFrames(options = {}) {
+        const {gapFill = true, fallbackToSmoothed = true, useTrackletLastSegment = false} = options;
         const data = [];
         const goodFrameIndices = [];
-        
+
         for (let f = 0; f < Sit.frames; f++) {
             const cached = this.resultCache.get(f);
             if (cached && cached.smoothedDirection && !cached.incomplete) {
+                const cons = useTrackletLastSegment
+                    ? (cached.flowData?.lastSegmentConsensus ?? cached.flowData?.consensus)
+                    : cached.flowData?.consensus;
                 const isGoodFrame = cached.flowData?.isGoodFrame ?? true;
-                if (isGoodFrame) {
+                if (isGoodFrame || !gapFill) {
                     data.push({
-                        dx: cached.flowData?.consensus?.dx ?? cached.smoothedDirection.x,
-                        dy: cached.flowData?.consensus?.dy ?? cached.smoothedDirection.y,
-                        confidence: cached.flowData?.consensus?.confidence ?? cached.smoothedDirection.confidence,
-                        isGood: true,
+                        dx: cons?.dx ?? (fallbackToSmoothed ? cached.smoothedDirection.x : 0) ?? 0,
+                        dy: cons?.dy ?? (fallbackToSmoothed ? cached.smoothedDirection.y : 0) ?? 0,
+                        confidence: cons?.confidence ?? (fallbackToSmoothed ? cached.smoothedDirection.confidence : 0) ?? 0,
+                        isGood: isGoodFrame,
                     });
-                    goodFrameIndices.push(f);
+                    if (isGoodFrame) goodFrameIndices.push(f);
                 } else {
                     data.push({dx: 0, dy: 0, confidence: 0, isGood: false});
                 }
@@ -288,11 +620,11 @@ export class MotionAnalyzer {
                 data.push({dx: 0, dy: 0, confidence: 0, isGood: false});
             }
         }
-        
-        if (goodFrameIndices.length === 0) {
+
+        if (!gapFill || goodFrameIndices.length === 0) {
             return data;
         }
-        
+
         for (let f = 0; f < Sit.frames; f++) {
             if (data[f].isGood) continue;
             
@@ -404,6 +736,14 @@ export class MotionAnalyzer {
         if (!image || !image.width) return;
         
         const {gray, width, height} = imageToGrayscale(image, this.params.blurSize);
+
+        const duplicateInfo = this.detectDuplicateFrame(targetFrame, gray);
+        if (duplicateInfo.isDuplicate) {
+            gray.delete();
+            this.cacheZeroMotionFrame(targetFrame, width, height, duplicateInfo);
+            setRenderOne(true);
+            return;
+        }
 
         this.frameBuffer.push({gray: gray.clone(), frame: targetFrame, width, height});
         while (this.frameBuffer.length > this.maxBufferSize) {
@@ -694,6 +1034,7 @@ export class MotionAnalyzer {
     analyze(frame) {
         frame = Math.floor(frame);
         if (!this.active || !cv) return;
+        if (this.suspendAnalysis) return;
 
         const videoData = this.videoView.videoData;
         if (!videoData) return;
@@ -761,6 +1102,16 @@ export class MotionAnalyzer {
             this.maskOverlayNode.initMask(imgWidth, imgHeight);
         }
 
+        const duplicateInfo = this.detectDuplicateFrame(frame, gray);
+        if (duplicateInfo.isDuplicate) {
+            gray.delete();
+            this.cacheZeroMotionFrame(frame, imgWidth, imgHeight, duplicateInfo);
+            this.drawOverlay(width, height, imgWidth, imgHeight);
+            this.drawGraph();
+            this.updateSliderStatus();
+            return;
+        }
+
         this.frameBuffer.push({gray: gray.clone(), frame, width: imgWidth, height: imgHeight});
         
         while (this.frameBuffer.length > this.maxBufferSize) {
@@ -769,10 +1120,10 @@ export class MotionAnalyzer {
         }
 
         const skipFrames = Math.max(1, Math.round(this.params.frameSkip));
-        const targetFrame = frame - skipFrames;
+        const targetFrame = this.getPriorAnalysisFrame(frame, skipFrames);
         let compareIdx = this.frameBuffer.findIndex(entry => entry.frame === targetFrame);
         
-        if (compareIdx < 0 && frame >= skipFrames) {
+        if (compareIdx < 0 && targetFrame >= 0) {
             const prevFrame = targetFrame;
             const isLoaded = videoData.isFrameLoaded ? videoData.isFrameLoaded(prevFrame) : true;
             if (!isLoaded) {
@@ -888,7 +1239,7 @@ export class MotionAnalyzer {
             return;
         }
         
-        const {flowVectors, consensus} = result;
+        const {flowVectors, consensus, lastSegmentConsensus} = result;
         if (!consensus) {
             console.log(`Motion: technique=Linear Tracklet, consensus is null, vectors=${flowVectors.length}`);
         }
@@ -932,7 +1283,7 @@ export class MotionAnalyzer {
             console.log(`Motion: BAD FRAME skipped - vectors=${flowVectors.length}, confidence=${consensus?.confidence?.toFixed(2) ?? 'null'}`);
         }
 
-        this.lastFlowData = {vectors: flowVectors, consensus, isGoodFrame};
+        this.lastFlowData = {vectors: flowVectors, consensus, lastSegmentConsensus, isGoodFrame};
     }
 
     computeOpticalFlow(prevGray, gray, imgWidth, imgHeight, skipFrames = 1) {
@@ -1324,19 +1675,39 @@ export class MotionAnalyzer {
         };
     }
 
-    computeLinearTracklet(frame, imgWidth, imgHeight, skipFrames) {
+    getTrackletSourceFrames(frame, skipFrames) {
+        if (!this.params.skipDuplicateFrames) {
+            const startFrame = frame - skipFrames;
+            if (startFrame < 0) return null;
+            const frames = [];
+            for (let f = startFrame; f <= frame; f++) frames.push(f);
+            return frames;
+        }
+
+        const frames = [];
+        for (let f = frame; f >= 0 && frames.length < skipFrames + 1; f--) {
+            const duplicateInfo = this.duplicateFrameCache.get(f);
+            if (duplicateInfo?.isDuplicate) continue;
+            frames.push(f);
+        }
+        if (frames.length < skipFrames + 1) return null;
+        return frames.reverse();
+    }
+
+    computeLinearTracklet(frame, imgWidth, imgHeight, skipFrames, beforeFrameCallback = null) {
         const videoData = this.videoView.videoData;
         if (!videoData) return {flowVectors: [], consensus: null};
         
-        const startFrame = frame - skipFrames;
-        if (startFrame < 0) return {flowVectors: [], consensus: null};
+        const sourceFrames = this.getTrackletSourceFrames(frame, skipFrames);
+        if (!sourceFrames) return {flowVectors: [], consensus: null};
         
         const grayFrames = [];
-        for (let f = startFrame; f <= frame; f++) {
+        for (const f of sourceFrames) {
             const entry = this.frameBuffer.find(e => e.frame === f);
             if (entry) {
                 grayFrames.push(entry.gray);
             } else {
+                beforeFrameCallback?.(f);
                 const image = videoData.getImage(f);
                 if (!image || !image.width || !image.height) {
                     for (const g of grayFrames) {
@@ -1459,6 +1830,7 @@ export class MotionAnalyzer {
         }
         
         const flowVectors = [];
+        const lastSegmentFlowVectors = [];
         const motionScale = 1 / skipFrames;
         
         for (const traj of trajectories) {
@@ -1513,6 +1885,10 @@ export class MotionAnalyzer {
             const dx = totalDx * motionScale;
             const dy = totalDy * motionScale;
             const mag = Math.sqrt(dx * dx + dy * dy);
+            const penultimate = traj.points[traj.points.length - 2];
+            const lastDx = end[0] - penultimate[0];
+            const lastDy = end[1] - penultimate[1];
+            const lastMag = Math.sqrt(lastDx * lastDx + lastDy * lastDy);
             
             const key = `${Math.round(start[0] / 20)}_${Math.round(start[1] / 20)}`;
             let staticScore = this.staticHistory.get(key) || 0;
@@ -1544,6 +1920,14 @@ export class MotionAnalyzer {
                 linearityScore,
                 spacingScore
             });
+            lastSegmentFlowVectors.push({
+                px: penultimate[0], py: penultimate[1], dx: lastDx, dy: lastDy, mag: lastMag,
+                quality,
+                angle: Math.atan2(lastDy, lastDx),
+                trackError: avgError,
+                linearityScore,
+                spacingScore
+            });
         }
         
         if (flowVectors.length < 3) {
@@ -1551,7 +1935,8 @@ export class MotionAnalyzer {
         }
         
         const consensus = this.findConsensusDirection(flowVectors);
-        return {flowVectors, consensus};
+        const lastSegmentConsensus = this.findConsensusDirection(lastSegmentFlowVectors);
+        return {flowVectors, consensus, lastSegmentConsensus};
     }
 
     computeSparseConsensus(prevGray, gray, imgWidth, imgHeight, skipFrames) {
@@ -2123,4 +2508,3 @@ export class MotionAnalyzer {
 
 // UI, menu, panorama and {de,}serializeMotionAnalysis now live in
 // CMotionAnalysisUI.js — external consumers should import from there.
-

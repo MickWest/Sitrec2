@@ -61,35 +61,24 @@ function calculateFrameOffsets(motionData, startFrame, endFrame, frameStep = 1, 
     const sin = Math.sin(rotationAngle);
     
     const alignFlow = rotationAngle !== 0;
+
+    const accumulateMotion = (md) => {
+        const dx = -md.dx;
+        const dy = -md.dy;
+        cumX += dx * cos - dy * sin;
+        if (!alignFlow) {
+            cumY += dx * sin + dy * cos;
+        }
+    };
     
     for (let i = 0; i < totalFrames; i++) {
         const frame = startFrame + i * frameStep;
         if (i > 0) {
             if (frameStep === 1) {
-                const md = motionData[frame];
-                const dx = -md.dx;
-                const dy = -md.dy;
-                if (alignFlow) {
-                     const rotatedX = dx * cos - dy * sin;
-                    const magnitude = Math.sqrt(dx * dx + dy * dy);
-                    cumX += rotatedX >= 0 ? magnitude : -magnitude;
-                } else {
-                    cumX += dx * cos - dy * sin;
-                    cumY += dx * sin + dy * cos;
-                }
+                accumulateMotion(motionData[frame]);
             } else {
                 for (let f = frame - frameStep + 1; f <= frame; f++) {
-                    const md = motionData[f];
-                    const dx = -md.dx;
-                    const dy = -md.dy;
-                    if (alignFlow) {
-                        const rotatedX = dx * cos - dy * sin;
-                        const magnitude = Math.sqrt(dx * dx + dy * dy);
-                        cumX += rotatedX >= 0 ? magnitude : -magnitude;
-                    } else {
-                        cumX += dx * cos - dy * sin;
-                        cumY += dx * sin + dy * cos;
-                    }
+                    accumulateMotion(motionData[f]);
                 }
             }
         }
@@ -357,6 +346,67 @@ function countCompleteInRange() {
     return n;
 }
 
+function isMotionAnalysisReady() {
+    if (!motionAnalyzer || !motionAnalyzer.isCacheFull()) return false;
+    const aFrame = Sit.aFrame || 0;
+    const bFrame = Sit.bFrame ?? (Sit.frames - 1);
+    return motionAnalyzer.hasDuplicateFrameMapForRange(aFrame, bFrame);
+}
+
+function resetMotionAnalysisDerivedState(clearDuplicateMap = false) {
+    if (!motionAnalyzer) return;
+
+    for (const entry of motionAnalyzer.frameBuffer) {
+        if (entry.gray) entry.gray.delete();
+    }
+    motionAnalyzer.resultCache.clear();
+    if (clearDuplicateMap) motionAnalyzer.duplicateFrameCache.clear();
+    motionAnalyzer.frameBuffer = [];
+    motionAnalyzer.staticHistory.clear();
+    motionAnalyzer.angleHistory = [];
+    motionAnalyzer.smoothedDirection = {x: 0, y: 0, angle: 0, magnitude: 0, confidence: 0, rotation: 0};
+    motionAnalyzer.lastFlowData = null;
+
+    const videoData = motionAnalyzer.videoView?.videoData;
+    motionAnalyzer.lastVideoDataId = videoData?.id || videoData?.filename || 'unknown';
+    motionAnalyzer.lastAFrame = Sit.aFrame;
+    motionAnalyzer.lastBFrame = Sit.bFrame;
+}
+
+function resetVideoThrashDetector(videoData) {
+    if (!videoData) return;
+    videoData.lastGetImageFrame = undefined;
+    videoData.lastGetImageTime = undefined;
+}
+
+function setMotionAnalysisProgressLabel(menuItem, progress, fallbackCurrent = null) {
+    if (!menuItem) return;
+
+    if (typeof progress === "number") {
+        const total = fallbackCurrent ?? 1;
+        const pct = total > 0 ? Math.round(100 * progress / total) : 0;
+        setMenuItemLabel(menuItem, "status.analyzingPercent", {pct});
+        return;
+    }
+
+    const pct = progress.pct ?? (progress.total > 0 ? Math.round(100 * progress.current / progress.total) : 0);
+    const step = progress.step ?? 1;
+    const steps = progress.steps ?? 1;
+
+    switch (progress.phase) {
+        case "duplicates":
+            setMenuItemLabel(menuItem, "status.detectingDuplicatesPercent", {step, steps, pct});
+            break;
+        case "fallback":
+            setMenuItemLabel(menuItem, "status.fillingMotionGapsPercent", {step, steps, pct});
+            break;
+        case "analysis":
+        default:
+            setMenuItemLabel(menuItem, "status.analyzingStepPercent", {step, steps, pct});
+            break;
+    }
+}
+
 async function analyzeAllFrames(progressCallback) {
     if (!motionAnalyzer) return false;
 
@@ -367,12 +417,12 @@ async function analyzeAllFrames(progressCallback) {
     // If another caller is already driving an analysis pass, just observe its
     // progress through our own callback and return when it finishes.
     if (analysisInProgress) {
-        while (analysisInProgress && !motionAnalyzer.isCacheFull()) {
+        while (analysisInProgress && !isMotionAnalysisReady()) {
             if (progressCallback) progressCallback(countCompleteInRange(), totalFrames);
             await new Promise(r => setTimeout(r, 100));
         }
         if (progressCallback) progressCallback(countCompleteInRange(), totalFrames);
-        return motionAnalyzer.isCacheFull();
+        return isMotionAnalysisReady();
     }
 
     const videoData = motionAnalyzer.videoView?.videoData;
@@ -388,6 +438,31 @@ async function analyzeAllFrames(progressCallback) {
 
     try {
         const skip = Math.max(1, Math.round(motionAnalyzer.params.frameSkip));
+        if (motionAnalyzer.params.skipDuplicateFrames && !motionAnalyzer.hasDuplicateFrameMapForRange(aFrame, bFrame)) {
+            const duplicateScanStart = Math.max(1, aFrame - Math.max(skip * 10, 30));
+            motionAnalyzer.suspendAnalysis = true;
+            resetMotionAnalysisDerivedState(true);
+            resetVideoThrashDetector(videoData);
+            await motionAnalyzer.buildDuplicateFrameMap(duplicateScanStart, bFrame, (current, total) => {
+                progressCallback?.({
+                    phase: "duplicates",
+                    step: 1,
+                    steps: 3,
+                    current,
+                    total,
+                    pct: Math.round(100 * current / total),
+                });
+            }, (frame) => {
+                par.frame = frame;
+                GlobalDateTimeNode.update(frame);
+            });
+
+            // Re-run the selected range against the fixed virtual frame list,
+            // but keep the duplicate map itself.
+            resetMotionAnalysisDerivedState(false);
+            motionAnalyzer.suspendAnalysis = false;
+            resetVideoThrashDetector(videoData);
+        }
 
         // Preload the prev-context frames so the first `skip` frames of the
         // range can compute optical flow. Without this, analyze() marks them
@@ -414,21 +489,73 @@ async function analyzeAllFrames(progressCallback) {
                 par.frame = f;
                 GlobalDateTimeNode.update(f);
                 motionAnalyzer.analyze(f);
+                await motionAnalyzer.fillBadNonDuplicateMotionGap(f, (frame) => {
+                    par.frame = frame;
+                    GlobalDateTimeNode.update(frame);
+                });
 
                 const after = motionAnalyzer.resultCache.get(f);
                 if (!after || after.incomplete) stillMissing++;
 
                 if (f % 5 === 0) {
-                    if (progressCallback) progressCallback(countCompleteInRange(), totalFrames);
+                    const complete = countCompleteInRange();
+                    progressCallback?.({
+                        phase: "analysis",
+                        step: 2,
+                        steps: 3,
+                        current: complete,
+                        total: totalFrames,
+                        pct: Math.round(100 * complete / totalFrames),
+                    });
                     await new Promise(r => setTimeout(r, 0));
                 }
             }
-            if (progressCallback) progressCallback(countCompleteInRange(), totalFrames);
+            const complete = countCompleteInRange();
+            progressCallback?.({
+                phase: "analysis",
+                step: 2,
+                steps: 3,
+                current: complete,
+                total: totalFrames,
+                pct: Math.round(100 * complete / totalFrames),
+            });
             if (stillMissing === 0) break;
         }
 
-        return motionAnalyzer.isCacheFull();
+        progressCallback?.({
+            phase: "fallback",
+            step: 3,
+            steps: 3,
+            current: 0,
+            total: 1,
+            pct: 0,
+        });
+        resetVideoThrashDetector(videoData);
+        await motionAnalyzer.fillBadNonDuplicateMotionGaps(aFrame, bFrame, (frame) => {
+            par.frame = frame;
+            GlobalDateTimeNode.update(frame);
+        }, (current, total) => {
+            progressCallback?.({
+                phase: "fallback",
+                step: 3,
+                steps: 3,
+                current,
+                total,
+                pct: Math.round(100 * current / total),
+            });
+        });
+        progressCallback?.({
+            phase: "fallback",
+            step: 3,
+            steps: 3,
+            current: 1,
+            total: 1,
+            pct: 100,
+        });
+
+        return isMotionAnalysisReady();
     } finally {
+        if (motionAnalyzer) motionAnalyzer.suspendAnalysis = false;
         par.paused = savedPaused;
         par.frame = savedFrame;
         Globals.justVideoAnalysis = false;
@@ -447,9 +574,8 @@ async function createTrackFromMotion() {
 
     setMenuItemLabel(createTrackMenuItem, "status.analyzingPercent", {pct: 0});
     
-    await analyzeAllFrames((current, total) => {
-        const pct = Math.round(100 * current / total);
-        setMenuItemLabel(createTrackMenuItem, "status.analyzingPercent", {pct});
+    await analyzeAllFrames((progress, total) => {
+        setMotionAnalysisProgressLabel(createTrackMenuItem, progress, total);
     });
 
     setMenuItemLabel(createTrackMenuItem, "status.creatingTrack");
@@ -475,6 +601,8 @@ async function createTrackFromMotion() {
     const imageWidthMeters = 2 * distance * Math.tan(fovRadians / 2);
     const metersPerPixel = imageWidthMeters / dims.width;
 
+    // Track creation wants a smooth curve: gap-fill interpolates over
+    // low-quality frames so the synthesized velocity track stays continuous.
     const motionData = motionAnalyzer.getMotionDataForAllFrames();
 
     motionTrackCounter++;
@@ -522,11 +650,10 @@ async function exportMotionCSV() {
     );
     if (!result) return;
 
-    if (!motionAnalyzer.isCacheFull()) {
+    if (!isMotionAnalysisReady()) {
         setMenuItemLabel(exportMotionMenuItem, "status.analyzingPercent", {pct: 0});
-        await analyzeAllFrames((current, total) => {
-            const pct = Math.round(100 * current / total);
-            setMenuItemLabel(exportMotionMenuItem, "status.analyzingPercent", {pct});
+        await analyzeAllFrames((progress, total) => {
+            setMotionAnalysisProgressLabel(exportMotionMenuItem, progress, total);
         });
     }
 
@@ -583,12 +710,16 @@ async function exportMotionPanorama() {
     if (!result) return;
     const {videoData} = result;
 
-    if (!motionAnalyzer.isCacheFull()) {
+    if (!isMotionAnalysisReady()) {
         setMenuItemLabel(exportPanoMenuItem, "status.analyzingPercent", {pct: 0});
-        await analyzeAllFrames((current, total) => {
-            const pct = Math.round(100 * current / total);
-            setMenuItemLabel(exportPanoMenuItem, "status.analyzingPercent", {pct});
+        const ready = await analyzeAllFrames((progress, total) => {
+            setMotionAnalysisProgressLabel(exportPanoMenuItem, progress, total);
         });
+        if (!ready) {
+            console.warn("Motion panorama export aborted: motion analysis did not complete for the selected range");
+            setMenuItemLabel(exportPanoMenuItem, "menu.panorama.exportImage.label");
+            return;
+        }
     }
 
     setMenuItemLabel(exportPanoMenuItem, "status.buildingPanorama");
@@ -596,7 +727,12 @@ async function exportMotionPanorama() {
     const startFrame = Sit.aFrame;
     const endFrame = Sit.bFrame;
     const crop = panoCrop;
-    const motionData = motionAnalyzer.getMotionDataForAllFrames();
+    resetVideoThrashDetector(videoData);
+    await motionAnalyzer.fillBadNonDuplicateMotionGaps(startFrame, endFrame, (frame) => {
+        par.frame = frame;
+        GlobalDateTimeNode.update(frame);
+    });
+    const motionData = motionAnalyzer.getMotionDataForAllFrames({gapFill: false, fallbackToSmoothed: false, useTrackletLastSegment: true});
 
     const panoRotation = isAlignWithFlowEnabled() ? -calculateOverallMotionAngle(motionData, startFrame, endFrame) : 0;
     const {frameData, totalFrames, minPx, maxPx, minPy, maxPy} = calculateFrameOffsets(motionData, startFrame, endFrame, panoFrameStep, panoRotation);
@@ -701,7 +837,6 @@ async function exportMotionPanorama() {
         if (i % previewEveryNFrames === 0) {
             const pct = Math.round(100 * i / totalFrames);
             updatePreview();
-            const skipInfo = skippedFrames > 0 ? ` (${skippedFrames} skipped)` : '';
             statusText.textContent = skippedFrames > 0
                 ? mt("status.loadingFrameSkipped", {
                     current: i + 1,
@@ -752,12 +887,16 @@ async function exportPanoVideo() {
     if (!result) return;
     const {videoData} = result;
 
-    if (!motionAnalyzer.isCacheFull()) {
+    if (!isMotionAnalysisReady()) {
         setMenuItemLabel(exportPanoVideoMenuItem, "status.analyzingPercent", {pct: 0});
-        await analyzeAllFrames((current, total) => {
-            const pct = Math.round(100 * current / total);
-            setMenuItemLabel(exportPanoVideoMenuItem, "status.analyzingPercent", {pct});
+        const ready = await analyzeAllFrames((progress, total) => {
+            setMotionAnalysisProgressLabel(exportPanoVideoMenuItem, progress, total);
         });
+        if (!ready) {
+            console.warn("Motion pano video export aborted: motion analysis did not complete for the selected range");
+            setMenuItemLabel(exportPanoVideoMenuItem, "menu.panorama.exportVideo.label");
+            return;
+        }
     }
 
     setMenuItemLabel(exportPanoVideoMenuItem, "status.buildingPanorama");
@@ -765,7 +904,12 @@ async function exportPanoVideo() {
     const startFrame = Sit.aFrame;
     const endFrame = Sit.bFrame;
     const crop = panoCrop;
-    const motionData = motionAnalyzer.getMotionDataForAllFrames();
+    resetVideoThrashDetector(videoData);
+    await motionAnalyzer.fillBadNonDuplicateMotionGaps(startFrame, endFrame, (frame) => {
+        par.frame = frame;
+        GlobalDateTimeNode.update(frame);
+    });
+    const motionData = motionAnalyzer.getMotionDataForAllFrames({gapFill: false, fallbackToSmoothed: false, useTrackletLastSegment: true});
 
     const panoRotation = isAlignWithFlowEnabled() ? -calculateOverallMotionAngle(motionData, startFrame, endFrame) : 0;
     const {frameData, totalFrames, minPx, maxPx, minPy, maxPy} = calculateFrameOffsets(motionData, startFrame, endFrame, 1, panoRotation);
@@ -1006,17 +1150,16 @@ async function stabilizeVideoFromMotion() {
     if (!result) return;
     const {videoData} = result;
 
-    if (!motionAnalyzer.isCacheFull()) {
+    if (!isMotionAnalysisReady()) {
         setMenuItemLabel(stabilizeMenuItem, "status.analyzingPercent", {pct: 0});
-        await analyzeAllFrames((current, total) => {
-            const pct = Math.round(100 * current / total);
-            setMenuItemLabel(stabilizeMenuItem, "status.analyzingPercent", {pct});
+        await analyzeAllFrames((progress, total) => {
+            setMotionAnalysisProgressLabel(stabilizeMenuItem, progress, total);
         });
     }
 
     setMenuItemLabel(stabilizeMenuItem, "status.buildingStabilization");
 
-    const motionData = motionAnalyzer.getMotionDataForAllFrames();
+    const motionData = motionAnalyzer.getMotionDataForAllFrames({gapFill: false});
 
     // Calculate cumulative offsets from per-frame motion vectors
     // This reverses the camera motion to stabilize the video
@@ -1201,6 +1344,10 @@ function createParamSliders() {
         .name(isTracklet ? mt("menu.trackingParameters.trackletLength.label") : mt("menu.trackingParameters.frameSkip.label"))
         .onChange(invalidate)
         .tooltip(isTracklet ? mt("menu.trackingParameters.trackletLength.tooltip") : mt("menu.trackingParameters.frameSkip.tooltip")));
+    paramControllers.push(trackingFolder.add(p, 'skipDuplicateFrames')
+        .name(mt("menu.trackingParameters.skipDuplicateFrames.label"))
+        .onChange(invalidate)
+        .tooltip(mt("menu.trackingParameters.skipDuplicateFrames.tooltip")));
     paramControllers.push(trackingFolder.add(p, 'blurSize', 1, 15, 2).name(mt("menu.trackingParameters.blurSize.label")).onChange(invalidate)
         .tooltip(mt("menu.trackingParameters.blurSize.tooltip")));
     paramControllers.push(trackingFolder.add(p, 'minMotion', 0, 2, 0.1).name(mt("menu.trackingParameters.minMotion.label")).onChange(invalidate)
@@ -1513,6 +1660,9 @@ export async function deserializeMotionAnalysis(data) {
             
             if (data.params) {
                 Object.assign(motionAnalyzer.params, data.params);
+                if (data.params.skipDuplicateFrames === undefined) {
+                    motionAnalyzer.params.skipDuplicateFrames = true;
+                }
             }
             if (data.maskEnabled !== undefined) {
                 motionAnalyzer.maskEnabled = data.maskEnabled;

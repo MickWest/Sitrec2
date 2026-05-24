@@ -556,6 +556,10 @@ const en = {
                     label: "Tracklet Length",
                     tooltip: "Number of frames in tracklet (longer = stricter coherence)",
                 },
+                skipDuplicateFrames: {
+                    label: "Skip Duplicates",
+                    tooltip: "Detect adjacent duplicate video frames, cache them as zero motion, and exclude them from motion estimation",
+                },
                 blurSize: {
                     label: "Blur Size",
                     tooltip: "Gaussian blur for macro features (odd numbers)",
@@ -610,6 +614,9 @@ const en = {
             loadingOpenCv: "Loading OpenCV...",
             stopAnalysis: "Stop Analysis",
             analyzingPercent: "Analyzing... {{pct}}%",
+            detectingDuplicatesPercent: "Step {{step}}/{{steps}} Detecting duplicate frames... {{pct}}%",
+            analyzingStepPercent: "Step {{step}}/{{steps}} Analyzing motion... {{pct}}%",
+            fillingMotionGapsPercent: "Step {{step}}/{{steps}} Filling motion gaps... {{pct}}%",
             creatingTrack: "Creating track...",
             buildingPanorama: "Building panorama...",
             buildingPanoramaPercent: "Building panorama... {{pct}}%",
