@@ -18,6 +18,9 @@ import {registerLabel3D, unregisterLabel3D} from "./CNodeDisplaySkyOverlay";
 import {t} from "../i18n";
 
 
+const HIGH_ALTITUDE_LABEL_THRESHOLD_M = 100000 * 0.3048;
+const HIGH_ALTITUDE_LABEL_DECIMALS = 2;
+
 export const measurementUIVars = {
 }
 
@@ -348,6 +351,11 @@ export class CNodeMeasureAB extends CNodeLabel3D {
         let text;
         if (this.altitude) {
             const alt = altitudeMSLFromECEF(this.A);
+            if (alt >= HIGH_ALTITUDE_LABEL_THRESHOLD_M) {
+                text = Units.withUnits(alt, HIGH_ALTITUDE_LABEL_DECIMALS, "big") + " msl";
+                this.changeText(text);
+                return;
+            }
             if (Math.abs(alt-length) < 1) {
                 // if the altitude is within 1 meter of the length, then just show the length
                 // as that means we are over the ocean (zero altitude msl))
