@@ -53,6 +53,13 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
         super.dispose();
     }
 
+    modSerialize() {
+        return {
+            ...super.modSerialize(),
+            visible: false,
+        };
+    }
+
     handlePointerDown = (event) => {
         const local = this.eventToLocalPoint(event);
         if (this.rectContainsPoint(this.shadowIndicatorRect, local.x, local.y)) {

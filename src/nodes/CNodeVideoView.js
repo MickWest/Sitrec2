@@ -53,6 +53,7 @@ import {isResolvableSitrecReference, resolveURLForFetch} from "../SitrecObjectRe
 import {t} from "../i18n";
 import {
     addFiltersToVideoNode,
+    applyCurvesToImage,
     applyConvolutionToImage,
     applyEchoEffect,
     applyLevelsMidpointToImage,
@@ -62,6 +63,7 @@ import {
 } from "./CNodeVideoViewFilters";
 import {analysisMethods} from "./CNodeVideoViewAnalysis";
 import {CNodeVideoHistogramView} from "./CNodeVideoHistogramView";
+import {CNodeVideoCurvesView} from "./CNodeVideoCurvesView";
 
 // Re-export for external consumers (e.g. CMotionAnalysis).
 export {addFiltersToVideoNode, applyConvolution} from "./CNodeVideoViewFilters";
@@ -74,12 +76,13 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         // these no longer work with the new rendering pipeline
         // TODO: reimplement them as effects?
-        this.optionalInputs(["brightness", "contrast", "levelsMidpoint", "blur", "greyscale", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
+        this.optionalInputs(["brightness", "contrast", "levelsMidpoint", "curves", "showCurves", "blur", "greyscale", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
         //
 
         //  if (this.overlayView === undefined)
         addFiltersToVideoNode(this)
         this.setupHistogramView();
+        this.setupCurvesView();
 
         this.positioned = false;
         this.autoFill = v.autoFill ?? true; // default to autofill
@@ -128,6 +131,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this._clipOriginalCanvas = null;
         this._clipAdjustedCanvas = null;
         this._clipMaskCanvas = null;
+        this._curvesCanvas = null;
 
         // Pan offset for zoom+pan mode (fraction of video dimensions, 0 = centered)
         this.panOffsetX = 0;
@@ -175,7 +179,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     }
 
     isVideoAdjustmentsOpen() {
-        const contextMenu = Globals.menuBar?.activeContextMenu;
+        const contextMenu = Globals.menuBar?.activeContextMenu || Globals.menuBar?.activePersistentMenu;
         const contextMenuTitle = contextMenu?._title?.textContent || contextMenu?.$title?.textContent;
         return !!(guiVideoEffectsFolder && !guiVideoEffectsFolder._closed)
             || (contextMenuTitle === "Video Adjustments");
@@ -183,6 +187,40 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
     updateHistogramVisibilityFromVideoAdjustments() {
         this.histogramView?.setVisible(this.isVideoAdjustmentsOpen());
+    }
+
+    setupCurvesView() {
+        if (this.id !== "video") return;
+        if (this.curvesView) return;
+
+        this.curvesView = new CNodeVideoCurvesView({
+            id: this.id + "CurveEditor",
+            videoView: this,
+            relativeTo: this.id,
+            left: 0.68,
+            top: 0.38,
+            width: 0.30,
+            height: -1,
+        });
+
+        this.updateCurvesVisibility();
+        if (guiVideoEffectsFolder) {
+            guiVideoEffectsFolder.onOpenClose(() => {
+                this.updateCurvesVisibility();
+                setRenderOne(true);
+            });
+        }
+    }
+
+    updateCurvesVisibility() {
+        const curvesEnabled = this.in.curves?.value === true;
+        const showCurves = this.in.showCurves?.value !== false;
+        this.curvesView?.setVisible(curvesEnabled && showCurves && this.isVideoAdjustmentsOpen());
+    }
+
+    invalidateCurveResult() {
+        this._curvesLastImage = undefined;
+        this._curvesLastRevision = undefined;
     }
 
     setClipWarningMaskEnabled(shadowEnabled, highlightEnabled) {
@@ -911,10 +949,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                     menu._escapeKeyHandler = null;
                 }
                 this.histogramView?.setVisible(true);
+                this.updateCurvesVisibility();
                 const destroyMenu = menu.destroy.bind(menu);
                 menu.destroy = (...args) => {
                     const result = destroyMenu(...args);
                     this.updateHistogramVisibilityFromVideoAdjustments();
+                    this.updateCurvesVisibility();
                     return result;
                 };
                 CustomManager.setupDynamicMirroring(adjFolder, menu);
@@ -1433,6 +1473,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         if (effectsEnabled && this.in.levelsMidpoint && this.in.levelsMidpoint.v0 !== 1) {
             sourceImage = applyLevelsMidpointToImage(sourceImage, this.in.levelsMidpoint.v0, this);
+        }
+
+        if (effectsEnabled && this.in.curves?.value === true && this.curvesView) {
+            sourceImage = applyCurvesToImage(sourceImage, this.curvesView.getCurveLUT(), this);
         }
 
         const blurPx = effectsEnabled ? (this.in.blur?.v0 ?? 0) : 0;
