@@ -1040,7 +1040,7 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             let dateTimeX = data.dateTimeX ?? 99.5;
             let align = data.align ?? "right";
 
-            AddTimeDisplayToUI(labelVideo, dateTimeX, dateTimeY, textSize, "#f0f000", align)
+            AddTimeDisplayToUI(labelVideo, dateTimeX, dateTimeY, textSize, "hud", align)
 
             labelVideo.setVisible(true)
             node = labelVideo;

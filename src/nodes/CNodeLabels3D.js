@@ -217,6 +217,7 @@ export class CNodeLabel3D extends CNode3DGroup {
         }
 
         this.color = color;
+        this.useHUDColor = v.useHUDColor ?? this.in.color === undefined;
         
         const groupNodeId = v.groupNode ?? "MeasurementsGroupNode";
         if (v.layers !== undefined) {

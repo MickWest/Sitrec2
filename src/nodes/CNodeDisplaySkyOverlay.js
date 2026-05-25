@@ -8,6 +8,7 @@ import {wgs84} from "../LLA-ECEF-ENU";
 import {intersectSphere2, V3} from "../threeUtils";
 import {Ray, Raycaster, Sphere, Vector3} from "three";
 import {calculateAltitude} from "../threeExt";
+import {getHUDColor} from "../HUDColor";
 
 const registeredLabels = new Set();
 
@@ -393,9 +394,11 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             this.ctx.font = (label.fontWeight ? label.fontWeight + ' ' : '') + Math.floor(fontSize) + 'px Arial';
             this.ctx.textAlign = textAlign;
             
-            const color = label.color || '#FFFFFF';
             const alpha = Math.floor(transparency * 255).toString(16).padStart(2, '0');
-            this.ctx.fillStyle = color.length === 7 ? color + alpha : color;
+            const color = label.useHUDColor ? getHUDColor(transparency) : (label.color || '#FFFFFF');
+            this.ctx.fillStyle = label.useHUDColor
+                ? color
+                : color.length === 7 ? color + alpha : color;
             
             const lines = label.text.split('\n');
             const lineHeight = fontSize * 1.2;

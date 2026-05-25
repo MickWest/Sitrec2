@@ -157,6 +157,7 @@ import {
     waitForAllPendingOperations,
     windowChanged,
 } from "./indexRender";
+import {setupHUDColor} from "./HUDColor";
 
 // Initialize debug log capture BEFORE any console output
 debugLog.init();
@@ -1638,6 +1639,7 @@ async function initializeOnce() {
         .tooltip(t("menus.file.tooltip"));
     addTranslatedGUIMenu("view", "menus.view.title")
         .tooltip(t("menus.view.tooltip"));
+    setupHUDColor(guiMenus.view);
 
 
 

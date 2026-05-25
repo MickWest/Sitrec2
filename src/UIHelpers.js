@@ -13,7 +13,7 @@ export function AddTimeDisplayToUI(viewUI, x, y, size, color, align = "center") 
         this.text = utcDate(nowDate);
     });
 
-    viewUI.addText("videoTimeLabelTZ", "", x, y + 100 * ((Math.abs(size)) / viewUI.heightPx + 2), size, "pink", align).update(function () {
+    viewUI.addText("videoTimeLabelTZ", "", x, y + 100 * ((Math.abs(size)) / viewUI.heightPx + 2), size, color, align).update(function () {
         var nowDate = GlobalDateTimeNode.dateNow;
 
         this.y = (y + 100 * (Math.abs(size)+2) / viewUI.heightPx)/100; // PATCH Update y position to match the new text element

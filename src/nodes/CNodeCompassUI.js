@@ -8,6 +8,7 @@ import {Vector3} from "three";
 import {arModeManager} from "../ARMode";
 
 import {windSourceShortLabels} from "./WindSources";
+import {getHUDColor} from "../HUDColor";
 
 export class   CNodeCompassUI extends CNodeViewUI {
 
@@ -17,10 +18,10 @@ export class   CNodeCompassUI extends CNodeViewUI {
 
         // addText(key, text, x, y, size, color, align, font) {
         if(Globals.showCompassElevation === false) {
-            this.text = this.addText("heading", "0°", 50, 20, 20, "white", "center", "Arial")
+            this.text = this.addText("heading", "0°", 50, 20, 20, "hud", "center", "Arial")
         }
         else {
-            this.text = this.addText("heading", "0°", 50, 20, 16, "white", "center", "Arial")
+            this.text = this.addText("heading", "0°", 50, 20, 16, "hud", "center", "Arial")
         }
 
         this.cx = 50;
@@ -335,6 +336,7 @@ export class   CNodeCompassUI extends CNodeViewUI {
         const currentTargetWindFrom = targetWind?.from;
         const currentLocalWindFrom = localWind?.from;
         const currentWindSourceKey = windField?.source ?? null;
+        const hudColor = getHUDColor();
 
         // Update canvas dimensions FIRST so we can detect resize
         this.adjustSize();
@@ -346,6 +348,7 @@ export class   CNodeCompassUI extends CNodeViewUI {
             this.lastLocalWindFrom === currentLocalWindFrom &&
             this.lastWindSourceKey === currentWindSourceKey &&
             this.lastARMode === Globals.arMode &&
+            this.lastHUDColor === hudColor &&
             this.lastCanvasWidth === this.widthPx && this.lastCanvasHeight === this.heightPx) {
             return; // Nothing changed, early out
         }
@@ -372,7 +375,7 @@ export class   CNodeCompassUI extends CNodeViewUI {
         
         this.removeText("heading");
         this.text = this.addText("heading", headingText, 50, 20,
-            Globals.showCompassElevation ? 16 : 20, "white", "center", "Arial");
+            Globals.showCompassElevation ? 16 : 20, "hud", "center", "Arial");
 
         // Wind source label (small, attribution-style, under the compass rose)
         this.removeText("windSource");
@@ -392,6 +395,7 @@ export class   CNodeCompassUI extends CNodeViewUI {
         this.lastLocalWindFrom = currentLocalWindFrom;
         this.lastWindSourceKey = currentWindSourceKey;
         this.lastARMode = Globals.arMode;
+        this.lastHUDColor = hudColor;
 
         // now draw a centered arrow rotated by the heading
 
@@ -404,7 +408,7 @@ export class   CNodeCompassUI extends CNodeViewUI {
 
 
         // draw the letter N in the center
-        c.fillStyle = '#FFFFFF';
+        c.fillStyle = hudColor;
         c.font = this.px(17)+'px Arial';
         c.textAlign = 'center';
         c.fillText('N', this.px(this.cx), this.py(this.cy+7));
@@ -454,7 +458,7 @@ export class   CNodeCompassUI extends CNodeViewUI {
 
 
         // finally the compass line (so it's on top of the wind markers)
-        c.strokeStyle = '#FFFFFF';
+        c.strokeStyle = hudColor;
         c.lineWidth = 2.5;
         c.beginPath();
         length = 30;

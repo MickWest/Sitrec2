@@ -12,6 +12,7 @@ import {forward as mgrsForward} from "mgrs";
 import {degrees} from "../utils";
 import {NodeMan} from "../Globals";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
+import {getHUDColor} from "../HUDColor";
 
 export class   CNodeMQ9UI extends CNodeViewUI {
 
@@ -486,6 +487,8 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         }
 
         // Render grid-based text (inset by one character on left and right)
+        const hudColor = getHUDColor();
+        const dimHUDColor = getHUDColor(0.55);
         const charWidth = gridW / (this.gridCols + 2);
         const charHeight = gridH / this.gridRows;
         gridX += charWidth;
@@ -494,7 +497,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         c.font = `${fontSize}px monospace`;
         c.textBaseline = 'top';
         for (const t of this.gridTexts) {
-            c.fillStyle = t.color;
+            c.fillStyle = t.color === '#888888' ? dimHUDColor : hudColor;
             c.textAlign = t.align;
             let x;
             if (t.align === 'right') {
@@ -524,7 +527,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
 
         // draw the letter N in the center
-        c.fillStyle = '#FFFFFF';
+        c.fillStyle = hudColor;
         c.font = this.px(1.5)+'px Arial';
         c.textAlign = 'center';
         c.textBaseline = 'middle';
@@ -536,7 +539,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
 
         const crosshairWidth = 1
-        const crosshairColor = '#FFFFFF'
+        const crosshairColor = hudColor
         const crosshairGap = 2
         const crosshairLength = 6
 
@@ -599,8 +602,8 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         const gratY = gridY + charHeight * 0.2;
         const scaleY = gratY + boxHeight + triSize + tickHeight;
 
-        c.strokeStyle = '#FFFFFF';
-        c.fillStyle = '#FFFFFF';
+        c.strokeStyle = hudColor;
+        c.fillStyle = hudColor;
         c.lineWidth = 1;
 
         // Draw the scale line
@@ -674,7 +677,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         const elevRange = elevMax - elevMin;
 
         // Draw the vertical scale line
-        c.strokeStyle = '#FFFFFF';
+        c.strokeStyle = hudColor;
         c.lineWidth = 1;
         c.beginPath();
         c.moveTo(elevScaleX, elevScaleTop);
@@ -686,7 +689,7 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         const minorElevTicks = [30, -30, -90];
 
         c.font = `${fontSize}px monospace`;
-        c.fillStyle = '#FFFFFF';
+        c.fillStyle = hudColor;
         c.textAlign = 'right';
         c.textBaseline = 'middle';
 

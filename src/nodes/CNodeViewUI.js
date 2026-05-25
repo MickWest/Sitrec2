@@ -4,6 +4,7 @@ import {cos, getTextBBox, radians, sin} from "../utils";
 import {CUIText} from "./CNodeView";
 import {NodeMan, setRenderOne} from "../Globals";
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
+import {resolveHUDColor} from "../HUDColor";
 
 export class CNodeViewUI extends CNodeViewCanvas2D {
     // constructor is passed a CView object or id, if null then this is stand-alone
@@ -248,7 +249,7 @@ export class CNodeViewUI extends CNodeViewCanvas2D {
                 this.ctx.font = Math.floor(this.sx(t.size * 100)) + 'px' + " " + t.font
             }
 
-            this.ctx.fillStyle = t.color;
+            this.ctx.fillStyle = resolveHUDColor(t.color);
             this.ctx.strokeStyle = "black"; // t.color;
             this.ctx.textAlign = t.align;
             this.ctx.fillText(t.text, x, y)
