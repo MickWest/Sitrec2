@@ -230,6 +230,10 @@ const en = {
             label: "Video Format",
             tooltip: "Select the output video format",
         },
+        loops: {
+            label: "Loops",
+            tooltip: "Repeat the rendered A-B sequence this many times",
+        },
         renderSource: {
             label: "Render Source Video",
             tooltip: "Render the source video from A to B at the original resolution and framerate, with Video Adjustments applied",
@@ -258,8 +262,12 @@ const en = {
             label: "Wait for background loading",
             tooltip: "When enabled, rendering waits for terrain/building/background loads before capturing each frame",
         },
-        exportFrame: {
-            label: "Export Video Frame",
+        exportFrameJpg: {
+            label: "Export Video Frame (JPG)",
+            tooltip: "Export the current video frame as displayed (with effects) as a JPEG file",
+        },
+        exportFramePng: {
+            label: "Export Video Frame (PNG)",
             tooltip: "Export the current video frame as displayed (with effects) as a PNG file",
         },
     },
@@ -429,12 +437,16 @@ const en = {
             tooltip: "Duration of the sitch in HH:MM:SS.sss format",
         },
         aFrame: {
-            label: "A Frame",
-            tooltip: "limited the playback to between A and B, displayed as green and red on the frame slider",
+            label: "In Frame [I]",
+            tooltip: "Limit playback/export to start at the In frame. Press I to set this to the current frame.",
         },
         bFrame: {
-            label: "B Frame",
-            tooltip: "limited the playback to between A and B, displayed as green and red on the frame slider",
+            label: "Out Frame [O]",
+            tooltip: "Limit playback/export to end at the Out frame. Press O to set this to the current frame.",
+        },
+        pingPong: {
+            label: "In-Out Pingpong",
+            tooltip: "When playing, bounce between the In and Out frames instead of wrapping to the start. Video renders use the same In-Out bounce.",
         },
         videoFps: {
             label: "Video FPS",

@@ -1,6 +1,14 @@
 import {par} from "../par";
 import {showError} from "../showError";
-import {createVideoExporter, DefaultVideoFormat, getBestFormatForResolution, getVideoExtension} from "../VideoExporter";
+import {
+    createVideoExporter,
+    createVideoExportFramePlan,
+    DefaultVideoFormat,
+    getBestFormatForResolution,
+    getVideoExportSpeedInfo,
+    getVideoExportSpeedSuffix,
+    getVideoExtension
+} from "../VideoExporter";
 import {drawVideoWatermark, ExportProgressWidget} from "../utils";
 import {drawAttributionOnCanvas} from "../AttributionOverlay";
 import {ECEFToLLAVD_radii, wgs84} from "../LLA-ECEF-ENU";
@@ -358,13 +366,19 @@ export class CNodeView3D extends CNodeViewCanvas {
      * @param {boolean} includeAudio - Whether to include audio track if available
      * @param {boolean} waitForBackgroundLoading - When true, wait for background loading between captured frames
      */
-    async exportVideo(requestedFormatId = DefaultVideoFormat, includeAudio = true, waitForBackgroundLoading = false) {
+    async exportVideo(requestedFormatId = DefaultVideoFormat, includeAudio = true, waitForBackgroundLoading = false, options = {}) {
         const startFrame = Sit.aFrame;
         const endFrame = Sit.bFrame;
-        const totalFrames = endFrame - startFrame + 1;
         const width = this.canvas.width;
         const height = this.canvas.height;
-        const fps = Sit.fps;
+        const plan = createVideoExportFramePlan({
+            startFrame,
+            endFrame,
+            sourceFps: Sit.fps,
+            playbackSpeed: par.playbackSpeed ?? 1,
+            pingPong: options.pingPong ?? par.pingPong,
+            loops: options.loops ?? 1,
+        });
         
         const bestFormat = await getBestFormatForResolution(requestedFormatId, width, height);
         if (!bestFormat.formatId) {
@@ -378,22 +392,24 @@ export class CNodeView3D extends CNodeViewCanvas {
         const formatId = bestFormat.formatId;
         const extension = getVideoExtension(formatId);
         
-        console.log(`Starting video export (${formatId}): ${totalFrames} frames (${startFrame}-${endFrame}) at ${fps} fps, ${width}x${height}`);
+        const speedInfo = getVideoExportSpeedInfo(plan);
+        console.log(`Starting video export (${formatId}): ${plan.totalFrames} output frames from ${plan.totalSourceFrames} source (${startFrame}-${endFrame}) at ${plan.fps} fps${speedInfo}, ${width}x${height}`);
         
         const savedFrame = par.frame;
         const savedPaused = par.paused;
         par.paused = true;
         
-        const progress = new ExportProgressWidget('Exporting video...', totalFrames);
+        const progress = new ExportProgressWidget('Exporting video...', plan.totalFrames);
         
         const videoStartDate = GlobalDateTimeNode ? GlobalDateTimeNode.frameToDate(startFrame) : null;
         
         let audioBuffer = null;
         let audioStartTime = 0;
         let audioDuration = null;
-        let originalFps = fps;
+        let originalFps = plan.fps;
         
-        if (includeAudio) {
+        const canIncludeAudio = includeAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1;
+        if (canIncludeAudio) {
             for (const entry of Object.values(NodeMan.list)) {
                 const node = entry.data;
                 if (node.videoData && node.videoData.audioHandler && 
@@ -401,14 +417,16 @@ export class CNodeView3D extends CNodeViewCanvas {
                     const exportAudioBuffer = node.videoData.audioHandler.getAudioBufferForExport();
                     if (exportAudioBuffer) {
                         audioBuffer = exportAudioBuffer;
-                        originalFps = node.videoData.audioHandler.originalFps || fps;
+                        originalFps = node.videoData.audioHandler.originalFps || plan.fps;
                         audioStartTime = startFrame / originalFps;
-                        audioDuration = totalFrames / fps;
+                        audioDuration = plan.totalFrames / plan.fps;
                         console.log(`Found audio: ${audioBuffer.duration.toFixed(2)}s, using ${audioDuration.toFixed(2)}s from ${audioStartTime.toFixed(2)}s`);
                         break;
                     }
                 }
             }
+        } else if (includeAudio) {
+            console.log("Audio export skipped: playback speed, A-B pingpong, or loops would desync from video");
         }
         
         const compositeCanvas = document.createElement('canvas');
@@ -420,7 +438,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             const exporter = await createVideoExporter(formatId, {
                 width,
                 height,
-                fps,
+                fps: plan.fps,
                 bitrate: 5_000_000,
                 keyFrameInterval: 30,
                 videoStartDate,
@@ -439,10 +457,10 @@ export class CNodeView3D extends CNodeViewCanvas {
                 UpdatePRFromEA = jetStuff.UpdatePRFromEA;
             }
             
-            for (let i = 0; i < totalFrames; i++) {
+            for (let i = 0; i < plan.totalFrames; i++) {
                 if (progress.shouldStop()) break;
                 
-                const frame = startFrame + i;
+                const frame = plan.frameAt(i);
                 const renderSingleViewFrame = async () => {
                     par.frame = frame;
                     GlobalDateTimeNode.update(frame);
@@ -525,7 +543,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     });
                 }
                 
-                await exporter.addFrame(compositeCanvas, frame);
+                await exporter.addFrame(compositeCanvas, i);
                 
                 if (i % 10 === 0) {
                     progress.update(i + 1);
@@ -539,7 +557,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     (status) => progress.setStatus(status)
                 );
                 
-                const filename = `lookview_${Sit.name || 'export'}_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.${extension}`;
+                const filename = `lookview_${Sit.name || 'export'}${getVideoExportSpeedSuffix(plan)}_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.${extension}`;
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;

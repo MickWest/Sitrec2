@@ -4,6 +4,7 @@ import {closeFullscreen, openFullscreen} from "./utils";
 import {Vector3} from "three";
 import {EventManager} from "./CEventManager";
 import {KeyframeRegistry} from "./CKeyframeRegistry";
+import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
 
 /* Usage examples
 
@@ -332,6 +333,22 @@ export function initKeyboard() {
         // Don't intercept other Ctrl/Cmd combos (e.g. Cmd+C for copy, Cmd+V for paste)
         // Let the browser handle them natively
         if (e.ctrlKey || e.metaKey) return;
+
+        if (keyCode === 'KeyI' || keyCode === 'KeyO') {
+            const frame = Math.max(0, Math.min(Sit.frames - 1, Math.round(par.frame)));
+            if (keyCode === 'KeyI') {
+                Sit.aFrame = frame;
+                if (Sit.aFrame > Sit.bFrame) Sit.bFrame = Sit.aFrame;
+            } else {
+                Sit.bFrame = frame;
+                if (Sit.bFrame < Sit.aFrame) Sit.aFrame = Sit.bFrame;
+            }
+            updateFrameSlider();
+            NodeMan.recalculateAllRootFirst();
+            EventManager.dispatchEvent("abFrameChanged");
+            e.preventDefault();
+            return;
+        }
 
         KeyMan.handleKeyDown(e);
 

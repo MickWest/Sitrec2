@@ -1398,6 +1398,8 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
             console.warn(`waitForFrame: no group for frame ${frame}`);
             return false;
         }
+
+        this.requestGroup(group);
         
         if (group.loaded) {
             return this.isFrameCached(frame);

@@ -213,11 +213,101 @@ export async function getBestFormatForResolution(preferredFormat, width, height)
     return { formatId: null, fallback: false, reason: `No codec supports ${width}x${height}` };
 }
 
+function buildBaseFrameSequence(startFrame, endFrame, pingPong, loops) {
+    const forward = [];
+    for (let frame = startFrame; frame <= endFrame; frame++) {
+        forward.push(frame);
+    }
+
+    const oneLoop = [...forward];
+    if (pingPong && forward.length > 1) {
+        for (let i = forward.length - 2; i > 0; i--) {
+            oneLoop.push(forward[i]);
+        }
+    }
+
+    const sequence = [];
+    for (let loop = 0; loop < loops; loop++) {
+        sequence.push(...oneLoop);
+    }
+    return sequence;
+}
+
+export function createVideoExportFramePlan({
+    startFrame,
+    endFrame,
+    sourceFps,
+    playbackSpeed = 1,
+    pingPong = false,
+    loops = 1,
+    maxOutputFps = MAX_OUTPUT_FPS,
+}) {
+    const speed = Number.isFinite(playbackSpeed) && playbackSpeed > 0 ? playbackSpeed : 1;
+    const loopCount = Math.max(1, Math.min(20, Math.round(loops || 1)));
+    const baseFps = sourceFps || 30;
+    const sourceFrames = buildBaseFrameSequence(startFrame, endFrame, pingPong, loopCount);
+    const desiredFps = baseFps * speed;
+    const fps = speed > 1 ? Math.min(desiredFps, maxOutputFps) : desiredFps;
+    const frameStep = desiredFps / fps;
+    const totalFrames = Math.ceil(sourceFrames.length / frameStep);
+
+    return {
+        startFrame,
+        endFrame,
+        sourceFrames,
+        totalSourceFrames: sourceFrames.length,
+        totalFrames,
+        fps,
+        frameStep,
+        playbackSpeed: speed,
+        pingPong,
+        loops: loopCount,
+        frameAt(index) {
+            return sourceFrames[Math.min(Math.round(index * frameStep), sourceFrames.length - 1)];
+        },
+    };
+}
+
+export function getVideoExportSpeedSuffix(plan) {
+    const parts = [];
+    if (plan.playbackSpeed !== 1) parts.push(`${plan.playbackSpeed}x`);
+    if (plan.pingPong) parts.push("pingpong");
+    if (plan.loops > 1) parts.push(`${plan.loops}loops`);
+    return parts.length ? `_${parts.join("_")}` : "";
+}
+
+export function getVideoExportSpeedInfo(plan) {
+    const parts = [];
+    if (plan.playbackSpeed !== 1) parts.push(`${plan.playbackSpeed}x playback speed`);
+    if (plan.pingPong) parts.push("In-Out pingpong");
+    if (plan.loops > 1) parts.push(`${plan.loops} loops`);
+    if (plan.frameStep > 1) parts.push(`capped at ${MAX_OUTPUT_FPS} fps, step ${plan.frameStep.toFixed(3)}`);
+    return parts.length ? ` (${parts.join(", ")})` : "";
+}
+
+async function requestSourceFrameForExport(videoData, frame, timeout = 1500) {
+    if (videoData.isFrameCached?.(frame)) return true;
+
+    if (videoData.requestFrame) {
+        videoData.requestFrame(frame);
+    } else {
+        videoData.getImage?.(frame);
+    }
+
+    const start = performance.now();
+    while (performance.now() - start < timeout) {
+        if (videoData.isFrameCached?.(frame)) return true;
+        await new Promise(r => setTimeout(r, 10));
+    }
+    return videoData.isFrameCached?.(frame) ?? true;
+}
+
 export class VideoExportManager {
     constructor() {
         this.videoExportView = "lookView";
         this.retinaExport = false;
         this.exportAudio = true;
+        this.videoExportLoops = 1;
         // Export-time quality switch:
         // false (default) = capture as fast as possible
         // true            = wait for background terrain/3D tile/video settling per frame
@@ -271,7 +361,9 @@ export class VideoExportManager {
                     const view = ViewMan.get(this.videoExportView, false);
                     if (view && view.exportVideo) {
                         // Keep single-view export behavior in sync with viewport export toggle semantics.
-                        view.exportVideo(this.videoFormat, this.exportAudio, this.waitForBackgroundLoading);
+                        view.exportVideo(this.videoFormat, this.exportAudio, this.waitForBackgroundLoading, {
+                            loops: this.videoExportLoops,
+                        });
                     }
                 }
             }, "exportVideo").name(t("videoExport.renderSingleVideo.label"))
@@ -283,6 +375,15 @@ export class VideoExportManager {
                 .name(t("videoExport.videoFormat.label"))
                 .tooltip(t("videoExport.videoFormat.tooltip"));
         }
+
+        this.renderVideoFolder.add(this, "videoExportLoops", 1, 20, 1)
+            .name(t("videoExport.loops.label"))
+            .tooltip(t("videoExport.loops.tooltip"));
+
+        this.renderVideoFolder.add({
+            exportSourceVideo: () => this.exportSourceVideo()
+        }, "exportSourceVideo").name(t("videoExport.renderSource.label"))
+            .tooltip(t("videoExport.renderSource.tooltip"));
 
         this.renderVideoFolder.add({
             exportViewport: () => this.exportViewportVideo()
@@ -312,9 +413,14 @@ export class VideoExportManager {
             .tooltip(t("videoExport.waitForLoading.tooltip"));
 
         this.renderVideoFolder.add({
-            exportFrame: () => this.exportVideoFrame()
-        }, "exportFrame").name(t("videoExport.exportFrame.label"))
-            .tooltip(t("videoExport.exportFrame.tooltip"));
+            exportFrameJpg: () => this.exportVideoFrame("jpg")
+        }, "exportFrameJpg").name(t("videoExport.exportFrameJpg.label"))
+            .tooltip(t("videoExport.exportFrameJpg.tooltip"));
+
+        this.renderVideoFolder.add({
+            exportFramePng: () => this.exportVideoFrame("png")
+        }, "exportFramePng").name(t("videoExport.exportFramePng.label"))
+            .tooltip(t("videoExport.exportFramePng.tooltip"));
 
         if (!options.skipPanorama) {
             setupPanoramaExport(this.renderVideoFolder);
@@ -323,7 +429,145 @@ export class VideoExportManager {
         return this.renderVideoFolder;
     }
 
-    async exportVideoFrame() {
+    async exportSourceVideo() {
+        const { GlobalDateTimeNode, NodeMan, Sit, setRenderOne } = await import("./Globals");
+        const { par } = await import("./par");
+        const { ExportProgressWidget, getExportPrefix } = await import("./utils");
+
+        const videoView = NodeMan.get("video", false);
+        if (!videoView || !videoView.videoData || !videoView.drawAdjustedSourceFrame) {
+            alert("No source video available to render.");
+            return;
+        }
+
+        const videoData = videoView.videoData;
+        const startFrame = Math.max(0, Sit.aFrame ?? 0);
+        const lastVideoFrame = Math.max(0, (videoData.frames ?? Sit.frames ?? 1) - 1);
+        const endFrame = Math.min(Sit.bFrame ?? lastVideoFrame, lastVideoFrame);
+        if (endFrame < startFrame) {
+            alert("Invalid A-B range for source video render.");
+            return;
+        }
+
+        const sourceCanvas = document.createElement("canvas");
+        await requestSourceFrameForExport(videoData, startFrame, 3000);
+        if (!videoView.drawAdjustedSourceFrame(startFrame, sourceCanvas)) {
+            alert("Could not render the first source video frame.");
+            return;
+        }
+
+        const width = sourceCanvas.width;
+        const height = sourceCanvas.height;
+        const plan = createVideoExportFramePlan({
+            startFrame,
+            endFrame,
+            sourceFps: videoData.originalFps || Sit.fps || 30,
+            playbackSpeed: par.playbackSpeed ?? 1,
+            pingPong: par.pingPong,
+            loops: this.videoExportLoops,
+        });
+
+        const bestFormat = await getBestFormatForResolution(this.videoFormat, width, height);
+        if (!bestFormat.formatId) {
+            alert(`Source video render failed: ${bestFormat.reason}`);
+            return;
+        }
+        if (bestFormat.fallback) {
+            console.log(`${bestFormat.reason}, falling back to ${bestFormat.formatId}`);
+        }
+
+        const formatId = bestFormat.formatId;
+        const extension = getVideoExtension(formatId);
+
+        let audioBuffer = null;
+        let audioStartTime = 0;
+        let audioDuration = null;
+        let originalFps = plan.fps;
+        const canIncludeAudio = this.exportAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1;
+        if (canIncludeAudio && videoData.audioHandler && videoData.audioHandler.decodingComplete) {
+            audioBuffer = videoData.audioHandler.getAudioBufferForExport();
+            originalFps = videoData.audioHandler.originalFps || plan.fps;
+            audioStartTime = startFrame / originalFps;
+            audioDuration = plan.totalFrames / plan.fps;
+        } else if (this.exportAudio && !canIncludeAudio) {
+            console.log("Audio export skipped: playback speed, A-B pingpong, or loops would desync from source audio");
+        }
+
+        const speedInfo = getVideoExportSpeedInfo(plan);
+        console.log(`Starting source video render (${formatId}): ${plan.totalFrames} output frames from ${plan.totalSourceFrames} source (${startFrame}-${endFrame}) at ${plan.fps} fps${speedInfo}, ${width}x${height}`);
+
+        const savedFrame = par.frame;
+        const savedPaused = par.paused;
+        par.paused = true;
+
+        const progress = new ExportProgressWidget("Rendering source video...", plan.totalFrames);
+        const videoStartDate = GlobalDateTimeNode ? GlobalDateTimeNode.frameToDate(startFrame) : null;
+
+        try {
+            const exporter = await createVideoExporter(formatId, {
+                width,
+                height,
+                fps: plan.fps,
+                bitrate: 10_000_000,
+                keyFrameInterval: Math.max(1, Math.round(plan.fps)),
+                videoStartDate,
+                audioBuffer,
+                audioStartTime,
+                audioDuration,
+                originalFps,
+                hardwareAcceleration: bestFormat.hardwareAcceleration,
+            });
+
+            await exporter.initialize();
+
+            for (let i = 0; i < plan.totalFrames; i++) {
+                if (progress.shouldStop()) break;
+
+                const frame = plan.frameAt(i);
+                par.frame = frame;
+                if (GlobalDateTimeNode) GlobalDateTimeNode.update(frame);
+                await requestSourceFrameForExport(videoData, frame);
+
+                if (videoView.drawAdjustedSourceFrame(frame, sourceCanvas)) {
+                    await exporter.addFrame(sourceCanvas, i);
+                }
+
+                if (i % 10 === 0 || i === plan.totalFrames - 1) {
+                    progress.update(i + 1);
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+
+            if (progress.shouldSave()) {
+                const blob = await exporter.finalize(
+                    (current, total) => progress.setFinalizeProgress(current, total),
+                    (status) => progress.setStatus(status)
+                );
+
+                const filename = `${getExportPrefix()}_source${getVideoExportSpeedSuffix(plan)}_${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.${extension}`;
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(url);
+
+                console.log(`Source video render complete: ${filename}`);
+            } else {
+                console.log("Source video render aborted by user");
+            }
+        } catch (e) {
+            console.error("Source video render failed:", e);
+            alert("Source video render failed: " + e.message);
+        } finally {
+            progress.remove();
+            par.frame = savedFrame;
+            par.paused = savedPaused;
+            setRenderOne(true);
+        }
+    }
+
+    async exportVideoFrame(format = "png") {
         const { NodeMan } = await import("./Globals");
         const { par } = await import("./par");
         const { saveAs } = await import("file-saver");
@@ -336,13 +580,17 @@ export class VideoExportManager {
         }
 
         const frame = Math.floor(par.frame);
-        const fileName = `${getExportPrefix()}_frame_${String(frame).padStart(5, "0")}.png`;
+        const isJpg = format === "jpg" || format === "jpeg";
+        const extension = isJpg ? "jpg" : "png";
+        const mimeType = isJpg ? "image/jpeg" : "image/png";
+        const quality = isJpg ? 0.92 : undefined;
+        const fileName = `${getExportPrefix()}_frame_${String(frame).padStart(5, "0")}.${extension}`;
 
         videoView.canvas.toBlob((blob) => {
             if (blob) {
                 saveAs(blob, fileName);
             }
-        }, "image/png");
+        }, mimeType, quality);
     }
 
     async exportViewportVideo() {
@@ -359,15 +607,17 @@ export class VideoExportManager {
 
         const startFrame = Sit.aFrame;
         const endFrame = Sit.bFrame;
-        const totalSourceFrames = endFrame - startFrame + 1;
         const scale = this.retinaExport ? (window.devicePixelRatio || 1) : 1;
         const width = Math.round(ViewMan.widthPx * scale);
         const height = Math.round(ViewMan.heightPx * scale);
-        const playbackSpeed = par.playbackSpeed ?? 1;
-        const desiredFps = Sit.fps * playbackSpeed;
-        const fps = playbackSpeed > 1 ? Math.min(desiredFps, MAX_OUTPUT_FPS) : desiredFps;
-        const frameStep = desiredFps / fps;
-        const totalFrames = Math.ceil(totalSourceFrames / frameStep);
+        const plan = createVideoExportFramePlan({
+            startFrame,
+            endFrame,
+            sourceFps: Sit.fps,
+            playbackSpeed: par.playbackSpeed ?? 1,
+            pingPong: par.pingPong,
+            loops: this.videoExportLoops,
+        });
 
         const bestFormat = await getBestFormatForResolution(this.videoFormat, width, height);
         if (!bestFormat.formatId) {
@@ -381,16 +631,14 @@ export class VideoExportManager {
         const formatId = bestFormat.formatId;
         const extension = getVideoExtension(formatId);
 
-        const speedInfo = playbackSpeed !== 1
-            ? ` (${playbackSpeed}x playback speed${frameStep > 1 ? `, capped at ${MAX_OUTPUT_FPS} fps, step ${frameStep.toFixed(3)}` : ''})`
-            : '';
-        console.log(`Starting viewport video export (${formatId}): ${totalFrames} output frames from ${totalSourceFrames} source (${startFrame}-${endFrame}) at ${fps} fps${speedInfo}, ${width}x${height} (scale: ${scale}x)`);
+        const speedInfo = getVideoExportSpeedInfo(plan);
+        console.log(`Starting viewport video export (${formatId}): ${plan.totalFrames} output frames from ${plan.totalSourceFrames} source (${startFrame}-${endFrame}) at ${plan.fps} fps${speedInfo}, ${width}x${height} (scale: ${scale}x)`);
 
         const savedFrame = par.frame;
         const savedPaused = par.paused;
         par.paused = true;
 
-        const progress = new ExportProgressWidget('Exporting viewport video...', totalFrames);
+        const progress = new ExportProgressWidget('Exporting viewport video...', plan.totalFrames);
 
         const compositeCanvas = document.createElement('canvas');
         compositeCanvas.width = width;
@@ -402,9 +650,10 @@ export class VideoExportManager {
         let audioBuffer = null;
         let audioStartTime = 0;
         let audioDuration = null;
-        let originalFps = fps;
+        let originalFps = plan.fps;
 
-        if (this.exportAudio && playbackSpeed === 1) {
+        const canIncludeAudio = this.exportAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1;
+        if (canIncludeAudio) {
             for (const entry of Object.values(NodeMan.list)) {
                 const node = entry.data;
                 if (node.videoData && node.videoData.audioHandler &&
@@ -412,23 +661,23 @@ export class VideoExportManager {
                     const exportAudioBuffer = node.videoData.audioHandler.getAudioBufferForExport();
                     if (exportAudioBuffer) {
                         audioBuffer = exportAudioBuffer;
-                        originalFps = node.videoData.audioHandler.originalFps || fps;
+                        originalFps = node.videoData.audioHandler.originalFps || plan.fps;
                         audioStartTime = startFrame / originalFps;
-                        audioDuration = totalFrames / fps;
+                        audioDuration = plan.totalFrames / plan.fps;
                         console.log(`Found audio: ${audioBuffer.duration.toFixed(2)}s, using ${audioDuration.toFixed(2)}s from ${audioStartTime.toFixed(2)}s`);
                         break;
                     }
                 }
             }
-        } else if (this.exportAudio && playbackSpeed !== 1) {
-            console.log(`Audio export skipped: playback speed ${playbackSpeed}x would desync from video`);
+        } else if (this.exportAudio) {
+            console.log("Audio export skipped: playback speed, A-B pingpong, or loops would desync from video");
         }
 
         try {
             const exporter = await createVideoExporter(formatId, {
                 width,
                 height,
-                fps,
+                fps: plan.fps,
                 bitrate: 8_000_000 * scale * scale,
                 keyFrameInterval: 30,
                 videoStartDate,
@@ -441,10 +690,10 @@ export class VideoExportManager {
 
             await exporter.initialize();
 
-            for (let i = 0; i < totalFrames; i++) {
+            for (let i = 0; i < plan.totalFrames; i++) {
                 if (progress.shouldStop()) break;
 
-                const frame = Math.min(startFrame + Math.round(i * frameStep), endFrame);
+                const frame = plan.frameAt(i);
                 const visible3DViewIds = [];
                 const renderCompositeFrame = async () => {
                     par.frame = frame;
@@ -594,8 +843,7 @@ export class VideoExportManager {
                 );
 
                 const { getExportPrefix } = await import("./utils");
-                const speedSuffix = playbackSpeed !== 1 ? `_${playbackSpeed}x` : '';
-                const filename = `${getExportPrefix()}_viewport${speedSuffix}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
+                const filename = `${getExportPrefix()}_viewport${getVideoExportSpeedSuffix(plan)}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
@@ -692,12 +940,14 @@ export class VideoExportManager {
 
         const startFrame = Sit.aFrame;
         const endFrame = Sit.bFrame;
-        const totalSourceFrames = endFrame - startFrame + 1;
-        const playbackSpeed = par.playbackSpeed ?? 1;
-        const desiredFps = Sit.fps * playbackSpeed;
-        const fps = playbackSpeed > 1 ? Math.min(desiredFps, MAX_OUTPUT_FPS) : desiredFps;
-        const frameStep = desiredFps / fps;
-        const totalFrames = Math.ceil(totalSourceFrames / frameStep);
+        const plan = createVideoExportFramePlan({
+            startFrame,
+            endFrame,
+            sourceFps: Sit.fps,
+            playbackSpeed: par.playbackSpeed ?? 1,
+            pingPong: par.pingPong,
+            loops: this.videoExportLoops,
+        });
 
         const width = Math.ceil(captureWidth / 2) * 2;
         const height = Math.ceil(captureHeight / 2) * 2;
@@ -715,10 +965,8 @@ export class VideoExportManager {
         const formatId = bestFormat.formatId;
         const extension = getVideoExtension(formatId);
 
-        const winSpeedInfo = playbackSpeed !== 1
-            ? ` (${playbackSpeed}x playback speed${frameStep > 1 ? `, capped at ${MAX_OUTPUT_FPS} fps, step ${frameStep.toFixed(3)}` : ''})`
-            : '';
-        console.log(`Starting window video export (${formatId}): ${totalFrames} output frames from ${totalSourceFrames} source (${startFrame}-${endFrame}) at ${fps} fps${winSpeedInfo}, ${width}x${height}`);
+        const winSpeedInfo = getVideoExportSpeedInfo(plan);
+        console.log(`Starting window video export (${formatId}): ${plan.totalFrames} output frames from ${plan.totalSourceFrames} source (${startFrame}-${endFrame}) at ${plan.fps} fps${winSpeedInfo}, ${width}x${height}`);
 
         const savedFrame = par.frame;
         const savedPaused = par.paused;
@@ -743,9 +991,10 @@ export class VideoExportManager {
         let audioBuffer = null;
         let audioStartTime = 0;
         let audioDuration = null;
-        let originalFps = fps;
+        let originalFps = plan.fps;
 
-        if (this.exportAudio && playbackSpeed === 1) {
+        const canIncludeAudio = this.exportAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1;
+        if (canIncludeAudio) {
             for (const entry of Object.values(NodeMan.list)) {
                 const node = entry.data;
                 if (node.videoData && node.videoData.audioHandler &&
@@ -753,15 +1002,15 @@ export class VideoExportManager {
                     const exportAudioBuffer = node.videoData.audioHandler.getAudioBufferForExport();
                     if (exportAudioBuffer) {
                         audioBuffer = exportAudioBuffer;
-                        originalFps = node.videoData.audioHandler.originalFps || fps;
+                        originalFps = node.videoData.audioHandler.originalFps || plan.fps;
                         audioStartTime = startFrame / originalFps;
-                        audioDuration = totalFrames / fps;
+                        audioDuration = plan.totalFrames / plan.fps;
                         break;
                     }
                 }
             }
-        } else if (this.exportAudio && playbackSpeed !== 1) {
-            console.log(`Audio export skipped: playback speed ${playbackSpeed}x would desync from video`);
+        } else if (this.exportAudio) {
+            console.log("Audio export skipped: playback speed, A-B pingpong, or loops would desync from video");
         }
 
         const waitForPaint = () => new Promise(resolve => {
@@ -774,7 +1023,7 @@ export class VideoExportManager {
             const exporter = await createVideoExporter(formatId, {
                 width,
                 height,
-                fps,
+                fps: plan.fps,
                 bitrate: 8_000_000,
                 keyFrameInterval: 30,
                 videoStartDate,
@@ -787,14 +1036,14 @@ export class VideoExportManager {
 
             await exporter.initialize();
 
-            for (let i = 0; i < totalFrames; i++) {
+            for (let i = 0; i < plan.totalFrames; i++) {
                 if (stopEarly || abortExport) break;
                 if (videoTrack.readyState !== 'live') {
                     console.warn('Display capture stream ended');
                     break;
                 }
 
-                const frame = Math.min(startFrame + Math.round(i * frameStep), endFrame);
+                const frame = plan.frameAt(i);
                 par.frame = frame;
                 if (GlobalDateTimeNode) GlobalDateTimeNode.update(frame);
 
@@ -830,7 +1079,7 @@ export class VideoExportManager {
                 await exporter.addFrame(captureCanvas, frame);
 
                 if (i % 10 === 0) {
-                    document.title = `Recording ${i + 1}/${totalFrames} [Enter=save, Esc=abort]`;
+                    document.title = `Recording ${i + 1}/${plan.totalFrames} [Enter=save, Esc=abort]`;
                     await new Promise(r => setTimeout(r, 0));
                 }
             }
@@ -843,8 +1092,7 @@ export class VideoExportManager {
                 );
 
                 const { getExportPrefix } = await import("./utils");
-                const speedSuffix = playbackSpeed !== 1 ? `_${playbackSpeed}x` : '';
-                const filename = `${getExportPrefix()}_window${speedSuffix}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
+                const filename = `${getExportPrefix()}_window${getVideoExportSpeedSuffix(plan)}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;

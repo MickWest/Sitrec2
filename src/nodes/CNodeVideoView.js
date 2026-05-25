@@ -1286,6 +1286,141 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.dispatchVideoAvailabilityChanged();
     }
 
+    drawAdjustedSourceFrame(frame, canvas) {
+        if (!this.videoData) return false;
+
+        this.videoData.update();
+        const image = this.videoData.getImage(frame);
+        if (!image) return false;
+
+        const sourceWidth = image.width || this.videoWidth;
+        const sourceHeight = image.height || this.videoHeight;
+        if (!sourceWidth || !sourceHeight) return false;
+
+        const rotationSwapsDimensions = this.videoData.effectiveRotation === 90 || this.videoData.effectiveRotation === 270;
+        const outputWidth = rotationSwapsDimensions
+            ? (this.originalVideoHeight || sourceWidth)
+            : (this.originalVideoWidth || sourceWidth);
+        const outputHeight = rotationSwapsDimensions
+            ? (this.originalVideoWidth || sourceHeight)
+            : (this.originalVideoHeight || sourceHeight);
+
+        canvas.width = outputWidth;
+        canvas.height = outputHeight;
+
+        const {sourceImage, filter, fullABOverlay} = this.getAdjustedVideoFrameSource(image, frame);
+
+        const ctx = canvas.getContext("2d");
+        let srcX = 0;
+        let srcY = 0;
+        let srcWidth = sourceWidth;
+        let srcHeight = sourceHeight;
+
+        if (this.in.zoom !== undefined && this.in.zoom.v0 > 100) {
+            const zoom = this.in.zoom.v0 / 100;
+            srcWidth = sourceWidth / zoom;
+            srcHeight = sourceHeight / zoom;
+            srcX = (sourceWidth - srcWidth) / 2 + this.panOffsetX * sourceWidth;
+            srcY = (sourceHeight - srcHeight) / 2 + this.panOffsetY * sourceHeight;
+
+            srcX = Math.max(0, Math.min(sourceWidth - srcWidth, srcX));
+            srcY = Math.max(0, Math.min(sourceHeight - srcHeight, srcY));
+        }
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.imageSmoothingEnabled = quickToggle("Smooth", false, guiVideoEffectsFolder);
+        ctx.filter = filter || "none";
+        ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, outputWidth, outputHeight);
+        if (fullABOverlay) {
+            ctx.save();
+            ctx.filter = "none";
+            ctx.globalAlpha = fullABOverlay.opacity;
+            ctx.drawImage(fullABOverlay.image, srcX, srcY, srcWidth, srcHeight, 0, 0, outputWidth, outputHeight);
+            ctx.restore();
+        }
+        ctx.imageSmoothingEnabled = true;
+        ctx.filter = "none";
+        return true;
+    }
+
+    getAdjustedVideoFrameSource(image, frame) {
+        let sourceImage = image;
+        let filter = "";
+        const effectsEnabled = this.in.enableVideoEffects ? this.in.enableVideoEffects.v0 : true;
+
+        if (effectsEnabled && this.in.convolutionFilter && this.in.convolutionFilter.value !== "none") {
+            const filterType = this.in.convolutionFilter.value;
+            const params = {
+                amount: this.in.sharpenAmount?.v0 ?? 1,
+                threshold: this.in.edgeDetectThreshold?.v0 ?? 0,
+                strength: (filterType === "emboss" ? this.in.embossDepth?.v0 : 1) ?? 1
+            };
+            sourceImage = applyConvolutionToImage(image, filterType, params, this);
+        }
+
+        const hasFullABOverlay = this._fullABEchoResult && (this.in.fullABEcho?.value || this.in.fullABBlend?.value || this.in.fullABExposure?.value);
+        if (hasFullABOverlay && this._fullABEchoRunning) {
+            sourceImage = this._fullABEchoResult;
+        } else if (!hasFullABOverlay) {
+            const wantEchoMin = this.in.echoMin?.value ?? false;
+            const wantEchoMax = this.in.echoMax?.value ?? false;
+            if (effectsEnabled && (wantEchoMin || wantEchoMax)) {
+                sourceImage = applyEchoEffect(this, sourceImage, frame, wantEchoMin, wantEchoMax);
+            } else if (this._echoPixelCache) {
+                clearEchoCache(this);
+            }
+        }
+
+        if (effectsEnabled && this.in.levelsMidpoint && this.in.levelsMidpoint.v0 !== 1) {
+            sourceImage = applyLevelsMidpointToImage(sourceImage, this.in.levelsMidpoint.v0, this);
+        }
+
+        const blurPx = effectsEnabled ? (this.in.blur?.v0 ?? 0) : 0;
+        if (effectsEnabled && blurPx !== 0) {
+            let sourceFilter = "";
+            if (this.in.contrast && this.in.contrast.v0 !== 1) {
+                sourceFilter += "contrast(" + this.in.contrast.v0 + ") ";
+            }
+            if (this.in.brightness && this.in.brightness.v0 !== 1) {
+                sourceFilter += "brightness(" + this.in.brightness.v0 + ") ";
+            }
+            sourceFilter += "blur(" + blurPx + "px) ";
+            sourceImage = applySourcePixelFilterToImage(sourceImage, sourceFilter, this);
+        } else if (effectsEnabled) {
+            if (this.in.contrast && this.in.contrast.v0 !== 1) {
+                filter += "contrast(" + this.in.contrast.v0 + ") ";
+            }
+            if (this.in.brightness && this.in.brightness.v0 !== 1) {
+                filter += "brightness(" + this.in.brightness.v0 + ") ";
+            }
+        }
+
+        if (effectsEnabled) {
+            if (this.in.greyscale && this.in.greyscale.v0 !== 0) {
+                filter += "grayscale(" + this.in.greyscale.v0 + ") ";
+            }
+            if (this.in.hue && this.in.hue.v0 !== 0) {
+                filter += "hue-rotate(" + this.in.hue.v0 + "deg) ";
+            }
+            if (this.in.invert && this.in.invert.v0 !== 0) {
+                filter += "invert(" + this.in.invert.v0 + ") ";
+            }
+            if (this.in.saturate && this.in.saturate.v0 !== 1) {
+                filter += "saturate(" + this.in.saturate.v0 + ") ";
+            }
+        }
+
+        return {
+            sourceImage,
+            filter,
+            fullABOverlay: hasFullABOverlay && !this._fullABEchoRunning
+                ? {image: this._fullABEchoResult, opacity: (this.in.fullABEchoOpacity?.v0 ?? 100) / 100}
+                : null
+        };
+    }
+
     renderCanvas(frame = 0) {
         super.renderCanvas(frame); // needed for setting window size
 
@@ -1327,11 +1462,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             }
             // positions are a PERCENTAGE OF THE WIDTH
 
-            if (quickToggle("Smooth", false, guiVideoEffectsFolder) === false)
-                ctx.imageSmoothingEnabled = false;
+            ctx.imageSmoothingEnabled = quickToggle("Smooth", false, guiVideoEffectsFolder);
 
-            let filter = ''
-            const effectsEnabled = this.in.enableVideoEffects ? this.in.enableVideoEffects.v0 : true;
             const elaOverlay = this.getELAOverlayState(frame, image);
             if (elaOverlay.enabled) {
                 this.requestELAOverlay(image, elaOverlay);
@@ -1341,76 +1473,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 this.requestNoiseOverlay(image, noiseOverlay);
             }
 
-            let sourceImage = image;
-            if (effectsEnabled && this.in.convolutionFilter && this.in.convolutionFilter.value !== 'none') {
-                const filterType = this.in.convolutionFilter.value;
-                const params = {
-                    amount: this.in.sharpenAmount?.v0 ?? 1,
-                    threshold: this.in.edgeDetectThreshold?.v0 ?? 0,
-                    strength: (filterType === 'emboss' ? this.in.embossDepth?.v0 : 1) ?? 1
-                };
-                sourceImage = applyConvolutionToImage(image, filterType, params, this);
-            }
-
-            const hasFullABOverlay = this._fullABEchoResult && (this.in.fullABEcho?.value || this.in.fullABBlend?.value || this.in.fullABExposure?.value);
-            if (hasFullABOverlay && this._fullABEchoRunning) {
-                sourceImage = this._fullABEchoResult;
-            } else if (!hasFullABOverlay) {
-                const wantEchoMin = this.in.echoMin?.value ?? false;
-                const wantEchoMax = this.in.echoMax?.value ?? false;
-                if (effectsEnabled && (wantEchoMin || wantEchoMax)) {
-                    sourceImage = applyEchoEffect(this, sourceImage, frame, wantEchoMin, wantEchoMax);
-                } else if (this._echoPixelCache) {
-                    clearEchoCache(this);
-                }
-            }
-
-            if (effectsEnabled && this.in.levelsMidpoint && this.in.levelsMidpoint.v0 !== 1) {
-                sourceImage = applyLevelsMidpointToImage(sourceImage, this.in.levelsMidpoint.v0, this);
-            }
-
-            const blurPx = effectsEnabled ? (this.in.blur?.v0 ?? 0) : 0;
-            if (effectsEnabled && blurPx !== 0) {
-                let sourceFilter = '';
-                if (this.in.contrast && this.in.contrast.v0 !== 1) {
-                    sourceFilter += "contrast(" + this.in.contrast.v0 + ") "
-                }
-                if (this.in.brightness && this.in.brightness.v0 !== 1) {
-                    sourceFilter += "brightness(" + this.in.brightness.v0 + ") "
-                }
-                sourceFilter += "blur(" + blurPx + "px) ";
-                sourceImage = applySourcePixelFilterToImage(sourceImage, sourceFilter, this);
-            } else if (effectsEnabled) {
-                if (this.in.contrast && this.in.contrast.v0 !== 1) {
-                    filter += "contrast(" + this.in.contrast.v0 + ") "
-                }
-                if (this.in.brightness && this.in.brightness.v0 !== 1) {
-                    filter += "brightness(" + this.in.brightness.v0 + ") "
-                }
-            }
-
-            if (effectsEnabled) {
-                if (this.in.greyscale && this.in.greyscale.v0 !== 0) {
-                    filter += "grayscale(" + this.in.greyscale.v0 + ") "
-                }
-                if (this.in.hue && this.in.hue.v0 !== 0) {
-                    filter += "hue-rotate(" + this.in.hue.v0 + "deg) "
-                }
-                if (this.in.invert && this.in.invert.v0 !== 0) {
-                    filter += "invert(" + this.in.invert.v0 + ") "
-                }
-                if (this.in.saturate && this.in.saturate.v0 !== 1) {
-                    filter += "saturate(" + this.in.saturate.v0 + ") "
-                }
-            }
+            const {sourceImage, filter, fullABOverlay} = this.getAdjustedVideoFrameSource(image, frame);
 
             ctx.filter = filter || 'none';
-
-            const sourceW = this.videoWidth;
-            const sourceH = this.videoHeight
-            // rendering fill the view in at least one direction
-            const aspectSource = sourceW / sourceH
-            const aspectView = this.widthPx / this.heightPx
 
             const flowRotation = getFlowAlignRotation(frame);
             if (flowRotation !== 0) {
@@ -1438,16 +1503,15 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
             }
 
-            if (hasFullABOverlay && !this._fullABEchoRunning) {
-                const opacity = (this.in.fullABEchoOpacity?.v0 ?? 100) / 100;
+            if (fullABOverlay) {
                 ctx.save();
                 ctx.filter = 'none';
-                ctx.globalAlpha = opacity;
+                ctx.globalAlpha = fullABOverlay.opacity;
                 if (this.in.zoom !== undefined) {
-                    ctx.drawImage(this._fullABEchoResult, this.sx, this.sy, this.sWidth, this.sHeight,
+                    ctx.drawImage(fullABOverlay.image, this.sx, this.sy, this.sWidth, this.sHeight,
                         this.dx, this.dy, this.dWidth, this.dHeight);
                 } else {
-                    ctx.drawImage(this._fullABEchoResult,
+                    ctx.drawImage(fullABOverlay.image,
                         0, 0, this.videoWidth, this.videoHeight,
                         this.widthPx * (0.5 + this.posLeft), this.heightPx * 0.5 + this.widthPx * this.posTop,
                         this.widthPx * (this.posRight - this.posLeft), this.widthPx * (this.posBot - this.posTop));
@@ -1799,4 +1863,3 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
 // Install ELA, Noise and Full A-B analysis overlay methods on the prototype.
 Object.assign(CNodeVideoView.prototype, analysisMethods);
-

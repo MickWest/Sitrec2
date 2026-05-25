@@ -306,6 +306,11 @@ export class CNodeDateTime extends CNode {
         })
             .tooltip(t("dateTime.bFrame.tooltip"))
 
+        this.dateTimeFolder.add(par, "pingPong").name(t("dateTime.pingPong.label")).listen().onChange(() => {
+            setRenderOne(true);
+        })
+            .tooltip(t("dateTime.pingPong.tooltip"))
+
 
         this.dateTimeFolder.add(Sit, "fps",1,120,0.01).name(t("dateTime.videoFps.label")).listen().onFinishChange((v) => {
             this.changedFrames()
