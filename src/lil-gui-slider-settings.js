@@ -208,6 +208,7 @@ NumberController.prototype.updateDisplay = function() {
 const originalInitSlider = NumberController.prototype._initSlider;
 NumberController.prototype._initSlider = function() {
     originalInitSlider.call(this);
+    this._defaultValue = this.object[this.property];
 
     const handleRightClick = (e) => {
         if (e.button === 2) {
@@ -219,6 +220,12 @@ NumberController.prototype._initSlider = function() {
         }
     };
 
+    const resetToDefault = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.setValue(this._defaultValue);
+    };
+
     const suppressContextMenu = (e) => e.preventDefault();
 
     if (this.$slider) {
@@ -228,6 +235,7 @@ NumberController.prototype._initSlider = function() {
 
     // Also allow right-click on the name/label
     this.$name.addEventListener('mousedown', handleRightClick);
+    this.$name.addEventListener('dblclick', resetToDefault);
     this.$name.addEventListener('contextmenu', suppressContextMenu);
 };
 
