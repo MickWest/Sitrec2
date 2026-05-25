@@ -129,11 +129,14 @@ export const setupMethods = {
             cameraLOSController.addOption("Celestial Lock", celestialController);
         }
 
-        // Create the "Camera + Auto Track" LOS adapter node and wire it into the JetLOS switch.
+        // Create the "Camera + Point Track" LOS adapter node and wire it into the JetLOS switch.
         // Added here (rather than in SitCustom.js) so that sitches saved before this node was
         // introduced still get it on reload. The option is always present once setup completes;
         // CNodeAutoTrackLOS.getValueFrame() falls back safely to the plain camera LOS when the
-        // auto-tracker isn't active or video geometry isn't ready.
+        // point tracker isn't active or video geometry isn't ready.
+        // Legacy saves recorded this option under the name "Camera + Auto Track"; the
+        // serialize-time migration in CustomManagerSerialize rewrites that key to the new
+        // name before modDeserialize sees it.
         if (Sit.isCustom && NodeMan.exists("JetLOSCameraCenter") && NodeMan.exists("fovSwitch")
             && NodeMan.exists("video") && NodeMan.exists("JetLOS")) {
             if (!NodeMan.exists("autoTrackLOS")) {
@@ -146,7 +149,7 @@ export const setupMethods = {
             }
             const jetLOS = NodeMan.get("JetLOS");
             const autoTrackLOS = NodeMan.get("autoTrackLOS");
-            const autoTrackOptionName = "Camera + Auto Track";
+            const autoTrackOptionName = "Camera + Point Track";
             if (jetLOS.inputs[autoTrackOptionName] === undefined) {
                 jetLOS.addOption(autoTrackOptionName, autoTrackLOS);
                 jetLOS.controller?.updateDisplay();

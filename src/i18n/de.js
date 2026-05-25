@@ -258,13 +258,13 @@ const de = {
     },
     tracking: {
         enable: {
-            label: "Auto-Tracking aktivieren",
-            disableLabel: "Auto-Tracking deaktivieren",
-            tooltip: "Anzeige des Auto-Tracking-Cursors auf dem Video umschalten",
+            label: "Punkt-Track aktivieren",
+            disableLabel: "Punkt-Track deaktivieren",
+            tooltip: "Anzeige des Punkt-Track-Cursors auf dem Video umschalten",
         },
         start: {
-            label: "Auto-Tracking starten",
-            stopLabel: "Auto-Tracking stoppen",
+            label: "Punkt-Track starten",
+            stopLabel: "Punkt-Track stoppen",
             tooltip: "Das Objekt innerhalb des Cursors automatisch verfolgen, während das Video abgespielt wird",
         },
         clearFromHere: {

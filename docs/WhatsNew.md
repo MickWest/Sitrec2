@@ -9,6 +9,26 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.59.0 (2026-05-25)
+
+### New Features
+- **Video curves editor** (Video → Video Adjustments → *Curves*): a Photoshop-style tone curve for adjusting the brightness and contrast of the video by dragging control points; toggle *Show Curves* to hide the editor while keeping the curve applied.
+- **Video histogram with clipping warning** (Video → Video Adjustments): a live RGB histogram appears in the top-right of the video whenever Video Adjustments is open, with shadow and highlight clipping indicators; click an indicator to highlight the actual clipped pixels on the video.
+- **Configurable HUD color** (View → *HUD Color*): pick the color used for the compass, the MQ-9 HUD, sky labels, measurement labels, and the on-video time/date overlay.
+- **Drop a Metabunk thread URL onto Sitrec**: dragging a `metabunk.org/threads/...` link automatically pulls the associated war.gov UFO video, DVIDS video, or direct MP4 from the thread. A new `?drop=<URL>` query parameter does the same thing on page load.
+- **Drop a war.gov UFO page URL onto Sitrec**: dragging `https://war.gov/ufo` (optionally with a `#PR-xxx` fragment) automatically loads the matching UAP video via DVIDS.
+- **Drop a DVIDS video page URL onto Sitrec**: dragging a DVIDS video page link now resolves and loads the underlying video; direct video/data URLs from any host (mp4, mov, webm, csv, kml, glb, png, jpg, …) are also accepted now, not just same-domain or AWS links.
+- **Render Source Video** (Video → Video Render & Export): export the source video between the In and Out frames at its original resolution and frame rate, with all current Video Adjustments (brightness, contrast, levels, curves, blur, hue, etc.) baked in.
+- **Loops, In-Out pingpong, and playback speed for video exports** (Video → Video Render & Export, plus Time Settings → *In-Out Pingpong*): a new *Loops* slider repeats the A-B sequence up to 20 times, the *In-Out Pingpong* toggle bounces forward-then-backward, and the existing playback-speed setting now also applies to renders.
+- **I and O keyboard shortcuts to set In/Out frames**: press **I** to set the In frame to the current frame, **O** for the Out frame. Time Settings labels updated accordingly: *In Frame [I]* and *Out Frame [O]*.
+- **Export Video Frame split into JPG and PNG** (Video → Video Render & Export): the old single button is now two — *Export Video Frame (JPG)* and *Export Video Frame (PNG)*.
+
+### Improvements
+- **"Auto Tracking" renamed to "Point Track"**: the Video → *Auto Tracking* folder is now Video → *Point Track*, the Enable/Start/Stop labels and tooltips are reworded to match, and the *Camera + Auto Track* line-of-sight option in custom sitches is now *Camera + Point Track*. Old saves that used the previous name still load.
+- **What's New is split into a short overview and a detailed changelog**: Help → *What's New* (new top-level link) now shows the concise, end-user release notes; the long-form engineering changelog moves to Help → Documentation → *What's New (Details)*.
+- **High-altitude measure labels use larger units**: MSL altitude readouts on V/B measurement arrows above 100,000 ft now show in larger units with 2 decimals instead of long metre/foot numbers.
+- **Double-click a slider's label to reset it to its default value** (alongside the existing right-click-to-reset on the slider itself).
+
 ## Version 2.58.0 (2026-05-24)
 
 ### New Features

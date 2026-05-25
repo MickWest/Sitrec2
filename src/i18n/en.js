@@ -273,13 +273,13 @@ const en = {
     },
     tracking: {
         enable: {
-            label: "Enable Auto Tracking",
-            disableLabel: "Disable Auto Tracking",
-            tooltip: "Toggle display of the auto tracking cursor on video",
+            label: "Enable Point Track",
+            disableLabel: "Disable Point Track",
+            tooltip: "Toggle display of the point track cursor on video",
         },
         start: {
-            label: "Start Auto Tracking",
-            stopLabel: "Stop Auto Tracking",
+            label: "Start Point Track",
+            stopLabel: "Stop Point Track",
             tooltip: "Automatically track the object inside the cursor as video plays",
         },
         clearFromHere: {
@@ -288,11 +288,11 @@ const en = {
         },
         clearTrack: {
             label: "Clear Track",
-            tooltip: "Clear all auto-tracked positions and start fresh",
+            tooltip: "Clear all point-track positions and start fresh",
         },
         stabilize: {
             label: "Stabilize",
-            tooltip: "Apply auto-tracked positions to stabilize the video",
+            tooltip: "Apply point-track positions to stabilize the video",
         },
         stabilizeToggle: {
             enableLabel: "Enable Stabilization",

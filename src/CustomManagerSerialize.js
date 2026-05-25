@@ -1080,6 +1080,14 @@ export const serializeMethods = {
             console.warn(`CustomSupport: remapping legacy angles switch choice '${legacyAnglesChoice}' -> '${resolvedAnglesChoice}'`);
         }
 
+        // The "Auto Tracking" menu folder + LOS dropdown option were renamed to "Point Track"
+        // in 2.58.x. Saves predating the rename recorded JetLOS.choice as "Camera + Auto Track";
+        // rewrite to the new key so modDeserialize finds it in jetLOS.inputs.
+        if (mods?.JetLOS?.choice === "Camera + Auto Track") {
+            mods.JetLOS.choice = "Camera + Point Track";
+            console.warn("CustomSupport: remapping legacy JetLOS choice 'Camera + Auto Track' -> 'Camera + Point Track'");
+        }
+
         const legacyCameraChoice = mods?.cameraTrackSwitch?.choice;
         const cameraSwitch = NodeMan.get("cameraTrackSwitch", false);
         if (typeof legacyCameraChoice === "string" && cameraSwitch?.inputs && cameraSwitch.inputs[legacyCameraChoice] === undefined) {

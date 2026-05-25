@@ -2064,7 +2064,7 @@ let stabilizeToggleMenuItem = null;
 export function addObjectTrackingMenu() {
     if (!guiMenus.view) return;
 
-    trackingFolder = guiMenus.video.addFolder("Auto Tracking").close().perm();
+    trackingFolder = guiMenus.video.addFolder("Point Track").close().perm();
 
     const menuActions = {
         enableTracking: toggleEnableTracking,
