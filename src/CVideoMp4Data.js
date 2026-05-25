@@ -541,7 +541,7 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
             if (configTimedOut) return; // already reported by watchdog
             console.error("Error getting config:", err);
             this._markStatus(`error: getConfig rejected (${err?.message || err})`);
-            showError("Video loading error: " + (err.message || err));
+            showError("Video loading error:\n\n" + (err.message || err));
             if (this._loadingId) {
                 VideoLoadingManager.completeLoading(this._loadingId);
             }
@@ -691,4 +691,3 @@ function getRotationAngleFromVideoMatrix(matrix) {
         return 0;
     }
 }
-

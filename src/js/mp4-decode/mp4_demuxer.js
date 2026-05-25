@@ -540,7 +540,24 @@ export class MP4Demuxer {
     this.videoTrack = info.videoTracks[0];
 
     if (!this.videoTrack) {
-      throw new Error("No video track found in file");
+      const videoTrack = info.tracks?.find(track => track.type === 'video');
+      if (videoTrack) {
+        const codec = videoTrack.codec || videoTrack.video?.codec || "unknown";
+        const codecName = codec.toLowerCase().includes("apcn") || codec.toLowerCase().includes("apch") ||
+          codec.toLowerCase().includes("apcs") || codec.toLowerCase().includes("apco") ||
+          codec.toLowerCase().includes("ap4h") || codec.toLowerCase().includes("ap4x")
+          ? "Apple ProRes"
+          : codec;
+        const dimensions = videoTrack.video?.width && videoTrack.video?.height
+          ? ` (${videoTrack.video.width}x${videoTrack.video.height})`
+          : "";
+        throw new Error(
+          `Unsupported MOV/MP4 video codec: ${codecName} (${codec})${dimensions}. ` +
+          `Sitrec can load browser-decodable H.264/HEVC MP4/MOV files, but this file's video track is not exposed to WebCodecs. ` +
+          `Convert it with: ffmpeg -i input.mov -c:v libx264 -pix_fmt yuv420p -c:a aac -movflags +faststart output.mp4`
+        );
+      }
+      throw new Error("No video track found in file. If this is a MOV/MP4, it may contain only unsupported data tracks or metadata.");
     }
 
     const codecConfig = this.source.getCodecConfigBox();
