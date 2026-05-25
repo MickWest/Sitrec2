@@ -61,6 +61,7 @@ import {
     guiVideoEffectsFolder,
 } from "./CNodeVideoViewFilters";
 import {analysisMethods} from "./CNodeVideoViewAnalysis";
+import {CNodeVideoHistogramView} from "./CNodeVideoHistogramView";
 
 // Re-export for external consumers (e.g. CMotionAnalysis).
 export {addFiltersToVideoNode, applyConvolution} from "./CNodeVideoViewFilters";
@@ -78,6 +79,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         //  if (this.overlayView === undefined)
         addFiltersToVideoNode(this)
+        this.setupHistogramView();
 
         this.positioned = false;
         this.autoFill = v.autoFill ?? true; // default to autofill
@@ -121,6 +123,11 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this._noiseQueuedRequest = null;
         this._noiseWorker = null;
         this._noiseWorkerFailed = false;
+        this.showShadowClipMask = false;
+        this.showHighlightClipMask = false;
+        this._clipOriginalCanvas = null;
+        this._clipAdjustedCanvas = null;
+        this._clipMaskCanvas = null;
 
         // Pan offset for zoom+pan mode (fraction of video dimensions, 0 = centered)
         this.panOffsetX = 0;
@@ -142,6 +149,46 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
 
 
+    }
+
+    setupHistogramView() {
+        if (this.id !== "video") return;
+        if (this.histogramView) return;
+
+        this.histogramView = new CNodeVideoHistogramView({
+            id: this.id + "Histogram",
+            videoView: this,
+            relativeTo: this.id,
+            left: 0.68,
+            top: 0.035,
+            width: 0.30,
+            height: -0.34,
+        });
+
+        this.updateHistogramVisibilityFromVideoAdjustments();
+        if (guiVideoEffectsFolder) {
+            guiVideoEffectsFolder.onOpenClose(() => {
+                this.updateHistogramVisibilityFromVideoAdjustments();
+                setRenderOne(true);
+            });
+        }
+    }
+
+    isVideoAdjustmentsOpen() {
+        const contextMenu = Globals.menuBar?.activeContextMenu;
+        const contextMenuTitle = contextMenu?._title?.textContent || contextMenu?.$title?.textContent;
+        return !!(guiVideoEffectsFolder && !guiVideoEffectsFolder._closed)
+            || (contextMenuTitle === "Video Adjustments");
+    }
+
+    updateHistogramVisibilityFromVideoAdjustments() {
+        this.histogramView?.setVisible(this.isVideoAdjustmentsOpen());
+    }
+
+    setClipWarningMaskEnabled(shadowEnabled, highlightEnabled) {
+        this.showShadowClipMask = shadowEnabled;
+        this.showHighlightClipMask = highlightEnabled;
+        setRenderOne(true);
     }
 
     get videoWidth() {
@@ -856,9 +903,20 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 );
                 if (!adjFolder) return;
                 const menu = Globals.menuBar.createStandaloneMenu(
-                    "Video Adjustments", e.clientX, e.clientY, true
+                    "Video Adjustments", e.clientX, e.clientY, false
                 );
                 if (!menu) return;
+                if (menu._escapeKeyHandler) {
+                    document.removeEventListener('keydown', menu._escapeKeyHandler);
+                    menu._escapeKeyHandler = null;
+                }
+                this.histogramView?.setVisible(true);
+                const destroyMenu = menu.destroy.bind(menu);
+                menu.destroy = (...args) => {
+                    const result = destroyMenu(...args);
+                    this.updateHistogramVisibilityFromVideoAdjustments();
+                    return result;
+                };
                 CustomManager.setupDynamicMirroring(adjFolder, menu);
             }
 
@@ -1421,6 +1479,112 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         };
     }
 
+    getClipWarningMask(image, adjusted) {
+        if (!this.showShadowClipMask && !this.showHighlightClipMask) return null;
+
+        const sourceImage = adjusted.sourceImage || image;
+        const sourceWidth = sourceImage.videoWidth || sourceImage.naturalWidth || sourceImage.width || this.videoWidth;
+        const sourceHeight = sourceImage.videoHeight || sourceImage.naturalHeight || sourceImage.height || this.videoHeight;
+        if (!sourceWidth || !sourceHeight) return null;
+
+        if (!this._clipOriginalCanvas) {
+            this._clipOriginalCanvas = document.createElement("canvas");
+            this._clipAdjustedCanvas = document.createElement("canvas");
+            this._clipMaskCanvas = document.createElement("canvas");
+            this._clipOriginalCtx = this._clipOriginalCanvas.getContext("2d", {willReadFrequently: true});
+            this._clipAdjustedCtx = this._clipAdjustedCanvas.getContext("2d", {willReadFrequently: true});
+            this._clipMaskCtx = this._clipMaskCanvas.getContext("2d");
+        }
+
+        for (const canvas of [this._clipOriginalCanvas, this._clipAdjustedCanvas, this._clipMaskCanvas]) {
+            if (canvas.width !== sourceWidth || canvas.height !== sourceHeight) {
+                canvas.width = sourceWidth;
+                canvas.height = sourceHeight;
+            }
+        }
+
+        this.drawClipComparisonFrame(this._clipOriginalCtx, image, sourceWidth, sourceHeight, "none", null);
+        this.drawClipComparisonFrame(this._clipAdjustedCtx, sourceImage, sourceWidth, sourceHeight, adjusted.filter || "none", adjusted.fullABOverlay);
+
+        const originalData = this._clipOriginalCtx.getImageData(0, 0, sourceWidth, sourceHeight).data;
+        const adjustedData = this._clipAdjustedCtx.getImageData(0, 0, sourceWidth, sourceHeight).data;
+        const maskImage = this._clipMaskCtx.createImageData(sourceWidth, sourceHeight);
+        const maskData = maskImage.data;
+
+        let shadowCount = 0;
+        let highlightCount = 0;
+        for (let i = 0; i < adjustedData.length; i += 4) {
+            const adjustedR = adjustedData[i];
+            const adjustedG = adjustedData[i + 1];
+            const adjustedB = adjustedData[i + 2];
+            const originalR = originalData[i];
+            const originalG = originalData[i + 1];
+            const originalB = originalData[i + 2];
+            const shadowClipped = this.showShadowClipMask &&
+                ((adjustedR === 0 && originalR !== 0) ||
+                    (adjustedG === 0 && originalG !== 0) ||
+                    (adjustedB === 0 && originalB !== 0));
+            const highlightClipped = this.showHighlightClipMask &&
+                ((adjustedR === 255 && originalR !== 255) ||
+                    (adjustedG === 255 && originalG !== 255) ||
+                    (adjustedB === 255 && originalB !== 255));
+
+            if (highlightClipped) {
+                maskData[i] = 255;
+                maskData[i + 1] = 0;
+                maskData[i + 2] = 0;
+                maskData[i + 3] = 255;
+                highlightCount++;
+            } else if (shadowClipped) {
+                maskData[i] = 0;
+                maskData[i + 1] = 72;
+                maskData[i + 2] = 255;
+                maskData[i + 3] = 255;
+                shadowCount++;
+            }
+        }
+
+        this._clipMaskCtx.putImageData(maskImage, 0, 0);
+        this._clipMaskShadowCount = shadowCount;
+        this._clipMaskHighlightCount = highlightCount;
+        return this._clipMaskCanvas;
+    }
+
+    drawClipComparisonFrame(ctx, image, width, height, filter, fullABOverlay) {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+        ctx.globalAlpha = 1;
+        ctx.imageSmoothingEnabled = false;
+        ctx.filter = filter;
+        ctx.drawImage(image, 0, 0, width, height);
+        if (fullABOverlay) {
+            ctx.filter = "none";
+            ctx.globalAlpha = fullABOverlay.opacity;
+            ctx.drawImage(fullABOverlay.image, 0, 0, width, height);
+        }
+        ctx.restore();
+    }
+
+    drawClipWarningMask(maskCanvas, ctx) {
+        if (!maskCanvas) return;
+
+        ctx.save();
+        ctx.filter = "none";
+        ctx.globalAlpha = 1;
+        ctx.imageSmoothingEnabled = false;
+        if (this.in.zoom !== undefined) {
+            ctx.drawImage(maskCanvas, this.sx, this.sy, this.sWidth, this.sHeight,
+                this.dx, this.dy, this.dWidth, this.dHeight);
+        } else {
+            ctx.drawImage(maskCanvas,
+                0, 0, this.videoWidth, this.videoHeight,
+                this.widthPx * (0.5 + this.posLeft), this.heightPx * 0.5 + this.widthPx * this.posTop,
+                this.widthPx * (this.posRight - this.posLeft), this.widthPx * (this.posBot - this.posTop));
+        }
+        ctx.restore();
+    }
+
     renderCanvas(frame = 0) {
         super.renderCanvas(frame); // needed for setting window size
 
@@ -1473,7 +1637,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 this.requestNoiseOverlay(image, noiseOverlay);
             }
 
-            const {sourceImage, filter, fullABOverlay} = this.getAdjustedVideoFrameSource(image, frame);
+            const adjustedFrame = this.getAdjustedVideoFrameSource(image, frame);
+            const {sourceImage, filter, fullABOverlay} = adjustedFrame;
 
             ctx.filter = filter || 'none';
 
@@ -1550,6 +1715,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 }
                 ctx.restore();
             }
+
+            this.drawClipWarningMask(this.getClipWarningMask(image, adjustedFrame), ctx);
 
             if (flowRotation !== 0) {
                 ctx.restore();

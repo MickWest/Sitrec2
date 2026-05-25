@@ -88,6 +88,7 @@ class CNodeView extends CNode {
         this.resizable = v.resizable;
         this.doubleClickResizes = v.doubleClickResizes;
         if (v.doubleClickFullScreen !== undefined) this.doubleClickFullScreen = v.doubleClickFullScreen;
+        this.alwaysOnTop = v.alwaysOnTop ?? false;
         this.shiftDrag = v.shiftDrag;
         this.dragKey = v.dragKey;
         this.freeAspect = v.freeAspect;
@@ -910,5 +911,4 @@ export {CNodeView, CUIText}
 export function VG(id){
     return ViewMan.get(id)
 }
-
 
