@@ -270,6 +270,7 @@ let situation = "custom";
 
 // Some (essentially) global variables
 let urlParams;
+let startupDropURLLoaded = false;
 const sortedSitches = {};
 const selectableSitches = {};
 const toolSitches = {};
@@ -753,6 +754,7 @@ if (Sit.TerrainModel) {
 
 legacySetup();
 await setupFunctions();
+loadStartupDropURLAfterSitchSetup();
 
 const dateTime = urlParams.get("datetime");
 if (dateTime) {
@@ -1389,6 +1391,7 @@ async function newSitch(situation, customSetup = false ) {
 
     legacySetup();
     await setupFunctions();
+    loadStartupDropURLAfterSitchSetup();
     Globals.sitchDirty = false; // Reset after setup — initialization triggers onChange callbacks
     startAnimating(Sit.fps);
     setIsTransitioning(false);
@@ -2447,6 +2450,21 @@ function markSitrecReady() {
         newReadyElement.style.display = 'none';
         document.body.appendChild(newReadyElement);
     }
+}
+
+function loadStartupDropURLAfterSitchSetup() {
+    if (startupDropURLLoaded) return;
+
+    const dropURL = urlParams?.get("drop")?.trim();
+    if (!dropURL) return;
+
+    startupDropURLLoaded = true;
+    console.log("Loading URL from drop= parameter after sitch setup: " + dropURL);
+    setTimeout(() => {
+        DragDropHandler.uploadURL(dropURL, {persistDrop: false}).catch(error => {
+            console.warn("Failed to load startup drop URL:", error);
+        });
+    }, 0);
 }
 
 function selectInitialSitch(force) {

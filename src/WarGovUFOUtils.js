@@ -31,8 +31,8 @@ export function getWarGovUFOPrCode(url) {
 
 export function extractWarGovPRCode(value) {
     if (typeof value !== "string") return null;
-    const match = value.match(/\bPR-?(\d{3})\b/i);
-    return match ? `PR${match[1]}` : null;
+    const match = value.match(/\bPR-?(\d{2,3})\b/i);
+    return match ? `PR${match[1].padStart(3, "0")}` : null;
 }
 
 export function normalizeWarGovRecordText(value) {
@@ -114,6 +114,22 @@ export async function getWarGovUFODvidsId(url, fetchImpl = fetch) {
 
     for (const source of catalog) {
         const record = findWarGovUFORecord(source.records, url);
+        const dvidsId = String(record?.["DVIDS Video ID"] || "").trim();
+        if (dvidsId) return dvidsId;
+    }
+
+    return null;
+}
+
+export async function getWarGovUFODvidsIdForPrCode(prCode, fetchImpl = fetch) {
+    if (!prCode) return null;
+    const catalog = await loadWarGovUFOCatalog(fetchImpl);
+
+    for (const source of catalog) {
+        const record = source.records.find(record => {
+            const dvidsId = String(record["DVIDS Video ID"] || "").trim();
+            return dvidsId && extractWarGovPRCode(record.Title) === prCode;
+        });
         const dvidsId = String(record?.["DVIDS Video ID"] || "").trim();
         if (dvidsId) return dvidsId;
     }

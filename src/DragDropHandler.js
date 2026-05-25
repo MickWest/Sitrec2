@@ -17,6 +17,8 @@ import {extractJPEGImportMetadata} from "./EXIFUtils";
 import {sniffFileType} from "./sniffFileType";
 import {isDvidsVideoPageURL, resolveDvidsVideoURL} from "./DVIDSUtils";
 import {isWarGovUFOPageURL, resolveWarGovUFOVideoURL} from "./WarGovUFOUtils";
+import {isMetabunkThreadURL, resolveMetabunkThreadVideoURL} from "./MetabunkThreadUtils";
+import {showError} from "./showError";
 
 // Image file extensions
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'jp2', 'j2k', 'jpx', 'jpc', 'j2c'];
@@ -217,6 +219,7 @@ class CDragDropHandler {
         });
 
         document.body.addEventListener('drop', this.onDrop.bind(this));
+        document.body.addEventListener('paste', this.onPaste.bind(this));
 
         // Process any files that were dropped on the sitch browser before this sitch loaded
         if (this.pendingDropFiles.length > 0) {
@@ -227,6 +230,33 @@ class CDragDropHandler {
                 this.uploadDroppedFile(file, file.name);
             }
         }
+    }
+
+    isEditablePasteTarget(target) {
+        const tag = target?.tagName;
+        return tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable;
+    }
+
+    onPaste(e) {
+        if (this.isEditablePasteTarget(e.target)) {
+            return;
+        }
+
+        const text = e.clipboardData?.getData('text/plain')?.trim();
+        if (!text) {
+            return;
+        }
+
+        if (text.startsWith("http://") || text.startsWith("https://")) {
+            e.preventDefault();
+            console.log("LOADING PASTED URL:" + text);
+            this.uploadURL(text, {persistDrop: true});
+            return;
+        }
+
+        e.preventDefault();
+        console.log("LOADING PASTED text:" + text);
+        this.uploadText(text);
     }
 
     showDropZone(message) {
@@ -277,7 +307,7 @@ class CDragDropHandler {
                     this.uploadText(url);
                 } else {
 
-                    this.uploadURL(url);
+                    this.uploadURL(url, {persistDrop: true});
                 }
             }
         }
@@ -566,142 +596,209 @@ class CDragDropHandler {
 
 
 
-    async uploadURL(url) {
-        // Check if the URL is from the same domain we are hosting on
-        // later we might support other domains, and load them via proxy
-        const urlObject = new URL(url);
-        const pathExt = (urlObject.pathname.split('.').pop() || "").toLowerCase();
-        const looksLikeDirectAssetURL = /^(mp4|mov|webm|avi|m4a|mp3|h264|dad|ts|m2ts|mts|kml|kmz|csv|json|srt|txt|tle|glb|ply|png|jpe?g|gif|webp|tiff?)$/i.test(pathExt);
+    showDroppedURLResolveError(droppedURL, error, resolvedURL = null) {
+        const detail = error?.message || String(error || "No loadable media or data URL was found.");
+        const resolvedDetail = resolvedURL && resolvedURL !== droppedURL
+            ? `\n\nResolved URL:\n${resolvedURL}`
+            : "";
 
-        if (isDvidsVideoPageURL(url)) {
-            try {
-                const videoURL = await resolveDvidsVideoURL(url);
-                console.log(`[DVIDS] Resolved ${url} to ${videoURL}`);
-                return this.uploadURL(videoURL);
-            } catch (error) {
-                console.warn(`[DVIDS] Failed to resolve video URL from ${url}:`, error);
-                return;
-            }
+        showError(`Dropped URL did not resolve to a loadable video or file:\n\n${droppedURL}${resolvedDetail}\n\n${detail}`, error);
+    }
+
+    isVideoURLForDropParam(url) {
+        try {
+            const ext = (new URL(url, window.location.href).pathname.split('.').pop() || "").toLowerCase();
+            return /^(mp4|mov|webm|avi|m4v|mp4v|mpeg|mpg|ogv|h264|ts|m2ts|mts)$/i.test(ext);
+        } catch (e) {
+            return false;
         }
+    }
 
-        if (isWarGovUFOPageURL(url)) {
-            try {
-                const videoURL = await resolveWarGovUFOVideoURL(url);
-                console.log(`[war.gov UFO] Resolved ${url} to ${videoURL}`);
-                return this.uploadURL(videoURL);
-            } catch (error) {
-                console.warn(`[war.gov UFO] Failed to resolve video URL from ${url}:`, error);
-                return;
-            }
-        }
-
-        if (!isSubdomain(urlObject.hostname, SITREC_DOMAIN)
-            && !isSubdomain(urlObject.hostname, SITREC_DEV_DOMAIN)
-            && !isSubdomain(urlObject.hostname, "amazonaws.com")
-            && !looksLikeDirectAssetURL
-        ) {
-            // console.warn('The provided URL ' + urlObject.hostname +' is not from ' + SITREC_DOMAIN + " or " + SITREC_DEV_DOMAIN + "or amazonaws.com");
-
-            // for non-local URLS, we check for info in the URL itself, like a lat, lon, alt location
-
-            let lat, lon;
-            let alt = 30000;    // default altitude (meters)
-
-            const mainCamera = NodeMan.get("mainCamera").camera;
-
-            // check from Google Maps URLs, and extract the location
-            if (urlObject.hostname === "www.google.com" && urlObject.pathname.startsWith("/maps")) {
-
-                // example URL from Google Maps
-                // https://www.google.com/maps/place/Santa+Monica,+CA/@33.9948301,-118.4615695,67a,35y,116.89h,8.32t/data
-
-                // first get the string after the @ from the string url, and split it by the comma
-                const afterAt = url.split("@")[1].split("/data")[0];
-                const parts = afterAt.split(",");
-                if (parts.length > 1) {
-                    const lat = parseFloat(parts[0]);
-                    const lon = parseFloat(parts[1]);
-
-
-                    // if part[2] ends in "m" or "a" then it's the vertical span of the map
-                    // from that we can work out the altitude
-                    if (parts[2].endsWith("m") || parts[2].endsWith("a")) {
-                        const span = parseFloat(parts[2].slice(0, -1));
-                        // given the camera Vertical FOV, we can work out the altitude
-                        const vFOV = mainCamera.fov * Math.PI / 180;
-                        alt = span / 2 / Math.tan(vFOV / 2);
-                    }
-
-                    console.log("Google Maps URL detected, extracting location: " + lat + ", " + lon, " Altitude: " + alt);
-
-                }
-            }
-
-
-            // ADSBx example URL
-            // https://globe.adsbexchange.com/?replay=2024-12-30-23:54&lat=39.948&lon=-73.938&zoom=11.8
-            if (urlObject.hostname === "globe.adsbexchange.com") {
-                lat = parseFloat(urlObject.searchParams.get("lat"));
-                lon = parseFloat(urlObject.searchParams.get("lon"));
-                let zoom = parseFloat(urlObject.searchParams.get("zoom"));
-
-                // convert zoom to altitude
-                // by first converting it to a tile size in meters
-                let circumference = 40075000*cos(radians(lat));
-                let span = circumference/Math.pow(2,zoom-1)
-                const vFOV = mainCamera.fov * Math.PI / 180;
-                alt = span / 2 / Math.tan(vFOV / 2);
-
-            }
-
-            // FR24 example URL
-            // https://www.flightradar24.com/38.73,-120.56/9
-            if (urlObject.hostname === "www.flightradar24.com") {
-                let latlon = urlObject.pathname.split("/")[1];
-                lat = parseFloat(latlon.split(",")[0]);
-                lon = parseFloat(latlon.split(",")[1]);
-                let zoom = parseFloat(urlObject.pathname.split("/")[2]);
-
-                // convert zoom to altitude
-                // by first converting it to a tile size in meters
-                let circumference = 40075000*cos(radians(lat));
-                let span = circumference/Math.pow(2,zoom-1)
-                const vFOV = mainCamera.fov * Math.PI / 180;
-                alt = span / 2 / Math.tan(vFOV / 2);
-            }
-
-
-
-
-            if (lat !== undefined && lon !== undefined) {
-                this.droppedLLA(lat, lon, alt)
-            }
-
+    updateDropURLParam(videoURL) {
+        if (typeof window === "undefined" || !this.isVideoURLForDropParam(videoURL)) {
             return;
         }
 
-        // Route legacy Sitrec S3 URLs through the resolver so they become
-        // same-origin fetches (object.php returns either a local upload URL
-        // or the s3-proxy.php stream). Avoids CORS failures when the S3
-        // bucket does not whitelist this origin.
-        const fetchUrl = isResolvableSitrecReference(url)
-            ? await resolveURLForFetch(url)
-            : url;
+        const currentURL = new URL(window.location.href);
+        if (currentURL.searchParams.get("drop") === videoURL) {
+            return;
+        }
 
-        return quickFetch(fetchUrl, { showLoading: true, loadingCategory: "File" })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
+        currentURL.searchParams.set("drop", videoURL);
+        window.history.pushState({}, null, currentURL.href);
+    }
+
+    async uploadURL(url, options = {}) {
+        const {progressActive = false, originalURL = url, closeProgress = null, persistDrop = false} = options;
+        let progressClosed = false;
+
+        const rootCloseProgress = closeProgress || (() => {
+            if (!progressActive && !progressClosed) {
+                hideProgress();
+                progressClosed = true;
+            }
+        });
+        const closeURLProgress = () => rootCloseProgress();
+
+        if (!progressActive) {
+            initProgress({title: "Loading URL", filename: url});
+        }
+
+        updateProgress({status: "Resolving...", percent: 5, filename: url});
+
+        // Check if the URL is from the same domain we are hosting on
+        // later we might support other domains, and load them via proxy
+        try {
+            const urlObject = new URL(url);
+            const pathExt = (urlObject.pathname.split('.').pop() || "").toLowerCase();
+            const looksLikeDirectAssetURL = /^(mp4|mov|webm|avi|m4a|mp3|h264|dad|ts|m2ts|mts|kml|kmz|csv|json|srt|txt|tle|glb|ply|png|jpe?g|gif|webp|tiff?)$/i.test(pathExt);
+
+            if (isDvidsVideoPageURL(url)) {
+                updateProgress({status: "Resolving DVIDS video...", percent: 15, filename: url});
+                const videoURL = await resolveDvidsVideoURL(url);
+                console.log(`[DVIDS] Resolved ${url} to ${videoURL}`);
+                updateProgress({status: "Loading...", percent: 35, filename: videoURL});
+                return await this.uploadURL(videoURL, {progressActive: true, originalURL, closeProgress: closeURLProgress, persistDrop});
+            }
+
+            if (isWarGovUFOPageURL(url)) {
+                updateProgress({status: "Resolving war.gov video...", percent: 15, filename: url});
+                const videoURL = await resolveWarGovUFOVideoURL(url);
+                console.log(`[war.gov UFO] Resolved ${url} to ${videoURL}`);
+                updateProgress({status: "Loading...", percent: 35, filename: videoURL});
+                return await this.uploadURL(videoURL, {progressActive: true, originalURL, closeProgress: closeURLProgress, persistDrop});
+            }
+
+            if (isMetabunkThreadURL(url)) {
+                updateProgress({status: "Resolving Metabunk thread...", percent: 15, filename: url});
+                const videoURL = await resolveMetabunkThreadVideoURL(url);
+                console.log(`[Metabunk] Resolved ${url} to ${videoURL}`);
+                updateProgress({status: "Loading...", percent: 35, filename: videoURL});
+                return await this.uploadURL(videoURL, {progressActive: true, originalURL, closeProgress: closeURLProgress, persistDrop});
+            }
+
+            if (!isSubdomain(urlObject.hostname, SITREC_DOMAIN)
+                && !isSubdomain(urlObject.hostname, SITREC_DEV_DOMAIN)
+                && !isSubdomain(urlObject.hostname, "amazonaws.com")
+                && !looksLikeDirectAssetURL
+            ) {
+                // console.warn('The provided URL ' + urlObject.hostname +' is not from ' + SITREC_DOMAIN + " or " + SITREC_DEV_DOMAIN + "or amazonaws.com");
+
+                // for non-local URLS, we check for info in the URL itself, like a lat, lon, alt location
+
+                let lat, lon;
+                let alt = 30000;    // default altitude (meters)
+
+                const mainCamera = NodeMan.get("mainCamera").camera;
+
+                // check from Google Maps URLs, and extract the location
+                if (urlObject.hostname === "www.google.com" && urlObject.pathname.startsWith("/maps")) {
+
+                    // example URL from Google Maps
+                    // https://www.google.com/maps/place/Santa+Monica,+CA/@33.9948301,-118.4615695,67a,35y,116.89h,8.32t/data
+
+                    // first get the string after the @ from the string url, and split it by the comma
+                    const afterAt = url.split("@")[1].split("/data")[0];
+                    const parts = afterAt.split(",");
+                    if (parts.length > 1) {
+                        lat = parseFloat(parts[0]);
+                        lon = parseFloat(parts[1]);
+
+
+                        // if part[2] ends in "m" or "a" then it's the vertical span of the map
+                        // from that we can work out the altitude
+                        if (parts[2] && (parts[2].endsWith("m") || parts[2].endsWith("a"))) {
+                            const span = parseFloat(parts[2].slice(0, -1));
+                            // given the camera Vertical FOV, we can work out the altitude
+                            const vFOV = mainCamera.fov * Math.PI / 180;
+                            alt = span / 2 / Math.tan(vFOV / 2);
+                        }
+
+                        console.log("Google Maps URL detected, extracting location: " + lat + ", " + lon, " Altitude: " + alt);
+
+                    }
                 }
-                return response.arrayBuffer();
-            })
-            .then(buffer => {
-                console.log(`Fetched ${url} successfully, queueing result for parsing`)
-                this.queueResult(url, buffer, url)
-            })
-            .catch(error => {
-                console.log('There was a problem with the fetch operation:', error.message);
-            });
+
+
+                // ADSBx example URL
+                // https://globe.adsbexchange.com/?replay=2024-12-30-23:54&lat=39.948&lon=-73.938&zoom=11.8
+                if (urlObject.hostname === "globe.adsbexchange.com") {
+                    lat = parseFloat(urlObject.searchParams.get("lat"));
+                    lon = parseFloat(urlObject.searchParams.get("lon"));
+                    let zoom = parseFloat(urlObject.searchParams.get("zoom"));
+
+                    // convert zoom to altitude
+                    // by first converting it to a tile size in meters
+                    let circumference = 40075000*cos(radians(lat));
+                    let span = circumference/Math.pow(2,zoom-1)
+                    const vFOV = mainCamera.fov * Math.PI / 180;
+                    alt = span / 2 / Math.tan(vFOV / 2);
+
+                }
+
+                // FR24 example URL
+                // https://www.flightradar24.com/38.73,-120.56/9
+                if (urlObject.hostname === "www.flightradar24.com") {
+                    let latlon = urlObject.pathname.split("/")[1];
+                    lat = parseFloat(latlon.split(",")[0]);
+                    lon = parseFloat(latlon.split(",")[1]);
+                    let zoom = parseFloat(urlObject.pathname.split("/")[2]);
+
+                    // convert zoom to altitude
+                    // by first converting it to a tile size in meters
+                    let circumference = 40075000*cos(radians(lat));
+                    let span = circumference/Math.pow(2,zoom-1)
+                    const vFOV = mainCamera.fov * Math.PI / 180;
+                    alt = span / 2 / Math.tan(vFOV / 2);
+                }
+
+
+
+
+                if (lat !== undefined && lon !== undefined) {
+                    closeURLProgress();
+                    this.droppedLLA(lat, lon, alt)
+                    return;
+                }
+
+                throw new Error(`Unsupported URL host or page type: ${urlObject.hostname}`);
+            }
+
+            // Route legacy Sitrec S3 URLs through the resolver so they become
+            // same-origin fetches (object.php returns either a local upload URL
+            // or the s3-proxy.php stream). Avoids CORS failures when the S3
+            // bucket does not whitelist this origin.
+            updateProgress({status: "Resolving...", percent: 25, filename: url});
+            const fetchUrl = isResolvableSitrecReference(url)
+                ? await resolveURLForFetch(url)
+                : url;
+
+            updateProgress({status: "Loading...", percent: 45, filename: fetchUrl});
+
+            const response = await quickFetch(fetchUrl, {showLoading: true, loadingCategory: "File"});
+
+            if (!response.ok) {
+                throw new Error(`Network response was not ok (${response.status} ${response.statusText})`);
+            }
+
+            updateProgress({status: "Loading...", percent: 70, filename: fetchUrl});
+            const buffer = await response.arrayBuffer();
+
+            updateProgress({status: "Parsing...", percent: 90, filename: fetchUrl});
+            console.log(`Fetched ${url} successfully, queueing result for parsing`)
+            this.queueResult(url, buffer, url)
+            if (persistDrop) {
+                this.updateDropURLParam(url);
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error) {
+            console.log('There was a problem with the dropped URL operation:', error.message);
+            closeURLProgress();
+            this.showDroppedURLResolveError(originalURL, error, url);
+        } finally {
+            closeURLProgress();
+        }
     }
 
     // dragged in a text snippet
