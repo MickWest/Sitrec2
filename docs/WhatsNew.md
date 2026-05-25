@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.59.1 (2026-05-25)
+
+### Improvements
+- **Histogram toggle** (Video Adjustments): new *Histogram* checkbox lets you hide the live RGB histogram panel without closing the whole Video Adjustments folder.
+
+### Bug Fixes
+- Fixed the Curves filter occasionally showing the previous frame's adjusted image when scrubbing or playing certain videos.
+
 ## Version 2.59.0 (2026-05-25)
 
 ### New Features

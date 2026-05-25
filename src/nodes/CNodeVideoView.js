@@ -76,7 +76,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         // these no longer work with the new rendering pipeline
         // TODO: reimplement them as effects?
-        this.optionalInputs(["brightness", "contrast", "levelsMidpoint", "curves", "showCurves", "blur", "greyscale", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
+        this.optionalInputs(["brightness", "contrast", "levelsMidpoint", "showHistogram", "curves", "showCurves", "blur", "greyscale", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
         //
 
         //  if (this.overlayView === undefined)
@@ -170,12 +170,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         });
 
         this.updateHistogramVisibilityFromVideoAdjustments();
-        if (guiVideoEffectsFolder) {
-            guiVideoEffectsFolder.onOpenClose(() => {
-                this.updateHistogramVisibilityFromVideoAdjustments();
-                setRenderOne(true);
-            });
-        }
+        this.setupVideoAdjustmentsVisibilityHandler();
     }
 
     isVideoAdjustmentsOpen() {
@@ -186,7 +181,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     }
 
     updateHistogramVisibilityFromVideoAdjustments() {
-        this.histogramView?.setVisible(this.isVideoAdjustmentsOpen());
+        const showHistogram = this.in.showHistogram?.value !== false;
+        this.histogramView?.setVisible(showHistogram && this.isVideoAdjustmentsOpen());
     }
 
     setupCurvesView() {
@@ -204,12 +200,21 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         });
 
         this.updateCurvesVisibility();
+        this.setupVideoAdjustmentsVisibilityHandler();
+    }
+
+    setupVideoAdjustmentsVisibilityHandler() {
         if (guiVideoEffectsFolder) {
             guiVideoEffectsFolder.onOpenClose(() => {
-                this.updateCurvesVisibility();
+                this.updateVideoAdjustmentHelperVisibility();
                 setRenderOne(true);
             });
         }
+    }
+
+    updateVideoAdjustmentHelperVisibility() {
+        this.updateHistogramVisibilityFromVideoAdjustments();
+        this.updateCurvesVisibility();
     }
 
     updateCurvesVisibility() {
@@ -220,6 +225,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
     invalidateCurveResult() {
         this._curvesLastImage = undefined;
+        this._curvesLastFrame = undefined;
         this._curvesLastRevision = undefined;
     }
 
@@ -948,16 +954,15 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                     document.removeEventListener('keydown', menu._escapeKeyHandler);
                     menu._escapeKeyHandler = null;
                 }
-                this.histogramView?.setVisible(true);
-                this.updateCurvesVisibility();
+                this.updateVideoAdjustmentHelperVisibility();
                 const destroyMenu = menu.destroy.bind(menu);
                 menu.destroy = (...args) => {
                     const result = destroyMenu(...args);
-                    this.updateHistogramVisibilityFromVideoAdjustments();
-                    this.updateCurvesVisibility();
+                    this.updateVideoAdjustmentHelperVisibility();
                     return result;
                 };
                 CustomManager.setupDynamicMirroring(adjFolder, menu);
+                this.updateVideoAdjustmentHelperVisibility();
             }
 
         })
@@ -1476,7 +1481,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
 
         if (effectsEnabled && this.in.curves?.value === true && this.curvesView) {
-            sourceImage = applyCurvesToImage(sourceImage, this.curvesView.getCurveLUT(), this);
+            sourceImage = applyCurvesToImage(sourceImage, this.curvesView.getCurveLUT(), this, frame);
         }
 
         const blurPx = effectsEnabled ? (this.in.blur?.v0 ?? 0) : 0;

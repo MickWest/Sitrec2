@@ -54,7 +54,7 @@ export function addFiltersToVideoNode(videoNode) {
         guiVideoNoiseFolder.onOpenClose(() => setRenderOne(true));
     }
 
-    let brightness, contrast, levelsMidpoint, curves, showCurves, blur, greyscale, hue, invert, saturate, enableVideoEffects, convolutionFilter;
+    let brightness, contrast, levelsMidpoint, showHistogram, curves, showCurves, blur, greyscale, hue, invert, saturate, enableVideoEffects, convolutionFilter;
     let sharpenAmount, edgeDetectThreshold, embossDepth;
     let echoMin, echoMax, echoFrames, fullABEcho, fullABEchoOpacity, fullABBlend, fullABExposure;
     let showCache, elaJpegQuality, elaErrorScale, elaOpacity, elaExpandMethod, elaContrastClipPercent;
@@ -96,6 +96,7 @@ export function addFiltersToVideoNode(videoNode) {
             videoNode.inputs.brightness.value = 1;
             videoNode.inputs.contrast.value = 1;
             if (videoNode.inputs.levelsMidpoint) videoNode.inputs.levelsMidpoint.value = 1;
+            if (videoNode.inputs.showHistogram) videoNode.inputs.showHistogram.value = true;
             if (videoNode.inputs.curves) videoNode.inputs.curves.value = false;
             if (videoNode.inputs.showCurves) videoNode.inputs.showCurves.value = true;
             videoNode.inputs.blur.value = 0;
@@ -141,9 +142,12 @@ export function addFiltersToVideoNode(videoNode) {
     }
 
     if (!NodeMan.exists("videoBrightness")) {
-        brightness = new CNodeGUIValue({ id: "videoBrightness", value: 1, start: 0, end: 5, step: 0.01, desc: "Brightness", tip: "Brightness multiplier (1 = normal)" }, guiVideoEffectsFolder),
+            brightness = new CNodeGUIValue({ id: "videoBrightness", value: 1, start: 0, end: 5, step: 0.01, desc: "Brightness", tip: "Brightness multiplier (1 = normal)" }, guiVideoEffectsFolder),
             contrast = new CNodeGUIValue({ id: "videoContrast", value: 1, start: 0, end: 5, step: 0.01, desc: "Contrast", tip: "Contrast multiplier (1 = normal)" }, guiVideoEffectsFolder),
             levelsMidpoint = new CNodeGUIValue({ id: "videoLevelsMidpoint", value: 1, start: 0.1, end: 5, step: 0.01, desc: "Levels Midpoint", tip: "Gamma curve for midtones, like Photoshop's Levels midpoint slider (1 = normal, >1 brightens midtones, <1 darkens)" }, guiVideoEffectsFolder),
+            showHistogram = new CNodeGUIFlag({ id: "videoShowHistogram", value: true, desc: "Histogram", tip: "Show the live video RGB histogram", onChange: () => {
+                videoNode.updateHistogramVisibilityFromVideoAdjustments?.();
+            }}, guiVideoEffectsFolder),
             curves = new CNodeGUIFlag({ id: "videoCurves", value: false, desc: "Curves", tip: "Apply the video tone curve", onChange: () => {
                 updateCurvesControlVisibility();
             }}, guiVideoEffectsFolder),
@@ -263,6 +267,7 @@ export function addFiltersToVideoNode(videoNode) {
         brightness = NodeMan.get("videoBrightness");
         contrast = NodeMan.get("videoContrast");
         levelsMidpoint = NodeMan.get("videoLevelsMidpoint");
+        showHistogram = NodeMan.get("videoShowHistogram");
         curves = NodeMan.get("videoCurves");
         showCurves = NodeMan.get("videoShowCurves");
         blur = NodeMan.get("videoBlur");
@@ -315,6 +320,7 @@ export function addFiltersToVideoNode(videoNode) {
         brightness: brightness,
         contrast: contrast,
         levelsMidpoint: levelsMidpoint,
+        showHistogram: showHistogram,
         curves: curves,
         showCurves: showCurves,
         blur: blur,
@@ -740,7 +746,7 @@ export function applyLevelsMidpointToImage(image, midpoint, videoView) {
     return videoView._levelsMidpointCanvas;
 }
 
-export function applyCurvesToImage(image, lut, videoView) {
+export function applyCurvesToImage(image, lut, videoView, frame = undefined) {
     if (!lut) return image;
 
     const width = image.width;
@@ -754,11 +760,14 @@ export function applyCurvesToImage(image, lut, videoView) {
         videoView._curvesCanvas.height = height;
         videoView._curvesCtx = videoView._curvesCanvas.getContext('2d', {willReadFrequently: true});
         videoView._curvesLastImage = undefined;
+        videoView._curvesLastFrame = undefined;
         videoView._curvesLastRevision = undefined;
     }
 
     const revision = videoView.curvesView?.curveRevision ?? 0;
-    if (videoView._curvesLastImage === image && videoView._curvesLastRevision === revision) {
+    if (videoView._curvesLastImage === image &&
+        videoView._curvesLastFrame === frame &&
+        videoView._curvesLastRevision === revision) {
         return videoView._curvesCanvas;
     }
 
@@ -776,6 +785,7 @@ export function applyCurvesToImage(image, lut, videoView) {
     ctx.putImageData(imageData, 0, 0);
 
     videoView._curvesLastImage = image;
+    videoView._curvesLastFrame = frame;
     videoView._curvesLastRevision = revision;
 
     return videoView._curvesCanvas;

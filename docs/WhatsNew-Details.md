@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.59.1 (2026-05-25)
+
+### Improvements
+- **Histogram toggle** (Video Adjustments): added a new *Histogram* checkbox (i18n-keyed `videoShowHistogram`, defaults on) sitting between *Levels Midpoint* and *Curves* in the Video Adjustments folder. `CNodeVideoView.updateHistogramVisibilityFromVideoAdjustments()` now ANDs the flag with the folder-open check, so the live RGB histogram panel is hidden whenever either the flag is off or Video Adjustments is closed. The flag is added to `CNodeVideoView`'s `optionalInputs` list and registered in `getFilterNodes` / `attachInputsToVideoNode` in `CNodeVideoViewFilters.js` so it serializes with custom-sitch saves; the *Reset Video Adjustments* helper restores it to `true` alongside the other defaults. The visibility check uses `!== false`, so older saves without the input still show the histogram by default.
+
+### Bug Fixes
+- Fixed a stale-frame artifact in the Curves filter: `applyCurvesToImage` in `CNodeVideoViewFilters.js` cached on `(image, revision)` only, but some decode paths reuse the same `image` object reference across frames while the underlying pixels change. The cache would then hand back the previously-adjusted canvas for the new frame. `applyCurvesToImage` now takes a `frame` argument and keys the cache on `(image, frame, revision)` via a new `_curvesLastFrame` field; `invalidateCurveResult` clears it, and the call site in `applyAdjustmentsToImage` passes the current frame.
+
+### Internal
+- Unified the two separate `guiVideoEffectsFolder.onOpenClose` handlers (one for histogram, one for curves) into a single shared listener installed by `setupVideoAdjustmentsVisibilityHandler()`, which calls a new `updateVideoAdjustmentHelperVisibility()` that fans out to `updateHistogramVisibilityFromVideoAdjustments()` and `updateCurvesVisibility()`. The standalone "Video Adjustments" context-menu (right-click) open/destroy path uses the same helper, and now also calls it once after `CustomManager.setupDynamicMirroring` so the helpers settle on the mirrored folder state. No standalone user-visible change, but this is the wiring that ties the new *Histogram* toggle into the existing show/hide logic.
+
 ## Version 2.59.0 (2026-05-25)
 
 ### New Features
