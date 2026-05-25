@@ -16,6 +16,7 @@ import {convertTiffBufferToBlobURL} from "./TIFFUtils";
 import {extractJPEGImportMetadata} from "./EXIFUtils";
 import {sniffFileType} from "./sniffFileType";
 import {isDvidsVideoPageURL, resolveDvidsVideoURL} from "./DVIDSUtils";
+import {isWarGovUFOPageURL, resolveWarGovUFOVideoURL} from "./WarGovUFOUtils";
 
 // Image file extensions
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'jp2', 'j2k', 'jpx', 'jpc', 'j2c'];
@@ -579,6 +580,17 @@ class CDragDropHandler {
                 return this.uploadURL(videoURL);
             } catch (error) {
                 console.warn(`[DVIDS] Failed to resolve video URL from ${url}:`, error);
+                return;
+            }
+        }
+
+        if (isWarGovUFOPageURL(url)) {
+            try {
+                const videoURL = await resolveWarGovUFOVideoURL(url);
+                console.log(`[war.gov UFO] Resolved ${url} to ${videoURL}`);
+                return this.uploadURL(videoURL);
+            } catch (error) {
+                console.warn(`[war.gov UFO] Failed to resolve video URL from ${url}:`, error);
                 return;
             }
         }
