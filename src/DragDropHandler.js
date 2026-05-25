@@ -15,6 +15,7 @@ import {isResolvableSitrecReference, resolveURLForFetch} from "./SitrecObjectRes
 import {convertTiffBufferToBlobURL} from "./TIFFUtils";
 import {extractJPEGImportMetadata} from "./EXIFUtils";
 import {sniffFileType} from "./sniffFileType";
+import {isDvidsVideoPageURL, resolveDvidsVideoURL} from "./DVIDSUtils";
 
 // Image file extensions
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'jp2', 'j2k', 'jpx', 'jpc', 'j2c'];
@@ -568,9 +569,24 @@ class CDragDropHandler {
         // Check if the URL is from the same domain we are hosting on
         // later we might support other domains, and load them via proxy
         const urlObject = new URL(url);
+        const pathExt = (urlObject.pathname.split('.').pop() || "").toLowerCase();
+        const looksLikeDirectAssetURL = /^(mp4|mov|webm|avi|m4a|mp3|h264|dad|ts|m2ts|mts|kml|kmz|csv|json|srt|txt|tle|glb|ply|png|jpe?g|gif|webp|tiff?)$/i.test(pathExt);
+
+        if (isDvidsVideoPageURL(url)) {
+            try {
+                const videoURL = await resolveDvidsVideoURL(url);
+                console.log(`[DVIDS] Resolved ${url} to ${videoURL}`);
+                return this.uploadURL(videoURL);
+            } catch (error) {
+                console.warn(`[DVIDS] Failed to resolve video URL from ${url}:`, error);
+                return;
+            }
+        }
+
         if (!isSubdomain(urlObject.hostname, SITREC_DOMAIN)
             && !isSubdomain(urlObject.hostname, SITREC_DEV_DOMAIN)
             && !isSubdomain(urlObject.hostname, "amazonaws.com")
+            && !looksLikeDirectAssetURL
         ) {
             // console.warn('The provided URL ' + urlObject.hostname +' is not from ' + SITREC_DOMAIN + " or " + SITREC_DEV_DOMAIN + "or amazonaws.com");
 
