@@ -4,6 +4,7 @@ import {isKeyHeld, keyHeldTime, KeyMan} from "./KeyBoardHandler";
 import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
 import {UpdatePRFromEA} from "./JetStuff";
 import {Frame2Az, Frame2El} from "./JetUtils";
+import {clampSitFrameRange} from "./UpdateSitFrames";
 
 
 let hookedKeys = false;
@@ -33,8 +34,9 @@ export function updateFrame(elapsed) {
 
     const dt = elapsed;
 
+    clampSitFrameRange();
     const A = Sit.aFrame;
-    let B = Sit.bFrame ?? Sit.frames-1;
+    let B = Sit.bFrame;
 
     // dt is in milliseconds, so divide by 1000 to get seconds
     // then multiply by the frames per second to get the number of frames

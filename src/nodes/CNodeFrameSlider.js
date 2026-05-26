@@ -4,6 +4,7 @@ import {CNode} from "./CNode";
 import {getControlsContainer} from "../PageStructure";
 import {EventManager} from "../CEventManager";
 import {KeyframeRegistry} from "../CKeyframeRegistry";
+import {lastSitFrame} from "../UpdateSitFrames";
 
 export class CNodeFrameSlider extends CNode {
     constructor(v) {
@@ -453,7 +454,7 @@ export class CNodeFrameSlider extends CNode {
             // Calculate frame from touch position
             const rect = this.sliderInput.getBoundingClientRect();
             const x = touch.clientX - rect.left;
-            const frame = Math.max(0, Math.min(Sit.frames, Math.round((x / rect.width) * this.sliderInput.max)));
+            const frame = Math.max(0, Math.min(lastSitFrame(), Math.round((x / rect.width) * this.sliderInput.max)));
             
             this.sliderInput.value = frame;
             newFrame(frame);
@@ -472,7 +473,7 @@ export class CNodeFrameSlider extends CNode {
                 // Calculate frame from touch position
                 const rect = this.sliderInput.getBoundingClientRect();
                 const x = touch.clientX - rect.left;
-                const frame = Math.max(0, Math.min(Sit.frames, Math.round((x / rect.width) * this.sliderInput.max)));
+                const frame = Math.max(0, Math.min(lastSitFrame(), Math.round((x / rect.width) * this.sliderInput.max)));
                 
                 this.sliderInput.value = frame;
                 newFrame(frame);
@@ -1233,8 +1234,9 @@ export class CNodeFrameSlider extends CNode {
             }
 
             const max = parseInt(this.sliderInput.max, 10);
-            if (max !== Sit.frames) {
-                this.sliderInput.max = Sit.frames;
+            const lastFrame = lastSitFrame();
+            if (max !== lastFrame) {
+                this.sliderInput.max = lastFrame;
             }
         }
     }

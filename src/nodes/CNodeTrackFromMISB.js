@@ -454,40 +454,18 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         // any future change.
         const videoFirstPTSus = (usePESPTS && videoData.framePTSus) ? videoData.framePTSus[0] : 0;
 
-        // Use real per-frame video PTS in the wall-clock path too, when available.
-        // Without this, msNow advances at synthetic frame/fps rate even when the
-        // video had dropped-frame jumps (real PTS is non-uniform). Looking up KLV
-        // by synthetic time then mis-pairs frames after every burst — which
-        // visually presents as the sim lagging the video by the cumulative
-        // dropped-frame interval. With real PTS, msNow advances with real PCR
-        // time even when the KLV has no PES PTS.
-        const useRealVideoPTSForWallClock = !usePESPTS &&
-            videoData &&
-            typeof videoData.hasRealFramePTS === "function" &&
-            videoData.hasRealFramePTS() &&
-            Array.isArray(videoData.framePTSus);
-        const wallClockVideoFirstPTSus = useRealVideoPTSForWallClock ? videoData.framePTSus[0] : 0;
-        if (useRealVideoPTSForWallClock) {
-            console.log(`CNodeTrackFromMISB(${this.id}): using real video PTS for wall-clock pairing (KLV has no PES PTS, video does)`);
-        }
-
         for (var f=0;f<Sit.frames;f++) {
             // For PES-PTS mode, msNow is the video frame's PTS in ms,
             // relative to the first frame — same origin as pesTimeArray.
-            // For wall-clock mode it's msStart + real-video-PTS-since-start
-            // (or synthesized frame_time if real PTS unavailable).
+            // For wall-clock mode, use the sitch clock. A loaded video's PTS
+            // cannot be used unless the KLV records also have PES PTS; otherwise
+            // independent MISB-shaped tracks (KML/ADSB, CSV, STANAG, SRT, etc.)
+            // get incorrectly retimed by whichever video happens to be loaded.
             var msNow;
             if (usePESPTS) {
                 const us = videoData.framePTSus[f];
                 if (typeof us === "number") {
                     msNow = (us - videoFirstPTSus) / 1000;
-                } else {
-                    msNow = msStart + Math.floor(frameTime * 1000);
-                }
-            } else if (useRealVideoPTSForWallClock) {
-                const us = videoData.framePTSus[f];
-                if (typeof us === "number") {
-                    msNow = msStart + (us - wallClockVideoFirstPTSus) / 1000;
                 } else {
                     msNow = msStart + Math.floor(frameTime * 1000);
                 }
@@ -642,7 +620,6 @@ export class CNodeTrackFromMISB extends CNodeTrack {
     }
 
 }
-
 
 
 
