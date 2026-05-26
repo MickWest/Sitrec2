@@ -12,11 +12,19 @@ import {makeDraggable, makeResizable, removeDraggable, removeResizable} from "..
 import {isKeyHeld} from "../KeyBoardHandler";
 import {
     getCenterSidebarAdjustment,
+    getLeftSidebar,
+    getRightSidebar,
+    hideLeftSidebar,
+    hideRightSidebar,
     isCenterSidebarSuspended,
     resumeCenterSidebar,
+    showLeftSidebar,
+    showRightSidebar,
     suspendCenterSidebar
 } from "../PageStructure";
 
+const DOCK_EDGE_PX = 36;
+const DOCK_MARGIN_PX = 8;
 
 const defaultCViewParams = {
     visible: true,
@@ -92,6 +100,10 @@ class CNodeView extends CNode {
         this.shiftDrag = v.shiftDrag;
         this.dragKey = v.dragKey;
         this.freeAspect = v.freeAspect;
+        this.dockable = v.dockable ?? this.draggable;
+        this.dockedSidebar = null;
+        this.floatingRectBeforeDock = null;
+        this.dockedAspectRatio = null;
         //
         //
 
@@ -141,6 +153,7 @@ class CNodeView extends CNode {
             } else {
                 this.divParent = this.container;
             }
+            this.floatingParent = this.divParent;
 
             this.divParent.appendChild(this.div);
 
@@ -150,9 +163,13 @@ class CNodeView extends CNode {
                     viewInstance: this,
                     shiftKey: this.shiftDrag,
                     requiredKey: this.dragKey,
+                    onDragStart: (event, data) => {
+                        this.onViewDragStart?.(event, {...data, viewInstance: this});
+                    },
                     onDrag: (event, data) => {
                         const view = data.viewInstance;
                         if (!view.draggable) return false;
+                        if (view.dockedSidebar) return true;
                         // If dragKey is set, use that instead of shiftDrag
                         if (view.dragKey) {
                             if (!isKeyHeld(view.dragKey)) return false;
@@ -169,7 +186,10 @@ class CNodeView extends CNode {
                             }
                         });
                         return true;
-                    }
+                    },
+                    onDragEnd: (event, data) => {
+                        data.viewInstance?.onViewDragEnd?.(event, data);
+                    },
                 });
             }
             
@@ -275,6 +295,7 @@ class CNodeView extends CNode {
 
     dispose() {
         console.log("Disposing CNodeView: "+this.id)
+        const sidebar = this.dockedSidebar ? this.getDockSidebar(this.dockedSidebar) : null;
 
         // Clear any pending resize timeout to prevent post-disposal callbacks
         if (this._resizeTimeout) {
@@ -293,7 +314,8 @@ class CNodeView extends CNode {
                 removeResizable(this.div);
             }
 
-            this.divParent.removeChild(this.div);
+            this.div.parentElement?.removeChild(this.div);
+            this.hideSidebarIfEmpty(sidebar);
         }
         
         super.dispose()
@@ -477,6 +499,8 @@ class CNodeView extends CNode {
 
     // Updates the Pixel and Div values from the fractional and window values
     updateWH() {
+        if (this.updateDockedWH?.()) return;
+
         this.leftPx = Math.floor(this.containerLeft() + this.containerWidth()  * this.left);
         this.topPx  = Math.floor(this.containerTop()  + this.containerHeight() * this.top);
 
@@ -827,7 +851,234 @@ class CNodeView extends CNode {
                 this.canvas.style.visibility = this.visible ? 'visible' : 'hidden';
             }
         }
+        if (!this.dockedSidebar) return;
+
+        if (this.visible) {
+            if (this.dockedSidebar === "left") {
+                showLeftSidebar();
+            } else {
+                showRightSidebar();
+            }
+            this.updateDockedWH();
+        } else {
+            this.hideSidebarIfEmpty(this.getDockSidebar(this.dockedSidebar));
+        }
         // Non-separateVisibility overlays: DOM controlled by parent's div
+    }
+
+    updateDockedWH() {
+        if (!this.dockedSidebar || !this.div) return false;
+
+        const sidebar = this.getDockSidebar(this.dockedSidebar);
+        if (!sidebar) return false;
+
+        const oldWidth = this.widthPx;
+        const oldHeight = this.heightPx;
+        const aspect = this.dockedAspectRatio || this.currentAspectRatio();
+        const availableWidth = Math.max(1, sidebar.clientWidth - DOCK_MARGIN_PX * 2);
+        const availableHeight = Math.max(1, sidebar.clientHeight - DOCK_MARGIN_PX * 2);
+
+        let width = availableWidth;
+        let height = width / aspect;
+        if (height > availableHeight) {
+            height = availableHeight;
+            width = height * aspect;
+        }
+
+        this.widthPx = Math.max(1, Math.floor(width));
+        this.heightPx = Math.max(1, Math.floor(height));
+        this.leftPx = DOCK_MARGIN_PX;
+        this.topPx = DOCK_MARGIN_PX;
+
+        Object.assign(this.div.style, {
+            position: "relative",
+            left: "0px",
+            top: "0px",
+            width: `${this.widthPx}px`,
+            height: `${this.heightPx}px`,
+            margin: `${DOCK_MARGIN_PX}px`,
+            display: this.visible ? "block" : "none",
+        });
+
+        if (oldWidth !== this.widthPx || oldHeight !== this.heightPx) {
+            this.changedSize();
+        }
+        return true;
+    }
+
+    onViewDragEnd(event) {
+        if (!this.visible || !this.dockable) return;
+
+        if (this.dockedSidebar) {
+            if (!this.isEventInDockSidebar(event, this.dockedSidebar)) {
+                this.undockFromSidebar(event);
+            } else {
+                this.updateDockedWH();
+            }
+            return;
+        }
+
+        const side = this.dockSideForEvent(event);
+        if (side) {
+            this.dockToSidebar(side);
+        }
+    }
+
+    dockToSidebar(side) {
+        if (!this.dockable || (side !== "left" && side !== "right")) return;
+
+        if (!this.dockedSidebar) {
+            this.saveFloatingRect();
+        }
+
+        this.dockedSidebar = side;
+        this.dockedAspectRatio = this.currentAspectRatio();
+        if (side === "left") {
+            showLeftSidebar();
+        } else {
+            showRightSidebar();
+        }
+
+        const sidebar = this.getDockSidebar(side);
+        sidebar.appendChild(this.div);
+        this.setResizeHandlesVisible(false);
+        this.updateDockedWH();
+    }
+
+    undockFromSidebar(event) {
+        if (!this.dockedSidebar) return;
+
+        const sidebar = this.getDockSidebar(this.dockedSidebar);
+        const saved = this.floatingRectBeforeDock || {
+            widthPx: this.widthPx,
+            heightPx: this.heightPx,
+            leftPx: this.leftPx,
+            topPx: this.topPx,
+        };
+
+        this.dockedSidebar = null;
+        this.dockedAspectRatio = null;
+        this.floatingParent.appendChild(this.div);
+        this.hideSidebarIfEmpty(sidebar);
+        this.setResizeHandlesVisible(true);
+
+        const widthPx = Math.max(1, Math.floor(saved.widthPx));
+        const heightPx = Math.max(1, Math.floor(saved.heightPx));
+        const parentRect = this.floatingParent.getBoundingClientRect();
+        const pointerLeft = event?.clientX !== undefined
+            ? event.clientX - parentRect.left - widthPx / 2
+            : saved.leftPx;
+        const pointerTop = event?.clientY !== undefined
+            ? event.clientY - parentRect.top - 16
+            : saved.topPx;
+
+        this.widthPx = widthPx;
+        this.heightPx = heightPx;
+        this.leftPx = this.clamp(pointerLeft, 0, Math.max(0, this.containerWidth() - widthPx));
+        this.topPx = this.clamp(pointerTop, 0, Math.max(0, this.containerHeight() - heightPx));
+
+        this.width = this.widthPx / this.containerWidth();
+        this.height = this.heightPx / this.containerHeight();
+        this.left = (this.leftPx - this.containerLeft()) / this.containerWidth();
+        this.top = (this.topPx - this.containerTop()) / this.containerHeight();
+
+        Object.assign(this.div.style, {
+            position: "absolute",
+            margin: "0px",
+            left: `${this.leftPx}px`,
+            top: `${this.topPx}px`,
+            width: `${this.widthPx}px`,
+            height: `${this.heightPx}px`,
+            display: this.visible ? "block" : "none",
+        });
+
+        this.changedSize();
+        this.deferFloatingPixelSizeRestore(widthPx, heightPx);
+    }
+
+    saveFloatingRect() {
+        this.floatingRectBeforeDock = {
+            leftPx: this.leftPx,
+            topPx: this.topPx,
+            widthPx: this.div?.clientWidth || this.widthPx,
+            heightPx: this.div?.clientHeight || this.heightPx,
+        };
+    }
+
+    currentAspectRatio() {
+        const width = this.div?.clientWidth || this.widthPx || 1;
+        const height = this.div?.clientHeight || this.heightPx || 1;
+        return Math.max(0.01, width / height);
+    }
+
+    dockSideForEvent(event) {
+        if (event.clientX <= DOCK_EDGE_PX || this.isEventInDockSidebar(event, "left")) {
+            return "left";
+        }
+        if (event.clientX >= window.innerWidth - DOCK_EDGE_PX || this.isEventInDockSidebar(event, "right")) {
+            return "right";
+        }
+        return null;
+    }
+
+    isEventInDockSidebar(event, side) {
+        const sidebar = this.getDockSidebar(side);
+        if (!sidebar || sidebar.style.display === "none") return false;
+        const rect = sidebar.getBoundingClientRect();
+        return event.clientX >= rect.left
+            && event.clientX <= rect.right
+            && event.clientY >= rect.top
+            && event.clientY <= rect.bottom;
+    }
+
+    getDockSidebar(side) {
+        return side === "left" ? getLeftSidebar() : getRightSidebar();
+    }
+
+    hideSidebarIfEmpty(sidebar) {
+        if (!sidebar) return;
+        const hasVisibleChild = Array.from(sidebar.children).some(child => {
+            return child !== this.div && child.style.display !== "none";
+        });
+        if (hasVisibleChild) return;
+
+        if (sidebar.id === "LeftSidebar") {
+            hideLeftSidebar();
+        } else if (sidebar.id === "RightSidebar") {
+            hideRightSidebar();
+        }
+    }
+
+    setResizeHandlesVisible(visible) {
+        if (!this.div?._resizeHandles) return;
+        Object.values(this.div._resizeHandles).forEach(handle => {
+            handle.style.display = visible ? "block" : "none";
+        });
+    }
+
+    deferFloatingPixelSizeRestore(widthPx, heightPx) {
+        requestAnimationFrame(() => {
+            if (this.dockedSidebar || !this.div) return;
+            this.widthPx = widthPx;
+            this.heightPx = heightPx;
+            this.leftPx = this.clamp(this.leftPx, 0, Math.max(0, this.containerWidth() - widthPx));
+            this.topPx = this.clamp(this.topPx, 0, Math.max(0, this.containerHeight() - heightPx));
+            this.width = this.widthPx / this.containerWidth();
+            this.height = this.heightPx / this.containerHeight();
+            this.left = (this.leftPx - this.containerLeft()) / this.containerWidth();
+            this.top = (this.topPx - this.containerTop()) / this.containerHeight();
+            Object.assign(this.div.style, {
+                left: `${this.leftPx}px`,
+                top: `${this.topPx}px`,
+                width: `${this.widthPx}px`,
+                height: `${this.heightPx}px`,
+            });
+            this.changedSize();
+        });
+    }
+
+    clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
     }
 
     show(visible = true) {
@@ -911,4 +1162,3 @@ export {CNodeView, CUIText}
 export function VG(id){
     return ViewMan.get(id)
 }
-
