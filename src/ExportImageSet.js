@@ -1,7 +1,7 @@
 import {saveAs} from "file-saver";
 import JSZip from "jszip";
 import {Vector3} from "three";
-import {Globals, NodeMan, setRenderOne} from "./Globals";
+import {GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
 import {ViewMan} from "./CViewManager";
 import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
@@ -10,16 +10,35 @@ import {radians} from "./mathUtils";
 import {targetSphere} from "./JetStuffVars";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
 import {forceShadowRefreshForExport} from "./nodes/CNodeView3D";
+import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
 
 // Max output width for the Fullscreen variant. Inputs wider than this are
 // downscaled (preserving aspect) before PNG encoding.
 const FULLSCREEN_MAX_WIDTH = 1920;
 
 // Resolve a world-space point for the "target" the look camera should orbit.
-// Order of preference matches existing patterns elsewhere in the codebase
-// (CustomSupport.preRenderUpdate, CMotionAnalysisUI, CFileManagerParse).
-function resolveTargetPosition() {
+// If trackKey is provided and resolves to a position node on targetTrackSwitch,
+// that track's position at par.frame is used.
+//
+// Fallback policy: if trackKey is falsy or the *default sentinel* "fixedTarget",
+// we silently fall through to the legacy targetObject / targetTrack / targetSphere
+// resolution. For any other explicit user choice, a missing or non-positional
+// track returns null — the caller is expected to alert. This avoids quietly
+// orbiting some other entity when the user's chosen track has been renamed,
+// removed, or never carried a `.p()` (e.g. a non-track node).
+function resolveTargetPosition(trackKey) {
     const out = new Vector3();
+
+    if (trackKey) {
+        const targetTrackSwitch = NodeMan.get("targetTrackSwitch", false);
+        const node = targetTrackSwitch?.inputs?.[trackKey];
+        if (node && typeof node.p === "function") {
+            const p = node.p(par.frame);
+            if (p) return out.copy(p);
+        }
+        // Explicit user choice that we can't honor: fail closed.
+        if (trackKey !== "fixedTarget") return null;
+    }
 
     const targetObject = NodeMan.get("targetObject", false)
         ?? NodeMan.get("traverseObject", false);
@@ -43,6 +62,26 @@ function resolveTargetPosition() {
     return null;
 }
 
+// Build {key: key} options object from the current targetTrackSwitch inputs.
+// Always include the user's currently-chosen key so a missing-track state is
+// still selectable (and doesn't silently flip to something else).
+function buildTrackOptions(currentChoice) {
+    const opts = {};
+    const targetTrackSwitch = NodeMan.get("targetTrackSwitch", false);
+    if (targetTrackSwitch?.inputs) {
+        for (const key of Object.keys(targetTrackSwitch.inputs)) {
+            opts[key] = key;
+        }
+    }
+    if (currentChoice && opts[currentChoice] === undefined) {
+        opts[currentChoice] = currentChoice;
+    }
+    if (Object.keys(opts).length === 0) {
+        opts.fixedTarget = "fixedTarget";
+    }
+    return opts;
+}
+
 // Encode the source canvas as a PNG blob, downscaling to maxWidth if requested
 // and the source is larger. Aspect ratio is preserved.
 function canvasToPngBlob(canvas, maxWidth) {
@@ -64,32 +103,123 @@ function canvasToPngBlob(canvas, maxWidth) {
 
 export class ImageSetExporter {
     constructor() {
-        this.azStep = 10;
-        this.elStep = 10;
+        this.azStep = 45;
+        this.elStep = 20;
         this.elStart = 10;
+        this.trackToOrbit = "fixedTarget";
+        this.timeStepMinutes = 120;
+        this.numTimeSteps = 1;
+        this.useCurrentDistance = true;
     }
 
     setupMenu(parentFolder) {
-        const folder = parentFolder.addFolder("Image Set").close()
-            .tooltip("Export a set of PNG images of the look view from az/el positions around the target");
+        const folder = parentFolder.addFolder("Orbit Image Set").close()
+            .tooltip("Export a set of PNG images of the look view from az/el positions around the target, optionally stepping the sitch time forward between sweeps");
 
-        folder.add(this, "azStep", 1, 90, 1)
+        // Track selector — options are rebuilt from targetTrackSwitch each time
+        // the folder is opened so newly-imported KML/MISB tracks show up.
+        this.trackController = folder.add(this, "trackToOrbit", buildTrackOptions(this.trackToOrbit))
+            .name("Track to Orbit")
+            .tooltip("Track whose position at the current frame is the orbit center. Drawn from the same list as the Target Track switch.");
+
+        folder.add(this, "azStep", 5, 90, 5)
             .name("AZ Step (deg)")
-            .tooltip("Azimuth step (1-90). 360 / azStep images per elevation.");
+            .tooltip("Azimuth step (5-90, multiples of 5). 360 / azStep images per elevation.");
         folder.add(this, "elStart", 0, 80, 1)
             .name("EL Start (deg)")
             .tooltip("Lowest elevation in the sweep (0-80). 0 = horizontal, higher values skip the most grazing angles.");
         folder.add(this, "elStep", 1, 90, 1)
             .name("EL Step (deg)")
             .tooltip("Elevation step (1-90). Sweeps from EL Start to 90 (straight down) inclusive.");
+        // Orbit distance: a checkbox to use the current camera-to-target
+        // distance, OR a manual distance slider in big units (NM / mi / km).
+        this.useCurrentDistanceController = folder.add(this, "useCurrentDistance")
+            .name("Use Current Camera Distance")
+            .tooltip("If on, the orbit radius is the current distance from the look camera to the target. If off, use the Orbit Distance slider below.")
+            .onChange((on) => {
+                if (this.orbitDistanceNode?.guiEntry) {
+                    if (on) this.orbitDistanceNode.guiEntry.hide();
+                    else this.orbitDistanceNode.guiEntry.show();
+                }
+            });
+
+        // Distance slider. unitType "big" means the slider displays NM/mi/km
+        // depending on the user's units setting, and getValueFrame(0) returns
+        // meters. The initial value is in big units (≈5 km / 5 mi / 5 NM).
+        if (!NodeMan.exists("imageSetOrbitDistance")) {
+            this.orbitDistanceNode = new CNodeGUIValue({
+                id: "imageSetOrbitDistance",
+                value: 5,
+                start: 0.01,
+                end: 100,
+                step: 0.01,
+                maxMax: 10000,
+                elastic: true,
+                elasticMin: 0.01,
+                elasticMax: 1000,
+                unitType: "big",
+                desc: "Orbit Distance",
+                tooltip: "Orbit radius around the target (large units). Only used when 'Use Current Camera Distance' is off.",
+            }, folder);
+        } else {
+            this.orbitDistanceNode = NodeMan.get("imageSetOrbitDistance");
+        }
+        // Initially hidden because useCurrentDistance defaults to true.
+        if (this.orbitDistanceNode?.guiEntry) {
+            this.orbitDistanceNode.guiEntry.hide();
+        }
+
+        folder.add(this, "timeStepMinutes", 0, 1440, 1)
+            .name("Time Step (minutes)")
+            .tooltip("Minutes to advance the sitch start time between successive sweeps. Ignored when Number of Time Steps is 1.");
+        folder.add(this, "numTimeSteps", 1, 240, 1)
+            .name("Number of Time Steps")
+            .tooltip("How many time-stepped sweeps to render. Step 0 uses Sit.startTime; step N adds N * Time Step.");
         folder.add({
             run: () => this.exportImageSet(),
         }, "run").name("Export Image Set")
-            .tooltip("Render the look view at every (az, el) and download as a zip");
+            .tooltip("Render the look view at every (time, el, az) and download as a zip");
         folder.add({
             runFs: () => this.exportImageSetFullscreen(),
         }, "runFs").name("Export Image Set (Fullscreen)")
             .tooltip(`Like Export Image Set, but enter fullscreen, hide UI/clock/compass/attribution, and render at native effect resolution (capped at ${FULLSCREEN_MAX_WIDTH}px wide)`);
+
+        // Track which key-set is currently in the dropdown so we only rebuild
+        // it when the available tracks actually change. This avoids the
+        // visible row reorder caused by lil-gui's options() destroying and
+        // re-appending the controller on every folder open.
+        this.trackOptionsKeySig = Object.keys(buildTrackOptions(this.trackToOrbit)).join("|");
+
+        // Refresh the track dropdown whenever the folder is (re)opened so any
+        // tracks the user just drag-dropped become selectable without a reload.
+        folder.onOpenClose((g) => {
+            if (g._closed) return;
+            if (!this.trackController) return;
+
+            const newOpts = buildTrackOptions(this.trackToOrbit);
+            const newSig = Object.keys(newOpts).join("|");
+            if (newSig === this.trackOptionsKeySig) return; // nothing to do
+
+            // lil-gui's options() implementation (lil-gui.esm.js:337) calls
+            // parent.add() — which appends the replacement controller at the
+            // end of $children — and then destroys the old one. Move the new
+            // controller's DOM row back to where the old one was so the
+            // "Track to Orbit" row stays at the top of the folder.
+            const $children = folder.$children;
+            const oldDom = this.trackController.domElement;
+            const index = oldDom ? Array.prototype.indexOf.call($children.children, oldDom) : -1;
+
+            this.trackController = this.trackController.options(newOpts)
+                .name("Track to Orbit")
+                .tooltip("Track whose position at the current frame is the orbit center. Drawn from the same list as the Target Track switch.");
+            this.trackOptionsKeySig = newSig;
+
+            if (index >= 0 && this.trackController.domElement) {
+                const ref = $children.children[index] || null;
+                $children.insertBefore(this.trackController.domElement, ref);
+            }
+        });
+
         return folder;
     }
 
@@ -104,48 +234,69 @@ export class ImageSetExporter {
             alert("Look view is not available; cannot export image set.");
             return;
         }
-        const target = resolveTargetPosition();
-        if (!target) {
-            alert("No target found. Image set export needs a 'targetObject', 'targetTrack', or 'targetSphere'.");
+
+        const trackKey = this.trackToOrbit;
+        const initialTarget = resolveTargetPosition(trackKey);
+        if (!initialTarget) {
+            if (trackKey && trackKey !== "fixedTarget") {
+                alert("Track to Export '" + trackKey + "' was not found or has no position. "
+                    + "Pick another track, or import it before exporting.");
+            } else {
+                alert("No target found. Image set export needs a 'fixedTarget', "
+                    + "'targetObject', 'targetTrack', or 'targetSphere'.");
+            }
             return;
         }
 
         const camera = view.camera;
-        const distance = camera.position.distanceTo(target);
-        if (!isFinite(distance) || distance < 1e-6) {
-            alert("Initial camera distance to target is zero or invalid; cannot orbit at that radius.");
+        let initialDistance;
+        if (this.useCurrentDistance) {
+            initialDistance = camera.position.distanceTo(initialTarget);
+        } else if (this.orbitDistanceNode) {
+            // getValueFrame returns the slider value converted to SI meters.
+            initialDistance = this.orbitDistanceNode.getValueFrame(0);
+        } else {
+            initialDistance = camera.position.distanceTo(initialTarget);
+        }
+        if (!isFinite(initialDistance) || initialDistance < 1e-6) {
+            alert(this.useCurrentDistance
+                ? "Initial camera distance to target is zero or invalid; cannot orbit at that radius."
+                : "Orbit Distance is zero or invalid; raise it above zero.");
             return;
         }
-
-        // ENU basis at the target so az/el are referenced to local geographic up/north.
-        const east = getLocalEastVector(target);
-        const north = getLocalNorthVector(target);
-        const up = getLocalUpVector(target);
 
         const azStep = Math.max(1, Math.round(this.azStep));
         const elStep = Math.max(1, Math.round(this.elStep));
         const elStart = Math.max(0, Math.min(80, Math.round(this.elStart)));
+        const timeStepMinutes = Math.max(0, Number(this.timeStepMinutes) || 0);
+        const numTimeSteps = Math.max(1, Math.round(Number(this.numTimeSteps) || 1));
 
-        // Build the (az, el) shot list.
+        // Build the per-time (az, el) shot list.
         // EL sweeps from elStart (0 = horizontal, 80 = nearly straight down)
         // up to 90 (straight down — camera directly above target).
         // At el=90 every azimuth produces the same image so we collapse to a
         // single shot.
-        const shots = [];
         const elValues = [];
         for (let el = elStart; el <= 90 + 1e-6; el += elStep) {
             elValues.push(Math.min(90, el));
         }
         if (elValues.length === 0 || elValues[elValues.length - 1] < 90) elValues.push(90);
 
+        const sweepShots = [];
         for (const el of elValues) {
             if (el >= 90 - 1e-6) {
-                shots.push({az: 0, el});
+                sweepShots.push({az: 0, el});
             } else {
                 for (let az = 0; az < 360; az += azStep) {
-                    shots.push({az, el});
+                    sweepShots.push({az, el});
                 }
             }
+        }
+
+        // Full shot list across all time steps, in (time, el, az) order.
+        const shots = [];
+        for (let t = 0; t < numTimeSteps; t++) {
+            for (const s of sweepShots) shots.push({t, az: s.az, el: s.el});
         }
 
         // Save everything we're about to clobber.
@@ -158,6 +309,14 @@ export class ImageSetExporter {
         const savedFocus = view.focusTrackName;
         const savedControlsEnabled = view.controls ? view.controls.enabled : undefined;
         const savedPaused = par.paused;
+
+        // Snapshot the sitch start time so we can restore after time-stepping.
+        // We capture both the ISO string and the actual Date the DateTime node
+        // currently holds — they can differ briefly during populate().
+        const savedSitStartTime = Sit.startTime;
+        const baseStartDate = (GlobalDateTimeNode && GlobalDateTimeNode.dateStart)
+            ? new Date(GlobalDateTimeNode.dateStart)
+            : new Date(Sit.startTime);
 
         // Find the CNodeCamera that owns this Three.js camera and disable its
         // controllers — otherwise CNode3D.update() re-applies things like
@@ -192,13 +351,54 @@ export class ImageSetExporter {
 
         const fmtAz = (az) => String(Math.round(az)).padStart(3, "0");
         const fmtEl = (el) => (el >= 0 ? "p" : "n") + String(Math.abs(Math.round(el))).padStart(2, "0");
+        const tDigits = String(Math.max(1, numTimeSteps - 1)).length;
+        const fmtT = (t) => String(t).padStart(Math.max(2, tDigits), "0");
+
+        // Per-time-step state: when t changes we advance the sitch start time
+        // and re-resolve the target (the chosen track may move with time).
+        let currentT = -1;
+        let target = initialTarget.clone();
+        let distance = initialDistance;
+        let east = getLocalEastVector(target);
+        let north = getLocalNorthVector(target);
+        let up = getLocalUpVector(target);
 
         let savedCount = 0;
         try {
             for (let i = 0; i < shots.length; i++) {
                 if (progress.shouldStop()) break;
 
-                const {az, el} = shots[i];
+                const {t, az, el} = shots[i];
+
+                // Advance time on the first shot of each new time step.
+                if (t !== currentT) {
+                    currentT = t;
+                    if (GlobalDateTimeNode && timeStepMinutes > 0) {
+                        const newStart = new Date(baseStartDate.getTime() + t * timeStepMinutes * 60_000);
+                        GlobalDateTimeNode.setStartDateTime(newStart, true);
+                        GlobalDateTimeNode.update(par.frame);
+                        // setStartDateTime/populate doesn't trigger downstream
+                        // recalculation on its own — date-driven nodes like
+                        // CNodeSatelliteTrack rebuild their arrays in
+                        // recalculate(), and the existing UI date-change paths
+                        // (CNodeDateTime.js:239,782) always cascade. Without
+                        // this, satellite/sun-driven targets would read stale
+                        // positions for every time step.
+                        GlobalDateTimeNode.recalculateCascade();
+                    }
+                    // Re-resolve target since the chosen track may move with time.
+                    const t2 = resolveTargetPosition(trackKey);
+                    if (t2) {
+                        target = t2;
+                        east = getLocalEastVector(target);
+                        north = getLocalNorthVector(target);
+                        up = getLocalUpVector(target);
+                        // Keep the orbit radius fixed to the initial distance so all
+                        // time steps render at the same scale.
+                        distance = initialDistance;
+                    }
+                }
+
                 const azR = radians(az);
                 const elR = radians(el);
                 const cosE = Math.cos(elR);
@@ -272,7 +472,8 @@ export class ImageSetExporter {
 
                 const blob = await canvasToPngBlob(view.canvas, maxWidth);
                 if (blob) {
-                    const name = `${prefix}${filenameSuffix}_el${fmtEl(el)}_az${fmtAz(az)}.png`;
+                    const tPart = numTimeSteps > 1 ? `_t${fmtT(t)}` : "";
+                    const name = `${prefix}${filenameSuffix}${tPart}_el${fmtEl(el)}_az${fmtAz(az)}.png`;
                     const buf = await blob.arrayBuffer();
                     zip.file(name, buf);
                     savedCount++;
@@ -316,6 +517,20 @@ export class ImageSetExporter {
             camera.updateMatrix();
             camera.updateMatrixWorld(true);
             par.paused = savedPaused;
+
+            // Restore the sitch start time. setStartDateTime rewrites
+            // Sit.startTime via populate(), so we additionally pin
+            // Sit.startTime back to its original string to keep deserialization
+            // / save-state stable. recalculateCascade pulls date-driven nodes
+            // (e.g. CNodeSatelliteTrack) back to their original-time arrays so
+            // the post-export scene matches the pre-export scene.
+            if (GlobalDateTimeNode && timeStepMinutes > 0 && numTimeSteps > 1) {
+                GlobalDateTimeNode.setStartDateTime(baseStartDate, true);
+                GlobalDateTimeNode.update(par.frame);
+                GlobalDateTimeNode.recalculateCascade();
+                Sit.startTime = savedSitStartTime;
+            }
+
             progress.remove();
             setRenderOne(true);
         }
