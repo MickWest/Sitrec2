@@ -19,7 +19,7 @@
  * - Double click: Reset to default position
  * 
  * Video effects (optional inputs):
- * - brightness, contrast, blur, greyscale
+ * - brightness, contrast, blur
  * - hue, invert, saturate
  * - convolutionFilter (sharpen, edge detect, emboss)
  * 
@@ -53,6 +53,7 @@ import {isResolvableSitrecReference, resolveURLForFetch} from "../SitrecObjectRe
 import {t} from "../i18n";
 import {
     addFiltersToVideoNode,
+    applyByteInvertToImage,
     applyCurvesToImage,
     applyConvolutionToImage,
     applyEchoEffect,
@@ -77,7 +78,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         // these no longer work with the new rendering pipeline
         // TODO: reimplement them as effects?
-        this.optionalInputs(["brightness", "contrast", "levels", "levelsInputBlack", "levelsMidpoint", "levelsInputWhite", "levelsOutputBlack", "levelsOutputWhite", "showHistogram", "curves", "showCurves", "blur", "greyscale", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
+        this.optionalInputs(["brightness", "contrast", "levels", "levelsInputBlack", "levelsMidpoint", "levelsInputWhite", "levelsOutputBlack", "levelsOutputWhite", "showHistogram", "curves", "showCurves", "blur", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
         //
 
         //  if (this.overlayView === undefined)
@@ -375,6 +376,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (clearFrames) {
             Sit.frames = undefined; // need to recalculate this
         }
+        EventManager.dispatchEvent("videoImportStarted", {viewId: this.id, fileName});
         this.fileName = fileName;
         this.invalidateELAResult();
         if (this.pendingVideoRestore) {
@@ -1569,6 +1571,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             sourceImage = applyCurvesToImage(sourceImage, this.curvesView.getCurveLUT(), this, frame);
         }
 
+        if (effectsEnabled && (this.in.invert?.value === true || this.in.invert?.value === 1)) {
+            sourceImage = applyByteInvertToImage(sourceImage, this, frame);
+        }
+
         const blurPx = effectsEnabled ? (this.in.blur?.v0 ?? 0) : 0;
         if (effectsEnabled && blurPx !== 0) {
             let sourceFilter = "";
@@ -1590,14 +1596,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
 
         if (effectsEnabled) {
-            if (this.in.greyscale && this.in.greyscale.v0 !== 0) {
-                filter += "grayscale(" + this.in.greyscale.v0 + ") ";
-            }
             if (this.in.hue && this.in.hue.v0 !== 0) {
                 filter += "hue-rotate(" + this.in.hue.v0 + "deg) ";
-            }
-            if (this.in.invert && this.in.invert.v0 !== 0) {
-                filter += "invert(" + this.in.invert.v0 + ") ";
             }
             if (this.in.saturate && this.in.saturate.v0 !== 1) {
                 filter += "saturate(" + this.in.saturate.v0 + ") ";

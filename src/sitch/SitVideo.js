@@ -1,9 +1,8 @@
-import {Globals, GlobalURLParams, gui, guiMenus, Sit} from "../Globals";
+import {GlobalURLParams, gui, guiMenus, Sit} from "../Globals";
 import {setURLParameters} from "../utils";
 import {CNodeVideoWebCodecView} from "../nodes/CNodeVideoWebCodecView";
 import {CNodeVideoInfoUI} from "../nodes/CNodeVideoInfoUI";
 import {DragDropHandler} from "../DragDropHandler";
-import {addMenuToRightSidebar} from "../PageStructure";
 
 export const SitVideo = {
     name: "video",
@@ -86,7 +85,7 @@ export const SitVideo = {
             }
         )
 
-        DragDropHandler.addDropArea();
+        DragDropHandler.addDropArea({keepTextVisibleUntilMedia: this.file === ""});
 
         this.videoInfoNode = new CNodeVideoInfoUI({
             id: "videoInfo",
@@ -123,16 +122,6 @@ export const SitVideo = {
 
         }).name("Preset Video")
 
-        // Dock the Video menu to the right sidebar
-        const videoMenu = guiMenus.video;
-        if (videoMenu) {
-            addMenuToRightSidebar(videoMenu);
-            videoMenu.mode = "SIDEBAR_RIGHT";
-            videoMenu.lockOpenClose = false;
-            videoMenu.open();
-            videoMenu.lockOpenClose = true;
-            Globals.menuBar.applyModeStyles(videoMenu);
-        }
     },
 
     setupVideoInfoMenu: function() {
@@ -142,5 +131,3 @@ export const SitVideo = {
         videoInfo.setupMenu(guiMenus.video);
     },
 }
-
-

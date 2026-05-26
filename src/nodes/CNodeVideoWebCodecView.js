@@ -20,6 +20,7 @@ import {resolveURLForFetch} from "../SitrecObjectResolver";
 import {showError} from "../showError";
 import {TSParser} from "../TSParser";
 import {t} from "../i18n";
+import {EventManager} from "../CEventManager";
 
 export class CNodeVideoWebCodecView extends CNodeVideoView {
     constructor(v) {
@@ -162,6 +163,7 @@ export class CNodeVideoWebCodecView extends CNodeVideoView {
     async _doUploadFile(file) {
         this.fileName = file.name;
         this.staticURL = undefined;
+        EventManager.dispatchEvent("videoImportStarted", {viewId: this.id, fileName: file.name});
 
         this.addLoadingMessage()
 

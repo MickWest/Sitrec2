@@ -101,11 +101,10 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
             });
         }
 
-        if (!normalized.some(point => point.x === 0)) {
-            normalized.push({x: 0, y: 0});
-        }
-        if (!normalized.some(point => point.x === 255)) {
-            normalized.push({x: 255, y: 1});
+        if (normalized.length === 0) {
+            normalized.push({x: 0, y: 0}, {x: 255, y: 1});
+        } else if (normalized.length === 1) {
+            normalized.push(normalized[0].x < 128 ? {x: 255, y: 1} : {x: 0, y: 0});
         }
 
         normalized.sort((a, b) => a.x - b.x);
@@ -120,8 +119,6 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
             }
         }
 
-        deduped[0].x = 0;
-        deduped[deduped.length - 1].x = 255;
         return deduped;
     }
 
@@ -216,13 +213,11 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
             event.stopImmediatePropagation();
             return;
         }
-        if (!this.rectContainsPoint(this.graphRect, local.x, local.y)) return;
-
         const pointIndex = this.findPointAt(local.x, local.y);
         if (pointIndex !== -1) {
             this.selectedPointIndex = pointIndex;
             this.draggingPointIndex = pointIndex;
-        } else if (this.isNearCurve(local.x, local.y)) {
+        } else if (this.rectContainsPoint(this.graphRect, local.x, local.y) && this.isNearCurve(local.x, local.y)) {
             const graphPoint = this.localToGraph(local.x, local.y);
             const newPoint = {
                 x: graphPoint.x,
@@ -318,7 +313,12 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
     setPointFromLocal(index, x, y) {
         const graphPoint = this.localToGraph(x, y);
         const point = this.points[index];
-        if (this.isEndpointIndex(index)) {
+        const endpointRole = this.endpointRole(index);
+        if (endpointRole === "start") {
+            point.x = Math.min(this.neighborX(index, 1) - 1, graphPoint.x);
+            point.y = graphPoint.y;
+        } else if (endpointRole === "end") {
+            point.x = Math.max(this.neighborX(index, -1) + 1, graphPoint.x);
             point.y = graphPoint.y;
         } else {
             const minX = this.neighborX(index, -1) + 1;
@@ -340,7 +340,16 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
     }
 
     isEndpointIndex(index) {
-        return this.points[index]?.x === 0 || this.points[index]?.x === 255;
+        return this.endpointRole(index) !== null;
+    }
+
+    endpointRole(index) {
+        const point = this.points[index];
+        if (!point) return null;
+        const sorted = this.getSortedPoints();
+        if (point === sorted[0]) return "start";
+        if (point === sorted[sorted.length - 1]) return "end";
+        return null;
     }
 
     clamp01(value) {

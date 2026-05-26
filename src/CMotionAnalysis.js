@@ -48,7 +48,6 @@ export function getVideoEffectsFilterString() {
     const contrast = NodeMan.get("videoContrast", false);
     const brightness = NodeMan.get("videoBrightness", false);
     const blur = NodeMan.get("videoBlur", false);
-    const greyscale = NodeMan.get("videoGreyscale", false);
     const hue = NodeMan.get("videoHue", false);
     const invert = NodeMan.get("videoInvert", false);
     const saturate = NodeMan.get("videoSaturate", false);
@@ -56,7 +55,6 @@ export function getVideoEffectsFilterString() {
     if (contrast && contrast.v0 !== 1) filter += `contrast(${contrast.v0}) `;
     if (brightness && brightness.v0 !== 1) filter += `brightness(${brightness.v0}) `;
     if (blur && blur.v0 !== 0) filter += `blur(${blur.v0}px) `;
-    if (greyscale && greyscale.v0 !== 0) filter += `grayscale(${greyscale.v0}) `;
     if (hue && hue.v0 !== 0) filter += `hue-rotate(${hue.v0}deg) `;
     if (invert && invert.v0 !== 0) filter += `invert(${invert.v0}) `;
     if (saturate && saturate.v0 !== 1) filter += `saturate(${saturate.v0}) `;

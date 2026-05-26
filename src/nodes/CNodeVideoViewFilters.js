@@ -54,7 +54,7 @@ export function addFiltersToVideoNode(videoNode) {
         guiVideoNoiseFolder.onOpenClose(() => setRenderOne(true));
     }
 
-    let brightness, contrast, levels, levelsInputBlack, levelsMidpoint, levelsInputWhite, levelsOutputBlack, levelsOutputWhite, showHistogram, curves, showCurves, blur, greyscale, hue, invert, saturate, enableVideoEffects, convolutionFilter;
+    let brightness, contrast, levels, levelsInputBlack, levelsMidpoint, levelsInputWhite, levelsOutputBlack, levelsOutputWhite, showHistogram, curves, showCurves, blur, hue, invert, saturate, enableVideoEffects, convolutionFilter;
     let sharpenAmount, edgeDetectThreshold, embossDepth;
     let echoMin, echoMax, echoFrames, fullABEcho, fullABEchoOpacity, fullABBlend, fullABExposure;
     let showCache, elaJpegQuality, elaErrorScale, elaOpacity, elaExpandMethod, elaContrastClipPercent;
@@ -95,53 +95,68 @@ export function addFiltersToVideoNode(videoNode) {
         elaContrastClipPercent?.show(needsClip);
     };
 
+    const resetInput = (name, value) => {
+        const node = videoNode.inputs[name];
+        if (!node) return;
+        if (typeof node.setValue === "function") {
+            node.setValue(value);
+        } else if (node.guiEntry) {
+            node.guiEntry.setValue(value);
+        } else {
+            node.value = value;
+        }
+    };
+
     const reset = {
         resetFilters: () => {
-            videoNode.inputs.brightness.value = 1;
-            videoNode.inputs.contrast.value = 1;
-            if (videoNode.inputs.levels) videoNode.inputs.levels.value = false;
-            if (videoNode.inputs.levelsInputBlack) videoNode.inputs.levelsInputBlack.value = 0;
-            if (videoNode.inputs.levelsMidpoint) videoNode.inputs.levelsMidpoint.value = 1;
-            if (videoNode.inputs.levelsInputWhite) videoNode.inputs.levelsInputWhite.value = 255;
-            if (videoNode.inputs.levelsOutputBlack) videoNode.inputs.levelsOutputBlack.value = 0;
-            if (videoNode.inputs.levelsOutputWhite) videoNode.inputs.levelsOutputWhite.value = 255;
-            if (videoNode.inputs.showHistogram) videoNode.inputs.showHistogram.value = true;
-            if (videoNode.inputs.curves) videoNode.inputs.curves.value = false;
-            if (videoNode.inputs.showCurves) videoNode.inputs.showCurves.value = true;
-            videoNode.inputs.blur.value = 0;
-            videoNode.inputs.greyscale.value = 0;
-            videoNode.inputs.hue.value = 0;
-            videoNode.inputs.invert.value = 0;
-            videoNode.inputs.saturate.value = 1;
-            if (videoNode.inputs.enableVideoEffects) {
-                videoNode.inputs.enableVideoEffects.value = true;
+            resetInput("brightness", 1);
+            resetInput("contrast", 1);
+            if (videoNode.levelsView) {
+                videoNode.levelsView.resetLevels();
+            } else {
+                resetInput("levelsInputBlack", 0);
+                resetInput("levelsMidpoint", 1);
+                resetInput("levelsInputWhite", 255);
+                resetInput("levelsOutputBlack", 0);
+                resetInput("levelsOutputWhite", 255);
+                videoNode.invalidateLevelsResult?.();
             }
+            resetInput("showHistogram", true);
+            resetInput("showCurves", true);
+            videoNode.curvesView?.resetCurve();
+            resetInput("blur", 0);
+            resetInput("hue", 0);
+            resetInput("invert", false);
+            resetInput("saturate", 1);
+            resetInput("enableVideoEffects", true);
             filterOptions.convolutionFilterValue = 'none';
-            if (videoNode.inputs.sharpenAmount) videoNode.inputs.sharpenAmount.value = 1;
-            if (videoNode.inputs.edgeDetectThreshold) videoNode.inputs.edgeDetectThreshold.value = 0;
-            if (videoNode.inputs.embossDepth) videoNode.inputs.embossDepth.value = 1;
-            if (videoNode.inputs.echoMin) videoNode.inputs.echoMin.value = false;
-            if (videoNode.inputs.echoMax) videoNode.inputs.echoMax.value = false;
-            if (videoNode.inputs.echoFrames) videoNode.inputs.echoFrames.value = 10;
-            if (videoNode.inputs.fullABEcho) videoNode.inputs.fullABEcho.value = false;
-            if (videoNode.inputs.fullABBlend) videoNode.inputs.fullABBlend.value = false;
-            if (videoNode.inputs.fullABExposure) videoNode.inputs.fullABExposure.value = false;
-            if (videoNode.inputs.fullABEchoOpacity) videoNode.inputs.fullABEchoOpacity.value = 100;
-            if (videoNode.inputs.showCache) videoNode.inputs.showCache.value = false;
-            if (videoNode.inputs.elaJpegQuality) videoNode.inputs.elaJpegQuality.value = 90;
-            if (videoNode.inputs.elaErrorScale) videoNode.inputs.elaErrorScale.value = 20;
-            if (videoNode.inputs.elaOpacity) videoNode.inputs.elaOpacity.value = 65;
-            if (videoNode.inputs.elaExpandMethod) videoNode.inputs.elaExpandMethod.value = 'none';
-            if (videoNode.inputs.elaContrastClipPercent) videoNode.inputs.elaContrastClipPercent.value = 0.5;
+            resetInput("convolutionFilter", "none");
+            if (convolutionFilterDropdown) convolutionFilterDropdown.setValue("none");
+            resetInput("sharpenAmount", 1);
+            resetInput("edgeDetectThreshold", 0);
+            resetInput("embossDepth", 1);
+            resetInput("echoMin", false);
+            resetInput("echoMax", false);
+            resetInput("echoFrames", 10);
+            resetInput("fullABEcho", false);
+            resetInput("fullABBlend", false);
+            resetInput("fullABExposure", false);
+            resetInput("fullABEchoOpacity", 100);
+            resetInput("showCache", false);
+            resetInput("elaJpegQuality", 90);
+            resetInput("elaErrorScale", 20);
+            resetInput("elaOpacity", 65);
+            resetInput("elaExpandMethod", 'none');
+            resetInput("elaContrastClipPercent", 0.5);
             elaExpandMethodOptions.methodValue = 'none';
             elaExpandMethodDropdown?.updateDisplay();
             updateELAExpandControlVisibility();
             updateLevelsControlVisibility();
             videoNode.invalidateELAResult();
-            if (videoNode.inputs.noiseBlockSize) videoNode.inputs.noiseBlockSize.value = 16;
-            if (videoNode.inputs.noiseScale) videoNode.inputs.noiseScale.value = 5;
-            if (videoNode.inputs.noiseOpacity) videoNode.inputs.noiseOpacity.value = 65;
-            if (videoNode.inputs.noiseDisplayMode) videoNode.inputs.noiseDisplayMode.value = 'heatmap';
+            resetInput("noiseBlockSize", 16);
+            resetInput("noiseScale", 5);
+            resetInput("noiseOpacity", 65);
+            resetInput("noiseDisplayMode", 'heatmap');
             noiseDisplayModeOptions.modeValue = 'heatmap';
             noiseDisplayModeDropdown?.updateDisplay();
             videoNode.invalidateNoiseResult();
@@ -173,9 +188,8 @@ export function addFiltersToVideoNode(videoNode) {
                 videoNode.updateCurvesVisibility?.();
             }}, guiVideoEffectsFolder),
             blur = new CNodeGUIValue({ id: "videoBlur", value: 0, start: 0, end: 50, step: 0.05, desc: "Blur Src Px", tip: "Gaussian blur radius in source pixels (0 = none)" }, guiVideoEffectsFolder),
-            greyscale = new CNodeGUIValue({ id: "videoGreyscale", value: 0, start: 0, end: 1, step: 0.01, desc: "Greyscale", tip: "Greyscale mix (0 = color, 1 = fully grey)" }, guiVideoEffectsFolder),
             hue = new CNodeGUIValue({ id: "videoHue", value: 0, start: 0, end: 360, step: 1, desc: "Hue Rotate", tip: "Rotate the hue of the video in degrees" }, guiVideoEffectsFolder),
-            invert = new CNodeGUIValue({ id: "videoInvert", value: 0, start: 0, end: 1, step: 0.01, desc: "Invert", tip: "Invert colors (0 = normal, 1 = fully inverted)" }, guiVideoEffectsFolder),
+            invert = new CNodeGUIFlag({ id: "videoInvert", value: false, desc: "Invert", tip: "Invert colors with exact 255 - byte mapping" }, guiVideoEffectsFolder),
             saturate = new CNodeGUIValue({ id: "videoSaturate", value: 1, start: 0, end: 5, step: 0.01, desc: "Saturate", tip: "Saturation multiplier (1 = normal, 0 = desaturated)" }, guiVideoEffectsFolder),
             enableVideoEffects = new CNodeGUIFlag({ id: "videoEnableEffects", value: true, desc: "Enable Video Effects", tip: "Master toggle for all video adjustments" }, guiVideoEffectsFolder),
             sharpenAmount = new CNodeGUIValue({ id: "videoSharpenAmount", value: 1, start: 0, end: 5, step: 0.1, desc: "Sharpen Amount", tip: "Strength of the sharpen convolution filter" }, guiVideoEffectsFolder),
@@ -295,7 +309,6 @@ export function addFiltersToVideoNode(videoNode) {
         curves = NodeMan.get("videoCurves");
         showCurves = NodeMan.get("videoShowCurves");
         blur = NodeMan.get("videoBlur");
-        greyscale = NodeMan.get("videoGreyscale");
         hue = NodeMan.get("videoHue");
         invert = NodeMan.get("videoInvert");
         saturate = NodeMan.get("videoSaturate");
@@ -354,7 +367,6 @@ export function addFiltersToVideoNode(videoNode) {
         curves: curves,
         showCurves: showCurves,
         blur: blur,
-        greyscale: greyscale,
         hue: hue,
         invert: invert,
         saturate: saturate,
@@ -465,7 +477,7 @@ export function applyConvolution(ctx, width, height, kernelName, params = {}) {
     if (kernelName === 'sharpen') {
         kernel = [
             0, -1 * amount, 0,
-            -1 * amount, 5 * amount, -1 * amount,
+            -1 * amount, 1 + 4 * amount, -1 * amount,
             0, -1 * amount, 0
         ];
         divisor = 1;
@@ -482,14 +494,14 @@ export function applyConvolution(ctx, width, height, kernelName, params = {}) {
 
     const imageData = ctx.getImageData(0, 0, width, height);
     const data = imageData.data;
-    const output = new Uint8ClampedArray(data.length);
+    const output = new Uint8ClampedArray(data);
 
     const w = width;
     const h = height;
 
     for (let y = 1; y < h - 1; y++) {
         for (let x = 1; x < w - 1; x++) {
-            for (let c = 0; c < 4; c++) {
+            for (let c = 0; c < 3; c++) {
                 let sum = 0;
                 for (let ky = -1; ky <= 1; ky++) {
                     for (let kx = -1; kx <= 1; kx++) {
@@ -507,19 +519,10 @@ export function applyConvolution(ctx, width, height, kernelName, params = {}) {
                     output[(y * w + x) * 4 + c] = Math.min(255, Math.max(0, val));
                 }
             }
-            output[((y * w + x) * 4 + 3)] = data[((y * w + x) * 4 + 3)];
         }
     }
 
-    for (let i = 0; i < data.length; i += 4) {
-        if (output[i] !== 0 || output[i + 1] !== 0 || output[i + 2] !== 0 || output[i + 3] !== 0) {
-            data[i] = output[i];
-            data[i + 1] = output[i + 1];
-            data[i + 2] = output[i + 2];
-        }
-    }
-
-    ctx.putImageData(imageData, 0, 0);
+    ctx.putImageData(new ImageData(output, width, height), 0, 0);
 }
 
 function getOrCachePixelData(videoView, frameImage, frame, width, height) {
@@ -811,6 +814,46 @@ export function applyLevelsToImage(image, levels, videoView) {
 
 export function applyLevelsMidpointToImage(image, midpoint, videoView) {
     return applyLevelsToImage(image, {midpoint}, videoView);
+}
+
+export function applyByteInvertToImage(image, videoView, frame = undefined) {
+    if (!image) return image;
+
+    const width = image.width;
+    const height = image.height;
+
+    if (!videoView._invertCanvas ||
+        videoView._invertCanvas.width !== width ||
+        videoView._invertCanvas.height !== height) {
+        videoView._invertCanvas = document.createElement('canvas');
+        videoView._invertCanvas.width = width;
+        videoView._invertCanvas.height = height;
+        videoView._invertCtx = videoView._invertCanvas.getContext('2d', {willReadFrequently: true});
+        videoView._invertLastImage = undefined;
+        videoView._invertLastFrame = undefined;
+    }
+
+    if (videoView._invertLastImage === image && videoView._invertLastFrame === frame) {
+        return videoView._invertCanvas;
+    }
+
+    const ctx = videoView._invertCtx;
+    ctx.drawImage(image, 0, 0, width, height);
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+
+    for (let i = 0; i < data.length; i += 4) {
+        data[i] = 255 - data[i];
+        data[i + 1] = 255 - data[i + 1];
+        data[i + 2] = 255 - data[i + 2];
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+    videoView._invertLastImage = image;
+    videoView._invertLastFrame = frame;
+
+    return videoView._invertCanvas;
 }
 
 export function applyCurvesToImage(image, lut, videoView, frame = undefined) {

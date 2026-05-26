@@ -33,6 +33,8 @@ class CDragDropHandler {
         this.dropAreas = [];
         this.dropQueue = []; // Queue for dropped files that need parsing
         this.pendingDropFiles = []; // Files dropped before a sitch was loaded (e.g. on sitch browser)
+        this.keepDropZoneTextVisible = false;
+        this._mediaImportListenerAdded = false;
     }
 
     /**
@@ -158,15 +160,23 @@ class CDragDropHandler {
         return IMAGE_EXTENSIONS.includes(ext);
     }
 
-    addDropArea() {
+    addDropArea(options = {}) {
 
         if (Globals.isMobile) {
             console.log("Mobile device detected, skipping drag-and-drop zone");
             return;
         }
+
+        if (options.keepTextVisibleUntilMedia) {
+            this.keepDropZoneTextVisible = true;
+        }
         
         if (this.dropZone !== undefined) {
 //            console.warn("DropZone already exists");
+            if (this.keepDropZoneTextVisible) {
+                this.showPassiveDropZoneText();
+            }
+            this.ensureMediaImportListener();
             return;
         }
         this.dropZone = document.createElement('div');
@@ -186,7 +196,7 @@ class CDragDropHandler {
         dropZone.style.zIndex = '9999'; // High z-index to overlay other elements
         dropZone.innerHTML = 'DROP FILES <br>OR URLS<br>HERE';
 
-        if (!Sit.initialDropZoneAnimation || Globals.fixedFrame !== undefined) {
+        if ((!Sit.initialDropZoneAnimation && !this.keepDropZoneTextVisible) || Globals.fixedFrame !== undefined) {
             dropZone.style.visibility = 'hidden'; // Initially hidden
         }
         // 10px red border
@@ -196,10 +206,16 @@ class CDragDropHandler {
 
         document.body.appendChild(dropZone);
 
-        // make it transition over 2 seconds from visible to invisible
-        requestAnimationFrame(() => {
-            dropZone.style.opacity = '0';
-        })
+        if (this.keepDropZoneTextVisible) {
+            this.showPassiveDropZoneText();
+        } else {
+            // make it transition over 2 seconds from visible to invisible
+            requestAnimationFrame(() => {
+                dropZone.style.opacity = '0';
+            })
+        }
+
+        this.ensureMediaImportListener();
 
         function handleDragOver(event) {
             event.preventDefault(); // Necessary to allow a drop
@@ -270,10 +286,38 @@ class CDragDropHandler {
         this.dropZone.style.pointerEvents = 'all'; // Enable pointer events when showing
     }
 
+    ensureMediaImportListener() {
+        if (this._mediaImportListenerAdded) return;
+        this._mediaImportListenerAdded = true;
+        EventManager.addEventListener("videoImportStarted", () => this.clearPersistentDropZoneText());
+        EventManager.addEventListener("videoLoaded", () => this.clearPersistentDropZoneText());
+    }
+
     hideDropZone() {
+        if (this.keepDropZoneTextVisible) {
+            this.showPassiveDropZoneText();
+            return;
+        }
         this.dropZone.style.visibility = 'hidden';
         this.dropZone.style.backgroundColor = 'transparent';
         this.dropZone.style.pointerEvents = 'none'; // Disable pointer events when hidden
+    }
+
+    showPassiveDropZoneText() {
+        if (!this.dropZone) return;
+        this.dropZone.innerHTML = 'DROP FILES <br>OR URLS<br>HERE';
+        this.dropZone.style.opacity = '1';
+        this.dropZone.style.transition = 'background-color 0.2s, opacity 0.2s';
+        this.dropZone.style.visibility = 'visible';
+        this.dropZone.style.backgroundColor = 'transparent';
+        this.dropZone.style.pointerEvents = 'none';
+    }
+
+    clearPersistentDropZoneText() {
+        this.keepDropZoneTextVisible = false;
+        if (this.dropZone) {
+            this.hideDropZone();
+        }
     }
 
     handlerFunction(event) {
@@ -283,7 +327,7 @@ class CDragDropHandler {
     onDrop(e) {
         this.dropQueue = [];
         e.preventDefault();
-        this.hideDropZone();
+        this.clearPersistentDropZoneText();
         // Don't mark dirty here — wait until a file is actually processed
         // (cancelled dialogs, unsupported files, or invalid drops shouldn't arm beforeunload)
         // we defer the checkDrop to a check in the main loop
