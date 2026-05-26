@@ -30,6 +30,7 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
         this.curveDirty = true;
         this.curveRevision = 0;
         this.graphRect = null;
+        this.resetButtonRect = null;
 
         this.div.style.border = "1px solid rgba(255,255,255,0.22)";
         this.div.style.boxShadow = "0 2px 8px rgba(0,0,0,0.45)";
@@ -195,9 +196,26 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
         setRenderOne(true);
     }
 
+    resetCurve() {
+        this.points = [
+            {x: 0, y: 0},
+            {x: 255, y: 1},
+        ];
+        this.selectedPointIndex = -1;
+        this.draggingPointIndex = -1;
+        this.markCurveChanged();
+    }
+
     handlePointerDown = (event) => {
         if (!this.visible || !this.graphRect) return;
         const local = this.eventToLocalPoint(event);
+        if (this.rectContainsPoint(this.resetButtonRect, local.x, local.y)) {
+            this.resetCurve();
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            return;
+        }
         if (!this.rectContainsPoint(this.graphRect, local.x, local.y)) return;
 
         const pointIndex = this.findPointAt(local.x, local.y);
@@ -261,7 +279,7 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
     }
 
     rectContainsPoint(rect, x, y) {
-        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+        return !!rect && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     }
 
     localToGraph(x, y) {
@@ -392,6 +410,22 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
         }
     }
 
+    drawResetButton() {
+        const ctx = this.ctx;
+        const rect = this.resetButtonRect;
+        ctx.fillStyle = "rgba(48,48,48,0.98)";
+        ctx.strokeStyle = "rgba(255,255,255,0.28)";
+        ctx.lineWidth = 1 / this.devicePixelRatio;
+        ctx.fillRect(rect.left, rect.top, rect.width, rect.height);
+        ctx.strokeRect(rect.left, rect.top, rect.width, rect.height);
+        ctx.fillStyle = "rgba(245,245,245,0.95)";
+        ctx.font = "13px Arial";
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "center";
+        ctx.fillText("Reset", rect.left + rect.width / 2, rect.top + rect.height / 2);
+        ctx.textAlign = "start";
+    }
+
     renderCanvas(frame = 0) {
         super.renderCanvas(frame);
         if (!this.visible) return;
@@ -407,15 +441,24 @@ export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
         ctx.fillRect(0, 0, w, h);
 
         const pad = Math.max(10, Math.round(Math.min(w, h) * 0.045));
+        this.resetButtonRect = {
+            left: w - pad - 56,
+            top: pad,
+            right: w - pad,
+            bottom: pad + 24,
+            width: 56,
+            height: 24,
+        };
         this.graphRect = {
             left: pad,
-            top: pad,
+            top: pad + 32,
             right: w - pad,
             bottom: h - pad,
             width: Math.max(1, w - pad * 2),
-            height: Math.max(1, h - pad * 2),
+            height: Math.max(1, h - pad * 2 - 32),
         };
 
+        this.drawResetButton();
         this.drawGrid(this.graphRect);
         this.drawCurve(this.graphRect);
         this.drawPoints();

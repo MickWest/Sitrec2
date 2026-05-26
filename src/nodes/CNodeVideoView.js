@@ -56,7 +56,7 @@ import {
     applyCurvesToImage,
     applyConvolutionToImage,
     applyEchoEffect,
-    applyLevelsMidpointToImage,
+    applyLevelsToImage,
     applySourcePixelFilterToImage,
     clearEchoCache,
     guiVideoEffectsFolder,
@@ -64,6 +64,7 @@ import {
 import {analysisMethods} from "./CNodeVideoViewAnalysis";
 import {CNodeVideoHistogramView} from "./CNodeVideoHistogramView";
 import {CNodeVideoCurvesView} from "./CNodeVideoCurvesView";
+import {CNodeVideoLevelsView} from "./CNodeVideoLevelsView";
 
 // Re-export for external consumers (e.g. CMotionAnalysis).
 export {addFiltersToVideoNode, applyConvolution} from "./CNodeVideoViewFilters";
@@ -76,12 +77,13 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         // these no longer work with the new rendering pipeline
         // TODO: reimplement them as effects?
-        this.optionalInputs(["brightness", "contrast", "levelsMidpoint", "showHistogram", "curves", "showCurves", "blur", "greyscale", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
+        this.optionalInputs(["brightness", "contrast", "levels", "levelsInputBlack", "levelsMidpoint", "levelsInputWhite", "levelsOutputBlack", "levelsOutputWhite", "showHistogram", "curves", "showCurves", "blur", "greyscale", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
         //
 
         //  if (this.overlayView === undefined)
         addFiltersToVideoNode(this)
         this.setupHistogramView();
+        this.setupLevelsView();
         this.setupCurvesView();
 
         this.positioned = false;
@@ -132,6 +134,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this._clipAdjustedCanvas = null;
         this._clipMaskCanvas = null;
         this._curvesCanvas = null;
+        this._levelsMidpointCanvas = null;
 
         // Pan offset for zoom+pan mode (fraction of video dimensions, 0 = centered)
         this.panOffsetX = 0;
@@ -203,6 +206,24 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.setupVideoAdjustmentsVisibilityHandler();
     }
 
+    setupLevelsView() {
+        if (this.id !== "video") return;
+        if (this.levelsView) return;
+
+        this.levelsView = new CNodeVideoLevelsView({
+            id: this.id + "LevelsEditor",
+            videoView: this,
+            relativeTo: this.id,
+            left: 0.68,
+            top: 0.38,
+            width: 0.30,
+            height: -1,
+        });
+
+        this.updateLevelsVisibility();
+        this.setupVideoAdjustmentsVisibilityHandler();
+    }
+
     setupVideoAdjustmentsVisibilityHandler() {
         if (guiVideoEffectsFolder) {
             guiVideoEffectsFolder.onOpenClose(() => {
@@ -214,13 +235,77 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
     updateVideoAdjustmentHelperVisibility() {
         this.updateHistogramVisibilityFromVideoAdjustments();
+        this.updateLevelsVisibility();
         this.updateCurvesVisibility();
+    }
+
+    updateLevelsVisibility() {
+        const levelsEnabled = this.in.levels?.value === true;
+        const visible = levelsEnabled && this.isVideoAdjustmentsOpen();
+        this.levelsView?.setVisible(visible);
+        if (visible) this.moveEditorTowardCenterIfOverlapping(this.levelsView, this.curvesView);
     }
 
     updateCurvesVisibility() {
         const curvesEnabled = this.in.curves?.value === true;
         const showCurves = this.in.showCurves?.value !== false;
-        this.curvesView?.setVisible(curvesEnabled && showCurves && this.isVideoAdjustmentsOpen());
+        const visible = curvesEnabled && showCurves && this.isVideoAdjustmentsOpen();
+        this.curvesView?.setVisible(visible);
+        if (visible) this.moveEditorTowardCenterIfOverlapping(this.curvesView, this.levelsView);
+    }
+
+    moveEditorTowardCenterIfOverlapping(editor, otherEditor) {
+        if (!editor?.visible || !otherEditor?.visible) return;
+        if (!this.editorRectsOverlap(editor, otherEditor)) return;
+
+        const gap = 12;
+        const containerLeft = editor.containerLeft();
+        const containerRight = containerLeft + editor.containerWidth();
+        const containerCenter = containerLeft + editor.containerWidth() / 2;
+        const editorCenter = editor.leftPx + editor.widthPx / 2;
+        const moveLeftTowardCenter = editorCenter >= containerCenter;
+        const preferredLeft = moveLeftTowardCenter
+            ? otherEditor.leftPx - editor.widthPx - gap
+            : otherEditor.leftPx + otherEditor.widthPx + gap;
+        const clampedLeft = Math.max(containerLeft, Math.min(containerRight - editor.widthPx, preferredLeft));
+
+        editor.leftPx = clampedLeft;
+        editor.left = (editor.leftPx - editor.containerLeft()) / editor.containerWidth();
+        editor.div.style.left = `${editor.leftPx}px`;
+    }
+
+    editorRectsOverlap(a, b) {
+        return a.leftPx < b.leftPx + b.widthPx &&
+            a.leftPx + a.widthPx > b.leftPx &&
+            a.topPx < b.topPx + b.heightPx &&
+            a.topPx + a.heightPx > b.topPx;
+    }
+
+    invalidateLevelsResult() {
+        this._levelsLastImage = undefined;
+        this._levelsLastKey = undefined;
+        this._levelsMidpointLUT = null;
+        this.invalidateCurveResult();
+    }
+
+    getLevelsSettings() {
+        return {
+            inputBlack: this.in.levelsInputBlack?.v0 ?? 0,
+            inputWhite: this.in.levelsInputWhite?.v0 ?? 255,
+            midpoint: this.in.levelsMidpoint?.v0 ?? 1,
+            outputBlack: this.in.levelsOutputBlack?.v0 ?? 0,
+            outputWhite: this.in.levelsOutputWhite?.v0 ?? 255,
+        };
+    }
+
+    hasActiveLevels() {
+        const levels = this.getLevelsSettings();
+        return this.in.levels?.value === true ||
+            levels.inputBlack !== 0 ||
+            levels.inputWhite !== 255 ||
+            levels.midpoint !== 1 ||
+            levels.outputBlack !== 0 ||
+            levels.outputWhite !== 255;
     }
 
     invalidateCurveResult() {
@@ -1476,8 +1561,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             }
         }
 
-        if (effectsEnabled && this.in.levelsMidpoint && this.in.levelsMidpoint.v0 !== 1) {
-            sourceImage = applyLevelsMidpointToImage(sourceImage, this.in.levelsMidpoint.v0, this);
+        if (effectsEnabled && this.hasActiveLevels()) {
+            sourceImage = applyLevelsToImage(sourceImage, this.getLevelsSettings(), this);
         }
 
         if (effectsEnabled && this.in.curves?.value === true && this.curvesView) {
