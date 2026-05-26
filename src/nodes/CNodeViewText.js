@@ -39,6 +39,8 @@ export class CNodeViewText extends CNodeView {
         const wasDraggable = v.draggable;
         // Temporarily disable draggable during super() call
         v.draggable = false;
+        v.dockable = v.dockable ?? wasDraggable;
+        v.dockedTextScale = v.dockedTextScale ?? 0.8;
         
         super(v);
         this.alwaysOnTop = true;
@@ -120,8 +122,13 @@ export class CNodeViewText extends CNodeView {
             onDrag: (event, data) => {
                 const view = data.viewInstance;
                 if (!view.draggable) return false;
+                if (view.dockedSidebar) return true;
                 if (view.shiftDrag && !event.shiftKey) return false;
+                view.setFromDiv(view.div);
                 return true;
+            },
+            onDragEnd: (event, data) => {
+                data.viewInstance?.onViewDragEnd?.(event, data);
             }
         });
     }

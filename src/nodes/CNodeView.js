@@ -104,6 +104,8 @@ class CNodeView extends CNode {
         this.dockedSidebar = null;
         this.floatingRectBeforeDock = null;
         this.dockedAspectRatio = null;
+        this.dockedTextScale = v.dockedTextScale;
+        this.dockedTextOriginalFontSizes = null;
         //
         //
 
@@ -273,6 +275,9 @@ class CNodeView extends CNode {
             ...super.modSerialize(),
             ...this.simpleSerialize(this.toSerialCNodeView)
         };
+        if (this.dockedSidebar) {
+            result.dockedSidebar = this.dockedSidebar;
+        }
         // Only the actual fullscreen view should serialize as doubled.
         // Otherwise all views with doubled:true race during deserialization,
         // and the last one wins — hiding the others.
@@ -284,10 +289,20 @@ class CNodeView extends CNode {
 
     modDeserialize(v) {
         super.modDeserialize(v);
+        const restoredDockedSidebar = v.dockedSidebar === "left" || v.dockedSidebar === "right"
+            ? v.dockedSidebar
+            : null;
+        if (this.dockedSidebar) {
+            this.undockFromSidebar();
+        }
         this.simpleDeserialize(v,this.toSerialCNodeView)
         this.updateWH();
-        this.visible = !v.visible; // ensure we toggle the visibility
-        this.setVisible(v.visible);
+        const visible = v.visible ?? this.visible;
+        if (restoredDockedSidebar) {
+            this.dockToSidebar(restoredDockedSidebar);
+        }
+        this.visible = !visible; // ensure we toggle the visibility
+        this.setVisible(visible);
         // Don't restore fullscreen here — that's deferred to
         // restoreFullscreenFromMods() which runs after ALL mods are applied,
         // so it can detect corrupted saves with multiple doubled views.
@@ -899,6 +914,7 @@ class CNodeView extends CNode {
             margin: `${DOCK_MARGIN_PX}px`,
             display: this.visible ? "block" : "none",
         });
+        this.applyDockedTextScale();
 
         if (oldWidth !== this.widthPx || oldHeight !== this.heightPx) {
             this.changedSize();
@@ -961,6 +977,7 @@ class CNodeView extends CNode {
         this.floatingParent.appendChild(this.div);
         this.hideSidebarIfEmpty(sidebar);
         this.setResizeHandlesVisible(true);
+        this.restoreDockedTextScale();
 
         const widthPx = Math.max(1, Math.floor(saved.widthPx));
         const heightPx = Math.max(1, Math.floor(saved.heightPx));
@@ -1054,6 +1071,27 @@ class CNodeView extends CNode {
         Object.values(this.div._resizeHandles).forEach(handle => {
             handle.style.display = visible ? "block" : "none";
         });
+    }
+
+    applyDockedTextScale() {
+        if (!this.dockedTextScale || this.dockedTextOriginalFontSizes || !this.div) return;
+
+        this.dockedTextOriginalFontSizes = new Map();
+        this.div.querySelectorAll("*").forEach(element => {
+            const fontSize = parseFloat(getComputedStyle(element).fontSize);
+            if (!Number.isFinite(fontSize)) return;
+            this.dockedTextOriginalFontSizes.set(element, element.style.fontSize);
+            element.style.fontSize = `${fontSize * this.dockedTextScale}px`;
+        });
+    }
+
+    restoreDockedTextScale() {
+        if (!this.dockedTextOriginalFontSizes) return;
+
+        this.dockedTextOriginalFontSizes.forEach((fontSize, element) => {
+            element.style.fontSize = fontSize;
+        });
+        this.dockedTextOriginalFontSizes = null;
     }
 
     deferFloatingPixelSizeRestore(widthPx, heightPx) {

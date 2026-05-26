@@ -7,6 +7,8 @@ import {t} from "../i18n";
 class CNodeNotes extends CNodeView {
     constructor(v) {
         v.draggable = false;
+        v.dockable = true;
+        v.dockedTextScale = v.dockedTextScale ?? 0.8;
         v.excludeFromViewsMenu = true;
         super(v);
 
@@ -141,8 +143,12 @@ class CNodeNotes extends CNodeView {
             viewInstance: this,
             onDrag: (event, data) => {
                 const view = data.viewInstance;
+                if (view.dockedSidebar) return true;
                 view.setFromDiv(view.div);
                 return true;
+            },
+            onDragEnd: (event, data) => {
+                data.viewInstance?.onViewDragEnd?.(event, data);
             }
         });
     }

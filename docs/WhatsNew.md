@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.61.1 (2026-05-26)
+
+### Improvements
+- **Dockable text panels**: text-based floating panels — including the on-screen Notes panel and other text overlays — can now be dragged to the left or right sidebar and docked, alongside the editor panels that were already dockable. Docked text automatically shrinks to fit the narrower sidebar.
+- **Docked panels stay docked across save and reload**: whichever side a panel was docked on (left or right) is now remembered with the sitch, so reopening a custom sitch restores docked panels to their docked positions instead of leaving them floating.
+
 ## Version 2.61.0 (2026-05-26)
 
 ### New Features
