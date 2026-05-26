@@ -807,6 +807,15 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         for (let f = 0; f < frames; f++) {
             let trackPoint = this.in.track.v(f);
 
+            if (trackPoint && trackPoint.x !== undefined) {
+                // If it's a Vector3, wrap it.
+                trackPoint = { position: trackPoint };
+            }
+
+            if (trackPoint?.position === undefined) {
+                continue;
+            }
+
             // find distance from last point
             const dist = trackPoint.position.distanceTo(lastPoint);
 
@@ -816,31 +825,25 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
             lastPoint = trackPoint.position.clone();
 
-            if (trackPoint && trackPoint.x !== undefined) {
-                // If it's a Vector3, wrap it
-                trackPoint = { position: trackPoint };
-            }
-            if (trackPoint?.position !== undefined) {
-                const A = trackPoint.position;
-                assert(!isNaN(A.x) && !isNaN(A.y) && !isNaN(A.z), "CNodeDisplayTrack: trackPoint has NaNs, id=" + this.id + " frame=" + f);
+            const A = trackPoint.position;
+            assert(!isNaN(A.x) && !isNaN(A.y) && !isNaN(A.z), "CNodeDisplayTrack: trackPoint has NaNs, id=" + this.id + " frame=" + f);
 
-                // The top point
-                linePoints.push(A);
-                // Ground point: for relativeToGround polygons, use terrain elevation
-                // so the wall extends to the actual ground surface, not sea level.
-                // This prevents buildings from appearing too tall when the terrain
-                // mesh doesn't fully hide the below-ground wall portion.
-                const lla = ECEFToLLAVD_radii(A);
-                let bottom;
-                if (this.showCap && this.in.track.altitudeMode === "relativeToGround"
-                    && this.in.track.centerElevation !== undefined) {
-                    bottom = LLAToECEF(lla.x, lla.y, this.in.track.centerElevation);
-                } else {
-                    // Default: project down to MSL=0 using EGM96 geoid undulation (HAE = N).
-                    bottom = LLAToECEF(lla.x, lla.y, meanSeaLevelOffset(lla.x, lla.y));
-                }
-                groundPoints.push(bottom);
+            // The top point
+            linePoints.push(A);
+            // Ground point: for relativeToGround polygons, use terrain elevation
+            // so the wall extends to the actual ground surface, not sea level.
+            // This prevents buildings from appearing too tall when the terrain
+            // mesh doesn't fully hide the below-ground wall portion.
+            const lla = ECEFToLLAVD_radii(A);
+            let bottom;
+            if (this.showCap && this.in.track.altitudeMode === "relativeToGround"
+                && this.in.track.centerElevation !== undefined) {
+                bottom = LLAToECEF(lla.x, lla.y, this.in.track.centerElevation);
+            } else {
+                // Default: project down to MSL=0 using EGM96 geoid undulation (HAE = N).
+                bottom = LLAToECEF(lla.x, lla.y, meanSeaLevelOffset(lla.x, lla.y));
             }
+            groundPoints.push(bottom);
         }
 
         assert(linePoints.length > 1, "CNodeDisplayTrack: not enough points for mesh in track " + this.id);
