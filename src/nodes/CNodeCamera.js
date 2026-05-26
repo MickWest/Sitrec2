@@ -1,6 +1,6 @@
-import {Camera, PerspectiveCamera, Vector3} from "three";
+import {Camera, PerspectiveCamera, Raycaster, Vector3} from "three";
 import {f2m, m2f} from "../utils";
-import {GlobalDateTimeNode, guiMenus, NodeMan, Sit} from "../Globals";
+import {GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {ECEFToLLAVD_radii, LLAToECEF, LLAVToECEF} from "../LLA-ECEF-ENU";
 import {
     altitudeAboveSphere,
@@ -13,6 +13,7 @@ import {CNode3D} from "./CNode3D";
 import {MV3} from "../threeUtils";
 import {getCelestialDirection, getCelestialDirectionFromRaDec} from "../CelestialMath";
 import {t} from "../i18n";
+import {raycastLocalGround} from "../raycastGround";
 
 export class CNodeCamera extends CNode3D {
     constructor(v, camera = null) {
@@ -27,6 +28,17 @@ export class CNodeCamera extends CNode3D {
         this.lookAt = v.lookAt;
         this.startPosLLA = v.startPosLLA;
         this.lookAtLLA = v.lookAtLLA;
+        this.switchToGroundTrackFrame = v.switchToGroundTrackFrame ?? 0;
+        if (v.switchToGroundTrackEnabled && this.switchToGroundTrackFrame <= 0) {
+            this.switchToGroundTrackFrame = 1;
+        }
+        this._groundTrackSwitchComputing = false;
+        this._groundTrackSwitchRaycaster = new Raycaster();
+        this._groundTrackSwitchWarned = false;
+        this._groundTrackSwitchCachedFrame = null;
+        this._groundTrackSwitchCachedTarget = null;
+        this.addSimpleSerial("switchToGroundTrackFrame");
+        this.onTerrainLoaded(() => this.clearGroundTrackSwitchCache());
 
         if (camera) {
             this._object = camera;
@@ -50,6 +62,10 @@ export class CNodeCamera extends CNode3D {
         }
 
         this.applyEarlyMods();
+
+        if (this.id === "lookCamera") {
+            this.addGroundTrackSwitchGUI();
+        }
     }
 
 
@@ -141,6 +157,35 @@ export class CNodeCamera extends CNode3D {
         this.upLLA = ECEFToLLAVD_radii(this.camera.position.clone().add(this.camera.up.clone().multiplyScalar(1000)))
     }
 
+    addGroundTrackSwitchGUI() {
+        if (!guiMenus.camera) return;
+
+        const controller = guiMenus.camera.add(
+            this,
+            "switchToGroundTrackFrame",
+            0,
+            Math.max(0, (Sit.frames ?? 1) - 1),
+            1
+        )
+            .name("Switch to Ground Track at")
+            .listen()
+            .onChange(() => {
+                this.switchToGroundTrackFrame = Math.round(this.switchToGroundTrackFrame);
+                this.clearGroundTrackSwitchCache();
+                setRenderOne(true);
+            })
+            .tooltip("0 disables this. Any positive frame bakes the camera's ground intersection at that frame, then aims at that point for all later frames.")
+            .moveToEnd();
+        this.groundTrackSwitchFrameController = controller;
+        setTimeout(() => controller.moveToEnd(), 0);
+    }
+
+    clearGroundTrackSwitchCache() {
+        this._groundTrackSwitchCachedFrame = null;
+        this._groundTrackSwitchCachedTarget = null;
+        this._groundTrackSwitchWarned = false;
+    }
+
 
 
     get camera() {
@@ -180,6 +225,93 @@ export class CNodeCamera extends CNode3D {
                     ptzController.el = el;
                 }
             }
+        }
+
+        this.updateGroundTrackSwitchFrameRange();
+        this.applyGroundTrackSwitch(f);
+    }
+
+    updateGroundTrackSwitchFrameRange() {
+        const controller = this.groundTrackSwitchFrameController;
+        if (!controller || Sit.frames === undefined) return;
+
+        const maxFrame = Math.max(0, Sit.frames - 1);
+        if (controller._max !== maxFrame) {
+            controller._max = maxFrame;
+            if (this.switchToGroundTrackFrame > maxFrame) {
+                this.switchToGroundTrackFrame = maxFrame;
+            }
+            controller.updateDisplay();
+        }
+    }
+
+    getGroundTrackSwitchFrame() {
+        return Math.max(0, Math.min(Math.round(this.switchToGroundTrackFrame), Math.max(0, (Sit.frames ?? 1) - 1)));
+    }
+
+    applyGroundTrackSwitch(f) {
+        if (this._groundTrackSwitchComputing) return;
+
+        const switchFrame = this.getGroundTrackSwitchFrame();
+        if (switchFrame <= 0 || f < switchFrame) return;
+
+        const target = this.getGroundTrackSwitchTarget(switchFrame);
+        if (!target) return;
+
+        this.camera.up.copy(this.getUpVector(this.camera.position));
+        this.camera.lookAt(target);
+        this.camera.updateMatrix();
+        this.camera.updateMatrixWorld(true);
+    }
+
+    getGroundTrackSwitchTarget(switchFrame) {
+        if (this._groundTrackSwitchCachedFrame === switchFrame) {
+            return this._groundTrackSwitchCachedTarget?.clone() ?? null;
+        }
+
+        const camera = this.camera;
+        const savedPosition = camera.position.clone();
+        const savedQuaternion = camera.quaternion.clone();
+        const savedUp = camera.up.clone();
+        const savedFov = camera.fov;
+        const savedNear = camera.near;
+        const savedFar = camera.far;
+
+        this._groundTrackSwitchComputing = true;
+        try {
+            this.applyControllers(switchFrame);
+            if (this.in.altAdjust !== undefined) {
+                camera.position.copy(raisePoint(camera.position, f2m(this.in.altAdjust.v())));
+            }
+
+            camera.updateMatrix();
+            camera.updateMatrixWorld(true);
+
+            this._groundTrackSwitchRaycaster.ray.origin.copy(camera.position);
+            camera.getWorldDirection(this._groundTrackSwitchRaycaster.ray.direction);
+            this._groundTrackSwitchRaycaster.near = 0;
+            this._groundTrackSwitchRaycaster.far = Infinity;
+
+            const hit = raycastLocalGround(this._groundTrackSwitchRaycaster);
+            if (!hit && !this._groundTrackSwitchWarned) {
+                console.warn(`Camera ground track switch could not find a ground intersection at frame ${switchFrame}.`);
+                this._groundTrackSwitchWarned = true;
+            }
+            this._groundTrackSwitchCachedFrame = switchFrame;
+            this._groundTrackSwitchCachedTarget = hit?.point.clone() ?? null;
+            return this._groundTrackSwitchCachedTarget?.clone() ?? null;
+        } finally {
+            camera.position.copy(savedPosition);
+            camera.quaternion.copy(savedQuaternion);
+            camera.up.copy(savedUp);
+            camera.fov = savedFov;
+            camera.near = savedNear;
+            camera.far = savedFar;
+            camera.updateProjectionMatrix();
+            camera.updateMatrix();
+            camera.updateMatrixWorld(true);
+            this.syncUIPosition();
+            this._groundTrackSwitchComputing = false;
         }
     }
 
@@ -332,6 +464,3 @@ export function getCameraNode(cam) {
     }
     return cameraNode;
 }
-
-
-
