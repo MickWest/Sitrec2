@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.61.0 (2026-05-26)
+
+### New Features
+- **Video Levels editor** (Video Adjustments → *Levels*): a Photoshop-style Levels panel with five draggable handles — input black/midpoint/white and output black/white — on a live luminance histogram of the current video frame. Toggle the *Levels* checkbox to enable; a double-click resets all handles. Settings save with the sitch.
+- **Dockable floating views**: drag any of the floating helper views (Levels, Curves, Histogram, etc.) to the left or right edge of the window and it snaps into a sidebar; drag it back out to float again. The sidebar appears only when something is docked there and tucks itself away when emptied.
+
+### Bug Fixes
+- Fixed the timeline slider's end point being stuck at a stale value after a custom sitch loaded a longer or shorter video, which made the playhead and the A/B range jump past the actual end of the video. The current frame and the A/B range are now always clamped to the loaded video's length.
+- Fixed independent imported tracks (KML/ADS-B, CSV, STANAG, SRT) being silently retimed by whichever video happened to be loaded. Only MISB tracks that carry their own per-record PES timestamps now align to video PTS; everything else stays on sitch wall-clock time.
+
 ## Version 2.60.0 (2026-05-26)
 
 ### New Features
