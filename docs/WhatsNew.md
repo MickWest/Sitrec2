@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.61.2 (2026-05-26)
+
+### Improvements
+- **True photographic Invert** (Video → Video Adjustments): the *Invert* control is now a single on/off checkbox that produces a true negative (every byte mapped to 255 minus itself), instead of the old 0-1 slider which used a non-photographic blend.
+- **Sharpen Amount at 0 is now identity** (Video → Video Adjustments → *Convolution Filter* → Sharpen): the *Sharpen Amount* slider at 0 now passes the image through unchanged (it previously went to solid black at 0), and sharpening no longer leaves a one-pixel black border around the frame.
+- **Drop-zone text stays visible on the empty Video sitch**: the *DROP FILES OR URLS HERE* hint now stays on screen on the Video sitch until you actually load a video, instead of fading out after two seconds.
+- **Video Curves: endpoints can move along x**: the left and right control points on the Curves editor are no longer pinned to x=0 and x=255 — you can now slide them inward (or drag them outside the graph) to clip or remap the input range, matching how Photoshop Curves works.
+- **Reset Video Adjustments updates the sliders**: clicking *Reset Video Adjustments* now actually refreshes every slider, checkbox, and dropdown in the panel (including the Convolution Filter, the Curves editor, and the Levels editor), rather than only updating the underlying values while leaving the UI stuck on the old positions.
+
+### Bug Fixes
+- Removed the redundant *Greyscale* slider from Video Adjustments (its effect is reproducible with *Saturate* at 0).
+- Fixed the Video menu being force-docked into the right sidebar on the Video sitch; it now opens floating like every other menu, and you can dock it yourself.
+
 ## Version 2.61.1 (2026-05-26)
 
 ### Improvements
