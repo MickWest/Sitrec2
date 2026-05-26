@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.60.0 (2026-05-26)
+
+### New Features
+- **Switch the look camera to a ground track** (Camera → *Switch to Ground Track at*): pick a frame; the look camera bakes its ground intersection at that frame and aims at that fixed point for every later frame. 0 disables. Useful for "fly past, then keep looking back at the spot we just passed".
+- **Orbit Image Set rebuild** (File → Export → *Orbit Image Set*): the old *Image Set* exporter is renamed and gains four new controls — *Track to Orbit* (pick which track's position is the orbit centre, drawn live from the same list as the Target Track switch), *Time Step (minutes)* + *Number of Time Steps* (advance the sitch time between sweeps and re-render — works with satellite, sun, and other time-driven tracks), and *Use Current Camera Distance* + *Orbit Distance* (orbit at a manual radius instead of the current camera-to-target distance). Filenames pick up a `_tNN` segment when more than one time step is exported.
+
+### Improvements
+- **Clearer error message when loading an unsupported MOV/MP4 video**: files whose video track the browser cannot decode (e.g. Apple ProRes captures) now say so explicitly, list the codec and resolution, and suggest an `ffmpeg` command to re-encode to H.264.
+
+### Bug Fixes
+- Fixed track wall (the vertical "wall" rendered under a track) failing to draw on tracks whose samples are sparse or carry missing frames; missing samples are now skipped instead of breaking the wall mesh.
+
 ## Version 2.59.1 (2026-05-25)
 
 ### Improvements
