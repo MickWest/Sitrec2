@@ -11,7 +11,7 @@
  * accessing only its public/underscore-prefixed state.
  */
 
-import {guiMenus, NodeMan, setRenderOne} from "../Globals";
+import {CustomManager, guiMenus, NodeMan, setRenderOne} from "../Globals";
 import {t} from "../i18n";
 import {CNodeGUIFlag, CNodeGUIValue} from "./CNodeGUIValue";
 import {CNodeConstant} from "./CNode";
@@ -299,6 +299,22 @@ export function addFiltersToVideoNode(videoNode) {
             updateLevelsControlVisibility(),
             updateConvolutionControlVisibility(),
             guiVideoEffectsFolder.add(reset, "resetFilters").name(t("videoView.resetVideoAdjustments.label")).tooltip(t("videoView.resetVideoAdjustments.tooltip"))
+
+        // Render Source Video — DRY: same call as the button in Video Render
+        // & Export, just placed here for convenience after adjusting filters.
+        // CustomManager.videoExportManager is wired up by CCustomManager.setupVideoExport
+        // (CustomSupport.js); the optional-chain protects against click-before-setup.
+        const renderSourceBtn = guiVideoEffectsFolder.add({
+            exportSourceVideo: () => CustomManager?.videoExportManager?.exportSourceVideo(),
+        }, "exportSourceVideo")
+            .name(t("videoExport.renderSource.label"))
+            .tooltip(t("videoExport.renderSource.tooltip"));
+        // Light-green tint so the action button stands out from the slider rows.
+        // Dark text keeps the label legible against the light background.
+        if (renderSourceBtn.domElement) {
+            renderSourceBtn.domElement.style.backgroundColor = "#90EE90";
+            renderSourceBtn.domElement.style.color = "#000";
+        }
 
         const makeVideoActions = { makeVideo: () => videoNode.makeProcessedVideo() };
         guiVideoProcessingFolder.add(makeVideoActions, "makeVideo").name(t("videoView.makeVideo.label")).tooltip(t("videoView.makeVideo.tooltip"));
