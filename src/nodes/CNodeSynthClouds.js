@@ -95,6 +95,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         this.density = v.density !== undefined ? v.density : 0.5;
         this.opacity = v.opacity !== undefined ? v.opacity : 0.8;
         this.brightness = v.brightness !== undefined ? v.brightness : 1.0;
+        this.sunReflection = v.sunReflection !== undefined ? v.sunReflection : 0;
         this.seed = v.seed !== undefined ? v.seed : 0;
         this.feather = v.feather !== undefined ? v.feather : 1000;
         
@@ -232,6 +233,8 @@ export class CNodeSynthClouds extends CNode3DGroup {
                 emissive: { value: new Color(emissiveIntensity, emissiveIntensity, emissiveIntensity) },
                 sunDirection: { value: new Vector3(0, 1, 0) },
                 earthCenter: { value: new Vector3(0, 0, 0) },
+                reflectionPoint: { value: new Vector3(0, 0, 0) },
+                reflectionRadius: { value: 0 },
                 ...sharedUniforms,
             },
             vertexShader: `
@@ -268,22 +271,33 @@ export class CNodeSynthClouds extends CNode3DGroup {
                 uniform float farPlane;
                 uniform vec3 sunDirection;
                 uniform vec3 earthCenter;
+                uniform vec3 reflectionPoint;
+                uniform float reflectionRadius;
                 uniform float sunAmbientIntensity;
                 uniform float sunNightAmbientIntensity;
                 varying vec2 vUv;
                 varying float vDepth;
                 varying vec3 vWorldPosition;
-                
+
                 void main() {
                     vec4 texColor = texture2D(map, vUv);
                     float alpha = texColor.a * opacity;
                     if (alpha < 0.01) discard;
-                    
+
                     vec3 globalNormal = normalize(vWorldPosition - earthCenter);
                     float globalIntensity = max(dot(globalNormal, sunDirection), -0.1);
                     float dayFactor = smoothstep(-0.1, 0.1, globalIntensity);
                     float lighting = mix(sunNightAmbientIntensity, 1.0, dayFactor);
-                    vec3 litColor = texColor.rgb * color * lighting + emissive;
+                    vec3 litDiffuse = texColor.rgb * color * lighting;
+                    if (reflectionRadius > 0.0) {
+                        vec3 planeNormal = normalize(reflectionPoint - earthCenter);
+                        vec3 diff = vWorldPosition - reflectionPoint;
+                        vec3 diffProj = diff - dot(diff, planeNormal) * planeNormal;
+                        float pdist = length(diffProj);
+                        float boost = max(0.0, 1.0 - pdist / reflectionRadius);
+                        litDiffuse *= (1.0 + boost);
+                    }
+                    vec3 litColor = litDiffuse + emissive;
                     gl_FragColor = vec4(litColor, alpha);
 
                     // Convert sRGB-space output to linear for the render target.
@@ -420,11 +434,34 @@ export class CNodeSynthClouds extends CNode3DGroup {
     
     preRender(view) {
         if (!this.cloudMesh || !this.cloudMesh.material || !this.cloudMesh.material.uniforms) return;
-        
+
+        const uniforms = this.cloudMesh.material.uniforms;
+
         if (Globals.sunLight) {
-            this.cloudMesh.material.uniforms.sunDirection.value.copy(Globals.sunLight.position).normalize();
+            uniforms.sunDirection.value.copy(Globals.sunLight.position).normalize();
         }
-        
+
+        let effectiveReflectionRadius = 0;
+        if (this.sunReflection > 0 && Globals.sunLight && this.localUp) {
+            const lookCameraNode = NodeMan.get("lookCamera", false);
+            if (lookCameraNode && lookCameraNode.camera) {
+                const sunDir = uniforms.sunDirection.value;
+                const planeNormal = this.localUp;
+                const sDotN = sunDir.dot(planeNormal);
+                if (sDotN > 0.001) {
+                    const camPos = lookCameraNode.camera.position;
+                    const planePoint = this.group.position;
+                    const h = camPos.clone().sub(planePoint).dot(planeNormal);
+                    const camMirror = camPos.clone().sub(planeNormal.clone().multiplyScalar(2 * h));
+                    const camMirrorOffset = camMirror.clone().sub(planePoint).dot(planeNormal);
+                    const t = -camMirrorOffset / sDotN;
+                    uniforms.reflectionPoint.value.copy(camMirror).add(sunDir.clone().multiplyScalar(t));
+                    effectiveReflectionRadius = this.sunReflection;
+                }
+            }
+        }
+        uniforms.reflectionRadius.value = effectiveReflectionRadius;
+
         if (this.basePosition) {
             if (this.windMode === "No Wind") {
                 this.group.position.copy(this.basePosition);
@@ -941,7 +978,14 @@ export class CNodeSynthClouds extends CNode3DGroup {
                 setRenderOne(true);
             })
             .onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
-        
+
+        propsFolder.add(this, 'sunReflection', 0, 10000, 1)
+            .name(t("synthClouds.sunReflection.label"))
+            .onChange(() => {
+                setRenderOne(true);
+            })
+            .onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
+
         const depthProxy = {
             _displayValue: this.depth,
             get depth() { return this._displayValue; },
@@ -1112,6 +1156,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             density: this.density,
             opacity: this.opacity,
             brightness: this.brightness,
+            sunReflection: this.sunReflection,
             seed: this.seed,
             feather: this.feather,
             windMode: this.windMode,
@@ -1119,7 +1164,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             windKnots: this.windKnots
         };
     }
-    
+
     static deserialize(data) {
         return new CNodeSynthClouds({
             id: data.id,
@@ -1136,6 +1181,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             density: data.density,
             opacity: data.opacity,
             brightness: data.brightness,
+            sunReflection: data.sunReflection,
             seed: data.seed,
             feather: data.feather,
             windMode: data.windMode,

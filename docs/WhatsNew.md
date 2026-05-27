@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.62.3 (2026-05-27)
+
+### New Features
+- **Sun Reflection on synthetic clouds** (Objects → *Clouds: \<name\>* → Properties): a new *Sun Reflection* slider (0–10000 m, default 0) adds a soft circular sun-glint hotspot on the cloud layer, positioned where the look camera's mirrored line of sight meets the sun. 0 is a no-op; larger values widen the bright patch.
+
+### Improvements
+- **Drop or paste URLs onto the sitch browser**: the sitch browser's drop area now accepts dragged URLs (e.g. a Metabunk thread link or a video URL) and pasted URLs in the search box, not just files. The drop hint reads *Drop files or URLs to create a new sitch*, and the dropped URL is handed off to the same custom-sitch import flow that files use.
+- **War.gov UFO videos: skip the Metabunk fetch when the URL says it all**: dropping a Metabunk thread URL that already contains a `PR-NNN` War.gov release code now resolves the underlying DVIDS video directly from the bundled War.gov index, without first downloading the thread HTML.
+
 ## Version 2.62.2 (2026-05-27)
 
 ### Bug Fixes

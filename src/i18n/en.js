@@ -889,6 +889,7 @@ const en = {
         density: { label: "Density" },
         opacity: { label: "Opacity" },
         brightness: { label: "Brightness" },
+        sunReflection: { label: "Sun Reflection" },
         depth: { label: "Depth" },
         edgeWiggle: { label: "Edge Wiggle" },
         edgeFrequency: { label: "Edge Frequency" },
