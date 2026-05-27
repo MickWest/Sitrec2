@@ -9,6 +9,25 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.62.0 (2026-05-27)
+
+### New Features
+- **Vertical FOV for orbit exports** (File → Export → Orbit Image Set): a new *Use Current Camera FOV* checkbox and *Vertical FOV (deg)* slider let you lock orbit shots to a specific field of view instead of always using the look camera's current FOV.
+- **JPEG output for orbit exports** (File → Export → Orbit Image Set): a new *Use PNGs* checkbox (off by default) saves each orbit shot as JPEG, with roughly 5–20× faster encoding and 10–15× smaller files; turn it on for lossless PNGs.
+- **Orbit Preview** (File → Export → Orbit Image Set): a new *Orbit Preview* checkbox repurposes the main frame slider to step through every shot the orbit export would produce — drag the slider to walk the camera around the target, with the sitch time advancing between sweeps. The slider tints green while preview is active; turning it off restores the previous camera, time, and frame.
+- **Tonal adjustments for video** (Video → Video Adjustments): three new sliders — *Shadows*, *Highlights*, and *Dehaze* — lift or crush darker tones, brighter tones, or atmospheric haze independently. Each ranges -100 to +100 with 0 as no change, and the existing Reset button clears them along with the other adjustments.
+- **Tonal-loss readout on the histogram** (Video → Video Adjustments → Histogram): the live histogram now shows how much tonal resolution survives the current adjustment chain — kept-levels percentage, effective bit depth, collapsed-input count, and worst many-to-one collapse — turning amber when any collapse is happening. Hover the text for an explanation of each value.
+- **Current LOS line** (Show/Hide → Current LOS): a new toggle draws a single white line of sight for just the current frame, on top of the existing per-second LOS bundle, for cleaner callouts.
+
+### Improvements
+- **Easier-to-grab curve handles** (Video → Video Adjustments → Curves): the click targets for points and the curve itself are roughly doubled, so grabbing a handle no longer requires pixel-precise clicks.
+- **Drag any view off the top to close it, and dragged views stay where you drop them**: any view (not just dockable ones) now commits its new position on release, and dragging a view above the top edge of the window closes it.
+- **Smoother camera tilt**: the look-up/down rotation is now clamped symmetrically near both straight-up and straight-down, so the camera no longer flips past the zenith.
+
+### Bug Fixes
+- Fixed shadow/highlight clip indicators on the histogram reporting spurious clipping when the *Invert* filter (Video → Video Adjustments) is on.
+- Fixed saved on/off settings sometimes loading as off when the saved sitch stored them as a number or string instead of a boolean.
+
 ## Version 2.61.2 (2026-05-26)
 
 ### Improvements
