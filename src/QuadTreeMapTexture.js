@@ -532,6 +532,11 @@ class QuadTreeMapTexture extends QuadTreeMap {
             if (tile.mesh) {
                 this.setTileLayerMask(tile, tile.tileLayers);
             }
+
+            if (useParentData && this.applyParentDataFallback(tile)) {
+                setRenderOne(true);
+                return tile;
+            }
             
             // Check if the tile needs its texture loaded (e.g., if it was aborted previously)
             if (tile.mesh?.material?.wireframe && 
@@ -760,36 +765,9 @@ class QuadTreeMapTexture extends QuadTreeMap {
         // LAZY LOADING: Try to create child tile using parent's texture data
         // This allows child tiles to appear instantly with lower-quality parent texture,
         // then upgrade to high-res later when visible (via triggerLazyLoadIfNeeded)
-        if (useParentData && z > 0) {
-            const parentTile = tile.parent;
-            
-            // Verify parent has a loaded texture that we can extract data from
-            // Requirements:
-            // 1. Parent tile exists and has a mesh with material
-            // 2. Material has a texture map (material.map)
-            // 3. Material is not wireframe (texture has actually loaded, not placeholder)
-            //
-            // This check is critical for the race condition fix - it ensures we only
-            // attempt to use parent data when the parent texture is actually available.
-            // The deferred subdivision logic in subdivideTiles() ensures this is true.
-            if (parentTile && parentTile.mesh && parentTile.mesh.material && 
-                parentTile.mesh.getMap() && !parentTile.mesh.material.wireframe) {
-                // Extract and downsample parent texture for this child tile
-                const parentMaterial = tile.buildMaterialFromParent(parentTile);
-                if (parentMaterial) {
-                    tile.mesh.material = parentMaterial;
-                    tile.updateSkirtMaterial();
-                    tile.usingParentData = true;
-                    tile.needsHighResLoad = true;
-                    tile.loaded = true;
-                    this.invalidateCoverageCache(tile);
-
-                    this.addTileWhenReady(tile);
-
-                    return tile;
-                }
-            }
-            // If parent data not available, fall through to normal loading path
+        if (useParentData && this.applyParentDataFallback(tile)) {
+            this.addTileWhenReady(tile);
+            return tile;
         }
 
         // Track the async texture loading (normal path or fallback if parent data unavailable)
@@ -837,6 +815,60 @@ class QuadTreeMapTexture extends QuadTreeMap {
         setRenderOne(true);
 
         return tile;
+    }
+
+    applyParentDataFallback(tile) {
+        if (!tile || tile.z <= 0) return false;
+
+        // Don't resurrect a tile that PlaceholderTile already marked dead.
+        // The dead-branch flag is the signal that high-res loads here will
+        // never succeed (e.g., Esri has no imagery for this footprint). The
+        // pruner cleans these up; resurrecting them via the parent fallback
+        // path just starts another load-fail cycle next frame.
+        if (tile.isDeadBranch) return false;
+
+        // Never downgrade a tile that already has its own loaded high-res
+        // material. Surgical reactivation passes useParentData=true based on
+        // the *parent's* state, so an already-loaded child reached via the
+        // existing-tile path in activateTile must not have its high-res
+        // material disposed and replaced with the coarse parent fallback —
+        // that produced a single-frame coarse flash followed by a forced
+        // high-res reload, i.e. visible flicker.
+        if (tile.mesh
+            && tile.mesh.material
+            && !tile.mesh.material.wireframe
+            && !tile.usingParentData
+            && tile.mesh.getMap()) {
+            return false;
+        }
+
+        const parentTile = tile.parent;
+
+        // Verify parent has a loaded texture that we can extract data from:
+        // parent exists, has a material texture, and is not still wireframe.
+        if (!parentTile
+            || !parentTile.mesh
+            || !parentTile.mesh.material
+            || !parentTile.mesh.getMap()
+            || parentTile.mesh.material.wireframe) {
+            return false;
+        }
+
+        const parentMaterial = tile.buildMaterialFromParent(parentTile);
+        if (!parentMaterial) return false;
+
+        if (tile.mesh?.material && tile.mesh.material !== parentMaterial) {
+            tile.mesh.material.getMap?.()?.dispose();
+            tile.mesh.material.dispose?.();
+        }
+
+        tile.mesh.material = parentMaterial;
+        tile.updateSkirtMaterial();
+        tile.usingParentData = true;
+        tile.needsHighResLoad = true;
+        tile.loaded = true;
+        this.invalidateCoverageCache(tile);
+        return true;
     }
 
 

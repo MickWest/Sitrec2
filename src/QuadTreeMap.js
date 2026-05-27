@@ -37,6 +37,11 @@ const EARTH_CIRCUMFERENCE_M = 40075016.686;
 // memory but more flicker.
 const MERGE_HYSTERESIS_FACTOR = 0.5;
 
+// Texture merges are visually destructive: a ready high-detail child cut is
+// replaced by a coarser parent. Do that only after the camera has stopped
+// moving long enough for the view to settle, not during a pan/zoom frame.
+const MERGE_CAMERA_STABLE_FRAMES = 12;
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // QuadTreeMap is the base class of a QuadTreeMapTexture and a QuadTreeMapElevation
 export class QuadTreeMap {
@@ -371,6 +376,8 @@ export class QuadTreeMap {
                     // Collect children for pruning (delete after iteration completes)
                     tilesToPrune.push(...children);
                     tile.children = null; // Clear children reference from parent
+                    this.parentTiles.delete(tile);
+                    this.invalidateCoverageCache(tile);
                 }
             }
 
@@ -400,6 +407,8 @@ export class QuadTreeMap {
                         }
 
                         tile.children = null; // Clear children reference from parent
+                        this.parentTiles.delete(tile);
+                        this.invalidateCoverageCache(tile);
                     }
                 }
             }
@@ -583,6 +592,15 @@ export class QuadTreeMap {
             mode: tileBoundsModeForView(view.id),
             coverageMode: "main",
         };
+        const mergeStableFrames = this.updateMergeCameraStability(view, camera);
+        const allowVisibleTextureMerge = !isTextureMap
+            || mergeStableFrames >= MERGE_CAMERA_STABLE_FRAMES;
+        const reconcileVisibilityMemo = isTextureMap ? new WeakMap() : null;
+        const rememberReconcileVisibility = (tile, visibility) => {
+            if (reconcileVisibilityMemo) {
+                reconcileVisibilityMemo.set(tile, visibility.visible && visibility.frustumIntersects !== false);
+            }
+        };
 
         // PASS 2: Deactivate parent tiles whose children are fully loaded (texture maps only, view-specific)
         if (isTextureMap) {
@@ -615,6 +633,7 @@ export class QuadTreeMap {
             // This is expensive, so we only do it after early exit checks.
             // Errors propagate — silent fallback to legacy was hiding real bugs.
             const visibility = this.calculateTileVisibility(tile, camera, _v5Options, diag);
+            rememberReconcileVisibility(tile, visibility);
             let coverageVisibility = null;
             const textureCoverageVisible = () => {
                 if (!isTextureMap) return false;
@@ -650,12 +669,7 @@ export class QuadTreeMap {
             // (which remain in the tile cache; deactivation only clears
             // the per-view bit, not the underlying data).
             if (!visibility.visible && !hasChildren) {
-                // Texture cut reconciliation uses the sphere-only coverage
-                // predicate to decide when a child replaces its parent. Keep
-                // coverage-visible leaves alive even if OBB subdivision culling
-                // rejects them, otherwise parent fallback can never prove that
-                // descendants form a complete ready cover.
-                if (isActiveInView && !textureCoverageVisible()) {
+                if (isActiveInView) {
                     this.deactivateTile(tile, tileLayers, true);
                 }
                 continue;
@@ -698,18 +712,25 @@ export class QuadTreeMap {
             //       resolving the violation without needing a deeper cascade.
             const hasActiveDescendant = hasChildren && this.hasAnyActiveDescendantForView(tile, tileLayers);
             if (visibility.visible && hasChildren && (shouldSubdivide || hasActiveDescendant)) {
-                const surgicalCoverageOptions = { ..._v5Options, coverageMode: "coverageSphereOnly" };
                 for (const child of tile.children) {
                     if (!child) continue;
                     if ((child.tileLayers & tileLayers) !== 0) continue;
-                    const childVis = this.calculateTileVisibility(child, camera, surgicalCoverageOptions, null);
+                    // Surgical activation answers "does this view need this
+                    // child rendered?", so use the view's real culling mode.
+                    // Parent deactivation's coarse fallback scan still uses
+                    // coverageSphereOnly, but render-cut reconciliation must
+                    // follow this real view predicate.
+                    const childVis = this.calculateTileVisibility(child, camera, _v5Options, null);
+                    rememberReconcileVisibility(child, childVis);
                     if (!childVis.visible) continue;
                     // Reactivate bridge ancestors as active/loading state even
                     // when deeper descendants already exist. Render suppression
                     // in reconcileRenderedTileCut keeps the visible cut clean,
                     // so these bridge tiles can repair stale partial subtrees
                     // without drawing over either parent fallback or children.
-                    this.activateTile(child.x, child.y, child.z, tileLayers);
+                    const useParentData = isTextureMap && tile.mesh && tile.mesh.material
+                        && tile.mesh.getMap() && !tile.mesh.material.wireframe;
+                    this.activateTile(child.x, child.y, child.z, tileLayers, useParentData);
                 }
             }
 
@@ -749,7 +770,7 @@ export class QuadTreeMap {
             }
 
             // Check for merging children back to parent (gated by hysteresis)
-            if (shouldMerge && hasChildren) {
+            if (shouldMerge && hasChildren && allowVisibleTextureMerge) {
                 if (this.mergeChildrenIfPossible(tile, tileLayers) && diag) diag.merged++;
             }
         }
@@ -765,7 +786,7 @@ export class QuadTreeMap {
         }
 
         if (isTextureMap) {
-            this.reconcileRenderedTileCut(tileLayers, camera, _v5Options);
+            this.reconcileRenderedTileCut(tileLayers, camera, _v5Options, reconcileVisibilityMemo);
         }
 
         // V5 Phase 0.1.b: per-pass timing + per-map activeTileHash writes.
@@ -877,6 +898,36 @@ export class QuadTreeMap {
         }
     }
 
+    updateMergeCameraStability(view, camera) {
+        if (!this._mergeCameraState) this._mergeCameraState = new Map();
+        const viewKey = view?.id || "default";
+        const e = camera.matrixWorld.elements;
+        // Compare full rotation submatrix + translation + lens, element-wise.
+        // A scalar sum is a degenerate hash: it uses only the diagonal of the
+        // rotation block (which for small rotations is ~1 + 2cosθ and barely
+        // moves) and lets position components cancel (a (+dx, -dy, 0) move
+        // preserves e12+e13+e14), so a smoothly-moving camera could spoof a
+        // "stable" state and let merges fire mid-pan, producing a one-frame
+        // coarse-tile flash. Element-wise compare avoids that aliasing.
+        const state = this._mergeCameraState.get(viewKey);
+        const isSame = state
+            && state.e0 === e[0] && state.e1 === e[1] && state.e2 === e[2]
+            && state.e4 === e[4] && state.e5 === e[5] && state.e6 === e[6]
+            && state.e8 === e[8] && state.e9 === e[9] && state.e10 === e[10]
+            && state.e12 === e[12] && state.e13 === e[13] && state.e14 === e[14]
+            && state.fov === camera.fov && state.zoom === camera.zoom;
+        const stableFrames = isSame ? state.stableFrames + 1 : 0;
+        this._mergeCameraState.set(viewKey, {
+            e0: e[0], e1: e[1], e2: e[2],
+            e4: e[4], e5: e[5], e6: e[6],
+            e8: e[8], e9: e[9], e10: e[10],
+            e12: e[12], e13: e[13], e14: e[14],
+            fov: camera.fov, zoom: camera.zoom,
+            stableFrames,
+        });
+        return stableFrames;
+    }
+
     /**
      * Deactivate parent tiles when their descendants cover the parent's area.
      * OPTIMIZATION: Only iterates over tiles that have children (tracked in parentTiles Set)
@@ -928,13 +979,18 @@ export class QuadTreeMap {
             && tile.mesh.parent);
     }
 
-    hasAnyRenderingDescendantForView(tile, tileLayers) {
+    hasAnyRenderingDescendantForView(tile, tileLayers, memo = null) {
+        if (memo?.has(tile)) return memo.get(tile);
         if (!tile.children) return false;
         for (const child of tile.children) {
             if (!child) continue;
             if (this.isRenderingForView(child, tileLayers)
-                || this.hasAnyRenderingDescendantForView(child, tileLayers)) return true;
+                || this.hasAnyRenderingDescendantForView(child, tileLayers, memo)) {
+                memo?.set(tile, true);
+                return true;
+            }
         }
+        memo?.set(tile, false);
         return false;
     }
 
@@ -948,46 +1004,153 @@ export class QuadTreeMap {
         return false;
     }
 
-    describeDescendantCutForView(tile, tileLayers, camera = null, options = null) {
+    reconcileTileVisible(tile, camera, options, visibilityMemo) {
+        if (!camera) return true;
+        // Reconcile owns the visible render cut, not the preload margin.
+        // calculateTileVisibility().visible includes the dilated subdivision
+        // frustum; a tile that is only in that margin must not force a coarse
+        // parent fallback over an already-ready strict-frustum cut.
+        if (!visibilityMemo) {
+            const visibility = this.calculateTileVisibility(tile, camera, options, null);
+            return visibility.visible && visibility.frustumIntersects !== false;
+        }
+        if (!visibilityMemo.has(tile)) {
+            const visibility = this.calculateTileVisibility(tile, camera, options, null);
+            visibilityMemo.set(tile, visibility.visible && visibility.frustumIntersects !== false);
+        }
+        return visibilityMemo.get(tile);
+    }
+
+    describeDescendantCutForView(
+        tile,
+        tileLayers,
+        camera = null,
+        options = null,
+        cutMemo = null,
+        renderingDescendantMemo = null,
+        visibilityMemo = null
+    ) {
+        if (cutMemo?.has(tile)) return cutMemo.get(tile);
+
         if (!tile.children) {
-            return {
+            const leafResult = {
+                anyRendering: false,
                 anyReady: false,
                 renderedCovered: false,
                 readyCovered: false,
             };
+            cutMemo?.set(tile, leafResult);
+            return leafResult;
         }
 
         let anyChildVisible = false;
+        let anyRendering = false;
         let anyReady = false;
         let renderedCovered = true;
         let readyCovered = true;
+        const childInfos = [];
 
         for (const child of tile.children) {
             if (!child) continue;
 
-            if (camera) {
-                const childVis = this.calculateTileVisibility(child, camera, options, null);
-                if (!childVis.visible) continue;
-            }
-
-            anyChildVisible = true;
-
             const childRendering = this.isRenderingForView(child, tileLayers);
             const childReady = this.isReadyForView(child, tileLayers);
+            let coverageVisible = true;
+            let forcedVisibleByRendering = false;
+
+            if (camera) {
+                coverageVisible = this.reconcileTileVisible(child, camera, options, visibilityMemo);
+                forcedVisibleByRendering = !coverageVisible
+                    && (childRendering || this.hasAnyRenderingDescendantForView(
+                        child,
+                        tileLayers,
+                        renderingDescendantMemo
+                    ));
+            }
+
+            childInfos.push({
+                child,
+                childRendering,
+                childReady,
+                coverageVisible,
+                forcedVisibleByRendering,
+            });
+        }
+
+        const anyCoverageVisible = childInfos.some(info => info.coverageVisible);
+        const anyForcedVisibleByRendering = childInfos.some(info => info.forcedVisibleByRendering);
+        const forceFullSiblingCheck = camera && !anyCoverageVisible && anyForcedVisibleByRendering;
+
+        for (const {
+            child,
+            childRendering,
+            childReady,
+            coverageVisible,
+            forcedVisibleByRendering,
+        } of childInfos) {
+            if (!coverageVisible && !forcedVisibleByRendering && !forceFullSiblingCheck) continue;
+            // Force-visited sibling that contributes nothing to the rendering
+            // cut: a tile in cache but neither coverageVisible (out of strict
+            // frustum), nor rendering, nor a forced bridge to rendering
+            // descendants. Counting its empty cut against renderedCovered /
+            // readyCovered breaks the cover for shallow ancestors during
+            // rapid camera motion.
+            if (forceFullSiblingCheck && !forcedVisibleByRendering && !coverageVisible
+                && !childRendering
+                && !this.hasAnyRenderingDescendantForView(
+                    child, tileLayers, renderingDescendantMemo)) {
+                continue;
+            }
+            anyChildVisible = true;
+
             let childCut = null;
 
             if ((!childRendering || !childReady) && child.children) {
-                childCut = this.describeDescendantCutForView(child, tileLayers, camera, options);
+                const childCamera = (forcedVisibleByRendering || forceFullSiblingCheck) ? null : camera;
+                childCut = this.describeDescendantCutForView(
+                    child,
+                    tileLayers,
+                    childCamera,
+                    options,
+                    childCamera ? cutMemo : null,
+                    renderingDescendantMemo,
+                    visibilityMemo
+                );
             }
 
+            if (childRendering || childCut?.anyRendering) {
+                anyRendering = true;
+            }
             if (childReady || childCut?.anyReady) {
                 anyReady = true;
             }
-            if (!childRendering && !childCut?.renderedCovered) {
-                renderedCovered = false;
-            }
-            if (!childReady && !childCut?.readyCovered) {
-                readyCovered = false;
+            // A "forced" child was visited only because something in its
+            // subtree is already rendering (or ready) — that rendering covers
+            // the camera-visible portion of the child's footprint by
+            // definition. Counting empty/inactive cache siblings deeper in
+            // that forced subtree as "uncovered" cascades a false partial-
+            // cover up the tree and triggers the mass-suppress block at the
+            // top of reconcile, dropping the entire deep cut for one frame.
+            // Trust the force signal: if the subtree has rendering activity,
+            // treat it as covered for this caller.
+            const wasForced = forcedVisibleByRendering
+                || (forceFullSiblingCheck && !coverageVisible);
+            if (!wasForced) {
+                if (!childRendering && !childCut?.renderedCovered) {
+                    renderedCovered = false;
+                }
+                if (!childReady && !childCut?.readyCovered) {
+                    readyCovered = false;
+                }
+            } else {
+                // Forced subtree: only break cover if there is truly no
+                // rendering/ready activity at all in this subtree.
+                if (!childRendering && !childCut?.anyRendering) {
+                    renderedCovered = false;
+                }
+                if (!childReady && !childCut?.anyReady) {
+                    readyCovered = false;
+                }
             }
         }
 
@@ -996,11 +1159,14 @@ export class QuadTreeMap {
             readyCovered = false;
         }
 
-        return {
+        const result = {
+            anyRendering,
             anyReady,
             renderedCovered,
             readyCovered,
         };
+        cutMemo?.set(tile, result);
+        return result;
     }
 
     setTileRenderSuppressed(tile, layerMask, suppressed) {
@@ -1029,33 +1195,82 @@ export class QuadTreeMap {
         }
     }
 
-    revealReadyCut(tile, tileLayers, camera, options) {
+    revealReadyCut(
+        tile,
+        tileLayers,
+        camera,
+        options,
+        renderingDescendantMemo = null,
+        visibilityMemo = null
+    ) {
         if (!tile.children) return;
-        const coverageOptions = options
-            ? { ...options, coverageMode: "coverageSphereOnly" }
-            : null;
+
+        const childInfos = [];
 
         for (const child of tile.children) {
             if (!child) continue;
+            const childReady = this.isReadyForView(child, tileLayers);
+            const childRendering = this.isRenderingForView(child, tileLayers);
+            let visible = true;
+            let forcedVisibleByRendering = false;
+
             if (camera) {
-                const childVis = this.calculateTileVisibility(child, camera, coverageOptions, null);
-                if (!childVis.visible) continue;
+                visible = this.reconcileTileVisible(child, camera, options, visibilityMemo);
+                forcedVisibleByRendering = !visible
+                    && (childRendering || this.hasAnyRenderingDescendantForView(
+                        child,
+                        tileLayers,
+                        renderingDescendantMemo
+                    ));
             }
 
-            if (this.isReadyForView(child, tileLayers)) {
+            childInfos.push({
+                child,
+                childReady,
+                visible,
+                forcedVisibleByRendering,
+            });
+        }
+
+        const anyVisible = childInfos.some(info => info.visible);
+        const anyForcedVisibleByRendering = childInfos.some(info => info.forcedVisibleByRendering);
+        const forceFullSiblingCheck = camera && !anyVisible && anyForcedVisibleByRendering;
+
+        for (const {
+            child,
+            childReady,
+            visible,
+            forcedVisibleByRendering,
+        } of childInfos) {
+            if (!visible && !forcedVisibleByRendering && !forceFullSiblingCheck) continue;
+            if (childReady) {
                 this.setTileRenderSuppressed(child, tileLayers, false);
+                this.triggerLazyLoadIfNeeded(child, tileLayers);
             } else {
-                this.revealReadyCut(child, tileLayers, camera, coverageOptions);
+                const childCamera = (forcedVisibleByRendering || forceFullSiblingCheck) ? null : camera;
+                this.revealReadyCut(
+                    child,
+                    tileLayers,
+                    childCamera,
+                    options,
+                    renderingDescendantMemo,
+                    visibilityMemo
+                );
             }
         }
     }
 
-    reconcileRenderedTileCut(tileLayers, camera = null, options = null) {
-        const coverageOptions = options
-            ? { ...options, coverageMode: "coverageSphereOnly" }
-            : null;
+    reconcileRenderedTileCut(tileLayers, camera = null, options = null, visibilityMemo = null) {
+        // Reconcile is a suppression-only pass. It may hide/reveal already
+        // active render branches, and it may retire a currently-rendering
+        // parent when descendants fully cover it. It must never activate a
+        // parent tile: all active-set ownership belongs to PASS 2 coverage,
+        // surgical reactivation, and subdivideTile().
         const ownedToken = (this._reconcilePassToken || 0) + 1;
         this._reconcilePassToken = ownedToken;
+        const cutMemo = new WeakMap();
+        const renderingDescendantMemo = new WeakMap();
+        visibilityMemo = visibilityMemo || new WeakMap();
 
         const parents = Array.from(this.parentTiles)
             .filter(tile => tile.children && !tile.isDeadBranch)
@@ -1065,12 +1280,18 @@ export class QuadTreeMap {
             if (tile._reconcileOwnedToken === ownedToken) continue;
 
             let tileRendering = this.isRenderingForView(tile, tileLayers);
-            const visible = camera
-                ? this.calculateTileVisibility(tile, camera, coverageOptions, null).visible
-                : true;
-            if (!visible) continue;
+            const visible = this.reconcileTileVisible(tile, camera, options, visibilityMemo);
+            if (!visible && !tileRendering) continue;
 
-            const descendantCut = this.describeDescendantCutForView(tile, tileLayers, camera, coverageOptions);
+            const descendantCut = this.describeDescendantCutForView(
+                tile,
+                tileLayers,
+                camera,
+                options,
+                cutMemo,
+                renderingDescendantMemo,
+                visibilityMemo
+            );
             if (!tileRendering && !descendantCut.anyReady) continue;
 
             if (tileRendering && descendantCut.renderedCovered) {
@@ -1081,7 +1302,14 @@ export class QuadTreeMap {
             }
 
             if (descendantCut.readyCovered) {
-                this.revealReadyCut(tile, tileLayers, camera, coverageOptions);
+                this.revealReadyCut(
+                    tile,
+                    tileLayers,
+                    camera,
+                    options,
+                    renderingDescendantMemo,
+                    visibilityMemo
+                );
                 if ((tile.tileLayers & tileLayers) !== 0) {
                     this.deactivateTile(tile, tileLayers, true);
                 }
@@ -1089,14 +1317,17 @@ export class QuadTreeMap {
             }
 
             if (!tileRendering && descendantCut.anyReady) {
-                if ((tile.tileLayers & tileLayers) === 0) {
-                    this.activateTile(tile.x, tile.y, tile.z, tileLayers);
+                // Partial fallback path: only unsuppress a parent that is
+                // already active in this view. Reactivating an inactive parent
+                // here can undo PASS 2's camera-aware deactivation and produces
+                // a one-frame coarse-tile flash.
+                if ((tile.tileLayers & tileLayers) !== 0) {
+                    this.setTileRenderSuppressed(tile, tileLayers, false);
+                    tileRendering = this.isRenderingForView(tile, tileLayers);
                 }
-                this.setTileRenderSuppressed(tile, tileLayers, false);
-                tileRendering = this.isRenderingForView(tile, tileLayers);
             }
 
-            if (tileRendering && descendantCut.anyReady) {
+            if (tileRendering && (descendantCut.anyReady || descendantCut.anyRendering)) {
                 for (const child of tile.children) {
                     if (child) this.setBranchRenderSuppressed(child, tileLayers, true, ownedToken);
                 }
@@ -1147,10 +1378,9 @@ export class QuadTreeMap {
                 continue;
             }
 
-            // Partial coverage is resolved later by reconcileRenderedTileCut:
-            // either descendants fully replace this parent, or this parent
-            // remains the coarse fallback and the partial descendant subtree
-            // is hidden for this view.
+            // Partial fallback is still supported, but only for parents that
+            // remain active after this pass. Reconcile no longer reactivates a
+            // parent that PASS 2 or subdivideTile has already deactivated.
         }
     }
 
@@ -1358,14 +1588,12 @@ export class QuadTreeMap {
             diag.outOfFrustum++;
         }
 
-        // Force load of the first 3 zoom levels for the texture map only,
-        // so the lazy-load fallback always has *some* parent texture to
-        // resample from while higher-zoom tiles fetch. Elevation root tiles
-        // are skipped — they're useless at any camera position where SSE
-        // wouldn't already refine them.
+        // Keep the first texture zoom levels eager only when they are already
+        // in the view predicate. Forcing `visible=true` here made every z2
+        // globe tile render in narrow look views, pinning visible terrain to
+        // coarse imagery even when z19/z20 descendants were ready.
         if (tile.z < 3 && this.constructor.name === 'QuadTreeMapTexture') {
             screenSpaceError = Math.max(screenSpaceError, Number.POSITIVE_INFINITY);
-            visible = true;
             if (diag) diag.forcedRoot++;
         }
 
@@ -1403,6 +1631,11 @@ export class QuadTreeMap {
             const materialPromise = tile.applyMaterial().then(() => {
                 tile.usingParentData = false; // Mark as using high-res data now
             }).catch(error => {
+                if (error.message === 'PlaceholderTile') {
+                    tile.needsHighResLoad = false;
+                    tile.isDeadBranch = true;
+                    return;
+                }
                 // Reset flag to retry - whether it's an abort or real error
                 tile.needsHighResLoad = true;
             });

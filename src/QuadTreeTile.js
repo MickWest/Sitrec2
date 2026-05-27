@@ -1992,6 +1992,14 @@ export class QuadTreeTile {
                     }
 
                     this.mesh.material = material
+                    // Clear synchronously when the high-res material is
+                    // installed. The .then() in triggerLazyLoadIfNeeded also
+                    // clears this, but that runs in a later microtask — a
+                    // surgical reactivation landing in the window between
+                    // mesh.material = material and the .then() would see a
+                    // stale usingParentData=true and stomp the freshly-
+                    // installed high-res material back to parent data.
+                    this.usingParentData = false;
                     this.updateSkirtMaterial(); // Update skirt to use the same material
                     if (!this.map.scene) {
                         console.warn("QuadTreeTile.applyMaterial: map.scene is not defined, not adding mesh to scene (changed levels?)")

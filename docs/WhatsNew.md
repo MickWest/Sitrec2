@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.62.4 (2026-05-27)
+
+### Bug Fixes
+- Fixed terrain briefly dropping to very low-detail imagery for a single frame during fast camera pans and rotations — the high-detail tile cut no longer collapses while the camera is moving, and merges back to coarser tiles are deferred until the camera holds still.
+- Fixed brief brown/khaki coarse-texture rectangles flashing over otherwise-sharp terrain when new tiles enter the view at high zoom.
+
+---
+
 ## Version 2.62.3 (2026-05-27)
 
 ### New Features
