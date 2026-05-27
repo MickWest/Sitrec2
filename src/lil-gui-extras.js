@@ -225,6 +225,10 @@ Controller.prototype.setLabelColor = function (color) {
         document.head.appendChild(style);
     }
 
+    // Record the color so CustomManagerMirror.mirrorController can replay it
+    // on the mirrored copy (the standalone Video Adjustments popup, etc.).
+    this._labelColor = color;
+
     return this; // Return the controller to allow method chaining
 };
 

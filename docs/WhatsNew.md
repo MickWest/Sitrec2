@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.62.1 (2026-05-27)
+
+### Improvements
+- **Render Source Video shortcut** (Video → Video Adjustments): a light-green *Render Source Video* button at the bottom of the Video Adjustments panel runs the same source-video render as the button in Video → Video Render & Export, so you can render a take without leaving the adjustments panel. The green label now also shows up correctly in the standalone right-click popup of the panel.
+
+### Bug Fixes
+- Fixed blurry terrain tiles, overlapping tiles, holes, and z-fighting that could appear after zooming in then back out, or after the camera jumped to a new point.
+
 ## Version 2.62.0 (2026-05-27)
 
 ### New Features

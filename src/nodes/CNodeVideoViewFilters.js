@@ -304,17 +304,17 @@ export function addFiltersToVideoNode(videoNode) {
         // & Export, just placed here for convenience after adjusting filters.
         // CustomManager.videoExportManager is wired up by CCustomManager.setupVideoExport
         // (CustomSupport.js); the optional-chain protects against click-before-setup.
-        const renderSourceBtn = guiVideoEffectsFolder.add({
+        // Use the project's setLabelColor extension (lil-gui-extras.js) — it
+        // injects a `<style>` block with `!important`, which is how the codebase
+        // overrides lil-gui's default text color in every other place (see
+        // CFileManager `setLabelColor("#FF8080")`, CNodeControllerPTZUI, etc.).
+        // Inline element styles lose to lil-gui's per-element `color` rule.
+        guiVideoEffectsFolder.add({
             exportSourceVideo: () => CustomManager?.videoExportManager?.exportSourceVideo(),
         }, "exportSourceVideo")
             .name(t("videoExport.renderSource.label"))
-            .tooltip(t("videoExport.renderSource.tooltip"));
-        // Light-green tint so the action button stands out from the slider rows.
-        // Dark text keeps the label legible against the light background.
-        if (renderSourceBtn.domElement) {
-            renderSourceBtn.domElement.style.backgroundColor = "#90EE90";
-            renderSourceBtn.domElement.style.color = "#000";
-        }
+            .tooltip(t("videoExport.renderSource.tooltip"))
+            .setLabelColor("#90EE90");
 
         const makeVideoActions = { makeVideo: () => videoNode.makeProcessedVideo() };
         guiVideoProcessingFolder.add(makeVideoActions, "makeVideo").name(t("videoView.makeVideo.label")).tooltip(t("videoView.makeVideo.tooltip"));

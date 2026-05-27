@@ -647,6 +647,12 @@ export const mirrorMethods = {
                     mirroredController.tooltip(controller._tooltip);
                 }
 
+                // Copy custom label color (set via Controller.setLabelColor)
+                // so the mirrored popup matches the source folder's styling.
+                if (controller._labelColor && mirroredController.setLabelColor) {
+                    mirroredController.setLabelColor(controller._labelColor);
+                }
+
                 // Copy elastic properties for numeric controllers
                 if (controller._elastic && mirroredController.elastic) {
                     mirroredController.elastic(controller._elastic.max, controller._elastic.maxMax, controller._elastic.allowNegative);
