@@ -105,6 +105,16 @@ export function extractMetabunkLinkedURLs(html, pageURL = "https://www.metabunk.
 export async function resolveMetabunkThreadVideoURL(threadURL, fetchImpl = fetch) {
     if (!isMetabunkThreadURL(threadURL)) return null;
 
+    const urlPrCode = extractWarGovPRCode(threadURL);
+    if (urlPrCode) {
+        try {
+            const dvidsId = await getWarGovUFODvidsIdForPrCode(urlPrCode, fetchImpl);
+            if (dvidsId) {
+                return resolveDvidsVideoURL(`https://www.dvidshub.net/video/${dvidsId}`, fetchImpl);
+            }
+        } catch (error) {}
+    }
+
     const response = await fetchImpl(threadURL, {mode: "cors", cache: "no-store"});
     if (!response.ok) {
         throw new Error(`Metabunk thread fetch failed: ${response.status}`);

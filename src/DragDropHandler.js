@@ -33,6 +33,7 @@ class CDragDropHandler {
         this.dropAreas = [];
         this.dropQueue = []; // Queue for dropped files that need parsing
         this.pendingDropFiles = []; // Files dropped before a sitch was loaded (e.g. on sitch browser)
+        this.pendingDropTexts = []; // Text/URLs dropped before a sitch was loaded (e.g. on sitch browser)
         this.keepDropZoneTextVisible = false;
         this._mediaImportListenerAdded = false;
     }
@@ -246,6 +247,15 @@ class CDragDropHandler {
                 this.uploadDroppedFile(file, file.name);
             }
         }
+
+        if (this.pendingDropTexts.length > 0) {
+            const pending = this.pendingDropTexts;
+            this.pendingDropTexts = [];
+            console.log("Processing " + pending.length + " deferred dropped text item(s)");
+            for (const text of pending) {
+                this.handleDroppedText(text);
+            }
+        }
     }
 
     isEditablePasteTarget(target) {
@@ -343,19 +353,39 @@ class CDragDropHandler {
         }
 // If a plain text snippet or URL was dragged and dropped
         else {
-            let url = dt.getData('text/plain');
-            if (url) {
-                console.log("LOADING DROPPED text:" + url);
-                // check if it's not a valid URL
-                if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                    this.uploadText(url);
-                } else {
-
-                    this.uploadURL(url, {persistDrop: true});
-                }
+            let text = this.getDroppedText(dt);
+            if (text) {
+                this.handleDroppedText(text);
             }
         }
 
+    }
+
+    getDroppedText(dataTransfer) {
+        if (!dataTransfer) {
+            return "";
+        }
+
+        const uriList = dataTransfer.getData('text/uri-list') || "";
+        const firstURI = uriList
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .find(line => line && !line.startsWith("#"));
+
+        return (firstURI || dataTransfer.getData('text/plain') || "").trim();
+    }
+
+    handleDroppedText(text) {
+        if (!text) {
+            return;
+        }
+
+        console.log("LOADING DROPPED text:" + text);
+        if (!text.startsWith("http://") && !text.startsWith("https://")) {
+            this.uploadText(text);
+        } else {
+            this.uploadURL(text, {persistDrop: true});
+        }
     }
 
 

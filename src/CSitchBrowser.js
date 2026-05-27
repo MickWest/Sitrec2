@@ -1572,6 +1572,17 @@ export class CSitchBrowser {
             this.applyFilterAndSort();
             onUpdate();
         });
+        si.addEventListener("paste", (e) => {
+            const text = e.clipboardData?.getData("text/plain")?.trim();
+            if (!text?.startsWith("http://") && !text?.startsWith("https://")) {
+                return;
+            }
+
+            e.preventDefault();
+            e.stopPropagation();
+            DragDropHandler.pendingDropTexts.push(text);
+            this._loadCustomSitchForQueuedDrops(1);
+        });
         return si;
     }
 
@@ -1956,6 +1967,13 @@ export class CSitchBrowser {
 
     // ==================== FILE DRAG & DROP ====================
 
+    _loadCustomSitchForQueuedDrops(queuedCount) {
+        console.log("Sitch browser: queued " + queuedCount + " dropped item(s), loading custom sitch");
+        this.close();
+        const customSitchData = SitchMan.findFirstData(s => s.data.name === "custom");
+        setNewSitchObject(customSitchData);
+    }
+
     _setupFileDragDrop(overlay) {
         // Visual feedback element for file drags
         const dropHint = document.createElement("div");
@@ -1966,21 +1984,27 @@ export class CSitchBrowser {
             zIndex: "1", pointerEvents: "none", fontSize: "32px", color: "#3fb950",
             fontWeight: "700",
         });
-        dropHint.textContent = "Drop files to create a new sitch";
+        dropHint.textContent = "Drop files or URLs to create a new sitch";
         overlay.appendChild(dropHint);
 
         let dragCounter = 0; // track nested dragenter/dragleave pairs
+        const hasExternalDropData = (dataTransfer) => {
+            if (!dataTransfer) return false;
+            return dataTransfer.types.includes("Files")
+                || dataTransfer.types.includes("text/uri-list")
+                || dataTransfer.types.includes("text/plain");
+        };
 
         overlay.addEventListener("dragenter", (e) => {
-            // Only show hint for external file drags, not internal sitch-card drags
-            if (!e.dataTransfer || !e.dataTransfer.types.includes("Files")) return;
+            // Only show hint for external drops, not internal sitch-card drags.
+            if (!hasExternalDropData(e.dataTransfer)) return;
             e.preventDefault();
             dragCounter++;
             dropHint.style.display = "flex";
         });
 
         overlay.addEventListener("dragover", (e) => {
-            if (!e.dataTransfer || !e.dataTransfer.types.includes("Files")) return;
+            if (!hasExternalDropData(e.dataTransfer)) return;
             e.preventDefault();
             e.dataTransfer.dropEffect = "copy";
         });
@@ -2000,18 +2024,24 @@ export class CSitchBrowser {
             dropHint.style.display = "none";
 
             const files = e.dataTransfer?.files;
-            if (!files || files.length === 0) return;
+            let queuedCount = 0;
 
-            // Stash files for DragDropHandler to process after SitCustom loads
-            for (const file of files) {
-                DragDropHandler.pendingDropFiles.push(file);
+            if (files && files.length > 0) {
+                // Stash files for DragDropHandler to process after SitCustom loads.
+                for (const file of files) {
+                    DragDropHandler.pendingDropFiles.push(file);
+                    queuedCount++;
+                }
+            } else {
+                const text = DragDropHandler.getDroppedText(e.dataTransfer);
+                if (text) {
+                    DragDropHandler.pendingDropTexts.push(text);
+                    queuedCount++;
+                }
             }
-            console.log("Sitch browser: queued " + files.length + " file(s), loading custom sitch");
 
-            // Close the browser and load SitCustom
-            this.close();
-            const customSitchData = SitchMan.findFirstData(s => s.data.name === "custom");
-            setNewSitchObject(customSitchData);
+            if (queuedCount === 0) return;
+            this._loadCustomSitchForQueuedDrops(queuedCount);
         });
     }
 

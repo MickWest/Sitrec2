@@ -68,6 +68,29 @@ describe("MetabunkThreadUtils", () => {
         );
     });
 
+    test("resolves PR code from the thread URL before fetching Metabunk HTML", async () => {
+        const pr072URL = "https://www.metabunk.org/threads/dow-uap-pr072-administrative-revision-iir-1777-j0032-22-kazakhstan.14909/";
+        const fetchImpl = jest.fn(async (url) => {
+            if (url === pr072URL) throw new Error("thread HTML should not be fetched");
+            if (url === "data/WARGOV/uap-data.csv") {
+                return response(`Redaction,Release Date,Title,Type,Video Pairing,PDF Pairing,Description Blurb,DVIDS Video ID,Video Title
+,5/22/26,"DOW-UAP-PR072, ""ADMINISTRATIVE REVISION: IIR 1777 J0032 22 Kazakhstan""",VID,,,description,1007788,`);
+            }
+            if (url === "data/WARGOV/uap-release001.csv") return response("");
+            if (url === "https://www.dvidshub.net/video/1007788.m3u8") {
+                return response(`#EXTM3U
+#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=123
+https://d34w7g4gy10iej.cloudfront.net/video/2605/DOD_111719922/DOD_111719922-1280x720-hls_1.m3u8`);
+            }
+            throw new Error(`unexpected fetch: ${url}`);
+        });
+
+        await expect(resolveMetabunkThreadVideoURL(pr072URL, fetchImpl)).resolves.toBe(
+            "https://d34w7g4gy10iej.cloudfront.net/video/2605/DOD_111719922/DOD_111719922.mp4"
+        );
+        expect(fetchImpl).not.toHaveBeenCalledWith(pr072URL, expect.anything());
+    });
+
     test("resolves DVIDS links in posts when the title has no mapped PR", async () => {
         const fetchImpl = jest.fn(async (url) => {
             if (url === threadURL) {
