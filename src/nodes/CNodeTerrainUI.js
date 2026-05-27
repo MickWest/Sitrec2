@@ -1509,6 +1509,7 @@ export class CNodeTerrainUI extends CNode {
             let cameraFingerprint = 0;
             for (const view of views) {
                 if (view && view.visible && view.camera) {
+                    view.camera.updateMatrixWorld(true);
                     const e = view.camera.matrixWorld.elements;
                     // Hash a few matrix elements that change on any move/rotate/zoom
                     cameraFingerprint += e[0] + e[5] + e[10] + e[12] + e[13] + e[14];

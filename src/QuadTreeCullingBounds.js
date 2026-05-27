@@ -16,11 +16,7 @@
 // `north = up × east` (NOT `east × up`, which gives -north).
 
 import {Box3, Frustum, Matrix4, Sphere, Vector3} from "three";
-// Convenience path; resolves through the package's `./three` export. Webpack
-// tree-shakes unused exports (`"sideEffects": false` in the dep's
-// package.json); Jest 30 resolves the `./three` export field via a Jest
-// moduleNameMapper added in this commit.
-import {OBB} from "3d-tiles-renderer/three";
+import {OBB} from "3d-tiles-renderer/src/three/renderer/math/OBB.js";
 import {LLAToECEFInto} from "./LLA-ECEF-ENU";
 
 // ----- constants (V5 §3) -----

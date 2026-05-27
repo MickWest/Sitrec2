@@ -336,6 +336,51 @@ class QuadTreeMapTexture extends QuadTreeMap {
         return true;
     }
 
+    areaReadyByDescendants(tile, tileLayerMask) {
+        if (!tile.children) return false;
+
+        for (let i = 0; i < 4; i++) {
+            const child = tile.children[i];
+            if (!child) continue;
+
+            if (!this.isReadyForView(child, tileLayerMask)
+                && !this.areaReadyByDescendants(child, tileLayerMask)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    visibleAreaReadyByDescendants(tile, tileLayerMask, camera, options = null) {
+        if (!tile.children) return false;
+
+        const _v5CoverageOptions = options ?? {
+            viewId: "coverage",
+            tileLayers: tileLayerMask,
+            mode: "legacy",
+            coverageMode: "coverageSphereOnly",
+        };
+
+        let anyChildVisible = false;
+
+        for (let i = 0; i < 4; i++) {
+            const child = tile.children[i];
+            if (!child) continue;
+
+            const childVis = this.calculateTileVisibility(child, camera, _v5CoverageOptions, null);
+            if (!childVis.visible) continue;
+            anyChildVisible = true;
+
+            if (!this.isReadyForView(child, tileLayerMask)
+                && !this.visibleAreaReadyByDescendants(child, tileLayerMask, camera, _v5CoverageOptions)) {
+                return false;
+            }
+        }
+
+        if (!anyChildVisible) return false;
+        return true;
+    }
+
     // Covered if EITHER
     // 1) all 4 children are loaded and visible
     // OR
@@ -392,9 +437,11 @@ class QuadTreeMapTexture extends QuadTreeMap {
         // If no specific layer mask provided, clear all layers (backward compatibility)
         if (layerMask === 0) {
             tile.tileLayers = 0;
+            tile.renderSuppressedLayers = 0;
         } else {
             // Clear only the specified layer bits using bitwise AND with NOT mask
             tile.tileLayers = tile.tileLayers & (~layerMask);
+            tile.renderSuppressedLayers = (tile.renderSuppressedLayers || 0) & ~layerMask;
         }
 
         // Debug validation: check if the area is still covered by descendants or ancestors
@@ -462,7 +509,11 @@ class QuadTreeMapTexture extends QuadTreeMap {
 
             // Combine the new layer mask with existing layers (don't overwrite)
             if (layerMask > 0) {
+                const wasActiveInLayer = (tile.tileLayers & layerMask) !== 0;
                 tile.tileLayers = (tile.tileLayers || 0) | layerMask;
+                if (!wasActiveInLayer) {
+                    tile.renderSuppressedLayers = (tile.renderSuppressedLayers || 0) & ~layerMask;
+                }
                 
                 // If tile was deactivated (tileLayers was 0), re-add to scene
                 if (!tile.added) {
@@ -471,6 +522,7 @@ class QuadTreeMapTexture extends QuadTreeMap {
             } else {
                 // layerMask=0 means load tile data but don't make it visible (e.g., for ancestor tiles)
                 tile.tileLayers = 0;
+                tile.renderSuppressedLayers = 0;
             }
             
             // Clear inactive timestamp since tile is now active
@@ -514,10 +566,12 @@ class QuadTreeMapTexture extends QuadTreeMap {
         if (layerMask > 0) {
             // OR the new layer mask with existing layers to support multiple views
             tile.tileLayers = (tile.tileLayers || 0) | layerMask;
+            tile.renderSuppressedLayers = (tile.renderSuppressedLayers || 0) & ~layerMask;
      //       console.log(`activateTile: ${key} - set tileLayers to ${tile.tileLayers.toString(2)} (${tile.tileLayers}) via layerMask`);
         } else {
             // layerMask=0 means load tile data but don't make it visible (e.g., for ancestor tiles)
             tile.tileLayers = 0;
+            tile.renderSuppressedLayers = 0;
      //       console.log(`activateTile: ${key} - set tileLayers to ${tile.tileLayers.toString(2)} (${tile.tileLayers}) via layerMask=0`);
         }
 

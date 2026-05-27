@@ -382,6 +382,13 @@ export class CNodeCamera extends CNode3D {
         this.camera.up.copy(up);
         // and look at the target point
         this.camera.lookAt(point);
+        this.camera.updateMatrixWorld(true);
+
+        if (NodeMan.exists("terrainUI")) {
+            NodeMan.get("terrainUI").requestSubdivisionPass();
+        }
+
+        setRenderOne(true);
     }
 
 

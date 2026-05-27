@@ -91,6 +91,7 @@
     ],
     "moduleNameMapper": {
       ".+\\.mjs$": "<rootDir>/tests/__mocks__/three-addons-stub.js",
+      "^3d-tiles-renderer/src/(.*)$": "<rootDir>/node_modules/3d-tiles-renderer/src/$1",
       "^3d-tiles-renderer/three$": "<rootDir>/node_modules/3d-tiles-renderer/src/three/renderer/math/OBB.js"
     }
   },
