@@ -2,13 +2,13 @@ import {SITREC_SERVER} from "./configUtils";
 
 const DVIDS_VIDEO_PAGE_RE = /^https?:\/\/(?:www\.)?dvidshub\.net\/video\/(?:embed\/)?\d+(?:[/?#].*)?$/i;
 
+// Single-pass replacement. Sequential .replace() calls would double-unescape:
+// "&amp;lt;" -> "&lt;" -> "<". A single regex sweep visits each character once,
+// so the substituted "&" from "&amp;" is never reconsidered as the start of
+// another entity. CodeQL: js/double-escaping.
+const HTML_ENTITY_MAP = {amp: "&", quot: "\"", "#39": "'", lt: "<", gt: ">"};
 function decodeHTMLEntities(value) {
-    return value
-        .replace(/&amp;/g, "&")
-        .replace(/&quot;/g, "\"")
-        .replace(/&#39;/g, "'")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">");
+    return String(value || "").replace(/&(amp|quot|#39|lt|gt);/g, (_, name) => HTML_ENTITY_MAP[name]);
 }
 
 function absolutizeURL(candidate, baseURL) {

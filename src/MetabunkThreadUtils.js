@@ -3,13 +3,13 @@ import {isWarGovUFOPageURL, getWarGovUFODvidsIdForPrCode, extractWarGovPRCode, r
 
 const METABUNK_THREAD_RE = /^https?:\/\/(?:www\.)?metabunk\.org\/threads\/[^?#]+(?:[?#].*)?$/i;
 
+// Single-pass replacement. Sequential .replace() calls would double-unescape:
+// "&amp;lt;" -> "&lt;" -> "<". A single regex sweep visits each character once,
+// so the substituted "&" from "&amp;" is never reconsidered as the start of
+// another entity. CodeQL: js/double-escaping.
+const HTML_ENTITY_MAP = {amp: "&", quot: "\"", "#39": "'", lt: "<", gt: ">"};
 function decodeHTMLEntities(value) {
-    return String(value || "")
-        .replace(/&amp;/g, "&")
-        .replace(/&quot;/g, "\"")
-        .replace(/&#39;/g, "'")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">");
+    return String(value || "").replace(/&(amp|quot|#39|lt|gt);/g, (_, name) => HTML_ENTITY_MAP[name]);
 }
 
 function absolutizeURL(candidate, baseURL) {
@@ -23,7 +23,12 @@ function absolutizeURL(candidate, baseURL) {
 function isIgnoredMetabunkMP4URL(url) {
     try {
         const parsed = new URL(url);
-        return parsed.hostname.endsWith("metabunk.org") && parsed.pathname.startsWith("/styles/");
+        // Require exact host OR a true subdomain — bare endsWith would also
+        // match attacker-controlled hostnames like "evilmetabunk.org".
+        // CodeQL: js/incomplete-url-substring-sanitization.
+        const onMetabunk = parsed.hostname === "metabunk.org"
+            || parsed.hostname.endsWith(".metabunk.org");
+        return onMetabunk && parsed.pathname.startsWith("/styles/");
     } catch (e) {
         return false;
     }
