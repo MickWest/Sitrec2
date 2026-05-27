@@ -54,6 +54,11 @@ export const Globals = {
     hasByokKeys: false, // true when the user has at least one BYOK LLM API key stored in IndexedDB
     useVideoPatching: true, // wrap dropped-frame video with CVideoPatchedData (see docs/dev/misb-timing.md)
 
+    // Orbit preview mode (ImageSetExporter): when active, par.frame is an index
+    // into the precomputed orbit shot list and this hook positions the camera
+    // and advances time per shot. Called from updateFrame after slider sync.
+    orbitPreviewApply: null,
+
     // V5 OBB tile-culling flags (Phase 0.1.a). Pure data, no behavior change
     // yet — calculateTileVisibility hasn't been refactored to consult these.
     // Defaults to "legacy" until measured-bounds pipeline (Phase 1+) and

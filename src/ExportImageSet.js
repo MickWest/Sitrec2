@@ -82,11 +82,12 @@ function buildTrackOptions(currentChoice) {
     return opts;
 }
 
-// Encode the source canvas as a PNG blob, downscaling to maxWidth if requested
-// and the source is larger. Aspect ratio is preserved.
-function canvasToPngBlob(canvas, maxWidth) {
+// Encode the source canvas as an image blob, downscaling to maxWidth if
+// requested and the source is larger. Aspect ratio is preserved. mimeType is
+// "image/png" or "image/jpeg"; quality only applies to JPEG.
+function canvasToImageBlob(canvas, maxWidth, mimeType = "image/png", quality = 0.9) {
     if (!maxWidth || canvas.width <= maxWidth) {
-        return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+        return new Promise((resolve) => canvas.toBlob(resolve, mimeType, quality));
     }
     const scale = maxWidth / canvas.width;
     const w = Math.max(1, Math.round(canvas.width * scale));
@@ -98,7 +99,7 @@ function canvasToPngBlob(canvas, maxWidth) {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(canvas, 0, 0, w, h);
-    return new Promise((resolve) => out.toBlob(resolve, "image/png"));
+    return new Promise((resolve) => out.toBlob(resolve, mimeType, quality));
 }
 
 export class ImageSetExporter {
@@ -110,6 +111,13 @@ export class ImageSetExporter {
         this.timeStepMinutes = 120;
         this.numTimeSteps = 1;
         this.useCurrentDistance = true;
+        this.useCurrentFOV = true;
+        this.verticalFOV = 30;
+        this.usePNGs = false;
+        this.orbitPreview = false;
+
+        // Preview state — populated by _enterPreview, cleared by _exitPreview.
+        this._previewState = null;
     }
 
     setupMenu(parentFolder) {
@@ -169,12 +177,50 @@ export class ImageSetExporter {
             this.orbitDistanceNode.guiEntry.hide();
         }
 
+        // Vertical FOV: checkbox to use the look camera's current FOV, or
+        // a manual vertical FOV slider in degrees. Mirrors the distance pattern.
+        this.useCurrentFOVController = folder.add(this, "useCurrentFOV")
+            .name("Use Current Camera FOV")
+            .tooltip("If on, render at the look camera's current vertical FOV. If off, use the Vertical FOV slider below.")
+            .onChange((on) => {
+                if (this.verticalFOVController) {
+                    if (on) this.verticalFOVController.hide();
+                    else this.verticalFOVController.show();
+                }
+            });
+
+        this.verticalFOVController = folder.add(this, "verticalFOV", 0.1, 120, 0.1)
+            .name("Vertical FOV (deg)")
+            .tooltip("Vertical field of view in degrees. Only used when 'Use Current Camera FOV' is off.");
+        // Initially hidden because useCurrentFOV defaults to true.
+        this.verticalFOVController.hide();
+
         folder.add(this, "timeStepMinutes", 0, 1440, 1)
             .name("Time Step (minutes)")
             .tooltip("Minutes to advance the sitch start time between successive sweeps. Ignored when Number of Time Steps is 1.");
         folder.add(this, "numTimeSteps", 1, 240, 1)
             .name("Number of Time Steps")
             .tooltip("How many time-stepped sweeps to render. Step 0 uses Sit.startTime; step N adds N * Time Step.");
+        folder.add(this, "usePNGs")
+            .name("Use PNGs")
+            .tooltip("Off (default): save each shot as JPEG. Much faster to encode (5-20x), smaller files, but lossy compression (subtle blocking around high-contrast edges, slight color shift). Recommended for previews, large sweeps, and shots dominated by terrain/sky. On: save lossless PNG. Pixel-perfect, larger files, slower per shot — use when you need to compare against a reference image or scrub for sub-pixel artifacts.");
+
+        this.orbitPreviewController = folder.add(this, "orbitPreview")
+            .name("Orbit Preview")
+            .tooltip("When on, repurpose the frame slider as an index into the orbit shot list. Stepping moves the camera and (between sweeps) advances the sitch time. Turning it off restores the prior camera, time and frame.")
+            .onChange((on) => {
+                if (on) {
+                    const ok = this._enterPreview();
+                    if (!ok) {
+                        // Validation failed — bounce the checkbox back to off.
+                        this.orbitPreview = false;
+                        this.orbitPreviewController.updateDisplay();
+                    }
+                } else {
+                    this._exitPreview();
+                }
+            });
+
         folder.add({
             run: () => this.exportImageSet(),
         }, "run").name("Export Image Set")
@@ -223,11 +269,386 @@ export class ImageSetExporter {
         return folder;
     }
 
+    // Compute the (az, el) sweep used by both export and preview, plus the
+    // full (t, az, el) shot list across time steps. Returns plain numbers
+    // (clamped/rounded) so callers don't repeat the validation.
+    _buildShotList() {
+        const azStep = Math.max(1, Math.round(this.azStep));
+        const elStep = Math.max(1, Math.round(this.elStep));
+        const elStart = Math.max(0, Math.min(80, Math.round(this.elStart)));
+        const timeStepMinutes = Math.max(0, Number(this.timeStepMinutes) || 0);
+        const numTimeSteps = Math.max(1, Math.round(Number(this.numTimeSteps) || 1));
+
+        const elValues = [];
+        for (let el = elStart; el <= 90 + 1e-6; el += elStep) {
+            elValues.push(Math.min(90, el));
+        }
+        if (elValues.length === 0 || elValues[elValues.length - 1] < 90) elValues.push(90);
+
+        const sweepShots = [];
+        for (const el of elValues) {
+            if (el >= 90 - 1e-6) {
+                sweepShots.push({az: 0, el});
+            } else {
+                for (let az = 0; az < 360; az += azStep) {
+                    sweepShots.push({az, el});
+                }
+            }
+        }
+
+        const shots = [];
+        for (let t = 0; t < numTimeSteps; t++) {
+            for (const s of sweepShots) shots.push({t, az: s.az, el: s.el});
+        }
+
+        return {shots, sweepShots, numTimeSteps, timeStepMinutes};
+    }
+
+    // Enter orbit preview mode. Returns false if validation failed (caller
+    // should bounce the checkbox back to off).
+    _enterPreview() {
+        if (this._previewState) return true; // already in preview
+
+        const view = ViewMan.get("lookView", false);
+        if (!view || !view.camera || !view.canvas) {
+            alert("Look view is not available; cannot enter orbit preview.");
+            return false;
+        }
+
+        const trackKey = this.trackToOrbit;
+        const initialTarget = resolveTargetPosition(trackKey);
+        if (!initialTarget) {
+            if (trackKey && trackKey !== "fixedTarget") {
+                alert("Track to Orbit '" + trackKey + "' was not found or has no position. "
+                    + "Pick another track, or import it before previewing.");
+            } else {
+                alert("No target found. Orbit preview needs a 'fixedTarget', "
+                    + "'targetObject', 'targetTrack', or 'targetSphere'.");
+            }
+            return false;
+        }
+
+        const camera = view.camera;
+        let initialDistance;
+        if (this.useCurrentDistance) {
+            initialDistance = camera.position.distanceTo(initialTarget);
+        } else if (this.orbitDistanceNode) {
+            initialDistance = this.orbitDistanceNode.getValueFrame(0);
+        } else {
+            initialDistance = camera.position.distanceTo(initialTarget);
+        }
+        if (!isFinite(initialDistance) || initialDistance < 1e-6) {
+            alert(this.useCurrentDistance
+                ? "Initial camera distance to target is zero or invalid; cannot orbit at that radius."
+                : "Orbit Distance is zero or invalid; raise it above zero.");
+            return false;
+        }
+
+        const {shots} = this._buildShotList();
+        if (shots.length === 0) {
+            alert("Orbit shot list is empty — check AZ/EL step settings.");
+            return false;
+        }
+
+        // Snapshot everything we're about to clobber.
+        const state = {
+            view,
+            camera,
+            trackKey,
+            initialDistance,
+            // Camera pose / projection.
+            savedPos: camera.position.clone(),
+            savedQuat: camera.quaternion.clone(),
+            savedUp: camera.up.clone(),
+            savedFov: camera.fov,
+            // View render hooks + controls.
+            savedPreRender: view.preRenderFunction,
+            savedPostRender: view.postRenderFunction,
+            savedFocus: view.focusTrackName,
+            savedTargetVec: view.controls?.target?.clone(),
+            savedControlsEnabled: view.controls ? view.controls.enabled : undefined,
+            // Frame state.
+            savedFrames: Sit.frames,
+            savedAFrame: Sit.aFrame,
+            savedBFrame: Sit.bFrame,
+            savedFrame: par._frame,
+            // Time state.
+            savedSitStartTime: Sit.startTime,
+            baseStartDate: (GlobalDateTimeNode && GlobalDateTimeNode.dateStart)
+                ? new Date(GlobalDateTimeNode.dateStart)
+                : new Date(Sit.startTime),
+            // Look-camera controller toggles we'll re-enable on exit.
+            disabledControllers: [],
+            // Slider styling we restore on exit.
+            sliderDiv: null,
+            savedSliderBg: null,
+            sliderInput: null,
+            savedAccentColor: null,
+            // Last applied time step (so we only call recalculateCascade when t crosses).
+            lastT: -1,
+        };
+
+        // Disable look-camera controllers, same as the export does, so nothing
+        // re-applies a track-driven pose between our manual updates.
+        const lookCameraNode = NodeMan.get("lookCamera", false);
+        if (lookCameraNode && lookCameraNode.inputs) {
+            for (const inputID in lookCameraNode.inputs) {
+                const inp = lookCameraNode.inputs[inputID];
+                if (inp && inp.isController && inp.enabled) {
+                    state.disabledControllers.push(inp);
+                    inp.enabled = false;
+                }
+            }
+        }
+
+        // preRenderFunction fires inside renderCanvas just before the camera
+        // matrices are sampled — re-apply our orbit pose here so anything that
+        // moved the camera during the node-update cascade (CNodeCamera.update's
+        // altAdjust / applyGroundTrackSwitch, etc.) gets overridden right before
+        // the GL pipeline reads camera.matrixWorld. Without this, moving the
+        // fixedTarget would visibly flicker between our pose and whatever the
+        // node update left behind.
+        const noop = function () {};
+        view.preRenderFunction = () => {
+            const previewState = this._previewState;
+            if (!previewState) return;
+            const shots = previewState.lastShots || this._buildShotList().shots;
+            const shotIdx = Math.max(0, Math.min(shots.length - 1, Math.round(par.frame)));
+            this._applyPreviewCameraPose(shots[shotIdx]);
+        };
+        view.postRenderFunction = noop;
+        view.focusTrackName = "default";
+        if (view.controls) view.controls.enabled = false;
+
+        // Apply FOV override if requested.
+        if (!this.useCurrentFOV) {
+            const fovDeg = Number(this.verticalFOV);
+            if (isFinite(fovDeg) && fovDeg > 0) {
+                camera.fov = Math.max(0.01, Math.min(179, fovDeg));
+                camera.updateProjectionMatrix();
+            }
+        }
+
+        // Repurpose the frame slider as an orbit-shot index.
+        Sit.frames = shots.length;
+        Sit.aFrame = 0;
+        Sit.bFrame = shots.length - 1;
+        par.frame = 0;
+
+        // Tint the frame slider green to signal preview mode.
+        const slider = NodeMan.get("FrameSlider", false);
+        if (slider) {
+            if (slider.sliderDiv) {
+                state.sliderDiv = slider.sliderDiv;
+                state.savedSliderBg = slider.sliderDiv.style.backgroundColor;
+                slider.sliderDiv.style.backgroundColor = "#1a5d2a"; // dark green
+            }
+            if (slider.sliderInput) {
+                state.sliderInput = slider.sliderInput;
+                state.savedAccentColor = slider.sliderInput.style.accentColor;
+                slider.sliderInput.style.accentColor = "#2ecc71"; // bright green track/thumb
+            }
+        }
+
+        this._previewState = state;
+        Globals.orbitPreviewApply = () => this._applyPreviewFrame();
+
+        // Apply shot 0 immediately so the view jumps to the orbit start.
+        this._applyPreviewFrame();
+        setRenderOne(true);
+
+        return true;
+    }
+
+    // Called every tick by updateFrame.js (via Globals.orbitPreviewApply).
+    // par.frame is the orbit shot index; we position the camera and (when t
+    // changes) advance the sitch time.
+    _applyPreviewFrame() {
+        const state = this._previewState;
+        if (!state) return;
+
+        // Live-rebuild so changes to AZ/EL/time controls take effect without
+        // toggling preview off and on. Cache the result so preRenderFunction
+        // can reuse it without rebuilding per view-render.
+        const {shots, numTimeSteps, timeStepMinutes} = this._buildShotList();
+        if (shots.length === 0) return;
+        state.lastShots = shots;
+
+        // Keep Sit.frames in sync if the user changed AZ/EL step counts.
+        if (Sit.frames !== shots.length) {
+            Sit.frames = shots.length;
+            Sit.aFrame = 0;
+            Sit.bFrame = shots.length - 1;
+        }
+
+        // Clamp the slider's current frame to the shot range.
+        let shotIdx = Math.max(0, Math.min(shots.length - 1, Math.round(par.frame)));
+        if (par.frame !== shotIdx) par.frame = shotIdx;
+
+        const shot = shots[shotIdx];
+
+        // Time step boundary: shift the sitch start date so dateNow lands on
+        // the correct point in the time-step schedule. We pick a startDate
+        // such that for the first shot of this time step, dateNow == base + t*step;
+        // within the time step, dateNow naturally advances by 1/fps per shot.
+        if (shot.t !== state.lastT) {
+            state.lastT = shot.t;
+            if (GlobalDateTimeNode) {
+                const N = shots.length / numTimeSteps; // shots per sweep
+                const stepSec = timeStepMinutes * 60;
+                const fps = Sit.fps || 30;
+                // First shot index of this time step = shot.t * N.
+                // We want dateNow at that index to be base + t*stepSec.
+                // dateNow = startDate + (firstIdx)/fps  ⇒
+                // startDate = base + t*stepSec - (t*N)/fps.
+                const newStart = new Date(
+                    state.baseStartDate.getTime()
+                    + shot.t * stepSec * 1000
+                    - (shot.t * N / fps) * 1000
+                );
+                GlobalDateTimeNode.setStartDateTime(newStart, true);
+                GlobalDateTimeNode.update(par.frame);
+                GlobalDateTimeNode.recalculateCascade();
+            }
+        }
+
+        // Apply camera pose for the current shot. Done in a separate method so
+        // we can also call it from preRenderFunction — node updates between
+        // updateFrame and the actual render (CNodeCamera.update applies
+        // altAdjust and applyGroundTrackSwitch directly, ignoring our disabled
+        // controllers) would otherwise clobber the pose we set here.
+        this._applyPreviewCameraPose(shot);
+    }
+
+    _applyPreviewCameraPose(shot) {
+        const state = this._previewState;
+        if (!state || !shot) return;
+
+        // Re-resolve target every call so the camera tracks a moving fixed
+        // target / drag-edited target without needing a preview re-toggle.
+        const target = resolveTargetPosition(state.trackKey);
+        if (!target) return;
+
+        const east = getLocalEastVector(target);
+        const north = getLocalNorthVector(target);
+        const up = getLocalUpVector(target);
+
+        const azR = radians(shot.az);
+        const elR = radians(shot.el);
+        const cosE = Math.cos(elR);
+        const sinE = Math.sin(elR);
+        const sinA = Math.sin(azR);
+        const cosA = Math.cos(azR);
+
+        const dir = new Vector3()
+            .addScaledVector(north, cosE * cosA)
+            .addScaledVector(east, cosE * sinA)
+            .addScaledVector(up, sinE);
+
+        // Resolve distance live each call. "Use current camera distance" keeps
+        // the value captured at enter time (the camera-to-target distance just
+        // before preview started — since the camera has been moving since
+        // then, "current" only makes sense as an enter-time snapshot). The
+        // manual-distance branch reads the slider every call so dragging
+        // Orbit Distance updates the preview just like Vertical FOV does.
+        let distance = state.initialDistance;
+        if (!this.useCurrentDistance && this.orbitDistanceNode) {
+            const sliderMeters = this.orbitDistanceNode.getValueFrame(0);
+            if (isFinite(sliderMeters) && sliderMeters > 1e-6) {
+                distance = sliderMeters;
+            }
+        }
+
+        const camera = state.camera;
+        camera.position.copy(target).addScaledVector(dir, distance);
+        camera.up.copy(up);
+        camera.lookAt(target);
+        camera.updateMatrix();
+        camera.updateMatrixWorld(true);
+
+        // Keep manual FOV pinned each call — any node could have nudged
+        // camera.fov via match-video-aspect, fovOverride, etc.
+        if (!this.useCurrentFOV) {
+            const fovDeg = Number(this.verticalFOV);
+            if (isFinite(fovDeg) && fovDeg > 0) {
+                const clamped = Math.max(0.01, Math.min(179, fovDeg));
+                if (camera.fov !== clamped) {
+                    camera.fov = clamped;
+                    camera.updateProjectionMatrix();
+                }
+            }
+        }
+    }
+
+    // Exit orbit preview mode and restore everything captured at enter time.
+    _exitPreview() {
+        const state = this._previewState;
+        if (!state) return;
+        this._previewState = null;
+        Globals.orbitPreviewApply = null;
+
+        // Restore frame state first so any downstream cascade reads sane values.
+        Sit.frames = state.savedFrames;
+        Sit.aFrame = state.savedAFrame;
+        Sit.bFrame = state.savedBFrame;
+        par.frame = state.savedFrame;
+
+        // Restore time. Only call setStartDateTime if we actually moved time.
+        if (GlobalDateTimeNode && state.lastT !== -1) {
+            GlobalDateTimeNode.setStartDateTime(state.baseStartDate, true);
+            GlobalDateTimeNode.update(par.frame);
+            GlobalDateTimeNode.recalculateCascade();
+            Sit.startTime = state.savedSitStartTime;
+        }
+
+        // Restore look-camera controllers.
+        for (const inp of state.disabledControllers) inp.enabled = true;
+
+        // Restore render hooks and controls.
+        const view = state.view;
+        view.preRenderFunction = state.savedPreRender;
+        view.postRenderFunction = state.savedPostRender;
+        view.focusTrackName = state.savedFocus;
+        if (view.controls) {
+            if (state.savedTargetVec) view.controls.target.copy(state.savedTargetVec);
+            view.controls.enabled = state.savedControlsEnabled !== false;
+        }
+
+        // Restore camera pose.
+        const camera = state.camera;
+        camera.position.copy(state.savedPos);
+        camera.quaternion.copy(state.savedQuat);
+        camera.up.copy(state.savedUp);
+        camera.fov = state.savedFov;
+        camera.updateProjectionMatrix();
+        camera.updateMatrix();
+        camera.updateMatrixWorld(true);
+
+        // Restore slider styling.
+        if (state.sliderDiv) {
+            state.sliderDiv.style.backgroundColor = state.savedSliderBg || "#000000";
+        }
+        if (state.sliderInput) {
+            state.sliderInput.style.accentColor = state.savedAccentColor || "";
+        }
+
+        setRenderOne(true);
+    }
+
     // Run the orbit + capture loop. Optional opts:
     //   maxWidth — if set, output PNGs are downscaled to at most this width.
     //   filenameSuffix — extra string injected into each PNG name and the zip name.
     async exportImageSet(opts = {}) {
         const {maxWidth, filenameSuffix = ""} = opts;
+
+        // Preview drives the camera/time per-tick. If it's on when the user
+        // clicks Export, exit it first so the export's own snapshot/restore
+        // can capture a clean pre-export state.
+        if (this.orbitPreview) {
+            this.orbitPreview = false;
+            if (this.orbitPreviewController) this.orbitPreviewController.updateDisplay();
+            this._exitPreview();
+        }
 
         const view = ViewMan.get("lookView", false);
         if (!view || !view.camera || !view.canvas) {
@@ -265,44 +686,17 @@ export class ImageSetExporter {
             return;
         }
 
-        const azStep = Math.max(1, Math.round(this.azStep));
-        const elStep = Math.max(1, Math.round(this.elStep));
-        const elStart = Math.max(0, Math.min(80, Math.round(this.elStart)));
-        const timeStepMinutes = Math.max(0, Number(this.timeStepMinutes) || 0);
-        const numTimeSteps = Math.max(1, Math.round(Number(this.numTimeSteps) || 1));
-
-        // Build the per-time (az, el) shot list.
         // EL sweeps from elStart (0 = horizontal, 80 = nearly straight down)
-        // up to 90 (straight down — camera directly above target).
-        // At el=90 every azimuth produces the same image so we collapse to a
-        // single shot.
-        const elValues = [];
-        for (let el = elStart; el <= 90 + 1e-6; el += elStep) {
-            elValues.push(Math.min(90, el));
-        }
-        if (elValues.length === 0 || elValues[elValues.length - 1] < 90) elValues.push(90);
-
-        const sweepShots = [];
-        for (const el of elValues) {
-            if (el >= 90 - 1e-6) {
-                sweepShots.push({az: 0, el});
-            } else {
-                for (let az = 0; az < 360; az += azStep) {
-                    sweepShots.push({az, el});
-                }
-            }
-        }
-
-        // Full shot list across all time steps, in (time, el, az) order.
-        const shots = [];
-        for (let t = 0; t < numTimeSteps; t++) {
-            for (const s of sweepShots) shots.push({t, az: s.az, el: s.el});
-        }
+        // up to 90 (straight down — camera directly above target). At el=90
+        // every azimuth produces the same image so the sweep collapses to a
+        // single shot. Shared with the orbit preview path.
+        const {shots, numTimeSteps, timeStepMinutes} = this._buildShotList();
 
         // Save everything we're about to clobber.
         const savedPos = camera.position.clone();
         const savedQuat = camera.quaternion.clone();
         const savedUp = camera.up.clone();
+        const savedFov = camera.fov;
         const savedTargetVec = view.controls?.target?.clone();
         const savedPreRender = view.preRenderFunction;
         const savedPostRender = view.postRenderFunction;
@@ -344,6 +738,19 @@ export class ImageSetExporter {
         view.focusTrackName = "default";
         if (view.controls) view.controls.enabled = false;
         par.paused = true;
+
+        // Lock the camera FOV for the orbit. With FOV controllers disabled
+        // above, setting camera.fov once sticks across every renderCanvas
+        // call (CNodeView3D snapshots/restores around its fovOverride, which
+        // is itself derived from camera.fov — so the override chain rebuilds
+        // from this value rather than fighting it).
+        if (!this.useCurrentFOV) {
+            const fovDeg = Number(this.verticalFOV);
+            if (isFinite(fovDeg) && fovDeg > 0) {
+                camera.fov = Math.max(0.01, Math.min(179, fovDeg));
+                camera.updateProjectionMatrix();
+            }
+        }
 
         const progress = new ExportProgressWidget("Exporting image set...", shots.length);
         const zip = new JSZip();
@@ -470,10 +877,15 @@ export class ImageSetExporter {
                     postSettleRenders: 2,
                 });
 
-                const blob = await canvasToPngBlob(view.canvas, maxWidth);
+                const mimeType = this.usePNGs ? "image/png" : "image/jpeg";
+                const ext = this.usePNGs ? "png" : "jpg";
+                // JPEG quality 0.9 — high enough that compression artifacts are
+                // hard to spot on terrain/sky-dominated shots, while still
+                // ~10-15x smaller than equivalent PNG.
+                const blob = await canvasToImageBlob(view.canvas, maxWidth, mimeType, 0.9);
                 if (blob) {
                     const tPart = numTimeSteps > 1 ? `_t${fmtT(t)}` : "";
-                    const name = `${prefix}${filenameSuffix}${tPart}_el${fmtEl(el)}_az${fmtAz(az)}.png`;
+                    const name = `${prefix}${filenameSuffix}${tPart}_el${fmtEl(el)}_az${fmtAz(az)}.${ext}`;
                     const buf = await blob.arrayBuffer();
                     zip.file(name, buf);
                     savedCount++;
@@ -510,6 +922,8 @@ export class ImageSetExporter {
             camera.position.copy(savedPos);
             camera.quaternion.copy(savedQuat);
             camera.up.copy(savedUp);
+            camera.fov = savedFov;
+            camera.updateProjectionMatrix();
             if (view.controls) {
                 if (savedTargetVec) view.controls.target.copy(savedTargetVec);
                 view.controls.enabled = savedControlsEnabled !== false;

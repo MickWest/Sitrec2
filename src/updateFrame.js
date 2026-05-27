@@ -1,5 +1,5 @@
 import {par} from "./par";
-import {GlobalDateTimeNode, isFrameAdvanceBlocked, requiresSingleFrameMode, setRenderOne, Sit} from "./Globals";
+import {GlobalDateTimeNode, Globals, isFrameAdvanceBlocked, requiresSingleFrameMode, setRenderOne, Sit} from "./Globals";
 import {isKeyHeld, keyHeldTime, KeyMan} from "./KeyBoardHandler";
 import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
 import {UpdatePRFromEA} from "./JetStuff";
@@ -121,6 +121,12 @@ export function updateFrame(elapsed) {
     const beforeSliderFrame = par.frame;
 
     updateFrameSlider();
+
+    // Orbit preview: par.frame is the orbit shot index. Apply the camera pose
+    // and time for that shot before the node update cascade reads par.frame.
+    if (Globals.orbitPreviewApply) {
+        Globals.orbitPreviewApply();
+    }
 
     // if the the frame was changed by the slider, turn off live mode
     if (par.frame !== beforeSliderFrame) {
