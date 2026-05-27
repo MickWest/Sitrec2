@@ -25,6 +25,7 @@ import {
 
 const DOCK_EDGE_PX = 36;
 const DOCK_MARGIN_PX = 8;
+const CLOSE_OFF_TOP_PX = -5;
 
 const defaultCViewParams = {
     visible: true,
@@ -923,7 +924,7 @@ class CNodeView extends CNode {
     }
 
     onViewDragEnd(event) {
-        if (!this.visible || !this.dockable) return;
+        if (!this.visible) return;
 
         if (this.dockedSidebar) {
             if (!this.isEventInDockSidebar(event, this.dockedSidebar)) {
@@ -933,6 +934,14 @@ class CNodeView extends CNode {
             }
             return;
         }
+
+        this.setFromDiv(this.div);
+        if (this.div.getBoundingClientRect().top < CLOSE_OFF_TOP_PX) {
+            this.setVisible(false);
+            return;
+        }
+
+        if (!this.dockable) return;
 
         const side = this.dockSideForEvent(event);
         if (side) {

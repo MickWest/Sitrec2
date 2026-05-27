@@ -2,8 +2,8 @@ import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
 import {setRenderOne} from "../Globals";
 
 const CURVE_SIZE = 256;
-const HIT_RADIUS = 9;
-const CURVE_HIT_RADIUS = 10;
+const HIT_RADIUS = 18;
+const CURVE_HIT_RADIUS = 20;
 
 export class CNodeVideoCurvesView extends CNodeViewCanvas2D {
     constructor(v) {

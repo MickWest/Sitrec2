@@ -59,6 +59,8 @@ const STATE = {
 	DOUBLE_TAP_DRAG_ZOOM: 12,    // Double-tap-and-drag one-hand zoom
 };
 
+const MIN_CAMERA_ELEVATION_DEGREES = -89;
+const MAX_CAMERA_ELEVATION_DEGREES = 89;
 
 
 class CameraMapControls {
@@ -1446,20 +1448,14 @@ class CameraMapControls {
 	rotateUp(angle) {
 
 		const downAngleStart = this.getVerticalAngleDegrees();
+		const targetElevation = downAngleStart - degrees(angle) - 90;
+		const clampedElevation = Math.max(MIN_CAMERA_ELEVATION_DEGREES, Math.min(MAX_CAMERA_ELEVATION_DEGREES, targetElevation));
+		angle = radians(downAngleStart - (clampedElevation + 90));
+		if (Math.abs(angle) < 0.000001) return;
+
 		if (Math.abs(angle) > 0.0001) {
 //			console.log("rotateUp: angle=" + degrees(angle).toFixed(2) + " downAngleStart=" + downAngleStart.toFixed(2) + " maxTilt=" + this.maxTilt);
 		}
-
-		if (angle > 0 && (downAngleStart - degrees(angle)) < 0) {
-//			 console.log("rotateUp: clamping to Nadir. angle=" + degrees(angle).toFixed(2) + " downAngleStart=" + downAngleStart.toFixed(2) + " maxTilt=" + this.maxTilt);
-			return; // don't go below the horizon (Nadir)
-		}
-
-		// if (angle < 0 && (downAngleStart - degrees(angle)) > this.maxTilt) {
-		// 	console.log("rotateUp: clamping to Zenith. angle=" + degrees(angle).toFixed(2) + " downAngleStart=" + downAngleStart.toFixed(2) + " maxTilt=" + this.maxTilt);
-		// 	return;
-		// } // don't go above the max tilt angle, which is usually Zenith but can be set lower for certain views
-
 
 		this.camera.position.sub(this.target) // make relative to the target
 		// need to get the local right vector

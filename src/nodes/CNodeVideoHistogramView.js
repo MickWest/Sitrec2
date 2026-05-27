@@ -29,6 +29,7 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
         this.red = new Uint32Array(HISTOGRAM_BINS);
         this.green = new Uint32Array(HISTOGRAM_BINS);
         this.blue = new Uint32Array(HISTOGRAM_BINS);
+        this.tonalLossStats = null;
         this.lastFrame = -1;
         this.lastVideoData = null;
         this.shadowWarningEnabled = false;
@@ -38,6 +39,15 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
         this.div.style.border = "1px solid rgba(255,255,255,0.22)";
         this.div.style.boxShadow = "0 2px 8px rgba(0,0,0,0.45)";
         this.canvas.style.pointerEvents = "none";
+        this.tonalLossTooltipDiv = document.createElement("div");
+        Object.assign(this.tonalLossTooltipDiv.style, {
+            position: "absolute",
+            display: "none",
+            background: "transparent",
+            cursor: "help",
+            pointerEvents: "auto",
+        });
+        this.div.appendChild(this.tonalLossTooltipDiv);
         this.div.addEventListener("pointerdown", this.handlePointerDown, true);
     }
 
@@ -50,6 +60,9 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
         this.red = null;
         this.green = null;
         this.blue = null;
+        this.tonalLossStats = null;
+        this.tonalLossTooltipDiv?.remove();
+        this.tonalLossTooltipDiv = null;
         super.dispose();
     }
 
@@ -159,6 +172,22 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
         this.green.fill(0);
         this.blue.fill(0);
 
+        const originalSeen = [
+            new Uint8Array(HISTOGRAM_BINS),
+            new Uint8Array(HISTOGRAM_BINS),
+            new Uint8Array(HISTOGRAM_BINS),
+        ];
+        const adjustedSeen = [
+            new Uint8Array(HISTOGRAM_BINS),
+            new Uint8Array(HISTOGRAM_BINS),
+            new Uint8Array(HISTOGRAM_BINS),
+        ];
+        const reverseMaps = [
+            new Uint8Array(HISTOGRAM_BINS * HISTOGRAM_BINS),
+            new Uint8Array(HISTOGRAM_BINS * HISTOGRAM_BINS),
+            new Uint8Array(HISTOGRAM_BINS * HISTOGRAM_BINS),
+        ];
+
         let shadowClipCount = 0;
         let highlightClipCount = 0;
         for (let i = 0; i < data.length; i += 4) {
@@ -173,6 +202,15 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
             this.red[r]++;
             this.green[g]++;
             this.blue[b]++;
+            originalSeen[0][originalR] = 1;
+            originalSeen[1][originalG] = 1;
+            originalSeen[2][originalB] = 1;
+            adjustedSeen[0][r] = 1;
+            adjustedSeen[1][g] = 1;
+            adjustedSeen[2][b] = 1;
+            reverseMaps[0][r * HISTOGRAM_BINS + originalR] = 1;
+            reverseMaps[1][g * HISTOGRAM_BINS + originalG] = 1;
+            reverseMaps[2][b * HISTOGRAM_BINS + originalB] = 1;
             if ((r === 0 && originalR !== 0) || (g === 0 && originalG !== 0) || (b === 0 && originalB !== 0)) {
                 shadowClipCount++;
             }
@@ -185,6 +223,73 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
         this.highlightClipCount = highlightClipCount;
         this.shadowClipped = shadowClipCount > 0;
         this.highlightClipped = highlightClipCount > 0;
+        this.tonalLossStats = this.calculateTonalLossStats(originalSeen, adjustedSeen, reverseMaps);
+        this.updateTonalLossTooltip();
+    }
+
+    countSeen(seen) {
+        let count = 0;
+        for (let i = 0; i < HISTOGRAM_BINS; i++) {
+            if (seen[i]) count++;
+        }
+        return count;
+    }
+
+    calculateTonalLossStats(originalSeen, adjustedSeen, reverseMaps) {
+        let totalOriginalLevels = 0;
+        let totalAdjustedLevels = 0;
+        let totalCollapsedInputs = 0;
+        let worstCollapse = 1;
+
+        for (let channel = 0; channel < 3; channel++) {
+            const originalLevels = this.countSeen(originalSeen[channel]);
+            const adjustedLevels = this.countSeen(adjustedSeen[channel]);
+            totalOriginalLevels += originalLevels;
+            totalAdjustedLevels += adjustedLevels;
+
+            const reverseMap = reverseMaps[channel];
+            for (let out = 0; out < HISTOGRAM_BINS; out++) {
+                let inputCount = 0;
+                const rowOffset = out * HISTOGRAM_BINS;
+                for (let input = 0; input < HISTOGRAM_BINS; input++) {
+                    if (reverseMap[rowOffset + input]) inputCount++;
+                }
+                if (inputCount > 1) totalCollapsedInputs += inputCount - 1;
+                if (inputCount > worstCollapse) worstCollapse = inputCount;
+            }
+        }
+
+        if (totalOriginalLevels === 0) return null;
+
+        const keptRatio = totalAdjustedLevels / totalOriginalLevels;
+        const averageAdjustedLevels = totalAdjustedLevels / 3;
+        return {
+            keptPercent: Math.min(999, Math.round(keptRatio * 100)),
+            effectiveBits: Math.log2(Math.max(1, averageAdjustedLevels)),
+            collapsedInputs: totalCollapsedInputs,
+            worstCollapse,
+        };
+    }
+
+    updateTonalLossTooltip() {
+        const stats = this.tonalLossStats;
+        if (!stats) {
+            if (this.tonalLossTooltipDiv) {
+                this.tonalLossTooltipDiv.title = "";
+                this.tonalLossTooltipDiv.style.display = "none";
+            }
+            this.div.removeAttribute("title");
+            return;
+        }
+
+        if (!this.tonalLossTooltipDiv) return;
+        this.div.removeAttribute("title");
+        this.tonalLossTooltipDiv.title =
+            "Tonal resolution after video adjustments\n" +
+            `Levels ${stats.keptPercent}%: adjusted distinct RGB levels divided by original distinct RGB levels.\n` +
+            `${stats.effectiveBits.toFixed(1)}b: effective tonal bit depth from the remaining output levels.\n` +
+            `C${stats.collapsedInputs}: input levels that now share an output level, summed across RGB.\n` +
+            `W${stats.worstCollapse}:1: worst many-to-one collapse for any output level.`;
     }
 
     maxBinValue() {
@@ -254,6 +359,44 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
         ctx.restore();
     }
 
+    drawTonalLossStats(left, top, width) {
+        const stats = this.tonalLossStats;
+        if (!stats) return;
+
+        const ctx = this.ctx;
+        const text = `Levels ${stats.keptPercent}% | ${stats.effectiveBits.toFixed(1)}b | C${stats.collapsedInputs} | W${stats.worstCollapse}:1`;
+        let fontSize = Math.max(9, Math.min(14, Math.round(this.heightPx * 0.08)));
+
+        ctx.save();
+        ctx.font = `600 ${fontSize}px sans-serif`;
+        while (fontSize > 8 && ctx.measureText(text).width > width) {
+            fontSize--;
+            ctx.font = `600 ${fontSize}px sans-serif`;
+        }
+        const textWidth = ctx.measureText(text).width;
+        this.positionTonalLossTooltip(left + width * 0.5, top, Math.min(width, textWidth + 8), fontSize + 5);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.fillStyle = stats.collapsedInputs > 0
+            ? "rgba(255,205,92,0.96)"
+            : "rgba(210,235,255,0.90)";
+        ctx.shadowColor = "rgba(0,0,0,0.85)";
+        ctx.shadowBlur = 3;
+        ctx.fillText(text, left + width * 0.5, top);
+        ctx.restore();
+    }
+
+    positionTonalLossTooltip(centerX, top, width, height) {
+        if (!this.tonalLossTooltipDiv) return;
+        Object.assign(this.tonalLossTooltipDiv.style, {
+            display: "block",
+            left: `${centerX - width / 2}px`,
+            top: `${top}px`,
+            width: `${width}px`,
+            height: `${height}px`,
+        });
+    }
+
     renderCanvas(frame = 0) {
         super.renderCanvas(frame);
         if (!this.visible) return;
@@ -308,6 +451,7 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
             true,
             this.highlightWarningEnabled
         );
+        this.drawTonalLossStats(graphLeft + indicatorSize * 0.9, pad, graphWidth - indicatorSize * 1.8);
         ctx.restore();
     }
 }
