@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.62.2 (2026-05-27)
+
+### Bug Fixes
+- Fixed a double-unescape edge case in `decodeHTMLEntities` in `src/DVIDSUtils.js` and `src/MetabunkThreadUtils.js`. The previous sequential `.replace()` chain decoded `&amp;` first, so an already-encoded payload like `&amp;lt;` collapsed to `<` instead of `&lt;` because the substituted `&` was reconsidered as the start of the next entity. Rewrote both as a single-pass `String.replace` over `/&(amp|quot|#39|lt|gt);/g` backed by a `HTML_ENTITY_MAP` lookup, so each character is visited once and double-encoded input round-trips correctly. The existing 12 tests in `DVIDSUtils.test.js` and `MetabunkThreadUtils.test.js` still pass. Closes CodeQL alerts #48 and #49 (`js/double-escaping`).
+
+### Security
+- Hardened the Metabunk host check in `isIgnoredMetabunkMP4URL` (`src/MetabunkThreadUtils.js`). The previous `parsed.hostname.endsWith("metabunk.org")` test would also match attacker-controlled lookalike hostnames such as `evilmetabunk.org`; the check now requires either an exact host match or a true `.metabunk.org` subdomain before the `/styles/` path filter is applied. Defensive hardening — no known exploit path through real upstream thread content. Closes CodeQL alert #50 (`js/incomplete-url-substring-sanitization`). Alert #47 (`js/clear-text-storage-of-sensitive-data` for an API key stored in `localStorage` by `tools/airport-arrivals/index.html`) was dismissed as won't-fix: the standalone client-side tool stores the user's own ADS-B Exchange key with no backend, which is the canonical pattern.
+- Upgraded `qs` to 6.15.2 in `package-lock.json` and `tools/SitrecBridge/package-lock.json` (transitive via `express` / `body-parser` and `webpack-dev-server → express@4`), closing Dependabot alerts #132 and #133 (DoS via `TypeError` in `qs.stringify` on `null`/`undefined` entries in comma-format arrays when `encodeValuesOnly` is set; medium severity). Pulled via `npm audit fix`.
+- Upgraded `uuid` to 11.1.1 via a new `overrides: { "uuid": "^11.1.1" }` block in `package.json` (transitive via `sockjs → webpack-dev-server`), closing Dependabot alert #131 (missing buffer bounds check in v3/v5/v6 when a `buf` argument is supplied; medium severity). Our only caller is `sockjs` invoking `uuid.v4()` with no arguments, so the CVE is not reachable in practice, but the patched version ships anyway. The `npm audit fix` suggestion of downgrading `webpack-dev-server` 5.x to 1.16.5 was rejected. `npm audit` now reports 0 vulnerabilities in both lockfiles.
+- Upgraded `tmp` to ≥ 0.2.6 in `apps/video-viewer/package-lock.json` (transitive via `electron-builder → app-builder-lib → @malept/flatpak-bundler → tmp-promise`), closing Dependabot alert #134 (path traversal via unsanitized `prefix`/`postfix`; high severity). Pulled via `npm audit fix`; `npm audit` now reports 0 vulnerabilities in the video-viewer lockfile.
+
 ## Version 2.62.1 (2026-05-27)
 
 ### Improvements

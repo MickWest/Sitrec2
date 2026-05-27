@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.62.2 (2026-05-27)
+
+### Bug Fixes
+- Fixed an edge case where double-encoded HTML entities in DVIDS and Metabunk thread content (e.g. `&amp;lt;`) were collapsed one level too far when decoding link text and titles.
+
+### Security
+- Tightened the host check that suppresses Metabunk forum styling URLs so it can no longer be fooled by attacker-controlled lookalike hostnames.
+- Updated bundled dependencies (`qs`, `uuid`, `tmp`) to pull in upstream security fixes; no functional changes.
+
 ## Version 2.62.1 (2026-05-27)
 
 ### Improvements
