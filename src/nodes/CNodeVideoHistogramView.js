@@ -1,5 +1,6 @@
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
 import {setRenderOne} from "../Globals";
+import {getClipComparisonValue} from "./CNodeVideoViewFilters";
 
 const HISTOGRAM_BINS = 256;
 
@@ -144,7 +145,7 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
         this.drawSample(this.sampleCtx, sourceImage, sourceWidth, sourceHeight, sampleWidth, sampleHeight, adjusted.filter || "none", adjusted.fullABOverlay);
         const originalData = this.originalSampleCtx.getImageData(0, 0, sampleWidth, sampleHeight).data;
         const data = this.sampleCtx.getImageData(0, 0, sampleWidth, sampleHeight).data;
-        this.updateBinsAndClipping(originalData, data);
+        this.updateBinsAndClipping(originalData, data, adjusted.invertActive);
 
         this.lastFrame = frame;
         this.lastVideoData = videoView.videoData;
@@ -167,7 +168,7 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
         ctx.restore();
     }
 
-    updateBinsAndClipping(originalData, data) {
+    updateBinsAndClipping(originalData, data, invertActive = false) {
         this.red.fill(0);
         this.green.fill(0);
         this.blue.fill(0);
@@ -196,9 +197,9 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
             const r = data[i];
             const g = data[i + 1];
             const b = data[i + 2];
-            const originalR = originalData[i];
-            const originalG = originalData[i + 1];
-            const originalB = originalData[i + 2];
+            const originalR = getClipComparisonValue(originalData[i], invertActive);
+            const originalG = getClipComparisonValue(originalData[i + 1], invertActive);
+            const originalB = getClipComparisonValue(originalData[i + 2], invertActive);
             this.red[r]++;
             this.green[g]++;
             this.blue[b]++;

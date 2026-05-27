@@ -54,7 +54,7 @@ export function addFiltersToVideoNode(videoNode) {
         guiVideoNoiseFolder.onOpenClose(() => setRenderOne(true));
     }
 
-    let brightness, contrast, levels, levelsInputBlack, levelsMidpoint, levelsInputWhite, levelsOutputBlack, levelsOutputWhite, showHistogram, curves, showCurves, blur, hue, invert, saturate, enableVideoEffects, convolutionFilter;
+    let brightness, contrast, levels, levelsInputBlack, levelsMidpoint, levelsInputWhite, levelsOutputBlack, levelsOutputWhite, showHistogram, curves, showCurves, shadows, highlights, dehaze, blur, hue, invert, saturate, enableVideoEffects, convolutionFilter;
     let sharpenAmount, edgeDetectThreshold, embossDepth;
     let echoMin, echoMax, echoFrames, fullABEcho, fullABEchoOpacity, fullABBlend, fullABExposure;
     let showCache, elaJpegQuality, elaErrorScale, elaOpacity, elaExpandMethod, elaContrastClipPercent;
@@ -124,6 +124,9 @@ export function addFiltersToVideoNode(videoNode) {
             resetInput("showHistogram", true);
             resetInput("showCurves", true);
             videoNode.curvesView?.resetCurve();
+            resetInput("shadows", 0);
+            resetInput("highlights", 0);
+            resetInput("dehaze", 0);
             resetInput("blur", 0);
             resetInput("hue", 0);
             resetInput("invert", false);
@@ -187,6 +190,9 @@ export function addFiltersToVideoNode(videoNode) {
             showCurves = new CNodeGUIFlag({ id: "videoShowCurves", value: true, desc: "Show Curves", tip: "Show the video tone curve editor when Curves is enabled", onChange: () => {
                 videoNode.updateCurvesVisibility?.();
             }}, guiVideoEffectsFolder),
+            shadows = new CNodeGUIValue({ id: "videoShadows", value: 0, start: -100, end: 100, step: 1, desc: "Shadows", tip: "Raise or lower darker tones (0 = none)" }, guiVideoEffectsFolder),
+            highlights = new CNodeGUIValue({ id: "videoHighlights", value: 0, start: -100, end: 100, step: 1, desc: "Highlights", tip: "Raise or lower brighter tones (0 = none)" }, guiVideoEffectsFolder),
+            dehaze = new CNodeGUIValue({ id: "videoDehaze", value: 0, start: -100, end: 100, step: 1, desc: "Dehaze", tip: "Reduce or add atmospheric haze (0 = none)" }, guiVideoEffectsFolder),
             blur = new CNodeGUIValue({ id: "videoBlur", value: 0, start: 0, end: 50, step: 0.05, desc: "Blur Src Px", tip: "Gaussian blur radius in source pixels (0 = none)" }, guiVideoEffectsFolder),
             hue = new CNodeGUIValue({ id: "videoHue", value: 0, start: 0, end: 360, step: 1, desc: "Hue Rotate", tip: "Rotate the hue of the video in degrees" }, guiVideoEffectsFolder),
             invert = new CNodeGUIFlag({ id: "videoInvert", value: false, desc: "Invert", tip: "Invert colors with exact 255 - byte mapping" }, guiVideoEffectsFolder),
@@ -308,6 +314,18 @@ export function addFiltersToVideoNode(videoNode) {
         showHistogram = NodeMan.get("videoShowHistogram");
         curves = NodeMan.get("videoCurves");
         showCurves = NodeMan.get("videoShowCurves");
+        shadows = NodeMan.get("videoShadows");
+        highlights = NodeMan.get("videoHighlights");
+        dehaze = NodeMan.get("videoDehaze");
+        if (!shadows) {
+            shadows = new CNodeGUIValue({ id: "videoShadows", value: 0, start: -100, end: 100, step: 1, desc: "Shadows", tip: "Raise or lower darker tones (0 = none)" }, guiVideoEffectsFolder);
+        }
+        if (!highlights) {
+            highlights = new CNodeGUIValue({ id: "videoHighlights", value: 0, start: -100, end: 100, step: 1, desc: "Highlights", tip: "Raise or lower brighter tones (0 = none)" }, guiVideoEffectsFolder);
+        }
+        if (!dehaze) {
+            dehaze = new CNodeGUIValue({ id: "videoDehaze", value: 0, start: -100, end: 100, step: 1, desc: "Dehaze", tip: "Reduce or add atmospheric haze (0 = none)" }, guiVideoEffectsFolder);
+        }
         blur = NodeMan.get("videoBlur");
         hue = NodeMan.get("videoHue");
         invert = NodeMan.get("videoInvert");
@@ -366,6 +384,9 @@ export function addFiltersToVideoNode(videoNode) {
         showHistogram: showHistogram,
         curves: curves,
         showCurves: showCurves,
+        shadows: shadows,
+        highlights: highlights,
+        dehaze: dehaze,
         blur: blur,
         hue: hue,
         invert: invert,
@@ -725,6 +746,139 @@ export function applySourcePixelFilterToImage(image, filterString, videoView) {
     return videoView._sourceFilterCanvas;
 }
 
+export function hasActiveTonalAdjustments({
+    shadows = 0,
+    highlights = 0,
+    dehaze = 0,
+} = {}) {
+    return shadows !== 0 || highlights !== 0 || dehaze !== 0;
+}
+
+export function tonalRegionWeight(luma, center, width = 0.25) {
+    const x = Math.max(0, Math.min(1, luma));
+    const endpointFade = Math.sin(Math.PI * x);
+    const distance = Math.abs(x - center) / width;
+    const region = Math.max(0, 1 - distance * distance);
+    return endpointFade * region * region;
+}
+
+export function applyTonalAdjustmentToPixel(r, g, b, {
+    shadows = 0,
+    highlights = 0,
+    dehaze = 0,
+} = {}) {
+    if (!hasActiveTonalAdjustments({shadows, highlights, dehaze})) {
+        return [r, g, b];
+    }
+
+    let outR = r;
+    let outG = g;
+    let outB = b;
+    const luma = getLuma(r, g, b) / 255;
+    const shadowAmount = Math.max(-1, Math.min(1, shadows / 100));
+    const highlightAmount = Math.max(-1, Math.min(1, highlights / 100));
+
+    if (shadowAmount !== 0) {
+        const mask = tonalRegionWeight(luma, 0.1);
+        if (shadowAmount > 0) {
+            outR += (255 - outR) * shadowAmount * mask;
+            outG += (255 - outG) * shadowAmount * mask;
+            outB += (255 - outB) * shadowAmount * mask;
+        } else {
+            outR += outR * shadowAmount * mask;
+            outG += outG * shadowAmount * mask;
+            outB += outB * shadowAmount * mask;
+        }
+    }
+
+    if (highlightAmount !== 0) {
+        const mask = tonalRegionWeight(luma, 0.9);
+        if (highlightAmount > 0) {
+            outR += (255 - outR) * highlightAmount * mask;
+            outG += (255 - outG) * highlightAmount * mask;
+            outB += (255 - outB) * highlightAmount * mask;
+        } else {
+            outR += outR * highlightAmount * mask;
+            outG += outG * highlightAmount * mask;
+            outB += outB * highlightAmount * mask;
+        }
+    }
+
+    const dehazeAmount = Math.max(-1, Math.min(1, dehaze / 100));
+    if (dehazeAmount !== 0) {
+        const airlight = 220;
+        if (dehazeAmount > 0) {
+            const contrast = 1 + 0.75 * dehazeAmount;
+            outR = airlight + (outR - airlight) * contrast;
+            outG = airlight + (outG - airlight) * contrast;
+            outB = airlight + (outB - airlight) * contrast;
+            const adjustedLuma = getLuma(outR, outG, outB);
+            const saturation = 1 + 0.25 * dehazeAmount;
+            outR = adjustedLuma + (outR - adjustedLuma) * saturation;
+            outG = adjustedLuma + (outG - adjustedLuma) * saturation;
+            outB = adjustedLuma + (outB - adjustedLuma) * saturation;
+        } else {
+            const haze = -dehazeAmount * 0.45;
+            outR = outR * (1 - haze) + airlight * haze;
+            outG = outG * (1 - haze) + airlight * haze;
+            outB = outB * (1 - haze) + airlight * haze;
+            const hazyLuma = getLuma(outR, outG, outB);
+            const saturation = 1 + dehazeAmount * 0.3;
+            outR = hazyLuma + (outR - hazyLuma) * saturation;
+            outG = hazyLuma + (outG - hazyLuma) * saturation;
+            outB = hazyLuma + (outB - hazyLuma) * saturation;
+        }
+    }
+
+    return [clampByte(outR), clampByte(outG), clampByte(outB)];
+}
+
+export function applyTonalAdjustmentsToImage(image, settings, videoView, frame = undefined) {
+    if (!hasActiveTonalAdjustments(settings)) return image;
+
+    const width = image.width;
+    const height = image.height;
+
+    if (!videoView._tonalAdjustCanvas ||
+        videoView._tonalAdjustCanvas.width !== width ||
+        videoView._tonalAdjustCanvas.height !== height) {
+        videoView._tonalAdjustCanvas = document.createElement('canvas');
+        videoView._tonalAdjustCanvas.width = width;
+        videoView._tonalAdjustCanvas.height = height;
+        videoView._tonalAdjustCtx = videoView._tonalAdjustCanvas.getContext('2d', {willReadFrequently: true});
+        videoView._tonalAdjustLastImage = undefined;
+        videoView._tonalAdjustLastFrame = undefined;
+        videoView._tonalAdjustLastKey = undefined;
+    }
+
+    const key = `${settings.shadows ?? 0}:${settings.highlights ?? 0}:${settings.dehaze ?? 0}`;
+    if (videoView._tonalAdjustLastImage === image &&
+        videoView._tonalAdjustLastFrame === frame &&
+        videoView._tonalAdjustLastKey === key) {
+        return videoView._tonalAdjustCanvas;
+    }
+
+    const ctx = videoView._tonalAdjustCtx;
+    ctx.drawImage(image, 0, 0, width, height);
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+
+    for (let i = 0; i < data.length; i += 4) {
+        const [r, g, b] = applyTonalAdjustmentToPixel(data[i], data[i + 1], data[i + 2], settings);
+        data[i] = r;
+        data[i + 1] = g;
+        data[i + 2] = b;
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+    videoView._tonalAdjustLastImage = image;
+    videoView._tonalAdjustLastFrame = frame;
+    videoView._tonalAdjustLastKey = key;
+
+    return videoView._tonalAdjustCanvas;
+}
+
 export function buildLevelsLUT({
     inputBlack = 0,
     inputWhite = 255,
@@ -816,7 +970,7 @@ export function applyLevelsMidpointToImage(image, midpoint, videoView) {
     return applyLevelsToImage(image, {midpoint}, videoView);
 }
 
-export function applyByteInvertToImage(image, videoView, frame = undefined) {
+export function applyByteInvertToImage(image, videoView, frame = undefined, sourceKey = "") {
     if (!image) return image;
 
     const width = image.width;
@@ -831,9 +985,12 @@ export function applyByteInvertToImage(image, videoView, frame = undefined) {
         videoView._invertCtx = videoView._invertCanvas.getContext('2d', {willReadFrequently: true});
         videoView._invertLastImage = undefined;
         videoView._invertLastFrame = undefined;
+        videoView._invertLastSourceKey = undefined;
     }
 
-    if (videoView._invertLastImage === image && videoView._invertLastFrame === frame) {
+    if (videoView._invertLastImage === image &&
+        videoView._invertLastFrame === frame &&
+        videoView._invertLastSourceKey === sourceKey) {
         return videoView._invertCanvas;
     }
 
@@ -852,6 +1009,7 @@ export function applyByteInvertToImage(image, videoView, frame = undefined) {
 
     videoView._invertLastImage = image;
     videoView._invertLastFrame = frame;
+    videoView._invertLastSourceKey = sourceKey;
 
     return videoView._invertCanvas;
 }
@@ -899,6 +1057,10 @@ export function applyCurvesToImage(image, lut, videoView, frame = undefined) {
     videoView._curvesLastRevision = revision;
 
     return videoView._curvesCanvas;
+}
+
+export function getClipComparisonValue(originalValue, invertActive = false) {
+    return invertActive ? 255 - originalValue : originalValue;
 }
 
 export function applyELAOutputExpansion(pixels, width, height, method, clipPercent) {

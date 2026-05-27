@@ -59,7 +59,10 @@ import {
     applyEchoEffect,
     applyLevelsToImage,
     applySourcePixelFilterToImage,
+    applyTonalAdjustmentsToImage,
     clearEchoCache,
+    getClipComparisonValue,
+    hasActiveTonalAdjustments,
     guiVideoEffectsFolder,
 } from "./CNodeVideoViewFilters";
 import {analysisMethods} from "./CNodeVideoViewAnalysis";
@@ -78,7 +81,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         // these no longer work with the new rendering pipeline
         // TODO: reimplement them as effects?
-        this.optionalInputs(["brightness", "contrast", "levels", "levelsInputBlack", "levelsMidpoint", "levelsInputWhite", "levelsOutputBlack", "levelsOutputWhite", "showHistogram", "curves", "showCurves", "blur", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
+        this.optionalInputs(["brightness", "contrast", "levels", "levelsInputBlack", "levelsMidpoint", "levelsInputWhite", "levelsOutputBlack", "levelsOutputWhite", "showHistogram", "curves", "showCurves", "shadows", "highlights", "dehaze", "blur", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
         //
 
         //  if (this.overlayView === undefined)
@@ -1538,6 +1541,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     getAdjustedVideoFrameSource(image, frame) {
         let sourceImage = image;
         let filter = "";
+        let invertSourceKey = "";
         const effectsEnabled = this.in.enableVideoEffects ? this.in.enableVideoEffects.v0 : true;
 
         if (effectsEnabled && this.in.convolutionFilter && this.in.convolutionFilter.value !== "none") {
@@ -1548,31 +1552,47 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 strength: (filterType === "emboss" ? this.in.embossDepth?.v0 : 1) ?? 1
             };
             sourceImage = applyConvolutionToImage(image, filterType, params, this);
+            invertSourceKey += `conv:${filterType}:${params.amount}:${params.threshold}:${params.strength}|`;
         }
 
         const hasFullABOverlay = this._fullABEchoResult && (this.in.fullABEcho?.value || this.in.fullABBlend?.value || this.in.fullABExposure?.value);
         if (hasFullABOverlay && this._fullABEchoRunning) {
             sourceImage = this._fullABEchoResult;
+            invertSourceKey += `fullABRunning:${this.in.fullABEcho?.value}:${this.in.fullABBlend?.value}:${this.in.fullABExposure?.value}|`;
         } else if (!hasFullABOverlay) {
             const wantEchoMin = this.in.echoMin?.value ?? false;
             const wantEchoMax = this.in.echoMax?.value ?? false;
             if (effectsEnabled && (wantEchoMin || wantEchoMax)) {
                 sourceImage = applyEchoEffect(this, sourceImage, frame, wantEchoMin, wantEchoMax);
+                invertSourceKey += `echo:${wantEchoMin}:${wantEchoMax}:${Math.round(this.in.echoFrames?.v0 ?? 10)}|`;
             } else if (this._echoPixelCache) {
                 clearEchoCache(this);
             }
         }
 
         if (effectsEnabled && this.hasActiveLevels()) {
-            sourceImage = applyLevelsToImage(sourceImage, this.getLevelsSettings(), this);
+            const levels = this.getLevelsSettings();
+            sourceImage = applyLevelsToImage(sourceImage, levels, this);
+            invertSourceKey += `levels:${levels.inputBlack}:${levels.inputWhite}:${levels.midpoint}:${levels.outputBlack}:${levels.outputWhite}|`;
         }
 
         if (effectsEnabled && this.in.curves?.value === true && this.curvesView) {
             sourceImage = applyCurvesToImage(sourceImage, this.curvesView.getCurveLUT(), this, frame);
+            invertSourceKey += `curves:${this.curvesView.curveRevision ?? 0}|`;
+        }
+
+        const tonalAdjustments = {
+            shadows: this.in.shadows?.v0 ?? 0,
+            highlights: this.in.highlights?.v0 ?? 0,
+            dehaze: this.in.dehaze?.v0 ?? 0,
+        };
+        if (effectsEnabled && hasActiveTonalAdjustments(tonalAdjustments)) {
+            sourceImage = applyTonalAdjustmentsToImage(sourceImage, tonalAdjustments, this, frame);
+            invertSourceKey += `tonal:${tonalAdjustments.shadows}:${tonalAdjustments.highlights}:${tonalAdjustments.dehaze}|`;
         }
 
         if (effectsEnabled && (this.in.invert?.value === true || this.in.invert?.value === 1)) {
-            sourceImage = applyByteInvertToImage(sourceImage, this, frame);
+            sourceImage = applyByteInvertToImage(sourceImage, this, frame, invertSourceKey);
         }
 
         const blurPx = effectsEnabled ? (this.in.blur?.v0 ?? 0) : 0;
@@ -1607,6 +1627,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         return {
             sourceImage,
             filter,
+            invertActive: effectsEnabled && (this.in.invert?.value === true || this.in.invert?.value === 1),
             fullABOverlay: hasFullABOverlay && !this._fullABEchoRunning
                 ? {image: this._fullABEchoResult, opacity: (this.in.fullABEchoOpacity?.v0 ?? 100) / 100}
                 : null
@@ -1651,9 +1672,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             const adjustedR = adjustedData[i];
             const adjustedG = adjustedData[i + 1];
             const adjustedB = adjustedData[i + 2];
-            const originalR = originalData[i];
-            const originalG = originalData[i + 1];
-            const originalB = originalData[i + 2];
+            const originalR = getClipComparisonValue(originalData[i], adjusted.invertActive);
+            const originalG = getClipComparisonValue(originalData[i + 1], adjusted.invertActive);
+            const originalB = getClipComparisonValue(originalData[i + 2], adjusted.invertActive);
             const shadowClipped = this.showShadowClipMask &&
                 ((adjustedR === 0 && originalR !== 0) ||
                     (adjustedG === 0 && originalG !== 0) ||

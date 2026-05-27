@@ -406,6 +406,7 @@ export class CNodeGUIFlag extends CNodeConstant {
 
     constructor(v, _guiMenu) {
 
+        v = {...v, value: normalizeGUIFlagValue(v.value)};
         super(v);
 
         if (v.desc) {
@@ -416,6 +417,7 @@ export class CNodeGUIFlag extends CNodeConstant {
         this.onChange = v.onChange;
         this.guiEntry = this.gui.add(this, "value").onChange(
             value => {
+                this.value = normalizeGUIFlagValue(value);
                 this.recalculateCascade()
                 if (this.onChange !== undefined) {
                     this.onChange()
@@ -436,12 +438,17 @@ export class CNodeGUIFlag extends CNodeConstant {
 
     modDeserialize(v) {
         super.modDeserialize(v);
-        if (v.value !== undefined && this.value !== v.value) {
-            this.value = v.value;
+        const value = normalizeGUIFlagValue(v.value);
+        if (v.value !== undefined && this.value !== value) {
+            this.value = value;
             this.guiEntry.setValue(this.value);
             this.recalculateCascade();
         }
     }
+}
+
+export function normalizeGUIFlagValue(value) {
+    return value === true || value === 1 || value === "1" || value === "true";
 }
 
 export function makeCNodeGUIFlag(id, value, desc, guiMenu, change) {
@@ -452,4 +459,3 @@ export function makeCNodeGUIFlag(id, value, desc, guiMenu, change) {
     }, guiMenu)
 
 }
-
