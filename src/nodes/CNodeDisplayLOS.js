@@ -1,6 +1,6 @@
 //var matLineWhiteThin = makeMatLine(0xFFFFFF, 0.75);
 import {makeMatLine} from "../MatLines";
-import {Sit} from "../Globals";
+import {guiShowHide, setRenderOne, Sit} from "../Globals";
 import {DebugSphere, dispose, intersectSurface} from "../threeExt";
 import {par} from "../par";
 import {metersFromMiles} from "../utils";
@@ -10,9 +10,11 @@ import {t} from "../i18n";
 
 import {LineGeometry} from "three/addons/lines/LineGeometry.js";
 import {Line2} from "three/addons/lines/Line2.js";
+import {Group} from "three";
 import * as LAYER from "../LayerMasks";
 
 const matLineGreyThin = makeMatLine(0x404040, 0.50);
+const matLineWhite = makeMatLine(0xffffff, 1);
 // CNodeDisplayLOS display the Lines Of Sight
 // inputs.LOS is a per-frame node that returns values of:
 //  .position = Vector3 start of the LOS
@@ -50,10 +52,28 @@ export class CNodeDisplayLOS extends CNode3DGroup {
 
         // extra lines and spheres for debugging
         this.displayFineDetail = false
+        this.showCurrentLOS = v.showCurrentLOS ?? false
+        this.currentLOSGeometry = null
+        this.currentLOSLine = null
+        this.currentLOSGroup = new Group()
+        this.currentLOSGroup.name = `${this.id}_currentLOS`
+        this.currentLOSGroup.layers.mask = v.layers
+        this.currentLOSGroup.visible = this.showCurrentLOS
+        this.container.add(this.currentLOSGroup)
+        this.simpleSerials.push("showCurrentLOS")
 
         this.recalculate()
 
         this.showHider(t("showHiders.linesOfSight.label"), "o", t("showHiders.linesOfSight.tooltip"));
+        guiShowHide.add(this, "showCurrentLOS")
+            .name(t("showHiders.currentLOS.label", {defaultValue: "Current LOS"}))
+            .tooltip(t("showHiders.currentLOS.tooltip", {defaultValue: "Show only the current frame's line of sight"}))
+            .listen()
+            .onChange((v) => {
+                this.currentLOSGroup.visible = v;
+                if (!v) this.clearCurrentLOS();
+                setRenderOne(true);
+            });
     }
 
     // we update the positions of the spheres every frame
@@ -62,6 +82,8 @@ export class CNodeDisplayLOS extends CNode3DGroup {
 
        // this.recalculate();
        // return;
+
+        this.updateCurrentLOS(par.frame);
 
         if (this.in.traverse)
             for (var f = 0; f < this.in.LOS.frames; f++) {
@@ -88,6 +110,63 @@ export class CNodeDisplayLOS extends CNode3DGroup {
 
     detailFrameName(f) {
         return "" + (f - par.frame)
+    }
+
+    getLineEndpoints(f) {
+        var los = this.in.LOS.v(f)
+        var A = los.position.clone();
+        var fwd = los.heading.clone();
+        var B = A.clone()
+
+        const scale = metersFromMiles(this.LOSLengthMiles)
+        fwd.multiplyScalar(scale)
+        B.add(fwd)
+
+        if (this.clipSeaLevel && fwd.dot(getLocalUpVector(A)) < 0) {
+            // intersecting with a plane is no good with larger scales
+            // especially when a sitch is setup with large tiles
+            // as the "level" plane diverges significantly from the globe
+            // so we get intersection with the globe
+            const seaLevelPoint = intersectSurface(A, fwd)
+            if (seaLevelPoint) {
+                B = seaLevelPoint
+            }
+        }
+
+        return {A, B};
+    }
+
+    clearCurrentLOS() {
+        if (this.currentLOSLine) {
+            this.currentLOSGroup.remove(this.currentLOSLine)
+            this.currentLOSLine = null
+        }
+        if (this.currentLOSGeometry) {
+            dispose(this.currentLOSGeometry)
+            this.currentLOSGeometry = null
+        }
+    }
+
+    updateCurrentLOS(f) {
+        this.currentLOSGroup.visible = this.showCurrentLOS;
+        if (!this.showCurrentLOS) return;
+
+        this.clearCurrentLOS();
+
+        const {A, B} = this.getLineEndpoints(f);
+        const mid = A.clone().add(B).multiplyScalar(0.5);
+
+        A.sub(mid);
+        B.sub(mid);
+        const points = [A.x, A.y, A.z, B.x, B.y, B.z]
+
+        this.currentLOSGeometry = new LineGeometry();
+        this.currentLOSGeometry.setPositions(points);
+        this.currentLOSGroup.layers.mask = this.group.layers.mask;
+        this.currentLOSLine = new Line2(this.currentLOSGeometry, matLineWhite);
+        this.currentLOSLine.position.set(mid.x, mid.y, mid.z);
+        this.currentLOSLine.layers.mask = this.currentLOSGroup.layers.mask;
+        this.currentLOSGroup.add(this.currentLOSLine);
     }
 
     recalculate() {
@@ -123,26 +202,7 @@ export class CNodeDisplayLOS extends CNode3DGroup {
             // one per second (assume 30 fps), plus arbitary lines to highlight
             if (this.isFineDetail(f) || f % spacing === 0 || this.highlightLines[f] !== undefined) {
 
-                var los = this.in.LOS.v(f)
-                var A = los.position.clone();
-                var fwd = los.heading.clone();
-                var B = A.clone()
-
-
-                const scale = metersFromMiles(this.LOSLengthMiles)
-                fwd.multiplyScalar(scale)
-                B.add(fwd)
-
-                if (this.clipSeaLevel && fwd.dot(getLocalUpVector(A)) < 0) {
-                    // intersecting with a plane is no good with larger scales
-                    // especially when a sitch is setup with large tiles
-                    // as the "level" plane diverges significantly from the globe
-                    // so we get intersection with the globe
-                    const seaLevelPoint = intersectSurface(A, fwd)
-                    if (seaLevelPoint) {
-                        B = seaLevelPoint
-                    }
-                }
+                var {A, B} = this.getLineEndpoints(f)
 
                 var mid = A.clone().add(B).multiplyScalar(0.5);
 
@@ -171,5 +231,13 @@ export class CNodeDisplayLOS extends CNode3DGroup {
             }
         }
         this.propagateLayerMask()
+    }
+
+    dispose() {
+        this.clearCurrentLOS();
+        if (this.currentLOSGroup) {
+            this.container.remove(this.currentLOSGroup);
+        }
+        super.dispose();
     }
 }

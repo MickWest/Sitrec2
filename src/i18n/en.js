@@ -1683,6 +1683,10 @@ const en = {
             label: "Lines of Sight",
             tooltip: "Show lines of sight from camera to target (toggle: O)",
         },
+        currentLOS: {
+            label: "Current LOS",
+            tooltip: "Show only the current frame's line of sight",
+        },
         physicalPointer: {
             label: "Physical Pointer",
         },
