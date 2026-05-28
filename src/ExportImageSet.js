@@ -121,8 +121,20 @@ export class ImageSetExporter {
     }
 
     setupMenu(parentFolder) {
+        // Idempotent: a sitch reload tears down non-perm GUI children of the
+        // perm Export folder, so this is re-called from sitchChanged(). Drop
+        // any previous folder + the orbit-distance node so we rebuild cleanly.
+        if (this.menuFolder) {
+            this.menuFolder.destroy();
+            this.menuFolder = null;
+        }
+        if (NodeMan.exists("imageSetOrbitDistance")) {
+            NodeMan.disposeRemove("imageSetOrbitDistance");
+        }
+
         const folder = parentFolder.addFolder("Orbit Image Set").close()
             .tooltip("Export a set of PNG images of the look view from az/el positions around the target, optionally stepping the sitch time forward between sweeps");
+        this.menuFolder = folder;
 
         // Track selector — options are rebuilt from targetTrackSwitch each time
         // the folder is opened so newly-imported KML/MISB tracks show up.

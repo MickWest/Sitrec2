@@ -647,6 +647,11 @@ export class CFileManager extends CManager {
      * Shows/hides Local and Server save folders accordingly.
      */
     sitchChanged() {
+        // Sitch teardown destroys the non-perm Resources and Orbit Image Set
+        // subfolders inside the perm Export folder; rebuild them here so they
+        // come back after File > Open. Both setup methods are idempotent.
+        this.setupResourcesMenu();
+        this.setupImageSetExportMenu();
     }
 
     /**
@@ -2297,20 +2302,26 @@ export class CFileManager extends CManager {
 
     /**
      * Set up the File > Export > Image Set submenu under the existing Export folder.
-     * Call once after guiMenus.file is available.
+     * Called from the FileManager init block and again from sitchChanged() so
+     * the (non-perm) subfolder is rebuilt after sitch teardown wipes it.
      */
     setupImageSetExportMenu() {
         if (!guiMenus.file) return;
         if (this.exportFolder === undefined) {
             this.exportFolder = this.guiFolder.addFolder("Export").perm().close();
         }
-        this.imageSetExporter = new ImageSetExporter();
+        // Construct the exporter once so user-set fields (azStep, trackToOrbit,
+        // etc.) survive sitch reloads; setupMenu is idempotent.
+        if (!this.imageSetExporter) {
+            this.imageSetExporter = new ImageSetExporter();
+        }
         this.imageSetExporter.setupMenu(this.exportFolder);
     }
 
     /**
      * Set up the File > Export > Resources submenu under the existing Export folder.
-     * Call once after guiMenus.file is available.
+     * Called from the FileManager init block and again from sitchChanged() so
+     * the (non-perm) subfolder is rebuilt after sitch teardown wipes it.
      */
     setupResourcesMenu() {
         if (!guiMenus.file) return;
@@ -2320,13 +2331,23 @@ export class CFileManager extends CManager {
             this.exportFolder = this.guiFolder.addFolder("Export").perm().close();
         }
 
+        // Drop any previous Resources subfolder before re-adding.
+        if (this._resourcesFolder) {
+            this._resourcesFolder.destroy();
+            this._resourcesFolder = null;
+        }
+
         this._resourcesFolder = this.exportFolder.addFolder("Resources").close()
             .tooltip("Download raw data for any loaded file");
 
-        // Rebuild the resources list whenever files finish parsing.
-        EventManager.addEventListener("filesParsed", () => {
-            this._rebuildResourcesList();
-        });
+        // Register the filesParsed listener exactly once; the handler always
+        // references the latest _resourcesFolder via `this`.
+        if (!this._resourcesListenerRegistered) {
+            EventManager.addEventListener("filesParsed", () => {
+                this._rebuildResourcesList();
+            });
+            this._resourcesListenerRegistered = true;
+        }
         // Also rebuild when the folder is opened (catches files loaded before
         // the event listener was set up, e.g. initial sitch assets).
         this._resourcesFolder.$title.addEventListener('mousedown', () => {
@@ -2337,6 +2358,9 @@ export class CFileManager extends CManager {
                 }
             }, 0);
         });
+
+        // Rebuild now in case files are already loaded (sitch reload path).
+        this._rebuildResourcesList();
     }
 
     /**
