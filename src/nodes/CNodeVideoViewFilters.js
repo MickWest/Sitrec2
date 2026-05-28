@@ -29,6 +29,13 @@ export let guiVideoForensicsFolder = null;
 export let guiVideoELAFolder = null;
 export let guiVideoNoiseFolder = null;
 
+const TONAL_ENDPOINT_PI = Math.PI;
+const TONAL_REGION_WIDTH = 0.25;
+const TONAL_REGION_INV_WIDTH = 1 / TONAL_REGION_WIDTH;
+const TONAL_LUMA_R = 0.299;
+const TONAL_LUMA_G = 0.587;
+const TONAL_LUMA_B = 0.114;
+
 export function addFiltersToVideoNode(videoNode) {
 
     if (guiVideoEffectsFolder === null) {
@@ -521,6 +528,7 @@ export function applyConvolution(ctx, width, height, kernelName, params = {}) {
     const amount = params.amount ?? 1;
     const threshold = params.threshold ?? 0;
     const strength = params.strength ?? 1;
+    const isEdgeDetect = kernelName === 'edgeDetect';
 
     if (kernelName === 'sharpen') {
         kernel = [
@@ -561,7 +569,7 @@ export function applyConvolution(ctx, width, height, kernelName, params = {}) {
                     }
                 }
                 const val = sum / divisor + offset;
-                if (kernelName === 'edgeDetect') {
+                if (isEdgeDetect) {
                     output[(y * w + x) * 4 + c] = val > threshold ? 255 : 0;
                 } else {
                     output[(y * w + x) * 4 + c] = Math.min(255, Math.max(0, val));
@@ -781,7 +789,7 @@ export function hasActiveTonalAdjustments({
     return shadows !== 0 || highlights !== 0 || dehaze !== 0;
 }
 
-export function tonalRegionWeight(luma, center, width = 0.25) {
+export function tonalRegionWeight(luma, center, width = TONAL_REGION_WIDTH) {
     const x = Math.max(0, Math.min(1, luma));
     const endpointFade = Math.sin(Math.PI * x);
     const distance = Math.abs(x - center) / width;
@@ -860,6 +868,251 @@ export function applyTonalAdjustmentToPixel(r, g, b, {
     return [clampByte(outR), clampByte(outG), clampByte(outB)];
 }
 
+function clampTonalAmount(value) {
+    return Math.max(-1, Math.min(1, (value ?? 0) / 100));
+}
+
+function applyTonalRegionLoop(data, amount, center) {
+    const target = amount > 0 ? 255 : 0;
+    const strength = Math.abs(amount);
+    const length = data.length;
+
+    // All slider-dependent values are fixed above this point. The loop only
+    // does per-pixel luma/mask math, then moves each channel toward its target.
+    for (let i = 0; i < length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        let lumaByte = TONAL_LUMA_R * r + TONAL_LUMA_G * g + TONAL_LUMA_B * b;
+        if (lumaByte <= 0) lumaByte = 0;
+        else if (lumaByte >= 255) lumaByte = 255;
+        else lumaByte = Math.round(lumaByte);
+        const luma = lumaByte / 255;
+        const distance = Math.abs(luma - center) * TONAL_REGION_INV_WIDTH;
+        const region = 1 - distance * distance;
+
+        if (region > 0) {
+            const mask = Math.sin(TONAL_ENDPOINT_PI * luma) * region * region * strength;
+            data[i] = r + (target - r) * mask;
+            data[i + 1] = g + (target - g) * mask;
+            data[i + 2] = b + (target - b) * mask;
+        }
+    }
+}
+
+function applyShadowHighlightRegionLoop(data, shadowAmount, highlightAmount) {
+    const shadowTarget = shadowAmount > 0 ? 255 : 0;
+    const highlightTarget = highlightAmount > 0 ? 255 : 0;
+    const shadowStrength = Math.abs(shadowAmount);
+    const highlightStrength = Math.abs(highlightAmount);
+    const length = data.length;
+
+    // Shadows and highlights both key from the original pixel luma. Keeping
+    // them in one loop preserves that relationship while avoiding two luma
+    // calculations and two full image passes when both sliders are active.
+    for (let i = 0; i < length; i += 4) {
+        let r = data[i];
+        let g = data[i + 1];
+        let b = data[i + 2];
+        let lumaByte = TONAL_LUMA_R * r + TONAL_LUMA_G * g + TONAL_LUMA_B * b;
+        if (lumaByte <= 0) lumaByte = 0;
+        else if (lumaByte >= 255) lumaByte = 255;
+        else lumaByte = Math.round(lumaByte);
+        const luma = lumaByte / 255;
+
+        let distance = Math.abs(luma - 0.1) * TONAL_REGION_INV_WIDTH;
+        let region = 1 - distance * distance;
+        if (region > 0) {
+            const mask = Math.sin(TONAL_ENDPOINT_PI * luma) * region * region * shadowStrength;
+            r += (shadowTarget - r) * mask;
+            g += (shadowTarget - g) * mask;
+            b += (shadowTarget - b) * mask;
+        }
+
+        distance = Math.abs(luma - 0.9) * TONAL_REGION_INV_WIDTH;
+        region = 1 - distance * distance;
+        if (region > 0) {
+            const mask = Math.sin(TONAL_ENDPOINT_PI * luma) * region * region * highlightStrength;
+            r += (highlightTarget - r) * mask;
+            g += (highlightTarget - g) * mask;
+            b += (highlightTarget - b) * mask;
+        }
+
+        data[i] = r;
+        data[i + 1] = g;
+        data[i + 2] = b;
+    }
+}
+
+function applyTonalRegionToFloatLoop(data, out, amount, center) {
+    const target = amount > 0 ? 255 : 0;
+    const strength = Math.abs(amount);
+    const length = data.length;
+
+    // Float-output variant for the "region adjustment then dehaze" pipeline.
+    // It preserves the old single final clamp without putting sign/slider
+    // checks inside the pixel loop.
+    for (let i = 0; i < length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        let lumaByte = TONAL_LUMA_R * r + TONAL_LUMA_G * g + TONAL_LUMA_B * b;
+        if (lumaByte <= 0) lumaByte = 0;
+        else if (lumaByte >= 255) lumaByte = 255;
+        else lumaByte = Math.round(lumaByte);
+        const luma = lumaByte / 255;
+        const distance = Math.abs(luma - center) * TONAL_REGION_INV_WIDTH;
+        const region = 1 - distance * distance;
+
+        if (region > 0) {
+            const mask = Math.sin(TONAL_ENDPOINT_PI * luma) * region * region * strength;
+            out[i] = r + (target - r) * mask;
+            out[i + 1] = g + (target - g) * mask;
+            out[i + 2] = b + (target - b) * mask;
+        } else {
+            out[i] = r;
+            out[i + 1] = g;
+            out[i + 2] = b;
+        }
+    }
+}
+
+function applyShadowHighlightRegionToFloatLoop(data, out, shadowAmount, highlightAmount) {
+    const shadowTarget = shadowAmount > 0 ? 255 : 0;
+    const highlightTarget = highlightAmount > 0 ? 255 : 0;
+    const shadowStrength = Math.abs(shadowAmount);
+    const highlightStrength = Math.abs(highlightAmount);
+    const length = data.length;
+
+    // This variant is used only when dehaze follows. It keeps the intermediate
+    // shadow/highlight result in float storage so ImageData's Uint8ClampedArray
+    // does not round/clamp before the dehaze math; the old helper also clamped
+    // only once at the very end.
+    for (let i = 0; i < length; i += 4) {
+        let r = data[i];
+        let g = data[i + 1];
+        let b = data[i + 2];
+        let lumaByte = TONAL_LUMA_R * r + TONAL_LUMA_G * g + TONAL_LUMA_B * b;
+        if (lumaByte <= 0) lumaByte = 0;
+        else if (lumaByte >= 255) lumaByte = 255;
+        else lumaByte = Math.round(lumaByte);
+        const luma = lumaByte / 255;
+
+        let distance = Math.abs(luma - 0.1) * TONAL_REGION_INV_WIDTH;
+        let region = 1 - distance * distance;
+        if (region > 0) {
+            const mask = Math.sin(TONAL_ENDPOINT_PI * luma) * region * region * shadowStrength;
+            r += (shadowTarget - r) * mask;
+            g += (shadowTarget - g) * mask;
+            b += (shadowTarget - b) * mask;
+        }
+
+        distance = Math.abs(luma - 0.9) * TONAL_REGION_INV_WIDTH;
+        region = 1 - distance * distance;
+        if (region > 0) {
+            const mask = Math.sin(TONAL_ENDPOINT_PI * luma) * region * region * highlightStrength;
+            r += (highlightTarget - r) * mask;
+            g += (highlightTarget - g) * mask;
+            b += (highlightTarget - b) * mask;
+        }
+
+        out[i] = r;
+        out[i + 1] = g;
+        out[i + 2] = b;
+    }
+}
+
+function applyPositiveDehazeLoop(data, amount) {
+    const airlight = 220;
+    const contrast = 1 + 0.75 * amount;
+    const saturation = 1 + 0.25 * amount;
+    const length = data.length;
+
+    // Dehaze has a different formula for positive values, so the caller
+    // dispatches here once instead of checking the sign for every pixel.
+    for (let i = 0; i < length; i += 4) {
+        let r = airlight + (data[i] - airlight) * contrast;
+        let g = airlight + (data[i + 1] - airlight) * contrast;
+        let b = airlight + (data[i + 2] - airlight) * contrast;
+        let luma = TONAL_LUMA_R * r + TONAL_LUMA_G * g + TONAL_LUMA_B * b;
+        if (luma <= 0) luma = 0;
+        else if (luma >= 255) luma = 255;
+        else luma = Math.round(luma);
+
+        data[i] = luma + (r - luma) * saturation;
+        data[i + 1] = luma + (g - luma) * saturation;
+        data[i + 2] = luma + (b - luma) * saturation;
+    }
+}
+
+function applyNegativeDehazeLoop(data, amount) {
+    const airlight = 220;
+    const haze = -amount * 0.45;
+    const imageWeight = 1 - haze;
+    const saturation = 1 + amount * 0.3;
+    const length = data.length;
+
+    // Negative dehaze adds haze and desaturates. Its constants are invariant
+    // for the frame, so this loop contains only the arithmetic that varies by
+    // pixel/channel.
+    for (let i = 0; i < length; i += 4) {
+        let r = data[i] * imageWeight + airlight * haze;
+        let g = data[i + 1] * imageWeight + airlight * haze;
+        let b = data[i + 2] * imageWeight + airlight * haze;
+        let luma = TONAL_LUMA_R * r + TONAL_LUMA_G * g + TONAL_LUMA_B * b;
+        if (luma <= 0) luma = 0;
+        else if (luma >= 255) luma = 255;
+        else luma = Math.round(luma);
+
+        data[i] = luma + (r - luma) * saturation;
+        data[i + 1] = luma + (g - luma) * saturation;
+        data[i + 2] = luma + (b - luma) * saturation;
+    }
+}
+
+function applyPositiveDehazeFromFloatLoop(source, data, amount) {
+    const airlight = 220;
+    const contrast = 1 + 0.75 * amount;
+    const saturation = 1 + 0.25 * amount;
+    const length = data.length;
+
+    for (let i = 0; i < length; i += 4) {
+        let r = airlight + (source[i] - airlight) * contrast;
+        let g = airlight + (source[i + 1] - airlight) * contrast;
+        let b = airlight + (source[i + 2] - airlight) * contrast;
+        let luma = TONAL_LUMA_R * r + TONAL_LUMA_G * g + TONAL_LUMA_B * b;
+        if (luma <= 0) luma = 0;
+        else if (luma >= 255) luma = 255;
+        else luma = Math.round(luma);
+
+        data[i] = luma + (r - luma) * saturation;
+        data[i + 1] = luma + (g - luma) * saturation;
+        data[i + 2] = luma + (b - luma) * saturation;
+    }
+}
+
+function applyNegativeDehazeFromFloatLoop(source, data, amount) {
+    const airlight = 220;
+    const haze = -amount * 0.45;
+    const imageWeight = 1 - haze;
+    const saturation = 1 + amount * 0.3;
+    const length = data.length;
+
+    for (let i = 0; i < length; i += 4) {
+        let r = source[i] * imageWeight + airlight * haze;
+        let g = source[i + 1] * imageWeight + airlight * haze;
+        let b = source[i + 2] * imageWeight + airlight * haze;
+        let luma = TONAL_LUMA_R * r + TONAL_LUMA_G * g + TONAL_LUMA_B * b;
+        if (luma <= 0) luma = 0;
+        else if (luma >= 255) luma = 255;
+        else luma = Math.round(luma);
+
+        data[i] = luma + (r - luma) * saturation;
+        data[i + 1] = luma + (g - luma) * saturation;
+        data[i + 2] = luma + (b - luma) * saturation;
+    }
+}
+
 export function applyTonalAdjustmentsToImage(image, settings, videoView, frame = undefined) {
     if (!hasActiveTonalAdjustments(settings)) return image;
 
@@ -889,12 +1142,47 @@ export function applyTonalAdjustmentsToImage(image, settings, videoView, frame =
     ctx.drawImage(image, 0, 0, width, height);
     const imageData = ctx.getImageData(0, 0, width, height);
     const data = imageData.data;
+    const shadows = clampTonalAmount(settings?.shadows);
+    const highlights = clampTonalAmount(settings?.highlights);
+    const dehaze = clampTonalAmount(settings?.dehaze);
+    const hasRegionAdjustment = shadows !== 0 || highlights !== 0;
 
-    for (let i = 0; i < data.length; i += 4) {
-        const [r, g, b] = applyTonalAdjustmentToPixel(data[i], data[i + 1], data[i + 2], settings);
-        data[i] = r;
-        data[i + 1] = g;
-        data[i + 2] = b;
+    // Dispatch once per active control. The old path called
+    // applyTonalAdjustmentToPixel() for every pixel, repeatedly normalizing the
+    // same slider values and branching over all three adjustment families.
+    if (dehaze !== 0 && hasRegionAdjustment) {
+        const length = data.length;
+        if (!videoView._tonalAdjustFloatBuffer || videoView._tonalAdjustFloatBuffer.length !== length) {
+            videoView._tonalAdjustFloatBuffer = new Float32Array(length);
+        }
+
+        const tonalFloats = videoView._tonalAdjustFloatBuffer;
+        if (shadows !== 0 && highlights !== 0) {
+            applyShadowHighlightRegionToFloatLoop(data, tonalFloats, shadows, highlights);
+        } else if (shadows !== 0) {
+            applyTonalRegionToFloatLoop(data, tonalFloats, shadows, 0.1);
+        } else {
+            applyTonalRegionToFloatLoop(data, tonalFloats, highlights, 0.9);
+        }
+        if (dehaze > 0) {
+            applyPositiveDehazeFromFloatLoop(tonalFloats, data, dehaze);
+        } else {
+            applyNegativeDehazeFromFloatLoop(tonalFloats, data, dehaze);
+        }
+    } else {
+        if (shadows !== 0 && highlights !== 0) {
+            applyShadowHighlightRegionLoop(data, shadows, highlights);
+        } else if (shadows !== 0) {
+            applyTonalRegionLoop(data, shadows, 0.1);
+        } else if (highlights !== 0) {
+            applyTonalRegionLoop(data, highlights, 0.9);
+        }
+
+        if (dehaze > 0) {
+            applyPositiveDehazeLoop(data, dehaze);
+        } else if (dehaze < 0) {
+            applyNegativeDehazeLoop(data, dehaze);
+        }
     }
 
     ctx.putImageData(imageData, 0, 0);
@@ -978,8 +1266,9 @@ export function applyLevelsToImage(image, levels, videoView) {
     const imageData = ctx.getImageData(0, 0, width, height);
     const data = imageData.data;
     const lut = videoView._levelsMidpointLUT;
+    const length = data.length;
 
-    for (let i = 0; i < data.length; i += 4) {
+    for (let i = 0; i < length; i += 4) {
         data[i] = lut[data[i]];
         data[i + 1] = lut[data[i + 1]];
         data[i + 2] = lut[data[i + 2]];
@@ -1025,8 +1314,9 @@ export function applyByteInvertToImage(image, videoView, frame = undefined, sour
     ctx.drawImage(image, 0, 0, width, height);
     const imageData = ctx.getImageData(0, 0, width, height);
     const data = imageData.data;
+    const length = data.length;
 
-    for (let i = 0; i < data.length; i += 4) {
+    for (let i = 0; i < length; i += 4) {
         data[i] = 255 - data[i];
         data[i + 1] = 255 - data[i + 1];
         data[i + 2] = 255 - data[i + 2];
@@ -1070,8 +1360,9 @@ export function applyCurvesToImage(image, lut, videoView, frame = undefined) {
     ctx.drawImage(image, 0, 0, width, height);
     const imageData = ctx.getImageData(0, 0, width, height);
     const data = imageData.data;
+    const length = data.length;
 
-    for (let i = 0; i < data.length; i += 4) {
+    for (let i = 0; i < length; i += 4) {
         data[i] = lut[data[i]];
         data[i + 1] = lut[data[i + 1]];
         data[i + 2] = lut[data[i + 2]];

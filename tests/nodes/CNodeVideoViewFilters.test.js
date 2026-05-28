@@ -1,5 +1,6 @@
 import {
     applyTonalAdjustmentToPixel,
+    applyTonalAdjustmentsToImage,
     areLevelsDefault,
     buildLevelsLUT,
     getClipComparisonValue,
@@ -117,5 +118,114 @@ describe("video tonal adjustments", () => {
     test("Dehaze changes pixels only when non-zero", () => {
         expect(hasActiveTonalAdjustments({dehaze: 1})).toBe(true);
         expect(applyTonalAdjustmentToPixel(128, 144, 160, {dehaze: 50})).not.toEqual([128, 144, 160]);
+    });
+});
+
+describe("applyTonalAdjustmentsToImage matches per-pixel reference", () => {
+    // 2x2 fixture covering shadows, low/high midtones, and bright pixels, plus
+    // varied alpha values so we can confirm alpha passes through untouched.
+    function makeFixturePixels() {
+        return [
+            [20, 25, 30, 255],
+            [60, 75, 90, 200],
+            [170, 185, 200, 128],
+            [220, 230, 240, 255],
+        ];
+    }
+
+    function fixtureBytes(pixels) {
+        const bytes = new Uint8ClampedArray(pixels.length * 4);
+        for (let i = 0; i < pixels.length; i++) {
+            bytes[i * 4 + 0] = pixels[i][0];
+            bytes[i * 4 + 1] = pixels[i][1];
+            bytes[i * 4 + 2] = pixels[i][2];
+            bytes[i * 4 + 3] = pixels[i][3];
+        }
+        return bytes;
+    }
+
+    // Run the image-level dispatch by stubbing the canvas/ctx pair so no DOM
+    // is required. drawImage is a no-op because we pre-populate the buffer
+    // that getImageData hands back.
+    function runImageDispatch(pixels, settings) {
+        const width = 2, height = 2;
+        const data = fixtureBytes(pixels);
+        const imageData = {data, width, height};
+        const videoView = {
+            _tonalAdjustCanvas: {width, height},
+            _tonalAdjustCtx: {
+                drawImage() {},
+                getImageData() { return imageData; },
+                putImageData() {},
+            },
+        };
+        applyTonalAdjustmentsToImage({width, height}, settings, videoView);
+        return data;
+    }
+
+    function runPerPixelReference(pixels, settings) {
+        const out = fixtureBytes(pixels);
+        for (let i = 0; i < out.length; i += 4) {
+            const [r, g, b] = applyTonalAdjustmentToPixel(out[i], out[i + 1], out[i + 2], settings);
+            out[i] = r;
+            out[i + 1] = g;
+            out[i + 2] = b;
+        }
+        return out;
+    }
+
+    // Tolerance of 1 byte: Uint8ClampedArray rounds .5 values using IEEE
+    // round-half-to-even while the per-pixel reference uses Math.round
+    // (half-away-from-zero). The two agree on every non-half value, and the
+    // optimized loops are not allowed to diverge by more than that.
+    function expectChannelsClose(actual, expected) {
+        expect(actual.length).toBe(expected.length);
+        for (let i = 0; i < actual.length; i++) {
+            if (i % 4 === 3) continue; // alpha handled separately
+            const diff = Math.abs(actual[i] - expected[i]);
+            if (diff > 1) {
+                throw new Error(`byte ${i}: got ${actual[i]}, expected ${expected[i]} (diff ${diff})`);
+            }
+        }
+    }
+
+    const scenarios = [
+        ["shadows positive only",                {shadows: 50}],
+        ["shadows negative only",                {shadows: -50}],
+        ["highlights positive only",             {highlights: 50}],
+        ["highlights negative only",             {highlights: -50}],
+        ["shadows + highlights, both positive",  {shadows: 40, highlights: 30}],
+        ["shadows + highlights, mixed signs",    {shadows: 60, highlights: -40}],
+        ["dehaze positive only",                 {dehaze: 50}],
+        ["dehaze negative only",                 {dehaze: -50}],
+        ["all three, float-buffer path",         {shadows: 30, highlights: -25, dehaze: 40}],
+        ["all three, opposite sign combo",       {shadows: -40, highlights: 50, dehaze: -30}],
+    ];
+
+    test.each(scenarios)("%s matches per-pixel within 1 byte", (_label, settings) => {
+        const pixels = makeFixturePixels();
+        const dispatched = runImageDispatch(pixels, settings);
+        const reference = runPerPixelReference(pixels, settings);
+        expectChannelsClose(dispatched, reference);
+    });
+
+    test("alpha channel is preserved across every dispatch branch", () => {
+        const pixels = makeFixturePixels();
+        const alphas = pixels.map(p => p[3]);
+        for (const [, settings] of scenarios) {
+            const dispatched = runImageDispatch(pixels, settings);
+            for (let p = 0; p < alphas.length; p++) {
+                expect(dispatched[p * 4 + 3]).toBe(alphas[p]);
+            }
+        }
+    });
+
+    test("no active adjustments leaves bytes untouched", () => {
+        const pixels = makeFixturePixels();
+        const original = fixtureBytes(pixels);
+        const dispatched = runImageDispatch(pixels, {shadows: 0, highlights: 0, dehaze: 0});
+        for (let i = 0; i < dispatched.length; i++) {
+            expect(dispatched[i]).toBe(original[i]);
+        }
     });
 });
