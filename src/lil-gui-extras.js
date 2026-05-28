@@ -1842,6 +1842,40 @@ export class CGuiMenuBar {
         return undefined;
     }
 
+    // Walk a folder's subfolders and capture each one's open/closed state,
+    // keyed by title. Used by modSerialize so a saved sitch remembers which
+    // submenus the user had expanded. Sibling folders with duplicate titles
+    // are not distinguished — the last one wins (rare in practice).
+    _serializeFolderStates(gui) {
+        const out = {};
+        if (!gui || !gui.folders) return out;
+        for (const f of gui.folders) {
+            const key = f.$title?.innerHTML;
+            if (!key) continue;
+            out[key] = {
+                closed: f._closed,
+                folders: this._serializeFolderStates(f),
+            };
+        }
+        return out;
+    }
+
+    // Apply a previously-captured folder-state map. Folders that no longer
+    // exist (renamed, removed, or not yet created) are silently skipped;
+    // folders without a matching entry keep their current default state.
+    _applyFolderStates(gui, data) {
+        if (!gui || !gui.folders || !data) return;
+        for (const f of gui.folders) {
+            const key = f.$title?.innerHTML;
+            if (!key) continue;
+            const entry = data[key];
+            if (!entry) continue;
+            if (entry.closed === true) f.close();
+            else if (entry.closed === false) f.open();
+            this._applyFolderStates(f, entry.folders);
+        }
+    }
+
     modSerialize() {
 
         // serialize the GUIs by index
@@ -1857,6 +1891,7 @@ export class CGuiMenuBar {
                 zIndex: gui.$children.style.zIndex || gui.domElement.parentElement.style.zIndex,
                 mode: gui.mode,
                 lockOpenClose: gui.lockOpenClose,
+                folders: this._serializeFolderStates(gui),
             };
             if (gui.mode === "SIDEBAR_LEFT") {
                 serialized.sidebarIndex = getLeftSidebarMenuIndex(gui);
@@ -1926,6 +1961,12 @@ export class CGuiMenuBar {
                 } else if (data.mode === "SIDEBAR_CENTER") {
                     centerSidebarMenusToAdd.push({ gui, index: data.sidebarIndex ?? 0 });
                 }
+
+                // Restore each submenu's open/closed state. Top-level slots
+                // are intentionally always closed (see above), but the user's
+                // expanded subfolders (Export > Orbit Image Set, etc.) should
+                // survive a save/reload round-trip.
+                this._applyFolderStates(gui, data.folders);
             }
         }
         
