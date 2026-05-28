@@ -79,6 +79,7 @@ if (typeof window !== "undefined" && !window.matchMedia) {
 //   3d-tiles-renderer   — npm package with an "exports" field Jest can't
 //                         resolve the same way webpack does.
 const SKIP_FILES = new Set([
+    "CNodeAnnotateOverlay.js",  // import.meta (via CNodeTrackingOverlay -> CNodeVideoView -> CNodeVideoViewAnalysis)
     "CNodeBuildings3DTiles.js", // 3d-tiles-renderer resolve
     "CNodeMaskOverlay.js",      // import.meta
     "CNodeMirrorVideoView.js",  // import.meta
