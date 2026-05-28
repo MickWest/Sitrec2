@@ -379,6 +379,69 @@ function resetVideoThrashDetector(videoData) {
     videoData.lastGetImageTime = undefined;
 }
 
+export async function scanDuplicateFramesForVideoExport(startFrame, endFrame, progress = null, expectedVideoData = null, options = {}) {
+    const result = await ensureOpenCVAndAnalyzer(null, "", "");
+    if (!result) return new Set();
+
+    const {videoData} = result;
+    if (expectedVideoData && expectedVideoData !== videoData) {
+        console.warn("Unique-frame export is using the primary video view for duplicate detection; the requested videoData differs.");
+    }
+
+    const duplicateFrameSet = new Set();
+    if (endFrame <= startFrame) return duplicateFrameSet;
+
+    const savedPaused = par.paused;
+    const savedFrame = par.frame;
+    const savedJustVideoAnalysis = Globals.justVideoAnalysis;
+    Globals.justVideoAnalysis = true;
+    par.paused = true;
+
+    try {
+        const videoId = videoData?.id || videoData?.filename || "unknown";
+        if (motionAnalyzer.lastVideoDataId !== videoId ||
+            motionAnalyzer.lastAFrame !== Sit.aFrame ||
+            motionAnalyzer.lastBFrame !== Sit.bFrame) {
+            resetMotionAnalysisDerivedState(true);
+        }
+
+        motionAnalyzer.params.skipDuplicateFrames = true;
+
+        if (!motionAnalyzer.hasDuplicateFrameMapForRange(startFrame, endFrame)) {
+            resetVideoThrashDetector(videoData);
+            await motionAnalyzer.buildDuplicateFrameMap(startFrame, endFrame, (current, total) => {
+                progress?.update?.(current);
+                if (progress?.setStatus) {
+                    progress.setStatus(`Scanning duplicate video frames... ${Math.round(100 * current / total)}%`);
+                }
+            }, (frame) => {
+                par.frame = frame;
+                GlobalDateTimeNode?.update(frame);
+            });
+        }
+
+        const meanAbsDiffThreshold = options.meanAbsDiffThreshold;
+        for (let f = startFrame + 1; f <= endFrame; f++) {
+            const duplicateInfo = motionAnalyzer.duplicateFrameCache.get(f);
+            if (duplicateInfo?.isDuplicate ||
+                (Number.isFinite(meanAbsDiffThreshold) && duplicateInfo?.meanAbsDiff <= meanAbsDiffThreshold)) {
+                duplicateFrameSet.add(f);
+            }
+        }
+
+        // Always keep the first exported frame, even if it duplicates the
+        // frame immediately before the A-B range.
+        duplicateFrameSet.delete(startFrame);
+        return duplicateFrameSet;
+    } finally {
+        Globals.justVideoAnalysis = savedJustVideoAnalysis;
+        par.paused = savedPaused;
+        par.frame = savedFrame;
+        GlobalDateTimeNode?.update(savedFrame);
+        setRenderOne(true);
+    }
+}
+
 function setMotionAnalysisProgressLabel(menuItem, progress, fallbackCurrent = null) {
     if (!menuItem) return;
 

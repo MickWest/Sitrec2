@@ -12,6 +12,9 @@ const defaultAccelerationOrder = isFirefox
 // on speed > 1 so high-fps sources at 1x still encode at their native rate.
 // Invariant: frameStep >= 1 always (cap can't shrink fps below desired).
 const MAX_OUTPUT_FPS = 60;
+const DUPLICATE_IDENTICAL_RATIO = 0.93;
+const DUPLICATE_MEAN_ABS_DIFF = 0.15;
+const DEFAULT_UNIQUE_FRAME_MEAN_ABS_DIFF_THRESHOLD = 1.0;
 
 export const VideoFormats = {
     'mp4-h264': {
@@ -233,6 +236,11 @@ function buildBaseFrameSequence(startFrame, endFrame, pingPong, loops) {
     return sequence;
 }
 
+function filterDuplicateFrames(sourceFrames, duplicateFrameSet) {
+    if (!duplicateFrameSet || duplicateFrameSet.size === 0) return sourceFrames;
+    return sourceFrames.filter(frame => !duplicateFrameSet.has(frame));
+}
+
 export function createVideoExportFramePlan({
     startFrame,
     endFrame,
@@ -241,21 +249,26 @@ export function createVideoExportFramePlan({
     pingPong = false,
     loops = 1,
     maxOutputFps = MAX_OUTPUT_FPS,
+    duplicateFrameSet = null,
 }) {
     const speed = Number.isFinite(playbackSpeed) && playbackSpeed > 0 ? playbackSpeed : 1;
     const loopCount = Math.max(1, Math.min(20, Math.round(loops || 1)));
     const baseFps = sourceFps || 30;
-    const sourceFrames = buildBaseFrameSequence(startFrame, endFrame, pingPong, loopCount);
+    const unfilteredSourceFrames = buildBaseFrameSequence(startFrame, endFrame, pingPong, loopCount);
+    const sourceFrames = filterDuplicateFrames(unfilteredSourceFrames, duplicateFrameSet);
     const desiredFps = baseFps * speed;
     const fps = speed > 1 ? Math.min(desiredFps, maxOutputFps) : desiredFps;
     const frameStep = desiredFps / fps;
-    const totalFrames = Math.ceil(sourceFrames.length / frameStep);
+    const totalFrames = sourceFrames.length === 0 ? 0 : Math.ceil(sourceFrames.length / frameStep);
 
     return {
         startFrame,
         endFrame,
         sourceFrames,
+        unfilteredSourceFrames,
         totalSourceFrames: sourceFrames.length,
+        totalUnfilteredSourceFrames: unfilteredSourceFrames.length,
+        skippedDuplicateFrames: unfilteredSourceFrames.length - sourceFrames.length,
         totalFrames,
         fps,
         frameStep,
@@ -263,6 +276,7 @@ export function createVideoExportFramePlan({
         pingPong,
         loops: loopCount,
         frameAt(index) {
+            if (sourceFrames.length === 0) return startFrame;
             return sourceFrames[Math.min(Math.round(index * frameStep), sourceFrames.length - 1)];
         },
     };
@@ -281,8 +295,51 @@ export function getVideoExportSpeedInfo(plan) {
     if (plan.playbackSpeed !== 1) parts.push(`${plan.playbackSpeed}x playback speed`);
     if (plan.pingPong) parts.push("In-Out pingpong");
     if (plan.loops > 1) parts.push(`${plan.loops} loops`);
+    if (plan.skippedDuplicateFrames > 0) parts.push(`${plan.skippedDuplicateFrames} duplicate frames skipped`);
     if (plan.frameStep > 1) parts.push(`capped at ${MAX_OUTPUT_FPS} fps, step ${plan.frameStep.toFixed(3)}`);
     return parts.length ? ` (${parts.join(", ")})` : "";
+}
+
+export function compareGraySamplesForDuplicate(grayA, grayB) {
+    const n = Math.min(grayA?.length || 0, grayB?.length || 0);
+    if (n === 0 || grayA.length !== grayB.length) {
+        return {isDuplicate: false, identicalRatio: 0, meanAbsDiff: Infinity};
+    }
+
+    let identical = 0;
+    let totalDiff = 0;
+    for (let i = 0; i < n; i++) {
+        const diff = Math.abs(grayA[i] - grayB[i]);
+        if (diff === 0) identical++;
+        totalDiff += diff;
+    }
+
+    const identicalRatio = identical / n;
+    const meanAbsDiff = totalDiff / n;
+    return {
+        isDuplicate: identicalRatio >= DUPLICATE_IDENTICAL_RATIO && meanAbsDiff <= DUPLICATE_MEAN_ABS_DIFF,
+        identicalRatio,
+        meanAbsDiff,
+    };
+}
+
+export function findFirstVideoData(NodeMan) {
+    for (const entry of Object.values(NodeMan?.list || {})) {
+        const node = entry.data;
+        if (node?.videoData) return node.videoData;
+    }
+    return null;
+}
+
+export async function scanDuplicateVideoFrames(videoData, startFrame, endFrame, progress = null, options = {}) {
+    if (!videoData || endFrame <= startFrame) return new Set();
+
+    const meanAbsDiffThreshold = options.meanAbsDiffThreshold ?? DEFAULT_UNIQUE_FRAME_MEAN_ABS_DIFF_THRESHOLD;
+    const {scanDuplicateFramesForVideoExport} = await import("./CMotionAnalysisUI");
+    return scanDuplicateFramesForVideoExport(startFrame, endFrame, progress, videoData, {
+        ...options,
+        meanAbsDiffThreshold,
+    });
 }
 
 async function requestSourceFrameForExport(videoData, frame, timeout = 1500) {
@@ -307,6 +364,8 @@ export class VideoExportManager {
         this.videoExportView = "lookView";
         this.retinaExport = false;
         this.exportAudio = true;
+        this.uniqueFramesOnly = false;
+        this.uniqueFrameMeanAbsDiffThreshold = DEFAULT_UNIQUE_FRAME_MEAN_ABS_DIFF_THRESHOLD;
         this.videoExportLoops = 1;
         // Export-time quality switch:
         // false (default) = capture as fast as possible
@@ -363,6 +422,8 @@ export class VideoExportManager {
                         // Keep single-view export behavior in sync with viewport export toggle semantics.
                         view.exportVideo(this.videoFormat, this.exportAudio, this.waitForBackgroundLoading, {
                             loops: this.videoExportLoops,
+                            uniqueFramesOnly: this.uniqueFramesOnly,
+                            uniqueFrameMeanAbsDiffThreshold: this.uniqueFrameMeanAbsDiffThreshold,
                         });
                     }
                 }
@@ -408,6 +469,14 @@ export class VideoExportManager {
             .name(t("videoExport.includeAudio.label"))
             .tooltip(t("videoExport.includeAudio.tooltip"));
 
+        this.renderVideoFolder.add(this, "uniqueFramesOnly")
+            .name(t("videoExport.uniqueFramesOnly.label"))
+            .tooltip(t("videoExport.uniqueFramesOnly.tooltip"));
+
+        this.renderVideoFolder.add(this, "uniqueFrameMeanAbsDiffThreshold", 0, 5, 0.05)
+            .name(t("videoExport.uniqueFrameThreshold.label"))
+            .tooltip(t("videoExport.uniqueFrameThreshold.tooltip"));
+
         this.renderVideoFolder.add(this, "waitForBackgroundLoading")
             .name(t("videoExport.waitForLoading.label"))
             .tooltip(t("videoExport.waitForLoading.tooltip"));
@@ -427,6 +496,26 @@ export class VideoExportManager {
         }
 
         return this.renderVideoFolder;
+    }
+
+    async buildDuplicateFrameSetForExport(videoData, startFrame, endFrame) {
+        const { ExportProgressWidget } = await import("./utils");
+        if (!this.uniqueFramesOnly || !videoData) return null;
+
+        const progress = new ExportProgressWidget("Scanning duplicate video frames...", endFrame - startFrame + 1);
+        try {
+            const duplicateFrameSet = await scanDuplicateVideoFrames(videoData, startFrame, endFrame, progress, {
+                meanAbsDiffThreshold: this.uniqueFrameMeanAbsDiffThreshold,
+            });
+            if (progress.shouldStop()) {
+                console.log("Duplicate frame scan cancelled; exporting all frames");
+                return null;
+            }
+            console.log(`Unique frames only: found ${duplicateFrameSet.size} duplicate frame(s) in ${startFrame}-${endFrame} (mean diff <= ${this.uniqueFrameMeanAbsDiffThreshold})`);
+            return duplicateFrameSet;
+        } finally {
+            progress.remove();
+        }
     }
 
     async exportSourceVideo() {
@@ -458,6 +547,7 @@ export class VideoExportManager {
 
         const width = sourceCanvas.width;
         const height = sourceCanvas.height;
+        const duplicateFrameSet = await this.buildDuplicateFrameSetForExport(videoData, startFrame, endFrame);
         const plan = createVideoExportFramePlan({
             startFrame,
             endFrame,
@@ -465,7 +555,12 @@ export class VideoExportManager {
             playbackSpeed: par.playbackSpeed ?? 1,
             pingPong: par.pingPong,
             loops: this.videoExportLoops,
+            duplicateFrameSet,
         });
+        if (plan.totalFrames === 0) {
+            alert("Source video render failed: no unique frames found in the A-B range.");
+            return;
+        }
 
         const bestFormat = await getBestFormatForResolution(this.videoFormat, width, height);
         if (!bestFormat.formatId) {
@@ -483,14 +578,14 @@ export class VideoExportManager {
         let audioStartTime = 0;
         let audioDuration = null;
         let originalFps = plan.fps;
-        const canIncludeAudio = this.exportAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1;
+        const canIncludeAudio = this.exportAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1 && plan.skippedDuplicateFrames === 0;
         if (canIncludeAudio && videoData.audioHandler && videoData.audioHandler.decodingComplete) {
             audioBuffer = videoData.audioHandler.getAudioBufferForExport();
             originalFps = videoData.audioHandler.originalFps || plan.fps;
             audioStartTime = startFrame / originalFps;
             audioDuration = plan.totalFrames / plan.fps;
         } else if (this.exportAudio && !canIncludeAudio) {
-            console.log("Audio export skipped: playback speed, A-B pingpong, or loops would desync from source audio");
+            console.log("Audio export skipped: playback speed, A-B pingpong, loops, or unique-frame export would desync from source audio");
         }
 
         const speedInfo = getVideoExportSpeedInfo(plan);
@@ -631,6 +726,7 @@ export class VideoExportManager {
         const scale = this.retinaExport ? (window.devicePixelRatio || 1) : 1;
         const width = Math.round(ViewMan.widthPx * scale);
         const height = Math.round(ViewMan.heightPx * scale);
+        const duplicateFrameSet = await this.buildDuplicateFrameSetForExport(findFirstVideoData(NodeMan), startFrame, endFrame);
         const plan = createVideoExportFramePlan({
             startFrame,
             endFrame,
@@ -638,7 +734,12 @@ export class VideoExportManager {
             playbackSpeed: par.playbackSpeed ?? 1,
             pingPong: par.pingPong,
             loops: this.videoExportLoops,
+            duplicateFrameSet,
         });
+        if (plan.totalFrames === 0) {
+            alert("Video export failed: no unique frames found in the A-B range.");
+            return;
+        }
 
         const bestFormat = await getBestFormatForResolution(this.videoFormat, width, height);
         if (!bestFormat.formatId) {
@@ -673,7 +774,7 @@ export class VideoExportManager {
         let audioDuration = null;
         let originalFps = plan.fps;
 
-        const canIncludeAudio = this.exportAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1;
+        const canIncludeAudio = this.exportAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1 && plan.skippedDuplicateFrames === 0;
         if (canIncludeAudio) {
             for (const entry of Object.values(NodeMan.list)) {
                 const node = entry.data;
@@ -691,7 +792,7 @@ export class VideoExportManager {
                 }
             }
         } else if (this.exportAudio) {
-            console.log("Audio export skipped: playback speed, A-B pingpong, or loops would desync from video");
+            console.log("Audio export skipped: playback speed, A-B pingpong, loops, or unique-frame export would desync from video");
         }
 
         try {
@@ -961,6 +1062,7 @@ export class VideoExportManager {
 
         const startFrame = Sit.aFrame;
         const endFrame = Sit.bFrame;
+        const duplicateFrameSet = await this.buildDuplicateFrameSetForExport(findFirstVideoData(NodeMan), startFrame, endFrame);
         const plan = createVideoExportFramePlan({
             startFrame,
             endFrame,
@@ -968,6 +1070,7 @@ export class VideoExportManager {
             playbackSpeed: par.playbackSpeed ?? 1,
             pingPong: par.pingPong,
             loops: this.videoExportLoops,
+            duplicateFrameSet,
         });
 
         const width = Math.ceil(captureWidth / 2) * 2;
@@ -977,6 +1080,11 @@ export class VideoExportManager {
         if (!bestFormat.formatId) {
             displayStream.getTracks().forEach(t => t.stop());
             alert(`Video export failed: ${bestFormat.reason}`);
+            return;
+        }
+        if (plan.totalFrames === 0) {
+            displayStream.getTracks().forEach(t => t.stop());
+            alert("Video export failed: no unique frames found in the A-B range.");
             return;
         }
         if (bestFormat.fallback) {
@@ -1014,7 +1122,7 @@ export class VideoExportManager {
         let audioDuration = null;
         let originalFps = plan.fps;
 
-        const canIncludeAudio = this.exportAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1;
+        const canIncludeAudio = this.exportAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1 && plan.skippedDuplicateFrames === 0;
         if (canIncludeAudio) {
             for (const entry of Object.values(NodeMan.list)) {
                 const node = entry.data;
@@ -1031,7 +1139,7 @@ export class VideoExportManager {
                 }
             }
         } else if (this.exportAudio) {
-            console.log("Audio export skipped: playback speed, A-B pingpong, or loops would desync from video");
+            console.log("Audio export skipped: playback speed, A-B pingpong, loops, or unique-frame export would desync from video");
         }
 
         const waitForPaint = () => new Promise(resolve => {

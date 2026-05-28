@@ -1,4 +1,4 @@
-import {createVideoExportFramePlan} from "../src/VideoExporter";
+import {compareGraySamplesForDuplicate, createVideoExportFramePlan} from "../src/VideoExporter";
 
 describe("createVideoExportFramePlan", () => {
     test("builds a repeated A-B pingpong sequence", () => {
@@ -28,5 +28,35 @@ describe("createVideoExportFramePlan", () => {
         expect(plan.frameStep).toBe(1.5);
         expect(plan.totalFrames).toBe(7);
         expect(plan.frameAt(1)).toBe(2);
+    });
+
+    test("filters duplicate source frames without changing fps", () => {
+        const plan = createVideoExportFramePlan({
+            startFrame: 0,
+            endFrame: 5,
+            sourceFps: 30,
+            duplicateFrameSet: new Set([2, 4]),
+        });
+
+        expect(plan.sourceFrames).toEqual([0, 1, 3, 5]);
+        expect(plan.fps).toBe(30);
+        expect(plan.totalFrames).toBe(4);
+        expect(plan.skippedDuplicateFrames).toBe(2);
+    });
+});
+
+describe("compareGraySamplesForDuplicate", () => {
+    test("detects identical grayscale samples", () => {
+        const a = new Uint8Array([10, 20, 30, 40]);
+        const b = new Uint8Array([10, 20, 30, 40]);
+
+        expect(compareGraySamplesForDuplicate(a, b).isDuplicate).toBe(true);
+    });
+
+    test("rejects visibly different grayscale samples", () => {
+        const a = new Uint8Array([10, 20, 30, 40]);
+        const b = new Uint8Array([80, 90, 100, 110]);
+
+        expect(compareGraySamplesForDuplicate(a, b).isDuplicate).toBe(false);
     });
 });

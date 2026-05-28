@@ -7,7 +7,9 @@ import {
     getBestFormatForResolution,
     getVideoExportSpeedInfo,
     getVideoExportSpeedSuffix,
-    getVideoExtension
+    getVideoExtension,
+    findFirstVideoData,
+    scanDuplicateVideoFrames
 } from "../VideoExporter";
 import {drawVideoWatermark, ExportProgressWidget} from "../utils";
 import {drawAttributionOnCanvas} from "../AttributionOverlay";
@@ -383,6 +385,23 @@ export class CNodeView3D extends CNodeViewCanvas {
         const endFrame = Sit.bFrame;
         const width = this.canvas.width;
         const height = this.canvas.height;
+        let duplicateFrameSet = null;
+        if (options.uniqueFramesOnly) {
+            const scanProgress = new ExportProgressWidget("Scanning duplicate video frames...", endFrame - startFrame + 1);
+            try {
+                duplicateFrameSet = await scanDuplicateVideoFrames(findFirstVideoData(NodeMan), startFrame, endFrame, scanProgress, {
+                    meanAbsDiffThreshold: options.uniqueFrameMeanAbsDiffThreshold,
+                });
+                if (scanProgress.shouldStop()) {
+                    console.log("Duplicate frame scan cancelled; exporting all frames");
+                    duplicateFrameSet = null;
+                } else {
+                    console.log(`Unique frames only: found ${duplicateFrameSet.size} duplicate frame(s) in ${startFrame}-${endFrame}`);
+                }
+            } finally {
+                scanProgress.remove();
+            }
+        }
         const plan = createVideoExportFramePlan({
             startFrame,
             endFrame,
@@ -390,7 +409,12 @@ export class CNodeView3D extends CNodeViewCanvas {
             playbackSpeed: par.playbackSpeed ?? 1,
             pingPong: options.pingPong ?? par.pingPong,
             loops: options.loops ?? 1,
+            duplicateFrameSet,
         });
+        if (plan.totalFrames === 0) {
+            alert("Video export failed: no unique frames found in the A-B range.");
+            return;
+        }
         
         const bestFormat = await getBestFormatForResolution(requestedFormatId, width, height);
         if (!bestFormat.formatId) {
@@ -420,7 +444,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         let audioDuration = null;
         let originalFps = plan.fps;
         
-        const canIncludeAudio = includeAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1;
+        const canIncludeAudio = includeAudio && plan.playbackSpeed === 1 && !plan.pingPong && plan.loops === 1 && plan.skippedDuplicateFrames === 0;
         if (canIncludeAudio) {
             for (const entry of Object.values(NodeMan.list)) {
                 const node = entry.data;
@@ -438,7 +462,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 }
             }
         } else if (includeAudio) {
-            console.log("Audio export skipped: playback speed, A-B pingpong, or loops would desync from video");
+            console.log("Audio export skipped: playback speed, A-B pingpong, loops, or unique-frame export would desync from video");
         }
         
         const compositeCanvas = document.createElement('canvas');

@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.64.0 (2026-05-28)
+
+### New Features
+- **Unique frames only** (Video → Render Video): when exporting a video, scan the A-B range first and skip source frames that duplicate the previous frame, so a re-encoded video (e.g. 30 fps wrapper around true 15 fps content) produces a shorter output at the chosen frame rate instead of carrying the duplicates through. A *Unique threshold* slider tunes how aggressively near-identical frames are treated as duplicates — raise it for recompressed footage with tiny shimmer, lower it if real subtle motion is being skipped. Audio is omitted from unique-frame exports because the trimmed video no longer aligns with the source audio.
+
+---
+
 ## Version 2.63.0 (2026-05-28)
 
 ### New Features

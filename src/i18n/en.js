@@ -258,6 +258,14 @@ const en = {
             label: "Include Audio",
             tooltip: "Include audio track from source video if available",
         },
+        uniqueFramesOnly: {
+            label: "Unique frames only",
+            tooltip: "Scan the A-B range before export and skip source video frames that duplicate the previous frame. Output keeps the selected/original frame rate, so the video becomes shorter.",
+        },
+        uniqueFrameThreshold: {
+            label: "Unique threshold",
+            tooltip: "Mean grayscale difference at or below this value counts as a duplicate for Unique frames only. Raise for recompressed videos with tiny frame-to-frame shimmer; lower if real subtle motion is being skipped.",
+        },
         waitForLoading: {
             label: "Wait for background loading",
             tooltip: "When enabled, rendering waits for terrain/building/background loads before capturing each frame",
