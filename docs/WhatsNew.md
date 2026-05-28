@@ -9,6 +9,25 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.63.0 (2026-05-28)
+
+### New Features
+- **Annotate** (Video → Annotate): draw on top of the video with pencil, brush, line, arrow, rectangle, ellipse, text, and dropped images; strokes stick to the video as you zoom and pan, save with the sitch, and appear in exported single frames and rendered videos.
+- **Lighting Preset** (Lighting menu): pick *Default* to restore the sitch's original lighting, or *Shadows* for a fixed setup tuned for shadow rendering; your choice is remembered with the sitch.
+- **Atmosphere moved to the Lighting menu**: the atmosphere checkbox and *Atmosphere Tweaks* now live under Lighting instead of Effects.
+- **Orbit Image Set — AZ Start and single-shot sweeps** (Export → Orbit Image Set): new *AZ Start* slider chooses the starting heading of the azimuth sweep, and setting *AZ Step* or *EL Step* to 0 captures a single shot at that angle.
+- **On-screen histogram** (Video → Effects → *Histogram On-Screen*): limits the video histogram to the part of the frame currently visible in the view.
+
+### Improvements
+- Open/closed state of menu subfolders is now saved and restored with the sitch.
+- The login button, *Add Object*, *Export Debug Log*, the local-folder status row, and the HUD Color picker no longer disappear when a custom sitch is loaded.
+- Video shadows / highlights / dehaze adjustments are noticeably faster.
+
+### Bug Fixes
+- Fixed *Resources* and *Orbit Image Set* disappearing from the Export menu after using File → Open.
+
+---
+
 ## Version 2.62.4 (2026-05-27)
 
 ### Bug Fixes
