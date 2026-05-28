@@ -237,6 +237,32 @@ export class ImageSetExporter {
                 }
             });
 
+        // Mirror the Lighting Preset dropdown from the Lighting menu. Attached
+        // lazily because the lighting node is created by Sit.setup() at
+        // index.js:2199, well after FileManager.sitchChanged() fires the
+        // initial setupMenu at index.js:2060. We try once sync (for the case
+        // where lighting exists already, e.g. a subsequent sitch reload), and
+        // also retry on each folder open (the dropdown isn't visible until
+        // then anyway) until it lands.
+        this._attachLightingPresetMirror = () => {
+            if (!this.menuFolder || this.menuFolder !== folder) return; // stale folder
+            if (folder.controllers.some(c => c._name === "Lighting Preset")) return; // already added
+            const lightingNode = NodeMan.get("lighting", false);
+            if (!lightingNode?._lightingPresets) return;
+            const ctrl = folder.add(lightingNode, "lightingPreset", Object.keys(lightingNode._lightingPresets))
+                .name("Lighting Preset")
+                .tooltip("Mirror of the Lighting menu's preset dropdown — applies the same set of values to the lighting sliders, master shadows toggle, and lookView atmosphere flag.")
+                .listen()
+                .onChange((v) => lightingNode.applyLightingPreset(v));
+            // lil-gui's add() appends at the end; re-position the row so it
+            // lands just above the "Export Image Set" button.
+            const exportBtn = folder.controllers.find(c => c._name === "Export Image Set");
+            if (exportBtn?.domElement && ctrl.domElement) {
+                folder.$children.insertBefore(ctrl.domElement, exportBtn.domElement);
+            }
+        };
+        this._attachLightingPresetMirror();
+
         folder.add({
             run: () => this.exportImageSet(),
         }, "run").name("Export Image Set")
@@ -256,6 +282,9 @@ export class ImageSetExporter {
         // tracks the user just drag-dropped become selectable without a reload.
         folder.onOpenClose((g) => {
             if (g._closed) return;
+            // Retry attaching the Lighting Preset mirror in case the lighting
+            // node wasn't constructed yet at setupMenu time.
+            this._attachLightingPresetMirror?.();
             if (!this.trackController) return;
 
             const newOpts = buildTrackOptions(this.trackToOrbit);

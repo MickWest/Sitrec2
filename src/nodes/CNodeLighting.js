@@ -5,6 +5,7 @@ import {CNode} from "./CNode";
 import * as LAYER from "../LayerMasks";
 import {updateNightTexture} from "../Globe";
 import {t} from "../i18n";
+import {ViewMan} from "../CViewManager";
 
 // by default this will live in one node "lighting"
 export class CNodeLighting extends CNode {
@@ -63,18 +64,64 @@ export class CNodeLighting extends CNode {
 
         this.gui = guiMenus.lighting;
 
-        this.addGUIValue("ambientIntensity", 0, 2, 0.01, t("lighting.ambientIntensity.label"))
-            .tooltip(t("lighting.ambientIntensity.tooltip"));
-        this.addGUIValue("IRAmbientIntensity", 0, 2, 0.01, t("lighting.irAmbientIntensity.label"))
-            .tooltip(t("lighting.irAmbientIntensity.tooltip"));
-        this.addGUIValue("sunIntensity", 0, 2, 0.01, t("lighting.sunIntensity.label"))
-            .tooltip(t("lighting.sunIntensity.tooltip"));
-        this.addGUIValue("sunScattering", 0, 2, 0.01, t("lighting.sunScattering.label"))
-            .tooltip(t("lighting.sunScattering.tooltip"));
-        this.addGUIValue("sunBoost", 1, 100, 1, t("lighting.sunBoost.label"))
-            .tooltip(t("lighting.sunBoost.tooltip"));
-        this.addGUIValue("sceneExposure", 0.01, 2.0, 0.01, t("lighting.sceneExposure.label"))
-            .tooltip(t("lighting.sceneExposure.tooltip"));
+        // Preset dropdown: "Default" snapshots whatever this sitch's six
+        // light-tunable fields were at construction (the sitch's intended
+        // baseline); "Shadows" applies a fixed set tuned for shadow rendering.
+        // Manual slider tweaks don't auto-flip the label — selecting a preset
+        // again re-applies it. The label itself is serialized so a saved sitch
+        // remembers which preset the user last picked.
+        this._lightingPresets = {
+            Default: {
+                ambientIntensity: this.ambientIntensity,
+                IRAmbientIntensity: this.IRAmbientIntensity,
+                sunIntensity: this.sunIntensity,
+                sunScattering: this.sunScattering,
+                sunBoost: this.sunBoost,
+                sceneExposure: this.sceneExposure,
+                shadowsEnabled: this.shadowsEnabled,
+                // atmosphereEnabled is per-view (lookView). CNodeView3D
+                // snapshots its initial value via captureDefaultAtmosphere()
+                // since it's constructed after this node.
+                atmosphereEnabled: undefined,
+            },
+            Shadows: {
+                ambientIntensity: 0.07,
+                IRAmbientIntensity: 0.8,
+                sunIntensity: 1.02,
+                sunScattering: 0,
+                sunBoost: 1,
+                sceneExposure: 0.22,
+                shadowsEnabled: true,
+                atmosphereEnabled: false,
+            },
+        };
+        this.lightingPreset = "Default";
+        this.addSimpleSerial("lightingPreset");
+        this._presetControllers = {};
+        this._presetControllers.lightingPreset =
+            this.gui.add(this, "lightingPreset", Object.keys(this._lightingPresets))
+                .name("Lighting Preset")
+                .tooltip("Apply a bundled set of values to the six light sliders, the master shadows toggle, and the lookView atmosphere flag. 'Default' is this sitch's baseline; 'Shadows' is tuned for shadow rendering.")
+                .onChange((value) => this.applyLightingPreset(value));
+
+        this._presetControllers.ambientIntensity =
+            this.addGUIValue("ambientIntensity", 0, 2, 0.01, t("lighting.ambientIntensity.label"))
+                .tooltip(t("lighting.ambientIntensity.tooltip"));
+        this._presetControllers.IRAmbientIntensity =
+            this.addGUIValue("IRAmbientIntensity", 0, 2, 0.01, t("lighting.irAmbientIntensity.label"))
+                .tooltip(t("lighting.irAmbientIntensity.tooltip"));
+        this._presetControllers.sunIntensity =
+            this.addGUIValue("sunIntensity", 0, 2, 0.01, t("lighting.sunIntensity.label"))
+                .tooltip(t("lighting.sunIntensity.tooltip"));
+        this._presetControllers.sunScattering =
+            this.addGUIValue("sunScattering", 0, 2, 0.01, t("lighting.sunScattering.label"))
+                .tooltip(t("lighting.sunScattering.tooltip"));
+        this._presetControllers.sunBoost =
+            this.addGUIValue("sunBoost", 1, 100, 1, t("lighting.sunBoost.label"))
+                .tooltip(t("lighting.sunBoost.tooltip"));
+        this._presetControllers.sceneExposure =
+            this.addGUIValue("sceneExposure", 0.01, 2.0, 0.01, t("lighting.sceneExposure.label"))
+                .tooltip(t("lighting.sceneExposure.tooltip"));
         this.addGUIBoolean("ambientOnly", t("lighting.ambientOnly.label"))
             .tooltip(t("lighting.ambientOnly.tooltip"));
         this.addGUIBoolean("atmosphere", t("lighting.daylightSky.label"))
@@ -111,7 +158,7 @@ export class CNodeLighting extends CNode {
         // its own per-view flag. When on, each view's per-view flag (inside
         // Shadow tweaks below) decides whether THAT view renders shadows.
         if (this.gui) {
-            this.gui.add(this, "shadowsEnabled")
+            this._presetControllers.shadowsEnabled = this.gui.add(this, "shadowsEnabled")
                 .name(t("lighting.shadowsEnabled.label"))
                 .tooltip(t("lighting.shadowsEnabled.tooltip"))
                 .listen()
@@ -181,6 +228,47 @@ export class CNodeLighting extends CNode {
 
         this.recalculate();
 
+    }
+
+    // Apply a named lighting preset. Public so callers like the Orbit Image
+    // Set exporter can mirror the Lighting Preset dropdown without duplicating
+    // the per-field write logic.
+    applyLightingPreset(name) {
+        const preset = this._lightingPresets?.[name];
+        if (!preset) return;
+        this.lightingPreset = name;
+        const prevShadowsEnabled = this.shadowsEnabled;
+        for (const k in preset) {
+            if (preset[k] === undefined) continue;
+            // atmosphereEnabled lives on lookView, not on this node.
+            if (k === "atmosphereEnabled") continue;
+            this[k] = preset[k];
+            this._presetControllers[k]?.updateDisplay();
+        }
+        if (this.shadowsEnabled !== prevShadowsEnabled) {
+            this.applyShadowConfig({reason: "preset"});
+        }
+        if (preset.atmosphereEnabled !== undefined) {
+            const lookView = ViewMan.get("lookView", false);
+            if (lookView && lookView.atmosphereEnabled !== preset.atmosphereEnabled) {
+                lookView.atmosphereEnabled = preset.atmosphereEnabled;
+                // The lookView checkbox uses .listen() so it will refresh
+                // itself; just nudge a render.
+                setRenderOne(true);
+            }
+        }
+        // Keep the dropdown in sync when called from a mirror (e.g. OIS).
+        this._presetControllers.lightingPreset?.updateDisplay();
+        this.recalculate();
+        setRenderOne();
+    }
+
+    // CNodeView3D calls this when the lookView is set up so the "Default"
+    // preset captures the sitch's intended initial atmosphere state.
+    captureDefaultAtmosphere(value) {
+        if (this._lightingPresets?.Default) {
+            this._lightingPresets.Default.atmosphereEnabled = value;
+        }
     }
 
     // Returns true if at least one CNodeView3D has effective shadows.

@@ -179,21 +179,33 @@ export class CNodeView3D extends CNodeViewCanvas {
             })
                 .tooltip(t("view3d.northUp.tooltip"))
 
-            guiTweaks.add(this, "atmosphereEnabled").name(t("view3d.atmosphere.label")).listen().onChange(() => {
+            // Atmosphere flag + tweaks now live under Lighting (peer to the
+            // Shadows / Shadow tweaks pair) instead of Effects. The master
+            // checkbox sits at lighting-level; the three tunables go in a
+            // collapsed "Atmosphere Tweaks" subfolder beneath it.
+            guiMenus.lighting.add(this, "atmosphereEnabled").name(t("view3d.atmosphere.label")).listen().onChange(() => {
                 setRenderOne(true);
             }).tooltip(t("view3d.atmosphere.tooltip"));
 
-            guiTweaks.add(this, "atmosphereVisibilityKm", 1, 500, 0.1).name(t("view3d.atmoVisibility.label")).listen().onChange(() => {
+            const atmoFolder = guiMenus.lighting.addFolder("Atmosphere Tweaks").close();
+            atmoFolder.add(this, "atmosphereVisibilityKm", 1, 500, 0.1).name(t("view3d.atmoVisibility.label")).listen().onChange(() => {
                 setRenderOne(true);
             }).tooltip(t("view3d.atmoVisibility.tooltip"));
 
-            guiTweaks.add(this, "atmosphereHDR").name(t("view3d.atmoHDR.label")).listen().onChange(() => {
+            atmoFolder.add(this, "atmosphereHDR").name(t("view3d.atmoHDR.label")).listen().onChange(() => {
                 setRenderOne(true);
             }).tooltip(t("view3d.atmoHDR.tooltip"));
 
-            guiTweaks.add(this, "atmosphereExposure", 0.1, 5.0, 0.01).name(t("view3d.atmoExposure.label")).listen().onChange(() => {
+            atmoFolder.add(this, "atmosphereExposure", 0.1, 5.0, 0.01).name(t("view3d.atmoExposure.label")).listen().onChange(() => {
                 setRenderOne(true);
             }).tooltip(t("view3d.atmoExposure.tooltip"));
+
+            // Snapshot the sitch's initial atmosphere state into the lighting
+            // node's "Default" preset so picking Default restores it.
+            const lightingNode = NodeMan.get("lighting", false);
+            if (lightingNode && typeof lightingNode.captureDefaultAtmosphere === "function") {
+                lightingNode.captureDefaultAtmosphere(this.atmosphereEnabled);
+            }
 
             guiTweaks.add(this, "skyGradient")
                 .name(t("view3d.skyGradient.label", {defaultValue: "Sky Gradient"}))
