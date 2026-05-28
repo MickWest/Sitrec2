@@ -742,6 +742,7 @@ const en = {
             aiModel: { label: "AI Model", tooltip: "Select the AI model for the chat assistant" },
             centerSidebar: { label: "Center Sidebar", tooltip: "Enable center sidebar between split views (drag menus to the divider line)" },
             showAttribution: { label: "Show Attribution", tooltip: "Show map and elevation data source attribution overlay" },
+            showFilename: { label: "Show Filename", tooltip: "Show the current video filename centered at the bottom of the viewport and exported videos" },
         },
         balloons: {
             count: { label: "Count", tooltip: "Number of nearby stations to import" },
@@ -1161,6 +1162,10 @@ const en = {
         showVideoInfo: {
             label: "Show Video Info",
             tooltip: "Master toggle - enable or disable all video info displays",
+        },
+        filename: {
+            label: "Filename",
+            tooltip: "Show the current video filename",
         },
         frameCounter: {
             label: "Frame Number",

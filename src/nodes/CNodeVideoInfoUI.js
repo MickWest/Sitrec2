@@ -2,6 +2,7 @@ import {CNodeViewUI} from "./CNodeViewUI";
 import {CustomManager, GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
 import {t} from "../i18n";
+import {getDisplayFilename} from "../FilenameUtils";
 
 const DEFAULT_X = 50;
 const DEFAULT_Y = 8;
@@ -14,6 +15,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         this.doubleClickFullScreen = false;
 
         this.showInfo = v.showInfo ?? true;
+        this.showFilename = v.showFilename ?? false;
         this.showFrameCounter = v.showFrameCounter ?? false;
         this.showSourceFrame = v.showSourceFrame ?? false;
         this.showOffsetFrame = v.showOffsetFrame ?? false;
@@ -28,6 +30,8 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         this.showDateTimeUTC = v.showDateTimeUTC ?? false;
         this.fontSize = v.fontSize ?? 30;
 
+        this.filenameX = v.filenameX ?? DEFAULT_X;
+        this.filenameY = v.filenameY ?? DEFAULT_Y;
         this.frameCounterX = v.frameCounterX ?? DEFAULT_X;
         this.frameCounterY = v.frameCounterY ?? DEFAULT_Y;
         this.sourceFrameX = v.sourceFrameX ?? DEFAULT_X;
@@ -52,6 +56,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         this.dateTimeUTCY = v.dateTimeUTCY ?? DEFAULT_Y;
 
         this.addSimpleSerial("showInfo");
+        this.addSimpleSerial("showFilename");
         this.addSimpleSerial("showFrameCounter");
         this.addSimpleSerial("showSourceFrame");
         this.addSimpleSerial("showOffsetFrame");
@@ -65,6 +70,8 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         this.addSimpleSerial("showTimeUTC");
         this.addSimpleSerial("showDateTimeUTC");
         this.addSimpleSerial("fontSize");
+        this.addSimpleSerial("filenameX");
+        this.addSimpleSerial("filenameY");
         this.addSimpleSerial("frameCounterX");
         this.addSimpleSerial("frameCounterY");
         this.addSimpleSerial("sourceFrameX");
@@ -117,7 +124,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
     }
 
     hasAnyInfoItem() {
-        return this.showFrameCounter || this.showSourceFrame || this.showOffsetFrame ||
+        return this.showFilename || this.showFrameCounter || this.showSourceFrame || this.showOffsetFrame ||
             this.showTimecode || this.showTimestamp ||
             this.showDateLocal || this.showTimeLocal || this.showDateTimeLocal ||
             this.showDateUTC || this.showTimeUTC || this.showDateTimeUTC;
@@ -145,12 +152,13 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
     }
 
     getAllItemIds() {
-        return ['frameCounter', 'sourceFrame', 'offsetFrame', 'timecode', 'timestamp', 'dateLocal', 'timeLocal',
+        return ['filename', 'frameCounter', 'sourceFrame', 'offsetFrame', 'timecode', 'timestamp', 'dateLocal', 'timeLocal',
             'dateTimeLocal', 'dateUTC', 'timeUTC', 'dateTimeUTC'];
     }
 
     getShowProp(id) {
         const map = {
+            filename: 'showFilename',
             frameCounter: 'showFrameCounter',
             sourceFrame: 'showSourceFrame',
             offsetFrame: 'showOffsetFrame',
@@ -249,6 +257,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
             }
         };
 
+        addBbox('filename', this.showFilename, this._filenameBbox);
         addBbox('frameCounter', this.showFrameCounter, this._frameCounterBbox);
         addBbox('sourceFrame', this.showSourceFrame, this._sourceFrameBbox);
         addBbox('offsetFrame', this.showOffsetFrame, this._offsetFrameBbox);
@@ -280,6 +289,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
 
     getElementPos(id) {
         const map = {
+            filename: ['filenameX', 'filenameY'],
             frameCounter: ['frameCounterX', 'frameCounterY'],
             sourceFrame: ['sourceFrameX', 'sourceFrameY'],
             offsetFrame: ['offsetFrameX', 'offsetFrameY'],
@@ -519,6 +529,11 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         return `${mm}:${ssDecimal}`;
     }
 
+    getVideoFilename() {
+        const videoView = this.in.relativeTo;
+        return getDisplayFilename(videoView?.fileName ?? videoView?.videoData?.filename);
+    }
+
     getVideoRect() {
         let vx = 0, vy = 0, vw = this.widthPx, vh = this.heightPx;
         const videoView = this.in.relativeTo;
@@ -615,6 +630,13 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
 
             return { x: bgX, y: bgY, w: bgW, h: bgH };
         };
+
+        if (this.showFilename) {
+            const filename = this.getVideoFilename();
+            if (filename) {
+                this._filenameBbox = drawTextWithBg(filename, this.filenameX, this.filenameY);
+            }
+        }
 
         if (this.showFrameCounter) {
             this._frameCounterBbox = drawTextWithBg(`${Math.floor(par.frame)}`, this.frameCounterX, this.frameCounterY);
@@ -858,6 +880,11 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
             .tooltip(t("videoInfo.showVideoInfo.tooltip"))
             .listen()
             .onChange(() => this.updateVisibility());
+
+        folder.add(this, "showFilename").name(t("videoInfo.filename.label"))
+            .tooltip(t("videoInfo.filename.tooltip"))
+            .listen()
+            .onChange(v => { if (v) this.positionItemToAvoidOverlaps('filename'); this.updateVisibility(); });
 
         folder.add(this, "showFrameCounter").name(t("videoInfo.frameCounter.label"))
             .tooltip(t("videoInfo.frameCounter.tooltip"))

@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.65.0 (2026-05-28)
+
+### New Features
+- **Show Filename** (Settings → *Show Filename*, on by default): the current video's filename now appears centered along the bottom of the page, next to the existing bottom-right map/data attribution. It also shows up in rendered viewport videos so exported clips are labeled with the source filename. Turn it off in Settings if you don't want it.
+- **Filename in Video Info** (per video view, Video Info → *Filename*, off by default): you can also show the filename inside the video viewport itself, alongside the frame counter and timecode. Drag it to wherever you want; the position is saved with the sitch.
+
+---
+
 ## Version 2.64.0 (2026-05-28)
 
 ### New Features

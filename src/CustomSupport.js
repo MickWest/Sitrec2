@@ -98,6 +98,7 @@ import {getNearbyWeatherBalloons, importSoundingDialog} from "./SondeFetch";
 import {WIND_SOURCES, windSourceLabelsToKeys, windSourceByKey} from "./nodes/WindSources";
 import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
 import {CNodeSAPage} from "./nodes/CNodeSAPage";
+import {updateFilenameOverlay} from "./AttributionOverlay";
 import {
     gimbalStepAirTrack,
     gimbalStepAirTrackDisplay,
@@ -623,6 +624,18 @@ export class CCustomManager {
                 if (terrainUI) terrainUI.updateAttribution();
             })
             .listen();
+
+        settingsFolder.add(Globals.settings, "showFilename")
+            .name(t("custom.settings.showFilename.label"))
+            .tooltip(t("custom.settings.showFilename.tooltip"))
+            .onChange((value) => {
+                Globals.settings.showFilename = Boolean(value);
+                this.saveGlobalSettings(true);
+                updateFilenameOverlay();
+            })
+            .listen();
+
+        updateFilenameOverlay();
 
         // Fetch available models from server
         this.fetchAvailableChatModels();

@@ -51,6 +51,7 @@ import {applyImportedImageMetadata, extractJPEGImportMetadata} from "../EXIFUtil
 import {EXIFInfoPanel} from "../EXIFInfoPanel";
 import {isResolvableSitrecReference, resolveURLForFetch} from "../SitrecObjectResolver";
 import {t} from "../i18n";
+import {setFilenameOverlaySource} from "../AttributionOverlay";
 import {
     addFiltersToVideoNode,
     applyByteInvertToImage,
@@ -381,6 +382,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
         EventManager.dispatchEvent("videoImportStarted", {viewId: this.id, fileName});
         this.fileName = fileName;
+        setFilenameOverlaySource(this.fileName);
         this.invalidateELAResult();
         if (this.pendingVideoRestore) {
             this.videoData = null;
@@ -541,6 +543,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         assert(videoData, "CNodeVideoView loadedCallback called with no videoData, possibly because it's called in the constructor before the this.videoData is assigned");
         this.dispatchVideoAvailabilityChanged();
+        setFilenameOverlaySource(this.fileName ?? videoData?.filename);
 
         // Decrement pendingActions if this video was registered with the VideoLoadingManager
         // Use _loadingId to track per-video pending state (not videoLoadPending which is shared)
@@ -1176,6 +1179,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         console.log(`[VideoSwitch]   loaded: ${vd?.loaded}, percentLoaded: ${vd?.percentLoaded}`);
 
         this.fileName = entry.fileName;
+        setFilenameOverlaySource(this.fileName ?? vd?.filename);
         this.staticURL = entry.staticURL;
         this.videoData = entry.videoData;
         this.imageFileID = entry.imageFileID || null;
@@ -1471,6 +1475,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     makeImageVideo(filename, img, deleteAfterUsing = false, imageFileID = undefined, importMetadata = undefined, pauseTimelineOnLoad = false) {
 
         this.fileName = filename;
+        setFilenameOverlaySource(this.fileName);
         this.imageFileID = imageFileID ?? null;
         this.invalidateELAResult();
 

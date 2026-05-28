@@ -3,10 +3,14 @@
 // and 3D tile data sources.  Renders as a small semi-transparent HTML overlay
 // positioned at the bottom-right of the viewport.
 
+import {Globals} from "./Globals";
 import {getEnv, getEnvBool} from "./envUtils";
+import {getDisplayFilename} from "./FilenameUtils";
 
 let overlayDiv = null;
+let filenameDiv = null;
 let currentParts = {map: "", elevation: "", tiles: ""};
+let currentFilename = "";
 
 function htmlToText(html) {
     // Convert an HTML snippet to plain text using the DOM, avoiding regex-based stripping
@@ -15,20 +19,23 @@ function htmlToText(html) {
     return tmp.textContent || "";
 }
 
+function getBottomOffsetPx() {
+    const bannerActive = getEnvBool("BANNER_ACTIVE", process.env.BANNER_ACTIVE);
+    const bannerHeight = bannerActive
+        ? (parseInt(getEnv("BANNER_HEIGHT", process.env.BANNER_HEIGHT)) || 20)
+        : 0;
+    return bannerHeight + 2;
+}
+
 function createOverlay() {
     if (overlayDiv) return overlayDiv;
 
     overlayDiv = document.createElement("div");
     overlayDiv.id = "sitrec-attribution";
-    // If the bottom banner is active, offset above it so attribution is visible
-    const bannerActive = getEnvBool("BANNER_ACTIVE", process.env.BANNER_ACTIVE);
-    const bannerHeight = bannerActive
-        ? (parseInt(getEnv("BANNER_HEIGHT", process.env.BANNER_HEIGHT)) || 20)
-        : 0;
 
     Object.assign(overlayDiv.style, {
         position: "fixed",
-        bottom: (bannerHeight + 2) + "px",
+        bottom: getBottomOffsetPx() + "px",
         right: "2px",
         maxWidth: "60vw",
         padding: "1px 4px",
@@ -46,6 +53,45 @@ function createOverlay() {
     });
     document.body.appendChild(overlayDiv);
     return overlayDiv;
+}
+
+function createFilenameOverlay() {
+    if (filenameDiv) return filenameDiv;
+
+    filenameDiv = document.createElement("div");
+    filenameDiv.id = "sitrec-filename";
+    Object.assign(filenameDiv.style, {
+        position: "fixed",
+        bottom: getBottomOffsetPx() + "px",
+        left: "50%",
+        transform: "translateX(-50%)",
+        maxWidth: "60vw",
+        padding: "1px 4px",
+        background: "rgba(0,0,0,0.45)",
+        color: "rgba(255,255,255,0.8)",
+        fontSize: "10px",
+        fontFamily: "sans-serif",
+        lineHeight: "1.3",
+        pointerEvents: "none",
+        zIndex: "10000",
+        borderRadius: "2px",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+    });
+    document.body.appendChild(filenameDiv);
+    return filenameDiv;
+}
+
+function renderFilename() {
+    const el = createFilenameOverlay();
+    if (!el) return;
+    if (!Globals.settings?.showFilename || !currentFilename) {
+        el.style.display = "none";
+        return;
+    }
+    el.style.display = "";
+    el.textContent = currentFilename;
 }
 
 function render() {
@@ -68,6 +114,7 @@ function render() {
         a.target = "_blank";
         a.rel = "noopener noreferrer";
     }
+    renderFilename();
 }
 
 /**
@@ -109,19 +156,33 @@ export function getAttributionText() {
     return parts.join(" | ");
 }
 
+export function setFilenameOverlaySource(source) {
+    currentFilename = getDisplayFilename(source);
+    renderFilename();
+}
+
+export function updateFilenameOverlay() {
+    renderFilename();
+}
+
 /**
  * Draw attribution text onto a 2D canvas context (for video export).
  * Positioned at bottom-right, matching the on-screen overlay style.
  */
 export function drawAttributionOnCanvas(ctx, canvasWidth, canvasHeight) {
     const text = getAttributionText();
-    if (!text) return;
     ctx.save();
     ctx.font = "10px sans-serif";
     ctx.fillStyle = "rgba(255,255,255,0.7)";
-    ctx.textAlign = "right";
     ctx.textBaseline = "bottom";
-    ctx.fillText(text, canvasWidth - 4, canvasHeight - 2);
+    if (Globals.settings?.showFilename && currentFilename) {
+        ctx.textAlign = "center";
+        ctx.fillText(currentFilename, canvasWidth / 2, canvasHeight - 2);
+    }
+    if (text) {
+        ctx.textAlign = "right";
+        ctx.fillText(text, canvasWidth - 4, canvasHeight - 2);
+    }
     ctx.restore();
 }
 
@@ -129,6 +190,11 @@ export function disposeAttributionOverlay() {
     if (overlayDiv && overlayDiv.parentNode) {
         overlayDiv.parentNode.removeChild(overlayDiv);
     }
+    if (filenameDiv && filenameDiv.parentNode) {
+        filenameDiv.parentNode.removeChild(filenameDiv);
+    }
     overlayDiv = null;
+    filenameDiv = null;
     currentParts = {map: "", elevation: "", tiles: ""};
+    currentFilename = "";
 }
