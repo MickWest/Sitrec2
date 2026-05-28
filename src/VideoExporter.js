@@ -529,6 +529,11 @@ export class VideoExportManager {
                 await requestSourceFrameForExport(videoData, frame);
 
                 if (videoView.drawAdjustedSourceFrame(frame, sourceCanvas)) {
+                    // Composite annotations on top, at original-video resolution.
+                    const annotateOverlay = NodeMan.get("annotateOverlay", false);
+                    if (annotateOverlay?.renderToVideoCanvas) {
+                        annotateOverlay.renderToVideoCanvas(sourceCanvas, frame);
+                    }
                     await exporter.addFrame(sourceCanvas, i);
                 }
 
@@ -586,6 +591,22 @@ export class VideoExportManager {
         const quality = isJpg ? 0.92 : undefined;
         const fileName = `${getExportPrefix()}_frame_${String(frame).padStart(5, "0")}.${extension}`;
 
+        // Composite the video canvas with the annotation overlay (if any) so
+        // exported frames match what the user sees on screen.
+        const annotateOverlay = NodeMan.get("annotateOverlay", false);
+        if (annotateOverlay?.show && annotateOverlay?.canvas && annotateOverlay?.strokes?.length) {
+            const composite = document.createElement("canvas");
+            composite.width = videoView.canvas.width;
+            composite.height = videoView.canvas.height;
+            const cctx = composite.getContext("2d");
+            cctx.drawImage(videoView.canvas, 0, 0);
+            cctx.drawImage(annotateOverlay.canvas, 0, 0,
+                composite.width, composite.height);
+            composite.toBlob((blob) => {
+                if (blob) saveAs(blob, fileName);
+            }, mimeType, quality);
+            return;
+        }
         videoView.canvas.toBlob((blob) => {
             if (blob) {
                 saveAs(blob, fileName);

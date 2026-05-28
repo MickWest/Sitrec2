@@ -927,6 +927,19 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         return maskOverlay !== undefined && maskOverlay.editing === true;
     }
 
+    // Check if the annotation overlay is in edit mode — left-drag is then
+    // owned by the annotation tools (drawing / selecting / moving / resizing),
+    // not by video pan. Mirrors the mask overlay gate above. Uses the effective
+    // predicate so when "Show Annotations" is off the gate is also off (even
+    // if Edit Mode flag is still set).
+    _isAnnotateEditing() {
+        const annotateOverlay = NodeMan.get("annotateOverlay", false);
+        if (!annotateOverlay) return false;
+        return typeof annotateOverlay.isEditingActive === "function"
+            ? annotateOverlay.isEditingActive()
+            : annotateOverlay.editing === true;
+    }
+
     setupMouseHandler() {
         this.mouse = new CMouseHandler(this, {
 
@@ -966,6 +979,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
                 // Don't pan while painting the motion-analysis mask — left-drag paints instead
                 if (this._isMaskEditing()) {
+                    return;
+                }
+
+                // Don't pan while the annotate overlay is editing — left-drag is for drawing /
+                // selecting / moving / resizing annotation strokes, not for panning the video.
+                if (this._isAnnotateEditing()) {
                     return;
                 }
 

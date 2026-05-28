@@ -60,6 +60,7 @@ import {getCursorPositionFromTopView} from "./mouseMoveView";
 import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightSidebar} from "./PageStructure";
 import {CNodeControllerCelestial} from "./nodes/CNodeControllerVarious";
 import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
+import {CNodeAnnotateOverlay} from "./nodes/CNodeAnnotateOverlay";
 import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
 import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
 import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
@@ -154,6 +155,17 @@ export const setupMethods = {
                 jetLOS.addOption(autoTrackOptionName, autoTrackLOS);
                 jetLOS.controller?.updateDisplay();
             }
+        }
+
+        // Create the Annotate overlay on the video view. It's hidden / no-op until the
+        // user enables it from the View > Annotate menu, so creating it unconditionally
+        // for any custom sitch with a video is harmless. Added here (not in SitCustom.js)
+        // so older saves get it on reload — strokes are restored via modDeserialize.
+        if (Sit.isCustom && NodeMan.exists("video") && !NodeMan.exists("annotateOverlay")) {
+            new CNodeAnnotateOverlay({
+                id: "annotateOverlay",
+                overlayView: "video",
+            });
         }
 
         // When the PTZ controller is disabled (i.e. another angles source like a track
