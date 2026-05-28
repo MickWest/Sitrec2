@@ -172,7 +172,7 @@ export class CFileManager extends CManager {
 
                     // this.guiFolder.add(this, "rehostFile").name("Rehost File").perm().tooltip("Rehost a file from your local system. DEPRECATED");
                 } else {
-                    this.loginButton = this.guiServer.add(this, "loginServer").name(t("file.savingDisabled")).setLabelColor("#FF8080");
+                    this.loginButton = this.guiServer.add(this, "loginServer").name(t("file.savingDisabled")).setLabelColor("#FF8080").perm();
                     // Still add Browse button for non-logged-in users so featured sitches remain discoverable.
                     this.ensureBrowseButton(t("file.server.browseFeatured"));
                     this.guiServer.close();
@@ -190,7 +190,8 @@ export class CFileManager extends CManager {
                     .disable()
                     .tooltip(useDesktopLocalUi
                         ? t("file.local.statusDesktop")
-                        : t("file.local.statusFolder"));
+                        : t("file.local.statusFolder"))
+                    .perm();
                 this._saveLocalController = this.guiLocal.add(this, "saveLocal").name(t("file.local.saveLocal.label")).perm()
                     .tooltip(useDesktopLocalUi
                         ? t("file.local.saveLocal.tooltipDesktop")

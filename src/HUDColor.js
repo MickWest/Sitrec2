@@ -6,12 +6,15 @@ export const DEFAULT_HUD_COLOR = "#ffffff";
 export function setupHUDColor(guiMenu) {
     if (NodeMan.exists("hudColor")) return NodeMan.get("hudColor");
 
-    return new CNodeGUIColor({
+    const node = new CNodeGUIColor({
         id: "hudColor",
         value: DEFAULT_HUD_COLOR,
         desc: "HUD Color",
         onChange: () => setRenderOne(true),
     }, guiMenu);
+
+    node.guiEntry?.perm();
+    return node;
 }
 
 export function getHUDColor(alpha = 1) {

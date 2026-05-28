@@ -1684,7 +1684,8 @@ async function initializeOnce() {
     
     guiMenus.objects.add(objectMenuActions, 'addObject')
         .name(t("menus.objects.addObject.label"))
-        .tooltip(t("menus.objects.addObject.tooltip"));
+        .tooltip(t("menus.objects.addObject.tooltip"))
+        .perm();
     
     addTranslatedGUIMenu("satellites", "menus.satellites.title")
         .tooltip(t("menus.satellites.tooltip"));
@@ -1816,7 +1817,8 @@ async function initializeOnce() {
     // Export debug log button
     guiMenus.help.add({ exportDebugLog: () => debugLog.export() }, 'exportDebugLog')
         .name(t("menus.help.exportDebugLog.label"))
-        .tooltip(t("menus.help.exportDebugLog.tooltip"));
+        .tooltip(t("menus.help.exportDebugLog.tooltip"))
+        .perm();
 
     setupHelpSearch(guiMenus.help);
 
