@@ -81,7 +81,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         // these no longer work with the new rendering pipeline
         // TODO: reimplement them as effects?
-        this.optionalInputs(["brightness", "contrast", "levels", "levelsInputBlack", "levelsMidpoint", "levelsInputWhite", "levelsOutputBlack", "levelsOutputWhite", "showHistogram", "curves", "showCurves", "shadows", "highlights", "dehaze", "blur", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
+        this.optionalInputs(["brightness", "contrast", "levels", "levelsInputBlack", "levelsMidpoint", "levelsInputWhite", "levelsOutputBlack", "levelsOutputWhite", "showHistogram", "histogramOnScreen", "curves", "showCurves", "shadows", "highlights", "dehaze", "blur", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
         //
 
         //  if (this.overlayView === undefined)

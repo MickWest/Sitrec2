@@ -132,17 +132,20 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
         const sourceHeight = sourceImage.videoHeight || sourceImage.naturalHeight || sourceImage.height;
         if (!sourceWidth || !sourceHeight) return false;
 
-        const scale = Math.min(1, HISTOGRAM_BINS / Math.max(sourceWidth, sourceHeight));
-        const sampleWidth = Math.max(1, Math.round(sourceWidth * scale));
-        const sampleHeight = Math.max(1, Math.round(sourceHeight * scale));
+        const sourceRect = this.getHistogramSourceRect(sourceWidth, sourceHeight);
+        if (!sourceRect) return false;
+
+        const scale = Math.min(1, HISTOGRAM_BINS / Math.max(sourceRect.width, sourceRect.height));
+        const sampleWidth = Math.max(1, Math.round(sourceRect.width * scale));
+        const sampleHeight = Math.max(1, Math.round(sourceRect.height * scale));
 
         if (this.sampleCanvas.width !== sampleWidth || this.sampleCanvas.height !== sampleHeight) {
             this.sampleCanvas.width = sampleWidth;
             this.sampleCanvas.height = sampleHeight;
         }
 
-        this.drawSample(this.originalSampleCtx, image, sourceWidth, sourceHeight, sampleWidth, sampleHeight, "none", null);
-        this.drawSample(this.sampleCtx, sourceImage, sourceWidth, sourceHeight, sampleWidth, sampleHeight, adjusted.filter || "none", adjusted.fullABOverlay);
+        this.drawSample(this.originalSampleCtx, image, sourceRect, sampleWidth, sampleHeight, "none", null);
+        this.drawSample(this.sampleCtx, sourceImage, sourceRect, sampleWidth, sampleHeight, adjusted.filter || "none", adjusted.fullABOverlay);
         const originalData = this.originalSampleCtx.getImageData(0, 0, sampleWidth, sampleHeight).data;
         const data = this.sampleCtx.getImageData(0, 0, sampleWidth, sampleHeight).data;
         this.updateBinsAndClipping(originalData, data, adjusted.invertActive);
@@ -152,18 +155,53 @@ export class CNodeVideoHistogramView extends CNodeViewCanvas2D {
         return true;
     }
 
-    drawSample(ctx, image, sourceWidth, sourceHeight, sampleWidth, sampleHeight, filter, fullABOverlay) {
+    getHistogramSourceRect(sourceWidth, sourceHeight) {
+        const fullRect = {x: 0, y: 0, width: sourceWidth, height: sourceHeight};
+        if (this.videoView?.in.histogramOnScreen?.value !== true) return fullRect;
+
+        const videoView = this.videoView;
+        videoView.getSourceAndDestCoords?.();
+        const destLeft = Math.max(0, videoView.dx);
+        const destTop = Math.max(0, videoView.dy);
+        const destRight = Math.min(videoView.widthPx, videoView.dx + videoView.dWidth);
+        const destBottom = Math.min(videoView.heightPx, videoView.dy + videoView.dHeight);
+
+        if (destRight <= destLeft || destBottom <= destTop || videoView.dWidth === 0 || videoView.dHeight === 0) {
+            return null;
+        }
+
+        const sourceLeft = videoView.sx + ((destLeft - videoView.dx) / videoView.dWidth) * videoView.sWidth;
+        const sourceTop = videoView.sy + ((destTop - videoView.dy) / videoView.dHeight) * videoView.sHeight;
+        const sourceRight = videoView.sx + ((destRight - videoView.dx) / videoView.dWidth) * videoView.sWidth;
+        const sourceBottom = videoView.sy + ((destBottom - videoView.dy) / videoView.dHeight) * videoView.sHeight;
+
+        const videoWidth = videoView.videoWidth || sourceWidth;
+        const videoHeight = videoView.videoHeight || sourceHeight;
+        const scaleX = sourceWidth / videoWidth;
+        const scaleY = sourceHeight / videoHeight;
+        const x = Math.max(0, Math.min(sourceWidth, sourceLeft * scaleX));
+        const y = Math.max(0, Math.min(sourceHeight, sourceTop * scaleY));
+        const right = Math.max(0, Math.min(sourceWidth, sourceRight * scaleX));
+        const bottom = Math.max(0, Math.min(sourceHeight, sourceBottom * scaleY));
+        const width = right - x;
+        const height = bottom - y;
+        if (width <= 0 || height <= 0) return null;
+
+        return {x, y, width, height};
+    }
+
+    drawSample(ctx, image, sourceRect, sampleWidth, sampleHeight, filter, fullABOverlay) {
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, sampleWidth, sampleHeight);
         ctx.globalAlpha = 1;
         ctx.imageSmoothingEnabled = true;
         ctx.filter = filter;
-        ctx.drawImage(image, 0, 0, sourceWidth, sourceHeight, 0, 0, sampleWidth, sampleHeight);
+        ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, 0, 0, sampleWidth, sampleHeight);
         if (fullABOverlay) {
             ctx.filter = "none";
             ctx.globalAlpha = fullABOverlay.opacity;
-            ctx.drawImage(fullABOverlay.image, 0, 0, sourceWidth, sourceHeight, 0, 0, sampleWidth, sampleHeight);
+            ctx.drawImage(fullABOverlay.image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, 0, 0, sampleWidth, sampleHeight);
         }
         ctx.restore();
     }

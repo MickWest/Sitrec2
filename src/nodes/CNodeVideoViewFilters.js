@@ -54,7 +54,7 @@ export function addFiltersToVideoNode(videoNode) {
         guiVideoNoiseFolder.onOpenClose(() => setRenderOne(true));
     }
 
-    let brightness, contrast, levels, levelsInputBlack, levelsMidpoint, levelsInputWhite, levelsOutputBlack, levelsOutputWhite, showHistogram, curves, showCurves, shadows, highlights, dehaze, blur, hue, invert, saturate, enableVideoEffects, convolutionFilter;
+    let brightness, contrast, levels, levelsInputBlack, levelsMidpoint, levelsInputWhite, levelsOutputBlack, levelsOutputWhite, showHistogram, histogramOnScreen, curves, showCurves, shadows, highlights, dehaze, blur, hue, invert, saturate, enableVideoEffects, convolutionFilter;
     let sharpenAmount, edgeDetectThreshold, embossDepth;
     let echoMin, echoMax, echoFrames, fullABEcho, fullABEchoOpacity, fullABBlend, fullABExposure;
     let showCache, elaJpegQuality, elaErrorScale, elaOpacity, elaExpandMethod, elaContrastClipPercent;
@@ -122,6 +122,7 @@ export function addFiltersToVideoNode(videoNode) {
                 videoNode.invalidateLevelsResult?.();
             }
             resetInput("showHistogram", true);
+            resetInput("histogramOnScreen", false);
             resetInput("showCurves", true);
             videoNode.curvesView?.resetCurve();
             resetInput("shadows", 0);
@@ -183,6 +184,9 @@ export function addFiltersToVideoNode(videoNode) {
             levelsOutputWhite = new CNodeConstant({ id: "videoLevelsOutputWhite", value: 255 }),
             showHistogram = new CNodeGUIFlag({ id: "videoShowHistogram", value: true, desc: "Histogram", tip: "Show the live video RGB histogram", onChange: () => {
                 videoNode.updateHistogramVisibilityFromVideoAdjustments?.();
+            }}, guiVideoEffectsFolder),
+            histogramOnScreen = new CNodeGUIFlag({ id: "videoHistogramOnScreen", value: false, desc: "Histogram On-Screen", tip: "Limit the histogram to the pixels currently visible in the video view", onChange: () => {
+                setRenderOne(true);
             }}, guiVideoEffectsFolder),
             curves = new CNodeGUIFlag({ id: "videoCurves", value: false, desc: "Curves", tip: "Apply the video tone curve", onChange: () => {
                 updateCurvesControlVisibility();
@@ -328,6 +332,12 @@ export function addFiltersToVideoNode(videoNode) {
         levelsOutputBlack = NodeMan.get("videoLevelsOutputBlack");
         levelsOutputWhite = NodeMan.get("videoLevelsOutputWhite");
         showHistogram = NodeMan.get("videoShowHistogram");
+        histogramOnScreen = NodeMan.get("videoHistogramOnScreen");
+        if (!histogramOnScreen) {
+            histogramOnScreen = new CNodeGUIFlag({ id: "videoHistogramOnScreen", value: false, desc: "Histogram On-Screen", tip: "Limit the histogram to the pixels currently visible in the video view", onChange: () => {
+                setRenderOne(true);
+            }}, guiVideoEffectsFolder);
+        }
         curves = NodeMan.get("videoCurves");
         showCurves = NodeMan.get("videoShowCurves");
         shadows = NodeMan.get("videoShadows");
@@ -398,6 +408,7 @@ export function addFiltersToVideoNode(videoNode) {
         levelsOutputBlack: levelsOutputBlack,
         levelsOutputWhite: levelsOutputWhite,
         showHistogram: showHistogram,
+        histogramOnScreen: histogramOnScreen,
         curves: curves,
         showCurves: showCurves,
         shadows: shadows,
