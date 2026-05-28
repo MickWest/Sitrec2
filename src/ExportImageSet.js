@@ -104,6 +104,7 @@ function canvasToImageBlob(canvas, maxWidth, mimeType = "image/png", quality = 0
 
 export class ImageSetExporter {
     constructor() {
+        this.azStart = 0;
         this.azStep = 45;
         this.elStep = 20;
         this.elStart = 10;
@@ -142,15 +143,18 @@ export class ImageSetExporter {
             .name("Track to Orbit")
             .tooltip("Track whose position at the current frame is the orbit center. Drawn from the same list as the Target Track switch.");
 
-        folder.add(this, "azStep", 5, 90, 5)
+        folder.add(this, "azStart", 0, 355, 5)
+            .name("AZ Start (deg)")
+            .tooltip("Starting azimuth in degrees (0-355, multiples of 5). 0 = North; sweeps clockwise from here.");
+        folder.add(this, "azStep", 0, 90, 5)
             .name("AZ Step (deg)")
-            .tooltip("Azimuth step (5-90, multiples of 5). 360 / azStep images per elevation.");
+            .tooltip("Azimuth step (0-90, multiples of 5). 360 / azStep images per elevation. Set to 0 to take a single shot at AZ Start.");
         folder.add(this, "elStart", 0, 80, 1)
             .name("EL Start (deg)")
             .tooltip("Lowest elevation in the sweep (0-80). 0 = horizontal, higher values skip the most grazing angles.");
-        folder.add(this, "elStep", 1, 90, 1)
+        folder.add(this, "elStep", 0, 90, 1)
             .name("EL Step (deg)")
-            .tooltip("Elevation step (1-90). Sweeps from EL Start to 90 (straight down) inclusive.");
+            .tooltip("Elevation step (0-90). Sweeps from EL Start to 90 (straight down) inclusive. Set to 0 to take a single sweep at EL Start.");
         // Orbit distance: a checkbox to use the current camera-to-target
         // distance, OR a manual distance slider in big units (NM / mi / km).
         this.useCurrentDistanceController = folder.add(this, "useCurrentDistance")
@@ -285,25 +289,32 @@ export class ImageSetExporter {
     // full (t, az, el) shot list across time steps. Returns plain numbers
     // (clamped/rounded) so callers don't repeat the validation.
     _buildShotList() {
-        const azStep = Math.max(1, Math.round(this.azStep));
-        const elStep = Math.max(1, Math.round(this.elStep));
+        const azStep = Math.max(0, Math.round(this.azStep));
+        const elStep = Math.max(0, Math.round(this.elStep));
         const elStart = Math.max(0, Math.min(80, Math.round(this.elStart)));
+        const azStart = ((Math.round(Number(this.azStart) || 0)) % 360 + 360) % 360;
         const timeStepMinutes = Math.max(0, Number(this.timeStepMinutes) || 0);
         const numTimeSteps = Math.max(1, Math.round(Number(this.numTimeSteps) || 1));
 
+        // EL Step 0 -> single elevation at EL Start (skip the 90° cap row).
         const elValues = [];
-        for (let el = elStart; el <= 90 + 1e-6; el += elStep) {
-            elValues.push(Math.min(90, el));
+        if (elStep === 0) {
+            elValues.push(elStart);
+        } else {
+            for (let el = elStart; el <= 90 + 1e-6; el += elStep) {
+                elValues.push(Math.min(90, el));
+            }
+            if (elValues.length === 0 || elValues[elValues.length - 1] < 90) elValues.push(90);
         }
-        if (elValues.length === 0 || elValues[elValues.length - 1] < 90) elValues.push(90);
 
+        // AZ Step 0 -> single azimuth at AZ Start for each elevation.
         const sweepShots = [];
         for (const el of elValues) {
-            if (el >= 90 - 1e-6) {
-                sweepShots.push({az: 0, el});
+            if (el >= 90 - 1e-6 || azStep === 0) {
+                sweepShots.push({az: azStart, el});
             } else {
-                for (let az = 0; az < 360; az += azStep) {
-                    sweepShots.push({az, el});
+                for (let i = 0; i < 360; i += azStep) {
+                    sweepShots.push({az: (azStart + i) % 360, el});
                 }
             }
         }
