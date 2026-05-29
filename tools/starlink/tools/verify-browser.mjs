@@ -75,24 +75,29 @@ await page.click("#go");
 ok("navigated to results screen", await page.locator("#results-screen").isVisible());
 ok("form screen hidden", !(await page.locator("#form-screen").isVisible()));
 
-// Wait for the verdict headline (FLARES VISIBLE or No Flares).
+// Wait for the results header — the compact ".r-when" (flares) or ".verdict" (none).
 let rendered = false;
 try {
-    await page.waitForSelector("#results .verdict", { timeout: 35000 });
+    await page.waitForSelector("#results .r-when, #results .verdict", { timeout: 35000 });
     rendered = true;
 } catch { /* timed out */ }
-ok("a verdict headline rendered", rendered);
+ok("results header rendered", rendered);
 
-const verdict = (await page.locator("#results .verdict").innerText().catch(() => "")).trim();
+const hasFlares = (await page.locator("#results .r-when").count()) > 0;
 const resultsHtml = await page.locator("#results").innerHTML().catch(() => "");
-ok("verdict is FLARES VISIBLE or No Flares", /FLARES VISIBLE|No Flares/i.test(verdict), verdict);
 
-if (/FLARES VISIBLE/i.test(verdict)) {
-    ok("one-sentence summary present", /Flares will be visible from/i.test(resultsHtml));
+if (hasFlares) {
+    const when = (await page.locator("#results .r-when").innerText().catch(() => "")).trim();
+    ok("compact header reads 'Flares visible …'", /Flares visible/i.test(when), when);
+    ok("no large verdict banner on the flares screen", await page.locator("#results .verdict").count() === 0);
+    ok("three-line header (when + dir + meta)",
+        await page.locator("#results .r-when").count() === 1 &&
+        await page.locator("#results .r-dir").count() === 1 &&
+        await page.locator("#results .r-meta").count() === 1);
     ok("compass rose SVG rendered", await page.locator("#results svg.compass-rose").count() === 1);
     ok("compass rose has a direction arrow", await page.locator("#results svg.compass-rose polygon").count() >= 1);
     ok("horizon view SVG rendered", await page.locator("#results svg.horizon-view").count() === 1);
-    ok("horizon view has flare markers", (resultsHtml.match(/url\(#glow\)/g) || []).length >= 1);
+    ok("horizon view has white flare disks", (resultsHtml.match(/r="3\.5" fill="#ffffff"/g) || []).length >= 1);
     ok("compass rose has the animated white flare sprinkle",
         await page.locator('#results svg.compass-rose circle[fill="#ffffff"]').count() >= 8);
     ok("no 'All N flares' detail section", await page.locator("#results .flare-details").count() === 0);
@@ -102,7 +107,7 @@ if (/FLARES VISIBLE/i.test(verdict)) {
     await page.evaluate(() => document.querySelectorAll('svg.compass-rose circle[fill="#ffffff"]')
         .forEach((c) => c.setAttribute("opacity", "0.9")));
 } else {
-    console.log("    (synthetic TLEs produced no flares; verdict=No Flares is acceptable)");
+    console.log("    (synthetic TLEs produced no flares; 'No Flares' verdict is acceptable)");
 }
 
 ok("no uncaught page errors during run", pageErrors.length === 0, pageErrors.join(" | "));
@@ -123,8 +128,8 @@ console.log("== browser: out-of-range date -> simulated note ==");
 await page.fill("#date", "2027-12-25");   // far future -> clamps to today, simulated
 await page.click("#go");
 let simRendered = false;
-try { await page.waitForSelector("#results .verdict", { timeout: 35000 }); simRendered = true; } catch {}
-ok("verdict rendered for far-future date", simRendered);
+try { await page.waitForSelector("#results .r-when, #results .verdict", { timeout: 35000 }); simRendered = true; } catch {}
+ok("results rendered for far-future date", simRendered);
 ok("shows the 'Simulated results, out of date range' note",
     await page.locator("#results .sim-note").count() === 1,
     (await page.locator("#results .sim-note").innerText().catch(() => "")).slice(0, 60));
@@ -148,8 +153,8 @@ await page.fill("#origin", "");          // blank -> should use geolocation
 await page.fill("#date", today);          // back in range
 await page.click("#go");
 let geoRendered = false;
-try { await page.waitForSelector("#results .verdict", { timeout: 35000 }); geoRendered = true; } catch {}
-ok("geolocation run produced a verdict", geoRendered);
+try { await page.waitForSelector("#results .r-when, #results .verdict", { timeout: 35000 }); geoRendered = true; } catch {}
+ok("geolocation run produced results", geoRendered);
 ok("blank origin was populated from geolocation", /Testville, Testland/.test(await page.inputValue("#origin")),
     await page.inputValue("#origin"));
 ok("geolocation run had no errors", pageErrors.length === 0, pageErrors.join(" | "));

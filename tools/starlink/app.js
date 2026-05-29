@@ -89,6 +89,11 @@ function fmtDate(utcMs, tz) {
   if (tz) o.timeZone = tz;
   return new Intl.DateTimeFormat(undefined, o).format(new Date(utcMs));
 }
+function fmtDateShort(utcMs, tz) {   // compact, no year — e.g. "Fri, May 29"
+  const o = { weekday: "short", month: "short", day: "numeric" };
+  if (tz) o.timeZone = tz;
+  return new Intl.DateTimeFormat(undefined, o).format(new Date(utcMs));
+}
 function tzAbbrev(utcMs, tz) {
   if (!tz) return "local time";
   const parts = new Intl.DateTimeFormat("en-US",
@@ -206,6 +211,7 @@ async function resolveField(input) {
       lat: r.lat, lon: r.lon,
       altKm: (r.alt || 0) / 1000,
       name: r.name || (r.iata || r.icao || q),
+      short: (r.iata || r.icao || "") + (r.city ? ", " + r.city : ""),
       tz: r.tz || "", source: "airport",
     };
   }
@@ -239,7 +245,7 @@ async function resolveBrowserLocation(load) {
   const label = name || `${pos.lat.toFixed(3)}°, ${pos.lon.toFixed(3)}°`;
   els.origin.value = label;       // show what we detected (and for Edit)
   els.origin._resolved = null;
-  return { lat: pos.lat, lon: pos.lon, altKm: 0, name: label, tz: "", source: "geolocation" };
+  return { lat: pos.lat, lon: pos.lon, altKm: 0, name: label, short: label, tz: "", source: "geolocation" };
 }
 
 // ---------------------------------------------------------------------------
@@ -391,13 +397,11 @@ function renderResults(flares, stats, req, origin, dest) {
   const moved = startC !== endC && Math.abs(angDiff(endAz, startAz)) >= 12;
   const zone = tzAbbrev(t1, tz);
 
-  const dirPhrase = moved
-    ? `starting in the <b>${startC}</b> and moving toward the <b>${endC}</b>`
-    : `looking toward the <b>${startC}</b>`;
-  const localRange = `<b>${fmtTime(t1, tz, { second: undefined })}</b> to <b>${fmtTime(t2, tz, { second: undefined })}</b>`;
-  const utcRange = `${fmtTime(t1, "UTC", { second: undefined })}–${fmtTime(t2, "UTC", { second: undefined })} UTC`;
-  const sentence =
-    `Flares will be visible from ${localRange} ${escapeHtml(zone)} (${utcRange}) on ${fmtDate(t1, tz)}, ${dirPhrase}.`;
+  // Compact three-line header (no big banner) — tuned to fit an iPhone SE.
+  const localT = `${fmtTime(t1, tz, { second: undefined })}–${fmtTime(t2, tz, { second: undefined })}`;
+  const utcT = `${fmtTime(t1, "UTC", { second: undefined })}–${fmtTime(t2, "UTC", { second: undefined })}`;
+  const dirLine = moved ? `Look <b>${startC}</b> → <b>${endC}</b>` : `Look <b>${startC}</b>`;
+  const place = dest ? `${origin.short || origin.name} → ${dest.short || dest.name}` : (origin.short || origin.name);
 
   const arrows = moved ? [{ azDeg: startAz }, { azDeg: endAz }] : [{ azDeg: startAz }];
 
@@ -409,27 +413,24 @@ function renderResults(flares, stats, req, origin, dest) {
   }));
   const win = horizonWindow(hvFlares);
 
-  const place = dest ? `${origin.name} → ${dest.name}` : origin.name;
-  const plural = flares.length === 1 ? "" : "s";
-
   // Shown when the requested date was out of TLE range and we fell back to today.
   const simBanner = (req && req.simulated)
     ? `<div class="sim-note">Simulated results, out of date range — using current satellite data.</div>`
     : "";
 
   els.results.innerHTML =
-    `<div class="verdict yes">FLARES VISIBLE</div>
+    `<div class="r-when">Flares visible <b>${localT}</b> ${escapeHtml(zone)}</div>
+     <div class="r-dir">${dirLine}</div>
+     <div class="r-meta">${escapeHtml(place)} · ${fmtDateShort(t1, tz)} · ${utcT} UTC</div>
      ${simBanner}
-     <p class="sentence">${sentence}</p>
-     <div class="place">${escapeHtml(place)}</div>
-     <div class="rose-wrap">${compassRose(arrows)}</div>
-     <div class="section-label">The view toward the ${escapeHtml(startC)} around ${fmtTime(t1, tz, { second: undefined })} ${escapeHtml(zone)}</div>
+     <div class="rose-wrap">${compassRose(arrows, flares)}</div>
      <div class="horizon-wrap">${horizonView({ stars, flares: hvFlares, ...win })}</div>
-     <div class="legend"><span class="lg-flare">●</span> Starlink flare &nbsp;·&nbsp; <span class="lg-star">●</span> bright star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction of travel</div>`;
+     <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction</div>`;
 
   // Per-flare detail list — kept but disabled for a cleaner results page.
   const SHOW_FLARE_LIST = false;
   if (SHOW_FLARE_LIST) {
+    const plural = flares.length === 1 ? "" : "s";
     const det = document.createElement("details");
     det.className = "flare-details";
     det.innerHTML = `<summary>All ${flares.length} flare${plural} · scanned ${stats.satsTotal} satellites</summary>`;

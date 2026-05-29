@@ -47,6 +47,8 @@ function fromAirport(rec) {
         lon: rec.lon,
         altKm: (rec.alt || 0) / 1000,
         name: airportLabel(rec),
+        // Compact label for the small results line, e.g. "LAX, Los Angeles".
+        short: (rec.iata || rec.icao || "") + (rec.city ? ", " + rec.city : ""),
         tz: rec.tz || "",
         source: "airport",
     };
@@ -90,11 +92,13 @@ export async function resolveLocation(query) {
     );
     const d = await r.json();
     if (!d.length) throw new Error("Location not found: " + q);
+    const dn = d[0].display_name || q;
     return {
         lat: +d[0].lat,
         lon: +d[0].lon,
         altKm: 0,
-        name: d[0].display_name,
+        name: dn,
+        short: dn.split(",")[0].trim(),   // first segment, e.g. "Paris"
         tz: "",
         source: "nominatim",
     };

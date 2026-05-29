@@ -63,9 +63,57 @@ function flareDots(arrows, cx, cy, R) {
     return out;
 }
 
+// An amber arc along the rim spanning the azimuths where flares occur, whose
+// thickness AND opacity track the flare density at each azimuth — so it is fat
+// and bright where flares are most frequent and tapers to thin/faint at the
+// edges of the distribution (≈ flares-per-minute, since azimuth tracks time).
+function flareArc(flares, cx, cy, R) {
+    if (!flares || flares.length < 2) return "";
+    // Circular mean of the flare azimuths, and the widest deviation from it.
+    let sx = 0, sy = 0;
+    for (const f of flares) { sx += Math.cos(f.azDeg * DEG); sy += Math.sin(f.azDeg * DEG); }
+    const center = ((Math.atan2(sy, sx) / DEG) % 360 + 360) % 360;
+    let span = 0;
+    for (const f of flares) span = Math.max(span, Math.abs(angDiff(f.azDeg, center)));
+    if (span < 1.5) return "";   // essentially one direction — an arc adds nothing
+
+    // Density histogram across [-span, +span] (degrees from centre), smoothed.
+    const BINS = 48, k = 3;
+    const hist = new Array(BINS).fill(0);
+    for (const f of flares) {
+        let b = Math.floor((angDiff(f.azDeg, center) + span) / (2 * span) * BINS);
+        if (b < 0) b = 0; else if (b >= BINS) b = BINS - 1;
+        hist[b]++;
+    }
+    const sm = new Array(BINS).fill(0);
+    for (let i = 0; i < BINS; i++) {
+        let s = 0, c = 0;
+        for (let j = -k; j <= k; j++) { const idx = i + j; if (idx >= 0 && idx < BINS) { s += hist[idx]; c++; } }
+        sm[i] = s / c;
+    }
+    const maxD = Math.max(...sm) || 1;
+
+    const baseW = 9;             // max band thickness (SVG units)
+    let out = `<g class="flare-arc">`;
+    for (let i = 0; i < BINS; i++) {
+        const d = sm[i] / maxD;          // 0..1 local density
+        if (d <= 0.02) continue;
+        const aA = (center - span + (i / BINS) * 2 * span) * DEG;
+        const aB = (center - span + ((i + 1) / BINS) * 2 * span) * DEG;
+        const x1 = cx + Math.sin(aA) * R, y1 = cy - Math.cos(aA) * R;
+        const x2 = cx + Math.sin(aB) * R, y2 = cy - Math.cos(aB) * R;
+        const w = (0.15 + 0.85 * d) * baseW;     // thickness ∝ density
+        const op = 0.12 + 0.6 * d;               // opacity ∝ density
+        out += `<line x1="${n(x1)}" y1="${n(y1)}" x2="${n(x2)}" y2="${n(y2)}" stroke="#ffcf3f" `
+            + `stroke-width="${n(w)}" stroke-opacity="${n(op)}" stroke-linecap="round"/>`;
+    }
+    return out + `</g>`;
+}
+
 // --- compass rose ----------------------------------------------------------
 // arrows: [{ azDeg, color?, label? }] (1 or 2). Yellow by default.
-export function compassRose(arrows) {
+// flares: optional [{azDeg, ...}] — used to draw the density arc along the rim.
+export function compassRose(arrows, flares) {
     const W = 220, cx = 110, cy = 112, R = 84;
     const pts = [];
     // tick marks every 22.5°
@@ -107,6 +155,7 @@ export function compassRose(arrows) {
       <circle cx="${cx}" cy="${cy}" r="${R - 30}" fill="none" stroke="#1c2740" stroke-width="1"/>
       ${pts.join("")}
       ${labels}
+      ${flareArc(flares, cx, cy, R)}
       ${flareDots(arrows, cx, cy, R)}
       ${arr}
       <circle cx="${cx}" cy="${cy}" r="3.5" fill="#cfe0ff"/>
@@ -143,7 +192,6 @@ export function horizonView(opts) {
           <stop offset="0.7" stop-color="#13213f"/>
           <stop offset="1" stop-color="#243a5e"/>
         </linearGradient>
-        <radialGradient id="glow"><stop offset="0" stop-color="#fff2b0" stop-opacity="0.95"/><stop offset="1" stop-color="#ffcf3f" stop-opacity="0"/></radialGradient>
       </defs>
       <rect x="0" y="0" width="${W}" height="${horizonY}" fill="url(#sky)"/>
       <rect x="0" y="${horizonY}" width="${W}" height="${H - horizonY}" fill="#0a0f1d"/>`;
@@ -186,16 +234,15 @@ export function horizonView(opts) {
         }
     }
 
-    // flares (drawn last, on top)
+    // flares (drawn last, on top): small WHITE disks (same max size as the
+    // compass-rose sprinkle), each with a thin, ~75%-opacity amber motion arrow.
+    const WHITE_R = 3.5;                       // ≈ compass sprinkle's peak dot size
     const elPxPerDeg = (horizonY - topY) / elMax;
     const azPxPerDeg = plotW / (2 * HW);
     for (const f of flares) {
         if (!inWin(f.azDeg)) continue;
         const x = xOf(f.azDeg), y = yOf(f.elDeg);
-        const op = 0.35 + 0.65 * Math.max(0, Math.min(1, f.intensity ?? 1));
-        svg += `<circle cx="${n(x)}" cy="${n(y)}" r="9" fill="url(#glow)"/>`;
-        svg += `<circle cx="${n(x)}" cy="${n(y)}" r="3.2" fill="#fff4c2" stroke="#ffcf3f" stroke-width="1.5" opacity="${n(op)}"/>`;
-        // motion arrow
+        // motion arrow first (thin, semi-transparent) so the disk sits cleanly on top
         let vx = (f.dAzDeg || 0) * azPxPerDeg;
         let vy = -(f.dElDeg || 0) * elPxPerDeg;
         const m = Math.hypot(vx, vy);
@@ -204,9 +251,12 @@ export function horizonView(opts) {
             const ex = x + vx, ey = y + vy;
             const ang = Math.atan2(vy, vx);
             const a1 = ang + Math.PI - 0.4, a2 = ang + Math.PI + 0.4;
-            svg += `<line x1="${n(x)}" y1="${n(y)}" x2="${n(ex)}" y2="${n(ey)}" stroke="#ffcf3f" stroke-width="1.8"/>`
-                + `<polygon points="${n(ex)},${n(ey)} ${n(ex + Math.cos(a1) * 5)},${n(ey + Math.sin(a1) * 5)} ${n(ex + Math.cos(a2) * 5)},${n(ey + Math.sin(a2) * 5)}" fill="#ffcf3f"/>`;
+            svg += `<g stroke="#ffcf3f" fill="#ffcf3f" opacity="0.75">`
+                + `<line x1="${n(x)}" y1="${n(y)}" x2="${n(ex)}" y2="${n(ey)}" stroke-width="1"/>`
+                + `<polygon points="${n(ex)},${n(ey)} ${n(ex + Math.cos(a1) * 4)},${n(ey + Math.sin(a1) * 4)} ${n(ex + Math.cos(a2) * 4)},${n(ey + Math.sin(a2) * 4)}" stroke="none"/>`
+                + `</g>`;
         }
+        svg += `<circle cx="${n(x)}" cy="${n(y)}" r="${WHITE_R}" fill="#ffffff"/>`;
     }
 
     svg += `</svg>`;

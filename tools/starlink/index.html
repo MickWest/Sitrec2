@@ -12,23 +12,17 @@
   <div id="form-screen" class="screen">
   <header class="app-header">
     <h1>Starlink Flare Predictor</h1>
-    <p class="subtitle">
-      When sunlight glints off a Starlink's flat antenna it can briefly outshine
-      the brightest stars. This finds those <em>horizon flares</em> — when and where
-      to look — for a place or along a flight.
-    </p>
   </header>
 
   <main>
     <form id="form" autocomplete="off" novalidate>
       <div class="field combo">
-        <label for="origin">Origin</label>
+        <label for="origin">Origin <span class="opt">(blank for current location)</span></label>
         <input id="origin" name="origin" type="text" inputmode="text"
                placeholder="Airport code, name, or place — e.g. LAX, Heathrow, Paris"
                aria-autocomplete="list" aria-expanded="false" autocapitalize="off"
                spellcheck="false">
         <div class="suggestions" id="origin-suggestions" role="listbox" hidden></div>
-        <p class="help">Leave blank to use your current location.</p>
       </div>
 
       <div class="field combo">
@@ -38,7 +32,6 @@
                aria-autocomplete="list" aria-expanded="false" autocapitalize="off"
                spellcheck="false">
         <div class="suggestions" id="dest-suggestions" role="listbox" hidden></div>
-        <p class="help">Leave blank for a fixed location.</p>
       </div>
 
       <div class="row">
@@ -64,6 +57,8 @@
                  inputmode="numeric" placeholder="37000">
         </div>
       </div>
+
+      <button id="go" type="submit" class="go-btn">Find Flares</button>
 
       <details class="advanced">
         <summary>Advanced</summary>
@@ -101,8 +96,6 @@
             celestrak.org → GP “starlink” → TLE format.</p>
         </div>
       </details>
-
-      <button id="go" type="submit" class="go-btn">Find Flares</button>
     </form>
 
     <div id="status" class="status" aria-live="polite"></div>
