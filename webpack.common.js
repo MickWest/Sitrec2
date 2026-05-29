@@ -355,8 +355,11 @@ ${bodyContent}
     optimization: {
         minimizer: [
             new TerserPlugin({
-                // exclude files starting with "Sit" and ending with ".js"
-                exclude: /Sit.*\.js$/,
+                // Exclude files starting with "Sit" and ending with ".js".
+                // Also exclude the standalone Starlink tool: it is copied
+                // verbatim as native ES modules (import/export), which Terser's
+                // script-mode parser can't minify ("Unexpected token: import").
+                exclude: /(Sit.*|tools[\\/]starlink[\\/].*)\.js$/,
                 terserOptions: {
                     keep_classnames: true,
                     compress: {
