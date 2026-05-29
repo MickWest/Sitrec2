@@ -19,7 +19,7 @@ let baseURL = process.env.PLAYWRIGHT_BASE_URL || 'https://local.metabunk.org';
 
 export default defineConfig({
   testDir: './tests_regression',
-  testMatch: ['**/ui-playwright.test.js', '**/ui-menu-sweep.test.js', '**/regression.test.js', '**/chatbot-playwright.test.js', '**/webm-video-export.test.js', '**/motion-analysis.test.js', '**/motion-accumulation.test.js', '**/video-loading.test.js', '**/satellite-label-visibility.test.js', '**/mobile-viewport.test.js', '**/video-cache-gaps.test.js', '**/nitf-decode.test.js'],
+  testMatch: ['**/ui-playwright.test.js', '**/ui-menu-sweep.test.js', '**/regression.test.js', '**/save-load-roundtrip.test.js', '**/chatbot-playwright.test.js', '**/webm-video-export.test.js', '**/motion-analysis.test.js', '**/motion-accumulation.test.js', '**/video-loading.test.js', '**/satellite-label-visibility.test.js', '**/mobile-viewport.test.js', '**/video-cache-gaps.test.js', '**/nitf-decode.test.js'],
   // All baseline snapshots live under a single tracked directory,
   // organized by source test file. Diffs and "actual" images on test
   // failure go to snapshots-diffs/ (gitignored) instead of the default
