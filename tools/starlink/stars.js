@@ -1,0 +1,36 @@
+// stars.js — the ~30 brightest stars for the horizon sky chart.
+// J2000 right ascension / declination in DEGREES, plus visual magnitude.
+// Positions are good to a few tenths of a degree for the next couple of decades
+// (precession is negligible at this chart scale). Brighter = more negative mag.
+export const BRIGHT_STARS = [
+    { name: "Sirius",      raDeg: 101.287, decDeg: -16.716, mag: -1.46 },
+    { name: "Canopus",     raDeg:  95.988, decDeg: -52.696, mag: -0.74 },
+    { name: "Rigil Kent.", raDeg: 219.902, decDeg: -60.834, mag: -0.27 },
+    { name: "Arcturus",    raDeg: 213.915, decDeg:  19.182, mag: -0.05 },
+    { name: "Vega",        raDeg: 279.234, decDeg:  38.784, mag:  0.03 },
+    { name: "Capella",     raDeg:  79.172, decDeg:  45.998, mag:  0.08 },
+    { name: "Rigel",       raDeg:  78.634, decDeg:  -8.202, mag:  0.13 },
+    { name: "Procyon",     raDeg: 114.825, decDeg:   5.225, mag:  0.34 },
+    { name: "Achernar",    raDeg:  24.429, decDeg: -57.237, mag:  0.46 },
+    { name: "Betelgeuse",  raDeg:  88.793, decDeg:   7.407, mag:  0.50 },
+    { name: "Hadar",       raDeg: 210.956, decDeg: -60.373, mag:  0.61 },
+    { name: "Altair",      raDeg: 297.696, decDeg:   8.868, mag:  0.77 },
+    { name: "Acrux",       raDeg: 186.650, decDeg: -63.099, mag:  0.76 },
+    { name: "Aldebaran",   raDeg:  68.980, decDeg:  16.509, mag:  0.85 },
+    { name: "Antares",     raDeg: 247.352, decDeg: -26.432, mag:  1.09 },
+    { name: "Spica",       raDeg: 201.298, decDeg: -11.161, mag:  0.97 },
+    { name: "Pollux",      raDeg: 116.329, decDeg:  28.026, mag:  1.14 },
+    { name: "Fomalhaut",   raDeg: 344.413, decDeg: -29.622, mag:  1.16 },
+    { name: "Deneb",       raDeg: 310.358, decDeg:  45.280, mag:  1.25 },
+    { name: "Mimosa",      raDeg: 191.930, decDeg: -59.689, mag:  1.25 },
+    { name: "Regulus",     raDeg: 152.093, decDeg:  11.967, mag:  1.35 },
+    { name: "Adhara",      raDeg: 104.656, decDeg: -28.972, mag:  1.50 },
+    { name: "Castor",      raDeg: 113.650, decDeg:  31.888, mag:  1.58 },
+    { name: "Shaula",      raDeg: 263.402, decDeg: -37.104, mag:  1.62 },
+    { name: "Gacrux",      raDeg: 187.791, decDeg: -57.113, mag:  1.63 },
+    { name: "Bellatrix",   raDeg:  81.283, decDeg:   6.350, mag:  1.64 },
+    { name: "Elnath",      raDeg:  81.573, decDeg:  28.608, mag:  1.65 },
+    { name: "Alnilam",     raDeg:  84.053, decDeg:  -1.202, mag:  1.69 },
+    { name: "Dubhe",       raDeg: 165.932, decDeg:  61.751, mag:  1.79 },
+    { name: "Polaris",     raDeg:  37.954, decDeg:  89.264, mag:  1.98 },
+];

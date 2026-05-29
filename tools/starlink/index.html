@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#070b18">
+  <title>Starlink Flare Predictor</title>
+  <link rel="stylesheet" href="style.css?v=__BUILD_V__">
+</head>
+<body>
+  <div id="form-screen" class="screen">
+  <header class="app-header">
+    <h1>Starlink Flare Predictor</h1>
+    <p class="subtitle">
+      When sunlight glints off a Starlink's flat antenna it can briefly outshine
+      the brightest stars. This finds those <em>horizon flares</em> — when and where
+      to look — for a place or along a flight.
+    </p>
+  </header>
+
+  <main>
+    <form id="form" autocomplete="off" novalidate>
+      <div class="field combo">
+        <label for="origin">Origin</label>
+        <input id="origin" name="origin" type="text" inputmode="text"
+               placeholder="Airport code, name, or place — e.g. LAX, Heathrow, Paris"
+               aria-autocomplete="list" aria-expanded="false" autocapitalize="off"
+               spellcheck="false">
+        <div class="suggestions" id="origin-suggestions" role="listbox" hidden></div>
+      </div>
+
+      <div class="field combo">
+        <label for="dest">Destination <span class="opt">(optional)</span></label>
+        <input id="dest" name="dest" type="text" inputmode="text"
+               placeholder="Airport code, name, or place"
+               aria-autocomplete="list" aria-expanded="false" autocapitalize="off"
+               spellcheck="false">
+        <div class="suggestions" id="dest-suggestions" role="listbox" hidden></div>
+        <p class="help">Leave blank for a fixed location.</p>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="date">Date</label>
+          <input id="date" name="date" type="date">
+        </div>
+        <div class="field">
+          <label for="time">Time</label>
+          <input id="time" name="time" type="time">
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="duration">Flight duration (hrs)</label>
+          <input id="duration" name="duration" type="number" min="0" step="0.1"
+                 inputmode="decimal" placeholder="auto">
+        </div>
+        <div class="field">
+          <label for="alt">Cruise altitude (ft)</label>
+          <input id="alt" name="alt" type="number" min="0" step="500"
+                 inputmode="numeric" placeholder="37000">
+        </div>
+      </div>
+
+      <details class="advanced">
+        <summary>Advanced</summary>
+        <div class="adv-grid">
+          <div class="field">
+            <label for="cone">Flare cone (°)</label>
+            <input id="cone" name="cone" type="number" min="0.5" step="0.5"
+                   inputmode="decimal" value="5">
+          </div>
+          <div class="field">
+            <label for="minel">Min elevation (°)</label>
+            <input id="minel" name="minel" type="number" min="0" max="90" step="1"
+                   inputmode="numeric" value="0">
+          </div>
+          <div class="field">
+            <label for="model">Nadir model</label>
+            <select id="model" name="model">
+              <option value="geocentric" selected>Geocentric</option>
+              <option value="geodetic">Geodetic</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="window">Look ahead (days)</label>
+            <input id="window" name="window" type="number" min="0.25" step="0.5"
+                   inputmode="decimal" value="3">
+            <p class="help">Fixed location: how far ahead to search for the next flares.</p>
+          </div>
+        </div>
+
+        <div class="field file-field">
+          <label for="tlefile">Use a downloaded Starlink .tle
+            <span class="opt">(offline / CORS fallback)</span></label>
+          <input id="tlefile" name="tlefile" type="file" accept=".tle,.txt">
+          <p class="help">Get the current set from
+            celestrak.org → GP “starlink” → TLE format.</p>
+        </div>
+      </details>
+
+      <button id="go" type="submit" class="go-btn">Find Flares</button>
+    </form>
+
+    <div id="status" class="status" aria-live="polite"></div>
+  </main>
+
+  <footer class="app-footer">
+    <p>Flare physics adapted from
+      <a href="https://github.com/MickWest/Sitrec2" rel="noopener" target="_blank">Sitrec</a>.
+      Predictions are approximate — flares are brief and sensitive to antenna orientation.</p>
+  </footer>
+  </div><!-- /form-screen -->
+
+  <section id="results-screen" class="screen" hidden>
+    <div class="results-bar">
+      <button id="edit" type="button" class="edit-btn" aria-label="Edit inputs">&#8249; Edit</button>
+      <span class="results-bar-title">Starlink Flares</span>
+    </div>
+    <div id="results" class="results" aria-live="polite"></div>
+  </section>
+
+  <script type="module" src="app.js?v=__BUILD_V__"></script>
+</body>
+</html>

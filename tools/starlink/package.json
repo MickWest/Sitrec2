@@ -1,0 +1,11 @@
+{
+  "name": "sitrec-starlink-flares",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone, mobile-friendly Starlink horizon-flare predictor. Reuses Sitrec's flare physics; no build step.",
+  "scripts": {
+    "test": "node tools/test-foundation.mjs && node tools/test-engine.mjs && node tools/test-location.mjs && node tools/test-skyview.mjs",
+    "test:browser": "node tools/verify-browser.mjs"
+  }
+}

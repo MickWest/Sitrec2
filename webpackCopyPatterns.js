@@ -13,6 +13,11 @@ const patterns = [];
 // Global ignore list applied to all copy patterns that use globs
 const globalIgnore = ['**/.DS_Store'];
 
+// Build timestamp used for cache-busting hand-authored standalone tools whose
+// files have stable names (and are served with a long immutable cache header).
+// Computed once per build invocation.
+const BUILD_V = Date.now();
+
 // Data directory handling
 if (isServerlessBuild) {
     // For serverless: only copy essential data directories
@@ -35,6 +40,21 @@ patterns.push({ from: "./src/PixelFilters.js", to:"./src" });
 patterns.push({ from: "tools", to: "./tools", globOptions: {
     ignore: [...globalIgnore, "**/SitrecBridge/node_modules/**", "**/SitrecBridge/package-lock.json", "**/sitrec-comms/node_modules/**", "**/sitrec-comms/package-lock.json"],
 } });
+
+// Cache-busting for the standalone Starlink Flare tool: its index.html (which the
+// browser revalidates) carries `?v=__BUILD_V__` on the stylesheet and the entry
+// module; the module graph then reads that query off import.meta.url and appends
+// it to every import / fetch / Worker URL. We only need to stamp index.html here.
+// force:true so this overwrites the verbatim copy made by the "tools" pattern above.
+patterns.push({
+    from: "tools/starlink/index.html",
+    to: "./tools/starlink/index.html",
+    force: true,
+    transform(content) {
+        return content.toString().replace(/__BUILD_V__/g, String(BUILD_V));
+    },
+});
+
 patterns.push({ from: "assets/install", to: "./install" });
 
 // Copy tests directory (for browser-based benchmarks/tests) - dev only
