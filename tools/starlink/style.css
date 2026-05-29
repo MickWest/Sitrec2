@@ -380,6 +380,18 @@ input[type="file"]::file-selector-button {
 }
 .verdict.no { color: var(--muted); }
 
+.sim-note {
+  text-align: center;
+  margin: 0 auto 8px;
+  max-width: 32em;
+  padding: 7px 12px;
+  font-size: 0.85rem;
+  color: var(--accent-2);
+  background: rgba(255, 158, 44, 0.10);
+  border: 1px solid var(--accent-dim);
+  border-radius: 9px;
+}
+
 .sentence {
   font-size: 1.08rem;
   line-height: 1.5;

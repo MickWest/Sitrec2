@@ -17,6 +17,52 @@ function angDiff(a, b) {
     return d;
 }
 
+// Animated "sprinkle" of small white flares in the angular sector BETWEEN the
+// arrows (just outside the rim). Each dot twinkles (opacity + size) and drifts a
+// short distance over 5–10 s — every dot at the SAME speed but a random direction
+// and a random moment within a single 60 s loop (SMIL, repeats indefinitely).
+function flareDots(arrows, cx, cy, R) {
+    if (!arrows || !arrows.length) return "";
+    const a0 = arrows[0].azDeg;
+    const a1 = arrows.length >= 2 ? arrows[arrows.length - 1].azDeg : a0;
+    // Sweep the short way from a0 to a1; for a single arrow use a narrow band.
+    let lo = a0, span = arrows.length >= 2 ? angDiff(a1, a0) : 0;
+    if (arrows.length < 2) { lo = a0 - 16; span = 32; }
+
+    const PERIOD = 60;   // whole sprinkle repeats every 60 s
+    const SPEED = 2.2;   // SVG units / second — identical for every dot
+    const N = 16;
+    let out = "";
+    for (let i = 0; i < N; i++) {
+        const az = (lo + Math.random() * span) * DEG;
+        const rad = R + 4 + Math.random() * 22;            // just beyond the outer ring
+        const px = cx + Math.sin(az) * rad;
+        const py = cy - Math.cos(az) * rad;
+        // Three-stage flare envelope: fade UP (1–2 s), hold at MAX (2–12 s),
+        // fade DOWN (== up). The dot drifts the whole time it is lit.
+        const up = 1 + Math.random();                      // fade-in / fade-out 1–2 s
+        const hold = 2 + Math.random() * 10;               // hold at max 2–12 s
+        const D = up + hold + up;                           // total lit window (down == up)
+        const t0 = Math.random() * (PERIOD - D);           // random moment in the loop
+        const dir = Math.random() * 2 * Math.PI;           // random direction
+        const dist = SPEED * D;                            // same speed -> distance ∝ D
+        const dx = Math.cos(dir) * dist, dy = Math.sin(dir) * dist;
+        const rDot = 1.1 + Math.random() * 0.9;
+        // key times (normalised to the 60 s loop): idle, rise, hold, fall, idle
+        const t1 = (t0 / PERIOD).toFixed(4);
+        const t2 = ((t0 + up) / PERIOD).toFixed(4);
+        const t3 = ((t0 + up + hold) / PERIOD).toFixed(4);
+        const t4 = ((t0 + D) / PERIOD).toFixed(4);
+        const kt = `0;${t1};${t2};${t3};${t4};1`;
+        out += `<circle cx="${n(px)}" cy="${n(py)}" r="${n(rDot)}" fill="#ffffff" opacity="0">`
+            + `<animate attributeName="opacity" dur="${PERIOD}s" repeatCount="indefinite" keyTimes="${kt}" values="0;0;0.95;0.95;0;0"/>`
+            + `<animate attributeName="r" dur="${PERIOD}s" repeatCount="indefinite" keyTimes="${kt}" values="${n(rDot * 0.4)};${n(rDot * 0.4)};${n(rDot * 1.7)};${n(rDot * 1.7)};${n(rDot * 0.4)};${n(rDot * 0.4)}"/>`
+            + `<animateTransform attributeName="transform" type="translate" dur="${PERIOD}s" repeatCount="indefinite" keyTimes="0;${t1};${t4};1" values="0 0;0 0;${n(dx)} ${n(dy)};${n(dx)} ${n(dy)}"/>`
+            + `</circle>`;
+    }
+    return out;
+}
+
 // --- compass rose ----------------------------------------------------------
 // arrows: [{ azDeg, color?, label? }] (1 or 2). Yellow by default.
 export function compassRose(arrows) {
@@ -54,11 +100,14 @@ export function compassRose(arrows) {
             + `<polygon points="${n(tipx)},${n(tipy)} ${n(bx + hx)},${n(by + hy)} ${n(bx - hx)},${n(by - hy)}" fill="${col}"/>`;
     }).join("");
 
-    return `<svg viewBox="0 0 ${W} ${W}" class="compass-rose" role="img" aria-label="Compass showing the flare direction">
+    // Expand the viewBox upward so the sprinkle of flares (just beyond the rim,
+    // in the wedge between the arrows) has room to appear and drift.
+    return `<svg viewBox="0 -30 ${W} ${W + 30}" class="compass-rose" role="img" aria-label="Compass showing the flare direction">
       <circle cx="${cx}" cy="${cy}" r="${R}" fill="#0c1224" stroke="#2a3550" stroke-width="2"/>
       <circle cx="${cx}" cy="${cy}" r="${R - 30}" fill="none" stroke="#1c2740" stroke-width="1"/>
       ${pts.join("")}
       ${labels}
+      ${flareDots(arrows, cx, cy, R)}
       ${arr}
       <circle cx="${cx}" cy="${cy}" r="3.5" fill="#cfe0ff"/>
     </svg>`;

@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.66.0 (2026-05-29)
+
+### New Features
+- **Fixed Altitude orbit mode** (Export → Orbit Image Set): A new Orbit Mode dropdown lets you orbit the camera at a constant altitude above sea level instead of a constant distance to the target. Turn on Use Current Camera Altitude to match the camera you're looking through, or set the Orbit Altitude slider; each shot is placed at that altitude automatically.
+- **Starlink Flare Predictor** (standalone tool): A new mobile-friendly tool that predicts when and where Starlink satellite flares will be visible from a location or along a flight, using live satellite data. Shows a clear "flares visible" verdict with local and UTC times, a compass rose, and a labelled horizon view.
+
+### Improvements
+- The Starlink Flare Predictor can now use your current location automatically — just leave the Origin field blank.
+- When you pick a date too far in the future or past for accurate satellite data, the Starlink Flare Predictor shows simulated results for that time of day and clearly flags them as out of date range.
+
+### Bug Fixes
+- Fixed "Save Sitch As" sometimes failing while capturing the preview thumbnail.
+
+---
+
 ## Version 2.65.0 (2026-05-28)
 
 ### New Features

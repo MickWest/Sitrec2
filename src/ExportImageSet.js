@@ -4,7 +4,7 @@ import {Vector3} from "three";
 import {GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
 import {ViewMan} from "./CViewManager";
-import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
+import {getLocalEastVector, getLocalNorthVector, getLocalUpVector, altitudeHAE} from "./SphericalMath";
 import {ExportProgressWidget, getExportPrefix, openFullscreen, closeFullscreen} from "./utils";
 import {radians} from "./mathUtils";
 import {targetSphere} from "./JetStuffVars";
@@ -102,6 +102,37 @@ function canvasToImageBlob(canvas, maxWidth, mimeType = "image/png", quality = 0
     return new Promise((resolve) => out.toBlob(resolve, mimeType, quality));
 }
 
+// Solve for the distance `d` along the unit ECEF direction `dir` (pointing from
+// `target` toward the camera) such that the camera's geodetic altitude (HAE)
+// equals `altMeters`. Positions are ECEF — the world/render frame, see
+// docs/TransitionToECEF.md — so altitudeHAE() applies directly. Moving along
+// `dir` away from the target monotonically increases the geocentric radius, so
+// altitude is monotonic in d and a doubling-bracket + bisection converges
+// (and stays finite even at near-horizontal elevations, where the camera ends
+// up far out at the chosen altitude, lifted there by Earth curvature).
+//
+// Returns null if `altMeters` is at or below the target's own altitude — the
+// camera would have to sit below the target, which our 0..90° look-down sweep
+// never does.
+function solveDistanceForHAE(target, dir, altMeters) {
+    const targetAlt = altitudeHAE(target);
+    if (!isFinite(altMeters) || altMeters <= targetAlt + 1e-3) return null;
+    const probe = new Vector3();
+    const haeAt = (d) => altitudeHAE(probe.copy(target).addScaledVector(dir, d));
+    let lo = 0;
+    let hi = Math.max(altMeters - targetAlt, 1000);
+    // Expand hi until it brackets the target altitude. Low elevations need a
+    // large mostly-horizontal distance before curvature lifts HAE to altMeters.
+    let guard = 0;
+    while (haeAt(hi) < altMeters && guard++ < 80) hi *= 2;
+    // Bisect to ~0.5 m (well below any visible difference at orbit ranges).
+    for (let i = 0; i < 60 && (hi - lo) > 0.5; i++) {
+        const mid = 0.5 * (lo + hi);
+        if (haeAt(mid) < altMeters) lo = mid; else hi = mid;
+    }
+    return 0.5 * (lo + hi);
+}
+
 export class ImageSetExporter {
     constructor() {
         this.azStart = 0;
@@ -111,7 +142,12 @@ export class ImageSetExporter {
         this.trackToOrbit = "fixedTarget";
         this.timeStepMinutes = 120;
         this.numTimeSteps = 1;
+        // Orbit constraint mode: "distance" keeps a fixed slant range to the
+        // target; "altitude" keeps the camera at a fixed geodetic altitude (HAE)
+        // and lets each elevation step set how far out the camera sits.
+        this.orbitMode = "distance";
         this.useCurrentDistance = true;
+        this.useCurrentAltitude = true;
         this.useCurrentFOV = true;
         this.verticalFOV = 30;
         this.usePNGs = false;
@@ -131,6 +167,9 @@ export class ImageSetExporter {
         }
         if (NodeMan.exists("imageSetOrbitDistance")) {
             NodeMan.disposeRemove("imageSetOrbitDistance");
+        }
+        if (NodeMan.exists("imageSetOrbitAltitude")) {
+            NodeMan.disposeRemove("imageSetOrbitAltitude");
         }
 
         const folder = parentFolder.addFolder("Orbit Image Set").close()
@@ -155,17 +194,33 @@ export class ImageSetExporter {
         folder.add(this, "elStep", 0, 90, 1)
             .name("EL Step (deg)")
             .tooltip("Elevation step (0-90). Sweeps from EL Start to 90 (straight down) inclusive. Set to 0 to take a single sweep at EL Start.");
+        // Orbit constraint selector: fixed slant distance vs fixed altitude.
+        // Switching toggles which control pair (distance vs altitude) is shown;
+        // the AZ/EL sweep applies to both modes.
+        this.orbitModeController = folder.add(this, "orbitMode",
+            {"Fixed Distance": "distance", "Fixed Altitude": "altitude"})
+            .name("Orbit Mode")
+            .tooltip("Fixed Distance: orbit at a constant slant range to the target (camera altitude rises with elevation). Fixed Altitude: hold the camera at a constant altitude above sea level (HAE); each elevation step sets how far out the camera sits.")
+            .onChange(() => {
+                this._updateOrbitModeVisibility();
+                // The preview snapshots the orbit mode at enter time, so re-enter
+                // when the mode changes mid-preview — otherwise the new mode (and
+                // its validation) wouldn't take effect until preview is re-toggled.
+                if (this.orbitPreview) {
+                    this._exitPreview();
+                    if (!this._enterPreview()) {
+                        this.orbitPreview = false;
+                        this.orbitPreviewController?.updateDisplay();
+                    }
+                }
+            });
+
         // Orbit distance: a checkbox to use the current camera-to-target
         // distance, OR a manual distance slider in big units (NM / mi / km).
         this.useCurrentDistanceController = folder.add(this, "useCurrentDistance")
             .name("Use Current Camera Distance")
             .tooltip("If on, the orbit radius is the current distance from the look camera to the target. If off, use the Orbit Distance slider below.")
-            .onChange((on) => {
-                if (this.orbitDistanceNode?.guiEntry) {
-                    if (on) this.orbitDistanceNode.guiEntry.hide();
-                    else this.orbitDistanceNode.guiEntry.show();
-                }
-            });
+            .onChange(() => this._updateOrbitModeVisibility());
 
         // Distance slider. unitType "big" means the slider displays NM/mi/km
         // depending on the user's units setting, and getValueFrame(0) returns
@@ -188,10 +243,40 @@ export class ImageSetExporter {
         } else {
             this.orbitDistanceNode = NodeMan.get("imageSetOrbitDistance");
         }
-        // Initially hidden because useCurrentDistance defaults to true.
-        if (this.orbitDistanceNode?.guiEntry) {
-            this.orbitDistanceNode.guiEntry.hide();
+
+        // Fixed-altitude controls mirror the distance pair: a checkbox to use
+        // the look camera's current altitude, or a manual Orbit Altitude slider
+        // in small units (ft / m). Only relevant in "altitude" orbit mode.
+        this.useCurrentAltitudeController = folder.add(this, "useCurrentAltitude")
+            .name("Use Current Camera Altitude")
+            .tooltip("If on, hold the orbit at the look camera's current altitude above sea level (HAE). If off, use the Orbit Altitude slider below.")
+            .onChange(() => this._updateOrbitModeVisibility());
+
+        // Altitude slider. unitType "small" displays ft/m per the user's units
+        // setting; getValueFrame(0) returns meters (HAE). Default value is in
+        // small units (30000 ft / 30000 m).
+        if (!NodeMan.exists("imageSetOrbitAltitude")) {
+            this.orbitAltitudeNode = new CNodeGUIValue({
+                id: "imageSetOrbitAltitude",
+                value: 30000,
+                start: 0,
+                end: 100000,
+                step: 100,
+                maxMax: 2000000,
+                elastic: true,
+                elasticMin: 0,
+                elasticMax: 1000000,
+                unitType: "small",
+                desc: "Orbit Altitude",
+                tooltip: "Camera altitude above sea level (HAE) for the orbit. Each elevation step places the camera at this altitude, varying how far out it sits. Only used when 'Use Current Camera Altitude' is off.",
+            }, folder);
+        } else {
+            this.orbitAltitudeNode = NodeMan.get("imageSetOrbitAltitude");
         }
+
+        // Set initial visibility of the distance/altitude control pairs to match
+        // the current orbit mode and "Use Current ..." checkboxes.
+        this._updateOrbitModeVisibility();
 
         // Vertical FOV: checkbox to use the look camera's current FOV, or
         // a manual vertical FOV slider in degrees. Mirrors the distance pattern.
@@ -314,6 +399,38 @@ export class ImageSetExporter {
         return folder;
     }
 
+    // Show the control pair (distance vs altitude) that matches the current
+    // orbit mode and hide the other; within the active pair the manual slider
+    // is shown only when its "Use Current ..." checkbox is off.
+    _updateOrbitModeVisibility() {
+        const altMode = this.orbitMode === "altitude";
+        if (this.useCurrentDistanceController) {
+            if (altMode) this.useCurrentDistanceController.hide();
+            else this.useCurrentDistanceController.show();
+        }
+        if (this.orbitDistanceNode?.guiEntry) {
+            if (!altMode && !this.useCurrentDistance) this.orbitDistanceNode.guiEntry.show();
+            else this.orbitDistanceNode.guiEntry.hide();
+        }
+        if (this.useCurrentAltitudeController) {
+            if (altMode) this.useCurrentAltitudeController.show();
+            else this.useCurrentAltitudeController.hide();
+        }
+        if (this.orbitAltitudeNode?.guiEntry) {
+            if (altMode && !this.useCurrentAltitude) this.orbitAltitudeNode.guiEntry.show();
+            else this.orbitAltitudeNode.guiEntry.hide();
+        }
+    }
+
+    // Resolve the target geodetic altitude (HAE, meters) for fixed-altitude
+    // orbit mode: either the look camera's current altitude, or the manual
+    // Orbit Altitude slider (whose getValueFrame(0) returns SI meters).
+    _resolveFixedAltitude(camera) {
+        if (this.useCurrentAltitude) return altitudeHAE(camera.position);
+        if (this.orbitAltitudeNode) return this.orbitAltitudeNode.getValueFrame(0);
+        return altitudeHAE(camera.position);
+    }
+
     // Compute the (az, el) sweep used by both export and preview, plus the
     // full (t, az, el) shot list across time steps. Returns plain numbers
     // (clamped/rounded) so callers don't repeat the validation.
@@ -381,19 +498,32 @@ export class ImageSetExporter {
         }
 
         const camera = view.camera;
-        let initialDistance;
-        if (this.useCurrentDistance) {
-            initialDistance = camera.position.distanceTo(initialTarget);
-        } else if (this.orbitDistanceNode) {
-            initialDistance = this.orbitDistanceNode.getValueFrame(0);
+        const orbitMode = this.orbitMode;
+        let initialDistance = 0;   // fixed-distance mode: constant slant range
+        let fixedAltMeters = 0;    // fixed-altitude mode: target HAE (meters)
+        if (orbitMode === "altitude") {
+            fixedAltMeters = this._resolveFixedAltitude(camera);
+            const targetAlt = altitudeHAE(initialTarget);
+            if (!isFinite(fixedAltMeters) || fixedAltMeters <= targetAlt + 1) {
+                alert("Orbit Altitude must be above the target's altitude "
+                    + "(~" + Math.round(targetAlt) + " m HAE). Raise the Orbit Altitude, "
+                    + "or turn on 'Use Current Camera Altitude' with the camera above the target.");
+                return false;
+            }
         } else {
-            initialDistance = camera.position.distanceTo(initialTarget);
-        }
-        if (!isFinite(initialDistance) || initialDistance < 1e-6) {
-            alert(this.useCurrentDistance
-                ? "Initial camera distance to target is zero or invalid; cannot orbit at that radius."
-                : "Orbit Distance is zero or invalid; raise it above zero.");
-            return false;
+            if (this.useCurrentDistance) {
+                initialDistance = camera.position.distanceTo(initialTarget);
+            } else if (this.orbitDistanceNode) {
+                initialDistance = this.orbitDistanceNode.getValueFrame(0);
+            } else {
+                initialDistance = camera.position.distanceTo(initialTarget);
+            }
+            if (!isFinite(initialDistance) || initialDistance < 1e-6) {
+                alert(this.useCurrentDistance
+                    ? "Initial camera distance to target is zero or invalid; cannot orbit at that radius."
+                    : "Orbit Distance is zero or invalid; raise it above zero.");
+                return false;
+            }
         }
 
         const {shots} = this._buildShotList();
@@ -407,7 +537,12 @@ export class ImageSetExporter {
             view,
             camera,
             trackKey,
+            orbitMode,
             initialDistance,
+            fixedAltMeters,
+            // Last distance that solved cleanly in altitude mode — reused if a
+            // later shot's solve fails (e.g. a moving target rises above altMeters).
+            lastGoodDistance: initialDistance || 0,
             // Camera pose / projection.
             savedPos: camera.position.clone(),
             savedQuat: camera.quaternion.clone(),
@@ -597,17 +732,41 @@ export class ImageSetExporter {
             .addScaledVector(east, cosE * sinA)
             .addScaledVector(up, sinE);
 
-        // Resolve distance live each call. "Use current camera distance" keeps
-        // the value captured at enter time (the camera-to-target distance just
-        // before preview started — since the camera has been moving since
-        // then, "current" only makes sense as an enter-time snapshot). The
-        // manual-distance branch reads the slider every call so dragging
-        // Orbit Distance updates the preview just like Vertical FOV does.
-        let distance = state.initialDistance;
-        if (!this.useCurrentDistance && this.orbitDistanceNode) {
-            const sliderMeters = this.orbitDistanceNode.getValueFrame(0);
-            if (isFinite(sliderMeters) && sliderMeters > 1e-6) {
-                distance = sliderMeters;
+        // Resolve the camera distance live each call so slider drags update the
+        // preview. In distance mode "Use current camera distance" keeps the
+        // enter-time snapshot (the camera has moved since, so "current" only
+        // makes sense as that snapshot) while the manual branch reads the
+        // slider every call. In altitude mode the distance is solved per shot.
+        let distance;
+        if (state.orbitMode === "altitude") {
+            // Re-resolve altitude live so dragging Orbit Altitude updates the
+            // preview, mirroring the Orbit Distance behavior below. Per-shot
+            // distance varies because each elevation reaches the chosen HAE at
+            // a different range.
+            let altMeters = state.fixedAltMeters;
+            if (!this.useCurrentAltitude && this.orbitAltitudeNode) {
+                const v = this.orbitAltitudeNode.getValueFrame(0);
+                if (isFinite(v)) altMeters = v;
+            }
+            const d = solveDistanceForHAE(target, dir, altMeters);
+            if (d !== null && isFinite(d) && d > 1e-6) {
+                distance = d;
+                state.lastGoodDistance = d;
+            } else if (state.lastGoodDistance > 1e-6) {
+                distance = state.lastGoodDistance;
+            } else {
+                // No valid distance yet (e.g. Orbit Altitude dragged below the
+                // target): leave the camera where it is rather than snap it to
+                // ~1 m from the target. A later tick with a valid altitude moves it.
+                return;
+            }
+        } else {
+            distance = state.initialDistance;
+            if (!this.useCurrentDistance && this.orbitDistanceNode) {
+                const sliderMeters = this.orbitDistanceNode.getValueFrame(0);
+                if (isFinite(sliderMeters) && sliderMeters > 1e-6) {
+                    distance = sliderMeters;
+                }
             }
         }
 
@@ -722,20 +881,33 @@ export class ImageSetExporter {
         }
 
         const camera = view.camera;
-        let initialDistance;
-        if (this.useCurrentDistance) {
-            initialDistance = camera.position.distanceTo(initialTarget);
-        } else if (this.orbitDistanceNode) {
-            // getValueFrame returns the slider value converted to SI meters.
-            initialDistance = this.orbitDistanceNode.getValueFrame(0);
+        const orbitMode = this.orbitMode;
+        let initialDistance = 0;   // fixed-distance mode: constant slant range
+        let fixedAltMeters = 0;    // fixed-altitude mode: target HAE (meters)
+        if (orbitMode === "altitude") {
+            fixedAltMeters = this._resolveFixedAltitude(camera);
+            const targetAlt = altitudeHAE(initialTarget);
+            if (!isFinite(fixedAltMeters) || fixedAltMeters <= targetAlt + 1) {
+                alert("Orbit Altitude must be above the target's altitude "
+                    + "(~" + Math.round(targetAlt) + " m HAE). Raise the Orbit Altitude, "
+                    + "or turn on 'Use Current Camera Altitude' with the camera above the target.");
+                return;
+            }
         } else {
-            initialDistance = camera.position.distanceTo(initialTarget);
-        }
-        if (!isFinite(initialDistance) || initialDistance < 1e-6) {
-            alert(this.useCurrentDistance
-                ? "Initial camera distance to target is zero or invalid; cannot orbit at that radius."
-                : "Orbit Distance is zero or invalid; raise it above zero.");
-            return;
+            if (this.useCurrentDistance) {
+                initialDistance = camera.position.distanceTo(initialTarget);
+            } else if (this.orbitDistanceNode) {
+                // getValueFrame returns the slider value converted to SI meters.
+                initialDistance = this.orbitDistanceNode.getValueFrame(0);
+            } else {
+                initialDistance = camera.position.distanceTo(initialTarget);
+            }
+            if (!isFinite(initialDistance) || initialDistance < 1e-6) {
+                alert(this.useCurrentDistance
+                    ? "Initial camera distance to target is zero or invalid; cannot orbit at that radius."
+                    : "Orbit Distance is zero or invalid; raise it above zero.");
+                return;
+            }
         }
 
         // EL sweeps from elStart (0 = horizontal, 80 = nearly straight down)
@@ -818,6 +990,11 @@ export class ImageSetExporter {
         let currentT = -1;
         let target = initialTarget.clone();
         let distance = initialDistance;
+        // Fixed-altitude state: last distance that solved cleanly (0 until the
+        // first solve in altitude mode), plus a count of shots that couldn't
+        // reach the chosen HAE (target rose above it) so we can warn at the end.
+        let lastGoodDistance = orbitMode === "altitude" ? 0 : initialDistance;
+        let altitudeFallbackCount = 0;
         let east = getLocalEastVector(target);
         let north = getLocalNorthVector(target);
         let up = getLocalUpVector(target);
@@ -866,17 +1043,41 @@ export class ImageSetExporter {
                 const cosA = Math.cos(azR);
 
                 // Az measured from local north, increasing clockwise toward east.
-                // Direction points FROM target TOWARD camera, so camera = target + dir*distance.
+                // Direction points FROM target TOWARD camera, so camera = target + dir*shotDistance.
                 const dir = new Vector3()
                     .addScaledVector(north, cosE * cosA)
                     .addScaledVector(east, cosE * sinA)
                     .addScaledVector(up, sinE);
 
+                // Distance for this shot. Fixed-distance mode uses the constant
+                // `distance`; fixed-altitude mode solves the distance along `dir`
+                // that lands the camera at the chosen HAE — which varies per
+                // elevation step (and per target altitude across time steps).
+                let shotDistance = distance;
+                if (orbitMode === "altitude") {
+                    const d = solveDistanceForHAE(target, dir, fixedAltMeters);
+                    if (d !== null && isFinite(d) && d > 1e-6) {
+                        shotDistance = d;
+                        lastGoodDistance = d;
+                    } else if (lastGoodDistance > 1e-6) {
+                        // A (usually time-stepped) target has risen above the chosen
+                        // altitude: reuse the last solved distance and flag it so the
+                        // off-altitude frames aren't shipped silently.
+                        shotDistance = lastGoodDistance;
+                        altitudeFallbackCount++;
+                    } else {
+                        // No valid distance yet (target already above the altitude on
+                        // this shot) — skip rather than render a degenerate close-up.
+                        altitudeFallbackCount++;
+                        continue;
+                    }
+                }
+
                 // The render closure is invoked by waitForExportFrameSettled
                 // *during* its wait loop so terrain/3D-tile traversal can make
                 // progress with the camera in its final pose.
                 const renderShot = async () => {
-                    camera.position.copy(target).addScaledVector(dir, distance);
+                    camera.position.copy(target).addScaledVector(dir, shotDistance);
                     camera.up.copy(up);
                     camera.lookAt(target);
                     camera.updateMatrix();
@@ -947,6 +1148,10 @@ export class ImageSetExporter {
                     progress.update(i + 1);
                     await new Promise((r) => setTimeout(r, 0));
                 }
+            }
+
+            if (orbitMode === "altitude" && altitudeFallbackCount > 0) {
+                console.warn(`Image set export: ${altitudeFallbackCount} shot(s) could not reach the requested altitude (the target rose above it); those shots were skipped or reused the last valid distance.`);
             }
 
             if (progress.shouldSave() && savedCount > 0) {

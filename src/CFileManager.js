@@ -797,7 +797,7 @@ export class CFileManager extends CManager {
 
         const srcWidth = Math.max(1, Math.ceil(maxX - minX));
         const srcHeight = Math.max(1, Math.ceil(maxY - minY));
-        const targetHeight = Math.round(targetWidth * srcHeight / srcWidth);
+        const targetHeight = Math.max(1, Math.round(targetWidth * srcHeight / srcWidth));
 
         // Composite all visible views into a full-size canvas (same as viewport video export)
         const fullCanvas = document.createElement("canvas");
@@ -811,7 +811,9 @@ export class CFileManager extends CManager {
         const frame = Math.floor(par.frame);
         for (const view of nonOverlays) {
             view.renderCanvas(frame);
-            if (view.canvas) {
+            // drawImage throws InvalidStateError if the source canvas is 0-sized,
+            // which can happen for a view that has not been laid out yet.
+            if (view.canvas && view.canvas.width > 0 && view.canvas.height > 0) {
                 const x = view.leftPx * scale - minX;
                 const y = (view.topPx - ViewMan.topPx) * scale - minY;
                 fullCtx.drawImage(view.canvas, x, y, view.widthPx * scale, view.heightPx * scale);
@@ -824,6 +826,8 @@ export class CFileManager extends CManager {
             // Skip canvases hidden by style to match on-screen output.
             if (view.canvas.style.display === "none" || view.canvas.style.visibility === "hidden") continue;
             view.renderCanvas(frame);
+            // Skip 0-sized canvases (drawImage throws InvalidStateError on them).
+            if (view.canvas.width === 0 || view.canvas.height === 0) continue;
             const parentView = view.overlayView;
             const x = parentView.leftPx * scale - minX;
             const y = (parentView.topPx - ViewMan.topPx) * scale - minY;

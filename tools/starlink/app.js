@@ -16,7 +16,7 @@
 // builds everything stays cached. See VERSION below, reused for the Worker URL.
 const VERSION = new URL(import.meta.url).search; // e.g. "?v=1716998400000" (or "")
 const [
-  { resolveLocation, searchAirports, loadAirports },
+  { resolveLocation, searchAirports, loadAirports, reverseGeocode },
   { compass16, greatCircleDistanceKm },
   { equatorialToAltAz },
   { BRIGHT_STARS },
@@ -212,6 +212,36 @@ async function resolveField(input) {
   return await resolveLocation(q);
 }
 
+// Ask the browser for the user's position (used when Origin is left blank).
+function getBrowserLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("This browser can't share a location — tap Edit and enter a place or airport."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+      (err) => reject(new Error("Couldn't get your location (" +
+        (err && err.message ? err.message : "permission denied") +
+        ") — tap Edit and enter a place or airport.")),
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 }
+    );
+  });
+}
+
+// Resolve the origin from the browser's geolocation: reverse-geocode to a place
+// name (falling back to lat/lon), populate the Origin field, and return the
+// origin object. tz is left blank, so times use the browser's local zone — which
+// for the user's own location is the right one.
+async function resolveBrowserLocation(load) {
+  const pos = await getBrowserLocation();
+  const name = await reverseGeocode(pos.lat, pos.lon);
+  const label = name || `${pos.lat.toFixed(3)}°, ${pos.lon.toFixed(3)}°`;
+  els.origin.value = label;       // show what we detected (and for Edit)
+  els.origin._resolved = null;
+  return { lat: pos.lat, lon: pos.lon, altKm: 0, name: label, tz: "", source: "geolocation" };
+}
+
 // ---------------------------------------------------------------------------
 // TLE acquisition
 // ---------------------------------------------------------------------------
@@ -382,8 +412,14 @@ function renderResults(flares, stats, req, origin, dest) {
   const place = dest ? `${origin.name} → ${dest.name}` : origin.name;
   const plural = flares.length === 1 ? "" : "s";
 
+  // Shown when the requested date was out of TLE range and we fell back to today.
+  const simBanner = (req && req.simulated)
+    ? `<div class="sim-note">Simulated results, out of date range — using current satellite data.</div>`
+    : "";
+
   els.results.innerHTML =
     `<div class="verdict yes">FLARES VISIBLE</div>
+     ${simBanner}
      <p class="sentence">${sentence}</p>
      <div class="place">${escapeHtml(place)}</div>
      <div class="rose-wrap">${compassRose(arrows)}</div>
@@ -391,11 +427,15 @@ function renderResults(flares, stats, req, origin, dest) {
      <div class="horizon-wrap">${horizonView({ stars, flares: hvFlares, ...win })}</div>
      <div class="legend"><span class="lg-flare">●</span> Starlink flare &nbsp;·&nbsp; <span class="lg-star">●</span> bright star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction of travel</div>`;
 
-  const det = document.createElement("details");
-  det.className = "flare-details";
-  det.innerHTML = `<summary>All ${flares.length} flare${plural} · scanned ${stats.satsTotal} satellites</summary>`;
-  for (const f of flares) det.appendChild(flareCard(f, tz));
-  els.results.appendChild(det);
+  // Per-flare detail list — kept but disabled for a cleaner results page.
+  const SHOW_FLARE_LIST = false;
+  if (SHOW_FLARE_LIST) {
+    const det = document.createElement("details");
+    det.className = "flare-details";
+    det.innerHTML = `<summary>All ${flares.length} flare${plural} · scanned ${stats.satsTotal} satellites</summary>`;
+    for (const f of flares) det.appendChild(flareCard(f, tz));
+    els.results.appendChild(det);
+  }
 }
 
 function flareCard(f, tz) {
@@ -464,7 +504,10 @@ function renderNoFlares(stats, req, origin) {
        while the <b>satellite</b> is still lit by the Sun. That sweet spot happens
        within roughly an hour of <b>dawn or dusk</b>.</p>
     ${tail}`;
-  els.results.innerHTML = `<div class="verdict no">No Flares</div>`;
+  const simBanner = (req && req.simulated)
+    ? `<div class="sim-note">Simulated results, out of date range — using current satellite data.</div>`
+    : "";
+  els.results.innerHTML = `<div class="verdict no">No Flares</div>${simBanner}`;
   els.results.appendChild(div);
 }
 
@@ -480,7 +523,6 @@ async function onSubmit(e) {
   // Validate while still on the form.
   const dt = parseDateTime();
   if (!dt) { formError("Please choose a valid date and time."); return; }
-  if (!els.origin.value.trim()) { formError("Enter an origin (airport code, name, or place)."); return; }
   setStatus("");
 
   // Switch to the results screen with a loading panel; everything else renders there.
@@ -488,8 +530,15 @@ async function onSubmit(e) {
   const load = renderLoading("Resolving location…");
 
   try {
-    const origin = await resolveField(els.origin);
-    if (!origin) throw new Error("Couldn't find that origin — check the spelling.");
+    // Origin: use the typed value, or fall back to the browser's location if blank.
+    let origin;
+    if (els.origin.value.trim()) {
+      origin = await resolveField(els.origin);
+      if (!origin) throw new Error("Couldn't find that origin — check the spelling.");
+    } else {
+      load.setMsg("Getting your location…");
+      origin = await resolveBrowserLocation(load);
+    }
 
     let dest = null;
     if (els.dest.value.trim()) {
@@ -497,7 +546,20 @@ async function onSubmit(e) {
       if (!dest) throw new Error("Couldn't find that destination — check the spelling.");
     }
 
-    const startMs = wallClockToUTCms(dt.y, dt.mo, dt.d, dt.h, dt.mi, origin.tz);
+    // TLEs are only accurate within roughly a week of "now"; far-future/past dates
+    // make SGP4 diverge into nonsense. If the requested moment is more than a week
+    // away, fall back to today's date (keeping the requested time of day) and flag
+    // the results as a simulation using current orbital data.
+    let startMs = wallClockToUTCms(dt.y, dt.mo, dt.d, dt.h, dt.mi, origin.tz);
+    let simulated = false;
+    const WEEK = 7 * 86400 * 1000;
+    if (Math.abs(startMs - Date.now()) > WEEK) {
+      simulated = true;
+      const today = new Date();
+      startMs = wallClockToUTCms(today.getFullYear(), today.getMonth() + 1, today.getDate(),
+        dt.h, dt.mi, origin.tz);
+    }
+
     const options = {
       flareAngleDeg: +els.cone.value || 5,
       minElevationDeg: +els.minel.value || 0,
@@ -527,6 +589,7 @@ async function onSubmit(e) {
       };
       load.setMsg(`Checking the ${origin.name} → ${dest.name} flight…`);
     }
+    req.simulated = simulated;
 
     // --- TLE ---
     load.setMsg("Loading satellite data…");

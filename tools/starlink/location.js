@@ -100,6 +100,28 @@ export async function resolveLocation(query) {
     };
 }
 
+// Reverse-geocode a lat/lon to a short readable place name (city-ish + country),
+// e.g. for a browser-geolocated origin. Returns a string or null if nothing usable.
+export async function reverseGeocode(lat, lon) {
+    try {
+        const r = await fetch(
+            "https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&lat=" +
+                encodeURIComponent(lat) + "&lon=" + encodeURIComponent(lon),
+            { headers: { "User-Agent": "Sitrec-StarlinkFlares/1.0" } }
+        );
+        if (!r.ok) return null;
+        const d = await r.json();
+        if (!d || d.error) return null;
+        const a = d.address || {};
+        const place = a.city || a.town || a.village || a.hamlet || a.suburb ||
+            a.county || a.state || a.region;
+        if (place && a.country) return place + ", " + a.country;
+        return place || d.display_name || null;
+    } catch {
+        return null;
+    }
+}
+
 // ---- autocomplete ---------------------------------------------------------
 // Match where iata/icao/name/city contains the query (case-insensitive).
 // Rank: exact code first, then prefix matches, then plain substring.

@@ -48,6 +48,10 @@ console.log("errors:", errs.length ? errs.slice(0, 5).join(" | ") : "(none)");
 console.log("VERSIONED assets (?v=…):", [...versioned].sort().join(", "));
 console.log("UNVERSIONED .js/.css/.json under tool:", unversionedAssets.size ? [...unversionedAssets].join(", ") : "(none — good)");
 
+console.log("sprinkle dots:", await page.locator('#results svg.compass-rose circle[fill="#ffffff"]').count());
+// Reveal all sprinkle dots so the still screenshot shows their placement.
+await page.evaluate(() => document.querySelectorAll('svg.compass-rose circle[fill="#ffffff"]')
+    .forEach((c) => c.setAttribute("opacity", "0.9")));
 const shot = (process.env.TMPDIR || "/tmp") + "/starlink-live.png";
 await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
 console.log("screenshot:", shot);

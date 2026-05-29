@@ -65,7 +65,7 @@ console.log("== browser: drive the form -> results screen ==");
 // satellites actually register flares within the forward search — exercising the
 // full FLARES VISIBLE results screen (verdict, sentence, compass rose, horizon view).
 await page.fill("#origin", "LAX");
-await page.fill("#date", "2026-06-15");
+// leave #date at its default (today) so it is in TLE range — no simulation
 await page.fill("#time", "20:45");
 await page.setInputFiles("#tlefile", tlePath);
 await page.locator("details.advanced > summary").click().catch(() => {});
@@ -93,6 +93,14 @@ if (/FLARES VISIBLE/i.test(verdict)) {
     ok("compass rose has a direction arrow", await page.locator("#results svg.compass-rose polygon").count() >= 1);
     ok("horizon view SVG rendered", await page.locator("#results svg.horizon-view").count() === 1);
     ok("horizon view has flare markers", (resultsHtml.match(/url\(#glow\)/g) || []).length >= 1);
+    ok("compass rose has the animated white flare sprinkle",
+        await page.locator('#results svg.compass-rose circle[fill="#ffffff"]').count() >= 8);
+    ok("no 'All N flares' detail section", await page.locator("#results .flare-details").count() === 0);
+    ok("no simulated note for an in-range (today) date", await page.locator("#results .sim-note").count() === 0);
+    // Reveal all sprinkle dots so the screenshot shows their placement (live they
+    // twinkle a few at a time).
+    await page.evaluate(() => document.querySelectorAll('svg.compass-rose circle[fill="#ffffff"]')
+        .forEach((c) => c.setAttribute("opacity", "0.9")));
 } else {
     console.log("    (synthetic TLEs produced no flares; verdict=No Flares is acceptable)");
 }
@@ -110,6 +118,41 @@ await page.click("#edit");
 ok("Edit shows the form screen again", await page.locator("#form-screen").isVisible());
 ok("results screen hidden after Edit", !(await page.locator("#results-screen").isVisible()));
 ok("origin value preserved for editing", (await page.inputValue("#origin")) === "LAX");
+
+console.log("== browser: out-of-range date -> simulated note ==");
+await page.fill("#date", "2027-12-25");   // far future -> clamps to today, simulated
+await page.click("#go");
+let simRendered = false;
+try { await page.waitForSelector("#results .verdict", { timeout: 35000 }); simRendered = true; } catch {}
+ok("verdict rendered for far-future date", simRendered);
+ok("shows the 'Simulated results, out of date range' note",
+    await page.locator("#results .sim-note").count() === 1,
+    (await page.locator("#results .sim-note").innerText().catch(() => "")).slice(0, 60));
+ok("far-future run had no errors", pageErrors.length === 0);
+
+console.log("== browser: blank origin -> browser geolocation ==");
+const context = page.context();
+await context.grantPermissions(["geolocation"]);
+await context.setGeolocation({ latitude: 40.0, longitude: -105.0 });
+await page.route("**/nominatim.openstreetmap.org/reverse*", (route) =>
+    route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ address: { city: "Testville", country: "Testland" }, display_name: "Testville, Testland" }),
+    }));
+const today = await page.evaluate(() => {
+    const d = new Date(), p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+});
+await page.click("#edit");
+await page.fill("#origin", "");          // blank -> should use geolocation
+await page.fill("#date", today);          // back in range
+await page.click("#go");
+let geoRendered = false;
+try { await page.waitForSelector("#results .verdict", { timeout: 35000 }); geoRendered = true; } catch {}
+ok("geolocation run produced a verdict", geoRendered);
+ok("blank origin was populated from geolocation", /Testville, Testland/.test(await page.inputValue("#origin")),
+    await page.inputValue("#origin"));
+ok("geolocation run had no errors", pageErrors.length === 0, pageErrors.join(" | "));
 
 await browser.close();
 server.close();
