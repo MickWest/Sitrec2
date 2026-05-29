@@ -43,7 +43,7 @@ export function updateGUIFrames() {
     guiFrames.add(par, 'paused').listen()
         .name(t("jet.frames.paused.label"))
         .tooltip(t("jet.frames.paused.tooltip"))
-    guiFrames.add(par, 'playbackSpeed', 0.25, 10, 0.25).listen()
+    guiFrames.add(par, 'playbackSpeed', 0.01, 100, 0.01).listen()
         .name("Playback Speed")
         .tooltip("Multiplier on per-tick frame advance during playback. 1 = normal, 2 = 2x, 0.25 = quarter speed.")
 
