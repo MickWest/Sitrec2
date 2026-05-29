@@ -1,3 +1,5 @@
+import { sanitizeAvcDescription } from "./H264Utils";
+
 export class MediabunnyExporter {
     constructor(options = {}) {
         this.width = options.width || 640;
@@ -66,6 +68,25 @@ export class MediabunnyExporter {
         this.encoder = new VideoEncoder({
             output: async (chunk, meta) => {
                 try {
+                    // Some browsers (e.g. Opera) emit a malformed H.264 avcC description with
+                    // duplicated SPS/PPS NAL-header bytes. Mediabunny writes the description
+                    // verbatim into the MP4, producing a file that only plays in Chromium-based
+                    // browsers. Repair it here so the export plays everywhere.
+                    if (this.codec === 'avc' && meta?.decoderConfig?.description) {
+                        const { bytes, repaired, warning } = sanitizeAvcDescription(meta.decoderConfig.description);
+                        if (warning && !this._loggedAvccWarning) {
+                            console.warn('MediabunnyExporter: ' + warning);
+                            this._loggedAvccWarning = true;
+                        }
+                        if (repaired) {
+                            if (!this._loggedAvccRepair) {
+                                console.warn('MediabunnyExporter: repaired malformed H.264 avcC description ' +
+                                    'from the browser encoder (duplicated SPS/PPS NAL header bytes / zeroed reserved bits).');
+                                this._loggedAvccRepair = true;
+                            }
+                            meta = { ...meta, decoderConfig: { ...meta.decoderConfig, description: bytes } };
+                        }
+                    }
                     const packet = this.EncodedPacket.fromEncodedChunk(chunk);
                     await this.videoSource.add(packet, meta);
                 } catch (e) {

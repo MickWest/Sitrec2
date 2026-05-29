@@ -5,6 +5,7 @@ import {updateSitFrames} from "./UpdateSitFrames";
 import {EventManager} from "./CEventManager";
 import {showError} from "./showError";
 import {VideoLoadingManager} from "./CVideoLoadingManager";
+import {sanitizeAvcDescription} from "./H264Utils";
 
 /**
  * Inspect the leading bytes of a video file and identify its container.
@@ -411,6 +412,21 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
             console.log("🍿Setting Video width and height to ", config.codedWidth, "x", config.codedHeight )
 
             this.config = config;
+
+            // Defend against already-broken files (e.g. a Firefox/Media-Foundation export whose
+            // avcC has duplicated SPS/PPS NAL header bytes and zeroed reserved bits). mp4box
+            // re-emits that malformed avcC verbatim into config.description; strict browser
+            // decoders (Firefox/Safari) would then reject the stream. Repair it before the worker
+            // configures its VideoDecoder so the file decodes in any browser. No-op for valid files.
+            if (config.description && typeof config.codec === "string" && config.codec.startsWith("avc")) {
+                const {bytes, repaired, warning} = sanitizeAvcDescription(config.description);
+                if (warning) console.warn("[CVideoMp4Data] " + warning);
+                if (repaired) {
+                    console.warn("[CVideoMp4Data] Repaired malformed H.264 avcC in imported file " +
+                        "(duplicated SPS/PPS NAL header bytes / zeroed reserved bits)");
+                    config.description = bytes;
+                }
+            }
 
             this.metadataRotation = getRotationAngleFromVideoMatrix(demuxer.videoTrack.matrix);
 
