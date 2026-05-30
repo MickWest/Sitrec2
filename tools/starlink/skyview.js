@@ -170,6 +170,7 @@ export function compassRose(arrows, flares) {
 // }
 export function horizonView(opts) {
     const stars = opts.stars || [];
+    const bodies = opts.bodies || [];   // planets + Moon: {name, azDeg, altDeg, color, r}
     const flares = opts.flares || [];
     const azCenter = opts.azCenter;
     const HW = opts.halfWidthDeg;          // degrees either side of centre
@@ -232,6 +233,14 @@ export function horizonView(opts) {
         if (s.mag < 1.6) {
             svg += `<text x="${n(x + r + 3)}" y="${n(y + 3.5)}" font-size="12" fill="#aab8da">${esc(s.name)}</text>`;
         }
+    }
+
+    // planets (coloured) and the Moon (grey, larger) — always labelled
+    for (const b of bodies) {
+        if (b.altDeg < 0 || b.altDeg > elMax || !inWin(b.azDeg)) continue;
+        const x = xOf(b.azDeg), y = yOf(b.altDeg), r = b.r || 3.4;
+        svg += `<circle cx="${n(x)}" cy="${n(y)}" r="${n(r)}" fill="${b.color}"/>`;
+        svg += `<text x="${n(x + r + 3)}" y="${n(y + 4)}" font-size="12" fill="${b.color}">${esc(b.name)}</text>`;
     }
 
     // flares (drawn last, on top): small WHITE disks (same max size as the

@@ -176,6 +176,23 @@ input[type="file"]::file-selector-button {
   padding-bottom: 12px;
 }
 .file-field { padding-bottom: 14px; }
+.file-field .sub-label { margin-top: 12px; }
+.adv-btn {
+  align-self: flex-start;
+  margin: 4px 0;
+  padding: 9px 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--accent-2);
+  background: var(--panel-2);
+  border: 1px solid var(--accent-dim);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.adv-btn:active { background: var(--panel); }
+.adv-btn:disabled { opacity: 0.6; cursor: default; }
+.help.ok { color: #7fd99a; }
+.help.err { color: #ff8a7a; }
 
 /* ---- button ---- */
 .go-btn {
@@ -413,6 +430,17 @@ input[type="file"]::file-selector-button {
   background: rgba(255, 158, 44, 0.10);
   border: 1px solid var(--accent-dim);
   border-radius: 9px;
+}
+.sim-note.synth {        /* synthetic data — make the approximation obvious */
+  color: #ffd24a;
+  background: rgba(255, 158, 44, 0.16);
+  border-color: rgba(255, 158, 44, 0.55);
+  font-weight: 600;
+}
+.sim-note.real {         /* real Starlink elements — quiet positive confirmation */
+  color: #9fe6b0;
+  background: rgba(90, 200, 120, 0.10);
+  border-color: rgba(90, 200, 120, 0.35);
 }
 
 .rose-wrap { display: flex; justify-content: center; margin: 0; }

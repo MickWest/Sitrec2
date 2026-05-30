@@ -13,9 +13,12 @@ is the vendored `lib/satellite.es.js` (satellite.js v6, ESM).
 Starlink satellites carry a large flat phased-array antenna panel that points straight down (nadir).
 When the Sun, the panel, and your eye line up just right, that panel acts like a mirror and you
 briefly see a bright glint — a **flare**. Because the satellites are low and the panel faces down,
-these glints typically appear **low on the horizon**, often clustered around twilight.
+these glints appear **low on the horizon** (hence "horizon flares"). They are **not** a twilight-only
+phenomenon: a satellite near the sunward limb stays sunlit even when the Sun is well below your
+horizon, so flares occur through much of the night — from dusk until the small hours when even those
+limb satellites fall into Earth's shadow, then again before dawn.
 
-Given a place (and optionally a flight), a date/time, and a search window, the app propagates the
+Given a place (and optionally a flight) and a date/time, the app propagates the
 current Starlink constellation, finds every moment a flare is geometrically possible from your eye,
 and reports the **time**, **sky direction** (azimuth / compass point), **elevation**, and relative
 **intensity** of each predicted flare.
@@ -70,22 +73,23 @@ it must be served over **http(s)**.
 ## What you get back
 
 For a **fixed location** the app answers *"when will I next see a flare from here?"* — it searches
-**forward** from the date/time you enter to the **next twilight session that actually produces a
-flare** (skipping daytime and deep night, which can be days away) and lists that session's flares.
-For a **flight** it lists the flares visible during that specific flight.
+**forward** from the date/time you enter to the **next dark window that actually produces a flare**
+(skipping daytime and the deep small-hours when even limb satellites are in shadow — which can be
+days away near the poles) and lists that window's flares. For a **flight** it lists the flares
+visible during that specific flight.
 
 After you tap **Find Flares** the app switches to a **results screen** (with an **‹ Edit** button
 top-left to change your inputs):
 
-- a big **FLARES VISIBLE** / **No Flares** verdict;
-- a one-sentence summary — *"Flares will be visible from 21:42 to 21:58 PDT (04:42–04:58 UTC) on …,
-  starting in the **NW** and moving toward the **NNW**"* (local time first, then UTC; a second
-  direction is shown only if the bearing shifts by more than a compass point);
-- a **compass rose** with one or two yellow arrows for the start (and end) direction;
-- a **horizon view** for the start time: a compass ribbon along the horizon, the brightest stars
-  labelled (computed for your location/time), and the predicted flares as yellow markers with little
-  arrows showing each one's direction of travel across the sky;
-- a collapsible list of every individual flare (time, direction, elevation, brightness, satellite).
+- a compact verdict: when flares are found, a three-line header — *"Flares visible 21:42–21:58 PDT"*,
+  *"Look NW → NNW"*, and *"place · date · 04:42–04:58 UTC"* (local time first, then UTC; the second
+  direction appears only if the bearing shifts by more than a compass point). When none are found, a
+  **No Flares** banner with a short explanation;
+- a **compass rose** with one or two yellow arrows for the start (and end) direction, a tapering arc
+  spanning the flare window, and a faint animated sprinkle hinting at the flare density;
+- a **horizon view** for the start time: a compass ribbon along the horizon, the brightest stars and
+  planets (and the Moon) labelled for your location/time, and the predicted flares as markers with
+  little arrows showing each one's direction of travel across the sky.
 
 ## Inputs
 
@@ -96,19 +100,23 @@ top-left to change your inputs):
 - **Cruise altitude** — default **37 000 ft**.
 - **Date / time** — the moment to search *from* (fixed location) or the **departure** (flight).
   Defaults to **now**, interpreted in the **location's local time**.
-- **Advanced:**
-  - **Cone angle** — flare half-angle threshold (default **5°**).
-  - **Minimum elevation** — ignore flares too low to see.
-  - **Nadir model** — geocentric (default) or geodetic.
-  - **Look ahead (days)** — for a fixed location, how far forward to search for the next flares
-    before giving up (default **3**).
+- **Advanced** — satellite data source only:
+  - **Fetch current TLE** — download the live Starlink elements (for real-data accuracy near "now").
+  - **…or load your own .tle file** — use a TLE set you supply.
+
+  By default the app uses a **synthetic** Starlink-like constellation (instant, offline). The flare
+  cone (5°), minimum elevation (0°), nadir model (geocentric), and look-ahead (3 days) are fixed
+  internally — they are no longer exposed as inputs.
 
 ## Data sources
 
-- **Starlink TLEs** — fetched at runtime. When deployed under Sitrec it uses the server-cached,
-  CORS-free Sitrec proxy (`sitrecServer/proxy.php?request=CURRENT_STARLINK`), falling back to
-  [Celestrak](https://celestrak.org/) directly, then to a `.tle` file you load by hand. The fetched
-  set is cached in `sessionStorage` for the session.
+- **Starlink orbits** — by default a **synthetic** Starlink-like constellation generated in-browser
+  (instant, offline, no network; see `dummyTLE.js`). For real-data accuracy near "now",
+  *Advanced › Fetch current TLE* downloads live elements via the server-cached, CORS-free Sitrec
+  proxy (`sitrecServer/proxy.php?request=CURRENT_STARLINK`), falling back to
+  [Celestrak](https://celestrak.org/); you can also load your own `.tle` file. A fetched set is
+  cached (~1 day) so small date/time tweaks don't re-fetch. (The engine also drops any satellite a
+  stale TLE propagates outside a LEO sanity band, so old elements can't conjure phantom flares.)
 - **Geocoding** — [OpenStreetMap Nominatim](https://nominatim.openstreetmap.org/).
 - **Airports** — the [OpenFlights](https://openflights.org/data.html) dataset, bundled as
   `airports.json`. Regenerate it with `tools/build-airports.mjs` (see that file's header for the
@@ -121,17 +129,19 @@ top-left to change your inputs):
 - **Sun position** is accurate to ~arcminute — far finer than the flare cone.
 - **Nadir model.** Geocentric vs geodetic nadir differ by **< 0.2°**; the default (geocentric)
   matches Sitrec.
-- **Twilight clustering.** Flares need a sunlit satellite against a dark-enough sky, so predictions
-  cluster around dawn/dusk twilight.
+- **When flares occur.** A flare needs a sunlit satellite against a dark-enough sky. That holds from
+  dusk, through much of the night (satellites near the sunward limb stay lit long after twilight),
+  until the small hours when even those fall into Earth's shadow — and again before dawn. Horizon
+  flares are **not** a twilight-only phenomenon.
 
 ## How the scan works (performance)
 
-Propagating ~7 000 Starlinks across a multi-hour window naively is millions of SGP4 calls — too slow
+Propagating ~10 000 Starlinks across a multi-hour window naively is millions of SGP4 calls — too slow
 for a phone. The engine uses a **two-pass scan** instead:
 
 1. **PASS A — coarse filter** (`filterStepSec`, default 30 s). At each step it only asks *which
    satellites are above the observer's horizon*, recording their pass intervals. It also **skips any
-   step outside the productive twilight band** — Sun elevation below ≈ −40° (satellites in shadow) or
+   step outside the productive band** — Sun elevation below ≈ −56° (satellites in shadow) or
    above ≈ +6° (sky too bright) — so a mostly-daytime window costs almost nothing. `stats.productiveSteps`
    reports how many coarse steps fell inside the band.
 2. **PASS B — fine refine** (`fineStepSec`, default 2 s) runs the full flare physics over *only* those
@@ -143,7 +153,7 @@ This runs comfortably in a Web Worker on a phone. One trade-off: a very short gr
 completeness near the horizon at the cost of more PASS A work.
 
 **Finding the next flares** (`engine.scanForward`, used for fixed locations). It probes Sun elevation
-every 5 minutes to find the next *twilight band*, runs the two-pass `scan` over just that band, and
+every 5 minutes to find the next *productive band*, runs the two-pass `scan` over just that band, and
 **stops at the first band that yields flares** — otherwise it advances to the next dawn/dusk, up to a
 look-ahead limit. A query made at midday therefore skips ahead to the next dusk almost for free
 (daytime costs only sun-elevation probes), then spends ~1–2 s finding the flares.

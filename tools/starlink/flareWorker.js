@@ -36,8 +36,9 @@ handle = (e) => {
 
     let result;
     if (req.mode === "fixed") {
-      // Fixed location: search FORWARD from startMs to the next twilight session
-      // that actually produces flares ("when will I next see a flare from here?").
+      // Fixed location: search FORWARD from startMs to the next dark window (the
+      // productive band) that actually produces flares ("when will I next see a flare
+      // from here?"). Flares persist most of the night, not just at twilight.
       const fixed = { lat: req.lat, lon: req.lon, altKm: req.altKm || 0 };
       result = engine.scanForward({
         sats,

@@ -18,15 +18,17 @@ const VERSION = new URL(import.meta.url).search; // e.g. "?v=1716998400000" (or 
 const [
   { resolveLocation, searchAirports, loadAirports, reverseGeocode },
   { compass16, greatCircleDistanceKm },
-  { equatorialToAltAz },
+  { equatorialToAltAz, planetEquatorial, moonEquatorial },
   { BRIGHT_STARS },
   { compassRose, horizonView, horizonWindow },
+  { generateDummyTLE },
 ] = await Promise.all([
   import("./location.js" + VERSION),
   import("./geo.js" + VERSION),
   import("./astro.js" + VERSION),
   import("./stars.js" + VERSION),
   import("./skyview.js" + VERSION),
+  import("./dummyTLE.js" + VERSION),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -39,8 +41,7 @@ const els = {
   originSug: $("origin-suggestions"), destSug: $("dest-suggestions"),
   date: $("date"), time: $("time"),
   duration: $("duration"), alt: $("alt"),
-  cone: $("cone"), minel: $("minel"), model: $("model"), window: $("window"),
-  tlefile: $("tlefile"),
+  tlefile: $("tlefile"), fetchtle: $("fetchtle"), tlestatus: $("tlestatus"),
   status: $("status"), results: $("results"),
   formScreen: $("form-screen"), resultsScreen: $("results-screen"), edit: $("edit"),
 };
@@ -273,46 +274,87 @@ async function tryFetch(url) {
   return text;
 }
 
-async function getTLEText(fileInput, log) {
-  // 1) explicit file
+// Persistent TLE cache (localStorage so it survives reloads / offline use).
+const TLE_CACHE_KEY = "starlinkTLE.v1";
+const ONE_DAY = 86400000;
+function readTLECache() {
+  try {
+    const o = JSON.parse(localStorage.getItem(TLE_CACHE_KEY));
+    if (o && typeof o.text === "string" && looksLikeTLE(o.text) && Number.isFinite(o.fetchedMs)) return o;
+  } catch (_) { /* unavailable / corrupt */ }
+  return null;
+}
+function writeTLECache(text) {
+  try { localStorage.setItem(TLE_CACHE_KEY, JSON.stringify({ text, fetchedMs: Date.now() })); } catch (_) {}
+}
+
+// Set to the in-flight promise while the Advanced "Fetch current TLE" download is
+// running, so a search started *during* the fetch can await it instead of silently
+// falling through to the synthetic set (which made a loaded TLE apply one run late).
+let tleFetchInFlight = null;
+
+// True once the user has opted into REAL data THIS session (fetched the current TLE
+// or loaded a .tle file). In-memory only, so a page reload resets to the synthetic
+// default — the fetched set stays cached for fast reuse *during* the session, but is
+// NOT silently reused as the default after a reload. Synthetic is the default.
+let useRealTLE = false;
+
+// Obtain a Starlink TLE set, returning { text, mode }:
+//   file      — user-supplied .tle (Advanced)
+//   cache     — real TLE fetched earlier (Advanced › Fetch) and still fresh (< 1 day)
+//   synthetic — the default: a synthesised Starlink-like constellation (no network)
+//
+// Find Flares NEVER hits the network — real data is opt-in via the Advanced controls
+// (the Fetch button, below, or a file). This keeps the default instant & offline-safe.
+async function getTLEText(fileInput, log, epochDate) {
+  // 1) explicit file always wins (and seeds the cache).
   if (fileInput.files && fileInput.files[0]) {
     log("Reading TLE file…");
     const text = await readFileText(fileInput.files[0]);
     if (!looksLikeTLE(text)) throw new Error("That file does not look like TLE data.");
-    return text;
+    writeTLECache(text);
+    useRealTLE = true;
+    return { text, mode: "file" };
   }
-  // 2) sessionStorage cache
-  try {
-    const cached = sessionStorage.getItem("starlinkTLE");
-    if (cached && looksLikeTLE(cached)) { log("Using cached TLE data."); return cached; }
-  } catch (_) { /* private mode etc. */ }
 
-  // 3) same-origin Sitrec proxy, 4) direct Celestrak.
-  // The Sitrec proxy (sitrecServer/proxy.php) takes a fixed allow-listed `request`
-  // key — NOT an arbitrary url — and serves a server-cached, CORS-free copy.
-  // basePath strips "/tools/..." so it resolves to "/sitrec/sitrecServer/..."
-  // regardless of how deeply this tool is nested (matches tools/airport-arrivals).
-  const basePath = window.location.pathname.replace(/\/tools\/.*$/, "");
-  const sources = [
-    { label: "Fetching TLE via Sitrec proxy…",
-      url: basePath + "/sitrecServer/proxy.php?request=CURRENT_STARLINK" },
-    { label: "Fetching TLE direct from Celestrak…", url: CELESTRAK },
-  ];
-  let lastErr;
-  for (const s of sources) {
-    try {
-      log(s.label);
-      const text = await tryFetch(s.url);
-      try { sessionStorage.setItem("starlinkTLE", text); } catch (_) {}
-      return text;
-    } catch (e) { lastErr = e; }
+  // 1b) If a "Fetch current TLE" is still downloading, wait for it so the freshly
+  //     fetched data applies to THIS search — not the next one. Without this, a
+  //     search started while the fetch was in flight would silently use synthetic.
+  if (tleFetchInFlight) {
+    log("Finishing current TLE download…");
+    try { await tleFetchInFlight; } catch (_) { /* fetch failed — fall through to cache/synthetic */ }
   }
-  const err = new Error(
-    "Could not download Starlink TLE data (" + (lastErr ? lastErr.message : "network error") +
-    "). Download the Starlink set from celestrak.org (GROUP=starlink, FORMAT=TLE) " +
-    "and load it with the file picker under Advanced.");
-  err.tleFailure = true;
-  throw err;
+
+  // 2) Real TLE fetched recently (< 1 day) — reuse it so small date/time tweaks
+  //    don't re-download. ONLY when the user opted into real data this session
+  //    (useRealTLE); a fresh page load ignores the cache and defaults to synthetic.
+  const cache = readTLECache();
+  if (useRealTLE && cache && Date.now() - cache.fetchedMs < ONE_DAY) {
+    log("Using current satellite data.");
+    return { text: cache.text, mode: "cache" };
+  }
+
+  // 3) Default: a synthetic constellation. Instant, offline, no rate limits.
+  //    Epoch = the requested time (not "now"), so the same inputs give the same
+  //    positions on every run — a repeated search with no changes is reproducible.
+  log("Building a synthetic constellation…");
+  return { text: generateDummyTLE(epochDate || new Date()), mode: "synthetic" };
+}
+
+// Download the current Starlink TLE (Advanced "Fetch current TLE" button only).
+// Same-origin Sitrec proxy first (allow-listed `request`, server-cached, CORS-free),
+// then direct Celestrak. Caches on success; throws on failure (e.g. offline).
+async function fetchCurrentTLE() {
+  const basePath = window.location.pathname.replace(/\/tools\/.*$/, "");
+  const sources = [basePath + "/sitrecServer/proxy.php?request=CURRENT_STARLINK", CELESTRAK];
+  let lastErr;
+  for (const url of sources) {
+    // Set useRealTLE synchronously on success (before this promise resolves) so a
+    // search awaiting the in-flight fetch sees the opt-in and uses the real data.
+    try { const text = await tryFetch(url); writeTLECache(text); useRealTLE = true; return text; }
+    catch (e) { lastErr = e; }
+  }
+  throw new Error(lastErr ? lastErr.message : "network error");
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +426,27 @@ function visibleStars(latDeg, lonDeg, date) {
   return out;
 }
 
+// Bright planets (distinct colours) and the Moon (grey, 2× size) above the horizon.
+const PLANET_COLORS = [
+  ["Venus", "#5dff8a"],   // green
+  ["Mars", "#ff5a4d"],    // red
+  ["Jupiter", "#ffd24a"], // yellow
+  ["Saturn", "#6db4ff"],  // blue
+];
+function visibleBodies(latDeg, lonDeg, date) {
+  const out = [];
+  for (const [name, color] of PLANET_COLORS) {
+    const eq = planetEquatorial(name, date);
+    if (!eq) continue;
+    const aa = equatorialToAltAz(eq.raDeg, eq.decDeg, latDeg, lonDeg, date);
+    if (aa.altDeg > -1) out.push({ name, azDeg: aa.azDeg, altDeg: aa.altDeg, color, r: 3.4 });
+  }
+  const m = moonEquatorial(date);
+  const ma = equatorialToAltAz(m.raDeg, m.decDeg, latDeg, lonDeg, date);
+  if (ma.altDeg > -1) out.push({ name: "Moon", azDeg: ma.azDeg, altDeg: ma.altDeg, color: "#cfd4dc", r: 6.8 });
+  return out;
+}
+
 // Full results screen: verdict, one-sentence summary, compass rose, horizon view.
 function renderResults(flares, stats, req, origin, dest) {
   if (!flares || flares.length === 0) { renderNoFlares(stats, req, origin); return; }
@@ -408,23 +471,19 @@ function renderResults(flares, stats, req, origin, dest) {
   const obsLat = flares[0].obsLat ?? origin.lat;
   const obsLon = flares[0].obsLon ?? origin.lon;
   const stars = visibleStars(obsLat, obsLon, new Date(t1));
+  const bodies = visibleBodies(obsLat, obsLon, new Date(t1));
   const hvFlares = flares.map((f) => ({
     azDeg: f.azDeg, elDeg: f.elDeg, dAzDeg: f.dAzDeg, dElDeg: f.dElDeg, intensity: f.intensity,
   }));
   const win = horizonWindow(hvFlares);
 
-  // Shown when the requested date was out of TLE range and we fell back to today.
-  const simBanner = (req && req.simulated)
-    ? `<div class="sim-note">Simulated results, out of date range — using current satellite data.</div>`
-    : "";
-
   els.results.innerHTML =
     `<div class="r-when">Flares visible <b>${localT}</b> ${escapeHtml(zone)}</div>
      <div class="r-dir">${dirLine}</div>
      <div class="r-meta">${escapeHtml(place)} · ${fmtDateShort(t1, tz)} · ${utcT} UTC</div>
-     ${simBanner}
+     ${notesHTML(req)}
      <div class="rose-wrap">${compassRose(arrows, flares)}</div>
-     <div class="horizon-wrap">${horizonView({ stars, flares: hvFlares, ...win })}</div>
+     <div class="horizon-wrap">${horizonView({ stars, bodies, flares: hvFlares, ...win })}</div>
      <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction</div>`;
 
   // Per-flare detail list — kept but disabled for a cleaner results page.
@@ -483,33 +542,46 @@ function renderNoFlares(stats, req, origin) {
   if (stats && stats.exhausted) {
     // Forward search reached the look-ahead limit without finding a flare session.
     const days = Math.round((stats.lookAheadSec || 0) / 86400);
-    lead = `<p>Searched the next <b>${days} day${days === 1 ? "" : "s"}</b> (${stats.scannedSessions || 0}
-       twilight sessions) from this time and found no visible horizon flares.</p>`;
-    tail = `<p>This is unusual at most latitudes. If you set a high <b>minimum elevation</b>, lower it;
-       near the poles in continuous daylight or polar night, flares may be impossible — try another
-       date or location. Increasing the look-ahead under Advanced may also help.</p>`;
+    lead = `<p>Searched the next <b>${days} day${days === 1 ? "" : "s"}</b> from this time and found no
+       visible horizon flares.</p>`;
+    tail = `<p>This is unusual at most latitudes. Near the poles (continuous daylight or polar night)
+       flares can be impossible — try another date or location.</p>`;
   } else {
     // Flight mode (fixed window) with no flares during the flight.
     const span = stats ? `${Math.round((stats.windowSec || 0) / 60)} min` : "the window";
-    const allOutOfTwilight = stats && stats.productiveSteps === 0;
-    lead = allOutOfTwilight
-      ? `<p>The whole ${span} flight was in <b>full daylight or deep night</b> — outside the brief
-           twilight when flares can occur — so none was possible.</p>`
+    const allDark = stats && stats.productiveSteps === 0;
+    lead = allDark
+      ? `<p>For the whole ${span} flight it was either <b>daylight</b>, or the night was so deep that the
+           satellites were in <b>Earth's shadow</b> — so no flares were possible.</p>`
       : `<p>Scanned ${scanned} over the ${span} flight and found no horizon flares.</p>`;
-    tail = `<p>Try a departure nearer dawn or dusk${allOutOfTwilight ? "" : ", or increasing the flare cone under Advanced"}.</p>`;
+    tail = `<p>Try a flight during the <b>dark hours</b> — flares appear once the sky is dark, and continue
+       through much of the night while the satellites overhead are still catching sunlight.</p>`;
   }
 
   div.innerHTML = `
     ${lead}
-    <p>Flares need a specific alignment: <b>you</b> must be in twilight or darkness
-       while the <b>satellite</b> is still lit by the Sun. That sweet spot happens
-       within roughly an hour of <b>dawn or dusk</b>.</p>
+    <p>A flare needs <b>you</b> in darkness while the <b>satellite</b> is still lit by the Sun. That holds
+       from dusk, through much of the night, until the small hours when even low satellites fall into
+       shadow (and again before dawn).</p>
     ${tail}`;
-  const simBanner = (req && req.simulated)
-    ? `<div class="sim-note">Simulated results, out of date range — using current satellite data.</div>`
-    : "";
-  els.results.innerHTML = `<div class="verdict no">No Flares</div>${simBanner}`;
+  els.results.innerHTML = `<div class="verdict no">No Flares</div>${notesHTML(req)}`;
   els.results.appendChild(div);
+}
+
+// Advisory banners: out-of-range date fallback, and which satellite data was used.
+// The data-source note shows on EVERY run so it is always clear whether the
+// positions came from synthetic (approximate) or real Starlink elements.
+function notesHTML(req) {
+  let html = "";
+  if (req && req.simulated)
+    html += `<div class="sim-note">Simulated results, out of date range — recomputed for today.</div>`;
+  if (req && req.tleMode === "synthetic")
+    html += `<div class="sim-note synth">⚠ Synthetic satellites — positions are approximate. Use <b>Advanced › Fetch current TLE</b> for real data.</div>`;
+  else if (req && req.tleMode === "cache")
+    html += `<div class="sim-note real">Real Starlink data (current TLE).</div>`;
+  else if (req && req.tleMode === "file")
+    html += `<div class="sim-note real">Using your uploaded TLE file.</div>`;
+  return html;
 }
 
 // ---------------------------------------------------------------------------
@@ -561,19 +633,17 @@ async function onSubmit(e) {
         dt.h, dt.mi, origin.tz);
     }
 
-    const options = {
-      flareAngleDeg: +els.cone.value || 5,
-      minElevationDeg: +els.minel.value || 0,
-      flareModel: els.model.value,
-    };
+    // Engine defaults (flare angle 5°, min elevation 0°, geocentric nadir model) —
+    // fixed internally; Advanced controls only the TLE source, not these.
+    const options = {};
+    const LOOK_AHEAD_DAYS = 3;
 
     let req;
     if (!dest) {
-      const lookAheadDays = +els.window.value || 3;
       req = {
         mode: "fixed",
         lat: origin.lat, lon: origin.lon, altKm: origin.altKm || 0,
-        startMs, maxLookAheadSec: lookAheadDays * 86400, options,
+        startMs, maxLookAheadSec: LOOK_AHEAD_DAYS * 86400, options,
       };
       load.setMsg(`Searching for the next flares near ${origin.name}…`);
     } else {
@@ -596,7 +666,9 @@ async function onSubmit(e) {
     load.setMsg("Loading satellite data…");
     let tleText;
     try {
-      tleText = await getTLEText(els.tlefile, (m) => load.setMsg(m));
+      const tle = await getTLEText(els.tlefile, (m) => load.setMsg(m), new Date(startMs));
+      tleText = tle.text;
+      req.tleMode = tle.mode;   // 'dummy' / 'stale' surface a note on the results
     } catch (err) {
       renderError(err.message);
       return;
@@ -610,7 +682,7 @@ async function onSubmit(e) {
     w.onmessage = (ev) => {
       const m = ev.data || {};
       if (m.type === "progress") {
-        load.setMsg(m.phase === "seek" ? "Skipping ahead to the next twilight…" : "Computing flares…");
+        load.setMsg(m.phase === "seek" ? "Skipping ahead to the next dark window…" : "Computing flares…");
         if (typeof m.fraction === "number") load.setBar(m.fraction);
         else if (m.total) load.setBar(m.done / m.total);
       } else if (m.type === "result") {
@@ -643,11 +715,43 @@ function setNowDefaults() {
   els.time.value = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
 }
 
+const countSats = (text) => (text.match(/^1 \d/gm) || []).length;
+
+function wireTLEControls() {
+  // "Fetch current TLE" — the only thing that hits the network (opt-in real data).
+  els.fetchtle.addEventListener("click", async () => {
+    els.fetchtle.disabled = true;
+    els.tlestatus.className = "help";
+    els.tlestatus.textContent = "Downloading current satellite data…";
+    const p = fetchCurrentTLE();
+    tleFetchInFlight = p;   // so a search started now waits for this download
+    try {
+      const text = await p;
+      els.tlestatus.className = "help ok";
+      const n = countSats(text);
+      els.tlestatus.textContent = `✓ Current TLE loaded — ${n} satellite${n === 1 ? "" : "s"}. (Used for the next search.)`;
+    } catch (e) {
+      els.tlestatus.className = "help err";
+      els.tlestatus.textContent = `Couldn't fetch (${e.message || "offline?"}); the synthetic set will be used.`;
+    } finally {
+      if (tleFetchInFlight === p) tleFetchInFlight = null;
+      els.fetchtle.disabled = false;
+    }
+  });
+  // Reflect a chosen .tle file in the status line.
+  els.tlefile.addEventListener("change", () => {
+    const file = els.tlefile.files && els.tlefile.files[0];
+    els.tlestatus.className = file ? "help ok" : "help";
+    els.tlestatus.textContent = file ? `✓ Using file: ${file.name}` : "";
+  });
+}
+
 function init() {
   setNowDefaults();
   loadAirports();   // fire-and-forget; searchAirports degrades gracefully until ready
   wireAutocomplete(els.origin, els.originSug);
   wireAutocomplete(els.dest, els.destSug);
+  wireTLEControls();
   els.form.addEventListener("submit", onSubmit);
   els.edit.addEventListener("click", showForm);  // results → back to the form
 }

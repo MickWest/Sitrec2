@@ -62,38 +62,13 @@
 
       <details class="advanced">
         <summary>Advanced</summary>
-        <div class="adv-grid">
-          <div class="field">
-            <label for="cone">Flare cone (°)</label>
-            <input id="cone" name="cone" type="number" min="0.5" step="0.5"
-                   inputmode="decimal" value="5">
-          </div>
-          <div class="field">
-            <label for="minel">Min elevation (°)</label>
-            <input id="minel" name="minel" type="number" min="0" max="90" step="1"
-                   inputmode="numeric" value="0">
-          </div>
-          <div class="field">
-            <label for="model">Nadir model</label>
-            <select id="model" name="model">
-              <option value="geocentric" selected>Geocentric</option>
-              <option value="geodetic">Geodetic</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="window">Look ahead (days)</label>
-            <input id="window" name="window" type="number" min="0.25" step="0.5"
-                   inputmode="decimal" value="3">
-            <p class="help">Fixed location: how far ahead to search for the next flares.</p>
-          </div>
-        </div>
-
         <div class="field file-field">
-          <label for="tlefile">Use a downloaded Starlink .tle
-            <span class="opt">(offline / CORS fallback)</span></label>
+          <label>Satellite data</label>
+          <p class="help">Synthetic by default. For real satellites:</p>
+          <button id="fetchtle" type="button" class="adv-btn">Fetch current TLE</button>
+          <div id="tlestatus" class="help" aria-live="polite"></div>
+          <label for="tlefile" class="sub-label">…or load your own .tle file</label>
           <input id="tlefile" name="tlefile" type="file" accept=".tle,.txt">
-          <p class="help">Get the current set from
-            celestrak.org → GP “starlink” → TLE format.</p>
         </div>
       </details>
     </form>

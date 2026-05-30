@@ -26,12 +26,16 @@ export const FLARE_DEFAULTS = {
     filterStepSec: 30,       // coarse step for PASS A (above-horizon filter)
     fineStepSec: 2,          // fine step for PASS B (flare refinement)
     minElevationDeg: 0,      // ignore flares below this elevation above the horizon
-    // Productive twilight band (Sun elevation at the observer). Outside it a flare
-    // is impossible or invisible, so PASS A skips those coarse steps entirely:
+    // Productive band (Sun elevation at the observer). Outside it a flare is
+    // impossible or invisible, so PASS A skips those coarse steps entirely:
     //   above maxSunElevationDeg -> daytime, the sky is too bright to see a flare;
-    //   below minSunElevationDeg -> the satellites are in Earth's shadow (unlit).
-    maxSunElevationDeg: 6,   // upper bound (~civil twilight)
-    minSunElevationDeg: -40, // lower bound (covers all Starlink shell altitudes)
+    //   below minSunElevationDeg -> even low satellites toward the sunward limb are
+    //     in Earth's shadow. Horizon flares persist deep into the night (a high
+    //     ~550 km sat near the limb stays lit until the Sun is ~-47° at the observer,
+    //     more from an aircraft), so this bound must be well below civil/nautical
+    //     twilight — these are NOT a twilight-only phenomenon; they last most of the night.
+    maxSunElevationDeg: 6,    // upper bound (~civil twilight)
+    minSunElevationDeg: -56,  // lower bound (past the limb-sunlit limit, incl. aircraft)
 };
 
 // acos in degrees, input clamped to [-1,1] to survive rounding.
@@ -39,6 +43,16 @@ const RAD2DEG = 180 / Math.PI;
 function acosDeg(x) {
     return Math.acos(x < -1 ? -1 : x > 1 ? 1 : x) * RAD2DEG;
 }
+
+// Geocentric-radius sanity band (km). SGP4 propagated far from a TLE's epoch can
+// fling a stale satellite onto a decayed or escape trajectory; those phantom
+// "satellites" sit at impossible altitudes yet still read as sunlit + above the
+// horizon, so they manufacture bogus flares (e.g. a months-old TLE evaluated at a
+// far-future date). Reject anything outside a generous LEO band: Starlink lives at
+// ~330–600 km (geocentric ~6690–6980 km), so these bounds keep every real Starlink
+// while discarding decayed (<~80 km) and escaped (>~2000 km) garbage.
+const MIN_SAT_RADIUS_KM = geo.WGS84.b + 80;    // ~6437 km — below this is reentered/decayed
+const MAX_SAT_RADIUS_KM = geo.WGS84.a + 2000;  // ~8378 km — above this is escape/garbage
 
 // ---------------------------------------------------------------------------
 // createFlareEngine(satellite) -> { parseTLE, scan }
@@ -112,12 +126,17 @@ export function createFlareEngine(satellite) {
         return v;
     }
 
-    // Propagate a satrec to ECEF (km). Returns null on SGP4 error / non-finite.
+    // Propagate a satrec to ECEF (km). Returns null on SGP4 error / non-finite, or
+    // when the satellite is outside the LEO sanity band (stale-TLE phantom orbits).
     function satEcef(satrec, date, gmst) {
         const pv = satellite.propagate(satrec, date);
         if (!pv || !pv.position) return null;
         const p = pv.position;
         if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) return null;
+        // Magnitude is rotation-invariant, so gate on the cheaper ECI radius before
+        // converting — most stale-TLE garbage is discarded without the ECEF rotation.
+        const r = Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+        if (r < MIN_SAT_RADIUS_KM || r > MAX_SAT_RADIUS_KM) return null;
         return satellite.eciToEcf(p, gmst);
     }
 
@@ -141,7 +160,7 @@ export function createFlareEngine(satellite) {
         const report = typeof onProgress === "function" ? onProgress : null;
         _frameCache.clear();
 
-        // Count coarse steps that actually fall inside the productive twilight band,
+        // Count coarse steps that actually fall inside the productive band,
         // so the PASS A progress total reflects the work really done.
         let bandSteps = 0;
 
@@ -169,7 +188,7 @@ export function createFlareEngine(satellite) {
             const f = frame(t);
             const lla = observerAt(t);
 
-            // Twilight-band gate: skip this whole step (all satellites) when the Sun
+            // Productive-band gate: skip this whole step (all satellites) when the Sun
             // is too high (daytime — flares invisible) or too low (satellites in
             // shadow). Treat skipped steps like "all below horizon" so any open
             // above-horizon window is closed, segmenting candidate intervals to the
@@ -404,7 +423,7 @@ export function createFlareEngine(satellite) {
                 satsFlaring: satsFlaringSet.size,
                 flares: flares.length,
                 windowSec: (endMs - startMs) / 1000,
-                // Coarse steps that fell inside the productive twilight band. Zero
+                // Coarse steps that fell inside the productive band. Zero
                 // means the whole search window was daytime or deep night — the UI
                 // can use this to explain why no flares were found.
                 productiveSteps: bandSteps,
@@ -450,20 +469,20 @@ export function createFlareEngine(satellite) {
 
     // -----------------------------------------------------------------------
     // scanForward(...) — "when is the NEXT time flares are visible on or after
-    // startMs?" Walks forward one twilight session at a time, scanning each, and
-    // returns the first session that actually produces flares. Time outside the
-    // productive twilight band costs only a cheap Sun-elevation probe, so a query
+    // startMs?" Walks forward one productive-band session at a time, scanning each,
+    // and returns the first session that actually produces flares. Time outside the
+    // productive band costs only a cheap Sun-elevation probe, so a query
     // made in daylight skips ahead to the next dusk/dawn almost for free.
     //
     // Returns { flares, stats, foundSession } where stats adds:
-    //   searchedFromMs, sessionStartMs/sessionEndMs (the winning twilight band),
+    //   searchedFromMs, sessionStartMs/sessionEndMs (the winning productive band),
     //   scannedSessions, lookAheadSec, exhausted (true if none found in range).
     // -----------------------------------------------------------------------
     function scanForward({ sats, observerAt, startMs, maxLookAheadSec, options, onProgress }) {
         const opt = Object.assign({}, FLARE_DEFAULTS, options || {});
         const lookAheadSec = maxLookAheadSec || 3 * 86400; // default: search up to 3 days ahead
         const limitMs = startMs + lookAheadSec * 1000;
-        const probeMs = 5 * 60 * 1000;   // 5-min probe for twilight-band edges
+        const probeMs = 5 * 60 * 1000;   // 5-min probe for productive-band edges
         const report = typeof onProgress === "function" ? onProgress : null;
 
         const inBand = (t) => {
@@ -477,13 +496,13 @@ export function createFlareEngine(satellite) {
         let totalSatsCandidates = 0;
 
         while (cursor < limitMs) {
-            // Seek forward to the start of the next productive twilight band.
+            // Seek forward to the start of the next productive band.
             let bandStart = null;
             for (let t = cursor; t <= limitMs; t += probeMs) {
                 if (inBand(t)) { bandStart = t; break; }
                 if (report) report({ phase: "seek", fraction: (t - startMs) / (limitMs - startMs) });
             }
-            if (bandStart === null) break;            // no productive twilight left (e.g. polar day/night)
+            if (bandStart === null) break;            // no productive band left (e.g. polar day/night)
             bandStart = Math.max(startMs, bandStart - probeMs); // back up so we don't clip the edge
 
             // Seek to the end of this band.
@@ -492,7 +511,7 @@ export function createFlareEngine(satellite) {
                 if (!inBand(t)) { bandEnd = Math.min(limitMs, t + probeMs); break; }
             }
 
-            // Full two-pass scan over just this twilight session.
+            // Full two-pass scan over just this productive-band session.
             const res = scan({
                 sats, observerAt, startMs: bandStart, endMs: bandEnd, options: opt,
                 onProgress: report ? (p) => report(Object.assign({ session: scannedSessions }, p)) : undefined,

@@ -60,16 +60,12 @@ ok("no page errors on load", pageErrors.length === 0, pageErrors.join(" | "));
 ok("date input defaulted to now", !!(await page.inputValue("#date")), await page.inputValue("#date"));
 ok("origin input present", await page.locator("#origin").count() === 1);
 
-console.log("== browser: drive the form -> results screen ==");
-// Use a local .tle (no network) and a very wide flare cone so the few synthetic
-// satellites actually register flares within the forward search — exercising the
-// full FLARES VISIBLE results screen (verdict, sentence, compass rose, horizon view).
+console.log("== browser: drive the form -> results screen (synthetic default) ==");
+// Default flow: no file, no fetch -> the synthetic constellation, which is dense
+// enough to produce flares and exercise the full results screen.
 await page.fill("#origin", "LAX");
-// leave #date at its default (today) so it is in TLE range — no simulation
+// leave #date at its default (today) so it is in TLE range — no date simulation
 await page.fill("#time", "20:45");
-await page.setInputFiles("#tlefile", tlePath);
-await page.locator("details.advanced > summary").click().catch(() => {});
-await page.fill("#cone", "90");
 await page.click("#go");
 
 ok("navigated to results screen", await page.locator("#results-screen").isVisible());
@@ -101,7 +97,8 @@ if (hasFlares) {
     ok("compass rose has the animated white flare sprinkle",
         await page.locator('#results svg.compass-rose circle[fill="#ffffff"]').count() >= 8);
     ok("no 'All N flares' detail section", await page.locator("#results .flare-details").count() === 0);
-    ok("no simulated note for an in-range (today) date", await page.locator("#results .sim-note").count() === 0);
+    ok("shows the synthetic-satellites note (default data)",
+        await page.locator("#results .sim-note").filter({ hasText: /synthetic satellites/i }).count() >= 1);
     // Reveal all sprinkle dots so the screenshot shows their placement (live they
     // twinkle a few at a time).
     await page.evaluate(() => document.querySelectorAll('svg.compass-rose circle[fill="#ffffff"]')
@@ -130,9 +127,8 @@ await page.click("#go");
 let simRendered = false;
 try { await page.waitForSelector("#results .r-when, #results .verdict", { timeout: 35000 }); simRendered = true; } catch {}
 ok("results rendered for far-future date", simRendered);
-ok("shows the 'Simulated results, out of date range' note",
-    await page.locator("#results .sim-note").count() === 1,
-    (await page.locator("#results .sim-note").innerText().catch(() => "")).slice(0, 60));
+ok("shows the 'out of date range' note",
+    await page.locator("#results .sim-note").filter({ hasText: /out of date range/i }).count() >= 1);
 ok("far-future run had no errors", pageErrors.length === 0);
 
 console.log("== browser: blank origin -> browser geolocation ==");
@@ -158,6 +154,45 @@ ok("geolocation run produced results", geoRendered);
 ok("blank origin was populated from geolocation", /Testville, Testland/.test(await page.inputValue("#origin")),
     await page.inputValue("#origin"));
 ok("geolocation run had no errors", pageErrors.length === 0, pageErrors.join(" | "));
+
+console.log("== browser: Advanced 'Fetch current TLE' button ==");
+// Mock the Sitrec proxy so the fetch button has something to load.
+const FETCH_TLE = "STARLINK-X\n1 44713U 19074A   26100.50000000  .00001000  00000-0  10000-3 0  9990\n2 44713  53.0540 100.0000 0001400  90.0000 270.0000 15.06000000    13\n";
+await page.route("**/sitrecServer/proxy.php*", (r) =>
+    r.fulfill({ status: 200, contentType: "text/plain", body: FETCH_TLE }));
+await page.click("#edit");
+await page.evaluate(() => { const d = document.querySelector("details.advanced"); if (d) d.open = true; });
+await page.click("#fetchtle");
+await page.waitForFunction(() => /Current TLE loaded|Couldn't fetch/.test(document.getElementById("tlestatus").textContent), { timeout: 15000 }).catch(() => {});
+const tleStatus = await page.locator("#tlestatus").innerText();
+ok("Fetch button reports the loaded TLE", /Current TLE loaded — 1 satellite/i.test(tleStatus), tleStatus);
+
+console.log("== browser: a loaded TLE is used on the NEXT run (race-fix regression) ==");
+// After fetching, the immediately-following search must use the real TLE — not fall
+// through to synthetic for one run. The data-source note must flip to "real".
+// (We are already on the form screen from the fetch step — no #edit needed.)
+await page.fill("#origin", "LAX");
+await page.fill("#date", today);          // back in range
+await page.click("#go");
+await page.waitForSelector("#results .r-when, #results .verdict", { timeout: 35000 }).catch(() => {});
+ok("loaded TLE applies on the very next run (real-data note shown)",
+    await page.locator("#results .sim-note.real").count() >= 1);
+ok("no synthetic note once a real TLE is loaded",
+    await page.locator("#results .sim-note.synth").count() === 0);
+
+console.log("== browser: reload returns to synthetic default (cache not reused across loads) ==");
+// The fetched TLE is cached in localStorage, but a hard reload must forget the
+// session opt-in and default to synthetic again — NOT silently reuse the cache.
+await page.reload({ waitUntil: "load" });
+await page.waitForTimeout(400);
+await page.fill("#origin", "LAX");
+await page.fill("#date", today);
+await page.click("#go");
+await page.waitForSelector("#results .r-when, #results .verdict", { timeout: 35000 }).catch(() => {});
+ok("after reload, default is synthetic again (despite a cached TLE on disk)",
+    await page.locator("#results .sim-note.synth").count() >= 1);
+ok("no real-data note on a fresh load",
+    await page.locator("#results .sim-note.real").count() === 0);
 
 await browser.close();
 server.close();

@@ -100,5 +100,32 @@ const pol = astro.equatorialToAltAz(37.954, 89.264, 40, -105, new Date("2026-05-
 ok("Polaris is near due north", pol.azDeg < 2 || pol.azDeg > 358, `az=${pol.azDeg.toFixed(2)}`);
 ok("Polaris altitude ≈ observer latitude", near(pol.altDeg, 40, 1.5), `alt=${pol.altDeg.toFixed(2)}`);
 
+console.log("== astro: planets & Moon vs astronomy-engine (trusted ephemeris) ==");
+{
+    const A = await import("astronomy-engine");
+    const Astro = A.default ?? A;
+    const obs = new Astro.Observer(0, 0, 0);
+    const D = Math.PI / 180;
+    const sepDeg = (a, b) => Math.acos(Math.max(-1, Math.min(1,
+        Math.sin(a.decDeg * D) * Math.sin(b.decDeg * D) +
+        Math.cos(a.decDeg * D) * Math.cos(b.decDeg * D) * Math.cos((a.raDeg - b.raDeg) * D)))) * 180 / Math.PI;
+    // Two dates spread apart to exercise the element rates.
+    for (const iso of ["2026-05-29T08:00:00Z", "2027-11-02T03:00:00Z"]) {
+        const date = new Date(iso);
+        for (const [name, body] of [["Venus", Astro.Body.Venus], ["Mars", Astro.Body.Mars],
+                                    ["Jupiter", Astro.Body.Jupiter], ["Saturn", Astro.Body.Saturn]]) {
+            const mine = astro.planetEquatorial(name, date);
+            const eq = Astro.Equator(body, date, obs, true, true);  // of-date, apparent
+            const s = sepDeg(mine, { raDeg: eq.ra * 15, decDeg: eq.dec });
+            ok(`${name} within 1° of astronomy-engine @ ${iso.slice(0, 10)}`, s < 1.0, `Δ=${s.toFixed(2)}°`);
+        }
+        const mn = astro.moonEquatorial(date);
+        const meq = Astro.Equator(Astro.Body.Moon, date, obs, true, true);
+        // geocentric (mine) vs topocentric (astronomy-engine) differ by up to ~1° parallax.
+        const ms = sepDeg(mn, { raDeg: meq.ra * 15, decDeg: meq.dec });
+        ok(`Moon within 1.5° of astronomy-engine @ ${iso.slice(0, 10)}`, ms < 1.5, `Δ=${ms.toFixed(2)}°`);
+    }
+}
+
 console.log(fails === 0 ? "\nALL PASS" : `\n${fails} FAILURE(S)`);
 process.exit(fails === 0 ? 0 : 1);

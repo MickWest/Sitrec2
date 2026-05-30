@@ -18,7 +18,11 @@ const stars = [
     { name: "Deneb", azDeg: 300, altDeg: 22, mag: 1.25 },
     { name: "Faint", azDeg: 325, altDeg: 5, mag: 3.1 },
 ];
-const hv = horizonView({ stars, flares, ...win });
+const bodies = [
+    { name: "Mars", azDeg: 330, altDeg: 12, color: "#ff5a4d", r: 3.4 },
+    { name: "Moon", azDeg: 318, altDeg: 8, color: "#cfd4dc", r: 6.8 },
+];
+const hv = horizonView({ stars, bodies, flares, ...win });
 
 ok("rose is an <svg>…</svg>", rose.startsWith("<svg") && rose.trim().endsWith("</svg>"));
 ok("rose has 2 arrowheads", (rose.match(/<polygon/g) || []).length >= 2);
@@ -32,6 +36,8 @@ ok("horizon draws a white disk per flare", (hv.match(/r="3\.5" fill="#ffffff"/g)
 ok("horizon motion arrows are thin & ~75% opacity", hv.includes('opacity="0.75"') && hv.includes('stroke-width="1"'));
 ok("horizon labels bright star Vega", hv.includes(">Vega</text>"));
 ok("horizon labels Deneb", hv.includes(">Deneb</text>"));
+ok("horizon shows a coloured planet (Mars, red)", hv.includes('fill="#ff5a4d"') && hv.includes(">Mars</text>"));
+ok("horizon shows the Moon (grey, 2× size)", hv.includes('r="6.8" fill="#cfd4dc"') && hv.includes(">Moon</text>"));
 ok("horizon omits faint star label", !hv.includes(">Faint</text>"));
 ok("horizon has a compass-ribbon NW label", hv.includes(">NW</text>"));
 ok("window centred near 325° (NW-ish)", Math.abs(win.azCenter - 325.5) < 3);

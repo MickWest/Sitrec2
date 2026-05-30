@@ -116,8 +116,8 @@ const resGeo = engine.scan({
 });
 ok("geodetic model finds a flare (equatorial ~ same geometry)", resGeo.flares.length >= 1, `n=${resGeo.flares.length}`);
 
-console.log("== engine: twilight-band clip (real Sun) ==");
-// With the DEFAULT band, PASS A only scans when the real Sun is in [-40°, +6°] at the
+console.log("== engine: productive-band clip (real Sun) ==");
+// With the DEFAULT band, PASS A only scans when the real Sun is in [-56°, +6°] at the
 // observer. At the synthetic test's timestamp the real Sun at (0,0) is out of band,
 // so the (synthetic) flare must be suppressed and productiveSteps must be 0.
 const realSunEl = astro.sunElevationDeg(0, 0, new Date(startMs));
@@ -128,7 +128,7 @@ const resBand = engine.scan({
     options: { fineStepSec: 1, filterStepSec: 30 }, // default band
     onProgress: () => {},
 });
-const outOfBand = realSunEl > 6 || realSunEl < -40;
+const outOfBand = realSunEl > 6 || realSunEl < -56;
 ok("test timestamp's real Sun is out of band", outOfBand, `sunEl=${realSunEl.toFixed(1)}°`);
 ok("default band reports 0 productive steps when out of band", resBand.stats.productiveSteps === 0,
     `productiveSteps=${resBand.stats.productiveSteps}`);
@@ -136,7 +136,7 @@ ok("default band suppresses the out-of-band flare", resBand.flares.length === 0,
 
 console.log("== engine: scanForward finds the NEXT flaring session ==");
 // Start in full daylight at (0,0). The mock satellite flares whenever a band is
-// scanned, so scanForward must skip ahead to the next real twilight band and find it.
+// scanned, so scanForward must skip ahead to the next real productive band and find it.
 const noonMs = Date.UTC(2026, 4, 28, 12, 0, 0);
 ok("start time is daytime (out of band)", astro.sunElevationDeg(0, 0, new Date(noonMs)) > 6,
     `sunEl=${astro.sunElevationDeg(0, 0, new Date(noonMs)).toFixed(1)}°`);
@@ -155,7 +155,7 @@ ok("session starts within the next ~16 h (next dusk)", (fwd.stats.sessionStartMs
     `+${((fwd.stats.sessionStartMs - noonMs) / 3600000).toFixed(1)} h`);
 {
     const elAtSession = astro.sunElevationDeg(0, 0, new Date(fwd.stats.sessionStartMs));
-    ok("session start is at/near the twilight band", elAtSession <= 6 + 3 && elAtSession >= -40 - 3,
+    ok("session start is at/near the productive band", elAtSession <= 6 + 3 && elAtSession >= -56 - 3,
         `sunEl=${elAtSession.toFixed(1)}°`);
 }
 
@@ -165,7 +165,7 @@ const fwdNone = engine.scanForward({
     sats,
     observerAt: () => ({ lat: 0, lon: 0, altKm: 0 }),
     startMs: deepNight,
-    maxLookAheadSec: 600, // only 10 min — cannot reach the next twilight
+    maxLookAheadSec: 600, // only 10 min — cannot reach the next productive band
     options: { fineStepSec: 5, filterStepSec: 60 },
     onProgress: () => {},
 });
@@ -207,6 +207,56 @@ try {
 ok("real-data scan completes without throwing", !threw);
 ok("returns well-formed stats", !!e2e && Array.isArray(e2e.flares) && Number.isFinite(e2e.stats?.satsTotal),
     e2e ? `flares=${e2e.flares.length} satsTotal=${e2e.stats.satsTotal}` : "");
+
+console.log("== engine: stale-TLE altitude guard (no phantom-orbit flares) ==");
+// SGP4 propagated far from a TLE's epoch flings stale satellites onto decayed or
+// escape trajectories (altitudes of thousands to billions of km). Those phantoms
+// still read as sunlit + above the horizon and would manufacture bogus flares, so
+// the engine's LEO sanity band must drop them. Build the SAME forced-flare geometry
+// as above but at an absurd altitude: the geometry is a genuine flare (glint inside
+// the cone), so if the engine reports zero, the ONLY thing suppressing it is the guard.
+function buildFlareAt(altKm) {
+    const obs = geo.llaToEcef(0, 0, 0);
+    for (let dlon = 0.5; dlon < 89; dlon += 0.5) {
+        const sp = geo.llaToEcef(0, dlon, altKm);
+        const d = geo.vsub(sp, obs);
+        if (geo.rayHitsEllipsoid(obs, d)) continue;          // above the observer's horizon
+        const ae = geo.azElFromObserver(obs, sp);
+        if (ae.elDeg <= 0.3) continue;
+        const nrm = geo.geocentricUp(sp);
+        const reflected = geo.vnorm(geo.vreflect(d, nrm));
+        for (let eps = 0; eps <= 0.4; eps += 0.005) {
+            const ts = geo.vnorm(geo.vadd(reflected, geo.vscale(nrm, eps)));
+            if (geo.rayHitsEllipsoid(sp, ts)) continue;      // sunlit
+            const glint = Math.acos(Math.max(-1, Math.min(1, geo.vdot(reflected, ts)))) * 180 / Math.PI;
+            if (glint < 4.0) return { sp, ts, ae, glint };
+        }
+    }
+    return null;
+}
+const PHANTOM_ALT = 55000;                                    // radius ~61371 km, far above the 8378 km cap
+const ph = buildFlareAt(PHANTOM_ALT);
+ok("constructed a genuine flare geometry at an absurd altitude", !!ph,
+    ph ? `el=${ph.ae.elDeg.toFixed(1)}° glint=${ph.glint.toFixed(2)}°` : "none");
+if (ph) {
+    const phMock = {
+        twoline2satrec: (l1) => ({ error: 0, _l1: l1 }),
+        gstime: () => 0,
+        propagate: () => ({ position: { ...ph.sp }, velocity: { x: 0, y: 0, z: 0 } }),
+        eciToEcf: (p) => (Math.hypot(p.x, p.y, p.z) < 1.5 ? { ...ph.ts } : { x: p.x, y: p.y, z: p.z }),
+    };
+    const phEngine = createFlareEngine(phMock);
+    const phSats = phEngine.parseTLE("PHANTOM-1\n1 00002U 00000A   00000.0  .0  0  0 0  01\n2 00002  53.0 0 0 0 0 15.0 01\n");
+    const phRes = phEngine.scan({
+        sats: phSats,
+        observerAt: () => ({ lat: 0, lon: 0, altKm: 0 }),
+        startMs, endMs: startMs + windowSec * 1000,
+        options: { fineStepSec: 1, filterStepSec: 30, maxSunElevationDeg: 90, minSunElevationDeg: -90 },
+        onProgress: () => {},
+    });
+    ok("guard suppresses the absurd-altitude phantom flare", phRes.flares.length === 0,
+        `n=${phRes.flares.length}`);
+}
 
 console.log("\nFLARE_DEFAULTS:", JSON.stringify(FLARE_DEFAULTS));
 console.log(fails === 0 ? "\nALL PASS" : `\n${fails} FAILURE(S)`);
