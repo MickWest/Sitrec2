@@ -70,6 +70,21 @@ it must be served over **http(s)**.
   python3 -m http.server            # open http://localhost:8000/
   ```
 
+## Install as an app (PWA)
+
+This is an installable Progressive Web App. Over https, your browser offers **Install**
+(or *Add to Home Screen* on iOS); it then launches standalone, with its own icon, no
+browser chrome, and works offline after the first visit (the synthetic constellation is
+the default, so no network is needed to get a prediction).
+
+- `manifest.webmanifest` — app metadata: name, icons (`icons/`, including maskable +
+  an SVG), theme/background colour, `display: standalone`, screenshots (`screenshots/`).
+- `sw.js` — service worker: network-first for navigations (fresh when online, cached
+  shell when offline), cache-first for the version-stamped assets, cross-origin
+  (geocoding / TLE) never cached. Its cache name carries the build stamp, so each
+  deploy cleans the previous build's cache. Regenerate icons/screenshots with
+  `node tools/generate-icons.mjs` / `node tools/generate-screenshots.mjs`.
+
 ## What you get back
 
 For a **fixed location** the app answers *"when will I next see a flare from here?"* — it searches
@@ -172,7 +187,10 @@ look-ahead limit. A query made at midday therefore skips ahead to the next dusk 
 | `flareWorker.js` | Web Worker that propagates TLEs and runs the flare scan off the main thread. |
 | `lib/satellite.es.js` | Vendored satellite.js v6 (SGP4 propagation, ECI→ECEF, GMST). |
 | `airports.json` | Bundled OpenFlights airport list (regenerate via `tools/build-airports.mjs`). |
-| `tools/test-*.mjs` | Node tests: foundation (geo/astro), engine, location, skyview; `verify-browser.mjs` is a headless end-to-end check. |
+| `manifest.webmanifest` | PWA manifest (installable app metadata). |
+| `sw.js` | Service worker (offline + installability); cache name carries the build stamp. |
+| `icons/`, `screenshots/` | App icons (incl. maskable + SVG) and manifest screenshots. |
+| `tools/test-*.mjs` | Node tests: foundation (geo/astro), engine, location, skyview; `verify-browser.mjs` is a headless end-to-end check (incl. PWA). |
 
 ## Conventions
 

@@ -35,7 +35,13 @@ body {
   line-height: 1.45;
   -webkit-text-size-adjust: 100%;
   min-height: 100vh;
-  padding: 16px 14px 48px;
+  /* Base padding + iOS safe-area insets, so the installed (standalone) app clears
+     the translucent status bar, notch, and home indicator. env() is 0 elsewhere. */
+  padding:
+    calc(16px + env(safe-area-inset-top))
+    calc(14px + env(safe-area-inset-right))
+    calc(48px + env(safe-area-inset-bottom))
+    calc(14px + env(safe-area-inset-left));
 }
 
 main, .app-header, .app-footer { max-width: 640px; margin: 0 auto; }

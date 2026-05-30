@@ -9,6 +9,24 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.67.0 (2026-05-30)
+
+### New Features
+- **Starlink Flare Predictor is now an installable app**: the standalone flare tool can be added to your phone or desktop home screen and runs offline (using its built-in synthetic constellation when there's no network), with proper icons, a portrait layout, and a screen that clears the notch and status bar.
+
+### Improvements
+- **Playback speed now ranges from 1/100× to 100×** (frames bar → Playback Speed): much slower frame-by-frame scrubbing and much faster playback than before.
+- Starlink tool: the built-in synthetic constellation now closely matches the real Starlink fleet (count, altitudes, and sky distribution), so predictions look realistic even without downloading live data.
+- Starlink tool: synthetic data is used by default; real satellite data is a per-session choice (Advanced → Fetch current TLE, or load a .tle file) and reloading the page returns to synthetic.
+- Starlink tool: the results now show the peak time (the busiest minute to look) and a clear note at the bottom saying whether the prediction used synthetic, live, or your uploaded satellite data.
+- Starlink tool: a more compact results screen that fits small phones, a tidier input page, and a cleaner horizon view.
+
+### Bug Fixes
+- Fixed H.264 video exports (and imports) that would only play in Chrome — files made via Firefox on Windows now play correctly in Safari, Firefox, and other players.
+- Starlink tool: out-of-date satellite data no longer produces phantom flares, and predictions now correctly show flares through most of the night rather than only around twilight.
+
+---
+
 ## Version 2.66.0 (2026-05-29)
 
 ### New Features

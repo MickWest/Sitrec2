@@ -466,6 +466,18 @@ function renderResults(flares, stats, req, origin, dest) {
   const dirLine = moved ? `Look <b>${startC}</b> → <b>${endC}</b>` : `Look <b>${startC}</b>`;
   const place = dest ? `${origin.short || origin.name} → ${dest.short || dest.name}` : (origin.short || origin.name);
 
+  // Peak = the busiest minute (greatest flare density) — the best moment to look,
+  // matching the rose's density arc. (Flare intensity saturates at 1.0, so the
+  // single "brightest" flare isn't meaningful; density is.)
+  const peakMs = (() => {
+    const bin = 60000, m = new Map();
+    for (const f of flares) { const b = Math.round(f.peakMs / bin); m.set(b, (m.get(b) || 0) + 1); }
+    let bestBin = Math.round(flares[0].peakMs / bin), bestN = -1;
+    for (const [b, n] of m) if (n > bestN) { bestN = n; bestBin = b; }
+    return bestBin * bin;
+  })();
+  const peakT = fmtTime(peakMs, tz, { second: undefined });
+
   const arrows = moved ? [{ azDeg: startAz }, { azDeg: endAz }] : [{ azDeg: startAz }];
 
   const obsLat = flares[0].obsLat ?? origin.lat;
@@ -478,13 +490,13 @@ function renderResults(flares, stats, req, origin, dest) {
   const win = horizonWindow(hvFlares);
 
   els.results.innerHTML =
-    `<div class="r-when">Flares visible <b>${localT}</b> ${escapeHtml(zone)}</div>
+    `<div class="r-when">Flares visible <b>${localT}</b> ${escapeHtml(zone)} · peak <b>${peakT}</b></div>
      <div class="r-dir">${dirLine}</div>
      <div class="r-meta">${escapeHtml(place)} · ${fmtDateShort(t1, tz)} · ${utcT} UTC</div>
-     ${notesHTML(req)}
      <div class="rose-wrap">${compassRose(arrows, flares)}</div>
      <div class="horizon-wrap">${horizonView({ stars, bodies, flares: hvFlares, ...win })}</div>
-     <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction</div>`;
+     <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction</div>
+     ${notesHTML(req)}`;
 
   // Per-flare detail list — kept but disabled for a cleaner results page.
   const SHOW_FLARE_LIST = false;
@@ -746,6 +758,18 @@ function wireTLEControls() {
   });
 }
 
+// Register the service worker that makes this an installable, offline-capable PWA.
+// Relative scriptURL + scope so it works at any deploy path; updateViaCache:"none"
+// so each new build's sw.js (with its version stamp) is always picked up fresh.
+// Skipped under automation (navigator.webdriver) to keep e2e runs deterministic.
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator) || navigator.webdriver) return;
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js", { scope: "./", updateViaCache: "none" })
+      .catch((e) => console.warn("Service worker registration failed:", e && e.message));
+  });
+}
+
 function init() {
   setNowDefaults();
   loadAirports();   // fire-and-forget; searchAirports degrades gracefully until ready
@@ -754,6 +778,7 @@ function init() {
   wireTLEControls();
   els.form.addEventListener("submit", onSubmit);
   els.edit.addEventListener("click", showForm);  // results → back to the form
+  registerServiceWorker();
 }
 
 if (document.readyState === "loading") {

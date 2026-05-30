@@ -44,15 +44,19 @@ patterns.push({ from: "tools", to: "./tools", globOptions: {
 // Cache-busting for the standalone Starlink Flare tool: its index.html (which the
 // browser revalidates) carries `?v=__BUILD_V__` on the stylesheet and the entry
 // module; the module graph then reads that query off import.meta.url and appends
-// it to every import / fetch / Worker URL. We only need to stamp index.html here.
-// force:true so this overwrites the verbatim copy made by the "tools" pattern above.
-patterns.push({
-    from: "tools/starlink/index.html",
-    to: "./tools/starlink/index.html",
-    force: true,
-    transform(content) {
-        return content.toString().replace(/__BUILD_V__/g, String(BUILD_V));
-    },
+// it to every import / fetch / Worker URL. sw.js (the PWA service worker) carries
+// the same stamp in its cache name, so a new build produces a byte-different worker
+// that the browser installs and that purges the previous build's cache on activate.
+// force:true so these overwrite the verbatim copies made by the "tools" pattern.
+["index.html", "sw.js"].forEach((file) => {
+    patterns.push({
+        from: `tools/starlink/${file}`,
+        to: `./tools/starlink/${file}`,
+        force: true,
+        transform(content) {
+            return content.toString().replace(/__BUILD_V__/g, String(BUILD_V));
+        },
+    });
 });
 
 patterns.push({ from: "assets/install", to: "./install" });

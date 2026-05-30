@@ -23,7 +23,9 @@ const tlePath = join(process.env.TMPDIR || "/tmp", "starlink-verify.tle");
 await writeFile(tlePath, TLE);
 
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
-    ".json": "application/json", ".css": "text/css", ".map": "application/json" };
+    ".json": "application/json", ".css": "text/css", ".map": "application/json",
+    ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml",
+    ".png": "image/png", ".ico": "image/x-icon" };
 
 const server = http.createServer(async (req, res) => {
     try {
@@ -59,6 +61,40 @@ await page.waitForTimeout(400); // let module script run init()
 ok("no page errors on load", pageErrors.length === 0, pageErrors.join(" | "));
 ok("date input defaulted to now", !!(await page.inputValue("#date")), await page.inputValue("#date"));
 ok("origin input present", await page.locator("#origin").count() === 1);
+
+console.log("== browser: PWA — manifest, icons, head tags ==");
+const manifestHref = await page.getAttribute('link[rel="manifest"]', "href");
+ok("has <link rel=manifest>", manifestHref === "manifest.webmanifest", String(manifestHref));
+const manifest = await page.evaluate(async (href) => {
+    const r = await fetch(href);
+    if (!r.ok) return { __status: r.status };
+    try { return await r.json(); } catch (e) { return { __parse: String(e) }; }
+}, manifestHref || "manifest.webmanifest");
+ok("manifest fetches + parses as JSON", manifest && !manifest.__status && !manifest.__parse,
+    JSON.stringify(manifest).slice(0, 80));
+ok("manifest has name + short_name", !!(manifest.name && manifest.short_name), `${manifest.name} / ${manifest.short_name}`);
+ok("manifest display = standalone", manifest.display === "standalone", manifest.display);
+ok("manifest has start_url + scope", !!manifest.start_url && !!manifest.scope, `${manifest.start_url} ${manifest.scope}`);
+ok("manifest has theme + background color", !!manifest.theme_color && !!manifest.background_color);
+const iconSizes = (manifest.icons || []).map((i) => i.sizes);
+ok("manifest has 192 + 512 PNG icons", iconSizes.includes("192x192") && iconSizes.includes("512x512"), iconSizes.join(","));
+ok("manifest has a maskable icon", (manifest.icons || []).some((i) => /maskable/.test(i.purpose || "")));
+const iconResolves = await page.evaluate(async (icons) => {
+    const out = [];
+    for (const i of icons) { try { const r = await fetch(i.src); out.push(`${i.src}:${r.status}`); } catch (e) { out.push(`${i.src}:ERR`); } }
+    return out;
+}, manifest.icons || []);
+ok("all manifest icons resolve (200)", iconResolves.every((s) => s.endsWith(":200")), iconResolves.join("  "));
+const shotResolves = await page.evaluate(async (shots) => {
+    const out = [];
+    for (const s of shots) { try { const r = await fetch(s.src); out.push(`${s.src}:${r.status}`); } catch (e) { out.push(`${s.src}:ERR`); } }
+    return out;
+}, manifest.screenshots || []);
+ok("manifest screenshots resolve (200)", shotResolves.length > 0 && shotResolves.every((s) => s.endsWith(":200")), shotResolves.join("  "));
+ok("apple-touch-icon present", await page.locator('link[rel="apple-touch-icon"]').count() === 1);
+ok("theme-color meta present", await page.locator('meta[name="theme-color"]').count() >= 1);
+ok("apple-mobile-web-app-capable meta present", await page.locator('meta[name="apple-mobile-web-app-capable"]').count() === 1);
+ok("description meta present", await page.locator('meta[name="description"]').count() === 1);
 
 console.log("== browser: drive the form -> results screen (synthetic default) ==");
 // Default flow: no file, no fetch -> the synthetic constellation, which is dense
@@ -193,6 +229,23 @@ ok("after reload, default is synthetic again (despite a cached TLE on disk)",
     await page.locator("#results .sim-note.synth").count() >= 1);
 ok("no real-data note on a fresh load",
     await page.locator("#results .sim-note.real").count() === 0);
+
+console.log("== browser: PWA — service worker registers + installs ==");
+// The app skips auto-registration under automation (navigator.webdriver); register
+// explicitly here to confirm sw.js is valid, registrable, and reaches a live state.
+const swState = await page.evaluate(async () => {
+    if (!("serviceWorker" in navigator)) return "no-sw-support";
+    try {
+        const reg = await navigator.serviceWorker.register("sw.js", { scope: "./", updateViaCache: "none" });
+        await new Promise((r) => setTimeout(r, 1500));     // let it install
+        const w = reg.active || reg.waiting || reg.installing;
+        const state = w ? w.state : "none";
+        await reg.unregister();
+        return state;
+    } catch (e) { return "error: " + (e && e.message); }
+});
+ok("service worker registers + reaches a live state",
+    ["installing", "installed", "activating", "activated"].includes(swState), swState);
 
 await browser.close();
 server.close();

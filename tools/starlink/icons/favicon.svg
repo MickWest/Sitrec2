@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><defs>
+  <radialGradient id="bg" cx="50%" cy="36%" r="80%">
+    <stop offset="0%" stop-color="#0c1430"/><stop offset="100%" stop-color="#070b18"/>
+  </radialGradient>
+  <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#fff3cf" stop-opacity="0.95"/>
+    <stop offset="30%" stop-color="#ffd24a" stop-opacity="0.6"/>
+    <stop offset="100%" stop-color="#ff9e2c" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="limb" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#15294a"/><stop offset="100%" stop-color="#091324"/>
+  </linearGradient>
+</defs><rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#bg)"/>
+    <!-- Earth's limb across the lower portion + atmosphere glow -->
+    <circle cx="256" cy="1000" r="690" fill="url(#limb)"/>
+    <circle cx="256" cy="1000" r="690" fill="none" stroke="#3b7fc4" stroke-width="5" opacity="0.55"/>
+    <circle cx="256" cy="1000" r="703" fill="none" stroke="#9bdcff" stroke-width="3" opacity="0.30"/>
+    <!-- a few satellites -->
+    <circle cx="118" cy="150" r="6" fill="#cfe3ff" opacity="0.85"/>
+    <circle cx="406" cy="300" r="5" fill="#cfe3ff" opacity="0.70"/>
+    <circle cx="356" cy="116" r="4" fill="#cfe3ff" opacity="0.55"/>
+    <!-- flare: soft glow, 8-point sparkle, bright core -->
+    <circle cx="256" cy="226" r="176" fill="url(#glow)"/>
+    <g transform="rotate(45 256 226)"><path d="M256,130 Q269,213 352,226 Q269,239 256,322 Q243,239 160,226 Q243,213 Z" fill="#ffd24a" opacity="0.75"/></g>
+    <path d="M256,76 Q280,202 406,226 Q280,250 256,376 Q232,250 106,226 Q232,202 Z" fill="#ffd24a"/>
+    <circle cx="256" cy="226" r="21" fill="#fff6da"/></svg>

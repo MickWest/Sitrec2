@@ -1,0 +1,27 @@
+{
+  "name": "Starlink Flare Predictor",
+  "short_name": "Flares",
+  "description": "Predicts Starlink horizon-flare times and sky directions for a fixed location or along a flight path.",
+  "lang": "en",
+  "dir": "ltr",
+  "id": "./",
+  "start_url": ".",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "theme_color": "#070b18",
+  "background_color": "#070b18",
+  "categories": ["utilities", "education"],
+  "icons": [
+    { "src": "icons/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "screenshots": [
+    { "src": "screenshots/results.png", "sizes": "390x844", "type": "image/png", "form_factor": "narrow", "label": "Predicted flare times, directions, and the sky view" },
+    { "src": "screenshots/form.png", "sizes": "390x844", "type": "image/png", "form_factor": "narrow", "label": "Enter a place (or flight) and a time" }
+  ]
+}
