@@ -50,8 +50,8 @@ patterns.push({ from: "tools", to: "./tools", globOptions: {
 // force:true so these overwrite the verbatim copies made by the "tools" pattern.
 ["index.html", "sw.js"].forEach((file) => {
     patterns.push({
-        from: `tools/starlink/${file}`,
-        to: `./tools/starlink/${file}`,
+        from: `tools/shf/${file}`,
+        to: `./tools/shf/${file}`,
         force: true,
         transform(content) {
             return content.toString().replace(/__BUILD_V__/g, String(BUILD_V));

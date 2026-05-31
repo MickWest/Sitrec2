@@ -54,7 +54,7 @@ The app uses ES modules, a module Web Worker, and `fetch`, **none of which work 
 it must be served over **http(s)**.
 
 - **Easiest (with Sitrec):** it lives under `tools/`, which `npm run build` copies verbatim into the
-  deploy, so it is live at **https://local.metabunk.org/sitrec/tools/starlink/**.
+  deploy, so it is live at **https://local.metabunk.org/sitrec/tools/shf/**.
 
   *Cache-busting:* the deploy server caches these stable-named `.js`/`.css` files for years, so to
   make updates appear without a hard refresh the build stamps a timestamp into `index.html`
@@ -65,7 +65,7 @@ it must be served over **http(s)**.
   without the build, the placeholder is a harmless constant.
 - **Any static server**, serving this folder:
   ```bash
-  npx http-server tools/starlink    # then open the printed http://… URL
+  npx http-server tools/shf    # then open the printed http://… URL
   # or, from inside this folder:
   python3 -m http.server            # open http://localhost:8000/
   ```

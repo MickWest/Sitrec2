@@ -1,5 +1,5 @@
 // fromApp.js — receive a prediction handed off from the standalone Starlink Horizon
-// Flare tool (tools/starlink) via `?fromapp=1&...` URL params, and turn it into a
+// Flare tool (tools/shf) via `?fromapp=1&...` URL params, and turn it into a
 // live Sitrec situation: a night-sky sitch (satellites + flares) with a REAL-TIME
 // (1×) timeline running from the first flare to the last flare, starting on the peak
 // flare, a synthetic flight camera track (or a fixed ground camera raised 50 ft), and

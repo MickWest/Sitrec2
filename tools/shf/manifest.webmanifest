@@ -1,6 +1,6 @@
 {
   "name": "Starlink Horizon Flares",
-  "short_name": "Flares",
+  "short_name": "SHF",
   "description": "Predicts Starlink horizon-flare times and sky directions for a fixed location or along a flight path.",
   "lang": "en",
   "dir": "ltr",

@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.68.1 (2026-05-31)
+
+### Improvements
+- Starlink Horizon Flare tool: the install instructions are now correct for your device and browser — iPhone (Safari and other browsers), Android, Mac, and desktop Chrome/Edge/Firefox each get the right steps. The previous version wrongly told iPhone Chrome users to switch to Safari.
+- Starlink Horizon Flare tool: when added to a phone or desktop home screen, the app icon is now labelled **SHF** instead of the generic "Flares" (the install dialog still shows the full "Starlink Horizon Flares" name). Already-installed copies keep the old label until reinstalled.
+- Starlink Horizon Flare tool: moved to a shorter web address (`/tools/shf/`). The launcher link and the *Open in Sitrec* handoff were updated to match; no change to how the tool works.
+
+---
+
 ## Version 2.68.0 (2026-05-31)
 
 ### New Features

@@ -489,10 +489,10 @@ function visibleBodies(latDeg, lonDeg, date) {
 }
 
 // Base URL of the Sitrec app that hosts this tool: the tool lives at
-// <origin><base>/tools/starlink/, so Sitrec is at <origin><base>/. Using the SAME
+// <origin><base>/tools/shf/, so Sitrec is at <origin><base>/. Using the SAME
 // host means local.metabunk.org opens local Sitrec, production opens production.
 function sitrecBaseURL() {
-  const base = window.location.pathname.replace(/\/tools\/starlink\/.*$/, "").replace(/\/+$/, "");
+  const base = window.location.pathname.replace(/\/tools\/shf\/.*$/, "").replace(/\/+$/, "");
   return window.location.origin + base + "/";
 }
 
@@ -874,10 +874,23 @@ function isStandalone() {
     || window.navigator.standalone === true;
 }
 
-// iOS / iPadOS (which can't be automated — install is a manual "Add to Home Screen").
-function isIOS() {
-  return /iphone|ipad|ipod/i.test(navigator.userAgent)
-    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1 && "ontouchend" in document);
+// Detect platform + browser so the MANUAL install steps match what the user sees.
+// (The automated path is chosen purely by whether `beforeinstallprompt` fired, which
+// no iOS browser and no desktop Safari/Firefox ever do — so detection only drives the
+// instruction text.) Since iOS 16.4 every iOS browser, not just Safari, can Add to
+// Home Screen, but the Share button lives in a different place in each.
+function platformInfo() {
+  const ua = navigator.userAgent;
+  // iPadOS 13+ reports a desktop (MacIntel) UA, so fall back to the touch-point test.
+  const ios = /iphone|ipad|ipod/i.test(ua)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const android = /android/i.test(ua);
+  const iosChrome = ios && /CriOS\//.test(ua);                 // Chrome on iOS
+  const iosSafari = ios && !/CriOS\/|FxiOS\/|EdgiOS\/|OPiOS\/|OPT\//.test(ua); // Safari (not a wrapper)
+  const macSafari = !ios && /Macintosh/.test(ua) && /Safari\//.test(ua)
+    && !/Chrom(e|ium)|Edg\/|OPR\//.test(ua);                   // Safari on macOS
+  const firefoxDesktop = !ios && !android && /Firefox\//.test(ua);
+  return { ios, android, iosChrome, iosSafari, macSafari, firefoxDesktop };
 }
 
 // Show the Install button only when not already installed.
@@ -901,10 +914,76 @@ const SHARE_ICON =
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
    </svg>`;
 
+// Platform-specific manual instructions (used when there's no automated prompt).
+function manualInstall() {
+  const p = platformInfo();
+  if (p.ios) {
+    // Where the Share button is differs by iOS browser; all then offer Add to Home Screen.
+    const whereShare = p.iosSafari
+      ? `the <strong>Share</strong> button ${SHARE_ICON} in the toolbar (bottom of the screen)`
+      : p.iosChrome
+        ? `the <strong>Share</strong> button ${SHARE_ICON} (in the address bar, or the <strong>⋯</strong> menu)`
+        : `your browser's <strong>Share</strong> ${SHARE_ICON} option (usually in the <strong>⋯</strong> menu)`;
+    return {
+      title: "Add to your Home Screen",
+      body: `<p>To install on iPhone or iPad:</p>
+        <ol>
+          <li>Tap ${whereShare}.</li>
+          <li>Scroll down and tap <strong>“Add to Home Screen”</strong>.</li>
+          <li>Tap <strong>Add</strong>.</li>
+        </ol>
+        <p class="modal-note">In non-Safari browsers this needs iOS/iPadOS 16.4 or later. The
+          app then opens full-screen and works offline.</p>`,
+    };
+  }
+  if (p.android) {
+    return {
+      title: "Add to your Home Screen",
+      body: `<p>To install on Android:</p>
+        <ol>
+          <li>Tap the <strong>⋮</strong> menu (top-right).</li>
+          <li>Tap <strong>“Install app”</strong> (or <strong>“Add to Home screen”</strong>).</li>
+          <li>Tap <strong>Install</strong>.</li>
+        </ol>`,
+    };
+  }
+  if (p.macSafari) {
+    return {
+      title: "Install the app",
+      body: `<p>To install in Safari on a Mac:</p>
+        <ol>
+          <li>In the menu bar, choose <strong>File → Add to Dock</strong>.</li>
+          <li>Click <strong>Add</strong>.</li>
+        </ol>
+        <p class="modal-note">Requires macOS Sonoma (14) or later.</p>`,
+    };
+  }
+  if (p.firefoxDesktop) {
+    return {
+      title: "Install the app",
+      body: `<p>Firefox on the desktop can't install web apps. To install Starlink Horizon
+        Flares, open this page in desktop <strong>Chrome</strong> or <strong>Edge</strong>,
+        <strong>Safari</strong> on a Mac, or use <strong>Add to Home Screen</strong> on your
+        phone.</p>`,
+    };
+  }
+  // Desktop Chrome / Edge (and anything else with an address-bar install affordance).
+  return {
+    title: "Install the app",
+    body: `<p>To install on this device:</p>
+      <ol>
+        <li>Click the <strong>install icon</strong> in the address bar (a monitor with a ↓),
+          or open the browser's <strong>⋮</strong> menu.</li>
+        <li>Choose <strong>“Install Starlink Horizon Flares…”</strong>.</li>
+      </ol>`,
+  };
+}
+
 async function onInstallClick() {
   const bip = window.__bipEvent;
   if (bip) {
-    // Automated path (Chrome/Edge/Android): confirm, then show the native prompt.
+    // Automated path (Android Chrome/Edge/Opera/Firefox, desktop Chrome/Edge): confirm,
+    // then show the browser's native install prompt.
     if (!window.confirm("Install the Starlink Horizon Flares app on this device?")) return;
     bip.prompt();
     try {
@@ -916,26 +995,9 @@ async function onInstallClick() {
     } catch (_) { /* user dismissed — leave the button in place */ }
     return;
   }
-  // Manual path: platform-specific instructions.
-  if (isIOS()) {
-    openInstallModal("Add to your Home Screen",
-      `<p>To install on iPhone or iPad, in <strong>Safari</strong>:</p>
-       <ol>
-         <li>Tap the <strong>Share</strong> button ${SHARE_ICON} in the toolbar.</li>
-         <li>Scroll down and tap <strong>“Add to Home Screen”</strong>.</li>
-         <li>Tap <strong>Add</strong> in the top-right corner.</li>
-       </ol>
-       <p class="modal-note">The app then opens full-screen and works offline.</p>`);
-  } else {
-    openInstallModal("Install the app",
-      `<p>To install on this device:</p>
-       <ol>
-         <li>Open your browser's menu (usually <strong>⋮</strong> or <strong>⋯</strong>).</li>
-         <li>Choose <strong>“Install app”</strong> or <strong>“Add to Home Screen”</strong>.</li>
-       </ol>
-       <p class="modal-note">On desktop Chrome or Edge you can also click the install icon
-         in the address bar.</p>`);
-  }
+  // Manual path (all iOS browsers, desktop Safari/Firefox): platform-specific steps.
+  const { title, body } = manualInstall();
+  openInstallModal(title, body);
 }
 
 function wireInstall() {
