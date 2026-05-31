@@ -424,10 +424,10 @@ ${bodyContent}
         minimizer: [
             new TerserPlugin({
                 // Exclude files starting with "Sit" and ending with ".js".
-                // Also exclude the standalone Starlink tool: it is copied
-                // verbatim as native ES modules (import/export), which Terser's
-                // script-mode parser can't minify ("Unexpected token: import").
-                exclude: /(Sit.*|tools[\\/]starlink[\\/].*)\.js$/,
+                // Also exclude the standalone SHF (Starlink Horizon Flares) tool:
+                // it is copied verbatim as native ES modules (import/export), which
+                // Terser's script-mode parser can't minify ("Unexpected token: import").
+                exclude: /(Sit.*|tools[\\/]shf[\\/].*)\.js$/,
                 terserOptions: {
                     keep_classnames: true,
                     compress: {

@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.68.2 (2026-05-31)
+
+### Bug Fixes
+- Fixed the production build of Sitrec failing to compile (a hotfix for a problem introduced in 2.68.1). No change to how the app behaves.
+
+---
+
 ## Version 2.68.1 (2026-05-31)
 
 ### Improvements

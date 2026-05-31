@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.68.2 (2026-05-31)
+
+### Bug Fixes
+- **Fixed the production deploy build failing after the `tools/starlink` → `tools/shf` rename** (`webpack.common.js`): 2.68.1 renamed the standalone tool directory `tools/starlink` → `tools/shf` but missed one path reference — the `TerserPlugin` `exclude` regex in the production-only minimizer config still read `/(Sit.*|tools[\\/]starlink[\\/].*)\.js$/`. That exclude exists because the SHF (Starlink Horizon Flares) tool is copied verbatim as native ES modules (`import`/`export`), which Terser's script-mode parser can't minify. After the rename the regex no longer matched the tool's files, so `npm run deploy` (which minifies) hard-failed with `ERROR in tools/shf/flareWorker.js from Terser plugin — Unexpected token: name (import)`. Dev builds (`npm run build`) were unaffected because they don't run the minimizer — which is why 2.68.1's dev builds passed but its production deploy build was broken. The fix updates the exclude to `tools[\\/]shf[\\/]` (and the adjacent comment). Verified with `npx webpack --config webpack.prod.js` compiling cleanly.
+
+---
+
 ## Version 2.68.1 (2026-05-31)
 
 ### Improvements
