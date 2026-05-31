@@ -220,6 +220,17 @@ input[type="file"]::file-selector-button {
   box-shadow: none;
 }
 
+/* "Open in Sitrec" — full-width call to action on the results screen, in a cool
+   blue to distinguish it from the amber "Find Flares" button. */
+.sitrec-btn {
+  display: block;
+  width: 100%;
+  margin: 14px 0 2px;
+  color: #04121f;
+  background: linear-gradient(180deg, #7fd0ff, #3b9fe0);
+  box-shadow: 0 8px 22px rgba(60,140,220,0.28);
+}
+
 /* ---- status ---- */
 .status { margin-top: 16px; min-height: 1.2em; }
 .status .line { color: var(--muted); font-size: 0.92rem; margin: 2px 0; }

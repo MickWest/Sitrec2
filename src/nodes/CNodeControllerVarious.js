@@ -3,7 +3,7 @@ import {par} from "../par";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {GlobalDateTimeNode, gui, guiMenus, guiPhysics, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
-import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
+import {getAzElFromPositionAndForward, getLocalEastVector, getLocalNorthVector, getLocalUpVector, getNorthPole} from "../SphericalMath";
 import {adjustHeightAboveGround, clampAboveGround, DebugArrow} from "../threeExt";
 import {CNodeController} from "./CNodeController";
 
@@ -752,5 +752,48 @@ export class CNodeControllerCelestial extends CNodeController {
 }
 
 
+// A camera "lock" that points at the Starlink horizon-flare region: the Sun's
+// AZIMUTH (the compass direction toward the Sun, which is below the horizon at
+// night) but at a fixed low elevation just above the horizon, where horizon flares
+// appear. It re-derives the Sun azimuth every frame, so as the Sun moves through the
+// night the camera follows the flare region along the horizon. Like the Celestial
+// Lock it only sets the camera orientation (not its position or FOV).
+export class CNodeControllerHorizonFlareRegion extends CNodeController {
+    constructor(v) {
+        super(v);
+        // Elevation above the horizon. Default 9° = "10% above the horizon"
+        // (10% of the 0–90° horizon-to-zenith range).
+        this.el = v.el ?? 9;
+        this.allowUpdate = true;
+    }
+
+    apply(f, objectNode) {
+        const camera = objectNode.camera;
+        const sunDir = getCelestialDirection("Sun", GlobalDateTimeNode.dateNow, camera.position);
+        if (!sunDir) return;
+
+        // Sun azimuth, in the same convention as the PTZ / AzElZoom aim.
+        const az = getAzElFromPositionAndForward(camera.position, sunDir.clone().normalize())[0];
+
+        // Build the look direction at that azimuth and our fixed elevation. This
+        // mirrors CNodeControllerAzElZoom.apply() exactly (right=east=cross(up,south),
+        // fwd=north, rotate el about east then -az about up) so the azimuth matches.
+        const up = getLocalUpVector(camera.position);
+        const toNorth = getNorthPole().clone().sub(camera.position).normalize();
+        const north = toNorth.clone().sub(up.clone().multiplyScalar(toNorth.dot(up)));
+        if (north.lengthSq() < 1e-10) return;   // at a pole — north undefined
+        north.normalize();
+        const south = north.clone().negate();
+        const east = new Vector3().crossVectors(up, south);
+
+        const fwd = north.clone();
+        fwd.applyAxisAngle(east, radians(this.el));
+        fwd.applyAxisAngle(up, -radians(az));
+        fwd.add(camera.position);
+        camera.up = up;
+        camera.lookAt(fwd);
+        objectNode.syncUIPosition();
+    }
+}
 
 

@@ -49,6 +49,7 @@ import {
 } from "./Globals";
 import {disableScroll, f2m, stripComments, updateDocumentTitle} from './utils'
 import {CSituation} from "./CSituation";
+import {parseFromAppParams, buildFromAppSitch, finishFromApp} from "./fromApp.js";
 import {par, resetPar} from "./par";
 
 // was here
@@ -542,7 +543,8 @@ const hasExplicitStartupRequest = isNewSitchAction
     || !!urlParams.get("custom")
     || !!urlParams.get("mod")
     || !!urlParams.get("test")
-    || !!urlParams.get("testAll");
+    || !!urlParams.get("testAll")
+    || urlParams.get("fromapp") === "1";   // app handoff builds its own sitch — don't auto-open the sitch browser
 
 const hasServerBackedSaves = getEnvBool("SAVE_TO_SERVER", process.env.SAVE_TO_SERVER)
     || getEnvBool("SAVE_TO_S3", process.env.SAVE_TO_S3);
@@ -595,7 +597,16 @@ if (!initRendering()) {
 
 }
 
-if (customSitch !== null) {
+// Handoff from the standalone Starlink Horizon Flare tool (?fromapp=1&...): build a
+// night-sky sitch from the params instead of loading a named/custom sitch.
+const fromAppParams = parseFromAppParams(urlParams);
+
+if (fromAppParams !== null) {
+    Globals.sitchEstablished = true;
+    setSit(new CSituation(buildFromAppSitch(fromAppParams)));
+    Sit.initialDropZoneAnimation = false;
+    markSitrecReady();
+} else if (customSitch !== null) {
     if (isResolvableSitrecReference(customSitch)) {
         // Resolve to a temporary fetch URL for this session while preserving a stable canonical ref.
         const resolvedCustom = await resolveSitrecReference(customSitch);
@@ -767,6 +778,12 @@ if (dateTime) {
 }
 
 
+
+// fromApp handoff: nodes (lookCamera etc.) now exist — load the flight track (flight
+// mode), place the camera, and start playback.
+if (fromAppParams !== null) {
+    await finishFromApp(fromAppParams);
+}
 
 windowChanged()
 

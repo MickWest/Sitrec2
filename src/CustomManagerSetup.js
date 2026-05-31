@@ -58,7 +58,7 @@ import {deserializeMotionAnalysis, serializeMotionAnalysis} from "./CMotionAnaly
 import {deserializeAutoTracking, serializeAutoTracking} from "./CObjectTracking";
 import {getCursorPositionFromTopView} from "./mouseMoveView";
 import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightSidebar} from "./PageStructure";
-import {CNodeControllerCelestial} from "./nodes/CNodeControllerVarious";
+import {CNodeControllerCelestial, CNodeControllerHorizonFlareRegion} from "./nodes/CNodeControllerVarious";
 import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
 import {CNodeAnnotateOverlay} from "./nodes/CNodeAnnotateOverlay";
 import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
@@ -128,6 +128,17 @@ export const setupMethods = {
             const lookCamera = NodeMan.get("lookCamera", false);
             lookCamera.addControllerNode(celestialController);
             cameraLOSController.addOption("Celestial Lock", celestialController);
+
+            // "Horizon Flare Region": points at the Sun's azimuth but just above the
+            // horizon (10% up), where Starlink horizon flares appear — and follows the
+            // Sun along the horizon over time. Used by the "Open in Sitrec" handoff.
+            const horizonFlareController = new CNodeControllerHorizonFlareRegion({
+                id: "horizonFlareController",
+                el: 9,
+                camera: "lookCamera",
+            });
+            lookCamera.addControllerNode(horizonFlareController);
+            cameraLOSController.addOption("Horizon Flare Region", horizonFlareController);
         }
 
         // Create the "Camera + Point Track" LOS adapter node and wire it into the JetLOS switch.

@@ -447,6 +447,50 @@ function visibleBodies(latDeg, lonDeg, date) {
   return out;
 }
 
+// Base URL of the Sitrec app that hosts this tool: the tool lives at
+// <origin><base>/tools/starlink/, so Sitrec is at <origin><base>/. Using the SAME
+// host means local.metabunk.org opens local Sitrec, production opens production.
+function sitrecBaseURL() {
+  const base = window.location.pathname.replace(/\/tools\/starlink\/.*$/, "").replace(/\/+$/, "");
+  return window.location.origin + base + "/";
+}
+
+// "Open in Sitrec" — hand the current prediction to the main Sitrec app, which
+// builds a night-sky sitch (satellites + flares), a 60×-speed timeline over the
+// window/flight, a synthetic flight camera track (or fixed ground camera +50ft),
+// and aims the look camera at the peak flare direction. See src/fromApp.js.
+function openInSitrec(req, flares, origin, dest, peakMs) {
+  // Peak look direction = the flare nearest the peak (busiest) minute.
+  let peak = flares[0], best = Infinity;
+  for (const f of flares) { const d = Math.abs(f.peakMs - peakMs); if (d < best) { best = d; peak = f; } }
+  const t1 = Math.min(...flares.map((f) => f.startMs));
+  const t2 = Math.max(...flares.map((f) => f.endMs));
+
+  const q = new URLSearchParams();
+  q.set("fromapp", "1");
+  q.set("mode", dest ? "flight" : "fixed");
+  q.set("lat", origin.lat.toFixed(5));
+  q.set("lon", origin.lon.toFixed(5));
+  q.set("peakAz", peak.azDeg.toFixed(1));
+  q.set("peakEl", peak.elDeg.toFixed(1));
+  // The Sitrec timeline runs (1×) from the first flare to the last, starting at the peak.
+  q.set("firstMs", String(Math.round(t1)));
+  q.set("lastMs", String(Math.round(t2)));
+  q.set("peakMs", String(Math.round(peakMs)));
+  if (origin.name) q.set("place", origin.name);
+
+  if (dest) {
+    q.set("dlat", dest.lat.toFixed(5));
+    q.set("dlon", dest.lon.toFixed(5));
+    q.set("cruiseAltFt", String(Math.round((req.cruiseAltKm || 11.2772) * 1000 / 0.3048)));
+    // The flight envelope (departure + duration) lets Sitrec place the camera at the
+    // correct point along the route for each moment of the (shorter) flare window.
+    q.set("flightStartMs", String(Math.round(req.startMs)));
+    q.set("flightDurSec", String(Math.round(req.durationSec || ((t2 - req.startMs) / 1000))));
+  }
+  window.open(sitrecBaseURL() + "?" + q.toString(), "_blank", "noopener");
+}
+
 // Full results screen: verdict, one-sentence summary, compass rose, horizon view.
 function renderResults(flares, stats, req, origin, dest) {
   if (!flares || flares.length === 0) { renderNoFlares(stats, req, origin); return; }
@@ -496,7 +540,11 @@ function renderResults(flares, stats, req, origin, dest) {
      <div class="rose-wrap">${compassRose(arrows, flares)}</div>
      <div class="horizon-wrap">${horizonView({ stars, bodies, flares: hvFlares, ...win })}</div>
      <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction</div>
+     <button id="opensitrec" type="button" class="go-btn sitrec-btn">Open in Sitrec ↗</button>
      ${notesHTML(req)}`;
+
+  const openBtn = els.results.querySelector("#opensitrec");
+  if (openBtn) openBtn.addEventListener("click", () => openInSitrec(req, flares, origin, dest, peakMs));
 
   // Per-flare detail list — kept but disabled for a cleaner results page.
   const SHOW_FLARE_LIST = false;

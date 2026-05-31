@@ -1,5 +1,5 @@
 {
-  "name": "Starlink Flare Predictor",
+  "name": "Starlink Horizon Flares",
   "short_name": "Flares",
   "description": "Predicts Starlink horizon-flare times and sky directions for a fixed location or along a flight path.",
   "lang": "en",
