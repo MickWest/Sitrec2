@@ -1812,7 +1812,13 @@ export class CNodeView3D extends CNodeViewCanvas {
         //   surfacing as the "video at half size" symptom we saw on Cheyenne
         // - pinned-program metadata (the __pinned hack on usedTimes) leaks
         //   onto programs whose GL-side counterparts are gone
-        this.canvas.addEventListener('webglcontextlost', (e) => {
+        // Stored as bound references (not anonymous listeners) so dispose() can
+        // removeEventListener them. dispose() deliberately calls forceContextLoss()
+        // to free the GPU context; if these handlers stayed registered, that forced
+        // (asynchronously-dispatched) webglcontextlost event would fire on an
+        // already-disposed view whose this.renderer has been nulled. Owning the
+        // listener lifecycle — added here, removed in dispose() — is the fix.
+        this._onContextLost = (e) => {
             e.preventDefault();
             this.contextLost = true;
             console.warn(`[WebGL] Context LOST on view "${this.id}"`);
@@ -1825,9 +1831,9 @@ export class CNodeView3D extends CNodeViewCanvas {
             if (this.renderer.info?.programs) {
                 for (const p of this.renderer.info.programs) p.__pinned = false;
             }
-        }, false);
+        };
 
-        this.canvas.addEventListener('webglcontextrestored', () => {
+        this._onContextRestored = () => {
             console.warn(`[WebGL] Context restored on view "${this.id}"`);
             this.contextLost = false;
             // Re-establish per-view renderer state: setPixelRatio + recreate
@@ -1872,8 +1878,10 @@ export class CNodeView3D extends CNodeViewCanvas {
             // already in CPU memory so this is fast.
             const terrainNode = NodeMan.get("terrainUI", false);
             if (terrainNode) terrainNode.doRefresh();
-        }, false);
+        };
 
+        this.canvas.addEventListener('webglcontextlost', this._onContextLost, false);
+        this.canvas.addEventListener('webglcontextrestored', this._onContextRestored, false);
     }
 
 
@@ -3297,6 +3305,17 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     dispose() {
+        // Remove our WebGL context-loss listeners FIRST, while this.canvas still
+        // exists. super.dispose() (CNodeViewCanvas.dispose) nulls this.canvas, and
+        // the later renderer.forceContextLoss() asynchronously dispatches a
+        // webglcontextlost event. If the listener is still attached, it fires after
+        // this.renderer is nulled below — the root cause of the "reading 'info' of
+        // null" crash on sitch swaps. A disposed view owns no context to recover.
+        if (this.canvas) {
+            this.canvas.removeEventListener('webglcontextlost', this._onContextLost, false);
+            this.canvas.removeEventListener('webglcontextrestored', this._onContextRestored, false);
+        }
+
         // Clean up XR session if active
         if (Globals.canVR && this.id === "lookView") {
             // Remove XR event listeners

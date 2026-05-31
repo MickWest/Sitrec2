@@ -6,8 +6,9 @@
  * Right-click context menu with label checkboxes.
  */
 import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
-import {getEffectiveUserID, Globals, setNewSitchObject, SitchMan, withTestUser} from "./Globals";
+import {getEffectiveUserID, Globals, NodeMan, setNewSitchObject, SitchMan, withTestUser} from "./Globals";
 import {DragDropHandler} from "./DragDropHandler";
+import {extractWarGovPRCode} from "./WarGovUFOUtils";
 
 const LABEL_COLORS = [
     "#4285f4", "#34a853", "#fbbc04", "#24c1e0",
@@ -19,6 +20,11 @@ const PERMANENT_LABELS = [
     {name: "Private", color: "#a142f4", permanent: true},
     {name: "Deleted", color: "#ea4335", permanent: true},
 ];
+
+// Sentinel "selectedKey" for the synthetic war.gov PR action tile. Real sitch
+// keys are "<ownerUserID>:<name>", so this colon-less control string can never
+// collide. It is used for focus/highlight only — never added to this.selection.
+const WARGOV_PR_KEY = "__wargov_pr_tile__";
 
 export class CSitchBrowser {
     constructor(fileManager) {
@@ -34,6 +40,8 @@ export class CSitchBrowser {
         this.viewMode = "thumbnails";
         this.thumbColumns = 4;
         this._thumbObserver = null;
+        this._thumbCardOffset = 0; // leading synthetic cards (e.g. war.gov PR tile) in the grid
+        this._warGovPRCode = null; // current PR code shown by the synthetic tile, or null
 
         // Labels
         this.userLabels = [];    // [{name, color, permanent?}, ...]
@@ -792,8 +800,19 @@ export class CSitchBrowser {
             return;
         }
 
-        // Don't capture other keys if typing in search
-        if (e.target.tagName === "INPUT") return;
+        // From the search box: Down arrow moves focus into the grid and selects the
+        // first tile; Enter (with nothing selected) activates the first tile directly.
+        if (e.target.tagName === "INPUT") {
+            if (e.key === "ArrowDown") {
+                e.preventDefault();
+                e.target.blur(); // so subsequent arrow keys navigate the grid
+                this._selectFirstTile();
+            } else if (e.key === "Enter") {
+                e.preventDefault();
+                this._activateKey(this.selectedKey || this._firstTileKey());
+            }
+            return;
+        }
 
         if (e.key === "a" && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
@@ -820,12 +839,26 @@ export class CSitchBrowser {
         const arrows = ["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"];
         if (arrows.includes(e.key)) {
             e.preventDefault();
-            if (this.filtered.length === 0) return;
-            let idx = this.filtered.findIndex(s => s.key === this.selectedKey);
 
-            if (idx === -1) {
+            // Navigate over raw grid positions so the synthetic war.gov tile (always
+            // at position 0) folds in naturally. offset = number of leading synthetic
+            // tiles; filtered[i] lives at grid position i + offset.
+            const offset = this._hasSyntheticTile() ? 1 : 0;
+            const total = offset + this.filtered.length;
+            if (total === 0) return;
+
+            // Current grid position from the focused key (-1 = nothing focused).
+            let pos;
+            if (offset && this.selectedKey === WARGOV_PR_KEY) {
+                pos = 0;
+            } else {
+                const fi = this.filtered.findIndex(s => s.key === this.selectedKey);
+                pos = fi === -1 ? -1 : fi + offset;
+            }
+
+            if (pos === -1) {
                 const forward = (e.key === "ArrowDown" || e.key === "ArrowRight");
-                idx = forward ? 0 : this.filtered.length - 1;
+                pos = forward ? 0 : total - 1;
             } else {
                 let delta;
                 if (this.viewMode === "thumbnails") {
@@ -836,41 +869,47 @@ export class CSitchBrowser {
                 } else {
                     delta = (e.key === "ArrowDown" || e.key === "ArrowRight") ? 1 : -1;
                 }
-                idx = Math.max(0, Math.min(this.filtered.length - 1, idx + delta));
+                pos = Math.max(0, Math.min(total - 1, pos + delta));
             }
 
-            const sitch = this.filtered[idx];
-            if (!sitch) return;
-
-            if (e.shiftKey) {
-                // Extend selection
-                if (this._lastClickedIndex < 0) this._lastClickedIndex = idx;
-                const start = Math.min(this._lastClickedIndex, idx);
-                const end = Math.max(this._lastClickedIndex, idx);
-                this.selection.clear();
-                for (let i = start; i <= end; i++) {
-                    if (this.filtered[i]) this.selection.add(this.filtered[i].key);
-                }
+            if (offset && pos === 0) {
+                // Landed on the synthetic tile (single-select only; no shift ranges).
+                this._selectWarGovPRCard();
             } else {
-                this.selection.clear();
-                this.selection.add(sitch.key);
-                this._lastClickedIndex = idx;
+                const idx = pos - offset;
+                const sitch = this.filtered[idx];
+                if (!sitch) return;
+
+                if (e.shiftKey && this.selectedKey !== WARGOV_PR_KEY) {
+                    // Extend selection across real sitches only.
+                    if (this._lastClickedIndex < 0) this._lastClickedIndex = idx;
+                    const start = Math.min(this._lastClickedIndex, idx);
+                    const end = Math.max(this._lastClickedIndex, idx);
+                    this.selection.clear();
+                    for (let i = start; i <= end; i++) {
+                        if (this.filtered[i]) this.selection.add(this.filtered[i].key);
+                    }
+                } else {
+                    this.selection.clear();
+                    this.selection.add(sitch.key);
+                    this._lastClickedIndex = idx;
+                }
+
+                this.selectedKey = sitch.key;
+                if (this.viewMode === "list") this.updatePreview(sitch);
             }
 
-            this.selectedKey = sitch.key;
             this._updateHighlights();
-            if (this.viewMode === "list") this.updatePreview(sitch);
 
-            // Scroll into view
+            // Scroll the focused grid position into view.
             const container = this.viewMode === "list" ? this._tbody : this._thumbGrid;
-            if (container && container.children[idx]) {
-                container.children[idx].scrollIntoView({block: "nearest"});
+            if (container && container.children[pos]) {
+                container.children[pos].scrollIntoView({block: "nearest"});
             }
         }
 
-        if (e.key === "Enter" && this.selectedKey) {
-            this.close();
-            this._loadSitch(this.selectedKey);
+        if (e.key === "Enter") {
+            this._activateKey(this.selectedKey);
         }
     }
 
@@ -1079,7 +1118,7 @@ export class CSitchBrowser {
                     const cardY = cr.top - contRect.top + scrollContainer.scrollTop;
                     const overlaps = !(cardX + cr.width < bx || cardX > bx + bw ||
                         cardY + cr.height < by || cardY > by + bh);
-                    const key = this.filtered[i]?.key;
+                    const key = this.filtered[i - (this._thumbCardOffset || 0)]?.key;
                     if (key && overlaps) this.selection.add(key);
                 }
                 this._updateHighlights();
@@ -1386,7 +1425,7 @@ export class CSitchBrowser {
             if (this.selectedKey && this._thumbGrid) {
                 const i = this.filtered.findIndex(s => s.key === this.selectedKey);
                 if (i >= 0) {
-                    selectedCard = this._thumbGrid.children[i];
+                    selectedCard = this._thumbGrid.children[i + (this._thumbCardOffset || 0)];
                     if (selectedCard) {
                         offsetFromViewport = selectedCard.getBoundingClientRect().top - this._thumbScrollContainer.getBoundingClientRect().top;
                     }
@@ -1429,12 +1468,27 @@ export class CSitchBrowser {
         this._destroyThumbObserver();
         this._thumbGrid.innerHTML = "";
 
-        if (this.filtered.length === 0) {
+        // If the search text looks like a war.gov UAP case code (e.g. "PR050"),
+        // show a synthetic action tile as the first card. It is not a saved sitch,
+        // so it carries no data-sitch-card attribute and is excluded from
+        // selection/rubber-band. _thumbCardOffset keeps the positional
+        // DOM-child <-> this.filtered mapping correct everywhere else.
+        const prCode = extractWarGovPRCode(this.searchText);
+        this._thumbCardOffset = prCode ? 1 : 0;
+        this._warGovPRCode = prCode || null;
+        // If the synthetic tile was focused but no longer exists, drop the focus.
+        if (!prCode && this.selectedKey === WARGOV_PR_KEY) this.selectedKey = null;
+
+        if (this.filtered.length === 0 && !prCode) {
             const empty = document.createElement("div");
             Object.assign(empty.style, { padding: "40px 0", textAlign: "center", color: "#666", fontSize: "14px", gridColumn: "1 / -1" });
             empty.textContent = this.searchText ? "No matching sitches found." : "No saved sitches.";
             this._thumbGrid.appendChild(empty);
             return;
+        }
+
+        if (prCode) {
+            this._thumbGrid.appendChild(this._makeWarGovPRCard(prCode));
         }
 
         this._thumbObserver = new IntersectionObserver((entries) => {
@@ -1527,10 +1581,144 @@ export class CSitchBrowser {
 
         if (this.selectedKey) {
             const idx = this.filtered.findIndex(s => s.key === this.selectedKey);
-            if (idx >= 0 && this._thumbGrid.children[idx]) {
-                this._thumbGrid.children[idx].scrollIntoView({block: "nearest"});
+            const childIdx = idx + this._thumbCardOffset;
+            if (idx >= 0 && this._thumbGrid.children[childIdx]) {
+                this._thumbGrid.children[childIdx].scrollIntoView({block: "nearest"});
             }
         }
+    }
+
+    // Build the synthetic "war.gov UAP record" action tile shown when the
+    // search text matches a case code (e.g. "PR050"). Double-clicking it
+    // behaves exactly as if the corresponding war.gov page URL was dropped.
+    _makeWarGovPRCard(prCode) {
+        const card = document.createElement("div");
+        // Deliberately NO data-sitch-card: this is an action, not a saved sitch, so
+        // it stays out of rubber-band selection, multi-select, delete and context menu.
+        Object.assign(card.style, {
+            backgroundColor: "#1e2e1e", borderRadius: "8px",
+            border: "2px solid #3fb950", overflow: "hidden",
+            cursor: "pointer", transition: "border-color 0.15s",
+        });
+
+        // Selected => blue border (matching real cards); otherwise its green theme.
+        const setHighlight = () => {
+            const sel = this.selectedKey === WARGOV_PR_KEY;
+            card.style.borderColor = sel ? "#8ab4f8" : "#3fb950";
+            card.style.backgroundColor = sel ? "#252540" : "#1e2e1e";
+        };
+        card._setHighlight = setHighlight;
+        setHighlight();
+
+        card.addEventListener("mouseenter", () => {
+            if (this.selectedKey !== WARGOV_PR_KEY) card.style.borderColor = "#56d364";
+        });
+        card.addEventListener("mouseleave", () => setHighlight());
+        // Single click focuses/selects the tile (blue border), like a real card.
+        card.addEventListener("click", () => this._selectWarGovPRCard());
+
+        // Thumbnail area — a themed placeholder rather than a screenshot.
+        const imgWrap = document.createElement("div");
+        Object.assign(imgWrap.style, { width: "100%", aspectRatio: "16/9", backgroundColor: "#11240f", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", overflow: "hidden", gap: "4px" });
+        const icon = document.createElement("div");
+        Object.assign(icon.style, { fontSize: "40px", lineHeight: "1" });
+        icon.textContent = "🛸";
+        const codeBig = document.createElement("div");
+        Object.assign(codeBig.style, { fontSize: "22px", fontWeight: "700", color: "#56d364", letterSpacing: "1px" });
+        codeBig.textContent = prCode;
+        imgWrap.appendChild(icon);
+        imgWrap.appendChild(codeBig);
+        card.appendChild(imgWrap);
+
+        // Info
+        const info = document.createElement("div");
+        Object.assign(info.style, { padding: "8px 10px" });
+        const nameDiv = document.createElement("div");
+        Object.assign(nameDiv.style, { fontSize: "13px", fontWeight: "600", color: "#e0e0e0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
+        nameDiv.textContent = prCode;
+        nameDiv.title = `Open war.gov UAP record ${prCode}`;
+        info.appendChild(nameDiv);
+        const subDiv = document.createElement("div");
+        Object.assign(subDiv.style, { fontSize: "11px", color: "#7ee787", marginTop: "2px" });
+        subDiv.textContent = "Open war.gov UAP record";
+        info.appendChild(subDiv);
+        card.appendChild(info);
+
+        card.addEventListener("dblclick", () => this._triggerWarGovPRRecord(prCode));
+        return card;
+    }
+
+    // Resolve a war.gov case code by routing the URL to the SAME handler Sitrec
+    // uses for a dropped URL — keyed on the same condition the drop pipeline uses
+    // (does a "video" node exist to receive the video?).
+    //
+    //  - A video/custom sitch is already loaded (video node exists): hand the URL
+    //    straight to handleDroppedText() -> uploadURL(), exactly like dragging the
+    //    URL onto the running app. No sitch reload, so no disposeEverything() and
+    //    no WebGL context-loss churn. This is the path that already worked for
+    //    sitch-to-sitch swaps.
+    //  - No video node yet (e.g. the empty startup sitch): a dropped video has
+    //    nowhere to go (CFileManagerParse bails with "No video node found"), so we
+    //    must establish the custom sitch first. Queue the URL and load custom; the
+    //    custom sitch's setup drains the queue — identical to dropping a URL onto
+    //    the sitch browser, which is the canonical "start from scratch" flow.
+    _triggerWarGovPRRecord(prCode) {
+        const url = `https://www.war.gov/ufo/#${prCode}`;
+        if (NodeMan.exists("video")) {
+            this.close();
+            DragDropHandler.handleDroppedText(url);
+        } else {
+            DragDropHandler.pendingDropTexts.push(url);
+            this._loadCustomSitchForQueuedDrops(1);
+        }
+    }
+
+    // Activate a tile by key, i.e. do what Enter / a double-click does:
+    // the green tile resolves its war.gov record; a real sitch loads.
+    _activateKey(key) {
+        if (key === WARGOV_PR_KEY) {
+            if (this._warGovPRCode) this._triggerWarGovPRRecord(this._warGovPRCode);
+        } else if (key) {
+            this.close();
+            this._loadSitch(key);
+        }
+    }
+
+    // Key of the first visible tile (green war.gov tile if present, else first sitch).
+    _firstTileKey() {
+        if (this._hasSyntheticTile()) return WARGOV_PR_KEY;
+        return this.filtered.length ? this.filtered[0].key : null;
+    }
+
+    // Focus the synthetic war.gov tile (blue border). It is never added to
+    // this.selection — only this.selectedKey tracks it.
+    _selectWarGovPRCard() {
+        this.selection.clear();
+        this.selectedKey = WARGOV_PR_KEY;
+        this._lastClickedIndex = -1;
+        this._updateHighlights();
+    }
+
+    // True when the thumbnail grid currently leads with the synthetic war.gov tile.
+    _hasSyntheticTile() {
+        return this.viewMode === "thumbnails" && !!this._warGovPRCode;
+    }
+
+    // Down-arrow from the search box selects the first visible tile (green or otherwise).
+    _selectFirstTile() {
+        if (this._hasSyntheticTile()) {
+            this._selectWarGovPRCard();
+        } else if (this.filtered.length > 0) {
+            this.selection.clear();
+            this.selectedKey = this.filtered[0].key;
+            this.selection.add(this.selectedKey);
+            this._lastClickedIndex = 0;
+            this._updateHighlights();
+        } else {
+            return;
+        }
+        const container = this.viewMode === "list" ? this._tbody : this._thumbGrid;
+        if (container && container.children[0]) container.children[0].scrollIntoView({block: "nearest"});
     }
 
     // ==================== SHARED HELPERS ====================
