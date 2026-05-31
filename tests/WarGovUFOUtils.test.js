@@ -1,5 +1,8 @@
 import {
+    extractWarGovPRCode,
+    getAaroDvidsIdForPrCode,
     getWarGovUFODvidsId,
+    getWarGovUFODvidsIdForPrCode,
     getWarGovUFOPrCode,
     getWarGovUFORecordKey,
     isWarGovUFOPageURL,
@@ -78,5 +81,38 @@ describe("WarGovUFOUtils", () => {
         await expect(resolveWarGovUFOVideoURL(pr050URL, fetchImpl)).resolves.toBe(
             "https://d34w7g4gy10iej.cloudfront.net/video/2605/DOD_111719709/DOD_111719709.mp4"
         );
+    });
+
+    // AARO "Official UAP Imagery" cases PR-001..PR-018 (not in the war.gov CSVs).
+    const AARO_EXPECTED = {
+        PR001: "973045", PR002: "973048", PR003: "973055", PR004: "977221",
+        PR005: "977834", PR006: "977837", PR007: "977838", PR008: "977839",
+        PR009: "977840", PR010: "976937", PR011: "992261", PR012: "989428",
+        PR013: "992262", PR014: "989429", PR015: "989430", PR016: "988673",
+        PR017: "988675", PR018: "988676",
+    };
+
+    test("maps every AARO PR code (PR001..PR018) to its DVIDS ID", () => {
+        for (const [pr, id] of Object.entries(AARO_EXPECTED)) {
+            expect(getAaroDvidsIdForPrCode(pr)).toBe(id);
+        }
+        // Out of the AARO range -> not in the fixed table.
+        expect(getAaroDvidsIdForPrCode("PR019")).toBeNull();
+        expect(getAaroDvidsIdForPrCode("PR050")).toBeNull();
+    });
+
+    test("extracts single-digit PR codes and normalises to 3 digits", () => {
+        expect(extractWarGovPRCode("PR1")).toBe("PR001");
+        expect(extractWarGovPRCode("PR5")).toBe("PR005");
+        expect(extractWarGovPRCode("PR18")).toBe("PR018");
+        expect(extractWarGovPRCode("PR-9")).toBe("PR009");
+    });
+
+    test("resolves AARO PR codes without consulting the war.gov CSVs", async () => {
+        // fetchImpl throws if the catalog is loaded — proves the AARO short-circuit.
+        const noFetch = jest.fn(async () => { throw new Error("CSV should not be fetched for AARO codes"); });
+        await expect(getWarGovUFODvidsIdForPrCode("PR001", noFetch)).resolves.toBe("973045");
+        await expect(getWarGovUFODvidsId("https://www.war.gov/ufo/#PR018", noFetch)).resolves.toBe("988676");
+        expect(noFetch).not.toHaveBeenCalled();
     });
 });

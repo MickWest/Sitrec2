@@ -1636,11 +1636,12 @@ export class CSitchBrowser {
         const nameDiv = document.createElement("div");
         Object.assign(nameDiv.style, { fontSize: "13px", fontWeight: "600", color: "#e0e0e0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
         nameDiv.textContent = prCode;
-        nameDiv.title = `Open war.gov UAP record ${prCode}`;
+        nameDiv.title = `Open UAP case ${prCode}`;
         info.appendChild(nameDiv);
         const subDiv = document.createElement("div");
         Object.assign(subDiv.style, { fontSize: "11px", color: "#7ee787", marginTop: "2px" });
-        subDiv.textContent = "Open war.gov UAP record";
+        // PR-001..PR-018 are AARO Official UAP Imagery; PR019+ are the war.gov release.
+        subDiv.textContent = "Open UAP case record";
         info.appendChild(subDiv);
         card.appendChild(info);
 

@@ -6,6 +6,25 @@ const WAR_GOV_CSV_PATHS = [
     "data/WARGOV/uap-release001.csv",
 ];
 
+// AARO "Official UAP Imagery" cases, PR-001..PR-018, hosted on DVIDS. These
+// predate the war.gov "DOW-UAP-PRxx" release (PR019+) and are NOT in the WARGOV
+// CSVs, so they resolve from this fixed table (PR code -> DVIDS video ID).
+// Source: https://www.aaro.mil/UAP-Cases/Official-UAP-Imagery/ — each ID was
+// taken from the matching "PR-0NN, ... UAP Report ..." video on dvidshub.net.
+const AARO_PR_DVIDS_IDS = {
+    PR001: "973045", PR002: "973048", PR003: "973055",
+    PR004: "977221", PR005: "977834", PR006: "977837",
+    PR007: "977838", PR008: "977839", PR009: "977840",
+    PR010: "976937", PR011: "992261", PR012: "989428",
+    PR013: "992262", PR014: "989429", PR015: "989430",
+    PR016: "988673", PR017: "988675", PR018: "988676",
+};
+
+// DVIDS video ID for an AARO Official UAP Imagery PR code (PR001..PR018), or null.
+export function getAaroDvidsIdForPrCode(prCode) {
+    return (prCode && AARO_PR_DVIDS_IDS[prCode]) || null;
+}
+
 let warGovCatalogPromise = null;
 
 export function isWarGovUFOPageURL(url) {
@@ -31,7 +50,9 @@ export function getWarGovUFOPrCode(url) {
 
 export function extractWarGovPRCode(value) {
     if (typeof value !== "string") return null;
-    const match = value.match(/\bPR-?(\d{2,3})\b/i);
+    // 1-3 digits so AARO single-digit codes (PR1..PR9) are recognised too; all
+    // are normalised to a zero-padded 3-digit form (PR5 -> PR005, PR79 -> PR079).
+    const match = value.match(/\bPR-?(\d{1,3})\b/i);
     return match ? `PR${match[1].padStart(3, "0")}` : null;
 }
 
@@ -110,6 +131,10 @@ export function resetWarGovUFOCatalogCacheForTests() {
 }
 
 export async function getWarGovUFODvidsId(url, fetchImpl = fetch) {
+    // AARO PR-001..PR-018 are a fixed set not present in the war.gov CSVs.
+    const aaroId = getAaroDvidsIdForPrCode(getWarGovUFOPrCode(url));
+    if (aaroId) return aaroId;
+
     const catalog = await loadWarGovUFOCatalog(fetchImpl);
 
     for (const source of catalog) {
@@ -123,6 +148,10 @@ export async function getWarGovUFODvidsId(url, fetchImpl = fetch) {
 
 export async function getWarGovUFODvidsIdForPrCode(prCode, fetchImpl = fetch) {
     if (!prCode) return null;
+
+    const aaroId = getAaroDvidsIdForPrCode(prCode);
+    if (aaroId) return aaroId;
+
     const catalog = await loadWarGovUFOCatalog(fetchImpl);
 
     for (const source of catalog) {
