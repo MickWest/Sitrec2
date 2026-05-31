@@ -20,11 +20,29 @@
   <meta name="apple-mobile-web-app-title" content="Flares">
 
   <link rel="stylesheet" href="style.css?v=__BUILD_V__">
+
+  <!-- Capture the PWA install prompt as early as possible: Chrome/Edge/Android fire
+       `beforeinstallprompt` during load, often before app.js (an async ES module)
+       finishes loading. Stash the event on window and re-fire a custom event that
+       app.js listens for. iOS Safari never fires this — that path uses manual steps. -->
+  <script>
+    window.__bipEvent = null;
+    window.addEventListener("beforeinstallprompt", function (e) {
+      e.preventDefault();
+      window.__bipEvent = e;
+      window.dispatchEvent(new Event("bip-ready"));
+    });
+    window.addEventListener("appinstalled", function () {
+      window.__bipEvent = null;
+      window.dispatchEvent(new Event("app-installed"));
+    });
+  </script>
 </head>
 <body>
   <div id="form-screen" class="screen">
   <header class="app-header">
     <h1>Starlink Horizon Flares</h1>
+    <button type="button" class="info-btn" data-info aria-label="About Starlink horizon flares — how this works" title="How it works">i</button>
   </header>
 
   <main>
@@ -100,9 +118,232 @@
     <div class="results-bar">
       <button id="edit" type="button" class="edit-btn" aria-label="Edit inputs">&#8249; Edit</button>
       <span class="results-bar-title">Starlink Horizon Flares</span>
+      <button type="button" class="info-btn" data-info aria-label="About Starlink horizon flares — how this works" title="How it works">i</button>
     </div>
     <div id="results" class="results" aria-live="polite"></div>
   </section>
+
+  <section id="info-screen" class="screen" hidden>
+    <div class="results-bar">
+      <button id="info-back" type="button" class="edit-btn" aria-label="Back">&#8249; Back</button>
+      <span class="results-bar-title">About Starlink Horizon Flares</span>
+    </div>
+
+    <article class="info">
+      <!-- "It looks like" appearance box, floated right; the brief text flows around it. -->
+      <figure class="looklike">
+        <div id="info-looklike" class="looklike-anim" aria-hidden="true"></div>
+        <figcaption>What it looks like: brief flares fading in and out low over the
+          horizon in the night sky — directly above the sun.</figcaption>
+      </figure>
+
+      <h2>What is a Starlink horizon flare?</h2>
+      <p>A <strong>Starlink horizon flare</strong> is a brief bright point of light often brighter than Venus.
+        They are seen low over the horizon well after the Sun has set.
+        Each satellite carries a large, flat antenna that faces the ground. When that flat
+        surface catches the Sun at just the right angle, it acts like a mirror and the satellite briefly
+      becomes very bright.</p>
+      <p>Because the are tens of thousands of satellites in orbit, you get a constant,
+        but random-looking, sequence of flares in the region of the sky above the sun.
+        This is sometimes mistaken for a formation of lights, an "orb", or maneuvering
+        UFOs. This tool predicts <em>when</em> and in <em>which direction</em> those flares
+        will appear for a fixed location or along a flight path.</p>
+
+      <!-- Real-time direction simulation — the same animated compass rose as the results. -->
+      <h2>Live direction preview</h2>
+      <p class="info-sub">The compass below is the same real-time view the predictor shows
+        in its results: the yellow arrows point at the flare directions, and the twinkling
+        dots simulate flares appearing across that part of the sky.</p>
+      <div id="info-rose" class="rose-wrap info-rose" aria-hidden="true"></div>
+
+      <!-- AARO explainer video: playable and full-screenable. -->
+      <h2>Starlink Horizon Flares explained by AARO</h2>
+      <p class="info-sub">The U.S. All-domain Anomaly Resolution Office (AARO) explains the
+        phenomenon. Tap to play, and use the full-screen control for a closer look.</p>
+      <div class="info-video">
+        <video controls playsinline preload="metadata"
+               controlsList="nodownload" aria-label="Starlink Horizon Flares explained by AARO">
+          <source src="video/DOD_110779879-480p.mp4?v=__BUILD_V__" type="video/mp4">
+          Your browser can't play this video.
+        </video>
+      </div>
+
+      <h2>How it works in detail</h2>
+      <p>In its operational orbit, each Starlink satellite flies with the flat
+        underside of its bus — the phased-array antennas and mirrored panels — pointing straight
+        <strong>down</strong> at the ground (nadir) to serve its users, with the solar panels
+        extended above to catch the Sun. Because that reflective underside faces the ground, it
+        lies <strong>flat against the curve of the Earth</strong> — tangential to the surface
+        directly beneath the satellite, not tilted toward space. Smooth and flat, at narrow angles it behaves
+        like a mirror: a <strong>specular</strong> reflector (a “glint”) that throws the Sun's
+        light in one sharp, narrow beam instead of scattering it — which is what makes the flare
+        so intense, orders of magnitude brighter than ordinary diffuse reflection.</p>
+
+      <p>You see a flare only when the geometry lines up exactly. Reflect your line of sight to
+        the satellite off that downward-facing underside; if the reflected line points back at
+        the Sun, the mirror is aimed at <em>you</em> and the satellite flare. That is precisely
+        the test Sitrec performs — reflect the observer&#8202;→&#8202;satellite vector about the
+        panel's nadir normal and measure the angle to the Sun; within a couple of degrees it
+        flares, peaking when the alignment is near-perfect. The window is tiny and the satellite
+        is moving fast, so each flare lasts only a few seconds — yet it can briefly outshine
+        Venus.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 640 280" role="img"
+             aria-label="Diagram: grazing sunlight reflecting off a satellite's downward-facing flat antenna to an observer, equal angles about the straight-down normal">
+          <rect x="0" y="0" width="640" height="280" fill="#0b1326" rx="10"/>
+          <!-- satellite body + flat ground-facing antenna panel (horizontal) -->
+          <rect x="300" y="44" width="40" height="20" rx="3" fill="#2a3a5e" stroke="#5a6e9a" stroke-width="1"/>
+          <rect x="246" y="64" width="148" height="12" rx="2" fill="#9fb6e8" stroke="#cfe0ff" stroke-width="1.5"/>
+          <text x="320" y="36" text-anchor="middle" fill="#cfe0ff" font-size="13">Starlink satellite</text>
+          <text x="320" y="98" text-anchor="middle" fill="#9fb6e8" font-size="12">flat antenna — faces straight down</text>
+          <!-- satellite's local horizontal (the panel's plane), dotted -->
+          <line x1="120" y1="76" x2="560" y2="76" stroke="#3a4566" stroke-width="1" stroke-dasharray="3 4"/>
+          <!-- nadir normal: straight down, dashed -->
+          <line x1="320" y1="76" x2="320" y2="170" stroke="#7f8db3" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#dn)"/>
+          <text x="328" y="150" fill="#7f8db3" font-size="12">nadir normal</text>
+          <!-- incoming grazing sunlight: from the Sun (lower right) up into the panel -->
+          <line x1="582" y1="150" x2="332" y2="78" stroke="#ffd24a" stroke-width="2.5" marker-end="url(#sa)"/>
+          <text x="430" y="120" fill="#ffd24a" font-size="13">grazing sunlight</text>
+          <!-- reflected flare: panel down-left to observer (mirror image about the normal) -->
+          <line x1="308" y1="78" x2="58" y2="150" stroke="#ff9e2c" stroke-width="2.5" marker-end="url(#re)"/>
+          <text x="120" y="120" fill="#ff9e2c" font-size="13">reflected flare</text>
+          <!-- equal-angle arcs about the normal -->
+          <path d="M 320 116 A 40 40 0 0 1 348 105" fill="none" stroke="#cfe0ff" stroke-width="1.2"/>
+          <path d="M 320 116 A 40 40 0 0 0 292 105" fill="none" stroke="#cfe0ff" stroke-width="1.2"/>
+          <text x="356" y="112" fill="#cfe0ff" font-size="12">θ</text>
+          <text x="276" y="112" fill="#cfe0ff" font-size="12">θ</text>
+          <!-- Sun, just below the satellite's local horizon (over the limb) -->
+          <circle cx="592" cy="156" r="13" fill="#ffd24a"/>
+          <text x="592" y="186" text-anchor="middle" fill="#ffd24a" font-size="12">Sun</text>
+          <!-- observer -->
+          <circle cx="52" cy="156" r="6" fill="#5ad0a0"/>
+          <text x="52" y="186" text-anchor="middle" fill="#5ad0a0" font-size="12">Observer</text>
+          <defs>
+            <marker id="dn" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+              <path d="M0,0 L9,4.5 L0,9 Z" fill="#7f8db3"/></marker>
+            <marker id="sa" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+              <path d="M0,0 L9,4.5 L0,9 Z" fill="#ffd24a"/></marker>
+            <marker id="re" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+              <path d="M0,0 L9,4.5 L0,9 Z" fill="#ff9e2c"/></marker>
+          </defs>
+        </svg>
+        <figcaption>The ground-facing panel acts as a flat mirror. Sunlight grazes in over the
+          limb (just below the satellite's local horizon) and reflects down to an observer at the
+          mirror-image angle about the straight-down normal — so the flare appears low in the sky.</figcaption>
+      </figure>
+
+      <p>Lighting an underside that faces the ground means the sunlight has to arrive almost
+        horizontally, <strong>grazing in over the Earth's limb</strong>. That only happens when
+        the satellite sits near the edge of the Earth as you see it — low on your horizon — and
+        the reflected beam then comes down to you at a shallow angle. So the flares appear in a
+        small patch of sky AARO calls the <strong>flare window</strong>: between the horizon and
+        only about <strong>10° above it</strong>, clustered <strong>toward the Sun's position
+        below the horizon</strong>. For the nominal 550&#8239;km orbit this happens while the Sun
+        sits roughly <strong>38°–46° below the horizon</strong>. That is why they are called
+        <em>horizon</em> flares, and why they show up over the spot where the Sun has set (or is
+        about to rise).</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 640 280" role="img"
+             aria-label="Diagram: a night-side observer sees a low satellite near the horizon still catching grazing sunlight over the Earth's limb">
+          <rect x="0" y="0" width="640" height="280" fill="#0b1326" rx="10"/>
+          <!-- Earth -->
+          <circle cx="320" cy="1010" r="838" fill="#16223f" stroke="#2a3550" stroke-width="2"/>
+          <!-- night shading on the observer's side -->
+          <rect x="0" y="0" width="330" height="280" fill="#060a16" opacity="0.45"/>
+          <text x="40" y="262" fill="#46527a" font-size="12">night side</text>
+          <!-- observer's local horizon (tangent), dashed -->
+          <line x1="120" y1="178" x2="560" y2="178" stroke="#3a4566" stroke-width="1.2" stroke-dasharray="5 4"/>
+          <text x="126" y="170" fill="#7f8db3" font-size="12">observer's horizon</text>
+          <!-- observer on the surface -->
+          <circle cx="250" cy="178" r="6" fill="#5ad0a0"/>
+          <text x="236" y="204" fill="#5ad0a0" font-size="12">Observer (in the dark)</text>
+          <!-- satellite low on the horizon toward the Sun, still sunlit -->
+          <rect x="452" y="118" width="34" height="10" rx="2" fill="#9fb6e8" stroke="#cfe0ff" stroke-width="1.2"/>
+          <text x="496" y="118" fill="#cfe0ff" font-size="12">Starlink (still sunlit)</text>
+          <!-- grazing sunlight from beyond the limb -->
+          <g stroke="#ffd24a" stroke-width="2" opacity="0.85">
+            <line x1="626" y1="150" x2="488" y2="121" marker-end="url(#g1)"/>
+            <line x1="626" y1="186" x2="500" y2="138" marker-end="url(#g1)"/>
+          </g>
+          <text x="540" y="232" fill="#ffd24a" font-size="12">grazing sunlight</text>
+          <!-- Sun below the observer's horizon -->
+          <circle cx="600" cy="250" r="13" fill="#ffd24a"/>
+          <text x="600" y="276" text-anchor="middle" fill="#ffd24a" font-size="12">Sun (below horizon)</text>
+          <!-- reflected flare down to the observer -->
+          <line x1="456" y1="124" x2="256" y2="176" stroke="#ff9e2c" stroke-width="2.5" marker-end="url(#g2)"/>
+          <text x="300" y="138" fill="#ff9e2c" font-size="12">flare to observer</text>
+          <defs>
+            <marker id="g1" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+              <path d="M0,0 L9,4.5 L0,9 Z" fill="#ffd24a"/></marker>
+            <marker id="g2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+              <path d="M0,0 L9,4.5 L0,9 Z" fill="#ff9e2c"/></marker>
+          </defs>
+        </svg>
+        <figcaption>The Sun can be tens of degrees below the observer's horizon while a
+          satellite near the limb is still bathed in sunlight — so horizon flares are
+          <strong>not a twilight effect</strong>. For the nominal 550&#8239;km orbit they appear
+          when the Sun is roughly <strong>38°–46° below the horizon</strong>: deep night, long
+          after dusk or before dawn.</figcaption>
+      </figure>
+
+      <p>And despite sometimes being confused with one, a horizon-flare display is
+        <strong>not a moving train</strong> of lights. The familiar “Starlink train” is a
+        separate effect: for a few days after launch the satellites fly in an “open-book” ascent
+        configuration with their solar panels turned toward Earth, and it is sunlight off those
+        <em>solar panels</em> that draws the line of bright dots. A horizon flare is the opposite
+        — each flare is a <em>different</em> operational satellite, out of the thousands overhead
+        in many orbital planes, catching the Sun for an instant off its mirrored underside as it
+        crosses the flare window. The result is a random-looking sprinkle of flares popping in
+        and out in one small patch of sky — which AARO notes can look like spinning lights,
+        glowing orbs that vanish and reappear, or shapes such as triangles, and is a common
+        source of UAP reports.</p>
+
+      <p>The predictor reproduces this geometry numerically: it propagates each satellite's
+        orbit from its <abbr title="Two-Line Element set">TLE</abbr>, computes the Sun
+        direction, and for every moment checks whether the satellite is above your horizon,
+        still sunlit, and aimed at you by the mirror test above — the same flare-detection math
+        used inside Sitrec. Press <strong>“Open in Sitrec”</strong> on a result to explore the
+        event in a full 3-D recreation.</p>
+
+      <h2>Learn more</h2>
+      <ul class="info-links">
+        <li><a href="https://www.aaro.mil/Portals/136/PDFs/Information%20Papers/AARO_Satellite_Flaring_Paper_508_FINAL_04222025.pdf"
+               rel="noopener" target="_blank">AARO Satellite Flaring information paper</a>
+          — the official explanation of the phenomenon (PDF).</li>
+        <li><a href="https://github.com/MickWest/Sitrec2" rel="noopener" target="_blank">Sitrec on GitHub</a>
+          — the 3-D situation-recreation tool this predictor's physics comes from.</li>
+        <li><a href="https://www.metabunk.org" rel="noopener" target="_blank">Metabunk</a>
+          — discussion and analysis of UAP/UFO sightings, including satellite flares.</li>
+        <li><a href="https://celestrak.org/NORAD/elements/" rel="noopener" target="_blank">CelesTrak</a>
+          — the live Starlink orbital element (TLE) data the “Fetch current TLE” option uses.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Starlink" rel="noopener" target="_blank">Starlink (Wikipedia)</a>
+          — background on the satellite constellation.</li>
+      </ul>
+    </article>
+  </section>
+
+  <!-- Install button — outside the screen divs so it appears at the bottom of every
+       screen (form, results, info). Shown only when NOT already an installed app. -->
+  <div id="install-wrap" class="install-wrap" hidden>
+    <button id="install-app" type="button" class="install-btn">
+      <span class="install-ico" aria-hidden="true">⤓</span> Install App
+    </button>
+    <p class="install-hint">Add Starlink Horizon Flares to your home screen for one-tap,
+      full-screen, offline access.</p>
+  </div>
+
+  <!-- Manual install instructions (iOS, or browsers without an automated prompt). -->
+  <div id="install-modal" class="modal" hidden role="dialog" aria-modal="true"
+       aria-labelledby="install-modal-title">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card" role="document">
+      <h3 id="install-modal-title">Install the app</h3>
+      <div id="install-modal-body" class="modal-body"></div>
+      <button id="install-modal-close" type="button" class="go-btn modal-ok">Got it</button>
+    </div>
+  </div>
 
   <script type="module" src="app.js?v=__BUILD_V__"></script>
 </body>

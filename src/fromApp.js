@@ -193,6 +193,11 @@ export async function buildAppFlightTrack(p) {
     const info = FileManager.getInfo(filename);
     info.filename = filename;
     info.dataType = "MISB";
+    // Route this track through CNodeLazyMISBFlightTrack (sparse, lazily
+    // interpolated) instead of a baked per-frame array. Not serialized — the
+    // file is dropped via skipSerialization and this flag is re-set on reload
+    // when CustomManagerSerialize re-invokes buildAppFlightTrack.
+    info.isAppFlight = true;
     // Regenerable from the params below, so never rehost/serialize the generated file:
     // skipSerialization drops it from both rehost paths and the loadedFiles save loop.
     info.skipSerialization = true;
@@ -217,6 +222,23 @@ export async function buildAppFlightTrack(p) {
         }
     }
     return null;
+}
+
+// --- lightweight flight scene: skip the unused video-analysis machinery -------
+// A Starlink-from-plane scene needs only the (lazy) flight camera + satellites +
+// the look-camera aim. The Custom graph it inherits also builds a target track,
+// traverse, LOS-to-target, and altitude/distance measurement labels — none used
+// here, yet each pins an expensive per-frame "smoothed" track / munge that re-bakes
+// on every cascade (e.g. time-menu edits). Hiding their display leaves lets the
+// engine's existing checkDisplayOutputs gate skip those bakes. We hide, not delete,
+// so nothing that references these node ids breaks and a real dropped track would
+// restore them. Gated on Sit.appFlight; shared by live launch + saved-sitch reload.
+export function applyFlightLightweightGating() {
+    if (!Sit.appFlight) return;
+    for (const id of ["traverseDisplayTrack", "altitudeLabel2", "distanceLabel",
+                      "traverseObject", "moveTargetAlongPath", "orientTarget"]) {
+        NodeMan.get(id, false)?.show?.(false);
+    }
 }
 
 // --- after the sitch is set up: place the camera + start playback -------------
@@ -253,6 +275,9 @@ export async function finishFromApp(p) {
     // Turn off the red Line-Of-Sight display (no traverse target here, it just clutters).
     const losDisplay = NodeMan.get("displayLOS", false);
     if (losDisplay && typeof losDisplay.show === "function") losDisplay.show(false);
+
+    // Skip the unused target/traverse/measurement machinery (keeps time-menu edits light).
+    applyFlightLightweightGating();
 
     // Frame the main 3D view on the look camera + the flare band/region.
     frameMainView(observerECEF, p.peakAz);

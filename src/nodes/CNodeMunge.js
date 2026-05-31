@@ -8,6 +8,14 @@ export class CNodeMunge extends CNode {
         super(v);
         this.munge = v.munge
 
+        // Default to skipping the per-frame bake when no visible display output
+        // consumes this munge (e.g. a closed graph or hidden label — the common case).
+        // Safe/behavior-identical: getValueFrame() falls back to a live munge() compute
+        // and nothing reads .cachedValues directly, so a skipped bake changes only WHEN
+        // the work happens, not the result. A visible graph keeps countVisibleOutputs>0
+        // so it still bakes. Opt out with checkDisplayOutputs:false.
+        this.checkDisplayOutputs = v.checkDisplayOutputs ?? true;
+
         // remember the input we derived frame count from, so recalculate()
         // can re-read it after Sit.frames cascades through the source node
         if (v.frames === undefined) {
@@ -30,6 +38,15 @@ export class CNodeMunge extends CNode {
         // count may have grown via the Sit.frames cascade
         if (this.framesSource !== undefined) {
             this.frames = this.framesSource.frames;
+        }
+        // Skip baking the per-frame cache when this munge has no visible display
+        // output (e.g. its speed graph panel is closed — the default). getValueFrame()
+        // falls back to the live munge() for any visible-frame read, and a cascade
+        // re-bakes automatically once the graph is shown (countVisibleOutputs > 0).
+        // Behavior-identical for hidden graphs; only changes WHEN the work happens.
+        if (this.checkDisplayOutputs && this.countVisibleOutputs(0, true) === 0) {
+            this.cachedValues = undefined;
+            return;
         }
         if (this.frames > 0) {
             this.cachedValues = new Array(this.frames);

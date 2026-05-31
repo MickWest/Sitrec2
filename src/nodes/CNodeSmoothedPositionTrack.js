@@ -121,6 +121,27 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
     recalculate() {
 
         assert(this.in.source !== undefined, "CNodeSmoothedPositionTrack: source input is undefined, id=" + this.id)
+
+        // Passthrough: if the source resolves (through a switch) to a lazily-
+        // interpolated track that stores no per-frame array (the synthetic app
+        // flight), don't bake. Delegate getValue/getValueFrame to the source so
+        // the camera gets on-demand smooth values. Re-evaluated every cascade, so
+        // switching camera tracks turns this on/off dynamically.
+        const resolved = (typeof this.in.source.getObject === 'function')
+            ? this.in.source.getObject() : this.in.source;
+        if (resolved?.lazyInterpolated === true) {
+            this._passthrough = true;
+            // Propagate the lazy flag so a smoother-of-this-smoother (e.g. the
+            // ObjectTilt orientation smoothers chained off cameraTrackSwitchSmooth)
+            // also takes the passthrough path instead of baking 414k entries.
+            this.lazyInterpolated = true;
+            this.frames = this.in.source.frames;
+            this.array = undefined;
+            return;
+        }
+        this._passthrough = false;
+        this.lazyInterpolated = false;   // clear when the source is no longer lazy
+
         assert(!this.in.source._needsRecalculate,
             "CNodeSmoothedPositionTrack(" + this.id + "): direct lazy source " + this.in.source.id + " not supported; use a switch or materialize first");
         this.sourceArray = this.in.source.array;
@@ -406,6 +427,9 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
             // rebuilding now that we've been asked for a frame past the end.
             this.recalculate();
         }
+        if (this._passthrough) {
+            return this.in.source.getValueFrame(frame);
+        }
         let pos;
         if (this.method === "none" || this.method === "moving" || this.method === "movingPolyEdge" || this.method === "sliding" || this.method === "savgol" || this.method === "spline") {
             assert(this.array[frame] !== undefined, "CNodeSmoothedPositionTrack: array[frame] is undefined, frame=" + frame + " id=" + this.id)
@@ -426,6 +450,28 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
             return {position: pos}
         }
 
+    }
+
+    getValue(frame) {
+        if (this._needsRecalculate) {
+            this._needsRecalculate = false;
+            this.recalculate();
+        }
+        if (this._passthrough) {
+            return this.in.source.getValue(frame);
+        }
+        return super.getValue(frame);
+    }
+
+    exportArray(inspect = false) {
+        if (this._passthrough) {
+            // No per-frame array to export; defer to the source if it can.
+            if (typeof this.in.source.exportArray === 'function') {
+                return this.in.source.exportArray(inspect);
+            }
+            return inspect ? null : undefined;
+        }
+        return super.exportArray(inspect);
     }
 
 

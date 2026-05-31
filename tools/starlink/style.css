@@ -47,7 +47,13 @@ body {
 main, .app-header, .app-footer { max-width: 640px; margin: 0 auto; }
 
 /* ---- header ---- */
-.app-header { padding: 8px 2px 18px; }
+.app-header {
+  padding: 8px 2px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 h1 {
   font-size: 1.55rem;
   margin: 0 0 6px;
@@ -513,3 +519,190 @@ input[type="file"]::file-selector-button {
   font-weight: 600;
 }
 .flare-details > .card { margin-top: 10px; }
+
+/* =========================================================================
+   Info ("i") button + Info screen
+   ========================================================================= */
+.info-btn {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--accent-2);
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-style: italic;
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.info-btn:active { background: var(--panel); }
+.info-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(255, 158, 44, 0.22);
+}
+/* In the results bar the info button sits at the far right. */
+.results-bar .info-btn { margin-left: auto; }
+
+.info {
+  max-width: 760px;
+  margin: 0 auto;
+  color: var(--text);
+  line-height: 1.55;
+}
+.info h2 {
+  font-size: 1.15rem;
+  margin: 26px 0 8px;
+  color: var(--accent-2);
+}
+.info h2:first-of-type { margin-top: 8px; }
+.info p { margin: 0 0 12px; color: var(--text); }
+.info .info-sub { color: var(--muted); font-size: 0.92rem; margin-bottom: 10px; }
+.info abbr { text-decoration: underline dotted; cursor: help; }
+
+/* "It looks like" appearance box, floated so the brief text flows around it. */
+.looklike {
+  float: right;
+  width: 210px;
+  max-width: 46%;
+  margin: 4px 0 12px 16px;
+  padding: 8px;
+  background: linear-gradient(180deg, var(--panel), var(--panel-2));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+.looklike-anim { line-height: 0; border-radius: 8px; overflow: hidden; }
+.looklike-sky { display: block; width: 100%; height: auto; border-radius: 8px; }
+.looklike figcaption {
+  margin-top: 7px;
+  font-size: 0.76rem;
+  color: var(--faint);
+  line-height: 1.35;
+}
+
+/* The live compass-rose preview reuses .rose-wrap; just give it breathing room. */
+.info-rose { margin: 6px 0 4px; }
+
+/* Responsive 16:9 video that can be played and full-screened. */
+.info-video {
+  margin: 4px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+.info-video video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+
+/* Explanatory diagrams. */
+.diagram {
+  clear: both;
+  margin: 14px 0 16px;
+}
+.diagram svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.diagram figcaption {
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: var(--faint);
+  text-align: center;
+}
+
+.info-links { margin: 8px 0 4px; padding-left: 20px; }
+.info-links li { margin: 8px 0; color: var(--muted); font-size: 0.92rem; }
+.info-links a { color: var(--accent-2); font-weight: 600; }
+
+/* On narrow phones, let the appearance box go full width above the text. */
+@media (max-width: 460px) {
+  .looklike {
+    float: none;
+    width: 100%;
+    max-width: 280px;
+    margin: 4px auto 14px;
+  }
+}
+
+/* =========================================================================
+   Install-app button + instructions modal
+   ========================================================================= */
+.install-wrap {
+  max-width: 640px;
+  margin: 22px auto 0;
+  text-align: center;
+}
+.install-wrap[hidden] { display: none; }
+.install-btn {
+  font-size: 1rem;
+  font-weight: 700;
+  min-height: 50px;
+  padding: 0 24px;
+  color: var(--accent-2);
+  background: var(--panel-2);
+  border: 1px solid var(--accent-dim);
+  border-radius: 12px;
+  cursor: pointer;
+  letter-spacing: 0.2px;
+}
+.install-btn:active { transform: translateY(1px); }
+.install-ico { margin-right: 7px; font-weight: 700; }
+.install-hint {
+  margin: 8px auto 0;
+  max-width: 30em;
+  color: var(--faint);
+  font-size: 0.8rem;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.modal[hidden] { display: none; }
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 5, 12, 0.66);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+.modal-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 420px;
+  background: linear-gradient(180deg, var(--panel), var(--panel-2));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.55);
+}
+.modal-card h3 { margin: 0 0 12px; color: var(--accent-2); font-size: 1.15rem; }
+.modal-body { color: var(--text); font-size: 0.95rem; line-height: 1.5; }
+.modal-body p { margin: 0 0 8px; }
+.modal-body ol { padding-left: 22px; margin: 8px 0; }
+.modal-body li { margin: 9px 0; }
+.modal-body .share-ico { vertical-align: -3px; margin: 0 2px; }
+.modal-body .modal-note { color: var(--faint); font-size: 0.82rem; margin-top: 10px; }
+.modal-ok { width: 100%; margin-top: 16px; }

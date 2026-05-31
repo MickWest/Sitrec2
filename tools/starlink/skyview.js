@@ -17,10 +17,51 @@ function angDiff(a, b) {
     return d;
 }
 
+// One animated "flare" dot at (px,py): a small white point that brightens, holds,
+// and fades while drifting a short distance, at SPEED units/s, in a random
+// direction, lit at a random moment within a single PERIOD-second SMIL loop.
+// Three-stage envelope: rise (upMin..upMin+upRange s), hold at MAX (2–12 s), fall
+// (== rise). The compass uses a brisk 1–2 s rise; the naked-eye preview 3–6 s.
+// opts:
+//   upOnly     — restrict the drift so it never heads downward (dy <= 0 in SVG).
+//   shrinkFade — fade ENTIRELY by growing/shrinking the radius (0 -> rMax -> 0) at
+//                constant full opacity, instead of dimming a fixed-size disk. Opacity
+//                is then binary, toggled only while the radius is 0 (so no visible
+//                pop and no dim translucent disks); the inevitable sub-pixel tail
+//                where r < ~1px is the only place transparency does any work.
+function twinkleFlare(px, py, PERIOD, SPEED, upMin = 1, upRange = 1, opts = {}) {
+    const up = upMin + Math.random() * upRange;        // fade-in / fade-out time
+    const hold = 2 + Math.random() * 10;               // hold at max 2–12 s
+    const D = up + hold + up;                           // total lit window (down == up)
+    const t0 = Math.random() * (PERIOD - D);           // random moment in the loop
+    // Drift direction; with upOnly, pick a lower-half angle so sin(dir) <= 0 -> dy <= 0
+    // in SVG coordinates (y grows downward), i.e. the dot only ever moves up or sideways.
+    const dir = opts.upOnly ? Math.PI + Math.random() * Math.PI : Math.random() * 2 * Math.PI;
+    const dist = SPEED * D;                            // same speed -> distance ∝ D
+    const dx = Math.cos(dir) * dist, dy = Math.sin(dir) * dist;
+    const rDot = 1.1 + Math.random() * 0.9;
+    const rMax = rDot * 1.7;
+    // key times (normalised to the loop): idle, rise, hold, fall, idle
+    const t1 = (t0 / PERIOD).toFixed(4);
+    const t2 = ((t0 + up) / PERIOD).toFixed(4);
+    const t3 = ((t0 + up + hold) / PERIOD).toFixed(4);
+    const t4 = ((t0 + D) / PERIOD).toFixed(4);
+    const kt = `0;${t1};${t2};${t3};${t4};1`;
+    // Fade by SIZE (shrinkFade) or by OPACITY (default compass look).
+    const opVals = opts.shrinkFade ? `0;1;1;1;1;0` : `0;0;0.95;0.95;0;0`;
+    const rVals = opts.shrinkFade
+        ? `0;0;${n(rMax)};${n(rMax)};0;0`
+        : `${n(rDot * 0.4)};${n(rDot * 0.4)};${n(rMax)};${n(rMax)};${n(rDot * 0.4)};${n(rDot * 0.4)}`;
+    return `<circle cx="${n(px)}" cy="${n(py)}" r="0" fill="#ffffff" opacity="0">`
+        + `<animate attributeName="opacity" dur="${PERIOD}s" repeatCount="indefinite" keyTimes="${kt}" values="${opVals}"/>`
+        + `<animate attributeName="r" dur="${PERIOD}s" repeatCount="indefinite" keyTimes="${kt}" values="${rVals}"/>`
+        + `<animateTransform attributeName="transform" type="translate" dur="${PERIOD}s" repeatCount="indefinite" keyTimes="0;${t1};${t4};1" values="0 0;0 0;${n(dx)} ${n(dy)};${n(dx)} ${n(dy)}"/>`
+        + `</circle>`;
+}
+
 // Animated "sprinkle" of small white flares in the angular sector BETWEEN the
-// arrows (just outside the rim). Each dot twinkles (opacity + size) and drifts a
-// short distance over 5–10 s — every dot at the SAME speed but a random direction
-// and a random moment within a single 60 s loop (SMIL, repeats indefinitely).
+// arrows (just outside the rim). Every dot at the SAME speed but a random
+// direction/moment within a single 60 s loop (SMIL, repeats indefinitely).
 function flareDots(arrows, cx, cy, R) {
     if (!arrows || !arrows.length) return "";
     const a0 = arrows[0].azDeg;
@@ -38,27 +79,7 @@ function flareDots(arrows, cx, cy, R) {
         const rad = R + 4 + Math.random() * 22;            // just beyond the outer ring
         const px = cx + Math.sin(az) * rad;
         const py = cy - Math.cos(az) * rad;
-        // Three-stage flare envelope: fade UP (1–2 s), hold at MAX (2–12 s),
-        // fade DOWN (== up). The dot drifts the whole time it is lit.
-        const up = 1 + Math.random();                      // fade-in / fade-out 1–2 s
-        const hold = 2 + Math.random() * 10;               // hold at max 2–12 s
-        const D = up + hold + up;                           // total lit window (down == up)
-        const t0 = Math.random() * (PERIOD - D);           // random moment in the loop
-        const dir = Math.random() * 2 * Math.PI;           // random direction
-        const dist = SPEED * D;                            // same speed -> distance ∝ D
-        const dx = Math.cos(dir) * dist, dy = Math.sin(dir) * dist;
-        const rDot = 1.1 + Math.random() * 0.9;
-        // key times (normalised to the 60 s loop): idle, rise, hold, fall, idle
-        const t1 = (t0 / PERIOD).toFixed(4);
-        const t2 = ((t0 + up) / PERIOD).toFixed(4);
-        const t3 = ((t0 + up + hold) / PERIOD).toFixed(4);
-        const t4 = ((t0 + D) / PERIOD).toFixed(4);
-        const kt = `0;${t1};${t2};${t3};${t4};1`;
-        out += `<circle cx="${n(px)}" cy="${n(py)}" r="${n(rDot)}" fill="#ffffff" opacity="0">`
-            + `<animate attributeName="opacity" dur="${PERIOD}s" repeatCount="indefinite" keyTimes="${kt}" values="0;0;0.95;0.95;0;0"/>`
-            + `<animate attributeName="r" dur="${PERIOD}s" repeatCount="indefinite" keyTimes="${kt}" values="${n(rDot * 0.4)};${n(rDot * 0.4)};${n(rDot * 1.7)};${n(rDot * 1.7)};${n(rDot * 0.4)};${n(rDot * 0.4)}"/>`
-            + `<animateTransform attributeName="transform" type="translate" dur="${PERIOD}s" repeatCount="indefinite" keyTimes="0;${t1};${t4};1" values="0 0;0 0;${n(dx)} ${n(dy)};${n(dx)} ${n(dy)}"/>`
-            + `</circle>`;
+        out += twinkleFlare(px, py, PERIOD, SPEED);
     }
     return out;
 }
@@ -270,6 +291,44 @@ export function horizonView(opts) {
 
     svg += `</svg>`;
     return svg;
+}
+
+// --- "it looks like" naked-eye animation -----------------------------------
+// The same twinkling-flare sprinkle as the compass-rose live preview, but set in
+// a small patch of night sky: a horizon line, a couple of static stars, and the
+// flares appearing/drifting low over the horizon (reuses twinkleFlare, so the
+// motion matches the compass exactly). Self-contained animated SVG (SMIL).
+export function flareSimSky() {
+    const W = 200, H = 150, horizonY = 128;
+
+    // A couple of static background stars.
+    const starPos = [[40, 30], [150, 26], [96, 50], [176, 66], [22, 60]];
+    let stars = "";
+    for (const [x, y] of starPos) {
+        stars += `<circle cx="${x}" cy="${y}" r="0.9" fill="#cdd8f5" opacity="0.7"/>`;
+    }
+
+    // Twinkling flares — same envelope/drift mechanism as the compass sprinkle, but
+    // with slow 3–6 s fades and clustered toward the centre of the patch (the part of
+    // sky above the set Sun), drifting gently so they stay framed.
+    const PERIOD = 60, SPEED = 4.2, N = 14;
+    let flares = "";
+    for (let i = 0; i < N; i++) {
+        const px = W / 2 + (Math.random() - 0.5) * 84;     // centred ~100 ± 42
+        const py = 60 + Math.random() * 48;                // mid-low in the sky, above the horizon
+        flares += twinkleFlare(px, py, PERIOD, SPEED, 3, 3, { upOnly: true, shrinkFade: true });   // fade-in/out 3–6 s
+    }
+
+    return `<svg viewBox="0 0 ${W} ${H}" class="looklike-sky" role="img" aria-label="Animation of Starlink satellites flaring low over the horizon">
+      <defs><linearGradient id="llsky" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#0a1330"/><stop offset="1" stop-color="#1a2a4d"/>
+      </linearGradient></defs>
+      <rect x="0" y="0" width="${W}" height="${horizonY}" fill="url(#llsky)"/>
+      <rect x="0" y="${horizonY}" width="${W}" height="${H - horizonY}" fill="#070b16"/>
+      <line x1="0" y1="${horizonY}" x2="${W}" y2="${horizonY}" stroke="#5a6e9a" stroke-width="1" stroke-opacity="0.7"/>
+      ${stars}
+      ${flares}
+    </svg>`;
 }
 
 // Decide a horizon-view window (centre + half-width) that frames all the flares.

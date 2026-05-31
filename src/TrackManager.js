@@ -26,6 +26,7 @@ import {EventManager} from "./CEventManager";
 // Removed mathjs import - using native JavaScript Number.isFinite or typeof checks
 import {CNodeMISBDataTrack, makeLOSNodeFromTrackAngles, removeLOSNodeColumnNodes} from "./nodes/CNodeMISBData";
 import {CNodeTrackFromMISB} from "./nodes/CNodeTrackFromMISB";
+import {CNodeLazyMISBFlightTrack} from "./nodes/CNodeLazyMISBFlightTrack";
 import {assert} from "./assert";
 import {getLocalSouthVector, getLocalUpVector, pointOnSphereBelow} from "./SphericalMath";
 import {closestIntersectionTime, trackBoundingBox} from "./trackUtils";
@@ -307,6 +308,20 @@ class CTrackManager extends CManager {
     makeTrackFromMISBData(sourceFile, dataID, trackID, columns, guiFolder = null, trackIndex = 0) {
         const fileInfo = FileManager.getInfo(sourceFile);
         const frameRelativeTime = (fileInfo.dataType === "CUSTOM_FLL");
+
+        // The synthetic "Open in Sitrec" airplane flight uses a lazily-interpolated
+        // track that stores only the sparse MISB samples (≤1200) and interpolates
+        // the camera on demand, instead of baking a per-global-frame array (and
+        // then re-smoothing it). Gated strictly by isAppFlight so no other track
+        // path changes.
+        if (fileInfo.isAppFlight) {
+            return new CNodeLazyMISBFlightTrack({
+                id: trackID,
+                misb: dataID,
+                columns: columns,
+                exportable: true,
+            });
+        }
 
         // right now we only smooth the track if it's a custom situation
         // otherwise we just use the raw interpolated data

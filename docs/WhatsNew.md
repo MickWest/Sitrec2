@@ -9,6 +9,26 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.68.0 (2026-05-31)
+
+### New Features
+- **Open in Sitrec** (Starlink Horizon Flare tool → results screen): The flare tool's results now have an *Open in Sitrec* button that launches the full 3D recreation of the predicted event — a real-time timeline over the whole flare window, the camera pre-aimed at the flare region just above the set Sun, and (for flight searches) your real origin-to-destination flight as a selectable track.
+- **Open a UAP case by code** (Sitch Browser): Typing a war.gov UAP case code (e.g. *PR050*) into the Sitch Browser search box surfaces a green tile as the first result; click it to load that case's video, just like dragging in its web link.
+- **About page** (Starlink Horizon Flare tool → "i" button): A new info page explains what Starlink horizon flares are, with an animated "what it looks like" preview, a live direction-compass demo, an embedded AARO explainer video, illustrated diagrams of how the geometry works, and links to further reading.
+- **Install App button** (Starlink Horizon Flare tool): An *Install App* button now appears at the bottom of every screen, walking you through adding the tool to your phone or desktop home screen for one-tap, full-screen, offline use (with the right steps for iPhone, Android, and desktop).
+
+### Improvements
+- The flare tool and Sitch Browser now recognise AARO's Official UAP Imagery cases PR1 through PR18 (single-digit codes like *PR1* work too), in addition to the previously supported war.gov cases.
+- Starlink Horizon Flare tool: the "next flares from here" search now looks ahead 24 hours instead of 3 days, so results come back faster (flares recur daily, so nothing is missed).
+- The synthetic "Open in Sitrec" airplane flight now loads and runs much more efficiently, so building and saving that scene — and editing its time settings — is noticeably faster.
+
+### Bug Fixes
+- Fixed a crash when switching between situations that could leave the 3D view unusable.
+- Fixed the rare "Multiple instances of Three.js" warning and the subtle rendering glitches that came with it.
+- Fixed the synthetic "Open in Sitrec" flight being unnecessarily embedded when you save the scene; saved files are now smaller and reload identically.
+
+---
+
 ## Version 2.67.0 (2026-05-30)
 
 ### New Features

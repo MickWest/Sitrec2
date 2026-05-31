@@ -87,6 +87,7 @@ const SKIP_FILES = new Set([
     "CNodeTerrain.js",          // nested ESM path
     "CNodeTerrainUI.js",        // nested ESM path
     "CNodeTrackFromMISB.js",    // nested ESM path
+    "CNodeLazyMISBFlightTrack.js", // extends CNodeTrackFromMISB (nested ESM path)
     "CNodeTrackingOverlay.js",  // import.meta
     "CNodeVideoView.js",        // import.meta
     "CNodeVideoViewAnalysis.js",// import.meta

@@ -20,7 +20,7 @@ const [
   { compass16, greatCircleDistanceKm },
   { equatorialToAltAz, planetEquatorial, moonEquatorial },
   { BRIGHT_STARS },
-  { compassRose, horizonView, horizonWindow },
+  { compassRose, horizonView, horizonWindow, flareSimSky },
   { generateDummyTLE },
 ] = await Promise.all([
   import("./location.js" + VERSION),
@@ -44,6 +44,11 @@ const els = {
   tlefile: $("tlefile"), fetchtle: $("fetchtle"), tlestatus: $("tlestatus"),
   status: $("status"), results: $("results"),
   formScreen: $("form-screen"), resultsScreen: $("results-screen"), edit: $("edit"),
+  infoScreen: $("info-screen"), infoBack: $("info-back"),
+  infoLookLike: $("info-looklike"), infoRose: $("info-rose"),
+  installWrap: $("install-wrap"), installApp: $("install-app"),
+  installModal: $("install-modal"), installModalTitle: $("install-modal-title"),
+  installModalBody: $("install-modal-body"), installModalClose: $("install-modal-close"),
 };
 
 // Smallest signed difference a−b on a circle, in (−180, 180].
@@ -392,6 +397,42 @@ function showResults() {
   window.scrollTo(0, 0);
 }
 
+// --- info screen -----------------------------------------------------------
+// Which screen the "i" button was pressed from, so Back returns there. (The
+// results screen keeps its rendered content while hidden, so this is lossless.)
+let infoReturnScreen = null;
+let infoBuilt = false;
+
+// Build the info screen's two live visuals once (they animate via SMIL forever):
+//   * the "it looks like" naked-eye flare-train preview, and
+//   * a demo of the same animated compass rose the results page shows.
+function buildInfoVisuals() {
+  if (infoBuilt) return;
+  infoBuilt = true;
+  if (els.infoLookLike) els.infoLookLike.innerHTML = flareSimSky();
+  if (els.infoRose) {
+    const arrows = [{ azDeg: 296 }, { azDeg: 322 }];
+    const flares = [];
+    for (let i = 0; i < 40; i++) flares.push({ azDeg: 296 + Math.random() * 26 });
+    els.infoRose.innerHTML = compassRose(arrows, flares);
+  }
+}
+
+function showInfo() {
+  infoReturnScreen = els.resultsScreen.hidden ? els.formScreen : els.resultsScreen;
+  buildInfoVisuals();
+  els.formScreen.hidden = true;
+  els.resultsScreen.hidden = true;
+  els.infoScreen.hidden = false;
+  window.scrollTo(0, 0);
+}
+
+function hideInfo() {
+  els.infoScreen.hidden = true;
+  (infoReturnScreen || els.formScreen).hidden = false;
+  window.scrollTo(0, 0);
+}
+
 // A loading panel inside the results screen; returns helpers to update it.
 function renderLoading(msg) {
   els.results.innerHTML =
@@ -696,7 +737,11 @@ async function onSubmit(e) {
     // Engine defaults (flare angle 5°, min elevation 0°, geocentric nadir model) —
     // fixed internally; Advanced controls only the TLE source, not these.
     const options = {};
-    const LOOK_AHEAD_DAYS = 3;
+    // Search at most 24 hours ahead for the next flares. The flare geometry recurs on
+    // a ~daily cycle (Sun position + the constellation's ground track), so if there is
+    // no flare in the first day there won't be one in the next two either — searching
+    // further just wastes time.
+    const LOOK_AHEAD_DAYS = 1;
 
     let req;
     if (!dest) {
@@ -818,6 +863,95 @@ function registerServiceWorker() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Install-as-app (PWA)
+// ---------------------------------------------------------------------------
+// True when the page is already running as an installed app (so there's nothing
+// to install). Covers the standard display-mode and iOS Safari's navigator.standalone.
+function isStandalone() {
+  return window.matchMedia("(display-mode: standalone)").matches
+    || window.matchMedia("(display-mode: window-controls-overlay)").matches
+    || window.navigator.standalone === true;
+}
+
+// iOS / iPadOS (which can't be automated — install is a manual "Add to Home Screen").
+function isIOS() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1 && "ontouchend" in document);
+}
+
+// Show the Install button only when not already installed.
+function updateInstallButton() {
+  if (els.installWrap) els.installWrap.hidden = isStandalone();
+}
+
+function openInstallModal(title, bodyHTML) {
+  els.installModalTitle.textContent = title;
+  els.installModalBody.innerHTML = bodyHTML;
+  els.installModal.hidden = false;
+}
+function closeInstallModal() { els.installModal.hidden = true; }
+
+// The iOS share glyph (a box with an up-arrow), drawn inline so the steps are unambiguous.
+const SHARE_ICON =
+  `<svg class="share-ico" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+     <path d="M12 3 L12 15 M8.5 6.5 L12 3 L15.5 6.5" fill="none" stroke="#7fd0ff"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+     <path d="M7 10 L5 10 L5 21 L19 21 L19 10 L17 10" fill="none" stroke="#7fd0ff"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+   </svg>`;
+
+async function onInstallClick() {
+  const bip = window.__bipEvent;
+  if (bip) {
+    // Automated path (Chrome/Edge/Android): confirm, then show the native prompt.
+    if (!window.confirm("Install the Starlink Horizon Flares app on this device?")) return;
+    bip.prompt();
+    try {
+      const choice = await bip.userChoice;
+      if (choice && choice.outcome === "accepted") {
+        window.__bipEvent = null;          // a prompt can only be used once
+        updateInstallButton();
+      }
+    } catch (_) { /* user dismissed — leave the button in place */ }
+    return;
+  }
+  // Manual path: platform-specific instructions.
+  if (isIOS()) {
+    openInstallModal("Add to your Home Screen",
+      `<p>To install on iPhone or iPad, in <strong>Safari</strong>:</p>
+       <ol>
+         <li>Tap the <strong>Share</strong> button ${SHARE_ICON} in the toolbar.</li>
+         <li>Scroll down and tap <strong>“Add to Home Screen”</strong>.</li>
+         <li>Tap <strong>Add</strong> in the top-right corner.</li>
+       </ol>
+       <p class="modal-note">The app then opens full-screen and works offline.</p>`);
+  } else {
+    openInstallModal("Install the app",
+      `<p>To install on this device:</p>
+       <ol>
+         <li>Open your browser's menu (usually <strong>⋮</strong> or <strong>⋯</strong>).</li>
+         <li>Choose <strong>“Install app”</strong> or <strong>“Add to Home Screen”</strong>.</li>
+       </ol>
+       <p class="modal-note">On desktop Chrome or Edge you can also click the install icon
+         in the address bar.</p>`);
+  }
+}
+
+function wireInstall() {
+  if (!els.installApp) return;
+  els.installApp.addEventListener("click", onInstallClick);
+  els.installModalClose.addEventListener("click", closeInstallModal);
+  els.installModal.querySelector("[data-close]").addEventListener("click", closeInstallModal);
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !els.installModal.hidden) closeInstallModal();
+  });
+  // The early-capture inline script (in index.html) re-fires these on window.
+  window.addEventListener("bip-ready", updateInstallButton);
+  window.addEventListener("app-installed", () => { closeInstallModal(); updateInstallButton(); });
+  updateInstallButton();
+}
+
 function init() {
   setNowDefaults();
   loadAirports();   // fire-and-forget; searchAirports degrades gracefully until ready
@@ -826,6 +960,10 @@ function init() {
   wireTLEControls();
   els.form.addEventListener("submit", onSubmit);
   els.edit.addEventListener("click", showForm);  // results → back to the form
+  // "i" buttons (one per screen) open the info page; Back returns to the caller.
+  for (const b of document.querySelectorAll("[data-info]")) b.addEventListener("click", showInfo);
+  if (els.infoBack) els.infoBack.addEventListener("click", hideInfo);
+  wireInstall();
   registerServiceWorker();
 }
 

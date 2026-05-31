@@ -68,7 +68,7 @@ import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController
 import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry} from "./trackSourceUtils";
-import {buildAppFlightTrack} from "./fromApp.js";
+import {buildAppFlightTrack, applyFlightLightweightGating} from "./fromApp.js";
 import {encodeShareParam, resolveURLForFetch, toShareableCustomValue} from "./SitrecObjectResolver";
 import {getEnvBool} from "./envUtils";
 import {CNodeFloodSim} from "./nodes/CNodeFloodSim";
@@ -1408,6 +1408,13 @@ export const serializeMethods = {
         ViewMan.restoreFullscreenFromMods();
 
         Globals.dontRecalculate = false;
+
+        // Lightweight flight scene: hide the unused target/traverse/measurement leaves
+        // BEFORE the final recalcs below, so the checkDisplayOutputs gate skips their
+        // expensive per-frame bakes on reload too (mirrors the live-launch finishFromApp,
+        // and — running pre-recalc here — keeps the reload itself fast). No-op unless
+        // Sit.appFlight is set.
+        applyFlightLightweightGating();
 
         // recalculate everything after the mods
         // in case there's some missing dependency
