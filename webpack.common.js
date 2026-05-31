@@ -303,34 +303,102 @@ ${bodyContent}
 
         {
             apply: (compiler) => {
+                // A build file is a *complete, self-contained* copy of the Three.js runtime
+                // when it carries the `window.__THREE__ = REVISION` init guard. If more than
+                // one such file ends up in a single bundle, the guard fires twice ("Multiple
+                // instances of Three.js being imported") and, worse, you get two disjoint sets
+                // of class prototypes so `instanceof` and prototype extensions silently break.
+                // The classic cause is mixing an ESM `import ... from "three"` (resolves to
+                // build/three.core.js via three.module.js) with a CJS `require("three")`
+                // (resolves to build/three.cjs through the package's "require" export
+                // condition). See CLAUDE.md "Working with Three.js".
+                //
+                // We detect the guard by *content*, not by filename, so this stays correct
+                // across Three versions that move the init between build files (e.g. the
+                // three.module.js / three.core.js split). three.module.js itself is only a
+                // re-export shim with no guard, so it legitimately coexists with three.core.js.
+                const INIT_MARKER = 'window.__THREE__';
+                const guardCache = new Map(); // resource path -> bool (contains init guard)
+                const hasInitGuard = (resource) => {
+                    if (!guardCache.has(resource)) {
+                        let found = false;
+                        try {
+                            found = fs.readFileSync(resource, 'utf-8').includes(INIT_MARKER);
+                        } catch (e) { /* unreadable -> treat as non-runtime */ }
+                        guardCache.set(resource, found);
+                    }
+                    return guardCache.get(resource);
+                };
+
                 compiler.hooks.emit.tap('DetectDuplicateThreeModules', (compilation) => {
                     const threeModules = new Map();
-                    
+                    const runtimeBuilds = new Map(); // build path -> Set of importing modules
+
                     for (const module of compilation.modules) {
                         if (!module.resource) continue;
-                        
-                        if (module.resource.includes('node_modules/three/')) {
-                            const relativePath = module.resource.substring(
-                                module.resource.indexOf('node_modules/three/')
-                            );
-                            
-                            if (!threeModules.has(relativePath)) {
-                                threeModules.set(relativePath, []);
+                        if (!module.resource.includes('node_modules/three/')) continue;
+
+                        const relativePath = module.resource.substring(
+                            module.resource.indexOf('node_modules/three/')
+                        );
+
+                        if (!threeModules.has(relativePath)) {
+                            threeModules.set(relativePath, []);
+                        }
+                        threeModules.get(relativePath).push(module.identifier());
+
+                        if (hasInitGuard(module.resource)) {
+                            if (!runtimeBuilds.has(relativePath)) {
+                                runtimeBuilds.set(relativePath, new Set());
                             }
-                            threeModules.get(relativePath).push(module.identifier());
+                            // Record which of *our* modules pulled this build in, so the
+                            // error message points at the real offender.
+                            for (const conn of compilation.moduleGraph.getIncomingConnections(module)) {
+                                const origin = conn.originModule && conn.originModule.resource;
+                                if (origin && !origin.includes('node_modules/three/')) {
+                                    runtimeBuilds.get(relativePath).add(
+                                        origin.replace(compiler.context + '/', '')
+                                    );
+                                }
+                            }
                         }
                     }
-                    
+
+                    // (1) Same build file pulled in as more than one webpack module.
                     const duplicates = Array.from(threeModules.entries())
                         .filter(([, identifiers]) => identifiers.length > 1);
-                    
+
+                    // (2) Two or more *distinct* runtime builds (the ESM/CJS mix). This is the
+                    //     case the old path-grouping check missed: three.cjs and three.core.js
+                    //     are different paths, so each looked "unique".
+                    const variants = Array.from(runtimeBuilds.keys());
+
+                    if (variants.length > 1) {
+                        let msg = 'Multiple Three.js runtime builds bundled together — '
+                            + 'this produces the runtime "Multiple instances of Three.js" warning '
+                            + 'and breaks instanceof / prototype extensions:\n';
+                        for (const v of variants) {
+                            const importers = Array.from(runtimeBuilds.get(v));
+                            msg += `    • ${v}`;
+                            if (importers.length) {
+                                msg += `  ← imported by: ${importers.slice(0, 5).join(', ')}`
+                                    + (importers.length > 5 ? `, +${importers.length - 5} more` : '');
+                            }
+                            msg += '\n';
+                        }
+                        msg += '  Use ESM `import ... from "three"` everywhere; never `require("three")` '
+                            + '(CJS resolves to three.cjs) or `three/src/*`.';
+                        compilation.errors.push(new Error('[DetectDuplicateThreeModules] ' + msg));
+                    }
+
                     if (duplicates.length > 0) {
-                        console.error('\n⚠️  WARNING: Duplicate Three.js modules detected!\n');
-                        duplicates.forEach(([path, identifiers]) => {
-                            console.error(`  ${path}: ${identifiers.length} instances`);
+                        let msg = 'Duplicate Three.js modules detected (same file bundled more than once) — '
+                            + 'this may cause prototype extensions to fail:\n';
+                        duplicates.forEach(([p, identifiers]) => {
+                            msg += `    • ${p}: ${identifiers.length} instances\n`;
                         });
-                        console.error('\n  This may cause prototype extensions to fail.');
-                        console.error('  Ensure all Three.js imports use "three" not "three/src/*"\n');
+                        msg += '  Ensure all Three.js imports use "three", not "three/src/*".';
+                        compilation.errors.push(new Error('[DetectDuplicateThreeModules] ' + msg));
                     }
                 });
             },

@@ -380,8 +380,7 @@ export class QuadTreeTile {
         const pointPoolSize = Math.max(1, maxPointsFor(this.z));
         if (!QuadTreeTile._scratchPoints || QuadTreeTile._scratchPoints.length < pointPoolSize) {
             QuadTreeTile._scratchPoints = [];
-            const {Vector3: _V3} = require("three");
-            for (let i = 0; i < pointPoolSize; i++) QuadTreeTile._scratchPoints.push(new _V3());
+            for (let i = 0; i < pointPoolSize; i++) QuadTreeTile._scratchPoints.push(new Vector3());
         }
         const points = QuadTreeTile._scratchPoints;
         const count = buildFallbackPointSet(tileBounds, this.altitudeBounds, {points});
@@ -398,9 +397,8 @@ export class QuadTreeTile {
                 this.map.options.mapProjection.getLeftLongitude(this.x + 1, this.z)
             );
             const midAlt = 0.5 * (this.altitudeBounds.min + this.altitudeBounds.max);
-            const {Vector3: _V3} = require("three");
-            const origin = new _V3();
-            require("./LLA-ECEF-ENU").LLAToECEFInto(latC, lonC, midAlt, origin);
+            const origin = new Vector3();
+            LLAToECEFInto(latC, lonC, midAlt, origin);
             const latRad = latC * Math.PI / 180;
             const lonRad = lonC * Math.PI / 180;
             state.localFrame = buildLocalFrame(origin, latRad, lonRad);
