@@ -145,6 +145,80 @@ function frameMainView(O, peakAz) {
     if (typeof mainCam.syncUIPosition === "function") mainCam.syncUIPosition();
 }
 
+// --- build the synthetic flight track (shared by live launch + reload) --------
+// Builds the origin -> destination flight as a MISB array and loads it through the
+// NORMAL track pathway (FileManager.add + TrackManager.addTracks), so it becomes a real
+// CNodeTrackFromMISB ("Track_Flight"), appears in the Contents menu, and wires into
+// cameraTrackSwitch — exactly as a dropped KML/MISB flight would. No special-case node.
+//
+// The generated MISB is fully deterministic from a handful of scalar params, so we:
+//   * flag the FileManager entry `skipSerialization` (never rehosted/embedded on save), and
+//   * stash the params on `Sit.appFlight`, which a custom-sitch save persists (~8 numbers)
+//     and CustomManagerSerialize regenerates from on reload by calling this same function.
+// Returns the selected track node (for framing the main view), or null.
+export async function buildAppFlightTrack(p) {
+    if (!(p.mode === "flight" && Number.isFinite(p.dlat) && Number.isFinite(p.dlon))) return null;
+
+    const filename = "App Flight.kml";
+    // Legacy saves may still embed the file and load it before we run — don't double-create.
+    if (FileManager.list[filename]) {
+        const sw = NodeMan.get("cameraTrackSwitch", false);
+        const existing = sw && Object.keys(sw.inputs).find((k) => /Flight/.test(k));
+        return existing ? sw.inputs[existing] : null;
+    }
+
+    const flightDurMs = Math.max(1000, p.flightDurSec * 1000);
+    const cruiseAltM = p.cruiseAltFt * FT_TO_M;
+    const climbF = 0.12, descF = 0.12;                 // climb-out / descent fraction
+    const N = clamp(Math.round(p.flightDurSec / 30), 50, 1200);   // ~one sample / 30 s
+    const misb = [];
+    for (let i = 0; i < N; i++) {
+        const ft = N > 1 ? i / (N - 1) : 0;            // progress along the flight, 0..1
+        const gc = greatCircle(p.lat, p.lon, p.dlat, p.dlon, ft);
+        let alt;
+        if (ft < climbF) alt = cruiseAltM * (ft / climbF);
+        else if (ft > 1 - descF) alt = cruiseAltM * ((1 - ft) / descF);
+        else alt = cruiseAltM;
+        const row = new Array(MISBFields).fill(null);
+        row[MISB.UnixTimeStamp] = (p.flightStartMs + ft * flightDurMs) * 1000;  // microseconds
+        row[MISB.SensorLatitude] = gc.lat;
+        row[MISB.SensorLongitude] = gc.lon;
+        row[MISB.SensorTrueAltitude] = alt;            // metres MSL
+        row[MISB.PlatformTailNumber] = "Flight";
+        misb.push(row);
+    }
+
+    // Register as a track file and run the standard track-loading pathway.
+    FileManager.add(filename, new CTrackFileMISB(misb), misb);
+    const info = FileManager.getInfo(filename);
+    info.filename = filename;
+    info.dataType = "MISB";
+    // Regenerable from the params below, so never rehost/serialize the generated file:
+    // skipSerialization drops it from both rehost paths and the loadedFiles save loop.
+    info.skipSerialization = true;
+    Sit.appFlight = {
+        mode: p.mode, lat: p.lat, lon: p.lon, dlat: p.dlat, dlon: p.dlon,
+        cruiseAltFt: p.cruiseAltFt, flightStartMs: p.flightStartMs, flightDurSec: p.flightDurSec,
+    };
+
+    // Keep our flare-window timeline (sitchEstablished suppresses "sync start time to
+    // track"); we then select the new track into the camera switch ourselves (the
+    // same thing the dropTarget does when the sitch isn't already established).
+    Globals.sitchEstablished = true;
+    const sw = NodeMan.get("cameraTrackSwitch", false);
+    const before = sw ? new Set(Object.keys(sw.inputs)) : new Set();
+    await TrackManager.addTracks([filename]);
+    if (sw) {
+        const added = Object.keys(sw.inputs).find((k) => !before.has(k));
+        if (added) {
+            sw.selectOption(added);
+            const trackNode = sw.inputs[added];
+            if (trackNode && typeof trackNode.p === "function") return trackNode;
+        }
+    }
+    return null;
+}
+
 // --- after the sitch is set up: place the camera + start playback -------------
 // Uses the Custom machinery already built by the starlink sitch: a `cameraTrackSwitch`
 // feeding (smooth -> trackPosition) into the look camera, with `ptzAngles` aiming it.
@@ -153,53 +227,11 @@ export async function finishFromApp(p) {
     let observerECEF = null;   // look-camera position at the peak frame, for framing the main view
 
     if (p.mode === "flight" && Number.isFinite(p.dlat) && Number.isFinite(p.dlon)) {
-        // Build a REAL flight track for the whole origin -> destination route and load
-        // it through the normal track pathway (as if a KML/MISB flight had been dropped):
-        // it becomes a CNodeTrackFromMISB, appears in the Contents menu, and is wired
-        // into cameraTrackSwitch via Sit.dropTargets — no special-case track here.
-        const flightDurMs = Math.max(1000, p.flightDurSec * 1000);
-        const cruiseAltM = p.cruiseAltFt * FT_TO_M;
-        const climbF = 0.12, descF = 0.12;                 // climb-out / descent fraction
-        const N = clamp(Math.round(p.flightDurSec / 30), 50, 1200);   // ~one sample / 30 s
-        const misb = [];
-        for (let i = 0; i < N; i++) {
-            const ft = N > 1 ? i / (N - 1) : 0;            // progress along the flight, 0..1
-            const gc = greatCircle(p.lat, p.lon, p.dlat, p.dlon, ft);
-            let alt;
-            if (ft < climbF) alt = cruiseAltM * (ft / climbF);
-            else if (ft > 1 - descF) alt = cruiseAltM * ((1 - ft) / descF);
-            else alt = cruiseAltM;
-            const row = new Array(MISBFields).fill(null);
-            row[MISB.UnixTimeStamp] = (p.flightStartMs + ft * flightDurMs) * 1000;  // microseconds
-            row[MISB.SensorLatitude] = gc.lat;
-            row[MISB.SensorLongitude] = gc.lon;
-            row[MISB.SensorTrueAltitude] = alt;            // metres MSL
-            row[MISB.PlatformTailNumber] = "Flight";
-            misb.push(row);
-        }
-
-        // Register as a track file and run the standard track-loading pathway.
-        const filename = "App Flight.kml";
-        FileManager.add(filename, new CTrackFileMISB(misb), misb);
-        const info = FileManager.getInfo(filename);
-        info.filename = filename;
-        info.dataType = "MISB";
-
-        // Keep our flare-window timeline (sitchEstablished suppresses "sync start time to
-        // track"); we then select the new track into the camera switch ourselves (the
-        // same thing the dropTarget does when the sitch isn't already established).
-        Globals.sitchEstablished = true;
-        const sw = NodeMan.get("cameraTrackSwitch", false);
-        const before = sw ? new Set(Object.keys(sw.inputs)) : new Set();
-        await TrackManager.addTracks([filename]);
-        if (sw) {
-            const added = Object.keys(sw.inputs).find((k) => !before.has(k));
-            if (added) {
-                sw.selectOption(added);
-                const trackNode = sw.inputs[added];
-                if (trackNode && typeof trackNode.p === "function") observerECEF = trackNode.p(tl.peakFrame);
-            }
-        }
+        // Build the synthetic flight track through the normal pathway. This is shared
+        // verbatim with the reload path (CustomManagerSerialize calls the same function),
+        // so a saved sitch regenerates an identical track from the persisted params.
+        const trackNode = await buildAppFlightTrack(p);
+        if (trackNode && typeof trackNode.p === "function") observerECEF = trackNode.p(tl.peakFrame);
     } else {
         // Ground-based observer, raised 50 ft above ground (the default camera track
         // is the fixed camera position).

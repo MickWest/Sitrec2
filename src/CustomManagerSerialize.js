@@ -68,6 +68,7 @@ import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController
 import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry} from "./trackSourceUtils";
+import {buildAppFlightTrack} from "./fromApp.js";
 import {encodeShareParam, resolveURLForFetch, toShareableCustomValue} from "./SitrecObjectResolver";
 import {getEnvBool} from "./envUtils";
 import {CNodeFloodSim} from "./nodes/CNodeFloodSim";
@@ -318,6 +319,10 @@ export const serializeMethods = {
             const trackInfoPerFile = {};
             TrackManager.iterate((trackId, metaTrack) => {
                 if (metaTrack.isSynthetic || !metaTrack.trackFileName) return;
+                // Skip files excluded from serialization (e.g. the regenerable App Flight
+                // MISB) — its source file isn't saved, so don't emit a dangling
+                // selectedTracks/shortNames entry pointing at a file that won't reload.
+                if (FileManager.list[metaTrack.trackFileName]?.skipSerialization) return;
                 if (!trackInfoPerFile[metaTrack.trackFileName]) {
                     trackInfoPerFile[metaTrack.trackFileName] = {
                         selectedTracks: [],
@@ -512,6 +517,12 @@ export const serializeMethods = {
         // This must be done before mods, as the tracks need to be recreated
         // before mods are applied to their nodes
         out.syntheticTracks = TrackManager.serialize()
+
+        // Synthetic fromApp flight: persist ONLY the compact generator params
+        // (origin/dest lat-lon, cruise altitude, flight start/duration). The generated
+        // MISB file is flagged skipSerialization, so it's never rehosted — on reload
+        // buildAppFlightTrack regenerates an identical track from these ~8 numbers.
+        if (Sit.appFlight) out.appFlight = Sit.appFlight;
 
         // Serialize feature markers from FeatureManager
         out.featureMarkers = FeatureManager.serialize()
@@ -963,7 +974,7 @@ export const serializeMethods = {
 
 
         // wait for the files to load
-        Promise.all(loadingPromises).then(() => {
+        Promise.all(loadingPromises).then(async () => {
 
             // We supress recalculation while we apply the mods
             // otherwise we get multiple recalculations of the same thing
@@ -981,6 +992,16 @@ export const serializeMethods = {
             // This recreates the track nodes so that mods can be applied to them
             if (sitchData.syntheticTracks) {
                 TrackManager.deserialize(sitchData.syntheticTracks)
+            }
+
+            // Regenerate the fromApp synthetic flight track from its saved params.
+            // Same shared builder as the live launch, so Track_Flight (and TrackData_Flight,
+            // the display tracks, the GUI nodes) are recreated with identical, deterministic
+            // IDs — which lets the mods pass below attach to them. Must run BEFORE mods.
+            // Guarded so legacy saves that still embed the file (loaded above) don't
+            // double-create it.
+            if (sitchData.appFlight && !FileManager.list["App Flight.kml"]) {
+                await buildAppFlightTrack(sitchData.appFlight)
             }
 
             // Deserialize feature markers BEFORE applying mods
