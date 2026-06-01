@@ -644,11 +644,35 @@ input[type="file"]::file-selector-button {
    Install-app button + instructions modal
    ========================================================================= */
 .install-wrap {
+  position: relative;
   max-width: 640px;
-  margin: 22px auto 0;
+  /* Clear divider + generous gap so the install suggestion never abuts the content
+     above it (it is not part of the primary task flow). */
+  margin: 32px auto 0;
+  padding: 20px 0 0;
+  border-top: 1px solid var(--line);
   text-align: center;
 }
 .install-wrap[hidden] { display: none; }
+.install-dismiss {
+  position: absolute;
+  top: 10px;
+  right: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--faint);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.install-dismiss:hover, .install-dismiss:active {
+  color: var(--muted);
+  background: var(--panel-2);
+}
 .install-btn {
   font-size: 1rem;
   font-weight: 700;

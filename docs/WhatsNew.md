@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.68.3 (2026-06-01)
+
+### Improvements
+- The Back and Forward buttons (browser and mouse) now move between the screens of the Starlink Horizon Flares tool, so Back after a search returns you to the search form instead of doing nothing.
+- The "Install App" suggestion in the Starlink Horizon Flares tool is now clearly divided off from the content above it, and can be dismissed with an "×" for the rest of your session.
+
+---
+
 ## Version 2.68.2 (2026-05-31)
 
 ### Bug Fixes

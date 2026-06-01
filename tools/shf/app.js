@@ -385,22 +385,44 @@ function fmtDuration(sec) {
 // --- screen toggling -------------------------------------------------------
 let activeWorker = null;
 
-function showForm() {
-  if (activeWorker) { activeWorker.terminate(); activeWorker = null; }
-  els.resultsScreen.hidden = true;
-  els.formScreen.hidden = false;
-  window.scrollTo(0, 0);
-}
-function showResults() {
-  els.formScreen.hidden = true;
-  els.resultsScreen.hidden = false;
+// Render a screen by name ("form" | "results" | "info") — toggles visibility ONLY,
+// with no history changes, so it is safe to call from both navigation and the
+// popstate handler. Preserves the side effects the old togglers had: terminate the
+// flare worker when landing on the form, and build the info visuals (once) for info.
+function renderScreen(name) {
+  if (name === "form" && activeWorker) { activeWorker.terminate(); activeWorker = null; }
+  if (name === "info") buildInfoVisuals();
+  els.formScreen.hidden = name !== "form";
+  els.resultsScreen.hidden = name !== "results";
+  els.infoScreen.hidden = name !== "info";
   window.scrollTo(0, 0);
 }
 
-// --- info screen -----------------------------------------------------------
-// Which screen the "i" button was pressed from, so Back returns there. (The
-// results screen keeps its rendered content while hidden, so this is lossless.)
-let infoReturnScreen = null;
+// --- history-backed navigation ---------------------------------------------
+// Entering a sub-view (results/info) pushes a history entry, so the browser's (and
+// mouse's) Back button returns to the previous screen; the on-screen Edit/Back
+// buttons call history.back() so manual and browser navigation share one code path
+// and never desync the stack. The form is the base entry (replaceState in init);
+// popstate renders the target screen WITHOUT pushing. Back from info pops to
+// whatever entry was underneath (form or results), so no return-screen bookkeeping
+// is needed — the history stack reproduces it losslessly.
+function navigateResults() {
+  // onSubmit is only reachable from the form, but guard against stacking a second
+  // results entry on a re-submit so a single Back always reaches the form.
+  if (history.state && history.state.screen === "results") {
+    history.replaceState({ screen: "results" }, "");
+  } else {
+    history.pushState({ screen: "results" }, "");
+  }
+  renderScreen("results");
+}
+
+function navigateInfo() {
+  history.pushState({ screen: "info" }, "");
+  renderScreen("info");
+}
+
+// --- info screen visuals ---------------------------------------------------
 let infoBuilt = false;
 
 // Build the info screen's two live visuals once (they animate via SMIL forever):
@@ -416,21 +438,6 @@ function buildInfoVisuals() {
     for (let i = 0; i < 40; i++) flares.push({ azDeg: 296 + Math.random() * 26 });
     els.infoRose.innerHTML = compassRose(arrows, flares);
   }
-}
-
-function showInfo() {
-  infoReturnScreen = els.resultsScreen.hidden ? els.formScreen : els.resultsScreen;
-  buildInfoVisuals();
-  els.formScreen.hidden = true;
-  els.resultsScreen.hidden = true;
-  els.infoScreen.hidden = false;
-  window.scrollTo(0, 0);
-}
-
-function hideInfo() {
-  els.infoScreen.hidden = true;
-  (infoReturnScreen || els.formScreen).hidden = false;
-  window.scrollTo(0, 0);
 }
 
 // A loading panel inside the results screen; returns helpers to update it.
@@ -700,7 +707,7 @@ async function onSubmit(e) {
   setStatus("");
 
   // Switch to the results screen with a loading panel; everything else renders there.
-  showResults();
+  navigateResults();
   const load = renderLoading("Resolving location…");
 
   try {
@@ -893,9 +900,15 @@ function platformInfo() {
   return { ios, android, iosChrome, iosSafari, macSafari, firefoxDesktop };
 }
 
-// Show the Install button only when not already installed.
+// Whether the user dismissed the install suggestion this session (sessionStorage
+// can throw in some privacy modes, so guard it).
+function installDismissed() {
+  try { return sessionStorage.getItem("shfInstallDismissed") === "1"; } catch (_) { return false; }
+}
+
+// Show the Install button only when not already installed and not dismissed.
 function updateInstallButton() {
-  if (els.installWrap) els.installWrap.hidden = isStandalone();
+  if (els.installWrap) els.installWrap.hidden = isStandalone() || installDismissed();
 }
 
 function openInstallModal(title, bodyHTML) {
@@ -1011,6 +1024,12 @@ function wireInstall() {
   // The early-capture inline script (in index.html) re-fires these on window.
   window.addEventListener("bip-ready", updateInstallButton);
   window.addEventListener("app-installed", () => { closeInstallModal(); updateInstallButton(); });
+  // Dismiss "×" — hide the install suggestion for the rest of the session.
+  const dismiss = document.getElementById("install-dismiss");
+  if (dismiss) dismiss.addEventListener("click", () => {
+    try { sessionStorage.setItem("shfInstallDismissed", "1"); } catch (_) { /* ignore */ }
+    updateInstallButton();
+  });
   updateInstallButton();
 }
 
@@ -1021,10 +1040,15 @@ function init() {
   wireAutocomplete(els.dest, els.destSug);
   wireTLEControls();
   els.form.addEventListener("submit", onSubmit);
-  els.edit.addEventListener("click", showForm);  // results → back to the form
+  // History-backed navigation: the form is the base entry; sub-views push a state and
+  // popstate renders the target. Edit/Back go through history.back() so the on-screen
+  // buttons and the browser/mouse Back button share one path.
+  history.replaceState({ screen: "form" }, "");
+  window.addEventListener("popstate", (e) => renderScreen((e.state && e.state.screen) || "form"));
+  els.edit.addEventListener("click", () => history.back());   // results → back to the form
   // "i" buttons (one per screen) open the info page; Back returns to the caller.
-  for (const b of document.querySelectorAll("[data-info]")) b.addEventListener("click", showInfo);
-  if (els.infoBack) els.infoBack.addEventListener("click", hideInfo);
+  for (const b of document.querySelectorAll("[data-info]")) b.addEventListener("click", navigateInfo);
+  if (els.infoBack) els.infoBack.addEventListener("click", () => history.back());
   wireInstall();
   registerServiceWorker();
 }
