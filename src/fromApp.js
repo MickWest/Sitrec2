@@ -114,10 +114,11 @@ function greatCircle(lat1, lon1, lat2, lon2, t) {
     return { lat: Math.atan2(z, Math.hypot(x, y)) * R, lon: Math.atan2(y, x) * R };
 }
 
-// Frame the main (3D overview) view: a third-person shot from behind and above the
-// look camera (the observer/aircraft, at ECEF `O`), facing the flare region (toward
-// the peak/Sun azimuth, just above the horizon). The look camera + its frustum sit in
-// the foreground and the flare band/region fill the view.
+// Frame the main (3D overview) view: put the camera UP IN SPACE and look DOWN at the
+// look-camera position (the observer/aircraft, at ECEF `O`) at about 45°, so the Earth's
+// limb and the Starlink shell wrapping it fill the frame with the observer in the middle.
+// The camera sits on the anti-Sun side, so the view looks down past the observer toward
+// the flare/Sun azimuth.
 function frameMainView(O, peakAz) {
     if (!O) return;
     const mainCam = NodeMan.get("mainCamera", false);
@@ -126,21 +127,19 @@ function frameMainView(O, peakAz) {
     const north = getLocalNorthVector(O);
     const east = getLocalEastVector(O);
     const azR = radians(peakAz);
-    // Horizontal unit vector toward the flare (compass azimuth: 0=N, 90=E).
+    // Horizontal unit vector toward the flare/Sun azimuth (compass: 0=N, 90=E).
     const flareDir = north.clone().multiplyScalar(Math.cos(azR))
         .add(east.clone().multiplyScalar(Math.sin(azR))).normalize();
-    const back = 14000, height = 7000, ahead = 40000;   // metres (a wide establishing shot)
-    const camPos = O.clone()
-        .sub(flareDir.clone().multiplyScalar(back))
-        .add(up.clone().multiplyScalar(height));
-    // Look toward a point far out in the flare region (slightly above the horizon), so
-    // the look camera sits in the scene and the flare band/region fill the frame.
-    const target = O.clone()
-        .add(flareDir.clone().multiplyScalar(ahead))
-        .add(up.clone().multiplyScalar(ahead * Math.tan(radians(6))));
+    // Offset from O = range·(cos45·(anti-flare horizontal) + sin45·up). The line of sight
+    // back to O then has equal horizontal and vertical parts → a 45° look-down.
+    const range = 6000 * 1000;          // metres from the observer (~6000 km — Earth reads as a disk with the shell around its limb)
+    const a = radians(45);
+    const dir = flareDir.clone().multiplyScalar(-Math.cos(a))
+        .add(up.clone().multiplyScalar(Math.sin(a))).normalize();
+    const camPos = O.clone().add(dir.multiplyScalar(range));
     mainCam.camera.position.copy(camPos);
     mainCam.camera.up.copy(up);
-    mainCam.camera.lookAt(target);
+    mainCam.camera.lookAt(O);
     mainCam.camera.updateMatrixWorld(true);
     if (typeof mainCam.syncUIPosition === "function") mainCam.syncUIPosition();
 }

@@ -134,7 +134,9 @@ function flareArc(flares, cx, cy, R) {
 // --- compass rose ----------------------------------------------------------
 // arrows: [{ azDeg, color?, label? }] (1 or 2). Yellow by default.
 // flares: optional [{azDeg, ...}] — used to draw the density arc along the rim.
-export function compassRose(arrows, flares) {
+// opts.live: skip the animated (SMIL) flare sprinkle — used for the 10 Hz live
+//   re-render during scanning, where restarting the animation every frame would flicker.
+export function compassRose(arrows, flares, opts = {}) {
     const W = 220, cx = 110, cy = 112, R = 84;
     const pts = [];
     // tick marks every 22.5°
@@ -177,7 +179,7 @@ export function compassRose(arrows, flares) {
       ${pts.join("")}
       ${labels}
       ${flareArc(flares, cx, cy, R)}
-      ${flareDots(arrows, cx, cy, R)}
+      ${opts.live ? "" : flareDots(arrows, cx, cy, R)}
       ${arr}
       <circle cx="${cx}" cy="${cy}" r="3.5" fill="#cfe0ff"/>
     </svg>`;

@@ -16,6 +16,11 @@
 const VERSION = new URL(import.meta.url).search;
 const geo = await import("./geo.js" + VERSION);
 const astro = await import("./astro.js" + VERSION);
+// Shared, canonical flare brightness model (also used by Sitrec's night sky) — the cone
+// ramp, penumbra fade, and "is this flare actually visible?" all live there so the two
+// can't drift. See flarePhysics.js.
+const fp = await import("./flarePhysics.js" + VERSION);
+const POLAR_RADIUS_M = geo.WGS84.b * 1000;   // shadow sphere radius (m), matching Sitrec's globe
 
 // ---------------------------------------------------------------------------
 // Defaults — merged-over by caller-supplied options in scan().
@@ -143,14 +148,15 @@ export function createFlareEngine(satellite) {
     // -----------------------------------------------------------------------
     // scan(...) — two-pass flare search.
     // -----------------------------------------------------------------------
-    function scan({ sats, observerAt, startMs, endMs, options, onProgress }) {
+    // onFlares(batch) — optional. Called with newly-found flares as PASS B proceeds
+    // (and once more at the end), so a caller can stream partial results to a UI while
+    // the scan is still running. Batches are in PASS-B (satellite-major) order, not yet
+    // sorted; the returned `flares` array is the full, peak-time-sorted set.
+    function scan({ sats, observerAt, startMs, endMs, options, onProgress, onFlares }) {
         const opt = Object.assign({}, FLARE_DEFAULTS, options || {});
         const filterStepMs = opt.filterStepSec * 1000;
         const fineStepMs = opt.fineStepSec * 1000;
-        const spread = opt.flareAngleDeg;
-        const ramp = spread * 0.25;          // outer falloff band width
-        const middle = spread - ramp;        // glint < middle => full intensity
-        const ramp2 = ramp * ramp || 1;      // avoid /0 if spread==0
+        const spread = opt.flareAngleDeg;    // flare cone half-angle (ramp math now in flarePhysics)
         const geodetic = opt.flareModel === "geodetic";
         const minEl = opt.minElevationDeg;
         const maxSunEl = opt.maxSunElevationDeg;
@@ -273,6 +279,10 @@ export function createFlareEngine(satellite) {
 
         const flares = [];
         const satsFlaringSet = new Set();
+        let emitted = 0;                     // how many flares already handed to onFlares
+        const flush = () => {
+            if (onFlares && flares.length > emitted) { onFlares(flares.slice(emitted)); emitted = flares.length; }
+        };
 
         // Estimate total fine steps for progress reporting.
         let fineTotal = 0;
@@ -309,6 +319,7 @@ export function createFlareEngine(satellite) {
         let bestGlint = Infinity;
         let peakMs = 0, peakAz = 0, peakEl = 0, peakRange = 0, peakSatAlt = 0;
         let peakObsLat = 0, peakObsLon = 0;
+        let peakSatE = null, peakToSun = null;   // sat ECEF + Sun dir at the peak, for the penumbra fade
 
         for (let i = 0; i < nSats; i++) {
             const ivs = intervals[i];
@@ -320,9 +331,18 @@ export function createFlareEngine(satellite) {
             // Emit one flare event for the just-finished run, using its peak sample.
             const emit = () => {
                 const mot = apparentMotion(satrec, peakMs, Math.max(2000, fineStepMs));
+                // Penumbra fade at the peak (shared shadow model; ~1 for a normally-lit
+                // flare, <1 only when the satellite grazes Earth's thin shadow band).
+                let fade = 1;
+                if (peakSatE && peakToSun) {
+                    const occ = fp.shadowOcclusion(
+                        { x: peakSatE.x * 1000, y: peakSatE.y * 1000, z: peakSatE.z * 1000 },
+                        peakToSun, POLAR_RADIUS_M);
+                    fade = fp.penumbraFade(occ);
+                }
                 flares.push(makeFlare(sat, runStartMs, peakMs, runEndMs, bestGlint,
                     peakAz, peakEl, peakRange, peakSatAlt, peakObsLat, peakObsLon,
-                    mot.dAzDeg, mot.dElDeg, middle, ramp, ramp2));
+                    mot.dAzDeg, mot.dElDeg, fade, spread));
                 satsFlaringSet.add(i);
             };
 
@@ -340,8 +360,9 @@ export function createFlareEngine(satellite) {
 
                 for (let t = iv0; t <= iv1; t += fineStepMs) {
                     fineDone++;
-                    if (report && (fineDone & 255) === 0) {
-                        report({ phase: "refine", done: fineDone, total: fineTotal });
+                    if ((fineDone & 255) === 0) {
+                        if (report) report({ phase: "refine", done: fineDone, total: fineTotal });
+                        flush();
                     }
 
                     const f = frame(t);
@@ -394,6 +415,8 @@ export function createFlareEngine(satellite) {
                             peakSatAlt = geo.ecefToLla(e).altKm;
                             peakObsLat = lla.lat;
                             peakObsLon = lla.lon;
+                            peakSatE = e;            // {x,y,z} km, fresh per sample
+                            peakToSun = f.toSun;     // unit Sun direction at this instant
                         }
                     } else if (inRun) {
                         // Run just ended — emit the flare event.
@@ -411,6 +434,7 @@ export function createFlareEngine(satellite) {
         }
 
         if (report) report({ phase: "refine", done: fineTotal, total: fineTotal });
+        flush();   // hand off any flares found since the last progress tick
 
         // Sort flares chronologically by peak time.
         flares.sort((a, b) => a.peakMs - b.peakMs);
@@ -431,20 +455,12 @@ export function createFlareEngine(satellite) {
         };
     }
 
-    // Build a flare event object from a completed run's peak sample.
-    // intensity is the Sitrec ramp value evaluated at the peak glint angle.
+    // Build a flare event object from a completed run's peak sample. intensity (the cone
+    // ramp) and visible (does the glint outshine the base satellite brightness?) come from
+    // the SHARED flarePhysics model, so SHF's "visible flare" definition matches Sitrec's.
     function makeFlare(sat, startMs, peakMs, endMs, peakGlintDeg,
                        azDeg, elDeg, rangeKm, satAltKm, obsLat, obsLon,
-                       dAzDeg, dElDeg, middle, ramp, ramp2) {
-        let intensity;
-        if (peakGlintDeg < middle) {
-            intensity = 1;
-        } else {
-            const dd = peakGlintDeg - middle;
-            const r = ramp - dd;
-            intensity = (r * r) / ramp2;
-            if (intensity < 0) intensity = 0;
-        }
+                       dAzDeg, dElDeg, fade, spread) {
         return {
             satName: sat.name,
             noradId: sat.noradId,
@@ -452,7 +468,9 @@ export function createFlareEngine(satellite) {
             peakMs,
             endMs,
             peakGlintDeg,
-            intensity,
+            intensity: fp.flareRamp(peakGlintDeg, spread),
+            fade,
+            visible: fp.isFlareVisible(fade, peakGlintDeg, spread),
             azDeg,
             elDeg,
             compass: geo.compass16(azDeg),

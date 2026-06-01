@@ -39,7 +39,7 @@ const els = {
   form: $("form"), go: $("go"),
   origin: $("origin"), dest: $("dest"),
   originSug: $("origin-suggestions"), destSug: $("dest-suggestions"),
-  date: $("date"), time: $("time"),
+  date: $("date"), time: $("time"), tzbtn: $("tzbtn"),
   duration: $("duration"), alt: $("alt"),
   tlefile: $("tlefile"), fetchtle: $("fetchtle"), tlestatus: $("tlestatus"),
   status: $("status"), results: $("results"),
@@ -49,6 +49,7 @@ const els = {
   installWrap: $("install-wrap"), installApp: $("install-app"),
   installModal: $("install-modal"), installModalTitle: $("install-modal-title"),
   installModalBody: $("install-modal-body"), installModalClose: $("install-modal-close"),
+  topProgressWrap: $("top-progress"), topProgress: $("top-progress-bar"),
 };
 
 // Smallest signed difference a−b on a circle, in (−180, 180].
@@ -107,12 +108,15 @@ function fmtHourLabel(utcMs, tz) {
   return new Intl.DateTimeFormat("en-US", o).format(new Date(utcMs))
     .replace(/\s/g, "").toLowerCase();   // "10 PM" -> "10pm"
 }
-function tzAbbrev(utcMs, tz) {
-  if (!tz) return "local time";
-  const parts = new Intl.DateTimeFormat("en-US",
-    { timeZone: tz, timeZoneName: "short" }).formatToParts(new Date(utcMs));
+// Short zone abbreviation (e.g. "PST", "MDT", "UTC") for a zone at a given instant.
+// tz "" → the browser's local zone. Used for the form button and every where/when line
+// so the location, date, and zone are always spelled out — never a bare "No Flares".
+function zoneAbbrev(tz, atMs) {
+  const o = { timeZoneName: "short", hour: "2-digit" };
+  if (tz) o.timeZone = tz;
+  const parts = new Intl.DateTimeFormat("en-US", o).formatToParts(new Date(atMs ?? Date.now()));
   const z = parts.find((p) => p.type === "timeZoneName");
-  return z ? z.value : tz;
+  return z ? z.value : (tz || "local");
 }
 
 // ---------------------------------------------------------------------------
@@ -144,7 +148,7 @@ function airportLabel(rec) {
   return { code, name: rec.name || "", place };
 }
 
-function wireAutocomplete(input, box) {
+function wireAutocomplete(input, box, onPick) {
   let items = [];
   let active = -1;
   let seq = 0;   // guards against out-of-order async results from fast typing
@@ -162,6 +166,7 @@ function wireAutocomplete(input, box) {
     input.value = code || rec.name || `${rec.lat},${rec.lon}`;
     input._resolved = rec;          // cache so we skip a redundant resolve
     close();
+    if (onPick) onPick(rec);        // e.g. origin → update the time-zone button
   };
 
   const render = () => {
@@ -252,7 +257,7 @@ function getBrowserLocation() {
 // name (falling back to lat/lon), populate the Origin field, and return the
 // origin object. tz is left blank, so times use the browser's local zone — which
 // for the user's own location is the right one.
-async function resolveBrowserLocation(load) {
+async function resolveBrowserLocation() {
   const pos = await getBrowserLocation();
   const name = await reverseGeocode(pos.lat, pos.lon);
   const label = name || `${pos.lat.toFixed(3)}°, ${pos.lon.toFixed(3)}°`;
@@ -379,6 +384,61 @@ function parseDateTime() {
   return { y, mo, d, h, mi };
 }
 
+// --- Time-zone selection for the entered Date/Time -------------------------
+// The form interprets the entered wall-clock in `tzMode`:
+//   "local" → the origin location's zone when known (airport tz), else the browser's
+//   "utc"   → UTC
+// The little button after the Time field shows the active zone and toggles it.
+let tzMode = "local";          // "local" | "utc"
+let formTz = "";               // origin location's IANA tz when known ("" = browser local)
+
+// IANA zone the entered time is read in, given the current mode/location.
+function formInterpTz() { return tzMode === "utc" ? "UTC" : (formTz || ""); }
+
+// The entered Date/Time as a UTC instant (for the button's zone abbreviation, which
+// can vary with the date across a DST boundary). Falls back to "now" if incomplete.
+function enteredMs() {
+  const dt = parseDateTime();
+  return dt ? wallClockToUTCms(dt.y, dt.mo, dt.d, dt.h, dt.mi, formInterpTz()) : Date.now();
+}
+
+function updateTzButton() {
+  if (!els.tzbtn) return;
+  const label = tzMode === "utc" ? "UTC" : zoneAbbrev(formTz, enteredMs());
+  els.tzbtn.textContent = label;
+  els.tzbtn.classList.toggle("utc", tzMode === "utc");
+  els.tzbtn.setAttribute("aria-label",
+    `Time zone: ${label}. Tap to switch to ${tzMode === "utc" ? "local time" : "UTC"}.`);
+}
+
+// Write a UTC instant into the Date/Time fields as the wall-clock for zone `tz`
+// (tz "" = browser local). Setting .value doesn't fire change/input, so this won't
+// re-trigger the relabel listeners.
+function setDateTimeFromMs(ms, tz) {
+  const o = { hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
+              hour: "2-digit", minute: "2-digit" };
+  if (tz) o.timeZone = tz;
+  const p = {};
+  for (const part of new Intl.DateTimeFormat("en-US", o).formatToParts(new Date(ms))) p[part.type] = part.value;
+  els.date.value = `${p.year}-${p.month}-${p.day}`;
+  els.time.value = `${p.hour}:${p.minute}`;
+}
+
+// Toggle local ↔ UTC, KEEPING THE SAME ABSOLUTE INSTANT: read the current wall-clock in
+// its current zone, flip the mode, then re-display that instant in the new zone (the date
+// rolls over if needed). With empty fields there's nothing to convert — just flip.
+function toggleTimeZone() {
+  const dt = parseDateTime();
+  if (dt) {
+    const ms = wallClockToUTCms(dt.y, dt.mo, dt.d, dt.h, dt.mi, formInterpTz());
+    tzMode = tzMode === "utc" ? "local" : "utc";
+    setDateTimeFromMs(ms, formInterpTz());
+  } else {
+    tzMode = tzMode === "utc" ? "local" : "utc";
+  }
+  updateTzButton();
+}
+
 function fmtDuration(sec) {
   const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
   if (h && m) return `${h} h ${m} min`;
@@ -398,6 +458,7 @@ let activeWorker = null;
 // flare worker when landing on the form, and build the info visuals (once) for info.
 function renderScreen(name) {
   if (name === "form" && activeWorker) { activeWorker.terminate(); activeWorker = null; }
+  if (name === "form") { stopLiveTimer(); showTopProgress(false); }   // leaving a running scan
   if (name === "info") buildInfoVisuals();
   els.formScreen.hidden = name !== "form";
   els.resultsScreen.hidden = name !== "results";
@@ -469,77 +530,102 @@ function buildInfoVisuals() {
   }
 }
 
-// A loading panel inside the results screen with a SINGLE-PASS progress bar.
-//
-// The bar is divided into named stages whose widths are proportional to each
-// stage's TYPICAL duration in seconds (set via setStages) — so it advances at a
-// roughly even real-world pace. The value is monotonic: it can only ever move
-// forward (one pass, never a reset), even though the worker reports several
-// restarting sub-progress signals (seek fraction, then per-session filter/refine
-// done/total). Within the current stage the bar follows real progress when the
-// worker reports it (frac), and otherwise CREEPS forward on a timer toward — but
-// never reaching — the stage's end, so it keeps moving during indeterminate
-// network waits. setMsg sets the small "what's happening" label above the bar.
-function renderLoading(msg) {
-  els.results.innerHTML =
-    `<div class="loading">
-       <div class="spinner" aria-hidden="true"></div>
-       <div class="loading-msg"></div>
-       <div class="progress"><span style="width:0%"></span></div>
-     </div>`;
-  const msgEl = els.results.querySelector(".loading-msg");
-  const bar = els.results.querySelector(".progress > span");
-  if (msgEl && msg) msgEl.textContent = msg;
+// --- Merged scanning + results view --------------------------------------------
+// There is no separate loading screen: the results layout appears immediately and the
+// compass rose + horizon view populate in real time as the worker STREAMS flares. A thin
+// orange bar at the top of the window shows scan progress. We re-render at 10 Hz from the
+// flares accumulated so far; the final worker "result" then replaces the live view with
+// the polished renderResults (animated rose, Open-in-Sitrec, notes).
+let liveFlares = [];
+let liveDirty = false;
+let liveTimer = null;
+let liveCtx = null;                              // { req, origin, dest }
+let liveStatusEl = null, liveRoseEl = null, liveHorizonEl = null;
 
-  let segs = {};                                   // id -> { start, end, secs } (bar fractions)
-  let curId = null, curStart = 0, curEnd = 1, curSecs = 1, curEnterMs = 0;
-  let realFrac = 0;                                // last real fraction for the current stage
-  let value = 0;                                   // current bar value (0..1), monotonic
-  let timer = null;
-
-  const write = (v) => {
-    // monotonic, and never quite 100% until done() — so the fill can't complete early
-    value = Math.max(value, Math.min(0.995, v));
-    if (bar) bar.style.width = (value * 100).toFixed(1) + "%";
-  };
-  const recompute = () => {
-    const elapsed = (Date.now() - curEnterMs) / 1000;
-    // asymptotic creep to 95% of the segment, half-filled after ~curSecs/2 seconds
-    const creep = curStart + (curEnd - curStart) * 0.95 * (1 - Math.pow(2, -elapsed / (curSecs * 0.5)));
-    const real = curStart + (curEnd - curStart) * Math.max(0, Math.min(1, realFrac));
-    write(Math.max(creep, real));
-  };
-
-  return {
-    setMsg: (m) => { if (msgEl) msgEl.textContent = m; },
-    // list: [{ id, secs }] — secs are typical durations; widths are proportional.
-    setStages: (list) => {
-      const total = list.reduce((s, x) => s + x.secs, 0) || 1;
-      let acc = 0; segs = {};
-      for (const x of list) {
-        const start = acc / total; acc += x.secs;
-        segs[x.id] = { start, end: acc / total, secs: x.secs };
-      }
-    },
-    stage: (id) => {
-      const s = segs[id];
-      if (!s || id === curId) return;              // unknown stage, or already here (idempotent)
-      curId = id;
-      curStart = Math.max(value, s.start);         // never step back
-      curEnd = Math.max(curStart, s.end);
-      curSecs = s.secs; curEnterMs = Date.now(); realFrac = 0;
-      if (!timer) timer = setInterval(recompute, 60);
-      recompute();
-    },
-    frac: (p) => { realFrac = Math.max(realFrac, p); recompute(); },
-    done: () => { if (timer) { clearInterval(timer); timer = null; } value = 1; if (bar) bar.style.width = "100%"; },
-    stop: () => { if (timer) { clearInterval(timer); timer = null; } },
-  };
+// Thin orange progress bar fixed at the very top of the window.
+function setTopProgress(frac) {
+  if (!els.topProgress) return;
+  els.topProgress.style.width = (Math.max(0, Math.min(1, frac || 0)) * 100).toFixed(1) + "%";
+}
+function showTopProgress(on) {
+  if (els.topProgressWrap) els.topProgressWrap.classList.toggle("on", !!on);
+  if (!on) setTopProgress(0);
 }
 
-function renderError(msg) {
+function setLiveStatus(html) { if (liveStatusEl) liveStatusEl.innerHTML = html; }
+
+// Build the live results scaffold once: a status line + the two SVG panels + legend.
+// The panels stay empty until flares stream in; setLiveStatus narrates the pre-scan
+// phases (locating, loading TLE) and then the running flare count.
+function setupLiveResults() {
   els.results.innerHTML =
-    `<div class="verdict no">Couldn't compute flares</div>
+    `<div class="r-when" id="live-status">Resolving location…</div>
+     <div class="rose-wrap" id="live-rose"></div>
+     <div class="horizon-wrap" id="live-horizon"></div>
+     <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour</div>`;
+  liveStatusEl = document.getElementById("live-status");
+  liveRoseEl = document.getElementById("live-rose");
+  liveHorizonEl = document.getElementById("live-horizon");
+}
+
+function startLiveTimer() {
+  stopLiveTimer();
+  liveTimer = setInterval(() => { if (liveDirty) { liveDirty = false; liveRender(); } }, 100);   // 10 Hz
+}
+function stopLiveTimer() { if (liveTimer) { clearInterval(liveTimer); liveTimer = null; } }
+
+// Redraw the rose + horizon + status from the flares accumulated so far. Cheap enough to
+// run at 10 Hz; the compass rose is drawn in "live" mode (no animated sprinkle, which
+// would otherwise restart every frame).
+function liveRender() {
+  if (!liveCtx) return;
+  // Only visible flares drive the live count/plot (the shared f.visible flag, as final).
+  const flares = liveFlares.filter((f) => f.visible);
+  if (!flares.length) { setLiveStatus("Scanning…"); return; }
+  const tz = liveCtx.origin.tz || "";
+  let t1 = Infinity, t2 = -Infinity, startAz = flares[0].azDeg, endAz = flares[0].azDeg;
+  let startT = Infinity, endT = -Infinity;
+  for (const f of flares) {
+    if (f.startMs < t1) t1 = f.startMs;
+    if (f.endMs > t2) t2 = f.endMs;
+    if (f.peakMs < startT) { startT = f.peakMs; startAz = f.azDeg; }
+    if (f.peakMs > endT) { endT = f.peakMs; endAz = f.azDeg; }
+  }
+  const obsLat = flares[0].obsLat ?? liveCtx.origin.lat;
+  const obsLon = flares[0].obsLon ?? liveCtx.origin.lon;
+  const stars = visibleStars(obsLat, obsLon, new Date(t1));
+  const bodies = visibleBodies(obsLat, obsLon, new Date(t1));
+  const hvFlares = flares.map((f) =>
+    ({ azDeg: f.azDeg, elDeg: f.elDeg, dAzDeg: f.dAzDeg, dElDeg: f.dElDeg, intensity: f.intensity }));
+  const win = horizonWindow(hvFlares);
+  const sunMarks = sunHourMarkers(t1, t2, tz, obsLat, obsLon);
+  const moved = compass16(startAz) !== compass16(endAz) && Math.abs(angDiff(endAz, startAz)) >= 12;
+  const arrows = moved ? [{ azDeg: startAz }, { azDeg: endAz }] : [{ azDeg: startAz }];
+  const range = `${fmtTime(t1, tz, { second: undefined })}–${fmtTime(t2, tz, { second: undefined })} ${escapeHtml(zoneAbbrev(tz, t1))}`;
+  setLiveStatus(`Scanning… <b>${flares.length}</b> flare${flares.length === 1 ? "" : "s"} · ${range}`);
+  if (liveRoseEl) liveRoseEl.innerHTML = compassRose(arrows, hvFlares, { live: true });
+  if (liveHorizonEl) liveHorizonEl.innerHTML = horizonView({ stars, bodies, flares: hvFlares, sunMarks, ...win });
+}
+
+// Compact "<place> · <date>, <time> <ZONE> · <UTC>" context line so every results,
+// no-flares, and error screen always states where and when (and in which zone) the
+// search was for. Times use the location's zone when known (origin.tz), else browser
+// local, and always also show UTC. startMs is the searched start (already adjusted if
+// the date was out of range). Returns "" when there's no location/time yet.
+function whereWhenLine(req, origin, dest) {
+  if (!req || !origin || !req.startMs) return "";
+  const tz = origin.tz || "";
+  const ms = req.startMs;
+  const place = dest ? `${origin.short || origin.name} → ${dest.short || dest.name}`
+                     : (origin.short || origin.name);
+  const when = `${fmtDateShort(ms, tz)}, ${fmtTime(ms, tz, { second: undefined })} ${zoneAbbrev(tz, ms)}`;
+  const utc = `${fmtTime(ms, "UTC", { second: undefined })} UTC`;
+  return `<div class="r-meta">${escapeHtml(place)} · ${escapeHtml(when)} · ${utc}</div>`;
+}
+
+function renderError(msg, req, origin, dest) {
+  els.results.innerHTML =
+    `<div class="verdict no">Couldn't compute flares</div>${whereWhenLine(req, origin, dest)}
      <div class="no-flares"><p>${escapeHtml(msg)}</p>
        <p>Use <b>Edit</b> (top-left) to change your inputs and try again.</p></div>`;
 }
@@ -606,10 +692,15 @@ function sunHourMarkers(t1, t2, tz, latDeg, lonDeg) {
 }
 
 // Base URL of the Sitrec app that hosts this tool: the tool lives at
-// <origin><base>/tools/shf/, so Sitrec is at <origin><base>/. Using the SAME
+// <origin><base>/tools/<name>/, so Sitrec is at <origin><base>/. Using the SAME
 // host means local.metabunk.org opens local Sitrec, production opens production.
+//
+// Strip from "/tools/" onward, case-INSENSITIVELY: the tool may be served at a
+// differently-cased path (e.g. /tools/SHF/ on a case-insensitive filesystem), and
+// matching only lowercase "shf" left the SHF tool's OWN URL here — which the installed
+// SHF PWA then captured, opening the tool again instead of the Sitrec desktop site.
 function sitrecBaseURL() {
-  const base = window.location.pathname.replace(/\/tools\/shf\/.*$/, "").replace(/\/+$/, "");
+  const base = window.location.pathname.replace(/\/tools\/.*$/i, "").replace(/\/+$/, "");
   return window.location.origin + base + "/";
 }
 
@@ -617,24 +708,42 @@ function sitrecBaseURL() {
 // builds a night-sky sitch (satellites + flares), a 60×-speed timeline over the
 // window/flight, a synthetic flight camera track (or fixed ground camera +50ft),
 // and aims the look camera at the peak flare direction. See src/fromApp.js.
+//
+// Works with OR without flares: when none were found (the No-Flares screen) we still
+// open the same place & time so the user can explore the sky, using the flight window
+// (or a short window at a fixed site) and aiming low toward the Sun's azimuth — the
+// direction flares would appear.
 function openInSitrec(req, flares, origin, dest, peakMs) {
-  // Peak look direction = the flare nearest the peak (busiest) minute.
-  let peak = flares[0], best = Infinity;
-  for (const f of flares) { const d = Math.abs(f.peakMs - peakMs); if (d < best) { best = d; peak = f; } }
-  const t1 = Math.min(...flares.map((f) => f.startMs));
-  const t2 = Math.max(...flares.map((f) => f.endMs));
+  let t1, t2, peakAz, peakEl, pkMs;
+  if (flares && flares.length) {
+    // Peak look direction = the flare nearest the peak (busiest) minute.
+    let peak = flares[0], best = Infinity;
+    for (const f of flares) { const d = Math.abs(f.peakMs - peakMs); if (d < best) { best = d; peak = f; } }
+    t1 = Math.min(...flares.map((f) => f.startMs));
+    t2 = Math.max(...flares.map((f) => f.endMs));
+    peakAz = peak.azDeg; peakEl = peak.elDeg; pkMs = peakMs;
+  } else {
+    // No flares: open the searched window (flight duration, or a couple of hours at a
+    // fixed site) and aim at where flares would be — the Sun's azimuth, low on the horizon.
+    t1 = req.startMs;
+    t2 = req.startMs + (req.mode === "flight" ? (req.durationSec || 3600) : 2 * 3600) * 1000;
+    pkMs = Math.round((t1 + t2) / 2);
+    const eq = sunEquatorial(new Date(pkMs));
+    const aa = equatorialToAltAz(eq.raDeg, eq.decDeg, origin.lat, origin.lon, new Date(pkMs));
+    peakAz = aa.azDeg; peakEl = 8;   // flares hug the horizon; the Sun itself is below it
+  }
 
   const q = new URLSearchParams();
   q.set("fromapp", "1");
   q.set("mode", dest ? "flight" : "fixed");
   q.set("lat", origin.lat.toFixed(5));
   q.set("lon", origin.lon.toFixed(5));
-  q.set("peakAz", peak.azDeg.toFixed(1));
-  q.set("peakEl", peak.elDeg.toFixed(1));
+  q.set("peakAz", peakAz.toFixed(1));
+  q.set("peakEl", peakEl.toFixed(1));
   // The Sitrec timeline runs (1×) from the first flare to the last, starting at the peak.
   q.set("firstMs", String(Math.round(t1)));
   q.set("lastMs", String(Math.round(t2)));
-  q.set("peakMs", String(Math.round(peakMs)));
+  q.set("peakMs", String(Math.round(pkMs)));
   if (origin.name) q.set("place", origin.name);
 
   if (dest) {
@@ -649,18 +758,28 @@ function openInSitrec(req, flares, origin, dest, peakMs) {
   window.open(sitrecBaseURL() + "?" + q.toString(), "_blank", "noopener");
 }
 
+// Whether a flare is bright enough to actually SEE now lives in the shared flarePhysics
+// model (flareEngine sets f.visible via isFlareVisible), so SHF and Sitrec agree on the
+// definition. The display simply filters on f.visible.
+
 // Full results screen: verdict, one-sentence summary, compass rose, horizon view.
 function renderResults(flares, stats, req, origin, dest) {
-  if (!flares || flares.length === 0) { renderNoFlares(stats, req, origin); return; }
-  flares = flares.slice().sort((a, b) => a.peakMs - b.peakMs);
+  if (!flares || flares.length === 0) { renderNoFlares(stats, req, origin, dest); return; }
+  const all = flares.slice().sort((a, b) => a.peakMs - b.peakMs);     // full set (local debug list)
+  // Drive the prediction (count, compass, horizon, peak, times) from only the flares the
+  // SHARED model marks visible (f.visible — the glint outshines the base satellite
+  // brightness; flarePhysics.isFlareVisible, the same definition Sitrec renders by). Faint
+  // grazing glints no longer inflate the result. Never blank the plot if all were faint.
+  const visible = all.filter((f) => f.visible);
+  const shown = visible.length ? visible : all;
   const tz = origin.tz || "";
-  const t1 = Math.min(...flares.map((f) => f.startMs));
-  const t2 = Math.max(...flares.map((f) => f.endMs));
-  const startAz = flares[0].azDeg, endAz = flares[flares.length - 1].azDeg;
-  const startC = flares[0].compass || compass16(startAz);
-  const endC = flares[flares.length - 1].compass || compass16(endAz);
+  const t1 = Math.min(...shown.map((f) => f.startMs));
+  const t2 = Math.max(...shown.map((f) => f.endMs));
+  const startAz = shown[0].azDeg, endAz = shown[shown.length - 1].azDeg;
+  const startC = shown[0].compass || compass16(startAz);
+  const endC = shown[shown.length - 1].compass || compass16(endAz);
   const moved = startC !== endC && Math.abs(angDiff(endAz, startAz)) >= 12;
-  const zone = tzAbbrev(t1, tz);
+  const zone = zoneAbbrev(tz, t1);
 
   // Compact three-line header (no big banner) — tuned to fit an iPhone SE.
   const localT = `${fmtTime(t1, tz, { second: undefined })}–${fmtTime(t2, tz, { second: undefined })}`;
@@ -668,13 +787,11 @@ function renderResults(flares, stats, req, origin, dest) {
   const dirLine = moved ? `Look <b>${startC}</b> → <b>${endC}</b>` : `Look <b>${startC}</b>`;
   const place = dest ? `${origin.short || origin.name} → ${dest.short || dest.name}` : (origin.short || origin.name);
 
-  // Peak = the busiest minute (greatest flare density) — the best moment to look,
-  // matching the rose's density arc. (Flare intensity saturates at 1.0, so the
-  // single "brightest" flare isn't meaningful; density is.)
+  // Peak = the busiest minute (greatest flare density) among the VISIBLE flares.
   const peakMs = (() => {
     const bin = 60000, m = new Map();
-    for (const f of flares) { const b = Math.round(f.peakMs / bin); m.set(b, (m.get(b) || 0) + 1); }
-    let bestBin = Math.round(flares[0].peakMs / bin), bestN = -1;
+    for (const f of shown) { const b = Math.round(f.peakMs / bin); m.set(b, (m.get(b) || 0) + 1); }
+    let bestBin = Math.round(shown[0].peakMs / bin), bestN = -1;
     for (const [b, n] of m) if (n > bestN) { bestN = n; bestBin = b; }
     return bestBin * bin;
   })();
@@ -682,11 +799,11 @@ function renderResults(flares, stats, req, origin, dest) {
 
   const arrows = moved ? [{ azDeg: startAz }, { azDeg: endAz }] : [{ azDeg: startAz }];
 
-  const obsLat = flares[0].obsLat ?? origin.lat;
-  const obsLon = flares[0].obsLon ?? origin.lon;
+  const obsLat = shown[0].obsLat ?? origin.lat;
+  const obsLon = shown[0].obsLon ?? origin.lon;
   const stars = visibleStars(obsLat, obsLon, new Date(t1));
   const bodies = visibleBodies(obsLat, obsLon, new Date(t1));
-  const hvFlares = flares.map((f) => ({
+  const hvFlares = shown.map((f) => ({
     azDeg: f.azDeg, elDeg: f.elDeg, dAzDeg: f.dAzDeg, dElDeg: f.dElDeg, intensity: f.intensity,
   }));
   const win = horizonWindow(hvFlares);
@@ -696,23 +813,35 @@ function renderResults(flares, stats, req, origin, dest) {
     `<div class="r-when">Flares visible <b>${localT}</b> ${escapeHtml(zone)} · peak <b>${peakT}</b></div>
      <div class="r-dir">${dirLine}</div>
      <div class="r-meta">${escapeHtml(place)} · ${fmtDateShort(t1, tz)} · ${utcT} UTC</div>
-     <div class="rose-wrap">${compassRose(arrows, flares)}</div>
+     <div class="rose-wrap">${compassRose(arrows, hvFlares)}</div>
      <div class="horizon-wrap">${horizonView({ stars, bodies, flares: hvFlares, sunMarks, ...win })}</div>
      <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour</div>
      <button id="opensitrec" type="button" class="go-btn sitrec-btn">Open in Sitrec ↗</button>
      ${notesHTML(req)}`;
 
   const openBtn = els.results.querySelector("#opensitrec");
-  if (openBtn) openBtn.addEventListener("click", () => openInSitrec(req, flares, origin, dest, peakMs));
+  if (openBtn) openBtn.addEventListener("click", () => openInSitrec(req, shown, origin, dest, peakMs));
 
-  // Per-flare detail list — kept but disabled for a cleaner results page.
-  const SHOW_FLARE_LIST = false;
+  // Per-flare detail list — hidden in production for a cleaner page, but shown on local
+  // dev hosts as a DEBUG aid: each card lists the satellite, peak time, peak glint, az/el,
+  // and relative brightness %, so the SHF flares can be cross-referenced against what
+  // Sitrec actually renders (e.g. faint/low-% flares are the ones Sitrec's brightness
+  // floor drops). Sorted by time to match scrubbing the Sitrec timeline.
+  const SHOW_FLARE_LIST = isLocalHost;
   if (SHOW_FLARE_LIST) {
-    const plural = flares.length === 1 ? "" : "s";
+    const plural = all.length === 1 ? "" : "s";
+    const faintN = all.length - visible.length;
     const det = document.createElement("details");
     det.className = "flare-details";
-    det.innerHTML = `<summary>All ${flares.length} flare${plural} · scanned ${stats.satsTotal} satellites</summary>`;
-    for (const f of flares) det.appendChild(flareCard(f, tz));
+    det.open = true;
+    det.innerHTML = `<summary>${all.length} flare${plural} · ${visible.length} visible` +
+      `${faintN ? ` · ${faintN} too faint to see` : ""}` +
+      ` · scanned ${stats.satsTotal} satellites · debug</summary>`;
+    for (const f of all) {
+      const card = flareCard(f, tz);
+      if (!f.visible) card.classList.add("faint");
+      det.appendChild(card);
+    }
     els.results.appendChild(det);
   }
 }
@@ -752,7 +881,7 @@ function flareCard(f, tz) {
   return card;
 }
 
-function renderNoFlares(stats, req, origin) {
+function renderNoFlares(stats, req, origin, dest) {
   const div = document.createElement("div");
   div.className = "no-flares";
   const scanned = stats ? `${stats.satsTotal} satellites` : "the satellites";
@@ -773,18 +902,30 @@ function renderNoFlares(stats, req, origin) {
       ? `<p>For the whole ${span} flight it was either <b>daylight</b>, or the night was so deep that the
            satellites were in <b>Earth's shadow</b> — so no flares were possible.</p>`
       : `<p>Scanned ${scanned} over the ${span} flight and found no horizon flares.</p>`;
-    tail = `<p>Try a flight during the <b>dark hours</b> — flares appear once the sky is dark, and continue
-       through much of the night while the satellites overhead are still catching sunlight.</p>`;
+    tail = `<p>Try a flight during the <b>dark hours</b> — flares appear once the sky is dark and can
+       continue through the night (how late depends on the season) while the satellites overhead are
+       still catching sunlight.</p>`;
   }
 
   div.innerHTML = `
     ${lead}
-    <p>A flare needs <b>you</b> in darkness while the <b>satellite</b> is still lit by the Sun. That holds
-       from dusk, through much of the night, until the small hours when even low satellites fall into
-       shadow (and again before dawn).</p>
+    <p>A flare needs <b>you</b> in darkness while the <b>satellite</b> is still lit by the Sun. How much
+       of the night that covers depends on the <b>season</b> (and your latitude): in summer the Sun stays
+       shallow enough overnight that satellites keep catching it right through the small hours, while in
+       winter it dips so deep that even low satellites spend the middle of the night in Earth's shadow.</p>
     ${tail}`;
-  els.results.innerHTML = `<div class="verdict no">No Flares</div>${notesHTML(req)}`;
+  els.results.innerHTML =
+    `<div class="verdict no">No Flares</div>${whereWhenLine(req, origin, dest)}${notesHTML(req)}`;
   els.results.appendChild(div);
+  // Still offer "Open in Sitrec" — opens this place & time so the user can explore the
+  // sky there even though no flares were found (no flare data needed).
+  const openBtn = document.createElement("button");
+  openBtn.type = "button";
+  openBtn.id = "opensitrec";
+  openBtn.className = "go-btn sitrec-btn";
+  openBtn.textContent = "Open in Sitrec ↗";
+  openBtn.addEventListener("click", () => openInSitrec(req, [], origin, dest, null));
+  els.results.appendChild(openBtn);
 }
 
 // Advisory banners: out-of-range date fallback, and which satellite data was used.
@@ -811,35 +952,29 @@ function formError(msg) { setStatus(""); statusLine(msg, "err"); }
 async function onSubmit(e) {
   e.preventDefault();
   if (activeWorker) { activeWorker.terminate(); activeWorker = null; }
+  stopLiveTimer();
 
   // Validate while still on the form.
   const dt = parseDateTime();
   if (!dt) { formError("Please choose a valid date and time."); return; }
   setStatus("");
 
-  // Switch to the results screen with a loading panel; everything else renders there.
+  // Go straight to the results screen — the scan populates it in real time (no separate
+  // loading screen). The thin top bar shows scan progress.
   navigateResults();
-  const load = renderLoading("Resolving location…");
-
-  // One-pass progress bar tracking ONLY the long step — the flare scan — which is driven
-  // by the worker's real filter/refine progress (see the message handler). Locating the
-  // place and loading the TLE set are near-instant when warm (only the first, slow TLE
-  // fetch ever isn't), so they're kept OFF the bar: reserving a slice for them just made
-  // it hop to ~25% instantly. The bar stays at 0 (spinner + label show activity) until the
-  // scan starts. secs only sets the gentle creep that fills gaps with no measurable
-  // progress (the seek phase, or the wait between dark windows); ≈ a full ~10k-sat scan.
-  const isFlight = !!els.dest.value.trim();
-  load.setStages(isFlight ? [{ id: "scan", secs: 10 }] : [{ id: "compute", secs: 12 }]);
+  setupLiveResults();
+  showTopProgress(true); setTopProgress(0);
+  liveFlares = []; liveDirty = false; liveCtx = null;
 
   try {
-    // Origin: use the typed value, or fall back to the browser's location if blank.
+    // Origin: typed value, or the browser's location if blank.
     let origin;
     if (els.origin.value.trim()) {
       origin = await resolveField(els.origin);
       if (!origin) throw new Error("Couldn't find that origin — check the spelling.");
     } else {
-      load.setMsg("Getting your location…");
-      origin = await resolveBrowserLocation(load);
+      setLiveStatus("Getting your location…");
+      origin = await resolveBrowserLocation();
     }
 
     let dest = null;
@@ -848,115 +983,92 @@ async function onSubmit(e) {
       if (!dest) throw new Error("Couldn't find that destination — check the spelling.");
     }
 
-    // TLEs are only accurate within roughly a week of "now"; far-future/past dates
-    // make SGP4 diverge into nonsense. If the requested moment is more than a week
-    // away, fall back to today's date (keeping the requested time of day) and flag
-    // the results as a simulation using current orbital data.
-    let startMs = wallClockToUTCms(dt.y, dt.mo, dt.d, dt.h, dt.mi, origin.tz);
+    // Interpret the entered wall-clock in the chosen zone (UTC if toggled, else the
+    // location's zone when known, else browser local); sync the button for a later Edit.
+    const interpTz = tzMode === "utc" ? "UTC" : (origin.tz || "");
+    if (tzMode !== "utc") { formTz = origin.tz || ""; updateTzButton(); }
+
+    // TLEs are only accurate within ~a week of "now"; clamp far dates to today (same time
+    // of day) and flag the run as a simulation using current orbital data.
+    let startMs = wallClockToUTCms(dt.y, dt.mo, dt.d, dt.h, dt.mi, interpTz);
     let simulated = false;
     const WEEK = 7 * 86400 * 1000;
     if (Math.abs(startMs - Date.now()) > WEEK) {
       simulated = true;
       const today = new Date();
       startMs = wallClockToUTCms(today.getFullYear(), today.getMonth() + 1, today.getDate(),
-        dt.h, dt.mi, origin.tz);
+        dt.h, dt.mi, interpTz);
     }
 
-    // Engine defaults (flare angle 5°, min elevation 0°, geocentric nadir model) —
-    // fixed internally; Advanced controls only the TLE source, not these.
     const options = {};
-    // Search at most 24 hours ahead for the next flares. The flare geometry recurs on
-    // a ~daily cycle (Sun position + the constellation's ground track), so if there is
-    // no flare in the first day there won't be one in the next two either — searching
-    // further just wastes time.
-    const LOOK_AHEAD_DAYS = 1;
+    const LOOK_AHEAD_DAYS = 1;   // the flare geometry recurs daily — no need to look further
 
     let req;
     if (!dest) {
-      req = {
-        mode: "fixed",
-        lat: origin.lat, lon: origin.lon, altKm: origin.altKm || 0,
-        startMs, maxLookAheadSec: LOOK_AHEAD_DAYS * 86400, options,
-      };
-      load.setMsg(`Searching for the next flares near ${origin.name}…`);
+      req = { mode: "fixed", lat: origin.lat, lon: origin.lon, altKm: origin.altKm || 0,
+              startMs, maxLookAheadSec: LOOK_AHEAD_DAYS * 86400, options };
+      setLiveStatus(`Searching near ${escapeHtml(origin.short || origin.name)}…`);
     } else {
       const distKm = greatCircleDistanceKm(origin.lat, origin.lon, dest.lat, dest.lon);
       const durationSec = (+els.duration.value > 0)
         ? +els.duration.value * 3600
         : distKm / 875 * 3600 + 1800;   // ~875 km/h cruise + 30 min overhead
       const cruiseAltKm = (+els.alt.value > 0 ? +els.alt.value : 37000) * 0.3048 / 1000;
-      req = {
-        mode: "flight",
-        origin: { lat: origin.lat, lon: origin.lon },
-        dest: { lat: dest.lat, lon: dest.lon },
-        cruiseAltKm, durationSec, startMs, options,
-      };
-      load.setMsg(`Checking the ${origin.name} → ${dest.name} flight…`);
+      req = { mode: "flight", origin: { lat: origin.lat, lon: origin.lon }, dest: { lat: dest.lat, lon: dest.lon },
+              cruiseAltKm, durationSec, startMs, options };
+      setLiveStatus(`Checking the ${escapeHtml(origin.short || origin.name)} → ${escapeHtml(dest.short || dest.name)} flight…`);
     }
     req.simulated = simulated;
 
-    // --- TLE --- (off the bar; bar stays at 0 with just the spinner + this label)
-    load.setMsg("Loading satellite data…");
+    // --- TLE ---
+    setLiveStatus("Loading satellite data…");
     let tleText;
     try {
-      const tle = await getTLEText(els.tlefile, (m) => load.setMsg(m), new Date(startMs));
+      const tle = await getTLEText(els.tlefile, (m) => setLiveStatus(escapeHtml(m)), new Date(startMs));
       tleText = tle.text;
-      req.tleMode = tle.mode;   // 'dummy' / 'stale' surface a note on the results
+      req.tleMode = tle.mode;
     } catch (err) {
-      load.stop();
-      renderError(err.message);
+      showTopProgress(false);
+      renderError(err.message, req, origin, dest);
       return;
     }
 
-    // --- run worker ---
-    const computeStage = isFlight ? "scan" : "compute";
-    const scanCeil = isFlight ? 1 : 0.92;   // fixed leaves headroom in case it scans >1 dark window
-    load.stage(computeStage);
-    load.setMsg("Computing flares…");
+    // --- run the STREAMING worker; populate the page live at 10 Hz ---
+    setLiveStatus("Scanning…");
+    liveCtx = { req, origin, dest };
+    liveFlares = []; liveDirty = false;
+    startLiveTimer();
+
     const w = new Worker("flareWorker.js" + VERSION, { type: "module" });
     activeWorker = w;
-
     w.onmessage = (ev) => {
       const m = ev.data || {};
-      if (m.type === "progress") {
-        // Label narrates the phase; the bar follows the scan's real filter/refine
-        // progress (filter = first half, refine = second). frac() is monotonic, so a
-        // fixed search's later dark window can't shove it back — and its fill is capped
-        // just below 100% (scanCeil) so a possible extra window can't read as fully done;
-        // a flight is one scan and fills the whole bar. The seek phase has no measurable
-        // progress, so the creep floor nudges the bar along until the scan reports in.
-        load.stage(computeStage);
-        if (m.phase === "seek") load.setMsg("Finding the next dark window…");
-        else if (m.phase === "filter") {
-          load.setMsg("Scanning satellites…");
-          if (m.total) load.frac(scanCeil * 0.5 * m.done / m.total);
-        } else if (m.phase === "refine") {
-          // Fixed mode cycles filter/refine once per window; keep a steady label there
-          // so the text doesn't flip each session (flight makes a single clean pass).
-          load.setMsg(isFlight ? "Pinpointing flares…" : "Scanning satellites…");
-          if (m.total) load.frac(scanCeil * (0.5 + 0.5 * m.done / m.total));
-        }
+      if (m.type === "flares") {
+        if (m.flares && m.flares.length) { liveFlares.push(...m.flares); liveDirty = true; }
+      } else if (m.type === "progress") {
+        setTopProgress(m.fraction);
       } else if (m.type === "result") {
-        load.done();
-        lastResults = { flares: m.flares, stats: m.stats, req, origin, dest };   // for shf/shfEval debugging
+        // Final authoritative (deduped, sorted) set — replace the live view with the
+        // polished results (animated rose, Open-in-Sitrec, notes).
+        stopLiveTimer(); showTopProgress(false);
+        lastResults = { flares: m.flares, stats: m.stats, req, origin, dest };
         renderResults(m.flares, m.stats, req, origin, dest);
         w.terminate(); activeWorker = null;
       } else if (m.type === "error") {
-        load.stop();
-        renderError(m.message || "unknown computation error");
+        stopLiveTimer(); showTopProgress(false);
+        renderError(m.message || "unknown computation error", req, origin, dest);
         w.terminate(); activeWorker = null;
       }
     };
     w.onerror = (err) => {
-      load.stop();
-      renderError(err.message || "the worker failed to run");
+      stopLiveTimer(); showTopProgress(false);
+      renderError(err.message || "the worker failed to run", req, origin, dest);
       try { w.terminate(); } catch (_) {}
       activeWorker = null;
     };
-
     w.postMessage({ req, tleText });
   } catch (err) {
-    load.stop();
+    stopLiveTimer(); showTopProgress(false);
     renderError(err && err.message ? err.message : String(err));
   }
 }
@@ -1218,8 +1330,18 @@ function wireInstall() {
 function init() {
   setNowDefaults();
   loadAirports();   // fire-and-forget; searchAirports degrades gracefully until ready
-  wireAutocomplete(els.origin, els.originSug);
+  // Origin picks set the time-zone button to that location's zone; destination doesn't
+  // affect the observer's zone, so it has no onPick.
+  wireAutocomplete(els.origin, els.originSug, (rec) => { formTz = rec.tz || ""; updateTzButton(); });
   wireAutocomplete(els.dest, els.destSug);
+  // Time-zone button: tap toggles local ↔ UTC. Typing a new origin clears the known
+  // zone (back to browser-local) until it's picked or resolved; changing the date/time
+  // refreshes the abbreviation in case it crosses a DST boundary.
+  els.tzbtn.addEventListener("click", toggleTimeZone);
+  els.origin.addEventListener("input", () => { formTz = ""; updateTzButton(); });
+  els.date.addEventListener("change", updateTzButton);
+  els.time.addEventListener("change", updateTzButton);
+  updateTzButton();
   wireTLEControls();
   els.form.addEventListener("submit", onSubmit);
   // History-backed navigation: the form is the base entry; sub-views push a state and

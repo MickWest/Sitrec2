@@ -39,6 +39,9 @@
   </script>
 </head>
 <body>
+  <!-- Thin scan-progress bar pinned to the very top of the window (shown only while scanning). -->
+  <div id="top-progress" aria-hidden="true"><span id="top-progress-bar"></span></div>
+
   <div id="form-screen" class="screen">
   <header class="app-header">
     <h1>Starlink Horizon Flares</h1>
@@ -71,7 +74,12 @@
           <input id="date" name="date" type="date">
         </div>
         <div class="field">
-          <label for="time">Time</label>
+          <div class="field-head">
+            <label for="time">Time</label>
+            <button id="tzbtn" type="button" class="tz-btn"
+                    title="Time zone — tap to switch between local and UTC"
+                    aria-label="Time zone: tap to switch between local time and UTC">&mdash;</button>
+          </div>
           <input id="time" name="time" type="time">
         </div>
       </div>
@@ -334,8 +342,8 @@
         <figcaption>The Sun can be tens of degrees below the observer's horizon while a
           satellite near the limb is still bathed in sunlight — so horizon flares are
           <strong>not a twilight effect</strong>. For the nominal 550&#8239;km orbit they appear
-          when the Sun is roughly <strong>38°–46° below the horizon</strong>: deep night, long
-          after dusk or before dawn.</figcaption>
+          when the Sun is roughly <strong>38°–46° below the horizon</strong>. Depending on the season
+          and latitude, that window can fall in the evening, before dawn, or right through the small hours.</figcaption>
       </figure>
 
       <p>And despite sometimes being confused with one, a horizon-flare display is

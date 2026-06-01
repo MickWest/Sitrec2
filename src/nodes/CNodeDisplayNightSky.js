@@ -25,6 +25,11 @@ import {CNodeDisplayEarthShadow} from "./CNodeDisplayEarthShadow";
 import {CNodeDisplayMoonShadow} from "./CNodeDisplayMoonShadow";
 import {assert} from "../assert";
 import {intersectSphere2, V3} from "../threeUtils";
+// Shared flare brightness model — the cone ramp, penumbra fade, and base/darkness
+// constants, single-sourced so the standalone SHF flare tool can't drift from this
+// live render. (Lives under tools/shf/ because that tool is served as raw ES modules
+// and can only import from there; this bundle can import down into it.)
+import {FLARE, flareRamp, penumbraFade} from "../../tools/shf/flarePhysics.js";
 import {
     getCelestialDirectionFromRaDec,
     getGeocentricBodyPositionECEF,
@@ -1101,8 +1106,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             }
 
             const satPosition = satData.ecef;
-            let brightness = 0.04;
-            const darknessMultiplier = 0.3;
+            let brightness = FLARE.base;
+            const darknessMultiplier = FLARE.darknessMult;
             let fade = 1;
 
             raycaster.set(satPosition, toSun);
@@ -1110,14 +1115,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 const midPoint = hitPoint.clone().add(hitPoint2).multiplyScalar(0.5);
                 const originToMid = midPoint.clone().sub(this.globe.center);
                 const occludedMeters = this.globe.radius - originToMid.length();
-                if (occludedMeters < this.satellites.penumbraDepth) {
-                    fade = 1 - occludedMeters / this.satellites.penumbraDepth;
-                    brightness *= darknessMultiplier + (1 - darknessMultiplier) * fade;
-                } else {
-                    fade = 0;
-                    brightness *= darknessMultiplier;
-                    this.satellites.removeSatSunArrows(satData);
-                }
+                fade = penumbraFade(occludedMeters, this.satellites.penumbraDepth);
+                brightness *= fade > 0 ? darknessMultiplier + (1 - darknessMultiplier) * fade : darknessMultiplier;
+                if (fade <= 0) this.satellites.removeSatSunArrows(satData);
             }
             satData.isLit = fade > 0;
 
@@ -1136,20 +1136,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                     const glintAngle = Math.abs(degrees(Math.acos(dot)));
 
                     const spread = this.satellites.flareAngle;
-                    const ramp = spread * 0.25;
-                    const middle = spread - ramp;
                     const glintSize = Sit.flareScale;
 
                     if (glintAngle < spread) {
-                        let glintScale;
-                        const d = Math.abs(glintAngle);
-                        if (d < middle) {
-                            glintScale = fade * glintSize;
-                        } else {
-                            const dOffset = d - middle;
-                            glintScale = fade * glintSize * (ramp - dOffset) * (ramp - dOffset) / (ramp * ramp);
-                        }
-                        brightness += glintScale;
+                        // Shared cone ramp: full inside the core, fading to 0 at the cone edge.
+                        brightness += fade * glintSize * flareRamp(Math.abs(glintAngle), spread);
 
                         DebugArrowAB(satData.name, cameraPos, satPosition, "#FF0000", true, this.sunArrowGroup, 10, LAYER.MASK_HELPERS);
                         DebugArrowAB(satData.name + "sun", satPosition,
