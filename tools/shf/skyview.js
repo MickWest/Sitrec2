@@ -185,14 +185,17 @@ export function compassRose(arrows, flares) {
 
 // --- horizon view ----------------------------------------------------------
 // opts: {
-//   stars:  [{name, azDeg, altDeg, mag}]   (all above the horizon; filtered here)
-//   flares: [{azDeg, elDeg, dAzDeg, dElDeg, intensity}]
+//   stars:    [{name, azDeg, altDeg, mag}]   (all above the horizon; filtered here)
+//   bodies:   [{name, azDeg, altDeg, color, r}]
+//   flares:   [{azDeg, elDeg, dAzDeg, dElDeg, intensity}]
+//   sunMarks: [{azDeg, label}]   hourly Sun-azimuth markers (label e.g. "11pm")
 //   azCenter, halfWidthDeg, elMaxDeg
 // }
 export function horizonView(opts) {
     const stars = opts.stars || [];
     const bodies = opts.bodies || [];   // planets + Moon: {name, azDeg, altDeg, color, r}
     const flares = opts.flares || [];
+    const sunMarks = opts.sunMarks || [];
     const azCenter = opts.azCenter;
     const HW = opts.halfWidthDeg;          // degrees either side of centre
     const elMax = opts.elMaxDeg || 45;
@@ -206,8 +209,29 @@ export function horizonView(opts) {
     const yOf = (el) => horizonY - Math.max(0, Math.min(elMax, el)) / elMax * (horizonY - topY);
     const inWin = (az) => Math.abs(angDiff(az, azCenter)) <= HW + 0.5;
 
+    // Hourly Sun-azimuth markers: a labelled amber down-arrow per whole hour, drawn
+    // in a headroom band ABOVE the sky so they never collide with stars/flares. The
+    // arrow points down into the sky at the Sun's azimuth (the flares track it). Skip
+    // a marker whose label would crowd the previous one (keeps it readable on mobile).
+    const HEAD = 30;                                // headroom band height (when used)
+    const labelY = -HEAD + 13, lineTop = -10, lineBot = 12;   // arrow spans headroom -> top of sky
+    let hourMarksSvg = "";
+    let lastX = -1e9;
+    for (const mk of sunMarks) {
+        if (!inWin(mk.azDeg)) continue;
+        const x = xOf(mk.azDeg);
+        if (Math.abs(x - lastX) < 30) continue;     // avoid overlapping labels
+        lastX = x;
+        hourMarksSvg += `<g stroke="#ffcf3f" fill="#ffcf3f" opacity="0.85">`
+            + `<line x1="${n(x)}" y1="${lineTop}" x2="${n(x)}" y2="${lineBot}" stroke-width="1.5"/>`
+            + `<polygon points="${n(x)},${n(lineBot + 5)} ${n(x - 3.5)},${n(lineBot - 1)} ${n(x + 3.5)},${n(lineBot - 1)}" stroke="none"/>`
+            + `</g>`
+            + `<text x="${n(x)}" y="${labelY}" text-anchor="middle" font-size="13" font-weight="700" fill="#ffcf3f">${esc(mk.label)}</text>`;
+    }
+    const head = hourMarksSvg ? HEAD : 0;           // only reserve the band if a marker drew
+
     // sky gradient + ground
-    let svg = `<svg viewBox="0 0 ${W} ${H}" class="horizon-view" role="img" aria-label="Horizon view of the flares and bright stars">
+    let svg = `<svg viewBox="0 ${-head} ${W} ${H + head}" class="horizon-view" role="img" aria-label="Horizon view of the flares, bright stars, and the Sun's hourly direction">
       <defs>
         <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#0a1330"/>
@@ -288,6 +312,9 @@ export function horizonView(opts) {
         }
         svg += `<circle cx="${n(x)}" cy="${n(y)}" r="${WHITE_R}" fill="#ffffff"/>`;
     }
+
+    // hourly Sun-azimuth markers on top (in the headroom band above the sky)
+    svg += hourMarksSvg;
 
     svg += `</svg>`;
     return svg;

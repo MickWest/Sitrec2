@@ -156,6 +156,22 @@
         dots simulate flares appearing across that part of the sky.</p>
       <div id="info-rose" class="rose-wrap info-rose" aria-hidden="true"></div>
 
+      <!-- The horizon "view from here" — the same wide-angle sky map the results show. -->
+      <h2>The &ldquo;view from here&rdquo; sky map</h2>
+      <p class="info-sub">Below the compass, the results draw a wide-angle view of the patch of
+        sky where the flares appear, as if you were standing at your location and facing that
+        direction. Each white dot is a predicted flare, placed at its <strong>azimuth</strong>
+        (compass direction, left&ndash;right) and <strong>altitude</strong> (height above the
+        horizon, bottom&ndash;top), with a thin amber arrow showing the way it drifts. Bright
+        stars &mdash; and any visible planets or the Moon &mdash; are added for orientation, and
+        the compass ribbon along the bottom marks the cardinal directions.</p>
+      <p class="info-sub">The amber <strong>&darr; markers along the top</strong> show where the
+        <strong>Sun</strong> is at each whole hour of the visible window. The Sun is tens of
+        degrees below the horizon at these times, but because the flares are reflected sunlight
+        they cluster toward its direction &mdash; so the hourly markers act as a clock laid across
+        the sky, showing how the whole display slides sideways as the night goes on.</p>
+      <div id="info-horizon" class="horizon-wrap info-horizon" aria-hidden="true"></div>
+
       <!-- AARO explainer video: playable and full-screenable. -->
       <h2>Starlink Horizon Flares explained by AARO</h2>
       <p class="info-sub">The U.S. All-domain Anomaly Resolution Office (AARO) explains the
@@ -246,40 +262,74 @@
 
       <figure class="diagram">
         <svg viewBox="0 0 640 280" role="img"
-             aria-label="Diagram: a night-side observer sees a low satellite near the horizon still catching grazing sunlight over the Earth's limb">
-          <rect x="0" y="0" width="640" height="280" fill="#0b1326" rx="10"/>
-          <!-- Earth -->
-          <circle cx="320" cy="1010" r="838" fill="#16223f" stroke="#2a3550" stroke-width="2"/>
-          <!-- night shading on the observer's side -->
-          <rect x="0" y="0" width="330" height="280" fill="#060a16" opacity="0.45"/>
-          <text x="40" y="262" fill="#46527a" font-size="12">night side</text>
-          <!-- observer's local horizon (tangent), dashed -->
-          <line x1="120" y1="178" x2="560" y2="178" stroke="#3a4566" stroke-width="1.2" stroke-dasharray="5 4"/>
-          <text x="126" y="170" fill="#7f8db3" font-size="12">observer's horizon</text>
-          <!-- observer on the surface -->
-          <circle cx="250" cy="178" r="6" fill="#5ad0a0"/>
-          <text x="236" y="204" fill="#5ad0a0" font-size="12">Observer (in the dark)</text>
-          <!-- satellite low on the horizon toward the Sun, still sunlit -->
-          <rect x="452" y="118" width="34" height="10" rx="2" fill="#9fb6e8" stroke="#cfe0ff" stroke-width="1.2"/>
-          <text x="496" y="118" fill="#cfe0ff" font-size="12">Starlink (still sunlit)</text>
-          <!-- grazing sunlight from beyond the limb -->
-          <g stroke="#ffd24a" stroke-width="2" opacity="0.85">
-            <line x1="626" y1="150" x2="488" y2="121" marker-end="url(#g1)"/>
-            <line x1="626" y1="186" x2="500" y2="138" marker-end="url(#g1)"/>
-          </g>
-          <text x="540" y="232" fill="#ffd24a" font-size="12">grazing sunlight</text>
-          <!-- Sun below the observer's horizon -->
-          <circle cx="600" cy="250" r="13" fill="#ffd24a"/>
-          <text x="600" y="276" text-anchor="middle" fill="#ffd24a" font-size="12">Sun (below horizon)</text>
-          <!-- reflected flare down to the observer -->
-          <line x1="456" y1="124" x2="256" y2="176" stroke="#ff9e2c" stroke-width="2.5" marker-end="url(#g2)"/>
-          <text x="300" y="138" fill="#ff9e2c" font-size="12">flare to observer</text>
+             aria-label="Diagram: a night-side observer, inside the Earth's shadow, sees a low satellite at the edge of the shadow still catching parallel sunlight grazing over the Earth's limb, and reflecting it down off its ground-facing panel">
           <defs>
+            <!-- Earth surface shading: night (upper-left) brightening toward the day
+                 side just beyond the right limb. -->
+            <linearGradient id="earthGrad" x1="0" y1="0" x2="1" y2="0.7">
+              <stop offset="0" stop-color="#0c1428"/>
+              <stop offset="0.55" stop-color="#15223f"/>
+              <stop offset="1" stop-color="#33507f"/>
+            </linearGradient>
             <marker id="g1" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
               <path d="M0,0 L9,4.5 L0,9 Z" fill="#ffd24a"/></marker>
             <marker id="g2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
               <path d="M0,0 L9,4.5 L0,9 Z" fill="#ff9e2c"/></marker>
           </defs>
+          <rect x="0" y="0" width="640" height="280" fill="#0b1326" rx="10"/>
+
+          <!-- Light/dark regions. The Sun's parallel rays travel up-left; the ray that
+               just grazes the limb to reach the satellite defines the edge of the
+               Earth's shadow. Everything below that tangent line (toward Earth) is in
+               shadow; the wedge above it, toward the Sun, is sunlit. -->
+          <!-- sunlit space (above the grazing tangent, toward the Sun) -->
+          <polygon points="274.1,0 640,0 640,224.1 470,120" fill="#28477d" opacity="0.40"/>
+          <!-- Earth's shadow / umbra (below the grazing tangent) -->
+          <polygon points="274.1,0 0,0 0,300 640,300 640,224.1 470,120" fill="#04060c" opacity="0.62"/>
+          <text x="74" y="92" fill="#6b76a0" font-size="12">Earth&#8217;s shadow</text>
+
+          <!-- Earth (drawn over the shadow polygons so they only shade the space above
+               the surface); gradient fill gives a proper terminator — night here,
+               day just beyond the right limb. -->
+          <circle cx="320" cy="1010" r="838" fill="url(#earthGrad)" stroke="#2a3550" stroke-width="2"/>
+          <text x="40" y="264" fill="#46527a" font-size="12">night side</text>
+
+          <!-- observer's local horizon (tangent), dashed -->
+          <line x1="120" y1="178" x2="560" y2="178" stroke="#5a6a93" stroke-width="1.2" stroke-dasharray="5 4"/>
+          <text x="126" y="170" fill="#8b99bd" font-size="12">observer&#8217;s horizon</text>
+          <!-- observer on the surface, deep in the Earth's shadow -->
+          <circle cx="250" cy="178" r="6" fill="#5ad0a0"/>
+          <text x="236" y="200" fill="#5ad0a0" font-size="12">Observer (in the dark)</text>
+
+          <!-- Several PARALLEL rays of sunlight (the Sun is effectively at infinity),
+               grazing in over the right limb. The lowest ray just clears the limb and
+               strikes the satellite; rays below it are blocked by the Earth (the shadow). -->
+          <g stroke="#ffd24a" stroke-width="1.8" opacity="0.9">
+            <line x1="639.1" y1="188.7" x2="485.7" y2="94.4" marker-end="url(#g1)"/>
+            <line x1="640" y1="153.7" x2="501.4" y2="68.8" marker-end="url(#g1)"/>
+            <line x1="640" y1="118.5" x2="517.1" y2="43.2" marker-end="url(#g1)"/>
+            <line x1="640" y1="83.3" x2="532.8" y2="17.6" marker-end="url(#g1)"/>
+            <!-- the grazing ray that reaches the satellite -->
+            <line x1="623.4" y1="214.3" x2="473" y2="121.5" marker-end="url(#g1)"/>
+          </g>
+          <text x="556" y="64" text-anchor="middle" fill="#ffd24a" font-size="12">parallel sunlight</text>
+
+          <!-- Satellite at the very edge of the shadow, its flat antenna panel held
+               PARALLEL to the ground below it (tilted to the local horizontal, ~9.6°). -->
+          <g transform="rotate(9.57 470 120)">
+            <rect x="453" y="115" width="34" height="10" rx="2" fill="#9fb6e8" stroke="#cfe0ff" stroke-width="1.2"/>
+          </g>
+          <text x="486" y="108" fill="#cfe0ff" font-size="12">Starlink (still sunlit)</text>
+          <!-- panel normal (nadir) — the reflection is symmetric about this line -->
+          <line x1="470" y1="120" x2="463.4" y2="159.4" stroke="#9fb6e8" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>
+
+          <!-- the grazing ray reflects off the panel down to the observer -->
+          <line x1="468" y1="123" x2="258" y2="176" stroke="#ff9e2c" stroke-width="2.5" marker-end="url(#g2)"/>
+          <text x="300" y="132" fill="#ff9e2c" font-size="12">flare to observer</text>
+
+          <!-- Sun, far below the observer's horizon, beyond the limb on the day side -->
+          <circle cx="600" cy="252" r="12" fill="#ffd24a"/>
+          <text x="632" y="274" text-anchor="end" fill="#ffd24a" font-size="12">Sun (below horizon)</text>
         </svg>
         <figcaption>The Sun can be tens of degrees below the observer's horizon while a
           satellite near the limb is still bathed in sunlight — so horizon flares are

@@ -488,6 +488,7 @@ input[type="file"]::file-selector-button {
 .legend .lg-flare { color: #ffffff; }
 .legend .lg-star { color: #aab8da; }
 .legend .lg-arrow { color: #ffcf3f; font-weight: 700; }
+.legend .lg-hour { color: #ffcf3f; font-weight: 700; }
 
 /* loading panel */
 .loading {
@@ -589,6 +590,9 @@ input[type="file"]::file-selector-button {
 
 /* The live compass-rose preview reuses .rose-wrap; just give it breathing room. */
 .info-rose { margin: 6px 0 4px; }
+
+/* The example horizon view reuses .horizon-wrap; matching breathing room. */
+.info-horizon { margin: 6px 0 4px; }
 
 /* Responsive 16:9 video that can be played and full-screened. */
 .info-video {

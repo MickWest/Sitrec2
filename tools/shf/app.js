@@ -18,7 +18,7 @@ const VERSION = new URL(import.meta.url).search; // e.g. "?v=1716998400000" (or 
 const [
   { resolveLocation, searchAirports, loadAirports, reverseGeocode },
   { compass16, greatCircleDistanceKm },
-  { equatorialToAltAz, planetEquatorial, moonEquatorial },
+  { equatorialToAltAz, planetEquatorial, moonEquatorial, sunEquatorial },
   { BRIGHT_STARS },
   { compassRose, horizonView, horizonWindow, flareSimSky },
   { generateDummyTLE },
@@ -45,7 +45,7 @@ const els = {
   status: $("status"), results: $("results"),
   formScreen: $("form-screen"), resultsScreen: $("results-screen"), edit: $("edit"),
   infoScreen: $("info-screen"), infoBack: $("info-back"),
-  infoLookLike: $("info-looklike"), infoRose: $("info-rose"),
+  infoLookLike: $("info-looklike"), infoRose: $("info-rose"), infoHorizon: $("info-horizon"),
   installWrap: $("install-wrap"), installApp: $("install-app"),
   installModal: $("install-modal"), installModalTitle: $("install-modal-title"),
   installModalBody: $("install-modal-body"), installModalClose: $("install-modal-close"),
@@ -99,6 +99,13 @@ function fmtDateShort(utcMs, tz) {   // compact, no year — e.g. "Fri, May 29"
   const o = { weekday: "short", month: "short", day: "numeric" };
   if (tz) o.timeZone = tz;
   return new Intl.DateTimeFormat(undefined, o).format(new Date(utcMs));
+}
+// Compact 12-hour label for an on-the-hour marker, e.g. "10pm", "12am", "1am".
+function fmtHourLabel(utcMs, tz) {
+  const o = { hour: "numeric", hour12: true };
+  if (tz) o.timeZone = tz;
+  return new Intl.DateTimeFormat("en-US", o).format(new Date(utcMs))
+    .replace(/\s/g, "").toLowerCase();   // "10 PM" -> "10pm"
 }
 function tzAbbrev(utcMs, tz) {
   if (!tz) return "local time";
@@ -438,9 +445,41 @@ function buildInfoVisuals() {
     for (let i = 0; i < 40; i++) flares.push({ azDeg: 296 + Math.random() * 26 });
     els.infoRose.innerHTML = compassRose(arrows, flares);
   }
+  if (els.infoHorizon) {
+    // A stylised example of the horizon "view from here": a low NW flare swarm with
+    // drift arrows, a few orientation stars (unlabelled), and three hourly Sun markers
+    // sliding across the top — the same builder the results page uses.
+    const flares = [];
+    for (let i = 0; i < 38; i++) {
+      flares.push({
+        azDeg: 296 + Math.random() * 26, elDeg: 4 + Math.random() * 13,
+        dAzDeg: 0.7 + Math.random() * 0.6, dElDeg: (Math.random() - 0.35) * 0.5, intensity: 0.85,
+      });
+    }
+    const stars = [
+      { name: "", azDeg: 288, altDeg: 24, mag: 2.0 },
+      { name: "", azDeg: 312, altDeg: 27, mag: 2.2 },
+      { name: "", azDeg: 330, altDeg: 17, mag: 1.9 },
+    ];
+    const sunMarks = [
+      { azDeg: 299, label: "10pm" }, { azDeg: 309, label: "11pm" }, { azDeg: 319, label: "12am" },
+    ];
+    els.infoHorizon.innerHTML =
+      horizonView({ stars, bodies: [], flares, sunMarks, ...horizonWindow(flares) });
+  }
 }
 
-// A loading panel inside the results screen; returns helpers to update it.
+// A loading panel inside the results screen with a SINGLE-PASS progress bar.
+//
+// The bar is divided into named stages whose widths are proportional to each
+// stage's TYPICAL duration in seconds (set via setStages) — so it advances at a
+// roughly even real-world pace. The value is monotonic: it can only ever move
+// forward (one pass, never a reset), even though the worker reports several
+// restarting sub-progress signals (seek fraction, then per-session filter/refine
+// done/total). Within the current stage the bar follows real progress when the
+// worker reports it (frac), and otherwise CREEPS forward on a timer toward — but
+// never reaching — the stage's end, so it keeps moving during indeterminate
+// network waits. setMsg sets the small "what's happening" label above the bar.
 function renderLoading(msg) {
   els.results.innerHTML =
     `<div class="loading">
@@ -450,10 +489,51 @@ function renderLoading(msg) {
      </div>`;
   const msgEl = els.results.querySelector(".loading-msg");
   const bar = els.results.querySelector(".progress > span");
-  if (msgEl) msgEl.textContent = msg;
+  if (msgEl && msg) msgEl.textContent = msg;
+
+  let segs = {};                                   // id -> { start, end, secs } (bar fractions)
+  let curId = null, curStart = 0, curEnd = 1, curSecs = 1, curEnterMs = 0;
+  let realFrac = 0;                                // last real fraction for the current stage
+  let value = 0;                                   // current bar value (0..1), monotonic
+  let timer = null;
+
+  const write = (v) => {
+    // monotonic, and never quite 100% until done() — so the fill can't complete early
+    value = Math.max(value, Math.min(0.995, v));
+    if (bar) bar.style.width = (value * 100).toFixed(1) + "%";
+  };
+  const recompute = () => {
+    const elapsed = (Date.now() - curEnterMs) / 1000;
+    // asymptotic creep to 95% of the segment, half-filled after ~curSecs/2 seconds
+    const creep = curStart + (curEnd - curStart) * 0.95 * (1 - Math.pow(2, -elapsed / (curSecs * 0.5)));
+    const real = curStart + (curEnd - curStart) * Math.max(0, Math.min(1, realFrac));
+    write(Math.max(creep, real));
+  };
+
   return {
     setMsg: (m) => { if (msgEl) msgEl.textContent = m; },
-    setBar: (frac) => { if (bar) bar.style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + "%"; },
+    // list: [{ id, secs }] — secs are typical durations; widths are proportional.
+    setStages: (list) => {
+      const total = list.reduce((s, x) => s + x.secs, 0) || 1;
+      let acc = 0; segs = {};
+      for (const x of list) {
+        const start = acc / total; acc += x.secs;
+        segs[x.id] = { start, end: acc / total, secs: x.secs };
+      }
+    },
+    stage: (id) => {
+      const s = segs[id];
+      if (!s || id === curId) return;              // unknown stage, or already here (idempotent)
+      curId = id;
+      curStart = Math.max(value, s.start);         // never step back
+      curEnd = Math.max(curStart, s.end);
+      curSecs = s.secs; curEnterMs = Date.now(); realFrac = 0;
+      if (!timer) timer = setInterval(recompute, 60);
+      recompute();
+    },
+    frac: (p) => { realFrac = Math.max(realFrac, p); recompute(); },
+    done: () => { if (timer) { clearInterval(timer); timer = null; } value = 1; if (bar) bar.style.width = "100%"; },
+    stop: () => { if (timer) { clearInterval(timer); timer = null; } },
   };
 }
 
@@ -492,6 +572,36 @@ function visibleBodies(latDeg, lonDeg, date) {
   const m = moonEquatorial(date);
   const ma = equatorialToAltAz(m.raDeg, m.decDeg, latDeg, lonDeg, date);
   if (ma.altDeg > -1) out.push({ name: "Moon", azDeg: ma.azDeg, altDeg: ma.altDeg, color: "#cfd4dc", r: 6.8 });
+  return out;
+}
+
+// Hourly Sun-azimuth markers spanning the visible window [t1,t2]. The flares are
+// forward-scattered sunlight, so the Sun's azimuth tracks where the swarm is; one
+// marker per whole local hour turns the horizon view's azimuth axis into a rough
+// time axis. The Sun is below the horizon (twilight/night), so only its azimuth
+// is meaningful — we return { azDeg, label } and the chart draws a labelled tick.
+function sunHourMarkers(t1, t2, tz, latDeg, lonDeg) {
+  const HOUR = 3600000;
+  // ms the zone is ahead of UTC at a given instant (browser-local when tz empty).
+  const offAt = (ms) => tz ? tzOffsetMs(new Date(ms), tz)
+                           : -new Date(ms).getTimezoneOffset() * 60000;
+  // The Sun's azimuth at a UTC instant.
+  const sunAz = (utc) => {
+    const eq = sunEquatorial(new Date(utc));
+    return equatorialToAltAz(eq.raDeg, eq.decDeg, latDeg, lonDeg, new Date(utc)).azDeg;
+  };
+  const off0 = offAt(t1);
+  const out = [];
+  // First whole local hour at or after t1, then step hour by hour to t2. Each
+  // local-hour boundary is re-projected to UTC with the offset at that instant,
+  // so a DST/odd-offset change inside the (short) window is still placed correctly.
+  let local = Math.ceil((t1 + off0) / HOUR) * HOUR;
+  for (let i = 0; i < 48; i++, local += HOUR) {        // 48 = generous safety cap
+    const utc = local - offAt(local - off0);
+    if (utc > t2) break;
+    if (utc < t1) continue;
+    out.push({ azDeg: sunAz(utc), label: fmtHourLabel(utc, tz) });
+  }
   return out;
 }
 
@@ -580,14 +690,15 @@ function renderResults(flares, stats, req, origin, dest) {
     azDeg: f.azDeg, elDeg: f.elDeg, dAzDeg: f.dAzDeg, dElDeg: f.dElDeg, intensity: f.intensity,
   }));
   const win = horizonWindow(hvFlares);
+  const sunMarks = sunHourMarkers(t1, t2, tz, obsLat, obsLon);
 
   els.results.innerHTML =
     `<div class="r-when">Flares visible <b>${localT}</b> ${escapeHtml(zone)} · peak <b>${peakT}</b></div>
      <div class="r-dir">${dirLine}</div>
      <div class="r-meta">${escapeHtml(place)} · ${fmtDateShort(t1, tz)} · ${utcT} UTC</div>
      <div class="rose-wrap">${compassRose(arrows, flares)}</div>
-     <div class="horizon-wrap">${horizonView({ stars, bodies, flares: hvFlares, ...win })}</div>
-     <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction</div>
+     <div class="horizon-wrap">${horizonView({ stars, bodies, flares: hvFlares, sunMarks, ...win })}</div>
+     <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour</div>
      <button id="opensitrec" type="button" class="go-btn sitrec-btn">Open in Sitrec ↗</button>
      ${notesHTML(req)}`;
 
@@ -710,6 +821,16 @@ async function onSubmit(e) {
   navigateResults();
   const load = renderLoading("Resolving location…");
 
+  // One-pass progress bar tracking ONLY the long step — the flare scan — which is driven
+  // by the worker's real filter/refine progress (see the message handler). Locating the
+  // place and loading the TLE set are near-instant when warm (only the first, slow TLE
+  // fetch ever isn't), so they're kept OFF the bar: reserving a slice for them just made
+  // it hop to ~25% instantly. The bar stays at 0 (spinner + label show activity) until the
+  // scan starts. secs only sets the gentle creep that fills gaps with no measurable
+  // progress (the seek phase, or the wait between dark windows); ≈ a full ~10k-sat scan.
+  const isFlight = !!els.dest.value.trim();
+  load.setStages(isFlight ? [{ id: "scan", secs: 10 }] : [{ id: "compute", secs: 12 }]);
+
   try {
     // Origin: use the typed value, or fall back to the browser's location if blank.
     let origin;
@@ -774,7 +895,7 @@ async function onSubmit(e) {
     }
     req.simulated = simulated;
 
-    // --- TLE ---
+    // --- TLE --- (off the bar; bar stays at 0 with just the spinner + this label)
     load.setMsg("Loading satellite data…");
     let tleText;
     try {
@@ -782,11 +903,15 @@ async function onSubmit(e) {
       tleText = tle.text;
       req.tleMode = tle.mode;   // 'dummy' / 'stale' surface a note on the results
     } catch (err) {
+      load.stop();
       renderError(err.message);
       return;
     }
 
     // --- run worker ---
+    const computeStage = isFlight ? "scan" : "compute";
+    const scanCeil = isFlight ? 1 : 0.92;   // fixed leaves headroom in case it scans >1 dark window
+    load.stage(computeStage);
     load.setMsg("Computing flares…");
     const w = new Worker("flareWorker.js" + VERSION, { type: "module" });
     activeWorker = w;
@@ -794,18 +919,36 @@ async function onSubmit(e) {
     w.onmessage = (ev) => {
       const m = ev.data || {};
       if (m.type === "progress") {
-        load.setMsg(m.phase === "seek" ? "Skipping ahead to the next dark window…" : "Computing flares…");
-        if (typeof m.fraction === "number") load.setBar(m.fraction);
-        else if (m.total) load.setBar(m.done / m.total);
+        // Label narrates the phase; the bar follows the scan's real filter/refine
+        // progress (filter = first half, refine = second). frac() is monotonic, so a
+        // fixed search's later dark window can't shove it back — and its fill is capped
+        // just below 100% (scanCeil) so a possible extra window can't read as fully done;
+        // a flight is one scan and fills the whole bar. The seek phase has no measurable
+        // progress, so the creep floor nudges the bar along until the scan reports in.
+        load.stage(computeStage);
+        if (m.phase === "seek") load.setMsg("Finding the next dark window…");
+        else if (m.phase === "filter") {
+          load.setMsg("Scanning satellites…");
+          if (m.total) load.frac(scanCeil * 0.5 * m.done / m.total);
+        } else if (m.phase === "refine") {
+          // Fixed mode cycles filter/refine once per window; keep a steady label there
+          // so the text doesn't flip each session (flight makes a single clean pass).
+          load.setMsg(isFlight ? "Pinpointing flares…" : "Scanning satellites…");
+          if (m.total) load.frac(scanCeil * (0.5 + 0.5 * m.done / m.total));
+        }
       } else if (m.type === "result") {
+        load.done();
+        lastResults = { flares: m.flares, stats: m.stats, req, origin, dest };   // for shf/shfEval debugging
         renderResults(m.flares, m.stats, req, origin, dest);
         w.terminate(); activeWorker = null;
       } else if (m.type === "error") {
+        load.stop();
         renderError(m.message || "unknown computation error");
         w.terminate(); activeWorker = null;
       }
     };
     w.onerror = (err) => {
+      load.stop();
       renderError(err.message || "the worker failed to run");
       try { w.terminate(); } catch (_) {}
       activeWorker = null;
@@ -813,8 +956,47 @@ async function onSubmit(e) {
 
     w.postMessage({ req, tleText });
   } catch (err) {
+    load.stop();
     renderError(err && err.message ? err.message : String(err));
   }
+}
+
+// ---------------------------------------------------------------------------
+// MCP / debug bridge
+// ---------------------------------------------------------------------------
+// The SitrecBridge browser extension already injects into this page (it matches
+// any /sitrec/tools/ path and treats it as "ready"), so its sitrec_eval works
+// here. But sitrec_eval runs `new Function()` in the extension's own scope, which
+// only sees `window.*` — and app.js is a non-bundled ES module, so els, lastResults,
+// the imported helpers, etc. live in module scope, invisible to it.
+//
+// Two hooks bridge that gap:
+//   * window.shf      — curated live handles; reachable straight from sitrec_eval:
+//                         sitrec_eval({ expression: "shf.lastResults?.flares.length" })
+//                         sitrec_eval({ expression: "shf.els.origin.value" })
+//   * window.shfEval  — runs a DIRECT eval() inside this module, so it can reach any
+//                       module-private binding (works because tools are served as raw,
+//                       un-minified ES modules — names are preserved):
+//                         sitrec_eval({ expression: "shfEval('horizonWindow(lastResults.flares)')" })
+//                         sitrec_eval({ expression: "shfEval('Object.keys(lastResults.stats)')" })
+// No secrets live in this module (it is all public client-side code), but to avoid
+// shipping an eval gadget to production we attach the hooks ONLY on local dev hosts
+// (local.metabunk.org / localhost / 127.0.0.1) — never on www.metabunk.org.
+let lastResults = null;       // { flares, stats, req, origin, dest } from the most recent run
+const isLocalHost = /^(local\.metabunk\.org|localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+if (isLocalHost) {
+  window.shfEval = (code) => eval(code);   // direct eval => this module's scope
+  window.shf = {
+    VERSION,
+    get els() { return els; },
+    get lastResults() { return lastResults; },
+    get activeWorker() { return activeWorker; },
+    get useRealTLE() { return useRealTLE; },
+    // live module helpers, callable from the MCP / console for ad-hoc checks
+    horizonView, horizonWindow, compassRose,
+    equatorialToAltAz, sunEquatorial, planetEquatorial, moonEquatorial,
+    resolveLocation, greatCircleDistanceKm,
+  };
 }
 
 // ---------------------------------------------------------------------------

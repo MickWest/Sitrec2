@@ -46,6 +46,17 @@ export function sunEciDirection(date) {
     };
 }
 
+// Sun's geocentric equatorial RA/Dec (degrees) — same low-precision model as
+// sunEciDirection, exposed for the sky chart. Feed into equatorialToAltAz like a
+// star/planet to get the Sun's alt/az (e.g. for hourly horizon-view markers).
+export function sunEquatorial(date) {
+    const d = sunEciDirection(date);
+    return {
+        raDeg: ((Math.atan2(d.y, d.x) * RAD) % 360 + 360) % 360,
+        decDeg: Math.asin(Math.max(-1, Math.min(1, d.z))) * RAD,
+    };
+}
+
 // Greenwich Mean Sidereal Time (radians), IAU 1982 — matches satellite.js gstime.
 // Provided for standalone night-side computation; the engine prefers
 // satellite.gstime so Sun and satellites share one rotation.
