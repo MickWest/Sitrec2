@@ -313,6 +313,10 @@ export function createFlareEngine(satellite) {
             return { dAzDeg: dAz, dElDeg: b.elDeg - a.elDeg };
         }
 
+        // Glint below this = full brightness ("core"); used to record the ramp-hold-ramp
+        // plateau (when the flare enters/leaves full brightness) for the timelapse streaks.
+        const coreAngle = fp.flareCoreAngle(spread);
+
         // Reusable run-state (reset between runs to stay allocation-light).
         let inRun = false;
         let runStartMs = 0, runEndMs = 0;
@@ -320,6 +324,7 @@ export function createFlareEngine(satellite) {
         let peakMs = 0, peakAz = 0, peakEl = 0, peakRange = 0, peakSatAlt = 0;
         let peakObsLat = 0, peakObsLon = 0;
         let peakSatE = null, peakToSun = null;   // sat ECEF + Sun dir at the peak, for the penumbra fade
+        let coreStartMs = 0, coreEndMs = 0;       // first/last time glint is in the full-brightness core (0 = never)
 
         for (let i = 0; i < nSats; i++) {
             const ivs = intervals[i];
@@ -342,7 +347,7 @@ export function createFlareEngine(satellite) {
                 }
                 flares.push(makeFlare(sat, runStartMs, peakMs, runEndMs, bestGlint,
                     peakAz, peakEl, peakRange, peakSatAlt, peakObsLat, peakObsLon,
-                    mot.dAzDeg, mot.dElDeg, fade, spread));
+                    mot.dAzDeg, mot.dElDeg, fade, spread, coreStartMs, coreEndMs));
                 satsFlaringSet.add(i);
             };
 
@@ -403,8 +408,11 @@ export function createFlareEngine(satellite) {
                             inRun = true;
                             runStartMs = t;
                             bestGlint = Infinity;
+                            coreStartMs = 0; coreEndMs = 0;
                         }
                         runEndMs = t;
+                        // Track the full-brightness plateau (glint inside the core).
+                        if (glint < coreAngle) { if (coreStartMs === 0) coreStartMs = t; coreEndMs = t; }
                         if (glint < bestGlint) {
                             bestGlint = glint;
                             peakMs = t;
@@ -460,13 +468,17 @@ export function createFlareEngine(satellite) {
     // the SHARED flarePhysics model, so SHF's "visible flare" definition matches Sitrec's.
     function makeFlare(sat, startMs, peakMs, endMs, peakGlintDeg,
                        azDeg, elDeg, rangeKm, satAltKm, obsLat, obsLon,
-                       dAzDeg, dElDeg, fade, spread) {
+                       dAzDeg, dElDeg, fade, spread, coreStartMs, coreEndMs) {
         return {
             satName: sat.name,
             noradId: sat.noradId,
             startMs,
             peakMs,
             endMs,
+            // Full-brightness plateau (glint inside the core); 0 = the flare never reached
+            // full brightness (a pure peak). Used to draw the ramp-hold-ramp streak profile.
+            coreStartMs: coreStartMs || 0,
+            coreEndMs: coreEndMs || 0,
             peakGlintDeg,
             intensity: fp.flareRamp(peakGlintDeg, spread),
             fade,

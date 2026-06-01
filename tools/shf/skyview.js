@@ -17,6 +17,98 @@ function angDiff(a, b) {
     return d;
 }
 
+// Apparent-motion sampling interval (ms): dAzDeg/dElDeg are the satellite's change in
+// az/el over this span, so its position at time t = peak + d(Az|El)·(t − peakMs)/MOTION_SAMPLE_MS.
+// Shared by the streak path, the dot's motion arrow, and the replay animation.
+export const MOTION_SAMPLE_MS = 2000;
+
+// The horizon panorama's az/el → x/y projection plus its key coordinates, given the framing
+// window {azCenter, halfWidthDeg, elMaxDeg}. Extracted so the live results page can animate
+// the replay flares + Sun onto the SAME SVG with the IDENTICAL mapping horizonView draws by —
+// the moving layer can't drift from the static scene because both call this one function.
+export function horizonProjection(win) {
+    const HW = win.halfWidthDeg;
+    const elMax = win.elMaxDeg || 45;
+    const azCenter = win.azCenter;
+    const W = 760, H = 300, padL = 8, padR = 8, horizonY = 250, topY = 26;
+    const plotW = W - padL - padR;
+    const xOf = (az) => padL + (angDiff(az, azCenter) / HW + 1) / 2 * plotW;   // rel∈[-HW,HW] -> [padL, W-padR]
+    // Unclamped: a point above elMax or below the horizon gets a real off-view y, and the sky
+    // clip-path crops it at the edge — clamping instead would squash overflowing lines onto the rim.
+    const yOf = (el) => horizonY - el / elMax * (horizonY - topY);
+    const inWin = (az) => Math.abs(angDiff(az, azCenter)) <= HW + 0.5;
+    return {
+        W, H, padL, padR, horizonY, topY, plotW, HW, elMax, azCenter, xOf, yOf, inWin,
+        elPxPerDeg: (horizonY - topY) / elMax, azPxPerDeg: plotW / (2 * HW),
+    };
+}
+
+// Brightness (0..intensity) of a flare at absolute time t (ms): a ramp-HOLD-ramp that rises
+// from 0 at startMs to its peak intensity by the core start, holds across the core
+// (coreStartMs..coreEndMs — where the glint sat inside the cone's full-brightness core), then
+// falls back to 0 by endMs. With no recorded core it's a triangle peaking at peakMs. Uses the
+// SAME control points as the timelapse-streak gradient, so the replay animation and the streak
+// agree on each flare's brightness curve (and both ultimately derive from flarePhysics).
+export function flareBrightnessAt(f, t) {
+    const a = f.startMs, b = f.endMs;
+    if (!(t > a && t < b)) return 0;
+    const inten = Math.max(0, Math.min(1, f.intensity ?? 1));
+    const hasCore = f.coreStartMs && f.coreEndMs && f.coreEndMs > f.coreStartMs + 1;
+    const cs = hasCore ? f.coreStartMs : (f.peakMs ?? (a + b) / 2);
+    const ce = hasCore ? f.coreEndMs : cs;
+    if (t < cs) return inten * (t - a) / Math.max(1, cs - a);   // ramp up
+    if (t <= ce) return inten;                                  // hold (single peak if no core)
+    return inten * (b - t) / Math.max(1, b - ce);               // ramp down
+}
+
+// SVG for the bright stars (white, brighter = bigger; labelled when mag < 1.6) and the planets/
+// Moon (coloured, always labelled) that are above the horizon and inside the framing window.
+// Extracted from horizonView so the replay animation can REDRAW them at the current time (their
+// alt/az drift with the sky) using the IDENTICAL look. P is a horizonProjection result.
+export function skyBodiesSVG(stars, bodies, P) {
+    const { xOf, yOf, inWin, elMax } = P;
+    let s = "";
+    for (const st of (stars || [])) {
+        if (st.altDeg < 0 || st.altDeg > elMax || !inWin(st.azDeg)) continue;
+        const x = xOf(st.azDeg), y = yOf(st.altDeg);
+        const r = Math.max(1.1, 3.2 - st.mag * 0.7);
+        s += `<circle cx="${n(x)}" cy="${n(y)}" r="${n(r)}" fill="#eaf1ff"/>`;
+        if (st.mag < 1.6) s += `<text x="${n(x + r + 3)}" y="${n(y + 3.5)}" font-size="12" fill="#aab8da">${esc(st.name)}</text>`;
+    }
+    for (const b of (bodies || [])) {
+        if (b.altDeg < 0 || b.altDeg > elMax || !inWin(b.azDeg)) continue;
+        const x = xOf(b.azDeg), y = yOf(b.altDeg), r = b.r || 3.4;
+        s += `<circle cx="${n(x)}" cy="${n(y)}" r="${n(r)}" fill="${b.color}"/>`;
+        s += `<text x="${n(x + r + 3)}" y="${n(y + 4)}" font-size="12" fill="${b.color}">${esc(b.name)}</text>`;
+    }
+    return s;
+}
+
+// A small "LIVE" badge — red text + a red dot in a red-outlined box. Used UNDER the Sun as a
+// pure indicator: rendered hidden, the app shows it only while real-time mode is active. (x,y)
+// is the box's top-left; the badge is 46×16.
+function liveBadge(x, y) {
+    return `<g class="replay-live" visibility="hidden" pointer-events="none">`
+        + `<rect x="${n(x)}" y="${n(y)}" width="46" height="16" rx="3" fill="rgba(220,30,30,0.18)" stroke="#ff4040" stroke-width="1"/>`
+        + `<circle cx="${n(x + 10)}" cy="${n(y + 8)}" r="2.6" fill="#ff3b3b"/>`
+        + `<text x="${n(x + 17)}" y="${n(y + 12)}" font-size="10" font-weight="700" fill="#ff6b6b" `
+        + `font-family="ui-monospace, SFMono-Regular, Menlo, monospace" letter-spacing="0.6">LIVE</text>`
+        + `</g>`;
+}
+
+// The LIVE toggle BUTTON above the time readout (replaces the old clock button). It is always
+// drawn (when real time is possible); colours come from CSS — grey with the dot at opacity 0
+// when off (so nothing shifts), red box + red dot + red text when .on. The app wires the click
+// and toggles .on. Same 46×16 geometry as liveBadge so the two read identically.
+function liveButton(x, y) {
+    return `<g class="replay-live-btn" style="cursor:pointer">`
+        + `<rect class="rl-box" x="${n(x)}" y="${n(y)}" width="46" height="16" rx="3"/>`
+        + `<circle class="rl-dot" cx="${n(x + 10)}" cy="${n(y + 8)}" r="2.6"/>`
+        + `<text class="rl-text" x="${n(x + 17)}" y="${n(y + 12)}" font-size="10" font-weight="700" `
+        + `letter-spacing="0.6" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">LIVE</text>`
+        + `</g>`;
+}
+
 // One animated "flare" dot at (px,py): a small white point that brightens, holds,
 // and fades while drifting a short distance, at SPEED units/s, in a random
 // direction, lit at a random moment within a single PERIOD-second SMIL loop.
@@ -198,18 +290,17 @@ export function horizonView(opts) {
     const bodies = opts.bodies || [];   // planets + Moon: {name, azDeg, altDeg, color, r}
     const flares = opts.flares || [];
     const sunMarks = opts.sunMarks || [];
-    const azCenter = opts.azCenter;
-    const HW = opts.halfWidthDeg;          // degrees either side of centre
-    const elMax = opts.elMaxDeg || 45;
+    // Wide-view style: 'dots' (white disk + motion arrow), 'streaks' (timelapse lines), or
+    // 'replay' (faint streaks behind a JS-animated, time-driven flare playback the app drives).
+    // Accept the older boolean opts.streaks too. Replay reuses the streak drawing, dimmed.
+    const mode = opts.mode || (opts.streaks ? "streaks" : "dots");
+    const replay = mode === "replay";
+    const liveBtn = !!opts.liveButton;     // draw the LIVE toggle (real time is possible: now ∈ window)
+    const streaks = mode === "streaks" || replay;
+    const streakMul = replay ? 0.12 : 1;   // ~10% faint timelapse streaks as context under the replay layer
 
-    const W = 760, H = 300;
-    const padL = 8, padR = 8;
-    const horizonY = 250, topY = 26;
-    const plotW = W - padL - padR;
-
-    const xOf = (az) => padL + (angDiff(az, azCenter) / HW + 1) / 2 * plotW;   // rel∈[-HW,HW] -> [padL, W-padR]
-    const yOf = (el) => horizonY - Math.max(0, Math.min(elMax, el)) / elMax * (horizonY - topY);
-    const inWin = (az) => Math.abs(angDiff(az, azCenter)) <= HW + 0.5;
+    const P = horizonProjection(opts);
+    const { W, H, padL, padR, horizonY, topY, plotW, HW, elMax, azCenter, xOf, yOf, inWin } = P;
 
     // Hourly Sun-azimuth markers: a labelled amber down-arrow per whole hour, drawn
     // in a headroom band ABOVE the sky so they never collide with stars/flares. The
@@ -240,6 +331,7 @@ export function horizonView(opts) {
           <stop offset="0.7" stop-color="#13213f"/>
           <stop offset="1" stop-color="#243a5e"/>
         </linearGradient>
+        <clipPath id="skyClip"><rect x="0" y="0" width="${W}" height="${horizonY}"/></clipPath>
       </defs>
       <rect x="0" y="0" width="${W}" height="${horizonY}" fill="url(#sky)"/>
       <rect x="0" y="${horizonY}" width="${W}" height="${H - horizonY}" fill="#0a0f1d"/>`;
@@ -271,48 +363,117 @@ export function horizonView(opts) {
         }
     }
 
-    // stars
-    for (const s of stars) {
-        if (s.altDeg < 0 || s.altDeg > elMax || !inWin(s.azDeg)) continue;
-        const x = xOf(s.azDeg), y = yOf(s.altDeg);
-        const r = Math.max(1.1, 3.2 - s.mag * 0.7);
-        svg += `<circle cx="${n(x)}" cy="${n(y)}" r="${n(r)}" fill="#eaf1ff"/>`;
-        if (s.mag < 1.6) {
-            svg += `<text x="${n(x + r + 3)}" y="${n(y + 3.5)}" font-size="12" fill="#aab8da">${esc(s.name)}</text>`;
+    // stars (white), planets (coloured) and the Moon — above the horizon, inside the window.
+    // In replay they go in a group the app redraws each second as the sky rotates with time.
+    const bodiesSVG = skyBodiesSVG(stars, bodies, P);
+    svg += replay ? `<g class="replay-bodies">${bodiesSVG}</g>` : bodiesSVG;
+
+    // flares (drawn last, on top). Two looks, toggled by opts.streaks:
+    //  • default — a small WHITE disk with a thin, ~75%-opacity amber motion arrow.
+    //  • streaks — a "timelapse exposure": a 2px white line tracing the satellite's path
+    //    over the flare (peak ± apparent-motion × time-offset), brightest (opacity =
+    //    intensity) at the peak and fading to nothing at the ends, ≈ its brightness curve.
+    const WHITE_R = 1.75;                      // small white dot (half the old size)
+    const { elPxPerDeg, azPxPerDeg } = P;
+    const MOTION_DT_MS = MOTION_SAMPLE_MS;     // dAzDeg/dElDeg sampled over ~2 s
+    // Everything flare-related goes in a group clipped to the sky rect, so streaks/arrows that
+    // run off the top, sides, or below the horizon are cropped at the edge (not squashed onto it).
+    svg += `<g clip-path="url(#skyClip)">`;
+    if (streaks) {
+        let defs = "", lines = "", gi = 0;
+        for (const f of flares) {
+            if (!inWin(f.azDeg)) continue;
+            const inten = Math.max(0, Math.min(1, f.intensity ?? 1));
+            const dAz = f.dAzDeg || 0, dEl = f.dElDeg || 0;
+            const back = ((f.peakMs - f.startMs) || 0) / MOTION_DT_MS;   // peak -> start, in motion-samples
+            const fwd = ((f.endMs - f.peakMs) || 0) / MOTION_DT_MS;      // peak -> end
+            const xp = xOf(f.azDeg), yp = yOf(f.elDeg);
+            const x1 = xOf(f.azDeg - dAz * back), y1 = yOf(f.elDeg - dEl * back);
+            const x2 = xOf(f.azDeg + dAz * fwd), y2 = yOf(f.elDeg + dEl * fwd);
+            if (Math.hypot(x2 - x1, y2 - y1) < 2) {                       // negligible path -> a point
+                lines += `<circle cx="${n(xp)}" cy="${n(yp)}" r="1.6" fill="#ffffff" opacity="${n(inten * streakMul)}"/>`;
+                continue;
+            }
+            // Brightness profile along the streak. If the flare held at full brightness
+            // (the core: coreStartMs..coreEndMs from the shared physics), draw a flat-top
+            // ramp-HOLD-ramp by repeating the bright stop at both core edges. Otherwise it
+            // never reached full brightness, so a single peak stop (a triangle) is right.
+            const total = (f.endMs - f.startMs) || 1;
+            const off = (v) => Math.round(Math.max(0.02, Math.min(0.98, v)) * 1000) / 1000;
+            let midStops;
+            if (f.coreStartMs && f.coreEndMs && f.coreEndMs > f.coreStartMs + 1) {
+                const cs = off((f.coreStartMs - f.startMs) / total);
+                let ce = off((f.coreEndMs - f.startMs) / total);
+                if (ce <= cs) ce = Math.min(0.98, cs + 0.01);
+                midStops = `<stop offset="${cs}" stop-color="#ffffff" stop-opacity="${n(inten * streakMul)}"/>`
+                    + `<stop offset="${ce}" stop-color="#ffffff" stop-opacity="${n(inten * streakMul)}"/>`;
+            } else {
+                midStops = `<stop offset="${off((f.peakMs - f.startMs) / total)}" stop-color="#ffffff" stop-opacity="${n(inten * streakMul)}"/>`;
+            }
+            const id = "st" + (gi++);
+            defs += `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${n(x1)}" y1="${n(y1)}" x2="${n(x2)}" y2="${n(y2)}">`
+                + `<stop offset="0" stop-color="#ffffff" stop-opacity="0"/>${midStops}`
+                + `<stop offset="1" stop-color="#ffffff" stop-opacity="0"/></linearGradient>`;
+            lines += `<line x1="${n(x1)}" y1="${n(y1)}" x2="${n(x2)}" y2="${n(y2)}" stroke="url(#${id})" stroke-width="2" stroke-linecap="round"/>`;
+        }
+        svg += `<defs>${defs}</defs>${lines}`;
+    } else {
+        for (const f of flares) {
+            if (!inWin(f.azDeg)) continue;
+            const x = xOf(f.azDeg), y = yOf(f.elDeg);
+            // motion arrow first (thin, semi-transparent) so the disk sits cleanly on top.
+            // Length now reflects the flare's DURATION: how far the satellite travels over
+            // the run (apparent motion × duration), capped so a long one can't dominate.
+            const durDt = ((f.endMs - f.startMs) || 0) / MOTION_DT_MS;
+            let vx = (f.dAzDeg || 0) * azPxPerDeg * durDt;
+            let vy = -(f.dElDeg || 0) * elPxPerDeg * durDt;
+            let m = Math.hypot(vx, vy);
+            if (m > 3) {
+                const MAXL = 80; if (m > MAXL) { vx = vx / m * MAXL; vy = vy / m * MAXL; }
+                const ex = x + vx, ey = y + vy;
+                const ang = Math.atan2(vy, vx);
+                const a1 = ang + Math.PI - 0.4, a2 = ang + Math.PI + 0.4;
+                svg += `<g stroke="#ffcf3f" fill="#ffcf3f" opacity="0.75">`
+                    + `<line x1="${n(x)}" y1="${n(y)}" x2="${n(ex)}" y2="${n(ey)}" stroke-width="1"/>`
+                    + `<polygon points="${n(ex)},${n(ey)} ${n(ex + Math.cos(a1) * 4)},${n(ey + Math.sin(a1) * 4)} ${n(ex + Math.cos(a2) * 4)},${n(ey + Math.sin(a2) * 4)}" stroke="none"/>`
+                    + `</g>`;
+            }
+            svg += `<circle cx="${n(x)}" cy="${n(y)}" r="${WHITE_R}" fill="#ffffff"/>`;
         }
     }
+    svg += `</g>`;   // end sky-clipped flare group
 
-    // planets (coloured) and the Moon (grey, larger) — always labelled
-    for (const b of bodies) {
-        if (b.altDeg < 0 || b.altDeg > elMax || !inWin(b.azDeg)) continue;
-        const x = xOf(b.azDeg), y = yOf(b.altDeg), r = b.r || 3.4;
-        svg += `<circle cx="${n(x)}" cy="${n(y)}" r="${n(r)}" fill="${b.color}"/>`;
-        svg += `<text x="${n(x + r + 3)}" y="${n(y + 4)}" font-size="12" fill="${b.color}">${esc(b.name)}</text>`;
-    }
-
-    // flares (drawn last, on top): small WHITE disks (same max size as the
-    // compass-rose sprinkle), each with a thin, ~75%-opacity amber motion arrow.
-    const WHITE_R = 3.5;                       // ≈ compass sprinkle's peak dot size
-    const elPxPerDeg = (horizonY - topY) / elMax;
-    const azPxPerDeg = plotW / (2 * HW);
-    for (const f of flares) {
-        if (!inWin(f.azDeg)) continue;
-        const x = xOf(f.azDeg), y = yOf(f.elDeg);
-        // motion arrow first (thin, semi-transparent) so the disk sits cleanly on top
-        let vx = (f.dAzDeg || 0) * azPxPerDeg;
-        let vy = -(f.dElDeg || 0) * elPxPerDeg;
-        const m = Math.hypot(vx, vy);
-        if (m > 0.5) {
-            const L = 15; vx = vx / m * L; vy = vy / m * L;
-            const ex = x + vx, ey = y + vy;
-            const ang = Math.atan2(vy, vx);
-            const a1 = ang + Math.PI - 0.4, a2 = ang + Math.PI + 0.4;
-            svg += `<g stroke="#ffcf3f" fill="#ffcf3f" opacity="0.75">`
-                + `<line x1="${n(x)}" y1="${n(y)}" x2="${n(ex)}" y2="${n(ey)}" stroke-width="1"/>`
-                + `<polygon points="${n(ex)},${n(ey)} ${n(ex + Math.cos(a1) * 4)},${n(ey + Math.sin(a1) * 4)} ${n(ex + Math.cos(a2) * 4)},${n(ey + Math.sin(a2) * 4)}" stroke="none"/>`
-                + `</g>`;
-        }
-        svg += `<circle cx="${n(x)}" cy="${n(y)}" r="${WHITE_R}" fill="#ffffff"/>`;
+    // Replay layer: an empty group the live page fills each animation frame with the flares
+    // active at the current replay time (positioned + brightened via the shared flareBrightnessAt),
+    // and a draggable Sun under the horizon that marks that instant at the Sun's true azimuth.
+    if (replay) {
+        const sunY = horizonY + 14, cx0 = n((padL + W - padR) / 2);
+        // White flare dot with a softened edge (objectBoundingBox, so it re-centres on every
+        // circle the app draws): solid white out to ~88% of the radius, then a quick fade to
+        // transparent over the outer ~12% — just enough to kill the hard edge, no real bloom.
+        svg += `<defs><radialGradient id="rflareDot">`
+            + `<stop offset="0" stop-color="#ffffff" stop-opacity="1"/>`
+            + `<stop offset="0.88" stop-color="#ffffff" stop-opacity="1"/>`
+            + `<stop offset="1" stop-color="#ffffff" stop-opacity="0"/>`
+            + `</radialGradient></defs>`;
+        svg += `<g class="replay-flares" clip-path="url(#skyClip)"></g>`
+            + `<g class="replay-sun" transform="translate(${cx0},0)">`
+            + `<line x1="0" y1="${horizonY}" x2="0" y2="${sunY - 7}" stroke="#ffcf3f" stroke-width="1.5" stroke-opacity="0.6"/>`
+            + `<circle cx="0" cy="${sunY}" r="6.5" fill="#ffd24a"/>`
+            + `<g stroke="#ffd24a" stroke-width="1.4" stroke-linecap="round">`
+            + `<line x1="-11" y1="${sunY}" x2="-8.5" y2="${sunY}"/><line x1="8.5" y1="${sunY}" x2="11" y2="${sunY}"/>`
+            + `<line x1="0" y1="${sunY + 8.5}" x2="0" y2="${sunY + 11}"/>`
+            + `<line x1="-7.5" y1="${sunY + 7.5}" x2="-6" y2="${sunY + 6}"/><line x1="7.5" y1="${sunY + 7.5}" x2="6" y2="${sunY + 6}"/>`
+            + `</g>`
+            + `<rect class="replay-sun-hit" x="-16" y="${horizonY}" width="32" height="${H - horizonY}" fill="transparent" style="cursor:grab"/>`
+            + liveBadge(-23, 281)                    // a LIVE badge below the Sun (moves with it; shown only in real time)
+            + `</g>`;
+        // Live time readout (with seconds), top-left above the horizon — the app sets its text
+        // each second to the current replay instant. Monospace so the width doesn't jitter. The
+        // LIVE toggle button sits just above it (only when real time is possible).
+        svg += (liveBtn ? liveButton(padL + 4, 1) : "")
+            + `<text class="replay-time" x="${padL + 4}" y="34" font-size="15" font-weight="700" `
+            + `font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#dfe8ff"></text>`;
     }
 
     // hourly Sun-azimuth markers on top (in the headroom band above the sky)

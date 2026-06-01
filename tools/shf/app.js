@@ -20,7 +20,7 @@ const [
   { compass16, greatCircleDistanceKm },
   { equatorialToAltAz, planetEquatorial, moonEquatorial, sunEquatorial },
   { BRIGHT_STARS },
-  { compassRose, horizonView, horizonWindow, flareSimSky },
+  { compassRose, horizonView, horizonWindow, flareSimSky, horizonProjection, flareBrightnessAt, skyBodiesSVG, MOTION_SAMPLE_MS },
   { generateDummyTLE },
 ] = await Promise.all([
   import("./location.js" + VERSION),
@@ -457,6 +457,7 @@ let activeWorker = null;
 // popstate handler. Preserves the side effects the old togglers had: terminate the
 // flare worker when landing on the form, and build the info visuals (once) for info.
 function renderScreen(name) {
+  if (name !== "results") stopReplay();   // tear down the replay rAF/listeners when leaving results
   if (name === "form" && activeWorker) { activeWorker.terminate(); activeWorker = null; }
   if (name === "form") { stopLiveTimer(); showTopProgress(false); }   // leaving a running scan
   if (name === "info") buildInfoVisuals();
@@ -541,6 +542,35 @@ let liveDirty = false;
 let liveTimer = null;
 let liveCtx = null;                              // { req, origin, dest }
 let liveStatusEl = null, liveRoseEl = null, liveHorizonEl = null;
+// Wide-view flare style, cycled by the ★ button: 'dots' (disk + arrow) → 'streaks' (timelapse
+// lines) → 'replay' (animated, time-driven playback). Default is the replay animation (looping,
+// non-live); the ★ cycles on to dots/streaks. Persists across renders this session.
+let horizonMode = "replay";
+const HMODES = ["dots", "streaks", "replay"];
+
+// Wide-view zoom, cycled by the magnifier button: 1× (default) → 2× → 4× → 1×. Zoom narrows the
+// projection window (halfWidth/elMax ÷ factor) so POSITIONS spread out while element sizes (text,
+// dots, lines — all absolute px) stay the same; everything re-frames around the same centre.
+let horizonZoom = 1;
+const ZOOMS = [1, 2, 4];
+function zoomWin(win) {
+  return horizonZoom > 1
+    ? { ...win, halfWidthDeg: win.halfWidthDeg / horizonZoom, elMaxDeg: win.elMaxDeg / horizonZoom }
+    : win;
+}
+
+// Wide-view container: the horizon SVG (rebuilt on render/toggle) plus two persistent overlay
+// buttons at the left edge that survive the SVG rebuilds — ★ cycles the style, and ⏱ (shown
+// only when "now" is inside the flaring window) plays the replay anchored to the real clock.
+function horizonWrapHTML(svg) {
+  return `<div class="horizon-wrap"><div class="horizon-svg">${svg}</div>`
+    + `<button type="button" class="hv-zoom${horizonZoom > 1 ? " on" : ""}" `
+    + `aria-label="Zoom the wide view: 1×, 2×, 4×" title="Zoom: 1× → 2× → 4×">${horizonZoom}×</button>`
+    + `<button type="button" class="hv-toggle${horizonMode !== "dots" ? " on" : ""}" `
+    + `aria-label="Cycle wide-view style: dots, streaks, replay" `
+    + `title="View: dots → timelapse streaks → replay">★</button>`
+    + `</div>`;
+}
 
 // Thin orange progress bar fixed at the very top of the window.
 function setTopProgress(frac) {
@@ -558,14 +588,28 @@ function setLiveStatus(html) { if (liveStatusEl) liveStatusEl.innerHTML = html; 
 // The panels stay empty until flares stream in; setLiveStatus narrates the pre-scan
 // phases (locating, loading TLE) and then the running flare count.
 function setupLiveResults() {
+  stopReplay();   // a fresh scan tears down any replay animation from the previous result
   els.results.innerHTML =
     `<div class="r-when" id="live-status">Resolving location…</div>
      <div class="rose-wrap" id="live-rose"></div>
-     <div class="horizon-wrap" id="live-horizon"></div>
+     ${horizonWrapHTML("")}
      <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour</div>`;
   liveStatusEl = document.getElementById("live-status");
   liveRoseEl = document.getElementById("live-rose");
-  liveHorizonEl = document.getElementById("live-horizon");
+  liveHorizonEl = els.results.querySelector(".horizon-svg");   // the SVG holder inside the wrap
+  const btn = els.results.querySelector(".hv-toggle");
+  if (btn) btn.addEventListener("click", () => {
+    horizonMode = HMODES[(HMODES.indexOf(horizonMode) + 1) % HMODES.length];
+    btn.classList.toggle("on", horizonMode !== "dots");
+    liveRender();   // re-draw immediately (replay shows as static streaks until the scan finishes)
+  });
+  const zbtn = els.results.querySelector(".hv-zoom");
+  if (zbtn) zbtn.addEventListener("click", () => {
+    horizonZoom = ZOOMS[(ZOOMS.indexOf(horizonZoom) + 1) % ZOOMS.length];
+    zbtn.textContent = horizonZoom + "×";
+    zbtn.classList.toggle("on", horizonZoom > 1);
+    liveRender();
+  });
 }
 
 function startLiveTimer() {
@@ -596,7 +640,8 @@ function liveRender() {
   const stars = visibleStars(obsLat, obsLon, new Date(t1));
   const bodies = visibleBodies(obsLat, obsLon, new Date(t1));
   const hvFlares = flares.map((f) =>
-    ({ azDeg: f.azDeg, elDeg: f.elDeg, dAzDeg: f.dAzDeg, dElDeg: f.dElDeg, intensity: f.intensity }));
+    ({ azDeg: f.azDeg, elDeg: f.elDeg, dAzDeg: f.dAzDeg, dElDeg: f.dElDeg, intensity: f.intensity,
+       startMs: f.startMs, peakMs: f.peakMs, endMs: f.endMs, coreStartMs: f.coreStartMs, coreEndMs: f.coreEndMs }));
   const win = horizonWindow(hvFlares);
   const sunMarks = sunHourMarkers(t1, t2, tz, obsLat, obsLon);
   const moved = compass16(startAz) !== compass16(endAz) && Math.abs(angDiff(endAz, startAz)) >= 12;
@@ -604,7 +649,10 @@ function liveRender() {
   const range = `${fmtTime(t1, tz, { second: undefined })}–${fmtTime(t2, tz, { second: undefined })} ${escapeHtml(zoneAbbrev(tz, t1))}`;
   setLiveStatus(`Scanning… <b>${flares.length}</b> flare${flares.length === 1 ? "" : "s"} · ${range}`);
   if (liveRoseEl) liveRoseEl.innerHTML = compassRose(arrows, hvFlares, { live: true });
-  if (liveHorizonEl) liveHorizonEl.innerHTML = horizonView({ stars, bodies, flares: hvFlares, sunMarks, ...win });
+  // Replay can't animate mid-scan (flares still streaming in) — show its faint streaks
+  // statically; the final renderResults starts the real, time-driven playback.
+  const liveMode = horizonMode === "replay" ? "streaks" : horizonMode;
+  if (liveHorizonEl) liveHorizonEl.innerHTML = horizonView({ stars, bodies, flares: hvFlares, sunMarks, mode: liveMode, ...zoomWin(win) });
 }
 
 // Compact "<place> · <date>, <time> <ZONE> · <UTC>" context line so every results,
@@ -666,16 +714,20 @@ function visibleBodies(latDeg, lonDeg, date) {
 // marker per whole local hour turns the horizon view's azimuth axis into a rough
 // time axis. The Sun is below the horizon (twilight/night), so only its azimuth
 // is meaningful — we return { azDeg, label } and the chart draws a labelled tick.
+// The Sun's azimuth (° CW from N) at a place and UTC instant. Shared by the hourly markers
+// and the replay Sun, so the draggable Sun lands on the same azimuths as the ticks above it.
+function sunAzimuthAt(utcMs, latDeg, lonDeg) {
+  const d = new Date(utcMs);
+  const eq = sunEquatorial(d);
+  return equatorialToAltAz(eq.raDeg, eq.decDeg, latDeg, lonDeg, d).azDeg;
+}
+
 function sunHourMarkers(t1, t2, tz, latDeg, lonDeg) {
   const HOUR = 3600000;
   // ms the zone is ahead of UTC at a given instant (browser-local when tz empty).
   const offAt = (ms) => tz ? tzOffsetMs(new Date(ms), tz)
                            : -new Date(ms).getTimezoneOffset() * 60000;
-  // The Sun's azimuth at a UTC instant.
-  const sunAz = (utc) => {
-    const eq = sunEquatorial(new Date(utc));
-    return equatorialToAltAz(eq.raDeg, eq.decDeg, latDeg, lonDeg, new Date(utc)).azDeg;
-  };
+  const sunAz = (utc) => sunAzimuthAt(utc, latDeg, lonDeg);
   const off0 = offAt(t1);
   const out = [];
   // First whole local hour at or after t1, then step hour by hour to t2. Each
@@ -689,6 +741,144 @@ function sunHourMarkers(t1, t2, tz, latDeg, lonDeg) {
     out.push({ azDeg: sunAz(utc), label: fmtHourLabel(utc, tz) });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Replay mode — animate the flares over the window at 1× real time
+// ---------------------------------------------------------------------------
+// The ★ "replay" view plays the prediction the way it will actually look: each satellite
+// brightens, holds, and fades over its REAL duration (shared flareBrightnessAt), drifting along
+// its real apparent path, with the faint timelapse streaks behind for context. A draggable Sun
+// under the horizon marks the current instant (at the Sun's true azimuth) and scrubs time.
+// Playback starts at the busiest minute and loops over the window; long gaps with nothing
+// visible are skipped (each flare still plays at 1×). The ⏱ button anchors it to the real
+// clock instead (only offered when "now" is inside the window). One rAF loop drives it all.
+let replayCtl = null;
+
+function stopReplay() {
+  if (replayCtl) { replayCtl.stop(); replayCtl = null; }
+}
+
+function startReplay(o) {
+  stopReplay();
+  const root = o.root.querySelector("svg") || o.root;
+  const flaresG = root.querySelector(".replay-flares");
+  if (!flaresG) return;
+  const sunG = root.querySelector(".replay-sun");
+  const bodiesG = root.querySelector(".replay-bodies");   // stars + planets (redrawn each second)
+  const timeEl = root.querySelector(".replay-time");      // live HH:MM:SS readout
+  // LIVE badges (above the time, below the Sun) show only when anchored to the real clock.
+  root.querySelectorAll(".replay-live").forEach((e) => e.setAttribute("visibility", o.realtime ? "visible" : "hidden"));
+  const { proj, flares, t1, t2, peakMs, obsLat, obsLon, tz } = o;
+  const zone = zoneAbbrev(tz, peakMs);
+  const clampT = (t) => (t < t1 ? t1 : t > t2 ? t2 : t);
+  let lastSec = null;   // throttles the slow-moving sky + the seconds readout to 1 Hz
+
+  // Pre-sample the Sun's screen-x across the window for placing + scrubbing the Sun icon.
+  const NS = 120, sunX = new Array(NS + 1), sunT = new Array(NS + 1);
+  for (let i = 0; i <= NS; i++) {
+    const t = t1 + (t2 - t1) * (i / NS);
+    sunT[i] = t;
+    sunX[i] = proj.xOf(sunAzimuthAt(t, obsLat, obsLon));
+  }
+  const clampX = (x) => Math.max(proj.padL, Math.min(proj.W - proj.padR, x));
+  const anyActive = (t) => flares.some((f) => t >= f.startMs - 500 && t <= f.endMs + 400);
+  const nextStart = (t) => { let m = Infinity; for (const f of flares) if (f.startMs > t && f.startMs < m) m = f.startMs; return m; };
+
+  const ctl = { realtime: !!o.realtime, dragging: false, stopped: false, raf: 0,
+                t: o.realtime ? clampT(Date.now()) : peakMs, last: 0 };
+  replayCtl = ctl;
+
+  // Render the flares active at time t (positioned + brightened), and move the Sun.
+  function draw(t) {
+    let s = "";
+    for (const f of flares) {
+      const b = flareBrightnessAt(f, t);
+      if (b <= 0.01) continue;
+      const k = (t - (f.peakMs ?? t)) / MOTION_SAMPLE_MS;
+      const az = f.azDeg + (f.dAzDeg || 0) * k;
+      if (!proj.inWin(az)) continue;
+      const x = proj.xOf(az), y = proj.yOf(f.elDeg + (f.dElDeg || 0) * k);
+      // A single white dot sized by brightness, edge-softened by the gradient (the solid part
+      // is ~88% of r, so the visible disk ≈ 0.9 + 1.8·b px with just a ~12% feather beyond it).
+      const r = (1.0 + 2.0 * b).toFixed(2);
+      s += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="url(#rflareDot)" opacity="${Math.min(1, 0.5 + b).toFixed(3)}"/>`;
+    }
+    flaresG.innerHTML = s;
+    if (sunG) sunG.setAttribute("transform",
+      `translate(${clampX(proj.xOf(sunAzimuthAt(t, obsLat, obsLon))).toFixed(1)},0)`);
+    // Once per second: advance the (slowly rotating) stars/planets and the time readout.
+    const sec = Math.floor(t / 1000);
+    if (sec !== lastSec) {
+      lastSec = sec;
+      const d = new Date(t);
+      if (bodiesG) bodiesG.innerHTML = skyBodiesSVG(visibleStars(obsLat, obsLon, d), visibleBodies(obsLat, obsLon, d), proj);
+      if (timeEl) timeEl.textContent = fmtTime(t, tz) + (zone ? " " + zone : "");
+    }
+  }
+
+  function frame(ts) {
+    if (ctl.stopped) return;
+    if (ctl.realtime) {
+      ctl.t = clampT(Date.now());
+    } else if (!ctl.dragging) {
+      if (ctl.last) {
+        ctl.t += (ts - ctl.last);                     // 1× real time
+        if (ctl.t > t2) ctl.t = t1;                   // loop the window
+        else if (!anyActive(ctl.t)) {                 // skip long dead gaps between flares
+          const ns = nextStart(ctl.t);
+          if (ns === Infinity) ctl.t = t1;
+          else if (ns - ctl.t > 1500) ctl.t = ns - 600;
+        }
+      }
+      ctl.last = ts;
+    } else {
+      ctl.last = ts;                                  // dragging — hold time, keep last fresh
+    }
+    draw(ctl.t);
+    ctl.raf = requestAnimationFrame(frame);
+  }
+
+  // --- Sun drag = scrub time (map pointer-x to the nearest pre-sampled instant) ---
+  function xToTime(clientX, clientY) {
+    let lx;
+    try {
+      const p = root.createSVGPoint(); p.x = clientX; p.y = clientY;
+      lx = p.matrixTransform(root.getScreenCTM().inverse()).x;
+    } catch (_) {
+      const r = root.getBoundingClientRect();
+      lx = (clientX - r.left) / r.width * proj.W;     // rough fallback
+    }
+    let bi = 0, bd = Infinity;
+    for (let i = 0; i <= NS; i++) { const d = Math.abs(sunX[i] - lx); if (d < bd) { bd = d; bi = i; } }
+    return sunT[bi];
+  }
+  const hit = sunG && sunG.querySelector(".replay-sun-hit");
+  function onDown(e) {
+    if (ctl.realtime) return;                         // real-time isn't scrubbable
+    ctl.dragging = true;
+    if (hit) { hit.style.cursor = "grabbing"; if (hit.setPointerCapture && e.pointerId != null) { try { hit.setPointerCapture(e.pointerId); } catch (_) {} } }
+    ctl.t = xToTime(e.clientX, e.clientY);
+    e.preventDefault();
+  }
+  function onMove(e) { if (ctl.dragging) { ctl.t = xToTime(e.clientX, e.clientY); e.preventDefault(); } }
+  function onUp() { if (ctl.dragging) { ctl.dragging = false; if (hit) hit.style.cursor = "grab"; } }
+  if (hit) {
+    hit.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  ctl.stop = function () {
+    ctl.stopped = true;
+    if (ctl.raf) cancelAnimationFrame(ctl.raf);
+    if (hit) hit.removeEventListener("pointerdown", onDown);
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+  };
+
+  draw(ctl.t);
+  ctl.raf = requestAnimationFrame(frame);
 }
 
 // Base URL of the Sitrec app that hosts this tool: the tool lives at
@@ -805,6 +995,7 @@ function renderResults(flares, stats, req, origin, dest) {
   const bodies = visibleBodies(obsLat, obsLon, new Date(t1));
   const hvFlares = shown.map((f) => ({
     azDeg: f.azDeg, elDeg: f.elDeg, dAzDeg: f.dAzDeg, dElDeg: f.dElDeg, intensity: f.intensity,
+    startMs: f.startMs, peakMs: f.peakMs, endMs: f.endMs, coreStartMs: f.coreStartMs, coreEndMs: f.coreEndMs,
   }));
   const win = horizonWindow(hvFlares);
   const sunMarks = sunHourMarkers(t1, t2, tz, obsLat, obsLon);
@@ -814,13 +1005,53 @@ function renderResults(flares, stats, req, origin, dest) {
      <div class="r-dir">${dirLine}</div>
      <div class="r-meta">${escapeHtml(place)} · ${fmtDateShort(t1, tz)} · ${utcT} UTC</div>
      <div class="rose-wrap">${compassRose(arrows, hvFlares)}</div>
-     <div class="horizon-wrap">${horizonView({ stars, bodies, flares: hvFlares, sunMarks, ...win })}</div>
+     ${horizonWrapHTML(horizonView({ stars, bodies, flares: hvFlares, sunMarks, mode: horizonMode, ...zoomWin(win) }))}
      <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour</div>
      <button id="opensitrec" type="button" class="go-btn sitrec-btn">Open in Sitrec ↗</button>
      ${notesHTML(req)}`;
 
   const openBtn = els.results.querySelector("#opensitrec");
   if (openBtn) openBtn.addEventListener("click", () => openInSitrec(req, shown, origin, dest, peakMs));
+
+  // Wide-view controls. ★ cycles dots → streaks → replay; ⏱ (only when "now" is inside the
+  // flaring window) jumps to replay anchored to the real clock. Replay animates the flares over
+  // the window at 1× via startReplay; dots/streaks are static SVG. renderHorizon rebuilds the
+  // SVG for the current mode and (re)starts or stops the animation accordingly.
+  const hvBtn = els.results.querySelector(".hv-toggle");
+  const hvZoom = els.results.querySelector(".hv-zoom");
+  const hvSvg = els.results.querySelector(".horizon-svg");
+  const nowInWindow = Date.now() >= t1 && Date.now() <= t2;
+
+  function renderHorizon(realtime) {
+    stopReplay();
+    const zwin = zoomWin(win);                 // zoom narrows the window; proj must match it
+    const proj = horizonProjection(zwin);
+    hvSvg.innerHTML = horizonView({ stars, bodies, flares: hvFlares, sunMarks, mode: horizonMode,
+                                    liveButton: nowInWindow, ...zwin });
+    if (hvBtn) hvBtn.classList.toggle("on", horizonMode !== "dots");
+    if (hvZoom) { hvZoom.textContent = horizonZoom + "×"; hvZoom.classList.toggle("on", horizonZoom > 1); }
+    if (horizonMode === "replay") {
+      // The LIVE badge above the time is the real-time toggle (rebuilt with the SVG, so re-wire it).
+      const liveBtn = hvSvg.querySelector(".replay-live-btn");
+      if (liveBtn) {
+        liveBtn.classList.toggle("on", !!realtime);
+        liveBtn.addEventListener("click", () => renderHorizon(!(replayCtl && replayCtl.realtime)));
+      }
+      startReplay({ root: hvSvg, flares: hvFlares, proj, t1, t2, peakMs, obsLat, obsLon, tz,
+                    realtime: !!realtime && nowInWindow });
+    }
+  }
+
+  if (hvBtn) hvBtn.addEventListener("click", () => {
+    horizonMode = HMODES[(HMODES.indexOf(horizonMode) + 1) % HMODES.length];
+    renderHorizon(false);
+  });
+  if (hvZoom) hvZoom.addEventListener("click", () => {
+    horizonZoom = ZOOMS[(ZOOMS.indexOf(horizonZoom) + 1) % ZOOMS.length];
+    renderHorizon(!!(replayCtl && replayCtl.realtime));   // re-frame, keeping the current real-time state
+  });
+  // Arrived already in replay mode (persisted from a previous view)? Start the animation now.
+  if (horizonMode === "replay") renderHorizon(false);
 
   // Per-flare detail list — hidden in production for a cleaner page, but shown on local
   // dev hosts as a DEBUG aid: each card lists the satellite, peak time, peak glint, az/el,
@@ -1104,8 +1335,10 @@ if (isLocalHost) {
     get lastResults() { return lastResults; },
     get activeWorker() { return activeWorker; },
     get useRealTLE() { return useRealTLE; },
+    get horizonMode() { return horizonMode; },
+    get replayCtl() { return replayCtl; },
     // live module helpers, callable from the MCP / console for ad-hoc checks
-    horizonView, horizonWindow, compassRose,
+    horizonView, horizonWindow, compassRose, horizonProjection, flareBrightnessAt,
     equatorialToAltAz, sunEquatorial, planetEquatorial, moonEquatorial,
     resolveLocation, greatCircleDistanceKm,
   };

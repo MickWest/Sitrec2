@@ -519,14 +519,69 @@ input[type="file"]::file-selector-button {
 .compass-rose { width: 196px; max-width: 56vw; height: auto; }
 
 .horizon-wrap {
+  position: relative;          /* anchors the star toggle overlay */
   border: 1px solid var(--line);
   border-radius: 12px;
   overflow: hidden;
   background: #0a0f1d;
 }
+.horizon-svg { display: block; line-height: 0; }
 /* Scale the whole panorama to fit the viewport so the full direction range is
    always visible (the SVG viewBox keeps everything proportional). */
 .horizon-view { display: block; width: 100%; height: auto; }
+
+/* Star toggle (middle of the wide view's left edge): switches the flare style between
+   dots+arrows and timelapse streaks. Highlighted (.on) when streaks are showing. */
+.hv-toggle {
+  position: absolute;
+  left: 6px; top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  font-size: 16px; line-height: 1;
+  color: var(--faint);
+  background: rgba(8, 12, 24, 0.55);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.hv-toggle:hover { color: var(--muted); border-color: var(--accent); }
+.hv-toggle.on { color: var(--accent); border-color: var(--accent); }
+.hv-toggle:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,158,44,0.18); }
+
+/* LIVE toggle button inside the replay view (above the time). It IS the real-time switch:
+   OFF = grey box + grey text + the dot at opacity 0 (so nothing shifts); ON (.on) = red box,
+   red dot, red text. Colours are set here (not as SVG attributes) so the class flip drives them. */
+.replay-live-btn .rl-box { fill: rgba(130,140,160,0.10); stroke: #46526b; stroke-width: 1; }
+.replay-live-btn .rl-dot { fill: #ff3b3b; opacity: 0; }
+.replay-live-btn .rl-text { fill: #8a97b5; }
+.replay-live-btn:hover .rl-box { stroke: #6b7a99; }
+.replay-live-btn.on .rl-box { fill: rgba(220,30,30,0.18); stroke: #ff4040; }
+.replay-live-btn.on .rl-dot { opacity: 1; }
+.replay-live-btn.on .rl-text { fill: #ff6b6b; }
+
+/* Zoom button, stacked just above the ★. Cycles 1× → 2× → 4×; label shows the level,
+   .on (amber) when zoomed in. */
+.hv-zoom {
+  position: absolute;
+  left: 6px; top: calc(50% - 37px);
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  font-size: 12px; font-weight: 700; line-height: 1;
+  color: var(--faint);
+  background: rgba(8, 12, 24, 0.55);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.hv-zoom:hover { color: var(--muted); border-color: var(--accent); }
+.hv-zoom.on { color: var(--accent); border-color: var(--accent); }
+.hv-zoom:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,158,44,0.18); }
 
 .legend {
   text-align: center;

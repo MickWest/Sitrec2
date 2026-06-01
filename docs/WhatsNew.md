@@ -9,6 +9,28 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.69.0 (2026-06-01)
+
+### New Features
+- **Replay (Starlink Horizon Flares tool → results, "view from here" panorama):** the wide view now plays an animation, by default, of how the predicted flares will actually look — each one brightening, holding, and fading over its real duration as it drifts across the sky, at real-time (1×) speed, looping over the window. A live clock reads out the time and the stars and planets turn with it; a Sun beneath the horizon marks the moment and can be dragged to scrub back and forth. The ★ button at the left edge cycles between this replay, simple dots, and timelapse streaks.
+- **Timelapse-streak view (★ button):** draws each flare as a streak of light tracing the satellite's path, brightest while the flare holds at full brightness and fading away at each end.
+- **LIVE button (in the replay view, when a flare window is happening right now):** switch the replay to the actual current time to see what is flaring overhead at this moment, with a red LIVE indicator.
+- **Zoom button (left edge of the wide view):** steps through 1×, 2×, and 4×, spreading the flares and stars further apart while keeping labels and markers the same size.
+
+### Improvements
+- The Starlink Horizon Flares tool and Sitrec's main night-sky view now share one flare-brightness model, so the predicted flares and the 3D recreation look and count the same.
+- Only flares bright enough to actually be seen are now counted and shown in the Starlink Horizon Flares tool — faint glints no longer inflate the total or clutter the view.
+- In the dots view, a flare's direction arrow is now as long as the distance the satellite travels during the flare, so longer, faster passes stand out.
+- The "view from here" panorama now shows the Sun's position for each hour as a labelled marker across the top, turning the view into a rough time axis.
+- The scan progress bar now fills smoothly in a single pass instead of resetting or jumping partway through.
+- Redrew the diagram on the info page that explains how a horizon flare forms (sunlight grazing the edge of the Earth, the satellite at the edge of Earth's shadow).
+- The *Open in Sitrec* view now opens looking down from space at the observer, so the Earth's edge and the ring of Starlink satellites fill the frame.
+
+### Bug Fixes
+- Fixed flares near the edge of the "view from here" panorama getting squashed against the top or sides instead of simply running off-view — most noticeable when zoomed in.
+
+---
+
 ## Version 2.68.3 (2026-06-01)
 
 ### Improvements

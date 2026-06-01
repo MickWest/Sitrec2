@@ -39,6 +39,13 @@ export function flareRamp(glintDeg, spreadDeg = FLARE.angleDeg) {
     return (r * r) / (ramp * ramp);
 }
 
+// Glint angle (deg) below which the flare is at FULL brightness (the flat "core" where
+// flareRamp == 1). A flare whose glint dips below this holds at peak brightness for a
+// while — the plateau of the ramp-hold-ramp profile. Above it, flareRamp falls off.
+export function flareCoreAngle(spreadDeg = FLARE.angleDeg) {
+    return spreadDeg * (1 - FLARE.rampFraction);
+}
+
 // Penumbra fade (0..1) from how deep the Sun-ray's shadow chord sits below the surface.
 //   occludedDist <= 0  -> ray misses Earth, fully lit (1)
 //   0 < occludedDist < depth -> partial (1 - occludedDist/depth)
