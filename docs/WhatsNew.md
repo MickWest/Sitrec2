@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.69.1 (2026-06-01)
+
+### Improvements
+- **SHF App** (top-level menu, just below the live Starlink Horizon Flares entry): a new link that opens the standalone Starlink Horizon Flares predictor app in a new tab.
+
+---
+
 ## Version 2.69.0 (2026-06-01)
 
 ### New Features

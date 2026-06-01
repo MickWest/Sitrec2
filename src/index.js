@@ -1874,6 +1874,14 @@ async function initializeOnce() {
         _gui.add(Globals, ""+key+"Button").name(key).perm()
             .tooltip(sitchObject.tooltip || t("menus.main.noTooltip"))
 
+        // Directly below the live "Starlink Horizon Flares (LIVE)" sitch, link to the
+        // standalone SHF predictor app (tools/shf) — a separate PWA, so it's an external
+        // link (opens in a new tab) rather than a sitch button.
+        if (sitch === "starlink") {
+            _gui.addExternalLink("SHF App", SITREC_APP + "tools/shf/").perm()
+                .tooltip("Open the standalone Starlink Horizon Flares (SHF) predictor app");
+        }
+
     }
 
     // add menu buttons (displayed after root sitches)

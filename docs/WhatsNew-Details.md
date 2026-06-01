@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.69.1 (2026-06-01)
+
+### Improvements
+- **"SHF App" link added to the main menu, beneath the live Starlink Horizon Flares sitch** (`src/index.js`, `rootSitches` loop in `initializeOnce`). The root-sitch button-building loop now emits an extra menu item immediately after the per-sitch button when `sitch === "starlink"`: `_gui.addExternalLink("SHF App", SITREC_APP + "tools/shf/").perm()` with the tooltip *"Open the standalone Starlink Horizon Flares (SHF) predictor app"*. Because the SHF (Starlink Horizon Flares) predictor is a separate standalone PWA served as raw ES modules under `tools/shf/` — not a Sitrec sitch — it is added via `addExternalLink` (which does `window.open(url, '_blank')`, opening it in a new tab) rather than as a `newSitch` button. The result is a direct shortcut to the standalone SHF app sitting directly below the in-app "Starlink Horizon Flares (LIVE)" sitch entry. The target resolves through `SITREC_APP`, so it points at the SHF app of whichever deployment is running.
+
+---
+
 ## Version 2.69.0 (2026-06-01)
 
 ### New Features
