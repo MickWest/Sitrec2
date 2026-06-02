@@ -231,6 +231,24 @@ export class CNodeView3D extends CNodeViewCanvas {
         }
         this.addSimpleSerial("northUp");
 
+        // Y-compress: anamorphic vertical squash. 1 = no-op. Values >1 widen the
+        // vertical view frustum by that factor while keeping the same output height,
+        // packing more in vertically (the image looks vertically squashed).
+        // Only the mainView exposes the control; other views keep the default 1.
+        this.yCompress = v.yCompress ?? 1.0;
+        if (this.id === "mainView") {
+            guiMenus.view.add(this, "yCompress", 1, 20, 0.1)
+                .name("Y-compress")
+                .listen()
+                .onChange(() => {
+                    this.updateYCompressIndicator();
+                    setRenderOne(true);
+                })
+                .tooltip("Vertically expand the view frustum to pack more into the same height (distorts the view). 1 = off.");
+            this.addSimpleSerial("yCompress");
+            this.updateYCompressIndicator();
+        }
+
 
         this.isIR = v.isIR ?? false;
         this.fovOverride = v.fovOverride;
@@ -1056,6 +1074,16 @@ export class CNodeView3D extends CNodeViewCanvas {
                     this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
                 }
             }
+        }
+
+        // Apply the Y-compress vertical frustum expansion for LOD/culling too, so
+        // terrain tile selection sees the same widened vertical frustum that the
+        // render pass uses. Without this, tiles outside the un-squashed frustum
+        // never load and the squashed view shows black gaps.
+        // restoreCameraAfterLOD() rebuilds the matrix from fov/aspect/zoom, undoing this.
+        if (this.yCompress !== undefined && this.yCompress > 1.0001) {
+            this.camera.projectionMatrix.elements[5] /= this.yCompress;
+            this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
         }
     }
 
@@ -2204,6 +2232,27 @@ export class CNodeView3D extends CNodeViewCanvas {
                     }
                 }
 
+                // Apply Y-compress (anamorphic vertical squash). Patched on top of
+                // any pan patch so it survives re-computation (matchVideoAspect
+                // re-apply after renderSky). elements[5] is the vertical NDC scale
+                // (1/tan(fovV/2)); dividing it by yCompress widens the vertical
+                // frustum by that factor, compressing the content into the same height.
+                let _yCompressPatchedCamera = null;
+                let _yCompressOrigUpdatePM = null;
+                if (this.yCompress !== undefined && this.yCompress > 1.0001) {
+                    _yCompressPatchedCamera = this.camera;
+                    _yCompressOrigUpdatePM = this.camera.updateProjectionMatrix;
+                    const cam = this.camera;
+                    const origFn = _yCompressOrigUpdatePM;
+                    const yc = this.yCompress;
+                    cam.updateProjectionMatrix = function () {
+                        origFn.call(cam);
+                        cam.projectionMatrix.elements[5] /= yc;
+                        cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+                    };
+                    cam.updateProjectionMatrix();
+                }
+
                 // Hoist declarations needed by the finally block below
                 let oldLayers = this.camera.layers.mask;
                 let nightSkyForRestore = null;
@@ -2382,6 +2431,12 @@ export class CNodeView3D extends CNodeViewCanvas {
                     }
 
                     this.removeCameraOffset(savedQuaternion);
+
+                    // Restore the Y-compress patch first (it was applied on top of
+                    // any pan patch), then the pan patch below.
+                    if (_yCompressPatchedCamera && _yCompressOrigUpdatePM) {
+                        _yCompressPatchedCamera.updateProjectionMatrix = _yCompressOrigUpdatePM;
+                    }
 
                     // Restore original updateProjectionMatrix before FOV restore
                     if (_panPatchedCamera && _panOrigUpdatePM) {
@@ -3265,6 +3320,34 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
 
+    // Top-left "Y-compress=N.Nx" overlay, shown only when compression is active.
+    // A DOM child of the view div (not a WebGL draw), so it's independent of the
+    // composite render path. Dirty-checked so it's effectively free to call per-frame.
+    updateYCompressIndicator() {
+        if (this.id !== "mainView") return;
+        const yc = this.yCompress ?? 1.0;
+        if (yc === this._yCompressShown && this._yCompressIndicator !== undefined) return;
+        this._yCompressShown = yc;
+
+        if (this._yCompressIndicator === undefined) {
+            const el = document.createElement('div');
+            Object.assign(el.style, {
+                position: 'absolute', top: '4px', left: '6px', zIndex: 20,
+                pointerEvents: 'none', font: '13px monospace', color: '#ffe000',
+                textShadow: '0 0 3px #000, 1px 1px 2px #000', whiteSpace: 'nowrap',
+            });
+            this.div.appendChild(el);
+            this._yCompressIndicator = el;
+        }
+
+        if (yc > 1.0001) {
+            this._yCompressIndicator.textContent = `Y-compress=${yc.toFixed(1)}x`;
+            this._yCompressIndicator.style.display = 'block';
+        } else {
+            this._yCompressIndicator.style.display = 'none';
+        }
+    }
+
     modSerialize() {
         return {
             ...super.modSerialize(),
@@ -3302,6 +3385,9 @@ export class CNodeView3D extends CNodeViewCanvas {
         if (lighting) {
             lighting._pendingFirstShadowConfig = true;
         }
+        // yCompress is restored via addSimpleSerial (no onChange fires on load),
+        // so sync the top-left indicator to the restored value.
+        this.updateYCompressIndicator();
     }
 
     dispose() {
