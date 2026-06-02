@@ -72,9 +72,13 @@ export class CNodeCameraMotionTrack extends CNodeTrack {
             this.array.push({ position: setAltitudeHAE(pos.clone(), alt), imageRot: cumTheta });
 
             const m = this.motion[f] || { dx: 0, dy: 0, scale: 1, theta: 0 };
-            cumTheta += (m.theta ?? 0);
-            let dxe = m.dx ?? 0;
-            let dyn = m.dy ?? 0;
+            // Guard every term against NaN/non-finite values from a bad fit — a single NaN would
+            // poison the cumulative sums and corrupt the whole path from this frame onward.
+            const theta = Number.isFinite(m.theta) ? m.theta : 0;
+            let dxe = Number.isFinite(m.dx) ? m.dx : 0;
+            let dyn = Number.isFinite(m.dy) ? m.dy : 0;
+            const scale = (Number.isFinite(m.scale) && m.scale > 1e-6) ? m.scale : 1;
+            cumTheta += theta;
             if (this.swapEN) { const t = dxe; dxe = dyn; dyn = t; }
 
             const up = getLocalUpVector(pos);
@@ -85,7 +89,7 @@ export class CNodeCameraMotionTrack extends CNodeTrack {
             const dN = this.signN * dyn * this.metersPerPixel;
             pos.add(east.multiplyScalar(dE)).add(north.multiplyScalar(dN));
 
-            cumLogS += Math.log(m.scale ?? 1);
+            cumLogS += Math.log(scale);
         }
     }
 }

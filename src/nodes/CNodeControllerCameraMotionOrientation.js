@@ -36,8 +36,15 @@ export class CNodeControllerCameraMotionOrientation extends CNodeController {
     apply(f, objectNode) {
         if (this.mode === "off") return;
         const cam = objectNode.camera;
-        const m = this.in.motionTrack.v(Math.floor(f));
-        const roll = this.rollSign * ((m && m.imageRot) || 0);
+        const track = this.in.motionTrack;
+        // Clamp the frame index — the motion array length may differ from Sit.frames, and an
+        // out-of-range index would throw. Guard imageRot so one bad frame can't bake NaN into the
+        // camera matrix (which would corrupt rendering for the rest of the session).
+        const maxF = (track.frames || 1) - 1;
+        const fi = Math.max(0, Math.min(maxF, Math.floor(f)));
+        const m = track.v(fi);
+        const imageRot = (m && Number.isFinite(m.imageRot)) ? m.imageRot : 0;
+        const roll = this.rollSign * imageRot;
 
         if (this.mode === "fixed" || this.mode === "nadir") {
             const dep = this.mode === "nadir" ? 90 : this.depression;

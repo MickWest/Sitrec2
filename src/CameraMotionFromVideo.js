@@ -20,6 +20,8 @@ import {loadOpenCV, getCV} from "./openCVLoader";
 import {CNodeCameraMotionTrack} from "./nodes/CNodeCameraMotionTrack";
 import {CNodeControllerCameraMotionOrientation} from "./nodes/CNodeControllerCameraMotionOrientation";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
+import {altitudeHAE, getLocalUpVector} from "./SphericalMath";
+import {V3} from "./threeUtils";
 import {Color} from "three";
 
 // The lookCamera's position comes from cameraTrackSwitch -> cameraTrackSwitchSmooth ->
@@ -44,7 +46,10 @@ const DEFAULTS = {
     reticleHalf: 34,    // half-size of the central box masked out for the reticle
     maxTrackError: 20,
     smoothing: 3,       // light moving-average on per-frame motion (estimates are now cleaner)
-    metersPerPixel: 12, // ground-sample-distance assumption (horizontal scale is ambiguous)
+    metersPerPixel: 12, // manual ground-sample-distance (used when autoScale is off)
+    autoScale: true,    // derive metersPerPixel from FOV + camera altitude + depression
+    backgroundAlt: 0,   // altitude (m HAE) of the imaged background plane (e.g. cloud-top); the
+                        // one quantity the video can't supply, so it's a user input
     signE: -1,
     signN: -1,
     swapEN: false,
@@ -62,6 +67,45 @@ function realLOSDepressionDeg() {
     const ptz = NodeMan.get("ptzAngles", false);
     if (ptz && typeof ptz.el === "number") return Math.max(0, Math.min(90, -ptz.el));
     return DEFAULTS.depression;
+}
+
+// Look-camera depression below horizontal (degrees), measured from its actual forward vector
+// (robust to the LOS mode), falling back to the PTZ elevation.
+function lookDepressionDeg() {
+    const lc = NodeMan.get("lookCamera", false);
+    if (lc && lc.camera) {
+        const cam = lc.camera;
+        cam.updateMatrixWorld();
+        const e = cam.matrixWorld.elements;
+        const fwd = V3(-e[8], -e[9], -e[10]);
+        const dot = Math.max(-1, Math.min(1, fwd.dot(getLocalUpVector(cam.position))));
+        const dep = -Math.asin(dot) * 180 / Math.PI;
+        if (Number.isFinite(dep) && dep > 0.5) return Math.min(89.5, dep);
+    }
+    return realLOSDepressionDeg();
+}
+
+// Physically-derived ground-sample-distance (metres per pixel) of the imaged background plane.
+// GSD = 2*R*tan(vFOV/2)/pixelHeight, with R = (cameraHAE - backgroundAlt)/sin(depression) the
+// slant distance from the camera to where the optical axis meets the background plane. This pins
+// the horizontal scale from the sitch's own FOV + altitude; only the background (cloud) altitude
+// is a user assumption, since the video alone can't give the plane's distance.
+function geometricMetersPerPixel(P) {
+    const vv = getVideo();
+    const lc = NodeMan.get("lookCamera", false);
+    const origin = NodeMan.get("fixedCameraPosition", false)
+        ?? NodeMan.get("flightSimCameraPosition", false)
+        ?? NodeMan.get("cameraTrack", false);
+    if (!vv || !lc || !origin || !origin.p) return null;
+    let camHAE;
+    try { camHAE = altitudeHAE(origin.p(0)); } catch (e) { return null; }
+    const vFOVdeg = lc.camera.renderedFOV ?? lc.camera.fov;
+    const Hpx = vv.videoData.videoHeight;
+    const depDeg = lookDepressionDeg();
+    const dh = camHAE - (P.backgroundAlt ?? 0);
+    if (!(dh > 0) || !(depDeg > 0.5) || !(vFOVdeg > 0) || !Hpx) return null;
+    const R = dh / Math.sin(depDeg * Math.PI / 180);
+    return 2 * R * Math.tan(vFOVdeg * Math.PI / 360) / Hpx;
 }
 
 // Shared status object so progress can be polled (e.g. from MCP) and so the menu label updates.
@@ -200,10 +244,11 @@ function fitSimilarity(P, Q, W, H, P_) {
     if (n < 3) return null;
     const thr2 = P_.ransacThr * P_.ransacThr;
     let w = new Array(n).fill(1);
-    let res = null, inliers = n;
+    let res = null;
     for (let iter = 0; iter < 5; iter++) {
-        res = weightedSimilarity(P, Q, w);
-        if (!res) return null;
+        const next = weightedSimilarity(P, Q, w);
+        if (!next) break;
+        res = next;
         const { Ax, Ay, Bx, By } = res;
         let inl = 0;
         for (let i = 0; i < n; i++) {
@@ -213,19 +258,19 @@ function fitSimilarity(P, Q, W, H, P_) {
             w[i] = keep; if (keep) inl++;
         }
         if (inl < 2) break;
-        inliers = inl;
     }
     if (!res) return null;
+    // Recompute the inlier set, count and RMS residual from the FINAL model, so they always agree
+    // with the returned transform (the iterative w[] could otherwise lag the last fit).
     const { Ax, Ay, Bx, By } = res;
-    // RMS residual over the inliers — a sub-pixel measure of how well the model fits.
-    let sse = 0, ninl = 0;
+    let sse = 0, inliers = 0;
     for (let i = 0; i < n; i++) {
-        if (w[i] <= 0) continue;
         const ex = (Ax * P[i][0] - Ay * P[i][1] + Bx) - Q[i][0];
         const ey = (Ay * P[i][0] + Ax * P[i][1] + By) - Q[i][1];
-        sse += ex * ex + ey * ey; ninl++;
+        const r2 = ex * ex + ey * ey;
+        if (r2 < thr2) { sse += r2; inliers++; }
     }
-    const meanResidual = ninl ? Math.sqrt(sse / ninl) : Infinity;
+    const meanResidual = inliers ? Math.sqrt(sse / inliers) : Infinity;
     const cxp = W / 2, cyp = H / 2;
     const mx = Ax * cxp - Ay * cyp + Bx, my = Ay * cxp + Ax * cyp + By;
     return { dx: mx - cxp, dy: my - cyp, theta: Math.atan2(Ay, Ax), scale: Math.hypot(Ax, Ay), inliers, n, meanResidual, Ax, Ay, Bx, By };
@@ -344,9 +389,11 @@ function redistributeUnreliable(motion, vizVectors, interp) {
         if (k < total && motion[k]) {
             const span = k - (i - 1);             // distribute the (i-1 -> k) motion across frames i..k
             const m = motion[k];
-            const per = { dx: m.dx / span, dy: m.dy / span, theta: m.theta / span, scale: Math.pow(m.scale || 1, 1 / span), confidence: m.confidence };
+            const per = { dx: m.dx / span, dy: m.dy / span, theta: m.theta / span, scale: Math.pow(m.scale || 1, 1 / span) };
             for (let kk = i; kk <= k; kk++) {
-                motion[kk] = { ...per };
+                // Interpolated frames (i..k-1) carry confidence 0 so they render/report as
+                // low-confidence; only the measured frame k keeps its real confidence.
+                motion[kk] = { ...per, confidence: kk === k ? m.confidence : 0 };
                 // duplicates/gaps have no flow of their own; show the neighbouring frame's.
                 if (!vizVectors[kk] || vizVectors[kk].length === 0) vizVectors[kk] = vizVectors[k];
             }
@@ -356,8 +403,19 @@ function redistributeUnreliable(motion, vizVectors, interp) {
     return count;
 }
 
-// Run the full analysis and (re)build the camera-motion track + display nodes.
+// Re-entrancy guard: the Analyze button and the Visualize toggle can both trigger a run, and the
+// user can double-click. A second call returns the in-flight promise instead of starting a
+// concurrent pass (which would corrupt par.frame, the shared vectors array, and churn cv.Mats).
+let _cmInflight = null;
 export async function runCameraMotionAnalysis(opts = {}) {
+    if (_cmInflight) return _cmInflight;
+    _cmInflight = _runCameraMotionAnalysis(opts);
+    try { return await _cmInflight; }
+    finally { _cmInflight = null; }
+}
+
+// Run the full analysis and (re)build the camera-motion track + display nodes.
+async function _runCameraMotionAnalysis(opts = {}) {
     const P = { ...DEFAULTS, ...opts };
     const S = status();
     const videoView = getVideo();
@@ -365,6 +423,7 @@ export async function runCameraMotionAnalysis(opts = {}) {
     const vd = videoView.videoData;
     const W = vd.videoWidth, H = vd.videoHeight;
     const total = vd.frames || Sit.frames;
+    if (!total || total < 2) { S.state = "error"; S.error = "Need at least 2 video frames"; return null; }
 
     S.state = "loading-opencv"; S.progress = 0; S.total = total; S.error = null;
     await loadOpenCV();
@@ -379,6 +438,7 @@ export async function runCameraMotionAnalysis(opts = {}) {
     const grayMat = makeGrayHelper(cv, W, H);
 
     let mask = null;
+    let prevG = null;   // current grayscale Mat — deleted in finally so it can't leak on error
     try {
         S.state = "masking";
         mask = await buildMask(cv, vd, W, H, P, grayMat, total);
@@ -392,7 +452,9 @@ export async function runCameraMotionAnalysis(opts = {}) {
         vizVectors[0] = [];
         const ZERO = () => ({ dx: 0, dy: 0, theta: 0, scale: 1, confidence: 0 });
         let dupCount = 0, lowQCount = 0, residSum = 0, inlierSum = 0, goodCount = 0;
-        let prevG = grayMat(await frameImage(vd, 0));
+        const img0 = await frameImage(vd, 0);
+        if (!img0 || !img0.width) { S.state = "error"; S.error = "Could not decode the first frame"; return null; }
+        prevG = grayMat(img0);
         let lastYield = performance.now();
         for (let f = 1; f < total; f++) {
             // Yield to the event loop periodically so the page stays responsive. The optical-flow
@@ -426,7 +488,6 @@ export async function runCameraMotionAnalysis(opts = {}) {
             prevG.delete(); prevG = curG;
             S.progress = f;
         }
-        prevG.delete();
 
         S.duplicates = dupCount;
         S.lowQuality = lowQCount;
@@ -440,13 +501,14 @@ export async function runCameraMotionAnalysis(opts = {}) {
         S.state = "done";
         Globals.cameraMotionData = motionData;
         saveMotionCache(motionData);
-        console.log(`[CameraMotion] done: ${goodCount} tracked frames, mean ${S.meanInliers} inliers @ ${S.meanResidualPx}px RMS, ${dupCount} duplicates + ${lowQCount} low-quality interpolated`);
+        console.log(`[CameraMotion] done: ${goodCount} tracked frames, mean ${S.meanInliers} inliers @ ${S.meanResidualPx}px RMS, ${dupCount} duplicates + ${lowQCount} low-quality interpolated; scale ${S.metersPerPixel} m/px [${S.scaleSource}]`);
         return motionData;
     } catch (e) {
         S.state = "error"; S.error = e.message + "\n" + (e.stack || "");
         return null;
     } finally {
         if (mask) mask.delete();
+        if (prevG) { try { prevG.delete(); } catch (e) { /* already freed */ } }
         par.frame = wasFrame;   // restore the playhead (analysis scrubbed through every frame)
         par.paused = wasPaused;
     }
@@ -491,11 +553,18 @@ function buildPathNodes(motionData, P) {
 
     clearPathNodes();
 
+    // Horizontal scale: physically derived from FOV + altitude when autoScale is on, else manual.
+    const autoMpp = P.autoScale ? geometricMetersPerPixel(P) : null;
+    const metersPerPixel = autoMpp ?? P.metersPerPixel;
+    const S = status();
+    S.metersPerPixel = +metersPerPixel.toFixed(2);
+    S.scaleSource = autoMpp ? `auto (FOV ${(NodeMan.get("lookCamera").camera.renderedFOV ?? NodeMan.get("lookCamera").camera.fov).toFixed(1)}°, bg ${P.backgroundAlt} m)` : "manual";
+
     new CNodeCameraMotionTrack({
         id: "cameraMotionTrack",
         origin: originNode.id,
         motion: motionData,
-        metersPerPixel: P.metersPerPixel,
+        metersPerPixel,
         signE: P.signE,
         signN: P.signN,
         swapEN: P.swapEN,
@@ -537,12 +606,17 @@ function buildPathNodes(motionData, P) {
 // stored in Globals.cameraMotionVectors; this just draws them as arrows for the current frame:
 // green = inliers (consensus background motion), red = outliers (e.g. the moving object).
 const FlowViz = {
-    enabled: false, hooked: false, overlay: null, ctx: null,
+    enabled: false, hooked: false, overlay: null, ctx: null, view: null,
     targetPx: 22,     // desired median arrow length (video px); scale adapts per frame to this
 
     ensureOverlay() {
         const vv = getVideo();
         if (!vv) return false;
+        // If the video view was replaced (sitch reload / video swap), our overlay + render-hook
+        // point at the old, now-detached view — reset so we attach to the new one.
+        if (this.view && this.view !== vv) {
+            this.overlay = null; this.ctx = null; this.hooked = false; this.view = null;
+        }
         if (!this.overlay) {
             this.overlay = document.createElement("canvas");
             Object.assign(this.overlay.style, {
@@ -554,8 +628,9 @@ const FlowViz = {
         }
         if (!this.hooked) {
             this.hooked = true;
+            this.view = vv;
             const orig = vv.renderCanvas.bind(vv);
-            vv.renderCanvas = (frame) => { orig(frame); if (FlowViz.enabled) FlowViz.draw(frame); };
+            vv.renderCanvas = (frame) => { orig(frame); if (FlowViz.enabled && FlowViz.view === vv) FlowViz.draw(frame); };
         }
         return true;
     },
@@ -619,6 +694,8 @@ export function setupCameraMotionMenu() {
 
     const params = {
         metersPerPixel: DEFAULTS.metersPerPixel,
+        autoScale: DEFAULTS.autoScale,
+        backgroundAlt: DEFAULTS.backgroundAlt,
         smoothing: DEFAULTS.smoothing,
         signE: DEFAULTS.signE,
         signN: DEFAULTS.signN,
@@ -645,7 +722,16 @@ export function setupCameraMotionMenu() {
         }
     });
 
-    folder.add(params, "metersPerPixel", 1, 100, 0.5).name("Ground m / pixel");
+    // Horizontal scale. Auto: derive m/px from FOV + camera altitude + the background altitude
+    // below. Off: use the manual m/px slider. Either way changes only need a rebuild, not re-analyze.
+    const rebuildIfData = () => {
+        const data = Globals.cameraMotionData ?? loadMotionCache();
+        if (data) buildPathNodes(data, { ...DEFAULTS, ...params });
+        setRenderOne(true);
+    };
+    folder.add(params, "autoScale").name("Auto scale (FOV/alt)").listen().onChange(rebuildIfData);
+    folder.add(params, "backgroundAlt", 0, 12000, 50).name("Background alt (m)").listen().onChange(rebuildIfData);
+    folder.add(params, "metersPerPixel", 1, 100, 0.5).name("Manual m / pixel").listen().onChange(() => { if (!params.autoScale) rebuildIfData(); });
     folder.add(params, "smoothing", 1, 21, 2).name("Smoothing window");
     folder.add(params, "signE", { "East +": 1, "East -": -1 }).name("dx -> East sign");
     folder.add(params, "signN", { "North +": 1, "North -": -1 }).name("dy -> North sign");
@@ -709,11 +795,19 @@ export function setupCameraMotionMenu() {
     };
     analyzeItem = folder.add(actions, "analyze").name("Analyze & Build Path");
 
+    // Motion data is per-frame; reject data whose length doesn't match the current video so a
+    // path from a previous sitch / a re-encoded video can't be anchored to the wrong frames.
+    const matchesVideo = (data) => {
+        if (!Array.isArray(data)) return false;
+        const expected = getVideo()?.videoData?.frames ?? Sit.frames;
+        return !expected || data.length === expected;
+    };
+
     // Re-tune signs/scale without re-running the CV, if we already have motion data.
     const rebuild = {
         rebuild: () => {
             const data = Globals.cameraMotionData ?? loadMotionCache();
-            if (!data) return;
+            if (!data || !matchesVideo(data)) return;
             Globals.cameraMotionData = data;
             buildPathNodes(data, { ...DEFAULTS, ...params });
         },
@@ -731,10 +825,10 @@ export function setupCameraMotionMenu() {
     const tryRestore = (attempt) => {
         if (NodeMan.exists("cameraMotionTrack")) return;
         const cached = loadMotionCache();
-        if (cached) {
+        if (cached && matchesVideo(cached)) {
             Globals.cameraMotionData = cached;
             try { buildPathNodes(cached, { ...DEFAULTS, ...params }); setRenderOne(true); } catch (e) { /* ignore */ }
-        } else if (attempt < 5) {
+        } else if (!cached && attempt < 5) {
             setTimeout(() => tryRestore(attempt + 1), 1500);
         }
     };
