@@ -197,6 +197,39 @@ export const serializeMethods = {
             console.log("Exporting: No video node found")
         }
 
+        // Serialize the secondary video view (twovid) the same way as the primary,
+        // into videos2 / currentVideoIndex2 / videoFile2 so it round-trips on reload.
+        // The view's own position/visibility round-trips via its view mod.
+        if (NodeMan.exists("video2")) {
+            const videoNode2 = NodeMan.get("video2");
+            if (videoNode2.videos && videoNode2.videos.length > 0) {
+                videoNode2.updateCurrentVideoEntry();
+                out.videos2 = videoNode2.videos.map(entry => {
+                    const exported = {
+                        fileName: entry.fileName,
+                        isImage: entry.isImage || false
+                    };
+                    if (local && entry.localStaticURL) {
+                        exported.staticURL = entry.localStaticURL;
+                    } else if (entry.staticURL) {
+                        exported.staticURL = entry.staticURL;
+                    } else if (local && entry.fileName) {
+                        exported.staticURL = entry.fileName;
+                    }
+                    if (entry.imageFileID) {
+                        exported.imageFileID = entry.imageFileID;
+                    }
+                    return exported;
+                });
+                out.currentVideoIndex2 = videoNode2.currentVideoIndex;
+                console.log("Exporting: videos2 array with", out.videos2.length, "entries");
+            } else if (local && videoNode2.localStaticURL) {
+                out.videoFile2 = videoNode2.localStaticURL;
+            } else if (videoNode2.staticURL) {
+                out.videoFile2 = videoNode2.staticURL;
+            }
+        }
+
         if (Sit.isCustom) {
 
             // modify the terrain model directly, as we don't want to load terrain twice
@@ -1355,6 +1388,18 @@ export const serializeMethods = {
                     targetIndex: sitchData.currentVideoIndex ?? 0
                 };
                 videoNode.loadVideoFromEntry(sitchData.videos[0]);
+            }
+        }
+
+        // Same restore for the secondary video view (twovid).
+        if (sitchData.videos2 && sitchData.videos2.length > 0 && NodeMan.exists("video2")) {
+            const videoNode2 = NodeMan.get("video2");
+            if (!videoNode2.videoData && !videoNode2.pendingVideoRestore) {
+                videoNode2.pendingVideoRestore = {
+                    videos: sitchData.videos2,
+                    targetIndex: sitchData.currentVideoIndex2 ?? 0
+                };
+                videoNode2.loadVideoFromEntry(sitchData.videos2[0]);
             }
         }
 

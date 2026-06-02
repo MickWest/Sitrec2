@@ -783,6 +783,42 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
                 // Legacy single video format - add to videos array for consistency
                 node.addVideoEntry(videoFile, node.staticURL, false);
             }
+
+            // --- Secondary video view (twovid) ---
+            // A hidden second video view so a second dropped video can be shown
+            // side-by-side with the first, with per-view video selection and an
+            // optional "lock to in frame" offset. Created for every sitch that
+            // has a primary video view; stays hidden/empty until a second video
+            // is dropped (see DragDropHandler) or a two-video preset is chosen.
+            if (!NodeMan.exists("video2")) {
+                const video2 = new CNodeVideoWebCodecView({
+                    id: "video2",
+                    inputs: {
+                        zoom: "videoZoom"
+                    },
+                    visible: false,
+                    frames: Sit.frames,
+                    videoSpeed: Sit.videoSpeed,
+                    left: 0.5, top: 0.5, width: 0.5, height: 0.5,
+                    dragKey: data.dragKey ?? "Q",
+                    draggable: true, resizable: true, freeAspect: true,
+                });
+
+                // Restore second-view multi-video state if present
+                if (Sit.videos2 && Sit.videos2.length > 0) {
+                    video2.pendingVideoRestore = {
+                        videos: Sit.videos2,
+                        targetIndex: Sit.currentVideoIndex2 ?? 0
+                    };
+                    video2.loadVideoFromEntry(Sit.videos2[0]);
+                    video2.setVisible(true);
+                } else if (Sit.videoFile2) {
+                    // Legacy single-video fallback for the secondary view.
+                    // newVideo loads the file and registers it in the videos array.
+                    video2.newVideo(Sit.videoFile2, false);
+                    video2.setVisible(true);
+                }
+            }
             break;
 
         case "focusTracks":

@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////
 ///  DRAG AND DROP FILES?
-import {FileManager, Globals, markSitchDirty, NodeMan, Sit, Synth3DManager} from "./Globals";
+import {CustomManager, FileManager, Globals, markSitchDirty, NodeMan, Sit, Synth3DManager} from "./Globals";
 import {cos, isSubdomain, radians} from "./utils";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {getLocalSouthVector, getLocalUpVector} from "./SphericalMath";
@@ -147,6 +147,77 @@ class CDragDropHandler {
             overlay.appendChild(modal);
 
             // Add to document
+            document.body.appendChild(overlay);
+        });
+    }
+
+    /**
+     * Shown when a video is dropped while the primary video view already has one.
+     * Lets the user choose where the new video goes.
+     * @param {string} filename - The name of the dropped video file
+     * @returns {Promise<string>} Resolves 'secondView' | 'add' | 'replace', rejects if cancelled
+     */
+    showSecondVideoChoiceDialog(filename) {
+        return new Promise((resolve, reject) => {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0, 0, 0, 0.5); z-index: 10000;
+                display: flex; align-items: center; justify-content: center;
+            `;
+
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                background: #2a2a2a; border-radius: 8px; padding: 20px;
+                min-width: 320px; max-width: 420px;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+                font-family: Arial, sans-serif; color: white;
+            `;
+
+            const title = document.createElement('h3');
+            title.textContent = 'Second Video';
+            title.style.cssText = `margin: 0 0 10px 0; font-size: 18px; color: #fff;`;
+
+            const message = document.createElement('p');
+            message.textContent = `A video is already loaded. How would you like to use "${filename}"?`;
+            message.style.cssText = `margin: 0 0 20px 0; font-size: 14px; color: #ccc;`;
+
+            const buttonStyle = `
+                padding: 10px 20px; border: none; border-radius: 4px;
+                cursor: pointer; font-size: 14px; margin: 5px; width: calc(100% - 10px);
+            `;
+
+            const makeButton = (label, color, value) => {
+                const btn = document.createElement('button');
+                btn.textContent = label;
+                btn.style.cssText = buttonStyle + `background: ${color}; color: white;`;
+                btn.onclick = () => {
+                    document.body.removeChild(overlay);
+                    resolve(value);
+                };
+                return btn;
+            };
+
+            modal.appendChild(title);
+            modal.appendChild(message);
+
+            // Only offer the side-by-side option when a secondary view exists.
+            if (NodeMan.exists("video2")) {
+                modal.appendChild(makeButton('Second Video View (side by side)', '#1976d2', 'secondView'));
+            }
+            modal.appendChild(makeButton('Add to Video View (keep both, selectable)', '#388e3c', 'add'));
+            modal.appendChild(makeButton('Replace Video View video', '#b8860b', 'replace'));
+
+            const cancelButton = document.createElement('button');
+            cancelButton.textContent = 'Cancel';
+            cancelButton.style.cssText = buttonStyle + `background: #757575; color: white;`;
+            cancelButton.onclick = () => {
+                document.body.removeChild(overlay);
+                reject(new Error('User cancelled'));
+            };
+            modal.appendChild(cancelButton);
+
+            overlay.appendChild(modal);
             document.body.appendChild(overlay);
         });
     }
@@ -464,7 +535,39 @@ class CDragDropHandler {
                 console.warn("No video node found to load " + (isAudioFile ? "audio" : "video") + " file");
                 return;
             }
-            NodeMan.get("video").uploadFile(file);
+
+            const primary = NodeMan.get("video");
+            const primaryHasVideo = !!primary.videoData || primary.videos?.length > 0;
+
+            // Audio, or the first video into an empty primary view, loads straight in.
+            if (isAudioFile || !primaryHasVideo) {
+                primary.uploadFile(file);
+                markSitchDirty();
+                return;
+            }
+
+            // A second (or later) video dropped while one is already loaded.
+            // Offer: load into the secondary side-by-side view, add it to the
+            // primary view (old stays selectable), or replace the primary video.
+            let choice;
+            try {
+                choice = await this.showSecondVideoChoiceDialog(file.name);
+            } catch (cancelled) {
+                console.log("Second-video import cancelled");
+                return;
+            }
+
+            if (choice === "secondView" && NodeMan.exists("video2")) {
+                NodeMan.get("video2").uploadFile(file);
+                this.revealSecondVideoView();
+            } else if (choice === "add") {
+                // autoAdd: keep the existing video, add the new one, select it.
+                primary.uploadFile(file, true);
+            } else {
+                // "replace": drop all existing videos in the primary view first.
+                primary.disposeAllVideos();
+                primary.uploadFile(file);
+            }
             markSitchDirty();
             return;
         }
@@ -510,6 +613,33 @@ class CDragDropHandler {
         });
 
         return promise;
+    }
+
+    /**
+     * Make the secondary video view visible side-by-side with the primary.
+     * Uses the custom-sitch "TwoVideos" view preset when available, otherwise
+     * just reveals video2 at its default position.
+     */
+    revealSecondVideoView() {
+        if (!NodeMan.exists("video2")) return;
+        const video2 = NodeMan.get("video2");
+
+        if (CustomManager && CustomManager.viewPresets && CustomManager.viewPresets.TwoVideos) {
+            // Custom sitch with view presets: use the side-by-side two-video preset.
+            CustomManager.currentViewPreset = "TwoVideos";
+            CustomManager.updateViewFromPreset();
+        } else {
+            // No view presets (e.g. the standalone Video Viewer): split the
+            // primary video to the left half and show video2 on the right half.
+            if (NodeMan.exists("video")) {
+                const primary = NodeMan.get("video");
+                primary.left = 0.0; primary.top = 0; primary.width = 0.5; primary.height = 1;
+                primary.updateWH();
+            }
+            video2.left = 0.5; video2.top = 0; video2.width = 0.5; video2.height = 1;
+            video2.setVisible(true);
+            video2.updateWH();
+        }
     }
 
     /**
