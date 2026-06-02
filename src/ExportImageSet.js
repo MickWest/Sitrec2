@@ -4,8 +4,8 @@ import {Vector3} from "three";
 import {GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
 import {ViewMan} from "./CViewManager";
-import {getLocalEastVector, getLocalNorthVector, getLocalUpVector, altitudeHAE} from "./SphericalMath";
-import {ExportProgressWidget, getExportPrefix, openFullscreen, closeFullscreen} from "./utils";
+import {altitudeHAE, getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
+import {closeFullscreen, ExportProgressWidget, getExportPrefix, openFullscreen} from "./utils";
 import {radians} from "./mathUtils";
 import {targetSphere} from "./JetStuffVars";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
@@ -230,7 +230,7 @@ export class ImageSetExporter {
                 id: "imageSetOrbitDistance",
                 value: 5,
                 start: 0.01,
-                end: 100,
+                end: 500,
                 step: 0.01,
                 maxMax: 10000,
                 elastic: true,
@@ -258,15 +258,15 @@ export class ImageSetExporter {
         if (!NodeMan.exists("imageSetOrbitAltitude")) {
             this.orbitAltitudeNode = new CNodeGUIValue({
                 id: "imageSetOrbitAltitude",
-                value: 30000,
+                value: 5,
                 start: 0,
-                end: 100000,
+                end: 500,
                 step: 100,
-                maxMax: 2000000,
+                maxMax: 10000,
                 elastic: true,
                 elasticMin: 0,
-                elasticMax: 1000000,
-                unitType: "small",
+                elasticMax: 10000,
+                unitType: "big",
                 desc: "Orbit Altitude",
                 tooltip: "Camera altitude above sea level (HAE) for the orbit. Each elevation step places the camera at this altitude, varying how far out it sits. Only used when 'Use Current Camera Altitude' is off.",
             }, folder);
@@ -290,7 +290,7 @@ export class ImageSetExporter {
                 }
             });
 
-        this.verticalFOVController = folder.add(this, "verticalFOV", 0.1, 120, 0.1)
+        this.verticalFOVController = folder.add(this, "verticalFOV", 0.001, 120, 0.001)
             .name("Vertical FOV (deg)")
             .tooltip("Vertical field of view in degrees. Only used when 'Use Current Camera FOV' is off.");
         // Initially hidden because useCurrentFOV defaults to true.
