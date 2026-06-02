@@ -1,4 +1,5 @@
 import {parseKLVFile} from "../MISBUtils";
+import {MISB} from "../MISBFields";
 import {analyzeMisbTiming, analyzePtsSync, renderMisbTimingReport, summarizeTimingAnalysis} from "./MisbTimingStats";
 import {getPrimaryVideoPTSus, getPrimaryVideoStream, scanTransportStreamForMetadata} from "./TSMetadataScanner";
 
@@ -73,13 +74,136 @@ function normalizeVideoPts(scan) {
     return Array.isArray(pts) ? pts : [];
 }
 
+// ---- Per-frame ("virtual frame") export support ----
+// Reconstructs the §12 CVideoPatchedData virtual timeline from the video PES
+// PTS array (no decoder needed) so a per-frame CSV can include the synthesized
+// gap-fill "held" frames. The mapping mirrors CVideoPatchedData's algorithm
+// exactly — keep in sync with src/CVideoPatchedData.js if that changes.
+
+function medianUs(sortedAscending) {
+    const n = sortedAscending.length;
+    if (n === 0) return null;
+    const mid = Math.floor(n / 2);
+    return n % 2 ? sortedAscending[mid] : (sortedAscending[mid - 1] + sortedAscending[mid]) / 2;
+}
+
+function nominalFrameDurationUs(sortedPts) {
+    const intervals = [];
+    for (let i = 1; i < sortedPts.length; i++) {
+        const d = sortedPts[i] - sortedPts[i - 1];
+        if (d > 0) intervals.push(d);
+    }
+    intervals.sort((a, b) => a - b);
+    return medianUs(intervals);
+}
+
+function buildVirtualFrames(videoFramePTSus) {
+    const finite = (Array.isArray(videoFramePTSus) ? videoFramePTSus : [])
+        .filter(v => typeof v === "number" && Number.isFinite(v))
+        .sort((a, b) => a - b);
+    if (finite.length < 2) return null;
+    const frameDuration_us = nominalFrameDurationUs(finite);
+    if (!(frameDuration_us > 0)) return null;
+    const halfStep = frameDuration_us / 2;
+    const T0 = finite[0];
+    const TN = finite[finite.length - 1];
+    const map = [];
+    const virtualPTSus = [];
+    let S = 0;
+    for (let V = 0; ; V++) {
+        const targetPTS = T0 + V * frameDuration_us;
+        if (targetPTS > TN + halfStep) break;
+        while (S + 1 < finite.length && finite[S + 1] <= targetPTS + halfStep) S++;
+        map.push(S);
+        virtualPTSus.push(targetPTS);
+        if (map.length > 10_000_000) break; // runaway guard
+    }
+    return {sourcePTSus: finite, map, virtualPTSus, frameDuration_us, T0};
+}
+
+function firstFiniteUts(misb) {
+    for (let i = 0; i < misb.length; i++) {
+        const u = misb[i]?.[MISB.UnixTimeStamp];
+        if (typeof u === "number" && Number.isFinite(u)) return u;
+    }
+    return 0;
+}
+
+// One row per VIRTUAL video frame. Paired to the nearest KLV record on the PES
+// PTS axis when present (synchronous), else on UnixTimeStamp relative to the
+// recording start (asynchronous fallback) — the same dichotomy as
+// CNodeTrackFromMISB. Decision 1A: nearest record, raw values (no interpolation).
+// Decision 2A: only the MISB tags populated in this file, as named columns.
+function buildFrameRows(misb, videoFramePTSus) {
+    const vf = buildVirtualFrames(videoFramePTSus);
+    if (!vf) return {rows: [], columns: []};
+
+    const recordCount = misb.length;
+    const pes = Array.isArray(misb.pesPTSus) ? misb.pesPTSus : null;
+    const hasPes = !!pes && pes.length === recordCount && pes.some(v => Number.isFinite(v));
+
+    const pairingMode = hasPes ? "pts" : "uts";
+    const uts0 = hasPes ? 0 : firstFiniteUts(misb);
+    const axis = [];
+    for (let i = 0; i < recordCount; i++) {
+        const raw = hasPes ? pes[i] : misb[i]?.[MISB.UnixTimeStamp];
+        if (typeof raw === "number" && Number.isFinite(raw)) {
+            axis.push({t: hasPes ? raw : raw - uts0, recordIndex: i});
+        }
+    }
+    axis.sort((a, b) => a.t - b.t || a.recordIndex - b.recordIndex);
+
+    // Populated MISB columns, ordered by tag number.
+    const populated = Object.entries(MISB)
+        .filter(([, tag]) => Number.isInteger(tag))
+        .map(([name, tag]) => ({name, tag}))
+        .sort((a, b) => a.tag - b.tag)
+        .filter(({tag}) => misb.some(r => r && r[tag] !== undefined && r[tag] !== null && r[tag] !== ""));
+    const columns = populated.map(e => e.name);
+
+    const rows = [];
+    let p = 0;
+    for (let V = 0; V < vf.map.length; V++) {
+        const S = vf.map[V];
+        const isDuplicate = V > 0 && vf.map[V] === vf.map[V - 1];
+        const frameTime = hasPes ? vf.virtualPTSus[V] : vf.virtualPTSus[V] - vf.T0;
+        while (p + 1 < axis.length &&
+               Math.abs(axis[p + 1].t - frameTime) <= Math.abs(axis[p].t - frameTime)) {
+            p++;
+        }
+        const nearest = axis.length ? axis[p] : null;
+        const recordIndex = nearest ? nearest.recordIndex : null;
+        const rec = recordIndex != null ? misb[recordIndex] : null;
+        const row = {
+            frame: V,
+            isDuplicate: isDuplicate ? 1 : 0,
+            sourceFrame: S,
+            virtualTimeS: (vf.virtualPTSus[V] - vf.T0) / 1e6,
+            virtualPtsUs: Math.round(vf.virtualPTSus[V]),
+            sourcePtsUs: Math.round(vf.sourcePTSus[S]),
+            pairingMode,
+            klvRecordIndex: recordIndex,
+            klvPesPtsUs: pes && recordIndex != null && Number.isFinite(pes[recordIndex]) ? Math.round(pes[recordIndex]) : null,
+            klvUtsUs: rec && Number.isFinite(rec[MISB.UnixTimeStamp]) ? rec[MISB.UnixTimeStamp] : null,
+            klvDeltaUs: nearest ? Math.round(nearest.t - frameTime) : null,
+            misb: {},
+        };
+        for (const e of populated) {
+            const v = rec ? rec[e.tag] : undefined;
+            row.misb[e.name] = v === undefined ? null : v;
+        }
+        rows.push(row);
+    }
+    return {rows, columns};
+}
+
 async function analyzeKlvBuffer(buffer, context) {
     const misb = parseKLVFile(buffer, context.pesEntries ?? null, context.videoFirstPESus ?? null, {silent: true});
     if (!Array.isArray(misb)) {
         return null;
     }
     const ptsSync = analyzePtsSync(misb, context.videoFramePTSus, {
-        includeRows: true,
+        includeRows: false,
         sourceName: context.sourceName,
         klvPid: context.pid ?? null,
         videoPid: context.videoPid ?? null,
@@ -91,13 +215,23 @@ async function analyzeKlvBuffer(buffer, context) {
         videoTimingLabel: context.videoTimingLabel ?? "Video PES PTS",
         ptsSyncStats: ptsSync.stats,
     });
+    // Per-frame rows are only built on demand (the "Frames" export), since they
+    // are large and the folder scan keeps every file's result in memory.
+    let frameRows = [];
+    let frameMisbColumns = [];
+    if (context.includeFrameRows) {
+        const fr = buildFrameRows(misb, context.videoFramePTSus);
+        frameRows = fr.rows;
+        frameMisbColumns = fr.columns;
+    }
     return {
         pid: context.pid ?? null,
         codecName: context.codecName ?? "klv",
         analysis,
         summary: summarizeTimingAnalysis(analysis),
         report: renderMisbTimingReport(analysis),
-        ptsRows: ptsSync.rows,
+        frameRows,
+        frameMisbColumns,
     };
 }
 
@@ -121,6 +255,7 @@ async function analyzeTransportStreamFile(fileLike, context, options) {
                 videoFramePTSus,
                 videoPid: primaryVideoStream?.pid ?? null,
                 videoTimingLabel: "Video PES PTS",
+                includeFrameRows: options.includeFrameRows,
             });
             if (streamAnalysis) {
                 analyses.push(streamAnalysis);
@@ -169,7 +304,8 @@ async function analyzeTransportStreamFile(fileLike, context, options) {
         },
         analyses,
         selectedAnalysis: selected,
-        ptsRows: selected?.ptsRows ?? [],
+        frameRows: selected?.frameRows ?? [],
+        frameMisbColumns: selected?.frameMisbColumns ?? [],
         summary: selected?.summary ?? {
             sourceName: context.relativePath || context.name,
             container: "MPEG-TS",
@@ -201,7 +337,8 @@ async function analyzeStandaloneKlvFile(fileLike, context) {
         message: analysis ? analysis.analysis.verdict : "No MISB ST 0601 records decoded.",
         analyses,
         selectedAnalysis: analysis,
-        ptsRows: analysis?.ptsRows ?? [],
+        frameRows: analysis?.frameRows ?? [],
+        frameMisbColumns: analysis?.frameMisbColumns ?? [],
         summary: analysis?.summary ?? {
             sourceName: context.relativePath || context.name,
             container: "KLV",
@@ -219,6 +356,7 @@ export async function analyzeVideoFileLike(fileLike, {
     relativePath = fileLike?.relativePath || fileLike?.webkitRelativePath || name,
     onProgress = null,
     chunkSize = undefined,
+    includeFrameRows = false,
 } = {}) {
     const ext = extensionForName(name || relativePath);
     const size = fileSize(fileLike);
@@ -235,6 +373,7 @@ export async function analyzeVideoFileLike(fileLike, {
             return await analyzeTransportStreamFile(fileLike, context, {
                 onProgress,
                 chunkSize,
+                includeFrameRows,
             });
         }
         if (KLV_EXTENSIONS.has(ext)) {

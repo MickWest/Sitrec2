@@ -15,18 +15,21 @@ let fileAnalysisFolder = null;
 
 const BUTTON_TOOLTIPS = {
     "Close": "Close this analysis window and restore the previous Sitrec playback state.",
-    "Choose Folder": "Pick the folder of video files to scan.",
-    "Cancel Scan": "Stop the current folder scan after the current file finishes.",
-    "Export JSON": "Save a compact machine-readable summary of the scan results.",
+    "Choose Folder": "Pick a folder of video files to scan. Results are added to the table.",
+    "Choose File": "Pick a single video/KLV file to analyze. Its result is added to the table.",
+    "Cancel Scan": "Stop the current scan after the current file finishes.",
+    "Clear Results": "Remove every result from the table and start fresh.",
+    "Export JSON": "Save a compact machine-readable summary of all results.",
     "Export CSV": "Save one summary row per file for spreadsheet analysis.",
-    "Export PTS Rows": "Save timing-only frame-to-KLV PES PTS pairing rows for manual analysis.",
     "Export Reports": "Save detailed text timing reports for files that decoded MISB metadata.",
+    "Summary Report": "Open a combined overview report: overall stats, analysis, and the video table.",
     "View": "Open the detailed text timing report for this file.",
+    "Export": "Save a per-frame CSV (virtual frames, gap-fill flag, and all populated MISB columns) for this file.",
 };
 
 const SUMMARY_TOOLTIPS = {
-    "Candidates": "How many files in the selected folder matched the supported extensions.",
-    "Analyzed": "How many candidate files have finished processing.",
+    "Candidates": "How many files have been added to the table.",
+    "Analyzed": "How many files have finished processing.",
     "MISB": "How many files decoded at least one MISB ST 0601 metadata stream.",
     "PES PTS Files": "How many files have enough KLV PES-header PTS data to use synchronous PTS pairing.",
     "PES PTS Records": "The percentage of all decoded MISB records that have KLV PES-header PTS values.",
@@ -34,11 +37,11 @@ const SUMMARY_TOOLTIPS = {
     "Errors": "How many files could not be analyzed because of an error.",
     "Gaps": "How many files have detected gaps in their MISB UnixTimeStamp timing.",
     "No MISB": "How many files were scanned but did not decode MISB ST 0601 metadata.",
-    "Unsupported": "How many candidate files use containers this tool does not scan yet.",
+    "Unsupported": "How many files use containers this tool does not scan yet.",
 };
 
 const TABLE_HEADER_TOOLTIPS = {
-    "File": "The file path within the selected folder.",
+    "File": "The file path (within the selected folder, or the file name).",
     "Status": "The current or final analysis state for this file.",
     "Verdict": "A short plain-English summary of the file's timing result.",
     "Records": "The number of decoded MISB metadata records.",
@@ -49,12 +52,30 @@ const TABLE_HEADER_TOOLTIPS = {
     "CV": "Coefficient of variation for KLV UnixTimeStamp intervals; higher means more timing scatter.",
     "Video PTS": "The number of video PTS rows found in the transport stream.",
     "Diff": "KLV span minus video PTS span, in seconds.",
+    "Frames": "Export a per-frame CSV (virtual frames + MISB columns) for this file.",
     "Report": "Open the detailed timing report for this file.",
 };
 
-function fmtNumber(value, digits = 3) {
-    return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "";
-}
+const TABLE_HEADERS = [
+    ["File", "20%"],
+    ["Status", "6%"],
+    ["Verdict", "18%"],
+    ["Records", "6%"],
+    ["PES PTS Rec", "6%"],
+    ["Frame Pair", "6%"],
+    ["KLV Span", "6%"],
+    ["Gaps", "4%"],
+    ["CV", "5%"],
+    ["Video PTS", "6%"],
+    ["Diff", "5%"],
+    ["Frames", "6%"],
+    ["Report", "6%"],
+];
+
+const FRAME_TIMING_COLUMNS = [
+    "frame", "isDuplicate", "sourceFrame", "virtualTimeS", "virtualPtsUs",
+    "sourcePtsUs", "pairingMode", "klvRecordIndex", "klvPesPtsUs", "klvUtsUs", "klvDeltaUs",
+];
 
 function fmtSeconds(value) {
     return typeof value === "number" && Number.isFinite(value) ? value.toFixed(3) : "";
@@ -87,38 +108,13 @@ function csvEscape(value) {
 
 function resultsToCsv(results) {
     const columns = [
-        "path",
-        "status",
-        "severity",
-        "verdict",
-        "container",
-        "sizeBytes",
-        "recordCount",
-        "ptsAvailable",
-        "fullRecordPts",
-        "ptsRecordCount",
-        "ptsRecordCoverage",
-        "ptsFramePairCount",
-        "ptsFrameCoverage",
-        "exactFrameCoverage",
-        "ptsPairToleranceUs",
-        "ptsMeanAbsDeltaUs",
-        "ptsMaxDeltaUs",
-        "klvUtsSpanS",
-        "klvUtsMeanIntervalS",
-        "klvUtsCv",
-        "klvUtsGapCount",
-        "klvUtsMaxGapS",
-        "klvPesSpanS",
-        "klvPesGapCount",
-        "videoPtsCount",
-        "videoPtsSpanS",
-        "videoPtsCv",
-        "spanDiffS",
-        "pcrFps",
-        "realFps",
-        "flags",
-        "message",
+        "path", "status", "severity", "verdict", "container", "sizeBytes",
+        "recordCount", "ptsAvailable", "fullRecordPts", "ptsRecordCount",
+        "ptsRecordCoverage", "ptsFramePairCount", "ptsFrameCoverage", "exactFrameCoverage",
+        "ptsPairToleranceUs", "ptsMeanAbsDeltaUs", "ptsMaxDeltaUs",
+        "klvUtsSpanS", "klvUtsMeanIntervalS", "klvUtsCv", "klvUtsGapCount", "klvUtsMaxGapS",
+        "klvPesSpanS", "klvPesGapCount", "videoPtsCount", "videoPtsSpanS", "videoPtsCv",
+        "spanDiffS", "pcrFps", "realFps", "flags", "message",
     ];
     const lines = [columns.join(",")];
     for (const result of results) {
@@ -137,46 +133,17 @@ function resultsToCsv(results) {
     return lines.join("\n");
 }
 
-function allPtsRows(results) {
-    const rows = [];
-    for (const result of results) {
-        const path = result.file?.relativePath || result.file?.name || "";
-        for (const row of result.ptsRows || []) {
-            rows.push({
-                path,
-                status: result.status,
-                severity: result.summary?.severity,
-                verdict: result.summary?.verdict,
-                ...row,
-            });
-        }
-    }
-    return rows;
-}
-
-function ptsRowsToCsv(results) {
-    const columns = [
-        "path",
-        "status",
-        "severity",
-        "ptsAvailable",
-        "videoPid",
-        "klvPid",
-        "frameIndex",
-        "videoPtsUs",
-        "videoTimeS",
-        "klvRecordIndex",
-        "klvPesPtsUs",
-        "klvUtsUs",
-        "deltaUs",
-        "absDeltaUs",
-        "pairingMethod",
-        "pairingQuality",
-        "verdict",
-    ];
-    const lines = [columns.join(",")];
-    for (const row of allPtsRows(results)) {
-        lines.push(columns.map(column => csvEscape(row[column])).join(","));
+// Per-frame CSV for one file. Columns = fixed timing fields + this file's
+// populated MISB tag names (result.frameMisbColumns). Requires the result to
+// have been produced with {includeFrameRows: true}.
+function frameRowsToCsv(result) {
+    const misbCols = result.frameMisbColumns || [];
+    const header = [...FRAME_TIMING_COLUMNS, ...misbCols];
+    const lines = [header.join(",")];
+    for (const row of result.frameRows || []) {
+        const base = FRAME_TIMING_COLUMNS.map(c => csvEscape(row[c]));
+        const misb = misbCols.map(name => csvEscape(row.misb?.[name]));
+        lines.push([...base, ...misb].join(","));
     }
     return lines.join("\n");
 }
@@ -190,47 +157,168 @@ function allReportsText(results) {
     return reports.join("\n\n");
 }
 
-function stripPtsRowsForJson(result) {
-    const stripAnalysis = analysis => {
-        if (!analysis) return analysis;
-        const copy = {
-            ...analysis,
-            ptsRowCount: analysis.ptsRows?.length ?? 0,
-        };
-        delete copy.ptsRows;
-        return copy;
-    };
-    const copy = {
-        ...result,
-        ptsRowCount: result.ptsRows?.length ?? 0,
-        selectedAnalysis: stripAnalysis(result.selectedAnalysis),
-        analyses: Array.isArray(result.analyses) ? result.analyses.map(stripAnalysis) : result.analyses,
-    };
-    delete copy.ptsRows;
+function stripForJson(result) {
+    const copy = {...result};
+    delete copy.frameRows;
+    delete copy.__entry;
     return copy;
 }
 
-async function walkDirectoryHandle(directoryHandle, {
-    recursive,
-    basePath = "",
-    onFound = null,
-} = {}) {
+// ---- Summary Report (overall stats + plain analysis + video table) ----
+
+function padCell(value, width, right = false) {
+    let s = String(value ?? "");
+    if (s.length > width) s = s.slice(0, Math.max(1, width - 1)) + "…";
+    return right ? s.padStart(width) : s.padEnd(width);
+}
+
+function summaryTableText(results) {
+    const cols = [
+        {h: "File", w: 34, get: r => r.file?.relativePath || r.file?.name || ""},
+        {h: "Status", w: 9, get: r => r.status || ""},
+        {h: "Verdict", w: 32, get: r => r.summary?.verdict || r.message || ""},
+        {h: "Records", w: 8, get: r => r.summary?.recordCount ?? "", right: true},
+        {h: "PES%", w: 7, get: r => fmtPct(r.summary?.ptsRecordCoverage), right: true},
+        {h: "Pair%", w: 7, get: r => fmtPct(r.summary?.ptsFrameCoverage), right: true},
+        {h: "KLVSpan", w: 9, get: r => fmtSeconds(r.summary?.klvUtsSpanS), right: true},
+        {h: "Gaps", w: 5, get: r => r.summary?.klvUtsGapCount ?? "", right: true},
+        {h: "CV%", w: 7, get: r => fmtPct(r.summary?.klvUtsCv), right: true},
+        {h: "VidPTS", w: 8, get: r => r.summary?.videoPtsCount ?? "", right: true},
+        {h: "Diff", w: 8, get: r => fmtSeconds(r.summary?.spanDiffS), right: true},
+    ];
+    const lines = [];
+    lines.push(cols.map(c => padCell(c.h, c.w, c.right)).join(" "));
+    lines.push(cols.map(c => "─".repeat(c.w)).join(" "));
+    for (const r of results) {
+        lines.push(cols.map(c => padCell(c.get(r), c.w, c.right)).join(" "));
+    }
+    return lines.join("\n");
+}
+
+function buildSummaryReport(results) {
+    const n = results.length;
+    const ok = results.filter(r => r.status === "ok").length;
+    const ptsFiles = results.filter(r => r.summary?.ptsAvailable).length;
+    const totalRecords = results.reduce((s, r) => s + (Number(r.summary?.recordCount) || 0), 0);
+    const ptsRecords = results.reduce((s, r) => s + (Number(r.summary?.ptsRecordCount) || 0), 0);
+    const warn = results.filter(r => r.summary?.severity === "warn").length;
+    const errors = results.filter(r => r.status === "error" || r.summary?.severity === "error").length;
+    const gaps = results.filter(r => (r.summary?.klvUtsGapCount ?? 0) > 0).length;
+    const noMisb = results.filter(r => r.status === "no_misb").length;
+    const unsupported = results.filter(r => r.status === "unsupported").length;
+    const cvs = results.map(r => r.summary?.klvUtsCv).filter(v => typeof v === "number" && Number.isFinite(v));
+    const meanCv = cvs.length ? cvs.reduce((a, b) => a + b, 0) / cvs.length : null;
+    const bigDiff = results.filter(r => Math.abs(r.summary?.spanDiffS ?? 0) > 0.5).length;
+
+    const L = [];
+    L.push("=== Sitrec FMV Data — Summary Report ===");
+    L.push(`Files analyzed:    ${n}`);
+    L.push("");
+    L.push("OVERALL");
+    L.push("─".repeat(60));
+    L.push(`  With MISB metadata:     ${ok}`);
+    L.push(`  Synchronous (PES PTS):  ${ptsFiles} / ${n}`);
+    L.push(`  MISB records (total):   ${totalRecords}`);
+    L.push(`  Records w/ PES PTS:     ${ptsRecords}${totalRecords > 0 ? ` (${(100 * ptsRecords / totalRecords).toFixed(1)}%)` : ""}`);
+    L.push(`  Files with warnings:    ${warn}`);
+    L.push(`  Files with errors:      ${errors}`);
+    L.push(`  Files with KLV gaps:    ${gaps}`);
+    L.push(`  No MISB metadata:       ${noMisb}`);
+    L.push(`  Unsupported container:  ${unsupported}`);
+    if (typeof meanCv === "number" && Number.isFinite(meanCv)) {
+        L.push(`  Mean KLV UTS CV:        ${(meanCv * 100).toFixed(2)}%`);
+    }
+    L.push("");
+    L.push("ANALYSIS");
+    L.push("─".repeat(60));
+    if (ok === 0) {
+        L.push("  • No files decoded MISB ST 0601 metadata.");
+    } else {
+        L.push(`  • ${ptsFiles} of ${ok} MISB file(s) carry KLV PES PTS (synchronous, PCR-locked);`);
+        L.push("    the rest rely on the UnixTimeStamp wall-clock fallback.");
+        if (gaps > 0) L.push(`  • ${gaps} file(s) have UnixTimeStamp gaps — telemetry timing is interrupted.`);
+        if (bigDiff > 0) L.push(`  • ${bigDiff} file(s) have a KLV-vs-video span difference over 0.5 s.`);
+        if (warn > 0) L.push(`  • ${warn} file(s) raised timing warnings.`);
+        if (errors > 0) L.push(`  • ${errors} file(s) could not be analyzed.`);
+        if (gaps === 0 && bigDiff === 0 && warn === 0 && errors === 0) {
+            L.push("  • No gaps, large span differences, warnings, or errors across the set.");
+        }
+    }
+    L.push("");
+    L.push("VIDEOS");
+    L.push("─".repeat(60));
+    L.push(summaryTableText(results));
+    return L.join("\n");
+}
+
+// ---- drag-and-drop entry collection ----
+
+function fsEntryToFile(fsEntry) {
+    return new Promise((resolve, reject) => fsEntry.file(resolve, reject));
+}
+
+function collectFsEntry(fsEntry, basePath, out, recursive) {
+    return new Promise(resolve => {
+        const rel = basePath ? `${basePath}/${fsEntry.name}` : fsEntry.name;
+        if (fsEntry.isFile) {
+            if (isVideoAnalysisCandidateName(fsEntry.name)) {
+                out.push({
+                    name: fsEntry.name,
+                    relativePath: rel,
+                    getFile: () => fsEntryToFile(fsEntry),
+                });
+            }
+            resolve();
+        } else if (fsEntry.isDirectory && recursive) {
+            const reader = fsEntry.createReader();
+            const readBatch = () => reader.readEntries(async batch => {
+                if (!batch.length) {
+                    resolve();
+                    return;
+                }
+                for (const child of batch) await collectFsEntry(child, rel, out, recursive);
+                readBatch();
+            }, () => resolve());
+            readBatch();
+        } else {
+            resolve();
+        }
+    });
+}
+
+async function entriesFromDataTransfer(dataTransfer, recursive) {
+    const out = [];
+    const items = dataTransfer.items ? Array.from(dataTransfer.items) : [];
+    const fsEntries = items
+        .filter(it => it.kind === "file" && typeof it.webkitGetAsEntry === "function")
+        .map(it => it.webkitGetAsEntry())
+        .filter(Boolean);
+    if (fsEntries.length) {
+        for (const fe of fsEntries) await collectFsEntry(fe, "", out, recursive);
+    }
+    if (!out.length) {
+        for (const file of Array.from(dataTransfer.files || [])) {
+            if (isVideoAnalysisCandidateName(file.name)) {
+                out.push({name: file.name, relativePath: file.name, getFile: () => Promise.resolve(file)});
+            }
+        }
+    }
+    out.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+    return out;
+}
+
+async function walkDirectoryHandle(directoryHandle, {recursive, basePath = "", onFound = null} = {}) {
     const files = [];
     for await (const [name, handle] of directoryHandle.entries()) {
         const relativePath = basePath ? `${basePath}/${name}` : name;
         if (handle.kind === "file") {
             if (isVideoAnalysisCandidateName(name)) {
-                const entry = {name, relativePath, handle};
+                const entry = {name, relativePath, getFile: () => handle.getFile()};
                 files.push(entry);
                 onFound?.(entry);
             }
         } else if (recursive && handle.kind === "directory") {
-            const childFiles = await walkDirectoryHandle(handle, {
-                recursive,
-                basePath: relativePath,
-                onFound,
-            });
-            files.push(...childFiles);
+            files.push(...await walkDirectoryHandle(handle, {recursive, basePath: relativePath, onFound}));
         }
     }
     files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
@@ -262,13 +350,7 @@ function setButtonDisabled(button, disabled) {
 function acquireAnalysisPauseLock(state) {
     if (state.pauseLock) return;
     const hadNoLogic = Object.prototype.hasOwnProperty.call(par, "noLogic");
-    state.pauseLock = {
-        paused: par.paused,
-        noLogic: par.noLogic,
-        hadNoLogic,
-        timer: null,
-    };
-
+    state.pauseLock = {paused: par.paused, noLogic: par.noLogic, hadNoLogic, timer: null};
     const enforcePause = () => {
         par.paused = true;
         par.noLogic = true;
@@ -281,14 +363,9 @@ function acquireAnalysisPauseLock(state) {
 function releaseAnalysisPauseLock(state) {
     const lock = state.pauseLock;
     if (!lock) return;
-    if (lock.timer) {
-        clearInterval(lock.timer);
-    }
-    if (lock.hadNoLogic) {
-        par.noLogic = lock.noLogic;
-    } else {
-        delete par.noLogic;
-    }
+    if (lock.timer) clearInterval(lock.timer);
+    if (lock.hadNoLogic) par.noLogic = lock.noLogic;
+    else delete par.noLogic;
     par.paused = lock.paused;
     state.pauseLock = null;
     setRenderOne(true);
@@ -309,34 +386,32 @@ function createDialog() {
 
     const modal = document.createElement("div");
     modal.style.cssText = `
-        background: white; border-radius: 8px; padding: 18px;
-        width: 92vw; max-width: 1280px;
-        height: calc(100vh - 44px);
+        background: white; border-radius: 8px; padding: 16px;
+        width: 98vw; height: 98vh; max-width: none;
         box-shadow: 0 4px 20px rgba(0,0,0,0.3);
         font-family: Arial, sans-serif; display: flex; flex-direction: column;
         box-sizing: border-box; color: #222;
     `;
 
     const title = document.createElement("h3");
-    title.textContent = "Analyze Video Folder";
-    title.title = "Scan a folder of video files and summarize MISB timing, PES PTS pairing, and gaps.";
+    title.textContent = "Analyze Video FMV Data";
+    title.title = "Scan video/KLV files and summarize MISB timing, PES PTS pairing, and gaps. Drag files or a folder anywhere onto this window.";
     title.style.cssText = "margin: 0; color: #1976d2; font-size: 18px; flex: 0 0 auto;";
 
     const header = document.createElement("div");
     header.style.cssText = "display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px;";
     header.appendChild(title);
-
     const closeButton = makeButton("Close", "#757575");
     header.appendChild(closeButton);
 
     const controls = document.createElement("div");
     controls.style.cssText = `
-        display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
         border: 1px solid #ddd; border-radius: 6px; padding: 10px; margin-bottom: 10px;
     `;
 
     const recursiveLabel = document.createElement("label");
-    recursiveLabel.title = "When checked, include candidate files in subfolders of the selected folder.";
+    recursiveLabel.title = "When checked, include candidate files in subfolders of a chosen or dropped folder.";
     recursiveLabel.style.cssText = "display: inline-flex; align-items: center; gap: 7px; font-size: 13px;";
     const recursiveInput = document.createElement("input");
     recursiveInput.type = "checkbox";
@@ -345,35 +420,34 @@ function createDialog() {
     recursiveLabel.appendChild(recursiveInput);
     recursiveLabel.appendChild(document.createTextNode("Recursive"));
 
-    const chooseButton = makeButton("Choose Folder");
+    const chooseFolderButton = makeButton("Choose Folder");
+    const chooseFileButton = makeButton("Choose File");
     const cancelButton = makeButton("Cancel Scan", "#d32f2f");
+    const clearButton = makeButton("Clear Results", "#d32f2f");
     const exportJsonButton = makeButton("Export JSON", "#455a64");
     const exportCsvButton = makeButton("Export CSV", "#455a64");
-    const exportPtsButton = makeButton("Export PTS Rows", "#455a64");
     const exportReportsButton = makeButton("Export Reports", "#455a64");
-    setButtonDisabled(cancelButton, true);
-    setButtonDisabled(exportJsonButton, true);
-    setButtonDisabled(exportCsvButton, true);
-    setButtonDisabled(exportPtsButton, true);
-    setButtonDisabled(exportReportsButton, true);
+    const summaryButton = makeButton("Summary Report", "#00695c");
 
     controls.appendChild(recursiveLabel);
-    controls.appendChild(chooseButton);
+    controls.appendChild(chooseFolderButton);
+    controls.appendChild(chooseFileButton);
     controls.appendChild(cancelButton);
+    controls.appendChild(clearButton);
     controls.appendChild(exportJsonButton);
     controls.appendChild(exportCsvButton);
-    controls.appendChild(exportPtsButton);
     controls.appendChild(exportReportsButton);
+    controls.appendChild(summaryButton);
 
     const status = document.createElement("div");
-    status.textContent = "Ready";
+    status.textContent = "Ready — choose a folder or file, or drag files/folders onto this window.";
     status.title = "Shows the current scan state and the file being analyzed.";
     status.style.cssText = "font-size: 13px; margin: 0 0 8px 0; min-height: 18px; color: #333;";
 
     const progress = document.createElement("progress");
     progress.max = 1;
     progress.value = 0;
-    progress.title = "Overall scan progress across the candidate files and current file.";
+    progress.title = "Progress across the current batch of files.";
     progress.style.cssText = "width: 100%; height: 12px; margin-bottom: 10px; flex: 0 0 auto;";
 
     const summary = document.createElement("div");
@@ -386,27 +460,11 @@ function createDialog() {
     tableWrap.style.cssText = "flex: 1 1 auto; min-height: 0; overflow: auto; border: 1px solid #ddd; border-radius: 6px;";
 
     const table = document.createElement("table");
-    table.style.cssText = `
-        width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed;
-    `;
+    table.style.cssText = "width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed;";
     const thead = document.createElement("thead");
     thead.style.cssText = "position: sticky; top: 0; background: #f5f7fa; z-index: 1;";
     const headerRow = document.createElement("tr");
-    const headers = [
-        ["File", "22%"],
-        ["Status", "7%"],
-        ["Verdict", "20%"],
-        ["Records", "6%"],
-        ["PES PTS Rec", "7%"],
-        ["Frame Pair", "7%"],
-        ["KLV Span", "7%"],
-        ["Gaps", "5%"],
-        ["CV", "5%"],
-        ["Video PTS", "6%"],
-        ["Diff", "5%"],
-        ["Report", "5%"],
-    ];
-    for (const [label, width] of headers) {
+    for (const [label, width] of TABLE_HEADERS) {
         const th = document.createElement("th");
         th.textContent = label;
         th.title = TABLE_HEADER_TOOLTIPS[label] || label;
@@ -419,32 +477,34 @@ function createDialog() {
     table.appendChild(tbody);
     tableWrap.appendChild(table);
 
+    const dropHint = document.createElement("div");
+    dropHint.textContent = "Drop video / KLV files or a folder to analyze";
+    dropHint.style.cssText = `
+        position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+        background: rgba(25,118,210,0.10); border: 3px dashed #1976d2; border-radius: 8px;
+        color: #1976d2; font-size: 22px; font-weight: 700; pointer-events: none; z-index: 5;
+    `;
+    modal.style.position = "relative";
+
     modal.appendChild(header);
     modal.appendChild(controls);
     modal.appendChild(status);
     modal.appendChild(progress);
     modal.appendChild(summary);
     modal.appendChild(tableWrap);
+    modal.appendChild(dropHint);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
     const state = {
-        overlay,
+        overlay, modal, dropHint,
         recursiveInput,
-        chooseButton,
-        cancelButton,
-        closeButton,
-        exportJsonButton,
-        exportCsvButton,
-        exportPtsButton,
-        exportReportsButton,
-        status,
-        progress,
-        summary,
-        tbody,
-        rowsByPath: new Map(),
+        chooseFolderButton, chooseFileButton, cancelButton, clearButton,
+        closeButton, exportJsonButton, exportCsvButton, exportReportsButton, summaryButton,
+        status, progress, summary, tbody,
+        rowsByKey: new Map(),
         results: [],
-        folderName: "",
+        nextRowId: 0,
         cancelled: false,
         running: false,
         pauseLock: null,
@@ -472,21 +532,21 @@ function summaryCell(label, value) {
     return cell;
 }
 
-function updateSummary(state, fileCount = 0) {
+function updateSummary(state) {
     const results = state.results;
-    const ok = results.filter(result => result.status === "ok").length;
-    const warn = results.filter(result => result.summary?.severity === "warn").length;
-    const errors = results.filter(result => result.status === "error" || result.summary?.severity === "error").length;
-    const gaps = results.filter(result => (result.summary?.klvUtsGapCount ?? 0) > 0).length;
-    const noMisb = results.filter(result => result.status === "no_misb").length;
-    const unsupported = results.filter(result => result.status === "unsupported").length;
-    const ptsFiles = results.filter(result => result.summary?.ptsAvailable).length;
-    const totalRecords = results.reduce((sum, result) => sum + (Number(result.summary?.recordCount) || 0), 0);
-    const ptsRecords = results.reduce((sum, result) => sum + (Number(result.summary?.ptsRecordCount) || 0), 0);
+    const ok = results.filter(r => r.status === "ok").length;
+    const warn = results.filter(r => r.summary?.severity === "warn").length;
+    const errors = results.filter(r => r.status === "error" || r.summary?.severity === "error").length;
+    const gaps = results.filter(r => (r.summary?.klvUtsGapCount ?? 0) > 0).length;
+    const noMisb = results.filter(r => r.status === "no_misb").length;
+    const unsupported = results.filter(r => r.status === "unsupported").length;
+    const ptsFiles = results.filter(r => r.summary?.ptsAvailable).length;
+    const totalRecords = results.reduce((s, r) => s + (Number(r.summary?.recordCount) || 0), 0);
+    const ptsRecords = results.reduce((s, r) => s + (Number(r.summary?.ptsRecordCount) || 0), 0);
     const ptsRecordPct = totalRecords > 0 ? ptsRecords / totalRecords : null;
 
     state.summary.innerHTML = "";
-    state.summary.appendChild(summaryCell("Candidates", fileCount || results.length));
+    state.summary.appendChild(summaryCell("Candidates", results.length));
     state.summary.appendChild(summaryCell("Analyzed", results.length));
     state.summary.appendChild(summaryCell("MISB", ok));
     state.summary.appendChild(summaryCell("PES PTS Files", ptsFiles));
@@ -502,7 +562,7 @@ function makeRow(state, entry) {
     const tr = document.createElement("tr");
     tr.style.cssText = "border-bottom: 1px solid #eee;";
     const cells = [];
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < TABLE_HEADERS.length; i++) {
         const td = document.createElement("td");
         td.style.cssText = "padding: 7px 8px; vertical-align: top; overflow-wrap: anywhere;";
         cells.push(td);
@@ -510,21 +570,28 @@ function makeRow(state, entry) {
     }
     cells[0].textContent = entry.relativePath;
     cells[1].textContent = "Queued";
-    cells[2].textContent = fmtBytes(entry.size);
     state.tbody.appendChild(tr);
-    state.rowsByPath.set(entry.relativePath, {tr, cells});
-    return {tr, cells};
+    const row = {tr, cells, entry};
+    state.rowsByKey.set(entry.key, row);
+    return row;
 }
 
 function setRowProgress(state, entry, text) {
-    const row = state.rowsByPath.get(entry.relativePath) || makeRow(state, entry);
+    const row = state.rowsByKey.get(entry.key) || makeRow(state, entry);
     row.cells[1].textContent = text;
 }
 
-function setRowResult(state, result) {
-    const path = result.file?.relativePath || result.file?.name || "";
-    const row = state.rowsByPath.get(path) || makeRow(state, {relativePath: path, size: result.file?.size});
+function smallButton(label, color, tooltip) {
+    const b = makeButton(label, color, tooltip);
+    b.style.padding = "5px 8px";
+    b.style.minHeight = "26px";
+    return b;
+}
+
+function setRowResult(state, result, entry) {
+    const row = state.rowsByKey.get(entry.key) || makeRow(state, entry);
     const summary = result.summary || {};
+    row.cells[0].textContent = result.file?.relativePath || result.file?.name || entry.relativePath;
     row.cells[1].textContent = result.status;
     row.cells[2].textContent = summary.verdict || result.message || "";
     row.cells[3].textContent = summary.recordCount ?? "";
@@ -535,112 +602,115 @@ function setRowResult(state, result) {
     row.cells[8].textContent = fmtPct(summary.klvUtsCv);
     row.cells[9].textContent = summary.videoPtsCount ?? "";
     row.cells[10].textContent = fmtSeconds(summary.spanDiffS);
+
+    // Frames export (per-frame CSV) — only when the file actually has video frames.
     row.cells[11].innerHTML = "";
-    if (result.report) {
-        const reportButton = makeButton("View", "#1976d2", "Open the detailed text timing report for this file.");
-        reportButton.style.padding = "5px 8px";
-        reportButton.style.minHeight = "26px";
-        reportButton.onclick = () => showTimingAnalysis(result.report, `${path.replace(/[\/\\]+/g, "_")}-timing.txt`);
-        row.cells[11].appendChild(reportButton);
+    if ((summary.videoPtsCount ?? 0) > 0 && typeof entry.getFile === "function") {
+        const exportButton = smallButton("Export", "#455a64", BUTTON_TOOLTIPS["Export"]);
+        exportButton.onclick = () => exportFramesForFile(state, result, entry, exportButton);
+        row.cells[11].appendChild(exportButton);
     }
-    if (summary.severity === "error" || result.status === "error") {
-        row.tr.style.background = "#fff5f5";
-    } else if (summary.severity === "warn") {
-        row.tr.style.background = "#fffaf0";
-    } else if (result.status === "ok") {
-        row.tr.style.background = "#f7fff7";
-    } else {
-        row.tr.style.background = "";
+
+    // Detailed text report.
+    row.cells[12].innerHTML = "";
+    if (result.report) {
+        const reportButton = smallButton("View", "#1976d2", BUTTON_TOOLTIPS["View"]);
+        const path = result.file?.relativePath || result.file?.name || "report";
+        reportButton.onclick = () => showTimingAnalysis(result.report, `${path.replace(/[\/\\]+/g, "_")}-timing.txt`);
+        row.cells[12].appendChild(reportButton);
+    }
+
+    if (summary.severity === "error" || result.status === "error") row.tr.style.background = "#fff5f5";
+    else if (summary.severity === "warn") row.tr.style.background = "#fffaf0";
+    else if (result.status === "ok") row.tr.style.background = "#f7fff7";
+    else row.tr.style.background = "";
+}
+
+async function exportFramesForFile(state, result, entry, button) {
+    const original = button.textContent;
+    button.textContent = "…";
+    setButtonDisabled(button, true);
+    try {
+        const file = await entry.getFile();
+        const full = await analyzeVideoFileLike(file, {
+            name: result.file?.name || entry.name,
+            relativePath: result.file?.relativePath || entry.relativePath,
+            includeFrameRows: true,
+        });
+        if (!full.frameRows || full.frameRows.length === 0) {
+            state.status.textContent = "No virtual frames to export for this file (no video PTS).";
+            return;
+        }
+        const base = (result.file?.relativePath || result.file?.name || "frames").replace(/[\/\\]+/g, "_");
+        saveAs(new Blob([frameRowsToCsv(full)], {type: "text/csv;charset=utf-8"}), `${base}-frames.csv`);
+    } catch (error) {
+        if (!isAbortLikeError(error)) showError(error);
+    } finally {
+        button.textContent = original;
+        setButtonDisabled(button, false);
     }
 }
 
-async function runFolderScan(state) {
-    if (!supportsDirectoryPicker()) {
-        showLocalFolderAccessUnsupportedMessage();
+function refreshControls(state) {
+    const running = state.running;
+    const hasResults = state.results.length > 0;
+    setButtonDisabled(state.chooseFolderButton, running);
+    setButtonDisabled(state.chooseFileButton, running);
+    setButtonDisabled(state.cancelButton, !running);
+    setButtonDisabled(state.clearButton, running || !hasResults);
+    setButtonDisabled(state.exportJsonButton, running || !hasResults);
+    setButtonDisabled(state.exportCsvButton, running || !hasResults);
+    setButtonDisabled(state.exportReportsButton, running || !allReportsText(state.results));
+    setButtonDisabled(state.summaryButton, running || !hasResults);
+    state.recursiveInput.disabled = running;
+}
+
+function clearResults(state) {
+    if (state.running) return;
+    state.results = [];
+    state.rowsByKey.clear();
+    state.tbody.innerHTML = "";
+    state.progress.value = 0;
+    state.status.textContent = "Cleared. Choose a folder or file, or drag files/folders onto this window.";
+    updateSummary(state);
+    refreshControls(state);
+}
+
+// Core: analyze a batch of entries and APPEND them to the accumulated results.
+async function analyzeEntries(state, entries) {
+    if (state.running) return;
+    if (!entries.length) {
+        state.status.textContent = "No supported video/KLV files found.";
         return;
     }
-
-    let directoryHandle;
-    try {
-        directoryHandle = await window.showDirectoryPicker({mode: "read"});
-    } catch (error) {
-        if (!isAbortLikeError(error)) {
-            showError(error);
-        }
-        return;
-    }
-
     state.running = true;
     state.cancelled = false;
-    state.results = [];
-    state.rowsByPath.clear();
-    state.tbody.innerHTML = "";
-    state.folderName = directoryHandle.name || "folder";
-    state.status.textContent = "Scanning folder...";
-    state.progress.value = 0;
-    setButtonDisabled(state.chooseButton, true);
-    setButtonDisabled(state.cancelButton, false);
-    setButtonDisabled(state.exportJsonButton, true);
-    setButtonDisabled(state.exportCsvButton, true);
-    setButtonDisabled(state.exportPtsButton, true);
-    setButtonDisabled(state.exportReportsButton, true);
-    state.recursiveInput.disabled = true;
-    updateSummary(state, 0);
-
-    let entries = [];
-    try {
-        entries = await walkDirectoryHandle(directoryHandle, {
-            recursive: state.recursiveInput.checked,
-            onFound: entry => {
-                makeRow(state, entry);
-                state.status.textContent = `Found ${state.rowsByPath.size} candidate file(s)...`;
-            },
-        });
-    } catch (error) {
-        state.status.textContent = error.message || String(error);
-        state.running = false;
-        setButtonDisabled(state.chooseButton, false);
-        setButtonDisabled(state.cancelButton, true);
-        state.recursiveInput.disabled = false;
-        return;
-    }
-
-    updateSummary(state, entries.length);
-    if (entries.length === 0) {
-        state.status.textContent = "No candidate video/KLV files found.";
-        state.running = false;
-        setButtonDisabled(state.chooseButton, false);
-        setButtonDisabled(state.cancelButton, true);
-        state.recursiveInput.disabled = false;
-        return;
-    }
+    refreshControls(state);
 
     for (let i = 0; i < entries.length; i++) {
         if (state.cancelled) break;
         const entry = entries[i];
+        entry.key = state.nextRowId++;
+        makeRow(state, entry);
         setRowProgress(state, entry, "Reading");
         state.progress.value = i / entries.length;
         state.status.textContent = `Analyzing ${i + 1} of ${entries.length}: ${entry.relativePath}`;
 
         try {
-            const file = await entry.handle.getFile();
+            const file = await entry.getFile();
             entry.size = file.size;
             const result = await analyzeVideoFileLike(file, {
                 name: entry.name,
                 relativePath: entry.relativePath,
                 onProgress: progress => {
-                    if (state.cancelled) {
-                        throw new Error("Scan cancelled");
-                    }
+                    if (state.cancelled) throw new Error("Scan cancelled");
                     const fileFraction = progress.total > 0 ? progress.loaded / progress.total : 0;
                     state.progress.value = (i + fileFraction) / entries.length;
-                    const phase = progress.phase === "probe" ? "Probing" : "Extracting";
-                    setRowProgress(state, entry, phase);
+                    setRowProgress(state, entry, progress.phase === "probe" ? "Probing" : "Extracting");
                 },
             });
             state.results.push(result);
-            setRowResult(state, result);
-            updateSummary(state, entries.length);
+            setRowResult(state, result, entry);
         } catch (error) {
             if (state.cancelled) break;
             const result = {
@@ -648,31 +718,127 @@ async function runFolderScan(state) {
                 status: "error",
                 container: "",
                 message: error.message || String(error),
-                summary: {
-                    severity: "error",
-                    verdict: error.message || String(error),
-                    flags: "error",
-                },
+                summary: {severity: "error", verdict: error.message || String(error), flags: "error"},
                 report: "",
             };
             state.results.push(result);
-            setRowResult(state, result);
-            updateSummary(state, entries.length);
+            setRowResult(state, result, entry);
         }
+        updateSummary(state);
     }
 
     state.progress.value = state.cancelled ? state.progress.value : 1;
     state.status.textContent = state.cancelled
-        ? `Cancelled after ${state.results.length} of ${entries.length} file(s).`
-        : `Done. Analyzed ${state.results.length} of ${entries.length} file(s).`;
+        ? `Cancelled. ${state.results.length} result(s) in the table.`
+        : `Done. ${state.results.length} result(s) in the table.`;
     state.running = false;
-    setButtonDisabled(state.chooseButton, false);
-    setButtonDisabled(state.cancelButton, true);
-    setButtonDisabled(state.exportJsonButton, state.results.length === 0);
-    setButtonDisabled(state.exportCsvButton, state.results.length === 0);
-    setButtonDisabled(state.exportPtsButton, allPtsRows(state.results).length === 0);
-    setButtonDisabled(state.exportReportsButton, !allReportsText(state.results));
-    state.recursiveInput.disabled = false;
+    refreshControls(state);
+}
+
+async function runFolderScan(state) {
+    if (!supportsDirectoryPicker()) {
+        showLocalFolderAccessUnsupportedMessage();
+        return;
+    }
+    let directoryHandle;
+    try {
+        directoryHandle = await window.showDirectoryPicker({mode: "read"});
+    } catch (error) {
+        if (!isAbortLikeError(error)) showError(error);
+        return;
+    }
+    state.status.textContent = "Scanning folder...";
+    let count = 0;
+    let entries = [];
+    try {
+        entries = await walkDirectoryHandle(directoryHandle, {
+            recursive: state.recursiveInput.checked,
+            onFound: () => {
+                state.status.textContent = `Found ${++count} candidate file(s)...`;
+            },
+        });
+    } catch (error) {
+        state.status.textContent = error.message || String(error);
+        return;
+    }
+    await analyzeEntries(state, entries);
+}
+
+async function runChooseFile(state) {
+    let files;
+    try {
+        if (typeof window.showOpenFilePicker === "function") {
+            const handles = await window.showOpenFilePicker({multiple: true});
+            files = handles.map(h => ({name: h.name, relativePath: h.name, getFile: () => h.getFile()}));
+        } else {
+            const input = document.createElement("input");
+            input.type = "file";
+            input.multiple = true;
+            const picked = await new Promise(resolve => {
+                input.onchange = () => resolve(Array.from(input.files || []));
+                input.click();
+            });
+            files = picked.map(f => ({name: f.name, relativePath: f.name, getFile: () => Promise.resolve(f)}));
+        }
+    } catch (error) {
+        if (!isAbortLikeError(error)) showError(error);
+        return;
+    }
+    const entries = (files || []).filter(e => isVideoAnalysisCandidateName(e.name));
+    if (!entries.length) {
+        state.status.textContent = "Selected file(s) are not supported video/KLV containers.";
+        return;
+    }
+    await analyzeEntries(state, entries);
+}
+
+function setDropHighlight(state, on) {
+    state.dropHint.style.display = on ? "flex" : "none";
+}
+
+function wireDragAndDrop(state) {
+    const overlay = state.overlay;
+    let depth = 0;
+    const stop = e => {
+        e.preventDefault();
+        e.stopPropagation();
+    };
+    overlay.addEventListener("dragenter", e => {
+        stop(e);
+        depth++;
+        if (!state.running) setDropHighlight(state, true);
+    });
+    overlay.addEventListener("dragover", e => {
+        stop(e);
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    });
+    overlay.addEventListener("dragleave", e => {
+        stop(e);
+        depth = Math.max(0, depth - 1);
+        if (depth === 0) setDropHighlight(state, false);
+    });
+    overlay.addEventListener("drop", async e => {
+        stop(e);
+        depth = 0;
+        setDropHighlight(state, false);
+        if (state.running) {
+            state.status.textContent = "Busy — wait for the current scan to finish before dropping more.";
+            return;
+        }
+        state.status.textContent = "Reading dropped items...";
+        let entries = [];
+        try {
+            entries = await entriesFromDataTransfer(e.dataTransfer, state.recursiveInput.checked);
+        } catch (error) {
+            showError(error);
+            return;
+        }
+        if (!entries.length) {
+            state.status.textContent = "No supported video/KLV files in the drop.";
+            return;
+        }
+        await analyzeEntries(state, entries);
+    });
 }
 
 export function openVideoFolderAnalysisDialog() {
@@ -681,9 +847,7 @@ export function openVideoFolderAnalysisDialog() {
     state.closeButton.onclick = () => {
         state.cancelled = true;
         releaseAnalysisPauseLock(state);
-        if (state.overlay.parentNode) {
-            document.body.removeChild(state.overlay);
-        }
+        if (state.overlay.parentNode) document.body.removeChild(state.overlay);
         if (activeDialog === state) activeDialog = null;
     };
     state.cancelButton.onclick = () => {
@@ -691,39 +855,32 @@ export function openVideoFolderAnalysisDialog() {
         state.status.textContent = "Cancelling...";
         setButtonDisabled(state.cancelButton, true);
     };
-    state.chooseButton.onclick = () => runFolderScan(state);
+    state.clearButton.onclick = () => clearResults(state);
+    state.chooseFolderButton.onclick = () => runFolderScan(state);
+    state.chooseFileButton.onclick = () => runChooseFile(state);
     state.exportJsonButton.onclick = () => {
         const payload = {
             generatedAt: new Date().toISOString(),
-            folderName: state.folderName,
-            recursive: state.recursiveInput.checked,
-            results: state.results.map(stripPtsRowsForJson),
+            results: state.results.map(stripForJson),
         };
-        saveAs(
-            new Blob([JSON.stringify(payload, null, 2)], {type: "application/json;charset=utf-8"}),
-            "sitrec-video-folder-analysis.json"
-        );
+        saveAs(new Blob([JSON.stringify(payload, null, 2)], {type: "application/json;charset=utf-8"}),
+            "sitrec-fmv-data-analysis.json");
     };
     state.exportCsvButton.onclick = () => {
-        saveAs(
-            new Blob([resultsToCsv(state.results)], {type: "text/csv;charset=utf-8"}),
-            "sitrec-video-folder-analysis.csv"
-        );
-    };
-    state.exportPtsButton.onclick = () => {
-        saveAs(
-            new Blob([ptsRowsToCsv(state.results)], {type: "text/csv;charset=utf-8"}),
-            "sitrec-video-folder-pts-rows.csv"
-        );
+        saveAs(new Blob([resultsToCsv(state.results)], {type: "text/csv;charset=utf-8"}),
+            "sitrec-fmv-data-analysis.csv");
     };
     state.exportReportsButton.onclick = () => {
-        saveAs(
-            new Blob([allReportsText(state.results)], {type: "text/plain;charset=utf-8"}),
-            "sitrec-video-folder-analysis-reports.txt"
-        );
+        saveAs(new Blob([allReportsText(state.results)], {type: "text/plain;charset=utf-8"}),
+            "sitrec-fmv-data-reports.txt");
+    };
+    state.summaryButton.onclick = () => {
+        showTimingAnalysis(buildSummaryReport(state.results), "sitrec-fmv-data-summary.txt");
     };
 
-    updateSummary(state, 0);
+    wireDragAndDrop(state);
+    updateSummary(state);
+    refreshControls(state);
     return state;
 }
 
@@ -733,8 +890,8 @@ export function addFileAnalysisMenu() {
         .perm()
         .close()
         .tooltip("Tools that scan files without loading them into the current sitch");
-    fileAnalysisFolder.add({analyzeVideoFolder: openVideoFolderAnalysisDialog}, "analyzeVideoFolder")
-        .name("Analyze Video Folder...")
-        .tooltip("Open a batch scanner for MISB timing and PES PTS pairing statistics")
+    fileAnalysisFolder.add({analyzeVideoFMV: openVideoFolderAnalysisDialog}, "analyzeVideoFMV")
+        .name("Analyze Video FMV Data...")
+        .tooltip("Open the FMV timing/MISB analyzer — drag in files or a folder, or choose them")
         .perm();
 }

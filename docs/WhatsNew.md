@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.72.0 (2026-06-02)
+
+### Improvements
+- **Analyze Video FMV Data** (File → File Analysis → *Analyze Video FMV Data...*): the video folder analyzer is reworked and renamed. As well as choosing a folder, you can now pick individual files or drag files or a folder straight onto the window, and results from every action build up in the table instead of replacing it (with a *Clear Results* button to start over). Each file with video frames gets a *Frames* export that saves a per-frame CSV — one row per played frame on the real (gap-filled) timeline, flagging the duplicated hold frames and including every MISB metadata value present in that file. A new *Summary Report* button opens a combined overview with overall stats, a plain-English analysis, and a table of all the videos. Every control now has an explanatory tooltip.
+
+---
+
 ## Version 2.71.0 (2026-06-02)
 
 ### New Features
