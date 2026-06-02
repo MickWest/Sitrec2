@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.70.0 (2026-06-01)
+
+### New Features
+- **Camera Motion from video** (Video → Camera Motion (Background)): for near-straight-down footage, recover the camera's flight path from how the background moves and draw it over the terrain. Click *Analyze & Build Path*, then optionally let it drive the look camera's position and orientation, with a live overlay of the tracked motion.
+- **Side-by-side second video**: drop a second video to compare two recordings of the same event next to each other. A dialog lets you choose a side-by-side second view, add the clip to the existing view as a selectable option, or replace the current video. A *Lock to In Frame* option plays the second clip aligned to the in point so the two stay in sync.
+
+### Improvements
+- **Camera Motion auto-scaling** (Video → Camera Motion (Background)): the recovered path is now scaled automatically from the camera's field of view and altitude instead of a manual guess, with a manual override still available. The analysis is also more robust to bad or repeated frames.
+
+---
+
 ## Version 2.69.2 (2026-06-01)
 
 ### Bug Fixes
