@@ -13,6 +13,45 @@ import {par} from "../par";
 let activeDialog = null;
 let fileAnalysisFolder = null;
 
+const BUTTON_TOOLTIPS = {
+    "Close": "Close this analysis window and restore the previous Sitrec playback state.",
+    "Choose Folder": "Pick the folder of video files to scan.",
+    "Cancel Scan": "Stop the current folder scan after the current file finishes.",
+    "Export JSON": "Save a compact machine-readable summary of the scan results.",
+    "Export CSV": "Save one summary row per file for spreadsheet analysis.",
+    "Export PTS Rows": "Save timing-only frame-to-KLV PES PTS pairing rows for manual analysis.",
+    "Export Reports": "Save detailed text timing reports for files that decoded MISB metadata.",
+    "View": "Open the detailed text timing report for this file.",
+};
+
+const SUMMARY_TOOLTIPS = {
+    "Candidates": "How many files in the selected folder matched the supported extensions.",
+    "Analyzed": "How many candidate files have finished processing.",
+    "MISB": "How many files decoded at least one MISB ST 0601 metadata stream.",
+    "PES PTS Files": "How many files have enough KLV PES-header PTS data to use synchronous PTS pairing.",
+    "PES PTS Records": "The percentage of all decoded MISB records that have KLV PES-header PTS values.",
+    "Warnings": "How many analyzed files have timing warnings.",
+    "Errors": "How many files could not be analyzed because of an error.",
+    "Gaps": "How many files have detected gaps in their MISB UnixTimeStamp timing.",
+    "No MISB": "How many files were scanned but did not decode MISB ST 0601 metadata.",
+    "Unsupported": "How many candidate files use containers this tool does not scan yet.",
+};
+
+const TABLE_HEADER_TOOLTIPS = {
+    "File": "The file path within the selected folder.",
+    "Status": "The current or final analysis state for this file.",
+    "Verdict": "A short plain-English summary of the file's timing result.",
+    "Records": "The number of decoded MISB metadata records.",
+    "PES PTS Rec": "The percentage of MISB records with KLV PES-header PTS values.",
+    "Frame Pair": "The percentage of video PTS rows that can be paired to a nearby KLV PES PTS record.",
+    "KLV Span": "The elapsed time covered by the KLV UnixTimeStamp metadata.",
+    "Gaps": "The number of large gaps found in KLV UnixTimeStamp timing.",
+    "CV": "Coefficient of variation for KLV UnixTimeStamp intervals; higher means more timing scatter.",
+    "Video PTS": "The number of video PTS rows found in the transport stream.",
+    "Diff": "KLV span minus video PTS span, in seconds.",
+    "Report": "Open the detailed timing report for this file.",
+};
+
 function fmtNumber(value, digits = 3) {
     return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "";
 }
@@ -198,9 +237,13 @@ async function walkDirectoryHandle(directoryHandle, {
     return files;
 }
 
-function makeButton(label, color = "#1976d2") {
+function makeButton(label, color = "#1976d2", tooltip = BUTTON_TOOLTIPS[label]) {
     const button = document.createElement("button");
     button.textContent = label;
+    if (tooltip) {
+        button.title = tooltip;
+        button.setAttribute("aria-label", tooltip);
+    }
     button.style.cssText = `
         background: ${color}; color: white; border: none;
         padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px;
@@ -276,6 +319,7 @@ function createDialog() {
 
     const title = document.createElement("h3");
     title.textContent = "Analyze Video Folder";
+    title.title = "Scan a folder of video files and summarize MISB timing, PES PTS pairing, and gaps.";
     title.style.cssText = "margin: 0; color: #1976d2; font-size: 18px; flex: 0 0 auto;";
 
     const header = document.createElement("div");
@@ -292,10 +336,12 @@ function createDialog() {
     `;
 
     const recursiveLabel = document.createElement("label");
+    recursiveLabel.title = "When checked, include candidate files in subfolders of the selected folder.";
     recursiveLabel.style.cssText = "display: inline-flex; align-items: center; gap: 7px; font-size: 13px;";
     const recursiveInput = document.createElement("input");
     recursiveInput.type = "checkbox";
     recursiveInput.checked = true;
+    recursiveInput.title = recursiveLabel.title;
     recursiveLabel.appendChild(recursiveInput);
     recursiveLabel.appendChild(document.createTextNode("Recursive"));
 
@@ -321,11 +367,13 @@ function createDialog() {
 
     const status = document.createElement("div");
     status.textContent = "Ready";
+    status.title = "Shows the current scan state and the file being analyzed.";
     status.style.cssText = "font-size: 13px; margin: 0 0 8px 0; min-height: 18px; color: #333;";
 
     const progress = document.createElement("progress");
     progress.max = 1;
     progress.value = 0;
+    progress.title = "Overall scan progress across the candidate files and current file.";
     progress.style.cssText = "width: 100%; height: 12px; margin-bottom: 10px; flex: 0 0 auto;";
 
     const summary = document.createElement("div");
@@ -361,6 +409,7 @@ function createDialog() {
     for (const [label, width] of headers) {
         const th = document.createElement("th");
         th.textContent = label;
+        th.title = TABLE_HEADER_TOOLTIPS[label] || label;
         th.style.cssText = `text-align: left; padding: 8px; border-bottom: 1px solid #ddd; width: ${width};`;
         headerRow.appendChild(th);
     }
@@ -406,13 +455,17 @@ function createDialog() {
 }
 
 function summaryCell(label, value) {
+    const tooltip = SUMMARY_TOOLTIPS[label] || label;
     const cell = document.createElement("div");
+    cell.title = tooltip;
     cell.style.cssText = "border: 1px solid #ddd; border-radius: 6px; padding: 7px; background: #fafafa; min-width: 0;";
     const labelEl = document.createElement("div");
     labelEl.textContent = label;
+    labelEl.title = tooltip;
     labelEl.style.cssText = "color: #607d8b; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;";
     const valueEl = document.createElement("div");
     valueEl.textContent = value;
+    valueEl.title = tooltip;
     valueEl.style.cssText = "font-size: 15px; font-weight: 700; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;";
     cell.appendChild(labelEl);
     cell.appendChild(valueEl);
@@ -484,7 +537,7 @@ function setRowResult(state, result) {
     row.cells[10].textContent = fmtSeconds(summary.spanDiffS);
     row.cells[11].innerHTML = "";
     if (result.report) {
-        const reportButton = makeButton("View", "#1976d2");
+        const reportButton = makeButton("View", "#1976d2", "Open the detailed text timing report for this file.");
         reportButton.style.padding = "5px 8px";
         reportButton.style.minHeight = "26px";
         reportButton.onclick = () => showTimingAnalysis(result.report, `${path.replace(/[\/\\]+/g, "_")}-timing.txt`);
@@ -679,9 +732,9 @@ export function addFileAnalysisMenu() {
     fileAnalysisFolder = guiMenus.file.addFolder("File Analysis")
         .perm()
         .close()
-        .tooltip("Batch file analysis tools");
+        .tooltip("Tools that scan files without loading them into the current sitch");
     fileAnalysisFolder.add({analyzeVideoFolder: openVideoFolderAnalysisDialog}, "analyzeVideoFolder")
         .name("Analyze Video Folder...")
-        .tooltip("Scan a local folder for MISB timing statistics")
+        .tooltip("Open a batch scanner for MISB timing and PES PTS pairing statistics")
         .perm();
 }
