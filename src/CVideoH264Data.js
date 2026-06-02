@@ -537,12 +537,17 @@ export class CVideoH264Data extends CVideoWebCodecBase {
             console.log(`📊 Using decode order as frame sequence - frames will be numbered 0, 1, 2, 3... as decoded`);
             console.log(`🎯 This ensures consistent frame ordering regardless of H.264 internal timestamps`);
 
-            // Set global video properties
-            Sit.videoFrames = this.frames * this.videoSpeed;
-            Sit.fps = fps;
             this.detectedFps = fps; // Store for debugging
 
-            updateSitFrames();
+            // Set global video properties — only the timeline-owning (primary)
+            // video defines the sitch timeline; a secondary "video2" must not
+            // (see C1, 2.70.0 review).
+            if (this.ownsTimeline) {
+                Sit.videoFrames = this.frames * this.videoSpeed;
+                Sit.fps = fps;
+
+                updateSitFrames();
+            }
 
             this.loaded = true;
 
@@ -908,12 +913,17 @@ export class CVideoH264Data extends CVideoWebCodecBase {
     updateFPS(newFps) {
         if (newFps > 0 && newFps <= 240) {
             console.log(`Updating H.264 FPS from ${Sit.fps} to ${newFps}`);
-            Sit.fps = newFps;
             this.detectedFps = newFps;
-            
-            // Update frame timing if needed
-            updateSitFrames();
-            
+
+            // Only the timeline-owning (primary) video drives Sit.fps / Sit.frames
+            // (see C1, 2.70.0 review).
+            if (this.ownsTimeline) {
+                Sit.fps = newFps;
+
+                // Update frame timing if needed
+                updateSitFrames();
+            }
+
             console.log(`✓ FPS updated to ${newFps}`);
         } else {
             showError(`Invalid FPS value: ${newFps}. Must be between 0 and 240.`);

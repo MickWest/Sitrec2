@@ -96,6 +96,8 @@ export const SitVideo = {
                 background: "black",
                 autoFill: true,
                 doubleClickFullscreen: false,
+                // Secondary view must not redefine the sitch timeline (C1, 2.70.0).
+                ownsTimeline: false,
             }
         )
 

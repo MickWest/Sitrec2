@@ -880,10 +880,21 @@ export const saveMethods = {
         assert(normalizedPreferred, `Invalid preferred local rehost path: ${preferredRelativePath}`);
 
         // Fast path: if we already resolved this path earlier in the session
-        // (via a previous save or load), skip the expensive file read + compare.
+        // (via a previous save or load) for the SAME source buffer, skip the
+        // expensive file read + compare.
+        //
+        // The cache MUST be keyed on source identity, not just the preferred
+        // path: two dropped videos can share a basename but differ in bytes
+        // (e.g. the primary "video" and secondary "video2" both named clip.mp4).
+        // Keying on path alone made the second call reuse the first's resolved
+        // path, overwriting the first file and pointing both entries at one
+        // clip — silent data loss (see C2 in the 2.70.0 merge review). Distinct
+        // dropped files are distinct ArrayBuffer objects, so reference identity
+        // separates them; a genuine re-resolution of the same buffer still hits.
+        // On a miss the collision-suffix loop below dedups by content correctly.
         const cached = this._localRehostPathCache.get(normalizedPreferred);
-        if (cached) {
-            return cached;
+        if (cached && cached.sourceBuffer === sourceBuffer) {
+            return cached.result;
         }
 
         const parts = normalizedPreferred.split("/");
@@ -906,7 +917,7 @@ export const saveMethods = {
                 // Reuse existing file if identical bytes (no recopy needed).
                 if (areArrayBuffersEqual(existingBuffer, sourceBuffer)) {
                     const result = {path: candidatePath, reusedExisting: true};
-                    this._localRehostPathCache.set(normalizedPreferred, result);
+                    this._localRehostPathCache.set(normalizedPreferred, {result, sourceBuffer});
                     return result;
                 }
 
@@ -915,7 +926,7 @@ export const saveMethods = {
             } catch (error) {
                 if (error?.name === "NotFoundError") {
                     const result = {path: candidatePath, reusedExisting: false};
-                    this._localRehostPathCache.set(normalizedPreferred, result);
+                    this._localRehostPathCache.set(normalizedPreferred, {result, sourceBuffer});
                     return result;
                 }
                 throw error;

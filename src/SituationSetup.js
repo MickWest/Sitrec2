@@ -802,6 +802,8 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
                     left: 0.5, top: 0.5, width: 0.5, height: 0.5,
                     dragKey: data.dragKey ?? "Q",
                     draggable: true, resizable: true, freeAspect: true,
+                    // Secondary view must not redefine the sitch timeline (C1, 2.70.0).
+                    ownsTimeline: false,
                 });
 
                 // Restore second-view multi-video state if present

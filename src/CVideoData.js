@@ -68,6 +68,14 @@ export class CVideoData {
 
         this.videoSpeed = v.videoSpeed ?? 1 // what speed the original video was
 
+        // Whether this video "owns" the global sitch timeline. The primary video
+        // view ("video") defines Sit.frames/Sit.fps/Sit.videoFrames and resets the
+        // playhead when it loads. A secondary view ("video2", twovid) must NOT —
+        // otherwise a second clip with a different length/fps silently redefines
+        // the sitch timeline and desyncs everything (see C1 in the 2.70.0 merge
+        // review). Defaults true so single-video behavior is unchanged.
+        this.ownsTimeline = v.ownsTimeline ?? true;
+
         // increase the number of frames
         // to account for original speed
         // e.g. if video was 10x timelapse, then we need 10x the virtual frames

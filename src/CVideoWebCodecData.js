@@ -293,7 +293,11 @@ export class CVideoWebCodecData extends CVideoData {
                 //      ", duration = " + chunk.duration + ", byteLength = " + chunk.byteLength)
 
                 this.frames++;
-                Sit.videoFrames = this.frames * this.videoSpeed;
+                // Secondary ("video2") views must not overwrite the global
+                // sitch timeline (see C1, 2.70.0 review).
+                if (this.ownsTimeline) {
+                    Sit.videoFrames = this.frames * this.videoSpeed;
+                }
                 // Sit.aFrame = 0;
                 // Sit.bFrame = Sit.videoFrames-1;
 
@@ -306,13 +310,17 @@ export class CVideoWebCodecData extends CVideoData {
             console.log("Demuxer calculated frames as " + demuxer.source.totalFrames)
             //assert(this.frames === demuxer.source.totalFrames, "Frames mismatch between demuxer and decoder"+this.frames+"!="+demuxer.source.totalFrames)
 
-            // use the demuxer frame count, as it's more accurate
-            Sit.videoFrames = demuxer.source.totalFrames * this.videoSpeed;
+            // use the demuxer frame count, as it's more accurate.
+            // Only the timeline-owning (primary) video defines the sitch timeline
+            // (see C1, 2.70.0 review).
+            if (this.ownsTimeline) {
+                Sit.videoFrames = demuxer.source.totalFrames * this.videoSpeed;
 
-            // also update the fps
-            Sit.fps = demuxer.source.fps;
+                // also update the fps
+                Sit.fps = demuxer.source.fps;
 
-            updateSitFrames()
+                updateSitFrames()
+            }
         });
 
     }

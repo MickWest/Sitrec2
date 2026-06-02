@@ -104,6 +104,13 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.videoSpeed = v.videoSpeed ?? 1; // default to 1x speed
         this.alwaysReplace = v.alwaysReplace ?? false;
 
+        // Whether this view owns the global sitch timeline (Sit.frames/fps and the
+        // playhead reset on load). The primary "video" view does; a secondary
+        // "video2" view must not, so a second clip can't redefine the timeline.
+        // Passed down to each videoData so the data-layer Sit.* writes are gated.
+        // Defaults true so single-video behavior is unchanged.
+        this.ownsTimeline = v.ownsTimeline ?? true;
+
         this.lastAudioSyncFrame = -1;
         this.wasPlayingLastFrame = false;
 
@@ -413,8 +420,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             },
                 this.loadedCallback.bind(this), this.errorCallback.bind(this));
             this.positioned = false;
-            par.frame = 0;
-            par.paused = false;
+            if (this.ownsTimeline) {
+                par.frame = 0;
+                par.paused = false;
+            }
             return;
         }
 
@@ -463,11 +472,11 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             const ext = (getFileExtension(fileName) || "").toLowerCase();
             if (ext === "h264" || ext === "dad") {
                 console.log(`[VideoNew] Using CVideoH264Data for video[${videoIndex}]`);
-                this.videoData = new CVideoH264Data({ id: videoDataId, file: fileName, videoSpeed: this.videoSpeed },
+                this.videoData = new CVideoH264Data({ id: videoDataId, file: fileName, videoSpeed: this.videoSpeed, ownsTimeline: this.ownsTimeline },
                     this.loadedCallback.bind(this), this.errorCallback.bind(this));
             } else {
                 console.log(`[VideoNew] Using CVideoMp4Data for video[${videoIndex}]`);
-                this.videoData = new CVideoMp4Data({ id: videoDataId, file: fileName, videoSpeed: this.videoSpeed },
+                this.videoData = new CVideoMp4Data({ id: videoDataId, file: fileName, videoSpeed: this.videoSpeed, ownsTimeline: this.ownsTimeline },
                     this.loadedCallback.bind(this), this.errorCallback.bind(this))
             }
         }
@@ -486,8 +495,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
 
         this.positioned = false;
-        par.frame = 0;
-        par.paused = false; // unpause, otherwise we see nothing.
+        if (this.ownsTimeline) {
+            par.frame = 0;
+            par.paused = false; // unpause, otherwise we see nothing.
+        }
         this.addLoadingMessage()
         this.addDownloadButton()
 
@@ -527,8 +538,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
     stopStreaming() {
         this.removeText()
-        par.frame = 0
-        par.paused = false;
+        if (this.ownsTimeline) {
+            par.frame = 0
+            par.paused = false;
+        }
         if (this.videoData) {
             this.videoData.stopStreaming()
         }
@@ -1528,8 +1541,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
         
         this.positioned = false;
-        par.frame = 0;
-        par.paused = pauseTimelineOnLoad ? true : false;
+        if (this.ownsTimeline) {
+            par.frame = 0;
+            par.paused = pauseTimelineOnLoad ? true : false;
+        }
         EventManager.dispatchEvent("videoLoaded", {
             width: img.width, height: img.height,
             videoData: this

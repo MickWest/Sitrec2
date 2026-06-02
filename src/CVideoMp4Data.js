@@ -488,13 +488,17 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
                     console.log(`[CVideoMp4Data] Demuxer calculated frames as ` + demuxer.source.totalFrames)
                     //assert(this.frames === demuxer.source.totalFrames, "Frames mismatch between demuxer and decoder"+this.frames+"!="+demuxer.source.totalFrames)
 
-                    // use the demuxer frame count, as it's more accurate
-                    Sit.videoFrames = demuxer.source.totalFrames * this.videoSpeed;
+                    // use the demuxer frame count, as it's more accurate.
+                    // Only the timeline-owning (primary) video defines the sitch
+                    // timeline; a secondary "video2" must not (see C1, 2.70.0 review).
+                    if (this.ownsTimeline) {
+                        Sit.videoFrames = demuxer.source.totalFrames * this.videoSpeed;
 
-                    // also update the fps (use the stored original fps)
-                    Sit.fps = this.originalFps;
+                        // also update the fps (use the stored original fps)
+                        Sit.fps = this.originalFps;
 
-                    updateSitFrames()
+                        updateSitFrames()
+                    }
 
                     // Only call the callback if it hasn't been cleared (disposed)
                     // Pass this so the callback knows which videoData loaded
@@ -614,7 +618,11 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
         }
 
         this.frames++;
-        Sit.videoFrames = this.frames * this.videoSpeed;
+        // Secondary ("video2") views keep their own frame count but must not
+        // overwrite the global sitch timeline (see C1, 2.70.0 review).
+        if (this.ownsTimeline) {
+            Sit.videoFrames = this.frames * this.videoSpeed;
+        }
 
         if (this._loadingId && demuxer.source.totalFrames > 0) {
             const progress = (this.frames / demuxer.source.totalFrames) * 100;

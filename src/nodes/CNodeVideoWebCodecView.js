@@ -218,11 +218,11 @@ export class CNodeVideoWebCodecView extends CNodeVideoView {
             fileName.endsWith('.h264') || fileName.endsWith('.dad') ||
             file.type === 'video/h264') {
             console.log("Using H.264 specialized handler for: " + file.name);
-            this.videoData = new CVideoH264Data({id: this.id + "_data_" + this.videos.length, dropFile: file},
+            this.videoData = new CVideoH264Data({id: this.id + "_data_" + this.videos.length, dropFile: file, ownsTimeline: this.ownsTimeline},
                 this.loadedCallback.bind(this), this.errorCallback.bind(this));
         } else {
             // Default: MP4 / ISO-BMFF path (with internal getConfig watchdog)
-            this.videoData = new CVideoMp4Data({id: this.id + "_data_" + this.videos.length, dropFile: file},
+            this.videoData = new CVideoMp4Data({id: this.id + "_data_" + this.videos.length, dropFile: file, ownsTimeline: this.ownsTimeline},
                 this.loadedCallback.bind(this), this.errorCallback.bind(this));
         }
 
@@ -246,8 +246,13 @@ export class CNodeVideoWebCodecView extends CNodeVideoView {
 
         this.addVideoEntry(file.name, undefined, false);
 
-        par.frame = 0;
-        par.paused = false;
+        // Only the timeline-owning (primary) view resets the playhead on load.
+        // A secondary "video2" view must not, or dropping a second clip yanks
+        // the shared playhead back to 0 (see C1 in the 2.70.0 merge review).
+        if (this.ownsTimeline) {
+            par.frame = 0;
+            par.paused = false;
+        }
     }
 
     /**
@@ -327,6 +332,7 @@ export class CNodeVideoWebCodecView extends CNodeVideoView {
                 buffer: videoStream.data,
                 filename: file.name,
                 fps: videoStream.fps || undefined,
+                ownsTimeline: this.ownsTimeline,
             }, this.loadedCallback.bind(this), this.errorCallback.bind(this));
 
             this._finishUploadSetup(file);

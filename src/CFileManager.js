@@ -2213,9 +2213,12 @@ export class CFileManager extends CManager {
                 .then(arrayBuffer => {
                     // Pre-populate the rehost path cache so the first save
                     // doesn't need to re-read this file to verify it's unchanged.
+                    // Cache entries are keyed on source-buffer identity (see C2 in
+                    // chooseLocalRehostPath); store the buffer we just read so a
+                    // same-buffer save hits, and a different buffer correctly misses.
                     if (normalizedWorkingFolderPath) {
                         this._localRehostPathCache.set(normalizedWorkingFolderPath,
-                            {path: normalizedWorkingFolderPath, reusedExisting: true});
+                            {result: {path: normalizedWorkingFolderPath, reusedExisting: true}, sourceBuffer: arrayBuffer});
                     }
                     LoadingManager.completeLoading(loadingId);
                     return this.parseResult(filename, arrayBuffer, null, {metadataOverride}).then(result => {
