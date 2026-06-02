@@ -1,4 +1,4 @@
-import {wgs84} from "./LLA-ECEF-ENU";
+import {LLAToECEF, wgs84} from "./LLA-ECEF-ENU";
 import {Frustum, Matrix4, Sphere, Vector3} from "three";
 import {par} from "./par";
 import {computeActiveTileHash, debugLog, Globals, tileBoundsModeForView} from "./Globals";
@@ -15,6 +15,8 @@ import {removeMaterialByCacheKeyImpl} from "./QuadTreeTileMaterial";
 // Reused across all tile visibility calculations within a single pass.
 const _cameraPositionClone = new Vector3();
 const _cullingSphere = new Sphere();
+// Scratch sphere for the prospective-child visibility guard (anyProspectiveChildVisible).
+const _childCullSphere = new Sphere();
 
 // Tile subdivision treats a slightly-wider frustum than the render frustum as
 // "eligible for high LOD" — this is the preload margin for camera pan/track.
@@ -743,6 +745,17 @@ export class QuadTreeMap {
                 && visibility.screenSpaceError < errorTargetPixels * MERGE_HYSTERESIS_FACTOR;
 
             if (shouldSubdivide && isActiveInView && tile.z < this.maxZoom && !hasChildren) {
+                // Frustum-edge guard: a coarse tile's fat bounding sphere can
+                // graze a narrow frustum (so shouldSubdivide is true) while all
+                // four of its children's lean spheres fall entirely outside it.
+                // Refining into all-invisible children just churns (create ->
+                // deactivate -> prune -> re-create -> re-fetch). Treat the tile
+                // as a leaf instead. See anyProspectiveChildVisible() for why
+                // this can never wrongly block a useful subdivision.
+                if (!this.anyProspectiveChildVisible(tile, camera)) {
+                    continue;
+                }
+
                 // Only push LEAVES to subdivide. Tiles that already have
                 // children skip this path because subdivideTile would call
                 // activateTile on ALL 4 children — including ones we
@@ -1665,6 +1678,121 @@ export class QuadTreeMap {
         }
 
         return visibility.visible && visibility.screenSpaceError > errorTargetPixels;
+    }
+
+    /**
+     * Frustum-edge subdivision guard: would ANY of the four children this tile
+     * is about to be subdivided into actually be visible?
+     *
+     * A coarse tile's bounding sphere has ~2x the radius of each child's, so
+     * for a very narrow FOV (e.g. a ~3deg look view aimed up a mountain) the
+     * parent's fat sphere can graze the frustum edge while all four children's
+     * lean spheres fall entirely outside it. shouldSubdivideTile then says
+     * "refine", but every child is immediately deactivated as not-visible.
+     * With aggressive pruning (high maxDetails -> short inactive timeout) the
+     * children are deleted and their elevation data discarded, the still-
+     * visible parent re-subdivides and re-fetches them, and the cycle repeats
+     * forever (~5s period) — pure thrash with a completely static camera.
+     *
+     * This is the sphere-broad-phase analogue of the OBB narrow phase. The
+     * texture map gets that protection for free once a tile measures its own
+     * bounds, but elevation tiles never do — they have no mesh, so
+     * altitudeBounds.measured stays false and the OBB narrow phase never runs.
+     * Returning false here treats the tile as a leaf, so the doomed children
+     * are never created.
+     *
+     * Conservative by construction: a tile's bounding sphere ENCLOSES its OBB,
+     * so "no child sphere intersects the dilated frustum" guarantees "no child
+     * is visible" under any (sphere or OBB) culling mode — it can never wrongly
+     * block a subdivision that would have produced a visible child.
+     *
+     * We mirror calculateTileVisibility's legacy-sphere path exactly: dilated-
+     * frustum broad phase PLUS the horizon/globe-occlusion gate. The horizon
+     * gate matters because a coarse child can graze the frustum yet sit below
+     * the horizon (far-side globe tiles when the camera looks up at a peak);
+     * PASS 3 deactivates those, so without the gate here the guard would pass
+     * them and they'd thrash. For unmeasured tiles (all elevation tiles, plus
+     * any freshly-created texture tile) this reproduces the exact per-child
+     * verdict PASS 3 will reach. Measured texture tiles get an additional OBB
+     * narrow phase in PASS 3 that only narrows further, so the sphere test here
+     * stays conservative (never falsely blocks).
+     */
+    anyProspectiveChildVisible(tile, camera) {
+        const dilated = camera.dilatedFrustum;
+        if (!dilated) return true; // no frustum built yet — don't interfere
+
+        // Terrain-altitude estimate, identical to calculateTileVisibility's
+        // parent-walk. A freshly-created child has highestAltitude 0 and
+        // inherits via the walk starting at its parent (this tile), so the
+        // estimate is the same for all four children: this tile's own value,
+        // else the nearest ancestor with a measured highest altitude.
+        let terrainAlt = 0;
+        for (let p = tile; p; p = p.parent) {
+            if (p.highestAltitude > 0) { terrainAlt = p.highestAltitude; break; }
+        }
+
+        const proj = this.options.mapProjection;
+        const childZ = tile.z + 1;
+
+        for (let dx = 0; dx < 2; dx++) {
+            for (let dy = 0; dy < 2; dy++) {
+                const cx = tile.x * 2 + dx;
+                const cy = tile.y * 2 + dy;
+
+                // Bounding sphere from the four corners at sea level
+                // (mirrors QuadTreeTile.getWorldSphere).
+                const latS = proj.getNorthLatitude(cy, childZ);
+                const latN = proj.getNorthLatitude(cy + 1, childZ);
+                const lonW = proj.getLeftLongitude(cx, childZ);
+                const lonE = proj.getLeftLongitude(cx + 1, childZ);
+                const cornerSW = LLAToECEF(latS, lonW, 0);
+                const cornerNW = LLAToECEF(latN, lonW, 0);
+                const cornerSE = LLAToECEF(latS, lonE, 0);
+                const cornerNE = LLAToECEF(latN, lonE, 0);
+
+                const center = cornerSW.clone().add(cornerNW).add(cornerSE).add(cornerNE).multiplyScalar(0.25);
+                const radius = Math.max(
+                    center.distanceTo(cornerSW),
+                    center.distanceTo(cornerNW),
+                    center.distanceTo(cornerSE),
+                    center.distanceTo(cornerNE),
+                );
+
+                // Radial altitude shift (mirrors calculateTileVisibility): lift
+                // the sea-level centre out to the estimated terrain height so
+                // elevated terrain isn't culled by a sphere sitting below the
+                // actual ground.
+                let ccx = center.x, ccy = center.y, ccz = center.z;
+                if (terrainAlt > 0) {
+                    const r = Math.sqrt(ccx * ccx + ccy * ccy + ccz * ccz);
+                    const scale = (r + terrainAlt) / r;
+                    ccx *= scale; ccy *= scale; ccz *= scale;
+                }
+                _childCullSphere.center.set(ccx, ccy, ccz);
+                _childCullSphere.radius = radius;
+
+                // Broad phase: must be in the preload-margin frustum at all.
+                if (!dilated.intersectsSphere(_childCullSphere)) continue;
+
+                // Horizon / globe-occlusion gate, mirroring calculateTileVisibility.
+                const ddx = camera.position.x - ccx;
+                const ddy = camera.position.y - ccy;
+                const ddz = camera.position.z - ccz;
+                const distance = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+                const closestDistance = Math.max(0, distance - radius);
+                if (closestDistance < radius * 0.1) {
+                    return true; // camera essentially inside the sphere
+                }
+                const cameraAltitude = altitudeAboveSphere(_cameraPositionClone.copy(camera.position));
+                const horizon = distanceToHorizon(cameraAltitude);
+                // A freshly-created child has highestAltitude 0 (the same value
+                // PASS 3 uses for it), so the globe-peek term compares against 0.
+                if (horizon > closestDistance || hiddenByGlobe(cameraAltitude, closestDistance) <= 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
