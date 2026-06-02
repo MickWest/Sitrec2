@@ -62,7 +62,13 @@ it must be served over **http(s)**.
   to everything it imports/fetches, so one build timestamp versions the whole graph. `index.html`
   itself is revalidated (ETag), so a normal reload always picks up the newest build. The stamping
   happens in `webpackCopyPatterns.js` (replacing the `__BUILD_V__` placeholder); served directly
-  without the build, the placeholder is a harmless constant.
+  without the build, the placeholder stays the literal string `__BUILD_V__`. That is fine for the
+  page itself, but note the **service worker** (`sw.js`) uses the same constant as its Cache Storage
+  name *and* as the `?v=` on cached assets — so an un-stamped, directly-served install will pin one
+  cache name forever and can keep serving stale JS/CSS until the SW is updated or the cache cleared
+  (DevTools → Application → Clear storage). Production builds always stamp it, so this only bites
+  during local static-server testing. The SW only ever caches assets under its own scope
+  (`/tools/shf/`); dynamic same-origin URLs like the Sitrec TLE proxy are never cached.
 - **Any static server**, serving this folder:
   ```bash
   npx http-server tools/shf    # then open the printed http://… URL
@@ -120,8 +126,9 @@ top-left to change your inputs):
   - **…or load your own .tle file** — use a TLE set you supply.
 
   By default the app uses a **synthetic** Starlink-like constellation (instant, offline). The flare
-  cone (5°), minimum elevation (0°), nadir model (geocentric), and look-ahead (3 days) are fixed
-  internally — they are no longer exposed as inputs.
+  cone (5°), minimum elevation (0°), nadir model (geocentric), and look-ahead (1 day) are fixed
+  internally — they are no longer exposed as inputs. (The flare geometry recurs daily, so a
+  one-day look-ahead always reaches the next visible session.)
 
 ## Data sources
 

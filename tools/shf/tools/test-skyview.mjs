@@ -6,10 +6,13 @@ import { compassRose, horizonView, horizonWindow } from "../skyview.js";
 let fails = 0;
 const ok = (name, cond) => { console.log((cond ? "  ok   " : "  FAIL ") + name); if (!cond) fails++; };
 
+// start/peak/end times are required: the dots-mode motion arrow length scales with the flare's
+// DURATION ((endMs-startMs)/MOTION_SAMPLE_MS), so a flare with no times draws a zero-length arrow.
+const T0 = 1_700_000_000_000;
 const flares = [
-    { azDeg: 318, elDeg: 6, dAzDeg: 1.2, dElDeg: -0.8, intensity: 1 },
-    { azDeg: 322, elDeg: 9, dAzDeg: 1.1, dElDeg: 0.1, intensity: 0.9 },
-    { azDeg: 333, elDeg: 11, dAzDeg: 1.0, dElDeg: 0.5, intensity: 0.6 },
+    { azDeg: 318, elDeg: 6, dAzDeg: 1.2, dElDeg: -0.8, intensity: 1, startMs: T0, peakMs: T0 + 15_000, endMs: T0 + 30_000 },
+    { azDeg: 322, elDeg: 9, dAzDeg: 1.1, dElDeg: 0.1, intensity: 0.9, startMs: T0 + 60_000, peakMs: T0 + 78_000, endMs: T0 + 96_000 },
+    { azDeg: 333, elDeg: 11, dAzDeg: 1.0, dElDeg: 0.5, intensity: 0.6, startMs: T0 + 120_000, peakMs: T0 + 140_000, endMs: T0 + 160_000 },
 ];
 const rose = compassRose([{ azDeg: 315 }, { azDeg: 340 }], flares);
 const win = horizonWindow(flares);
@@ -32,7 +35,7 @@ ok("flare animations loop every 60s", (rose.match(/dur="60s"/g) || []).length >=
 ok("flare opacity is a 3-stage up/hold/down envelope", (rose.match(/values="0;0;0\.95;0\.95;0;0"/g) || []).length >= 8);
 ok("rose has the density arc along the rim", rose.includes('class="flare-arc"') && (rose.match(/stroke-opacity=/g) || []).length >= 2);
 ok("horizon is an <svg>…</svg>", hv.startsWith("<svg") && hv.trim().endsWith("</svg>"));
-ok("horizon draws a white disk per flare", (hv.match(/r="3\.5" fill="#ffffff"/g) || []).length === flares.length);
+ok("horizon draws a white disk per flare", (hv.match(/r="1\.75" fill="#ffffff"/g) || []).length === flares.length);
 ok("horizon motion arrows are thin & ~75% opacity", hv.includes('opacity="0.75"') && hv.includes('stroke-width="1"'));
 ok("horizon labels bright star Vega", hv.includes(">Vega</text>"));
 ok("horizon labels Deneb", hv.includes(">Deneb</text>"));

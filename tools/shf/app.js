@@ -362,7 +362,9 @@ async function getTLEText(fileInput, log, epochDate) {
 // Same-origin Sitrec proxy first (allow-listed `request`, server-cached, CORS-free),
 // then direct Celestrak. Caches on success; throws on failure (e.g. offline).
 async function fetchCurrentTLE() {
-  const basePath = window.location.pathname.replace(/\/tools\/.*$/, "");
+  // Strip from "/tools/" onward case-INSENSITIVELY (the tool may be served at /tools/SHF/ on a
+  // case-insensitive filesystem), matching sitrecBaseURL(), so the proxy base path is always right.
+  const basePath = window.location.pathname.replace(/\/tools\/.*$/i, "");
   const sources = [basePath + "/sitrecServer/proxy.php?request=CURRENT_STARLINK", CELESTRAK];
   let lastErr;
   for (const url of sources) {
@@ -594,6 +596,10 @@ function setupLiveResults() {
      <div class="rose-wrap" id="live-rose"></div>
      ${horizonWrapHTML("")}
      <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour</div>`;
+  // The live scaffold reuses ".r-when" for its status line, so tests/automation must NOT treat
+  // that class as "results are final". data-state is the unambiguous marker: "scanning" now,
+  // flipped to "final" by renderResults/renderNoFlares/renderError when the real screen renders.
+  els.results.dataset.state = "scanning";
   liveStatusEl = document.getElementById("live-status");
   liveRoseEl = document.getElementById("live-rose");
   liveHorizonEl = els.results.querySelector(".horizon-svg");   // the SVG holder inside the wrap
@@ -676,6 +682,7 @@ function renderError(msg, req, origin, dest) {
     `<div class="verdict no">Couldn't compute flares</div>${whereWhenLine(req, origin, dest)}
      <div class="no-flares"><p>${escapeHtml(msg)}</p>
        <p>Use <b>Edit</b> (top-left) to change your inputs and try again.</p></div>`;
+  els.results.dataset.state = "final";   // real (error) screen is up (see setupLiveResults)
 }
 
 // {name, azDeg, altDeg, mag} for bright stars above the horizon at a place/time.
@@ -1010,6 +1017,7 @@ function renderResults(flares, stats, req, origin, dest) {
      <button id="opensitrec" type="button" class="go-btn sitrec-btn">Open in Sitrec ↗</button>
      ${notesHTML(req)}`;
 
+  els.results.dataset.state = "final";   // real results screen is up (see setupLiveResults)
   const openBtn = els.results.querySelector("#opensitrec");
   if (openBtn) openBtn.addEventListener("click", () => openInSitrec(req, shown, origin, dest, peakMs));
 
@@ -1057,8 +1065,10 @@ function renderResults(flares, stats, req, origin, dest) {
   // dev hosts as a DEBUG aid: each card lists the satellite, peak time, peak glint, az/el,
   // and relative brightness %, so the SHF flares can be cross-referenced against what
   // Sitrec actually renders (e.g. faint/low-% flares are the ones Sitrec's brightness
-  // floor drops). Sorted by time to match scrubbing the Sitrec timeline.
-  const SHOW_FLARE_LIST = isLocalHost;
+  // floor drops). Sorted by time to match scrubbing the Sitrec timeline. Suppressed under
+  // automation (navigator.webdriver) — same as the service worker — so the headless e2e test
+  // sees the production-clean results page (the local test server is itself a "local host").
+  const SHOW_FLARE_LIST = isLocalHost && !navigator.webdriver;
   if (SHOW_FLARE_LIST) {
     const plural = all.length === 1 ? "" : "s";
     const faintN = all.length - visible.length;
@@ -1157,6 +1167,7 @@ function renderNoFlares(stats, req, origin, dest) {
   openBtn.textContent = "Open in Sitrec ↗";
   openBtn.addEventListener("click", () => openInSitrec(req, [], origin, dest, null));
   els.results.appendChild(openBtn);
+  els.results.dataset.state = "final";   // real results screen is up (see setupLiveResults)
 }
 
 // Advisory banners: out-of-range date fallback, and which satellite data was used.

@@ -107,10 +107,12 @@ await page.click("#go");
 ok("navigated to results screen", await page.locator("#results-screen").isVisible());
 ok("form screen hidden", !(await page.locator("#form-screen").isVisible()));
 
-// Wait for the results header — the compact ".r-when" (flares) or ".verdict" (none).
+// Wait for the FINAL results screen. The live scaffold reuses ".r-when" for its status line, so
+// waiting on that class would fire mid-scan; data-state="final" is set only once the real screen
+// (flares, no-flares, or error) renders. At that point ".r-when" cleanly means "flares found".
 let rendered = false;
 try {
-    await page.waitForSelector("#results .r-when, #results .verdict", { timeout: 35000 });
+    await page.waitForSelector('#results[data-state="final"]', { timeout: 35000 });
     rendered = true;
 } catch { /* timed out */ }
 ok("results header rendered", rendered);
@@ -129,7 +131,11 @@ if (hasFlares) {
     ok("compass rose SVG rendered", await page.locator("#results svg.compass-rose").count() === 1);
     ok("compass rose has a direction arrow", await page.locator("#results svg.compass-rose polygon").count() >= 1);
     ok("horizon view SVG rendered", await page.locator("#results svg.horizon-view").count() === 1);
-    ok("horizon view has white flare disks", (resultsHtml.match(/r="3\.5" fill="#ffffff"/g) || []).length >= 1);
+    // The wide view defaults to replay mode: a draggable Sun scrubber under the horizon plus the
+    // animated flare layer, with the predicted flares drawn as faint timelapse streaks behind.
+    ok("horizon view is in replay mode (Sun scrubber present)",
+        await page.locator("#results svg.horizon-view .replay-sun").count() === 1);
+    ok("horizon view shows flare streaks", /stroke="url\(#st/.test(resultsHtml));
     ok("compass rose has the animated white flare sprinkle",
         await page.locator('#results svg.compass-rose circle[fill="#ffffff"]').count() >= 8);
     ok("no 'All N flares' detail section", await page.locator("#results .flare-details").count() === 0);
@@ -161,7 +167,7 @@ console.log("== browser: out-of-range date -> simulated note ==");
 await page.fill("#date", "2027-12-25");   // far future -> clamps to today, simulated
 await page.click("#go");
 let simRendered = false;
-try { await page.waitForSelector("#results .r-when, #results .verdict", { timeout: 35000 }); simRendered = true; } catch {}
+try { await page.waitForSelector('#results[data-state="final"]', { timeout: 35000 }); simRendered = true; } catch {}
 ok("results rendered for far-future date", simRendered);
 ok("shows the 'out of date range' note",
     await page.locator("#results .sim-note").filter({ hasText: /out of date range/i }).count() >= 1);
@@ -185,7 +191,7 @@ await page.fill("#origin", "");          // blank -> should use geolocation
 await page.fill("#date", today);          // back in range
 await page.click("#go");
 let geoRendered = false;
-try { await page.waitForSelector("#results .r-when, #results .verdict", { timeout: 35000 }); geoRendered = true; } catch {}
+try { await page.waitForSelector('#results[data-state="final"]', { timeout: 35000 }); geoRendered = true; } catch {}
 ok("geolocation run produced results", geoRendered);
 ok("blank origin was populated from geolocation", /Testville, Testland/.test(await page.inputValue("#origin")),
     await page.inputValue("#origin"));
@@ -210,7 +216,7 @@ console.log("== browser: a loaded TLE is used on the NEXT run (race-fix regressi
 await page.fill("#origin", "LAX");
 await page.fill("#date", today);          // back in range
 await page.click("#go");
-await page.waitForSelector("#results .r-when, #results .verdict", { timeout: 35000 }).catch(() => {});
+await page.waitForSelector('#results[data-state="final"]', { timeout: 35000 }).catch(() => {});
 ok("loaded TLE applies on the very next run (real-data note shown)",
     await page.locator("#results .sim-note.real").count() >= 1);
 ok("no synthetic note once a real TLE is loaded",
@@ -224,7 +230,7 @@ await page.waitForTimeout(400);
 await page.fill("#origin", "LAX");
 await page.fill("#date", today);
 await page.click("#go");
-await page.waitForSelector("#results .r-when, #results .verdict", { timeout: 35000 }).catch(() => {});
+await page.waitForSelector('#results[data-state="final"]', { timeout: 35000 }).catch(() => {});
 ok("after reload, default is synthetic again (despite a cached TLE on disk)",
     await page.locator("#results .sim-note.synth").count() >= 1);
 ok("no real-data note on a fresh load",

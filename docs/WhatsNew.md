@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.69.2 (2026-06-01)
+
+### Bug Fixes
+- Fixed the standalone Starlink Horizon Flares (SHF) app sometimes predicting flares from out-of-date satellite data: its offline cache could hold on to a stale copy of the live Starlink data instead of fetching the latest. The app now always fetches fresh satellite data and only caches its own program files.
+
+---
+
 ## Version 2.69.1 (2026-06-01)
 
 ### Improvements

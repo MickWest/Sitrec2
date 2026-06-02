@@ -15,6 +15,11 @@
 // and `activate` deletes the previous build's cache.
 const VERSION = "__BUILD_V__";
 const CACHE = "starlink-flares-" + VERSION;
+// The SW's own scope path (the directory it was registered from), e.g. "/sitrec/tools/shf/".
+// Only assets UNDER this path are runtime-cached; other same-origin URLs (notably the Sitrec
+// TLE proxy at /sitrecServer/proxy.php) must bypass the cache. Derived from self.location so it
+// matches whatever case the tool was opened with (e.g. /tools/SHF/ on a case-insensitive FS).
+const SCOPE = new URL("./", self.location).pathname;
 
 self.addEventListener("install", () => {
   self.skipWaiting();                       // activate the new worker as soon as it's parsed
@@ -54,7 +59,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Same-origin assets: cache-first (versioned URLs make this safe and fast).
+  // Only runtime-cache the tool's OWN assets (under the SW scope, all version-stamped or
+  // static). Other same-origin requests — above all the Sitrec TLE proxy
+  // (/sitrecServer/proxy.php?request=CURRENT_STARLINK) — pass straight to the network so a
+  // {cache:"no-store"} fetch reaches the server instead of being served stale from Cache Storage.
+  if (!url.pathname.startsWith(SCOPE)) return;
+
+  // Same-origin tool assets: cache-first (versioned URLs make this safe and fast).
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const hit = await cache.match(req);
