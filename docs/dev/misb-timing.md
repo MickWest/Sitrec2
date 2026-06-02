@@ -282,10 +282,10 @@ sources, flat-file `.klv`).
   Free-running RTCs drift; sensor-blanking events can introduce gaps where
   the timestamp on either side doesn't reflect uniformly elapsed wall-clock.
 - We have seen real files where UnixTimeStamp runs at clock skews up to
-  -100,000 ppm (-9.9%, i.e., the Tag 2 clock advances 90 s for every 100 s
+  -100,000 ppm (-10%, i.e., the Tag 2 clock advances 90 s for every 100 s
   of PCR). At that magnitude it's not RTC drift, it's the encoder writing
   Tag 2 from the wrong source (a counter scaled by a wrong rational, a
-  different oscillator entirely, etc.). PCR-anchored Tier-1 pairing is
+  different oscillator entirely, etc.). PCR-anchored PTS pairing is
   unaffected; UnixTimeStamp-only pairing on such files is impossible.
 
 ### 1e. Sitrec timeline clock (Layer 2 in the chain)
@@ -342,7 +342,7 @@ PCR clock:    ─┬───┬───┬───┬───┬───┬
 
                  KLV PES PTS values fall on PCR ticks
                  that match specific video PES PTS values
-                 (every 6th frame here: 5 Hz KLV at 30 fps)
+                 (every 3rd frame here: 10 Hz KLV at 30 fps)
 ```
 
 The pairing isn't dependent on the rate — KLV may emit per-frame, at 1 Hz,
@@ -560,7 +560,7 @@ The fix (`CTrackFileMISB.toMISB(trackIndex=1)`) builds a parallel
 `centerPesPTSus` array alongside the row copy, applying the same
 filter-by-valid-center predicate, then attaches it to the returned array
 as `centerMisb.pesPTSus = centerPesPTSus`. After this, `hasRecordPTS()`
-is true on both nodes and Tier-1 pairing runs for both. Any future
+is true on both nodes and PTS pairing runs for both. Any future
 `toMISB(N)` paths that synthesize derived arrays must apply the same
 forwarding pattern, or the derived track silently regresses to UTS
 pairing on encoder-broken clocks.
@@ -584,7 +584,7 @@ The pipeline preserves the synchronous-mode timing data the MISB ST 0604
 standard provides, and falls back gracefully for files where that data
 isn't available.
 
-> Since late-2026 the pipeline can additionally **invert** the sync
+> The pipeline can additionally **invert** the sync
 > strategy for files with dropped-frame bursts: instead of advancing the
 > sim clock at the gappy decoded-video rate (which makes the sim
 > accelerate through bursts), wrap the source `CVideoData` in a
@@ -635,16 +635,14 @@ isn't available.
                   ┌──────────────────────────────┐
                   │ CNodeTrackFromMISB           │
                   │ recalculate():               │
-                  │  Tier 1  hasRealFramePTS()   │
+                  │  PTS     hasRealFramePTS()   │
                   │          AND hasRecordPTS()  │
                   │          → PCR pairing       │
-                  │  Tier 2  hasRealFramePTS()   │
-                  │          but no KLV PES PTS  │
-                  │          → real-video-PTS-   │
-                  │            driven wall-clock │
-                  │  Tier 3  no real PTS either  │
-                  │          → synthetic         │
-                  │            wall-clock        │
+                  │  UTS     else: async-mode    │
+                  │          KLV, or synthetic   │
+                  │          video PTS           │
+                  │          → nominal-Sit.fps   │
+                  │            UTS wall-clock    │
                   └──────────────────────────────┘
 ```
 
@@ -686,11 +684,11 @@ records the camera emitted before the first video frame on the PCR clock.
 
 ### 6c. Track recalc (`src/nodes/CNodeTrackFromMISB.js`)
 
-Three pairing tiers, in priority order. Tier selection is based on
+Two pairing modes, in priority order. Mode selection is based on
 which timing data is real on each side:
 
 ```js
-// Tier 1 — full PES-PTS pairing
+// PTS mode — PES-PTS pairing (synchronous)
 //   When: KLV side has real PES PTS (hasRecordPTS()) AND video side has
 //         real PTS (hasRealFramePTS()). Both clocks are PCR-locked.
 //   Why best: per-frame association is what MISB ST 0604 defines;
@@ -703,39 +701,37 @@ for each frame F:
 ```
 
 ```js
-// Tier 2 — real-video-PTS-driven wall-clock
-//   When: video side has real PTS (hasRealFramePTS()) but KLV side does
-//         not (e.g. asynchronous-mode KLV). Video advances in real PCR
-//         time; KLV is looked up by UnixTimeStamp.
-//   Why right: msNow reflects real recording-time elapsed at frame F,
-//              so dropped-frame bursts on the video side don't desync
-//              the KLV lookup. The recording-start-equivalence
-//              assumption (msStart ≈ first KLV UTS) handles cross-
-//              stream origin.
+// UTS mode — wall-clock fallback (asynchronous, UnixTimeStamp lookup)
+//   When: anything else — KLV side has no usable PES PTS (asynchronous-
+//         mode KLV, flat .klv, MP4), the PES values aren't monotonic, or
+//         the video has only synthetic PTS (image source). This is the
+//         `else` branch; it does NOT read framePTSus.
+//   How: msNow advances at the nominal Sit.fps rate from msStart (the
+//        recording-start-equivalence assumption msStart ≈ first KLV UTS
+//        handles cross-stream origin); KLV is looked up by UnixTimeStamp.
 for each frame F:
-    msNow = msStart + (framePTSus[F] − framePTSus[0]) / 1000
+    msNow = msStart + F × Sit.simSpeed / Sit.fps × 1000   // simSpeed usually 1
     binary_search timeArray (UnixTimeStamps) for bracketing records
     interpolate position by fraction
 ```
 
-```js
-// Tier 3 — synthetic wall-clock fallback
-//   When: video side has only synthetic PTS (image-source video, KLV
-//         from a flat .klv file, MP4 with no proper stts boxes, etc.).
-//         msNow advances at the nominal Sit.fps rate.
-//   Why last: if the source dropped frames, this path gets every post-
-//             burst frame paired to a too-early KLV record. We use it
-//             when nothing better is available.
-for each frame F:
-    msNow = msStart + F / Sit.fps × 1000
-    binary_search timeArray (UnixTimeStamps) for bracketing records
-    interpolate position by fraction
-```
-
-All three are structurally identical — same binary search, same
+Both modes are structurally identical — same binary search, same
 interpolation. Only the time axis (msNow source) and lookup table
-(pesTimeArray vs. UnixTimeStamps) differ. Tier 2 was the late addition
-that fixed sync for files with real video PTS and asynchronous-mode KLV.
+(pesTimeArray vs. UnixTimeStamps) differ. The selector is a single
+`usePESPTS` flag: true only when the video has real PTS *and* the KLV
+records carry monotonic PES PTS; every other case takes the `else`
+branch (the UTS fallback).
+
+**The dropped-frame caveat.** The UTS fallback's nominal-Sit.fps clock
+assumes uniform frame timing. A video with real PTS but *dropped-frame
+bursts* whose KLV is asynchronous-mode (so PTS pairing can't run) would,
+at the nominal rate, pair every post-burst frame to a too-early KLV
+record. This is handled not by the pairing mode but by **§12 frame
+patching**: the dropped-frame video is wrapped to a uniform-cadence
+virtual timeline (on by default — `Globals.useVideoPatching`), so by the
+time the UTS fallback runs the timeline really is uniform and `msNow`
+tracks true wall-clock. With patching disabled, this is the one
+configuration in which the UTS fallback can desync — see §8e and §12.
 
 ### 6d. Track recalc handles "negative" KLV times correctly
 
@@ -773,6 +769,16 @@ The handler iterates *all* CNodeMISBDataTrack nodes in NodeMan and:
    PIDs — see §5h, §8f).
 2. Picks the first one with `hasRecordPTS() === true` for the deep
    analysis, falling back to the first node otherwise.
+3. Lists every derived MISB track (`CNodeTrackFromMISB` and subclasses)
+   with the loaded stream it bound to and the pairing **mode** it
+   resolved to (PTS pairing vs UTS fallback), plus the shared video-PTS /
+   frame-patching state — the **"Track Pairing"** prelude block. This
+   answers "is the displayed track on the sync or the async KLV stream?"
+   for multi-PID files (§5h, §8f). Shown only when there are multiple
+   streams or any track falls to the UTS fallback; structural-only
+   (positional Stream labels and counts, no node ids). The mode reported
+   is the actual `usePESPTS` decision the track's last `recalculate()`
+   made, read from its in-memory `pairingInfo` stamp.
 
 Sections of the deep analysis:
 
@@ -865,7 +871,7 @@ Many MISB encoders emit metadata at 1, 2, 5, or 10 Hz with video at 30 or
 specific video frames at PCR moments where their PES PTS values match,
 and frames between are interpolated from bracketing records.
 
-### 8e. Dropped-frame video bursts (the late-2026 desync investigation)
+### 8e. Dropped-frame video bursts (the desync investigation)
 H.264 elementary streams from MISB sources sometimes have clusters of
 *missing* frames in the bitstream: the encoder simply didn't emit NAL
 units for those frame slots. The container/PES still keeps marching at
@@ -873,9 +879,10 @@ real PCR rate, so the next emitted frame's PES PTS is +N×33.367 ms ahead
 of the previous one (an 800 ms PES interval is common at burst centers).
 
 When chunk timestamps come from container PES (MP4 via mp4box, or our
-post-fix H.264 path), `framePTSus[]` reflects this and tier-1 / tier-2
-pairing stays correct. When chunk timestamps come from synthetic
-`i × frameDuration` stamps (the pre-fix H.264 path), the burst gets
+post-fix H.264 path), `framePTSus[]` reflects this, so PTS pairing
+stays correct and — via §12 patching — so does the UTS fallback.
+When chunk timestamps come from synthetic `i × frameDuration` stamps
+(the pre-fix H.264 path), the burst gets
 swallowed: the next surviving frame just gets the next sequential stamp,
 no acknowledgment of the gap. KLV pairing then mis-pairs every frame
 after the first burst by the cumulative dropped-frame interval, and
@@ -920,9 +927,9 @@ synchronous one will have one entry per record.
 `hasRecordPTS()` is the straightforward way to tell at the data-node
 level. The Timing Analysis "Multiple MISB Data Nodes" prelude lists
 every loaded one. If the user's camera platform is locked to a track
-backed by the async-mode node, only tier-2 pairing is available
-(real video PTS + UTS lookup); tier 1 needs the sync-mode node on the
-KLV side.
+backed by the async-mode node, only the UTS wall-clock fallback is
+available (nominal-rate UTS lookup); PTS pairing needs the sync-mode node on
+the KLV side.
 
 ---
 
@@ -941,14 +948,14 @@ KLV side.
      pesPTSus[0]   = 137_827_000 - 137_545_000 = 282_000 µs
                                               (= +282 ms — KLV started
                                                282 ms after video frame 0)
-     pesPTSus[499] = (something close to 100_000_000 + 282_000)
+     pesPTSus[499] = (something close to 99_800_000 + 282_000)
 
    In CVideoH264Data (via TSParser-supplied pesEntries):
      framePTSus[0]    = 137_545_000     (= original PCR PTS of first frame)
      framePTSus[2999] = 237_511_633     (≈ 100 s after the first)
      framePTSFromPES = true
 
-   In CNodeTrackFromMISB.recalculate (Tier 1: both sides have PES PTS),
+   In CNodeTrackFromMISB.recalculate (PTS pairing: both sides have PES PTS),
    for each video frame F:
      videoFirstPTSus = framePTSus[0] = 137_545_000
      msNow = (framePTSus[F] − videoFirstPTSus) / 1000   // ms since video start
@@ -966,7 +973,7 @@ KLV side.
      Direct PCR-locked match.
 
    At frame 2999 (msNow = 99_966 ms):
-     pesTimeArray reaches ~100_282 ms at record 499.
+     pesTimeArray reaches ~100_082 ms at record 499.
      Last frame interpolates between bracketing records cleanly.
 ```
 
@@ -979,13 +986,13 @@ KLV side.
 | `src/TSParser.js`                     | TS demux, per-PES PTS capture (per PID), cross-stream origin |
 | `src/H264Decoder.js`                  | `createEncodedVideoChunks(nalUnits, fps, pesPtsUs?)` — uses real PES PTS when supplied |
 | `src/MISBUtils.js`                    | `parseKLVFile()` pairs records to PES PTS             |
-| `src/TrackFiles/CTrackFileMISB.js`    | `toMISB(trackIndex)` splits a single MISB stream into platform vs. Center derived tracks; **must forward `pesPTSus[]`** to derived arrays so Tier-1 pairing applies to both — see §5g |
+| `src/TrackFiles/CTrackFileMISB.js`    | `toMISB(trackIndex)` splits a single MISB stream into platform vs. Center derived tracks; **must forward `pesPTSus[]`** to derived arrays so PTS pairing applies to both — see §5g |
 | `src/CFileManagerParse.js`            | Threads pesEntries + videoFirstPESus into parseKLVFile and stashes them on FileManager entries (also for video substreams, used by CVideoH264Data) |
 | `src/CVideoData.js`                   | `getFrameTimeMs()` and `hasRealFramePTS()` virtuals  |
 | `src/CVideoH264Data.js`               | Reads pesEntries off FileManager entry and threads through createEncodedVideoChunks; sets `framePTSFromPES` |
 | `src/CVideoWebCodecBase.js`           | `framePTSus[]`, `hasRealFramePTS()` impl, per-group decode failure tolerance |
 | `src/nodes/CNodeMISBData.js`          | `getRecordPTSms()`, `hasRecordPTS()`, Timing Analysis |
-| `src/nodes/CNodeTrackFromMISB.js`     | `recalculate()` with three-tier pairing (PES-PTS / real-video-PTS-driven wall-clock / synthetic) |
+| `src/nodes/CNodeTrackFromMISB.js`     | `recalculate()` with two-mode pairing (PTS pairing / nominal-rate UTS wall-clock fallback) |
 | `src/nodes/CNodeDateTime.js`          | Timing Analysis button handler — picks the MISB node with `hasRecordPTS()` if any |
 | `src/MISBValueDecoders.js`            | Bitfield/enum decoders for ST 0601 tags               |
 | `src/showTimingAnalysis.js`           | Modal viewer for the timing-analysis report           |
@@ -1009,13 +1016,13 @@ KLV side.
 
 ## 12. Frame patching: virtualized timeline (`CVideoPatchedData`)
 
-The Tier-1 pairing of §6c is *correct* about KLV-to-video association on
+The PTS pairing of §6c is *correct* about KLV-to-video association on
 the PCR axis but creates a second-order problem in playback: when the
 decoded-video timeline has dropped-frame bursts, the sim advances at the
 gappy rate. `Sit.frames` is the count of *decoded* frames and `Sit.fps`
 is nominal, so a 100-second PCR span with 300 missing video frames out
 of 3,000 plays back in 90 seconds of wall time. KLV (paired correctly
-against PCR via Tier 1) appears to *speed up* through the bursts.
+against PCR via PTS pairing) appears to *speed up* through the bursts.
 
 **The inversion.** Don't retime KLV; retime the video. Wrap the source
 `CVideoData` in a `CVideoPatchedData` decorator that synthesizes a
@@ -1040,7 +1047,7 @@ patched.virtualToSource  0  1  2  3  3  3  3  4  5  6
 Every virtual frame `V` has `framePTSus[V] = T0 + V × (1e6/Sit.fps)` —
 linear, on the *original* PCR origin `T0 = source.framePTSus[0]`. So
 `framePTSus[V] − framePTSus[0] = V × frameDuration`, identical to
-`V × 1000/Sit.fps`. Tier-1 pairing in `CNodeTrackFromMISB` continues to
+`V × 1e6/Sit.fps` (µs). PTS pairing in `CNodeTrackFromMISB` continues to
 work *without modification*: `msNow` advances at honest wall-clock rate;
 KLV's `pesPTSus[]` (already shifted by `videoFirstPESus`) is on the same
 axis. Held bursts on the source produce held image runs in the wrapper
@@ -1085,7 +1092,7 @@ Two distinct frame-index spaces, with a sharp persistence boundary:
 |---|---|
 | `par.frame` during playback | virtual |
 | `Sit.frames`, `Sit.videoFrames` | virtual count |
-| `videoData.framePTSus[V]` consumed by Tier-1 pairing | virtual |
+| `videoData.framePTSus[V]` consumed by PTS pairing | virtual |
 | Scrubber UI position | virtual |
 | Saved JSON: tracking keyframes, bookmarks | **source** |
 | URL `?frame=N`, MCP `sitrec_set_frame(N)` | **source** |
@@ -1095,7 +1102,7 @@ Two distinct frame-index spaces, with a sharp persistence boundary:
 patching toggles, and `Sit.fps` changes — a tracking keyframe authored
 against specific pixels follows those pixels rather than a wall-clock
 slot. Virtual-indexed runtime is what makes scrubbing feel uniform and
-makes Tier-1 pairing align with KLV by construction.
+makes PTS pairing align with KLV by construction.
 
 The wrapper exposes both directions:
 
@@ -1142,7 +1149,7 @@ pixels is wasted work.
 
 The Timing Analysis report's Video Timing section gains a "Frame
 patching" block reporting source frame count, virtual frame count, held
-frame count and percent, and longest hold. The Tier-1 pairing log line
+frame count and percent, and longest hold. The PTS pairing log line
 prints `[wrapped]` when `videoData.getPatchStats` is available. During
 debugging, held frames are returned with a 60-px red square in the top-
 right corner (`DEBUG_HELD_MARKER` flag in `CVideoPatchedData.js`).

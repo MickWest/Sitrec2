@@ -448,6 +448,22 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         // the PES-PTS-derived array (synchronous-mode path).
         const lookupTimes = usePESPTS ? pesTimeArray : this.timeArray;
 
+        // Record the pairing decision so the Timing Analysis report can show
+        // which KLV stream this track bound to and which mode resulted (see
+        // CNodeDateTime._timingAnalysisAction). "pts" = PES-PTS pairing
+        // (synchronous, PCR-locked); "uts" = UnixTimeStamp wall-clock fallback
+        // (asynchronous, nominal rate). In-memory diagnostic only; never
+        // serialized. misbNode is a live reference used for identity matching
+        // against the report's positional Stream list — no ids leak.
+        this.pairingInfo = {
+            mode: usePESPTS ? "pts" : "uts",
+            hasRealVideoPTS: !!ptsAvailable,
+            klvHasRecordPTS: !!(this.in.misb && this.in.misb.hasRecordPTS && this.in.misb.hasRecordPTS()),
+            wrapped: !!(videoData && typeof videoData.getPatchStats === "function"),
+            misbNode: this.in.misb,
+            records: points,
+        };
+
         // Cache the first video PTS for relative-to-stream-start computation
         // in PES mode. framePTSus is already normalized to start at 0 in the
         // WebCodec pipeline, but we subtract explicitly to be safe against

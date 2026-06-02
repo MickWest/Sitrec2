@@ -482,6 +482,60 @@ export class CNodeDateTime extends CNode {
             prelude += "  hidden by the choice of analyzed node.\n\n";
         }
 
+        // ── Track pairing modes ──────────────────────────────────────
+        // For each derived MISB track (CNodeTrackFromMISB and subclasses),
+        // report which loaded stream it bound to and which pairing mode
+        // resulted. This answers "is the displayed track on the sync or the
+        // async KLV stream?" for multi-PID files. "pts" = PES-PTS pairing
+        // (synchronous, PCR-locked); "uts" = UnixTimeStamp wall-clock fallback
+        // (asynchronous, nominal rate). Structural only: positional Stream
+        // labels + track counts, no node ids and no tag values.
+        // Detected by the presence of the .pairingInfo stamp that
+        // CNodeTrackFromMISB.recalculate() leaves behind (so subclasses like
+        // CNodeLazyMISBFlightTrack are included without an instanceof import).
+        const misbTracks = [];
+        NodeMan.iterate((k, n) => {
+            if (n.pairingInfo && n.pairingInfo.misbNode) misbTracks.push(n);
+        });
+        const anyUTS = misbTracks.some(n => n.pairingInfo.mode === "uts");
+        if (misbTracks.length > 0 && (misbNodes.length > 1 || anyUTS)) {
+            prelude += "TRACK PAIRING (which stream each derived track binds to)\n";
+            prelude += "─".repeat(60) + "\n";
+            const groups = new Map();
+            for (const n of misbTracks) {
+                const info = n.pairingInfo;
+                const si = misbNodes.indexOf(info.misbNode); // 0-based, -1 if unlisted
+                const key = si + "|" + info.mode;
+                if (!groups.has(key)) groups.set(key, { si, mode: info.mode, has: info.klvHasRecordPTS, count: 0 });
+                groups.get(key).count++;
+            }
+            const ordered = [...groups.values()].sort((a, b) => (a.si - b.si) || a.mode.localeCompare(b.mode));
+            for (const g of ordered) {
+                const streamLabel = g.si >= 0 ? `Stream ${g.si + 1}` : "an unlisted stream";
+                const hasLabel = g.has ? "hasRecordPTS=yes" : "hasRecordPTS=no";
+                const modeLabel = g.mode === "pts"
+                    ? "PTS pairing (PES PTS, PCR-locked per-record)"
+                    : "UTS fallback (wall-clock, nominal rate)";
+                prelude += `  bound ${streamLabel} (${hasLabel}): ${g.count} track(s) → ${modeLabel}\n`;
+            }
+            const v = misbTracks[0].pairingInfo;
+            const vpts = v.hasRealVideoPTS ? "real (honors dropped frames)" : "synthetic (uniform)";
+            const wrap = v.wrapped ? "WRAPPED (frame patching active)" : "not wrapped";
+            prelude += `  Video frame PTS: ${vpts};  patching: ${wrap}\n`;
+            if (!anyUTS) {
+                prelude += "\n  Verdict: every derived track pairs on PES PTS (synchronous-\n";
+                prelude += "  mode). The UTS wall-clock fallback is not exercised by this\n";
+                prelude += "  file. Frame patching here affects playback cadence only, not\n";
+                prelude += "  KLV-to-video pairing (which PES PTS locks to the PCR clock).\n\n";
+            } else {
+                prelude += "\n  Verdict: one or more tracks pair via the UTS wall-clock\n";
+                prelude += "  fallback (asynchronous-mode). With frame patching ON (the\n";
+                prelude += "  default) the video timeline is uniform, so the nominal-rate UTS\n";
+                prelude += "  lookup tracks true wall-clock; with patching OFF such a track\n";
+                prelude += "  can desync through dropped-frame bursts. See §6c, §12.\n\n";
+            }
+        }
+
         const report = prelude + misbNode.generateTimingAnalysis();
         // Generic download filename — never include sitch name (may
         // contain platform / mission text the user wrote).

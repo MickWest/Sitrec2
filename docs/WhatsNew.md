@@ -9,6 +9,22 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.71.0 (2026-06-02)
+
+### New Features
+- **Analyze Video Folder** (File → File Analysis → *Analyze Video Folder...*): pick a local folder and batch-analyze every video in it for MISB/KLV timing quality — record counts, PES-PTS pairing coverage, frame-pairing, timeline gaps, and a one-line verdict per file — shown in a sortable table with live progress. Export the results as JSON or CSV, dump the raw per-record PTS rows, or save the full per-file reports.
+
+### Improvements
+- **Track pairing in the Timing Analysis report** (date/time controls → *Timing Analysis...*): the report now shows, for each derived track, which video's KLV stream it bound to and whether it paired on PES PTS (synchronous, frame-accurate) or fell back to the UnixTimeStamp wall-clock (asynchronous) — making it clear, on multi-stream files, which stream the displayed track is actually riding.
+- **Consistent distance units in Image Set export** (Export Image Set; Physics → Units): the orbit distance and orbit altitude now both read out in the same distance unit (Nautical Miles by default — switch Physics → Units to feet if you prefer), and the Vertical FOV control now goes down to 0.001° for extreme high-zoom shots.
+
+### Bug Fixes
+- Fixed terrain elevation tiles continuously reloading with the camera held completely still at very narrow zoom (such as a tight view aimed up a mountainside).
+- Fixed a second, side-by-side video taking over the main timeline — a clip of a different length or frame rate no longer rewrites the playback range or desyncs the first video, tracks, and slider.
+- Fixed two dropped videos with the same filename being able to collapse into one file on a local save, which could overwrite the first clip.
+
+---
+
 ## Version 2.70.0 (2026-06-01)
 
 ### New Features
