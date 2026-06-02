@@ -27,6 +27,7 @@ import {
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {setupHorizonExtractorMenu} from "./CHorizonExtractor";
 import {setupCameraMotionMenu} from "./CameraMotionFromVideo";
+import {CustomGraphManager} from "./CCustomGraphManager";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {GlobalScene} from "./LocalFrame";
@@ -1686,6 +1687,10 @@ export const setupMethods = {
         setupHorizonExtractorMenu();
 
         setupCameraMotionMenu();
+
+        // Custom graphs: populate the data-series registry, add the "Add Custom
+        // Graph" button, and rebuild any graphs the sitch will deserialize.
+        CustomGraphManager.setup();
 
         this.setupSimpleFlightSim();
 

@@ -65,7 +65,7 @@ const en = {
             tooltip: "Traverse controls\nThe traverse object is the object that traverses the lines of sight - i.e. the UAP we are interested in\nThis menu defined how the traverse object moves and behaves",
         },
         showHide: {
-            title: "Show/Hide",
+            title: "Show",
             tooltip: "Showing or hiding views, object and other elements",
             views: {
                 title: "Views",
@@ -74,6 +74,10 @@ const en = {
             graphs: {
                 title: "Graphs",
                 tooltip: "Show or hide various graphs",
+                addCustom: {
+                    label: "Add Custom Graph",
+                    tooltip: "Create a new graph window. Choose X, Y1, Y2 and Y3 data series from any registered per-frame data source.",
+                },
             },
         },
         effects: {
@@ -1100,6 +1104,17 @@ const en = {
         },
     },
 
+    graphControls: {
+        title: "Title",
+        show: "Show",
+        dark: "Dark",
+        toggleLegend: "Toggle Legend",
+        xAxis: "X",
+        y1Axis: "Y1 (left)",
+        y2Axis: "Y2 (right)",
+        y3Axis: "Y3 (right)",
+        remove: "Remove",
+    },
     osdController: {
         seriesName: {
             label: "Name",

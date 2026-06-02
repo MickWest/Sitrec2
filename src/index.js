@@ -141,6 +141,8 @@ import {TileUsageTracker} from "./TileUsageTracker";
 import {debugLog} from "./DebugLog";
 import {getEnvBool} from "./envUtils";
 import {FeatureManager} from "./CFeatureManager";
+import {CustomGraphManager} from "./CCustomGraphManager";
+import {GraphDataManager} from "./CGraphDataManager";
 import {
     encodeShareParam,
     extractUserIdFromSitrecReference,
@@ -2616,10 +2618,17 @@ function disposeEverything() {
     // dispose of any feature manager managed nodes
     FeatureManager.disposeAll();
 
+    // dispose custom graphs (folders) and clear the per-frame data-series registry
+    CustomGraphManager.disposeAll();
+    GraphDataManager.disposeAll();
+
     // reset motion analysis state (must be after NodeMan.disposeAll since it references the video node)
     resetMotionAnalysis();
     resetObjectTracking();
     resetHorizonExtractor();
+    // camera motion data is per-video; clear so the next sitch reloads its own cache
+    Globals.cameraMotionData = undefined;
+    Globals.cameraMotionRaw = undefined;
 
     // dispose of any remaining GUI, except for the permanent folders and items
     Globals.menuBar.destroy(false);

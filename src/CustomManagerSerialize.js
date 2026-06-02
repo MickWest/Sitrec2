@@ -41,6 +41,7 @@ import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
+import {CustomGraphManager} from "./CCustomGraphManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
@@ -560,6 +561,9 @@ export const serializeMethods = {
         // Serialize feature markers from FeatureManager
         out.featureMarkers = FeatureManager.serialize()
 
+        // Serialize user-created custom graphs
+        out.customGraphs = CustomGraphManager.serialize()
+
         // Serialize synthetic 3D buildings from Synth3DManager
         out.syntheticBuildings = Synth3DManager.serialize()
 
@@ -1041,6 +1045,13 @@ export const serializeMethods = {
             // This creates the necessary feature marker nodes
             if (sitchData.featureMarkers) {
                 FeatureManager.deserialize(sitchData.featureMarkers)
+            }
+
+            // Recreate custom graphs BEFORE applying mods, so each graph view
+            // exists with its deterministic id and its saved geometry/visibility
+            // mod can re-attach.
+            if (sitchData.customGraphs) {
+                CustomGraphManager.deserialize(sitchData.customGraphs)
             }
 
             // Deserialize synthetic 3D buildings BEFORE applying mods
