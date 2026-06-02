@@ -40,6 +40,29 @@ function getWorktreeName() {
     return null;
 }
 
+// Return the short abbreviation of the build machine's local time zone for the
+// given instant (e.g. "PST"/"PDT", "UTC", "EDT"). The hours/minutes elsewhere are
+// produced with Date.getHours()/getMinutes(), which are also in local time, so the
+// label always matches the digits. We collapse Pacific Standard/Daylight to the
+// familiar "PT" since that's what dev builds on Mick's machine have always shown;
+// CI runners (typically UTC) now correctly read "UTC" instead of a bogus "PT".
+function getTimeZoneAbbreviation(date) {
+    try {
+        const parts = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(date);
+        const abbr = parts.find(p => p.type === 'timeZoneName')?.value;
+        if (abbr === 'PST' || abbr === 'PDT') return 'PT';
+        if (abbr) return abbr;
+    } catch (e) {
+        // Intl unavailable or failed — fall through to the IANA name below.
+    }
+    // Fallback: the raw IANA zone id (e.g. "America/Los_Angeles", "UTC").
+    try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+    } catch (e) {
+        return 'local';
+    }
+}
+
 function getFormattedLocalDateTime() {
     const now = new Date();
     const year = String(now.getFullYear()).substring(2);
@@ -53,8 +76,9 @@ function getFormattedLocalDateTime() {
         return `${worktreeName} ${hours}:${minutes}`;
     }
 
+    const zone = getTimeZoneAbbreviation(now);
     const gitTag = getVersionNumber();
-    return `Sitrec ${gitTag}: ${year}-${month}-${day} ${hours}:${minutes} PT`;
+    return `Sitrec ${gitTag}: ${year}-${month}-${day} ${hours}:${minutes} ${zone}`;
 }
 
 
