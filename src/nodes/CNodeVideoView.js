@@ -110,6 +110,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.videos = [];
         this.currentVideoIndex = -1;
         this.videoSelectorController = null;
+
+        // When true, this video plays relative to the "in frame" (Sit.aFrame):
+        // its own frame 0 is shown when the global playhead reaches Sit.aFrame.
+        // Used mainly by the secondary video view to sync a second clip to the in point.
+        this.lockToInFrame = v.lockToInFrame ?? false;
+        this.lockToInFrameController = null;
         this.exifInfoButtonController = null;
         this.exifInfoPanel = new EXIFInfoPanel({
             onVisibilityChange: () => this.updateEXIFInfoButton(),
@@ -605,6 +611,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         // Setup/update rotation dropdown now that video is loaded
         this.setupRotationDropdown();
+        this.setupLockToInFrameControl();
 
         // Apply EXIF metadata if present and not yet applied (single convergence point
         // for drag-drop, newVideo, and importMedia paths)
@@ -1080,7 +1087,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         })
     }
 
-    toSerializeCNodeVideoView = ["posLeft", "posRight", "posTop", "posBot", "panOffsetX", "panOffsetY"]
+    toSerializeCNodeVideoView = ["posLeft", "posRight", "posTop", "posBot", "panOffsetX", "panOffsetY", "lockToInFrame"]
 
     modSerialize() {
         const result = {
@@ -1237,7 +1244,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.currentVideoSelection = this.currentVideoIndex;
         console.log(`[VideoSelector] Creating selector with ${Object.keys(options).length} options`);
         this.videoSelectorController = guiMenus.video.add(this, "currentVideoSelection", options)
-            .name(t("videoView.currentVideo.label"))
+            .name(t("videoView.currentVideo.label") + this.viewMenuSuffix())
             .onChange((value) => {
                 this.selectVideo(value);
             });
@@ -1248,6 +1255,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (guiMenus.view) {
             this.updateVideoSelector();
             this.setupRotationDropdown();
+            this.setupLockToInFrameControl();
             this.updateEXIFPositionButton();
             this.updateEXIFInfoButton();
         } else if (retries > 0) {
@@ -1283,13 +1291,39 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.currentRotation = this.videoData.userRotation || 0;
 
         this.rotationController = guiMenus.video.add(this, "currentRotation", rotationOptions)
-            .name(t("videoView.videoRotation.label"))
+            .name(t("videoView.videoRotation.label") + this.viewMenuSuffix())
             .onChange((value) => {
                 if (this.videoData) {
                     this.videoData.setUserRotation(value);
                     this.positioned = false;  // Force layout recalculation
                     setRenderOne(true);
                 }
+            });
+    }
+
+    // Suffix used to distinguish this view's controls in the shared Video menu.
+    // Empty for the primary "video" view, " (2)" etc. for secondary views.
+    viewMenuSuffix() {
+        return this.id === "video" ? "" : " (2)";
+    }
+
+    /**
+     * Set up the "Lock to In Frame" checkbox in the Video menu.
+     * Only shown for secondary video views (not the primary "video"),
+     * since the primary defines the master timeline.
+     */
+    setupLockToInFrameControl() {
+        if (!guiMenus.video) return;
+        if (this.id === "video") return;       // primary defines the timeline
+        if (this.lockToInFrameController) return;
+        if (!this.videoData) return;
+
+        this.lockToInFrameController = guiMenus.video.add(this, "lockToInFrame")
+            .name("Lock to In Frame" + this.viewMenuSuffix())
+            .tooltip("Play this video relative to the in frame (set with the I key). " +
+                "Its first frame is shown when the playhead reaches the in frame.")
+            .onChange(() => {
+                setRenderOne(true);
             });
     }
 
@@ -1771,6 +1805,13 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         // if no video file, this is just a drop target for now
         if (!this.videoData) return;
+
+        // "Lock to in frame": play this video relative to the in point (Sit.aFrame)
+        // so its first frame appears when the global playhead reaches the in frame.
+        // Clamp to 0 so the video shows its first frame before the in point.
+        if (this.lockToInFrame) {
+            frame = Math.max(0, frame - (Sit.aFrame ?? 0));
+        }
 
         // While loading, don't render video - the loading message is shown via overlay
         if (this.videoLoadPending) return;

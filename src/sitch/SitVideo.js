@@ -85,6 +85,20 @@ export const SitVideo = {
             }
         )
 
+        // Secondary video view (twovid) — hidden until a second video is dropped.
+        // DragDropHandler routes the second dropped video here and reveals it
+        // side-by-side with the first.
+        this.VideoNode2 = new CNodeVideoWebCodecView({id:"video2",
+                visible: false,
+                left: 0.5, top: 0, width: 0.5, height: 1,
+                draggable: true, resizable: true,
+                frames: Sit.frames,
+                background: "black",
+                autoFill: true,
+                doubleClickFullscreen: false,
+            }
+        )
+
         DragDropHandler.addDropArea({keepTextVisibleUntilMedia: this.file === ""});
 
         this.videoInfoNode = new CNodeVideoInfoUI({

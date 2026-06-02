@@ -1116,6 +1116,13 @@ export class CCustomManager {
                 }
             }
 
+            // The secondary video view only appears in the two-video preset.
+            // Any preset that doesn't mention it should hide it, so an empty
+            // video2 box doesn't linger over another view after switching back.
+            if (NodeMan.exists("video2") && preset.video2 === undefined) {
+                NodeMan.get("video2").setVisible(false);
+            }
+
             forceUpdateUIText();
         } else {
             console.warn("No view preset found for " + this.currentViewPreset);

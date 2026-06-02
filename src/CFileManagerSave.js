@@ -973,47 +973,57 @@ export const saveMethods = {
      * @param {boolean} [rehostVideo=false]
      * @returns {Promise<void>}
      */
+    // Write a video node's dropped content into the working folder and record
+    // localStaticURL on each entry. Used for both "video" and "video2" views.
+    async rehostVideoNodeLocal(videoNode, directoryHandle, todayDateStr) {
+        videoNode.updateCurrentVideoEntry();
+
+        if (videoNode.videos && videoNode.videos.length > 0) {
+            for (const entry of videoNode.videos) {
+                if (entry.isImage) continue;
+                const videoDroppedData = entry.videoData?.videoDroppedData;
+                if (!videoDroppedData) continue;
+
+                const safeName = this.sanitizeLocalRehostFileName(entry.fileName, `video-${todayDateStr}.mp4`);
+                const existingRelativePath = this.isLikelyWorkingFolderAssetPath(entry.fileName)
+                    ? this.normalizeWorkingFolderRelativePath(entry.fileName)
+                    : null;
+                const preferredPath = existingRelativePath || `local/media/${safeName}`;
+                const {path: chosenPath, reusedExisting} = await this.chooseLocalRehostPath(preferredPath, videoDroppedData, directoryHandle);
+                if (!reusedExisting) {
+                    await this.writeWorkingFolderFile(chosenPath, videoDroppedData, directoryHandle);
+                }
+                entry.localStaticURL = chosenPath;
+
+                if (entry === videoNode.videos[videoNode.currentVideoIndex]) {
+                    videoNode.localStaticURL = chosenPath;
+                }
+            }
+        } else if (videoNode.videoData?.videoDroppedData) {
+            const safeName = this.sanitizeLocalRehostFileName(videoNode.fileName, `video-${todayDateStr}.mp4`);
+            const existingRelativePath = this.isLikelyWorkingFolderAssetPath(videoNode.fileName)
+                ? this.normalizeWorkingFolderRelativePath(videoNode.fileName)
+                : null;
+            const preferredPath = existingRelativePath || `local/media/${safeName}`;
+            const {path: chosenPath, reusedExisting} = await this.chooseLocalRehostPath(preferredPath, videoNode.videoData.videoDroppedData, directoryHandle);
+            if (!reusedExisting) {
+                await this.writeWorkingFolderFile(chosenPath, videoNode.videoData.videoDroppedData, directoryHandle);
+            }
+            videoNode.localStaticURL = chosenPath;
+        }
+    },
+
     async rehostDynamicLinksLocal(directoryHandle, rehostVideo = false) {
         if (!directoryHandle) return;
         const todayDateStr = new Date().toISOString().split("T")[0];
 
         // Local copy for dropped video content (so local saves are portable).
-        if (rehostVideo && NodeMan.exists("video")) {
-            const videoNode = NodeMan.get("video");
-            videoNode.updateCurrentVideoEntry();
-
-            if (videoNode.videos && videoNode.videos.length > 0) {
-                for (const entry of videoNode.videos) {
-                    if (entry.isImage) continue;
-                    const videoDroppedData = entry.videoData?.videoDroppedData;
-                    if (!videoDroppedData) continue;
-
-                    const safeName = this.sanitizeLocalRehostFileName(entry.fileName, `video-${todayDateStr}.mp4`);
-                    const existingRelativePath = this.isLikelyWorkingFolderAssetPath(entry.fileName)
-                        ? this.normalizeWorkingFolderRelativePath(entry.fileName)
-                        : null;
-                    const preferredPath = existingRelativePath || `local/media/${safeName}`;
-                    const {path: chosenPath, reusedExisting} = await this.chooseLocalRehostPath(preferredPath, videoDroppedData, directoryHandle);
-                    if (!reusedExisting) {
-                        await this.writeWorkingFolderFile(chosenPath, videoDroppedData, directoryHandle);
-                    }
-                    entry.localStaticURL = chosenPath;
-
-                    if (entry === videoNode.videos[videoNode.currentVideoIndex]) {
-                        videoNode.localStaticURL = chosenPath;
-                    }
+        // Covers both the primary "video" view and the secondary "video2" view.
+        if (rehostVideo) {
+            for (const vid of ["video", "video2"]) {
+                if (NodeMan.exists(vid)) {
+                    await this.rehostVideoNodeLocal(NodeMan.get(vid), directoryHandle, todayDateStr);
                 }
-            } else if (videoNode.videoData?.videoDroppedData) {
-                const safeName = this.sanitizeLocalRehostFileName(videoNode.fileName, `video-${todayDateStr}.mp4`);
-                const existingRelativePath = this.isLikelyWorkingFolderAssetPath(videoNode.fileName)
-                    ? this.normalizeWorkingFolderRelativePath(videoNode.fileName)
-                    : null;
-                const preferredPath = existingRelativePath || `local/media/${safeName}`;
-                const {path: chosenPath, reusedExisting} = await this.chooseLocalRehostPath(preferredPath, videoNode.videoData.videoDroppedData, directoryHandle);
-                if (!reusedExisting) {
-                    await this.writeWorkingFolderFile(chosenPath, videoNode.videoData.videoDroppedData, directoryHandle);
-                }
-                videoNode.localStaticURL = chosenPath;
             }
         }
 
@@ -1075,16 +1085,19 @@ export const saveMethods = {
 
         // first check for video rehosting
         if (rehostVideo) {
-            if (NodeMan.exists("video")) {
-                const videoNode = NodeMan.get("video")
-                
+            // Rehost dropped content for both the primary "video" and the
+            // secondary "video2" view.
+            for (const vid of ["video", "video2"]) {
+                if (NodeMan.exists(vid)) {
+                const videoNode = NodeMan.get(vid)
+
                 videoNode.updateCurrentVideoEntry();
-                
-                const videosToRehost = videoNode.videos && videoNode.videos.length > 0 
-                    ? videoNode.videos 
+
+                const videosToRehost = videoNode.videos && videoNode.videos.length > 0
+                    ? videoNode.videos
                     : [{ fileName: videoNode.fileName, staticURL: videoNode.staticURL, videoData: videoNode.videoData }];
-                
-                console.log("[CFileManager.rehostDynamicLinks] Rehosting", videosToRehost.length, "video(s)");
+
+                console.log("[CFileManager.rehostDynamicLinks] Rehosting", videosToRehost.length, "video(s) for", vid);
                 
                 for (let i = 0; i < videosToRehost.length; i++) {
                     const entry = videosToRehost[i];
@@ -1122,6 +1135,7 @@ export const saveMethods = {
                             videoNode.staticURL = staticURL;
                         }
                     }))
+                }
                 }
             }
         }

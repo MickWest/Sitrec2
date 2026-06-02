@@ -1559,6 +1559,16 @@ export const setupMethods = {
                 lookView: { visible: true, left: 0.5, top: 0, width: 0.5, height: 1 },
 
             },
+
+            // The two video views side by side, filling the screen, for
+            // comparing/syncing two clips. mainView and lookView are hidden.
+            TwoVideos: {
+                keypress: "8",
+                mainView: { visible: false },
+                video: { visible: true, left: 0.0, top: 0, width: 0.5, height: 1 },
+                video2: { visible: true, left: 0.5, top: 0, width: 0.5, height: 1 },
+                lookView: { visible: false },
+            },
         }
 
         this.currentViewPreset = "Default";
