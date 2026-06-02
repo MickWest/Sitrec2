@@ -478,7 +478,15 @@ for(const standard of standards) {
 // so we have an 11 byte key????
 
 
-export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null) {
+export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null, options = {}) {
+    const reportError = (...args) => {
+        if (options?.silent) {
+            console.warn(...args);
+        } else {
+            showError(...args);
+        }
+    };
+
     console.log(`parseKLVFile: Received data type: ${data.constructor.name}, byteLength: ${data.byteLength}`);
 
     // Convert to Uint8Array for processing
@@ -490,7 +498,7 @@ export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null) {
         uint8Data = data;
         console.log(`parseKLVFile: Data is Uint8Array with ${data.length} bytes, buffer has ${data.buffer.byteLength} bytes`);
     } else {
-        showError('parseKLVFile: Unsupported data type');
+        reportError('parseKLVFile: Unsupported data type');
         return;
     }
 
@@ -578,7 +586,7 @@ export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null) {
     console.log(`parseKLVFile: Found ${packetCount} complete KLV packets, skipped ${skippedIncomplete} incomplete packets`);
     
     if (validPackets.length === 0) {
-        showError('parseKLVFile: No valid KLV packets found');
+        reportError('parseKLVFile: No valid KLV packets found');
         return;
     }
     
@@ -597,7 +605,7 @@ export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null) {
     try {
         result = klv.decode(cleanedData.buffer, st0601, null, {debug: false});
     } catch (error) {
-        showError(error);
+        reportError(error);
         return;
     }
     // for (const standard of standards) {
@@ -706,7 +714,6 @@ export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null) {
     return MISBArray;
 
 }
-
 
 
 
