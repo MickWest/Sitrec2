@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.74.0 (2026-06-03)
+
+### New Features
+- **Drag menu sub-folders out into floating windows** (any menu sub-folder): drag a sub-menu's title out of the menu bar to tear it off into its own floating window. Floating sub-menus can be docked to the left, right, or center of the screen like the main menus, and restored by double-clicking their title, dragging them off the top of the screen, or dragging them mostly off-screen. Their position is saved and restored with the sitch.
+
 ## Version 2.73.1 (2026-06-03)
 
 ### Bug Fixes

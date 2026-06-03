@@ -53,8 +53,34 @@ import {PNG} from 'pngjs';
 import {existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync, unlinkSync} from 'fs';
 import {dirname, join} from 'path';
 import {fileURLToPath} from 'url';
+import {createRequire} from 'module';
+import {execSync} from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// The harness tests whatever build the CURRENT WORKTREE deploys — there is no
+// separate "/regress" deployment. The deploy folder (and thus the served URL
+// path) is derived from the git branch by config/config-install.js:
+//   main → 'sitrec',  any other branch → the branch name
+// served at https://local.metabunk.org/<buildFolder>/. We reuse that same source
+// of truth so `/regression` just works in main or any branch worktree without
+// needing --base. (--base= and SITREC_REGRESS_BASE still override this.)
+function currentWorktreeBase() {
+    let buildFolder;
+    try {
+        buildFolder = createRequire(import.meta.url)('../../config/config-install').buildFolder;
+    } catch {
+        // config-install.js is gitignored and may be absent (e.g. fresh clone);
+        // derive the same buildFolder directly from the current branch.
+        try {
+            const branch = execSync('git rev-parse --abbrev-ref HEAD', {encoding: 'utf-8'}).trim();
+            buildFolder = (branch === 'main' || branch === 'HEAD') ? 'sitrec' : branch;
+        } catch {
+            buildFolder = 'sitrec';
+        }
+    }
+    return `https://local.metabunk.org/${buildFolder || 'sitrec'}/`;
+}
 
 // ---------------------------------------------------------------------------
 // Config + CLI
@@ -67,7 +93,7 @@ const opt = (name, def) => {
 };
 
 const CONFIG = {
-    base: (opt('base', process.env.SITREC_REGRESS_BASE || 'https://local.metabunk.org/regress/')).replace(/\/?$/, '/'),
+    base: (opt('base', process.env.SITREC_REGRESS_BASE || currentWorktreeBase())).replace(/\/?$/, '/'),
     // Test users to enumerate Regression-labelled sitches under. 99999999 is the
     // shared regression test user (its saved versions are the curated fixtures the
     // baselines are captured against); user 1 is the real admin account, used only
@@ -97,6 +123,28 @@ const CONFIG = {
     matchThreshold: Number(opt('matchThreshold', '0.05')),
     maxDiffRatio: Number(opt('maxDiffRatio', '0.001')),
 };
+
+// Per-sitch frame overrides. Most sitches are captured at CONFIG.frame (10), but
+// a few only show their regression-relevant state at a specific frame. Keyed by
+// the exact sitch name (as labelled in the sitch browser). A sitch absent from
+// this map uses CONFIG.frame. Override via --frame-overrides="Name=62,Other=120".
+//   - "Mosul Orb": 62 — the orb is mid-scene at frame 62 (the old Playwright
+//     suite captured Mosul at 62 for exactly this reason); at frame 10 it isn't
+//     yet in a representative position.
+const FRAME_OVERRIDES = {
+    'Mosul Orb': 62,
+    ...Object.fromEntries(
+        (opt('frame-overrides', '') || '')
+            .split(',').map(s => s.trim()).filter(Boolean)
+            .map(pair => {
+                const i = pair.lastIndexOf('=');
+                return [pair.slice(0, i).trim(), Number(pair.slice(i + 1))];
+            })
+            .filter(([name, f]) => name && Number.isFinite(f))
+    ),
+};
+
+const frameFor = (sitch) => FRAME_OVERRIDES[sitch.name] ?? CONFIG.frame;
 
 const baselineDir = join(__dirname, 'baseline');
 const outputDir = join(__dirname, 'output');
@@ -180,7 +228,7 @@ function buildLoadUrl(sitch) {
     const params = [
         'custom=' + encodeURIComponent(sitch.url),
         'regression=1',
-        'frame=' + CONFIG.frame,
+        'frame=' + frameFor(sitch),
         'ignoreunload=1',
     ];
     if (CONFIG.localTerrain) params.push('regressionLocalTerrain=1');
@@ -402,8 +450,9 @@ async function processSitch(context, sitch) {
         // demand, so par.frame only snaps to fixedFrame once a frame renders).
         const renderedFrame = await page.evaluate(() => (typeof window.par !== 'undefined') ? window.par.frame : null);
         result.renderedFrame = renderedFrame;
-        if (renderedFrame !== CONFIG.frame) {
-            result.note += ` frameMismatch(want ${CONFIG.frame},got ${renderedFrame})`;
+        const wantFrame = frameFor(sitch);
+        if (renderedFrame !== wantFrame) {
+            result.note += ` frameMismatch(want ${wantFrame},got ${renderedFrame})`;
         }
 
         const clip = {x: 0, y: CONFIG.cropTop, width: CONFIG.viewport.width, height: CONFIG.viewport.height - CONFIG.cropTop};

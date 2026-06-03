@@ -2,7 +2,7 @@
 // as well as some other useful related functions
 
 import {Matrix3, Vector3} from "three";
-import {Globals, NodeMan, setRenderOne, Sit} from "./Globals";
+import {Globals, NodeMan, setRenderOne} from "./Globals";
 import {assert} from "./assert";
 
 /** [latitude, longitude, altitude] tuple — angles in radians, altitude in meters. */
@@ -484,68 +484,36 @@ export function legacyEUSToECEF(eus: Vector3, lat: number, lon: number): Vector3
 }
 
 
-// Pre-computed constants for optimization - updated when Sit location or earth model changes
-let _sitLatRad: number, _sitLonRad: number, _sitSinLat: number, _sitCosLat: number, _sitSinLon: number, _sitCosLon: number;
-let _originEcefX: number, _originEcefY: number, _originEcefZ: number;
-let _m00: number, _m01: number, _m10: number, _m11: number, _m12: number, _m20: number, _m21: number, _m22: number;
-// Pre-computed per-vertex ellipsoid constants (used in LLAToECEFRadians)
+// Pre-computed per-vertex ellipsoid constants, derived from the earth model
+// (Globals.equatorRadius / polarRadius). Used by LLAToECEFRadians / *Into.
 let _llaecef_e2: number, _llaecef_ratio: number;
-let _lastSitLat: number | null = null, _lastSitLon: number | null = null;
 let _lastEquatorRadius: number | null = null, _lastPolarRadius: number | null = null;
 
 // Constant for radians conversion (Math.PI / 180)
 const _DEG_TO_RAD = 0.017453292519943295;
 
-// Update pre-computed constants when Sit location or earth model changes
-function _updateSitConstants(): void {
-    if (Sit.lat === _lastSitLat && Sit.lon === _lastSitLon
-            && Globals.equatorRadius === _lastEquatorRadius && Globals.polarRadius === _lastPolarRadius) {
+// Recompute the ellipsoid constants when the earth model (Globals radii) changes.
+// Historically this also derived the EUS origin and ENU rotation matrix from
+// Sit.lat/Sit.lon, but since the ECEF transition LLA→ECEF needs neither: the
+// result is a raw ECEF position with no origin subtraction or rotation.
+function _updateEarthModelConstants(): void {
+    if (Globals.equatorRadius === _lastEquatorRadius && Globals.polarRadius === _lastPolarRadius) {
         return; // No change, constants are still valid
     }
 
-    _lastSitLat = Sit.lat;
-    _lastSitLon = Sit.lon;
     _lastEquatorRadius = Globals.equatorRadius;
     _lastPolarRadius   = Globals.polarRadius;
 
-    _sitLatRad = Sit.lat * _DEG_TO_RAD;
-    _sitLonRad = Sit.lon * _DEG_TO_RAD;
-    _sitSinLat = Math.sin(_sitLatRad);
-    _sitCosLat = Math.cos(_sitLatRad);
-    _sitSinLon = Math.sin(_sitLonRad);
-    _sitCosLon = Math.cos(_sitLonRad);
-
-    // Pre-compute ellipsoid constants for vertex ECEF conversion
     const a = Globals.equatorRadius;
     const b = Globals.polarRadius;
     _llaecef_e2    = (a*a - b*b) / (a*a);
     _llaecef_ratio = (b*b) / (a*a);
-
-    // Pre-compute origin ECEF using the current earth model (ellipsoid or degenerate sphere)
-    const N_origin = a / Math.sqrt(1 - _llaecef_e2 * _sitSinLat * _sitSinLat);
-    _originEcefX = N_origin * _sitCosLat * _sitCosLon;
-    _originEcefY = N_origin * _sitCosLat * _sitSinLon;
-    _originEcefZ = _llaecef_ratio * N_origin * _sitSinLat;
-    
-    // Pre-compute transformation matrix elements
-    _m00 = -_sitSinLon;
-    _m01 = _sitCosLon;
-    // _m02 = 0 (not needed, always zero)
-    _m10 = -_sitSinLat * _sitCosLon;
-    _m11 = -_sitSinLat * _sitSinLon;
-    _m12 = _sitCosLat;
-    _m20 = _sitCosLat * _sitCosLon;
-    _m21 = _sitCosLat * _sitSinLon;
-    _m22 = _sitSinLat;
 }
 
-// Convert LLA (degrees) to ECEF. The radius parameter is deprecated.
-export function LLAToECEFRadians(lat: number, lon: number, alt: number = 0, radius?: number): Vector3 {
-    assert(radius === undefined, "undexpected radius in LLAToECEF")
-    assert(Sit.lat !== undefined, "Sit.lat undefined in LLAToECEF")
-
-    // Update constants if Sit location or earth model changed (need ellipsoid constants)
-    _updateSitConstants();
+// Convert LLA (radians) to ECEF.
+export function LLAToECEFRadians(lat: number, lon: number, alt: number = 0): Vector3 {
+    // Update the ellipsoid constants if the earth model changed
+    _updateEarthModelConstants();
 
     const cos_lat = Math.cos(lat);
     const sin_lat = Math.sin(lat);
@@ -563,9 +531,9 @@ export function LLAToECEFRadians(lat: number, lon: number, alt: number = 0, radi
 }
 
 // Convert LLA (degrees) to ECEF. Uses constant multiplier for deg→rad.
-export function LLAToECEF(lat: number, lon: number, alt: number = 0, radius?: number): Vector3 {
+export function LLAToECEF(lat: number, lon: number, alt: number = 0): Vector3 {
     // Convert degrees to radians using constant multiplier (faster than radians() function)
-    return LLAToECEFRadians(lat * _DEG_TO_RAD, lon * _DEG_TO_RAD, alt, radius);
+    return LLAToECEFRadians(lat * _DEG_TO_RAD, lon * _DEG_TO_RAD, alt);
 }
 
 // Allocation-free LLA→ECEF for tight loops. Writes into target instead of
@@ -576,7 +544,7 @@ export function LLAToECEFInto(lat: number, lon: number, alt: number, target: Vec
 }
 
 export function LLAToECEFRadiansInto(lat: number, lon: number, alt: number, target: Vector3): Vector3 {
-    _updateSitConstants();
+    _updateEarthModelConstants();
     const cos_lat = Math.cos(lat);
     const sin_lat = Math.sin(lat);
     const cos_lon = Math.cos(lon);
@@ -589,16 +557,8 @@ export function LLAToECEFRadiansInto(lat: number, lon: number, alt: number, targ
 }
 
 // vector input version
-export function LLAVToECEF(lla: Vector3, radius?: number): Vector3 {
-    assert(radius === undefined, "undexpected radius in LLAVToECEF")
+export function LLAVToECEF(lla: Vector3): Vector3 {
     return LLAToECEF(lla.x, lla.y, lla.z)
-}
-
-// Force update of LLA to ECEF constants (call this if you manually change Sit.lat/lon)
-export function updateLLAToECEFConstants(): void {
-    _lastSitLat = null;
-    _lastSitLon = null;
-    _updateSitConstants();
 }
 
 

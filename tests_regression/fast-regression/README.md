@@ -34,8 +34,11 @@ node tests_regression/fast-regression/run.mjs --update --filter=ThomasH   # re-b
 > **Network/sandbox:** the harness talks to `local.metabunk.org` and S3, so run it
 > with the sandbox disabled if your shell sandboxes network.
 
-> **App code changes:** the harness loads the deployed `/regress/` build, so run
-> `npm run build` after editing `src/` before re-testing.
+> **App code changes:** the harness loads the deployed build of the **current
+> worktree** (the URL is auto-derived from the git branch — `main` →
+> `local.metabunk.org/sitrec/`, any other branch → `local.metabunk.org/<branch>/`,
+> matching `config/config-install.js`), so run `npm run build` after editing `src/`
+> before re-testing.
 
 ### Flags
 
@@ -50,7 +53,7 @@ node tests_regression/fast-regression/run.mjs --update --filter=ThomasH   # re-b
 | `--frame=N` | 10 | frame to lock + screenshot |
 | `--maxDiffRatio=R` | 0.001 | fraction of pixels allowed to differ before FAIL |
 | `--cropTop=PX` | 30 | pixels cropped off the top (menu bar has a live clock) |
-| `--base=URL` | `https://local.metabunk.org/regress/` | app base URL |
+| `--base=URL` | current worktree's build (`local.metabunk.org/<buildFolder>/`) | app base URL override |
 
 ## How a sitch is tested
 

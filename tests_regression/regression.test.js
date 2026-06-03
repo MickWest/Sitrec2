@@ -15,7 +15,6 @@ import {PNG} from 'pngjs';
 //   4. Verify the baseline visually, then commit it alongside the test entries
 //
 const testDataDefault = [
-    { id: "testquick", name: "testquick", url: "?testAll=2", waitFor: "All tests complete"},
     { id: 'default', name: 'default', url: '?action=new&frame=10' },
  //   { id: 'wmts', name: 'WMTS', url: '?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Regression%20test%20NRL%20WMTS/20251204_001658.js&mapType=WMTS' },
     // agua: fixed-grid sitch saved at zoom 15. The Local map source's
@@ -24,19 +23,12 @@ const testDataDefault = [
     // and the map renders empty (scene background green). Use live tiles
     // for this test; baseline was captured the same way.
     { id: 'agua', name: 'agua', url: '?sitch=agua&frame=10', localTerrain: false },
-    // ocean: explicitly tests the OceanSurface map type, so do NOT force the
-    // local-terrain mirror — the test would render the wrong tiles otherwise.
-    { id: 'ocean', name: 'ocean surface', url: '?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/REGRESSION%20TEST%20_%20Ocean%20Surface/20251114_234141.js&frame=10&mapType=OceanSurface', localTerrain: false },
-    { id: 'gimbal', name: 'gimbal', url: '?sitch=gimbal&frame=10', timeout: 120000 },
-    { id: 'starlink', name: 'starlink', url: '?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Stalink%20Names/20250218_060544.js' },
     // potomac: same root cause as agua — fixed-grid saved at a zoom deeper
     // than the Local map source's pre-cached tile depth, so local-terrain
     // mode loads no tiles and renders empty. Live tiles preserve the
     // baseline-matching render.
     { id: "potomac", name: "potomac", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Potomac/20250204_203812.js&frame=10", localTerrain: false },
-    { id: "orion", name: "orion", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Orion%20in%20Both%20views%20for%20Label%20Check/20251127_200130.js&frame=10" },
     { id: "bledsoe", name: "bledsoe", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/15857/BledsoeZoom/20250623_153507.js&frame=10" },
-    { id: "mosul", name: "mosul", url: "?custom=https://sitrec.s3.us-west-2.amazonaws.com/99999999/Mosul%20Orb/20250707_055311.js&frame=62"},
     { id: "nightsky-permalink", name: "nightsky permalink", url: "?sitch=nightsky&data=~(olat~51.48~olon~-3.16~lat~34.376627662040825~lon~-84.00309157040817~alt~36971.33215490772~startTime~%272023-02-28T00*3a45*3a41.276Z~az~-177.37058519694682~el~7.572727018255932~fov~48.170999999999985~roll~0~p~(x~-12526146.672264077~y~95667.1964429412~z~-1873477.710260879)~u~(x~0.05837430502341399~y~0.7414944410493608~z~0.6684148669845169)~q~(x~-0.39473570622715626~y~-0.6187577123399634~z~0.053388772167075584~w~0.6771057928091114)~f~526~pd~true~ssa~true~sfr~false~sfb~true~ssn~true~spd~29.3~rehostedFiles~(~%27https*3a*2f*2fsitrec.s3.us-west-2.amazonaws.com*2f15857*2fG6-1-6a5ed9b876ea212544084f48a933bcae.txt~%27https*3a*2f*2fsitrec.s3.us-west-2.amazonaws.com*2f15857*2fN230FR-track-press_alt_uncorrected*2520*25281*2529-fef762b490d1e988d0811bfb68a42273.kml)~rhs~true)_", timeout: 120000 },
     // demo-truck: KLV-driven sitch at Cheyenne, WY. Exercises the AGL-locked
     // MISB target track over real terrain (with the truck driving under a
