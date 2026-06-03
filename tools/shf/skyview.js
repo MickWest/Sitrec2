@@ -264,8 +264,9 @@ export function compassRose(arrows, flares, opts = {}) {
     }).join("");
 
     // Expand the viewBox upward so the sprinkle of flares (just beyond the rim,
-    // in the wedge between the arrows) has room to appear and drift.
-    return `<svg viewBox="0 -30 ${W} ${W + 30}" class="compass-rose" role="img" aria-label="Compass showing the flare direction">
+    // in the wedge between the arrows) has room to appear and drift. The bottom is
+    // trimmed close to the circle (nothing draws below it) to cut dead vertical space.
+    return `<svg viewBox="0 -30 ${W} ${W + 12}" class="compass-rose" role="img" aria-label="Compass showing the flare direction">
       <circle cx="${cx}" cy="${cy}" r="${R}" fill="#0c1224" stroke="#2a3550" stroke-width="2"/>
       <circle cx="${cx}" cy="${cy}" r="${R - 30}" fill="none" stroke="#1c2740" stroke-width="1"/>
       ${pts.join("")}

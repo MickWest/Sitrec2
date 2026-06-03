@@ -294,6 +294,12 @@ async function tryFetch(url) {
 // Persistent TLE cache (localStorage so it survives reloads / offline use).
 const TLE_CACHE_KEY = "starlinkTLE.v1";
 const ONE_DAY = 86400000;
+
+// One-shot, tab-scoped flag written by the "CLICK HERE TO LOAD CURRENT SATELLITES"
+// button just before it reloads. useRealTLE is in-memory only (reset on reload), so
+// without this the reload would fall back to synthetic; on the next load init() reads
+// this, opts into the freshly-fetched real data, restores the form, and re-runs.
+const PENDING_REAL_KEY = "shfPendingRealSearch";
 function readTLECache() {
   try {
     const o = JSON.parse(localStorage.getItem(TLE_CACHE_KEY));
@@ -305,25 +311,32 @@ function writeTLECache(text) {
   try { localStorage.setItem(TLE_CACHE_KEY, JSON.stringify({ text, fetchedMs: Date.now() })); } catch (_) {}
 }
 
-// Set to the in-flight promise while the Advanced "Fetch current TLE" download is
-// running, so a search started *during* the fetch can await it instead of silently
-// falling through to the synthetic set (which made a loaded TLE apply one run late).
+// Set to the in-flight TLE download (the startup background fetch, the Advanced "Fetch
+// current TLE" button, or the in-results "Load current satellites" button) so a search
+// started *during* the download awaits it instead of falling through to synthetic early.
 let tleFetchInFlight = null;
 
-// True once the user has opted into REAL data THIS session (fetched the current TLE
-// or loaded a .tle file). In-memory only, so a page reload resets to the synthetic
-// default — the fetched set stays cached for fast reuse *during* the session, but is
-// NOT silently reused as the default after a reload. Synthetic is the default.
+// True once a real current TLE has been successfully loaded this session (background
+// startup fetch, manual fetch, or a .tle file). Informational only — getTLEText keys
+// off the cache freshness, not this — but the debug bridge surfaces it.
 let useRealTLE = false;
 
+// True iff a fresh (< 1 day) real TLE is cached and ready to use right now.
+function haveFreshRealTLE() {
+  const c = readTLECache();
+  return !!(c && Date.now() - c.fetchedMs < ONE_DAY);
+}
+
 // Obtain a Starlink TLE set, returning { text, mode }:
-//   file      — user-supplied .tle (Advanced)
-//   cache     — real TLE fetched earlier (Advanced › Fetch) and still fresh (< 1 day)
-//   synthetic — the default: a synthesised Starlink-like constellation (no network)
+//   file      — user-supplied .tle (Advanced); always wins
+//   cache     — the real current TLE (downloaded at startup / on demand), fresh (< 1 day)
+//   synthetic — fallback: a synthesised Starlink-like constellation (no network)
 //
-// Find Flares NEVER hits the network — real data is opt-in via the Advanced controls
-// (the Fetch button, below, or a file). This keeps the default instant & offline-safe.
-async function getTLEText(fileInput, log, epochDate) {
+// Real data is the DEFAULT: a download is kicked off at startup (startBackgroundTLEFetch)
+// and reused here whenever fresh. We fall back to synthetic only when the real data is
+// unavailable (offline / fetch failed) OR the requested date is out of the TLE's useful
+// range (inRange === false) — for those dates synthetic, anchored to that date, is apter.
+async function getTLEText(fileInput, log, epochDate, inRange) {
   // 1) explicit file always wins (and seeds the cache).
   if (fileInput.files && fileInput.files[0]) {
     log("Reading TLE file…");
@@ -334,33 +347,34 @@ async function getTLEText(fileInput, log, epochDate) {
     return { text, mode: "file" };
   }
 
-  // 1b) If a "Fetch current TLE" is still downloading, wait for it so the freshly
-  //     fetched data applies to THIS search — not the next one. Without this, a
-  //     search started while the fetch was in flight would silently use synthetic.
-  if (tleFetchInFlight) {
-    log("Finishing current TLE download…");
-    try { await tleFetchInFlight; } catch (_) { /* fetch failed — fall through to cache/synthetic */ }
+  // 2) Out of the current TLE's useful range → synthetic anchored to the requested date.
+  //    Real elements are only valid near "now"; for far dates a synthetic constellation
+  //    at that date gives the meaningful seasonal flare geometry the user asked about.
+  if (!inRange) {
+    log("Building a synthetic constellation for this date…");
+    return { text: generateDummyTLE(epochDate || new Date()), mode: "synthetic" };
   }
 
-  // 2) Real TLE fetched recently (< 1 day) — reuse it so small date/time tweaks
-  //    don't re-download. ONLY when the user opted into real data this session
-  //    (useRealTLE); a fresh page load ignores the cache and defaults to synthetic.
+  // 3) In range → prefer the real current TLE. If the startup/on-demand download is still
+  //    running, wait for it so the freshly downloaded data applies to THIS search.
+  if (tleFetchInFlight) {
+    log("Finishing current TLE download…");
+    try { await tleFetchInFlight; } catch (_) { /* failed — fall through to cache/synthetic */ }
+  }
   const cache = readTLECache();
-  if (useRealTLE && cache && Date.now() - cache.fetchedMs < ONE_DAY) {
+  if (cache && Date.now() - cache.fetchedMs < ONE_DAY) {
     log("Using current satellite data.");
     return { text: cache.text, mode: "cache" };
   }
 
-  // 3) Default: a synthetic constellation. Instant, offline, no rate limits.
-  //    Epoch = the requested time (not "now"), so the same inputs give the same
-  //    positions on every run — a repeated search with no changes is reproducible.
-  log("Building a synthetic constellation…");
+  // 4) Real data unavailable (offline / fetch failed) → synthetic fallback.
+  log("Couldn't load current satellites — using a synthetic constellation…");
   return { text: generateDummyTLE(epochDate || new Date()), mode: "synthetic" };
 }
 
-// Download the current Starlink TLE (Advanced "Fetch current TLE" button only).
-// Same-origin Sitrec proxy first (allow-listed `request`, server-cached, CORS-free),
-// then direct Celestrak. Caches on success; throws on failure (e.g. offline).
+// Download the current Starlink TLE. Same-origin Sitrec proxy first (allow-listed
+// `request`, server-cached, CORS-free), then direct Celestrak. Caches on success;
+// throws on failure (e.g. offline).
 async function fetchCurrentTLE() {
   // Strip from "/tools/" onward case-INSENSITIVELY (the tool may be served at /tools/SHF/ on a
   // case-insensitive filesystem), matching sitrecBaseURL(), so the proxy base path is always right.
@@ -369,11 +383,88 @@ async function fetchCurrentTLE() {
   let lastErr;
   for (const url of sources) {
     // Set useRealTLE synchronously on success (before this promise resolves) so a
-    // search awaiting the in-flight fetch sees the opt-in and uses the real data.
+    // search awaiting the in-flight fetch sees that real data is now available.
     try { const text = await tryFetch(url); writeTLECache(text); useRealTLE = true; return text; }
     catch (e) { lastErr = e; }
   }
   throw new Error(lastErr ? lastErr.message : "network error");
+}
+
+// Kick off a current-TLE download in the background at startup, so real data is ready (or
+// already cached) by the time the user runs a search. Non-blocking, best-effort: any
+// failure (offline, rate-limited) just leaves us on the synthetic fallback. A search
+// started before this finishes awaits it via tleFetchInFlight (see getTLEText step 3).
+function startBackgroundTLEFetch() {
+  // Already have a fresh real set (e.g. downloaded earlier today)? Reuse it, skip the download.
+  if (haveFreshRealTLE()) { useRealTLE = true; return; }
+  // Skip only when the browser is certain it's offline; otherwise try and fail gracefully.
+  if (navigator.onLine === false) return;
+  const p = fetchCurrentTLE().catch((e) => {
+    console.warn("Background TLE download failed; synthetic until it's available:", e && e.message);
+  });
+  tleFetchInFlight = p;
+  p.finally(() => { if (tleFetchInFlight === p) tleFetchInFlight = null; });
+}
+
+// Snapshot the current form inputs so a reload can re-run the exact same search.
+// (init() calls setNowDefaults(), so without this the reload would reset to "now".)
+function savePendingRealSearch() {
+  try {
+    sessionStorage.setItem(PENDING_REAL_KEY, JSON.stringify({
+      date: els.date.value, time: els.time.value,
+      origin: els.origin.value, dest: els.dest.value,
+      duration: els.duration.value, alt: els.alt.value,
+      tzMode, formTz,
+    }));
+  } catch (_) { /* private mode / quota — reload will still load real data, just not auto-run */ }
+}
+
+// On load: if the previous page reloaded itself after fetching real TLE, opt back into
+// that data, restore the form, and re-run the search. Returns true if it handled a reload.
+function restorePendingRealSearch() {
+  let s;
+  try {
+    const raw = sessionStorage.getItem(PENDING_REAL_KEY);
+    sessionStorage.removeItem(PENDING_REAL_KEY);   // one-shot
+    if (!raw) return false;
+    s = JSON.parse(raw);
+  } catch (_) { return false; }
+  if (!s) return false;
+  useRealTLE = true;   // the cache (localStorage) holds the TLE fetched before the reload
+  els.date.value = s.date || els.date.value;
+  els.time.value = s.time || els.time.value;
+  els.origin.value = s.origin || "";
+  els.dest.value = s.dest || "";
+  els.duration.value = s.duration || "";
+  els.alt.value = s.alt || "";
+  tzMode = s.tzMode === "utc" ? "utc" : "local";
+  formTz = s.formTz || "";
+  updateTzButton();
+  // Re-run with the freshly loaded real data (requestSubmit fires the submit handler).
+  if (els.form.requestSubmit) els.form.requestSubmit();
+  else els.form.dispatchEvent(new Event("submit", { cancelable: true }));
+  return true;
+}
+
+// Click handler for the synthetic-data note (now a button): download the current TLE
+// with a loading indicator, then reload so the search re-runs against real data.
+async function onLoadCurrentSats(btn) {
+  if (btn.dataset.loading === "1") return;   // ignore re-clicks while in flight
+  btn.dataset.loading = "1";
+  btn.disabled = true;
+  btn.classList.remove("load-err");
+  btn.innerHTML = `<span class="spinner spinner-inline"></span> Loading current satellites…`;
+  try {
+    await fetchCurrentTLE();        // populates the localStorage cache + sets useRealTLE
+    savePendingRealSearch();        // so the reload re-runs this search with real data
+    location.reload();
+  } catch (e) {
+    btn.dataset.loading = "0";
+    btn.disabled = false;
+    btn.classList.add("load-err");
+    btn.innerHTML = `Couldn't load satellites (${escapeHtml(e.message || "offline?")}).<br>` +
+                    `<span class="synth-cta">TAP TO RETRY</span>`;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -544,6 +635,16 @@ let liveDirty = false;
 let liveTimer = null;
 let liveCtx = null;                              // { req, origin, dest }
 let liveStatusEl = null, liveRoseEl = null, liveHorizonEl = null;
+let liveDirEl = null, liveMetaEl = null;         // the "Look …" + place/date lines (shown live too)
+
+// While scanning, each newly-found flare fires a ONE-SHOT 60× playback of its moving dot
+// along its path (over the replay-mode dim-streak backdrop), so the wide view fills with a
+// flurry of dots as the area populates. Distinct from the post-scan replay (1× looping).
+// reg = active bursts {f, t0}; seen = flares already fired; proj = current framing. The rAF
+// redraws the .replay-flares group of the LIVE horizon SVG each frame from the registry, so
+// dots survive the 10 Hz SVG rebuilds (which only redraw the static backdrop).
+let liveBurst = null;
+const LIVE_BURST_SPEED = 60;
 // Wide-view flare style, cycled by the ★ button: 'dots' (disk + arrow) → 'streaks' (timelapse
 // lines) → 'replay' (animated, time-driven playback). Default is the replay animation (looping,
 // non-live); the ★ cycles on to dots/streaks. Persists across renders this session.
@@ -590,9 +691,15 @@ function setLiveStatus(html) { if (liveStatusEl) liveStatusEl.innerHTML = html; 
 // The panels stay empty until flares stream in; setLiveStatus narrates the pre-scan
 // phases (locating, loading TLE) and then the running flare count.
 function setupLiveResults() {
-  stopReplay();   // a fresh scan tears down any replay animation from the previous result
+  stopReplay();      // a fresh scan tears down any replay animation from the previous result
+  stopLiveBurst();   // …and any leftover live-burst animator
+  // Same element structure as the final results screen (r-when / r-dir / r-meta / rose /
+  // horizon / legend) so the compass and wide view sit in their FINAL position from the
+  // first frame — only the text inside the three header lines fills in as the scan runs.
   els.results.innerHTML =
     `<div class="r-when" id="live-status">Resolving location…</div>
+     <div class="r-dir" id="live-dir"></div>
+     <div class="r-meta" id="live-meta"></div>
      <div class="rose-wrap" id="live-rose"></div>
      ${horizonWrapHTML("")}
      <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour</div>`;
@@ -601,6 +708,8 @@ function setupLiveResults() {
   // flipped to "final" by renderResults/renderNoFlares/renderError when the real screen renders.
   els.results.dataset.state = "scanning";
   liveStatusEl = document.getElementById("live-status");
+  liveDirEl = document.getElementById("live-dir");
+  liveMetaEl = document.getElementById("live-meta");
   liveRoseEl = document.getElementById("live-rose");
   liveHorizonEl = els.results.querySelector(".horizon-svg");   // the SVG holder inside the wrap
   const btn = els.results.querySelector(".hv-toggle");
@@ -616,6 +725,64 @@ function setupLiveResults() {
     zbtn.classList.toggle("on", horizonZoom > 1);
     liveRender();
   });
+  startLiveBurst();   // begin the rAF loop that animates each newly-found flare's 60× dot burst
+}
+
+// --- live "flurry of dots" burst animator ----------------------------------
+function stopLiveBurst() {
+  if (liveBurst) { if (liveBurst.raf) cancelAnimationFrame(liveBurst.raf); liveBurst = null; }
+}
+
+function startLiveBurst() {
+  stopLiveBurst();
+  liveBurst = { reg: [], seen: new Set(), proj: null, raf: 0 };
+  const frame = () => {
+    if (!liveBurst) return;
+    drawLiveBurst();
+    liveBurst.raf = requestAnimationFrame(frame);
+  };
+  liveBurst.raf = requestAnimationFrame(frame);
+}
+
+// Register any newly-arrived visible flares for a one-shot burst (t0 = now), and keep the
+// projection in sync — the framing window grows as flares accumulate, so the dots' screen
+// positions must use the CURRENT projection (recomputed by liveRender each redraw).
+function updateLiveBurst(flares, proj) {
+  if (!liveBurst) return;
+  liveBurst.proj = proj;
+  for (const f of flares) {
+    if (liveBurst.seen.has(f)) continue;
+    liveBurst.seen.add(f);
+    liveBurst.reg.push({ f, t0: performance.now() });
+  }
+}
+
+// Draw the currently-bursting dots into the live horizon SVG's .replay-flares group. Each
+// flare plays from its start to its end at 60× wall-clock, then drops out of the registry
+// (leaving only its dim streak in the backdrop). Mirrors startReplay's per-dot drawing.
+function drawLiveBurst() {
+  const lb = liveBurst;
+  if (!lb || !lb.proj || !liveHorizonEl) return;
+  const g = liveHorizonEl.querySelector(".replay-flares");
+  if (!g) return;   // not in replay mode (no animated layer) — nothing to draw
+  const proj = lb.proj, now = performance.now();
+  let s = "";
+  for (let i = lb.reg.length - 1; i >= 0; i--) {
+    const { f, t0 } = lb.reg[i];
+    const dur = (f.endMs - f.startMs) || 1;
+    const elapsed = (now - t0) * LIVE_BURST_SPEED;   // scaled real-ms since the flare's start
+    if (elapsed > dur) { lb.reg.splice(i, 1); continue; }   // one-shot finished
+    const t = f.startMs + elapsed;
+    const b = flareBrightnessAt(f, t);
+    if (b <= 0.01) continue;
+    const k = (t - (f.peakMs ?? t)) / MOTION_SAMPLE_MS;
+    const az = f.azDeg + (f.dAzDeg || 0) * k;
+    if (!proj.inWin(az)) continue;
+    const x = proj.xOf(az), y = proj.yOf(f.elDeg + (f.dElDeg || 0) * k);
+    const r = (1.0 + 2.0 * b).toFixed(2);
+    s += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="url(#rflareDot)" opacity="${Math.min(1, 0.5 + b).toFixed(3)}"/>`;
+  }
+  g.innerHTML = s;
 }
 
 function startLiveTimer() {
@@ -629,6 +796,9 @@ function stopLiveTimer() { if (liveTimer) { clearInterval(liveTimer); liveTimer 
 // would otherwise restart every frame).
 function liveRender() {
   if (!liveCtx) return;
+  // The place/date line is known from the start — fill it immediately so the layout below
+  // (compass + wide view) is already in its final position before any flare arrives.
+  if (liveMetaEl) liveMetaEl.innerHTML = whereWhenInner(liveCtx.req, liveCtx.origin, liveCtx.dest);
   // Only visible flares drive the live count/plot (the shared f.visible flag, as final).
   const flares = liveFlares.filter((f) => f.visible);
   if (!flares.length) { setLiveStatus("Scanning…"); return; }
@@ -654,11 +824,15 @@ function liveRender() {
   const arrows = moved ? [{ azDeg: startAz }, { azDeg: endAz }] : [{ azDeg: startAz }];
   const range = `${fmtTime(t1, tz, { second: undefined })}–${fmtTime(t2, tz, { second: undefined })} ${escapeHtml(zoneAbbrev(tz, t1))}`;
   setLiveStatus(`Scanning… <b>${flares.length}</b> flare${flares.length === 1 ? "" : "s"} · ${range}`);
+  // "Look …" direction line — same content as the final header, shown live for a stable layout.
+  if (liveDirEl) liveDirEl.innerHTML = moved ? `Look <b>${compass16(startAz)}</b> → <b>${compass16(endAz)}</b>` : `Look <b>${compass16(startAz)}</b>`;
   if (liveRoseEl) liveRoseEl.innerHTML = compassRose(arrows, hvFlares, { live: true });
-  // Replay can't animate mid-scan (flares still streaming in) — show its faint streaks
-  // statically; the final renderResults starts the real, time-driven playback.
-  const liveMode = horizonMode === "replay" ? "streaks" : horizonMode;
+  // Use replay mode live: it draws the dim (12%) streak backdrop AND the empty .replay-flares
+  // layer the burst animator fills with the 60× flurry of dots as flares stream in. (dots/
+  // streaks modes have no animated layer, so the burst simply doesn't draw there.)
+  const liveMode = horizonMode;
   if (liveHorizonEl) liveHorizonEl.innerHTML = horizonView({ stars, bodies, flares: hvFlares, sunMarks, mode: liveMode, ...zoomWin(win) });
+  if (liveMode === "replay") updateLiveBurst(flares, horizonProjection(zoomWin(win)));
 }
 
 // Compact "<place> · <date>, <time> <ZONE> · <UTC>" context line so every results,
@@ -666,7 +840,7 @@ function liveRender() {
 // search was for. Times use the location's zone when known (origin.tz), else browser
 // local, and always also show UTC. startMs is the searched start (already adjusted if
 // the date was out of range). Returns "" when there's no location/time yet.
-function whereWhenLine(req, origin, dest) {
+function whereWhenInner(req, origin, dest) {
   if (!req || !origin || !req.startMs) return "";
   const tz = origin.tz || "";
   const ms = req.startMs;
@@ -674,10 +848,15 @@ function whereWhenLine(req, origin, dest) {
                      : (origin.short || origin.name);
   const when = `${fmtDateShort(ms, tz)}, ${fmtTime(ms, tz, { second: undefined })} ${zoneAbbrev(tz, ms)}`;
   const utc = `${fmtTime(ms, "UTC", { second: undefined })} UTC`;
-  return `<div class="r-meta">${escapeHtml(place)} · ${escapeHtml(when)} · ${utc}</div>`;
+  return `${escapeHtml(place)} · ${escapeHtml(when)} · ${utc}`;
+}
+function whereWhenLine(req, origin, dest) {
+  const inner = whereWhenInner(req, origin, dest);
+  return inner ? `<div class="r-meta">${inner}</div>` : "";
 }
 
 function renderError(msg, req, origin, dest) {
+  stopLiveBurst();   // the live DOM (and its .replay-flares target) is about to be replaced
   els.results.innerHTML =
     `<div class="verdict no">Couldn't compute flares</div>${whereWhenLine(req, origin, dest)}
      <div class="no-flares"><p>${escapeHtml(msg)}</p>
@@ -962,6 +1141,7 @@ function openInSitrec(req, flares, origin, dest, peakMs) {
 // Full results screen: verdict, one-sentence summary, compass rose, horizon view.
 function renderResults(flares, stats, req, origin, dest) {
   if (!flares || flares.length === 0) { renderNoFlares(stats, req, origin, dest); return; }
+  stopLiveBurst();   // the live DOM (and its .replay-flares target) is about to be replaced
   const all = flares.slice().sort((a, b) => a.peakMs - b.peakMs);     // full set (local debug list)
   // Drive the prediction (count, compass, horizon, peak, times) from only the flares the
   // SHARED model marks visible (f.visible — the glint outshines the base satellite
@@ -1008,7 +1188,7 @@ function renderResults(flares, stats, req, origin, dest) {
   const sunMarks = sunHourMarkers(t1, t2, tz, obsLat, obsLon);
 
   els.results.innerHTML =
-    `<div class="r-when">Flares visible <b>${localT}</b> ${escapeHtml(zone)} · peak <b>${peakT}</b></div>
+    `<div class="r-when">Flares <b>${localT}</b> ${escapeHtml(zone)} · peak <b>${peakT}</b></div>
      <div class="r-dir">${dirLine}</div>
      <div class="r-meta">${escapeHtml(place)} · ${fmtDateShort(t1, tz)} · ${utcT} UTC</div>
      <div class="rose-wrap">${compassRose(arrows, hvFlares)}</div>
@@ -1123,6 +1303,7 @@ function flareCard(f, tz) {
 }
 
 function renderNoFlares(stats, req, origin, dest) {
+  stopLiveBurst();   // the live DOM (and its .replay-flares target) is about to be replaced
   const div = document.createElement("div");
   div.className = "no-flares";
   const scanned = stats ? `${stats.satsTotal} satellites` : "the satellites";
@@ -1175,10 +1356,20 @@ function renderNoFlares(stats, req, origin, dest) {
 // positions came from synthetic (approximate) or real Starlink elements.
 function notesHTML(req) {
   let html = "";
-  if (req && req.simulated)
-    html += `<div class="sim-note">Simulated results, out of date range — recomputed for today.</div>`;
-  if (req && req.tleMode === "synthetic")
-    html += `<div class="sim-note synth">⚠ Synthetic satellites — positions are approximate. Use <b>Advanced › Fetch current TLE</b> for real data.</div>`;
+  if (req && req.tleMode === "synthetic") {
+    if (req.outOfRange)
+      // Out of the current TLE's range → synthetic by design (anchored to the requested
+      // date). Loading real data wouldn't help, so this is an explanation, not a button.
+      html += `<div class="sim-note synth">⚠ Synthetic satellites — this date is beyond the current data's range, ` +
+              `so an approximate constellation for that date is used.</div>`;
+    else
+      // In range but the real data isn't loaded (offline / download failed). The whole
+      // note is a button: clicking it downloads the current TLE (with a loading
+      // indicator) and reloads, re-running this search with real data.
+      html += `<button type="button" class="sim-note synth synth-load" id="loadsats">` +
+              `⚠ Synthetic satellites — couldn't load current data.<br>` +
+              `<span class="synth-cta">CLICK HERE TO LOAD CURRENT SATELLITES</span></button>`;
+  }
   else if (req && req.tleMode === "cache")
     html += `<div class="sim-note real">Real Starlink data (current TLE).</div>`;
   else if (req && req.tleMode === "file")
@@ -1230,17 +1421,13 @@ async function onSubmit(e) {
     const interpTz = tzMode === "utc" ? "UTC" : (origin.tz || "");
     if (tzMode !== "utc") { formTz = origin.tz || ""; updateTzButton(); }
 
-    // TLEs are only accurate within ~a week of "now"; clamp far dates to today (same time
-    // of day) and flag the run as a simulation using current orbital data.
-    let startMs = wallClockToUTCms(dt.y, dt.mo, dt.d, dt.h, dt.mi, interpTz);
-    let simulated = false;
+    // The real current TLE is only accurate within ~a week of "now". Within that window
+    // we use it; beyond it we fall back to a synthetic constellation anchored to the
+    // requested date (so the seasonal flare geometry for THAT date stays meaningful — no
+    // need to clamp to today the way real-only data forced). inRange drives that choice.
+    const startMs = wallClockToUTCms(dt.y, dt.mo, dt.d, dt.h, dt.mi, interpTz);
     const WEEK = 7 * 86400 * 1000;
-    if (Math.abs(startMs - Date.now()) > WEEK) {
-      simulated = true;
-      const today = new Date();
-      startMs = wallClockToUTCms(today.getFullYear(), today.getMonth() + 1, today.getDate(),
-        dt.h, dt.mi, interpTz);
-    }
+    const inRange = Math.abs(startMs - Date.now()) <= WEEK;
 
     const options = {};
     const LOOK_AHEAD_DAYS = 1;   // the flare geometry recurs daily — no need to look further
@@ -1260,13 +1447,13 @@ async function onSubmit(e) {
               cruiseAltKm, durationSec, startMs, options };
       setLiveStatus(`Checking the ${escapeHtml(origin.short || origin.name)} → ${escapeHtml(dest.short || dest.name)} flight…`);
     }
-    req.simulated = simulated;
+    req.outOfRange = !inRange;   // requested date is beyond the current TLE's useful range
 
     // --- TLE ---
     setLiveStatus("Loading satellite data…");
     let tleText;
     try {
-      const tle = await getTLEText(els.tlefile, (m) => setLiveStatus(escapeHtml(m)), new Date(startMs));
+      const tle = await getTLEText(els.tlefile, (m) => setLiveStatus(escapeHtml(m)), new Date(startMs), inRange);
       tleText = tle.text;
       req.tleMode = tle.mode;
     } catch (err) {
@@ -1346,6 +1533,8 @@ if (isLocalHost) {
     get lastResults() { return lastResults; },
     get activeWorker() { return activeWorker; },
     get useRealTLE() { return useRealTLE; },
+    get freshRealTLE() { return haveFreshRealTLE(); },
+    get tleFetchInFlight() { return !!tleFetchInFlight; },
     get horizonMode() { return horizonMode; },
     get replayCtl() { return replayCtl; },
     // live module helpers, callable from the MCP / console for ad-hoc checks
@@ -1368,7 +1557,8 @@ function setNowDefaults() {
 const countSats = (text) => (text.match(/^1 \d/gm) || []).length;
 
 function wireTLEControls() {
-  // "Fetch current TLE" — the only thing that hits the network (opt-in real data).
+  // "Fetch current TLE" — manual (re)download; real data is also fetched automatically
+  // in the background at startup (startBackgroundTLEFetch), so this is mainly a retry.
   els.fetchtle.addEventListener("click", async () => {
     els.fetchtle.disabled = true;
     els.tlestatus.className = "help";
@@ -1573,6 +1763,7 @@ function wireInstall() {
 
 function init() {
   setNowDefaults();
+  startBackgroundTLEFetch();   // start downloading the current TLE immediately (best-effort)
   loadAirports();   // fire-and-forget; searchAirports degrades gracefully until ready
   // Origin picks set the time-zone button to that location's zone; destination doesn't
   // affect the observer's zone, so it has no onPick.
@@ -1587,6 +1778,12 @@ function init() {
   els.time.addEventListener("change", updateTzButton);
   updateTzButton();
   wireTLEControls();
+  // Delegated: the synthetic-data note is re-rendered as a button on each result; one
+  // listener on the stable container handles every instance without re-binding.
+  els.results.addEventListener("click", (e) => {
+    const btn = e.target.closest("#loadsats");
+    if (btn) onLoadCurrentSats(btn);
+  });
   els.form.addEventListener("submit", onSubmit);
   // History-backed navigation: the form is the base entry; sub-views push a state and
   // popstate renders the target. Edit/Back go through history.back() so the on-screen
@@ -1599,6 +1796,9 @@ function init() {
   if (els.infoBack) els.infoBack.addEventListener("click", () => history.back());
   wireInstall();
   registerServiceWorker();
+  // If we just reloaded after "CLICK HERE TO LOAD CURRENT SATELLITES", re-run that
+  // search now against the real TLE that was fetched before the reload.
+  restorePendingRealSearch();
 }
 
 if (document.readyState === "loading") {

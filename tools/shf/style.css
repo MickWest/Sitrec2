@@ -308,7 +308,7 @@ input[type="file"]::file-selector-button {
 }
 
 /* ---- results ---- */
-.results { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
+.results { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; }
 .summary {
   font-size: 1.0rem;
   color: var(--text);
@@ -483,13 +483,15 @@ input[type="file"]::file-selector-button {
   font-size: 0.98rem;
   color: var(--text);
   margin: 0 0 1px;
+  min-height: 1.2em;    /* reserve the line while scanning so the compass doesn't shift down */
 }
 .r-dir b { color: var(--accent-2); }
 .r-meta {
   text-align: center;
   font-size: 0.78rem;
   color: var(--faint);
-  margin: 0 0 4px;
+  margin: 0 0 2px;
+  min-height: 1.05em;   /* reserve the line before the location resolves (same reason) */
 }
 
 .sim-note {
@@ -508,6 +510,41 @@ input[type="file"]::file-selector-button {
   background: rgba(255, 158, 44, 0.16);
   border-color: rgba(255, 158, 44, 0.55);
   font-weight: 600;
+}
+/* The synthetic note is a full-width button: click to load real satellites + reload. */
+button.sim-note.synth-load {
+  display: block;
+  width: 100%;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.4;
+  transition: background 0.12s, border-color 0.12s, transform 0.05s;
+}
+button.sim-note.synth-load:hover {
+  background: rgba(255, 158, 44, 0.26);
+  border-color: rgba(255, 158, 44, 0.85);
+}
+button.sim-note.synth-load:active { transform: translateY(1px); }
+button.sim-note.synth-load:disabled { cursor: default; opacity: 0.85; }
+button.sim-note.synth-load.load-err {
+  color: #ff9e9e;
+  background: rgba(220, 80, 80, 0.14);
+  border-color: rgba(220, 80, 80, 0.55);
+}
+.synth-cta {
+  display: inline-block;
+  margin-top: 3px;
+  letter-spacing: 0.04em;
+  text-decoration: underline;
+}
+/* Small spinner that sits inline in the button label while loading. */
+.spinner-inline {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 6px;
 }
 .sim-note.real {         /* real Starlink elements — quiet positive confirmation */
   color: #9fe6b0;
@@ -587,7 +624,7 @@ input[type="file"]::file-selector-button {
   text-align: center;
   color: var(--faint);
   font-size: 0.78rem;
-  margin: 8px 0 4px;
+  margin: 3px 0 2px;
 }
 .legend .lg-flare { color: #ffffff; }
 .legend .lg-star { color: #aab8da; }
