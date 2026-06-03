@@ -14,13 +14,15 @@
 // Lifecycle: setup() runs once per moddable sitch load (from CustomManager).
 // disposeEverything() calls disposeAll() on each reload.
 
-import {Globals, guiMenus, NodeMan, setRenderOne, Sit, TrackManager, Units} from "./Globals";
+import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit, TrackManager, Units} from "./Globals";
 import {t} from "./i18n";
 import {EventManager} from "./CEventManager";
 import {GraphDataManager} from "./CGraphDataManager";
 import {CNodeCustomGraphView} from "./nodes/CNodeCustomGraphView";
+import {CNodeDisplayLOS} from "./nodes/CNodeDisplayLOS";
 import {trackHeading} from "./trackUtils";
 import {getLocalUpVector} from "./SphericalMath";
+import {getCelestialDirection} from "./CelestialMath";
 import {getHorizonExtractor} from "./CHorizonExtractor";
 import {getObjectTracker} from "./CObjectTracking";
 import {getMotionAnalyzerForTesting} from "./CMotionAnalysisUI";
@@ -224,6 +226,9 @@ class CCustomGraphManager {
         this._osdArrays = {};
         this._osdNameSig = undefined;
         this._trackIdSig = undefined;
+        this._losSig = undefined;
+        this._sunDirArr = null;
+        this._sunKey = undefined;
         if (this._tracksChangedListener) {
             EventManager.removeEventListener("tracksChanged", this._tracksChangedListener);
             this._tracksChangedListener = null;
@@ -403,6 +408,82 @@ class CCustomGraphManager {
         this._lastSourceRefresh = now;
         this.reregisterTracks();
         this.reregisterOSD();
+        this.reregisterLOS();
+    }
+
+    // Sun-vs-LOS angles. For each CNodeDisplayLOS (its .in.LOS gives the look
+    // camera's per-frame line of sight as {position, heading}), register:
+    //   - the total angle between the LOS forward and the direction to the Sun
+    //   - the signed "up" angle (sun elevation offset, in the LOS vertical plane)
+    //   - the signed "left" angle (sun azimuth offset, in the LOS horizontal plane)
+    // LOS-display node ids vary per sitch (JetLOSDisplayNode, DisplayJetLOS2, ...)
+    // and there may be more than one, so we enumerate them.
+    reregisterLOS() {
+        const nodes = [];
+        NodeMan.iterate((id, node) => {
+            if (node instanceof CNodeDisplayLOS && node.in && node.in.LOS) nodes.push(node);
+        });
+        const sig = nodes.map(n => n.id).join("|");
+        if (sig === this._losSig) return;
+        this._losSig = sig;
+
+        GraphDataManager.unregisterGroup("sunLOS.");
+        const multi = nodes.length > 1;
+        for (const node of nodes) {
+            const tag = multi ? " [" + node.id + "]" : "";
+            const los = node.in.LOS;
+            GraphDataManager.register("sunLOS." + node.id + ".angle", {
+                label: "Sun-LOS angle" + tag, group: "Sun", units: "deg",
+                getValue: f => this._sunLOSAngle(los, f, "total"),
+            });
+            GraphDataManager.register("sunLOS." + node.id + ".up", {
+                label: "Sun-LOS up" + tag, group: "Sun", units: "deg",
+                getValue: f => this._sunLOSAngle(los, f, "up"),
+            });
+            GraphDataManager.register("sunLOS." + node.id + ".left", {
+                label: "Sun-LOS left" + tag, group: "Sun", units: "deg",
+                getValue: f => this._sunLOSAngle(los, f, "left"),
+            });
+        }
+    }
+
+    // Direction to the Sun in world coordinates for frame f. Cached per frame:
+    // the Astronomy computation is the only expensive part and depends (for the
+    // Sun) essentially only on the date, so a date+frames key invalidates it.
+    _sunDir(f, observerPos) {
+        const key = (() => { try { return GlobalDateTimeNode.frameToDate(0).getTime() + ":" + Sit.frames; } catch (e) { return "none"; } })();
+        if (this._sunKey !== key) { this._sunKey = key; this._sunDirArr = []; }
+        let s = this._sunDirArr[f];
+        if (s === undefined) {
+            try {
+                const date = GlobalDateTimeNode.frameToDate(f);
+                s = date ? getCelestialDirection("Sun", date, observerPos) : null;
+            } catch (e) { s = null; }
+            this._sunDirArr[f] = s;
+        }
+        return s;
+    }
+
+    _sunLOSAngle(los, f, which) {
+        if (!los || typeof los.v !== "function") return NaN;
+        const v = los.v(f);
+        if (!v || !v.heading || !v.position) return NaN;
+        const F = v.heading;                 // unit forward (LOS direction)
+        const A = v.position;                // LOS start (camera position)
+        const S = this._sunDir(f, A);        // unit direction to the Sun
+        if (!S) return NaN;
+        if (which === "total") {
+            const d = Math.max(-1, Math.min(1, F.dot(S)));
+            return Math.acos(d) * 180 / Math.PI;
+        }
+        // Build a roll-independent LOS frame from world-up at the camera.
+        const up = getLocalUpVector(A);
+        const left = up.clone().cross(F).normalize();          // up x forward = left
+        if (which === "left") {
+            return Math.atan2(S.dot(left), S.dot(F)) * 180 / Math.PI;
+        }
+        const camUp = F.clone().cross(left).normalize();        // forward x left = up-in-plane
+        return Math.atan2(S.dot(camUp), S.dot(F)) * 180 / Math.PI;
     }
 
     reregisterTracks() {
