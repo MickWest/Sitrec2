@@ -233,9 +233,18 @@ export async function buildAppFlightTrack(p) {
 // so nothing that references these node ids breaks and a real dropped track would
 // restore them. Gated on Sit.appFlight; shared by live launch + saved-sitch reload.
 export function applyFlightLightweightGating() {
-    if (!Sit.appFlight) return;
-    for (const id of ["traverseDisplayTrack", "altitudeLabel2", "distanceLabel",
-                      "traverseObject", "moveTargetAlongPath", "orientTarget"]) {
+    // Runs for BOTH fromApp modes: appFlight (synthetic flight) and the fixed-observer
+    // scene (Sit.appFromApp). Neither uses the Custom graph's target / traverse /
+    // measurement machinery, so hiding those leaves lets the checkDisplayOutputs gate skip
+    // their expensive per-frame bakes on every recalc (e.g. elevation-tile loads while
+    // dragging the camera).
+    if (!Sit.appFlight && !Sit.appFromApp) return;
+    const hide = ["traverseDisplayTrack", "altitudeLabel2", "distanceLabel",
+                  "traverseObject", "moveTargetAlongPath", "orientTarget"];
+    // A fixed observer's camera "track" is a single point — its display track is pure
+    // clutter and rebuilding it per frame is wasted work. (Flight keeps its path visible.)
+    if (!Sit.appFlight) hide.push("cameraDisplayTrack");
+    for (const id of hide) {
         NodeMan.get(id, false)?.show?.(false);
     }
 }
@@ -244,6 +253,10 @@ export function applyFlightLightweightGating() {
 // Uses the Custom machinery already built by the starlink sitch: a `cameraTrackSwitch`
 // feeding (smooth -> trackPosition) into the look camera, with `ptzAngles` aiming it.
 export async function finishFromApp(p) {
+    // Mark this as a fromApp scene (both fixed + flight) so the lightweight gating below
+    // (and on reload) hides the unused LOS-analysis machinery — target/traverse/measurement
+    // tracks that would otherwise bake per-frame arrays on every recalc.
+    Sit.appFromApp = true;
     const tl = p._timeline || framesAndStart(p);
     let observerECEF = null;   // look-camera position at the peak frame, for framing the main view
 

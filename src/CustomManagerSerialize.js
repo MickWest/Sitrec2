@@ -557,6 +557,7 @@ export const serializeMethods = {
         // MISB file is flagged skipSerialization, so it's never rehosted — on reload
         // buildAppFlightTrack regenerates an identical track from these ~8 numbers.
         if (Sit.appFlight) out.appFlight = Sit.appFlight;
+        if (Sit.appFromApp) out.appFromApp = true;   // fromApp scene marker (drives lightweight gating on reload)
 
         // Serialize feature markers from FeatureManager
         out.featureMarkers = FeatureManager.serialize()
@@ -1040,6 +1041,9 @@ export const serializeMethods = {
             if (sitchData.appFlight && !FileManager.list["App Flight.kml"]) {
                 await buildAppFlightTrack(sitchData.appFlight)
             }
+            // Restore the fromApp marker (fixed mode has no flight track to rebuild it),
+            // so applyFlightLightweightGating() below gates the LOS-analysis machinery.
+            if (sitchData.appFromApp) Sit.appFromApp = true;
 
             // Deserialize feature markers BEFORE applying mods
             // This creates the necessary feature marker nodes

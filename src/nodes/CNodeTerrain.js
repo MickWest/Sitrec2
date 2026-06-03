@@ -789,7 +789,24 @@ export class CNodeTerrain extends CNode {
         // NOTE: ASSUMING THE QUADTREES MATCH
         this.applyElevationTo(tile.z, tile.x, tile.y);
 
-        EventManager.dispatchEvent("elevationChanged", this)
+        // Coalesce the elevationChanged notification. When several tiles arrive in the
+        // same frame (e.g. a whole region served from cache while dragging the camera),
+        // dispatching synchronously per tile fired one full recalculate cascade EACH —
+        // and each cascade re-bakes the per-frame track machinery. Collapsing them to a
+        // single dispatch on the next frame turns N cascades/frame into 1.
+        this.scheduleElevationChanged()
+    }
+
+    // Fire a single "elevationChanged" on the next animation frame, no matter how many
+    // tiles loaded this frame. Guarded against the terrain node being disposed in between.
+    scheduleElevationChanged() {
+        if (this._elevationChangedPending) return;
+        this._elevationChangedPending = true;
+        requestAnimationFrame(() => {
+            this._elevationChangedPending = false;
+            if (!this.maps || !this.UI) return;   // disposed during a sitch transition
+            EventManager.dispatchEvent("elevationChanged", this)
+        })
     }
 
     recalculate() {

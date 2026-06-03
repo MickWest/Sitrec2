@@ -571,7 +571,18 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         // we need to adjust the step based on the simulation speed
         // as a single frame an represent a long time in the simulation
         // when the simulation speed is high (e.g. 10x, 100x)
-        const step = this.trackDisplayStep / Sit.simSpeed
+        let step = this.trackDisplayStep / Sit.simSpeed
+
+        // Cap the number of sampled points for very long (hours-long) sitches. Each sample
+        // pays for a track interpolation + ECEF->LLA + haversine, so on a 400k-frame sitch
+        // the default step still meant tens of thousands of iterations on every recalc
+        // (e.g. an elevation-tile load while dragging the camera). Beyond a few thousand
+        // line points the on-screen detail is imperceptible, so widen the step to keep the
+        // count bounded. Normal-length tracks stay well under the cap and are unaffected.
+        const MAX_DISPLAY_POINTS = 4000
+        if (this.frames / step > MAX_DISPLAY_POINTS) {
+            step = this.frames / MAX_DISPLAY_POINTS
+        }
 
         for (var f = 0; f < this.frames; f+= step) {
             let trackPoint = this.in.track.v(f)
