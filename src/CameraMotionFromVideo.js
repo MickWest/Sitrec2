@@ -45,7 +45,8 @@ const DEFAULTS = {
     dilate: 9,          // erode the keep-mask to drop high-contrast redaction-block edges
     reticleHalf: 34,    // half-size of the central box masked out for the reticle
     maxTrackError: 20,
-    smoothing: 3,       // light moving-average on per-frame motion (estimates are now cleaner)
+    smoothing: 4,       // moving-average width on per-frame motion. EVEN by default so it
+                        // cancels a common 2-frame source cadence (interlacing/pulldown) outright.
     metersPerPixel: 12, // manual ground-sample-distance (used when autoScale is off)
     autoScale: true,    // derive metersPerPixel from FOV + camera altitude + depression
     backgroundAlt: 0,   // altitude (m HAE) of the imaged background plane (e.g. cloud-top); the
@@ -345,13 +346,20 @@ function trackAndFit(cv, prevG, curG, mask, P) {
 
 function smoothMotion(motion, win) {
     if (win <= 1) return motion;
-    const h = (win - 1) / 2;
+    // Centred moving average over `win` consecutive frames, using INTEGER offsets
+    // (lo + 1 + hi === win) so EVEN windows work as well as odd. This matters
+    // because a source with a 2-frame cadence (interlacing / pulldown / frame-rate
+    // mismatch) puts a near-perfect sawtooth on the per-frame estimate: an even
+    // window spanning a whole number of cadence periods cancels it outright, while
+    // an odd window only attenuates it to ~1/win.
+    const lo = Math.floor((win - 1) / 2);
+    const hi = Math.floor(win / 2);
     const keys = ["dx", "dy", "theta"];
     const out = motion.map(m => ({ ...m }));
     for (let i = 0; i < motion.length; i++) {
         for (const key of keys) {
             let s = 0, c = 0;
-            for (let j = -h; j <= h; j++) {
+            for (let j = -lo; j <= hi; j++) {
                 const k = i + j;
                 if (k >= 0 && k < motion.length && motion[k]) { s += motion[k][key]; c++; }
             }
@@ -500,6 +508,9 @@ async function _runCameraMotionAnalysis(opts = {}) {
         buildPathNodes(motionData, P);
         S.state = "done";
         Globals.cameraMotionData = motionData;
+        // Keep the pre-smoothing motion so the Smoothing-window slider can re-apply a
+        // different width live, without re-reading the video (in-session only).
+        Globals.cameraMotionRaw = motion;
         saveMotionCache(motionData);
         console.log(`[CameraMotion] done: ${goodCount} tracked frames, mean ${S.meanInliers} inliers @ ${S.meanResidualPx}px RMS, ${dupCount} duplicates + ${lowQCount} low-quality interpolated; scale ${S.metersPerPixel} m/px [${S.scaleSource}]`);
         return motionData;
@@ -732,7 +743,21 @@ export function setupCameraMotionMenu() {
     folder.add(params, "autoScale").name("Auto scale (FOV/alt)").listen().onChange(rebuildIfData);
     folder.add(params, "backgroundAlt", 0, 12000, 50).name("Background alt (m)").listen().onChange(rebuildIfData);
     folder.add(params, "metersPerPixel", 1, 100, 0.5).name("Manual m / pixel").listen().onChange(() => { if (!params.autoScale) rebuildIfData(); });
-    folder.add(params, "smoothing", 1, 21, 2).name("Smoothing window");
+    // Step 1 so EVEN windows are selectable (they fully cancel a 2-frame source
+    // cadence; odd windows only attenuate it). Re-smooths the ORIGINAL (raw)
+    // per-frame motion at the new width and flags the camera-motion track to
+    // recalculate — no need to re-read the video. (Raw is kept in-session only;
+    // after a reload, re-run the analysis to change the width.)
+    folder.add(params, "smoothing", 1, 21, 1).name("Smoothing window").onChange(() => {
+        if (!Globals.cameraMotionRaw) return;
+        Globals.cameraMotionData = smoothMotion(Globals.cameraMotionRaw, params.smoothing);
+        saveMotionCache(Globals.cameraMotionData);
+        const track = NodeMan.get("cameraMotionTrack", false);
+        if (track) {
+            track.setMotion(Globals.cameraMotionData);   // re-smoothed data -> rebuild array (imageRot)
+            track.recalculateCascade();                  // flag downstream consumers + render
+        }
+    });
     folder.add(params, "signE", { "East +": 1, "East -": -1 }).name("dx -> East sign");
     folder.add(params, "signN", { "North +": 1, "North -": -1 }).name("dy -> North sign");
     folder.add(params, "swapEN").name("Swap dx/dy");
