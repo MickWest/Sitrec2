@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.73.1 (2026-06-03)
+
+### Bug Fixes
+- Fixed the on-video information labels (filename, frame, timecode, timestamps, etc.) drifting off the video and growing in size when you zoom or pan a video. The labels now stay pinned to the same point on the video content and keep a constant on-screen size at any zoom level.
+
 ## Version 2.73.0 (2026-06-03)
 
 ### New Features

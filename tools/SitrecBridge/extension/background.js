@@ -696,6 +696,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         setTimeout(() => chrome.runtime.reload(), 100);
         return false;
     }
+
+    if (msg.type === "closeOtherTabs") {
+        // Close every known Sitrec tab except the one the user is keeping
+        // (the active tab when the popup was opened). We deliberately only
+        // touch tabs in knownSitrecTabs so unrelated tabs (email, docs, etc.)
+        // are never closed. chrome.tabs.remove works regardless of how a tab
+        // was opened, so there's no need to ask pages to window.close()
+        // themselves.
+        const keepId = msg.keepTabId;
+        (async () => {
+            await refreshKnownTabs();
+            const toClose = [...knownSitrecTabs.keys()].filter((id) => id !== keepId);
+            let closed = 0;
+            for (const id of toClose) {
+                try {
+                    await chrome.tabs.remove(id);
+                    closed++;
+                } catch (e) {
+                    console.warn(`[SitrecBridge] Failed to close tab #${id}: ${e.message}`);
+                }
+            }
+            // onRemoved already prunes knownSitrecTabs and pushes a stateUpdate,
+            // but refresh once more in case any remove() raced the listener.
+            await refreshKnownTabs();
+            updatePopupState();
+            sendResponse({ ok: true, closed, kept: keepId ?? null });
+        })();
+        return true;
+    }
 });
 
 // -- Initialize -------------------------------------------------------------

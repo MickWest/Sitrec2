@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.73.1 (2026-06-03)
+
+### Bug Fixes
+- **Fixed Video Info Display labels drifting and growing when the video is zoomed or panned.** The optional on-video readouts (filename, frame number, timecode, timestamp, dates, etc., drawn by `CNodeVideoInfoUI`) had two problems under zoom/pan: (a) each label's font was scaled by the live, zoom-inflated destination height (`rect.h`), so text grew as you zoomed in; and (b) labels were pinned to the screen rather than to the video content, so they slid off the point they annotated when the video was panned. The fix treats each stored label position (`timecodeX/Y` etc.) as a fraction (0–100) of the *video frame* rather than the canvas, and routes reads/writes through the video view's existing source→dest transform via two new helpers, `pctToCanvas` / `canvasToPct` (which call `CNodeVideoView.videoToCanvasCoords` / `canvasToVideoCoords`, covering both the source-crop zoom and the pos-based mouse zoom). `drawInfoToContext` now takes a `videoView` argument and, when one is present (`live`), maps positions through a `mapPos` closure and sizes the font/padding off `baseHeight` — the unzoomed fit-to-view height computed from the source-vs-view aspect ratio — instead of `rect.h`, so labels keep a constant on-screen size at any zoom. The drag handlers (`dragOffsetX/Y` setup and the drag-move position write) were updated to use the same `pctToCanvas` / `canvasToPct` conversion. The stabilized-video exporter passes no `videoView`, so it keeps the prior native-resolution percent-of-frame layout (`widthPx`/`heightPx`) and is unchanged.
+
+### Internal
+- The fast-regression harness (`tests_regression/fast-regression/run.mjs`) now enumerates "Regression"-labelled sitches across multiple test-user accounts via a new `--user=1,99999999` option (default users 1 and 99999999), taking the union of labelled sitch names and resolving the owning user per sitch. Test-harness only; no user-facing effect.
+
 ## Version 2.73.0 (2026-06-03)
 
 ### New Features

@@ -180,3 +180,24 @@ document.getElementById("reconnect-btn").addEventListener("click", () => {
     wsDot.className = "dot yellow";
     chrome.runtime.sendMessage({ type: "reconnect" });
 });
+
+document.getElementById("close-tabs-btn").addEventListener("click", async () => {
+    // The active tab of the window the toolbar icon was clicked in is the one
+    // we keep. Determine it here (the popup has window context) and let the
+    // background worker do the actual closing — it owns the tabs permission and
+    // the knownSitrecTabs registry.
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    tabStatus.textContent = "Closing...";
+    chrome.runtime.sendMessage(
+        { type: "closeOtherTabs", keepTabId: activeTab?.id },
+        (resp) => {
+            if (resp && typeof resp.closed === "number") {
+                tabStatus.textContent = resp.closed === 0
+                    ? "No others to close"
+                    : `Closed ${resp.closed}`;
+            }
+            // The onRemoved listener triggers a stateUpdate that re-renders the
+            // tab list, so no manual refresh is needed here.
+        }
+    );
+});

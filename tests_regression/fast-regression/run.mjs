@@ -25,13 +25,18 @@
  *
  * The set of sitches is enumerated dynamically from the server's label
  * metadata, so coverage grows automatically as sitches are tagged
- * "Regression" in the sitch browser — no hardcoded list to maintain.
+ * "Regression" in the sitch browser — no hardcoded list to maintain. Labelled
+ * sitches are gathered across all --user accounts (default 99999999 then 1).
+ * When a sitch has saved versions under more than one account, the FIRST listed
+ * user wins — so 99999999 (the curated regression user) is preferred and user 1
+ * (the admin account) is only a fallback for sitches it solely owns.
  *
  * Usage:
  *   node tests_regression/fast-regression/run.mjs                # compare vs baselines
  *   node tests_regression/fast-regression/run.mjs --update       # (re)write baselines
  *   node tests_regression/fast-regression/run.mjs --list         # just list the Regression sitches
  *   node tests_regression/fast-regression/run.mjs --filter=wind  # only sitches whose name matches
+ *   node tests_regression/fast-regression/run.mjs --user=99999999,1  # test users to enumerate under (first wins)
  *   node tests_regression/fast-regression/run.mjs --concurrency=3
  *   node tests_regression/fast-regression/run.mjs --headless     # new-headless Chrome (no window)
  *
@@ -63,7 +68,13 @@ const opt = (name, def) => {
 
 const CONFIG = {
     base: (opt('base', process.env.SITREC_REGRESS_BASE || 'https://local.metabunk.org/regress/')).replace(/\/?$/, '/'),
-    testUserID: Number(opt('user', '99999999')),
+    // Test users to enumerate Regression-labelled sitches under. 99999999 is the
+    // shared regression test user (its saved versions are the curated fixtures the
+    // baselines are captured against); user 1 is the real admin account, used only
+    // as a fallback for sitches that exist solely under it. Order matters: when a
+    // sitch has versions under several users, the first listed wins, so 99999999
+    // is preferred. Comma-separated, e.g. --user=99999999,1.
+    testUserIDs: opt('user', '99999999,1').split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n)),
     label: opt('label', 'Regression'),
     frame: Number(opt('frame', '10')),
     viewport: {width: Number(opt('width', '1920')), height: Number(opt('height', '1080'))},
@@ -107,7 +118,8 @@ async function fetchJson(url) {
 
 async function enumerateSitches() {
     const server = CONFIG.base + 'sitrecServer/';
-    const tu = (u) => u + (u.includes('?') ? '&' : '?') + 'testUserID=' + CONFIG.testUserID;
+    // Append a testUserID to a URL (the param the sitch browser / endpoints use).
+    const tu = (u, uid) => u + (u.includes('?') ? '&' : '?') + 'testUserID=' + uid;
 
     let names;
     if (CONFIG.sitches) {
@@ -115,33 +127,51 @@ async function enumerateSitches() {
         // the label yet). Comma-separated; whitespace trimmed.
         names = CONFIG.sitches.split(',').map(s => s.trim()).filter(Boolean);
     } else {
-        const meta = await fetchJson(tu(server + 'metadata.php'));
-        const sitchLabels = Array.isArray(meta.sitchLabels) ? {} : (meta.sitchLabels || {});
-        names = Object.entries(sitchLabels)
-            .filter(([, labs]) => Array.isArray(labs) && labs.includes(CONFIG.label))
-            .map(([n]) => n)
-            .sort((a, b) => a.localeCompare(b));
+        // The label map (metadata.php sitchLabels) is global — the same regardless
+        // of testUserID — so it tells us a sitch IS labelled, but not which user
+        // owns its saved versions. Take the UNION of labelled names across users
+        // (a query per user, in case any user ever sees a different map), then
+        // resolve the owning user per-sitch in the version fetch below.
+        const nameSet = new Set();
+        for (const uid of CONFIG.testUserIDs) {
+            let meta;
+            try {
+                meta = await fetchJson(tu(server + 'metadata.php', uid));
+            } catch (e) {
+                console.warn(`  ! metadata fetch failed for user ${uid}: ${e.message}`);
+                continue;
+            }
+            const sitchLabels = Array.isArray(meta.sitchLabels) ? {} : (meta.sitchLabels || {});
+            for (const [n, labs] of Object.entries(sitchLabels))
+                if (Array.isArray(labs) && labs.includes(CONFIG.label)) nameSet.add(n);
+        }
+        names = [...nameSet].sort((a, b) => a.localeCompare(b));
     }
 
     if (CONFIG.filter) names = names.filter(n => n.toLowerCase().includes(CONFIG.filter.toLowerCase()));
 
     const sitches = [];
     for (const name of names) {
-        const vurl = server + 'getsitches.php?get=versions&name=' + encodeURIComponent(name) +
-            '&userid=' + CONFIG.testUserID;
-        let versions;
-        try {
-            versions = await fetchJson(tu(vurl));
-        } catch (e) {
-            console.warn(`  ! could not list versions for "${name}": ${e.message}`);
-            continue;
+        // A labelled sitch's versions live under exactly one user; we don't know
+        // which from the (global) label map, so try every test user and use the
+        // first that actually has saved versions.
+        let versions, usedUid;
+        for (const uid of CONFIG.testUserIDs) {
+            const vurl = server + 'getsitches.php?get=versions&name=' + encodeURIComponent(name) +
+                '&userid=' + uid;
+            try {
+                const v = await fetchJson(tu(vurl, uid));
+                if (Array.isArray(v) && v.length > 0) { versions = v; usedUid = uid; break; }
+            } catch (e) {
+                // try the next user
+            }
         }
-        if (!Array.isArray(versions) || versions.length === 0) {
-            console.warn(`  ! no versions found for "${name}"`);
+        if (!versions) {
+            console.warn(`  ! no versions found for "${name}" (users tried: ${CONFIG.testUserIDs.join(', ')})`);
             continue;
         }
         const latest = versions[versions.length - 1];
-        sitches.push({name, slug: slug(name), version: latest.version, url: latest.url, ref: latest.ref});
+        sitches.push({name, slug: slug(name), version: latest.version, url: latest.url, ref: latest.ref, userid: usedUid});
     }
     return sitches;
 }

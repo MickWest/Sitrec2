@@ -351,11 +351,13 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         const pos = this.getElementPos(element);
         if (pos) {
             if (pos.track) {
-                this.dragOffsetX = x - this.videoPx(pos.track.x);
-                this.dragOffsetY = y - this.videoPy(pos.track.y);
+                const [px, py] = this.pctToCanvas(pos.track.x, pos.track.y);
+                this.dragOffsetX = x - px;
+                this.dragOffsetY = y - py;
             } else {
-                this.dragOffsetX = x - this.videoPx(this[pos[0]]);
-                this.dragOffsetY = y - this.videoPy(this[pos[1]]);
+                const [px, py] = this.pctToCanvas(this[pos[0]], this[pos[1]]);
+                this.dragOffsetX = x - px;
+                this.dragOffsetY = y - py;
             }
         }
         this.canvas.style.pointerEvents = 'auto';
@@ -449,8 +451,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         const y = e.clientY - canvasRect.top;
 
         if (this.dragging) {
-            const newPctX = ((x - this.dragOffsetX) / canvasRect.width) * 100;
-            const newPctY = ((y - this.dragOffsetY) / canvasRect.height) * 100;
+            const [newPctX, newPctY] = this.canvasToPct(x - this.dragOffsetX, y - this.dragOffsetY);
 
             const pos = this.getElementPos(this.dragging);
             if (pos) {
@@ -551,12 +552,30 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         return { x: vx, y: vy, w: vw, h: vh };
     }
 
-    videoPx(pct) {
-        return (pct / 100) * this.widthPx;
+    // The stored item positions (timecodeX/Y etc.) are fractions (0-100) of the
+    // *video frame*, NOT the canvas. That keeps each label pinned to the same
+    // point on the video content, so it tracks the video as the user zooms/pans
+    // (see CNodeVideoView.videoToCanvasCoords / canvasToVideoCoords, which handle
+    // both the source-crop zoom and the pos-based zoom). When no zoomable video
+    // view is attached we fall back to treating the fraction as a canvas fraction.
+
+    // video-frame fraction (0-100) -> canvas pixel [x, y]
+    pctToCanvas(pctX, pctY) {
+        const v = this.in.relativeTo;
+        if (v && v.videoWidth > 0 && v.videoHeight > 0 && typeof v.videoToCanvasCoords === "function") {
+            return v.videoToCanvasCoords((pctX / 100) * v.videoWidth, (pctY / 100) * v.videoHeight);
+        }
+        return [(pctX / 100) * this.widthPx, (pctY / 100) * this.heightPx];
     }
 
-    videoPy(pct) {
-        return (pct / 100) * this.heightPx;
+    // canvas pixel -> video-frame fraction (0-100) [pctX, pctY]
+    canvasToPct(x, y) {
+        const v = this.in.relativeTo;
+        if (v && v.videoWidth > 0 && v.videoHeight > 0 && typeof v.canvasToVideoCoords === "function") {
+            const [vx, vy] = v.canvasToVideoCoords(x, y);
+            return [(vx / v.videoWidth) * 100, (vy / v.videoHeight) * 100];
+        }
+        return [(x / this.widthPx) * 100, (y / this.heightPx) * 100];
     }
 
     snapPositionsToView() {
@@ -593,28 +612,50 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
 
         super.renderCanvas(frame);
 
-        this.drawInfoToContext(this.ctx, this.widthPx, this.heightPx, rect, frame);
+        this.drawInfoToContext(this.ctx, this.widthPx, this.heightPx, rect, frame, this.in.relativeTo);
     }
 
     // Draws every enabled Video Info Display item plus the OSD Data Series
     // readouts into an arbitrary 2D context. Used both by the live overlay
     // (this.renderCanvas) and by the stabilized-video exporter, so the
     // exported video shows the same overlays the user configured in the UI.
-    drawInfoToContext(c, widthPx, heightPx, rect, frame) {
+    drawInfoToContext(c, widthPx, heightPx, rect, frame, videoView = null) {
         const fps = Sit.fps || 30;
         const totalSeconds = (Sit.frames || 1) / fps;
         const showHours = totalSeconds >= 3600;
         const referenceHeight = 1080;
-        const scaledFontSize = Math.round(this.fontSize * rect.h / referenceHeight);
+
+        // When drawn over a live, zoomable video view we want each label to:
+        //   - stay pinned to the same point on the video content (track zoom/pan), and
+        //   - keep a constant on-screen size (NOT grow when zoomed in).
+        // We get position tracking from the video view's source->dest transform,
+        // and constant size by basing the font on the *unzoomed* fit-to-view
+        // height rather than the live (zoom-inflated) destination height rect.h.
+        // The export path passes no videoView, so it keeps using rect.h and a
+        // plain percent-of-frame layout at native resolution (unchanged).
+        const live = videoView && videoView.videoWidth > 0 && videoView.videoHeight > 0 &&
+            typeof videoView.videoToCanvasCoords === "function";
+
+        let baseHeight = rect.h;
+        if (live) {
+            const aspectSource = videoView.videoWidth / videoView.videoHeight;
+            const aspectView = widthPx / heightPx;
+            baseHeight = (aspectSource > aspectView) ? (widthPx / aspectSource) : heightPx;
+        }
+
+        const scaledFontSize = Math.round(this.fontSize * baseHeight / referenceHeight);
         c.font = `${scaledFontSize}px monospace`;
         c.textAlign = 'center';
         c.textBaseline = 'alphabetic';
 
-        const padding = Math.round(6 * rect.h / referenceHeight);
+        const padding = Math.round(6 * baseHeight / referenceHeight);
+
+        const mapPos = (pctX, pctY) => live
+            ? videoView.videoToCanvasCoords((pctX / 100) * videoView.videoWidth, (pctY / 100) * videoView.videoHeight)
+            : [(pctX / 100) * widthPx, (pctY / 100) * heightPx];
 
         const drawTextWithBg = (text, pctX, pctY) => {
-            const x = (pctX / 100) * widthPx;
-            const y = (pctY / 100) * heightPx;
+            const [x, y] = mapPos(pctX, pctY);
             const metrics = c.measureText(text);
             const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
             const vPad = textHeight * 0.05;
