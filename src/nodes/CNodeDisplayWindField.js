@@ -2211,8 +2211,20 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // ── per-frame update ─────────────────────────────────────────────
     update(frame) {
         super.update(frame);
-        this.frameCount++;
-        this.material.uniforms.uTime.value = this.frameCount;
+        // Streamline dash animation. Normally uTime free-runs off a per-render
+        // counter so the dashes keep flowing even when the timeline is paused.
+        // But in fixed-frame / regression screenshot mode the render loop is
+        // on-demand and the playhead is pinned, so a free-running counter makes
+        // the dash phase differ between otherwise-identical renders — i.e.
+        // non-deterministic screenshots. Pin uTime to the locked frame in that
+        // mode so a given frame is exactly reproducible; live playback (where
+        // fixedFrame is undefined) is unaffected.
+        if (Globals.fixedFrame !== undefined) {
+            this.material.uniforms.uTime.value = Globals.fixedFrame;
+        } else {
+            this.frameCount++;
+            this.material.uniforms.uTime.value = this.frameCount;
+        }
 
         // Check if the sitch date has moved to a different GFS cycle
         if (this._lastDateCycle && !this.fetching) {
