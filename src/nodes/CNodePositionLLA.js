@@ -408,6 +408,14 @@ export class CNodePositionLLA extends CNodeTrack {
     }
 
 
+    // True when this position is identical for every frame: a fixed LLA with no wind.
+    // (agl is fine — the per-frame value is still constant; only this.ecef changes between
+    // recalculates as terrain refines.) getValueFrame already serves the value on demand,
+    // so CNodeSmoothedPositionTrack reads this to skip baking a per-frame array of clones.
+    get isConstantOverFrames() {
+        return this._LLA !== undefined && !this.in.wind;
+    }
+
     recalculate() {
         this.array = [];
         this.elevationCache = null; // flush cache for fresh terrain queries
@@ -427,6 +435,18 @@ export class CNodePositionLLA extends CNodeTrack {
             } else {
                 // aglHeight is MSL; convert to HAE for LLAToECEF (h = H + N)
                 this.ecef = LLAToECEF(this._LLA[0], this._LLA[1], aglHeight + meanSeaLevelOffset(this._LLA[0], this._LLA[1]));
+            }
+
+            // No wind => the position is identical for every frame, and getValueFrame()
+            // returns this.ecef.clone() on demand (the per-frame loop below only differs
+            // when wind drifts it). So skip baking an array of identical entries — on an
+            // hours-long fromApp sitch that was ~88k-414k wasted clones rebuilt on every
+            // elevation cascade while dragging the camera. Leave this.array undefined;
+            // getValueFrame serves the value, and refreshElevationCache already guards
+            // `this.array && this.array[f]`, so an undefined array is safe there.
+            if (!this.in.wind) {
+                this.array = undefined;
+                return;
             }
 
             for (let f = 0; f < this.frames; f++) {

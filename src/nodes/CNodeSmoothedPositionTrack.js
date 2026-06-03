@@ -135,11 +135,33 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
             // ObjectTilt orientation smoothers chained off cameraTrackSwitchSmooth)
             // also takes the passthrough path instead of baking 414k entries.
             this.lazyInterpolated = true;
+            this._constant = false;
             this.frames = this.in.source.frames;
             this.array = undefined;
             return;
         }
+
+        // Constant-source fast path. When the resolved source returns the SAME position
+        // for every frame (a fixed-camera CNodePositionLLA with no wind), the baked array
+        // would be N identical entries — provably equal to serving that one value for every
+        // frame, just without the O(frames) allocation that dominated camera-drag recalcs
+        // on hours-long fromApp sitches. Re-evaluated every cascade (so toggling the camera
+        // track on/off flips it). Gated to copyData===false (the camera/target/orient
+        // smoothers; a copyData smoother would lose per-frame misbRow/color/vFOV). We set
+        // lazyInterpolated=true so a smoother-of-this-smoother takes the existing passthrough
+        // above and also skips baking — reusing the regression-tested propagation.
+        if (!this.copyData && !this.in.dataTrack && resolved?.isConstantOverFrames === true) {
+            this._passthrough = false;
+            this._constant = true;
+            this.lazyInterpolated = true;
+            this._constantValue = this.in.source.p(0).clone();
+            this.frames = this.in.source.frames;
+            this.array = undefined;
+            return;
+        }
+
         this._passthrough = false;
+        this._constant = false;
         this.lazyInterpolated = false;   // clear when the source is no longer lazy
 
         assert(!this.in.source._needsRecalculate,
@@ -427,6 +449,10 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
             // rebuilding now that we've been asked for a frame past the end.
             this.recalculate();
         }
+        if (this._constant) {
+            // Same value every frame; matches the {position} shape the baked array returns.
+            return {position: this._constantValue};
+        }
         if (this._passthrough) {
             return this.in.source.getValueFrame(frame);
         }
@@ -457,6 +483,9 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
             this._needsRecalculate = false;
             this.recalculate();
         }
+        if (this._constant) {
+            return {position: this._constantValue};
+        }
         if (this._passthrough) {
             return this.in.source.getValue(frame);
         }
@@ -464,12 +493,31 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
     }
 
     exportArray(inspect = false) {
+        // The _passthrough/_constant flags are only set in recalculate(); an export button
+        // can fire before a cascade has run, so make them current first (mirrors the guard
+        // in getValue/getValueFrame).
+        if (this._needsRecalculate) {
+            this._needsRecalculate = false;
+            this.recalculate();
+        }
         if (this._passthrough) {
             // No per-frame array to export; defer to the source if it can.
             if (typeof this.in.source.exportArray === 'function') {
                 return this.in.source.exportArray(inspect);
             }
             return inspect ? null : undefined;
+        }
+        if (this._constant) {
+            // Materialize transiently just for this (rare, user-initiated) export, so the
+            // base CSV writer has a per-frame array; then drop it again. try/finally so a
+            // throw in the base writer can't leave the big array materialized.
+            this.array = new Array(this.frames);
+            for (let f = 0; f < this.frames; f++) this.array[f] = {position: this._constantValue};
+            try {
+                return super.exportArray(inspect);
+            } finally {
+                this.array = undefined;
+            }
         }
         return super.exportArray(inspect);
     }
