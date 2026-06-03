@@ -4,6 +4,9 @@
   "scripts": {
     "test": "npx jest tests/",
     "test-regression": "node scripts/run-regression-tests.js",
+    "test-fast": "node tests_regression/fast-regression/run.mjs",
+    "test-fast-update": "node tests_regression/fast-regression/run.mjs --update",
+    "test-fast-list": "node tests_regression/fast-regression/run.mjs --list",
     "pretest-ui": "find tests_regression -name '*.png' -exec xattr -d com.apple.quarantine {} \\; 2>/dev/null || true",
     "test-ui": "npx playwright test",
     "test-ui-headed": "npx playwright test --headed",
