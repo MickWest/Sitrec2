@@ -173,6 +173,19 @@ const originalAddFolder = GUI.prototype.addFolder;
 GUI.prototype.addFolder = function (...args) {
     const result = originalAddFolder.apply(this, args);
     this._notifyMenuBarChanged();
+    // Make sub-menus (folders) inside a menu-bar menu draggable so they can be
+    // torn out into a floating / sidebar-docked window. Only folders whose root
+    // is an actual menu-bar menu qualify (this excludes standalone dialogs,
+    // context menus, region editors, etc). this.root is cached at construction
+    // and stays valid because tear-out never reparents the GUI object.
+    if (result) {
+        if (result.mode === undefined) result.mode = "DOCKED";
+        const mb = Globals.menuBar;
+        if (mb && typeof mb._makeFolderDraggable === "function"
+            && Array.isArray(mb.slots) && this.root && mb.slots.includes(this.root)) {
+            mb._makeFolderDraggable(result);
+        }
+    }
     return result;
 };
 
@@ -748,6 +761,19 @@ export class CGuiMenuBar {
         this.numSlots = 20; // number of empty slots in the menu bar
         this.slots = []; // array of GUI objects
 
+        // Folders (sub-menus) that have been torn out of their parent menu into
+        // their own floating / sidebar-docked window. Each is a live lil-gui
+        // folder whose domElement has been relocated into its own container div
+        // (folder._detachedContainer), while it stays in its parent's
+        // children/folders arrays so listen()/serialization/destroy keep working.
+        this.detachedFolders = new Set();
+
+        // >0 while we are batch-restoring / batch-detaching folders (deserialize,
+        // teardown). Sidebar show/hide dispatches a synchronous window 'resize',
+        // so we suppress the off-screen auto-restore check during these batches
+        // to avoid re-entrancy on a half-placed folder.
+        this._folderBatchDepth = 0;
+
         this.barHeight = 25; // height of the menu bar
 
         // Z-index management for bringing clicked menus to front
@@ -887,8 +913,8 @@ export class CGuiMenuBar {
 
     // Bring a menu to the front by updating its z-index
     bringToFront(gui) {
-        if (gui._standaloneContainer) {
-            // This is a standalone menu
+        if (gui._standaloneContainer || gui._detachedContainer) {
+            // This is a standalone menu or a torn-out floating folder
             gui._bringToFront();
         } else {
             // This is a regular menu bar item - use original logic
@@ -992,6 +1018,9 @@ export class CGuiMenuBar {
      * Close and/or dock any menus that end up >80% off-screen
      */
     _checkFloatingMenusOnResize() {
+        // Don't auto-restore while we're mid-batch (deserialize/teardown) - the
+        // resize that fired this can be a side effect of sidebar show/hide.
+        if (this._folderBatchDepth > 0) return;
         // Check docked menu bar items
         this.slots.forEach((gui) => {
             if (gui && gui.mode === "DETACHED") {
@@ -1017,6 +1046,18 @@ export class CGuiMenuBar {
                 gui.destroy();
             }
         });
+
+        // Check floating (DETACHED) torn-out folders. Unlike standalone menus
+        // these are never destroyed - they belong to a parent menu, so restore
+        // them instead. Sidebar-docked folders ride along with their sidebar.
+        for (const folder of Array.from(this.detachedFolders)) {
+            if (folder.mode === "DETACHED") {
+                const container = folder._detachedContainer;
+                if (container && this.isMenuOffScreen(container)) {
+                    this.restoreFolderToParent(folder);
+                }
+            }
+        }
     }
     
     _showDropIndicator(side) {
@@ -1152,6 +1193,9 @@ export class CGuiMenuBar {
 
     reset() {
         this._restrictedMenuIds = null;
+        // Put any torn-out folders back into their parent menus first, so we
+        // don't leave orphaned floating windows or sidebar containers behind.
+        this._restoreAllDetachedFolders();
         this.slots.forEach((gui) => {
             this.restoreToBar(gui);
             gui.close();
@@ -1189,6 +1233,14 @@ export class CGuiMenuBar {
                 gui.close();
             }
         }
+        // Hide any torn-out floating folders too (they aren't in slots).
+        for (const folder of this.detachedFolders) {
+            const el = folder._detachedContainer;
+            if (el && el.style.display !== "none") {
+                this._hiddenForOverlay.push({ el, display: el.style.display });
+                el.style.display = "none";
+            }
+        }
         // Also hide sidebars themselves
         for (const fn of [getLeftSidebar, getRightSidebar, getCenterSidebar]) {
             const sb = fn();
@@ -1219,6 +1271,11 @@ export class CGuiMenuBar {
         for (const child of gui.children) {
             // If it's a folder (GUI), recursively check its content
             if (child instanceof GUI) {
+                // A folder that has been torn out into its own floating /
+                // sidebar-docked window no longer counts as content of this
+                // menu, so a menu whose only content was torn out collapses
+                // its menu-bar tab.
+                if (this._isFolderDetached(child)) continue;
                 if (this._hasVisibleContent(child)) return true;
             } else {
                 // It's a controller; only visible controllers count as content
@@ -1332,7 +1389,10 @@ export class CGuiMenuBar {
                 });
 
                 // if this gui only has one child, which is a folder (GUI class), then open it
-                if (newGUI.children.length === 1 && newGUI.children[0].constructor.name === "GUI") {
+                // (but not if that folder has been torn out into its own window -
+                // opening an off-screen floating folder would be invisible work)
+                if (newGUI.children.length === 1 && newGUI.children[0].constructor.name === "GUI"
+                    && !this._isFolderDetached(newGUI.children[0])) {
                     newGUI.children[0].open();
                 }
             } else {
@@ -1451,6 +1511,404 @@ export class CGuiMenuBar {
 
         this.applyModeStyles(newGUI);
         this.hideEmpty();
+    }
+
+    // ---- Torn-out sub-menus (folders dragged into their own window) ----
+
+    // A folder is "detached" once its DOM has been relocated into its own
+    // floating/sidebar container. It stays in its parent's children/folders
+    // arrays the whole time (only the DOM moves), so listen(), serialization,
+    // path lookups and destroy() cascades keep working.
+    _isFolderDetached(folder) {
+        return !!(folder && folder._detachedContainer);
+    }
+
+    // Wire a folder so its title can be dragged to tear it out of its parent
+    // menu, moved around, docked into the sidebars, and double-clicked /
+    // dragged off the top to restore it. Idempotent.
+    _makeFolderDraggable(folder) {
+        if (!folder || folder._tearoutWired) return;
+        folder._tearoutWired = true;
+        if (folder.mode === undefined) folder.mode = "DOCKED";
+
+        const menuBar = this;
+
+        const onPointerDown = (event) => {
+            if (event.isPrimary === false) return;
+            if (event.button !== undefined && event.button !== 0) return;
+            // In browser/overlay mode dragging is disabled; let the built-in
+            // open/close toggle work normally.
+            if (menuBar.browserMode) return;
+
+            const isDetached = !!folder._detachedContainer;
+            let container = folder._detachedContainer || null;
+
+            // Pre-emptively lock open/close on a docked folder so the built-in
+            // lil-gui $title 'mousedown' toggle (fired right after this
+            // pointerdown) is a no-op and doesn't flicker the folder while we
+            // decide whether this gesture is a click or a tear-out drag.
+            const wasLocked = folder.lockOpenClose;
+            if (!isDetached && !wasLocked) {
+                folder.lockOpenClose = true;
+            } else if (isDetached) {
+                menuBar.bringToFront(folder);
+            }
+
+            const startX = event.clientX;
+            const startY = event.clientY;
+            let hasDragged = false;
+
+            const wasInLeftSidebar = isInLeftSidebar(folder);
+            const wasInRightSidebar = isInRightSidebar(folder);
+            const wasInCenterSidebar = isInCenterSidebar(folder);
+            let hasUndockedFromSidebar = false;
+
+            const titleRect = folder.$title.getBoundingClientRect();
+            const menuBarRect = menuBar.menuBar.getBoundingClientRect();
+            const dragOffsetX = event.clientX - titleRect.left;
+            const dragOffsetY = event.clientY - titleRect.top;
+
+            const cleanup = () => {
+                document.removeEventListener("pointermove", onMove);
+                document.removeEventListener("pointerup", onUp);
+                document.removeEventListener("pointercancel", onUp);
+                menuBar._hideDropIndicators();
+            };
+
+            const onMove = (e) => {
+                const dx = Math.abs(e.clientX - startX);
+                const dy = Math.abs(e.clientY - startY);
+                if (dx > 10 || dy > 10) hasDragged = true;
+
+                // First real movement on a docked folder: tear it out at the
+                // cursor and continue dragging the new floating container.
+                if (!container && hasDragged) {
+                    container = menuBar._detachFolder(folder, {
+                        x: e.clientX - dragOffsetX - menuBarRect.left,
+                        y: e.clientY - dragOffsetY - menuBarRect.top,
+                    });
+                }
+
+                if (!container) return; // not yet a drag - may still be a click
+
+                // First movement of a sidebar-docked folder: pop it out into a
+                // floating window that follows the cursor.
+                if ((wasInLeftSidebar || wasInRightSidebar || wasInCenterSidebar) && !hasUndockedFromSidebar && hasDragged) {
+                    menuBar.menuBar.appendChild(container);
+                    container.style.position = "absolute";
+                    container.style.left = (e.clientX - dragOffsetX - menuBarRect.left) + "px";
+                    container.style.top = (e.clientY - dragOffsetY - menuBarRect.top) + "px";
+                    container.style.width = "240px";
+                    container.style.height = "auto";
+                    folder.domElement.style.position = "relative";
+                    folder.domElement.style.width = "100%";
+                    if (wasInLeftSidebar) removeMenuFromLeftSidebar(folder);
+                    else if (wasInRightSidebar) removeMenuFromRightSidebar(folder);
+                    else removeMenuFromCenterSidebar(folder);
+                    hasUndockedFromSidebar = true;
+                    folder.mode = "DRAGGING";
+                    menuBar.applyModeStyles(folder);
+                    folder.lockOpenClose = true;
+                    e.preventDefault();
+                    return;
+                }
+                if (!hasUndockedFromSidebar && (wasInLeftSidebar || wasInRightSidebar || wasInCenterSidebar)) {
+                    return;
+                }
+
+                // Mark as actively dragging so the synchronous 'resize' that
+                // sidebar show/hide dispatches doesn't re-enter
+                // _checkFloatingMenusOnResize and restore this folder while it
+                // is momentarily off-screen mid-drop (that check ignores
+                // DRAGGING - it only acts on settled DETACHED folders).
+                folder.mode = "DRAGGING";
+
+                container.style.left = (e.clientX - dragOffsetX - menuBarRect.left) + "px";
+                container.style.top = (e.clientY - dragOffsetY - menuBarRect.top) + "px";
+
+                // Dragged off the top of the screen -> restore to parent menu.
+                if (parseInt(container.style.top) < -5) {
+                    menuBar.restoreFolderToParent(folder);
+                    cleanup();
+                    e.preventDefault();
+                    return;
+                }
+
+                const viewportWidth = window.innerWidth;
+                const menuLeft = parseInt(container.style.left);
+                const menuRight = menuLeft + folder.domElement.offsetWidth;
+                if (menuLeft < 0) {
+                    menuBar._showDropIndicator("left");
+                } else if (menuRight > viewportWidth) {
+                    menuBar._showDropIndicator("right");
+                } else if (menuBar._isNearCenterDivider(e.clientX)) {
+                    menuBar._showDropIndicator("center");
+                } else {
+                    menuBar._hideDropIndicators();
+                }
+                e.preventDefault();
+            };
+
+            const onUp = (e) => {
+                cleanup();
+
+                if (!container) {
+                    // Pure click (no drag): reproduce the folder open/close
+                    // toggle we suppressed on pointerdown.
+                    if (!isDetached && !wasLocked) {
+                        folder.lockOpenClose = false;
+                        folder.openAnimated(folder._closed);
+                    }
+                    return;
+                }
+
+                // Released without ever leaving the sidebar - stay docked.
+                if ((wasInLeftSidebar || wasInRightSidebar || wasInCenterSidebar) && !hasUndockedFromSidebar) {
+                    e.preventDefault();
+                    return;
+                }
+
+                const viewportWidth = window.innerWidth;
+                const menuLeft = parseInt(container.style.left);
+                const menuRight = menuLeft + folder.domElement.offsetWidth;
+
+                if (hasDragged && menuLeft < 0) {
+                    addMenuToLeftSidebar(folder);
+                    folder.mode = "SIDEBAR_LEFT";
+                    folder.lockOpenClose = false; folder.open(); folder.lockOpenClose = true;
+                    menuBar.applyModeStyles(folder);
+                    menuBar.hideEmpty();
+                    e.preventDefault();
+                    return;
+                }
+                if (hasDragged && menuRight > viewportWidth) {
+                    addMenuToRightSidebar(folder);
+                    folder.mode = "SIDEBAR_RIGHT";
+                    folder.lockOpenClose = false; folder.open(); folder.lockOpenClose = true;
+                    menuBar.applyModeStyles(folder);
+                    menuBar.hideEmpty();
+                    e.preventDefault();
+                    return;
+                }
+                if (hasDragged && menuBar._isNearCenterDivider(e.clientX)) {
+                    const dividerFraction = menuBar._computeDividerFraction();
+                    if (dividerFraction !== null) {
+                        addMenuToCenterSidebar(folder, dividerFraction);
+                        folder.mode = "SIDEBAR_CENTER";
+                        folder.lockOpenClose = false; folder.open(); folder.lockOpenClose = true;
+                        menuBar.applyModeStyles(folder);
+                        menuBar.hideEmpty();
+                        e.preventDefault();
+                        return;
+                    }
+                }
+
+                // Dropped (mostly) off-screen -> restore to parent instead of
+                // leaving an unreachable floating folder.
+                if (menuBar.isMenuOffScreen(container)) {
+                    menuBar.restoreFolderToParent(folder);
+                    e.preventDefault();
+                    return;
+                }
+
+                // Otherwise it remains a floating DETACHED folder.
+                folder.mode = "DETACHED";
+                menuBar.bringToFront(folder);
+                menuBar.applyModeStyles(folder);
+                menuBar.hideEmpty();
+                e.preventDefault();
+            };
+
+            document.addEventListener("pointermove", onMove);
+            document.addEventListener("pointerup", onUp);
+            document.addEventListener("pointercancel", onUp);
+        };
+
+        folder.$title.addEventListener("pointerdown", onPointerDown);
+
+        // Double-click the title of a floating folder to close it (= restore it
+        // into the menu it came from).
+        folder.$title.addEventListener("dblclick", (event) => {
+            if (folder._detachedContainer) {
+                menuBar.restoreFolderToParent(folder);
+                event.stopPropagation();
+                event.preventDefault();
+            }
+        });
+
+        // Android double-tap (dblclick is unreliable there), mirroring the
+        // top-level menu double-tap handling.
+        let lastTapTime = 0, lastTapX = 0, lastTapY = 0;
+        folder.$title.addEventListener("touchend", (event) => {
+            if (!folder._detachedContainer) return;
+            const now = Date.now();
+            const touch = event.changedTouches[0];
+            const dist = Math.sqrt(Math.pow(touch.clientX - lastTapX, 2) + Math.pow(touch.clientY - lastTapY, 2));
+            if (now - lastTapTime < 300 && dist < 30) {
+                event.preventDefault();
+                menuBar.restoreFolderToParent(folder);
+                lastTapTime = 0;
+            } else {
+                lastTapTime = now; lastTapX = touch.clientX; lastTapY = touch.clientY;
+            }
+        });
+    }
+
+    // Tear a folder out of its parent menu into its own floating container.
+    // Returns the container div. pos = {x, y} is the desired top-left in
+    // menuBar-relative coordinates.
+    _detachFolder(folder, pos) {
+        const parent = folder.parent;
+
+        // Comment-node placeholder marks the exact DOM slot to restore into. A
+        // comment (not an element) does not defeat the lil-gui ".children:empty"
+        // styling of the parent if the folder was its only child.
+        const placeholder = document.createComment("torn-out-submenu");
+        if (folder.domElement.parentNode) {
+            folder.domElement.parentNode.insertBefore(placeholder, folder.domElement);
+        } else if (parent && parent.$children) {
+            parent.$children.appendChild(placeholder);
+        }
+        folder._detachPlaceholder = placeholder;
+        folder._detachParentGUI = parent;
+
+        // Floating positioning container (analogous to a menu-bar slot div or a
+        // standalone menu's containerDiv).
+        const container = document.createElement("div");
+        container.style.position = "absolute";
+        container.style.left = ((pos && pos.x != null) ? pos.x : 100) + "px";
+        container.style.top = ((pos && pos.y != null) ? pos.y : 100) + "px";
+        container.style.width = "240px";
+        container.style.height = "auto";
+        container.style.zIndex = (this.baseZIndex + 1000);
+        this.menuBar.appendChild(container);
+        container._gui = folder;
+        folder._detachedContainer = container;
+
+        // Relocate the folder DOM and make it look/lay out like a top menu.
+        container.appendChild(folder.domElement);
+        folder.domElement.classList.add("root");
+        folder.domElement.classList.add("allow-touch-styles");
+        folder.domElement.style.position = "relative";
+        folder.domElement.style.width = "100%";
+
+        // Open and lock open while floating.
+        folder.lockOpenClose = false;
+        folder.open();
+        folder.lockOpenClose = true;
+
+        folder.mode = "DETACHED";
+        this.applyModeStyles(folder);
+
+        folder._bringToFront = () => {
+            let maxZIndex = this.baseZIndex + 1000;
+            for (const c of Array.from(this.menuBar.children)) {
+                if (c !== container) {
+                    const z = parseInt(c.style.zIndex);
+                    if (z > maxZIndex) maxZIndex = z;
+                }
+            }
+            container.style.zIndex = maxZIndex + 1;
+        };
+
+        this.detachedFolders.add(folder);
+        folder._bringToFront();
+        this.hideEmpty();
+        return container;
+    }
+
+    // Restore a torn-out folder back into the menu it came from.
+    restoreFolderToParent(folder) {
+        if (!folder || !folder._detachedContainer) return;
+        const container = folder._detachedContainer;
+        const parent = folder._detachParentGUI;
+        const placeholder = folder._detachPlaceholder;
+
+        // Sidebar bookkeeping (array only; DOM is handled below).
+        if (isInLeftSidebar(folder)) removeMenuFromLeftSidebar(folder);
+        if (isInRightSidebar(folder)) removeMenuFromRightSidebar(folder);
+        if (isInCenterSidebar(folder)) removeMenuFromCenterSidebar(folder);
+
+        // Undo the floating styling.
+        folder.domElement.classList.remove("root");
+        folder.domElement.classList.remove("allow-touch-styles");
+        folder.domElement.style.position = "";
+        folder.domElement.style.width = "";
+        folder.$children.style.zIndex = "";
+        folder.$children.style.position = "";
+
+        // Put the folder DOM back where it was.
+        if (placeholder && placeholder.parentNode) {
+            placeholder.parentNode.replaceChild(folder.domElement, placeholder);
+        } else if (parent && parent.$children) {
+            parent.$children.appendChild(folder.domElement);
+        }
+        if (placeholder && placeholder.parentNode) {
+            placeholder.parentNode.removeChild(placeholder);
+        }
+
+        // Remove the now-empty floating container.
+        if (container.parentNode) container.parentNode.removeChild(container);
+
+        folder.mode = "DOCKED";
+        this.applyModeStyles(folder);
+
+        // Collapse it back as part of "closing" it (matches restoreToBar).
+        folder.lockOpenClose = false;
+        folder.close();
+
+        delete folder._detachedContainer;
+        delete folder._detachParentGUI;
+        delete folder._detachPlaceholder;
+        delete folder._bringToFront;
+        this.detachedFolders.delete(folder);
+
+        this.hideEmpty();
+    }
+
+    // Restore every torn-out folder (used before destroy/reset/deserialize so
+    // we never leave orphaned floating containers or placeholders behind).
+    _restoreAllDetachedFolders() {
+        if (!this.detachedFolders || this.detachedFolders.size === 0) return;
+        this._folderBatchDepth++;
+        try {
+            for (const folder of Array.from(this.detachedFolders)) {
+                try {
+                    this.restoreFolderToParent(folder);
+                } catch (e) {
+                    console.warn("Failed to restore detached folder", e);
+                }
+            }
+            this.detachedFolders.clear();
+        } finally {
+            this._folderBatchDepth--;
+        }
+    }
+
+    // Re-detach a folder during deserialization into the saved mode/position.
+    _detachFolderForRestore(folder, detached, collections) {
+        const left = parseInt(detached.left);
+        const top = parseInt(detached.top);
+        const container = this._detachFolder(folder, {
+            x: Number.isFinite(left) ? left : 100,
+            y: Number.isFinite(top) ? top : 100,
+        });
+        if (detached.zIndex) container.style.zIndex = detached.zIndex;
+
+        if (detached.mode === "SIDEBAR_LEFT" && collections) {
+            folder.mode = "SIDEBAR_LEFT";
+            collections.left.push({ gui: folder, index: detached.sidebarIndex ?? 0 });
+        } else if (detached.mode === "SIDEBAR_RIGHT" && collections) {
+            folder.mode = "SIDEBAR_RIGHT";
+            collections.right.push({ gui: folder, index: detached.sidebarIndex ?? 0 });
+        } else if (detached.mode === "SIDEBAR_CENTER" && collections) {
+            folder.mode = "SIDEBAR_CENTER";
+            collections.center.push({ gui: folder, index: detached.sidebarIndex ?? 0 });
+        } else {
+            folder.mode = "DETACHED";
+            this.ensureMenuOnScreen(container);
+        }
+        this.applyModeStyles(folder);
     }
 
     /**
@@ -1787,6 +2245,10 @@ export class CGuiMenuBar {
     }
 
     destroy(all = true) {
+        // Put torn-out folders back into their parents first, so the recursive
+        // GUI.destroy() below cleans them up normally instead of leaving
+        // orphaned floating containers / placeholder nodes behind.
+        this._restoreAllDetachedFolders();
         for (let i = this.numSlots - 1; i >= 0; i--) {
             const gui = this.slots[i];
             if (gui) {
@@ -1852,10 +2314,30 @@ export class CGuiMenuBar {
         for (const f of gui.folders) {
             const key = f.$title?.innerHTML;
             if (!key) continue;
-            out[key] = {
+            const entry = {
                 closed: f._closed,
                 folders: this._serializeFolderStates(f),
             };
+            // If this folder has been torn out into its own floating /
+            // sidebar-docked window, remember enough to recreate it on reload.
+            if (this._isFolderDetached(f)) {
+                const c = f._detachedContainer;
+                const detached = { mode: f.mode };
+                if (c) {
+                    detached.left = c.style.left;
+                    detached.top = c.style.top;
+                    detached.zIndex = c.style.zIndex;
+                }
+                if (f.mode === "SIDEBAR_LEFT") {
+                    detached.sidebarIndex = getLeftSidebarMenuIndex(f);
+                } else if (f.mode === "SIDEBAR_RIGHT") {
+                    detached.sidebarIndex = getRightSidebarMenuIndex(f);
+                } else if (f.mode === "SIDEBAR_CENTER") {
+                    detached.sidebarIndex = getCenterSidebarMenuIndex(f);
+                }
+                entry.detached = detached;
+            }
+            out[key] = entry;
         }
         return out;
     }
@@ -1863,16 +2345,24 @@ export class CGuiMenuBar {
     // Apply a previously-captured folder-state map. Folders that no longer
     // exist (renamed, removed, or not yet created) are silently skipped;
     // folders without a matching entry keep their current default state.
-    _applyFolderStates(gui, data) {
+    _applyFolderStates(gui, data, collections) {
         if (!gui || !gui.folders || !data) return;
         for (const f of gui.folders) {
             const key = f.$title?.innerHTML;
             if (!key) continue;
             const entry = data[key];
             if (!entry) continue;
-            if (entry.closed === true) f.close();
-            else if (entry.closed === false) f.open();
-            this._applyFolderStates(f, entry.folders);
+            if (entry.detached) {
+                // Re-tear-out this folder. Sidebar placements are collected and
+                // applied (sorted by index) together with the top-level menus.
+                this._detachFolderForRestore(f, entry.detached, collections);
+            } else {
+                if (entry.closed === true) f.close();
+                else if (entry.closed === false) f.open();
+            }
+            // Recurse parent-first so a folder torn out of an already-torn-out
+            // folder is detached after its (already-detached) ancestor.
+            this._applyFolderStates(f, entry.folders, collections);
         }
     }
 
@@ -1909,9 +2399,23 @@ export class CGuiMenuBar {
 
     modDeserialize(v) {
         const guiData = v;
+        // Start from a clean slate: put any currently torn-out folders back so
+        // a re-deserialize (or a reused menu bar) doesn't leave stale windows.
+        this._restoreAllDetachedFolders();
+        // Suppress off-screen auto-restore for the duration (sidebar add/remove
+        // below dispatches synchronous 'resize' events).
+        this._folderBatchDepth++;
+        try {
         const leftSidebarMenusToAdd = [];
         const rightSidebarMenusToAdd = [];
         const centerSidebarMenusToAdd = [];
+        // Detached folders share the same sidebars (and ordering) as top-level
+        // menus, so they push into the same collections.
+        const sidebarCollections = {
+            left: leftSidebarMenusToAdd,
+            right: rightSidebarMenusToAdd,
+            center: centerSidebarMenusToAdd,
+        };
 
         for (let i = 0; i < this.slots.length; i++) {
             const gui = this.slots[i];
@@ -1965,8 +2469,9 @@ export class CGuiMenuBar {
                 // Restore each submenu's open/closed state. Top-level slots
                 // are intentionally always closed (see above), but the user's
                 // expanded subfolders (Export > Orbit Image Set, etc.) should
-                // survive a save/reload round-trip.
-                this._applyFolderStates(gui, data.folders);
+                // survive a save/reload round-trip. This also re-tears-out any
+                // folders the user had dragged into floating / sidebar windows.
+                this._applyFolderStates(gui, data.folders, sidebarCollections);
             }
         }
         
@@ -1988,6 +2493,9 @@ export class CGuiMenuBar {
         }
 
         this.hideEmpty();
+        } finally {
+            this._folderBatchDepth--;
+        }
     }
 
     // Create a standalone pop-up menu that can be dragged around
