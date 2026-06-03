@@ -1,3 +1,4 @@
 output/
 .chrome-profile/
 *.log
+baseline/

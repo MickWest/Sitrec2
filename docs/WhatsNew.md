@@ -9,6 +9,22 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.73.0 (2026-06-03)
+
+### New Features
+- **Custom Graph** (Show → Graphs → *Add Custom Graph*): create your own graph windows and plot any per-frame data — camera motion, point/auto tracking, motion analysis (raw and smoothed), horizon, on-screen-display values, per-track heading and speed — on up to three axes, with light/dark themes, a legend, a title, and drag-to-scrub.
+- **Sun angle graphs**: plot the angle between the line of sight and the Sun (and its up/left offsets) as graph series, available in any Custom Graph.
+- **Y-compress** (View menu): a slider that vertically squashes the main view to pack more into the frame, useful for seeing tall scenes at once.
+- **Real Starlink satellites in the flare predictor**: the Starlink flare tool now uses live, current satellite data by default, downloaded in the background, and falls back to a synthetic constellation only when it's offline or the chosen date is out of range. The live scanning view is steadier and bursts a flurry of dots as each flare is found.
+
+### Improvements
+- **Smoother camera-motion smoothing** (Camera Motion): the smoothing window now allows even values, which cleanly cancel interlacing/pulldown cadence in source video; the default is now 4.
+- **Faster loading and camera dragging on very long "Open in Sitrec" scenes** (the multi-hour scenes handed off from the app), with no change to results.
+
+### Bug Fixes
+- Fixed all satellite flares being hidden for observers at or near sea level in the Starlink flare predictor.
+- Fixed the on-screen data overlay staying hidden after using "Show All".
+
 ## Version 2.72.0 (2026-06-02)
 
 ### Improvements
