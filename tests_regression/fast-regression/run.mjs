@@ -249,7 +249,14 @@ function isPending(s) {
         s.elevationPendingAncestor > 0 || s.pending3DTiles > 0 || s.videoPending;
 }
 
-async function waitForSettle(page, {maxWaitMs = 60000, stableChecks = 8, minWaitMs = 200} = {}) {
+// minWaitMs is the floor we wait before trusting a "quiet" reading when we have
+// NOT seen any load activity. Terrain sitches trip observedBusy (tile loads) and
+// finish as soon as they're stable, ignoring this floor. But celestial / no-tile
+// sitches (night sky, some rocket/eclipse sitches) never trip it, so this floor
+// must be long enough for their async load (stars/TLE/definition) to complete —
+// otherwise we screenshot an empty scene at frame 0. 3000 matches the original
+// suite and is overlapped away by --concurrency.
+async function waitForSettle(page, {maxWaitMs = 60000, stableChecks = 20, minWaitMs = 3000} = {}) {
     const start = Date.now();
     let stable = 0, lastSig = '', observedBusy = false;
     while (Date.now() - start < maxWaitMs) {
