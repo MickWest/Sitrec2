@@ -687,10 +687,24 @@ export function rayIntersectsEllipsoid(origin, direction) {
     const a = Globals.equatorRadius;
     const b = Globals.polarRadius;
 
-    const ox = origin.x, oy = origin.y, oz = origin.z;
+    let ox = origin.x, oy = origin.y, oz = origin.z;
     const dx = direction.x, dy = direction.y, dz = direction.z;
 
     const a2 = a * a, b2 = b * b;
+
+    // If the origin is ON or INSIDE the ellipsoid, project it back out to just above the
+    // surface before testing. A ground observer's altitude is geoid/terrain-relative, and
+    // at sea level the geoid sits BELOW the WGS84 ellipsoid — so an observer "50 ft up"
+    // can land a few metres inside it. With the origin inside (C <= 0) the two roots
+    // straddle zero, so the exit root t2 is ALWAYS > 0 and EVERY direction (even straight
+    // up) reports an intersection — which made every satellite read as below the horizon
+    // and silently killed ALL flares for sea-level observers. Projecting to the surface
+    // makes the entry/exit roots behave correctly (zenith → no hit, nadir → hit).
+    const norm = (ox * ox + oy * oy) / a2 + (oz * oz) / b2;   // <1 inside, =1 on surface, >1 outside
+    if (norm <= 1) {
+        const s = (1 + 1e-9) / Math.sqrt(norm);   // scale out to fractionally above the surface
+        ox *= s; oy *= s; oz *= s;
+    }
 
     const A = (dx * dx + dy * dy) / a2 + (dz * dz) / b2;
     const B = 2 * ((ox * dx + oy * dy) / a2 + (oz * dz) / b2);
@@ -703,7 +717,8 @@ export function rayIntersectsEllipsoid(origin, direction) {
     const t1 = (-B - sqrtDisc) / (2 * A);
     const t2 = (-B + sqrtDisc) / (2 * A);
 
-    return t1 > 0 || t2 > 0;
+    const EPS = 1e-6;
+    return t1 > EPS || t2 > EPS;
 }
 
 export class CDisplayLine {

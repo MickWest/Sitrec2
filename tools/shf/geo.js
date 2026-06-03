@@ -145,8 +145,17 @@ export function azElFromObserver(observerEcef, targetEcef) {
 export function rayHitsEllipsoid(origin, direction) {
     const a = WGS84.a, b = WGS84.b;
     const a2 = a * a, b2 = b * b;
-    const { x: ox, y: oy, z: oz } = origin;
+    let { x: ox, y: oy, z: oz } = origin;
     const { x: dx, y: dy, z: dz } = direction;
+    // Project an on/inside origin out to just above the surface first — a sea-level (or
+    // below-sea-level) observer can land marginally inside the WGS84 ellipsoid, where the
+    // roots straddle zero and t2>0 is always true (every ray "hits"), which would report
+    // every satellite as below the horizon. (Matches Sitrec rayIntersectsEllipsoid.)
+    const norm = (ox * ox + oy * oy) / a2 + (oz * oz) / b2;
+    if (norm <= 1) {
+        const s = (1 + 1e-9) / Math.sqrt(norm);
+        ox *= s; oy *= s; oz *= s;
+    }
     const A = (dx * dx + dy * dy) / a2 + (dz * dz) / b2;
     const B = 2 * ((ox * dx + oy * dy) / a2 + (oz * dz) / b2);
     const C = (ox * ox + oy * oy) / a2 + (oz * oz) / b2 - 1;
@@ -155,7 +164,8 @@ export function rayHitsEllipsoid(origin, direction) {
     const sq = Math.sqrt(disc);
     const t1 = (-B - sq) / (2 * A);
     const t2 = (-B + sq) / (2 * A);
-    return t1 > 0 || t2 > 0;
+    const EPS = 1e-6;
+    return t1 > EPS || t2 > EPS;
 }
 
 // ---- compass --------------------------------------------------------------
