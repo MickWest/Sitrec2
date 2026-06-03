@@ -239,6 +239,10 @@ export class CNodeOSDDataSeriesController extends CNode {
                 for (const track of this.tracks) {
                     track.show = this.showAll;
                 }
+                // Re-evaluate the video-info overlay's visibility (matches the
+                // per-series Show toggle); otherwise turning all series on never
+                // un-hides the overlay if it was hidden.
+                this.updateVideoInfoVisibility();
                 setRenderOne();
             })
             .tooltip(t("osdController.showAll.tooltip"));
