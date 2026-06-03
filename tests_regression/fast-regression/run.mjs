@@ -79,6 +79,7 @@ const CONFIG = {
     update: flag('update'),
     list: flag('list'),
     filter: opt('filter', null),
+    sitches: opt('sitches', null),     // explicit comma-separated names (bypass label enumeration)
     perSitchTimeoutMs: Number(opt('timeout', '90000')),
     // pixelmatch sensitivity. threshold = per-pixel color tolerance (0..1).
     // maxDiffRatio = fraction of differing pixels we tolerate before failing.
@@ -108,12 +109,19 @@ async function enumerateSitches() {
     const server = CONFIG.base + 'sitrecServer/';
     const tu = (u) => u + (u.includes('?') ? '&' : '?') + 'testUserID=' + CONFIG.testUserID;
 
-    const meta = await fetchJson(tu(server + 'metadata.php'));
-    const sitchLabels = Array.isArray(meta.sitchLabels) ? {} : (meta.sitchLabels || {});
-    let names = Object.entries(sitchLabels)
-        .filter(([, labs]) => Array.isArray(labs) && labs.includes(CONFIG.label))
-        .map(([n]) => n)
-        .sort((a, b) => a.localeCompare(b));
+    let names;
+    if (CONFIG.sitches) {
+        // Explicit list of saved-sitch names (vetting candidates without needing
+        // the label yet). Comma-separated; whitespace trimmed.
+        names = CONFIG.sitches.split(',').map(s => s.trim()).filter(Boolean);
+    } else {
+        const meta = await fetchJson(tu(server + 'metadata.php'));
+        const sitchLabels = Array.isArray(meta.sitchLabels) ? {} : (meta.sitchLabels || {});
+        names = Object.entries(sitchLabels)
+            .filter(([, labs]) => Array.isArray(labs) && labs.includes(CONFIG.label))
+            .map(([n]) => n)
+            .sort((a, b) => a.localeCompare(b));
+    }
 
     if (CONFIG.filter) names = names.filter(n => n.toLowerCase().includes(CONFIG.filter.toLowerCase()));
 

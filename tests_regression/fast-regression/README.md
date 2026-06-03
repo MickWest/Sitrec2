@@ -43,6 +43,7 @@ node tests_regression/fast-regression/run.mjs --update --filter=ThomasH   # re-b
 |---|---|---|
 | `--update` | off | write/refresh baselines instead of comparing |
 | `--filter=SUBSTR` | — | only sitches whose name contains SUBSTR (case-insensitive) |
+| `--sitches=A,B,C` | — | test these exact saved-sitch names, bypassing the label (vet candidates / one-off checks) |
 | `--concurrency=N` | 3 | run N sitches in parallel (one Chrome page each). ~2× faster; pixel-identical to serial on a real GPU. Use 1 for CI/SwiftShader or strict ordering |
 | `--headless` | off | use new-headless Chrome (no visible window) |
 | `--label=NAME` | `Regression` | enumerate a different label |
