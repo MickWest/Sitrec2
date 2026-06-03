@@ -14,8 +14,8 @@ both humans and AI agents to drive.
 | Flake control | `retries=3` to absorb SwiftShader shader-link races | real GPU is deterministic; no retries needed |
 | Sitch list | hardcoded `testData[]` | **dynamic** — every `Regression`-labeled sitch |
 
-Measured: ~38s warm for the current 6 sitches (mostly 4–5s each), all passing with
-0–2px diff.
+Measured: **~18s warm** for the current 6 sitches at the default 3 lanes (~38s
+serial), all passing with 0–2px diff.
 
 ## Usage
 
@@ -43,7 +43,7 @@ node tests_regression/fast-regression/run.mjs --update --filter=ThomasH   # re-b
 |---|---|---|
 | `--update` | off | write/refresh baselines instead of comparing |
 | `--filter=SUBSTR` | — | only sitches whose name contains SUBSTR (case-insensitive) |
-| `--concurrency=N` | 1 | run N sitches in parallel (one Chrome page each). Speed bonus; 1 is most deterministic |
+| `--concurrency=N` | 3 | run N sitches in parallel (one Chrome page each). ~2× faster; pixel-identical to serial on a real GPU. Use 1 for CI/SwiftShader or strict ordering |
 | `--headless` | off | use new-headless Chrome (no visible window) |
 | `--label=NAME` | `Regression` | enumerate a different label |
 | `--frame=N` | 10 | frame to lock + screenshot |

@@ -68,7 +68,12 @@ const CONFIG = {
     frame: Number(opt('frame', '10')),
     viewport: {width: Number(opt('width', '1920')), height: Number(opt('height', '1080'))},
     cropTop: Number(opt('cropTop', '30')),     // menu bar (with live clock) height + margin
-    concurrency: Math.max(1, Number(opt('concurrency', '1'))),
+    // Default 3 lanes: ~2x faster (overlaps settle/tile-load across sitches) and
+    // proven pixel-identical to serial on a real GPU — contention shifts timing,
+    // not pixels. Drop to --concurrency=1 for the most deterministic ordering or
+    // on a CPU rasterizer (CI/SwiftShader), where parallel WebGL contexts can
+    // lose the GPU context under contention.
+    concurrency: Math.max(1, Number(opt('concurrency', '3'))),
     localTerrain: flag('localTerrain'),
     headless: flag('headless'),
     update: flag('update'),
