@@ -74,6 +74,36 @@ import {CNodeVideoLevelsView} from "./CNodeVideoLevelsView";
 // Re-export for external consumers (e.g. CMotionAnalysis).
 export {addFiltersToVideoNode, applyConvolution} from "./CNodeVideoViewFilters";
 
+// True if `img` is a usable, already-decoded drawable (HTMLImageElement, canvas,
+// or ImageBitmap) — i.e. something CVideoImageData can read width/height from and
+// draw. A raw ArrayBuffer, null/undefined, or a not-yet-loaded Image (width 0) all
+// return false. Used to guard against handing CVideoImageData an undefined image.
+function isDecodedImage(img) {
+    return !!img && typeof img === 'object' &&
+        typeof img.width === 'number' && img.width > 0 &&
+        typeof img.height === 'number' && img.height > 0;
+}
+
+// Decode raw image bytes into a loaded HTMLImageElement, resolving only once the
+// browser has actually decoded it (onload). Mirrors the safe decode the
+// loadVideoFromEntry restore path already uses, so callers that only have bytes
+// (or a stale/undecoded FileManager entry) can still get a guaranteed-ready image.
+function decodeImageFromBytes(bytes, fileName) {
+    return new Promise((resolve, reject) => {
+        const ext = (fileName.split('.').pop() || '').toLowerCase();
+        const mimeType = ext === 'png' ? 'image/png' :
+            (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' :
+            ext === 'gif' ? 'image/gif' :
+            ext === 'webp' ? 'image/webp' :
+            ext === 'bmp' ? 'image/bmp' : 'image/png';
+        const blobURL = URL.createObjectURL(new Blob([bytes], {type: mimeType}));
+        const img = new Image();
+        img.onload = () => { URL.revokeObjectURL(blobURL); resolve(img); };
+        img.onerror = (e) => { URL.revokeObjectURL(blobURL); reject(e); };
+        img.src = blobURL;
+    });
+}
+
 
 export class CNodeVideoView extends CNodeViewCanvas2D {
     constructor(v) {
@@ -447,7 +477,28 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                         return null;
                     })
                     : null;
-                this.makeImageVideo(fileName, result.parsed, false, undefined, importMetadata, true);
+                // result.parsed is normally the decoded image (the FileManager entry's
+                // .data), but under load contention loadAsset can resolve from a list
+                // entry whose .data isn't populated yet, handing us an undefined image —
+                // which trips CVideoImageData's `img is undefined` assert (the
+                // intermittent Atremis Starlink load failure). Guard it: if we didn't get
+                // a usable, already-decoded image, decode one from the original bytes
+                // (same as the loadVideoFromEntry restore path) before continuing, and
+                // fail gracefully rather than asserting if even that yields nothing.
+                let img = result?.parsed;
+                if (!isDecodedImage(img) && fileEntry?.original) {
+                    img = await decodeImageFromBytes(fileEntry.original, fileName).catch(err => {
+                        console.error(`[VideoNew] Fallback image decode failed for ${fileName}:`, err);
+                        return null;
+                    });
+                }
+                if (!isDecodedImage(img)) {
+                    console.error(`[VideoNew] Image asset "${fileName}" produced no decoded image; skipping`);
+                    Globals.pendingActions--;
+                    this.videoLoadPending = false;
+                    return;
+                }
+                this.makeImageVideo(fileName, img, false, undefined, importMetadata, true);
                 this.staticURL = fileName;
             }).catch(err => {
                 console.error(`[VideoNew] Error loading image as video: ${fileName}`, err);

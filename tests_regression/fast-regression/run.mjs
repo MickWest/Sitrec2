@@ -165,10 +165,25 @@ const slug = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^
 // Done from Node (no browser, no CORS) against the same endpoints the sitch
 // browser uses.
 // ---------------------------------------------------------------------------
-async function fetchJson(url) {
-    const r = await fetch(url, {headers: {'Accept': 'application/json'}});
-    if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
-    return r.json();
+// Retry transient fetch failures. Enumeration fires ~70 sequential requests at
+// the dev server before the browser even launches; a single network blip (reset
+// keep-alive, transient 5xx) used to silently drop a sitch from the whole run —
+// and in --update mode that means a baseline silently goes un-refreshed. A
+// genuinely-absent sitch returns an empty array (not a throw), so retrying only
+// re-attempts real failures and never masks a real absence.
+async function fetchJson(url, {retries = 3, backoffMs = 300} = {}) {
+    let lastErr;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const r = await fetch(url, {headers: {'Accept': 'application/json'}});
+            if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
+            return await r.json();
+        } catch (e) {
+            lastErr = e;
+            if (attempt < retries) await new Promise(res => setTimeout(res, backoffMs * (attempt + 1)));
+        }
+    }
+    throw lastErr;
 }
 
 async function enumerateSitches() {
@@ -258,6 +273,7 @@ function settleStateFn() {
         ready: !!globals && !!nodeMan && !!nodeMan.list,
         pendingActions: 0, deserializing: false, parsing: 0, loadingVisible: false,
         texturePendingLoads: 0, textureLoading: 0, textureRecalc: 0, texturePendingAncestor: 0,
+        textureNeedsHighRes: 0,
         elevationLoading: 0, elevationRecalc: 0, elevationPendingAncestor: 0,
         pending3DTiles: 0, activeVisibleTextureTiles: 0, visibleTileHash: 0,
         videoPending: false,
@@ -312,6 +328,15 @@ function settleStateFn() {
                     if (tile.isLoading) state.textureLoading++;
                     if (tile.isRecalculatingCurve) state.textureRecalc++;
                     if (tile.pendingAncestorLoad) state.texturePendingAncestor++;
+                    // A visible tile still showing resampled parent (low-res) data that
+                    // is awaiting its high-res upgrade. waitForSettle waits for this count
+                    // to reach 0 (or plateau) before capturing, which closes the LOD race
+                    // that let the gate accept a low-res foreground in some runs and
+                    // high-res in others (the cheytest lookView bistable ~19.6% flip). NOT
+                    // a hard pending flag: some tiles stay set permanently when the server
+                    // has no higher-res tile (WPAFB 0375), so the gate keys off PROGRESS
+                    // (count changing) rather than the raw value — see waitForSettle.
+                    if (tile.needsHighResLoad) state.textureNeedsHighRes++;
                     const sig = `${mapID}:${tile.z}/${tile.x}/${tile.y}:${tile.usingParentData ? 1 : 0}:${tile.needsHighResLoad ? 1 : 0}`;
                     state.visibleTileHash = (state.visibleTileHash ^ hashString(sig)) >>> 0;
                 });
@@ -334,25 +359,56 @@ function isPending(s) {
         s.elevationPendingAncestor > 0 || s.pending3DTiles > 0 || s.videoPending;
 }
 
-// minWaitMs is the floor we wait before trusting a "quiet" reading when we have
-// NOT seen any load activity. Terrain sitches trip observedBusy (tile loads) and
-// finish as soon as they're stable, ignoring this floor. But celestial / no-tile
-// sitches (night sky, some rocket/eclipse sitches) never trip it, so this floor
-// must be long enough for their async load (stars/TLE/definition) to complete —
-// otherwise we screenshot an empty scene at frame 0. 3000 matches the original
-// suite and is overlapped away by --concurrency.
-async function waitForSettle(page, {maxWaitMs = 60000, stableChecks = 20, minWaitMs = 3000} = {}) {
+// minWaitMs is an UNCONDITIONAL floor: we never trust a "quiet" reading before
+// this much wall-clock has elapsed, regardless of whether we have already seen
+// load activity. This matters because a sitch's heavy async work often starts
+// LATE — especially on a cold cache, the sitch definition can still be parsing
+// (so Globals.fixedFrame isn't set yet → par.frame is still 0) and the satellite
+// image / late-instantiated view tiles haven't registered their loads. Startup
+// parsing trips isPending almost immediately, so an "observedBusy lets us skip
+// the floor" fast-path (what this code used to do) would return during the brief
+// quiet gap BEFORE that late work begins — capturing a half-loaded, frame-0
+// scene on cold but a fully-settled scene on warm (the cold/warm baseline
+// divergence). Applying the floor unconditionally gives late loads time to
+// register; once they do, isPending re-arms the wait until they finish.
+//
+// wantFrame, when given, is also required to be the actually-rendered frame
+// before we accept a settle — see the frameReady check below.
+//
+// hiResStallChecks: how many consecutive polls the high-res-upgrade count may sit
+// UNCHANGED before we stop waiting for it. Visible tiles showing low-res parent
+// data normally upgrade within a second or two (the count ticks down as each fires
+// and loads); waiting for that closes the cheytest LOD race. But some sitches have
+// tiles the server has no higher-res for (WPAFB 0375), whose flag never clears — so
+// once the count has plateaued (made no progress) for this many polls (~3s) we treat
+// the remaining tiles as permanently stuck and proceed, rather than hanging to the
+// maxWait timeout. Their stuck state is identical run-to-run, so capture stays
+// deterministic.
+async function waitForSettle(page, {maxWaitMs = 60000, stableChecks = 20, minWaitMs = 3000, wantFrame = null, hiResStallChecks = 75} = {}) {
     const start = Date.now();
-    let stable = 0, lastSig = '', observedBusy = false;
+    let stable = 0, lastSig = '', hiResStall = 0, lastHiRes = -1;
     while (Date.now() - start < maxWaitMs) {
         const s = await page.evaluate(settleStateFn);
         const sig = `${s.activeVisibleTextureTiles}:${s.visibleTileHash}`;
-        if (isPending(s)) {
-            observedBusy = true; stable = 0; lastSig = '';
+        // High-res-upgrade gate: hold the settle open while visible tiles are still
+        // upgrading from parent (low-res) data to their own high-res texture. Key off
+        // PROGRESS, not the raw count: reset the stall counter whenever the count
+        // changes (an upgrade fired), and consider the upgrades "done" once the count
+        // hits 0 OR has stalled (no change) for hiResStallChecks polls (stuck tiles).
+        if (s.textureNeedsHighRes === lastHiRes) hiResStall++; else { hiResStall = 0; lastHiRes = s.textureNeedsHighRes; }
+        const hiResReady = s.textureNeedsHighRes === 0 || hiResStall >= hiResStallChecks;
+        // The requested fixed frame must actually be the rendered frame. On a cold
+        // cache Globals.fixedFrame (set from the frame= URL param while the sitch
+        // definition parses) can land AFTER an early quiet gap, leaving par.frame at
+        // 0; treat "not yet on the target frame" as not-settled so we never snapshot
+        // the wrong frame.
+        const frameReady = (wantFrame == null) || (s.frame === wantFrame);
+        if (isPending(s) || !frameReady || !hiResReady) {
+            stable = 0; lastSig = '';
         } else {
             if (sig === lastSig) stable++; else { stable = 1; lastSig = sig; }
             const elapsed = Date.now() - start;
-            if ((observedBusy || elapsed >= minWaitMs) && stable >= stableChecks) {
+            if (elapsed >= minWaitMs && stable >= stableChecks) {
                 return {timedOut: false, state: s};
             }
         }
@@ -437,8 +493,9 @@ async function processSitch(context, sitch) {
         const url = buildLoadUrl(sitch);
         await page.goto(url, {waitUntil: 'load', timeout: 30000});
 
+        const wantFrame = frameFor(sitch);
         const settleStart = Date.now();
-        const settle = await waitForSettle(page, {maxWaitMs: CONFIG.perSitchTimeoutMs});
+        const settle = await waitForSettle(page, {maxWaitMs: CONFIG.perSitchTimeoutMs, wantFrame});
         result.settleMs = Date.now() - settleStart;
         result.settleTimedOut = settle.timedOut;
         result.note = `map=${settle.state.mapType || '?'} elev=${settle.state.elevationType || '?'} frame=${settle.state.frame}`;
@@ -457,9 +514,16 @@ async function processSitch(context, sitch) {
         // demand, so par.frame only snaps to fixedFrame once a frame renders).
         const renderedFrame = await page.evaluate(() => (typeof window.par !== 'undefined') ? window.par.frame : null);
         result.renderedFrame = renderedFrame;
-        const wantFrame = frameFor(sitch);
         if (renderedFrame !== wantFrame) {
             result.note += ` frameMismatch(want ${wantFrame},got ${renderedFrame})`;
+            // The settle gate requires the target frame, so a mismatch here means the
+            // load timed out before ever reaching it. Capturing now would write/compare
+            // a wrong-frame image (the old cold-cache frame-0 baseline bug) — fail hard
+            // instead, and never overwrite a baseline from such a capture.
+            result.status = 'error';
+            result.cause = `never reached frame ${wantFrame} (stuck at ${renderedFrame}) before ${CONFIG.perSitchTimeoutMs}ms timeout`;
+            result.consoleErrors = consoleErrors.slice(0, 20);
+            return result;
         }
 
         const clip = {x: 0, y: CONFIG.cropTop, width: CONFIG.viewport.width, height: CONFIG.viewport.height - CONFIG.cropTop};
