@@ -215,11 +215,65 @@ class CMetaTrack {
 
 
 
+// Default track-colour palette. Yellow is intentionally skipped (it's the
+// traverse colour). Shared by the initial assignment in addTracks and the
+// deterministic reassignment in reassignTrackColors().
+const TRACK_PALETTE = [
+    new Color(1, 0, 0),
+    new Color(0, 1, 0),
+    new Color(0, 0, 1),
+    new Color(1, 0, 1),
+    new Color(0, 1, 1),
+    new Color(0.5, 0, 0),
+    new Color(0, 0.5, 0),
+    new Color(0, 0, 0.5),
+    new Color(0.5, 0.5, 0),
+    new Color(0, 0.5, 0.5),
+    new Color(0.5, 0, 0.5),
+];
+
 class CTrackManager extends CManager {
 
     constructor() {
         super();
         this.usedShortNames = new Set(); // Track all used short names for uniqueness
+    }
+
+    // Deterministic, order-INDEPENDENT track-colour assignment.
+    //
+    // Imported tracks are created in async load-completion order (each file calls
+    // addTracks as it finishes parsing), so ANY creation-order index — size() or a
+    // running counter — assigns palette colours in a run-to-run-varying order,
+    // rotating the whole palette and recolouring every track. That produced the
+    // intermittent visual-regression failures on multi-track sitches (e.g. Potomac)
+    // and run-to-run colour flicker for users.
+    //
+    // Fix: rank the palette-coloured tracks by their STABLE shortName and assign
+    // TRACK_PALETTE[rank]. Same set of tracks -> same colours every load, regardless
+    // of which file finished first. Only tracks we auto-coloured from the palette are
+    // touched (paletteColored), so sonde tracks and user/serialised colours are left
+    // alone. Called at the end of addTracks (before the cascade recalc) so the
+    // colour CNodeConstants are updated before the geometry rebuilds.
+    reassignTrackColors() {
+        const palette = [];
+        this.iterate((id, t) => {
+            if (t.paletteColored && t.shortName) palette.push(t);
+        });
+        palette.sort((a, b) => (a.shortName < b.shortName ? -1 : a.shortName > b.shortName ? 1 : 0));
+        palette.forEach((t, rank) => {
+            const col = TRACK_PALETTE[rank % TRACK_PALETTE.length];
+            t.trackColor = col;
+            const drop = col.clone().multiplyScalar(0.75);
+            // Colours are fed to the display tracks via these CNodeConstants; update
+            // them (and the baked dropColor on the display nodes) so the end-of-
+            // addTracks recalculateAllRootFirst() rebuilds the line geometry colours.
+            const cd = NodeMan.get("colorData_" + t.shortName, false);
+            const ct = NodeMan.get("colorTrack_" + t.shortName, false);
+            if (cd) cd.value = new Color(col);
+            if (ct) ct.value = new Color(col);
+            if (t.trackDisplayDataNode) t.trackDisplayDataNode.dropColor = drop;
+            if (t.trackDisplayNode) t.trackDisplayNode.dropColor = drop;
+        });
     }
 
     // Tracks whose underlying MISB array has at least one valid
@@ -649,20 +703,7 @@ class CTrackManager extends CManager {
 
                     // how many tracks are there now?
                     const trackNumber = TrackManager.size();
-                    const trackColors = [
-                        new Color(1, 0, 0),
-                        new Color(0, 1, 0),
-                        new Color(0, 0, 1),
-                        // new Color(1, 1, 0), skip yellow as it's the traverse color
-                        new Color(1, 0, 1),
-                        new Color(0, 1, 1),
-                        new Color(0.5, 0, 0),
-                        new Color(0, 0.5, 0),
-                        new Color(0, 0, 0.5),
-                        new Color(0.5, 0.5, 0),
-                        new Color(0, 0.5, 0.5),
-                        new Color(0.5, 0, 0.5),
-                    ];
+                    const trackColors = TRACK_PALETTE;
 
                     // Sonde (radiosonde) tracks are reference data only — they
                     // should never auto-select as camera/target/angle tracks or
@@ -681,13 +722,22 @@ class CTrackManager extends CManager {
                         if (isSondeTrack) {
                             trackColor = new Color(1, 1, 1);
                         } else {
+                            // Provisional colour only. Tracks are created in async
+                            // load-completion order, so any creation-order index
+                            // (size() here) is run-to-run unstable. reassignTrackColors()
+                            // at the end of addTracks overrides this with a deterministic,
+                            // order-independent colour ranked by shortName. We mark the
+                            // track paletteColored so only auto-coloured tracks (not sonde
+                            // or user/serialised colours) get reassigned.
                             trackColor = trackColors[trackNumber % trackColors.length];
+                            trackOb.paletteColored = true;
                         }
                     }
                     // make dropcolor be the same as the track color bur reduced in brightness to 75%
                     const dropColor = trackColor.clone().multiplyScalar(0.75);
 
                     trackOb.trackColor = trackColor;
+                    trackOb.shortName = shortName;
 
                     let hasAngles = false;
                     if (!isSondeTrack) {
@@ -755,6 +805,10 @@ class CTrackManager extends CManager {
         if (settingSitchEstablished) {
             setSitchEstablished(true);
         }
+
+        // Make auto-assigned track colours deterministic (order-independent) BEFORE
+        // the cascade recalc, so the rebuilt line geometry picks up the stable colours.
+        this.reassignTrackColors();
 
         // we've loaded some tracks, and set stuff up, so ensure everything is calculated
         NodeMan.recalculateAllRootFirst()

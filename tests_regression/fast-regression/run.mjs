@@ -112,7 +112,14 @@ const CONFIG = {
     // lose the GPU context under contention.
     concurrency: Math.max(1, Number(opt('concurrency', '3'))),
     localTerrain: flag('localTerrain'),
-    headless: flag('headless'),
+    // Headless by DEFAULT. New-headless Chrome uses the *same* ANGLE Metal GPU
+    // backend as headed (verified: "ANGLE Metal Renderer" in both) at the same
+    // speed, but renders no on-screen window — so repeated runs no longer steal
+    // keyboard focus while you work. Pass --headed to watch the run in a real
+    // window (e.g. for debugging a single sitch). NOTE: headed and headless ANGLE
+    // differ by ~0.1-0.5% in rasterization, so baselines must be regenerated in
+    // whichever mode you run in (baselines are local-only — see README).
+    headless: !flag('headed'),
     update: flag('update'),
     list: flag('list'),
     filter: opt('filter', null),

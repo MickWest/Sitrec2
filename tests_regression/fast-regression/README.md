@@ -27,7 +27,7 @@ npm run test-fast-list       # just list the Regression sitches + latest version
 # direct, with flags:
 node tests_regression/fast-regression/run.mjs --filter=wind     # only matching sitches
 node tests_regression/fast-regression/run.mjs --concurrency=2   # N pages in parallel (bonus)
-node tests_regression/fast-regression/run.mjs --headless        # new-headless Chrome (no window)
+node tests_regression/fast-regression/run.mjs --headed          # show the Chrome window (default is headless)
 node tests_regression/fast-regression/run.mjs --update --filter=ThomasH   # re-baseline one
 ```
 
@@ -48,7 +48,7 @@ node tests_regression/fast-regression/run.mjs --update --filter=ThomasH   # re-b
 | `--filter=SUBSTR` | — | only sitches whose name contains SUBSTR (case-insensitive) |
 | `--sitches=A,B,C` | — | test these exact saved-sitch names, bypassing the label (vet candidates / one-off checks) |
 | `--concurrency=N` | 3 | run N sitches in parallel (one Chrome page each). ~2× faster; pixel-identical to serial on a real GPU. Use 1 for CI/SwiftShader or strict ordering |
-| `--headless` | off | use new-headless Chrome (no visible window) |
+| `--headed` | off | show the Chrome window. **Default is headless** — new-headless Chrome uses the *same* ANGLE Metal GPU backend as headed (verified `ANGLE Metal Renderer` in both) at the same speed, but draws no window, so repeated runs don't steal keyboard focus while you work. Use `--headed` to watch a run. (Headed and headless ANGLE rasterize ~0.1-0.5% differently, so baselines are mode-specific — regenerate if you switch modes.) `--headless` is still accepted as a no-op. |
 | `--label=NAME` | `Regression` | enumerate a different label |
 | `--frame=N` | 10 | frame to lock + screenshot |
 | `--maxDiffRatio=R` | 0.001 | fraction of pixels allowed to differ before FAIL |

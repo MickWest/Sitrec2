@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.74.1 (2026-06-03)
+
+### Bug Fixes
+- **Deterministic auto-assigned track colours** (`src/TrackManager.js`): auto-palette track colours were indexed by `TrackManager.size()` at track *creation* time. Imported tracks are created in async load-completion order (each file calls `addTracks` as it finishes parsing), so the palette index per track varied run-to-run — the whole palette rotated and every track was recoloured. This caused run-to-run track-colour flicker for users loading the same multi-track sitch, and intermittent visual-regression failures on multi-track sitches (e.g. the Potomac collision sitch). Fix: the palette is extracted to a module const `TRACK_PALETTE` (yellow deliberately skipped — it's the traverse colour), and a new `reassignTrackColors()` runs at the end of `addTracks`, *before* `NodeMan.recalculateAllRootFirst()`, so the colour constants are stable before the line geometry rebuilds. It collects every track flagged `paletteColored` with a `shortName`, sorts them by `shortName` (order-independent → deterministic and distinct), and assigns `TRACK_PALETTE[rank % length]`, updating the per-track colour `CNodeConstant`s (`colorData_<short>` / `colorTrack_<short>`) and the display nodes' `dropColor` (track colour × 0.75 on `trackDisplayDataNode` / `trackDisplayNode`). Only auto-palette tracks are touched: sonde (radiosonde) tracks stay white and aren't marked `paletteColored`, and user/serialised colours are left alone. The provisional `size()`-indexed colour is still set at creation but is now always overridden by the deterministic pass (tracks also now carry `paletteColored` and `shortName`).
+
+### Internal / Refactor
+- **Fast-regression harness defaults to headless** (`tests_regression/fast-regression/run.mjs`, `README.md`, test-only): the harness now launches Chrome headless by default — `headless: !flag('headed')`. New-headless Chrome uses the *same* ANGLE Metal GPU backend as headed (verified `ANGLE Metal Renderer` in both) at the same speed and shares the same persistent profile/cache, but draws no on-screen window, so repeated local runs no longer steal keyboard focus while you work. A new `--headed` flag opts back into a visible window (e.g. to watch a single sitch); `--headless` is kept as an accepted no-op. NOTE: headed and headless ANGLE rasterize ~0.1–0.5% differently, so baselines are mode-specific — regenerate the (local-only) baselines if you switch modes. `README.md` flag table updated to match.
+
 ## Version 2.74.0 (2026-06-03)
 
 ### New Features

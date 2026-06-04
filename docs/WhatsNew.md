@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.74.1 (2026-06-03)
+
+### Bug Fixes
+- Fixed track colours changing from one load to the next when loading a sitch with several tracks. Each track now keeps the same colour every time, regardless of which file finishes loading first.
+
 ## Version 2.74.0 (2026-06-03)
 
 ### New Features
