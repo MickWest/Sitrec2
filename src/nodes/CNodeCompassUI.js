@@ -364,7 +364,6 @@ export class   CNodeCompassUI extends CNodeViewUI {
         }
         else {
             headingText = headingRound + "° / " + elevationRound + "°";
-            this.lastElevation = elevationRound; // only track elevation if we're displaying it
         }
         
         // Add AR mode indicator if active
@@ -389,8 +388,13 @@ export class   CNodeCompassUI extends CNodeViewUI {
         // The parent class renderCanvas will call adjustSize() and applyPendingResize()
         super.renderCanvas(frame);
 
-        // Update state
+        // Update state. lastElevation must be tracked unconditionally — if it is
+        // only updated when elevation is displayed, the change-guard above keeps
+        // failing every frame (lastElevation stuck at its init value), redrawing
+        // the compass and calling removeText()->setRenderOne(true) every frame,
+        // which re-armed the render loop and pegged CPU.
         this.lastHeading = headingRound;
+        this.lastElevation = elevationRound;
         this.lastTargetWindFrom = currentTargetWindFrom;
         this.lastLocalWindFrom = currentLocalWindFrom;
         this.lastWindSourceKey = currentWindSourceKey;

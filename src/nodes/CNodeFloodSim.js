@@ -136,8 +136,13 @@ export class CNodeFloodSim extends CNode3DGroup {
             const now = performance.now();
             if (now - this._lastUpdateTime > 50) {
                 this.runFloodStep(par.frame);
+                // Only request a render when a physics step actually ran. Calling
+                // setRenderOne(true) unconditionally every 16ms forced a full
+                // 60fps scene re-render (and its GC) even on the throttled ticks
+                // where nothing changed — the dominant cost once the render loop
+                // itself was fixed. A step runs ~20/s, so the water still animates.
+                setRenderOne(true);
             }
-            setRenderOne(true);
         }, 16);
 
         this.setupMesh();

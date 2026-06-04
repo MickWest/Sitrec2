@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.74.2 (2026-06-04)
+
+### Bug Fixes
+- Fixed very high CPU usage when a scene was loaded and paused, especially on heavy scenes (Google photorealistic 3D buildings, terrain, and night sky). The view now stays idle when nothing is changing and wakes up only when you move the camera or new map data arrives.
+- Fixed stuttering and roughly one-second hangs when playing high-resolution (for example 4K) video.
+- Fixed a stale-camera frustum occasionally showing the wrong field of view in videos whose aspect ratio is matched to the view.
+- Fixed a harmless console warning on synthetic buildings.
+
+### Improvements
+- The Quality performance preset (Custom sitch performance settings) now caps decoded video at 1080P instead of full source resolution, so no preset decodes full 4K by default.
+
 ## Version 2.74.1 (2026-06-03)
 
 ### Bug Fixes

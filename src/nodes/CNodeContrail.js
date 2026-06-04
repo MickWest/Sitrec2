@@ -63,7 +63,15 @@ export class CNodeContrail extends CNode3DGroup {
     update(frame) {
         super.update(frame);
         this.rebuildRibbon(frame);
-        setRenderOne(true);
+        // rebuildRibbon(frame) is frame-deterministic, so only request a render when
+        // the frame actually changed. Calling setRenderOne(true) every frame here
+        // re-armed the render loop continuously — once render-on-demand was fixed to
+        // actually sleep, a paused contrail-enabled track would peg CPU at ~600%.
+        // Parameter edits go through GUI onChange handlers that already setRenderOne.
+        if (frame !== this._lastContrailFrame) {
+            this._lastContrailFrame = frame;
+            setRenderOne(true);
+        }
     }
 
     // Binary search for a float frame index in the data track matching a target time.

@@ -1523,17 +1523,25 @@ export class CNodeTerrainUI extends CNode {
                 this._subdivGraceFrames--;
             }
 
-            // Keep grace alive briefly whenever the texture map has dirty
-            // parents pending coverage re-check. This catches the case where
-            // textures finish loading AFTER the camera-driven grace expired:
-            // setTileLayerMask invalidates coverage and adds ancestors to
-            // _dirtyParents, but without a subdivision pass running to
-            // process them, the parents stay active alongside their loaded
-            // children — z-fighting in the visible area. A short extra
-            // grace (just enough for deactivateParentsWithLoadedChildren to
-            // walk the set once) clears the backlog.
+            // Keep a short grace alive ONLY while tiles are genuinely loading
+            // (network/decode in flight), so textures that finish AFTER the
+            // camera-driven grace expired still get one coverage pass (otherwise
+            // a freshly-loaded child renders alongside its still-active parent —
+            // z-fighting). pendingTileLoads is the authoritative in-flight set;
+            // when the last load completes the grace decays over 5 frames, which
+            // is the cleanup window.
+            //
+            // We must NOT gate this on _dirtyParents.size or a tile-count
+            // signature. Both create a feedback loop: a coverage pass flips a
+            // tile's active state (or re-marks a parent dirty) as a SIDE EFFECT,
+            // which changes the signal, which refreshes grace, which runs another
+            // pass that flips it back — churning forever with a static camera and
+            // re-arming the render loop every frame (~600% CPU / continuous
+            // render). During that churn pendingTileLoads is empty, so gating on
+            // real loads lets grace decay and the scene finally settles; genuine
+            // loading still extends it. A camera move resets grace to 120.
             const textureMap = this.terrainNode.maps[this.mapType]?.map;
-            if (textureMap?._dirtyParents?.size > 0 && this._subdivGraceFrames < 5) {
+            if (textureMap?.pendingTileLoads?.size > 0 && this._subdivGraceFrames < 5) {
                 this._subdivGraceFrames = 5;
             }
 
@@ -1585,6 +1593,29 @@ export class CNodeTerrainUI extends CNode {
             this.rebuildOceanSurfaceTiles();
         }
 
+        // Self-disable the paused keep-alive once the terrain is fully settled, so
+        // the render loop can sleep (shouldSleepAnimationLoop needs
+        // hasPausedBackgroundWork()===false). Running this node's update() ~60x/sec
+        // while paused-but-focused — even though each call is cheap — kept the loop
+        // alive and pegged the GC threads (~600% CPU). "Settled" = no subdivision
+        // grace left, nothing loading, no pending recalc/refresh. While asleep, a
+        // camera move (controls -> setRenderOne) or an async tile-load completion
+        // (-> setRenderOne) wakes the loop, which re-runs this update, re-detects
+        // work (grace gets re-armed / pendingTileLoads grows) and re-enables itself.
+        // pendingTileLoads is a Set that only QuadTreeMapTexture maintains; the
+        // elevation map (QuadTreeMapElevation) has no such field, so it needs the
+        // per-tile isLoadingElevation flag instead. Keep the loop awake while either
+        // map still has work in flight so freshly-loaded tiles get drawn.
+        const texMap = this.terrainNode?.maps?.[this.mapType]?.map;
+        const elevMap = this.terrainNode?.elevationMap;
+        const texMapPending = texMap?.pendingTileLoads?.size > 0;
+        const elevMapPending = !!elevMap?.getAllTiles?.().some(t => t.isLoadingElevation);
+        // NOTE: do NOT include this.startLoading here — its only reset site is
+        // commented out, so it would latch updateWhilePaused true forever (loop never
+        // sleeps) after a Refresh/detail change on a non-dynamic terrain sitch.
+        this.updateWhilePaused = this._subdivGraceFrames > 0
+            || texMapPending || elevMapPending
+            || !!this.recalculateSoon || !!this.refresh;
     }
 
     recalculate() {

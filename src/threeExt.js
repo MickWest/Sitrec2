@@ -339,8 +339,12 @@ export function DebugArrow(name, direction, origin, _length = 100, color="#FFFFF
             DebugArrows[name].cone.material.color.copy(newColor);
         }
 
-        // Update layer mask if it has changed
-        if (layerMask !== undefined) {
+        // Update layer mask ONLY if it has changed. setLayerMaskRecursive() calls
+        // setRenderOne(true), so calling it unconditionally on every per-frame
+        // arrow redraw (e.g. the camera frustum / flow indicator) re-armed the
+        // render flag every frame — a self-sustaining render loop that never let
+        // the paused scene settle (~600% CPU). Only re-apply on a real change.
+        if (layerMask !== undefined && DebugArrows[name].layers.mask !== layerMask) {
             setLayerMaskRecursive(DebugArrows[name], layerMask)
         }
     }
@@ -523,17 +527,25 @@ export function DebugArrowAB(name, A, B, color, visible, parent, headLength=20, 
 // so we need to propagate it if there's any chenge
 export function propagateLayerMaskObject(parent) {
     assert(parent !== undefined, "propagateLayerMaskObject called on undefined parent")
-    // copy group layers bitmask into all children
+    // copy group layers bitmask into all children, only requesting a render if
+    // a mask actually changed. These helpers are invoked from per-frame redraw
+    // paths (e.g. the camera frustum rebuild), so an unconditional setRenderOne
+    // re-armed the render loop every frame and pegged CPU on a static scene.
     const layersMask = parent.layers.mask;
-    parent.traverse( function( child ) { child.layers.mask = layersMask } )
-    setRenderOne(true);
+    let changed = false;
+    parent.traverse( function( child ) {
+        if (child.layers.mask !== layersMask) { child.layers.mask = layersMask; changed = true; }
+    } )
+    if (changed) setRenderOne(true);
 }
 
 export function setLayerMaskRecursive(object, mask) {
+    let changed = (object.layers.mask !== mask);
     object.layers.mask = mask;
-    object.traverse( function( child ) { child.layers.mask = mask } )
-    setRenderOne(true);
-
+    object.traverse( function( child ) {
+        if (child.layers.mask !== mask) { child.layers.mask = mask; changed = true; }
+    } )
+    if (changed) setRenderOne(true);
 }
 
 

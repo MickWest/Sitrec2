@@ -295,12 +295,18 @@ export function renderMain(elapsed) {
             setRenderOne(true);
     }
 
-    // frame number forced by URL parameter
-    if (Globals.fixedFrame !== undefined) {
+    // frame number forced by URL parameter. Only (re)arm a render when the frame
+    // actually needs pinning — Globals.fixedFrame is set once and never cleared,
+    // so re-running par.frame=... (which re-arms renderOne via the par.frame
+    // setter) every tick would defeat the paused early-out below and keep the
+    // scene full-rendering forever. Arm once, then settle.
+    if (Globals.fixedFrame !== undefined && par.frame !== Globals.fixedFrame) {
         par.frame = Globals.fixedFrame;
         GlobalDateTimeNode.update(Globals.fixedFrame);
         par.paused = true;
         setRenderOne(true);
+    } else if (Globals.fixedFrame !== undefined) {
+        par.paused = true; // keep paused, but do not re-arm renderOne
     }
 
 
@@ -321,8 +327,14 @@ export function renderMain(elapsed) {
     }
 
     // par.renderOne is a flag set whenever something is done that forces an update.
+    // Clear it with a direct write. (Historically setRenderOne(false) was a no-op
+    // here: setRenderOne() guards on `if (!par.renderOne)` to coalesce wake-ups on
+    // the truthy path, which silently neutralised the clear — so renderOne stayed
+    // true forever, renderMain never took the paused early-out above, and a heavy
+    // scene full-rendered every tick at ~600% CPU. setRenderOne now honours an
+    // explicit clear, but we still write directly here so this is unambiguous.)
     if (par.renderOne === true) {
-        setRenderOne(false);
+        par.renderOne = false;
     } else if (typeof par.renderOne === "number") {
         // allow it to be a number if we want to force more than one frame render
         if (par.renderOne > 0) {

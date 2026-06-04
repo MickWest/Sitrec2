@@ -64,6 +64,27 @@ export class CNodeBackgroundFlowIndicator extends CNode {
         const cameraPosA = losTrackA.position.clone();
         const cameraPosB = losTrackB.position.clone();
 
+        // The two terrain raycasts below are the single most expensive thing this
+        // node does (near-horizontal LOS rays skim across many high-detail terrain
+        // tiles). When the frame and camera pose are unchanged from the previous
+        // update there is nothing to recompute — the flow arrows are persistent
+        // named debug objects, so they remain drawn from the last computation.
+        // This eliminates the per-frame raycast churn while the camera is static
+        // (the dominant CPU cost when a heavy-terrain sitch just sits loaded).
+        const EPS = 1e-6; // squared metres; static ECEF positions compare bit-identical
+        if (this._cacheFrame === f
+            && this._cachePosA && this._cachePosA.distanceToSquared(cameraPosA) < EPS
+            && this._cachePosB && this._cachePosB.distanceToSquared(cameraPosB) < EPS
+            && this._cacheLosA && this._cacheLosA.distanceToSquared(losA) < EPS
+            && this._cacheLosB && this._cacheLosB.distanceToSquared(losB) < EPS) {
+            return;
+        }
+        this._cacheFrame = f;
+        this._cachePosA = (this._cachePosA ?? new Vector3()).copy(cameraPosA);
+        this._cachePosB = (this._cachePosB ?? new Vector3()).copy(cameraPosB);
+        this._cacheLosA = (this._cacheLosA ?? new Vector3()).copy(losA);
+        this._cacheLosB = (this._cacheLosB ?? new Vector3()).copy(losB);
+
         const rayA = new Raycaster(cameraPosA, losA)
         rayA.layers.mask  |= LAYER.MASK_MAIN | LAYER.MASK_LOOK;
 
@@ -149,7 +170,9 @@ export class CNodeBackgroundFlowIndicator extends CNode {
     remove() {
         removeDebugArrow(this.arrowName)
         removeDebugArrow(this.arrowName+"20")
-
+        // Invalidate the raycast cache so a later show() recomputes and redraws
+        // the arrows instead of early-returning on an unchanged camera pose.
+        this._cacheFrame = undefined;
     }
 
     dispose() {

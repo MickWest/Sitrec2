@@ -1040,9 +1040,14 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             depthTest: this.materialDepthTest,
             wireframe: this.materialWireframe,
             depthWrite: true,
-            flatShading: true  // Use face normals for flat surfaces
         };
-        
+
+        // flatShading uses face normals for a faceted look, but only applies to
+        // lit materials. MeshBasicMaterial is unlit and warns if it's passed.
+        if (this.materialType !== 'basic') {
+            materialConfig.flatShading = true;
+        }
+
         let mat;
         switch (this.materialType) {
             case 'basic':

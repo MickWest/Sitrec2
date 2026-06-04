@@ -355,7 +355,19 @@ export async function initializeSettings() {
     }
 
     if (Globals.regression) {
-        console.log("Regression mode - skipping settings load");
+        console.log("Regression mode - forcing Balanced preset (deterministic; ignores saved/cookie settings)");
+        // Regression screenshots must be deterministic regardless of the machine's
+        // saved/cookied performance preferences. Force the Balanced preset's knobs
+        // explicitly so a drifted default, a pre-set Globals.settings, or a changed
+        // per-user preset can never alter regression output.
+        // KEEP IN SYNC with PERFORMANCE_PRESETS.Balanced in CustomSupport.js.
+        Globals.settings.performancePreset = "Balanced";
+        Globals.settings.renderScale = 0.85;
+        Globals.settings.msaaSamples = 2;
+        Globals.settings.fpsLimit = 30;
+        Globals.settings.tileSegments = 32;
+        Globals.settings.maxDetails = 20;
+        Globals.settings.videoMaxSize = "720P";
         Globals.settings.showAttribution = false;
         Globals.lastSettingsJSON = JSON.stringify(sanitizeSettings(Globals.settings));
         return Globals.settings;

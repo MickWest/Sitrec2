@@ -1,7 +1,7 @@
 import {CNode} from "./CNode";
 import {pointAbove} from "../threeExt";
 import {cos, radians} from "../utils";
-import {Globals, markShadowCastersDirty, NodeMan, Sit} from "../Globals";
+import {Globals, markShadowCastersDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {ECEFToLLAVD_radii, RLLAToECEF_radii, RLLAToECEFV_Sphere} from "../LLA-ECEF-ENU";
 import {setAltitudeHAE} from "../SphericalMath";
 import {BufferGeometry, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, Raycaster} from "three";
@@ -806,6 +806,11 @@ export class CNodeTerrain extends CNode {
             this._elevationChangedPending = false;
             if (!this.maps || !this.UI) return;   // disposed during a sitch transition
             EventManager.dispatchEvent("elevationChanged", this)
+            // An elevation tile just mutated the terrain mesh. Under render-on-demand
+            // the loop may already be asleep (camera settled), so request a render —
+            // otherwise the new elevation is in memory but never drawn until the user
+            // nudges the camera (stale flat/coarse terrain).
+            setRenderOne(true)
         })
     }
 

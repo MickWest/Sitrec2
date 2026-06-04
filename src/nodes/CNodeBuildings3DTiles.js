@@ -8,7 +8,7 @@
 // competing for budget.
 
 import {CNode} from "./CNode";
-import {Globals, markShadowCastersDirty, NodeMan} from "../Globals";
+import {Globals, markShadowCastersDirty, NodeMan, setRenderOne} from "../Globals";
 import {GlobalScene} from "../LocalFrame";
 import {DoubleSide, Group} from "three";
 import * as LAYER from "../LayerMasks";
@@ -87,6 +87,12 @@ class PerViewTiles {
             this.visibilityVersion++;
             this.lastVisibilityChangeAt = performance.now();
             markShadowCastersDirty(`3dTiles:${source}:visibility`);
+            // A tile became visible/invisible (loaded, LOD swapped, fade step). Under
+            // render-on-demand the loop may have slept after the camera settled, so
+            // request a render — otherwise a late-arriving tile is in the scene graph
+            // but never drawn. Cheap: during active streaming the loop is already kept
+            // awake by _isUpdatePending(); once streaming stops these events stop too.
+            setRenderOne(true);
         };
         this.renderer.addEventListener("tile-visibility-change", this._onTileVisibilityChange);
 
@@ -143,9 +149,49 @@ class PerViewTiles {
         // Ensure the camera's world matrix is current — controllers may not
         // have run yet this frame depending on node update order.
         view.camera.updateMatrixWorld();
-        this.renderer.setCamera(view.camera);
-        this.renderer.setResolutionFromRenderer(view.camera, view.renderer);
+
+        // TilesRenderer.update() re-traverses the whole tileset every call to
+        // recompute screen-space error / LOD, allocating tens of KB each time
+        // (~119KB/frame across both views on a Google-photorealistic scene).
+        // When the camera is static AND the tileset is fully settled (nothing
+        // downloading / parsing / fading), re-running it changes nothing but
+        // churns ~7MB/s of garbage at 60fps — a primary GC/CPU sink even while
+        // paused. Skip it once settled; any camera move resumes immediately,
+        // and a short grace window covers fades/late tiles after the camera
+        // stops. Resolution (aspect) is folded into the fingerprint so a
+        // window resize also re-triggers an LOD pass.
+        const cam = view.camera;
+        const e = cam.matrixWorld.elements;
+        const fp = e[0] + e[5] + e[10] + e[12] + e[13] + e[14]
+            + cam.fov + cam.zoom + (cam.aspect || 0);
+        if (fp !== this._lastCamFingerprint) {
+            this._lastCamFingerprint = fp;
+            this._updateGraceFrames = 60; // keep updating ~1s after camera stops
+        } else if (this._updateGraceFrames > 0) {
+            this._updateGraceFrames--;
+        }
+        if ((this._updateGraceFrames ?? 0) <= 0 && !this._isUpdatePending()) {
+            return; // static camera + settled tileset: nothing to recompute
+        }
+
+        this.renderer.setCamera(cam);
+        this.renderer.setResolutionFromRenderer(cam, view.renderer);
         this.renderer.update();
+    }
+
+    // True while the tileset still has network/parse work or fade transitions
+    // in flight — i.e. update() must keep running even with a static camera.
+    // Mirrors the pending check used by getPendingLoadState().
+    _isUpdatePending() {
+        const r = this.renderer;
+        if (!r) return false;
+        const s = r.stats || {};
+        const fading = this.fadePlugin?.fadingTiles || 0;
+        return !!r.isLoading
+            || (s.queued || 0) > 0
+            || (s.downloading || 0) > 0
+            || (s.parsing || 0) > 0
+            || fading > 0;
     }
 
     /**
@@ -323,10 +369,21 @@ export class CNodeBuildings3DTiles extends CNode {
 
         if (!this._initialized) return;
 
+        let active = false;
         for (const [viewId, pv] of Object.entries(this._perView)) {
             const view = NodeMan.get(viewId, false);
             pv.update(view);
+            if ((pv._updateGraceFrames ?? 0) > 0 || pv._isUpdatePending()) active = true;
         }
+
+        // Self-disable the paused keep-alive once the tileset is fully settled and
+        // the camera is static, so the render loop can actually sleep
+        // (shouldSleepAnimationLoop needs hasPausedBackgroundWork()===false). While
+        // asleep, a camera move (controls -> setRenderOne) or a tile-visibility change
+        // (load / LOD swap / fade -> setRenderOne in _onTileVisibilityChange) wakes the
+        // loop, which re-runs this update, re-detects work via the per-view
+        // grace/pending check above, and re-arms.
+        this.updateWhilePaused = active;
     }
 
     /**

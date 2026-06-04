@@ -28,7 +28,7 @@ npm run test-fast-list       # just list the Regression sitches + latest version
 node tests_regression/fast-regression/run.mjs --filter=wind     # only matching sitches
 node tests_regression/fast-regression/run.mjs --concurrency=2   # N pages in parallel (bonus)
 node tests_regression/fast-regression/run.mjs --headed          # show the Chrome window (default is headless)
-node tests_regression/fast-regression/run.mjs --update --filter=ThomasH   # re-baseline one
+node tests_regression/fast-regression/run.mjs --update --filter=Mick   # re-baseline one
 ```
 
 > **Network/sandbox:** the harness talks to `local.metabunk.org` and S3, so run it

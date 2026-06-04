@@ -342,6 +342,13 @@ export function setupGUIjetTweaks(_jetTweaks) {
 }
 
 export function setRenderOne(value=true) {
+    // A clear must always apply (and must never wake the loop). The truthy path
+    // keeps its coalescing guard so a pending render request (incl. numeric
+    // setRenderOne(2)) is not clobbered or re-woken redundantly.
+    if (!value) {
+        par.renderOne = false;
+        return;
+    }
     if (!par.renderOne) {
         par.renderOne = value;
         globalThis.__sitrecWakeRenderLoop?.();

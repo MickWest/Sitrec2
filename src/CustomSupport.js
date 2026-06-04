@@ -132,7 +132,7 @@ import {serializeMethods} from "./CustomManagerSerialize";
 // sub-pixel-wide line smoothly. Below that, MatLines.js clamps linewidth to
 // ≥1 fb-pixel so LOS / track lines stay solid instead of dashing at low MSAA.
 const PERFORMANCE_PRESETS = {
-    Quality:  { renderScale: 1,    msaaSamples: 4, fpsLimit: 60, tileSegments: 64, maxDetails: 25, videoMaxSize: "None" },
+    Quality:  { renderScale: 1,    msaaSamples: 4, fpsLimit: 60, tileSegments: 64, maxDetails: 25, videoMaxSize: "1080P" },
     Balanced: { renderScale: 0.85, msaaSamples: 2, fpsLimit: 30, tileSegments: 32, maxDetails: 20, videoMaxSize: "720P" },
     Fast:     { renderScale: 0.7,  msaaSamples: 0, fpsLimit: 30, tileSegments: 16, maxDetails: 15, videoMaxSize: "480P" },
     Potato:   { renderScale: 0.5,  msaaSamples: 0, fpsLimit: 20, tileSegments: 16, maxDetails: 10, videoMaxSize: "360P" },

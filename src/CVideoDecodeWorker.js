@@ -12,6 +12,32 @@ let videoMaxSize = null;
 let lastConfig = null;
 let configGeneration = 0; // incremented on each configure to ignore stale error callbacks
 
+// --- Decode backpressure ---------------------------------------------------
+// Each decoded frame is a VideoFrame -> ImageBitmap carrying large EXTERNAL
+// memory (a 4K frame is ~33MB) that V8 tracks but stores off-heap. Decoding a
+// whole group (80-90 chunks) in one synchronous loop floods the pipeline with
+// GBs of external memory in flight; V8 reacts by firing back-to-back Major GCs
+// (each reclaiming ~nothing, because the buffers are live) and the worker spends
+// ~all its time collecting instead of decoding -> 1s playback hangs. Bounding
+// the in-flight frame count keeps external memory small at ANY resolution.
+let inFlightFrames = 0;        // decoded frames not yet turned into a bitmap + posted
+let drainWaiters = [];         // resolve callbacks for the decode loop awaiting drain
+let decodeGeneration = 0;      // bumped on reset/dispose to abort an in-flight group
+const MAX_IN_FLIGHT_FRAMES = 12; // ~12 x 33MB = ~400MB ceiling at 4K
+function wakeDrainWaiters() {
+    if (drainWaiters.length === 0) return;
+    const waiters = drainWaiters;
+    drainWaiters = [];
+    for (let i = 0; i < waiters.length; i++) waiters[i]();
+}
+function frameDrained() {
+    if (inFlightFrames > 0) inFlightFrames--;
+    wakeDrainWaiters();
+}
+function waitForDrain() {
+    return new Promise(function(resolve) { drainWaiters.push(resolve); });
+}
+
 const resolutionMap = {
     "1080P": 1920,
     "720P": 1280,
@@ -38,6 +64,15 @@ function createDecoder() {
 
 function recoverDecoder() {
     if (!lastConfig) return;
+    // A fatal decoder error discards all queued chunks (close() in createDecoder),
+    // so frames in flight will NEVER emit output → frameDrained() would never fire.
+    // If the decodeGroup loop is suspended at "await waitForDrain()" (queue full —
+    // exactly the corrupt/truncated-4K case backpressure targets), it must be aborted
+    // and unblocked, or it hangs until the main-thread 45s group timeout. Bump the
+    // generation (so the resumed loop bails), reset the in-flight count, and wake it.
+    decodeGeneration++;
+    inFlightFrames = 0;
+    wakeDrainWaiters();
     try {
         createDecoder();
         decoder.configure(lastConfig);
@@ -54,6 +89,9 @@ function handleDecodedFrame(videoFrame) {
         return;
     }
 
+    // Count this frame against the backpressure cap until it has been turned into
+    // a bitmap and transferred to the main thread (frameDrained in .finally()).
+    inFlightFrames++;
     createImageBitmap(videoFrame).then(bitmap => {
         videoFrame.close();
         return applyTransforms(bitmap);
@@ -74,6 +112,8 @@ function handleDecodedFrame(videoFrame) {
             frameNumber: frameNumber,
             message: err.message,
         });
+    }).finally(() => {
+        frameDrained();
     });
 }
 
@@ -120,11 +160,18 @@ async function resizeIfNeeded(image) {
     return createImageBitmap(canvas);
 }
 
-self.onmessage = function(e) {
+self.onmessage = async function(e) {
     const msg = e.data;
     switch (msg.type) {
         case 'configure': {
             configGeneration++; // Invalidate any pending error callbacks from old decoder
+            // createDecoder() closes the old decoder, discarding queued chunks, so any
+            // in-flight decodeGroup loop must be aborted + unblocked (same reasoning as
+            // recoverDecoder). Latent today — the main-thread busy gate serializes groups
+            // vs configure — but cheap insurance against a suspended-loop wedge.
+            decodeGeneration++;
+            inFlightFrames = 0;
+            wakeDrainWaiters();
             createDecoder();
             const config = { codec: msg.codec };
             if (msg.description) {
@@ -155,6 +202,7 @@ self.onmessage = function(e) {
                 }
             }
             currentGroupId = msg.groupId;
+            const myGen = ++decodeGeneration; // abort this loop if a reset/new group supersedes it
             timestampToFrameNumber.clear();
             for (const mapping of msg.timestampMap) {
                 timestampToFrameNumber.set(mapping.timestamp, mapping.frameNumber);
@@ -165,6 +213,13 @@ self.onmessage = function(e) {
             try {
                 let decodeErrors = 0;
                 for (const chunkData of chunks) {
+                    // BACKPRESSURE: don't queue more decodes than the output stage can
+                    // drain. Caps in-flight VideoFrames/ImageBitmaps (large EXTERNAL
+                    // memory) so V8 doesn't thrash on Major GC (see top-of-file note).
+                    while ((decoder.decodeQueueSize + inFlightFrames) > MAX_IN_FLIGHT_FRAMES) {
+                        await waitForDrain();
+                        if (decodeGeneration !== myGen || !decoder || decoder.state === 'closed') return;
+                    }
                     try {
                         const chunk = new EncodedVideoChunk({
                             type: chunkData.type,
@@ -244,6 +299,9 @@ self.onmessage = function(e) {
                 try { decoder.reset(); decoder.configure({ codec: msg.codec, description: msg.description }); } catch(e) {}
             }
             flushing = false;
+            decodeGeneration++;   // abort any in-flight decodeGroup loop awaiting backpressure
+            inFlightFrames = 0;
+            wakeDrainWaiters();
             self.postMessage({ type: 'resetDone' });
             break;
         }
@@ -253,6 +311,8 @@ self.onmessage = function(e) {
             }
             decoder = null;
             configured = false;
+            decodeGeneration++;
+            wakeDrainWaiters();
             self.close();
             break;
         }
