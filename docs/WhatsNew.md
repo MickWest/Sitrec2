@@ -9,9 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
-## Version 2.74.3 (2026-06-05)
+## Version 2.75.0 (2026-06-05)
+
+### New Features
+- **Auto Mask Redactions** (Video → Motion Analysis → Masking): a new tool that automatically finds solid black or grey rectangular redaction boxes in a video and masks them out so they don't interfere with motion analysis. It tells real redaction boxes apart from terrain by looking for areas that are grey, flat, and unchanging across several frames, and it covers overlapping boxes and grey sidebars cleanly. A set of tuning sliders (Redaction Frames, Invariance, Max Bright, Greyness, Flatness, Min Size, Min Fill, Expand) lets you dial in the detection, and your settings are saved with the sitch.
+
+### Improvements
+- Auto-masking now adds to your mask instead of clearing it. Running *Auto Mask* or *Auto Mask Redactions* (Video → Motion Analysis → Masking) no longer wipes your hand-painting or the other tool's result; re-running a tool replaces only its own contribution, and *Clear Mask* still starts over from scratch.
 
 ### Bug Fixes
+- Fixed an occasional failure to load an image as a video (most often the Atremis Starlink scene), where the image was handed over before it had finished decoding.
 - Fixed a 3D object intermittently showing the wrong model (for example a default F/A-18F instead of the model you saved or selected). This could happen after loading a saved sitch, or when switching a 3D object's model quickly. The object now always ends up showing the most recently selected model.
 - Fixed a saved sitch with several videos or images sometimes loading with the wrong image or video selected. The selection you saved is now restored reliably every time, even when the images finish loading in a different order than they were saved.
 
