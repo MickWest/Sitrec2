@@ -271,7 +271,7 @@ function settleStateFn() {
 
     const state = {
         ready: !!globals && !!nodeMan && !!nodeMan.list,
-        pendingActions: 0, deserializing: false, parsing: 0, loadingVisible: false,
+        pendingActions: 0, deserializing: false, parsing: 0, loadingVisible: false, loadingTerrain: false,
         texturePendingLoads: 0, textureLoading: 0, textureRecalc: 0, texturePendingAncestor: 0,
         textureNeedsHighRes: 0,
         elevationLoading: 0, elevationRecalc: 0, elevationPendingAncestor: 0,
@@ -285,6 +285,13 @@ function settleStateFn() {
     state.pendingActions = globals.pendingActions ?? 0;
     state.deserializing = !!globals.deserializing;
     state.parsing = globals.parsing ?? 0;
+    // CNodeTerrain sets Globals.loadingTerrain true from map creation until its
+    // loadedCallback fires. Under heavy concurrent load this is the window the gate
+    // otherwise misses: setup is done (deserializing/parsing false) and the terrain's
+    // tiles aren't visible yet (so the tile counts below read 0 = "not pending"), and
+    // the gate would settle on the minWait floor and screenshot an EARTHLESS scene
+    // (satellite-mode-test 40% flake). Treating terrain-loading as pending closes it.
+    state.loadingTerrain = !!globals.loadingTerrain;
     state.loadingVisible = !!loadingDiv && loadingDiv.style.display !== 'none' &&
         (loadingDiv.textContent || '').includes('Loading');
     if (typeof window.areVideoFramesPendingForFixedFrame === 'function') {
@@ -353,7 +360,7 @@ function settleStateFn() {
 
 function isPending(s) {
     if (!s.ready) return true;
-    return s.pendingActions > 0 || s.deserializing || s.parsing > 0 || s.loadingVisible ||
+    return s.pendingActions > 0 || s.deserializing || s.parsing > 0 || s.loadingVisible || s.loadingTerrain ||
         s.texturePendingLoads > 0 || s.textureLoading > 0 || s.textureRecalc > 0 ||
         s.texturePendingAncestor > 0 || s.elevationLoading > 0 || s.elevationRecalc > 0 ||
         s.elevationPendingAncestor > 0 || s.pending3DTiles > 0 || s.videoPending;
