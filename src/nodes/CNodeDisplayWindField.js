@@ -1191,6 +1191,21 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.linesMesh.visible = this.linesVisible;
         this.group.add(this.linesMesh);
 
+        // Dash-phase determinism for regression screenshots. The flowing-dash
+        // shader reads uTime; uTime is normally pinned to Globals.fixedFrame in
+        // update() (see ~line 2222). But under concurrent load the per-render
+        // update() that does that pinning may NOT run before the screenshot, so
+        // uTime is captured at its stale initial value (0) instead of the locked
+        // frame — shifting the dash phase and flipping which streamline segments
+        // are bright vs dim (a bistable ~1.5% diff, the wind-test flake: identical
+        // camera + identical wind data, only the cosmetic dash differs). Pin it
+        // here at build time too — rebuildStreamlines always runs during load — so
+        // the captured frame's dash is deterministic regardless of update() timing.
+        // Live playback (fixedFrame undefined) keeps free-running off frameCount.
+        if (Globals.fixedFrame !== undefined) {
+            this.material.uniforms.uTime.value = Globals.fixedFrame;
+        }
+
         const lodCounts = [0, 0, 0];
         out.lod.forEach(l => lodCounts[l]++);
         console.log(`Wind field: ${lineIndex} streamlines, ${out.pos.length / 3} verts ` +
