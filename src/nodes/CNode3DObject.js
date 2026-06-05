@@ -1231,6 +1231,7 @@ export class CNode3DObject extends CNode3DGroup {
 
                 if (this.currentModel
                     && this.currentModel.file !== model.file
+                    && FileManager.exists(this.currentModel.file)
                     && FileManager.isUnhosted(this.currentModel.file)
                     && (!FileManager.exists(this.selectModel) || FileManager.isUnhosted(this.selectModel))
                 ) {
@@ -1249,6 +1250,22 @@ export class CNode3DObject extends CNode3DGroup {
 
                 Globals.pendingActions++;
                 loadModelAsset(model.file, modelAsset => {
+                    // Stale-load guard (out-of-order async completion).
+                    // `this.currentModel` was set synchronously above to the LATEST
+                    // requested model; `model` is the one THIS load was started for.
+                    // Model loads can finish out of order (loadModelAsset re-parses every
+                    // time, so a more complex model can complete after a simpler one that
+                    // was requested later — e.g. the constructor's default-model load
+                    // completing after modDeserialize's saved-model load, or rapid menu
+                    // switches). Without this guard a stale earlier load would overwrite
+                    // this.model with the wrong model (last-writer-wins) and desync it from
+                    // this.currentModel — the same class of bug as the video selection race.
+                    // Discard the stale result, keeping Globals.pendingActions balanced.
+                    if (model !== this.currentModel) {
+                        console.warn(`Discarding stale model load "${model.file}" (current model is now "${this.currentModel?.file}")`);
+                        Globals.pendingActions--;
+                        return;
+                    }
                     // since it's async, we might now be rendering a geometry
                     // If so, then don't add the model to the group
                     if (this.modelOrGeometry === "model") {

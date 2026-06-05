@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.74.3 (2026-06-05)
+
+### Bug Fixes
+- **Fixed a 3D object intermittently rendering the wrong model after an out-of-order async model-load race.** `src/nodes/CNode3DObject.js`: when a `CNode3DObject`'s model changes, `this.currentModel` is set synchronously to the *latest* requested model, then `loadModelAsset(model.file, …)` loads the GLB asynchronously. Because `loadModelAsset` re-parses every time, those loads can complete out of order (a more complex model requested first can finish *after* a simpler model requested later — e.g. the constructor's default-model load completing after `modDeserialize`'s saved-model load, or rapid menu switches). The completion callback assigned `this.model = modelAsset.scene` on a last-writer-wins basis, so a stale earlier load could overwrite the correct/latest model and desync `this.model` from `this.currentModel` — the user saw the wrong model (e.g. the default F/A-18F instead of the saved/selected one), most often right after loading a saved sitch or after switching models quickly. Fix: the load callback now captures the `model` it was started for and bails if it is no longer current — `if (model !== this.currentModel) { Globals.pendingActions--; return; }` — discarding the stale result (with a `console.warn`) while keeping the `Globals.pendingActions` counter balanced. This is the model-load analogue of the video selection race.
+  - Same change also adds an assert-safety guard in the old-model cleanup branch: `FileManager.exists(this.currentModel.file) &&` now precedes `FileManager.isUnhosted(this.currentModel.file)`, so rapidly switching away from a still-loading, not-yet-registered model no longer asserts on a missing file inside `isUnhosted`.
+
 ## Version 2.74.2 (2026-06-04)
 
 ### Bug Fixes

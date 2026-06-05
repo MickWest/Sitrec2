@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.74.3 (2026-06-05)
+
+### Bug Fixes
+- Fixed a 3D object intermittently showing the wrong model (for example a default F/A-18F instead of the model you saved or selected). This could happen after loading a saved sitch, or when switching a 3D object's model quickly. The object now always ends up showing the most recently selected model.
+
 ## Version 2.74.2 (2026-06-04)
 
 ### Bug Fixes
