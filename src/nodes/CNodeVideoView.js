@@ -409,10 +409,15 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
      * @param {string|undefined} [storedRef=undefined] - Stable original ref for serialization/restoration.
      * @returns {void}
      */
-    newVideo(fileName, clearFrames = true, storedRef = undefined) {
+    // restoreIndex: when this load is part of a multi-video restore, the source
+    // slot index it fills. Carried through to the created videoData (_restoreIndex)
+    // so the completion assigns itself to the correct slot by identity, and so a
+    // restore-originated straggler never adds a duplicate entry. undefined for
+    // normal (drag-drop / single) loads, which keep the add-on-load behavior.
+    newVideo(fileName, clearFrames = true, storedRef = undefined, restoreIndex = undefined) {
         if (storedRef === undefined && isResolvableSitrecReference(fileName)) {
             resolveURLForFetch(fileName).then(resolvedUrl => {
-                this.newVideo(resolvedUrl, clearFrames, fileName);
+                this.newVideo(resolvedUrl, clearFrames, fileName, restoreIndex);
             }).catch(error => {
                 console.error(`[VideoNew] Failed to resolve video ref: ${fileName}`, error);
                 this.errorCallback(error);
@@ -449,6 +454,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 deleteAfterUsing: false
             },
                 this.loadedCallback.bind(this), this.errorCallback.bind(this));
+            if (restoreIndex !== undefined && this.videoData) {
+                this.videoData._restoreIndex = restoreIndex;
+            }
             this.positioned = false;
             if (this.ownsTimeline) {
                 par.frame = 0;
@@ -498,7 +506,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                     this.videoLoadPending = false;
                     return;
                 }
-                this.makeImageVideo(fileName, img, false, undefined, importMetadata, true);
+                this.makeImageVideo(fileName, img, false, undefined, importMetadata, true, restoreIndex);
                 this.staticURL = fileName;
             }).catch(err => {
                 console.error(`[VideoNew] Error loading image as video: ${fileName}`, err);
@@ -536,12 +544,19 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         VideoLoadingManager.registerLoading(videoDataId, fileName);
         this.videoData._loadingId = videoDataId;
+        // Tag restore-originated loads so the completion lands in its own slot.
+        if (restoreIndex !== undefined && this.videoData) {
+            this.videoData._restoreIndex = restoreIndex;
+        }
 
         // loaded from a URL, so we can set the staticURL
         this.staticURL = storedRef || this.fileName;
 
-        // Add to videos array immediately (not during restore - that's handled by continueVideoRestore)
-        if (!this.pendingVideoRestore) {
+        // Add to videos array immediately only for NON-restore loads. A restore
+        // pre-creates its slots and assigns by index in continueVideoRestore; a
+        // restore-originated straggler (restoreIndex defined) must never push a
+        // duplicate entry here even if it completes after restore has finished.
+        if (restoreIndex === undefined && !this.pendingVideoRestore) {
             this.addVideoEntry(fileName, this.staticURL, false);
         }
 
@@ -644,6 +659,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (Globals.useVideoPatching && Sit.fps && CVideoPatchedData.shouldWrap(vd, Sit.fps)) {
             const sourceFrames = vd.frames;
             const patched = new CVideoPatchedData(vd, {fps: Sit.fps, fillMode: "hold"});
+            // Preserve the restore-slot tag so continueVideoRestore still routes this
+            // (now-wrapped) completion to its own slot.
+            if (vd._restoreIndex !== undefined) patched._restoreIndex = vd._restoreIndex;
             const stats = patched.getPatchStats();
             console.log(`[VideoPatch] wrapping: source=${sourceFrames} virtual=${patched.frames} held=${stats.heldFrames} longestHold=${stats.longestHoldFrames}f (${Math.round(stats.longestHoldMs)}ms)`);
             const idx = this.videos.findIndex(v => v.videoData === vd);
@@ -698,66 +716,100 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
     }
 
+    // Pre-create one output slot per saved video, in order, with videoData=null.
+    // This makes the restore IDENTITY-BASED rather than completion-order-based:
+    // each saved entry has a FIXED slot, so out-of-order or duplicate async
+    // completions (which happen because images load via mixed fast/URL-fallback
+    // paths and shared S3 URLs) can no longer be mis-paired into the wrong slot,
+    // and selection is stable from the start. Each load is tagged with its source
+    // index (restoreIndex) and writes only to its own slot.
+    _preCreateRestoreSlots() {
+        const pr = this.pendingVideoRestore;
+        if (!pr || pr._slotsCreated) return;
+        this.videos = pr.videos.map(v => ({
+            fileName: v.fileName,
+            staticURL: v.staticURL,
+            isImage: v.isImage || false,
+            imageFileID: v.imageFileID,
+            videoData: null,
+        }));
+        pr._slotsCreated = true;
+        pr.loadingIndex = 0;
+        const ti = pr.targetIndex;
+        this.currentVideoIndex = (ti >= 0 && ti < this.videos.length) ? ti : 0;
+        this.updateVideoSelector();
+    }
+
     continueVideoRestore(loadedVideoData) {
         if (!this.pendingVideoRestore) return;
+        const pr = this.pendingVideoRestore;
+        const total = pr.videos.length;
 
-        const { videos, targetIndex } = this.pendingVideoRestore;
-        const loadedCount = this.videos.length;
-        const totalCount = videos.length;
-
-        console.log(`[VideoRestore] Video loaded callback - loaded=${loadedCount}/${totalCount}, targetIndex=${targetIndex}`);
-        console.log(`[VideoRestore] Loaded videoData: filename=${loadedVideoData?.filename}, frames=${loadedVideoData?.frames}, imageCache.length=${loadedVideoData?.imageCache?.length}, groups=${loadedVideoData?.groups?.length}`);
-
-        // Add the just-loaded video to the array
-        // Use the passed loadedVideoData since this.videoData may not be assigned yet
-        // Add the just-loaded video to the array
-        // Use the passed loadedVideoData since this.videoData may not be assigned yet
-        if (loadedCount < totalCount) {
-            const skippedCount = this.pendingVideoRestore.skippedCount || 0;
-            const entryIndex = loadedCount + skippedCount;
-            const entry = videos[entryIndex];
-            if (entry) {
-                console.log(`[VideoRestore] Adding video[${loadedCount}] (source index ${entryIndex}): "${entry.fileName}"`);
-                this.addVideoEntry(entry.fileName, entry.staticURL, entry.isImage || false, entry.imageFileID, loadedVideoData);
-            }
+        // Identity-based assignment: a completion carries the source index it was
+        // started for (_restoreIndex). Write it ONLY to its own slot, never to a
+        // positional "next" slot. A stale/duplicate completion for an
+        // already-filled slot is simply dropped.
+        const idx = loadedVideoData?._restoreIndex;
+        console.log(`[VideoRestore] completion for slot ${idx}: filename=${loadedVideoData?.filename}, loadingIndex=${pr.loadingIndex}/${total}`);
+        if (idx !== undefined && idx >= 0 && idx < this.videos.length && !this.videos[idx].videoData) {
+            this.videos[idx].videoData = loadedVideoData;
         }
 
-        // Check if more videos need to be loaded
-        // We need to check against totalCount, but remember that videos.length doesn't include skipped
-        const skippedCount = this.pendingVideoRestore.skippedCount || 0;
-        if (this.videos.length + skippedCount < totalCount) {
-            const nextIdx = this.videos.length + skippedCount;
-            const nextEntry = videos[nextIdx];
-            if (nextEntry) {
-                console.log(`[VideoRestore] Starting load for video[${nextIdx}]: "${nextEntry.fileName}"`);
-                this.loadVideoFromEntry(nextEntry);
-            }
+        // Only advance/start the next load when the slot we are CURRENTLY waiting
+        // for (loadingIndex) is resolved. A straggler completion for a different
+        // slot must not advance the chain or kick off a duplicate load.
+        const cur = this.videos[pr.loadingIndex];
+        if (!cur || !(cur.videoData || cur._restoreFailed)) {
+            return; // straggler — keep waiting for loadingIndex's own completion
+        }
+        while (pr.loadingIndex < total &&
+               (this.videos[pr.loadingIndex].videoData || this.videos[pr.loadingIndex]._restoreFailed)) {
+            pr.loadingIndex++;
+        }
+        if (pr.loadingIndex < total) {
+            this.loadVideoFromEntry(pr.videos[pr.loadingIndex], pr.loadingIndex);
         } else {
-            // All videos loaded
-            console.log(`[VideoRestore] All ${totalCount} videos loaded. Switching to targetIndex=${targetIndex}`);
-            this.logVideoArrayState();
-            delete this.pendingVideoRestore;
-            if (targetIndex !== this.currentVideoIndex && targetIndex < this.videos.length) {
-                this.selectVideo(targetIndex);
-            }
-            // Ensure video selector is updated after GUI is ready
-            // (guiMenus.view might not exist yet during early restore)
-            this.ensureVideoSelectorUpdated();
+            this._finalizeVideoRestore();
+        }
+    }
 
-            // Re-apply auto-tracking once videoData is available.
-            // finishDeserialization runs deserializeAutoTracking before the
-            // async video load completes, so it bails out early on the first
-            // pass (no videoData → can't scale positions, can't apply
-            // stabilization). Run it now that the video has decoded.
-            // Re-apply auto-tracking once the video is fully loaded.
-            // finishDeserialization runs deserializeAutoTracking before the
-            // async video load completes, so it bails out early on the first
-            // pass (no videoData).
-            if (Sit.autoTracking?.trackedPositions?.length > 0) {
-                import("../CObjectTracking").then(m => {
-                    m.deserializeAutoTracking(Sit.autoTracking);
-                });
+    // Compact out any slots whose load failed, apply the (possibly shifted) target
+    // selection, and clear restore state. Selection is authoritative here — the
+    // saved currentVideoIndex always wins, never a late add.
+    _finalizeVideoRestore() {
+        const pr = this.pendingVideoRestore;
+        if (!pr) return;
+        const targetIndex = pr.targetIndex;
+        let target = targetIndex;
+        const kept = [];
+        for (let i = 0; i < this.videos.length; i++) {
+            const slot = this.videos[i];
+            if (slot._restoreFailed && !slot.videoData) {
+                if (i < targetIndex) target--; // a removed-before-target slot shifts target left
+                continue;
             }
+            delete slot._restoreFailed;
+            kept.push(slot);
+        }
+        this.videos = kept;
+        delete this.pendingVideoRestore;
+        console.log(`[VideoRestore] All slots resolved. ${this.videos.length} kept, selecting targetIndex=${target}`);
+        this.logVideoArrayState();
+        const finalTarget = (target >= 0 && target < this.videos.length) ? target : 0;
+        // Force selectVideo to (re)apply the videoData/selection unconditionally.
+        this.currentVideoIndex = -1;
+        if (this.videos.length > 0) {
+            this.selectVideo(finalTarget);
+        }
+        this.ensureVideoSelectorUpdated();
+
+        // Re-apply auto-tracking once videoData is available. finishDeserialization
+        // runs deserializeAutoTracking before the async video load completes, so it
+        // bails out early on the first pass (no videoData).
+        if (Sit.autoTracking?.trackedPositions?.length > 0) {
+            import("../CObjectTracking").then(m => {
+                m.deserializeAutoTracking(Sit.autoTracking);
+            });
         }
     }
 
@@ -795,8 +847,19 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
      * }} entry
      * @returns {Promise<void>}
      */
-    async loadVideoFromEntry(entry) {
-        const nextIdx = this.videos.length;
+    async loadVideoFromEntry(entry, restoreIndex = undefined) {
+        // First restore load: pre-create all output slots so completions assign by
+        // identity (their own source index) rather than by arrival order.
+        if (this.pendingVideoRestore && !this.pendingVideoRestore._slotsCreated) {
+            this._preCreateRestoreSlots();
+        }
+        // During a restore, every load carries the index of the slot it fills. The
+        // initial trigger calls loadVideoFromEntry(videos[0]) with no index, so fall
+        // back to the current loadingIndex (0 at the start).
+        if (restoreIndex === undefined && this.pendingVideoRestore) {
+            restoreIndex = this.pendingVideoRestore.loadingIndex ?? 0;
+        }
+        const nextIdx = restoreIndex ?? this.videos.length;
         const storedRef = entry.staticURL || Sit.loadedFiles?.[entry.fileName] || entry.fileName;
         console.log(`[VideoLoad] loadVideoFromEntry[${nextIdx}]: "${entry.fileName}", isImage=${entry.isImage}, source=${storedRef?.substring(0, 80)}...`);
         const { FileManager } = require("../Globals");
@@ -819,7 +882,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 const img = new Image();
                 img.onload = () => {
                     console.log(`[VideoLoad] Image[${nextIdx}] loaded: ${img.width}x${img.height}`);
-                    this.makeImageVideo(entry.fileName, img, false, imageFileID);
+                    this.makeImageVideo(entry.fileName, img, false, imageFileID, undefined, false, restoreIndex);
                     this.imageFileID = imageFileID;
                     // NOTE: Don't call loadedCallback here - CVideoImageData constructor
                     // already queues it via queueMicrotask. Calling it twice would
@@ -840,7 +903,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             });
             if (this.isValidVideoURL(url)) {
                 console.log(`[VideoLoad] Loading image[${nextIdx}] from URL fallback: ${url.substring(0, 80)}...`);
-                this.newVideo(url, false, storedRef);
+                this.newVideo(url, false, storedRef, restoreIndex);
             } else {
                 console.warn(`[VideoLoad] Cannot restore image[${nextIdx}] "${entry.fileName}" - source unavailable`);
                 this.skipCurrentVideoRestore();
@@ -873,7 +936,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             });
             if (this.isValidVideoURL(url)) {
                 console.log(`[VideoLoad] Loading video[${nextIdx}] from URL: ${url.substring(0, 80)}...`);
-                this.newVideo(url, false, storedRef);
+                this.newVideo(url, false, storedRef, restoreIndex);
             } else {
                 console.warn(`[VideoLoad] Cannot restore video[${nextIdx}] "${entry.fileName}" - invalid URL (local files must be re-imported)`);
                 this.skipCurrentVideoRestore();
@@ -883,23 +946,24 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
     skipCurrentVideoRestore() {
         if (!this.pendingVideoRestore) return;
-        
-        const { videos, targetIndex } = this.pendingVideoRestore;
-        this.pendingVideoRestore.skippedCount = (this.pendingVideoRestore.skippedCount || 0) + 1;
-        const skipped = this.pendingVideoRestore.skippedCount;
-        
-        console.log(`[VideoRestore] Skipped ${skipped} video(s) so far`);
-        
-        if (this.videos.length + skipped < videos.length) {
-            const nextIdx = this.videos.length + skipped;
-            const nextEntry = videos[nextIdx];
-            if (nextEntry) {
-                console.log(`[VideoRestore] Continuing to video[${nextIdx}] after skip`);
-                this.loadVideoFromEntry(nextEntry);
-            }
+        const pr = this.pendingVideoRestore;
+        const total = pr.videos.length;
+
+        // Mark the slot we were loading as failed so the index-based chain skips it
+        // (it is compacted out at finalize). Then advance exactly like a completion.
+        if (pr.loadingIndex < this.videos.length) {
+            this.videos[pr.loadingIndex]._restoreFailed = true;
+        }
+        console.warn(`[VideoRestore] Skipping slot ${pr.loadingIndex} ("${pr.videos[pr.loadingIndex]?.fileName}")`);
+
+        while (pr.loadingIndex < total &&
+               (this.videos[pr.loadingIndex].videoData || this.videos[pr.loadingIndex]._restoreFailed)) {
+            pr.loadingIndex++;
+        }
+        if (pr.loadingIndex < total) {
+            this.loadVideoFromEntry(pr.videos[pr.loadingIndex], pr.loadingIndex);
         } else {
-            console.warn(`[VideoRestore] Restore complete with ${skipped} video(s) skipped - please re-import local files`);
-            delete this.pendingVideoRestore;
+            this._finalizeVideoRestore();
         }
     }
 
@@ -1570,7 +1634,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         super.dispose();
     }
 
-    makeImageVideo(filename, img, deleteAfterUsing = false, imageFileID = undefined, importMetadata = undefined, pauseTimelineOnLoad = false) {
+    makeImageVideo(filename, img, deleteAfterUsing = false, imageFileID = undefined, importMetadata = undefined, pauseTimelineOnLoad = false, restoreIndex = undefined) {
 
         this.fileName = filename;
         setFilenameOverlaySource(this.fileName);
@@ -1585,9 +1649,19 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             importMetadata: importMetadata,
         },
             this.loadedCallback.bind(this), this.errorCallback.bind(this))
-        
-        // Add to videos array immediately (not during restore - that's handled by continueVideoRestore)
-        if (!this.pendingVideoRestore) {
+
+        // Tag restore-originated loads so the completion (CVideoImageData queues
+        // loadedCallback as a microtask, after this assignment) lands in its own
+        // slot via continueVideoRestore.
+        if (restoreIndex !== undefined) {
+            this.videoData._restoreIndex = restoreIndex;
+        }
+
+        // Add to videos array immediately only for NON-restore loads. A restore
+        // pre-creates its slots and assigns by index; a restore-originated straggler
+        // (restoreIndex defined) must never push a duplicate entry here, even if it
+        // completes after restore has finished and pendingVideoRestore is gone.
+        if (restoreIndex === undefined && !this.pendingVideoRestore) {
             this.addVideoEntry(filename, undefined, true, imageFileID);
         }
         
