@@ -1938,6 +1938,23 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         ctx.restore();
     }
 
+    // Regression settle gate: is this view's CURRENT display frame decoded and
+    // ready to render? A visible video view that is still loading its source, or
+    // whose current frame hasn't decoded yet, must hold the settle open — otherwise
+    // (especially under concurrent load, where decode is slower) the screenshot can
+    // be captured over a stale or blank video region, producing a non-deterministic
+    // diff. Mirrors the display-frame mapping used by renderCanvas(). Returns true
+    // (ready, no gating) for hidden views and empty drop targets.
+    isSettleVideoReady() {
+        if (!this.visible) return true;
+        if (this.videoLoadPending || this.pendingVideoRestore) return false;
+        if (!this.videoData) return true;
+        let frame = Math.round(par.frame ?? 0);
+        if (this.lockToInFrame) frame = Math.max(0, frame - (Sit.aFrame ?? 0));
+        if (typeof this.videoData.isFrameLoaded !== 'function') return true;
+        return this.videoData.isFrameLoaded(frame);
+    }
+
     renderCanvas(frame = 0) {
         super.renderCanvas(frame); // needed for setting window size
 

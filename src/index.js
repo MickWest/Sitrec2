@@ -1509,6 +1509,22 @@ async function initializeOnce() {
     
     // Expose objects to window for console/MCP/testing access
     if (typeof window !== 'undefined') {
+        // Regression settle gate hook: true while any visible video view's current
+        // display frame is not yet decoded/ready (or its source is still loading).
+        // The fast-regression harness polls this so it never screenshots over a stale
+        // or blank video region — closing a non-determinism that showed up under
+        // concurrent load (slower video decode) as small video-region diffs/blank
+        // renders on video sitches (Beaver, Rocket Launch, Motion Tracking, etc.).
+        window.areVideoFramesPendingForFixedFrame = function () {
+            if (!NodeMan || !NodeMan.list) return false;
+            for (const id in NodeMan.list) {
+                const node = NodeMan.list[id]?.data;
+                if (node && typeof node.isSettleVideoReady === 'function' && !node.isSettleVideoReady()) {
+                    return true;
+                }
+            }
+            return false;
+        };
         window.NodeMan = NodeMan;
         window.LocalFrame = LocalFrame;
         window.GlobalScene = GlobalScene;

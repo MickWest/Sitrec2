@@ -29,6 +29,15 @@ export class CVideoImageData extends CVideoData {
         queueMicrotask(() => loadedCallback(this));
     }
 
+    // A single-image "video" has exactly one frame that is ready as soon as the
+    // image is decoded; it does not use imageCache (the base-class check), so a
+    // frame is "loaded" iff this.img exists with real dimensions. Used by the
+    // regression settle gate (areVideoFramesPendingForFixedFrame) so a screenshot
+    // is never taken before the image overlay is ready.
+    isFrameLoaded(frame) {
+        return !!(this.img && this.img.width > 0 && this.img.height > 0);
+    }
+
     getImage(frame) {
         const rotation = this.effectiveRotation;
 
