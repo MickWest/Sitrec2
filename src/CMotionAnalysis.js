@@ -223,12 +223,12 @@ export class MotionAnalyzer {
         // and mask them. See autoMaskRedactions().
         this.redactionWindow = 8;        // frames analysed for temporal invariance
         this.redactionInvariance = 5;    // max % luminance change to count as invariant
-        this.redactionMaxLuma = 180;     // ignore pixels brighter than this (keep black..mid-grey)
-        this.redactionColorSpread = 24;  // max RGB channel spread to count as "grey" (low saturation)
+        this.redactionMaxLuma = 180;     // ignore pixels brighter than this (bright-sky guard)
         this.redactionFlatness = 10;     // max local luminance variation to count as a flat solid fill
         this.redactionMinSize = 12;      // min box width AND height in pixels
         this.redactionFill = 0.6;        // min fraction of a region that must be covered by rectangles
-        this.redactionSpread = 3;        // expand each detected box by this many pixels
+        this.redactionSnap = 6;          // max sliver width (px) to bridge between adjacent boxes
+        this.redactionSpread = 8;        // expand each detected box outward by this many pixels
         this.redactionRects = [];        // last-applied redaction rects (informational)
 
         this.resultCache = new Map();
@@ -1071,10 +1071,10 @@ export class MotionAnalyzer {
         const rects = detectRedactionRects(frames, width, height, {
             invariance: this.redactionInvariance,
             maxLuma: this.redactionMaxLuma,
-            colorSpread: this.redactionColorSpread,
             flatness: this.redactionFlatness,
             minSize: this.redactionMinSize,
             fill: this.redactionFill,
+            snap: this.redactionSnap,
             spread: this.redactionSpread,
         });
         console.log(`AutoMaskRedactions: ${frames.length} frames, found ${rects.length} redaction rect(s)`);

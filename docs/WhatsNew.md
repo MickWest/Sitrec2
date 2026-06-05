@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.75.1 (2026-06-05)
+
+### Improvements
+- **Auto Mask Redactions now works on redaction boxes of any colour and seals the gaps between them** (Video → Motion Analysis → Masking): detection no longer assumes boxes are black or grey, so coloured, white, or thermal-palette boxes are caught too, and the thin strips where two boxes meet (such as a grey sidebar beside a black box) are now masked solidly instead of leaking into panoramas. The old *Redaction Greyness* slider is replaced by a new *Redaction Snap* slider that controls how wide a gap between adjacent boxes gets bridged, and *Redaction Expand* now goes up to 20.
+
+### Bug Fixes
+- Fixed dark vertical lines appearing along the edges of exported motion panoramas, which got worse the more Panorama Crop you used (Video → Motion Analysis → Panorama). Cropping now hides the frame border instead of cutting it away, so neighbouring frames fill it in cleanly.
+- Fixed the masking overlay not following the video when you pan or zoom (Video → Motion Analysis → Masking): the mask now stays locked to the footage, and the brush cursor scales correctly as you zoom in.
+
 ## Version 2.75.0 (2026-06-05)
 
 ### New Features

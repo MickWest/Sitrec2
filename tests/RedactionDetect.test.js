@@ -118,4 +118,61 @@ describe('detectRedactionRects', () => {
         expect(covers(rects, 30, 80)).toBe(true);  // in the narrow left arm
         expect(covers(rects, 70, 85)).toBe(false); // deep in the empty notch
     });
+
+    test('detects a coloured (non-grey) flat invariant box — colour is ignored', () => {
+        // A saturated blue box (RGB spread 180) would be rejected by the old
+        // "greyness" test; the detector now ignores colour entirely, so a flat,
+        // invariant box of any colour (luma <= maxLuma) is masked.
+        const W = 160, H = 120;
+        const box = {x: 50, y: 40, w: 50, h: 40, rgb: [20, 40, 200]}; // luma ~ 52
+        const frames = Array.from({length: 4}, (_, f) => {
+            const data = new Uint8ClampedArray(W * H * 4);
+            for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+                const idx = (y * W + x) * 4;
+                const inBox = x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h;
+                if (inBox) { data[idx] = box.rgb[0]; data[idx + 1] = box.rgb[1]; data[idx + 2] = box.rgb[2]; }
+                else { const v = (x * 37 + y * 101 + f * 60) & 255; data[idx] = v; data[idx + 1] = v; data[idx + 2] = v; }
+                data[idx + 3] = 255;
+            }
+            return {data, width: W, height: H};
+        });
+        const rects = detectRedactionRects(frames, W, H);
+        expect(covers(rects, box.x + box.w / 2, box.y + box.h / 2)).toBe(true);
+    });
+
+    test('bridges the non-flat seam between two stacked boxes when snap is enabled', () => {
+        // Two black boxes with a 6px gap between them filled by an invariant but
+        // NON-FLAT seam (alternating tones). The seam fails the flatness test, so
+        // it is not a candidate and the boxes are separate masses. `snap` should
+        // bridge across it (covering the seam); snap=0 should leave it unmasked.
+        const W = 160, H = 140;
+        const top = {x: 40, y: 30, w: 70, h: 30};
+        const bot = {x: 40, y: 66, w: 70, h: 30}; // gap y60..66
+        const frames = Array.from({length: 4}, (_, f) => {
+            const data = new Uint8ClampedArray(W * H * 4);
+            for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+                const idx = (y * W + x) * 4;
+                const inTop = x >= top.x && x < top.x + top.w && y >= top.y && y < top.y + top.h;
+                const inBot = x >= bot.x && x < bot.x + bot.w && y >= bot.y && y < bot.y + bot.h;
+                const inSeam = x >= 40 && x < 110 && y >= 60 && y < 66;
+                let v;
+                if (inTop || inBot) v = 0;                       // black boxes (flat, invariant)
+                else if (inSeam) v = ((x + y) & 1) ? 30 : 150;   // invariant but NON-FLAT seam
+                else v = (x * 37 + y * 101 + f * 60) & 255;      // moving textured background
+                data[idx] = v; data[idx + 1] = v; data[idx + 2] = v; data[idx + 3] = 255;
+            }
+            return {data, width: W, height: H};
+        });
+
+        // spread:0 isolates the bridging from the outward expansion.
+        const bridged = detectRedactionRects(frames, W, H, {snap: 10, spread: 0});
+        expect(covers(bridged, 70, 63)).toBe(true);   // seam centre now masked
+        expect(covers(bridged, 70, 45)).toBe(true);   // top box
+        expect(covers(bridged, 70, 80)).toBe(true);   // bottom box
+
+        const unbridged = detectRedactionRects(frames, W, H, {snap: 0, spread: 0});
+        expect(covers(unbridged, 70, 45)).toBe(true); // boxes still detected
+        expect(covers(unbridged, 70, 80)).toBe(true);
+        expect(covers(unbridged, 70, 63)).toBe(false); // seam left unmasked without snap
+    });
 });

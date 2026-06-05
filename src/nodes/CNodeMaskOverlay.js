@@ -385,10 +385,25 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
             ctx.translate(-this.widthPx / 2, -this.heightPx / 2);
         }
         
-        this.overlayView.getSourceAndDestCoords();
-        const {dx, dy, dWidth, dHeight} = this.overlayView;
-        
-        ctx.drawImage(this.maskCanvas, dx, dy, dWidth, dHeight);
+        // Draw the mask with the SAME source-crop transform the video view uses to
+        // draw the frame (see CNodeVideoView.renderCanvas), so the mask tracks the
+        // video's pan and zoom exactly. The mask canvas is at video resolution, so
+        // the source rect (sx,sy,sWidth,sHeight) selects the same visible sub-region
+        // the zoomed/panned video shows; without this the mask stayed fixed while
+        // the video moved underneath it.
+        const ov = this.overlayView;
+        ov.getSourceAndDestCoords();
+        if (ov.in.zoom !== undefined) {
+            ctx.drawImage(this.maskCanvas,
+                ov.sx, ov.sy, ov.sWidth, ov.sHeight,
+                ov.dx, ov.dy, ov.dWidth, ov.dHeight);
+        } else {
+            // Legacy zoomView path (zoom driven by posLeft/posTop, not in.zoom).
+            ctx.drawImage(this.maskCanvas,
+                0, 0, ov.videoWidth, ov.videoHeight,
+                ov.widthPx * (0.5 + ov.posLeft), ov.heightPx * 0.5 + ov.widthPx * ov.posTop,
+                ov.widthPx * (ov.posRight - ov.posLeft), ov.widthPx * (ov.posBot - ov.posTop));
+        }
         ctx.restore();
         
         if (this.editing) {
@@ -402,8 +417,12 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         
         this.overlayView.getSourceAndDestCoords();
         const {dWidth} = this.overlayView;
-        const videoWidth = this.overlayView.videoWidth || 1;
-        const brushRadius = this.brushSize * dWidth / videoWidth;
+        // The brush size is in video pixels; the video->canvas scale is dWidth/sWidth
+        // (sWidth shrinks with zoom). sWidth == videoWidth when unzoomed, so this is
+        // correct for both the zoom and legacy paths, and keeps the cursor matching
+        // the area actually painted as you zoom.
+        const sourceWidth = this.overlayView.sWidth || this.overlayView.videoWidth || 1;
+        const brushRadius = this.brushSize * dWidth / sourceWidth;
         
         ctx.strokeStyle = '#00ff00';
         ctx.lineWidth = 2;

@@ -114,8 +114,14 @@ function calculatePanoDimensions(videoData, startFrame, minPx, maxPx, minPy, max
     const firstImage = videoData.getImage(startFrame);
     const frameWidth = firstImage.width || firstImage.videoWidth || 1920;
     const frameHeight = firstImage.height || firstImage.videoHeight || 1080;
-    const croppedWidth = frameWidth - 2 * crop;
-    const croppedHeight = frameHeight - 2 * crop;
+    // "Panorama Crop" is applied as MASKING, not by cutting the geometry: the outer
+    // `crop`-px ring of each frame is masked out (ignored) and filled by neighbouring
+    // frames — see drawFrameToPano. So the full frame is always stitched and the
+    // panorama dimensions do not change with crop. (Cutting the geometry created a
+    // hard source-rect edge that bilinear-sampled the dark cropped-away border,
+    // producing the dark "edge-dropping" seams that worsened with crop.)
+    const croppedWidth = frameWidth;
+    const croppedHeight = frameHeight;
 
     const pxRange = maxPx - minPx;
     const pyRange = maxPy - minPy;
@@ -226,32 +232,40 @@ function drawFrameToPano(panoCtx, image, x, y, crop, croppedWidth, croppedHeight
         }
     };
     
-    if (useMask && maskImageData) {
+    // Build a frame with masked-out (transparent) regions when either the redaction
+    // mask is in use OR a crop border is requested. The "Panorama Crop" is applied
+    // here as MASKING: the outer `crop`-px ring is set transparent (alpha 0), so the
+    // full frame is still drawn at its true motion offset and the ignored border is
+    // filled by neighbouring frames — instead of cutting the source geometry (which
+    // left a hard, dark-sampled edge that produced the "edge-dropping" seams).
+    const applyMask = (useMask && maskImageData) || crop > 0;
+    if (applyMask) {
         tempCtx.clearRect(0, 0, frameWidth, frameHeight);
         tempCtx.drawImage(sourceImage, 0, 0);
-        const frameImgData = tempCtx.getImageData(crop, crop, croppedWidth, croppedHeight);
+        const frameImgData = tempCtx.getImageData(0, 0, frameWidth, frameHeight);
         const framePixels = frameImgData.data;
-        const maskPixels = maskImageData.data;
-        const maskWidth = maskImageData.width;
-        
-        for (let py = 0; py < croppedHeight; py++) {
-            for (let px = 0; px < croppedWidth; px++) {
-                const maskX = px + crop;
-                const maskY = py + crop;
-                if (maskX < maskWidth && maskY < maskImageData.height) {
-                    const maskIdx = (maskY * maskWidth + maskX) * 4;
-                    if (maskPixels[maskIdx + 3] > 128) {
-                        const frameIdx = (py * croppedWidth + px) * 4;
-                        framePixels[frameIdx + 3] = 0;
-                    }
+        const maskPixels = (useMask && maskImageData) ? maskImageData.data : null;
+        const maskW = maskImageData ? maskImageData.width : frameWidth;
+        const maskH = maskImageData ? maskImageData.height : frameHeight;
+        const xHi = frameWidth - crop;
+        const yHi = frameHeight - crop;
+
+        for (let py = 0; py < frameHeight; py++) {
+            const inCropY = py < crop || py >= yHi;
+            for (let px = 0; px < frameWidth; px++) {
+                // Masked if in the outer crop ring, or a redaction-mask pixel.
+                let masked = inCropY || px < crop || px >= xHi;
+                if (!masked && maskPixels && px < maskW && py < maskH) {
+                    if (maskPixels[(py * maskW + px) * 4 + 3] > 128) masked = true;
                 }
+                if (masked) framePixels[(py * frameWidth + px) * 4 + 3] = 0;
             }
         }
-        
-        tempCtx.putImageData(frameImgData, crop, crop);
-        drawWithRotation(tempCanvas, crop, crop, croppedWidth, croppedHeight, x, y, scaledFrameWidth, scaledFrameHeight);
+
+        tempCtx.putImageData(frameImgData, 0, 0);
+        drawWithRotation(tempCanvas, 0, 0, frameWidth, frameHeight, x, y, scaledFrameWidth, scaledFrameHeight);
     } else {
-        drawWithRotation(sourceImage, crop, crop, croppedWidth, croppedHeight, x, y, scaledFrameWidth, scaledFrameHeight);
+        drawWithRotation(sourceImage, 0, 0, frameWidth, frameHeight, x, y, scaledFrameWidth, scaledFrameHeight);
     }
 }
 let motionAnalyzer = null;
@@ -820,12 +834,16 @@ async function exportMotionPanorama() {
     let tempCanvas = null;
     let tempCtx = null;
     let maskImageData = null;
-    
-    if (useMask) {
+
+    // tempCanvas is needed whenever we build a masked frame — for the redaction mask
+    // and/or the crop border (which is applied as masking, not by cutting geometry).
+    if (useMask || crop > 0) {
         tempCanvas = document.createElement('canvas');
         tempCanvas.width = frameWidth;
         tempCanvas.height = frameHeight;
         tempCtx = tempCanvas.getContext('2d', {willReadFrequently: true});
+    }
+    if (useMask) {
         motionAnalyzer.maskOverlayNode.updateMaskImageData();
         maskImageData = motionAnalyzer.maskOverlayNode.maskImageData;
     }
@@ -990,12 +1008,16 @@ async function exportPanoVideo() {
     let tempCanvas = null;
     let tempCtx = null;
     let maskImageData = null;
-    
-    if (useMask) {
+
+    // tempCanvas is needed whenever we build a masked frame — for the redaction mask
+    // and/or the crop border (which is applied as masking, not by cutting geometry).
+    if (useMask || crop > 0) {
         tempCanvas = document.createElement('canvas');
         tempCanvas.width = frameWidth;
         tempCanvas.height = frameHeight;
         tempCtx = tempCanvas.getContext('2d', {willReadFrequently: true});
+    }
+    if (useMask) {
         motionAnalyzer.maskOverlayNode.updateMaskImageData();
         maskImageData = motionAnalyzer.maskOverlayNode.maskImageData;
     }
@@ -1152,14 +1174,14 @@ async function exportPanoVideo() {
                 compositeCtx.rotate(panoRotation);
                 compositeCtx.drawImage(
                     overlayImage,
-                    crop, crop, croppedWidth, croppedHeight,
+                    0, 0, croppedWidth, croppedHeight,
                     -videoFrameWidth / 2, -videoFrameHeight / 2, videoFrameWidth, videoFrameHeight
                 );
                 compositeCtx.restore();
             } else {
                 compositeCtx.drawImage(
                     overlayImage,
-                    crop, crop, croppedWidth, croppedHeight,
+                    0, 0, croppedWidth, croppedHeight,
                     frameX, frameY, videoFrameWidth, videoFrameHeight
                 );
             }
@@ -1393,9 +1415,6 @@ function createParamSliders() {
     if (motionAnalyzer.redactionMaxLuma === undefined) {
         motionAnalyzer.redactionMaxLuma = 180;
     }
-    if (motionAnalyzer.redactionColorSpread === undefined) {
-        motionAnalyzer.redactionColorSpread = 24;
-    }
     if (motionAnalyzer.redactionFlatness === undefined) {
         motionAnalyzer.redactionFlatness = 10;
     }
@@ -1405,8 +1424,11 @@ function createParamSliders() {
     if (motionAnalyzer.redactionFill === undefined) {
         motionAnalyzer.redactionFill = 0.6;
     }
+    if (motionAnalyzer.redactionSnap === undefined) {
+        motionAnalyzer.redactionSnap = 6;
+    }
     if (motionAnalyzer.redactionSpread === undefined) {
-        motionAnalyzer.redactionSpread = 3;
+        motionAnalyzer.redactionSpread = 8;
     }
     if (!Array.isArray(motionAnalyzer.redactionRects)) {
         motionAnalyzer.redactionRects = [];
@@ -1710,9 +1732,6 @@ function createParamSliders() {
     paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionMaxLuma', 0, 255, 1).name("Redaction Max Bright")
         .onChange(runAutoMaskRedactions).tooltip("Ignore pixels brighter than this (keeps black..mid-grey redactions)"));
 
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionColorSpread', 0, 60, 1).name("Redaction Greyness")
-        .onChange(runAutoMaskRedactions).tooltip("Max RGB channel spread to count as grey (lower = stricter; no effect on monochrome/thermal video)"));
-
     paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionFlatness', 0, 40, 1).name("Redaction Flatness")
         .onChange(runAutoMaskRedactions).tooltip("Max local brightness variation for a solid fill (lower = stricter; this is what rejects textured terrain)"));
 
@@ -1722,8 +1741,11 @@ function createParamSliders() {
     paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionFill', 0.3, 1, 0.05).name("Redaction Min Fill")
         .onChange(runAutoMaskRedactions).tooltip("Minimum filled fraction of the bounding box (rectangularity)"));
 
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionSpread', 0, 10, 1).name("Redaction Expand")
-        .onChange(runAutoMaskRedactions).tooltip("Expand each detected box by this many pixels"));
+    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionSnap', 0, 30, 1).name("Redaction Snap")
+        .onChange(runAutoMaskRedactions).tooltip("Bridge slivers up to this many px between adjacent boxes (closes grey↔black transition gaps; 0 = off)"));
+
+    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionSpread', 0, 20, 1).name("Redaction Expand")
+        .onChange(runAutoMaskRedactions).tooltip("Expand each detected box outward by this many pixels (outer margin)"));
 
     paramControllers.push(motionFolder.add(motionAnalyzer, 'speedOverlayEnabled').name("Speed Overlay").onChange((v) => {
         motionAnalyzer.setSpeedOverlayEnabled(v);
@@ -1768,10 +1790,10 @@ export function serializeMotionAnalysis() {
         redactionWindow: motionAnalyzer.redactionWindow,
         redactionInvariance: motionAnalyzer.redactionInvariance,
         redactionMaxLuma: motionAnalyzer.redactionMaxLuma,
-        redactionColorSpread: motionAnalyzer.redactionColorSpread,
         redactionFlatness: motionAnalyzer.redactionFlatness,
         redactionMinSize: motionAnalyzer.redactionMinSize,
         redactionFill: motionAnalyzer.redactionFill,
+        redactionSnap: motionAnalyzer.redactionSnap,
         redactionSpread: motionAnalyzer.redactionSpread,
         maskData: motionAnalyzer.maskOverlayNode?.maskData ?? null,
     };
@@ -1826,9 +1848,6 @@ export async function deserializeMotionAnalysis(data) {
             if (data.redactionMaxLuma !== undefined) {
                 motionAnalyzer.redactionMaxLuma = data.redactionMaxLuma;
             }
-            if (data.redactionColorSpread !== undefined) {
-                motionAnalyzer.redactionColorSpread = data.redactionColorSpread;
-            }
             if (data.redactionFlatness !== undefined) {
                 motionAnalyzer.redactionFlatness = data.redactionFlatness;
             }
@@ -1837,6 +1856,9 @@ export async function deserializeMotionAnalysis(data) {
             }
             if (data.redactionFill !== undefined) {
                 motionAnalyzer.redactionFill = data.redactionFill;
+            }
+            if (data.redactionSnap !== undefined) {
+                motionAnalyzer.redactionSnap = data.redactionSnap;
             }
             if (data.redactionSpread !== undefined) {
                 motionAnalyzer.redactionSpread = data.redactionSpread;
