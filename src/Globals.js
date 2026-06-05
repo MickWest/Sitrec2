@@ -54,6 +54,15 @@ export const Globals = {
     hasByokKeys: false, // true when the user has at least one BYOK LLM API key stored in IndexedDB
     useVideoPatching: true, // wrap dropped-frame video with CVideoPatchedData (see docs/dev/misb-timing.md)
 
+    // Async-work registry ("settled" resolver). A named companion to
+    // Globals.pendingActions: token -> human description of in-flight LOAD-BLOCKING
+    // async work (deserialized motion-analysis/tracking re-application, terrain
+    // elevation/normal workers, ...). registerPendingWork() bumps pendingActions so
+    // every existing waiter (the app's own load-wait AND the fast-regression settle
+    // gate) blocks on it with no change; the description just makes a settle stall
+    // debuggable ("what is it still waiting on?"). See registerPendingWork() below.
+    pendingWork: new Map(),
+
     // Orbit preview mode (ImageSetExporter): when active, par.frame is an index
     // into the precomputed orbit shot list and this hook positions the camera
     // and advances time per shot. Called from updateFrame after slider sync.
@@ -90,6 +99,35 @@ export const Globals = {
 
 export function setGPUMemoryMonitor(monitor) {
     Globals.GPUMemoryMonitor = monitor;
+}
+
+// ── Async-work registry ("settled" resolver) ────────────────────────────────
+// Register a piece of LOAD-BLOCKING async work so the scene is not considered
+// "settled" (and the regression harness does not screenshot) until it finishes.
+// Bumps Globals.pendingActions so every existing waiter blocks with no change,
+// and records `description` for debuggability. Returns a token; pass it to
+// completePendingWork() (idempotent — safe in a finally). Use ONLY for work that
+// must finish before the scene is correct on load (deserialized motion/tracking
+// re-application, terrain elevation/normal workers). Do NOT use for user-triggered
+// or continuous/optional background work (ELA/Noise forensic overlays, a manually
+// started optimization) — that would hold the gate open forever.
+let _pendingWorkSeq = 0;
+export function registerPendingWork(description = "async") {
+    const token = ++_pendingWorkSeq;
+    Globals.pendingWork.set(token, description);
+    Globals.pendingActions = (Globals.pendingActions || 0) + 1;
+    return token;
+}
+export function completePendingWork(token) {
+    if (token != null && Globals.pendingWork.has(token)) {
+        Globals.pendingWork.delete(token);
+        Globals.pendingActions = Math.max(0, (Globals.pendingActions || 0) - 1);
+    }
+}
+// Human-readable list of what load-blocking async work is still in flight — for
+// debugging a settle stall (e.g. logged by the harness on a settle timeout).
+export function getPendingWorkDescriptions() {
+    return Array.from(Globals.pendingWork.values());
 }
 
 // Returns the user's render-scale multiplier from settings, clamped to [0.25, 1].

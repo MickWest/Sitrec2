@@ -12,7 +12,7 @@
  * cycle.
  */
 
-import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, registerFrameBlocker, setRenderOne, Sit, unregisterFrameBlocker} from "./Globals";
+import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, registerFrameBlocker, registerPendingWork, completePendingWork, setRenderOne, Sit, unregisterFrameBlocker} from "./Globals";
 import {isAdmin} from "./configUtils";
 import {par} from "./par";
 import {ExportProgressWidget, getExportPrefix} from "./utils";
@@ -1776,8 +1776,18 @@ export async function deserializeMotionAnalysis(data) {
             setRenderOne(true);
         };
         
-        await loadOpenCV();
-        setCv(getCV());
-        doRestore();
+        // Register as load-blocking async work so the scene is not considered
+        // "settled" (and the regression harness does not screenshot) until the
+        // saved motion analysis has been re-applied — loadOpenCV() is slow under
+        // concurrent load and was previously invisible to the settle resolver, so
+        // the overlay could be captured half-restored.
+        const _restoreToken = registerPendingWork("motion-analysis-restore");
+        try {
+            await loadOpenCV();
+            setCv(getCV());
+            doRestore();
+        } finally {
+            completePendingWork(_restoreToken);
+        }
     }
 }
