@@ -1384,7 +1384,34 @@ function createParamSliders() {
     if (motionAnalyzer.autoMaskCloseToTarget === undefined) {
         motionAnalyzer.autoMaskCloseToTarget = 140;
     }
-    
+    if (motionAnalyzer.redactionWindow === undefined) {
+        motionAnalyzer.redactionWindow = 8;
+    }
+    if (motionAnalyzer.redactionInvariance === undefined) {
+        motionAnalyzer.redactionInvariance = 5;
+    }
+    if (motionAnalyzer.redactionMaxLuma === undefined) {
+        motionAnalyzer.redactionMaxLuma = 180;
+    }
+    if (motionAnalyzer.redactionColorSpread === undefined) {
+        motionAnalyzer.redactionColorSpread = 24;
+    }
+    if (motionAnalyzer.redactionFlatness === undefined) {
+        motionAnalyzer.redactionFlatness = 10;
+    }
+    if (motionAnalyzer.redactionMinSize === undefined) {
+        motionAnalyzer.redactionMinSize = 12;
+    }
+    if (motionAnalyzer.redactionFill === undefined) {
+        motionAnalyzer.redactionFill = 0.6;
+    }
+    if (motionAnalyzer.redactionSpread === undefined) {
+        motionAnalyzer.redactionSpread = 3;
+    }
+    if (!Array.isArray(motionAnalyzer.redactionRects)) {
+        motionAnalyzer.redactionRects = [];
+    }
+
     const p = motionAnalyzer.params;
     const invalidate = () => motionAnalyzer.onParamChange();
     const update = () => setRenderOne(true);
@@ -1624,6 +1651,11 @@ function createParamSliders() {
             if (motionAnalyzer) {
                 motionAnalyzer.autoMask();
             }
+        },
+        autoMaskRedactions: () => {
+            if (motionAnalyzer) {
+                motionAnalyzer.autoMaskRedactions();
+            }
         }
     };
     
@@ -1645,7 +1677,7 @@ function createParamSliders() {
         .tooltip("Clear all mask data"));
     
     paramControllers.push(maskFolder.add(maskControls, 'autoMask').name("Auto Mask")
-        .tooltip("Auto-generate mask from static pixels over frame window"));
+        .tooltip("Add a mask of static text-coloured pixels over the frame window (adds to the mask; use Clear Mask to reset)"));
     
     const runAutoMask = () => motionAnalyzer.autoMask();
     
@@ -1660,10 +1692,39 @@ function createParamSliders() {
     
     paramControllers.push(maskFolder.addColor(motionAnalyzer, 'autoMaskTargetColor', 255).name("Target Color")
         .onChange(runAutoMask).tooltip("Target color for auto mask"));
-    
+
     paramControllers.push(maskFolder.add(motionAnalyzer, 'autoMaskCloseToTarget', 0, 255, 1).name("Color Tolerance")
         .onChange(runAutoMask).tooltip("How close pixel must be to target color (lower = stricter)"));
-    
+
+    paramControllers.push(maskFolder.add(maskControls, 'autoMaskRedactions').name("Auto Mask Redactions")
+        .tooltip("Detect solid black/grey rectangular redaction boxes and add them to the mask (adds to the mask; use Clear Mask to reset)"));
+
+    const runAutoMaskRedactions = () => motionAnalyzer.autoMaskRedactions();
+
+    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionWindow', 2, 30, 1).name("Redaction Frames")
+        .onChange(runAutoMaskRedactions).tooltip("Number of frames analysed to find invariant (unchanging) regions"));
+
+    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionInvariance', 1, 15, 0.5).name("Redaction Invariance %")
+        .onChange(runAutoMaskRedactions).tooltip("Max % brightness change for a pixel to count as invariant (lower = stricter)"));
+
+    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionMaxLuma', 0, 255, 1).name("Redaction Max Bright")
+        .onChange(runAutoMaskRedactions).tooltip("Ignore pixels brighter than this (keeps black..mid-grey redactions)"));
+
+    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionColorSpread', 0, 60, 1).name("Redaction Greyness")
+        .onChange(runAutoMaskRedactions).tooltip("Max RGB channel spread to count as grey (lower = stricter; no effect on monochrome/thermal video)"));
+
+    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionFlatness', 0, 40, 1).name("Redaction Flatness")
+        .onChange(runAutoMaskRedactions).tooltip("Max local brightness variation for a solid fill (lower = stricter; this is what rejects textured terrain)"));
+
+    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionMinSize', 4, 100, 1).name("Redaction Min Size")
+        .onChange(runAutoMaskRedactions).tooltip("Minimum box width AND height in pixels"));
+
+    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionFill', 0.3, 1, 0.05).name("Redaction Min Fill")
+        .onChange(runAutoMaskRedactions).tooltip("Minimum filled fraction of the bounding box (rectangularity)"));
+
+    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionSpread', 0, 10, 1).name("Redaction Expand")
+        .onChange(runAutoMaskRedactions).tooltip("Expand each detected box by this many pixels"));
+
     paramControllers.push(motionFolder.add(motionAnalyzer, 'speedOverlayEnabled').name("Speed Overlay").onChange((v) => {
         motionAnalyzer.setSpeedOverlayEnabled(v);
     }).tooltip("Show thermal heat map of optical flow speed"));
@@ -1704,6 +1765,14 @@ export function serializeMotionAnalysis() {
         autoMaskSpread: motionAnalyzer.autoMaskSpread,
         autoMaskTargetColor: {...motionAnalyzer.autoMaskTargetColor},
         autoMaskCloseToTarget: motionAnalyzer.autoMaskCloseToTarget,
+        redactionWindow: motionAnalyzer.redactionWindow,
+        redactionInvariance: motionAnalyzer.redactionInvariance,
+        redactionMaxLuma: motionAnalyzer.redactionMaxLuma,
+        redactionColorSpread: motionAnalyzer.redactionColorSpread,
+        redactionFlatness: motionAnalyzer.redactionFlatness,
+        redactionMinSize: motionAnalyzer.redactionMinSize,
+        redactionFill: motionAnalyzer.redactionFill,
+        redactionSpread: motionAnalyzer.redactionSpread,
         maskData: motionAnalyzer.maskOverlayNode?.maskData ?? null,
     };
 }
@@ -1748,7 +1817,31 @@ export async function deserializeMotionAnalysis(data) {
             if (data.autoMaskCloseToTarget !== undefined) {
                 motionAnalyzer.autoMaskCloseToTarget = data.autoMaskCloseToTarget;
             }
-            
+            if (data.redactionWindow !== undefined) {
+                motionAnalyzer.redactionWindow = data.redactionWindow;
+            }
+            if (data.redactionInvariance !== undefined) {
+                motionAnalyzer.redactionInvariance = data.redactionInvariance;
+            }
+            if (data.redactionMaxLuma !== undefined) {
+                motionAnalyzer.redactionMaxLuma = data.redactionMaxLuma;
+            }
+            if (data.redactionColorSpread !== undefined) {
+                motionAnalyzer.redactionColorSpread = data.redactionColorSpread;
+            }
+            if (data.redactionFlatness !== undefined) {
+                motionAnalyzer.redactionFlatness = data.redactionFlatness;
+            }
+            if (data.redactionMinSize !== undefined) {
+                motionAnalyzer.redactionMinSize = data.redactionMinSize;
+            }
+            if (data.redactionFill !== undefined) {
+                motionAnalyzer.redactionFill = data.redactionFill;
+            }
+            if (data.redactionSpread !== undefined) {
+                motionAnalyzer.redactionSpread = data.redactionSpread;
+            }
+
             motionAnalyzer.start();
             
             if (data.maskData && motionAnalyzer.maskOverlayNode) {

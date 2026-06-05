@@ -104,6 +104,12 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
     
     saveMask() {
         if (this.maskCanvas) {
+            // Bump a revision counter on every mask mutation. The additive auto-mask
+            // tools use this to tell "the mask is exactly as I last left it" (safe to
+            // replace my own contribution) from "something else edited it since"
+            // (snapshot the current mask as the new baseline). See
+            // MotionAnalyzer._applyAutoMaskLayer().
+            this.maskRevision = (this.maskRevision || 0) + 1;
             this.maskData = this.maskCanvas.toDataURL('image/png');
             this.updateMaskImageData();
             this.notifyMaskChange();

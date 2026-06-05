@@ -22,6 +22,7 @@ import {Color} from "three";
 import {getCV, loadOpenCV} from "./openCVLoader";
 import {applyConvolution} from "./nodes/CNodeVideoView";
 import {getFlowAlignRotation, isAlignWithFlowEnabled, setAlignWithFlow, setMotionAnalyzerRef} from "./FlowAlignment";
+import {detectRedactionRects} from "./RedactionDetect";
 import {t} from "./i18n";
 
 let cv = null;
@@ -216,7 +217,20 @@ export class MotionAnalyzer {
         this.autoMaskSpread = 5;
         this.autoMaskTargetColor = {r: 235, g: 235, b: 235};
         this.autoMaskCloseToTarget = 140;
-        
+
+        // "Auto Mask Redactions": detect solid black/grey rectangular redaction
+        // boxes (which are temporally invariant because they cover the content)
+        // and mask them. See autoMaskRedactions().
+        this.redactionWindow = 8;        // frames analysed for temporal invariance
+        this.redactionInvariance = 5;    // max % luminance change to count as invariant
+        this.redactionMaxLuma = 180;     // ignore pixels brighter than this (keep black..mid-grey)
+        this.redactionColorSpread = 24;  // max RGB channel spread to count as "grey" (low saturation)
+        this.redactionFlatness = 10;     // max local luminance variation to count as a flat solid fill
+        this.redactionMinSize = 12;      // min box width AND height in pixels
+        this.redactionFill = 0.6;        // min fraction of a region that must be covered by rectangles
+        this.redactionSpread = 3;        // expand each detected box by this many pixels
+        this.redactionRects = [];        // last-applied redaction rects (informational)
+
         this.resultCache = new Map();
         this.duplicateFrameCache = new Map();
         this.suspendAnalysis = false;
@@ -806,8 +820,58 @@ export class MotionAnalyzer {
         if (this.maskOverlayNode) {
             this.maskOverlayNode.clearMask();
         }
+        // Drop the auto-mask baselines so the next auto run starts from the (now
+        // empty) mask rather than restoring stale content.
+        this._autoMaskBaselines = {};
     }
-    
+
+    // Apply one auto-mask "layer" (keyed by `name`) additively and idempotently.
+    // `drawFn(ctx, canvas)` paints the layer's primitives in mask-canvas pixels.
+    //
+    // The mask is shared by hand-painting, the text "Auto Mask", and "Auto Mask
+    // Redactions". To add this layer without wiping the rest, and without stacking
+    // when the same tool is re-run (e.g. while dragging a slider), we keep a
+    // per-layer baseline = the mask as it was just before this layer last drew:
+    //   - if the mask is still exactly as this layer last left it (revision match),
+    //     restore that baseline (removing only this layer's previous output) and
+    //     redraw — so re-running replaces this layer's contribution, not the others;
+    //   - otherwise something else changed the mask (paint / clear / the other auto
+    //     tool), so snapshot the current mask as the new baseline and draw on top,
+    //     i.e. genuinely add to whatever is there now.
+    // Returns true on success.
+    _applyAutoMaskLayer(name, drawFn) {
+        const overlay = this.maskOverlayNode;
+        if (!overlay) return false;
+        overlay.ensureMaskInitialized();
+        const canvas = overlay.maskCanvas;
+        const ctx = overlay.maskCtx;
+        if (!canvas) return false;
+
+        this._autoMaskBaselines = this._autoMaskBaselines || {};
+        const state = this._autoMaskBaselines[name];
+        const rev = overlay.maskRevision || 0;
+
+        let baseline;
+        if (state && rev === state.appliedRev && state.width === canvas.width && state.height === canvas.height) {
+            baseline = state.baseline; // mask untouched since this layer last drew
+        } else {
+            baseline = ctx.getImageData(0, 0, canvas.width, canvas.height); // add to current
+        }
+
+        ctx.putImageData(baseline, 0, 0);
+        ctx.globalCompositeOperation = 'source-over';
+        drawFn(ctx, canvas);
+
+        overlay.saveMask(); // bumps maskRevision
+        this._autoMaskBaselines[name] = {
+            baseline,
+            appliedRev: overlay.maskRevision,
+            width: canvas.width,
+            height: canvas.height,
+        };
+        return true;
+    }
+
     autoMask() {
         const videoData = this.videoView?.videoData;
         if (!videoData) {
@@ -870,9 +934,7 @@ export class MotionAnalyzer {
             console.log("AutoMask: maskCanvas not initialized");
             return;
         }
-        
-        this.maskOverlayNode.maskCtx.clearRect(0, 0, this.maskOverlayNode.maskCanvas.width, this.maskOverlayNode.maskCanvas.height);
-        
+
         const threshold = (1 - this.autoMaskThreshold) * 255;
         const {r: targetR, g: targetG, b: targetB} = this.autoMaskTargetColor;
         const targetThreshold = this.autoMaskCloseToTarget;
@@ -911,20 +973,127 @@ export class MotionAnalyzer {
         }
         
         console.log(`AutoMask: found ${invariantPixels.length} invariant pixels`);
-        
-        const ctx = this.maskOverlayNode.maskCtx;
-        ctx.fillStyle = 'rgba(255, 0, 0, 1)';
-        
-        for (const {x, y} of invariantPixels) {
-            ctx.beginPath();
-            ctx.arc(x, y, this.autoMaskSpread, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        
-        this.maskOverlayNode.saveMask();
+
+        // Add the text mask to whatever is already there (idempotent per layer);
+        // use Clear Mask to start fresh.
+        const spread = this.autoMaskSpread;
+        this._applyAutoMaskLayer('text', (ctx) => {
+            ctx.fillStyle = 'rgba(255, 0, 0, 1)';
+            for (const {x, y} of invariantPixels) {
+                ctx.beginPath();
+                ctx.arc(x, y, spread, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        });
+
         this.onMaskChange();
         setRenderOne(true);
         console.log("AutoMask: complete");
+    }
+
+    // Load a window of decoded frames as ImageData, centred on `centerFrame`.
+    // Returns {frames, width, height} or null. Unlike a pure cache read, this
+    // actively decodes each frame (await waitForFrame) so the temporal-invariance
+    // test has real evidence; frames that still fail to decode are skipped.
+    // The window is centred and clamped to [0, Sit.frames-1] so it never collapses
+    // to a single frame near the clip ends (which would defeat invariance).
+    async _loadMaskFrames(centerFrame, windowSize) {
+        const videoData = this.videoView?.videoData;
+        if (!videoData) return null;
+
+        const lastFrame = Sit.frames - 1;
+        const span = Math.max(2, Math.round(windowSize));
+        const half = Math.floor(span / 2);
+        let start = centerFrame - half;
+        let end = start + span;
+        if (start < 0) { end -= start; start = 0; }
+        if (end > lastFrame) { start -= (end - lastFrame); end = lastFrame; }
+        if (start < 0) start = 0;
+
+        // Determine dimensions from the centre frame (decode it first).
+        if (videoData.waitForFrame) { try { await videoData.waitForFrame(centerFrame, 4000); } catch (e) {} }
+        const firstImage = videoData.getImage(centerFrame);
+        if (!firstImage || !firstImage.width) return null;
+        const width = firstImage.width || firstImage.videoWidth;
+        const height = firstImage.height || firstImage.videoHeight;
+        if (!width || !height) return null;
+
+        const frames = [];
+        for (let f = start; f <= end; f++) {
+            if (videoData.waitForFrame) { try { await videoData.waitForFrame(f, 4000); } catch (e) {} }
+            const isLoaded = videoData.isFrameLoaded ? videoData.isFrameLoaded(f) : true;
+            if (!isLoaded) continue;
+            const img = videoData.getImage(f);
+            if (!img || !img.width) continue;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d', {willReadFrequently: true});
+            ctx.drawImage(img, 0, 0, width, height);
+            frames.push(ctx.getImageData(0, 0, width, height));
+        }
+
+        return {frames, width, height};
+    }
+
+    // "Auto Mask Redactions" — detect solid black/grey rectangular redaction
+    // boxes and paint them into the mask. See detectRedactionRects() for the
+    // detection details (grey + flat + temporally-invariant + rectilinear).
+    //
+    // Additive: the detected boxes are ADDED to the current mask (text Auto Mask,
+    // hand-painting, etc.). Re-running — e.g. while tuning the sliders — replaces
+    // only this tool's own boxes, not the rest. Use Clear Mask to start fresh.
+    async autoMaskRedactions() {
+        // Each call gets a monotonic id. The frame-loading await means several
+        // runs (e.g. from dragging a slider) can overlap; only the most recent one
+        // is allowed to write the mask so a slow earlier run can't overwrite it.
+        const runId = (this._redactionRunId = (this._redactionRunId || 0) + 1);
+
+        const currentFrame = Math.floor(par.frame);
+        const loaded = await this._loadMaskFrames(currentFrame, this.redactionWindow);
+        if (!loaded) {
+            console.log("AutoMaskRedactions: no usable frames");
+            return;
+        }
+        if (runId !== this._redactionRunId) return; // superseded by a newer run
+        const {frames, width, height} = loaded;
+        if (frames.length < 2) {
+            console.log(`AutoMaskRedactions: need >=2 decoded frames (got ${frames.length})`);
+            return;
+        }
+
+        if (!this.maskOverlayNode) {
+            console.log("AutoMaskRedactions: no mask overlay");
+            return;
+        }
+
+        const rects = detectRedactionRects(frames, width, height, {
+            invariance: this.redactionInvariance,
+            maxLuma: this.redactionMaxLuma,
+            colorSpread: this.redactionColorSpread,
+            flatness: this.redactionFlatness,
+            minSize: this.redactionMinSize,
+            fill: this.redactionFill,
+            spread: this.redactionSpread,
+        });
+        console.log(`AutoMaskRedactions: ${frames.length} frames, found ${rects.length} redaction rect(s)`);
+
+        // Add the detected boxes to the current mask (idempotent per layer).
+        this.redactionRects = rects;
+        this._applyAutoMaskLayer('redaction', (ctx, canvas) => {
+            // Map detection-space rects to mask-canvas pixels (normally identical).
+            const sx = canvas.width / width;
+            const sy = canvas.height / height;
+            ctx.fillStyle = 'rgba(255, 0, 0, 1)';
+            for (const r of rects) {
+                ctx.fillRect(r.x * sx, r.y * sy, r.w * sx, r.h * sy);
+            }
+        });
+
+        this.onMaskChange();
+        setRenderOne(true);
+        console.log("AutoMaskRedactions: complete");
     }
 
     createOverlays() {
