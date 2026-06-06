@@ -357,6 +357,29 @@ export function blockViewEvents(element) {
     }
 }
 
+// Bottom edge (px) of the Sitrec top menu bar, so floating windows can stay below it.
+function menuBarBottomPx() {
+    const el = document.getElementById("menuBarBlackBar");
+    return el ? (el.offsetTop + el.offsetHeight) : 0;
+}
+
+// True when a window dragged by `handle` is far enough above the menu bar that
+// releasing should dismiss it (the handle's mid-point is above the menu bar bottom).
+function willCloseOffTop(element, handle) {
+    const h = (handle && handle.offsetHeight) || 30;
+    const top = parseFloat(element.style.top) || 0;
+    return (top + h / 2) < menuBarBottomPx();
+}
+
+// Clamp a floating window's top so it sits at/below the menu bar — used on re-open
+// so a window that was dragged off the top doesn't come back stranded off-screen.
+export function clampBelowMenuBar(element, pad = 8) {
+    if (!element) return;
+    const limit = menuBarBottomPx() + pad;
+    const top = parseFloat(element.style.top) || 0;
+    if (top < limit) element.style.top = `${limit}px`;
+}
+
 export function makeDraggable(element, options = {}) {
     if (!element) return;
     
@@ -507,15 +530,37 @@ export function makeDraggable(element, options = {}) {
                 element.style.top = `${startTop}px`;
             }
         }
+
+        // visual hint: dragging the handle up under the menu bar will close the window
+        if (options.closeOnDragOffTop) {
+            element.style.opacity = willCloseOffTop(element, handleElement) ? "0.5" : "";
+        }
     };
-    
+
     const onPointerUp = (e) => {
         if (!isDragging) return;
-        
+
         e.stopPropagation();
         isDragging = false;
         isViewDragging = false;
-        
+
+        // If released with the window dragged up under the menu bar, close it instead
+        // of leaving it stranded off-screen (re-opening repositions it below the bar).
+        if (options.closeOnDragOffTop) {
+            element.style.opacity = "";
+            if (willCloseOffTop(element, handleElement)) {
+                document.removeEventListener('pointermove', onPointerMove);
+                document.removeEventListener('pointerup', onPointerUp);
+                options.closeOnDragOffTop({
+                    left: parseFloat(element.style.left) || 0,
+                    top: parseFloat(element.style.top) || 0,
+                    element,
+                    viewInstance: element._dragData && element._dragData.viewInstance,
+                });
+                return;
+            }
+        }
+
         // Call onDragEnd callback if provided
         if (options.onDragEnd && typeof options.onDragEnd === 'function') {
             options.onDragEnd(e, { 

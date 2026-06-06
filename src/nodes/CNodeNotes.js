@@ -1,6 +1,6 @@
 import {CNodeView} from "./CNodeView";
 import {guiShowHide, setRenderOne} from "../Globals";
-import {blockViewEvents, makeDraggable} from "../DragResizeUtils";
+import {blockViewEvents, makeDraggable, clampBelowMenuBar} from "../DragResizeUtils";
 import {ViewMan} from "../CViewManager";
 import {t} from "../i18n";
 
@@ -141,6 +141,9 @@ class CNodeNotes extends CNodeView {
         makeDraggable(this.div, {
             handle: '.cnodeview-tab',
             viewInstance: this,
+            // drag the tab up under the menu bar to dismiss (re-opening drops it back
+            // below the menu bar); not while docked to a sidebar
+            closeOnDragOffTop: () => { if (!this.dockedMode && !this.dockedSidebar) this.hide(); },
             onDrag: (event, data) => {
                 const view = data.viewInstance;
                 if (view.dockedSidebar) return true;
@@ -314,6 +317,18 @@ class CNodeNotes extends CNodeView {
         super.show(visible);
         if (visible) {
             this.linkifyContent();
+        }
+    }
+
+    // When the window (re)appears as a floating panel, make sure it isn't stranded
+    // off the top of the screen (e.g. after being dragged up under the menu bar).
+    setVisible(visible) {
+        const wasVisible = this.visible;
+        super.setVisible(visible);
+        if (visible && !wasVisible && !this.dockedMode && !this.dockedSidebar && this.div) {
+            this.updateWH();              // apply the stored fractional position to the div
+            clampBelowMenuBar(this.div);  // push it below the menu bar if it's above
+            this.setFromDiv(this.div);    // persist the corrected position as fractions
         }
     }
 
