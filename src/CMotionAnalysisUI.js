@@ -99,6 +99,11 @@ let panoFeatureFrameStep = 1;
 let panoFeatureCrop = 0;
 let panoFeatureUseMask = true;
 let panoFeatureProjection = "auto"; // "auto" | "planar" | "rigid"
+// De-fence options (see DefenceExporter.js).
+let defenceVarThresh = 0.45;   // fence-aligned variance below this = static board -> removed
+let defenceGapThresh = 0.12;   // gap-colour weight below this = fence-coloured -> removed
+let defenceBgBaseline = 24;    // keyframe baseline (frames) for background-motion separation
+let defenceTechnique = "colourVariance"; // colour | variance | colourVariance
 
 // ---- rotation-aware stamping (similarity transforms) ---------------------
 // 3x3 affine helpers (row-major [a,b,c, d,e,f, 0,0,1]); transforms map image
@@ -1001,6 +1006,8 @@ let exportFeaturePanoMenuItem = null;
 let exportFeaturePanoVideoMenuItem = null;
 let exportPanoVideoMenuItem = null;
 let stabilizeMenuItem = null;
+let defenceMenuItem = null;
+let defenceVideoMenuItem = null;
 let stabilizationEnabled = false;
 
 async function exportMotionPanorama() {
@@ -1246,6 +1253,59 @@ async function exportFeaturePanoVideo() {
         doneLabel: "menu.panorama.exportFeatureVideo.label",
         shouldCancel: isPanoJobCancelled,
     });
+}
+
+// "De-fence" — reconstruct the distant scene behind a foreground fence (see
+// DefenceExporter.js). Independent of motion analysis / OpenCV; just needs a video.
+async function exportDefenceHandler() {
+    const videoView = NodeMan.get("video", false);
+    if (!videoView || !videoView.videoData) { alert(mt("errors.noVideoData")); return; }
+    setMenuItemLabel(defenceMenuItem, "defence.analyzing", {pct: 0});
+    // try/finally so the button label is restored even if the dynamic import fails
+    // or the exporter early-returns (e.g. no A-B range) before its own finally runs.
+    try {
+        const {exportDefence} = await import("./DefenceExporter");
+        await exportDefence({
+            videoData: videoView.videoData,
+            startFrame: Sit.aFrame,
+            endFrame: Sit.bFrame,
+            varThresh: defenceVarThresh,
+            gapThresh: defenceGapThresh,
+            bgBaseline: defenceBgBaseline,
+            technique: defenceTechnique,
+            t: (key, opts) => mt(key, opts),
+            setMenuLabel: (key, opts) => setMenuItemLabel(defenceMenuItem, key, opts),
+            doneLabel: "menu.defence.label",
+        });
+    } finally {
+        setMenuItemLabel(defenceMenuItem, "menu.defence.label");
+    }
+}
+
+// De-fence process visualisation video: original pass -> fence dissolving -> result.
+async function exportDefenceVideoHandler() {
+    const videoView = NodeMan.get("video", false);
+    if (!videoView || !videoView.videoData) { alert(mt("errors.noVideoData")); return; }
+    setMenuItemLabel(defenceVideoMenuItem, "defence.analyzing", {pct: 0});
+    // try/finally so the button label is restored even if the dynamic import fails
+    // or the exporter early-returns (e.g. no A-B range) before its own finally runs.
+    try {
+        const {exportDefenceVideo} = await import("./DefenceExporter");
+        await exportDefenceVideo({
+            videoData: videoView.videoData,
+            startFrame: Sit.aFrame,
+            endFrame: Sit.bFrame,
+            varThresh: defenceVarThresh,
+            gapThresh: defenceGapThresh,
+            bgBaseline: defenceBgBaseline,
+            technique: defenceTechnique,
+            t: (key, opts) => mt(key, opts),
+            setMenuLabel: (key, opts) => setMenuItemLabel(defenceVideoMenuItem, key, opts),
+            doneLabel: "menu.defenceVideo.label",
+        });
+    } finally {
+        setMenuItemLabel(defenceVideoMenuItem, "menu.defenceVideo.label");
+    }
 }
 
 async function exportPanoVideo() {
@@ -1612,6 +1672,8 @@ export function addMotionAnalysisMenu() {
         exportFeaturePano: exportFeaturePano,
         exportFeaturePanoVideo: exportFeaturePanoVideo,
         stabilizeVideo: toggleStabilization,
+        defence: exportDefenceHandler,
+        defenceVideo: exportDefenceVideoHandler,
     };
 
     analyzeMenuItem = motionFolder.add(menuActions, 'analyzeMotion')
@@ -1646,6 +1708,38 @@ export function addMotionAnalysisMenu() {
         .name(mt("menu.panorama.stabilize.label"))
         .tooltip(mt("menu.panorama.stabilize.tooltip"))
         .perm();
+
+    const defenceParams = {
+        get technique() { return defenceTechnique; }, set technique(v) { defenceTechnique = v; },
+        get varThresh() { return defenceVarThresh; }, set varThresh(v) { defenceVarThresh = v; },
+        get gapThresh() { return defenceGapThresh; }, set gapThresh(v) { defenceGapThresh = v; },
+        get bgBaseline() { return defenceBgBaseline; }, set bgBaseline(v) { defenceBgBaseline = v; },
+    };
+    const defenceTechOptions = {};
+    defenceTechOptions[mt("menu.defenceOptions.technique.colourVariance")] = "colourVariance";
+    defenceTechOptions[mt("menu.defenceOptions.technique.colour")] = "colour";
+    defenceTechOptions[mt("menu.defenceOptions.technique.variance")] = "variance";
+    const defenceFolder = motionFolder.addFolder(mt("menu.defenceOptions.title")).close().perm();
+    defenceMenuItem = defenceFolder.add(menuActions, 'defence')
+        .name(mt("menu.defence.label"))
+        .tooltip(mt("menu.defence.tooltip"))
+        .perm();
+    defenceVideoMenuItem = defenceFolder.add(menuActions, 'defenceVideo')
+        .name(mt("menu.defenceVideo.label"))
+        .tooltip(mt("menu.defenceVideo.tooltip"))
+        .perm();
+    defenceFolder.add(defenceParams, 'technique', defenceTechOptions)
+        .name(mt("menu.defenceOptions.technique.label"))
+        .tooltip(mt("menu.defenceOptions.technique.tooltip")).perm();
+    defenceFolder.add(defenceParams, 'varThresh', 0, 1, 0.01)
+        .name(mt("menu.defenceOptions.varThresh.label"))
+        .tooltip(mt("menu.defenceOptions.varThresh.tooltip")).perm();
+    defenceFolder.add(defenceParams, 'gapThresh', 0, 1, 0.01)
+        .name(mt("menu.defenceOptions.gapThresh.label"))
+        .tooltip(mt("menu.defenceOptions.gapThresh.tooltip")).perm();
+    defenceFolder.add(defenceParams, 'bgBaseline', 4, 60, 1)
+        .name(mt("menu.defenceOptions.bgBaseline.label"))
+        .tooltip(mt("menu.defenceOptions.bgBaseline.tooltip")).perm();
 
     const panoFolder = motionFolder.addFolder(mt("menu.panorama.title")).close().perm();
 

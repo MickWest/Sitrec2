@@ -21,6 +21,7 @@ export class MediabunnyExporter {
         this.audioSource = null;
         this.frameCount = 0;
         this.error = null;
+        this.finalized = false;
     }
 
     async initialize() {
@@ -262,6 +263,7 @@ export class MediabunnyExporter {
         }
 
         await this.output.finalize();
+        this.finalized = true;
 
         const buffer = this.target.buffer;
         const mimeType = this.format === 'mp4' ? 'video/mp4' : 'video/webm';
@@ -271,5 +273,21 @@ export class MediabunnyExporter {
 
     getFrameCount() {
         return this.frameCount;
+    }
+
+    // Release the WebCodecs encoder and abort the muxer when an export is
+    // cancelled or errors before finalize() (a VideoEncoder holds a hardware
+    // session that must be closed explicitly; GC won't reliably free it).
+    // Idempotent and safe to call after a successful finalize().
+    async dispose() {
+        try { if (this.encoder && this.encoder.state !== 'closed') this.encoder.close(); } catch (_) { /* ignore */ }
+        // finalize() consumes the output; only cancel it if we never got there.
+        if (!this.finalized) {
+            try { await this.output?.cancel(); } catch (_) { /* ignore */ }
+        }
+        this.encoder = null;
+        this.videoSource = null;
+        this.audioSource = null;
+        this.output = null;
     }
 }
