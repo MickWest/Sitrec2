@@ -539,16 +539,30 @@ const en = {
             panorama: {
                 title: "Panorama",
                 exportImage: {
-                    label: "Export Motion Panorama",
+                    label: "Export Motion Pano Image",
                     tooltip: "Create a panorama image from video frames using motion tracking offsets",
                 },
-                exportFeature: {
-                    label: "Export Feature Pano",
-                    tooltip: "Create a panorama by feature-matching and warping video frames (handles rotation and perspective distortion, unlike Export Motion Panorama)",
-                },
                 exportVideo: {
-                    label: "Export Pano Video",
-                    tooltip: "Create a 4K video showing the panorama with video frame overlay",
+                    label: "Export Motion Pano Video",
+                    tooltip: "Create a 4K video showing the motion panorama with the video frame overlaid",
+                },
+                motionOptions: {
+                    title: "Motion Pano Options",
+                },
+                rotateFrames: {
+                    label: "Rotate Frames (SfM)",
+                    tooltip: "Stamp each frame with its full recovered rotation+translation (handles camera roll/rotation, like the feature pano) instead of translation only",
+                },
+                exportFeature: {
+                    label: "Export Feature Pano Image",
+                    tooltip: "Create a panorama by feature-matching and warping video frames (handles rotation and perspective distortion, unlike the Motion Panorama)",
+                },
+                exportFeatureVideo: {
+                    label: "Export Feature Pano Video",
+                    tooltip: "Create a video where each frame is warped into its place on the feature-stitched panorama background",
+                },
+                featureOptions: {
+                    title: "Feature Pano Options",
                 },
                 stabilize: {
                     label: "Stabilize Video",
@@ -578,6 +592,22 @@ const en = {
                 removeOuterBlack: {
                     label: "Remove Outer Black",
                     tooltip: "Make black pixels at the edges of each row transparent",
+                },
+                featureFrameStep: {
+                    label: "Frame Step",
+                    tooltip: "Frames to step between each stitched frame (1 = every frame). Higher = faster, fewer frames.",
+                },
+                featureCrop: {
+                    label: "Crop",
+                    tooltip: "Pixels to ignore at each edge of the video frames",
+                },
+                featureUseMask: {
+                    label: "Use Mask",
+                    tooltip: "Exclude redaction-masked regions from feature detection and blending",
+                },
+                featureProjection: {
+                    label: "Projection",
+                    tooltip: "Auto picks a planar (perspective) mosaic for translating cameras, or a rigid flat unrolling for rotating cameras. Force one if needed.",
                 },
             },
             trackingParameters: {

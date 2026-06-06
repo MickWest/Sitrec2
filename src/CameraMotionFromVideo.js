@@ -240,7 +240,8 @@ function weightedSimilarity(P, Q, w) {
 // dominates (~90% of tracked features are inliers), so a few trimming iterations reject the
 // moving foreground object + any stray features without the run-to-run variance of RANSAC.
 // Returns the translation of the image CENTER (dx,dy), rotation theta, scale, inlier count.
-function fitSimilarity(P, Q, W, H, P_) {
+// Exported so the panorama exporters can reuse the same robust similarity fit (DRY).
+export function fitSimilarity(P, Q, W, H, P_) {
     const n = P.length;
     if (n < 3) return null;
     const thr2 = P_.ransacThr * P_.ransacThr;

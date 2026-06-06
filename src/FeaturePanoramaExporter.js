@@ -1,56 +1,55 @@
 /**
- * Feature-based panorama exporter — "Export Feature Pano".
+ * Feature-based panorama exporter — "Export Feature Pano Image / Video".
  *
- * A separate, more capable panorama path than "Export Motion Panorama"
- * (CMotionAnalysisUI.js / exportMotionPanorama). The Motion Panorama uses the
- * optical-flow camera-motion estimate to paste each video frame with only a 2D
- * TRANSLATION (+ optional whole-image rotation), so any per-frame rotation or
- * perspective shows up as mis-registration. This path registers frames with
- * industry-standard feature matching and warps them to fit.
+ * A separate, more capable panorama path than "Export Motion Panorama". The
+ * Motion Panorama pastes each video frame with only a 2D translation (+ optional
+ * whole-image rotation); this path registers frames with industry-standard
+ * feature matching and warps them to fit.
  *
  * Pipeline (entirely on the actual video frames):
  *   1. ORB feature detection + 256-bit BRIEF descriptors per frame.
- *   2. Brute-force Hamming knn matching between consecutive frames + Lowe
- *      ratio test (0.75) for confident matches.
- *   3. cv.findHomography(RANSAC) per adjacent pair, and from its inliers a
- *      robust RIGID (rotation + translation) transform as well.
- *   4. Compose the per-pair transforms into a common frame, anchored at the
- *      MIDDLE frame (halves worst-case drift).
- *   5. Pick the model: a full-homography mosaic captures perspective (great for
- *      translating/aerial captures), but a planar homography mosaic EXPLODES as
- *      camera rotation grows past ~45° (frames approach the projective
- *      singularity → the whole panorama collapses to a black speck). When that
- *      blow-up is detected we fall back to the RIGID chain, which has no
- *      perspective DOF, cannot diverge, and gives the correct flat / cylindrical
- *      unrolling for a (narrow-FOV) rotating camera — no focal length needed.
- *   6. cv.warpPerspective each frame onto the panorama + feather-blend.
+ *   2. BFMatcher Hamming knn + Lowe ratio test (0.75).
+ *   3. cv.findHomography(RANSAC) per adjacent pair, plus a robust RIGID
+ *      (rotation + translation) fit on its inliers.
+ *   4. Compose into a common frame, anchored at the MIDDLE frame.
+ *   5. Pick the model: a full-homography PLANAR mosaic captures perspective
+ *      (great for translating/aerial captures) but explodes when the chain
+ *      drifts or the rotation is large (→ black). Detected by comparing the
+ *      planar bbox to the drift-proof RIGID bbox; on blow-up we use the RIGID
+ *      chain (correct flat/cylindrical unrolling for a rotating camera, no focal
+ *      length needed).
+ *   6a. Image: warpPerspective every frame onto the panorama + feather-blend → PNG.
+ *   6b. Video: build that panorama as a static background, then render an MP4
+ *       where each source frame is warped (by the SAME transform that stitched
+ *       it) into its place on the panorama — so the live frame conforms to and
+ *       moves across the feature-stitched background.
  *
- * Burned-in HUD / reticle / redaction graphics are STATIC in image space: if
- * ORB matched on them the transform would be dragged toward identity, so the
- * redaction mask (and the crop ring) is used as an ORB *detection* mask.
+ * A full-screen overlay shows progress, refreshing the intermediate image on a
+ * ~3 second wall-clock cadence (the current frame during registration, the
+ * building panorama / video composite during rendering).
  *
- * OpenCV.js Mat lifecycle is the biggest risk (a missed .delete() in the
- * per-frame loop OOMs the WASM heap), so every Mat is freed per-iteration via
- * try/finally and the long-lived objects in the outer finally on every path.
+ * Burned-in HUD / redaction graphics are STATIC in image space, so the redaction
+ * mask (+ crop ring) is used as the ORB *detection* mask. OpenCV.js Mat lifecycle
+ * is freed per-iteration via try/finally and long-lived objects in the outer
+ * finally on every path.
  */
 
-import {GlobalDateTimeNode, Globals, setRenderOne} from "./Globals";
+import {GlobalDateTimeNode, Globals, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
 import {getExportPrefix} from "./utils";
 
-// Browser 2D-canvas limits — see the matching notes in PanoramaExporter.js and
-// CMotionAnalysisUI.js. An over-limit canvas fails SILENTLY (drawImage paints
-// nothing, reads back black), so clamp BOTH the largest dimension and the area.
 const MAX_PANORAMA_DIM = 16384;
-const MAX_PANORAMA_AREA = 128 * 1024 * 1024; // ~134M px, safely under the limit
+const MAX_PANORAMA_AREA = 128 * 1024 * 1024;
+const PANO_VIDEO_MAX_W = 3840;
+const PANO_VIDEO_MAX_H = 2160;
+const PREVIEW_INTERVAL_MS = 3000;       // wall-clock cadence for intermediate-image preview
 
-// Registration tuning.
-const DEFAULT_FEATURE_COUNT = 2000;     // ORB keypoints per frame
-const RATIO_TEST = 0.75;                // Lowe ratio for knn match filtering
-const RANSAC_REPROJ = 3.0;              // px reprojection threshold for findHomography
-const MIN_GOOD_MATCHES = 12;            // below this, fall back to translation
-const MIN_INLIERS = 10;                 // RANSAC inliers required to trust a homography
-const MIN_INLIER_RATIO = 0.25;          // inliers / good matches required
+const DEFAULT_FEATURE_COUNT = 2000;
+const RATIO_TEST = 0.75;
+const RANSAC_REPROJ = 3.0;
+const MIN_GOOD_MATCHES = 12;
+const MIN_INLIERS = 10;
+const MIN_INLIER_RATIO = 0.25;
 const PLANAR_BLOWUP_AREA = 50;          // per-frame projected-area stretch that means "use rigid"
 
 function panoFitScale(width, height) {
@@ -104,11 +103,9 @@ function translate3(tx, ty) {
     return [1, 0, tx, 0, 1, ty, 0, 0, 1];
 }
 
-// Best-fit RIGID transform (rotation + translation, scale fixed at 1) mapping the
-// `cur` points onto the `prev` points (Umeyama, scale=1). Optionally restricted
-// to the inlier set. Returns a 3x3 (homography form) or null. A rigid transform
-// has no perspective DOF, so chaining it can never blow up — the key robustness
-// property for rotating-camera panoramas.
+// Best-fit RIGID transform (rotation + translation, scale=1) mapping `cur` -> `prev`
+// (Umeyama, scale=1), optionally over an inlier mask. No perspective DOF, so a
+// chain of these can never blow up — the key robustness property for rotating cams.
 function rigidFromMatches(curPts, prevPts, mask) {
     const N = curPts.length / 2;
     let cxc = 0, cyc = 0, cpx = 0, cpy = 0, cnt = 0;
@@ -148,8 +145,7 @@ async function loadVideoFrame(videoData, frame) {
     return image;
 }
 
-// Decode a frame into an RGBA cv.Mat with the feather/mask baked into its alpha
-// channel. Caller owns the returned Mat. Returns null if the frame won't load.
+// Decode a frame into an RGBA cv.Mat with the feather/mask baked into its alpha.
 async function decodeFeatherSrc(cv, videoData, frame, W, H, frameCtx, featherAlpha) {
     const image = await loadVideoFrame(videoData, frame);
     if (!image) return null;
@@ -161,33 +157,98 @@ async function decodeFeatherSrc(cv, videoData, frame, W, H, frameCtx, featherAlp
     return cv.matFromImageData(id);
 }
 
-// Composite a warped RGBA tile (CV_8UC4) onto the panorama with source-over.
-function compositeTile(panoCtx, tileCanvas, tileCtx, dst, rx, ry, rw, rh) {
+// Composite a warped RGBA tile (CV_8UC4) onto a 2D context with source-over.
+function compositeTile(ctx, tileCanvas, tileCtx, dst, rx, ry, rw, rh) {
     const tileImg = new ImageData(new Uint8ClampedArray(dst.data), rw, rh);
     tileCanvas.width = rw;
     tileCanvas.height = rh;
     tileCtx.putImageData(tileImg, 0, 0);
-    panoCtx.drawImage(tileCanvas, rx, ry);
+    ctx.drawImage(tileCanvas, rx, ry);
 }
 
-// Compose per-pair transforms M[i] (mapping frame i -> i-1) into global
-// transforms G[i] (mapping frame i -> anchor), anchored at the middle frame.
+// Warp source frame i (a feathered RGBA cv.Mat) through transform Fi and draw it
+// onto ctx (whose coordinate space Fi maps into). Bounds-clamped tile warp.
+function warpFrameOnto(cv, src, Fi, ctx, tileCanvas, tileCtx, outW, outH, corners) {
+    let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+    for (const [cx, cy] of corners) {
+        const [px, py] = applyH(Fi, cx, cy);
+        if (!isFinite(px) || !isFinite(py)) return false;
+        if (px < bx0) bx0 = px; if (px > bx1) bx1 = px;
+        if (py < by0) by0 = py; if (py > by1) by1 = py;
+    }
+    const rx = Math.max(0, Math.floor(bx0));
+    const ry = Math.max(0, Math.floor(by0));
+    const rw = Math.min(outW, Math.ceil(bx1)) - rx;
+    const rh = Math.min(outH, Math.ceil(by1)) - ry;
+    if (rw <= 0 || rh <= 0) return false;
+    let dst = null, Hm = null;
+    try {
+        dst = new cv.Mat();
+        Hm = cv.matFromArray(3, 3, cv.CV_64F, mat3mul(translate3(-rx, -ry), Fi));
+        cv.warpPerspective(src, dst, Hm, new cv.Size(rw, rh),
+            cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(0, 0, 0, 0));
+        compositeTile(ctx, tileCanvas, tileCtx, dst, rx, ry, rw, rh);
+    } finally {
+        if (dst) dst.delete();
+        if (Hm) Hm.delete();
+    }
+    return true;
+}
+
+// Draw the current video frame to the preview canvas with its matched features
+// circled — the live "detecting & matching features" visualization.
+function drawFeaturePreview(ctx, canvas, image, matched, W, H) {
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const sx = canvas.width / W, sy = canvas.height / H;
+    const r = Math.max(3, Math.round(canvas.width / 220) + 2);
+    if (matched && matched.length) {
+        ctx.strokeStyle = 'rgba(0, 255, 120, 0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (const p of matched) {
+            const x = p.x * sx, y = p.y * sy;
+            ctx.moveTo(x + r, y);
+            ctx.arc(x, y, r, 0, 2 * Math.PI);
+        }
+        ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(0, 255, 120, 0.95)';
+    ctx.font = '16px sans-serif';
+    ctx.fillText(`${matched ? matched.length : 0} matched features`, 8, 22);
+}
+
+// Stroke the outline of a frame's warped quad (its 4 corners through Fi), to
+// show where the current frame sits on the panorama background.
+function drawQuadOutline(ctx, Fi, corners) {
+    const pts = corners.map(([x, y]) => applyH(Fi, x, y));
+    for (const p of pts) if (!isFinite(p[0]) || !isFinite(p[1])) return;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0, 255, 255, 0.85)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+}
+
+// Compose per-pair transforms M[i] (frame i -> i-1) into global transforms
+// G[i] (frame i -> anchor), anchored at the middle frame.
 function composeChain(M, n, anchor) {
     const G = new Array(n).fill(null);
     G[anchor] = IDENTITY3.slice();
     for (let i = anchor + 1; i < n; i++) {
-        G[i] = mat3mul(G[i - 1], M[i] || IDENTITY3.slice());           // i -> anchor
+        G[i] = mat3mul(G[i - 1], M[i] || IDENTITY3.slice());
     }
     for (let i = anchor - 1; i >= 0; i--) {
-        const inv = mat3inv(M[i + 1] || IDENTITY3.slice());            // i -> i+1
+        const inv = mat3inv(M[i + 1] || IDENTITY3.slice());
         G[i] = mat3mul(G[i + 1], inv || IDENTITY3.slice());
     }
     return G;
 }
 
-// Bounding box of all frames' projected corners, plus the worst per-frame
-// projected-area stretch (× source area) and a non-finite flag. Used both to
-// size the canvas and to detect planar-mosaic blow-up.
+// Bounding box + worst per-frame projected-area stretch + non-finite flag.
 function bboxOf(G, n, W, H) {
     const srcArea = W * H;
     const corners = [[0, 0], [W, 0], [W, H], [0, H]];
@@ -213,25 +274,13 @@ function bboxOf(G, n, W, H) {
     return {minX, minY, maxX, maxY, area, maxStretch, bad};
 }
 
-// ---- core export ---------------------------------------------------------
+// ---- core (shared by image + video) -------------------------------------
 
 /**
- * @param {object} o
- * @param {object} o.cv               loaded OpenCV.js namespace
- * @param {object} o.videoData        the video view's videoData
- * @param {number} o.startFrame       first frame (inclusive)
- * @param {number} o.endFrame         last frame (inclusive)
- * @param {number} [o.frameStep=1]    frames to step between stitched frames
- * @param {number} [o.crop=0]         px ring ignored at each frame edge
- * @param {boolean} [o.useMask=false] use the redaction mask to exclude static graphics
- * @param {ImageData} [o.maskImageData] redaction mask (alpha>128 = masked)
- * @param {number} [o.featureCount]   ORB keypoints per frame
- * @param {string} [o.projection]     "auto" (default) | "planar" | "rigid"
- * @param {function} [o.t]            translator (key, opts) -> string
- * @param {function} [o.setMenuLabel] (key, opts) -> void
- * @param {string}  [o.doneLabel]     menu label key to restore when finished
+ * @param {object} o   see exportFeaturePanorama / exportFeaturePanoramaVideo
+ * @param {"image"|"video"} mode
  */
-export async function exportFeaturePanorama(o) {
+async function runFeaturePano(o, mode) {
     const cv = o.cv;
     const videoData = o.videoData;
     const startFrame = o.startFrame;
@@ -254,8 +303,6 @@ export async function exportFeaturePanorama(o) {
     const n = frames.length;
     if (n < 2) { alert("Need at least two frames for a panorama"); return; }
 
-    // Capture + set playback state up front (before any decode mutates par.frame)
-    // so the finally restores the user's actual playhead.
     const savedPaused = par.paused;
     const savedFrame = par.frame;
     const savedJustVideoAnalysis = Globals.justVideoAnalysis;
@@ -263,12 +310,12 @@ export async function exportFeaturePanorama(o) {
     par.paused = true;
 
     let overlay = null;
-    const persistent = [];   // long-lived cv objects, freed in finally
+    const persistent = [];
     let prevKP = null;
-    let prevDes = null;      // carried PASS-1 descriptors (cv.Mat) — freed in finally
-    let panoCanvas = null;
+    let prevDes = null;
     let weakLinks = 0;
     let cancelled = false;
+    let lastPreview = 0;
 
     try {
         const firstImage = await loadVideoFrame(videoData, frames[0]);
@@ -277,7 +324,7 @@ export async function exportFeaturePanorama(o) {
         const H = firstImage.height;
         const corners = [[0, 0], [W, 0], [W, H], [0, H]];
 
-        // ---- full-screen progress overlay (also hides live-viewport churn) ----
+        // ---- full-screen progress overlay ----
         overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:#000;z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;';
         const previewCanvas = document.createElement('canvas');
@@ -297,12 +344,22 @@ export async function exportFeaturePanorama(o) {
         document.body.appendChild(overlay);
         const setStatus = (s) => { statusText.textContent = s; };
 
+        // Refresh the intermediate image at most every PREVIEW_INTERVAL_MS.
+        const showPreview = (drawFn) => {
+            const now = performance.now();
+            if (now - lastPreview >= PREVIEW_INTERVAL_MS) { lastPreview = now; try { drawFn(); } catch (_) { /* ignore */ } }
+        };
+        const fitPreview = (w, h) => {
+            previewCanvas.width = Math.min(1600, w);
+            previewCanvas.height = Math.max(1, Math.round(previewCanvas.width * h / w));
+        };
+
         const frameCanvas = document.createElement('canvas');
         frameCanvas.width = W;
         frameCanvas.height = H;
         const frameCtx = frameCanvas.getContext('2d', {willReadFrequently: true});
 
-        // ORB detection mask: 0 over the crop ring and burned-in redaction graphics.
+        // ORB detection mask.
         let detectMask = null;
         if (useMask || crop > 0) {
             detectMask = cv.Mat.ones(H, W, cv.CV_8UC1);
@@ -327,7 +384,7 @@ export async function exportFeaturePanorama(o) {
         const noMask = new cv.Mat();
         persistent.push(noMask);
 
-        // Per-frame feather/mask alpha (0..255) baked into the warp source's alpha.
+        // Per-frame feather/mask alpha.
         const featherPx = Math.max(16, Math.round(0.06 * Math.min(W, H)));
         const featherAlpha = new Uint8ClampedArray(W * H);
         {
@@ -357,9 +414,9 @@ export async function exportFeaturePanorama(o) {
         persistent.push(bf);
 
         // ===== PASS 1: detect features + estimate pairwise transforms =====
-        // Mh[i]/Mr[i] map frame i -> frame (i-1) (homography / rigid).
         const Mh = new Array(n).fill(null);
         const Mr = new Array(n).fill(null);
+        let lastMatched = null;   // matched (inlier) points on the most recent frame
 
         for (let i = 0; i < n; i++) {
             if (cancelled) throw new Error("cancelled");
@@ -396,12 +453,13 @@ export async function exportFeaturePanorama(o) {
                     if (res.weak) weakLinks++;
                     Mh[i] = res.H;
                     Mr[i] = res.rigid;
+                    lastMatched = res.matched;
                 }
 
                 if (prevDes) prevDes.delete();
                 prevKP = kp;
                 prevDes = des;
-                des = null; // handed off
+                des = null;
             } finally {
                 if (src) src.delete();
                 if (gray) gray.delete();
@@ -412,19 +470,13 @@ export async function exportFeaturePanorama(o) {
             if (i % 4 === 0) {
                 setMenuLabel("status.analyzingPercent", {pct: Math.round(100 * (i + 1) / n)});
                 setStatus(t("status.detectingFeaturesPercent", {pct: Math.round(100 * (i + 1) / n)}));
+                drawFeaturePreview(previewCtx, previewCanvas, image, lastMatched, W, H);
                 await new Promise(r => setTimeout(r, 0));
             }
         }
         if (prevDes) { prevDes.delete(); prevDes = null; }
 
         // ===== choose the model & compose the global transform chain =====
-        // The full-homography mosaic captures perspective but EXPLODES when the
-        // chain drifts (noise over many near-identity homographies) or the
-        // rotation is large. The rigid (rotation+translation) chain can't drift
-        // or stretch, so it is our sanity reference: if the planar bbox is far
-        // bigger than the rigid bbox, or any frame stretches wildly, planar has
-        // blown up and we use rigid instead (the correct flat/cylindrical
-        // unrolling for a rotating camera; no focal length needed).
         const anchor = Math.floor(n / 2);
         const Gh = composeChain(Mh, n, anchor);
         const Gr = composeChain(Mr, n, anchor);
@@ -457,11 +509,10 @@ export async function exportFeaturePanorama(o) {
             `${useRigid ? 'RIGID' : 'PLANAR'} (planar ${(bh.area/1e6).toFixed(1)}Mpx stretch ${bh.maxStretch.toFixed(1)}x, ` +
             `rigid ${(br.area/1e6).toFixed(1)}Mpx), ${outW}x${outH}px, scale=${scale.toFixed(3)}`);
 
-        previewCanvas.width = Math.min(1600, outW);
-        previewCanvas.height = Math.max(1, Math.round(previewCanvas.width * outH / outW));
+        fitPreview(outW, outH);
 
-        // ===== PASS 2: warp + feather-blend each frame onto the panorama =====
-        panoCanvas = document.createElement('canvas');
+        // ===== PASS 2: warp + feather-blend each frame into the panorama =====
+        const panoCanvas = document.createElement('canvas');
         panoCanvas.width = outW;
         panoCanvas.height = outH;
         const panoCtx = panoCanvas.getContext('2d');
@@ -477,64 +528,47 @@ export async function exportFeaturePanorama(o) {
             const frame = frames[i];
             setStatus(t("status.stitchingPercent", {pct: Math.round(100 * (i + 1) / n)}));
 
-            let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
-            let badCorner = false;
-            for (const [ccx, ccy] of corners) {
-                const [px, py] = applyH(F[i], ccx, ccy);
-                if (!isFinite(px) || !isFinite(py)) { badCorner = true; break; }
-                if (px < bx0) bx0 = px; if (px > bx1) bx1 = px;
-                if (py < by0) by0 = py; if (py > by1) by1 = py;
-            }
-            if (badCorner) { skipped++; continue; }
-            const rx = Math.max(0, Math.floor(bx0));
-            const ry = Math.max(0, Math.floor(by0));
-            const rw = Math.min(outW, Math.ceil(bx1)) - rx;
-            const rh = Math.min(outH, Math.ceil(by1)) - ry;
-            if (rw <= 0 || rh <= 0) { skipped++; continue; }
-
             const src = await decodeFeatherSrc(cv, videoData, frame, W, H, frameCtx, featherAlpha);
             if (!src) { skipped++; continue; }
-
-            let dst = null, Hm = null;
             try {
-                dst = new cv.Mat();
-                const Htile = mat3mul(translate3(-rx, -ry), F[i]);
-                Hm = cv.matFromArray(3, 3, cv.CV_64F, Htile);
-                cv.warpPerspective(src, dst, Hm, new cv.Size(rw, rh),
-                    cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(0, 0, 0, 0));
-                compositeTile(panoCtx, tileCanvas, tileCtx, dst, rx, ry, rw, rh);
+                if (!warpFrameOnto(cv, src, F[i], panoCtx, tileCanvas, tileCtx, outW, outH, corners)) skipped++;
             } finally {
                 src.delete();
-                if (dst) dst.delete();
-                if (Hm) Hm.delete();
             }
 
             if (i % 4 === 0) {
-                previewCtx.drawImage(panoCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
+                showPreview(() => previewCtx.drawImage(panoCanvas, 0, 0, previewCanvas.width, previewCanvas.height));
                 setMenuLabel("status.renderingPercent", {pct: Math.round(100 * (i + 1) / n)});
                 await new Promise(r => setTimeout(r, 0));
             }
         }
-
         previewCtx.drawImage(panoCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
-        setStatus(t("status.saving"));
-        setMenuLabel("status.saving");
 
-        await new Promise((resolve) => {
-            panoCanvas.toBlob((blob) => {
-                if (blob) {
-                    const filename = `${getExportPrefix()}_feature_panorama_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = filename;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                    console.log(`Feature panorama exported: ${filename} (${skipped} frame(s) skipped)`);
-                }
-                resolve();
-            }, 'image/png');
-        });
+        if (mode === "video") {
+            await renderFeaturePanoVideo({
+                cv, videoData, frames, n, F, outW, outH, W, H, featherAlpha, frameCtx,
+                panoCanvas, corners, previewCanvas, previewCtx, setStatus, setMenuLabel, t,
+                showPreview, isCancelled: () => cancelled,
+            });
+        } else {
+            setStatus(t("status.saving"));
+            setMenuLabel("status.saving");
+            await new Promise((resolve) => {
+                panoCanvas.toBlob((blob) => {
+                    if (blob) {
+                        const filename = `${getExportPrefix()}_feature_panorama_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filename;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        console.log(`Feature panorama exported: ${filename} (${skipped} frame(s) skipped)`);
+                    }
+                    resolve();
+                }, 'image/png');
+            });
+        }
 
     } catch (e) {
         if (e.message !== "cancelled") {
@@ -556,21 +590,111 @@ export async function exportFeaturePanorama(o) {
     }
 }
 
-// Estimate the transforms mapping the CURRENT frame's pixels onto the PREVIOUS
-// frame's pixels. Returns {H, rigid, weak}: H is the full homography (or a
-// translation fallback), rigid is a rotation+translation fit on the homography
-// inliers (or the same translation fallback). weak=true when no reliable
-// homography was found.
+// Render the feature-pano VIDEO: a static feature-stitched background with each
+// source frame warped (by the same transform that stitched it) into its place.
+async function renderFeaturePanoVideo(c) {
+    const {cv, videoData, frames, n, F, outW, outH, W, H, featherAlpha, frameCtx,
+           panoCanvas, corners, previewCanvas, previewCtx, setStatus, setMenuLabel, t, showPreview, isCancelled} = c;
+
+    setStatus(t("status.renderingVideo"));
+
+    // Output: fit the panorama within 4K, preserving aspect; even dimensions.
+    const s = Math.min(PANO_VIDEO_MAX_W / outW, PANO_VIDEO_MAX_H / outH);
+    const vidW = Math.max(2, Math.round(outW * s / 2) * 2);
+    const vidH = Math.max(2, Math.round(outH * s / 2) * 2);
+    const Svid = [vidW / outW, 0, 0, 0, vidH / outH, 0, 0, 0, 1];
+
+    const {createVideoExporter, getVideoExtension, getBestFormatForResolution, checkVideoEncodingSupport} = await import("./VideoExporter");
+    const support = await checkVideoEncodingSupport();
+    if (!support || !support.supported) { alert("Video encoding is not supported in this browser"); return; }
+    const formatId = support.h264 ? 'mp4-h264' : 'webm-vp8';
+    const best = await getBestFormatForResolution(formatId, vidW, vidH);
+    if (!best.formatId) { alert("Feature pano video export not available: " + (best.reason || "")); return; }
+    const extension = getVideoExtension(best.formatId);
+
+    // Static background = the stitched panorama scaled to the video size.
+    const bgCanvas = document.createElement('canvas');
+    bgCanvas.width = vidW; bgCanvas.height = vidH;
+    const bgCtx = bgCanvas.getContext('2d');
+    bgCtx.fillStyle = 'black'; bgCtx.fillRect(0, 0, vidW, vidH);
+    bgCtx.drawImage(panoCanvas, 0, 0, vidW, vidH);
+
+    const compositeCanvas = document.createElement('canvas');
+    compositeCanvas.width = vidW; compositeCanvas.height = vidH;
+    const compositeCtx = compositeCanvas.getContext('2d');
+    const tileCanvas = document.createElement('canvas');
+    const tileCtx = tileCanvas.getContext('2d');
+
+    const exporter = await createVideoExporter(best.formatId, {
+        width: vidW, height: vidH, fps: Sit.fps,
+        bitrate: 20_000_000, keyFrameInterval: 30,
+        hardwareAcceleration: best.hardwareAcceleration,
+    });
+    await exporter.initialize();
+
+    try {
+        for (let i = 0; i < n; i++) {
+            if (isCancelled()) throw new Error("cancelled");
+            setStatus(t("status.videoPercent", {pct: Math.round(100 * (i + 1) / n)}));
+
+            compositeCtx.drawImage(bgCanvas, 0, 0);            // feature-stitched background
+            compositeCtx.fillStyle = 'rgba(0, 0, 0, 0.45)';   // dim it so the live frame pops
+            compositeCtx.fillRect(0, 0, vidW, vidH);
+
+            const Fv = mat3mul(Svid, F[i]);                    // source -> video coords
+            const src = await decodeFeatherSrc(cv, videoData, frames[i], W, H, frameCtx, featherAlpha);
+            if (src) {
+                try {
+                    warpFrameOnto(cv, src, Fv, compositeCtx, tileCanvas, tileCtx, vidW, vidH, corners);
+                } finally {
+                    src.delete();
+                }
+            }
+            drawQuadOutline(compositeCtx, Fv, corners);        // show where the live frame is
+
+            await exporter.addFrame(compositeCanvas, frames[i]);
+
+            if (i % 3 === 0) {
+                showPreview(() => previewCtx.drawImage(compositeCanvas, 0, 0, previewCanvas.width, previewCanvas.height));
+                setMenuLabel("status.videoPercent", {pct: Math.round(100 * (i + 1) / n)});
+                await new Promise(r => setTimeout(r, 0));
+            }
+        }
+
+        if (!isCancelled()) {
+            setStatus(t("status.saving"));
+            const blob = await exporter.finalize(null, (st) => setStatus(st));
+            const filename = `${getExportPrefix()}_feature_pano_video_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+            console.log(`Feature pano video exported: ${filename} (${vidW}x${vidH})`);
+        }
+    } finally {
+        try { exporter.dispose?.(); } catch (_) { /* ignore */ }
+    }
+}
+
+export const exportFeaturePanorama = (o) => runFeaturePano(o, "image");
+export const exportFeaturePanoramaVideo = (o) => runFeaturePano(o, "video");
+
+// Estimate the transforms mapping CURRENT frame pixels onto PREVIOUS frame pixels.
+// Returns {H, rigid, weak}. H is the full homography (or a translation fallback);
+// rigid is a rotation+translation fit on the homography inliers (or that same
+// translation fallback). weak=true when no reliable homography was found.
 function estimatePairwise(cv, bf, prevKP, prevDes, curKP, curDes) {
-    const fallback = (dxs, dys) => {
+    const fallback = (dxs, dys, matched) => {
         if (dxs && dxs.length >= 1) {
             const sx = dxs.slice().sort((a, b) => a - b);
             const sy = dys.slice().sort((a, b) => a - b);
             const m = sx.length >> 1;
             const tr = translate3(sx[m], sy[m]);
-            return {H: tr, rigid: tr, weak: true};
+            return {H: tr, rigid: tr, weak: true, matched: matched || []};
         }
-        return {H: IDENTITY3.slice(), rigid: IDENTITY3.slice(), weak: true};
+        return {H: IDENTITY3.slice(), rigid: IDENTITY3.slice(), weak: true, matched: matched || []};
     };
 
     if (!prevDes || !curDes || prevDes.rows < 2 || curDes.rows < 2) return fallback();
@@ -578,7 +702,7 @@ function estimatePairwise(cv, bf, prevKP, prevDes, curKP, curDes) {
     const knn = new cv.DMatchVectorVector();
     const curPts = [], prevPts = [], dxs = [], dys = [];
     try {
-        bf.knnMatch(curDes, prevDes, knn, 2);   // query=current, train=previous
+        bf.knnMatch(curDes, prevDes, knn, 2);
         for (let m = 0; m < knn.size(); m++) {
             const pair = knn.get(m);
             if (pair.size() < 2) continue;
@@ -598,7 +722,9 @@ function estimatePairwise(cv, bf, prevKP, prevDes, curKP, curDes) {
     }
 
     const good = curPts.length / 2;
-    if (good < MIN_GOOD_MATCHES) return fallback(dxs, dys);
+    const goodMatched = [];
+    for (let k = 0; k < good; k++) goodMatched.push({x: curPts[2*k], y: curPts[2*k+1]});
+    if (good < MIN_GOOD_MATCHES) return fallback(dxs, dys, goodMatched);
 
     const srcM = cv.matFromArray(good, 1, cv.CV_32FC2, curPts);
     const dstM = cv.matFromArray(good, 1, cv.CV_32FC2, prevPts);
@@ -615,7 +741,9 @@ function estimatePairwise(cv, bf, prevKP, prevDes, curKP, curDes) {
             for (let k = 0; k < 9; k++) arr.push(Hm.data64F[k]);
             if (inliers >= MIN_INLIERS && inliers / good >= MIN_INLIER_RATIO && isReasonableHomography(arr)) {
                 const rigid = rigidFromMatches(curPts, prevPts, maskArr) || arr;
-                result = {H: arr, rigid, weak: false};
+                const inMatched = [];
+                for (let k = 0; k < good; k++) if (maskArr[k]) inMatched.push({x: curPts[2*k], y: curPts[2*k+1]});
+                result = {H: arr, rigid, weak: false, matched: inMatched};
             }
         }
     } catch (_) { /* fall through */ }
@@ -624,11 +752,9 @@ function estimatePairwise(cv, bf, prevKP, prevDes, curKP, curDes) {
     dstM.delete();
     inlierMask.delete();
 
-    return result || fallback(dxs, dys);
+    return result || fallback(dxs, dys, goodMatched);
 }
 
-// Reject wildly distorting / degenerate homographies (a bad RANSAC fit on
-// repetitive texture).
 function isReasonableHomography(H) {
     for (let k = 0; k < 9; k++) if (!isFinite(H[k])) return false;
     const sx = Math.hypot(H[0], H[3]);

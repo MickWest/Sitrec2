@@ -18,6 +18,7 @@ import {par} from "./par";
 import {ExportProgressWidget, getExportPrefix} from "./utils";
 import {Color} from "three";
 import {getCV, loadOpenCV} from "./openCVLoader";
+import {fitSimilarity} from "./CameraMotionFromVideo";
 import {applyConvolution} from "./nodes/CNodeVideoView";
 import {getFlowAlignRotation, isAlignWithFlowEnabled, setAlignWithFlow, setMotionAnalyzerRef} from "./FlowAlignment";
 import {t} from "./i18n";
@@ -77,6 +78,133 @@ let removeOuterBlack = false;
 let panoCrop = 0;
 let useMaskInPano = true;
 let panoFrameStep = 1;
+// When true, the motion pano stamps each frame with a full per-frame similarity
+// transform (rotation + translation, off-center safe) recovered from the flow,
+// instead of translation only — see calculateFrameTransforms / drawFrameToPano.
+let panoRotateFrames = false;
+// Feature-pano options (separate from the motion-pano ones above).
+let panoFeatureFrameStep = 1;
+let panoFeatureCrop = 0;
+let panoFeatureUseMask = true;
+let panoFeatureProjection = "auto"; // "auto" | "planar" | "rigid"
+
+// ---- rotation-aware stamping (similarity transforms) ---------------------
+// 3x3 affine helpers (row-major [a,b,c, d,e,f, 0,0,1]); transforms map image
+// pixels -> reference-frame pixels.
+const PANO_IDENTITY3 = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+function pmul3(A, B) {
+    const C = new Array(9);
+    for (let r = 0; r < 3; r++)
+        for (let c = 0; c < 3; c++)
+            C[r*3+c] = A[r*3]*B[c] + A[r*3+1]*B[3+c] + A[r*3+2]*B[6+c];
+    return C;
+}
+function pinv3(M) {
+    const [a, b, c, d, e, f, g, h, i] = M;
+    const A = e*i - f*h, B = c*h - b*i, C = b*f - c*e;
+    const D = f*g - d*i, E = a*i - c*g, F = c*d - a*f;
+    const G = d*h - e*g, H = b*g - a*h, I = a*e - b*d;
+    const det = a*A + b*D + c*G;
+    if (!isFinite(det) || Math.abs(det) < 1e-18) return null;
+    const s = 1/det;
+    return [A*s, B*s, C*s, D*s, E*s, F*s, G*s, H*s, I*s];
+}
+function ppt(M, x, y) { return [M[0]*x + M[1]*y + M[2], M[3]*x + M[4]*y + M[5]]; }
+function ptranslate(dx, dy) { return [1, 0, dx, 0, 1, dy, 0, 0, 1]; }
+
+// Per-frame background similarity (prev->cur) recovered by refitting the motion
+// analyzer's cached inlier flow vectors with the shared fitSimilarity. Returns a
+// 3x3, or null when there are too few vectors to trust a rotation.
+function frameSimilarity(motionAnalyzer, frame, W, H) {
+    const vectors = motionAnalyzer.resultCache.get(frame)?.flowData?.vectors;
+    if (!vectors || vectors.length < 8) return null;
+    const P = [], Q = [];
+    for (const v of vectors) {
+        if (!v.isInlier) continue;
+        P.push([v.px, v.py]);
+        Q.push([v.px + v.dx, v.py + v.dy]);
+    }
+    if (P.length < 8) return null;
+    const fit = fitSimilarity(P, Q, W, H, {ransacThr: 2.0});
+    if (!fit || !isFinite(fit.Ax) || !isFinite(fit.By)) return null;
+    // q = (Ax,-Ay;Ay,Ax)·p + (Bx,By)
+    return [fit.Ax, -fit.Ay, fit.Bx, fit.Ay, fit.Ax, fit.By, 0, 0, 1];
+}
+
+// Cumulative per-frame transforms G[i] mapping each stamped frame's pixels into
+// the reference (first) frame, by chaining the inverse of each per-frame
+// background similarity (falling back to the translation-only motion when a
+// reliable similarity isn't available). Also returns the projected-corner bbox.
+function calculateFrameTransforms(motionAnalyzer, motionData, startFrame, endFrame, frameStep, W, H) {
+    const totalFrames = Math.ceil((endFrame - startFrame + 1) / frameStep);
+    const corners = [[0, 0], [W, 0], [W, H], [0, H]];
+    const frameData = [];
+    let G = PANO_IDENTITY3.slice();
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const accumCorners = (Gf) => {
+        for (const [cx, cy] of corners) {
+            const [x, y] = ppt(Gf, cx, cy);
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+        }
+    };
+    const stepSim = (frame) => {
+        const md = motionData[frame];
+        return frameSimilarity(motionAnalyzer, frame, W, H)
+            || ptranslate(md ? md.dx : 0, md ? md.dy : 0);
+    };
+
+    for (let i = 0; i < totalFrames; i++) {
+        const frame = startFrame + i * frameStep;
+        if (i > 0) {
+            // Compose the per-frame similarities spanning this step: S_frame·…·S_lo.
+            let Sstep = PANO_IDENTITY3.slice();
+            const lo = frameStep === 1 ? frame : frame - frameStep + 1;
+            for (let f = lo; f <= frame; f++) Sstep = pmul3(stepSim(f), Sstep);
+            G = pmul3(G, pinv3(Sstep) || PANO_IDENTITY3.slice());
+        }
+        frameData.push({frame, G});
+        accumCorners(G);
+    }
+    return {frameData, totalFrames, minX, minY, maxX, maxY};
+}
+
+// Shared layout for both motion-pano exports (image + video). Returns per-frame
+// placement as either a translation (x,y) or, when "Rotate Frames" is on, a full
+// affine (rotation+translation), plus the panorama dimensions. DRY: both export
+// paths consume the same {frameData, panoWidthPx, ...}.
+function computePanoLayout(videoData, motionData, startFrame, endFrame, frameStep, crop, panoRotation) {
+    const firstImage = videoData.getImage(startFrame);
+    const frameWidth = firstImage.width || firstImage.videoWidth || 1920;
+    const frameHeight = firstImage.height || firstImage.videoHeight || 1080;
+
+    if (panoRotateFrames) {
+        const tf = calculateFrameTransforms(motionAnalyzer, motionData, startFrame, endFrame, frameStep, frameWidth, frameHeight);
+        const w0 = Math.max(1, Math.ceil(tf.maxX - tf.minX));
+        const h0 = Math.max(1, Math.ceil(tf.maxY - tf.minY));
+        const scale = panoFitScale(w0, h0);
+        const panoWidthPx = Math.max(1, Math.floor(w0 * scale));
+        const panoHeightPx = Math.max(1, Math.floor(h0 * scale));
+        const SO = [scale, 0, -scale * tf.minX, 0, scale, -scale * tf.minY, 0, 0, 1];
+        const frameData = tf.frameData.map(fd => ({frame: fd.frame, x: 0, y: 0, affine: pmul3(SO, fd.G)}));
+        console.log(`Motion Panorama (rotate): ${panoWidthPx}x${panoHeightPx}px, scale=${scale.toFixed(3)}`);
+        return {
+            rotateMode: true, frameData, totalFrames: tf.totalFrames,
+            frameWidth, frameHeight, croppedWidth: frameWidth, croppedHeight: frameHeight,
+            panoWidthPx, panoHeightPx, scale, scaledFrameWidth: frameWidth, scaledFrameHeight: frameHeight,
+        };
+    }
+
+    const off = calculateFrameOffsets(motionData, startFrame, endFrame, frameStep, panoRotation);
+    const dims = calculatePanoDimensions(videoData, startFrame, off.minPx, off.maxPx, off.minPy, off.maxPy, crop);
+    const frameData = off.frameData.map(fd => ({
+        frame: fd.frame, affine: null,
+        x: (fd.px - off.minPx) * dims.scale,
+        y: (fd.py - off.minPy) * dims.scale,
+    }));
+    console.log(`Motion Panorama: ${dims.panoWidthPx}x${dims.panoHeightPx}px, scale=${dims.scale.toFixed(3)}`);
+    return {rotateMode: false, frameData, totalFrames: off.totalFrames, ...dims};
+}
 
 function calculateFrameOffsets(motionData, startFrame, endFrame, frameStep = 1, rotationAngle = 0) {
     const totalFrames = Math.ceil((endFrame - startFrame + 1) / frameStep);
@@ -220,7 +348,7 @@ function processRemoveOuterBlack(imageData) {
     }
 }
 
-function drawFrameToPano(panoCtx, image, x, y, crop, croppedWidth, croppedHeight, scaledFrameWidth, scaledFrameHeight, useMask, tempCanvas, tempCtx, maskImageData, frameWidth, frameHeight, rotation = 0) {
+function drawFrameToPano(panoCtx, image, x, y, crop, croppedWidth, croppedHeight, scaledFrameWidth, scaledFrameHeight, useMask, tempCanvas, tempCtx, maskImageData, frameWidth, frameHeight, rotation = 0, affine = null) {
     let sourceImage = image;
     
     if (exportWithEffects) {
@@ -248,7 +376,14 @@ function drawFrameToPano(panoCtx, image, x, y, crop, croppedWidth, croppedHeight
     }
     
     const drawWithRotation = (src, sx, sy, sw, sh, dx, dy, dw, dh) => {
-        if (rotation !== 0) {
+        if (affine) {
+            // Full per-frame similarity (rotation + translation, off-center safe):
+            // the affine maps native source pixels straight to panorama pixels.
+            panoCtx.save();
+            panoCtx.setTransform(affine[0], affine[3], affine[1], affine[4], affine[2], affine[5]);
+            panoCtx.drawImage(src, 0, 0);
+            panoCtx.restore();
+        } else if (rotation !== 0) {
             panoCtx.save();
             panoCtx.translate(dx + dw / 2, dy + dh / 2);
             panoCtx.rotate(rotation);
@@ -802,6 +937,7 @@ async function exportMotionCSV() {
 // use them before this block).
 let exportPanoMenuItem = null;
 let exportFeaturePanoMenuItem = null;
+let exportFeaturePanoVideoMenuItem = null;
 let exportPanoVideoMenuItem = null;
 let stabilizeMenuItem = null;
 let stabilizationEnabled = false;
@@ -840,15 +976,8 @@ async function exportMotionPanorama() {
     const motionData = motionAnalyzer.getMotionDataForAllFrames({gapFill: false, fallbackToSmoothed: false, useTrackletLastSegment: true});
 
     const panoRotation = isAlignWithFlowEnabled() ? -calculateOverallMotionAngle(motionData, startFrame, endFrame) : 0;
-    const {frameData, totalFrames, minPx, maxPx, minPy, maxPy} = calculateFrameOffsets(motionData, startFrame, endFrame, panoFrameStep, panoRotation);
-    const {frameWidth, frameHeight, croppedWidth, croppedHeight, panoWidthPx, panoHeightPx, scale, scaledFrameWidth, scaledFrameHeight} = calculatePanoDimensions(videoData, startFrame, minPx, maxPx, minPy, maxPy, crop);
-
-    if (isAlignWithFlowEnabled()) {
-        console.log(`Motion Panorama: Aligned with flow, rotation=${(panoRotation * 180 / Math.PI).toFixed(1)}°`);
-    }
-    console.log(`Motion Panorama: X range ${minPx.toFixed(1)} to ${maxPx.toFixed(1)} px (${(maxPx-minPx).toFixed(1)}px)`);
-    console.log(`Motion Panorama: Y range ${minPy.toFixed(1)} to ${maxPy.toFixed(1)} px (${(maxPy-minPy).toFixed(1)}px)`);
-    console.log(`Motion Panorama: ${panoWidthPx}x${panoHeightPx}px, scale=${scale.toFixed(3)}`);
+    const {frameData, totalFrames, frameWidth, frameHeight, croppedWidth, croppedHeight, panoWidthPx, panoHeightPx, scale, scaledFrameWidth, scaledFrameHeight} =
+        computePanoLayout(videoData, motionData, startFrame, endFrame, panoFrameStep, crop, panoRotation);
 
     const panoCanvas = document.createElement('canvas');
     panoCanvas.width = panoWidthPx;
@@ -938,10 +1067,7 @@ async function exportMotionPanorama() {
             continue;
         }
 
-        const x = (fd.px - minPx) * scale;
-        const y = (fd.py - minPy) * scale;
-
-        drawFrameToPano(panoCtx, image, x, y, crop, croppedWidth, croppedHeight, scaledFrameWidth, scaledFrameHeight, useMask, tempCanvas, tempCtx, maskImageData, frameWidth, frameHeight, panoRotation);
+        drawFrameToPano(panoCtx, image, fd.x, fd.y, crop, croppedWidth, croppedHeight, scaledFrameWidth, scaledFrameHeight, useMask, tempCanvas, tempCtx, maskImageData, frameWidth, frameHeight, panoRotation, fd.affine);
 
         if (i % previewEveryNFrames === 0) {
             const pct = Math.round(100 * i / totalFrames);
@@ -987,12 +1113,34 @@ async function exportMotionPanorama() {
     }, 'image/png');
 }
 
-// "Export Feature Pano" — a separate, perspective-aware panorama path that
-// registers frames with industry-standard feature matching + homography warping
-// (see FeaturePanoramaExporter.js) instead of the optical-flow translation used
-// by Export Motion Panorama. It needs OpenCV + a video, but NOT a completed
-// motion-analysis pass (it does its own registration). The redaction mask and
-// pano frame-step / crop settings are reused so the two panos behave alike.
+// "Export Feature Pano" (Image + Video) — a separate, perspective-aware panorama
+// path that registers frames with industry-standard feature matching + warping
+// (see FeaturePanoramaExporter.js) instead of the optical-flow translation used by
+// Export Motion Panorama. It needs OpenCV + a video, but NOT a completed
+// motion-analysis pass (it does its own registration). Uses the Feature Pano
+// Options (frame step / crop / mask / projection).
+function featurePanoOptions(videoData) {
+    const useMask = panoFeatureUseMask && motionAnalyzer.maskEnabled
+        && motionAnalyzer.maskOverlayNode && motionAnalyzer.maskOverlayNode.maskCanvas;
+    let maskImageData = null;
+    if (useMask) {
+        motionAnalyzer.maskOverlayNode.updateMaskImageData();
+        maskImageData = motionAnalyzer.maskOverlayNode.maskImageData;
+    }
+    return {
+        cv: getCV(),
+        videoData,
+        startFrame: Sit.aFrame,
+        endFrame: Sit.bFrame,
+        frameStep: panoFeatureFrameStep,
+        crop: panoFeatureCrop,
+        useMask,
+        maskImageData,
+        projection: panoFeatureProjection,
+        t: (key, opts) => mt(key, opts),
+    };
+}
+
 async function exportFeaturePano() {
     const result = await ensureOpenCVAndAnalyzer(
         exportFeaturePanoMenuItem,
@@ -1000,29 +1148,26 @@ async function exportFeaturePano() {
         mt("menu.panorama.exportFeature.label")
     );
     if (!result) return;
-    const {videoData} = result;
-
-    const useMask = useMaskInPano && motionAnalyzer.maskEnabled
-        && motionAnalyzer.maskOverlayNode && motionAnalyzer.maskOverlayNode.maskCanvas;
-    let maskImageData = null;
-    if (useMask) {
-        motionAnalyzer.maskOverlayNode.updateMaskImageData();
-        maskImageData = motionAnalyzer.maskOverlayNode.maskImageData;
-    }
-
     const {exportFeaturePanorama} = await import("./FeaturePanoramaExporter");
     await exportFeaturePanorama({
-        cv: getCV(),
-        videoData,
-        startFrame: Sit.aFrame,
-        endFrame: Sit.bFrame,
-        frameStep: panoFrameStep,
-        crop: panoCrop,
-        useMask,
-        maskImageData,
-        t: (key, opts) => mt(key, opts),
+        ...featurePanoOptions(result.videoData),
         setMenuLabel: (key, opts) => setMenuItemLabel(exportFeaturePanoMenuItem, key, opts),
         doneLabel: "menu.panorama.exportFeature.label",
+    });
+}
+
+async function exportFeaturePanoVideo() {
+    const result = await ensureOpenCVAndAnalyzer(
+        exportFeaturePanoVideoMenuItem,
+        mt("status.loadingOpenCv"),
+        mt("menu.panorama.exportFeatureVideo.label")
+    );
+    if (!result) return;
+    const {exportFeaturePanoramaVideo} = await import("./FeaturePanoramaExporter");
+    await exportFeaturePanoramaVideo({
+        ...featurePanoOptions(result.videoData),
+        setMenuLabel: (key, opts) => setMenuItemLabel(exportFeaturePanoVideoMenuItem, key, opts),
+        doneLabel: "menu.panorama.exportFeatureVideo.label",
     });
 }
 
@@ -1060,8 +1205,8 @@ async function exportPanoVideo() {
     const motionData = motionAnalyzer.getMotionDataForAllFrames({gapFill: false, fallbackToSmoothed: false, useTrackletLastSegment: true});
 
     const panoRotation = isAlignWithFlowEnabled() ? -calculateOverallMotionAngle(motionData, startFrame, endFrame) : 0;
-    const {frameData, totalFrames, minPx, maxPx, minPy, maxPy} = calculateFrameOffsets(motionData, startFrame, endFrame, 1, panoRotation);
-    const {frameWidth, frameHeight, croppedWidth, croppedHeight, panoWidthPx, panoHeightPx, scale: panoScale, scaledFrameWidth, scaledFrameHeight} = calculatePanoDimensions(videoData, startFrame, minPx, maxPx, minPy, maxPy, crop);
+    const {frameData, totalFrames, frameWidth, frameHeight, croppedWidth, croppedHeight, panoWidthPx, panoHeightPx, scale: panoScale, scaledFrameWidth, scaledFrameHeight} =
+        computePanoLayout(videoData, motionData, startFrame, endFrame, 1, crop, panoRotation);
 
     const panoCanvas = document.createElement('canvas');
     panoCanvas.width = panoWidthPx;
@@ -1107,10 +1252,7 @@ async function exportPanoVideo() {
         const image = videoData.getImageNoPurge(fd.frame);
         if (!image || !image.width) continue;
 
-        const x = (fd.px - minPx) * panoScale;
-        const y = (fd.py - minPy) * panoScale;
-
-        drawFrameToPano(panoCtx, image, x, y, crop, croppedWidth, croppedHeight, scaledFrameWidth, scaledFrameHeight, useMask, tempCanvas, tempCtx, maskImageData, frameWidth, frameHeight, panoRotation);
+        drawFrameToPano(panoCtx, image, fd.x, fd.y, crop, croppedWidth, croppedHeight, scaledFrameWidth, scaledFrameHeight, useMask, tempCanvas, tempCtx, maskImageData, frameWidth, frameHeight, panoRotation, fd.affine);
 
         if (i % 20 === 0) {
             const pct = Math.round(100 * i / totalFrames);
@@ -1207,8 +1349,8 @@ async function exportPanoVideo() {
 
             compositeCtx.drawImage(panoCanvas, offsetX, offsetY, fitWidth, fitHeight);
 
-            const frameX = offsetX + (fd.px - minPx) * panoScale * videoFrameScaleX;
-            const frameY = offsetY + (fd.py - minPy) * panoScale * videoFrameScaleY;
+            const frameX = offsetX + fd.x * videoFrameScaleX;
+            const frameY = offsetY + fd.y * videoFrameScaleY;
 
             let overlayImage = image;
             if (exportWithEffects) {
@@ -1235,7 +1377,15 @@ async function exportPanoVideo() {
                 overlayImage = blackCanvas;
             }
 
-            if (panoRotation !== 0) {
+            if (fd.affine) {
+                // Rotate-frames mode: map native source -> panorama -> 4K composite.
+                const C = [videoFrameScaleX, 0, offsetX, 0, videoFrameScaleY, offsetY, 0, 0, 1];
+                const A = pmul3(C, fd.affine);
+                compositeCtx.save();
+                compositeCtx.setTransform(A[0], A[3], A[1], A[4], A[2], A[5]);
+                compositeCtx.drawImage(overlayImage, 0, 0);
+                compositeCtx.restore();
+            } else if (panoRotation !== 0) {
                 compositeCtx.save();
                 compositeCtx.translate(frameX + videoFrameWidth / 2, frameY + videoFrameHeight / 2);
                 compositeCtx.rotate(panoRotation);
@@ -1369,8 +1519,9 @@ export function addMotionAnalysisMenu() {
         createTrack: createTrackFromMotion,
         exportMotion: exportMotionCSV,
         exportPanorama: exportMotionPanorama,
-        exportFeaturePano: exportFeaturePano,
         exportPanoVideo: exportPanoVideo,
+        exportFeaturePano: exportFeaturePano,
+        exportFeaturePanoVideo: exportFeaturePanoVideo,
         stabilizeVideo: toggleStabilization,
     };
 
@@ -1390,9 +1541,9 @@ export function addMotionAnalysisMenu() {
         .perm();
 
     const flowParams = {
-        get alignWithFlow() { return isAlignWithFlowEnabled(); }, 
-        set alignWithFlow(v) { 
-            setAlignWithFlow(v); 
+        get alignWithFlow() { return isAlignWithFlowEnabled(); },
+        set alignWithFlow(v) {
+            setAlignWithFlow(v);
             setRenderOne(true);
         }
     };
@@ -1401,16 +1552,18 @@ export function addMotionAnalysisMenu() {
         .tooltip(mt("menu.alignWithFlow.tooltip"))
         .perm();
 
+    // Stabilize Video lives at the Motion Analysis level (not under Panorama).
+    stabilizeMenuItem = motionFolder.add(menuActions, 'stabilizeVideo')
+        .name(mt("menu.panorama.stabilize.label"))
+        .tooltip(mt("menu.panorama.stabilize.tooltip"))
+        .perm();
+
     const panoFolder = motionFolder.addFolder(mt("menu.panorama.title")).close().perm();
-    
+
+    // --- Motion pano (optical-flow translation) ---
     exportPanoMenuItem = panoFolder.add(menuActions, 'exportPanorama')
         .name(mt("menu.panorama.exportImage.label"))
         .tooltip(mt("menu.panorama.exportImage.tooltip"))
-        .perm();
-
-    exportFeaturePanoMenuItem = panoFolder.add(menuActions, 'exportFeaturePano')
-        .name(mt("menu.panorama.exportFeature.label"))
-        .tooltip(mt("menu.panorama.exportFeature.tooltip"))
         .perm();
 
     exportPanoVideoMenuItem = panoFolder.add(menuActions, 'exportPanoVideo')
@@ -1418,12 +1571,7 @@ export function addMotionAnalysisMenu() {
         .tooltip(mt("menu.panorama.exportVideo.tooltip"))
         .perm();
 
-    stabilizeMenuItem = panoFolder.add(menuActions, 'stabilizeVideo')
-        .name(mt("menu.panorama.stabilize.label"))
-        .tooltip(mt("menu.panorama.stabilize.tooltip"))
-        .perm();
-
-    const panoParams = {
+    const motionPanoParams = {
         get panoCrop() { return panoCrop; }, set panoCrop(v) { panoCrop = v; },
         get useMaskInPano() { return useMaskInPano; }, set useMaskInPano(v) { useMaskInPano = v; },
         get panoFrameStep() { return panoFrameStep; }, set panoFrameStep(v) { panoFrameStep = v; },
@@ -1431,32 +1579,62 @@ export function addMotionAnalysisMenu() {
         // which remains there with the class). Bridge via the exported setter.
         get analyzeWithEffects() { return getAnalyzeWithEffects(); }, set analyzeWithEffects(v) { setAnalyzeWithEffects(v); },
         get exportWithEffects() { return exportWithEffects; }, set exportWithEffects(v) { exportWithEffects = v; },
-        get removeOuterBlack() { return removeOuterBlack; }, set removeOuterBlack(v) { removeOuterBlack = v; }
+        get removeOuterBlack() { return removeOuterBlack; }, set removeOuterBlack(v) { removeOuterBlack = v; },
+        get rotateFrames() { return panoRotateFrames; }, set rotateFrames(v) { panoRotateFrames = v; }
     };
-    panoFolder.add(panoParams, 'panoFrameStep', 1, 60, 1)
+    const motionOptions = panoFolder.addFolder(mt("menu.panorama.motionOptions.title")).close().perm();
+    motionOptions.add(motionPanoParams, 'rotateFrames')
+        .name(mt("menu.panorama.rotateFrames.label"))
+        .tooltip(mt("menu.panorama.rotateFrames.tooltip")).perm();
+    motionOptions.add(motionPanoParams, 'panoFrameStep', 1, 60, 1)
         .name(mt("menu.panorama.panoFrameStep.label"))
-        .tooltip(mt("menu.panorama.panoFrameStep.tooltip"))
-        .perm();
-    panoFolder.add(panoParams, 'panoCrop', 0, 100, 1)
+        .tooltip(mt("menu.panorama.panoFrameStep.tooltip")).perm();
+    motionOptions.add(motionPanoParams, 'panoCrop', 0, 100, 1)
         .name(mt("menu.panorama.crop.label"))
-        .tooltip(mt("menu.panorama.crop.tooltip"))
-        .perm();
-    panoFolder.add(panoParams, 'useMaskInPano')
+        .tooltip(mt("menu.panorama.crop.tooltip")).perm();
+    motionOptions.add(motionPanoParams, 'useMaskInPano')
         .name(mt("menu.panorama.useMask.label"))
-        .tooltip(mt("menu.panorama.useMask.tooltip"))
-        .perm();
-    panoFolder.add(panoParams, 'analyzeWithEffects')
+        .tooltip(mt("menu.panorama.useMask.tooltip")).perm();
+    motionOptions.add(motionPanoParams, 'analyzeWithEffects')
         .name(mt("menu.panorama.analyzeWithEffects.label"))
-        .tooltip(mt("menu.panorama.analyzeWithEffects.tooltip"))
-        .perm();
-    panoFolder.add(panoParams, 'exportWithEffects')
+        .tooltip(mt("menu.panorama.analyzeWithEffects.tooltip")).perm();
+    motionOptions.add(motionPanoParams, 'exportWithEffects')
         .name(mt("menu.panorama.exportWithEffects.label"))
-        .tooltip(mt("menu.panorama.exportWithEffects.tooltip"))
-        .perm();
-    panoFolder.add(panoParams, 'removeOuterBlack')
+        .tooltip(mt("menu.panorama.exportWithEffects.tooltip")).perm();
+    motionOptions.add(motionPanoParams, 'removeOuterBlack')
         .name(mt("menu.panorama.removeOuterBlack.label"))
-        .tooltip(mt("menu.panorama.removeOuterBlack.tooltip"))
+        .tooltip(mt("menu.panorama.removeOuterBlack.tooltip")).perm();
+
+    // --- Feature pano (feature matching + warping) ---
+    exportFeaturePanoMenuItem = panoFolder.add(menuActions, 'exportFeaturePano')
+        .name(mt("menu.panorama.exportFeature.label"))
+        .tooltip(mt("menu.panorama.exportFeature.tooltip"))
         .perm();
+
+    exportFeaturePanoVideoMenuItem = panoFolder.add(menuActions, 'exportFeaturePanoVideo')
+        .name(mt("menu.panorama.exportFeatureVideo.label"))
+        .tooltip(mt("menu.panorama.exportFeatureVideo.tooltip"))
+        .perm();
+
+    const featurePanoParams = {
+        get featureFrameStep() { return panoFeatureFrameStep; }, set featureFrameStep(v) { panoFeatureFrameStep = v; },
+        get featureCrop() { return panoFeatureCrop; }, set featureCrop(v) { panoFeatureCrop = v; },
+        get featureUseMask() { return panoFeatureUseMask; }, set featureUseMask(v) { panoFeatureUseMask = v; },
+        get featureProjection() { return panoFeatureProjection; }, set featureProjection(v) { panoFeatureProjection = v; },
+    };
+    const featureOptions = panoFolder.addFolder(mt("menu.panorama.featureOptions.title")).close().perm();
+    featureOptions.add(featurePanoParams, 'featureFrameStep', 1, 60, 1)
+        .name(mt("menu.panorama.featureFrameStep.label"))
+        .tooltip(mt("menu.panorama.featureFrameStep.tooltip")).perm();
+    featureOptions.add(featurePanoParams, 'featureCrop', 0, 100, 1)
+        .name(mt("menu.panorama.featureCrop.label"))
+        .tooltip(mt("menu.panorama.featureCrop.tooltip")).perm();
+    featureOptions.add(featurePanoParams, 'featureUseMask')
+        .name(mt("menu.panorama.featureUseMask.label"))
+        .tooltip(mt("menu.panorama.featureUseMask.tooltip")).perm();
+    featureOptions.add(featurePanoParams, 'featureProjection', {Auto: 'auto', Planar: 'planar', Rigid: 'rigid'})
+        .name(mt("menu.panorama.featureProjection.label"))
+        .tooltip(mt("menu.panorama.featureProjection.tooltip")).perm();
 }
 
 function createParamSliders() {
