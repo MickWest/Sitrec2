@@ -115,6 +115,8 @@ class CScriptedVideoManager {
         this._restore = null;        // function to undo scripted-mode changes
         this._activeViewId = null;   // currently-shown view during preview
         this._overlayCanvas = null;  // DOM canvas for live caption text
+        this._hoverNum = null;       // number token under the mouse in the editor
+        this._hoverSeg = null;       // timeline segment linked to the hovered number
 
         // dom refs (filled in by setupMenu / buildWindow)
         this.textarea = null;
@@ -151,6 +153,20 @@ class CScriptedVideoManager {
         return out;
     }
 
+    // Like tokenize() but also returns each token's character span within `line`
+    // ({text,start,end}). Used so the parser can record exactly where each editable
+    // number lives, enabling number<->timeline-segment cross-highlighting and
+    // scroll-wheel duration editing from the timeline.
+    tokenizeWithPos(line) {
+        const out = [];
+        const re = /"([^"]*)"|(\S+)/g;
+        let m;
+        while ((m = re.exec(line)) !== null) {
+            out.push({text: m[1] !== undefined ? m[1] : m[2], start: m.index, end: m.index + m[0].length});
+        }
+        return out;
+    }
+
     parse() {
         const text = this.getScriptText();
         const events = [];
@@ -168,38 +184,54 @@ class CScriptedVideoManager {
 
         const lines = text.split("\n");
         for (let i = 0; i < lines.length; i++) {
-            let raw = lines[i];
-            const hash = raw.indexOf("#");
-            if (hash >= 0) raw = raw.slice(0, hash);
-            raw = raw.trim();
-            if (raw.length === 0) continue;
+            const fullLine = lines[i];
+            const hash = fullLine.indexOf("#");
+            const body = hash >= 0 ? fullLine.slice(0, hash) : fullLine;
+            const leadWS = (body.match(/^\s*/) || [""])[0].length;
+            let raw = body.slice(leadWS);
+            if (raw.trim().length === 0) continue;
 
-            // leading & concurrency prefix
-            let concurrent = false, start;
+            // leading & concurrency prefix. contentStart = char offset (within the
+            // ORIGINAL line) where the command tokens begin, so token spans map back
+            // to the textarea text. offSpan = the &N offset number's span (if any).
+            let concurrent = false, start, contentStart = leadWS, offSpan = null;
             const amp = raw.match(/^&(\d*\.?\d*)\s*(.*)$/);
             if (amp) {
                 concurrent = true;
                 const off = amp[1] === "" ? 0 : parseFloat(amp[1]);
                 start = spineStart + (isNaN(off) ? 0 : off);
+                contentStart = leadWS + (amp[0].length - amp[2].length);
+                if (amp[1] !== "") offSpan = {start: leadWS + 1, end: leadWS + 1 + amp[1].length};
                 raw = amp[2];
             } else {
                 start = spineEnd;   // wait until previous (spine) line completed
             }
 
-            const tokens = this.tokenize(raw);
+            const tokensP = this.tokenizeWithPos(raw)
+                .map((t) => ({text: t.text, start: t.start + contentStart, end: t.end + contentStart}));
+            const tokens = tokensP.map((t) => t.text);
             if (tokens.length === 0) continue;
             const cmd = tokens[0].toLowerCase();
             const num = (s) => { const v = parseFloat(s); return isNaN(v) ? null : v; };
+            // span of token idx, but only if it's a CLEAN numeric token — a malformed
+            // token like "4hen" parses (parseFloat=4) yet must not be wheel-editable,
+            // or editing it would silently truncate the line.
+            const numSpan = (idx) => {
+                const t = tokensP[idx];
+                return (t && /^\d*\.?\d+$/.test(t.text)) ? {start: t.start, end: t.end} : null;
+            };
 
             let ev = null, dur = 0;
             if (cmd === "view") {
                 const name = (tokens[1] || "").toLowerCase();
                 if (!VIEW_MAP[name]) { errors.push(`line ${i + 1}: unknown view "${tokens[1]}"`); continue; }
                 ev = {type: "view", view: name, start, dur: 0, line: i + 1, concurrent};
+                ev.spans = {};
             } else if (cmd === "text" || cmd === "title") {
                 const str = tokens[1] ?? "";
                 dur = num(tokens[2]) ?? 3;
                 ev = {type: "text", text: str, start, dur, line: i + 1, concurrent};
+                ev.spans = {dur: numSpan(2)};
             } else if (cmd === "zoom" || cmd === "orbit" || cmd === "track") {
                 const target = tokens[1];
                 dur = num(tokens[2]);
@@ -207,23 +239,29 @@ class CScriptedVideoManager {
                 ev = {type: cmd, target, start, dur, line: i + 1, concurrent};
                 if (cmd === "zoom") ev.endDist = num(tokens[3]);
                 if (cmd === "orbit") ev.degrees = num(tokens[3]) ?? 90;
+                ev.spans = {dur: numSpan(2)};
+                if (cmd === "zoom") ev.spans.dist = numSpan(3);
+                if (cmd === "orbit") ev.spans.deg = numSpan(3);
                 cameraBeats.push(ev);
             } else if (cmd === "fov") {
                 const fov = num(tokens[1]);
                 dur = num(tokens[2]) ?? 1;
                 if (fov === null) { errors.push(`line ${i + 1}: "fov" needs <degrees> <secs>`); continue; }
                 ev = {type: "fov", fov: clamp(fov, 1, 120), start, dur, line: i + 1, concurrent};
+                ev.spans = {fov: numSpan(1), dur: numSpan(2)};
                 cameraBeats.push(ev);
             } else if (cmd === "wait") {
                 dur = num(tokens[1]);
                 if (dur === null) { errors.push(`line ${i + 1}: "wait" needs <secs>`); continue; }
                 ev = {type: "wait", start, dur, line: i + 1, concurrent};
+                ev.spans = {dur: numSpan(1)};
                 cameraBeats.push(ev);
             } else {
                 errors.push(`line ${i + 1}: unknown command "${tokens[0]}"`);
                 continue;
             }
 
+            ev.offSpan = offSpan;
             events.push(ev);
             maxEnd = Math.max(maxEnd, start + dur);
             if (!concurrent) { spineStart = start; spineEnd = start + dur; }  // advance the spine
@@ -518,14 +556,56 @@ class CScriptedVideoManager {
         const c = this._overlayCanvas;
         if (!c) return;
         const content = document.getElementById("Content");
-        const r = content ? content.getBoundingClientRect()
-            : {left: 0, top: 0, width: window.innerWidth, height: window.innerHeight};
-        c.style.left = r.left + "px";
-        c.style.top = r.top + "px";
-        c.style.width = r.width + "px";
-        c.style.height = r.height + "px";
-        if (c.width !== Math.round(r.width)) c.width = Math.round(r.width);
-        if (c.height !== Math.round(r.height)) c.height = Math.round(r.height);
+        const base = content ? content.getBoundingClientRect() : {left: 0, top: 0};
+        let left, top, w, h;
+        if (this._previewBox) {
+            // match the 16:9 preview box so captions land where the render puts them
+            left = base.left + this._previewBox.left; top = base.top + this._previewBox.top;
+            w = this._previewBox.bw; h = this._previewBox.bh;
+        } else {
+            const r = content ? content.getBoundingClientRect()
+                : {left: 0, top: 0, width: window.innerWidth, height: window.innerHeight};
+            left = r.left; top = r.top; w = r.width; h = r.height;
+        }
+        c.style.left = left + "px"; c.style.top = top + "px";
+        c.style.width = w + "px"; c.style.height = h + "px";
+        if (c.width !== Math.round(w)) c.width = Math.round(w);
+        if (c.height !== Math.round(h)) c.height = Math.round(h);
+    }
+
+    // a centred box inside #Content with the render's aspect (16:9), so the preview
+    // composition matches the exported video
+    _computePreviewBox() {
+        const content = document.getElementById("Content");
+        const W = content ? content.clientWidth : window.innerWidth;
+        const H = content ? content.clientHeight : window.innerHeight;
+        const ar = this.outW / this.outH;
+        let bw, bh;
+        if (W / H > ar) { bh = H; bw = Math.round(H * ar); } else { bw = W; bh = Math.round(W / ar); }
+        return {W, H, bw, bh, left: Math.round((W - bw) / 2), top: Math.round((H - bh) / 2)};
+    }
+
+    // Show ONLY the active view, sized to the 16:9 preview box (matches the render
+    // layout) instead of filling the whole (often non-16:9) window.
+    _setPreviewView(viewId) {
+        const box = this._computePreviewBox();
+        this._previewBox = box;
+        for (const vid of ["mainView", "lookView"]) {
+            const v = NodeMan.get(vid, false);
+            if (!v) continue;
+            if (vid === viewId) {
+                v.setVisible(true);
+                v.left = box.left / box.W; v.top = box.top / box.H;
+                v.width = box.bw / box.W; v.height = box.bh / box.H;
+                v.updateWH();
+            } else {
+                v.setVisible(false);
+            }
+        }
+        ViewMan.fullscreenView = null;
+        ViewMan.computeEffectiveVisibility();
+        ViewMan.updateDOMVisibility();
+        this._layoutOverlayCanvas();
     }
 
     _setFullscreen(viewId) {
@@ -711,6 +791,13 @@ class CScriptedVideoManager {
         this._ensureOverlayCanvas();
         this._showBottomTimeline();   // scripted timeline replaces the normal frame slider
         this._activeViewId = null;
+        this._previewBox = null;
+        // remember the views' on-screen rects + visibility so we can restore them
+        this._savedViewRects = ["mainView", "lookView"].map(vid => {
+            const v = NodeMan.get(vid, false);
+            if (!v) return null;
+            return {v, left: v.left, top: v.top, width: v.width, height: v.height, visible: v.visible};
+        }).filter(Boolean);
 
         this._previewStart = performance.now();
         const tick = () => {
@@ -733,7 +820,7 @@ class CScriptedVideoManager {
             // switch the on-screen view if needed
             const vName = this.activeViewAt(t);
             const viewId = VIEW_MAP[vName].viewId;
-            if (viewId !== this._activeViewId) { this._activeViewId = viewId; this._setFullscreen(viewId); }
+            if (viewId !== this._activeViewId) { this._activeViewId = viewId; this._setPreviewView(viewId); }
 
             // position the camera now (preRenderFunction will also re-apply)
             this.applyCameraForTime(t);
@@ -766,9 +853,22 @@ class CScriptedVideoManager {
         }
         const tu = NodeMan.get("terrainUI", false);
         if (tu) tu.disableDynamicSubdivision = this._previewSavedSubdiv;
+        // restore the views' original rects + visibility (we resized/hid them for the 16:9 box)
+        if (this._savedViewRects) {
+            for (const r of this._savedViewRects) {
+                r.v.left = r.left; r.v.top = r.top; r.v.width = r.width; r.v.height = r.height;
+                r.v.setVisible(r.visible);
+                r.v.updateWH();
+            }
+            this._savedViewRects = null;
+        }
+        this._previewBox = null;
+        ViewMan.computeEffectiveVisibility();
+        ViewMan.updateDOMVisibility();
         this._hideBottomTimeline();   // restore the normal frame slider
         if (this._restore) { this._restore(); this._restore = null; }
         if (this._savedPaused !== undefined) par.paused = this._savedPaused;
+        this._hoverSeg = null; this._hoverNum = null;   // drop any hover from the bottom strip
         setRenderOne(true);
         this.drawTimeline();
         this.setStatus(`Ready — ${this.totalDuration.toFixed(1)}s, ${this.cameraBeats.length} beats`);
@@ -956,6 +1056,60 @@ class CScriptedVideoManager {
         if (this.bottomTimeline && this.bottomTimeline.clientWidth > 0) this._drawTimelineTo(this.bottomTimeline);
     }
 
+    // Shared timeline geometry so the draw and the hit-test never drift apart.
+    _timelineGeom(c) {
+        const w = c.clientWidth || 320, h = c.clientHeight || 40;
+        const total = this.totalDuration || 1;
+        const span = total / this.tlZoom;                 // visible time window
+        const x = (t) => ((t - this.tlOffset) / span) * w;
+        const compact = h < 44;
+        const numLanes = this._numLanes || 1;
+        const padTop = compact ? 1 : 3;
+        const padBot = compact ? 1 : 13;   // room for duration label when not compact
+        const gap = compact ? 1 : 2;
+        const laneH = Math.max(3, (h - padTop - padBot - gap * (numLanes - 1)) / numLanes);
+        return {w, h, total, span, x, compact, numLanes, padTop, padBot, gap, laneH};
+    }
+
+    // The timeline segment (event bar) at a client position, or null.
+    _segAtTimeline(c, clientX, clientY) {
+        if (this.totalDuration <= 0 || !this.events) return null;
+        const r = c.getBoundingClientRect();
+        const px = clientX - r.left - (c.clientLeft || 0);   // strip the canvas border
+        const py = clientY - r.top - (c.clientTop || 0);
+        const g = this._timelineGeom(c);
+        // the bottom strip is the scrollbar when zoomed — don't treat it as a segment
+        const sb = this.tlZoom > 1.001 ? CScriptedVideoManager.SCROLLBAR_H : 0;
+        if (py < 0 || py > g.h - sb) return null;
+        for (const e of this.events) {
+            if (!(e.dur > 0)) continue;
+            const y0 = g.padTop + (e._lane || 0) * (g.laneH + g.gap);
+            const x0 = g.x(e.start), bw = Math.max(2, g.x(e.start + e.dur) - x0);
+            if (px >= x0 && px <= x0 + bw && py >= y0 && py <= y0 + g.laneH) return e;
+        }
+        return null;
+    }
+
+    // the current timed event on a (1-based) script line, or null
+    _eventOnLine(line1) {
+        if (!this.events) return null;
+        return this.events.find((e) => e.line === line1 && e.dur > 0) || null;
+    }
+
+    // any event on a (1-based) script line (incl. zero-duration view lines), or null
+    _anyEventOnLine(line1) {
+        if (!this.events) return null;
+        return this.events.find((e) => e.line === line1) || null;
+    }
+
+    // the duration number token of an event, as an editor hover descriptor
+    _durTokenForEvent(e) {
+        const s = e && e.spans && e.spans.dur;
+        if (!s || !this.textarea) return null;
+        const lt = (this.textarea.value.split("\n")[e.line - 1]) || "";
+        return {line: e.line - 1, start: s.start, end: s.end, text: lt.slice(s.start, s.end)};
+    }
+
     _drawTimelineTo(c) {
         const w = c.clientWidth || 320, h = c.clientHeight || 40;
         if (c.width !== w) c.width = w;
@@ -964,17 +1118,9 @@ class CScriptedVideoManager {
         ctx.clearRect(0, 0, w, h);
         ctx.fillStyle = "#16181d"; ctx.fillRect(0, 0, w, h);
 
-        const total = this.totalDuration || 1;
-        const span = total / this.tlZoom;                 // visible time window
-        const x = (t) => ((t - this.tlOffset) / span) * w;
-        const compact = h < 44;
-
-        // lanes: overlapping events stack on separate rows
-        const numLanes = this._numLanes || 1;
-        const padTop = compact ? 1 : 3;
-        const padBot = compact ? 1 : 13;   // room for duration label when not compact
-        const gap = compact ? 1 : 2;
-        const laneH = Math.max(3, (h - padTop - padBot - gap * (numLanes - 1)) / numLanes);
+        const g = this._timelineGeom(c);
+        const total = g.total, span = g.span, x = g.x, compact = g.compact;
+        const padTop = g.padTop, gap = g.gap, laneH = g.laneH;
 
         const label = (e) => {
             if (e.type === "text") return '"' + (e.text || "") + '"';
@@ -992,6 +1138,11 @@ class CScriptedVideoManager {
             ctx.fillRect(x0, y, bw, laneH);
             ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.lineWidth = 1;
             ctx.strokeRect(x0 + 0.5, y + 0.5, bw - 1, laneH - 1);
+            // highlight the segment linked to the hovered number / hovered segment
+            if (this._hoverSeg && e.line === this._hoverSeg.line) {
+                ctx.strokeStyle = "#ffd24a"; ctx.lineWidth = 2;
+                ctx.strokeRect(x0 + 1, y + 1, Math.max(1, bw - 2), Math.max(1, laneH - 2));
+            }
             if (bw > 24 && laneH >= 11) {
                 ctx.fillStyle = "#fff"; ctx.font = "10px sans-serif";
                 ctx.textBaseline = "middle"; ctx.textAlign = "left";
@@ -1041,10 +1192,13 @@ class CScriptedVideoManager {
         }
     }
 
-    // time at a pixel x on a timeline canvas (accounts for zoom/scroll)
+    // time at a pixel x on a timeline canvas (accounts for zoom/scroll). Strips the
+    // canvas border and divides by the content-box width so it lands exactly on the
+    // drawn bars/playhead (same convention as _segAtTimeline / _drawTimelineTo).
     _timeAtX(c, clientX) {
         const r = c.getBoundingClientRect();
-        const frac = clamp((clientX - r.left) / r.width, 0, 1);
+        const px = clientX - r.left - (c.clientLeft || 0);
+        const frac = clamp(px / (c.clientWidth || r.width), 0, 1);
         const span = this.totalDuration / this.tlZoom;
         return clamp(this.tlOffset + frac * span, 0, this.totalDuration);
     }
@@ -1057,6 +1211,36 @@ class CScriptedVideoManager {
         c.style.cursor = "ew-resize";
         c.addEventListener("mousedown", (ev) => this._onTimelineMouseDown(c, ev));
         c.addEventListener("wheel", (ev) => this._onTimelineWheel(c, ev), { passive: false });
+        c.addEventListener("mousemove", (ev) => this._updateTimelineHover(c, ev.clientX, ev.clientY));
+        c.addEventListener("mouseleave", () => this._onTimelineLeave(c));
+    }
+
+    // Hovering a timeline segment highlights it + its duration number in the editor,
+    // and arms the wheel to edit that duration. Hovering elsewhere = scrub/pan cursor.
+    _updateTimelineHover(c, clientX, clientY) {
+        if (this._tlDragging) return;
+        const seg = this._segAtTimeline(c, clientX, clientY);
+        // only show the wheel-edit affordance when there's a duration token to edit
+        c.style.cursor = (seg && seg.spans && seg.spans.dur) ? "ns-resize" : "ew-resize";
+        const prevLine = this._hoverSeg ? this._hoverSeg.line : null;
+        const newLine = seg ? seg.line : null;
+        // the boxed duration only changes via a wheel edit (which re-renders itself),
+        // so a same-line mousemove needs no rebuild
+        if (prevLine !== newLine) {
+            this._hoverSeg = seg;
+            this._hoverNum = seg ? this._durTokenForEvent(seg) : null;
+            this._renderBackdrop();
+            this.drawTimeline();
+        }
+    }
+
+    _onTimelineLeave(c) {
+        if (this._tlDragging) return;
+        c.style.cursor = "ew-resize";
+        if (this._hoverSeg || this._hoverNum) {
+            this._hoverSeg = null; this._hoverNum = null;
+            this._renderBackdrop(); this.drawTimeline();
+        }
     }
 
     _onTimelineMouseDown(c, ev) {
@@ -1082,10 +1266,13 @@ class CScriptedVideoManager {
         this._scrubTo(this._timeAtX(c, ev.clientX));
         const doc = c.ownerDocument || document;   // may live in a popped-out window
         const move = (e) => { if (this._dragCanvas) this._scrubTo(this._timeAtX(this._dragCanvas, e.clientX)); };
-        const up = () => {
+        const up = (e) => {
             this._tlDragging = false; this._dragCanvas = null;
             doc.removeEventListener("mousemove", move, true);
             doc.removeEventListener("mouseup", up, true);
+            // re-evaluate hover at the release point (clears a stale highlight if the
+            // drag ended off a bar / off the canvas)
+            if (e) this._updateTimelineHover(c, e.clientX, e.clientY);
         };
         doc.addEventListener("mousemove", move, true);
         doc.addEventListener("mouseup", up, true);
@@ -1132,6 +1319,21 @@ class CScriptedVideoManager {
 
     _onTimelineWheel(c, ev) {
         if (this.totalDuration <= 0) return;
+        // over a segment → the wheel edits that segment's duration (like the editor)
+        const seg = this._segAtTimeline(c, ev.clientX, ev.clientY);
+        if (seg && seg.spans && seg.spans.dur) {
+            ev.preventDefault();
+            this._adjustNumberToken(seg.line - 1, seg.spans.dur, ev.deltaY, ev.shiftKey, 0.1);
+            // events were rebuilt by doParse(); re-resolve the hovered segment + number
+            this._hoverSeg = this._eventOnLine(seg.line);
+            this._hoverNum = this._durTokenForEvent(this._hoverSeg);
+            c.style.cursor = "ns-resize";
+            this._renderBackdrop();
+            this.drawTimeline();
+            if (this._scrubbing || this._previewing) this._scrubTo(this._currentT);
+            return;
+        }
+        // otherwise pan the visible window
         ev.preventDefault();
         const span = this.totalDuration / this.tlZoom;
         const d = (Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY);
@@ -1284,19 +1486,40 @@ class CScriptedVideoManager {
         this._popoutBtn.style.marginLeft = "auto";
         toolbar.appendChild(this._popoutBtn);
 
+        // --- editor: a transparent textarea over a styled backdrop ---
+        // The textarea keeps native caret/typing/selection but renders its text
+        // transparent; the backdrop underneath renders the same text and adds the
+        // styling a textarea can't: bold the current line, and box a hovered number.
+        const editWrap = document.createElement("div");
+        editWrap.style.cssText = "position:relative; flex:1 1 auto; min-height:80px; margin:8px;";
+        // identical text-layout box for both layers so they line up exactly
+        const EDIT_CSS = "position:absolute; inset:0; box-sizing:border-box; margin:0;" +
+            " font:12px/1.4 monospace; padding:6px; border:1px solid; border-radius:4px;" +
+            " white-space:pre; overflow:auto; letter-spacing:0; tab-size:4;";
+        const backdrop = document.createElement("div");
+        backdrop.style.cssText = EDIT_CSS + " color:#ddd; background:#111; border-color:#333; pointer-events:none; z-index:0;";
+        this.backdrop = backdrop;
+
         const ta = document.createElement("textarea");
         ta.spellcheck = false;
-        ta.style.cssText = `flex:1 1 auto; min-height:80px; margin:8px; box-sizing:border-box; resize:none;
-            background:#111; color:#ddd; font:12px/1.4 monospace; border:1px solid #333; border-radius:4px;
-            padding:6px; white-space:pre; overflow:auto;`;
+        ta.wrap = "off";   // match the backdrop's white-space:pre so rows line up
+        ta.style.cssText = EDIT_CSS + " color:transparent; background:transparent; caret-color:#fff;" +
+            " border-color:transparent; resize:none; z-index:1;";
         let saved = null;
         try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
         ta.value = saved || DEFAULT_SCRIPT;
         for (const ev of ["keydown", "keyup", "keypress"]) ta.addEventListener(ev, (e) => e.stopPropagation());
-        ta.addEventListener("input", () => this.doParse());
-        ta.addEventListener("click", () => this._scrubToCursorLine());
-        ta.addEventListener("keyup", (e) => { if (NAV_KEYS.has(e.key)) this._scrubToCursorLine(); });
+        ta.addEventListener("input", () => { this.doParse(); this._renderBackdrop(); });
+        ta.addEventListener("click", () => { this._scrubToCursorLine(); this._renderBackdrop(); });
+        ta.addEventListener("keyup", (e) => { if (NAV_KEYS.has(e.key)) this._scrubToCursorLine(); this._renderBackdrop(); });
+        ta.addEventListener("scroll", () => { backdrop.scrollTop = ta.scrollTop; backdrop.scrollLeft = ta.scrollLeft; });
+        ta.addEventListener("mousemove", (e) => this._onEditorHover(e));
+        ta.addEventListener("mouseleave", () => { if (this._hoverNum || this._hoverSeg) { this._hoverNum = null; this._hoverSeg = null; ta.style.cursor = ""; this._renderBackdrop(); this.drawTimeline(); } });
+        ta.addEventListener("wheel", (e) => this._onEditorWheel(e), { passive: false });
         this.textarea = ta;
+
+        editWrap.appendChild(backdrop);
+        editWrap.appendChild(ta);
 
         const st = document.createElement("div");
         st.style.cssText = "font:11px sans-serif; color:#9aa; padding:0 10px 4px; flex:0 0 auto;";
@@ -1309,10 +1532,175 @@ class CScriptedVideoManager {
         this.timelineCanvas = tl;
 
         content.appendChild(toolbar);
-        content.appendChild(ta);
+        content.appendChild(editWrap);
         content.appendChild(st);
         content.appendChild(tl);
+        setTimeout(() => this._renderBackdrop(), 0);
         return content;
+    }
+
+    // ---- editor backdrop: bold current line + box the hovered number ----
+    _cursorLine() {
+        const ta = this.textarea;
+        if (!ta) return -1;
+        return ta.value.slice(0, ta.selectionStart).split("\n").length - 1;
+    }
+
+    _escHtml(s) {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    _renderBackdrop() {
+        const ta = this.textarea, bd = this.backdrop;
+        if (!ta || !bd) return;
+        const lines = ta.value.split("\n");
+        const cur = this._cursorLine();
+        const hov = this._hoverNum;
+        const box = '<span style="outline:1.5px solid #ffd24a;border-radius:2px;background:rgba(255,210,74,0.18)">';
+        let html = "";
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            let h;
+            if (hov && hov.line === i) {
+                h = this._escHtml(line.slice(0, hov.start)) + box + this._escHtml(line.slice(hov.start, hov.end))
+                    + "</span>" + this._escHtml(line.slice(hov.end));
+            } else {
+                h = this._escHtml(line);
+            }
+            if (i === cur) h = "<b>" + h + "</b>";
+            html += h + (i < lines.length - 1 ? "\n" : "");
+        }
+        bd.innerHTML = html;
+        bd.scrollTop = ta.scrollTop; bd.scrollLeft = ta.scrollLeft;
+    }
+
+    _charMetrics() {
+        const ta = this.textarea;
+        const cs = getComputedStyle(ta);
+        const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) * 1.4);
+        if (!this._charW) {
+            const probe = document.createElement("span");
+            probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;font:" + cs.font;
+            probe.textContent = "0000000000";
+            (ta.ownerDocument.body || document.body).appendChild(probe);
+            this._charW = probe.getBoundingClientRect().width / 10;
+            probe.remove();
+        }
+        return {cw: this._charW || 7.2, lh, padL: parseFloat(cs.paddingLeft), padT: parseFloat(cs.paddingTop)};
+    }
+
+    // The editable control-number under (row,col): ONLY a parser-recognised number
+    // (duration / distance / degrees / fov / &offset) — never a digit inside a quoted
+    // caption or a lat,lon,alt coordinate, which control nothing on the timeline.
+    // Accepts the mouse up to `pad` chars to either side; nearest wins. Returns
+    // {line,start,end,text,field} or null.
+    _editableNumberAt(row, col, pad = 0) {
+        const ev = this._anyEventOnLine(row + 1);
+        if (!ev) return null;
+        const lt = (this.textarea.value.split("\n")[row]) || "";
+        const cands = [];
+        if (ev.spans) for (const f of ["dur", "dist", "deg", "fov"]) if (ev.spans[f]) cands.push({s: ev.spans[f], field: f});
+        if (ev.offSpan) cands.push({s: ev.offSpan, field: "off"});
+        let best = null, bestDist = Infinity;
+        for (const {s, field} of cands) {
+            let dist = 0;
+            if (col < s.start) dist = s.start - col;            // chars to the left
+            else if (col >= s.end) dist = col - (s.end - 1);    // chars to the right
+            if (dist <= pad && dist < bestDist) {
+                best = {line: row, start: s.start, end: s.end, text: lt.slice(s.start, s.end), field};
+                bestDist = dist;
+            }
+        }
+        return best;
+    }
+
+    _onEditorHover(e) {
+        const ta = this.textarea;
+        const {cw, lh, padL, padT} = this._charMetrics();
+        const rect = ta.getBoundingClientRect();
+        const x = e.clientX - rect.left - padL + ta.scrollLeft;
+        const y = e.clientY - rect.top - padT + ta.scrollTop;
+        const row = Math.floor(y / lh);
+        const col = Math.floor(x / cw);
+        // accept the mouse up to 2 chars on either side of a control number
+        const found = (y < 0) ? null : this._editableNumberAt(row, col, 2);
+        const a = this._hoverNum;
+        const same = (!a && !found) || (a && found && a.line === found.line && a.start === found.start && a.end === found.end);
+        ta.style.cursor = found ? "ns-resize" : "";
+        if (!same) {
+            this._hoverNum = found;
+            this._hoverSeg = found ? this._eventOnLine(found.line + 1) : null;
+            this._renderBackdrop();
+            this.drawTimeline();   // highlight (or clear) the linked timeline segment
+        }
+    }
+
+    // per-field floor: a duration must stay > 0 (else its bar vanishes); fov ≥ 1;
+    // distance / degrees / offset may legitimately be 0
+    _minValForField(field) {
+        if (field === "dist" || field === "deg" || field === "off") return 0;
+        if (field === "fov") return 1;
+        return 0.1;   // dur (and anything unlabelled)
+    }
+
+    _onEditorWheel(e) {
+        if (!this._hoverNum) return;            // not over a control number → normal scroll
+        e.preventDefault();
+        const h = this._hoverNum;
+        const res = this._adjustNumberToken(h.line, {start: h.start, end: h.end}, e.deltaY, e.shiftKey, this._minValForField(h.field));
+        if (!res) return;
+        h.start = res.start; h.end = res.end; h.text = res.text;
+        this._hoverSeg = this._eventOnLine(h.line + 1);
+        if (!this._hoverSeg) this._hoverNum = null;   // keep both highlight surfaces consistent
+        this._renderBackdrop();
+        this.drawTimeline();
+        if (this._scrubbing || this._previewing) this._scrubTo(this._currentT);
+    }
+
+    // Increment/decrement the number token at lines[row][span.start..span.end] by a
+    // mouse-wheel step (1 for ints, 0.1 for decimals, ×10 with Shift), never below
+    // minVal. Rewrites the textarea, keeps the caret aligned across width changes,
+    // re-parses, and returns the new {start,end,text} span (null if not a clean
+    // number). Shared by the editor and the timeline-segment wheel.
+    _adjustNumberToken(row, span, deltaY, shiftKey, minVal = 0) {
+        const ta = this.textarea;
+        if (!ta || !span) return null;
+        const lines = ta.value.split("\n");
+        const line = lines[row];
+        if (line === undefined) return null;
+        const cur = line.slice(span.start, span.end);
+        if (!/^\d*\.?\d+$/.test(cur)) return null;     // only adjust a clean numeric token
+        const hasDot = cur.includes(".");
+        let step = hasDot ? 0.1 : 1;
+        if (shiftKey) step *= 10;
+        const dir = deltaY < 0 ? 1 : -1;
+        let val = parseFloat(cur) + dir * step;
+        if (!isFinite(val)) return null;
+        if (val < minVal) val = minVal;
+        // Keep a decimal token decimal (so the 0.1 step survives the whole-number
+        // boundary, e.g. 0.9→1.0→1.1) and floor AFTER rounding so an integer step
+        // can't collapse the value back below minVal (Math.round(0.1)=0 would).
+        let out;
+        if (hasDot) {
+            out = (Math.round(val * 10) / 10).toFixed(1);
+            if (parseFloat(out) < minVal) out = minVal.toFixed(1);
+        } else {
+            out = String(Math.round(val));
+            if (parseFloat(out) < minVal) out = String(Math.ceil(minVal));
+        }
+        // adjust the caret for any change in the token's character width
+        const delta = out.length - (span.end - span.start);
+        let lineStart = 0;
+        for (let r = 0; r < row; r++) lineStart += lines[r].length + 1;
+        const absStart = lineStart + span.start, absEnd = lineStart + span.end;
+        let caret = ta.selectionStart;
+        if (caret >= absEnd) caret += delta;
+        else if (caret > absStart) caret = absStart + out.length;
+        lines[row] = line.slice(0, span.start) + out + line.slice(span.end);
+        ta.value = lines.join("\n");
+        try { ta.selectionStart = ta.selectionEnd = caret; } catch (e2) {}
+        this.doParse();
+        return {start: span.start, end: span.start + out.length, text: out};
     }
 
     _togglePopout() {
@@ -1379,13 +1767,14 @@ class CScriptedVideoManager {
         const errs = this.parse();
         this.prepare();
         this.drawTimeline();
+        this._renderBackdrop();
         if (errs.length) this.setStatus("⚠ " + errs[0] + (errs.length > 1 ? ` (+${errs.length - 1} more)` : ""));
         else this.setStatus(`Ready — ${this.totalDuration.toFixed(1)}s, ${this.cameraBeats.length} beats`);
     }
 
     showWindow() {
         if (this.external && !this.external.closed) { this.external.focus(); return; }
-        if (this.window) { this.window.style.display = "flex"; this.parse(); setTimeout(() => this.drawTimeline(), 0); }
+        if (this.window) { this.window.style.display = "flex"; this.parse(); setTimeout(() => { this.drawTimeline(); this._renderBackdrop(); }, 0); }
     }
     hideWindow() {
         if (this.external && !this.external.closed) { this.dockWindow(); return; }
@@ -1422,7 +1811,11 @@ class CScriptedVideoManager {
     // scripted camera/world/captions at t (and swaps in the scripted timeline).
     _scrubTo(t) {
         if (this.totalDuration <= 0) return;
+        // reconcile against the (possibly just-shrunk) total so a wheel-edit of a late
+        // beat during playback can't push the clock past the end and auto-stop preview
+        t = clamp(t, 0, this.totalDuration);
         if (this._previewing) {
+            if (t >= this.totalDuration) t = Math.max(0, this.totalDuration - 1e-3);
             this._previewStart = performance.now() - t * 1000;  // re-anchor running clock
         } else {
             this.parse(); this.prepare();
