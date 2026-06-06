@@ -553,6 +553,10 @@ const en = {
                     label: "Rotate Frames (SfM)",
                     tooltip: "Stamp each frame with its full recovered rotation+translation (handles camera roll/rotation, like the feature pano) instead of translation only",
                 },
+                allowFrameScale: {
+                    label: "Allow Frame Scaling",
+                    tooltip: "Rotate Frames only: also apply the recovered per-frame SCALE. Off (default) keeps every frame the same size (rigid rotation+translation); on lets frames grow/shrink, which can accumulate scale drift across the panorama",
+                },
                 exportFeature: {
                     label: "Export Feature Pano Image",
                     tooltip: "Create a panorama by feature-matching and warping video frames (handles rotation and perspective distortion, unlike the Motion Panorama)",

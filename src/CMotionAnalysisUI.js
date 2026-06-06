@@ -12,19 +12,24 @@
  * cycle.
  */
 
-import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, registerFrameBlocker, registerPendingWork, completePendingWork, setRenderOne, Sit, unregisterFrameBlocker} from "./Globals";
+import {
+    completePendingWork,
+    GlobalDateTimeNode,
+    Globals,
+    guiMenus,
+    NodeMan,
+    registerPendingWork,
+    setRenderOne,
+    Sit
+} from "./Globals";
 import {isAdmin} from "./configUtils";
 import {par} from "./par";
 import {ExportProgressWidget, getExportPrefix} from "./utils";
 import {Color} from "three";
 import {getCV, loadOpenCV} from "./openCVLoader";
 import {fitSimilarity} from "./CameraMotionFromVideo";
-import {applyConvolution} from "./nodes/CNodeVideoView";
-import {getFlowAlignRotation, isAlignWithFlowEnabled, setAlignWithFlow, setMotionAnalyzerRef} from "./FlowAlignment";
-import {t} from "./i18n";
+import {isAlignWithFlowEnabled, setAlignWithFlow, setMotionAnalyzerRef} from "./FlowAlignment";
 import {setStartAnalysis, setUpdateGuiValues, setUpdateOptimizeStatus, updateGuiValues} from "./CMotionAnalysisShared";
-import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";
-import {CNodeSpeedOverlay} from "./nodes/CNodeSpeedOverlay";
 import {CNodeVelocityFromMotion} from "./nodes/CNodeVelocityFromMotion";
 import {CNodeTrackFromVelocity} from "./nodes/CNodeTrackFromVelocity";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
@@ -82,6 +87,13 @@ let panoFrameStep = 1;
 // transform (rotation + translation, off-center safe) recovered from the flow,
 // instead of translation only — see calculateFrameTransforms / drawFrameToPano.
 let panoRotateFrames = false;
+// "Rotate Frames" stamps each frame with its recovered per-frame similarity. A
+// full similarity includes a SCALE term, which — being noisy and chained frame to
+// frame — accumulates into visible scale drift (frames grow/shrink along the
+// panorama). Default OFF: the per-frame transform is constrained to RIGID
+// (rotation + translation, scale = 1) so every frame stays the same size. Turn ON
+// to restore the old full-similarity behaviour (e.g. a genuinely zooming camera).
+let panoAllowFrameScale = false;
 // Feature-pano options (separate from the motion-pano ones above).
 let panoFeatureFrameStep = 1;
 let panoFeatureCrop = 0;
@@ -127,8 +139,19 @@ function frameSimilarity(motionAnalyzer, frame, W, H) {
     if (P.length < 8) return null;
     const fit = fitSimilarity(P, Q, W, H, {ransacThr: 2.0});
     if (!fit || !isFinite(fit.Ax) || !isFinite(fit.By)) return null;
-    // q = (Ax,-Ay;Ay,Ax)·p + (Bx,By)
-    return [fit.Ax, -fit.Ay, fit.Bx, fit.Ay, fit.Ax, fit.By, 0, 0, 1];
+    if (panoAllowFrameScale) {
+        // Full similarity (rotation + translation + SCALE): q = (Ax,-Ay;Ay,Ax)·p + (Bx,By).
+        return [fit.Ax, -fit.Ay, fit.Bx, fit.Ay, fit.Ax, fit.By, 0, 0, 1];
+    }
+    // RIGID (scale = 1): keep the recovered rotation and image-CENTRE translation but
+    // drop the scale term, so chained frames can't accumulate scale drift (which made
+    // frames grow/shrink along the panorama). Rotate about the image centre by theta,
+    // then translate the centre by the fit's (dx,dy):  q = R(theta)·(p - c) + c + d.
+    const cos = Math.cos(fit.theta), sin = Math.sin(fit.theta);
+    const cx = W / 2, cy = H / 2;
+    const bx = cx + fit.dx - (cos * cx - sin * cy);
+    const by = cy + fit.dy - (sin * cx + cos * cy);
+    return [cos, -sin, bx, sin, cos, by, 0, 0, 1];
 }
 
 // Cumulative per-frame transforms G[i] mapping each stamped frame's pixels into
@@ -725,13 +748,16 @@ async function analyzeAllFrames(progressCallback) {
             }, (frame) => {
                 par.frame = frame;
                 GlobalDateTimeNode.update(frame);
-            });
+            }, isPanoJobCancelled);
 
             // Re-run the selected range against the fixed virtual frame list,
             // but keep the duplicate map itself.
             resetMotionAnalysisDerivedState(false);
             motionAnalyzer.suspendAnalysis = false;
             resetVideoThrashDetector(videoData);
+
+            // Stop cleanly if cancelled during the duplicate scan.
+            if (isPanoJobCancelled()) return false;
         }
 
         // Preload the prev-context frames so the first `skip` frames of the
@@ -817,7 +843,7 @@ async function analyzeAllFrames(progressCallback) {
                 total,
                 pct: Math.round(100 * current / total),
             });
-        });
+        }, isPanoJobCancelled);
         progressCallback?.({
             phase: "fallback",
             step: 3,
@@ -1008,7 +1034,7 @@ async function exportMotionPanorama() {
     await motionAnalyzer.fillBadNonDuplicateMotionGaps(startFrame, endFrame, (frame) => {
         par.frame = frame;
         GlobalDateTimeNode.update(frame);
-    });
+    }, null, isPanoJobCancelled);
     const motionData = motionAnalyzer.getMotionDataForAllFrames({gapFill: false, fallbackToSmoothed: false, useTrackletLastSegment: true});
 
     const panoRotation = isAlignWithFlowEnabled() ? -calculateOverallMotionAngle(motionData, startFrame, endFrame) : 0;
@@ -1253,7 +1279,7 @@ async function exportPanoVideo() {
     await motionAnalyzer.fillBadNonDuplicateMotionGaps(startFrame, endFrame, (frame) => {
         par.frame = frame;
         GlobalDateTimeNode.update(frame);
-    });
+    }, null, isPanoJobCancelled);
     const motionData = motionAnalyzer.getMotionDataForAllFrames({gapFill: false, fallbackToSmoothed: false, useTrackletLastSegment: true});
 
     const panoRotation = isAlignWithFlowEnabled() ? -calculateOverallMotionAngle(motionData, startFrame, endFrame) : 0;
@@ -1643,12 +1669,16 @@ export function addMotionAnalysisMenu() {
         get analyzeWithEffects() { return getAnalyzeWithEffects(); }, set analyzeWithEffects(v) { setAnalyzeWithEffects(v); },
         get exportWithEffects() { return exportWithEffects; }, set exportWithEffects(v) { exportWithEffects = v; },
         get removeOuterBlack() { return removeOuterBlack; }, set removeOuterBlack(v) { removeOuterBlack = v; },
-        get rotateFrames() { return panoRotateFrames; }, set rotateFrames(v) { panoRotateFrames = v; }
+        get rotateFrames() { return panoRotateFrames; }, set rotateFrames(v) { panoRotateFrames = v; },
+        get allowFrameScale() { return panoAllowFrameScale; }, set allowFrameScale(v) { panoAllowFrameScale = v; }
     };
     const motionOptions = panoFolder.addFolder(mt("menu.panorama.motionOptions.title")).close().perm();
     motionOptions.add(motionPanoParams, 'rotateFrames')
         .name(mt("menu.panorama.rotateFrames.label"))
         .tooltip(mt("menu.panorama.rotateFrames.tooltip")).perm();
+    motionOptions.add(motionPanoParams, 'allowFrameScale')
+        .name(mt("menu.panorama.allowFrameScale.label"))
+        .tooltip(mt("menu.panorama.allowFrameScale.tooltip")).perm();
     motionOptions.add(motionPanoParams, 'panoFrameStep', 1, 60, 1)
         .name(mt("menu.panorama.panoFrameStep.label"))
         .tooltip(mt("menu.panorama.panoFrameStep.tooltip")).perm();

@@ -1,27 +1,12 @@
-import {
-    GlobalDateTimeNode,
-    Globals,
-    guiMenus,
-    NodeMan,
-    registerFrameBlocker,
-    setRenderOne,
-    Sit,
-    unregisterFrameBlocker
-} from "./Globals";
-import {isAdmin} from "./configUtils";
+import {Globals, NodeMan, registerFrameBlocker, setRenderOne, Sit, unregisterFrameBlocker} from "./Globals";
 import {par} from "./par";
 import {startAnalysis, updateGuiValues, updateOptimizeStatus} from "./CMotionAnalysisShared";
-import {ExportProgressWidget, getExportPrefix} from "./utils";
 
 import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";
 import {CNodeSpeedOverlay} from "./nodes/CNodeSpeedOverlay";
-import {CNodeVelocityFromMotion} from "./nodes/CNodeVelocityFromMotion";
-import {CNodeTrackFromVelocity} from "./nodes/CNodeTrackFromVelocity";
-import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
-import {Color} from "three";
 import {getCV, loadOpenCV} from "./openCVLoader";
 import {applyConvolution} from "./nodes/CNodeVideoView";
-import {getFlowAlignRotation, isAlignWithFlowEnabled, setAlignWithFlow, setMotionAnalyzerRef} from "./FlowAlignment";
+import {getFlowAlignRotation} from "./FlowAlignment";
 import {detectRedactionRects} from "./RedactionDetect";
 import {t} from "./i18n";
 
@@ -325,7 +310,7 @@ export class MotionAnalyzer {
         return result;
     }
 
-    async buildDuplicateFrameMap(startFrame, endFrame, progressCallback = null, beforeFrameCallback = null) {
+    async buildDuplicateFrameMap(startFrame, endFrame, progressCallback = null, beforeFrameCallback = null, shouldCancel = null) {
         if (!this.params.skipDuplicateFrames) return;
 
         const videoData = this.videoView?.videoData;
@@ -345,6 +330,7 @@ export class MotionAnalyzer {
 
         const total = endFrame - startFrame + 1;
         for (let f = startFrame; f <= endFrame; f++) {
+            if (shouldCancel?.()) break;   // cooperative cancel (Stop Analysis during the dup scan)
             beforeFrameCallback?.(f);
             videoData.getImage(f);
             await videoData.waitForFrame?.(f, 5000);
@@ -466,11 +452,12 @@ export class MotionAnalyzer {
         });
     }
 
-    async fillBadNonDuplicateMotionGaps(startFrame, endFrame, beforeFrameCallback = null, progressCallback = null) {
+    async fillBadNonDuplicateMotionGaps(startFrame, endFrame, beforeFrameCallback = null, progressCallback = null, shouldCancel = null) {
         if (!this.params.skipDuplicateFrames) return;
 
         const total = endFrame - startFrame + 1;
         for (let f = startFrame; f <= endFrame; f++) {
+            if (shouldCancel?.()) return;   // cooperative cancel (Stop Analysis during gap-fill)
             await this.fillBadNonDuplicateMotionGap(f, beforeFrameCallback);
             if (progressCallback && ((f - startFrame) % 5 === 0 || f === endFrame)) {
                 progressCallback(f - startFrame + 1, total);
