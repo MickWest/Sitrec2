@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.76.0 (2026-06-06)
+
+### New Features
+- **Feature Panorama** (Video → Motion Analysis → Panorama): a new way to build a panorama by feature-matching and warping the video frames together, which handles camera rotation and perspective that the existing motion panorama can't. It automatically picks the right projection — a perspective mosaic for cameras that pan across a scene, or a flat unrolling for a camera that mainly rotates in place — and you can force one with the new *Projection* option. *Export Feature Pano Image* makes the still panorama; *Export Feature Pano Video* makes a video showing each frame warped into its place on the stitched background, with the current frame outlined in cyan. While it works, it shows the live frame with its matched features circled. Tuning options (*Frame Step*, *Crop*, *Use Mask*, *Projection*) live in the new *Feature Pano Options* folder.
+
+### Improvements
+- **Reorganized Panorama menu** (Video → Motion Analysis → Panorama): motion and feature panoramas now each have their own *Image* and *Video* export buttons and their own options folder (*Motion Pano Options*, *Feature Pano Options*), and *Stabilize Video* has moved up to the Motion Analysis level so it's easier to find.
+- **Rotate Frames option for the motion panorama** (Motion Pano Options): a new *Rotate Frames (SfM)* toggle (off by default) accounts for camera roll and rotation when stitching the motion panorama, instead of only sliding frames around, so rotating shots come out cleanly.
+
+### Bug Fixes
+- Fixed panorama and Pano Video exports coming out all black on very large camera sweeps. They are now scaled down to a size the browser can actually draw, so the stitched panorama appears instead of a black background.
+- Fixed the Switch-to-Ground-Track frame being silently reset to 0 after loading a saved sitch. Your saved frame is now preserved.
+
 ## Version 2.75.1 (2026-06-05)
 
 ### Improvements
