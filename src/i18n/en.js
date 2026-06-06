@@ -598,6 +598,10 @@ const en = {
                 featureOptions: {
                     title: "Feature Pano Options",
                 },
+                featureSource: {
+                    label: "Feature Source",
+                    tooltip: "ORB Features: detect & match ORB corners (re-detected each frame). Motion Tracklets: reuse the Motion Analysis optical-flow tracks (the same points followed across many frames — more consistent on soft/low-contrast content). Motion Tracklets runs a motion-analysis pass over the range first.",
+                },
                 stabilize: {
                     label: "Stabilize Video",
                     disableLabel: "Disable Stabilization",
@@ -642,6 +646,22 @@ const en = {
                 featureProjection: {
                     label: "Projection",
                     tooltip: "Auto picks a planar (perspective) mosaic for translating cameras, or a rigid flat unrolling for rotating cameras. Force one if needed.",
+                },
+                featureScale: {
+                    label: "Feature Scale",
+                    tooltip: "Detect features at 1/N resolution. 1 = fine, sharp detail (default). Higher values track larger, blurrier, low-frequency structures (e.g. soft clouds) and ignore pixel noise.",
+                },
+                featureContrast: {
+                    label: "Feature Contrast",
+                    tooltip: "Minimum corner contrast for a feature to register (ORB FAST threshold). Lower picks up faint, low-contrast features (clouds); higher keeps only strong, distinct corners. Default 20.",
+                },
+                featureCount: {
+                    label: "Feature Count",
+                    tooltip: "Maximum number of features to detect per frame. More features can give more matches (slower); fewer is faster. Default 2000.",
+                },
+                optimizeFeature: {
+                    label: "Optimize Feature Tracking",
+                    tooltip: "Auto-tune Feature Scale / Contrast for the content around the current frame, by trying combinations and keeping the one that yields the most stable multi-frame feature tracks.",
                 },
             },
             trackingParameters: {
@@ -733,6 +753,8 @@ const en = {
             saving: "Saving...",
             buildingStabilization: "Building stabilization...",
             exportProgressTitle: "Exporting pano video...",
+            optimizingPercent: "Optimizing feature tracking... {{pct}}%",
+            optimizeResult: "Optimized feature tracking:\n\nFeature Scale: {{scale}}\nFeature Contrast: {{contrast}}\nFeature Count: {{count}}\n\nFound {{tracklets}} stable feature tracks around the current frame.",
         },
         defence: {
             analyzing: "De-fence: estimating fence + background motion... {{pct}}%",

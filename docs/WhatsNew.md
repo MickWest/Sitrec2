@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.78.0 (2026-06-06)
+
+### New Features
+- **Feature Pano tuning for soft, low-contrast footage** (Motion Analysis → Panorama → Feature Pano Options): new **Feature Scale**, **Feature Contrast**, and **Feature Count** sliders let you track large, blurry, low-frequency structures like soft clouds instead of only sharp corners. A new **Feature Source** option can register from either detected feature corners or the existing Motion Analysis tracklets, and an **Optimize Feature Tracking** button auto-tunes the settings for the footage around the current frame.
+
+### Improvements
+- Feature panoramas now register more reliably by following features across many frames and keeping only those that move smoothly and consistently, filtering out noise before stitching.
+
+### Bug Fixes
+- Fixed "Export Feature Pano" finding no features on low-contrast footage (such as masked cloud or IR video). Detection now picks up faint, soft features and reaches the edges of the frame instead of only the centre.
+
+---
+
 ## Version 2.77.0 (2026-06-06)
 
 ### New Features

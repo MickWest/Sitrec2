@@ -45,6 +45,10 @@ const PANO_VIDEO_MAX_H = 2160;
 const PREVIEW_INTERVAL_MS = 3000;       // wall-clock cadence for intermediate-image preview
 
 const DEFAULT_FEATURE_COUNT = 2000;
+const DEFAULT_FAST_THRESHOLD = 20;      // ORB FAST corner-contrast threshold; lower = fainter features
+const DEFAULT_DETECT_SCALE = 1;         // detect features at 1/N resolution; higher = larger/blurrier features
+const MIN_TRACKLET_LEN = 3;             // a feature must appear in >= this many consecutive frames to be trusted
+const TRACKLET_COHERENCE_TOL = 3;       // px: max deviation of a step from the tracklet's median step
 const RATIO_TEST = 0.75;
 const RANSAC_REPROJ = 3.0;
 const MIN_GOOD_MATCHES = 12;
@@ -130,6 +134,111 @@ function rigidFromMatches(curPts, prevPts, mask) {
     const tx = cpx - (c * cxc - s * cyc);
     const ty = cpy - (s * cxc + c * cyc);
     return [c, -s, tx, s, c, ty, 0, 0, 1];
+}
+
+// ---- feature detection ---------------------------------------------------
+
+// Build an ORB detector tuned for the content. We configure it with the SETTER
+// methods rather than the positional constructor: this OpenCV.js (WASM) build
+// can't bind the ORB::ScoreType enum, so the multi-arg `new cv.ORB(...)` form
+// THROWS ("unbound types ... ScoreType"), which silently defeated any attempt to
+// pass a custom FAST threshold. The setters (setFastThreshold / setEdgeThreshold
+// / setPatchSize) work fine.
+//
+// fastThreshold is the key low-contrast knob: lower it to pick up faint cloud
+// edges. detectDim (the smallest dimension at which detection actually runs, i.e.
+// after any Feature-Scale downscale) lets us shrink edgeThreshold/patchSize so
+// they still fit a small image — the 31px defaults exceed a heavily downscaled
+// frame and would find nothing.
+function makeORB(cv, featureCount, fastThreshold, detectDim) {
+    const orb = new cv.ORB(Math.max(1, Math.round(featureCount)));
+    try { orb.setFastThreshold(Math.max(1, Math.round(fastThreshold))); } catch (_) { /* binding lacks setter */ }
+    if (detectDim && detectDim > 0) {
+        // Keep the ignored border a small, roughly constant FRACTION (~8%) of the
+        // detection image rather than the 31px default. At high Feature Scale the
+        // downscaled frame is small, and a 31px border would confine detection to
+        // the CENTRE — re-introducing the masked HUD/object and dropping the edge
+        // clouds (the bug that made Feature Scale > 1 cluster everything mid-frame
+        // and kept the optimizer pinned at scale 1). patchSize tracks edgeThreshold.
+        const edge = Math.max(8, Math.min(31, Math.round(detectDim / 12)));
+        try { orb.setEdgeThreshold(edge); } catch (_) { /* ignore */ }
+        try { orb.setPatchSize(edge); } catch (_) { /* ignore */ }
+    }
+    return orb;
+}
+
+// Detect ORB features on a gray Mat, optionally at a reduced resolution.
+// detectScale>1 downsamples with INTER_AREA (a low-pass average) BEFORE detection,
+// so large soft structures (e.g. clouds) become sharp corners and pixel noise is
+// washed out — the key knob for low-frequency content. Keypoints are scaled back
+// to FULL-resolution coordinates so all downstream geometry stays in source pixels.
+// Descriptors are computed at the detection scale; both frames in a pair share the
+// same scale, so they remain comparable. Returns {kp, des}; the CALLER owns des.
+function detectFeatures(cv, orb, gray, detectMask, noMask, detectScale) {
+    const s = Math.max(1, Math.round(detectScale || 1));
+    let small = null, smallMask = null;
+    let scaledGray = gray, scaledMask = detectMask;
+    let sx = 1, sy = 1;
+    try {
+        if (s > 1) {
+            const dw = Math.max(1, Math.round(gray.cols / s));
+            const dh = Math.max(1, Math.round(gray.rows / s));
+            small = new cv.Mat();
+            cv.resize(gray, small, new cv.Size(dw, dh), 0, 0, cv.INTER_AREA);
+            scaledGray = small;
+            sx = gray.cols / dw;
+            sy = gray.rows / dh;
+            if (detectMask && detectMask.rows) {
+                smallMask = new cv.Mat();
+                cv.resize(detectMask, smallMask, new cv.Size(dw, dh), 0, 0, cv.INTER_NEAREST);
+                scaledMask = smallMask;
+            }
+        }
+        const kpVec = new cv.KeyPointVector();
+        const des = new cv.Mat();
+        try {
+            orb.detectAndCompute(scaledGray, scaledMask || noMask, kpVec, des);
+            const kp = new Array(kpVec.size());
+            for (let k = 0; k < kpVec.size(); k++) {
+                const p = kpVec.get(k).pt;
+                kp[k] = {x: p.x * sx, y: p.y * sy};
+            }
+            return {kp, des};
+        } catch (e) {
+            des.delete();
+            throw e;
+        } finally {
+            kpVec.delete();
+        }
+    } finally {
+        if (small) small.delete();
+        if (smallMask) smallMask.delete();
+    }
+}
+
+// Build the ORB detection mask (CV_8UC1, 255 = detect here, 0 = ignore): the outer
+// `crop`-px ring plus any redaction-mask pixels are zeroed. Returns null when no
+// masking is needed. Caller owns the returned Mat.
+function buildDetectMask(cv, W, H, crop, useMask, maskImageData) {
+    if (!useMask && crop <= 0) return null;
+    const detectMask = cv.Mat.ones(H, W, cv.CV_8UC1);
+    detectMask.setTo(new cv.Scalar(255));
+    const md = detectMask.data;
+    const maskPix = useMask ? maskImageData.data : null;
+    const maskW = useMask ? maskImageData.width : W;
+    const maskH = useMask ? maskImageData.height : H;
+    const xHi = W - crop, yHi = H - crop;
+    for (let y = 0; y < H; y++) {
+        const inCropY = y < crop || y >= yHi;
+        for (let x = 0; x < W; x++) {
+            let masked = inCropY || x < crop || x >= xHi;
+            if (!masked && maskPix && x < maskW && y < maskH) {
+                if (maskPix[(y * maskW + x) * 4 + 3] > 128) masked = true;
+            }
+            if (masked) md[y * W + x] = 0;
+        }
+    }
+    return detectMask;
 }
 
 // ---- per-frame image access ---------------------------------------------
@@ -290,11 +399,20 @@ async function runFeaturePano(o, mode) {
     const useMask = !!o.useMask && !!o.maskImageData;
     const maskImageData = o.maskImageData || null;
     const featureCount = o.featureCount || DEFAULT_FEATURE_COUNT;
+    const fastThreshold = o.fastThreshold || DEFAULT_FAST_THRESHOLD;
+    const detectScale = Math.max(1, Math.round(o.detectScale || DEFAULT_DETECT_SCALE));
     const projection = o.projection || "auto";
     const t = o.t || ((k) => k);
     const setMenuLabel = o.setMenuLabel || (() => {});
     const doneLabel = o.doneLabel || null;
     const externalCancel = typeof o.shouldCancel === "function" ? o.shouldCancel : () => false;
+    // "Motion Tracklets" source: when provided, registration uses the existing
+    // MotionAnalyzer optical-flow tracklets (getCorrespondences(frame) -> {curPts,
+    // prevPts} for the prev->frame step) instead of detecting/matching ORB features.
+    // Those tracks follow the SAME points across many frames (consistent), unlike
+    // ORB which re-detects a fresh set of corners on soft clouds each frame.
+    const getCorrespondences = typeof o.getCorrespondences === "function" ? o.getCorrespondences : null;
+    const motionMode = !!getCorrespondences;
 
     if (!cv || !cv.Mat) { alert("OpenCV not available for feature panorama"); return; }
     if (endFrame <= startFrame) { alert("Select a frame range (A-B) before exporting a feature panorama"); return; }
@@ -312,7 +430,6 @@ async function runFeaturePano(o, mode) {
 
     let overlay = null;
     const persistent = [];
-    let prevKP = null;
     let prevDes = null;
     let weakLinks = 0;
     let cancelled = false;
@@ -363,31 +480,6 @@ async function runFeaturePano(o, mode) {
         frameCanvas.height = H;
         const frameCtx = frameCanvas.getContext('2d', {willReadFrequently: true});
 
-        // ORB detection mask.
-        let detectMask = null;
-        if (useMask || crop > 0) {
-            detectMask = cv.Mat.ones(H, W, cv.CV_8UC1);
-            persistent.push(detectMask);
-            detectMask.setTo(new cv.Scalar(255));
-            const md = detectMask.data;
-            const maskPix = useMask ? maskImageData.data : null;
-            const maskW = useMask ? maskImageData.width : W;
-            const maskH = useMask ? maskImageData.height : H;
-            const xHi = W - crop, yHi = H - crop;
-            for (let y = 0; y < H; y++) {
-                const inCropY = y < crop || y >= yHi;
-                for (let x = 0; x < W; x++) {
-                    let masked = inCropY || x < crop || x >= xHi;
-                    if (!masked && maskPix && x < maskW && y < maskH) {
-                        if (maskPix[(y * maskW + x) * 4 + 3] > 128) masked = true;
-                    }
-                    if (masked) md[y * W + x] = 0;
-                }
-            }
-        }
-        const noMask = new cv.Mat();
-        persistent.push(noMask);
-
         // Per-frame feather/mask alpha.
         const featherPx = Math.max(16, Math.round(0.06 * Math.min(W, H)));
         const featherAlpha = new Uint8ClampedArray(W * H);
@@ -412,73 +504,127 @@ async function runFeaturePano(o, mode) {
             }
         }
 
-        const orb = new cv.ORB(featureCount);
-        persistent.push(orb);
-        const bf = new cv.BFMatcher(cv.NORM_HAMMING, false);
-        persistent.push(bf);
+        // ORB feature detection + matching is only needed for the ORB source; the
+        // Motion-Tracklets source pulls correspondences straight from the analyzer.
+        let detectMask = null, noMask = null, orb = null, bf = null;
+        if (!motionMode) {
+            detectMask = buildDetectMask(cv, W, H, crop, useMask, maskImageData);
+            if (detectMask) persistent.push(detectMask);
+            noMask = new cv.Mat();
+            persistent.push(noMask);
+            orb = makeORB(cv, featureCount, fastThreshold, Math.min(W, H) / detectScale);
+            persistent.push(orb);
+            bf = new cv.BFMatcher(cv.NORM_HAMMING, false);
+            persistent.push(bf);
+        }
 
-        // ===== PASS 1: detect features + estimate pairwise transforms =====
+        // ===== PASS 1: per-adjacent-pair transforms Mh[i] (homography) / Mr[i] (rigid) =====
         const Mh = new Array(n).fill(null);
         const Mr = new Array(n).fill(null);
-        let lastMatched = null;   // matched (inlier) points on the most recent frame
 
-        for (let i = 0; i < n; i++) {
-            if (isCancelled()) throw new Error("cancelled");
-            const frame = frames[i];
-            setStatus(t("status.loadingFrame", {frame, current: i + 1, total: n}));
-
-            const image = await loadVideoFrame(videoData, frame);
-            if (!image) { if (i > 0) { Mh[i] = IDENTITY3.slice(); Mr[i] = IDENTITY3.slice(); } continue; }
-            frameCtx.clearRect(0, 0, W, H);
-            frameCtx.drawImage(image, 0, 0, W, H);
-            const id = frameCtx.getImageData(0, 0, W, H);
-
-            let src = null, gray = null, kpVec = null, des = null;
-            try {
-                src = cv.matFromImageData(id);
-                gray = new cv.Mat();
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                src.delete(); src = null;
-
-                kpVec = new cv.KeyPointVector();
-                des = new cv.Mat();
-                orb.detectAndCompute(gray, detectMask || noMask, kpVec, des);
-                gray.delete(); gray = null;
-
-                const kp = new Array(kpVec.size());
-                for (let k = 0; k < kpVec.size(); k++) {
-                    const p = kpVec.get(k).pt;
-                    kp[k] = {x: p.x, y: p.y};
+        if (motionMode) {
+            // ---- Source: existing MotionAnalyzer optical-flow tracklets ----
+            // For each pano step, compose the single-frame fits across the spanned
+            // video frames (handles frameStep > 1). Each frame's correspondences come
+            // straight from the analyzer's coherent tracklets, so no detection/matching
+            // is needed here — and no per-frame image decode (PASS 2 reloads for warping).
+            for (let i = 1; i < n; i++) {
+                if (isCancelled()) throw new Error("cancelled");
+                let Hstep = IDENTITY3.slice();
+                let Rstep = IDENTITY3.slice();
+                let stepWeak = false;
+                const lo = frameStep === 1 ? frames[i] : frames[i] - frameStep + 1;
+                for (let f = lo; f <= frames[i]; f++) {
+                    const corr = getCorrespondences(f);
+                    const res = (corr && corr.curPts.length >= 2)
+                        ? fitFromCorrespondences(cv, corr.curPts, corr.prevPts)
+                        : {H: IDENTITY3.slice(), rigid: IDENTITY3.slice(), weak: true};
+                    if (res.weak) stepWeak = true;
+                    Hstep = mat3mul(Hstep, res.H);
+                    Rstep = mat3mul(Rstep, res.rigid);
                 }
-                kpVec.delete(); kpVec = null;
+                if (stepWeak) weakLinks++;
+                Mh[i] = Hstep;
+                Mr[i] = Rstep;
 
-                if (i > 0) {
-                    const res = estimatePairwise(cv, bf, prevKP, prevDes, kp, des);
-                    if (res.weak) weakLinks++;
-                    Mh[i] = res.H;
-                    Mr[i] = res.rigid;
-                    lastMatched = res.matched;
+                if (i % 8 === 0) {
+                    setMenuLabel("status.analyzingPercent", {pct: Math.round(100 * (i + 1) / n)});
+                    setStatus(t("status.detectingFeaturesPercent", {pct: Math.round(100 * (i + 1) / n)}));
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+            console.log(`Feature Panorama (motion tracklets): ${n} frames, ${weakLinks} weak link(s)`);
+        } else {
+            // ---- Source: ORB features + multi-frame tracklets ----
+            // Independent frame-to-frame matching floods low-contrast / noisy footage
+            // with false positives (sensor noise, one-off mismatches). Instead we chain
+            // mutually-consistent matches into tracks spanning the whole sequence and keep
+            // only features that PERSIST (>= minTrackLen frames) and move COHERENTLY
+            // (near-constant per-step velocity). Noise can do neither, so it is filtered
+            // out before it ever reaches the transform fit.
+            const minTrackLen = Math.max(2, Math.min(MIN_TRACKLET_LEN, n));
+            const tracker = makeTracker(minTrackLen);
+            let lastMatched = null;   // persistent tracked points on the most recent frame (preview)
+
+            for (let i = 0; i < n; i++) {
+                if (isCancelled()) throw new Error("cancelled");
+                const frame = frames[i];
+                setStatus(t("status.loadingFrame", {frame, current: i + 1, total: n}));
+
+                const image = await loadVideoFrame(videoData, frame);
+                if (!image) {
+                    // A missing frame breaks track continuity; the next frame restarts chains.
+                    if (prevDes) { prevDes.delete(); prevDes = null; }
+                    continue;
+                }
+                frameCtx.clearRect(0, 0, W, H);
+                frameCtx.drawImage(image, 0, 0, W, H);
+                const id = frameCtx.getImageData(0, 0, W, H);
+
+                let src = null, gray = null, det = null;
+                try {
+                    src = cv.matFromImageData(id);
+                    gray = new cv.Mat();
+                    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                    src.delete(); src = null;
+
+                    det = detectFeatures(cv, orb, gray, detectMask, noMask, detectScale);
+                    gray.delete(); gray = null;
+
+                    const pairs = prevDes ? matchMutual(cv, bf, prevDes, det.des) : null;
+                    tracker.addFrame(i, det.kp, pairs);
+                    lastMatched = tracker.activePersistent(minTrackLen);
+
+                    if (prevDes) prevDes.delete();
+                    prevDes = det.des;
+                    det = null;
+                } finally {
+                    if (src) src.delete();
+                    if (gray) gray.delete();
+                    if (det && det.des) det.des.delete();
                 }
 
-                if (prevDes) prevDes.delete();
-                prevKP = kp;
-                prevDes = des;
-                des = null;
-            } finally {
-                if (src) src.delete();
-                if (gray) gray.delete();
-                if (kpVec) kpVec.delete();
-                if (des) des.delete();
+                if (i % 4 === 0) {
+                    setMenuLabel("status.analyzingPercent", {pct: Math.round(100 * (i + 1) / n)});
+                    setStatus(t("status.detectingFeaturesPercent", {pct: Math.round(100 * (i + 1) / n)}));
+                    drawFeaturePreview(previewCtx, previewCanvas, image, lastMatched, W, H);
+                    await new Promise(r => setTimeout(r, 0));
+                }
             }
+            if (prevDes) { prevDes.delete(); prevDes = null; }
 
-            if (i % 4 === 0) {
-                setMenuLabel("status.analyzingPercent", {pct: Math.round(100 * (i + 1) / n)});
-                setStatus(t("status.detectingFeaturesPercent", {pct: Math.round(100 * (i + 1) / n)}));
-                drawFeaturePreview(previewCtx, previewCanvas, image, lastMatched, W, H);
-                await new Promise(r => setTimeout(r, 0));
+            // Filter tracklets, then fit each pair from the clean correspondences.
+            const allTracks = tracker.finish();   // already length-filtered (>= minTrackLen)
+            const survivors = allTracks.filter(tr => trackIsCoherent(tr, TRACKLET_COHERENCE_TOL));
+            const {cur: pairCur, prev: pairPrev} = pairCorrespondences(survivors, n);
+            for (let i = 1; i < n; i++) {
+                const res = fitFromCorrespondences(cv, pairCur[i] || [], pairPrev[i] || []);
+                if (res.weak) weakLinks++;
+                Mh[i] = res.H;
+                Mr[i] = res.rigid;
             }
+            console.log(`Feature Panorama tracklets: ${allTracks.length} persistent (>=${minTrackLen}f) → ${survivors.length} coherent`);
         }
-        if (prevDes) { prevDes.delete(); prevDes = null; }
 
         // ===== choose the model & compose the global transform chain =====
         const anchor = Math.floor(n / 2);
@@ -510,6 +656,7 @@ async function runFeaturePano(o, mode) {
         const F = G.map(g => mat3mul(ST, g));
 
         console.log(`Feature Panorama: ${n} frames, anchor=${anchor}, ${weakLinks} weak link(s), ` +
+            `feat=${featureCount}/fast=${fastThreshold}/detScale=${detectScale}, ` +
             `${useRigid ? 'RIGID' : 'PLANAR'} (planar ${(bh.area/1e6).toFixed(1)}Mpx stretch ${bh.maxStretch.toFixed(1)}x, ` +
             `rigid ${(br.area/1e6).toFixed(1)}Mpx), ${outW}x${outH}px, scale=${scale.toFixed(3)}`);
 
@@ -685,56 +832,289 @@ async function renderFeaturePanoVideo(c) {
 export const exportFeaturePanorama = (o) => runFeaturePano(o, "image");
 export const exportFeaturePanoramaVideo = (o) => runFeaturePano(o, "video");
 
-// Estimate the transforms mapping CURRENT frame pixels onto PREVIOUS frame pixels.
-// Returns {H, rigid, weak}. H is the full homography (or a translation fallback);
-// rigid is a rotation+translation fit on the homography inliers (or that same
-// translation fallback). weak=true when no reliable homography was found.
-function estimatePairwise(cv, bf, prevKP, prevDes, curKP, curDes) {
-    const fallback = (dxs, dys, matched) => {
-        if (dxs && dxs.length >= 1) {
-            const sx = dxs.slice().sort((a, b) => a - b);
-            const sy = dys.slice().sort((a, b) => a - b);
-            const m = sx.length >> 1;
-            const tr = translate3(sx[m], sy[m]);
-            return {H: tr, rigid: tr, weak: true, matched: matched || []};
-        }
-        return {H: IDENTITY3.slice(), rigid: IDENTITY3.slice(), weak: true, matched: matched || []};
-    };
+// Auto-tune the feature-detection parameters for the content AROUND the current
+// frame. Grid-searches (detection downscale × FAST contrast threshold), scoring
+// each combo by the number of COHERENT multi-frame tracklets it yields over a few
+// neighbouring frames (not raw inlier count, which just rewards a flood of noise
+// matches), and returns the best {featureCount, fastThreshold, detectScale, score,
+// tested}. Cheap: it only touches a handful of frames, not the whole A-B range.
+const OPT_SCALES = [1, 2, 4, 8];
+const OPT_THRESHOLDS = [20, 10, 5, 2];  // include very-low thresholds for faint, low-contrast content
+const OPT_FEATURE_COUNT = 3000;         // generous cap during the sweep so matching isn't starved
+const OPT_FRAME_SPAN = 2;               // sample frames at offsets [-2..+2] * frameStep around current
 
-    if (!prevDes || !curDes || prevDes.rows < 2 || curDes.rows < 2) return fallback();
+export async function optimizeFeatureTracking(o) {
+    const cv = o.cv;
+    const videoData = o.videoData;
+    const startFrame = o.startFrame;
+    const endFrame = o.endFrame;
+    const frameStep = Math.max(1, Math.round(o.frameStep || 1));
+    const crop = Math.max(0, Math.round(o.crop || 0));
+    const useMask = !!o.useMask && !!o.maskImageData;
+    const maskImageData = o.maskImageData || null;
+    const setMenuLabel = o.setMenuLabel || (() => {});
+    const center = Math.max(startFrame, Math.min(endFrame, o.currentFrame ?? startFrame));
 
-    const knn = new cv.DMatchVectorVector();
-    const curPts = [], prevPts = [], dxs = [], dys = [];
-    try {
-        bf.knnMatch(curDes, prevDes, knn, 2);
-        for (let m = 0; m < knn.size(); m++) {
-            const pair = knn.get(m);
-            if (pair.size() < 2) continue;
-            const a = pair.get(0), b = pair.get(1);
-            if (a.distance < RATIO_TEST * b.distance) {
-                const cp = curKP[a.queryIdx];
-                const pp = prevKP[a.trainIdx];
-                if (!cp || !pp) continue;
-                curPts.push(cp.x, cp.y);
-                prevPts.push(pp.x, pp.y);
-                dxs.push(pp.x - cp.x);
-                dys.push(pp.y - cp.y);
-            }
-        }
-    } finally {
-        knn.delete();
+    if (!cv || !cv.Mat) { alert("OpenCV not available for feature optimization"); return null; }
+
+    // Build a small, ordered, deduped set of frames around the current frame.
+    const frameSet = [];
+    for (let d = -OPT_FRAME_SPAN; d <= OPT_FRAME_SPAN; d++) {
+        const f = center + d * frameStep;
+        if (f >= startFrame && f <= endFrame && !frameSet.includes(f)) frameSet.push(f);
+    }
+    frameSet.sort((a, b) => a - b);
+    if (frameSet.length < 2) {
+        alert("Need at least two frames around the current frame to optimize (widen the A-B range)");
+        return null;
     }
 
+    const savedPaused = par.paused;
+    const savedFrame = par.frame;
+    const savedJVA = Globals.justVideoAnalysis;
+    Globals.justVideoAnalysis = true;
+    par.paused = true;
+
+    const grays = [];
+    const persistent = [];
+    try {
+        const first = await loadVideoFrame(videoData, frameSet[0]);
+        if (!first) { alert("Could not load a video frame for optimization"); return null; }
+        const W = first.width, H = first.height;
+
+        const frameCanvas = document.createElement('canvas');
+        frameCanvas.width = W;
+        frameCanvas.height = H;
+        const frameCtx = frameCanvas.getContext('2d', {willReadFrequently: true});
+
+        const detectMask = buildDetectMask(cv, W, H, crop, useMask, maskImageData);
+        if (detectMask) persistent.push(detectMask);
+        const noMask = new cv.Mat();
+        persistent.push(noMask);
+
+        // Decode each sample frame once to a full-resolution gray Mat.
+        for (const f of frameSet) {
+            const img = await loadVideoFrame(videoData, f);
+            if (!img) { grays.push(null); continue; }
+            frameCtx.clearRect(0, 0, W, H);
+            frameCtx.drawImage(img, 0, 0, W, H);
+            const id = frameCtx.getImageData(0, 0, W, H);
+            const src = cv.matFromImageData(id);
+            const gray = new cv.Mat();
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            src.delete();
+            grays.push(gray);
+        }
+
+        let best = null;
+        let tested = 0;
+        const totalCombos = OPT_SCALES.length * OPT_THRESHOLDS.length;
+
+        const optMinLen = Math.max(2, Math.min(MIN_TRACKLET_LEN, grays.filter(Boolean).length));
+        for (const scale of OPT_SCALES) {
+            for (const thr of OPT_THRESHOLDS) {
+                const orb = makeORB(cv, OPT_FEATURE_COUNT, thr, Math.min(W, H) / scale);
+                const bf = new cv.BFMatcher(cv.NORM_HAMMING, false);
+                const trk = makeTracker(optMinLen);
+                let prevDes = null;
+                try {
+                    for (let gi = 0; gi < grays.length; gi++) {
+                        const g = grays[gi];
+                        if (!g) { if (prevDes) { prevDes.delete(); prevDes = null; } continue; }
+                        const det = detectFeatures(cv, orb, g, detectMask, noMask, scale);
+                        const pairs = prevDes ? matchMutual(cv, bf, prevDes, det.des) : null;
+                        trk.addFrame(gi, det.kp, pairs);
+                        if (prevDes) prevDes.delete();
+                        prevDes = det.des;
+                    }
+                } finally {
+                    if (prevDes) prevDes.delete();
+                    orb.delete();
+                    bf.delete();
+                }
+
+                // Score = count of COHERENT multi-frame tracklets (stable, trackable
+                // features) — NOT raw inlier count, which just rewards a flood of noise
+                // matches at low threshold / full resolution.
+                const score = trk.finish().filter(tr => trackIsCoherent(tr, TRACKLET_COHERENCE_TOL)).length;
+                if (!best || score > best.score) best = {detectScale: scale, fastThreshold: thr, score};
+                tested++;
+                setMenuLabel("status.optimizingPercent", {pct: Math.round(100 * tested / totalCombos)});
+                await new Promise(r => setTimeout(r, 0));
+            }
+        }
+
+        if (best) {
+            best.featureCount = OPT_FEATURE_COUNT;
+            best.tested = tested;
+            console.log(`Optimize Feature Tracking: best detScale=${best.detectScale}, ` +
+                `fast=${best.fastThreshold}, feat=${best.featureCount} ` +
+                `(${best.score} coherent tracklets over ${frameSet.length} frames)`);
+        }
+        return best;
+    } catch (e) {
+        console.error('Feature optimization failed:', e);
+        alert('Feature optimization failed: ' + e.message);
+        return null;
+    } finally {
+        for (const g of grays) { if (g) { try { g.delete(); } catch (_) { /* freed */ } } }
+        for (const m of persistent) { try { m.delete(); } catch (_) { /* freed */ } }
+        Globals.justVideoAnalysis = savedJVA;
+        par.paused = savedPaused;
+        par.frame = savedFrame;
+        GlobalDateTimeNode?.update(savedFrame);
+        setRenderOne(true);
+    }
+}
+
+// ---- matching, multi-frame tracklets & transform fitting ----------------
+
+// Mutual (forward-backward) ratio match between two frames' descriptors. Returns
+// index pairs {c, p}: cur keypoint c and prev keypoint p are EACH OTHER's
+// ratio-passing nearest neighbour. The mutual requirement rejects the asymmetric
+// one-off matches that would otherwise seed false tracks.
+function matchMutual(cv, bf, prevDes, curDes) {
+    if (!prevDes || !curDes || prevDes.rows < 2 || curDes.rows < 2) return [];
+    const fwd = new cv.DMatchVectorVector();   // cur -> prev
+    const bwd = new cv.DMatchVectorVector();   // prev -> cur
+    const pairs = [];
+    try {
+        bf.knnMatch(curDes, prevDes, fwd, 2);
+        bf.knnMatch(prevDes, curDes, bwd, 2);
+        const fwdBest = new Map();
+        for (let m = 0; m < fwd.size(); m++) {
+            const pr = fwd.get(m); if (pr.size() < 2) continue;
+            const a = pr.get(0), b = pr.get(1);
+            if (a.distance < RATIO_TEST * b.distance) fwdBest.set(a.queryIdx, a.trainIdx);
+        }
+        const bwdBest = new Map();
+        for (let m = 0; m < bwd.size(); m++) {
+            const pr = bwd.get(m); if (pr.size() < 2) continue;
+            const a = pr.get(0), b = pr.get(1);
+            if (a.distance < RATIO_TEST * b.distance) bwdBest.set(a.queryIdx, a.trainIdx);
+        }
+        for (const [c, p] of fwdBest) if (bwdBest.get(p) === c) pairs.push({c, p});
+    } finally {
+        fwd.delete();
+        bwd.delete();
+    }
+    return pairs;
+}
+
+// Incremental multi-frame tracker. Feed frames in order with their keypoints and
+// the mutual matches to the PREVIOUS frame ({c,p} pairs, or null/[] to break the
+// chain). Chains matches into tracks ({pts:[{i,x,y}...], lastI}). A track shorter
+// than minLen is dropped the instant it dies, so memory stays bounded over long
+// sequences. finish() returns all tracks that reached >= minLen frames.
+function makeTracker(minLen) {
+    const closed = [];
+    let activeByPrevIdx = new Map();   // previous frame's keypoint index -> its track
+    let prevKP = null;
+    return {
+        addFrame(i, kp, pairs) {
+            const newActive = new Map();
+            const extended = new Set();
+            if (pairs) {
+                for (const {c, p} of pairs) {
+                    let tr = activeByPrevIdx.get(p);
+                    if (tr && tr.lastI === i - 1) {
+                        tr.pts.push({i, x: kp[c].x, y: kp[c].y});
+                        tr.lastI = i;
+                    } else {
+                        tr = {pts: [{i: i - 1, x: prevKP[p].x, y: prevKP[p].y}, {i, x: kp[c].x, y: kp[c].y}], lastI: i};
+                    }
+                    newActive.set(c, tr);
+                    extended.add(tr);
+                }
+            }
+            for (const tr of activeByPrevIdx.values()) {
+                if (!extended.has(tr) && tr.pts.length >= minLen) closed.push(tr);
+            }
+            activeByPrevIdx = newActive;
+            prevKP = kp;
+        },
+        finish() {
+            for (const tr of activeByPrevIdx.values()) if (tr.pts.length >= minLen) closed.push(tr);
+            activeByPrevIdx = new Map();
+            return closed;
+        },
+        activePersistent(ml) {
+            const out = [], seen = new Set();
+            for (const tr of activeByPrevIdx.values()) {
+                if (seen.has(tr) || tr.pts.length < ml) continue;
+                seen.add(tr);
+                const last = tr.pts[tr.pts.length - 1];
+                out.push({x: last.x, y: last.y});
+            }
+            return out;
+        },
+    };
+}
+
+// A tracklet is COHERENT when (almost) every consecutive step is close to the
+// track's median step — i.e. near-constant velocity. Sensor-noise "tracks" jitter
+// randomly and fail this; real drifting scene features pass. Tracks are contiguous
+// by construction, so only step consistency is tested.
+function trackIsCoherent(tr, tol) {
+    const p = tr.pts;
+    if (p.length < 3) return true;
+    const vx = [], vy = [];
+    for (let j = 1; j < p.length; j++) { vx.push(p[j].x - p[j-1].x); vy.push(p[j].y - p[j-1].y); }
+    const mx = vx.slice().sort((a, b) => a - b)[vx.length >> 1];
+    const my = vy.slice().sort((a, b) => a - b)[vy.length >> 1];
+    let bad = 0;
+    for (let j = 0; j < vx.length; j++) if (Math.hypot(vx[j] - mx, vy[j] - my) > tol) bad++;
+    return bad <= Math.floor(vx.length * 0.25);   // tolerate up to 25% jittery steps
+}
+
+// Gather per-adjacent-pair correspondences (cur[i] / prev[i] flat coord arrays)
+// from surviving tracklets: every consecutive (i-1 -> i) hop of every tracklet.
+function pairCorrespondences(survivors, n) {
+    const cur = new Array(n), prev = new Array(n);
+    for (let i = 1; i < n; i++) { cur[i] = []; prev[i] = []; }
+    for (const tr of survivors) {
+        const p = tr.pts;
+        for (let j = 1; j < p.length; j++) {
+            const i = p[j].i;
+            if (i >= 1 && i < n && p[j - 1].i === i - 1) {
+                cur[i].push(p[j].x, p[j].y);
+                prev[i].push(p[j - 1].x, p[j - 1].y);
+            }
+        }
+    }
+    return {cur, prev};
+}
+
+function corrToPoints(pts) {
+    const a = [];
+    for (let k = 0; k < pts.length / 2; k++) a.push({x: pts[2*k], y: pts[2*k+1]});
+    return a;
+}
+
+// Fit the transform mapping CURRENT-frame points onto PREVIOUS-frame points from
+// explicit (already-clean, tracklet-derived) correspondences. Returns
+// {H, rigid, weak, matched}: H is the RANSAC homography (or a median-translation
+// fallback), rigid is a rotation+translation fit on the homography inliers.
+// weak=true when no reliable homography was found.
+function fitFromCorrespondences(cv, curPts, prevPts) {
     const good = curPts.length / 2;
-    const goodMatched = [];
-    for (let k = 0; k < good; k++) goodMatched.push({x: curPts[2*k], y: curPts[2*k+1]});
-    if (good < MIN_GOOD_MATCHES) return fallback(dxs, dys, goodMatched);
+    const fallback = () => {
+        if (good >= 1) {
+            const dxs = [], dys = [];
+            for (let k = 0; k < good; k++) { dxs.push(prevPts[2*k] - curPts[2*k]); dys.push(prevPts[2*k+1] - curPts[2*k+1]); }
+            dxs.sort((a, b) => a - b); dys.sort((a, b) => a - b);
+            const m = good >> 1;
+            const tr = translate3(dxs[m], dys[m]);
+            return {H: tr, rigid: tr, weak: true, matched: corrToPoints(curPts)};
+        }
+        return {H: IDENTITY3.slice(), rigid: IDENTITY3.slice(), weak: true, matched: []};
+    };
+    if (good < MIN_GOOD_MATCHES) return fallback();
 
     const srcM = cv.matFromArray(good, 1, cv.CV_32FC2, curPts);
     const dstM = cv.matFromArray(good, 1, cv.CV_32FC2, prevPts);
     const inlierMask = new cv.Mat();
-    let Hm = null;
-    let result = null;
+    let Hm = null, result = null;
     try {
         Hm = cv.findHomography(srcM, dstM, cv.RANSAC, RANSAC_REPROJ, inlierMask);
         if (Hm && Hm.rows === 3 && Hm.cols === 3) {
@@ -756,7 +1136,7 @@ function estimatePairwise(cv, bf, prevKP, prevDes, curKP, curDes) {
     dstM.delete();
     inlierMask.delete();
 
-    return result || fallback(dxs, dys, goodMatched);
+    return result || fallback();
 }
 
 function isReasonableHomography(H) {

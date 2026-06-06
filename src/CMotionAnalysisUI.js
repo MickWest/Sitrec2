@@ -99,6 +99,18 @@ let panoFeatureFrameStep = 1;
 let panoFeatureCrop = 0;
 let panoFeatureUseMask = true;
 let panoFeatureProjection = "auto"; // "auto" | "planar" | "rigid"
+// Feature-DETECTION tuning. Defaults match ORB's stock behaviour (sharp, high-
+// frequency corners). For low-contrast / blurry content (e.g. soft clouds) lower
+// the contrast threshold and/or raise the detect scale, or use "Optimize Feature
+// Tracking" to auto-tune them for the content around the current frame.
+let panoFeatureCount = 2000;        // ORB feature cap (nfeatures)
+let panoFeatureFastThreshold = 20;  // FAST corner-contrast threshold (lower = fainter features)
+let panoFeatureDetectScale = 1;     // detect at 1/N resolution (higher = larger, blurrier features)
+// Registration source: "orb" detects+matches ORB features (re-detected each frame);
+// "motion" reuses the MotionAnalyzer's optical-flow tracklets (same points tracked
+// across many frames — more consistent on soft/low-contrast content). "motion"
+// requires a motion-analysis pass over the range first.
+let panoFeatureSource = "orb";      // "orb" | "motion"
 // De-fence options (see DefenceExporter.js).
 let defenceVarThresh = 0.45;   // fence-aligned variance below this = static board -> removed
 let defenceGapThresh = 0.12;   // gap-colour weight below this = fence-coloured -> removed
@@ -1004,7 +1016,13 @@ async function exportMotionCSV() {
 let exportPanoMenuItem = null;
 let exportFeaturePanoMenuItem = null;
 let exportFeaturePanoVideoMenuItem = null;
+let optimizeFeatureMenuItem = null;
 let exportPanoVideoMenuItem = null;
+// Feature-detection slider controllers, kept so "Optimize Feature Tracking" can
+// push its tuned values back into the GUI via updateDisplay().
+let featureCountController = null;
+let featureFastThresholdController = null;
+let featureDetectScaleController = null;
 let stabilizeMenuItem = null;
 let defenceMenuItem = null;
 let defenceVideoMenuItem = null;
@@ -1217,8 +1235,47 @@ function featurePanoOptions(videoData) {
         useMask,
         maskImageData,
         projection: panoFeatureProjection,
+        featureCount: panoFeatureCount,
+        fastThreshold: panoFeatureFastThreshold,
+        detectScale: panoFeatureDetectScale,
+        currentFrame: par.frame,
+        // "Motion Tracklets" source: hand the exporter the analyzer's optical-flow
+        // tracklets as per-frame correspondences (px,py = previous position,
+        // px+dx,py+dy = current). Only wired when the source is "motion".
+        getCorrespondences: panoFeatureSource === "motion" ? motionTrackletCorrespondences : null,
         t: (key, opts) => mt(key, opts),
     };
+}
+
+// Per-frame correspondences from the MotionAnalyzer's optical-flow tracklets, in the
+// exporter's convention: curPts (this frame) onto prevPts (the previous frame).
+// Returns null when a frame has no usable tracklets.
+function motionTrackletCorrespondences(frame) {
+    const vectors = motionAnalyzer?.resultCache?.get(frame)?.flowData?.vectors;
+    if (!vectors || vectors.length < 2) return null;
+    const curPts = [], prevPts = [];
+    for (const v of vectors) {
+        if (!v.isInlier) continue;
+        prevPts.push(v.px, v.py);
+        curPts.push(v.px + v.dx, v.py + v.dy);
+    }
+    if (curPts.length < 4) return null;
+    return {curPts, prevPts};
+}
+
+// The "Motion Tracklets" source needs a completed motion-analysis pass over the
+// range first (so resultCache holds the optical-flow tracklets). Runs it on demand,
+// reusing the same path as the Motion Panorama. Returns false to abort the export.
+async function ensureMotionTrackletsForFeaturePano(menuItem, doneLabel) {
+    if (panoFeatureSource !== "motion") return true;
+    if (isMotionAnalysisReady()) return true;
+    setMenuItemLabel(menuItem, "status.analyzingPercent", {pct: 0});
+    const ready = await analyzeAllFrames((progress, total) => setMotionAnalysisProgressLabel(menuItem, progress, total));
+    if (!ready) {
+        console.warn("Feature pano (motion tracklets) aborted: motion analysis did not complete for the range");
+        setMenuItemLabel(menuItem, doneLabel);
+    }
+    return ready;
 }
 
 async function exportFeaturePano() {
@@ -1229,6 +1286,7 @@ async function exportFeaturePano() {
         mt("menu.panorama.exportFeature.label")
     );
     if (!result) return;
+    if (!await ensureMotionTrackletsForFeaturePano(exportFeaturePanoMenuItem, "menu.panorama.exportFeature.label")) return;
     const {exportFeaturePanorama} = await import("./FeaturePanoramaExporter");
     await exportFeaturePanorama({
         ...featurePanoOptions(result.videoData),
@@ -1246,6 +1304,7 @@ async function exportFeaturePanoVideo() {
         mt("menu.panorama.exportFeatureVideo.label")
     );
     if (!result) return;
+    if (!await ensureMotionTrackletsForFeaturePano(exportFeaturePanoVideoMenuItem, "menu.panorama.exportFeatureVideo.label")) return;
     const {exportFeaturePanoramaVideo} = await import("./FeaturePanoramaExporter");
     await exportFeaturePanoramaVideo({
         ...featurePanoOptions(result.videoData),
@@ -1253,6 +1312,43 @@ async function exportFeaturePanoVideo() {
         doneLabel: "menu.panorama.exportFeatureVideo.label",
         shouldCancel: isPanoJobCancelled,
     });
+}
+
+// "Optimize Feature Tracking" — auto-tune the feature-detection sliders for the
+// content around the CURRENT frame. Grid-searches detect-scale × contrast and
+// applies the best combo (most RANSAC inliers) back into the GUI. Useful when the
+// default sharp-corner detector finds nothing on low-contrast/blurry content.
+async function optimizeFeatureTrackingHandler() {
+    beginPanoJob();
+    const result = await ensureOpenCVAndAnalyzer(
+        optimizeFeatureMenuItem,
+        mt("status.loadingOpenCv"),
+        mt("menu.panorama.optimizeFeature.label")
+    );
+    if (!result) return;
+    try {
+        const {optimizeFeatureTracking} = await import("./FeaturePanoramaExporter");
+        const best = await optimizeFeatureTracking({
+            ...featurePanoOptions(result.videoData),
+            setMenuLabel: (key, opts) => setMenuItemLabel(optimizeFeatureMenuItem, key, opts),
+        });
+        if (best) {
+            panoFeatureCount = best.featureCount;
+            panoFeatureFastThreshold = best.fastThreshold;
+            panoFeatureDetectScale = best.detectScale;
+            featureCountController?.updateDisplay();
+            featureFastThresholdController?.updateDisplay();
+            featureDetectScaleController?.updateDisplay();
+            alert(mt("status.optimizeResult", {
+                scale: best.detectScale,
+                contrast: best.fastThreshold,
+                count: best.featureCount,
+                tracklets: best.score,
+            }));
+        }
+    } finally {
+        setMenuItemLabel(optimizeFeatureMenuItem, "menu.panorama.optimizeFeature.label");
+    }
 }
 
 // "De-fence" — reconstruct the distant scene behind a foreground fence (see
@@ -1671,6 +1767,7 @@ export function addMotionAnalysisMenu() {
         exportPanoVideo: exportPanoVideo,
         exportFeaturePano: exportFeaturePano,
         exportFeaturePanoVideo: exportFeaturePanoVideo,
+        optimizeFeatureTracking: optimizeFeatureTrackingHandler,
         stabilizeVideo: toggleStabilization,
         defence: exportDefenceHandler,
         defenceVideo: exportDefenceVideoHandler,
@@ -1808,8 +1905,15 @@ export function addMotionAnalysisMenu() {
         get featureCrop() { return panoFeatureCrop; }, set featureCrop(v) { panoFeatureCrop = v; },
         get featureUseMask() { return panoFeatureUseMask; }, set featureUseMask(v) { panoFeatureUseMask = v; },
         get featureProjection() { return panoFeatureProjection; }, set featureProjection(v) { panoFeatureProjection = v; },
+        get featureCount() { return panoFeatureCount; }, set featureCount(v) { panoFeatureCount = v; },
+        get featureContrast() { return panoFeatureFastThreshold; }, set featureContrast(v) { panoFeatureFastThreshold = v; },
+        get featureScale() { return panoFeatureDetectScale; }, set featureScale(v) { panoFeatureDetectScale = v; },
+        get featureSource() { return panoFeatureSource; }, set featureSource(v) { panoFeatureSource = v; },
     };
     const featureOptions = panoFolder.addFolder(mt("menu.panorama.featureOptions.title")).close().perm();
+    featureOptions.add(featurePanoParams, 'featureSource', {'ORB Features': 'orb', 'Motion Tracklets': 'motion'})
+        .name(mt("menu.panorama.featureSource.label"))
+        .tooltip(mt("menu.panorama.featureSource.tooltip")).perm();
     featureOptions.add(featurePanoParams, 'featureFrameStep', 1, 60, 1)
         .name(mt("menu.panorama.featureFrameStep.label"))
         .tooltip(mt("menu.panorama.featureFrameStep.tooltip")).perm();
@@ -1822,6 +1926,19 @@ export function addMotionAnalysisMenu() {
     featureOptions.add(featurePanoParams, 'featureProjection', {Auto: 'auto', Planar: 'planar', Rigid: 'rigid'})
         .name(mt("menu.panorama.featureProjection.label"))
         .tooltip(mt("menu.panorama.featureProjection.tooltip")).perm();
+    // Detection-tuning sliders for low-contrast / low-frequency content.
+    featureDetectScaleController = featureOptions.add(featurePanoParams, 'featureScale', 1, 8, 1)
+        .name(mt("menu.panorama.featureScale.label"))
+        .tooltip(mt("menu.panorama.featureScale.tooltip")).perm();
+    featureFastThresholdController = featureOptions.add(featurePanoParams, 'featureContrast', 1, 60, 1)
+        .name(mt("menu.panorama.featureContrast.label"))
+        .tooltip(mt("menu.panorama.featureContrast.tooltip")).perm();
+    featureCountController = featureOptions.add(featurePanoParams, 'featureCount', 500, 8000, 100)
+        .name(mt("menu.panorama.featureCount.label"))
+        .tooltip(mt("menu.panorama.featureCount.tooltip")).perm();
+    optimizeFeatureMenuItem = featureOptions.add(menuActions, 'optimizeFeatureTracking')
+        .name(mt("menu.panorama.optimizeFeature.label"))
+        .tooltip(mt("menu.panorama.optimizeFeature.tooltip")).perm();
 
     // Masking is a persistent folder, available as soon as a video is loaded — it
     // does NOT require Start Analysis. Its controls route through ensureMaskingAnalyzer()
