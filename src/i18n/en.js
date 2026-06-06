@@ -542,6 +542,10 @@ const en = {
                     label: "Export Motion Panorama",
                     tooltip: "Create a panorama image from video frames using motion tracking offsets",
                 },
+                exportFeature: {
+                    label: "Export Feature Pano",
+                    tooltip: "Create a panorama by feature-matching and warping video frames (handles rotation and perspective distortion, unlike Export Motion Panorama)",
+                },
                 exportVideo: {
                     label: "Export Pano Video",
                     tooltip: "Create a 4K video showing the panorama with video frame overlay",
@@ -654,6 +658,8 @@ const en = {
             creatingTrack: "Creating track...",
             buildingPanorama: "Building panorama...",
             buildingPanoramaPercent: "Building panorama... {{pct}}%",
+            detectingFeaturesPercent: "Detecting & matching features... {{pct}}%",
+            stitchingPercent: "Stitching panorama... {{pct}}%",
             loadingFrame: "Loading frame {{frame}}... ({{current}}/{{total}})",
             loadingFrameSkipped: "Loading frame {{frame}}... ({{current}}/{{total}}) ({{skipped}} skipped)",
             renderingPercent: "Rendering... {{pct}}%",

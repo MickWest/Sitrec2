@@ -801,6 +801,7 @@ async function exportMotionCSV() {
 // file (the helpers extracted from calculatePanoDimensions / drawFrameToPano
 // use them before this block).
 let exportPanoMenuItem = null;
+let exportFeaturePanoMenuItem = null;
 let exportPanoVideoMenuItem = null;
 let stabilizeMenuItem = null;
 let stabilizationEnabled = false;
@@ -981,9 +982,48 @@ async function exportMotionPanorama() {
         
         console.log(`Motion panorama exported: ${filename}`);
         setMenuItemLabel(exportPanoMenuItem, "menu.panorama.exportImage.label");
-        
+
         document.body.removeChild(previewOverlay);
     }, 'image/png');
+}
+
+// "Export Feature Pano" — a separate, perspective-aware panorama path that
+// registers frames with industry-standard feature matching + homography warping
+// (see FeaturePanoramaExporter.js) instead of the optical-flow translation used
+// by Export Motion Panorama. It needs OpenCV + a video, but NOT a completed
+// motion-analysis pass (it does its own registration). The redaction mask and
+// pano frame-step / crop settings are reused so the two panos behave alike.
+async function exportFeaturePano() {
+    const result = await ensureOpenCVAndAnalyzer(
+        exportFeaturePanoMenuItem,
+        mt("status.loadingOpenCv"),
+        mt("menu.panorama.exportFeature.label")
+    );
+    if (!result) return;
+    const {videoData} = result;
+
+    const useMask = useMaskInPano && motionAnalyzer.maskEnabled
+        && motionAnalyzer.maskOverlayNode && motionAnalyzer.maskOverlayNode.maskCanvas;
+    let maskImageData = null;
+    if (useMask) {
+        motionAnalyzer.maskOverlayNode.updateMaskImageData();
+        maskImageData = motionAnalyzer.maskOverlayNode.maskImageData;
+    }
+
+    const {exportFeaturePanorama} = await import("./FeaturePanoramaExporter");
+    await exportFeaturePanorama({
+        cv: getCV(),
+        videoData,
+        startFrame: Sit.aFrame,
+        endFrame: Sit.bFrame,
+        frameStep: panoFrameStep,
+        crop: panoCrop,
+        useMask,
+        maskImageData,
+        t: (key, opts) => mt(key, opts),
+        setMenuLabel: (key, opts) => setMenuItemLabel(exportFeaturePanoMenuItem, key, opts),
+        doneLabel: "menu.panorama.exportFeature.label",
+    });
 }
 
 async function exportPanoVideo() {
@@ -1329,6 +1369,7 @@ export function addMotionAnalysisMenu() {
         createTrack: createTrackFromMotion,
         exportMotion: exportMotionCSV,
         exportPanorama: exportMotionPanorama,
+        exportFeaturePano: exportFeaturePano,
         exportPanoVideo: exportPanoVideo,
         stabilizeVideo: toggleStabilization,
     };
@@ -1365,6 +1406,11 @@ export function addMotionAnalysisMenu() {
     exportPanoMenuItem = panoFolder.add(menuActions, 'exportPanorama')
         .name(mt("menu.panorama.exportImage.label"))
         .tooltip(mt("menu.panorama.exportImage.tooltip"))
+        .perm();
+
+    exportFeaturePanoMenuItem = panoFolder.add(menuActions, 'exportFeaturePano')
+        .name(mt("menu.panorama.exportFeature.label"))
+        .tooltip(mt("menu.panorama.exportFeature.tooltip"))
         .perm();
 
     exportPanoVideoMenuItem = panoFolder.add(menuActions, 'exportPanoVideo')
