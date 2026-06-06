@@ -248,6 +248,14 @@ export function renderMain(elapsed) {
         return;
     }
 
+    // The Scripted Video offline renderer drives its own render loop and forces the
+    // view to the export resolution. If the main loop also ran it would reset the view
+    // size (updateWH/adjustSize) and re-pump nodes every tick, making camera.aspect (and
+    // the 3D-tile LOD frustum) oscillate frame-to-frame. So it takes exclusive control.
+    if (Globals.scriptedVideoRendering) {
+        return;
+    }
+
     // Profile overall frame
     if (globalProfiler) globalProfiler.push('#1f77b4', 'Frame');
 

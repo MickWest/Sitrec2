@@ -128,6 +128,7 @@ import {
 import {addObjectTrackingMenu, resetObjectTracking} from "./CObjectTracking";
 import {resetHorizonExtractor} from "./CHorizonExtractor";
 import {addTextExtractionMenu} from "./CTextExtraction";
+import {addScriptedVideoMenu} from "./CScriptedVideo";
 import {QuadTreeTile} from "./QuadTreeTile";
 import {initI18n, t} from "./i18n";
 import {showError} from "./showError";
@@ -1862,6 +1863,7 @@ async function initializeOnce() {
     addMotionAnalysisMenu();
     addObjectTrackingMenu();
     addTextExtractionMenu();
+    addScriptedVideoMenu();
     setUnits(new CUnits("Nautical"));
     setFileManager(new CFileManager())
     
