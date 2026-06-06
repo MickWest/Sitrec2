@@ -238,9 +238,13 @@ export class CNodeCamera extends CNode3D {
         const maxFrame = Math.max(0, Sit.frames - 1);
         if (controller._max !== maxFrame) {
             controller._max = maxFrame;
-            if (this.switchToGroundTrackFrame > maxFrame) {
-                this.switchToGroundTrackFrame = maxFrame;
-            }
+            // Do NOT clamp this.switchToGroundTrackFrame here. Sit.frames can
+            // transiently shrink during load (e.g. before the video decode
+            // reports its final frame count), and overwriting the stored value
+            // would permanently destroy the user's setting — which then gets
+            // serialized as the clamped value (typically 0). The stored
+            // property is the user's intent; it is clamped safely at use-time
+            // in getGroundTrackSwitchFrame(). Only the GUI display range updates.
             controller.updateDisplay();
         }
     }
