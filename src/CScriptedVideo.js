@@ -37,7 +37,7 @@ import {MediabunnyExporter} from "./MediabunnyExporter";
 import {getBestFormatForResolution, getVideoExtension} from "./VideoExporter";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
 import {ExportProgressWidget, getExportPrefix} from "./utils";
-import {makeDraggable, blockViewEvents} from "./DragResizeUtils";
+import {makeDraggable, blockViewEvents, clampBelowMenuBar} from "./DragResizeUtils";
 import {getControlsContainer} from "./PageStructure";
 
 // ---------------------------------------------------------------------------
@@ -1462,9 +1462,10 @@ class CScriptedVideoManager {
         document.body.appendChild(panel);
         this.window = panel;
 
-        // make it draggable by the header, and don't let the 3D view eat mouse events
+        // make it draggable by the header, and don't let the 3D view eat mouse events.
+        // Dragging it up under the menu bar closes it (re-opening drops it back below).
         blockViewEvents(panel);
-        makeDraggable(panel, { handle: header, excludeElements: [closeBtn] });
+        makeDraggable(panel, { handle: header, excludeElements: [closeBtn], closeOnDragOffTop: () => this.hideWindow() });
 
         // redraw timeline when the window is resized
         try { new ResizeObserver(() => this.drawTimeline()).observe(panel); } catch (e) {}
@@ -1774,7 +1775,12 @@ class CScriptedVideoManager {
 
     showWindow() {
         if (this.external && !this.external.closed) { this.external.focus(); return; }
-        if (this.window) { this.window.style.display = "flex"; this.parse(); setTimeout(() => { this.drawTimeline(); this._renderBackdrop(); }, 0); }
+        if (this.window) {
+            this.window.style.display = "flex";
+            clampBelowMenuBar(this.window);   // never re-open off the top of the screen
+            this.parse();
+            setTimeout(() => { this.drawTimeline(); this._renderBackdrop(); }, 0);
+        }
     }
     hideWindow() {
         if (this.external && !this.external.closed) { this.dockWindow(); return; }
