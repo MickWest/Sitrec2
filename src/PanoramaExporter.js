@@ -9,8 +9,25 @@ import {intersectSurface} from "./threeExt";
 import * as LAYER from "./LayerMasks";
 import {t} from "./i18n";
 
-const MAX_PANORAMA_WIDTH = 20000;
+// Browser 2D-canvas limits — see the matching note in CMotionAnalysisUI.js. An
+// over-limit canvas fails SILENTLY (drawImage paints nothing, reads back black), so we
+// clamp BOTH the largest single dimension and the total area, not just the width.
+const MAX_PANORAMA_DIM = 16384;
+const MAX_PANORAMA_AREA = 128 * 1024 * 1024; // ~134M px, safely under the area limit
 const DEFAULT_BACKGROUND_DISTANCE = 50000;
+
+// Uniform downscale factor bringing a width x height panorama within both canvas
+// limits (1 = no scaling needed). Aspect ratio preserved.
+function panoFitScale(width, height) {
+    let scale = 1;
+    scale = Math.min(scale, MAX_PANORAMA_DIM / width);
+    scale = Math.min(scale, MAX_PANORAMA_DIM / height);
+    const area = width * height;
+    if (area > MAX_PANORAMA_AREA) {
+        scale = Math.min(scale, Math.sqrt(MAX_PANORAMA_AREA / area));
+    }
+    return scale;
+}
 
 function getBackgroundPoint(cameraPos, lookDir, terrainNode) {
     if (terrainNode) {
@@ -152,11 +169,12 @@ export async function exportPanorama() {
         let panoWidthPx = Math.ceil(pxRange + frameWidth);
         let panoHeightPx = Math.ceil(pyRange + frameHeight);
 
-        let scale = 1;
-        if (panoWidthPx > MAX_PANORAMA_WIDTH) {
-            scale = MAX_PANORAMA_WIDTH / panoWidthPx;
-            panoWidthPx = MAX_PANORAMA_WIDTH;
-            panoHeightPx = Math.ceil(panoHeightPx * scale);
+        // Clamp to the browser canvas limits (dimension AND area) so a large sweep
+        // does not silently produce an all-black, over-limit canvas.
+        const scale = panoFitScale(panoWidthPx, panoHeightPx);
+        if (scale < 1) {
+            panoWidthPx = Math.max(1, Math.floor(panoWidthPx * scale));
+            panoHeightPx = Math.max(1, Math.floor(panoHeightPx * scale));
         }
 
         const scaledFrameWidth = Math.ceil(frameWidth * scale);

@@ -41,9 +41,35 @@ import {
 } from "./CMotionAnalysis";
 
 // Panorama constants (shared with the class's export flow below).
-const MAX_PANORAMA_WIDTH = 20000;
+// Browser 2D-canvas size limits. A panorama from a large 2D camera sweep can grow
+// past what the browser will allocate, and the failure is SILENT: createElement and
+// `canvas.width = N` both succeed, every drawImage "succeeds", but the backing store
+// is never allocated, so the canvas reads back fully transparent/black. There are two
+// independent limits to respect:
+//   - MAX_PANORAMA_DIM: the largest single dimension (width OR height). Strict GPUs/
+//     drivers cap this around 16384px.
+//   - MAX_PANORAMA_AREA: the largest total pixel count. Empirically ~256-320M px here,
+//     but it varies by GPU/driver, so we keep a conservative margin.
+// Capping only the WIDTH (the original behaviour) was insufficient: a tall sweep kept
+// width <= the cap yet blew the AREA limit, producing an all-black "panorama".
+const MAX_PANORAMA_DIM = 16384;
+const MAX_PANORAMA_AREA = 128 * 1024 * 1024; // ~134M px, safely under the area limit
 const PANO_VIDEO_4K_WIDTH = 3840;
 const PANO_VIDEO_4K_HEIGHT = 2160;
+
+// Uniform downscale factor that brings a width x height panorama within BOTH the
+// per-dimension and total-area canvas limits (1 = no scaling needed). Aspect ratio is
+// preserved because the same factor is applied to width and height.
+function panoFitScale(width, height) {
+    let scale = 1;
+    scale = Math.min(scale, MAX_PANORAMA_DIM / width);
+    scale = Math.min(scale, MAX_PANORAMA_DIM / height);
+    const area = width * height;
+    if (area > MAX_PANORAMA_AREA) {
+        scale = Math.min(scale, Math.sqrt(MAX_PANORAMA_AREA / area));
+    }
+    return scale;
+}
 
 // Panorama export toggles — the addMotionAnalysisMenu folder below wires them.
 let exportWithEffects = false;
@@ -129,11 +155,12 @@ function calculatePanoDimensions(videoData, startFrame, minPx, maxPx, minPy, max
     let panoWidthPx = Math.ceil(pxRange + croppedWidth);
     let panoHeightPx = Math.ceil(pyRange + croppedHeight);
 
-    let scale = 1;
-    if (panoWidthPx > MAX_PANORAMA_WIDTH) {
-        scale = MAX_PANORAMA_WIDTH / panoWidthPx;
-        panoWidthPx = MAX_PANORAMA_WIDTH;
-        panoHeightPx = Math.ceil(panoHeightPx * scale);
+    // Clamp to the browser canvas limits (both dimension and total area). Without this
+    // a large sweep produces an over-limit canvas that silently stays black.
+    const scale = panoFitScale(panoWidthPx, panoHeightPx);
+    if (scale < 1) {
+        panoWidthPx = Math.max(1, Math.floor(panoWidthPx * scale));
+        panoHeightPx = Math.max(1, Math.floor(panoHeightPx * scale));
     }
 
     return {
@@ -769,7 +796,7 @@ async function exportMotionCSV() {
     setMenuItemLabel(exportMotionMenuItem, "menu.exportMotion.label");
 }
 
-// MAX_PANORAMA_WIDTH, PANO_VIDEO_4K_*, exportWithEffects, removeOuterBlack,
+// MAX_PANORAMA_DIM/AREA, PANO_VIDEO_4K_*, exportWithEffects, removeOuterBlack,
 // panoCrop, useMaskInPano and panoFrameStep are declared at the top of this
 // file (the helpers extracted from calculatePanoDimensions / drawFrameToPano
 // use them before this block).
