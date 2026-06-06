@@ -536,6 +536,36 @@ const en = {
                 label: "Align with Flow",
                 tooltip: "Rotate image so motion direction is horizontal",
             },
+            defence: {
+                label: "Start De-Fence",
+                tooltip: "Remove a foreground fence and reconstruct the distant scene seen through the moving gaps (needs camera pan)",
+            },
+            defenceVideo: {
+                label: "Export De-Fence Video",
+                tooltip: "Render a video of the de-fence process: a pass of the original video, then the fence dissolving as the scene accumulates, then the final result",
+            },
+            defenceOptions: {
+                title: "De-Fence",
+                technique: {
+                    label: "Technique",
+                    tooltip: "How to tell fence from background. Colour + Motion (default): lit-gap colour AND motion. Colour only: gap brightness/green — best when the fence is a distinct colour. Motion only: pixels that move with the background, not the fence (fence-aligned variance) — colour-independent, best on low-texture fences.",
+                    colourVariance: "Colour + Motion",
+                    colour: "Colour only",
+                    variance: "Motion only",
+                },
+                varThresh: {
+                    label: "Variance Threshold",
+                    tooltip: "How much a pixel must change (once the fence is aligned) to count as background. Lower = fills holes but lets more fence through; higher = cleaner but more gaps.",
+                },
+                gapThresh: {
+                    label: "Gap Brightness",
+                    tooltip: "Minimum lit-gap/green colour to count as background. Lower to keep darker background (e.g. shadowed lower fence); raise to reject more boards.",
+                },
+                bgBaseline: {
+                    label: "Background Baseline",
+                    tooltip: "Frames between samples when estimating the slower background motion. Larger = more reliable parallax separation; too large risks occlusion. ~24 is a good start.",
+                },
+            },
             panorama: {
                 title: "Panorama",
                 exportImage: {
@@ -699,6 +729,18 @@ const en = {
             saving: "Saving...",
             buildingStabilization: "Building stabilization...",
             exportProgressTitle: "Exporting pano video...",
+        },
+        defence: {
+            analyzing: "De-fence: estimating fence + background motion... {{pct}}%",
+            building: "De-fence: reconstructing background... {{pct}}%",
+            saving: "De-fence: saving...",
+            video: {
+                phaseOriginal: "Original video",
+                phaseRemoving: "Removing fence…",
+                phaseResult: "Reconstructed scene",
+                encodingHold: "De-fence: encoding final result… {{pct}}%",
+                unsupported: "Video encoding is not supported in this browser.",
+            },
         },
         errors: {
             noVideoView: "No video view found.",
