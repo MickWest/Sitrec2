@@ -9,6 +9,22 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.77.0 (2026-06-06)
+
+### New Features
+- **Scripted Video** (Video → Scripted Video): write a short text script of camera moves, view cuts, and on-screen captions to produce a cinematic flythrough, then export it as a 1080p60 video. Includes a live preview, a script editor with a draggable timeline, and scroll-wheel editing of timings and distances.
+- **De-Fence** (Motion Analysis → De-Fence): from a video panned past a fence (or similar foreground obstruction), reconstruct the scene behind it into a single fence-free image, with an option to also export a video showing the de-fence process step by step.
+
+### Improvements
+- **Allow Frame Scaling** (Motion Analysis → Panorama → Motion Panorama Options): motion panoramas built with rotated frames now keep every frame the same size by default, so they no longer drift in scale; turn this option on for footage from a genuinely zooming camera.
+- Draggable windows (such as the Scripted Video and Notes windows) now close when you drag them up off the top of the screen, and reopen neatly below the menu bar instead of getting stranded out of view.
+
+### Bug Fixes
+- Fixed Stop Analysis so it can also cancel a panorama job during duplicate-frame detection and motion gap-filling, instead of having to run to completion.
+- Fixed De-Fence and panorama video exports not cleaning up properly when cancelled or interrupted.
+
+---
+
 ## Version 2.76.1 (2026-06-06)
 
 ### Improvements
