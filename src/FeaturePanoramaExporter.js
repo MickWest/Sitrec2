@@ -294,6 +294,7 @@ async function runFeaturePano(o, mode) {
     const t = o.t || ((k) => k);
     const setMenuLabel = o.setMenuLabel || (() => {});
     const doneLabel = o.doneLabel || null;
+    const externalCancel = typeof o.shouldCancel === "function" ? o.shouldCancel : () => false;
 
     if (!cv || !cv.Mat) { alert("OpenCV not available for feature panorama"); return; }
     if (endFrame <= startFrame) { alert("Select a frame range (A-B) before exporting a feature panorama"); return; }
@@ -315,6 +316,9 @@ async function runFeaturePano(o, mode) {
     let prevDes = null;
     let weakLinks = 0;
     let cancelled = false;
+    // Cancelled either by the overlay's own Cancel button (local `cancelled`) or
+    // by the external "Stop Analysis" menu signal threaded in via o.shouldCancel.
+    const isCancelled = () => cancelled || externalCancel();
     let lastPreview = 0;
 
     try {
@@ -419,7 +423,7 @@ async function runFeaturePano(o, mode) {
         let lastMatched = null;   // matched (inlier) points on the most recent frame
 
         for (let i = 0; i < n; i++) {
-            if (cancelled) throw new Error("cancelled");
+            if (isCancelled()) throw new Error("cancelled");
             const frame = frames[i];
             setStatus(t("status.loadingFrame", {frame, current: i + 1, total: n}));
 
@@ -524,7 +528,7 @@ async function runFeaturePano(o, mode) {
 
         let skipped = 0;
         for (let i = 0; i < n; i++) {
-            if (cancelled) throw new Error("cancelled");
+            if (isCancelled()) throw new Error("cancelled");
             const frame = frames[i];
             setStatus(t("status.stitchingPercent", {pct: Math.round(100 * (i + 1) / n)}));
 
@@ -548,7 +552,7 @@ async function runFeaturePano(o, mode) {
             await renderFeaturePanoVideo({
                 cv, videoData, frames, n, F, outW, outH, W, H, featherAlpha, frameCtx,
                 panoCanvas, corners, previewCanvas, previewCtx, setStatus, setMenuLabel, t,
-                showPreview, isCancelled: () => cancelled,
+                showPreview, isCancelled,
             });
         } else {
             setStatus(t("status.saving"));

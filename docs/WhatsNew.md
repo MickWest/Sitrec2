@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.76.1 (2026-06-06)
+
+### Improvements
+- **Masking is now available as soon as a video is loaded** (Video → Motion Analysis → Masking): the *Masking* tools (Enable Mask, Edit Mask, Brush Size, Clear Mask, Auto Mask, Auto Mask Redactions, and all their settings) used to appear only after you clicked Start Analysis and vanished when you stopped. The Masking folder is now always present once a video is loaded, so you can paint and auto-mask without starting a motion-analysis pass first.
+
+### Bug Fixes
+- Fixed *Stop Analysis* not actually stopping a panorama export. Clicking Stop now cleanly cancels both the analysis and the panorama generation at any stage — for every export (Motion Pano Image, Motion Pano Video, Feature Pano Image, Feature Pano Video) — leaving no partial file saved and no leftover overlay.
+
 ## Version 2.76.0 (2026-06-06)
 
 ### New Features

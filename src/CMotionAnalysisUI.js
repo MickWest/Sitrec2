@@ -451,6 +451,10 @@ export function resetMotionAnalysis() {
 
 export async function toggleMotionAnalysis() {
     if (motionAnalyzer && motionAnalyzer.active) {
+        // Signal any in-flight analysis / pano-export loop to bail at its next
+        // poll, then tear down the live analysis. The running job's own finally
+        // restores frame state and resets its label.
+        panoCancelRequested = true;
         motionAnalyzer.stop();
         removeParamSliders();
         if (analyzeMenuItem) {
@@ -499,6 +503,22 @@ function startAnalysis(videoView) {
 }
 setStartAnalysis(startAnalysis);
 
+// Lazily ensure a MotionAnalyzer and its mask overlay exist so that Masking is
+// usable as soon as a video is loaded — WITHOUT starting a full motion-analysis
+// pass. The persistent Masking menu (built in addMotionAnalysisMenu) routes every
+// control through this. Returns the analyzer, or null if no video is loaded yet.
+// If analysis is later started, startAnalysis() reuses this same instance.
+function ensureMaskingAnalyzer() {
+    const videoView = NodeMan.get("video", false);
+    if (!videoView || !videoView.videoData) return null;
+    if (!motionAnalyzer) {
+        motionAnalyzer = new MotionAnalyzer(videoView);
+        setMotionAnalyzerRef(motionAnalyzer);
+    }
+    motionAnalyzer.ensureMaskOverlay();
+    return motionAnalyzer;
+}
+
 let motionFolder = null;
 let motionTrackCounter = 0;
 let createTrackMenuItem = null;
@@ -509,6 +529,16 @@ let exportMotionMenuItem = null;
 // progress, instead of each running their own polling loop and racing the
 // par.frame / Globals.justVideoAnalysis state.
 let analysisInProgress = null;
+
+// Cooperative cancellation for long-running analysis + panorama jobs. Clicking
+// "Stop Analysis" sets this flag (see toggleMotionAnalysis); every analysis /
+// pano-export loop polls isPanoJobCancelled() and ends itself cleanly — restoring
+// par.frame / par.paused, removing any progress overlay, and resetting its menu
+// label — instead of being force-killed mid-frame. Each user-initiated job clears
+// the flag at the start via beginPanoJob().
+let panoCancelRequested = false;
+function beginPanoJob() { panoCancelRequested = false; }
+function isPanoJobCancelled() { return panoCancelRequested; }
 
 function countCompleteInRange() {
     if (!motionAnalyzer) return 0;
@@ -657,6 +687,7 @@ async function analyzeAllFrames(progressCallback) {
     // progress through our own callback and return when it finishes.
     if (analysisInProgress) {
         while (analysisInProgress && !isMotionAnalysisReady()) {
+            if (isPanoJobCancelled()) break;
             if (progressCallback) progressCallback(countCompleteInRange(), totalFrames);
             await new Promise(r => setTimeout(r, 100));
         }
@@ -718,8 +749,10 @@ async function analyzeAllFrames(progressCallback) {
         // frameBuffer is warm); the second retries anything still incomplete.
         const MAX_PASSES = 3;
         for (let pass = 0; pass < MAX_PASSES; pass++) {
+            if (isPanoJobCancelled()) break;
             let stillMissing = 0;
             for (let f = aFrame; f <= bFrame; f++) {
+                if (isPanoJobCancelled()) break;
                 const cached = motionAnalyzer.resultCache.get(f);
                 if (cached && !cached.incomplete) continue;
 
@@ -761,6 +794,8 @@ async function analyzeAllFrames(progressCallback) {
             if (stillMissing === 0) break;
         }
 
+        if (isPanoJobCancelled()) return false;
+
         progressCallback?.({
             phase: "fallback",
             step: 3,
@@ -792,7 +827,7 @@ async function analyzeAllFrames(progressCallback) {
             pct: 100,
         });
 
-        return isMotionAnalysisReady();
+        return isPanoJobCancelled() ? false : isMotionAnalysisReady();
     } finally {
         if (motionAnalyzer) motionAnalyzer.suspendAnalysis = false;
         par.paused = savedPaused;
@@ -943,6 +978,7 @@ let stabilizeMenuItem = null;
 let stabilizationEnabled = false;
 
 async function exportMotionPanorama() {
+    beginPanoJob();
     const result = await ensureOpenCVAndAnalyzer(
         exportPanoMenuItem,
         mt("status.loadingOpenCv"),
@@ -1041,9 +1077,11 @@ async function exportMotionPanorama() {
     };
     
     let skippedFrames = 0;
+    let cancelledExport = false;
     for (let i = 0; i < totalFrames; i++) {
+        if (isPanoJobCancelled()) { cancelledExport = true; break; }
         const fd = frameData[i];
-        
+
         statusText.textContent = mt("status.loadingFrame", {
             current: i + 1,
             frame: fd.frame,
@@ -1089,12 +1127,21 @@ async function exportMotionPanorama() {
         }
     }
 
-    updatePreview();
-    statusText.textContent = mt("status.saving");
     Globals.justVideoAnalysis = false;
     par.paused = savedPaused;
     par.frame = savedFrame;
-    
+
+    if (cancelledExport) {
+        console.log("Motion panorama export cancelled");
+        document.body.removeChild(previewOverlay);
+        setMenuItemLabel(exportPanoMenuItem, "menu.panorama.exportImage.label");
+        setRenderOne(true);
+        return;
+    }
+
+    updatePreview();
+    statusText.textContent = mt("status.saving");
+
     setMenuItemLabel(exportPanoMenuItem, "status.saving");
 
     panoCanvas.toBlob((blob) => {
@@ -1142,6 +1189,7 @@ function featurePanoOptions(videoData) {
 }
 
 async function exportFeaturePano() {
+    beginPanoJob();
     const result = await ensureOpenCVAndAnalyzer(
         exportFeaturePanoMenuItem,
         mt("status.loadingOpenCv"),
@@ -1153,10 +1201,12 @@ async function exportFeaturePano() {
         ...featurePanoOptions(result.videoData),
         setMenuLabel: (key, opts) => setMenuItemLabel(exportFeaturePanoMenuItem, key, opts),
         doneLabel: "menu.panorama.exportFeature.label",
+        shouldCancel: isPanoJobCancelled,
     });
 }
 
 async function exportFeaturePanoVideo() {
+    beginPanoJob();
     const result = await ensureOpenCVAndAnalyzer(
         exportFeaturePanoVideoMenuItem,
         mt("status.loadingOpenCv"),
@@ -1168,10 +1218,12 @@ async function exportFeaturePanoVideo() {
         ...featurePanoOptions(result.videoData),
         setMenuLabel: (key, opts) => setMenuItemLabel(exportFeaturePanoVideoMenuItem, key, opts),
         doneLabel: "menu.panorama.exportFeatureVideo.label",
+        shouldCancel: isPanoJobCancelled,
     });
 }
 
 async function exportPanoVideo() {
+    beginPanoJob();
     const result = await ensureOpenCVAndAnalyzer(
         exportPanoVideoMenuItem,
         mt("status.loadingOpenCv"),
@@ -1240,15 +1292,16 @@ async function exportPanoVideo() {
     par.paused = true;
     
     for (let i = 0; i < totalFrames; i++) {
+        if (isPanoJobCancelled()) break;
         const fd = frameData[i];
-        
+
         par.frame = fd.frame;
         GlobalDateTimeNode.update(fd.frame);
 
         videoData.getImage(fd.frame);
         const loaded = await videoData.waitForFrame(fd.frame, 5000);
         if (!loaded) continue;
-        
+
         const image = videoData.getImageNoPurge(fd.frame);
         if (!image || !image.width) continue;
 
@@ -1259,6 +1312,16 @@ async function exportPanoVideo() {
             setMenuItemLabel(exportPanoVideoMenuItem, "status.panoPercent", {pct});
             await new Promise(r => setTimeout(r, 0));
         }
+    }
+
+    if (isPanoJobCancelled()) {
+        console.log("Pano video export cancelled");
+        Globals.justVideoAnalysis = false;
+        par.paused = savedPaused;
+        par.frame = savedFrame;
+        setMenuItemLabel(exportPanoVideoMenuItem, "menu.panorama.exportVideo.label");
+        setRenderOne(true);
+        return;
     }
 
     setMenuItemLabel(exportPanoVideoMenuItem, "status.renderingVideo");
@@ -1331,7 +1394,7 @@ async function exportPanoVideo() {
         await exporter.initialize();
 
         for (let i = 0; i < totalFrames; i++) {
-            if (progress.shouldStop()) break;
+            if (progress.shouldStop() || isPanoJobCancelled()) break;
 
             const fd = frameData[i];
             par.frame = fd.frame;
@@ -1413,7 +1476,7 @@ async function exportPanoVideo() {
             }
         }
 
-        if (progress.shouldSave()) {
+        if (progress.shouldSave() && !isPanoJobCancelled()) {
             const blob = await exporter.finalize(
                 (current, total) => progress.setFinalizeProgress(current, total),
                 (status) => progress.setStatus(status)
@@ -1635,6 +1698,111 @@ export function addMotionAnalysisMenu() {
     featureOptions.add(featurePanoParams, 'featureProjection', {Auto: 'auto', Planar: 'planar', Rigid: 'rigid'})
         .name(mt("menu.panorama.featureProjection.label"))
         .tooltip(mt("menu.panorama.featureProjection.tooltip")).perm();
+
+    // Masking is a persistent folder, available as soon as a video is loaded — it
+    // does NOT require Start Analysis. Its controls route through ensureMaskingAnalyzer()
+    // so the analyzer + mask overlay are spun up lazily on first use.
+    createMaskingFolder(motionFolder);
+}
+
+// Build the persistent "Masking" folder. Every control reads through to the
+// current analyzer (or a sensible default before one exists) and writes via
+// ensureMaskingAnalyzer(), which creates the analyzer + mask overlay on demand.
+// Because it lives outside createParamSliders/paramControllers, it survives
+// Start/Stop Analysis and is present whenever a video is loaded.
+function createMaskingFolder(parentFolder) {
+    const maskFolder = parentFolder.addFolder("Masking").close().perm();
+
+    // Live read-through accessors so the controls work before an analyzer exists.
+    // Action buttons + the editMask flag + the colour object live as plain props;
+    // the numeric/boolean analyzer fields are defined as proxies below.
+    const maskParams = {
+        editMask: false,
+        // Colour is bound as a plain object (lil-gui mutates addColor objects in
+        // place) and pushed into the analyzer on change.
+        autoMaskTargetColor: {r: 235, g: 235, b: 235},
+        clearMask: () => { const a = ensureMaskingAnalyzer(); if (a) { a.clearMask(); a.onMaskChange(); } },
+        autoMask: () => { const a = ensureMaskingAnalyzer(); if (a) a.autoMask(); },
+        autoMaskRedactions: () => { const a = ensureMaskingAnalyzer(); if (a) a.autoMaskRedactions(); },
+    };
+
+    // [property, default, sideEffect(analyzer)] — numeric / boolean fields that
+    // live on the analyzer. The setter ensures the analyzer, writes the value,
+    // then runs the side effect (re-run auto-mask / redactions / preview).
+    const maskFields = [
+        ['maskEnabled', true, a => { a.updateMaskPreview(); a.onMaskChange(); }],
+        ['autoMaskWindow', 10, a => a.autoMask()],
+        ['autoMaskThreshold', 0.9, a => a.autoMask()],
+        ['autoMaskSpread', 5, a => a.autoMask()],
+        ['autoMaskCloseToTarget', 140, a => a.autoMask()],
+        ['redactionWindow', 8, a => a.autoMaskRedactions()],
+        ['redactionInvariance', 5, a => a.autoMaskRedactions()],
+        ['redactionMaxLuma', 180, a => a.autoMaskRedactions()],
+        ['redactionFlatness', 10, a => a.autoMaskRedactions()],
+        ['redactionMinSize', 12, a => a.autoMaskRedactions()],
+        ['redactionFill', 0.6, a => a.autoMaskRedactions()],
+        ['redactionSnap', 6, a => a.autoMaskRedactions()],
+        ['redactionSpread', 8, a => a.autoMaskRedactions()],
+    ];
+    for (const [prop, dflt, after] of maskFields) {
+        Object.defineProperty(maskParams, prop, {
+            enumerable: true,
+            get() { return motionAnalyzer ? motionAnalyzer[prop] : dflt; },
+            set(v) { const a = ensureMaskingAnalyzer(); if (!a) return; a[prop] = v; after?.(a); },
+        });
+    }
+    Object.defineProperty(maskParams, 'brushSize', {
+        enumerable: true,
+        get() { return motionAnalyzer?.maskOverlayNode?.brushSize ?? 20; },
+        set(v) { const a = ensureMaskingAnalyzer(); if (a?.maskOverlayNode) { a.maskOverlayNode.brushSize = v; setRenderOne(true); } },
+    });
+
+    maskFolder.add(maskParams, 'maskEnabled').name("Enable Mask").perm()
+        .tooltip("Enable/disable mask filtering");
+
+    maskFolder.add(maskParams, 'editMask').name("Edit Mask").perm()
+        .onChange((v) => { const a = ensureMaskingAnalyzer(); if (a) a.setMaskEditing(v); })
+        .tooltip("Click and drag to paint mask (Alt/Option to erase)");
+
+    maskFolder.add(maskParams, 'brushSize', 5, 50, 1).name("Brush Size").perm()
+        .tooltip("Mask brush size in pixels");
+
+    maskFolder.add(maskParams, 'clearMask').name("Clear Mask").perm()
+        .tooltip("Clear all mask data");
+
+    maskFolder.add(maskParams, 'autoMask').name("Auto Mask").perm()
+        .tooltip("Add a mask of static text-coloured pixels over the frame window (adds to the mask; use Clear Mask to reset)");
+
+    maskFolder.add(maskParams, 'autoMaskWindow', 10, 30, 1).name("Auto Window").perm()
+        .tooltip("Number of frames to analyze for auto mask");
+    maskFolder.add(maskParams, 'autoMaskThreshold', 0.9, 1, 0.001).name("Auto Threshold").perm()
+        .tooltip("Color similarity threshold (higher = stricter)");
+    maskFolder.add(maskParams, 'autoMaskSpread', 1, 10, 0.1).name("Auto Spread").perm()
+        .tooltip("Radius of mask circle at each invariant pixel");
+    maskFolder.addColor(maskParams, 'autoMaskTargetColor', 255).name("Target Color").perm()
+        .onChange(() => { const a = ensureMaskingAnalyzer(); if (a) { a.autoMaskTargetColor = {...maskParams.autoMaskTargetColor}; a.autoMask(); } })
+        .tooltip("Target color for auto mask");
+    maskFolder.add(maskParams, 'autoMaskCloseToTarget', 0, 255, 1).name("Color Tolerance").perm()
+        .tooltip("How close pixel must be to target color (lower = stricter)");
+
+    maskFolder.add(maskParams, 'autoMaskRedactions').name("Auto Mask Redactions").perm()
+        .tooltip("Detect solid black/grey rectangular redaction boxes and add them to the mask (adds to the mask; use Clear Mask to reset)");
+    maskFolder.add(maskParams, 'redactionWindow', 2, 30, 1).name("Redaction Frames").perm()
+        .tooltip("Number of frames analysed to find invariant (unchanging) regions");
+    maskFolder.add(maskParams, 'redactionInvariance', 1, 15, 0.5).name("Redaction Invariance %").perm()
+        .tooltip("Max % brightness change for a pixel to count as invariant (lower = stricter)");
+    maskFolder.add(maskParams, 'redactionMaxLuma', 0, 255, 1).name("Redaction Max Bright").perm()
+        .tooltip("Ignore pixels brighter than this (keeps black..mid-grey redactions)");
+    maskFolder.add(maskParams, 'redactionFlatness', 0, 40, 1).name("Redaction Flatness").perm()
+        .tooltip("Max local brightness variation for a solid fill (lower = stricter; this is what rejects textured terrain)");
+    maskFolder.add(maskParams, 'redactionMinSize', 4, 100, 1).name("Redaction Min Size").perm()
+        .tooltip("Minimum box width AND height in pixels");
+    maskFolder.add(maskParams, 'redactionFill', 0.3, 1, 0.05).name("Redaction Min Fill").perm()
+        .tooltip("Minimum filled fraction of the bounding box (rectangularity)");
+    maskFolder.add(maskParams, 'redactionSnap', 0, 30, 1).name("Redaction Snap").perm()
+        .tooltip("Bridge slivers up to this many px between adjacent boxes (closes grey↔black transition gaps; 0 = off)");
+    maskFolder.add(maskParams, 'redactionSpread', 0, 20, 1).name("Redaction Expand").perm()
+        .tooltip("Expand each detected box outward by this many pixels (outer margin)");
 }
 
 function createParamSliders() {
@@ -1687,8 +1855,7 @@ function createParamSliders() {
 
     const p = motionAnalyzer.params;
     const invalidate = () => motionAnalyzer.onParamChange();
-    const update = () => setRenderOne(true);
-    
+
     const trackingFolder = motionFolder.addFolder(mt("menu.trackingParameters.title")).close();
     paramControllers.push(trackingFolder);
     
@@ -1908,95 +2075,10 @@ function createParamSliders() {
     
     statusCtrl = trackingFolder.add(statusText, 'value').name("Status").listen().disable();
     paramControllers.push(statusCtrl);
-    
-    const maskFolder = motionFolder.addFolder("Masking").close();
-    paramControllers.push(maskFolder);
-    
-    const maskControls = {
-        editMask: false,
-        clearMask: () => {
-            if (motionAnalyzer) {
-                motionAnalyzer.clearMask();
-                motionAnalyzer.onMaskChange();
-            }
-        },
-        autoMask: () => {
-            if (motionAnalyzer) {
-                motionAnalyzer.autoMask();
-            }
-        },
-        autoMaskRedactions: () => {
-            if (motionAnalyzer) {
-                motionAnalyzer.autoMaskRedactions();
-            }
-        }
-    };
-    
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'maskEnabled').name("Enable Mask").onChange(() => {
-        motionAnalyzer.updateMaskPreview();
-        motionAnalyzer.onMaskChange();
-    }).tooltip("Enable/disable mask filtering"));
-    
-    paramControllers.push(maskFolder.add(maskControls, 'editMask').name("Edit Mask").onChange((v) => {
-        motionAnalyzer.setMaskEditing(v);
-    }).tooltip("Click and drag to paint mask (Alt/Option to erase)"));
-    
-    if (motionAnalyzer.maskOverlayNode) {
-        paramControllers.push(maskFolder.add(motionAnalyzer.maskOverlayNode, 'brushSize', 5, 50, 1).name("Brush Size").onChange(update)
-            .tooltip("Mask brush size in pixels"));
-    }
-    
-    paramControllers.push(maskFolder.add(maskControls, 'clearMask').name("Clear Mask")
-        .tooltip("Clear all mask data"));
-    
-    paramControllers.push(maskFolder.add(maskControls, 'autoMask').name("Auto Mask")
-        .tooltip("Add a mask of static text-coloured pixels over the frame window (adds to the mask; use Clear Mask to reset)"));
-    
-    const runAutoMask = () => motionAnalyzer.autoMask();
-    
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'autoMaskWindow', 10, 30, 1).name("Auto Window")
-        .onChange(runAutoMask).tooltip("Number of frames to analyze for auto mask"));
-    
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'autoMaskThreshold', 0.9, 1, 0.001).name("Auto Threshold")
-        .onChange(runAutoMask).tooltip("Color similarity threshold (higher = stricter)"));
-    
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'autoMaskSpread', 1, 10, 0.1).name("Auto Spread")
-        .onChange(runAutoMask).tooltip("Radius of mask circle at each invariant pixel"));
-    
-    paramControllers.push(maskFolder.addColor(motionAnalyzer, 'autoMaskTargetColor', 255).name("Target Color")
-        .onChange(runAutoMask).tooltip("Target color for auto mask"));
 
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'autoMaskCloseToTarget', 0, 255, 1).name("Color Tolerance")
-        .onChange(runAutoMask).tooltip("How close pixel must be to target color (lower = stricter)"));
-
-    paramControllers.push(maskFolder.add(maskControls, 'autoMaskRedactions').name("Auto Mask Redactions")
-        .tooltip("Detect solid black/grey rectangular redaction boxes and add them to the mask (adds to the mask; use Clear Mask to reset)"));
-
-    const runAutoMaskRedactions = () => motionAnalyzer.autoMaskRedactions();
-
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionWindow', 2, 30, 1).name("Redaction Frames")
-        .onChange(runAutoMaskRedactions).tooltip("Number of frames analysed to find invariant (unchanging) regions"));
-
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionInvariance', 1, 15, 0.5).name("Redaction Invariance %")
-        .onChange(runAutoMaskRedactions).tooltip("Max % brightness change for a pixel to count as invariant (lower = stricter)"));
-
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionMaxLuma', 0, 255, 1).name("Redaction Max Bright")
-        .onChange(runAutoMaskRedactions).tooltip("Ignore pixels brighter than this (keeps black..mid-grey redactions)"));
-
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionFlatness', 0, 40, 1).name("Redaction Flatness")
-        .onChange(runAutoMaskRedactions).tooltip("Max local brightness variation for a solid fill (lower = stricter; this is what rejects textured terrain)"));
-
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionMinSize', 4, 100, 1).name("Redaction Min Size")
-        .onChange(runAutoMaskRedactions).tooltip("Minimum box width AND height in pixels"));
-
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionFill', 0.3, 1, 0.05).name("Redaction Min Fill")
-        .onChange(runAutoMaskRedactions).tooltip("Minimum filled fraction of the bounding box (rectangularity)"));
-
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionSnap', 0, 30, 1).name("Redaction Snap")
-        .onChange(runAutoMaskRedactions).tooltip("Bridge slivers up to this many px between adjacent boxes (closes grey↔black transition gaps; 0 = off)"));
-
-    paramControllers.push(maskFolder.add(motionAnalyzer, 'redactionSpread', 0, 20, 1).name("Redaction Expand")
-        .onChange(runAutoMaskRedactions).tooltip("Expand each detected box outward by this many pixels (outer margin)"));
+    // The Masking folder is NOT built here — it is a persistent folder created
+    // once in addMotionAnalysisMenu() (via createMaskingFolder) so it is available
+    // whenever a video is loaded, not only while analysis is running.
 
     paramControllers.push(motionFolder.add(motionAnalyzer, 'speedOverlayEnabled').name("Speed Overlay").onChange((v) => {
         motionAnalyzer.setSpeedOverlayEnabled(v);

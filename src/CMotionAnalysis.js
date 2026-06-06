@@ -1096,10 +1096,12 @@ export class MotionAnalyzer {
         console.log("AutoMaskRedactions: complete");
     }
 
-    createOverlays() {
-        if (this.overlaysCreated) return;
-        this.overlaysCreated = true;
-
+    // Create ONLY the mask overlay. Masking is usable as soon as a video is
+    // loaded — it does not require a running motion-analysis pass — so this is
+    // split out of createOverlays() and can be called standalone (e.g. when the
+    // persistent Masking menu is first touched). Idempotent.
+    ensureMaskOverlay() {
+        if (this.maskOverlayNode) return this.maskOverlayNode;
         this.maskOverlayNode = new CNodeMaskOverlay({
             id: "motionMaskOverlay",
             overlayView: this.videoView,
@@ -1107,6 +1109,15 @@ export class MotionAnalyzer {
             visible: false,
             onMaskChange: () => this.onMaskChange(),
         });
+        return this.maskOverlayNode;
+    }
+
+    createOverlays() {
+        if (this.overlaysCreated) return;
+        this.overlaysCreated = true;
+
+        // Reuses the mask overlay if it was already created for standalone masking.
+        this.ensureMaskOverlay();
 
         this.speedOverlayNode = new CNodeSpeedOverlay({
             id: "motionSpeedOverlay",
