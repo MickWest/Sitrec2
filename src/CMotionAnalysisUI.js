@@ -86,7 +86,7 @@ let panoFrameStep = 1;
 // When true, the motion pano stamps each frame with a full per-frame similarity
 // transform (rotation + translation, off-center safe) recovered from the flow,
 // instead of translation only — see calculateFrameTransforms / drawFrameToPano.
-let panoRotateFrames = false;
+let panoRotateFrames = true;
 // "Rotate Frames" stamps each frame with its recovered per-frame similarity. A
 // full similarity includes a SCALE term, which — being noisy and chained frame to
 // frame — accumulates into visible scale drift (frames grow/shrink along the
@@ -1963,8 +1963,25 @@ function createMaskingFolder(parentFolder) {
         // place) and pushed into the analyzer on change.
         autoMaskTargetColor: {r: 235, g: 235, b: 235},
         clearMask: () => { const a = ensureMaskingAnalyzer(); if (a) { a.clearMask(); a.onMaskChange(); } },
-        autoMask: () => { const a = ensureMaskingAnalyzer(); if (a) a.autoMask(); },
-        autoMaskRedactions: () => { const a = ensureMaskingAnalyzer(); if (a) a.autoMaskRedactions(); },
+        autoMask: () => {
+            const a = ensureMaskingAnalyzer();
+            if (!a) return;
+            a.autoMask();
+            // Auto-masking is only useful with the mask actually on and visible
+            // for tweaking, so turn on Enable Mask + Edit Mask. setValue() updates
+            // the GUI checkboxes and fires editMask's onChange (setMaskEditing).
+            maskEnabledController.setValue(true);
+            editMaskController.setValue(true);
+        },
+        autoMaskRedactions: () => {
+            const a = ensureMaskingAnalyzer();
+            if (!a) return;
+            a.autoMaskRedactions();
+            // Same as Auto Mask OSD: a freshly detected mask is only useful with
+            // the mask on and visible for tweaking, so enable both toggles.
+            maskEnabledController.setValue(true);
+            editMaskController.setValue(true);
+        },
     };
 
     // [property, default, sideEffect(analyzer)] — numeric / boolean fields that
@@ -1998,10 +2015,10 @@ function createMaskingFolder(parentFolder) {
         set(v) { const a = ensureMaskingAnalyzer(); if (a?.maskOverlayNode) { a.maskOverlayNode.brushSize = v; setRenderOne(true); } },
     });
 
-    maskFolder.add(maskParams, 'maskEnabled').name("Enable Mask").perm()
+    const maskEnabledController = maskFolder.add(maskParams, 'maskEnabled').name("Enable Mask").perm()
         .tooltip("Enable/disable mask filtering");
 
-    maskFolder.add(maskParams, 'editMask').name("Edit Mask").perm()
+    const editMaskController = maskFolder.add(maskParams, 'editMask').name("Edit Mask").perm()
         .onChange((v) => { const a = ensureMaskingAnalyzer(); if (a) a.setMaskEditing(v); })
         .tooltip("Click and drag to paint mask (Alt/Option to erase)");
 
@@ -2011,7 +2028,7 @@ function createMaskingFolder(parentFolder) {
     maskFolder.add(maskParams, 'clearMask').name("Clear Mask").perm()
         .tooltip("Clear all mask data");
 
-    maskFolder.add(maskParams, 'autoMask').name("Auto Mask").perm()
+    maskFolder.add(maskParams, 'autoMask').name("Auto Mask OSD").perm()
         .tooltip("Add a mask of static text-coloured pixels over the frame window (adds to the mask; use Clear Mask to reset)");
 
     maskFolder.add(maskParams, 'autoMaskWindow', 10, 30, 1).name("Auto Window").perm()

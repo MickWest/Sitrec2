@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.78.2 (2026-06-07)
+
+### Improvements
+- **One-click auto masking** (Motion Analysis → Masking): the **Auto Mask OSD** and **Auto Mask Redactions** buttons now turn on **Enable Mask** and **Edit Mask** for you, so a freshly detected mask is immediately active and ready to tweak without ticking those boxes by hand.
+- The masking button that hides burnt-in telemetry text is now labelled **Auto Mask OSD**, to tell it apart from **Auto Mask Redactions** (which hides solid redaction boxes).
+- **Rotate Frames (SfM)** (Motion Analysis → Panorama → Motion Pano Options) is now on by default, so panned or rolled footage stitches correctly into a motion panorama out of the box. Frame sizes stay locked (no scale drift); turn it off per session if you prefer the old translation-only behaviour.
+
+---
+
 ## Version 2.78.1 (2026-06-07)
 
 ### Bug Fixes

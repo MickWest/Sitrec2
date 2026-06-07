@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.78.2 (2026-06-07)
+
+### Improvements
+- **Auto-mask buttons now enable and open the mask in one click** (`createMaskingFolder()` in `src/CMotionAnalysisUI.js`, Motion Analysis → Masking). Previously, after clicking an auto-mask button you still had to manually tick **Enable Mask** and **Edit Mask** before the detected mask did anything or could be tweaked. The `autoMask` and `autoMaskRedactions` handlers now call `maskEnabledController.setValue(true)` and `editMaskController.setValue(true)` after running detection — `setValue` updates the GUI checkboxes and fires Edit Mask's `onChange` (`setMaskEditing(true)`), so a freshly detected mask is immediately active and paint-editable. This required capturing the two toggle controllers into `maskEnabledController` / `editMaskController` where they are added to the folder.
+- **Renamed "Auto Mask" to "Auto Mask OSD"** (`createMaskingFolder()` in `src/CMotionAnalysisUI.js`, Motion Analysis → Masking). This button masks static text-coloured pixels — the burnt-in on-screen-display (OSD) telemetry overlay — and the new name disambiguates it from the sibling **Auto Mask Redactions** button, which instead targets solid redaction boxes. Behaviour is unchanged apart from the label and the new auto-enable above.
+- **"Rotate Frames (SfM)" now defaults ON for motion panoramas** (Motion Analysis → Panorama → Motion Pano Options; `panoRotateFrames` default flipped `false` → `true` in `src/CMotionAnalysisUI.js`). With it on, the motion pano stamps each frame with its full recovered per-frame rigid transform (rotation + translation, via `calculateFrameTransforms` / `drawFrameToPano`) instead of translation only, so panned/rolled footage stitches correctly out of the box. The independent **Allow Frame Scaling** guard (`panoAllowFrameScale`) is left at its `false` default, so the per-frame rigid transform still excludes the noisy scale term — this default change does NOT reintroduce the scale drift that an unguarded full similarity would. Users can still toggle Rotate Frames (SfM) off per session.
+
+---
+
 ## Version 2.78.1 (2026-06-07)
 
 ### Bug Fixes
