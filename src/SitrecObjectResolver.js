@@ -8,10 +8,43 @@
  * - Cache resolver responses with expiry awareness to reduce repeat network calls.
  */
 import {SITREC_SERVER} from "./configUtils";
-import {withTestUser} from "./Globals";
+import {withTestUser, Globals} from "./Globals";
 
 const SITREC_REF_PREFIX = "sitrec://";
 const objectUrlCache = new Map();
+
+// object.php is a small JSON round-trip, but a bare fetch with no timeout will
+// hang the entire asset load forever if the request stalls (half-open socket).
+// Bound it. This is the resolve step that runs INSIDE loadAsset's fetch chain,
+// so a hang here leaves both the "Asset" and "Video" loading tasks at 0%.
+const RESOLVE_TIMEOUT_MS = 30000;
+
+/**
+ * Fetch object.php with a bounded timeout, combined with an optional caller
+ * AbortSignal (so situation teardown / a video watchdog can cancel it too).
+ */
+async function fetchObjectResolver(url, callerSignal) {
+    const init = {mode: "cors", cache: "no-store"};
+    if (Globals.regression) {
+        // Deterministic CI: no wall-clock timer (would add flakes); honor only the caller signal.
+        return fetch(url, callerSignal ? {...init, signal: callerSignal} : init);
+    }
+    const timeoutController = new AbortController();
+    const timer = setTimeout(() => timeoutController.abort(
+        new DOMException(`object.php resolve timed out after ${RESOLVE_TIMEOUT_MS}ms`, "TimeoutError")),
+        RESOLVE_TIMEOUT_MS);
+    let signal = timeoutController.signal;
+    if (callerSignal) {
+        signal = (typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function")
+            ? AbortSignal.any([callerSignal, timeoutController.signal])
+            : timeoutController.signal;
+    }
+    try {
+        return await fetch(url, {...init, signal});
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 /**
  * Converts resolver expiry metadata into epoch milliseconds.
@@ -223,7 +256,7 @@ function setCacheEntry(cacheKey, data) {
  *   version?: string
  * }|null>}
  */
-export async function resolveSitrecReference(value, {force = false} = {}) {
+export async function resolveSitrecReference(value, {force = false, signal} = {}) {
     if (!isResolvableSitrecReference(value)) {
         return null;
     }
@@ -238,7 +271,7 @@ export async function resolveSitrecReference(value, {force = false} = {}) {
     }
 
     const url = withTestUser(SITREC_SERVER + "object.php?ref=" + encodeURIComponent(canonicalRef));
-    const response = await fetch(url, {mode: "cors", cache: "no-store"});
+    const response = await fetchObjectResolver(url, signal);
     if (!response.ok) {
         throw new Error(`Object resolver failed: HTTP ${response.status}`);
     }

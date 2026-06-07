@@ -1,5 +1,11 @@
 import {setRenderOne} from "./Globals";
 
+// A task showing 0% for at least this many seconds is flagged as possibly
+// stalled in the loading panel. Kept just under the fetch layer's stall timeout
+// (quickFetch HEADER/STALL_TIMEOUT_MS = 10s) so the hint appears shortly before
+// a stuck load auto-fails/recovers.
+const STALL_HINT_SECONDS = 7;
+
 class CLoadingManagerClass {
     constructor() {
         this.loadingTasks = new Map();
@@ -112,16 +118,20 @@ class CLoadingManagerClass {
             for (const { taskId, entry } of tasks) {
                 const elapsed = Math.round((Date.now() - entry.startTime) / 1000);
                 const progressPercent = Math.round(entry.progress);
+                // A task that has made zero progress for a while is likely stalled
+                // (the fetch layer auto-times-out at ~30s, so this hint flags the
+                // window before recovery — and any un-timed work that wedges).
+                const stalled = progressPercent === 0 && elapsed >= STALL_HINT_SECONDS;
 
                 html += `<div style="margin: 6px 0; padding: 6px; background: rgba(74, 74, 106, 0.3); border-radius: 4px;">
                     <div style="color: #aaa; font-size: 11px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                         ${esc(entry.name)}
                     </div>
                     <div style="background: #2a2a4a; border-radius: 3px; height: 6px; overflow: hidden;">
-                        <div style="background: linear-gradient(90deg, #4a9eff, #00d4aa); width: ${progressPercent}%; height: 100%; transition: width 0.3s;"></div>
+                        <div style="background: ${stalled ? '#7a5a2a' : 'linear-gradient(90deg, #4a9eff, #00d4aa)'}; width: ${stalled ? 100 : progressPercent}%; height: 100%; transition: width 0.3s;"></div>
                     </div>
-                    <div style="color: #666; font-size: 10px; margin-top: 2px;">
-                        ${progressPercent > 0 ? progressPercent + '%' : 'Starting...'} ${elapsed > 0 ? '(' + elapsed + 's)' : ''}
+                    <div style="color: ${stalled ? '#ff9040' : '#666'}; font-size: 10px; margin-top: 2px;">
+                        ${progressPercent > 0 ? progressPercent + '%' : 'Starting...'} ${elapsed > 0 ? '(' + elapsed + 's)' : ''}${stalled ? ' &#9888; stalled?' : ''}
                     </div>
                 </div>`;
             }

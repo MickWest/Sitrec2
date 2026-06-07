@@ -1816,7 +1816,13 @@ export class CFileManager extends CManager {
      * @param {string} [id] - Unique identifier for storage (defaults to filename)
      * @returns {Promise<{filename: string, parsed: *, dataType: string}>} Parsed asset data
      */
-    loadAsset(filename, id, metadataOverride = null) {
+    loadAsset(filename, id, metadataOverride = null, options = {}) {
+        // options.abortSignal: optional caller AbortSignal. When it fires, the
+        // internal fetch is aborted so a stalled/slow load can be torn down by the
+        // caller (e.g. CVideoMp4Data's getConfig watchdog / disposal) — which lets
+        // this method's catch run and decrement Globals.parsing/pendingActions
+        // instead of leaking them forever.
+        const callerAbortSignal = options.abortSignal;
 
         assert(filename, "Filename is undefined or null");
 
@@ -2026,6 +2032,17 @@ export class CFileManager extends CManager {
                 // Split URL into base and query string if present
                 // Create AbortController for this fetch and register it
                 const fetchController = new AbortController();
+                // Link the caller's abort signal (if any) to this fetch so a
+                // watchdog/teardown can cancel a stalled or slow-but-progressing load.
+                if (callerAbortSignal) {
+                    if (callerAbortSignal.aborted) {
+                        try { fetchController.abort(callerAbortSignal.reason); } catch (e) { fetchController.abort(); }
+                    } else {
+                        callerAbortSignal.addEventListener("abort", () => {
+                            try { fetchController.abort(callerAbortSignal.reason); } catch (e) { fetchController.abort(); }
+                        }, {once: true});
+                    }
+                }
                 fetchOperationId = asyncOperationRegistry.registerAbortable(
                     fetchController,
                     "fetch",
@@ -2036,7 +2053,8 @@ export class CFileManager extends CManager {
                 bufferPromise = Promise.resolve(resolvedFilename)
                     .then(fetchSource => {
                         if (isResolvableSitrecReference(fetchSource)) {
-                            return resolveURLForFetch(fetchSource);
+                            // Pass the signal so a stalled object.php resolve is also bounded/cancellable.
+                            return resolveURLForFetch(fetchSource, {signal: fetchController.signal});
                         }
                         return fetchSource;
                     })
@@ -2057,8 +2075,10 @@ export class CFileManager extends CManager {
                         }
                         const fetchUrl = (isDirectObjectFetch || isS3Url) ? encodedFilename : encodedFilename + versionExtension;
 
-                        // Use custom fetch wrapper that supports File System Access API
-                        return fileSystemFetch(fetchUrl, {signal: fetchController.signal})
+                        // Use custom fetch wrapper that supports File System Access API.
+                        // progressId routes byte-progress to this load's "Asset" task so its
+                        // row advances during a chunked download instead of sitting at 0%.
+                        return fileSystemFetch(fetchUrl, {signal: fetchController.signal, progressId: loadingId})
                             .then(response => {
                                 if (!response.ok) {
                                     throw new Error("Network response was not ok");
@@ -2182,6 +2202,13 @@ export class CFileManager extends CManager {
                 .catch(error => {
                     Globals.parsing--;
                     console.log(`There was a problem loading ${resolvedFilename}: ${error.message}`);
+                    // On a stall-timeout (our quickFetch/resolver inactivity guards) dump
+                    // the in-flight async ops so a field report shows what was contending
+                    // for connections (e.g. a night-sky asset burst saturating the socket pool).
+                    if (error && error.name === "TimeoutError") {
+                        console.warn(`[loadAsset] STALL timed out for ${resolvedFilename}. In-flight async ops:\n` +
+                            asyncOperationRegistry.getPendingOperationsString());
+                    }
                     Globals.pendingActions--;
                     LoadingManager.completeLoading(loadingId);
 

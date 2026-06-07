@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.78.3 (2026-06-07)
+
+### Bug Fixes
+- Fixed a custom sitch occasionally getting stuck on the "LOADING" screen forever while fetching a video. A flaky or dropped network connection during a large video download used to freeze the whole scene with no way to recover. The download now detects a stalled connection, automatically retries once, and otherwise fails cleanly with a recoverable "Error Loading" within a few seconds instead of hanging.
+
+### Improvements
+- The loading panel now warns when a download has made no progress for several seconds, showing an amber bar and a "stalled?" hint so you can tell a wedged load apart from a merely slow one.
+
+---
+
 ## Version 2.78.2 (2026-06-07)
 
 ### Improvements

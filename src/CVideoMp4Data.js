@@ -172,6 +172,12 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
 
         this.demuxer = null;
 
+        // Abort handle for the FileManager.loadAsset byte-fetch. The getConfig
+        // watchdog and dispose() abort this so a stalled or slow-but-unfinished
+        // fetch is torn down — which lets loadAsset's catch run and unwind
+        // Globals.parsing/pendingActions instead of leaking them forever.
+        this._fetchAbort = new AbortController();
+
         let source = new MP4Source()
 
         // here v.file, if defined is a file name
@@ -185,7 +191,7 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
         if (v.file !== undefined ) {
             console.log(`[CVideoMp4Data] Loading video file: ${v.file}`);
             this._markStatus("fetching remote file");
-            const loadPromise = FileManager.loadAsset(v.file, "video").then(result => {
+            const loadPromise = FileManager.loadAsset(v.file, "video", null, {abortSignal: this._fetchAbort.signal}).then(result => {
                 this._markStatus(`file fetched (${result.parsed.byteLength} bytes), inspecting container`);
                 const detection = detectVideoContainer(result.parsed);
                 this._detectedContainer = detection;
@@ -206,6 +212,19 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
                 // as we only need it for the initial load
                 FileManager.disposeRemove("video");
             }).catch(err => {
+                // The byte-fetch failed (network error, our quickFetch/resolver
+                // stall-timeout, or a deliberate teardown abort). Cancel the
+                // getConfig watchdog and mark aborted so it can't fire a second,
+                // duplicate error 120s later (getConfig never resolves once the
+                // buffer was never appended).
+                this._aborted = true;
+                if (this._getConfigTimer) {
+                    clearTimeout(this._getConfigTimer);
+                    this._getConfigTimer = null;
+                }
+                // An intentional abort (dispose / watchdog already reported) is not a
+                // load error to surface to the user.
+                if (err && err.name === 'AbortError') return;
                 // Error will be ignored if callbacks are cleared
                 if (this.errorCallback) {
                     console.error(`Error loading video file: ${v.file}`, err);
@@ -394,6 +413,12 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
                 err.detection = det;
                 this.errorCallback(err);
             }
+            // Tear down the underlying byte-fetch too — a fetch that was still
+            // in flight (e.g. slow-but-progressing past the watchdog) would
+            // otherwise keep a socket open and leak loadAsset's pendingActions
+            // behind the error the user already saw. The loadAsset catch treats
+            // this AbortError as intentional and won't re-report it.
+            try { this._fetchAbort?.abort(new DOMException("video getConfig watchdog", "AbortError")); } catch (e) {}
         }, GET_CONFIG_TIMEOUT_MS);
 
         const configPromise = demuxer.getConfig().then((config) => {
@@ -662,6 +687,10 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
      * Implements proper async cancellation rather than flag-checking
      */
     dispose() {
+        // Abort any in-flight byte-fetch so a disposal mid-load tears down the
+        // socket and lets loadAsset unwind its pendingActions.
+        try { this._fetchAbort?.abort(new DOMException("video disposed", "AbortError")); } catch (e) {}
+
         // Clear pending audio wait polling timeout
         if (this._audioWaitTimeout) {
             clearTimeout(this._audioWaitTimeout);
