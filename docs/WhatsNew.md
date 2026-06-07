@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.78.1 (2026-06-07)
+
+### Bug Fixes
+- Fixed synthetic clouds slowly losing puffs and rendering slightly differently from one session to the next as you moved the look camera around. Clouds now keep all their puffs and look the same every time.
+
+---
+
 ## Version 2.78.0 (2026-06-06)
 
 ### New Features

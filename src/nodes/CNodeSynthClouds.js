@@ -333,72 +333,47 @@ export class CNodeSynthClouds extends CNode3DGroup {
         const n = this.cloudCount;
         
         const distances = new Float32Array(n);
-        let minDist = Infinity, maxDist = -Infinity;
-        
         for (let i = 0; i < n; i++) {
             const i3 = i * 3;
             const dx = groupPos.x + offsets[i3] - camPos.x;
             const dy = groupPos.y + offsets[i3 + 1] - camPos.y;
             const dz = groupPos.z + offsets[i3 + 2] - camPos.z;
-            const d = dx * dx + dy * dy + dz * dz;
-            distances[i] = d;
-            if (d < minDist) minDist = d;
-            if (d > maxDist) maxDist = d;
+            distances[i] = dx * dx + dy * dy + dz * dz;
         }
-        
-        const NUM_BINS = n;
-        const range = maxDist - minDist;
-        if (range <= 0) return;
-        
-        const binCounts = new Uint32Array(NUM_BINS);
-        const binIndices = new Uint32Array(n);
-        
-        for (let i = 0; i < n; i++) {
-            const bin = Math.min(NUM_BINS - 1, Math.floor((distances[i] - minDist) / range * NUM_BINS));
-            binIndices[i] = bin;
-            binCounts[bin]++;
-        }
-        
-        let maxBinCount = 0;
-        for (let b = 0; b < NUM_BINS; b++) {
-            if (binCounts[b] > maxBinCount) maxBinCount = binCounts[b];
-        }
-        
-        const binStarts = new Uint32Array(NUM_BINS);
-        let sum = 0;
-        for (let b = NUM_BINS - 1; b >= 0; b--) {
-            binStarts[b] = sum;
-            sum += binCounts[b];
-        }
-        
-        const binCurrent = binStarts.slice();
-        
+
+        // Reorder the puffs FARTHEST-first (back-to-front) for correct alpha
+        // blending. We sort an index permutation and gather, which is guaranteed
+        // LOSSLESS — every puff lands in exactly one slot. (The previous hand-rolled
+        // bucket sort dropped a puff per call, leaving a [0,0,0] hole; because binSort
+        // fires on camera movement, that made the cloud non-deterministic across loads
+        // and slowly shed puffs as the camera panned.) Array.prototype.sort is stable,
+        // so equal-distance puffs keep their build order — fully deterministic.
+        const order = new Array(n);
+        for (let i = 0; i < n; i++) order[i] = i;
+        order.sort((a, b) => distances[b] - distances[a]);
+
         const newOffsets = new Float32Array(n * 3);
         const newSizes = new Float32Array(n * 2);
-        
-        for (let i = 0; i < n; i++) {
-            const bin = binIndices[i];
-            const dest = binCurrent[bin]++;
-            const i3 = i * 3;
-            const d3 = dest * 3;
+        for (let dest = 0; dest < n; dest++) {
+            const i = order[dest];
+            const i3 = i * 3, d3 = dest * 3, i2 = i * 2, d2 = dest * 2;
             newOffsets[d3] = offsets[i3];
             newOffsets[d3 + 1] = offsets[i3 + 1];
             newOffsets[d3 + 2] = offsets[i3 + 2];
-            const i2 = i * 2;
-            const d2 = dest * 2;
             newSizes[d2] = sizes[i2];
             newSizes[d2 + 1] = sizes[i2 + 1];
         }
-        
+
         this.instanceOffsets.set(newOffsets);
         this.instanceSizes.set(newSizes);
-        
+
         if (this.cloudGeometry) {
             this.cloudGeometry.getAttribute('instanceOffset').needsUpdate = true;
             this.cloudGeometry.getAttribute('instanceSize').needsUpdate = true;
         }
-        
-        this.combGap = maxBinCount;
+
+        // Fully sorted now — the per-frame comb sort only needs to maintain it.
+        this.combGap = 1;
     }
     
     getWindVector() {

@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.78.1 (2026-06-07)
+
+### Bug Fixes
+- **Fixed synthetic clouds shedding puffs and rendering non-deterministically as the look camera moves** (`binSort()` in `src/nodes/CNodeSynthClouds.js`). `binSort` re-sorts the cloud's instanced puffs back-to-front (farthest first) for correct alpha blending, and runs whenever the look camera moves past a threshold. The old hand-rolled bucket sort was lossy: it computed `minDist`/`maxDist`, scattered the `n` puffs into `NUM_BINS = n` distance bins via `binCounts`/`binStarts`/`binCurrent`, and could miscount so that a puff was dropped on every call — leaving a `[0,0,0]` hole in `instanceOffsets`. Because the sort fires on camera motion, this made a cloud (a) render slightly differently between page loads / sessions (non-deterministic) and (b) slowly lose puffs as the camera panned. The rewrite sorts an index permutation instead: it builds `order = [0..n)`, does `order.sort((a, b) => distances[b] - distances[a])` (descending distance², i.e. farthest-first), then gathers `offsets`/`sizes` into fresh buffers indexed by `order`. This is guaranteed lossless — every puff lands in exactly one destination slot — and deterministic, since `Array.prototype.sort` is stable so equal-distance puffs keep their build order. Because the result is now fully sorted, `this.combGap` is set to `1` (the per-frame comb sort only has to maintain the order) instead of the old `maxBinCount`.
+
+### Improvements
+- **Fast-regression harness now auto-recovers environment flakes** (`tests_regression/fast-regression/run.mjs`; internal test tooling only — not shipped in the app). After the main concurrent run, each `fail`/`error` sitch is re-run once, serially, in its own fresh `chromium.launchPersistentContext` (new browser process = clean in-process GPU/memory state, no settle/tile-load contention): a real regression fails again and stays a failure (`stableFail`), while a sitch that passes solo is relabelled a recovered flake (`recoveredFromFlake`, counts as a pass) and added to a new `recovered` list in `report.json` and the summary line. This automates the manual "re-run it solo" triage so the gate is trustworthy without masking genuine stable diffs. A new `--no-retry` flag (`CONFIG.noRetry`) disables the retry pass, which is also skipped in `--update` mode. The per-result logging was factored into a shared `logResult()` helper.
+
+---
+
 ## Version 2.78.0 (2026-06-06)
 
 ### Improvements

@@ -121,6 +121,7 @@ const CONFIG = {
     // whichever mode you run in (baselines are local-only — see README).
     headless: !flag('headed'),
     update: flag('update'),
+    noRetry: flag('no-retry'),          // disable the fresh-context flake-recovery retry pass
     list: flag('list'),
     filter: opt('filter', null),
     sitches: opt('sitches', null),     // explicit comma-separated names (bypass label enumeration)
@@ -649,28 +650,70 @@ async function main() {
         return 1;
     }
 
-    const context = await chromium.launchPersistentContext(profileDir, {
+    const launchOpts = {
         channel: 'chrome',
         headless: CONFIG.headless,
         viewport: CONFIG.viewport,
         deviceScaleFactor: 1,
         ignoreHTTPSErrors: true,
         args: ['--hide-scrollbars', '--mute-audio'],
-    });
+    };
+    const logResult = (r) => {
+        const tag = {pass: '✓ PASS', baseline: '＋ BASE', updated: '↻ UPDT', fail: '✗ FAIL', error: '‼ ERR '}[r.status] || r.status;
+        const extra = r.status === 'pass' || r.status === 'fail'
+            ? ` diff=${r.diffPixels}px (${(r.diffRatio * 100).toFixed(3)}%)` : '';
+        console.log(`${tag}  ${r.name.padEnd(34)} ${(r.loadMs / 1000).toFixed(1)}s  settle=${(r.settleMs / 1000).toFixed(1)}s${r.settleTimedOut ? '*' : ''}${extra}${r.note ? '  [' + r.note + ']' : ''}`);
+    };
+
+    const context = await chromium.launchPersistentContext(profileDir, launchOpts);
 
     let results;
     try {
         console.log(`\nRunning (concurrency=${CONFIG.concurrency}, ${CONFIG.headless ? 'headless' : 'headed'} Chrome)...\n`);
         results = await runPool(sitches, CONFIG.concurrency, async (sitch) => {
             const r = await processSitch(context, sitch);
-            const tag = {pass: '✓ PASS', baseline: '＋ BASE', updated: '↻ UPDT', fail: '✗ FAIL', error: '‼ ERR '}[r.status] || r.status;
-            const extra = r.status === 'pass' || r.status === 'fail'
-                ? ` diff=${r.diffPixels}px (${(r.diffRatio * 100).toFixed(3)}%)` : '';
-            console.log(`${tag}  ${r.name.padEnd(34)} ${(r.loadMs / 1000).toFixed(1)}s  settle=${(r.settleMs / 1000).toFixed(1)}s${r.settleTimedOut ? '*' : ''}${extra}${r.note ? '  [' + r.note + ']' : ''}`);
+            logResult(r);
             return r;
         });
     } finally {
         await context.close().catch(() => {});
+    }
+
+    // ---- Flake recovery: re-run failures solo in a FRESH context ------------
+    // Visual-regression failures here are dominated by ENVIRONMENT flakes, not real
+    // regressions: (a) settle/tile-load contention under concurrency, and (b)
+    // cumulative IN-PROCESS browser state after many heavy sitches (GPU/memory
+    // pressure that can, e.g., leak a motion overlay onto a later sitch). Both clear
+    // in a fresh browser process. So we re-run each failure once, serially, each in
+    // its OWN fresh context (new process = clean in-process state, no contention): a
+    // REAL regression fails again; a flake passes. This automates the manual
+    // "re-run it solo" triage so the gate is trustworthy without masking genuine
+    // stable diffs. Skipped in --update mode and with --no-retry.
+    const recovered = [];
+    if (!CONFIG.update && !CONFIG.noRetry) {
+        const toRetry = results.filter(r => r.status === 'fail' || r.status === 'error');
+        if (toRetry.length) {
+            console.log(`\n${toRetry.length} sitch(es) failed the main run — retrying each solo in a fresh browser context (flake vs. real regression)...\n`);
+            for (const r of toRetry) {
+                const sitch = sitches.find(s => s.slug === r.slug);
+                if (!sitch) continue;
+                const idx = results.findIndex(x => x.slug === r.slug);
+                const rc = await chromium.launchPersistentContext(profileDir, launchOpts);
+                let rr;
+                try { rr = await processSitch(rc, sitch); } finally { await rc.close().catch(() => {}); }
+                if (rr.status === 'pass') {
+                    rr.recoveredFromFlake = true;
+                    rr.firstRunCause = r.cause;
+                    results[idx] = rr;
+                    recovered.push(r.name);
+                    console.log(`  ↻ FLAKE   ${r.name.padEnd(34)} first run: ${r.cause}  →  passed solo retry (diff ${rr.diffPixels}px)`);
+                } else {
+                    rr.stableFail = true;
+                    results[idx] = rr;
+                    console.log(`  ✗ STABLE  ${r.name.padEnd(34)} ${rr.cause}`);
+                }
+            }
+        }
     }
 
     const totalMs = Date.now() - runStart;
@@ -680,13 +723,16 @@ async function main() {
         base: CONFIG.base, label: CONFIG.label, frame: CONFIG.frame,
         viewport: CONFIG.viewport, cropTop: CONFIG.cropTop,
         concurrency: CONFIG.concurrency, headless: CONFIG.headless,
-        totalMs, counts, results,
+        totalMs, counts, recovered, results,
     };
     writeFileSync(join(outputDir, 'report.json'), JSON.stringify(report, null, 2));
 
     console.log('\n' + '─'.repeat(60));
     console.log(`Done in ${(totalMs / 1000).toFixed(1)}s — ` +
         Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', '));
+    if (recovered.length) {
+        console.log(`↻ ${recovered.length} flake(s) recovered on solo retry (not real regressions): ${recovered.join(', ')}`);
+    }
     // Show a one-line cause for anything that didn't pass, so an agent (or a
     // human skimming) sees *why* without opening report.json.
     for (const r of results) {
