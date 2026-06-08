@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.79.0 (2026-06-08)
+
+### New Features
+- **Much broader KML track support**: Sitrec now imports tracks from almost any KML layout — including multi-segment tracks, time-span-timed tracks, tracks buried in sub-folders, files that contain several tracks or data sources at once, more Flightradar24 and FlightAware exports, and Sitrec's own re-imported KML exports — all of which previously failed to load. Files that already imported are unchanged.
+
+### Bug Fixes
+- Fixed holding an arrow key not playing the video continuously while the video viewer is paused; a held ←/→ (or ↑/↓ for fast scrub) now advances frame-by-frame the whole time it is held instead of stepping just once.
+
 ## Version 2.78.5 (2026-06-07)
 
 ### Bug Fixes

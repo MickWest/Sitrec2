@@ -237,9 +237,10 @@ describe('KML variant suite', () => {
                 expect(() => tf.extractObjects()).not.toThrow();
             });
         } else if (m.category === 'gap') {
-            // DESIRED behavior — currently fails. test.failing keeps CI green until the
-            // generic importer lands, then this flips to a failure (remove `.failing`).
-            test.failing(`${title} — SHOULD import (generic-ingestion target)`, () => {
+            // Previously-unsupported variants now handled by the generic tree-walk extractor.
+            // (These were `test.failing` before the refactor; they flipped to passing once the
+            // generic importer landed.)
+            test(`${title} — imports (generic-ingestion target)`, () => {
                 const {tf} = load(m.file);
                 expect(tf.doesContainTrack()).toBe(true);
                 const misb = tf.toMISB(0);
@@ -347,4 +348,53 @@ describe('code-path coverage', () => {
             G.CustomManager.shouldIgnore = prev;
         }
     });
+});
+
+// GEOMETRY PARITY — locks the exact current track output (count, point-count, first/last
+// position) for representative committed fixtures. The generic-ingestion refactor MUST keep
+// these identical on the default path, or saved cameras/targets/measurements built on these
+// tracks would shift. Captured 2026-06-08 from the pre-refactor parser.
+describe('geometry parity (do not change on the default path)', () => {
+    const PARITY = [
+        ['data/test/ADSBX - 3 tracks  N2983Z-N410WN-N414WN-track-press_alt_uncorrected.kml', [
+            {n: 114, p0: [31.00398, -97.74959, 732], pN: [30.74319, -97.99618, 1097]},
+            {n: 291, p0: [30.20134, -97.66725, 0],   pN: [31.05066, -98.00612, 8595]},
+            {n: 227, p0: [29.96869, -95.34959, 61],  pN: [30.66097, -97.92454, 12192]},
+        ]],
+        ['data/test/FR24 KML WN276-3d7b69c5.kml', [
+            {n: 702, p0: [36.11873, -86.66667, 0], pN: [34.05989, -117.58879, 0]},
+        ]],
+        ['tests/kml-fixtures/real/adsbx-single-runway-then-flight.kml', [
+            {n: 323, p0: [30.20134, -97.66725, 0], pN: [31.61334, -98.45673, 11552]},
+        ]],
+        ['data/chilean/Chile Chopper Track from video GPSTime.kml', [
+            {n: 11, p0: [-34.09528, -71.91250, 1382], pN: [-33.74750, -71.77944, 1382]},
+        ]],
+        ['tests/kml-fixtures/synthetic/fr24-duplicate-time.kml', [
+            {n: 3, p0: [33.94000, -118.40100, 120], pN: [33.95100, -118.39500, 410]},
+        ]],
+        ['tests/kml-fixtures/synthetic/gxtrack-angles-extendeddata.kml', [
+            {n: 3, p0: [33.94000, -118.40100, 1200], pN: [33.95100, -118.39500, 1310]},
+        ]],
+    ];
+    beforeAll(() => ['log', 'warn', 'trace', 'error'].forEach(m => jest.spyOn(console, m).mockImplementation(() => {})));
+    afterAll(() => jest.restoreAllMocks());
+
+    for (const [file, tracks] of PARITY) {
+        test(`${file.split('/').pop()} — geometry stable`, () => {
+            const {tf} = load(file);
+            expect(tf.getTrackCount()).toBe(tracks.length);
+            tracks.forEach((t, i) => {
+                const misb = tf.toMISB(i);
+                expect(misb.length).toBe(t.n);
+                const a = misb[0], b = misb[misb.length - 1];
+                expect(a[MISB.SensorLatitude]).toBeCloseTo(t.p0[0], 4);
+                expect(a[MISB.SensorLongitude]).toBeCloseTo(t.p0[1], 4);
+                expect(a[MISB.SensorTrueAltitude]).toBeCloseTo(t.p0[2], 2);
+                expect(b[MISB.SensorLatitude]).toBeCloseTo(t.pN[0], 4);
+                expect(b[MISB.SensorLongitude]).toBeCloseTo(t.pN[1], 4);
+                expect(b[MISB.SensorTrueAltitude]).toBeCloseTo(t.pN[2], 2);
+            });
+        });
+    }
 });

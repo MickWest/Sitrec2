@@ -2,7 +2,6 @@ import {CTrackFile} from "./CTrackFile";
 import {MISB, MISBFields} from "../MISBFields";
 import {CustomManager, FileManager, NodeMan, Sit, Synth3DManager} from "../Globals";
 import {timeStrToEpoch} from "../DateTimeUtils";
-import {assert} from "../assert";
 import {CNodeTrackFromLLAArray} from "../nodes/CNodeTrack";
 import {CNodeDisplayTrack} from "../nodes/CNodeDisplayTrack";
 import * as LAYERS from "../LayerMasks";
@@ -114,31 +113,11 @@ export class CTrackFileKML extends CTrackFile {
     }
 
     hasMoreTracks(trackIndex = 0) {
-        const kml = this.data;
-        if (kml.kml !== undefined && kml.kml.Folder !== undefined && kml.kml.Folder.Folder !== undefined) {
-            const indexedTrack = kml.kml.Folder.Folder;
-            if (Array.isArray(indexedTrack)) {
-                return this.getValidIndexedTrackInFolder(indexedTrack, trackIndex + 1) !== null;
-            }
-        }
-        return false;
+        return (trackIndex + 1) < this.extractTrackGroups().length;
     }
 
     getTrackCount() {
-        const kml = this.data;
-        if (kml.kml !== undefined && kml.kml.Folder !== undefined && kml.kml.Folder.Folder !== undefined) {
-            const trackFolder = kml.kml.Folder.Folder;
-            if (Array.isArray(trackFolder)) {
-                let validCount = 0;
-                for (let i = 0; i < trackFolder.length; i++) {
-                    if (trackFolder[i].Placemark !== undefined) {
-                        validCount++;
-                    }
-                }
-                return validCount;
-            }
-        }
-        return 1;
+        return this.extractTrackGroups().length;
     }
 
     // KML tracks are always distinct aircraft, never FrameCenter-style supplementaries.
@@ -150,144 +129,165 @@ export class CTrackFileKML extends CTrackFile {
         this.extractKMLObjectsInternal(this.data);
     }
 
-    getKMLTrackWhenCoord(kml, trackIndex, when, coord, info) {
-        if (info === undefined) {
-            info = {}
-        }
+    // ---- Generic tree-walk track extraction --------------------------------------------
+    // Collect every (time, lon, lat, alt) sample from any time+geometry pairing, at any folder
+    // depth, grouping samples into tracks by enclosing-container identity. This subsumes the old
+    // shape-specific branch ladder (FR24 Route, FlightAware Placemark[2], ADSBx Folder.Folder,
+    // single-Document, and the Folder>Placemark fallback) AND additionally handles tracks in deep
+    // sub-folders, multiple data sources in one file, <gx:MultiTrack>, and <TimeSpan>. The exact
+    // sample set + per-segment / per-sequence consecutive-duplicate-time dedup of the old branches
+    // is preserved (locked by the geometry-parity tests).
 
-        if (kml.kml.Document !== undefined) {
-            if (kml.kml.Document.Folder !== undefined && Array.isArray(kml.kml.Document.Folder)) {
-                const route = kml.kml.Document.Folder[0]
-                if (route && route.name && route.name["#text"] === "Route") {
-                    if (when === undefined) {
-                        console.log("FR24 KML track detected")
-                        return true;
+    asArray(x) {
+        return (x === undefined || x === null) ? [] : (Array.isArray(x) ? x : [x]);
+    }
+
+    textOf(node, key) {
+        if (node === undefined || node === null) return undefined;
+        const v = node[key];
+        if (v === undefined) return undefined;
+        const item = Array.isArray(v) ? v[0] : v;
+        return item ? item["#text"] : undefined;
+    }
+
+    // Samples from one <gx:Track>: paired <when>/<gx:coord> (space-separated "lon lat alt"),
+    // skipping a sample whose <when> string equals the immediately preceding array element
+    // (matches the historical per-segment dedup at the old line 273).
+    samplesFromGxTrack(gxTrack) {
+        const whenArr = this.asArray(gxTrack["when"]);
+        const coordArr = this.asArray(gxTrack["gx:coord"]);
+        const len = whenArr.length;
+        const out = [];
+        for (let i = 0; i < len; i++) {
+            if (i > 0 && whenArr[i] && whenArr[i - 1] && whenArr[i]["#text"] === whenArr[i - 1]["#text"]) continue;
+            const w = whenArr[i] ? whenArr[i]["#text"] : undefined;
+            const c = coordArr[i] ? coordArr[i]["#text"] : undefined;
+            const cs = (c === undefined ? "" : c).split(' ');
+            out.push({t: timeStrToEpoch(w), lon: Number(cs[0]), lat: Number(cs[1]), alt: Number(cs[2])});
+        }
+        return out;
+    }
+
+    // One sample from a Placemark carrying a DIRECT time primitive (<TimeStamp><when> or
+    // <TimeSpan><begin>) plus a <Point> (comma-separated "lon,lat,alt"). Returns null when there
+    // is no usable direct time+point — e.g. FR24 Trail segments (MultiGeometry, no TimeStamp),
+    // static shapes, or a time primitive nested in <LookAt>/<Camera> (which must NOT count, and
+    // does not, since we only read direct children).
+    sampleFromTimedPlacemark(pm) {
+        const whenText = this.textOf(pm["TimeStamp"], "when") ?? this.textOf(pm["TimeSpan"], "begin");
+        if (whenText === undefined) return null;
+        const coordText = this.textOf(pm["Point"], "coordinates");
+        if (coordText === undefined) return null;
+        const cs = coordText.split(',');
+        return {whenText, t: timeStrToEpoch(whenText), lon: Number(cs[0]), lat: Number(cs[1]), alt: Number(cs[2])};
+    }
+
+    // Walk the parsed tree → ordered track groups (memoized; this.data is immutable per instance).
+    // Each group = { samples:[{t,lat,lon,alt}], placemarkName, folderName, documentName }.
+    extractTrackGroups() {
+        if (this._trackGroups !== undefined) return this._trackGroups;
+        const root = this.data && this.data.kml;
+        if (!root) return (this._trackGroups = []);
+        const documentName = this.textOf(root.Document, "name") ?? this.textOf(root.Folder, "name");
+        const groups = [];
+        const byContainer = new Map();
+        const ensureGroup = (container, folderName, placemarkName) => {
+            let g = byContainer.get(container);
+            if (!g) {
+                g = {samples: [], folderName, placemarkName, documentName, _prevTimedWhen: undefined};
+                byContainer.set(container, g);
+                groups.push(g);
+            } else if (g.placemarkName === undefined && placemarkName !== undefined) {
+                g.placemarkName = placemarkName;
+            }
+            return g;
+        };
+
+        const visit = (container, folderName) => {
+            for (const pm of this.asArray(container.Placemark)) {
+                // gather <gx:Track> segments, directly or via <gx:MultiTrack>
+                const segs = [];
+                for (const mt of this.asArray(pm["gx:MultiTrack"])) {
+                    for (const t of this.asArray(mt["gx:Track"])) segs.push(t);
+                }
+                for (const t of this.asArray(pm["gx:Track"])) segs.push(t);
+
+                if (segs.length > 0) {
+                    const g = ensureGroup(container, folderName, this.textOf(pm, "name"));
+                    for (const seg of segs) {
+                        const ss = this.samplesFromGxTrack(seg);
+                        for (const s of ss) g.samples.push(s);
                     }
-                    info.name = kml.kml.Document.name && kml.kml.Document.name["#text"] || "FR24 Track";
-                    const p = route.Placemark
-                    for (let i=0;i<p.length;i++) {
-                        const date = p[i].TimeStamp.when["#text"]
-
-                        if (i>0 && p[i].TimeStamp.when["#text"] === p[i-1].TimeStamp.when["#text"]) {
-                            console.warn("getKMLTrackWhenCoord: FR24 Duplicate time "+p[i].TimeStamp.when["#text"])
-                            continue;
-                        }
-
-                        when.push(timeStrToEpoch(date))
-
-                        const c = p[i].Point.coordinates["#text"]
-                        const cs = c.split(',')
-                        const lon = Number(cs[0])
-                        const lat = Number(cs[1])
-                        const alt = Number(cs[2])
-                        coord.push({lat: lat, lon: lon, alt: alt})
-                    }
-
-                    return true;
-
-                }
-            }
-        }
-
-        let tracks;
-
-        if (kml.kml.Document !== undefined) {
-            if (Array.isArray(kml.kml.Document.Placemark)) {
-                tracks = [kml.kml.Document.Placemark[2]]
-                info.name = kml.kml.Document.name["#text"].split(" ")[2];
-            } else {
-                if (kml.kml.Document.Placemark !== undefined) {
-                    tracks = [kml.kml.Document.Placemark]
-                    info.name = kml.kml.Document.Placemark.name["#text"];
-                }
-            }
-        } else if (kml.kml.Folder !== undefined) {
-            if (kml.kml.Folder.Folder !== undefined) {
-                let trackFolder = kml.kml.Folder.Folder
-                tracks = trackFolder.Placemark;
-
-                if (Array.isArray(trackFolder)) {
-                    console.log("Multiple Track ADSB-Exchange, using index "+trackIndex)
-
-                    const possibleTrack = this.getValidIndexedTrackInFolder(trackFolder, trackIndex);
-                    if (!possibleTrack) {
-                        console.log("Reached end of getKMLTrackWhenCoord, for track index "+trackIndex+", but found no valid track")
-                        return false;
-                    }
-                    trackFolder = possibleTrack;
-                    tracks = possibleTrack.Placemark;
-
-                }
-
-                if (!tracks) {
-                    console.log("Reached end of getKMLTrackWhenCoord, for track index "+trackIndex+", but found no valid track")
-                    return false;
-                }
-
-                info.name = trackFolder.name["#text"].split(" ")[0];
-            } else {
-                assert(0, "Unknown KML format - no Document or Folder.Folder")
-                tracks = kml.kml.Folder.Placemark;
-            }
-        } else {
-            console.log("KML has no Document or Folder - may contain only overlays or other non-track data");
-            return false;
-        }
-
-        if (tracks === undefined) {
-            console.warn("getKMLTrackWhenCoord: No tracks in KML file ")
-            return false;
-        }
-
-        if (info.name === undefined || info.name === "") {
-            info.name = "Unnamed Track";
-        }
-
-        if (!Array.isArray(tracks)) {
-            tracks = [tracks]
-        }
-
-        if (when === undefined) {
-            if (tracks[0]["gx:Track"] === undefined) {
-                console.warn("getKMLTrackWhenCoord: No gx:Track in KML file ")
-                return false;
-            }
-
-            return true;
-        }
-
-        tracks.forEach(track => {
-            assert(track !== undefined, "Missing track in KML")
-            assert(track["gx:Track"] !== undefined, "No gx:Track in KML");
-            assert(track["gx:Track"].when !== undefined, "No gx:Track.when in KML");
-            assert(track["gx:Track"]["gx:coord"] !== undefined, "No gx:Track.gx:coord in KML");
-
-            const gxTrack = track["gx:Track"];
-            let whenArray;
-            let coordArray;
-            whenArray = gxTrack["when"]
-            coordArray = gxTrack["gx:coord"]
-            const len = whenArray.length;
-            for (let i = 0; i < len; i++) {
-
-                if (i>0 && whenArray[i]["#text"] === whenArray[i-1]["#text"]) {
                     continue;
                 }
 
-                const w = whenArray[i]["#text"]
-                const c = coordArray[i]["#text"]
-                const cs = c.split(' ')
-                const lon = Number(cs[0])
-                const lat = Number(cs[1])
-                const alt = Number(cs[2])
-
-                when.push(timeStrToEpoch(w))
-
-                coord.push({lat: lat, lon: lon, alt: alt})
+                const ts = this.sampleFromTimedPlacemark(pm);
+                if (ts) {
+                    const g = ensureGroup(container, folderName, this.textOf(pm, "name"));
+                    // consecutive-duplicate-time skip across the placemark sequence (matches the
+                    // historical FR24 dedup at the old line 171)
+                    if (ts.whenText !== undefined && ts.whenText === g._prevTimedWhen) {
+                        g._prevTimedWhen = ts.whenText;
+                    } else {
+                        g._prevTimedWhen = ts.whenText;
+                        g.samples.push({t: ts.t, lat: ts.lat, lon: ts.lon, alt: ts.alt});
+                    }
+                }
+                // else: no usable time+geometry → static shape (extractKMLObjectsInternal handles it)
             }
-        })
+            for (const fld of this.asArray(container.Folder)) visit(fld, this.textOf(fld, "name"));
+            for (const doc of this.asArray(container.Document)) visit(doc, this.textOf(doc, "name"));
+        };
 
+        visit(root, undefined);
+        return (this._trackGroups = groups.filter(g => g.samples.length > 0));
+    }
+
+    getKMLTrackWhenCoord(kml, trackIndex, when, coord, info) {
+        if (info === undefined) info = {};
+        const groups = this.extractTrackGroups();
+        if (trackIndex < 0 || trackIndex >= groups.length) return false;
+        const g = groups[trackIndex];
+        // BACK-COMPAT: seed info.name with the EXACT value the old shape-specific branches
+        // produced, so getShortName (unchanged) yields byte-identical names and no saved sitch
+        // keyed on Track_<name> is orphaned. (Verified by the full-corpus name parity diff.)
+        // The Phase-4 name registry will replace this seed behind a version gate.
+        info.name = this.legacyTrackName(trackIndex) || "Unnamed Track";
+        if (when === undefined) return true;     // probe mode: a track exists at this index
+        for (const s of g.samples) {
+            when.push(s.t);
+            coord.push({lat: s.lat, lon: s.lon, alt: s.alt});
+        }
         return true;
+    }
+
+    // Reproduces the historical `info.name` assignment from the old branch ladder, used only as
+    // getShortName's seed/fallback. Kept faithful (incl. the `.split(' ')[0]`/`[2]` quirks) so
+    // names don't drift across the refactor. Index mapping matches getValidIndexedTrackInFolder
+    // (the same document-order folder counting the new grouping uses).
+    legacyTrackName(trackIndex) {
+        const kml = this.data;
+        const D = kml.kml.Document;
+        if (D !== undefined) {
+            if (D.Folder !== undefined && Array.isArray(D.Folder)
+                && D.Folder[0] && D.Folder[0].name && D.Folder[0].name["#text"] === "Route") {
+                return (D.name && D.name["#text"]) || "FR24 Track";   // FR24
+            }
+            if (Array.isArray(D.Placemark)) {
+                return D.name && D.name["#text"] && D.name["#text"].split(" ")[2];   // FlightAware
+            }
+            if (D.Placemark !== undefined) {
+                return D.Placemark.name && D.Placemark.name["#text"];   // single Document
+            }
+        } else if (kml.kml.Folder !== undefined) {
+            if (kml.kml.Folder.Folder !== undefined) {
+                let tf = kml.kml.Folder.Folder;   // ADSBx
+                if (Array.isArray(tf)) tf = this.getValidIndexedTrackInFolder(tf, trackIndex);
+                return tf && tf.name && tf.name["#text"] && tf.name["#text"].split(" ")[0];
+            }
+            // Folder>Placemark fallback: old code left info.name unset (-> "Unnamed Track")
+        }
+        return undefined;
     }
 
     getValidIndexedTrackInFolder(trackFolder, trackIndex) {
