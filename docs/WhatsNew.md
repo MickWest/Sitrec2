@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.78.5 (2026-06-07)
+
+### Bug Fixes
+- Fixed a sitch appearing to hang or load into a broken state (camera not positioned, object not shown) when it contained a 3D object using a dynamically-added or drag-dropped model file — including `.ply` Gaussian splats. Such sitches now finish loading correctly, and a single bad object can no longer stop the rest of the scene from loading.
+
 ## Version 2.78.4 (2026-06-07)
 
 ### Bug Fixes

@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.78.5 (2026-06-07)
+
+### Bug Fixes
+- **Fixed a sitch hanging in a half-loaded / "deserializing" state when it contained a 3D object whose model is a dynamic, non-registered file** (e.g. a drag-dropped model or a `.ply` Gaussian splat such as the *Splat test* sitch's `Piaggio-p180.ply`). Root cause was in `CNode3DObject.rebuild` (`src/nodes/CNode3DObject.js`): it looked the model up with `const model = ModelFiles[this.selectModel]`, but `this.selectModel` can be a model NAME (a key in the static `ModelFiles` registry) **or** a dynamic/drag-dropped FILENAME that is not registered. For the latter the lookup returned `undefined`, and the next line's `model.file` comparison threw a TypeError. That exception propagated out of `modDeserialize` and rejected the promise returned by `deserializeMods` in `src/CustomManagerSerialize.js`, so the `.then()` that runs `finishDeserialization` (and clears `Globals.deserializing`) never ran. The app was left wedged: cameras were never positioned (`finishDeserialization`'s `applyControllers` was skipped), and `deserializing`-gated behavior stayed suppressed (e.g. `markSitchDirty` early-returns while `Globals.deserializing` is true). The fix has two parts:
+  - **Dynamic-model fallback** (`src/nodes/CNode3DObject.js`): the lookup is now `const model = ModelFiles[this.selectModel] ?? {file: this.selectModel}`, so an unregistered model name yields a `{file: <filename>}` def instead of `undefined`. A genuinely missing file then fails gracefully through `loadModelAsset`'s error path rather than crashing the whole load. The reload guard was changed from object-identity (`model !== this.currentModel`) to file comparison (`model.file !== this.currentModel?.file`), because the fallback is a fresh object every call — an identity check would needlessly reload the dynamic model on every rebuild.
+  - **Defense-in-depth in the deserialize flow** (`src/CustomManagerSerialize.js`): `deserializeMods` now wraps each `node.modDeserialize(mods[id])` in try/catch, logging and skipping a single bad node (`Error applying mod to node "<id>" — skipping it:`) so one bad mod can never again abort the entire load. Additionally, the `deserializeMods(...).then(...)` chain gained a `.catch` that, on any unexpected throw, logs `Deserialization did not complete cleanly:`, clears `Globals.deserializing` and `Globals.sitchDirty`, and calls `setRenderOne(3)` — guaranteeing the app can never be stranded in the "deserializing" state even if a later post-mods recalc throws. The net effect: such sitches now finish loading correctly (camera positioned, object/splat rendered) instead of appearing to hang into a broken state.
+
 ## Version 2.78.4 (2026-06-07)
 
 ### Bug Fixes

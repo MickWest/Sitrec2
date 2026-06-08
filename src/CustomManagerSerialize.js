@@ -1071,6 +1071,15 @@ export const serializeMethods = {
                 this.deserializeMods(sitchData.mods).then(() => {
                     setSitchEstablished(true); // flag that we've done some editing, so any future drag-and-drop will not mess with the sitch
                     this.finishDeserialization(sitchData);
+                }).catch((err) => {
+                    // Last-resort guard so the app is never wedged in "deserializing" state.
+                    // Part 1 (per-node try/catch in deserializeMods) already tolerates a single
+                    // bad mod; this additionally covers an unexpected throw in the post-mods
+                    // recalcs inside finishDeserialization.
+                    console.error("Deserialization did not complete cleanly:", err);
+                    Globals.deserializing = false;
+                    Globals.sitchDirty = false;
+                    setRenderOne(3);
                 });
                 return; // Exit early, finishDeserialization will continue the process
             } else {
@@ -1315,7 +1324,19 @@ export const serializeMethods = {
                 // if we've overridden the time in the URL
                 // see the check for urlParams.get("datetime") in index.js
                 if (id !== "dateTimeStart" || !Globals.timeOverride) {
-                    node.modDeserialize(mods[id]);
+                    // A single bad mod must NOT abort the whole deserialize. If it threw
+                    // (e.g. an object referencing a model no longer in ModelFiles, so
+                    // CNode3DObject.rebuild dereferences an undefined model.file), the promise
+                    // this loop returns would reject, the .then() that clears
+                    // Globals.deserializing would never run, and the app would be wedged in
+                    // "deserializing" state forever — the settle gate hangs to its 90s cap and
+                    // deserializing-gated behavior (markSitchDirty, controller setup) stays
+                    // suppressed. Skip the offending node and keep loading the rest.
+                    try {
+                        node.modDeserialize(mods[id]);
+                    } catch (e) {
+                        console.error(`Error applying mod to node "${id}" — skipping it:`, e);
+                    }
 
                     // if this has triggered an async action, wait for it to finish
                     // e.g. Like the CNode3DModel.loadGLTFModel method

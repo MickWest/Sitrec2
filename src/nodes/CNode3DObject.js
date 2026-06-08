@@ -1219,9 +1219,17 @@ export class CNode3DObject extends CNode3DGroup {
             // here this.selectModel is the NAME of the model (id or drag and drop filename
             // and this.currentModel points to a model def object (which currently just just a file)
             // so this.currentModel.file is the filename of the last loaded file
-            const model = ModelFiles[this.selectModel];
+            // this.selectModel is a model NAME (a key in the static ModelFiles registry) OR a
+            // dynamic/drag-dropped model FILENAME that is not registered. For the latter the
+            // model def is simply {file: <filename>}; build that fallback rather than leaving
+            // `model` undefined (which made `model.file` below throw — aborting the whole sitch
+            // deserialize and wedging the app in "deserializing" state). A truly missing file
+            // then fails gracefully via loadModelAsset's error path instead of crashing.
+            const model = ModelFiles[this.selectModel] ?? {file: this.selectModel};
 
-            if (model !== this.currentModel || newType) {
+            // Compare by file (not object identity): the fallback above is a fresh object each
+            // call, so an identity check would reload the dynamic model on every rebuild.
+            if (model.file !== this.currentModel?.file || newType) {
 
                 // if the new model and the old model are BOTH dynamic
                 // then we need to remove the old model from the file manager and the GUI
