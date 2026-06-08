@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+<Document>
+	<name>Features</name>
+	<Style id="Line_Feature_1947604">
+		<LineStyle>
+			<width>2</width>
+			<color>ff00ffff</color>
+		</LineStyle>
+	</Style>
+	<Folder>
+		<name>elevated_track.xml</name>
+		<Folder>
+			<name>LineStrings</name>
+			<Placemark>
+				<name>Line_Feature_1947604</name>
+				<styleUrl>#Line_Feature_1947604</styleUrl>
+				<Snippet maxLines="0"></Snippet>
+				<description> <![CDATA[  ]]> </description>
+				<LineString>
+					<altitudeMode>absolute</altitudeMode>
+					<tessellate>1</tessellate>
+					<coordinates>
+						-104.877919707133,40.448281922640632,1761.7716218680143
+						-104.87864350364011,40.448343316955324,1761.7677442273125
+						-104.87920036777291,40.448398613640208,1761.7647477826104
+						-104.87961324781448,40.448428078131109,1761.7625447930768
+						-104.88009648775832,40.448489445744045,1761.7599202832207
+						-104.88048501086297,40.44852096216858,1761.7578412722796
+						-104.88085389957699,40.448535555831327,1761.7558957776055
+						-104.88128054132943,40.448542714671952,1761.7536603650078
+						-104.88183325086315,40.448572250230555,1761.7507287692279
+						-104.88234237265586,40.448635410275841,1761.7479669293389
+						-104.88271820500157,40.44872159056218,1761.7458593090996
+					</coordinates>
+				</LineString>
+			</Placemark>
+
+		</Folder>
+	</Folder>
+</Document>
+</kml>

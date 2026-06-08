@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VARIANT: FR24 Route+Trail with a DUPLICATE consecutive <when> in the Route.
+     Exercises the duplicate-timestamp skip in the FR24 branch (CTrackFileKML.js:171-173),
+     otherwise uncovered. Two folders [Route, Trail] make Document.Folder an array so the
+     FR24 branch fires.
+     CURRENT PARSER: imports; the 2nd (duplicate-time) point is skipped -> 3 unique points. -->
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Document>
+    <name>WN999/SWA999</name>
+    <Folder>
+      <name>Route</name>
+      <Placemark>
+        <TimeStamp><when>2024-06-26T21:17:23Z</when></TimeStamp>
+        <Point><coordinates>-118.401,33.940,120</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <TimeStamp><when>2024-06-26T21:17:23Z</when></TimeStamp>
+        <Point><coordinates>-118.401,33.940,120</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <TimeStamp><when>2024-06-26T21:17:33Z</when></TimeStamp>
+        <Point><coordinates>-118.398,33.945,260</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <TimeStamp><when>2024-06-26T21:17:43Z</when></TimeStamp>
+        <Point><coordinates>-118.395,33.951,410</coordinates></Point>
+      </Placemark>
+    </Folder>
+    <Folder>
+      <name>Trail</name>
+      <Placemark>
+        <MultiGeometry>
+          <LineString><coordinates>-118.401,33.940,120 -118.395,33.951,410</coordinates></LineString>
+        </MultiGeometry>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>

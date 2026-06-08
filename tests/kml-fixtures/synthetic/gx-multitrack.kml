@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VARIANT: <gx:MultiTrack> containing multiple <gx:Track> segments (runway then flight).
+     This is the OGC/Google-standard way to express a multi-segment track, and Google Earth
+     animates it. It does NOT appear in the current corpus, so it is synthesized here.
+     CURRENT PARSER: FAILS. It reads track["gx:Track"] directly on the Placemark; a
+     Placemark whose geometry is <gx:MultiTrack> has no top-level gx:Track -> assert/return.
+     DESIRED: 1 track named "N123AB" stitched from both segments, time-sorted. -->
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Folder>
+    <Folder>
+      <name>N123AB track</name>
+      <Placemark>
+        <name>N123AB</name>
+        <gx:MultiTrack>
+          <gx:interpolate>0</gx:interpolate>
+          <gx:Track>
+            <extrude>0</extrude>
+            <when>2024-06-26T21:10:00Z</when>
+            <when>2024-06-26T21:12:00Z</when>
+            <gx:coord>-118.410 33.935 0</gx:coord>
+            <gx:coord>-118.408 33.937 0</gx:coord>
+          </gx:Track>
+          <gx:Track>
+            <altitudeMode>absolute</altitudeMode>
+            <extrude>1</extrude>
+            <when>2024-06-26T21:17:23Z</when>
+            <when>2024-06-26T21:17:33Z</when>
+            <gx:coord>-118.401 33.940 1200</gx:coord>
+            <gx:coord>-118.398 33.945 1260</gx:coord>
+          </gx:Track>
+        </gx:MultiTrack>
+      </Placemark>
+    </Folder>
+  </Folder>
+</kml>

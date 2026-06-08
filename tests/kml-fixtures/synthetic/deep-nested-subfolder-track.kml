@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VARIANT: a track buried in a deep sub-folder hierarchy
+     (Document > Folder "Flights" > Folder "Day 1" > Folder "N123AB track" > Placemark > gx:Track).
+     Requirement from Mick: extract tracks from complex-hierarchy KMLs where the tracks
+     might be in sub-folders.
+     CURRENT PARSER: FAILS. With Document present, Document.Folder is a single object
+     (not an array), the FR24 branch is skipped, Document.Placemark is undefined, and
+     the parser never recurses into nested folders -> returns no track.
+     DESIRED: 1 track named "N123AB", found regardless of nesting depth. -->
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Document>
+    <name>Archive</name>
+    <Folder>
+      <name>Flights</name>
+      <Folder>
+        <name>Day 1</name>
+        <Folder>
+          <name>N123AB track</name>
+          <Placemark>
+            <name>N123AB</name>
+            <gx:Track>
+              <altitudeMode>absolute</altitudeMode>
+              <when>2024-06-26T21:17:23Z</when>
+              <when>2024-06-26T21:17:33Z</when>
+              <when>2024-06-26T21:17:43Z</when>
+              <gx:coord>-118.401 33.940 1200</gx:coord>
+              <gx:coord>-118.398 33.945 1260</gx:coord>
+              <gx:coord>-118.395 33.951 1310</gx:coord>
+            </gx:Track>
+          </Placemark>
+        </Folder>
+      </Folder>
+    </Folder>
+  </Document>
+</kml>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VARIANT: FlightAware-style Document but with only TWO placemarks (origin marker +
+     the gx:Track), e.g. a flight whose destination is unknown/INVALID. Related to the real
+     corpus file "FlightAware_NGL2008_OEJN_INVALID_20240625" (cluster C04).
+     CURRENT PARSER: THROWS. The FlightAware branch hard-indexes the track as Placemark[2];
+     with only 2 placemarks, Placemark[2] is undefined -> track["gx:Track"] dereference fails.
+     DESIRED: 1 track, found by matching the placemark that actually has a gx:Track
+     (not by fixed index). -->
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Document>
+    <name>FlightAware &#9992; NGL2008 OEJN / INVALID</name>
+    <Placemark>
+      <name>OEJN</name>
+      <Point><coordinates>-118.401,33.940,0</coordinates></Point>
+    </Placemark>
+    <Placemark>
+      <name>NGL2008</name>
+      <gx:Track>
+        <altitudeMode>absolute</altitudeMode>
+        <when>2024-06-25T10:00:00Z</when>
+        <when>2024-06-25T10:00:10Z</when>
+        <when>2024-06-25T10:00:20Z</when>
+        <gx:coord>-118.398 33.945 1200</gx:coord>
+        <gx:coord>-118.395 33.951 1260</gx:coord>
+        <gx:coord>-118.392 33.957 1310</gx:coord>
+      </gx:Track>
+    </Placemark>
+  </Document>
+</kml>

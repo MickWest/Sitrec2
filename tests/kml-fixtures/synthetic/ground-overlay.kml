@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VARIANT: a GroundOverlay (georeferenced image draped on terrain) — not a track.
+     Mirrors corpus clusters C10/C16 (KMZ "snapshot" overlays, GeoTIFF exports).
+     Exercises extractKMLObjectsInternal's GroundOverlay branch and extractKMLGroundOverlay
+     (CTrackFileKML.js:343-344, 499-565), which are otherwise uncovered.
+     Requires Synth3DManager + FileManager to be mocked in the test.
+     CURRENT PARSER: not a track (doesContainTrack false); extractObjects adds an overlay. -->
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Overlay Scene</name>
+    <GroundOverlay>
+      <name>Test Overlay</name>
+      <Icon><href>overlay.png</href></Icon>
+      <LatLonBox>
+        <north>34.05</north>
+        <south>33.90</south>
+        <east>-118.20</east>
+        <west>-118.45</west>
+        <rotation>12.5</rotation>
+      </LatLonBox>
+    </GroundOverlay>
+  </Document>
+</kml>

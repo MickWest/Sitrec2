@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VARIANT: empty/truncated ADS-B Exchange track export (Folder>Folder with a name but
+     NO Placemark / no points). Mirrors corpus cluster C11 (6 real files, e.g. a 198-byte
+     "G-16 track" export).
+     CURRENT PARSER: graceful no-track (tracks = Folder.Folder.Placemark is undefined ->
+     returns false). It must NOT throw.
+     DESIRED (unchanged): doesContainTrack() === false, extractObjects() does not throw. -->
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Folder>
+    <Folder>
+      <name>G-16 track</name>
+    </Folder>
+  </Folder>
+</kml>

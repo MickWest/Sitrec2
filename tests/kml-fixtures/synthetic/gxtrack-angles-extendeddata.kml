@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VARIANT: a spec-conformant <gx:Track> that ALSO carries the optional <gx:angles>
+     (heading/tilt/roll, per the Google KML reference) and per-point <ExtendedData> via
+     <SchemaData>/<gx:SimpleArrayData>. A robust importer must read the position track and
+     ignore the extra elements. Addresses "support anything conforming to the gx:Track base
+     reference" + bespoke extras.
+     CURRENT PARSER: imports the position track (gx:angles / ExtendedData ignored). -->
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Folder>
+    <Folder>
+      <name>N123AB track</name>
+      <Placemark>
+        <name>N123AB</name>
+        <gx:Track>
+          <altitudeMode>absolute</altitudeMode>
+          <when>2024-06-26T21:17:23Z</when>
+          <when>2024-06-26T21:17:33Z</when>
+          <when>2024-06-26T21:17:43Z</when>
+          <gx:coord>-118.401 33.940 1200</gx:coord>
+          <gx:coord>-118.398 33.945 1260</gx:coord>
+          <gx:coord>-118.395 33.951 1310</gx:coord>
+          <gx:angles>118 0 0</gx:angles>
+          <gx:angles>120 2 1</gx:angles>
+          <gx:angles>122 1 0</gx:angles>
+          <ExtendedData>
+            <SchemaData schemaUrl="#schema">
+              <gx:SimpleArrayData name="speed">
+                <gx:value>140</gx:value>
+                <gx:value>160</gx:value>
+                <gx:value>175</gx:value>
+              </gx:SimpleArrayData>
+            </SchemaData>
+          </ExtendedData>
+        </gx:Track>
+      </Placemark>
+    </Folder>
+  </Folder>
+</kml>

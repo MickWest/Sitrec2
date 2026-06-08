@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VARIANT: timed track using <TimeSpan> (begin/end) per Placemark instead of <TimeStamp>.
+     Google Earth animates these (each point visible during its span). Not present in the
+     corpus, so synthesized. A robust importer should treat a TimeSpan's begin (or midpoint)
+     as the sample time.
+     CURRENT PARSER: FAILS. It only recognizes <TimeStamp> (FR24 branch) or <gx:Track>.
+     DESIRED: a 3-point track. -->
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Document>
+    <name>TimeSpan Track</name>
+    <Folder>
+      <name>Route</name>
+      <Placemark>
+        <TimeSpan><begin>2024-06-26T21:17:23Z</begin><end>2024-06-26T21:17:33Z</end></TimeSpan>
+        <Point><coordinates>-118.401,33.940,120</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <TimeSpan><begin>2024-06-26T21:17:33Z</begin><end>2024-06-26T21:17:43Z</end></TimeSpan>
+        <Point><coordinates>-118.398,33.945,260</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <TimeSpan><begin>2024-06-26T21:17:43Z</begin><end>2024-06-26T21:17:53Z</end></TimeSpan>
+        <Point><coordinates>-118.395,33.951,410</coordinates></Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>

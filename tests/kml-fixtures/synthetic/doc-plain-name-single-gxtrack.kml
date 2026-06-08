@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VARIANT: a Document with a SINGLE Placemark > gx:Track and a plain name (no "✈",
+     no CALLSIGN/ICAO slash). Exercises the B-DocSingle branch (CTrackFileKML.js:199) and the
+     getShortName final fallback "shortName = name" (CTrackFileKML.js:106-107), otherwise
+     uncovered.
+     CURRENT PARSER: imports (1 track); getShortName returns the Document name verbatim. -->
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Document>
+    <name>Plain Scene Name</name>
+    <Placemark>
+      <name>Object A</name>
+      <gx:Track>
+        <altitudeMode>absolute</altitudeMode>
+        <when>2024-06-26T21:17:23Z</when>
+        <when>2024-06-26T21:17:33Z</when>
+        <when>2024-06-26T21:17:43Z</when>
+        <gx:coord>-118.401 33.940 1200</gx:coord>
+        <gx:coord>-118.398 33.945 1260</gx:coord>
+        <gx:coord>-118.395 33.951 1310</gx:coord>
+      </gx:Track>
+    </Placemark>
+  </Document>
+</kml>

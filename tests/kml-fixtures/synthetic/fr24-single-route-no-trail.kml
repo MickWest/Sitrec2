@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VARIANT: FR24-style export with a single "Route" folder and NO "Trail" folder.
+     Mirrors corpus cluster C15 (4 real files, e.g. "vm2006withlater times4").
+     CURRENT PARSER: FAILS. The FR24 branch requires Document.Folder to be an ARRAY
+     (>=2 folders). With one folder, Document.Folder is an object, the FR24 branch is
+     skipped, Document.Placemark is undefined, and the parser returns "no track".
+     DESIRED: a 3-point track named from the Document/Folder name. -->
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Document>
+    <name>VM2006/NGL2006</name>
+    <Folder>
+      <name>Route</name>
+      <Placemark>
+        <name>2024-06-26 21:17:23 UTC</name>
+        <TimeStamp><when>2024-06-26T21:17:23Z</when></TimeStamp>
+        <Point><coordinates>-118.401,33.940,120</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <name>2024-06-26 21:17:34 UTC</name>
+        <TimeStamp><when>2024-06-26T21:17:34Z</when></TimeStamp>
+        <Point><coordinates>-118.398,33.945,260</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <name>2024-06-26 21:17:41 UTC</name>
+        <TimeStamp><when>2024-06-26T21:17:41Z</when></TimeStamp>
+        <Point><coordinates>-118.395,33.951,410</coordinates></Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>

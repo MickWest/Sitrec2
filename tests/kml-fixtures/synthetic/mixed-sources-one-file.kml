@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VARIANT: TWO different data sources in ONE file, each in its own sub-folder:
+       (1) an ADS-B aircraft as a <gx:Track> (space-separated gx:coord), and
+       (2) an FR24-style route as timed <Placemark>/<Point> (comma-separated).
+     Requirement from Mick: extract tracks from complex-hierarchy KMLs where tracks
+     may come from two or more different data sources.
+     CURRENT PARSER: FAILS to return both. Document.Folder is an array, but Folder[0]
+     is "ADSB N123AB" (not "Route"), so the FR24 branch is skipped; Document.Placemark
+     is undefined, so it returns no track -> BOTH tracks lost.
+     DESIRED: 2 tracks (one gx:Track aircraft, one timed-point route). -->
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Document>
+    <name>Mixed Source Scene</name>
+    <Folder>
+      <name>ADSB N123AB</name>
+      <Placemark>
+        <name>N123AB</name>
+        <gx:Track>
+          <altitudeMode>absolute</altitudeMode>
+          <when>2024-06-26T21:17:23Z</when>
+          <when>2024-06-26T21:17:33Z</when>
+          <when>2024-06-26T21:17:43Z</when>
+          <gx:coord>-118.401 33.940 1200</gx:coord>
+          <gx:coord>-118.398 33.945 1260</gx:coord>
+          <gx:coord>-118.395 33.951 1310</gx:coord>
+        </gx:Track>
+      </Placemark>
+    </Folder>
+    <Folder>
+      <name>Route</name>
+      <Placemark>
+        <TimeStamp><when>2024-06-26T21:17:25Z</when></TimeStamp>
+        <Point><coordinates>-118.501,33.840,800</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <TimeStamp><when>2024-06-26T21:17:35Z</when></TimeStamp>
+        <Point><coordinates>-118.498,33.845,860</coordinates></Point>
+      </Placemark>
+      <Placemark>
+        <TimeStamp><when>2024-06-26T21:17:45Z</when></TimeStamp>
+        <Point><coordinates>-118.495,33.851,910</coordinates></Point>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>

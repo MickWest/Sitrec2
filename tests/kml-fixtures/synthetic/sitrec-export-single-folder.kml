@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- VARIANT: Sitrec's OWN exported track shape (CNodeTrack.exportTrackKML / CNodeMISBData):
+     a single <Folder> > <Placemark> > <gx:Track>, with NO inner Folder.Folder.
+     This exercises the F3 "fallback" branch (CTrackFileKML.js:228-230) which begins with
+     assert(0,"Unknown KML format") and then sets tracks = Folder.Placemark. In tests and in
+     production the assert is a no-op, so this imports. Round-trip coverage.
+     CURRENT PARSER: imports (1 track), name falls back to "Unnamed Track" (info.name unset). -->
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Folder>
+    <name>chilean-track_0</name>
+    <Placemark>
+      <name>chilean-track_0</name>
+      <gx:Track>
+        <altitudeMode>absolute</altitudeMode>
+        <extrude>1</extrude>
+        <when>2024-06-26T21:17:23Z</when>
+        <when>2024-06-26T21:17:33Z</when>
+        <when>2024-06-26T21:17:43Z</when>
+        <gx:coord>-118.401 33.940 1200</gx:coord>
+        <gx:coord>-118.398 33.945 1260</gx:coord>
+        <gx:coord>-118.395 33.951 1310</gx:coord>
+      </gx:Track>
+    </Placemark>
+  </Folder>
+</kml>
