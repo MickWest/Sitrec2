@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "scenarioId": "custom-camera-use",
+  "sitch": "custom",
+  "frame": 10,
+  "captures": {
+    "cameraStart": {
+      "alt": 10000,
+      "lat": 31.980814,
+      "lon": -118.428486
+    },
+    "cameraAfterGoto": {
+      "alt": 5000,
+      "lat": 51.5,
+      "lon": -0.13
+    },
+    "cameraAfterAlt": {
+      "alt": 12000,
+      "lat": 51.5,
+      "lon": -0.13
+    }
+  }
+}

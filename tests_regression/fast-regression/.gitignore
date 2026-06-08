@@ -2,3 +2,7 @@ output/
 .chrome-profile/
 *.log
 baseline/
+
+# value-baseline/ is intentionally NOT ignored: value baselines are deterministic,
+# environment-independent JSON computed from frozen inputs, so they ARE committed
+# (unlike the GPU/driver-dependent pixel baselines in baseline/, which are local-only).

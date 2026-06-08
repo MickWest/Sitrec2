@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "scenarioId": "custom-create-synth",
+  "sitch": "custom",
+  "frame": 10,
+  "captures": {
+    "building": {
+      "element": {
+        "cornerLatLons": [
+          {
+            "lat": 39.999998,
+            "lon": -100.000137
+          },
+          {
+            "lat": 40.000092,
+            "lon": -100.000066
+          },
+          {
+            "lat": 40.000002,
+            "lon": -99.999863
+          },
+          {
+            "lat": 39.999908,
+            "lon": -99.999934
+          }
+        ],
+        "depthTest": true,
+        "editMode": false,
+        "id": "synthBuilding_1",
+        "material": "lambert",
+        "name": "synthBuilding_1",
+        "opacity": 1,
+        "ridgelineInset": 0,
+        "roofAGL": 5,
+        "roofColor": "#404040",
+        "roofEaves": 0,
+        "rooflineHeightAGL": 0,
+        "transparent": true,
+        "visible": true,
+        "wallColor": "#c0c0c0",
+        "wireframe": false
+      },
+      "id": "synthBuilding_1",
+      "success": true,
+      "type": "building"
+    },
+    "clouds": {
+      "element": {
+        "altitude": 3000,
+        "brightness": 1,
+        "centerLat": 40,
+        "centerLon": -100,
+        "cloudSize": 200,
+        "density": 0.5,
+        "depth": 0,
+        "edgeFrequency": 5,
+        "edgeWiggle": 0,
+        "editMode": false,
+        "feather": 1000,
+        "id": "synthClouds_1",
+        "name": "synthClouds_1",
+        "opacity": 0.8,
+        "radius": 500,
+        "seed": 42,
+        "sunReflection": 0,
+        "visible": true,
+        "windFrom": 270,
+        "windKnots": 50,
+        "windMode": "No Wind"
+      },
+      "id": "synthClouds_1",
+      "success": true,
+      "type": "clouds"
+    },
+    "synthInventory": {
+      "buildings": [
+        {
+          "id": "synthBuilding_1",
+          "name": "synthBuilding_1",
+          "visible": true
+        }
+      ],
+      "clouds": [
+        {
+          "id": "synthClouds_1",
+          "name": "synthClouds_1",
+          "visible": true
+        }
+      ],
+      "count": 2,
+      "overlays": [],
+      "success": true
+    }
+  }
+}

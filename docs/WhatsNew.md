@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.78.4 (2026-06-07)
+
+### Bug Fixes
+- Creating a 3D object (Objects → Add Object) can now be undone. Undo (Ctrl/Cmd+Z) removes the object you just created along with its track, and Redo (Ctrl/Cmd+Y, or Ctrl/Cmd+Shift+Z) brings it back — matching how synthetic buildings, clouds, and ground overlays already behaved.
+
 ## Version 2.78.3 (2026-06-07)
 
 ### Bug Fixes

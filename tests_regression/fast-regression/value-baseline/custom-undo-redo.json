@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "scenarioId": "custom-undo-redo",
+  "sitch": "custom",
+  "frame": 10,
+  "captures": {
+    "countBefore": {
+      "count": 0
+    },
+    "countAfterCreate": {
+      "count": 1
+    },
+    "countAfterUndo": {
+      "count": 0
+    },
+    "countAfterRedo": {
+      "count": 1
+    }
+  }
+}

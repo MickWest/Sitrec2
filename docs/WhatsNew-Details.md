@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.78.4 (2026-06-07)
+
+### Bug Fixes
+- **Creating a 3D object is now undoable** (`createObjectFromInput()` in `src/CustomManagerMenus.js`). Both creation entry points — the **Objects ▸ Add Object** menu item (`src/index.js`, `menus.objects.addObject`) and the `addObjectAtLLA` API (`src/CSitrecAPI.js`) — route through `createObjectFromInput`, and neither previously pushed an undo action, so a freshly created object could not be undone, unlike synthetic buildings, clouds, and ground overlays (which already register undo in this file). `createObjectFromInput` now calls `UndoManager.add(...)` (guarded by `if (UndoManager && trackOb)`) using a new extracted helper, `makeCreateObjectUndoAction` in `src/undoCreateObject.js`. A created object is two linked nodes — a `CNode3DObject` (`objectID`) and a synthetic track (`trackID`) — so **Undo** (Ctrl/Cmd+Z) removes both: `TrackManager.disposeRemove(trackID)` first (which also tears down the track's display/data nodes), then `NodeMan.unlinkDisposeRemove(objectID)`. **Redo** (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z) re-creates the pair by re-invoking `createObjectFromInput` via an injected `recreate` callback; because recreation yields fresh ids, the action stores them in `curObjectID` / `curTrackID` closure vars and updates them on redo, so a subsequent undo targets the recreated pair rather than the stale originals. The nested `UndoManager.add` during recreation is a no-op while `UndoManager.isRedoing`, so redo does not stack a duplicate action. The helper takes its managers and the `recreate` callback as injected parameters (holding no hidden globals), making it unit-testable in isolation away from `CustomManagerMenus.js`'s large import tree; covered by `tests/createObjectUndo.test.js` (7 tests).
+
 ## Version 2.78.3 (2026-06-07)
 
 ### Bug Fixes

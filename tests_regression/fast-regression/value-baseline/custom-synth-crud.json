@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "scenarioId": "custom-synth-crud",
+  "sitch": "custom",
+  "frame": 10,
+  "captures": {
+    "countStart": {
+      "count": 0
+    },
+    "created": {
+      "element": {
+        "cornerLatLons": [
+          {
+            "lat": 39.999946,
+            "lon": -100.000117
+          },
+          {
+            "lat": 40.000054,
+            "lon": -100.000117
+          },
+          {
+            "lat": 40.000054,
+            "lon": -99.999883
+          },
+          {
+            "lat": 39.999946,
+            "lon": -99.999883
+          }
+        ],
+        "depthTest": true,
+        "editMode": false,
+        "id": "synthBuilding_1",
+        "material": "lambert",
+        "name": "synthBuilding_1",
+        "opacity": 1,
+        "ridgelineInset": 0,
+        "roofAGL": 5,
+        "roofColor": "#404040",
+        "roofEaves": 0,
+        "rooflineHeightAGL": 0,
+        "transparent": true,
+        "visible": true,
+        "wallColor": "#c0c0c0",
+        "wireframe": false
+      },
+      "id": "synthBuilding_1",
+      "success": true,
+      "type": "building"
+    },
+    "countAfterCreate": {
+      "count": 1
+    },
+    "updated": {
+      "element": {
+        "cornerLatLons": [
+          {
+            "lat": 39.999946,
+            "lon": -100.000117
+          },
+          {
+            "lat": 40.000054,
+            "lon": -100.000117
+          },
+          {
+            "lat": 40.000054,
+            "lon": -99.999883
+          },
+          {
+            "lat": 39.999946,
+            "lon": -99.999883
+          }
+        ],
+        "depthTest": true,
+        "editMode": false,
+        "id": "synthBuilding_1",
+        "material": "lambert",
+        "name": "synthBuilding_1",
+        "opacity": 1,
+        "ridgelineInset": 0,
+        "roofAGL": 9,
+        "roofColor": "#404040",
+        "roofEaves": 0,
+        "rooflineHeightAGL": 0,
+        "transparent": true,
+        "visible": true,
+        "wallColor": "#c0c0c0",
+        "wireframe": false
+      },
+      "id": "synthBuilding_1",
+      "success": true,
+      "type": "building"
+    },
+    "roofAfterUpdate": {
+      "element.roofAGL": 9
+    },
+    "deleted": {
+      "id": "synthBuilding_1",
+      "success": true,
+      "type": "building"
+    },
+    "countAfterDelete": {
+      "count": 0
+    }
+  }
+}

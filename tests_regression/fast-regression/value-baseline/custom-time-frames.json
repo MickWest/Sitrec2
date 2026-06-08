@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "scenarioId": "custom-time-frames",
+  "sitch": "custom",
+  "frame": 10,
+  "captures": {
+    "simTime": {
+      "isoString": "2024-01-01T12:00:00.333Z"
+    }
+  }
+}

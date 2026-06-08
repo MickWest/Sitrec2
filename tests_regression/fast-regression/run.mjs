@@ -52,7 +52,7 @@ import pixelmatch from 'pixelmatch';
 import {PNG} from 'pngjs';
 import {existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync, unlinkSync} from 'fs';
 import {dirname, join} from 'path';
-import {fileURLToPath} from 'url';
+import {fileURLToPath, pathToFileURL} from 'url';
 import {createRequire} from 'module';
 import {execSync} from 'child_process';
 
@@ -65,7 +65,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // served at https://local.metabunk.org/<buildFolder>/. We reuse that same source
 // of truth so `/regression` just works in main or any branch worktree without
 // needing --base. (--base= and SITREC_REGRESS_BASE still override this.)
-function currentWorktreeBase() {
+export function currentWorktreeBase() {
     let buildFolder;
     try {
         buildFolder = createRequire(import.meta.url)('../../config/config-install').buildFolder;
@@ -92,7 +92,7 @@ const opt = (name, def) => {
     return hit ? hit.slice(name.length + 3) : def;
 };
 
-const CONFIG = {
+export const CONFIG = {
     base: (opt('base', process.env.SITREC_REGRESS_BASE || currentWorktreeBase())).replace(/\/?$/, '/'),
     // Test users to enumerate Regression-labelled sitches under. 99999999 is the
     // shared regression test user (its saved versions are the curated fixtures the
@@ -154,12 +154,26 @@ const FRAME_OVERRIDES = {
 
 const frameFor = (sitch) => FRAME_OVERRIDES[sitch.name] ?? CONFIG.frame;
 
-const baselineDir = join(__dirname, 'baseline');
-const outputDir = join(__dirname, 'output');
-const profileDir = join(__dirname, '.chrome-profile');
+// Hoisted out of main() so the scenario runner can launch an identical persistent
+// context (same channel/GPU/profile = same warm cache). Behavior-neutral: main()
+// now calls this instead of an inline literal.
+export function buildLaunchOpts(config = CONFIG) {
+    return {
+        channel: 'chrome',
+        headless: config.headless,
+        viewport: config.viewport,
+        deviceScaleFactor: 1,
+        ignoreHTTPSErrors: true,
+        args: ['--hide-scrollbars', '--mute-audio'],
+    };
+}
+
+export const baselineDir = join(__dirname, 'baseline');
+export const outputDir = join(__dirname, 'output');
+export const profileDir = join(__dirname, '.chrome-profile');
 for (const d of [baselineDir, outputDir, profileDir]) mkdirSync(d, {recursive: true});
 
-const slug = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+export const slug = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
 // ---------------------------------------------------------------------------
 // Enumeration: which sitches carry the label, and their latest version URL.
@@ -172,7 +186,7 @@ const slug = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^
 // and in --update mode that means a baseline silently goes un-refreshed. A
 // genuinely-absent sitch returns an empty array (not a throw), so retrying only
 // re-attempts real failures and never masks a real absence.
-async function fetchJson(url, {retries = 3, backoffMs = 300} = {}) {
+export async function fetchJson(url, {retries = 3, backoffMs = 300} = {}) {
     let lastErr;
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
@@ -187,7 +201,7 @@ async function fetchJson(url, {retries = 3, backoffMs = 300} = {}) {
     throw lastErr;
 }
 
-async function enumerateSitches() {
+export async function enumerateSitches() {
     const server = CONFIG.base + 'sitrecServer/';
     // Append a testUserID to a URL (the param the sitch browser / endpoints use).
     const tu = (u, uid) => u + (u.includes('?') ? '&' : '?') + 'testUserID=' + uid;
@@ -247,14 +261,21 @@ async function enumerateSitches() {
     return sitches;
 }
 
-function buildLoadUrl(sitch) {
+export function buildLoadUrl(sitch) {
+    // A built-in sitch loads via ?sitch=<key>; a saved/Regression sitch via ?custom=<url>.
+    // (The existing pixel suite only ever passes ?custom= sitch objects — they have no
+    // `builtin` field, so this branch is behavior-neutral for run.mjs's own use.)
+    const loadParam = sitch.builtin
+        ? 'sitch=' + encodeURIComponent(sitch.sitch ?? sitch.name)
+        : 'custom=' + encodeURIComponent(sitch.url);
     const params = [
-        'custom=' + encodeURIComponent(sitch.url),
+        loadParam,
         'regression=1',
-        'frame=' + frameFor(sitch),
+        // A scenario may pin its own frame; otherwise fall back to the per-sitch override / default.
+        'frame=' + (sitch.frame ?? frameFor(sitch)),
         'ignoreunload=1',
     ];
-    if (CONFIG.localTerrain) params.push('regressionLocalTerrain=1');
+    if (CONFIG.localTerrain || sitch.localTerrain) params.push('regressionLocalTerrain=1');
     return CONFIG.base + '?' + params.join('&');
 }
 
@@ -264,7 +285,7 @@ function buildLoadUrl(sitch) {
 // of visible tiles, and waits for it to go quiet AND stable. This is the
 // battle-tested heuristic the existing suite uses, tuned here for speed.
 // ---------------------------------------------------------------------------
-function settleStateFn() {
+export function settleStateFn() {
     const globals = window.Globals;
     const nodeMan = window.NodeMan;
     const loadingDiv = document.getElementById('loadingIndicator');
@@ -359,7 +380,7 @@ function settleStateFn() {
     return state;
 }
 
-function isPending(s) {
+export function isPending(s) {
     if (!s.ready) return true;
     return s.pendingActions > 0 || s.deserializing || s.parsing > 0 || s.loadingVisible || s.loadingTerrain ||
         s.texturePendingLoads > 0 || s.textureLoading > 0 || s.textureRecalc > 0 ||
@@ -392,7 +413,7 @@ function isPending(s) {
 // the remaining tiles as permanently stuck and proceed, rather than hanging to the
 // maxWait timeout. Their stuck state is identical run-to-run, so capture stays
 // deterministic.
-async function waitForSettle(page, {maxWaitMs = 60000, stableChecks = 20, minWaitMs = 3000, wantFrame = null, hiResStallChecks = 75} = {}) {
+export async function waitForSettle(page, {maxWaitMs = 60000, stableChecks = 20, minWaitMs = 3000, wantFrame = null, hiResStallChecks = 75} = {}) {
     const start = Date.now();
     let stable = 0, lastSig = '', hiResStall = 0, lastHiRes = -1;
     while (Date.now() - start < maxWaitMs) {
@@ -429,7 +450,7 @@ async function waitForSettle(page, {maxWaitMs = 60000, stableChecks = 20, minWai
 // every WebGL context so the GPU has truly caught up before we screenshot.
 // Without the flush, drivers that batch command submission can leave sub-pixel
 // rasterization in flight, producing spurious 1-3px diffs.
-async function renderOneFrame(page) {
+export async function renderOneFrame(page) {
     await page.evaluate(() => new Promise((resolve) => {
         try { if (window.setRenderOne) window.setRenderOne(true); } catch { /* ignore */ }
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -450,7 +471,7 @@ async function renderOneFrame(page) {
 }
 
 // ~95% one-color => blank/failed render.
-function isBlank(pngBuffer) {
+export function isBlank(pngBuffer) {
     try {
         const png = PNG.sync.read(pngBuffer);
         const {data, width, height} = png;
@@ -473,7 +494,7 @@ function isBlank(pngBuffer) {
 // ---------------------------------------------------------------------------
 // Per-sitch processing
 // ---------------------------------------------------------------------------
-async function processSitch(context, sitch) {
+export async function processSitch(context, sitch) {
     const result = {
         name: sitch.name, slug: sitch.slug, status: 'error',
         loadMs: 0, settleMs: 0, settleTimedOut: false, diffPixels: 0, diffRatio: 0,
@@ -617,7 +638,7 @@ async function processSitch(context, sitch) {
 }
 
 // Simple concurrency pool.
-async function runPool(items, n, worker) {
+export async function runPool(items, n, worker) {
     const results = new Array(items.length);
     let next = 0;
     async function loop() {
@@ -634,7 +655,7 @@ async function runPool(items, n, worker) {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-async function main() {
+export async function main() {
     const runStart = Date.now();
     console.log(`Enumerating "${CONFIG.label}" sitches from ${CONFIG.base} ...`);
     const sitches = await enumerateSitches();
@@ -650,14 +671,7 @@ async function main() {
         return 1;
     }
 
-    const launchOpts = {
-        channel: 'chrome',
-        headless: CONFIG.headless,
-        viewport: CONFIG.viewport,
-        deviceScaleFactor: 1,
-        ignoreHTTPSErrors: true,
-        args: ['--hide-scrollbars', '--mute-audio'],
-    };
+    const launchOpts = buildLaunchOpts(CONFIG);
     const logResult = (r) => {
         const tag = {pass: '✓ PASS', baseline: '＋ BASE', updated: '↻ UPDT', fail: '✗ FAIL', error: '‼ ERR '}[r.status] || r.status;
         const extra = r.status === 'pass' || r.status === 'fail'
@@ -750,7 +764,13 @@ async function main() {
     return 0;
 }
 
-main().then((code) => process.exit(code)).catch((err) => {
-    console.error(err);
-    process.exit(1);
-});
+// Only auto-run the pixel suite when invoked directly as a script. When this module
+// is IMPORTED (by run-scenarios.mjs, to reuse settle/launch/enumerate), the guard is
+// false so importing has no side effect.
+const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+    main().then((code) => process.exit(code)).catch((err) => {
+        console.error(err);
+        process.exit(1);
+    });
+}

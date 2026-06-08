@@ -28,6 +28,7 @@ import {
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
+import {makeCreateObjectUndoAction} from "./undoCreateObject";
 import {GlobalScene} from "./LocalFrame";
 import {refreshLabelsAfterLoading} from "./nodes/CNodeLabels3D";
 import {assert} from "./assert";
@@ -178,6 +179,32 @@ export const menuMethods = {
         });
 
         console.log(`Created object "${name}" at ${lat}, ${lon}, ${finalAlt}m`);
+
+        // Make object creation undoable. Both entry points — the "Add Object" menu
+        // (index.js) and the addObjectAtLLA API (CSitrecAPI) — route through here, and
+        // previously neither pushed an undo action, so a created object could not be
+        // undone (unlike synth buildings/clouds/overlays, which already register undo in
+        // this file). Mirror that pattern: undo removes the synthetic track (which tears
+        // down its display/data nodes) plus the separate 3D object node; redo re-creates
+        // via this same method. We hold the live ids in closure vars because redo gets
+        // fresh ids — the nested add() below is a no-op while UndoManager.isRedoing, so it
+        // does not stack a duplicate action.
+        if (UndoManager && trackOb) {
+            UndoManager.add(makeCreateObjectUndoAction({
+                name,
+                objectID,
+                trackID: trackOb.trackID ?? trackID,
+                trackManager: TrackManager,
+                nodeMan: NodeMan,
+                // Redo re-creates via this same method (the nested UndoManager.add is a no-op
+                // while isRedoing, so it does not stack a duplicate action) and returns the
+                // fresh ids so a subsequent undo targets the recreated pair.
+                recreate: () => {
+                    const r = this.createObjectFromInput(name, lat, lon, finalAlt, true);
+                    return {objectID: r.objectID, trackID: r.trackOb?.trackID ?? r.trackID};
+                },
+            }));
+        }
 
         return { objectNode, trackOb, objectID, trackID };
     },

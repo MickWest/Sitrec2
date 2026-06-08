@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "scenarioId": "custom-object-edit",
+  "sitch": "custom",
+  "frame": 10,
+  "captures": {
+    "created": {
+      "alt": 10000,
+      "lat": 40,
+      "lon": -100,
+      "name": "EditOb",
+      "success": true
+    },
+    "geom": {
+      "allApplied": true,
+      "count": 3,
+      "geometry": "box",
+      "success": true
+    },
+    "dims": {
+      "allApplied": true,
+      "count": 3,
+      "success": true
+    }
+  }
+}

@@ -89,6 +89,7 @@ import {
     SITREC_SERVER
 } from "./configUtils"
 import {SituationSetup, startLoadingInlineAssets} from "./SituationSetup";
+import {sitrecAPI} from "./CSitrecAPI";
 import {CUnits} from "./CUnits";
 import {updateLockTrack} from "./updateLockTrack";
 import {updateFrame} from "./updateFrame";
@@ -1541,6 +1542,14 @@ async function initializeOnce() {
         window.newSitch = newSitch;
         window.toggleMotionAnalysis = toggleMotionAnalysis;
         window.getMotionAnalyzerForTesting = getMotionAnalyzerForTesting;
+        // The CSitrecAPI singleton is otherwise only window-exposed as a side effect of the
+        // chat view loading (CNodeVIewChat -> CClientNLU -> CSitrecAPI), which does NOT happen
+        // under ?regression=1. Expose it directly here so the MCP bridge and the fast-regression
+        // scenario harness can drive the API in regression mode. Gated on isLocal so production
+        // (www.metabunk.org) is byte-for-byte unchanged.
+        if (isLocal) {
+            window.sitrecAPI = sitrecAPI;
+        }
 
         // Set a flag to indicate that these objects are ready
         window.SITREC_OBJECTS_READY = {

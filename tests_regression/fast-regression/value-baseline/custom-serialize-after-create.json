@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "scenarioId": "custom-serialize-after-create",
+  "sitch": "custom",
+  "frame": 10,
+  "captures": {
+    "serialization": {
+      "beforeIsFile": true,
+      "beforeOk": true,
+      "created": true,
+      "grewByAtLeast10": true
+    }
+  }
+}

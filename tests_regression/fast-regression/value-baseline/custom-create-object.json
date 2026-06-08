@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "scenarioId": "custom-create-object",
+  "sitch": "custom",
+  "frame": 10,
+  "captures": {
+    "tracksBefore": {
+      "count": 0
+    },
+    "created": {
+      "alt": 10000,
+      "lat": 40,
+      "lon": -100,
+      "name": "TestOb",
+      "success": true
+    },
+    "tracksAfter": {
+      "count": 1,
+      "names": [
+        {
+          "isSynthetic": true,
+          "menuText": "synth_01_d"
+        }
+      ]
+    },
+    "dirtyAfter": {
+      "dirty": true
+    }
+  }
+}
