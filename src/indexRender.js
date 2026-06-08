@@ -34,6 +34,7 @@ import {Controller} from "./js/lil-gui.esm";
 import {DragDropHandler} from "./DragDropHandler";
 import {EventManager} from "./CEventManager";
 import {updateFrame} from "./updateFrame";
+import {isKeyHeld} from "./KeyBoardHandler";
 import {updateLockTrack} from "./updateLockTrack";
 import {assert} from "./assert";
 import {updateSize} from "./JetStuff";
@@ -348,6 +349,17 @@ export function renderMain(elapsed) {
         if (par.renderOne > 0) {
             par.renderOne--;
         }
+    }
+
+    // Held playback arrow keys (←/→ play, ↑/↓ 10x scrub) are polled every tick
+    // in updateFrame(). Under render-on-demand the loop sleeps once renderOne is
+    // cleared (just above) unless some node has updateWhilePaused work — which the
+    // video viewer typically does NOT — so a held arrow only advanced a single
+    // frame. Re-arm renderOne AFTER the clear so the loop keeps ticking and the
+    // polling runs continuously while held. Releasing the key stops the re-arm and
+    // the loop sleeps again next tick.
+    if (isKeyHeld('arrowleft') || isKeyHeld('arrowright') || isKeyHeld('arrowup') || isKeyHeld('arrowdown')) {
+        setRenderOne(true);
     }
 
     // Render-only passes usually reuse node/controller state. Scrubbing can
