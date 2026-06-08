@@ -43,6 +43,16 @@ export function updateFrame(elapsed) {
     // to advance
     let frameStep = dt / 1000 * Sit.fps;
 
+    // Render-on-demand keeps the loop asleep while paused. The held-arrow
+    // playback below is polled, so it only runs if updateFrame() is called
+    // every tick. Re-arm renderOne while any playback arrow is held so the
+    // loop keeps ticking; without this a held arrow advanced only a single
+    // frame (the onDown step) before the loop slept. Releasing the key stops
+    // the re-arm and the loop sleeps again.
+    if (isKeyHeld('arrowup') || isKeyHeld('arrowdown') || isKeyHeld('arrowleft') || isKeyHeld('arrowright')) {
+        setRenderOne(true);
+    }
+
     if (isKeyHeld('arrowup')) {
         par.frame -= 10 * frameStep;
         par.paused = true;
