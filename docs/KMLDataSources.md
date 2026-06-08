@@ -11,6 +11,7 @@ This document explains:
 - [How Sitrec detects the source](#how-sitrec-detects-the-source)
 - [Required data structure, source by source](#required-data-structure-source-by-source)
 - [How a KML becomes a track](#how-a-kml-becomes-a-track)
+- [Sitrec as a KML generator (round-trip)](#sitrec-as-a-kml-generator-round-trip)
 - [Altitude, time, and unit conventions](#altitude-time-and-unit-conventions)
 - [Non-track KML content](#non-track-kml-content-overlays-shapes-points)
 - [KMZ archives](#kmz-archives)
@@ -32,9 +33,14 @@ Sitrec reads tracks from three flight-tracking services, each with a distinct fi
 | **FlightAware** | flightaware.com | `<Document><Placemark>[2]<gx:Track>` | No — one flight per file |
 | **FlightRadar24 (FR24)** | flightradar24.com | `<Document><Folder name="Route">` of `<Point>`s | No — one flight per file |
 
-These three cover the practical universe of "drag a flight track onto Sitrec." Other KML files
-(Google Earth shapes, ground overlays, point landmarks) are also accepted, but they produce
-*scene features*, not tracks — see [Non-track KML content](#non-track-kml-content-overlays-shapes-points).
+These three cover the practical universe of "drag a flight track onto Sitrec." Each, however,
+has **structural sub-variants** the parser must distinguish — single-track vs. multi-track,
+with-airport-markers vs. without, plus a legacy/fallback shape and Sitrec's own exports. The full
+branch table is in [How Sitrec detects the source](#how-sitrec-detects-the-source).
+
+Other KML files (Google Earth shapes, ground overlays, point landmarks) are also accepted, but
+they produce *scene features*, not tracks — see
+[Non-track KML content](#non-track-kml-content-overlays-shapes-points).
 
 > **Important:** Sitrec does **not** branch on the provider's *name* or the file name. It
 > branches on the *XML shape* of the file (see below). Any KML whose structure matches one of
@@ -68,7 +74,9 @@ fetched automatically by Sitrec — you export the KML and then drag-and-drop it
 
 ## How Sitrec detects the source
 
-Detection happens in two stages.
+Detection happens in two stages, and the second stage has **more branches than the three
+headline sources** — there are legacy, single-track, and Sitrec-generated variants in the same
+decision tree.
 
 ### Stage 1 — "Is this a KML at all?"
 
@@ -82,23 +90,60 @@ static canHandle(filename, data) {
 }
 ```
 
-All three sources pass this — it is only a coarse gate.
+Every KML passes this — it is only a coarse gate. `detectTrackFile()`
+(`CFileManagerParse.js:1619`) asserts that *exactly one* `CTrackFile` subclass claims a file, so
+`CTrackFileKML` is the sole owner of anything with a `kml` root.
 
-### Stage 2 — "Which layout is it?"
+### Stage 2 — "Which layout is it?" (the full variant tree)
 
 The real discrimination is **structural**, inside `getKMLTrackWhenCoord()`
-(`CTrackFileKML.js:153`). The checks run in this order:
+(`CTrackFileKML.js:153`). A crucial enabling detail: `parseXml()` is called **without an
+`arrayTags` argument** (`CFileManagerParse.js:1442`), so a tag becomes a JS **array only when the
+source emitted two or more siblings**. A single `<Placemark>` parses to an *object*; three
+`<Placemark>`s parse to an *array*. The parser therefore uses `Array.isArray(...)` as its main
+format discriminator, and that is what separates the variants below.
 
-1. **FR24** — `kml.Document.Folder` is an array **and** `Folder[0].name["#text"] === "Route"`
-   (`CTrackFileKML.js:159-161`).
-2. **FlightAware** — `kml.Document.Placemark` is an array; the flight track is **always**
-   `Placemark[2]` (`Placemark[0]`/`[1]` are the origin/destination airport markers)
-   (`CTrackFileKML.js:194-197`).
-3. **ADS-B Exchange** — `kml.Folder.Folder` exists; if it is an array, each entry that has a
-   `Placemark` is one aircraft, indexed by `trackIndex` (`CTrackFileKML.js:204-227`).
+The branches, in the order they are tested:
 
-If none match, the function logs that the KML has no track and returns `false` (the file may
-still contain overlays or shapes, handled separately).
+| # | Match condition | Variant | Track location | Name source |
+|---|---|---|---|---|
+| **D1** | `Document.Folder` is array **and** `Folder[0].name === "Route"` | **FR24** | each `Route` `<Placemark>` (one point each) | `Document.name` |
+| **D2** | `Document.Placemark` is **array** | **FlightAware** | `Placemark[2]` (airports are `[0]`,`[1]`) | `Document.name` token `[2]` |
+| **D3** | `Document.Placemark` is a **single object** | **generic single-track Document** | the lone `Placemark` (`gx:Track`) | `Placemark.name` |
+| **F1** | `Folder.Folder` is **array** | **ADS-B Exchange, multi-track** | Nth valid inner folder's `Placemark` | folder `name` token `[0]`, regex `… track` |
+| **F2** | `Folder.Folder` is a **single object** | **ADS-B Exchange, single-track** (one aircraft) | `Folder.Folder.Placemark` | folder name |
+| **F3** | `Folder` with **no inner `Folder`** | **fallback / Sitrec-generated export** | `Folder.Placemark` | — (asserts in dev) |
+| **N1** | neither `Document` nor `Folder` | **not a track** | — | returns `false` → object extraction |
+
+Notes that make the tree behave the way it does:
+
+- **D2 vs D3** is purely "did the file have ≥2 placemarks?" A FlightAware export carries three
+  (origin marker, destination marker, the track), so it lands in D2 and the track is hard-indexed
+  at `Placemark[2]`. A KML carrying only the track placemark falls through to D3 and is named from
+  the placemark itself. The D2 name `Document.name["#text"].split(" ")[2]` grabs the third
+  space-delimited token of the document title — fragile, source-specific (`CTrackFileKML.js:197`).
+- **F1 vs F2** is "did the outer `<Folder>` contain ≥2 inner `<Folder>`s?" ADS-B Exchange wraps
+  every aircraft in its own inner folder; many aircraft → array (F1, indexed by `trackIndex` via
+  `getValidIndexedTrackInFolder()`), one aircraft → object (F2).
+- **F3 is the round-trip / legacy branch.** It begins with `assert(0, "Unknown KML format - no
+  Document or Folder.Folder")` and *then* sets `tracks = kml.kml.Folder.Placemark`
+  (`CTrackFileKML.js:228-231`). Because production builds strip `assert()`, this branch silently
+  works in production but **fires the debugger in dev builds**. It is reachable by Sitrec's own
+  exported track KML (see [Sitrec as a KML generator](#sitrec-as-a-kml-generator-round-trip)) and
+  by any simple "single folder, single placemark" KML.
+- **N1** (no `Document` and no `Folder`) returns `false`; the file may still contain overlays,
+  shapes, or point landmarks, which are handled by a separate walk — see
+  [Non-track KML content](#non-track-kml-content-overlays-shapes-points).
+
+### Probe mode vs extract mode
+
+`getKMLTrackWhenCoord()` does double duty. When called **without** the output arrays (`when ===
+undefined`) it runs in *probe* mode: it detects the layout and returns `true`/`false` for "does
+this contain a track?" without parsing every point. FR24 returns early at `CTrackFileKML.js:164`;
+the `gx:Track` variants confirm `tracks[0]["gx:Track"]` exists and return at `:256`. This backs
+`doesContainTrack()` (`:23`) and `getTrackCount()` (`:127`), which the importer calls *before*
+committing to a full parse and before showing the multi-track selection dialog. When called
+**with** the arrays, it runs in *extract* mode and fills `when[]`/`coord[]`.
 
 ---
 
@@ -225,6 +270,40 @@ The end-to-end pipeline:
 
 ---
 
+## Sitrec as a KML generator (round-trip)
+
+Sitrec doesn't only *read* KML — it also **writes** it, and those exports are themselves a
+variant the importer has to accept. There are three distinct generators, producing three
+different shapes:
+
+| Generator | Output shape | Re-import behaviour |
+|---|---|---|
+| `CNodeTrack.exportTrackKML` (`CNodeTrack.js:158`) | `<Folder><Placemark><gx:Track>` — single folder, single placemark, `altitudeMode=absolute`, `extrude=1` | Variant **F3** (fallback branch) — works in prod, asserts in dev |
+| `CNodeMISBData` track export (`CNodeMISBData.js:1813`) | Same `<Folder>…<gx:Track>` shape as above | Variant **F3** |
+| `CNode3DObject` (`CNode3DObject.js:443`) | `<Document><Placemark><Model><Link href=…dae>` — a COLLADA model placemark, **not a track** | No `gx:Track` → treated as a scene object, not a track |
+| `CustomManagerMenus` "Sitrec Pin" (`CustomManagerMenus.js:538`) | `<Document><Placemark><Point>` — a single point + pushpin style | Becomes a **point landmark feature**, not a track |
+
+The most important round-trip detail is in the track exporters: they emit **HAE** altitude and
+explicitly convert from MSL on the way out —
+
+```js
+// CNodeTrack.js:199
+// KML absolute altitude is ellipsoid height (HAE).
+if (altReference === "MSL") {
+    alt += meanSeaLevelOffset(lat, lon);
+}
+```
+
+— which is the mirror image of the import-side reconciliation. A track exported from Sitrec and
+re-imported therefore preserves its geometry, even though it travels through the asserts-stripped
+F3 fallback branch on the way back in.
+
+> **One asymmetry to know:** the `gx:Track` *extract* path does **not** read the
+> `<altitudeMode>` element — it assumes the altitude is HAE regardless. So Sitrec's exports set
+> `altitudeMode=absolute` for correctness in Google Earth, but a third-party `gx:Track` authored
+> with `relativeToGround` would be mis-read as HAE on import. Only the *shape* paths
+> (`extractKMLLineString`/`extractKMLPolygon`, `:444`/`:492`) actually honour `altitudeMode`.
+
 ## Altitude, time, and unit conventions
 
 ### Altitude — HAE vs MSL
@@ -283,11 +362,29 @@ flight isn't also drawn as a generic line shape.
 
 ## KMZ archives
 
-A `.kmz` is a ZIP containing a KML plus referenced images. The file manager
-(`src/CFileManagerParse.js:1099-1170`) unzips it, parses the inner KML exactly as above, and
-registers any referenced images (`dataType: "kmzImage"`) so that `<GroundOverlay>` icons resolve
-to local blob URLs. From the track parser's point of view a KMZ is identical to a KML once
-unzipped.
+A `.kmz` is a ZIP containing one or more KMLs plus referenced images. KMZ handling
+(`CFileManagerParse.js:1099-1190`) is richer than "unzip then parse," and has a few variants of
+its own:
+
+- **Detection is by content, not just extension.** A file is treated as a zip if its name ends
+  in `.kmz`/`.zip` **or** if its first four bytes are the ZIP magic number
+  `50 4B 03 04` (`PK\x03\x04`) (`CFileManagerParse.js:1103`). So a mislabeled `.kml` that is
+  actually zipped, or a `.zip` of KMLs, still works.
+- **Multiple inner KMLs are supported.** All `.kml` entries are collected
+  (`kmlFiles = allFiles.filter(... .kml)`, `:1116`); each non-image entry is recursively run back
+  through `parseAsset()` with a prefixed filename (`:1178-1184`), so each inner KML produces its
+  own track(s)/features independently.
+- **Image references are extracted as overlay textures.** Each inner KML is scanned for
+  `<href>…png|jpg|jpeg|gif|webp|jp2|j2k|jpx</href>` (`:1124-1131`); matching archive entries are
+  stored as `dataType: "kmzImage"` blob URLs and indexed in `kmzImageMap` (`:1157-1168`). This is
+  what lets a `<GroundOverlay>`'s `<Icon><href>` resolve to a local image instead of a (possibly
+  dead) network URL — see `extractKMLGroundOverlay()` (`CTrackFileKML.js:498`), which consults
+  `FileManager.kmzImageMap` before falling back to the raw href.
+- **`__MACOSX`/`._` junk entries are filtered out** (`:1113`) so macOS-zipped archives don't
+  inject phantom files.
+
+Apart from these unwrap steps, a KMZ's inner KML is parsed by exactly the same variant tree as a
+plain `.kml`.
 
 ---
 
@@ -308,6 +405,16 @@ unzipped.
   resolve to different names (noted in the code comment at `CTrackFileKML.js:56-60`).
 - **`isSupplementaryTrack()` is always `false`** for KML (`:144-146`): every KML track is treated
   as a distinct aircraft, never a FrameCenter-style supplementary track.
+- **The number of siblings changes the parse path.** Because `parseXml` has no `arrayTags`, a tag
+  with a single occurrence is an object and with multiple occurrences an array. This is leveraged
+  deliberately (FlightAware vs. single-track Document; multi- vs. single-aircraft ADS-B Exchange),
+  but it also means a degenerate file — e.g. a `gx:Track` with a *single* `<when>`/`<gx:coord>` —
+  parses those to objects rather than length-1 arrays, so the point-extraction loop (which reads
+  `whenArray.length`) sees no points. Real tracks always have many samples, so this only bites
+  hand-crafted edge cases.
+- **Sitrec's own exports take the assert-guarded fallback (F3) on re-import.** Harmless in
+  production (asserts stripped) but it will trip the debugger in a dev build — see
+  [Sitrec as a KML generator](#sitrec-as-a-kml-generator-round-trip).
 
 ---
 
