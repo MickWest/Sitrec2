@@ -168,7 +168,7 @@ export class MotionAnalyzer {
             staticFrames: 15,
             smoothingAlpha: 0.9,
             inlierThreshold: 0.6,
-            rejectMovingObjects: false,   // fit a global affine background transform (IRLS) and drop independently-moving objects
+            rejectMovingObjects: true,    // fit a global affine background transform (IRLS) and drop independently-moving objects
             objectRejectThreshold: 3.0,   // max reprojection residual (px) for a vector to count as background
             eccIterations: 50,
             eccEpsilon: 0.001,
