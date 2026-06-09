@@ -81,6 +81,7 @@ import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightS
 import {CNodeControllerCelestial} from "./nodes/CNodeControllerVarious";
 import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
 import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
+import {CNodeSimInfoUI} from "./nodes/CNodeSimInfoUI";
 import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
 import {CNodeGUIFlag, CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {CNodeControllerCameraBankRoll} from "./nodes/CNodeControllerCameraBankRoll";
@@ -850,7 +851,28 @@ export class CCustomManager {
 
         videoInfo.setupMenu(guiMenus.video);
     }
-    
+
+    // Sim Info Display: a date/time overlay on the look view, added under the
+    // "Show" menu. Independent of the Video Info Display (separate node + flags).
+    // Attached via overlayView (not relativeTo) so it shares the look view's div
+    // and behaves as a plain percent-of-canvas overlay (see CNodeSimInfoUI).
+    setupSimInfoMenu() {
+        if (!NodeMan.exists("lookView")) return;
+
+        if (!NodeMan.exists("simInfo")) {
+            new CNodeSimInfoUI({
+                id: "simInfo",
+                overlayView: "lookView",
+                visible: true,
+            });
+        }
+
+        const simInfo = NodeMan.get("simInfo", false);
+        if (!simInfo) return;
+
+        simInfo.setupMenu(guiMenus.showhide);
+    }
+
     setupOSDDataSeriesController() {
         if (!NodeMan.exists("osdDataSeriesController")) {
             new CNodeOSDDataSeriesController({

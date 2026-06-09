@@ -104,10 +104,15 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         this.boundHandleMouseDown = (e) => this.handleMouseDown(e);
         this.boundHandleMouseMove = (e) => this.handleMouseMove(e);
         this.boundHandleMouseUp = (e) => this.handleMouseUp(e);
+        this.boundHandlePointerDown = (e) => this.handlePointerDown(e);
 
         document.addEventListener('mousemove', this.boundHandleMouseMove);
         document.addEventListener('mouseup', this.boundHandleMouseUp);
         this.canvas.addEventListener('mousedown', this.boundHandleMouseDown);
+        // Intercept pointerdown so the underlying 3D view (e.g. the look view)
+        // doesn't also start a camera orbit when we grab an info element — see
+        // handlePointerDown for the full explanation.
+        this.canvas.addEventListener('pointerdown', this.boundHandlePointerDown);
         
         this.boundHandleClick = (e) => this.handleClick(e);
         this.canvas.addEventListener('click', this.boundHandleClick);
@@ -328,6 +333,31 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         return null;
     }
 
+    // The look view (and any CNodeView3D) starts its camera orbit/pan from a
+    // DOCUMENT-level 'pointerdown' listener (mouseMoveView.js SetupMouseHandler).
+    // Our label drag uses a 'mousedown' listener on this overlay's own canvas, so
+    // the stopPropagation() in handleMouseDown can never reach that camera handler
+    // — 'mousedown' and 'pointerdown' are independent event dispatches. The
+    // mouseInViewOnly() exclusivity (zIndex + onMouseDown) doesn't help either,
+    // since these overlay views set neither. So we intercept 'pointerdown' on our
+    // canvas: because the canvas is a descendant of document, this fires at the
+    // target phase BEFORE the document's bubble-phase listener, and a
+    // stopPropagation() here prevents the underlying view from ever becoming the
+    // drag view. We only claim the event when the press is actually on a draggable
+    // info element, so the rest of the view is still free to orbit/pan.
+    handlePointerDown(e) {
+        if (e.button !== 0) return;
+        if (!this.isVideoReady() || !this.shouldBeVisible()) return;
+
+        const canvasRect = this.canvas.getBoundingClientRect();
+        const x = e.clientX - canvasRect.left;
+        const y = e.clientY - canvasRect.top;
+
+        if (this.getElementAtPosition(x, y)) {
+            e.stopPropagation();
+        }
+    }
+
     handleMouseDown(e) {
         if (!this.isVideoReady() || !this.shouldBeVisible()) return;
 
@@ -463,6 +493,11 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
                     this[pos[1]] = newPctY;
                 }
             }
+            // Sitrec is render-on-demand: without this the overlay position
+            // updates but nothing repaints until some other event forces a
+            // frame, so the dragged item appears frozen and then "jumps" to the
+            // new spot on the next render. Request a frame for every drag move.
+            setRenderOne(true);
             return;
         }
 
@@ -906,6 +941,9 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         }
         if (this.canvas && this.boundHandleMouseDown) {
             this.canvas.removeEventListener('mousedown', this.boundHandleMouseDown);
+        }
+        if (this.canvas && this.boundHandlePointerDown) {
+            this.canvas.removeEventListener('pointerdown', this.boundHandlePointerDown);
         }
         if (this.canvas && this.boundHandleClick) {
             this.canvas.removeEventListener('click', this.boundHandleClick);

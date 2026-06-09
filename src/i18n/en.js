@@ -1340,6 +1340,17 @@ const en = {
         },
     },
 
+    simInfo: {
+        folderTitle: {
+            label: "Sim Info Display",
+            tooltip: "Date/time text overlays for the look view (independent of the Video Info Display)",
+        },
+        showSimInfo: {
+            label: "Show Sim Info",
+            tooltip: "Master toggle - enable or disable all sim info displays",
+        },
+    },
+
     terrainUI: {
         mapType: {
             label: "Map Type",

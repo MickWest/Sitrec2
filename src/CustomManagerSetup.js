@@ -1682,6 +1682,8 @@ export const setupMethods = {
 
         this.setupVideoInfoMenu();
 
+        this.setupSimInfoMenu();
+
         this.setupOSDDataSeriesController();
 
         setupHorizonExtractorMenu();
