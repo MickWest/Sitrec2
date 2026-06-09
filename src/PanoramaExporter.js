@@ -47,16 +47,18 @@ function getBackgroundPoint(cameraPos, lookDir, terrainNode) {
     return cameraPos.clone().add(lookDir.clone().normalize().multiplyScalar(DEFAULT_BACKGROUND_DISTANCE));
 }
 
-function getScreenDisplacement(prevBgPoint, cameraPos, cameraFwd, cameraRight, cameraUp, vFov, frameHeight) {
+// Angular (radians) displacement of the previous background point in the current
+// camera's frame. Kept in angle space so it is independent of the frame's FOV —
+// conversion to pano pixels happens later at one fixed pixels-per-radian.
+function getAngularDisplacement(prevBgPoint, cameraPos, cameraFwd, cameraRight, cameraUp) {
     const toPoint = prevBgPoint.clone().sub(cameraPos).normalize();
     const fwdDot = toPoint.dot(cameraFwd);
     if (fwdDot <= 0) return null;
     const rightAngle = Math.asin(Math.max(-1, Math.min(1, toPoint.dot(cameraRight))));
     const upAngle = Math.asin(Math.max(-1, Math.min(1, toPoint.dot(cameraUp))));
-    const pixelsPerRadian = frameHeight / (vFov * Math.PI / 180);
     return {
-        dx: -rightAngle * pixelsPerRadian,
-        dy: upAngle * pixelsPerRadian
+        ax: -rightAngle,
+        ay: upAngle
     };
 }
 
@@ -134,14 +136,14 @@ export async function exportPanorama() {
             }
 
             if (prevBgPoint) {
-                const disp = getScreenDisplacement(prevBgPoint, cameraPos, fwd, right, up, fov, frameHeight);
+                const disp = getAngularDisplacement(prevBgPoint, cameraPos, fwd, right, up);
                 if (disp) {
-                    cumX += disp.dx;
-                    cumY += disp.dy;
+                    cumX += disp.ax;
+                    cumY += disp.ay;
                 }
             }
 
-            frameData.push({frame, px: cumX, py: cumY, fov});
+            frameData.push({frame, ax: cumX, ay: cumY, vFovRad: fov * Math.PI / 180});
             prevBgPoint = bgPoint;
 
             if (i % 10 === 0) {
@@ -150,24 +152,37 @@ export async function exportPanorama() {
             }
         }
 
+        // One fixed angular scale for the whole panorama, anchored to the narrowest
+        // FOV in the range so the most-zoomed frame stays at native resolution and
+        // wider frames are drawn enlarged to span their true angular extent.
+        let minVFovRad = Infinity;
+        for (const fd of frameData) {
+            minVFovRad = Math.min(minVFovRad, fd.vFovRad);
+        }
+        const pixelsPerRadian = frameHeight / minVFovRad;
+
         let minPx = Infinity, maxPx = -Infinity;
         let minPy = Infinity, maxPy = -Infinity;
 
         for (const fd of frameData) {
-            minPx = Math.min(minPx, fd.px);
-            maxPx = Math.max(maxPx, fd.px);
-            minPy = Math.min(minPy, fd.py);
-            maxPy = Math.max(maxPy, fd.py);
+            fd.drawScale = fd.vFovRad / minVFovRad;
+            // frame center in pano pixels; zoom is about the optical axis, so a
+            // FOV change scales the frame about its center
+            fd.px = fd.ax * pixelsPerRadian;
+            fd.py = fd.ay * pixelsPerRadian;
+            fd.halfW = frameWidth * fd.drawScale / 2;
+            fd.halfH = frameHeight * fd.drawScale / 2;
+            minPx = Math.min(minPx, fd.px - fd.halfW);
+            maxPx = Math.max(maxPx, fd.px + fd.halfW);
+            minPy = Math.min(minPy, fd.py - fd.halfH);
+            maxPy = Math.max(maxPy, fd.py + fd.halfH);
         }
 
         console.log(`Panorama: X range ${minPx.toFixed(1)} to ${maxPx.toFixed(1)} px (${(maxPx-minPx).toFixed(1)}px)`);
         console.log(`Panorama: Y range ${minPy.toFixed(1)} to ${maxPy.toFixed(1)} px (${(maxPy-minPy).toFixed(1)}px)`);
 
-        const pxRange = maxPx - minPx;
-        const pyRange = maxPy - minPy;
-
-        let panoWidthPx = Math.ceil(pxRange + frameWidth);
-        let panoHeightPx = Math.ceil(pyRange + frameHeight);
+        let panoWidthPx = Math.ceil(maxPx - minPx);
+        let panoHeightPx = Math.ceil(maxPy - minPy);
 
         // Clamp to the browser canvas limits (dimension AND area) so a large sweep
         // does not silently produce an all-black, over-limit canvas.
@@ -176,9 +191,6 @@ export async function exportPanorama() {
             panoWidthPx = Math.max(1, Math.floor(panoWidthPx * scale));
             panoHeightPx = Math.max(1, Math.floor(panoHeightPx * scale));
         }
-
-        const scaledFrameWidth = Math.ceil(frameWidth * scale);
-        const scaledFrameHeight = Math.ceil(frameHeight * scale);
 
         console.log(`Panorama: ${panoWidthPx}x${panoHeightPx}px, scale=${scale.toFixed(3)}`);
 
@@ -222,13 +234,15 @@ export async function exportPanorama() {
 
             lookView.renderCanvas(fd.frame);
 
-            const x = (fd.px - minPx) * scale;
-            const y = (fd.py - minPy) * scale;
+            const x = (fd.px - fd.halfW - minPx) * scale;
+            const y = (fd.py - fd.halfH - minPy) * scale;
+            const w = frameWidth * fd.drawScale * scale;
+            const h = frameHeight * fd.drawScale * scale;
 
             panoCtx.drawImage(
                 lookView.canvas,
                 0, 0, frameWidth, frameHeight,
-                x, y, scaledFrameWidth, scaledFrameHeight
+                x, y, w, h
             );
 
             if (i % 10 === 0) {
