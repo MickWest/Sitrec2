@@ -1,0 +1,351 @@
+// ScriptTimelineWidget.js — the Scripted Video timeline canvas widget.
+//
+// Draws the labelled event blocks / view cuts / playhead onto one or two canvases
+// (the tall one in the script editor window, and a compact strip that replaces the
+// normal frame slider during preview/scrub), and handles all timeline interaction:
+// scrubbing, zoom (Cmd/Ctrl +/-/0), wheel-pan, scrollbar-pan, and hovering/wheel-
+// editing a segment's duration number.
+//
+// The widget holds a back-reference `sv` to the CScriptedVideoManager, which owns
+// the parsed model (events, totalDuration, _currentT) and the shared hover state
+// (_hoverSeg/_hoverNum, shared with the editor's number-token hover).
+
+import {clamp} from "./ScriptMath";
+import {commandColor, eventLabel} from "./ScriptCommands";
+import {getControlsContainer} from "../PageStructure";
+
+export class CScriptTimelineWidget {
+
+    // height (px) of the draggable scrollbar strip at the bottom of the timeline
+    static get SCROLLBAR_H() { return 6; }
+
+    constructor(sv) {
+        this.sv = sv;                 // the CScriptedVideoManager (model + modes)
+        this.editorCanvas = null;     // tall timeline in the script window
+        this.bottomCanvas = null;     // compact strip in #ControlsBottom during preview
+        this._hiddenControls = null;  // saved frame-slider children while replaced
+
+        // timeline view (zoom/scroll)
+        this.tlZoom = 1;              // 1 = whole timeline visible; >1 = zoomed in
+        this.tlOffset = 0;            // left-edge time (seconds) of the visible window
+        this._tlDragging = false;     // dragging the playhead
+        this._dragCanvas = null;
+    }
+
+    draw() {
+        if (this.sv._previewing) this._followPlayhead();
+        if (this.editorCanvas && this.editorCanvas.clientWidth > 0) this._drawTimelineTo(this.editorCanvas);
+        if (this.bottomCanvas && this.bottomCanvas.clientWidth > 0) this._drawTimelineTo(this.bottomCanvas);
+    }
+
+    // Shared timeline geometry so the draw and the hit-test never drift apart.
+    _timelineGeom(c) {
+        const w = c.clientWidth || 320, h = c.clientHeight || 40;
+        const total = this.sv.totalDuration || 1;
+        const span = total / this.tlZoom;                 // visible time window
+        const x = (t) => ((t - this.tlOffset) / span) * w;
+        const compact = h < 44;
+        const numLanes = this.sv._numLanes || 1;
+        const padTop = compact ? 1 : 3;
+        const padBot = compact ? 1 : 13;   // room for duration label when not compact
+        const gap = compact ? 1 : 2;
+        const laneH = Math.max(3, (h - padTop - padBot - gap * (numLanes - 1)) / numLanes);
+        return {w, h, total, span, x, compact, numLanes, padTop, padBot, gap, laneH};
+    }
+
+    // The timeline segment (event bar) at a client position, or null.
+    _segAtTimeline(c, clientX, clientY) {
+        if (this.sv.totalDuration <= 0 || !this.sv.events) return null;
+        const r = c.getBoundingClientRect();
+        const px = clientX - r.left - (c.clientLeft || 0);   // strip the canvas border
+        const py = clientY - r.top - (c.clientTop || 0);
+        const g = this._timelineGeom(c);
+        // the bottom strip is the scrollbar when zoomed — don't treat it as a segment
+        const sb = this.tlZoom > 1.001 ? CScriptTimelineWidget.SCROLLBAR_H : 0;
+        if (py < 0 || py > g.h - sb) return null;
+        for (const e of this.sv.events) {
+            if (!(e.dur > 0)) continue;
+            const y0 = g.padTop + (e._lane || 0) * (g.laneH + g.gap);
+            const x0 = g.x(e.start), bw = Math.max(2, g.x(e.start + e.dur) - x0);
+            if (px >= x0 && px <= x0 + bw && py >= y0 && py <= y0 + g.laneH) return e;
+        }
+        return null;
+    }
+
+    _drawTimelineTo(c) {
+        const sv = this.sv;
+        const w = c.clientWidth || 320, h = c.clientHeight || 40;
+        if (c.width !== w) c.width = w;
+        if (c.height !== h) c.height = h;
+        const ctx = c.getContext("2d");
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = "#16181d"; ctx.fillRect(0, 0, w, h);
+
+        const g = this._timelineGeom(c);
+        const total = g.total, span = g.span, x = g.x, compact = g.compact;
+        const padTop = g.padTop, gap = g.gap, laneH = g.laneH;
+
+        for (const e of sv.events) {
+            if (!(e.dur > 0)) continue;
+            const lane = e._lane || 0;
+            const y = padTop + lane * (laneH + gap);
+            const x0 = x(e.start), bw = Math.max(2, x(e.start + e.dur) - x0);
+            ctx.fillStyle = e.invalid ? "#7a2a2a" : commandColor(e.type);
+            ctx.fillRect(x0, y, bw, laneH);
+            ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.lineWidth = 1;
+            ctx.strokeRect(x0 + 0.5, y + 0.5, bw - 1, laneH - 1);
+            // highlight the segment linked to the hovered number / hovered segment
+            if (sv._hoverSeg && e.line === sv._hoverSeg.line) {
+                ctx.strokeStyle = "#ffd24a"; ctx.lineWidth = 2;
+                ctx.strokeRect(x0 + 1, y + 1, Math.max(1, bw - 2), Math.max(1, laneH - 2));
+            }
+            if (bw > 24 && laneH >= 11) {
+                ctx.fillStyle = "#fff"; ctx.font = "10px sans-serif";
+                ctx.textBaseline = "middle"; ctx.textAlign = "left";
+                ctx.save(); ctx.beginPath(); ctx.rect(x0, y, bw, laneH); ctx.clip();
+                ctx.fillText(eventLabel(e), x0 + 3, y + laneH / 2);
+                ctx.restore();
+            }
+        }
+
+        // view cuts (full-height markers)
+        for (const e of sv.events) {
+            if (e.type !== "view") continue;
+            const xx = x(e.start);
+            ctx.strokeStyle = "#cfd3da"; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.moveTo(xx, 0); ctx.lineTo(xx, h); ctx.stroke();
+            if (!compact) {
+                ctx.fillStyle = "#cfd3da"; ctx.font = "9px sans-serif";
+                ctx.textBaseline = "top"; ctx.textAlign = "left";
+                ctx.fillText(e.view, xx + 2, 1);
+            }
+        }
+
+        // playhead (always shown so scrubbing position is visible too)
+        const px = x(sv._currentT);
+        if (px >= -1 && px <= w + 1) {
+            // grab handle at the top so it's clear it can be dragged
+            ctx.fillStyle = "#ffd24a";
+            ctx.beginPath(); ctx.moveTo(px - 4, 0); ctx.lineTo(px + 4, 0); ctx.lineTo(px, 6); ctx.closePath(); ctx.fill();
+            ctx.strokeStyle = "#ffd24a"; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
+        }
+
+        // scrollbar showing/controlling the visible window when zoomed in
+        if (this.tlZoom > 1.001) {
+            const sbH = CScriptTimelineWidget.SCROLLBAR_H;
+            const bx0 = (this.tlOffset / total) * w, bw = (span / total) * w;
+            ctx.fillStyle = "rgba(255,255,255,0.12)"; ctx.fillRect(0, h - sbH, w, sbH);
+            ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.fillRect(bx0, h - sbH, Math.max(10, bw), sbH);
+        }
+
+        // current-time / duration label (only where there's room)
+        if (!compact) {
+            ctx.fillStyle = "#aab"; ctx.font = "10px sans-serif";
+            ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+            ctx.fillText(sv._currentT.toFixed(1) + " / " + total.toFixed(1) + "s"
+                + (this.tlZoom > 1.001 ? "  ×" + this.tlZoom.toFixed(1) : ""), w - 3, h - 1);
+        }
+    }
+
+    // time at a pixel x on a timeline canvas (accounts for zoom/scroll). Strips the
+    // canvas border and divides by the content-box width so it lands exactly on the
+    // drawn bars/playhead (same convention as _segAtTimeline / _drawTimelineTo).
+    _timeAtX(c, clientX) {
+        const r = c.getBoundingClientRect();
+        const px = clientX - r.left - (c.clientLeft || 0);
+        const frac = clamp(px / (c.clientWidth || r.width), 0, 1);
+        const span = this.sv.totalDuration / this.tlZoom;
+        return clamp(this.tlOffset + frac * span, 0, this.sv.totalDuration);
+    }
+
+    // attach mousedown (scrub or scrollbar-pan) + wheel-to-scroll handlers
+    attach(c) {
+        c.style.cursor = "ew-resize";
+        c.addEventListener("mousedown", (ev) => this._onTimelineMouseDown(c, ev));
+        c.addEventListener("wheel", (ev) => this._onTimelineWheel(c, ev), { passive: false });
+        c.addEventListener("mousemove", (ev) => this._updateTimelineHover(c, ev.clientX, ev.clientY));
+        c.addEventListener("mouseleave", () => this._onTimelineLeave(c));
+    }
+
+    // Hovering a timeline segment highlights it + its duration number in the editor,
+    // and arms the wheel to edit that duration. Hovering elsewhere = scrub/pan cursor.
+    _updateTimelineHover(c, clientX, clientY) {
+        if (this._tlDragging) return;
+        const sv = this.sv;
+        const seg = this._segAtTimeline(c, clientX, clientY);
+        // only show the wheel-edit affordance when there's a duration token to edit
+        c.style.cursor = (seg && seg.spans && seg.spans.dur) ? "ns-resize" : "ew-resize";
+        const prevLine = sv._hoverSeg ? sv._hoverSeg.line : null;
+        const newLine = seg ? seg.line : null;
+        // the boxed duration only changes via a wheel edit (which re-renders itself),
+        // so a same-line mousemove needs no rebuild
+        if (prevLine !== newLine) {
+            sv._hoverSeg = seg;
+            sv._hoverNum = seg ? sv._durTokenForEvent(seg) : null;
+            sv.editor._renderBackdrop();
+            this.draw();
+        }
+    }
+
+    _onTimelineLeave(c) {
+        if (this._tlDragging) return;
+        const sv = this.sv;
+        c.style.cursor = "ew-resize";
+        if (sv._hoverSeg || sv._hoverNum) {
+            sv._hoverSeg = null; sv._hoverNum = null;
+            sv.editor._renderBackdrop(); this.draw();
+        }
+    }
+
+    _onTimelineMouseDown(c, ev) {
+        const r = c.getBoundingClientRect();
+        const y = ev.clientY - r.top;
+        // bottom strip drags the scrollbar (only meaningful when zoomed in)
+        if (this.tlZoom > 1.001 && y >= r.height - CScriptTimelineWidget.SCROLLBAR_H) {
+            this._beginScrollDrag(c, ev);
+        } else {
+            this._beginTimelineDrag(c, ev);
+        }
+    }
+
+    // NOTE: listeners are added in the CAPTURE phase because the in-page panel calls
+    // blockViewEvents() which stopPropagation()s mouseup in the bubble phase — without
+    // capture the mouseup never reaches the document and the drag never ends.
+    _beginTimelineDrag(c, ev) {
+        ev.preventDefault();
+        const sv = this.sv;
+        if (sv.totalDuration <= 0) { sv.parse(); sv.prepare(); }
+        if (sv.totalDuration <= 0) return;
+        this._tlDragging = true;
+        this._dragCanvas = c;
+        sv._scrubTo(this._timeAtX(c, ev.clientX));
+        const doc = c.ownerDocument || document;   // may live in a popped-out window
+        const move = (e) => { if (this._dragCanvas) sv._scrubTo(this._timeAtX(this._dragCanvas, e.clientX)); };
+        const up = (e) => {
+            this._tlDragging = false; this._dragCanvas = null;
+            doc.removeEventListener("mousemove", move, true);
+            doc.removeEventListener("mouseup", up, true);
+            // re-evaluate hover at the release point (clears a stale highlight if the
+            // drag ended off a bar / off the canvas)
+            if (e) this._updateTimelineHover(c, e.clientX, e.clientY);
+        };
+        doc.addEventListener("mousemove", move, true);
+        doc.addEventListener("mouseup", up, true);
+    }
+
+    _beginScrollDrag(c, ev) {
+        ev.preventDefault();
+        if (this.sv.totalDuration <= 0) return;
+        const doc = c.ownerDocument || document;
+        const pan = (e) => {
+            const r = c.getBoundingClientRect();
+            const fx = clamp((e.clientX - r.left) / r.width, 0, 1);
+            const span = this.sv.totalDuration / this.tlZoom;
+            this.tlOffset = clamp(fx * this.sv.totalDuration - span / 2, 0, Math.max(0, this.sv.totalDuration - span));
+            this.draw();
+        };
+        pan(ev);
+        const up = () => {
+            doc.removeEventListener("mousemove", pan, true);
+            doc.removeEventListener("mouseup", up, true);
+        };
+        doc.addEventListener("mousemove", pan, true);
+        doc.addEventListener("mouseup", up, true);
+    }
+
+    // Cmd/Ctrl + '=' / '-' zoom the timeline (and suppress the browser's own zoom).
+    attachKeyZoom(win) {
+        const handler = (e) => {
+            if (!(e.metaKey || e.ctrlKey)) return;
+            const sv = this.sv;
+            const editorOpen = sv.editor.isOpen() || sv._previewing || sv._scrubbing;
+            if (!editorOpen) return;
+            const k = e.key, code = e.code;
+            if (k === "=" || k === "+" || code === "Equal" || code === "NumpadAdd") {
+                e.preventDefault(); e.stopPropagation(); this._zoomTimeline(1.5);
+            } else if (k === "-" || k === "_" || code === "Minus" || code === "NumpadSubtract") {
+                e.preventDefault(); e.stopPropagation(); this._zoomTimeline(1 / 1.5);
+            } else if (k === "0" || code === "Digit0") {
+                e.preventDefault(); e.stopPropagation(); this.tlZoom = 1; this.tlOffset = 0; this.draw();
+            }
+        };
+        win.addEventListener("keydown", handler, true);   // capture phase to beat the browser
+    }
+
+    _onTimelineWheel(c, ev) {
+        const sv = this.sv;
+        if (sv.totalDuration <= 0) return;
+        // over a segment → the wheel edits that segment's duration (like the editor)
+        const seg = this._segAtTimeline(c, ev.clientX, ev.clientY);
+        if (seg && seg.spans && seg.spans.dur) {
+            ev.preventDefault();
+            sv.editor.adjustNumberToken(seg.line - 1, seg.spans.dur, ev.deltaY, ev.shiftKey, 0.1);
+            // events were rebuilt by doParse(); re-resolve the hovered segment + number
+            sv._hoverSeg = sv._eventOnLine(seg.line);
+            sv._hoverNum = sv._durTokenForEvent(sv._hoverSeg);
+            c.style.cursor = "ns-resize";
+            sv.editor._renderBackdrop();
+            this.draw();
+            if (sv._scrubbing || sv._previewing) sv._scrubTo(sv._currentT);
+            return;
+        }
+        // otherwise pan the visible window
+        ev.preventDefault();
+        const span = sv.totalDuration / this.tlZoom;
+        const d = (Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY);
+        this.tlOffset = clamp(this.tlOffset + d * span / (c.clientWidth || 300),
+            0, Math.max(0, sv.totalDuration - span));
+        this.draw();
+    }
+
+    // zoom the timeline about the playhead (or visible centre if it's off-screen)
+    _zoomTimeline(factor) {
+        const total = this.sv.totalDuration || 1;
+        const span = total / this.tlZoom;
+        let centerT = this.sv._currentT;
+        if (centerT < this.tlOffset || centerT > this.tlOffset + span) centerT = this.tlOffset + span / 2;
+        const frac = span > 0 ? (centerT - this.tlOffset) / span : 0.5;
+        const maxZoom = Math.max(1, total / 0.5);
+        this.tlZoom = clamp(this.tlZoom * factor, 1, maxZoom);
+        const newSpan = total / this.tlZoom;
+        this.tlOffset = clamp(centerT - frac * newSpan, 0, Math.max(0, total - newSpan));
+        this.draw();
+    }
+
+    // keep the playhead in view while previewing if zoomed in
+    _followPlayhead() {
+        if (this.tlZoom <= 1.001) return;
+        const span = this.sv.totalDuration / this.tlZoom;
+        if (this.sv._currentT < this.tlOffset || this.sv._currentT > this.tlOffset + span) {
+            this.tlOffset = clamp(this.sv._currentT - span / 2, 0, Math.max(0, this.sv.totalDuration - span));
+        }
+    }
+
+    // Replace the normal bottom frame slider with the scripted timeline during preview.
+    showBottomStrip() {
+        const cc = getControlsContainer();
+        if (!cc || this.bottomCanvas) return;
+        this._hiddenControls = [];
+        for (const child of Array.from(cc.children)) {
+            this._hiddenControls.push([child, child.style.display]);
+            child.style.display = "none";
+        }
+        const c = document.createElement("canvas");
+        c.style.cssText = "display:block;width:100%;height:100%;z-index:1002;position:relative;";
+        this.attach(c);
+        cc.appendChild(c);
+        this.bottomCanvas = c;
+    }
+
+    hideBottomStrip() {
+        if (this.bottomCanvas && this.bottomCanvas.parentNode) {
+            this.bottomCanvas.parentNode.removeChild(this.bottomCanvas);
+        }
+        this.bottomCanvas = null;
+        if (this._hiddenControls) {
+            for (const [el, d] of this._hiddenControls) el.style.display = d;
+            this._hiddenControls = null;
+        }
+    }
+}

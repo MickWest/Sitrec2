@@ -60,6 +60,7 @@ import {createCustomModalWithCopy, saveFilePrompted, saveFileToDirectory, saveFi
 import {deserializeMotionAnalysis, serializeMotionAnalysis} from "./CMotionAnalysisUI";
 import {deserializeAutoTracking, serializeAutoTracking} from "./CObjectTracking";
 import {deserializeHorizonExtractor, serializeHorizonExtractor} from "./CHorizonExtractor";
+import {deserializeScriptedVideo, serializeScriptedVideo} from "./CScriptedVideo";
 import {getCursorPositionFromTopView} from "./mouseMoveView";
 import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightSidebar} from "./PageStructure";
 import {CNodeControllerCelestial} from "./nodes/CNodeControllerVarious";
@@ -580,6 +581,11 @@ export const serializeMethods = {
         // Falls back to Sit.horizonExtractor (from previous load) if the
         // extractor is no longer instantiated but old data exists.
         out.horizonExtractor = serializeHorizonExtractor() ?? Sit.horizonExtractor ?? null
+
+        // Scripted Video script text, so a saved sitch carries its scripted video.
+        // Falls back to Sit.scriptedVideoScript (from a previous load) if the
+        // editor holds nothing save-worthy (e.g. the unmodified demo script).
+        out.scriptedVideoScript = serializeScriptedVideo() ?? Sit.scriptedVideoScript ?? null
 
         // Serialize sub sitches
         out.subSitchesData = this.serializeSubSitches()
@@ -1477,6 +1483,10 @@ export const serializeMethods = {
 
         if (sitchData.horizonExtractor) {
             deserializeHorizonExtractor(sitchData.horizonExtractor);
+        }
+
+        if (sitchData.scriptedVideoScript) {
+            deserializeScriptedVideo(sitchData.scriptedVideoScript);
         }
 
         if (sitchData.subSitchesData) {
