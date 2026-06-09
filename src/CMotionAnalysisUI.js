@@ -2171,7 +2171,7 @@ function createParamSliders() {
         paramControllers.push(trackingFolder.add(p, 'inlierThreshold', 0.3, 0.9, 0.05).name("Inlier Threshold").onChange(invalidate)
             .tooltip("Threshold for consensus direction agreement"));
         paramControllers.push(trackingFolder.add(p, 'rejectMovingObjects').name("Reject Moving Objects").onChange(invalidate)
-            .tooltip("Fit a global rigid background (RANSAC) and exclude independently-moving objects (cars, trucks) from the consensus, regardless of their direction or speed"));
+            .tooltip("Fit a global affine background model and exclude independently-moving objects (cars, trucks) from the consensus, regardless of their direction or speed"));
         paramControllers.push(trackingFolder.add(p, 'objectRejectThreshold', 1, 10, 0.5).name("Object Reject Px").onChange(invalidate)
             .tooltip("Max reprojection residual (px) for a vector to count as background; lower = stricter rejection of movers"));
     }
@@ -2198,7 +2198,7 @@ function createParamSliders() {
         paramControllers.push(trackingFolder.add(p, 'inlierThreshold', 0.3, 0.9, 0.05).name("Inlier Threshold").onChange(invalidate)
             .tooltip("Threshold for consensus direction agreement"));
         paramControllers.push(trackingFolder.add(p, 'rejectMovingObjects').name("Reject Moving Objects").onChange(invalidate)
-            .tooltip("Fit a global rigid background (RANSAC) and exclude independently-moving objects (cars, trucks) from the consensus, regardless of their direction or speed"));
+            .tooltip("Fit a global affine background model and exclude independently-moving objects (cars, trucks) from the consensus, regardless of their direction or speed"));
         paramControllers.push(trackingFolder.add(p, 'objectRejectThreshold', 1, 10, 0.5).name("Object Reject Px").onChange(invalidate)
             .tooltip("Max reprojection residual (px) for a vector to count as background; lower = stricter rejection of movers"));
         paramControllers.push(trackingFolder.add(p, 'linearityThreshold', 0.5, 1, 0.05).name("Linearity Threshold").onChange(invalidate)

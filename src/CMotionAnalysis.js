@@ -168,7 +168,7 @@ export class MotionAnalyzer {
             staticFrames: 15,
             smoothingAlpha: 0.9,
             inlierThreshold: 0.6,
-            rejectMovingObjects: false,   // fit a global background transform (RANSAC) and drop independently-moving objects
+            rejectMovingObjects: false,   // fit a global affine background transform (IRLS) and drop independently-moving objects
             objectRejectThreshold: 3.0,   // max reprojection residual (px) for a vector to count as background
             eccIterations: 50,
             eccEpsilon: 0.001,
@@ -1762,9 +1762,9 @@ export class MotionAnalyzer {
     }
 
     computeAffineRANSAC(prevGray, gray, imgWidth, imgHeight, skipFrames) {
-        if (typeof cv.estimateAffinePartial2D !== 'function') {
+        if (typeof cv.estimateAffine2D !== 'function') {
             if (!this._affineWarned) {
-                console.warn("cv.estimateAffinePartial2D not available, falling back to Sparse + Consensus");
+                console.warn("cv.estimateAffine2D not available, falling back to Sparse + Consensus");
                 this._affineWarned = true;
             }
             return this.computeSparseConsensus(prevGray, gray, imgWidth, imgHeight, skipFrames);
@@ -2264,7 +2264,7 @@ export class MotionAnalyzer {
     }
 
     // Choose how "background" is defined for a set of flow vectors. With
-    // rejectMovingObjects on, fit a global rigid background and drop independent
+    // rejectMovingObjects on, fit a global affine background and drop independent
     // movers; otherwise use the legacy direction-agreement consensus. Falls back to
     // the direction consensus whenever the global fit can't find a dominant background.
     findConsensus(vectors) {

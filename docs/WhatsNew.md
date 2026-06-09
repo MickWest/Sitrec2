@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.80.0 (2026-06-09)
+
+### New Features
+- **Reject Moving Objects** (Motion Analysis → Tracking Parameters): motion analysis can now exclude independently-moving objects — passing cars and trucks, even ones moving the same direction as the background — from its background-motion estimate, instead of letting them skew it. Off by default; the companion **Object Reject Px** slider sets how strict the rejection is.
+- **Sim Info Display** (Show → Sim Info Display): show the simulation date and time on the look view as draggable text labels — date, time, or combined, in local time and/or UTC, with adjustable font size — independent of the Video Info Display. Turn on **Show Sim Info** and tick the readouts you want.
+
+### Bug Fixes
+- Fixed dragging an info label (Sim Info or Video Info) over a 3D view also rotating the camera underneath it.
+- Fixed dragged info labels appearing frozen and then jumping to their new position; they now follow the mouse smoothly.
+- Fixed the "Affine RANSAC" motion analysis technique silently doing nothing (it always fell back to "Sparse + Consensus"); selecting it now actually uses it.
+
 ## Version 2.79.0 (2026-06-08)
 
 ### New Features
