@@ -168,6 +168,8 @@ export class MotionAnalyzer {
             staticFrames: 15,
             smoothingAlpha: 0.9,
             inlierThreshold: 0.6,
+            rejectMovingObjects: false,   // fit a global background transform (RANSAC) and drop independently-moving objects
+            objectRejectThreshold: 3.0,   // max reprojection residual (px) for a vector to count as background
             eccIterations: 50,
             eccEpsilon: 0.001,
             ransacThreshold: 3.0,
@@ -1780,7 +1782,11 @@ export class MotionAnalyzer {
         
         let transform;
         try {
-            transform = cv.estimateAffinePartial2D(prevPtsMat, nextPtsMat, inliersMask, cv.RANSAC, this.params.ransacThreshold);
+            // NOTE: this opencv-js build does not ship estimateAffinePartial2D, so this
+            // technique used to throw here and silently fall back to sparse consensus.
+            // estimateAffine2D (full 6-DOF affine + RANSAC) is available and returns the
+            // same 2x3 matrix layout; rotation/translation are read identically below.
+            transform = cv.estimateAffine2D(prevPtsMat, nextPtsMat, inliersMask, cv.RANSAC, this.params.ransacThreshold);
         } catch (e) {
             prevPtsMat.delete();
             nextPtsMat.delete();
@@ -2099,8 +2105,8 @@ export class MotionAnalyzer {
             return {flowVectors: [], consensus: null};
         }
         
-        const consensus = this.findConsensusDirection(flowVectors);
-        const lastSegmentConsensus = this.findConsensusDirection(lastSegmentFlowVectors);
+        const consensus = this.findConsensus(flowVectors);
+        const lastSegmentConsensus = this.findConsensus(lastSegmentFlowVectors);
         return {flowVectors, consensus, lastSegmentConsensus};
     }
 
@@ -2149,7 +2155,7 @@ export class MotionAnalyzer {
             return {flowVectors: [], consensus: null};
         }
         
-        const consensus = this.findConsensusDirection(flowVectors);
+        const consensus = this.findConsensus(flowVectors);
         return {flowVectors, consensus};
     }
 
@@ -2257,6 +2263,18 @@ export class MotionAnalyzer {
         return vectors;
     }
 
+    // Choose how "background" is defined for a set of flow vectors. With
+    // rejectMovingObjects on, fit a global rigid background and drop independent
+    // movers; otherwise use the legacy direction-agreement consensus. Falls back to
+    // the direction consensus whenever the global fit can't find a dominant background.
+    findConsensus(vectors) {
+        if (this.params.rejectMovingObjects) {
+            const global = this.findConsensusGlobalModel(vectors);
+            if (global) return global;
+        }
+        return this.findConsensusDirection(vectors);
+    }
+
     findConsensusDirection(vectors) {
         if (vectors.length < 3) return null;
 
@@ -2323,6 +2341,144 @@ export class MotionAnalyzer {
         }
 
         return {dx, dy, confidence, inlierCount: inliers.length};
+    }
+
+    // Background-only consensus that rejects independently-moving objects.
+    //
+    // findConsensusDirection() classifies vectors by DIRECTION agreement alone, so
+    // traffic moving parallel to the background (same angle, different speed) leaks in
+    // as "background" and corrupts the estimate. Here we instead fit a single global
+    // AFFINE transform (translation + rotation + scale + shear) to the background and
+    // keep a vector only if it agrees with that one rigid model within
+    // objectRejectThreshold pixels. Any car, truck, or other independent mover —
+    // regardless of its direction or speed — produces a large residual and is rejected.
+    //
+    // We do NOT use cv RANSAC here: it is randomized, so near-identical frames land on
+    // different inlier sets and the overlay FLICKERS red<->green; worse, on a frame
+    // with sparse background features it can lock onto the tracked object's tight
+    // near-zero-motion cluster and flag the OBJECT as background. Instead we run a
+    // deterministic iteratively-reweighted least-squares (IRLS) fit, SEEDED from the
+    // dominant-direction majority (reliably the background, because background vectors
+    // carry more magnitude than the camera-followed, near-stationary target). Seeding
+    // from the background and never sampling randomly makes the result temporally
+    // stable and immune to the "target turns green" mode-flip.
+    //
+    // Returns the same {dx, dy, confidence, rotation, inlierCount} shape as
+    // findConsensusDirection and sets v.isInlier on every vector; returns null (caller
+    // falls back to the direction consensus) when there is no usable rigid background.
+    findConsensusGlobalModel(vectors) {
+        if (vectors.length < 6) return null;
+
+        // Seed inliers from the dominant-direction majority (sets v.isInlier). This is
+        // the background, since the followed target contributes little magnitude.
+        const seed = this.findConsensusDirection(vectors);
+        if (!seed) return null;
+
+        const thr = this.params.objectRejectThreshold;
+        const thr2 = thr * thr;
+        let inlier = vectors.map(v => v.isInlier);
+        let affine = null;
+
+        // IRLS: fit affine to current inliers, then reclassify everything by residual
+        // against that affine. Converges to the background in a few passes.
+        for (let iter = 0; iter < 5; iter++) {
+            const fit = this.fitAffineLeastSquares(vectors, inlier);
+            if (!fit) break;
+            affine = fit;
+            const [a, b, c, d, e, f] = fit;
+            let count = 0;
+            let changed = false;
+            const nextInlier = new Array(vectors.length);
+            for (let i = 0; i < vectors.length; i++) {
+                const v = vectors[i];
+                const predX = a * v.px + b * v.py + c;
+                const predY = d * v.px + e * v.py + f;
+                const ex = predX - (v.px + v.dx);
+                const ey = predY - (v.py + v.dy);
+                const inl = (ex * ex + ey * ey) <= thr2;
+                nextInlier[i] = inl;
+                if (inl) count++;
+                if (inl !== inlier[i]) changed = true;
+            }
+            if (count < 3) { affine = null; break; }
+            inlier = nextInlier;
+            if (!changed) break;   // converged
+        }
+
+        if (!affine) return null;
+
+        // Background translation = quality-weighted mean of inlier displacements
+        // (same semantics as the direction-consensus path, restricted to background).
+        let sumDx = 0, sumDy = 0, sumWeight = 0, inlierCount = 0;
+        for (let i = 0; i < vectors.length; i++) {
+            vectors[i].isInlier = inlier[i];
+            if (inlier[i]) {
+                const w = vectors[i].quality;
+                sumDx += vectors[i].dx * w;
+                sumDy += vectors[i].dy * w;
+                sumWeight += w;
+                inlierCount++;
+            }
+        }
+        if (inlierCount < 3 || sumWeight < 0.01) return null;
+
+        const dx = sumDx / sumWeight;
+        const dy = sumDy / sumWeight;
+        const rotation = Math.atan2(affine[3], affine[0]);   // d/a from the affine basis
+        const inlierRatio = inlierCount / vectors.length;
+        const avgQuality = sumWeight / inlierCount;
+        const confidence = Math.min(1, inlierRatio + 0.2) * Math.min(1, avgQuality + 0.3);
+
+        return {dx, dy, confidence, rotation, inlierCount};
+    }
+
+    // Quality-weighted least-squares affine fit over the flagged inliers. Solves
+    // x' = a*x + b*y + c and y' = d*x + e*y + f via the 3x3 normal equations (both
+    // share the same normal matrix). Returns [a,b,c,d,e,f] or null if degenerate
+    // (too few or near-collinear points → singular matrix). Deterministic.
+    fitAffineLeastSquares(vectors, inlier) {
+        let Sxx = 0, Sxy = 0, Sx = 0, Syy = 0, Sy = 0, S1 = 0;
+        let bx0 = 0, bx1 = 0, bx2 = 0;   // RHS for x'
+        let by0 = 0, by1 = 0, by2 = 0;   // RHS for y'
+        let n = 0;
+        for (let i = 0; i < vectors.length; i++) {
+            if (!inlier[i]) continue;
+            const v = vectors[i];
+            const w = v.quality > 0 ? v.quality : 1e-3;
+            const x = v.px, y = v.py;
+            const xp = v.px + v.dx, yp = v.py + v.dy;
+            Sxx += w * x * x; Sxy += w * x * y; Sx += w * x;
+            Syy += w * y * y; Sy += w * y; S1 += w;
+            bx0 += w * x * xp; bx1 += w * y * xp; bx2 += w * xp;
+            by0 += w * x * yp; by1 += w * y * yp; by2 += w * yp;
+            n++;
+        }
+        if (n < 3) return null;
+
+        // Invert the symmetric 3x3 normal matrix M = [[Sxx,Sxy,Sx],[Sxy,Syy,Sy],[Sx,Sy,S1]].
+        const m00 = Sxx, m01 = Sxy, m02 = Sx;
+        const m11 = Syy, m12 = Sy, m22 = S1;
+        const c00 = m11 * m22 - m12 * m12;
+        const c01 = m12 * m02 - m01 * m22;
+        const c02 = m01 * m12 - m11 * m02;
+        const det = m00 * c00 + m01 * c01 + m02 * c02;
+        if (Math.abs(det) < 1e-9) return null;   // singular / collinear
+        const inv = 1 / det;
+        const c11 = m00 * m22 - m02 * m02;
+        const c12 = m02 * m01 - m00 * m12;
+        const c22 = m00 * m11 - m01 * m01;
+        // Inverse (symmetric): rows of cofactors * inv
+        const i00 = c00 * inv, i01 = c01 * inv, i02 = c02 * inv;
+        const i10 = c01 * inv, i11 = c11 * inv, i12 = c12 * inv;
+        const i20 = c02 * inv, i21 = c12 * inv, i22 = c22 * inv;
+
+        const a = i00 * bx0 + i01 * bx1 + i02 * bx2;
+        const b = i10 * bx0 + i11 * bx1 + i12 * bx2;
+        const c = i20 * bx0 + i21 * bx1 + i22 * bx2;
+        const d = i00 * by0 + i01 * by1 + i02 * by2;
+        const e = i10 * by0 + i11 * by1 + i12 * by2;
+        const f = i20 * by0 + i21 * by1 + i22 * by2;
+        return [a, b, c, d, e, f];
     }
 
     isGoodQualityFrame(flowVectors, consensus) {

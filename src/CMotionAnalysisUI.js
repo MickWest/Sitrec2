@@ -2170,8 +2170,12 @@ function createParamSliders() {
             .tooltip("Frames to confirm static detection"));
         paramControllers.push(trackingFolder.add(p, 'inlierThreshold', 0.3, 0.9, 0.05).name("Inlier Threshold").onChange(invalidate)
             .tooltip("Threshold for consensus direction agreement"));
+        paramControllers.push(trackingFolder.add(p, 'rejectMovingObjects').name("Reject Moving Objects").onChange(invalidate)
+            .tooltip("Fit a global rigid background (RANSAC) and exclude independently-moving objects (cars, trucks) from the consensus, regardless of their direction or speed"));
+        paramControllers.push(trackingFolder.add(p, 'objectRejectThreshold', 1, 10, 0.5).name("Object Reject Px").onChange(invalidate)
+            .tooltip("Max reprojection residual (px) for a vector to count as background; lower = stricter rejection of movers"));
     }
-    
+
     if (p.technique === MOTION_TECHNIQUES.ECC_EUCLIDEAN) {
         paramControllers.push(trackingFolder.add(p, 'eccIterations', 10, 200, 10).name("ECC Iterations").onChange(invalidate)
             .tooltip("Maximum iterations for ECC convergence"));
@@ -2193,6 +2197,10 @@ function createParamSliders() {
             .tooltip("Frames to confirm static detection"));
         paramControllers.push(trackingFolder.add(p, 'inlierThreshold', 0.3, 0.9, 0.05).name("Inlier Threshold").onChange(invalidate)
             .tooltip("Threshold for consensus direction agreement"));
+        paramControllers.push(trackingFolder.add(p, 'rejectMovingObjects').name("Reject Moving Objects").onChange(invalidate)
+            .tooltip("Fit a global rigid background (RANSAC) and exclude independently-moving objects (cars, trucks) from the consensus, regardless of their direction or speed"));
+        paramControllers.push(trackingFolder.add(p, 'objectRejectThreshold', 1, 10, 0.5).name("Object Reject Px").onChange(invalidate)
+            .tooltip("Max reprojection residual (px) for a vector to count as background; lower = stricter rejection of movers"));
         paramControllers.push(trackingFolder.add(p, 'linearityThreshold', 0.5, 1, 0.05).name("Linearity Threshold").onChange(invalidate)
             .tooltip("Min trajectory straightness (1=perfect line)"));
         paramControllers.push(trackingFolder.add(p, 'spacingThreshold', 0, 1, 0.05).name("Spacing Threshold").onChange(invalidate)
