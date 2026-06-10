@@ -15,6 +15,7 @@
 // timeline widget reads/writes it too.
 
 import {makeDraggable, blockViewEvents, clampBelowMenuBar} from "../DragResizeUtils";
+import {markSitchDirty} from "../Globals";
 
 export const STORAGE_KEY = "sitrec_scripted_video_script";
 
@@ -149,7 +150,8 @@ export class CScriptEditorWindow {
         try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
         ta.value = saved || DEFAULT_SCRIPT;
         for (const ev of ["keydown", "keyup", "keypress"]) ta.addEventListener(ev, (e) => e.stopPropagation());
-        ta.addEventListener("input", () => { sv.doParse(); this._renderBackdrop(); });
+        // script edits count as unsaved work (arms the leave-page warning)
+        ta.addEventListener("input", () => { markSitchDirty(); sv.doParse(); this._renderBackdrop(); });
         ta.addEventListener("click", () => {
             // a completed number-drag must not re-scrub to the (unmoved) caret
             if (this._suppressClick) { this._suppressClick = false; return; }
@@ -244,6 +246,17 @@ export class CScriptEditorWindow {
         this._extPoll = setInterval(() => {
             if (!this.external || this.external.closed) this._dockFromExternal();
         }, 600);
+        // The popup has no scripts of its own — if the MAIN window goes away its
+        // editor becomes an inert orphan, so take it along. pagehide fires only
+        // AFTER the global beforeunload unsaved-work dialog (which script edits
+        // arm via markSitchDirty) has been confirmed, or immediately when there
+        // is nothing unsaved — cancelling the dialog keeps both windows.
+        if (!this._closePopupOnUnloadWired) {
+            this._closePopupOnUnloadWired = true;
+            window.addEventListener("pagehide", () => {
+                if (this.external && !this.external.closed) this.external.close();
+            });
+        }
         setTimeout(() => this.sv.timeline.draw(), 60);
     }
 
@@ -515,6 +528,7 @@ export class CScriptEditorWindow {
         lines[row] = line.slice(0, span.start) + out + line.slice(span.end);
         ta.value = lines.join("\n");
         try { ta.selectionStart = ta.selectionEnd = caret; } catch (e2) {}
+        markSitchDirty();   // wheel/drag number edits are unsaved work too
         this._parsePromise = this.sv.doParse();   // async; callers chain on it to see the new model
         return {start: span.start, end: span.start + out.length, text: out};
     }
