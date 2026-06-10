@@ -359,6 +359,37 @@ async function requestSourceFrameForExport(videoData, frame, timeout = 1500) {
     return videoData.isFrameCached?.(frame) ?? true;
 }
 
+// Wait until the viewport layout holds still for `stableTicks` consecutive animation
+// frames (or give up after `timeoutMs`). updateSize() is called each tick so any pending
+// window/container resize is applied to the views before sampling. Needed because the
+// viewport export can start while the layout is still changing — Render Fullscreen Video
+// hides the menu bar and triggers the OS fullscreen transition, which animates the window
+// size over several frames and fires resize events at unpredictable times. Sizing the
+// encoder (or capturing the first frame) off a mid-transition layout produced a first
+// frame at the old dimensions/FOV/aspect that visibly jumped on the next frame.
+async function waitForStableViewportLayout(ViewMan, updateSize, {stableTicks = 5, timeoutMs = 2000} = {}) {
+    const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+    const sample = () => [
+        window.innerWidth, window.innerHeight,
+        ViewMan.container ? ViewMan.container.offsetWidth : 0,
+        ViewMan.container ? ViewMan.container.offsetHeight : 0,
+        ViewMan.widthPx, ViewMan.heightPx, ViewMan.topPx,
+    ].join('x');
+    const start = performance.now();
+    let last = null;
+    let stable = 0;
+    while (performance.now() - start < timeoutMs) {
+        updateSize();   // apply any pending window/container resize to the views
+        const cur = sample();
+        stable = (cur === last) ? stable + 1 : 0;
+        last = cur;
+        if (stable >= stableTicks) return true;
+        await nextFrame();
+    }
+    console.warn(`Viewport video export: layout did not stabilize within ${timeoutMs}ms; exporting anyway`);
+    return false;
+}
+
 export class VideoExportManager {
     constructor() {
         this.videoExportView = "lookView";
@@ -689,7 +720,10 @@ export class VideoExportManager {
         // Composite the video canvas with the annotation overlay (if any) so
         // exported frames match what the user sees on screen.
         const annotateOverlay = NodeMan.get("annotateOverlay", false);
-        if (annotateOverlay?.show && annotateOverlay?.canvas && annotateOverlay?.strokes?.length) {
+        // The size check guards against a 0-sized overlay canvas (parent video view
+        // hidden / never laid out) — drawImage throws InvalidStateError on those.
+        if (annotateOverlay?.show && annotateOverlay?.canvas && annotateOverlay?.strokes?.length
+            && annotateOverlay.canvas.width > 0 && annotateOverlay.canvas.height > 0) {
             const composite = document.createElement("canvas");
             composite.width = videoView.canvas.width;
             composite.height = videoView.canvas.height;
@@ -709,13 +743,16 @@ export class VideoExportManager {
         }, mimeType, quality);
     }
 
-    async exportViewportVideo() {
+    // options.download=false runs the export programmatically (e.g. from the regression
+    // harness): the encoded blob is returned as {filename, size, totalFrames} instead of
+    // being downloaded, and errors are rethrown instead of shown in an alert().
+    async exportViewportVideo({ download = true } = {}) {
         const { ViewMan } = await import("./CViewManager");
         const { GlobalDateTimeNode, NodeMan, Sit, Globals, setRenderOne } = await import("./Globals");
         const { par } = await import("./par");
         const { GlobalScene, LocalFrame } = await import("./LocalFrame");
         const { Frame2Az, Frame2El } = await import("./JetUtils");
-        const { UpdatePRFromEA } = await import("./JetStuff");
+        const { UpdatePRFromEA, updateSize } = await import("./JetStuff");
         const { ExportProgressWidget, drawVideoWatermark } = await import("./utils");
         const { drawAttributionOnCanvas } = await import("./AttributionOverlay");
         const { getMotionAnalysisOverlays } = await import("./CMotionAnalysisUI");
@@ -723,6 +760,11 @@ export class VideoExportManager {
 
         const startFrame = Sit.aFrame;
         const endFrame = Sit.bFrame;
+
+        // Don't size the encoder until the viewport layout has settled (fullscreen
+        // transition / menu-bar hide may still be animating when we get here).
+        await waitForStableViewportLayout(ViewMan, updateSize);
+
         const scale = this.retinaExport ? (window.devicePixelRatio || 1) : 1;
         const width = Math.round(ViewMan.widthPx * scale);
         const height = Math.round(ViewMan.heightPx * scale);
@@ -737,13 +779,17 @@ export class VideoExportManager {
             duplicateFrameSet,
         });
         if (plan.totalFrames === 0) {
-            alert("Video export failed: no unique frames found in the A-B range.");
+            const msg = "Video export failed: no unique frames found in the A-B range.";
+            if (!download) throw new Error(msg);
+            alert(msg);
             return;
         }
 
         const bestFormat = await getBestFormatForResolution(this.videoFormat, width, height);
         if (!bestFormat.formatId) {
-            alert(`Video export failed: ${bestFormat.reason}`);
+            const msg = `Video export failed: ${bestFormat.reason}`;
+            if (!download) throw new Error(msg);
+            alert(msg);
             return;
         }
         if (bestFormat.fallback) {
@@ -761,6 +807,7 @@ export class VideoExportManager {
         par.paused = true;
 
         const progress = new ExportProgressWidget('Exporting viewport video...', plan.totalFrames);
+        let exportResult = null;
 
         const compositeCanvas = document.createElement('canvas');
         compositeCanvas.width = width;
@@ -812,140 +859,159 @@ export class VideoExportManager {
 
             await exporter.initialize();
 
+            const visible3DViewIds = [];
+            const renderCompositeFrame = async (frame) => {
+                par.frame = frame;
+                GlobalDateTimeNode.update(frame);
+
+                if (Sit.azSlider) {
+                    par.az = Frame2Az(par.frame);
+                    par.el = Frame2El(par.frame);
+                    UpdatePRFromEA();
+                }
+
+                for (const entry of Object.values(NodeMan.list)) {
+                    const node = entry.data;
+                    if (node.update !== undefined) {
+                        node.update(frame);
+                    }
+                    if (node.videoData && node.videoData.waitForFrame) {
+                        await node.videoData.waitForFrame(frame);
+                    }
+                }
+
+                GlobalScene.updateMatrixWorld(true);
+                if (LocalFrame) LocalFrame.updateMatrixWorld(true);
+
+                compositeCtx.fillStyle = '#000000';
+                compositeCtx.fillRect(0, 0, width, height);
+
+                const nonOverlays = [];
+                const overlays = [];
+
+                visible3DViewIds.length = 0;
+                ViewMan.computeEffectiveVisibility();
+
+                ViewMan.iterate((id, view) => {
+                    if (view._effectivelyVisible) {
+                        if (view.overlayView) {
+                            // An overlay composites onto its parent's rectangle. A
+                            // separateVisibility overlay (e.g. annotateOverlay) can be
+                            // "visible" while its parent view is hidden — its canvas sits
+                            // inside the parent's display:none div, laid out at 0x0 — so
+                            // it is not on screen and must not be drawn.
+                            if (view.overlayView._effectivelyVisible) {
+                                overlays.push(view);
+                            }
+                        } else {
+                            nonOverlays.push(view);
+                            if (view instanceof CNodeView3D) {
+                                visible3DViewIds.push(id);
+                            }
+                        }
+                    }
+                });
+
+                for (const view of nonOverlays) {
+                    if (view.camera && view instanceof CNodeView3D) {
+                        view.camera.updateMatrix();
+                        view.camera.updateMatrixWorld();
+                        for (const node of NodeMan.getPreRenderNodes()) {
+                            node.preRender(view);
+                        }
+                    }
+                    view.renderCanvas(frame);
+                    for (const node of NodeMan.getPostRenderNodes()) {
+                        node.postRender(view);
+                    }
+                    if (view.renderer) {
+                        view.renderer.getContext().finish();
+                    }
+                    // drawImage throws InvalidStateError on a 0-sized source canvas,
+                    // which can happen for a view that has not been laid out yet.
+                    if (view.canvas && view.canvas.width > 0 && view.canvas.height > 0) {
+                        const x = view.leftPx * scale;
+                        const y = (view.topPx - ViewMan.topPx) * scale;
+                        compositeCtx.drawImage(view.canvas, x, y, view.widthPx * scale, view.heightPx * scale);
+                    }
+                }
+
+                for (const view of overlays) {
+                    const alpha = view.transparency !== undefined ? view.transparency : 1;
+                    if (alpha <= 0) continue;
+                    if (view.canvas && (view.canvas.style.display === "none" || view.canvas.style.visibility === "hidden")) {
+                        // Hidden overlay canvases can retain stale pixels if they were previously shown.
+                        // Skip drawing them to match on-screen presentation.
+                        continue;
+                    }
+
+                    if (view.canvas) {
+                        const ctx = view.canvas.getContext('2d');
+                        ctx.clearRect(0, 0, view.canvas.width, view.canvas.height);
+                    }
+                    if (view.camera && view instanceof CNodeView3D) {
+                        view.camera.updateMatrix();
+                        view.camera.updateMatrixWorld();
+                        for (const node of NodeMan.getPreRenderNodes()) {
+                            node.preRender(view);
+                        }
+                    }
+                    view.renderCanvas(frame);
+                    for (const node of NodeMan.getPostRenderNodes()) {
+                        node.postRender(view);
+                    }
+                    // Skip 0-sized canvases (drawImage throws InvalidStateError on them).
+                    if (view.canvas && view.canvas.width > 0 && view.canvas.height > 0) {
+                        const parentView = view.overlayView;
+                        const x = parentView.leftPx * scale;
+                        const y = (parentView.topPx - ViewMan.topPx) * scale;
+                        compositeCtx.globalAlpha = alpha;
+                        compositeCtx.drawImage(view.canvas, x, y, parentView.widthPx * scale, parentView.heightPx * scale);
+                        compositeCtx.globalAlpha = 1;
+                    }
+                }
+
+                const motionOverlays = getMotionAnalysisOverlays();
+                if (motionOverlays && motionOverlays.videoView) {
+                    const vv = motionOverlays.videoView;
+                    const x = vv.leftPx * scale;
+                    const y = (vv.topPx - ViewMan.topPx) * scale;
+                    if (motionOverlays.overlay) {
+                        compositeCtx.drawImage(motionOverlays.overlay, x, y, vv.widthPx * scale, vv.heightPx * scale);
+                    }
+                    if (motionOverlays.graphCanvas) {
+                        const gw = 200 * scale;
+                        const gh = 80 * scale;
+                        const gx = x + vv.widthPx * scale - gw - 10 * scale;
+                        const gy = y + vv.heightPx * scale - gh - 10 * scale;
+                        compositeCtx.drawImage(motionOverlays.graphCanvas, gx, gy, gw, gh);
+                    }
+                }
+
+                drawVideoWatermark(compositeCtx, width);
+                drawAttributionOnCanvas(compositeCtx, width, height);
+            };
+
+            // Defensive warm-up: render the first output frame a few times before
+            // encoding anything. Per-view state that only settles during a render
+            // (camera aspect from a fresh layout, matchVideoAspect FOV adjustments,
+            // letterboxing) can lag a render behind a viewport change, which showed
+            // up as a first frame at the wrong zoom/aspect that jumped on frame 2.
+            for (let w = 0; w < 3; w++) {
+                await renderCompositeFrame(plan.frameAt(0));
+            }
+
             for (let i = 0; i < plan.totalFrames; i++) {
                 if (progress.shouldStop()) break;
 
                 const frame = plan.frameAt(i);
-                const visible3DViewIds = [];
-                const renderCompositeFrame = async () => {
-                    par.frame = frame;
-                    GlobalDateTimeNode.update(frame);
-
-                    if (Sit.azSlider) {
-                        par.az = Frame2Az(par.frame);
-                        par.el = Frame2El(par.frame);
-                        UpdatePRFromEA();
-                    }
-
-                    for (const entry of Object.values(NodeMan.list)) {
-                        const node = entry.data;
-                        if (node.update !== undefined) {
-                            node.update(frame);
-                        }
-                        if (node.videoData && node.videoData.waitForFrame) {
-                            await node.videoData.waitForFrame(frame);
-                        }
-                    }
-
-                    GlobalScene.updateMatrixWorld(true);
-                    if (LocalFrame) LocalFrame.updateMatrixWorld(true);
-
-                    compositeCtx.fillStyle = '#000000';
-                    compositeCtx.fillRect(0, 0, width, height);
-
-                    const nonOverlays = [];
-                    const overlays = [];
-
-                    visible3DViewIds.length = 0;
-                    ViewMan.computeEffectiveVisibility();
-
-                    ViewMan.iterate((id, view) => {
-                        if (view._effectivelyVisible) {
-                            if (view.overlayView) {
-                                overlays.push(view);
-                            } else {
-                                nonOverlays.push(view);
-                                if (view instanceof CNodeView3D) {
-                                    visible3DViewIds.push(id);
-                                }
-                            }
-                        }
-                    });
-
-                    for (const view of nonOverlays) {
-                        if (view.camera && view instanceof CNodeView3D) {
-                            view.camera.updateMatrix();
-                            view.camera.updateMatrixWorld();
-                            for (const node of NodeMan.getPreRenderNodes()) {
-                                node.preRender(view);
-                            }
-                        }
-                        view.renderCanvas(frame);
-                        for (const node of NodeMan.getPostRenderNodes()) {
-                            node.postRender(view);
-                        }
-                        if (view.renderer) {
-                            view.renderer.getContext().finish();
-                        }
-                        if (view.canvas) {
-                            const x = view.leftPx * scale;
-                            const y = (view.topPx - ViewMan.topPx) * scale;
-                            compositeCtx.drawImage(view.canvas, x, y, view.widthPx * scale, view.heightPx * scale);
-                        }
-                    }
-
-                    for (const view of overlays) {
-                        const alpha = view.transparency !== undefined ? view.transparency : 1;
-                        if (alpha <= 0) continue;
-                        if (view.canvas && (view.canvas.style.display === "none" || view.canvas.style.visibility === "hidden")) {
-                            // Hidden overlay canvases can retain stale pixels if they were previously shown.
-                            // Skip drawing them to match on-screen presentation.
-                            continue;
-                        }
-
-                        if (view.canvas) {
-                            const ctx = view.canvas.getContext('2d');
-                            ctx.clearRect(0, 0, view.canvas.width, view.canvas.height);
-                        }
-                        if (view.camera && view instanceof CNodeView3D) {
-                            view.camera.updateMatrix();
-                            view.camera.updateMatrixWorld();
-                            for (const node of NodeMan.getPreRenderNodes()) {
-                                node.preRender(view);
-                            }
-                        }
-                        view.renderCanvas(frame);
-                        for (const node of NodeMan.getPostRenderNodes()) {
-                            node.postRender(view);
-                        }
-                        if (view.canvas) {
-                            const parentView = view.overlayView;
-                            const x = parentView.leftPx * scale;
-                            const y = (parentView.topPx - ViewMan.topPx) * scale;
-                            compositeCtx.globalAlpha = alpha;
-                            compositeCtx.drawImage(view.canvas, x, y, parentView.widthPx * scale, parentView.heightPx * scale);
-                            compositeCtx.globalAlpha = 1;
-                        }
-                    }
-
-                    const motionOverlays = getMotionAnalysisOverlays();
-                    if (motionOverlays && motionOverlays.videoView) {
-                        const vv = motionOverlays.videoView;
-                        const x = vv.leftPx * scale;
-                        const y = (vv.topPx - ViewMan.topPx) * scale;
-                        if (motionOverlays.overlay) {
-                            compositeCtx.drawImage(motionOverlays.overlay, x, y, vv.widthPx * scale, vv.heightPx * scale);
-                        }
-                        if (motionOverlays.graphCanvas) {
-                            const gw = 200 * scale;
-                            const gh = 80 * scale;
-                            const gx = x + vv.widthPx * scale - gw - 10 * scale;
-                            const gy = y + vv.heightPx * scale - gh - 10 * scale;
-                            compositeCtx.drawImage(motionOverlays.graphCanvas, gx, gy, gw, gh);
-                        }
-                    }
-
-                    drawVideoWatermark(compositeCtx, width);
-                    drawAttributionOnCanvas(compositeCtx, width, height);
-                };
-
-                await renderCompositeFrame();
+                await renderCompositeFrame(frame);
                 if (this.waitForBackgroundLoading) {
                     // Wait for async loading and 3D tile visibility churn to settle before encoding the frame.
                     await waitForExportFrameSettled({
                         frame,
                         viewIds: visible3DViewIds,
-                        renderFrame: renderCompositeFrame,
+                        renderFrame: () => renderCompositeFrame(frame),
                         logPrefix: "Viewport video export",
                     });
                 }
@@ -966,12 +1032,15 @@ export class VideoExportManager {
 
                 const { getExportPrefix } = await import("./utils");
                 const filename = `${getExportPrefix()}_viewport${getVideoExportSpeedSuffix(plan)}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${extension}`;
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename;
-                a.click();
-                URL.revokeObjectURL(url);
+                exportResult = { filename, size: blob.size, totalFrames: plan.totalFrames };
+                if (download) {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
 
                 console.log(`Viewport video export complete: ${filename}`);
             } else {
@@ -980,6 +1049,7 @@ export class VideoExportManager {
 
         } catch (e) {
             console.error('Export failed:', e);
+            if (!download) throw e;
             alert('Viewport video export failed: ' + e.message);
         } finally {
             progress.remove();
@@ -987,6 +1057,7 @@ export class VideoExportManager {
             par.paused = savedPaused;
             setRenderOne(true);
         }
+        return exportResult;
     }
 
     async exportFullscreenViewportVideo() {

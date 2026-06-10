@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "scenarioId": "export-viewport-video",
+  "sitch": "custom",
+  "frame": 0,
+  "captures": {
+    "viewportExport": {
+      "annotateOverlayPresent": true,
+      "completed": true,
+      "nonEmpty": true,
+      "totalFrames": 6,
+      "videoViewVisible": false
+    }
+  }
+}

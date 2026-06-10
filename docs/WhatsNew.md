@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.80.1 (2026-06-10)
+
+### Bug Fixes
+- Fixed **Render Viewport Video** (Video → Video Render & Export) failing with a canvas-size error when the video panel was hidden — common on custom scenes with annotations.
+- Fixed the first frame of an exported viewport video sometimes coming out at the wrong size or zoom and visibly jumping on the second frame, mostly when using **Render Fullscreen Video**; the export now waits for the screen layout to settle before recording.
+
 ## Version 2.80.0 (2026-06-10)
 
 ### New Features
