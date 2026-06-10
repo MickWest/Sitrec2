@@ -9,16 +9,24 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
-## Version 2.80.0 (2026-06-09)
+## Version 2.80.0 (2026-06-10)
 
 ### New Features
-- **Reject Moving Objects** (Motion Analysis → Tracking Parameters): motion analysis can now exclude independently-moving objects — passing cars and trucks, even ones moving the same direction as the background — from its background-motion estimate, instead of letting them skew it. Off by default; the companion **Object Reject Px** slider sets how strict the rejection is.
+- **Reject Moving Objects** (Motion Analysis → Tracking Parameters): motion analysis can now exclude independently-moving objects — passing cars and trucks, even ones moving the same direction as the background — from its background-motion estimate, instead of letting them skew it. On by default (saved sitches that stored this setting keep their saved value); the companion **Object Reject Px** slider sets how strict the rejection is.
 - **Sim Info Display** (Show → Sim Info Display): show the simulation date and time on the look view as draggable text labels — date, time, or combined, in local time and/or UTC, with adjustable font size — independent of the Video Info Display. Turn on **Show Sim Info** and tick the readouts you want.
+- **Rectangle mask tool** (Motion Analysis → Masking): with **Edit Mask** on, hold Shift and drag to fill a rectangle of mask, or Alt(Option)-Shift-drag to erase one — a live preview (red for fill, blue for erase) stays locked to the footage as you zoom and pan, and the rectangle is applied when you release.
+- **Scripted Video scripts now save with the sitch** (Video → Scripted Video): a saved custom sitch carries its scripted video, so sharing or reloading the sitch keeps the script.
+
+### Improvements
+- Every way of changing the mask is now undoable — clearing it, the new rectangle tool, and the **Auto Mask OSD** / **Auto Mask Redactions** tools — and a single undo removes a whole auto-mask application even after you've dragged its sliders around.
+- **Export Look Panorama** (Video → Video Render & Export) now handles footage where the camera zooms during the export range: the most zoomed-in frames keep full resolution and wider frames are scaled to cover their true extent, instead of zoomed-in frames dominating the panorama.
 
 ### Bug Fixes
 - Fixed dragging an info label (Sim Info or Video Info) over a 3D view also rotating the camera underneath it.
 - Fixed dragged info labels appearing frozen and then jumping to their new position; they now follow the mouse smoothly.
 - Fixed the "Affine RANSAC" motion analysis technique silently doing nothing (it always fell back to "Sparse + Consensus"); selecting it now actually uses it.
+- Fixed a "#" inside a quoted Scripted Video caption cutting off the rest of the line; negative durations and unquoted multi-word captions are now reported as script errors instead of being silently mis-read.
+- Fixed scrubbing the Scripted Video timeline and then starting Preview or Render, which could leave the views, playback state, or timeline restored incorrectly afterwards.
 
 ## Version 2.79.0 (2026-06-08)
 
