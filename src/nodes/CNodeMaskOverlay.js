@@ -21,6 +21,12 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         this.isDrawing = false;
         this.lastDrawX = null;
         this.lastDrawY = null;
+        this.isRectDragging = false;
+        this.rectStartX = 0;
+        this.rectStartY = 0;
+        this.rectEndX = 0;
+        this.rectEndY = 0;
+        this.rectErase = false;
         this.lastMouseX = 0;
         this.lastMouseY = 0;
         this.preDrawMaskData = null;
@@ -178,34 +184,59 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         return mask;
     }
     
+    // Run `mutate(ctx, canvas)` on the mask as a single undoable edit: snapshots the
+    // mask before/after and pushes an undo action holding both states. With
+    // {coalesceKey, coalesce: true}, an immediately preceding action carrying the
+    // same key has its post state updated instead of pushing a new action — used by
+    // the auto-mask tools, which re-run on every tick of a slider drag.
+    applyMaskEdit(description, mutate, {coalesceKey = null, coalesce = false} = {}) {
+        this.ensureMaskInitialized();
+        if (!this.maskCanvas) return false;
+
+        const canvas = this.maskCanvas;
+        const ctx = this.maskCtx;
+        const preData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        mutate(ctx, canvas);
+        const postData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        this.saveMask();
+        setRenderOne(true);
+
+        const top = undoManager.undoStack[undoManager.undoStack.length - 1];
+        if (coalesce && coalesceKey && top && top.maskCoalesceKey === coalesceKey
+            && undoManager.redoStack.length === 0) {
+            top.postData = postData;
+            return true;
+        }
+
+        const overlay = this;
+        undoManager.add({
+            description,
+            maskCoalesceKey: coalesceKey,
+            preData,
+            postData,
+            undo() {
+                if (overlay.maskCanvas) {
+                    overlay.maskCtx.putImageData(this.preData, 0, 0);
+                    overlay.saveMask();
+                    setRenderOne(true);
+                }
+            },
+            redo() {
+                if (overlay.maskCanvas) {
+                    overlay.maskCtx.putImageData(this.postData, 0, 0);
+                    overlay.saveMask();
+                    setRenderOne(true);
+                }
+            }
+        });
+        return true;
+    }
+
     clearMask() {
         if (this.maskCanvas) {
-            const preData = this.maskCtx.getImageData(0, 0, this.maskCanvas.width, this.maskCanvas.height);
-            const overlay = this;
-            
-            this.maskCtx.clearRect(0, 0, this.maskCanvas.width, this.maskCanvas.height);
-            this.updateMaskImageData();
-            this.saveMask();
-            
-            undoManager.add({
-                description: "Clear mask",
-                undo: () => {
-                    if (overlay.maskCanvas) {
-                        overlay.maskCtx.putImageData(preData, 0, 0);
-                        overlay.saveMask();
-                        setRenderOne(true);
-                    }
-                },
-                redo: () => {
-                    if (overlay.maskCanvas) {
-                        overlay.maskCtx.clearRect(0, 0, overlay.maskCanvas.width, overlay.maskCanvas.height);
-                        overlay.saveMask();
-                        setRenderOne(true);
-                    }
-                }
+            this.applyMaskEdit("Clear mask", (ctx, canvas) => {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
             });
-            
-            setRenderOne(true);
         }
     }
     
@@ -260,12 +291,26 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
         const [ucx, ucy] = this.unrotateCanvasCoords(cx, cy);
         const [vX, vY] = this.overlayView.canvasToVideoCoords(ucx, ucy);
-        
+
         this.ensureMaskInitialized();
+
+        if (e.shiftKey) {
+            // Shift-drag: rectangle fill (Opt-Shift-drag: rectangle erase).
+            // Preview only while dragging; committed to the mask on release.
+            this.isRectDragging = true;
+            this.rectErase = e.altKey;
+            this.rectStartX = vX;
+            this.rectStartY = vY;
+            this.rectEndX = vX;
+            this.rectEndY = vY;
+            setRenderOne(true);
+            return true;
+        }
+
         if (this.maskCanvas) {
             this.preDrawMaskData = this.maskCtx.getImageData(0, 0, this.maskCanvas.width, this.maskCanvas.height);
         }
-        
+
         this.isDrawing = true;
         this.lastDrawX = null;
         this.lastDrawY = null;
@@ -279,20 +324,50 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         
         this.lastMouseX = mouseX;
         this.lastMouseY = mouseY;
-        
+
+        if (this.isRectDragging) {
+            const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
+            const [ucx, ucy] = this.unrotateCanvasCoords(cx, cy);
+            const [vX, vY] = this.overlayView.canvasToVideoCoords(ucx, ucy);
+            this.rectEndX = vX;
+            this.rectEndY = vY;
+            this.rectErase = e.altKey;
+            setRenderOne(true);
+            return;
+        }
+
         if (!this.isDrawing) return;
-        
+
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
         const [ucx, ucy] = this.unrotateCanvasCoords(cx, cy);
         const [vX, vY] = this.overlayView.canvasToVideoCoords(ucx, ucy);
-        
+
         this.drawLineTo(vX, vY, e.altKey);
         setRenderOne(true);
     }
     
     onMouseUp(e, mouseX, mouseY) {
         if (!this.editing) return;
-        
+
+        if (this.isRectDragging) {
+            this.isRectDragging = false;
+            const x = Math.min(this.rectStartX, this.rectEndX);
+            const y = Math.min(this.rectStartY, this.rectEndY);
+            const w = Math.abs(this.rectEndX - this.rectStartX);
+            const h = Math.abs(this.rectEndY - this.rectStartY);
+            if (w >= 1 && h >= 1) {
+                const erase = this.rectErase;
+                this.applyMaskEdit(erase ? "Mask rectangle erase" : "Mask rectangle fill", (ctx) => {
+                    ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
+                    ctx.fillStyle = 'rgba(255, 0, 0, 1)';
+                    ctx.fillRect(x, y, w, h);
+                    ctx.globalCompositeOperation = 'source-over';
+                });
+            }
+            setRenderOne(true);
+            return;
+        }
+
         if (this.isDrawing) {
             this.isDrawing = false;
             this.lastDrawX = null;
@@ -405,8 +480,33 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
                 ov.widthPx * (ov.posRight - ov.posLeft), ov.widthPx * (ov.posBot - ov.posTop));
         }
         ctx.restore();
-        
-        if (this.editing) {
+
+        if (this.editing && this.isRectDragging) {
+            // Rectangle drag preview: red for fill, blue for erase. The rect is held
+            // in video coords; map through the same view transform as the mask so it
+            // tracks zoom/pan, inside the same flow rotation the mask is drawn with.
+            const [x1, y1] = ov.videoToCanvasCoords(this.rectStartX, this.rectStartY);
+            const [x2, y2] = ov.videoToCanvasCoords(this.rectEndX, this.rectEndY);
+            ctx.save();
+            if (flowRotation !== 0) {
+                ctx.translate(this.widthPx / 2, this.heightPx / 2);
+                ctx.rotate(flowRotation);
+                ctx.translate(-this.widthPx / 2, -this.heightPx / 2);
+            }
+            const rgb = this.rectErase ? '0, 128, 255' : '255, 0, 0';
+            const rx = Math.min(x1, x2);
+            const ry = Math.min(y1, y2);
+            const rw = Math.abs(x2 - x1);
+            const rh = Math.abs(y2 - y1);
+            ctx.fillStyle = `rgba(${rgb}, 0.3)`;
+            ctx.fillRect(rx, ry, rw, rh);
+            ctx.strokeStyle = `rgba(${rgb}, 1)`;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(rx, ry, rw, rh);
+            ctx.restore();
+        }
+
+        if (this.editing && !this.isRectDragging) {
             this.drawBrushCursor(flowRotation);
         }
     }

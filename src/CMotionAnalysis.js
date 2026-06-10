@@ -833,25 +833,28 @@ export class MotionAnalyzer {
         if (!overlay) return false;
         overlay.ensureMaskInitialized();
         const canvas = overlay.maskCanvas;
-        const ctx = overlay.maskCtx;
         if (!canvas) return false;
 
         this._autoMaskBaselines = this._autoMaskBaselines || {};
         const state = this._autoMaskBaselines[name];
         const rev = overlay.maskRevision || 0;
 
-        let baseline;
-        if (state && rev === state.appliedRev && state.width === canvas.width && state.height === canvas.height) {
-            baseline = state.baseline; // mask untouched since this layer last drew
-        } else {
-            baseline = ctx.getImageData(0, 0, canvas.width, canvas.height); // add to current
-        }
+        // Mask untouched since this layer last drew → replace our own previous
+        // contribution (restore baseline). Otherwise add to the current mask.
+        const replacingOwn = !!(state && rev === state.appliedRev
+            && state.width === canvas.width && state.height === canvas.height);
+        const baseline = replacingOwn ? state.baseline
+            : overlay.maskCtx.getImageData(0, 0, canvas.width, canvas.height);
 
-        ctx.putImageData(baseline, 0, 0);
-        ctx.globalCompositeOperation = 'source-over';
-        drawFn(ctx, canvas);
+        // One undoable edit; re-runs that merely replace this layer's own output
+        // (e.g. while a slider drags) coalesce into the previous undo entry, so a
+        // single undo removes the whole auto-mask application.
+        overlay.applyMaskEdit(`Auto mask (${name})`, (ctx, cvs) => {
+            ctx.putImageData(baseline, 0, 0);
+            ctx.globalCompositeOperation = 'source-over';
+            drawFn(ctx, cvs);
+        }, {coalesceKey: `autoMask:${name}`, coalesce: replacingOwn});
 
-        overlay.saveMask(); // bumps maskRevision
         this._autoMaskBaselines[name] = {
             baseline,
             appliedRev: overlay.maskRevision,
