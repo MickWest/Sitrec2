@@ -2,17 +2,19 @@
 //
 // A text-script driven "video" system for Sitrec.
 //
-// The user writes a simple line-based script in a textarea under the
-// Video > "Scripted Video" menu. Each line is a command with a duration in
-// seconds. The commands drive cinematic camera moves (zoom in on an object,
-// orbit it, track it, change FOV), cut between views, and overlay on-screen
-// text. The whole thing has its own timeline (independent of the sitch frame
+// The user writes a JavaScript shot script (with optional flat one-line
+// shortcuts like `zoom OE-LNC 6`) in a textarea under the Video > "Scripted
+// Video" menu. The commands drive cinematic camera moves (zoom in on an
+// object, orbit it, track it, change FOV), cut between views, and overlay
+// on-screen text. The whole thing has its own timeline (independent of the sitch frame
 // slider) shown as labelled blocks, can be previewed live, and rendered out
 // to a 1080P60 MP4 via the existing Mediabunny encoder.
 //
 // The system is split across src/scriptedVideo/:
-//   ScriptCommands.js       command registry — each command's parse/prepare/sample
-//   ScriptParser.js         pure script-text → events parser (language docs here)
+//   ScriptCommands.js       command registry — each command's args/prepare/sample
+//   ScriptJSRunner.js       JS scheduling kernel (language docs here)
+//   ScriptSugar.js          DSL-flavored one-line shortcuts → JS rewriting
+//   ScriptJSCallSites.js    event → source-position mapping (wheel edit, errors)
 //   ScriptCameraEngine.js   camera pose computation (prepare/computeCamera)
 //   ScriptTimelineWidget.js timeline canvas widget (draw, scrub, zoom, wheel-edit)
 //   ScriptEditorWindow.js   floating script editor window (+ popout)
@@ -28,11 +30,12 @@
 // the camera moves.
 
 import {par} from "./par";
-import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "./Globals";
+import {CustomManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "./Globals";
 import {ViewMan} from "./CViewManager";
-import {clamp} from "./scriptedVideo/ScriptMath";
-import {VIEW_MAP} from "./scriptedVideo/ScriptCommands";
-import {parseScript, activeViewAt} from "./scriptedVideo/ScriptParser";
+import {clamp, smooth} from "./scriptedVideo/ScriptMath";
+import {VIEW_MAP, layoutForViewEvent, isSettingEvent} from "./scriptedVideo/ScriptCommands";
+import {runScriptJS} from "./scriptedVideo/ScriptJSRunner";
+import {sitrecAPI} from "./CSitrecAPI";
 import {prepareEvents, computeCamera, applyPoseToCam} from "./scriptedVideo/ScriptCameraEngine";
 import {CScriptTimelineWidget} from "./scriptedVideo/ScriptTimelineWidget";
 import {CScriptEditorWindow, STORAGE_KEY, DEFAULT_SCRIPT} from "./scriptedVideo/ScriptEditorWindow";
@@ -71,7 +74,7 @@ class CScriptedVideoManager {
         this._previewStart = 0;
         this._currentT = 0;
         this._restore = null;        // function to undo scripted-mode changes
-        this._activeViewId = null;   // currently-shown view during preview
+        this._lastLayoutKey = null;      // JSON of the layout currently on-screen during preview
         this._overlayCanvas = null;  // DOM canvas for live caption text
 
         // hover state SHARED between the editor (number under the mouse) and the
@@ -90,13 +93,40 @@ class CScriptedVideoManager {
 
     getScriptText() { return this.editor.getText(); }
 
-    parse() {
-        const r = parseScript(this.getScriptText());
+    // Run the script's scheduling pass and commit the resulting model. Async
+    // because the script is JS (executed once, record-only, virtual clock) —
+    // but it resolves in microtasks, so it completes before any timer/RAF
+    // callback queued in the same tick. Latest-run-wins: a parse superseded by
+    // a newer one (keystrokes) never commits a stale model.
+    async parse() {
+        const seq = (this._parseSeq = (this._parseSeq || 0) + 1);
+        // VideoOverlay is a dynamic pseudo-preset (look view sized to the witness
+        // video's aspect, video stacked on top) resolved in _resolveLayout
+        const r = await runScriptJS(this.getScriptText(),
+            {viewPresets: {...((CustomManager && CustomManager.viewPresets) || {}), VideoOverlay: {}}});
+        if (seq !== this._parseSeq) return this.parseErrors;
+        // A half-typed JS line is a syntax error on every keystroke: keep showing
+        // the last good timeline, just surface the error (and still save the text).
+        if (!r.events.length && this.events.length && r.errors.some((m) => m.startsWith("syntax error"))) {
+            this.parseErrors = r.errors;
+            this._saveScript();
+            return r.errors;
+        }
         this.events = r.events;
         this.cameraBeats = r.cameraBeats;
         this.totalDuration = r.totalDuration;
         this.parseErrors = r.errors;
         this._numLanes = r.numLanes;
+        // validate set/show/hide targets against the live menus (the runner is
+        // pure and can't) — bad paths get a line-tagged error and are skipped
+        for (const e of this.events) {
+            if (!isSettingEvent(e) || e.invalid) continue;
+            const res = sitrecAPI._resolveControl(e.menu, e.path);
+            if (!res.success) {
+                e.invalid = true;
+                this.parseErrors.push(`line ${e.line}: ${res.error}`);
+            }
+        }
         this._saveScript();
         return r.errors;
     }
@@ -118,8 +148,90 @@ class CScriptedVideoManager {
         return clamp(progress * (frames - 1), 0, frames - 1);
     }
 
-    // which friendly view name is active at time t
-    activeViewAt(t) { return activeViewAt(this.events, this.defaultView, t); }
+    // the view event active at time t (last view cut at or before t), or null
+    _activeViewEventAt(t) {
+        let ev = null;
+        for (const e of this.events) {
+            if (e.type === "view" && e.start <= t + 1e-6) ev = e;
+        }
+        return ev;
+    }
+
+    // The witness video's aspect, fit ("contain") inside the output frame —
+    // look view sized to the video aspect with the video stacked on top of it
+    // (insertion order = draw order, so video composites over the look view).
+    _videoOverlayLayout() {
+        const vd = NodeMan.get("video", false)?.videoData;
+        const frameAR = this.outW / this.outH;
+        const ar = (vd && vd.videoWidth && vd.videoHeight) ? vd.videoWidth / vd.videoHeight : frameAR;
+        let left = 0, top = 0, width = 1, height = 1;
+        if (ar < frameAR) { width = ar / frameAR; left = (1 - width) / 2; }
+        else if (ar > frameAR) { height = frameAR / ar; top = (1 - height) / 2; }
+        return {
+            lookView: {left, top, width, height},
+            video: {left, top, width, height},
+        };
+    }
+
+    // resolve one view event to a layout (dynamic pseudo-presets first)
+    _resolveLayout(e) {
+        if (e && e.preset === "VideoOverlay") return this._videoOverlayLayout();
+        const layout = layoutForViewEvent(e, CustomManager && CustomManager.viewPresets);
+        return layout && Object.keys(layout).length ? layout
+            : {[VIEW_MAP[this.defaultView].viewId]: {left: 0, top: 0, width: 1, height: 1}};
+    }
+
+    // The concrete layout at time t: {viewId: {left,top,width,height}} with rects
+    // as fractions of the output frame. Resolves single views, named presets
+    // (CustomManager.viewPresets, looked up live), explicit layout objects, and
+    // dynamic pseudo-presets; falls back to the default view full-frame. A view
+    // event with a duration is an animated transition: rects tween from the
+    // previous layout, views being left behind hold their rect (drawn on top)
+    // until the transition completes.
+    activeLayoutAt(t) {
+        const evs = [];
+        for (const e of this.events) {
+            if (e.type === "view" && e.start <= t + 1e-6) evs.push(e);
+        }
+        const cur = evs[evs.length - 1] || null;
+        const L1 = this._resolveLayout(cur);
+        if (cur && cur.dur > 0 && t < cur.start + cur.dur) {
+            const L0 = this._resolveLayout(evs[evs.length - 2] || null);
+            const f = smooth(clamp((t - cur.start) / cur.dur, 0, 1));
+            const out = {};
+            for (const id of Object.keys(L1)) {
+                const a = L0[id] || L1[id];   // not in the old layout → appears in place
+                const b = L1[id];
+                out[id] = {
+                    left: a.left + (b.left - a.left) * f,
+                    top: a.top + (b.top - a.top) * f,
+                    width: a.width + (b.width - a.width) * f,
+                    height: a.height + (b.height - a.height) * f,
+                };
+            }
+            for (const id of Object.keys(L0)) {
+                if (!out[id]) out[id] = {...L0[id]};   // leaving views hold (drawn on top)
+            }
+            return out;
+        }
+        return L1;
+    }
+
+    // scripted opacity of a view at time t — fade events chain; 1 if untouched
+    viewOpacityAt(viewId, t) {
+        const fades = this.events.filter((e) => e.type === "fade" && e.viewId === viewId)
+            .sort((a, b) => a.start - b.start);
+        let val = 1;
+        for (const e of fades) {
+            if (t >= e.start + e.dur - 1e-6) { val = e.to; continue; }
+            if (t >= e.start - 1e-6) {
+                const f = smooth(clamp((t - e.start) / Math.max(e.dur, 1e-6), 0, 1));
+                return val + (e.to - val) * f;
+            }
+            break;
+        }
+        return val;
+    }
 
     // the current timed event on a (1-based) script line, or null
     _eventOnLine(line1) {
@@ -152,6 +264,26 @@ class CScriptedVideoManager {
     // Compute {camId, pose} at scripted time t. Returns null if no camera beats.
     computeCamera(t) { return computeCamera(this.cameraBeats, t, (tt) => this.sitFrameAt(tt)); }
 
+    // Apply the menu settings in effect at scripted time t: for each touched
+    // control, the latest set/show/hide at or before t — or its pre-preview
+    // snapshot if none has fired yet (so scrubbing backwards un-does them).
+    // Only actually calls the API when a value changes (onChange can be costly).
+    applySettingsForTime(t) {
+        if (!this._settingEvents || this._settingEvents.length === 0) return;
+        const want = new Map(this._settingSnapshots);
+        for (const e of this._settingEvents) {
+            if (!e.invalid && e.start <= t + 1e-6) {
+                want.set(e._key, {menu: e.menu, path: e.path, value: e.value});
+            }
+        }
+        for (const [key, s] of want) {
+            if (this._appliedSettings.get(key) !== s.value) {
+                this._appliedSettings.set(key, s.value);
+                sitrecAPI._setMenuValue(s.menu, s.path, s.value);
+            }
+        }
+    }
+
     // apply the scripted camera for time t. We only drive mainCamera; lookCamera is
     // left to its own controllers so the look view stays matched to the witness video.
     applyCameraForTime(t) {
@@ -165,16 +297,21 @@ class CScriptedVideoManager {
     // TEXT OVERLAY (drawn directly to a 2D context, same for live & render)
     // -----------------------------------------------------------------------
 
-    _drawTexts(ctx, w, h, t) {
+    // forceLine (1-based, preview-only): a text event on that script line is drawn
+    // at full alpha even mid-fade or outside its window — so a paused preview with
+    // the edit cursor on a caption line always shows that caption. The renderer
+    // never passes it, so exported fades are untouched.
+    _drawTexts(ctx, w, h, t, forceLine = -1) {
         // collect captions active at t (stack multiple concurrent ones upward)
         const active = [];
         for (const e of this.events) {
             if (e.type !== "text" || !e.text) continue;
-            if (t < e.start || t > e.start + e.dur) continue;
+            const forced = e.line === forceLine;
+            if (!forced && (t < e.start || t > e.start + e.dur)) continue;
             const fade = 0.5;
             const upRamp = Math.min(1, (t - e.start) / fade);
             const dnRamp = Math.min(1, (e.start + e.dur - t) / fade);
-            const alpha = clamp(Math.min(upRamp, dnRamp), 0, 1);
+            const alpha = forced ? 1 : clamp(Math.min(upRamp, dnRamp), 0, 1);
             if (alpha > 0) active.push({e, alpha});
         }
         const px = Math.round(h * 0.055);
@@ -244,33 +381,91 @@ class CScriptedVideoManager {
         return {W, H, bw, bh, left: Math.round((W - bw) / 2), top: Math.round((H - bh) / 2)};
     }
 
-    // Show ONLY the active view, sized to the 16:9 preview box (matches the render
-    // layout) instead of filling the whole (often non-16:9) window.
-    _setPreviewView(viewId) {
+    // Apply a scripted layout ({viewId: rect}, rects as fractions of the output
+    // frame) inside the 16:9 preview box — single views fill it, presets and
+    // custom layouts subdivide it, everything else is hidden (matches the render).
+    _applyPreviewLayout(layout) {
         const box = this._computePreviewBox();
         this._previewBox = box;
-        for (const vid of ["mainView", "lookView"]) {
-            const v = NodeMan.get(vid, false);
-            if (!v) continue;
-            if (vid === viewId) {
-                v.setVisible(true);
-                v.left = box.left / box.W; v.top = box.top / box.H;
-                v.width = box.bw / box.W; v.height = box.bh / box.H;
-                v.updateWH();
-            } else {
+        // hide every root view not in the layout. Overlay children follow parents.
+        this._previewHidden = this._previewHidden || [];
+        ViewMan.iterate((vid, v) => {
+            if (layout[vid]) return;
+            if (v.overlayView && !v.separateVisibility) return;
+            if (v.visible && typeof v.setVisible === "function") {
+                // mainView/lookView restore via _savedViewRects; track the rest
+                if (vid !== "mainView" && vid !== "lookView" && !this._previewHidden.includes(v)) {
+                    this._previewHidden.push(v);
+                }
                 v.setVisible(false);
             }
+        });
+        for (const [vid, r] of Object.entries(layout)) {
+            const v = NodeMan.get(vid, false);
+            if (!v) continue;
+            // first touch of a view outside the startPreview snapshot (e.g. the
+            // video view): save its rect + visibility so stopPreview restores it
+            if (this._savedViewRects && !this._savedViewRects.some((s) => s.v === v)) {
+                this._savedViewRects.push({v, left: v.left, top: v.top, width: v.width, height: v.height,
+                    visible: v.visible, z: v.div ? v.div.style.zIndex : undefined});
+            }
+            v.setVisible(true);
+            v.left = (box.left + r.left * box.bw) / box.W;
+            v.top = (box.top + r.top * box.bh) / box.H;
+            v.width = (r.width * box.bw) / box.W;
+            v.height = (r.height * box.bh) / box.H;
+            v.updateWH();
+        }
+        // layout order = stacking order (e.g. VideoOverlay draws video over the
+        // look view): scriptZ is a sort key ViewMan.updateZOrder respects
+        let zi = 1;
+        for (const vid of Object.keys(layout)) {
+            const v = NodeMan.get(vid, false);
+            if (v) v.scriptZ = zi++;
         }
         ViewMan.fullscreenView = null;
         ViewMan.computeEffectiveVisibility();
         ViewMan.updateDOMVisibility();
+        ViewMan.updateZOrder();
         this._layoutOverlayCanvas();
+    }
+
+    // drive scripted view opacity (the fade command) on the previewed views
+    _applyViewOpacities(layout, t) {
+        if (!this._fadeTouched) this._fadeTouched = new Set();
+        for (const vid of Object.keys(layout)) {
+            const v = NodeMan.get(vid, false);
+            if (!v || !v.div) continue;
+            const o = this.viewOpacityAt(vid, t);
+            if (o < 1 || this._fadeTouched.has(vid)) {
+                this._fadeTouched.add(vid);
+                v.div.style.opacity = o >= 1 ? "" : String(o);
+            }
+        }
     }
 
     // disable the things that would fight our scripted camera, return a restore fn.
     // NOTE: we only take over mainCamera. lookCamera stays native so the "look" view
     // keeps showing the real witness footage matched to its own camera controllers.
     _enterScriptedMode() {
+        // Snapshot every menu setting the script touches (set/show/hide) so a
+        // scripted change never permanently mutates the sitch. _appliedSettings
+        // caches what's currently applied so applySettingsForTime() only calls
+        // the (onChange-running) API when a value actually changes.
+        this._settingEvents = this.events
+            .filter((e) => isSettingEvent(e) && !e.invalid)
+            .sort((a, b) => a.start - b.start);
+        this._settingSnapshots = new Map();
+        this._appliedSettings = new Map();
+        for (const e of this._settingEvents) {
+            e._key = (e.menu || "") + " " + e.path;
+            if (!this._settingSnapshots.has(e._key)) {
+                const r = sitrecAPI._getMenuValue(e.menu, e.path);
+                if (r.success) this._settingSnapshots.set(e._key, {menu: e.menu, path: e.path, value: r.value});
+                else e.invalid = true;
+            }
+        }
+
         const disabledControllers = [];
         const savedVisible = {};
         const savedPreRender = {};
@@ -330,28 +525,39 @@ class CScriptedVideoManager {
             if (lookV && savedVisible["lookView"] !== undefined) lookV.setVisible(savedVisible["lookView"]);
             for (const [view, en] of savedControls) if (view.controls) view.controls.enabled = en;
             for (const [fp, d] of fadeRestores) fp.fadeDuration = d;
+            // put back every menu setting the script changed
+            for (const s of this._settingSnapshots.values()) {
+                sitrecAPI._setMenuValue(s.menu, s.path, s.value);
+            }
+            this._settingSnapshots = new Map();
+            this._appliedSettings = new Map();
+            this._settingEvents = [];
             ViewMan.fullscreenView = savedFullscreen;
             ViewMan.computeEffectiveVisibility();
             ViewMan.updateDOMVisibility();
         };
     }
 
-    // Fully exit preview AND scrub mode. Preview, scrub, and render each save/restore
-    // overlapping state (controllers, views, paused, subdivision, bottom timeline), so
-    // entering one while another is active would stack restore closures out of order —
-    // always reconcile through here before entering a mode.
+    // Fully exit preview mode. Preview and render each save/restore overlapping
+    // state (controllers, views, paused, subdivision, bottom timeline), so
+    // entering one while another is active would stack restore closures out of
+    // order — always reconcile through here before entering a mode.
     _exitAllModes() {
         if (this._previewing) this.stopPreview();
-        if (this._scrubbing) this._scrubExit();
     }
 
-    startPreview() {
+    // Start the preview at startAt seconds; startPaused = true enters it holding
+    // (the scrub path: whenever the scripted timeline is visible we ARE in
+    // preview mode, just possibly paused).
+    async startPreview(startAt = 0, startPaused = false) {
         this._exitAllModes();
-        this.parse();
+        await this.parse();
         this.prepare();
         if (this.totalDuration <= 0) { this.setStatus("Nothing to preview (no timed commands)."); return; }
 
         this._previewing = true;
+        this._previewPaused = !!startPaused;
+        this._lastActiveLineKey = null;
         this._savedPaused = par.paused;
         par.paused = true;
         this._restore = this._enterScriptedMode();
@@ -362,37 +568,60 @@ class CScriptedVideoManager {
         if (tu) tu.disableDynamicSubdivision = true;
         this._ensureOverlayCanvas();
         this.timeline.showBottomStrip();   // scripted timeline replaces the normal frame slider
-        this._activeViewId = null;
+        this._lastLayoutKey = null;      // first tick always applies the layout
+        this._fadeTouched = new Set();   // views whose DOM opacity we've scripted
         this._previewBox = null;
         // remember the views' on-screen rects + visibility so we can restore them
         this._savedViewRects = ["mainView", "lookView"].map(vid => {
             const v = NodeMan.get(vid, false);
             if (!v) return null;
-            return {v, left: v.left, top: v.top, width: v.width, height: v.height, visible: v.visible};
+            return {v, left: v.left, top: v.top, width: v.width, height: v.height,
+                visible: v.visible, z: v.div ? v.div.style.zIndex : undefined};
         }).filter(Boolean);
 
-        this._previewStart = performance.now();
+        this._currentT = clamp(startAt, 0, Math.max(0, this.totalDuration - 1e-3));
+        this._previewStart = performance.now() - this._currentT * 1000;
+        this._lastTickT = null;
         const tick = () => {
             if (!this._previewing) return;
-            // while dragging the playhead, hold the clock at the dragged position
-            if (this.timeline._tlDragging) {
+            // while dragging the playhead (or paused via space), hold the clock —
+            // but still run one full update pass for the held time (so the right
+            // view shows even if we paused before the first tick, and dragging
+            // while paused updates the picture), then idle until t changes.
+            const held = this.timeline._tlDragging || this._previewPaused;
+            // while paused, the caption on the edit cursor's line is forced visible
+            const forceLine = this._previewPaused ? this.editor.cursorLine1() : -1;
+            let t;
+            if (held) {
                 this._previewStart = performance.now() - this._currentT * 1000;
-                this._previewRAF = requestAnimationFrame(tick);
-                return;
+                t = this._currentT;
+                if (t === this._lastTickT && forceLine === this._lastForceLine) {
+                    this._previewRAF = requestAnimationFrame(tick);
+                    return;
+                }
+            } else {
+                t = (performance.now() - this._previewStart) / 1000;
+                if (t >= this.totalDuration) t = this.totalDuration;
+                this._currentT = t;
             }
-            let t = (performance.now() - this._previewStart) / 1000;
-            if (t >= this.totalDuration) t = this.totalDuration;
-            this._currentT = t;
+            this._lastTickT = t;
+            this._lastForceLine = forceLine;
 
             // advance the world
             const sf = this.sitFrameAt(t);
             par.frame = sf;
             GlobalDateTimeNode?.update(sf);
+            this.applySettingsForTime(t);
 
-            // switch the on-screen view if needed
-            const vName = this.activeViewAt(t);
-            const viewId = VIEW_MAP[vName].viewId;
-            if (viewId !== this._activeViewId) { this._activeViewId = viewId; this._setPreviewView(viewId); }
+            // apply the on-screen layout whenever it changes (cuts AND animated
+            // transitions, which produce a new blended layout every frame)
+            const layout = this.activeLayoutAt(t);
+            const lkey = JSON.stringify(layout);
+            if (lkey !== this._lastLayoutKey) {
+                this._lastLayoutKey = lkey;
+                this._applyPreviewLayout(layout);
+            }
+            this._applyViewOpacities(layout, t);
 
             // position the camera now (preRenderFunction will also re-apply)
             this.applyCameraForTime(t);
@@ -402,16 +631,35 @@ class CScriptedVideoManager {
             const oc = this._overlayCanvas;
             const octx = oc.getContext("2d");
             octx.clearRect(0, 0, oc.width, oc.height);
-            this._drawTexts(octx, oc.width, oc.height, t);
+            this._drawTexts(octx, oc.width, oc.height, t, forceLine);
 
             this.timeline.draw();
             setRenderOne(true);
 
-            if (t >= this.totalDuration) { this.stopPreview(); return; }
+            // refresh the editor's yellow current-time line highlight when it changes
+            const lk = this._activeLineKey(t);
+            if (lk !== this._lastActiveLineKey) {
+                this._lastActiveLineKey = lk;
+                this.editor._renderBackdrop();
+            }
+
+            if (!held && t >= this.totalDuration) { this.stopPreview(); return; }
             this._previewRAF = requestAnimationFrame(tick);
         };
         this._previewRAF = requestAnimationFrame(tick);
-        this.setStatus(`Previewing… ${this.totalDuration.toFixed(1)}s`);
+        this.setStatus(startPaused
+            ? `Preview paused at ${this._currentT.toFixed(1)}s (space to play)`
+            : `Previewing… ${this.totalDuration.toFixed(1)}s`);
+    }
+
+    // Space bar during preview (routed here by KeyBoardHandler): pause/resume.
+    // The sim's own pause state is untouched — the script owns the clock.
+    togglePreviewPause() {
+        if (!this._previewing) return;
+        this._previewPaused = !this._previewPaused;
+        this.setStatus(this._previewPaused
+            ? `Preview paused at ${this._currentT.toFixed(1)}s (space to play)`
+            : `Previewing… ${this.totalDuration.toFixed(1)}s`);
     }
 
     stopPreview() {
@@ -426,13 +674,32 @@ class CScriptedVideoManager {
         const tu = NodeMan.get("terrainUI", false);
         if (tu) tu.disableDynamicSubdivision = this._previewSavedSubdiv;
         // restore the views' original rects + visibility (we resized/hid them for the 16:9 box)
+        const rectRestored = new Set((this._savedViewRects || []).map((r) => r.v));
         if (this._savedViewRects) {
             for (const r of this._savedViewRects) {
                 r.v.left = r.left; r.v.top = r.top; r.v.width = r.width; r.v.height = r.height;
                 r.v.setVisible(r.visible);
+                if (r.z !== undefined && r.v.div) r.v.div.style.zIndex = r.z;
                 r.v.updateWH();
             }
             this._savedViewRects = null;
+        }
+        // clear any scripted view opacities (fade command)
+        if (this._fadeTouched) {
+            for (const vid of this._fadeTouched) {
+                const v = NodeMan.get(vid, false);
+                if (v && v.div) v.div.style.opacity = "";
+            }
+            this._fadeTouched = null;
+        }
+        // drop the scripted stacking order
+        ViewMan.iterate((id, v) => { if (v.scriptZ) v.scriptZ = 0; });
+        ViewMan.updateZOrder();
+        // re-show the other root views (e.g. witness video) we hid for the preview;
+        // a rect snapshot is authoritative, so skip views it already restored
+        if (this._previewHidden) {
+            for (const v of this._previewHidden) if (!rectRestored.has(v)) v.setVisible(true);
+            this._previewHidden = null;
         }
         this._previewBox = null;
         ViewMan.computeEffectiveVisibility();
@@ -441,6 +708,8 @@ class CScriptedVideoManager {
         if (this._restore) { this._restore(); this._restore = null; }
         if (this._savedPaused !== undefined) par.paused = this._savedPaused;
         this._hoverSeg = null; this._hoverNum = null;   // drop any hover from the bottom strip
+        this._lastActiveLineKey = null;
+        this.editor._renderBackdrop();                  // clear the current-time line highlight
         setRenderOne(true);
         this.timeline.draw();
         this.setStatus(`Ready — ${this.totalDuration.toFixed(1)}s, ${this.cameraBeats.length} beats`);
@@ -463,9 +732,10 @@ class CScriptedVideoManager {
     toggleWindow() { this.editor.toggle(); }
     stopAll() { this._exitAllModes(); }
 
-    doParse() {
-        const errs = this.parse();
+    async doParse() {
+        const errs = await this.parse();
         this.prepare();
+        this._lastTickT = null;   // model changed → a paused preview tick must re-draw
         this.timeline.draw();
         this.editor._renderBackdrop();
         if (errs.length) this.setStatus("⚠ " + errs[0] + (errs.length > 1 ? ` (+${errs.length - 1} more)` : ""));
@@ -511,73 +781,55 @@ class CScriptedVideoManager {
     // -----------------------------------------------------------------------
 
     // Map the script editor's cursor line to its event time and scrub there.
-    _scrubToCursorLine() {
+    async _scrubToCursorLine() {
         const lineNo = this.editor.cursorLine1();
         if (lineNo < 0) return;
-        this.parse(); this.prepare();
+        await this.parse(); this.prepare();
         if (this.totalDuration <= 0) return;
         let best = null;
         for (const e of this.events) {
             if (e.line !== undefined && e.line <= lineNo && (!best || e.line > best.line)) best = e;
         }
-        this._scrubTo(best ? best.start : 0);
+        await this._scrubTo(best ? best.start : 0);
     }
 
-    // Scrub the timeline + viewport to scripted time t. While playing a preview this
-    // re-anchors the clock; otherwise it enters a paused "scrub" mode that shows the
-    // scripted camera/world/captions at t (and swaps in the scripted timeline).
-    _scrubTo(t) {
+    // Scrub the timeline + viewport to scripted time t. The scripted timeline
+    // being visible means we are ALWAYS in preview mode: if no preview is
+    // running, enter one paused at t — so view layouts (e.g. full-screen video)
+    // apply exactly as they do during playback. While previewing, this just
+    // re-anchors the clock; the tick applies world/camera/layout/captions for
+    // the new time (the held branch runs a full pass whenever t changes).
+    async _scrubTo(t) {
+        if (!this._previewing) {
+            await this.startPreview(t, true);
+            return;
+        }
         if (this.totalDuration <= 0) return;
         // reconcile against the (possibly just-shrunk) total so a wheel-edit of a late
         // beat during playback can't push the clock past the end and auto-stop preview
         t = clamp(t, 0, this.totalDuration);
-        if (this._previewing) {
-            if (t >= this.totalDuration) t = Math.max(0, this.totalDuration - 1e-3);
-            this._previewStart = performance.now() - t * 1000;  // re-anchor running clock
-        } else {
-            this.parse(); this.prepare();
-            if (!this._scrubbing) this._scrubEnter();
-        }
+        if (t >= this.totalDuration) t = Math.max(0, this.totalDuration - 1e-3);
+        this._previewStart = performance.now() - t * 1000;  // re-anchor running clock
         this._currentT = t;
-        par.frame = this.sitFrameAt(t);
-        GlobalDateTimeNode?.update(par.frame);
-        this.applyCameraForTime(t);
-        if (this._overlayCanvas) {
-            this._layoutOverlayCanvas();
-            const octx = this._overlayCanvas.getContext("2d");
-            octx.clearRect(0, 0, this._overlayCanvas.width, this._overlayCanvas.height);
-            this._drawTexts(octx, this._overlayCanvas.width, this._overlayCanvas.height, t);
-        }
-        setRenderOne(true);
+        if (this._previewPaused) this.setStatus(`Preview paused at ${t.toFixed(1)}s (space to play)`);
         this.timeline.draw();
+        setRenderOne(true);
     }
 
-    _scrubEnter() {
-        this._scrubbing = true;
-        this._scrubSavedPaused = par.paused;
-        par.paused = true;
-        this._scrubRestore = this._enterScriptedMode();
-        const tu = NodeMan.get("terrainUI", false);
-        this._scrubSavedSubdiv = tu ? tu.disableDynamicSubdivision : undefined;
-        if (tu) tu.disableDynamicSubdivision = true;
-        this._ensureOverlayCanvas();
-        this.timeline.showBottomStrip();
+    // 1-based script lines "active" at time t — timed events spanning t, plus
+    // the view cut in effect — for the editor's yellow current-time highlight.
+    _activeLineSet(t) {
+        const s = new Set();
+        const ve = this._activeViewEventAt(t);
+        if (ve && ve.line) s.add(ve.line);
+        for (const e of this.events) {
+            if (e.dur > 0 && e.line && t >= e.start - 1e-6 && t <= e.start + e.dur + 1e-6) s.add(e.line);
+        }
+        return s;
     }
 
-    _scrubExit() {
-        if (!this._scrubbing) return;
-        this._scrubbing = false;
-        if (this._overlayCanvas) {
-            const octx = this._overlayCanvas.getContext("2d");
-            octx.clearRect(0, 0, this._overlayCanvas.width, this._overlayCanvas.height);
-        }
-        const tu = NodeMan.get("terrainUI", false);
-        if (tu) tu.disableDynamicSubdivision = this._scrubSavedSubdiv;
-        this.timeline.hideBottomStrip();
-        if (this._scrubRestore) { this._scrubRestore(); this._scrubRestore = null; }
-        if (this._scrubSavedPaused !== undefined) par.paused = this._scrubSavedPaused;
-        setRenderOne(true);
-        this.timeline.draw();
+    _activeLineKey(t) {
+        return [...this._activeLineSet(t)].sort((a, b) => a - b).join(",");
     }
 }
 

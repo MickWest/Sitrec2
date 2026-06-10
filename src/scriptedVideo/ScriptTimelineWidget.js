@@ -259,7 +259,7 @@ export class CScriptTimelineWidget {
         const handler = (e) => {
             if (!(e.metaKey || e.ctrlKey)) return;
             const sv = this.sv;
-            const editorOpen = sv.editor.isOpen() || sv._previewing || sv._scrubbing;
+            const editorOpen = sv.editor.isOpen() || sv._previewing;
             if (!editorOpen) return;
             const k = e.key, code = e.code;
             if (k === "=" || k === "+" || code === "Equal" || code === "NumpadAdd") {
@@ -281,13 +281,16 @@ export class CScriptTimelineWidget {
         if (seg && seg.spans && seg.spans.dur) {
             ev.preventDefault();
             sv.editor.adjustNumberToken(seg.line - 1, seg.spans.dur, ev.deltaY, ev.shiftKey, 0.1);
-            // events were rebuilt by doParse(); re-resolve the hovered segment + number
-            sv._hoverSeg = sv._eventOnLine(seg.line);
-            sv._hoverNum = sv._durTokenForEvent(sv._hoverSeg);
-            c.style.cursor = "ns-resize";
-            sv.editor._renderBackdrop();
-            this.draw();
-            if (sv._scrubbing || sv._previewing) sv._scrubTo(sv._currentT);
+            // events are rebuilt by the (async) doParse(); re-resolve the hovered
+            // segment + number once the new model has committed
+            (sv.editor._parsePromise || Promise.resolve()).then(() => {
+                sv._hoverSeg = sv._eventOnLine(seg.line);
+                sv._hoverNum = sv._durTokenForEvent(sv._hoverSeg);
+                c.style.cursor = "ns-resize";
+                sv.editor._renderBackdrop();
+                this.draw();
+                if (sv._previewing) sv._scrubTo(sv._currentT);
+            });
             return;
         }
         // otherwise pan the visible window

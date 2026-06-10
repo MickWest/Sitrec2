@@ -87,7 +87,9 @@ export function prepareEvents(events, defaultView, sitFrameAt) {
         const def = COMMANDS[e.type];
         if (!def || !def.cameraBeat) continue;
 
-        const camId = VIEW_MAP[activeView].camId;
+        // preset / custom-layout views have no scripted camera of their own —
+        // beats elapsing there keep advancing the main camera for continuity
+        const camId = (VIEW_MAP[activeView] && VIEW_MAP[activeView].camId) || "mainCamera";
         if (!camPose[camId]) camPose[camId] = poseFromCamNode(camId);
         const startPose = camPose[camId] || makePose(new Vector3(0, 0, 1), new Vector3(), 30);
         e.camId = camId;
@@ -99,6 +101,7 @@ export function prepareEvents(events, defaultView, sitFrameAt) {
             sfEnd: sitFrameAt(e.start + e.dur),
             targetPos, makePose,
             localUp: getLocalUpVector,
+            livePose: poseFromCamNode,   // live pose of another camera (flyto look)
         });
 
         e.endPose = {position: endPose.position.clone(), up: endPose.up.clone(),

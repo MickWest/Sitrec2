@@ -16,7 +16,6 @@ import {MediabunnyExporter} from "../MediabunnyExporter";
 import {getBestFormatForResolution, getVideoExtension} from "../VideoExporter";
 import {waitForExportFrameSettled} from "../ExportFrameSettler";
 import {ExportProgressWidget, getExportPrefix} from "../utils";
-import {VIEW_MAP} from "./ScriptCommands";
 
 // Render the scene at scripted time t into the view's own canvas (no compositing).
 // superSample (>=1) renders at a multiple of the output resolution for SSAA.
@@ -42,12 +41,18 @@ async function renderViewAt(sv, view, sf, t, width, height) {
     const pr = (view.renderer && view.renderer.getPixelRatio) ? (view.renderer.getPixelRatio() || 1) : 1;
     view.widthPx = Math.max(2, Math.round((width * ss) / pr));
     view.heightPx = Math.max(2, Math.round((height * ss) / pr));
-    sv.applyCameraForTime(t);
-    view.camera.updateMatrix();
-    view.camera.updateMatrixWorld(true);
-    for (const pn of NodeMan.getPreRenderNodes()) pn.preRender(view);
-    view.renderCanvas(sf);
-    for (const pn of NodeMan.getPostRenderNodes()) pn.postRender(view);
+    if (view.camera) {
+        // 3D view: position the scripted camera and run the full render hooks
+        sv.applyCameraForTime(t);
+        view.camera.updateMatrix();
+        view.camera.updateMatrixWorld(true);
+        for (const pn of NodeMan.getPreRenderNodes()) pn.preRender(view);
+        view.renderCanvas(sf);
+        for (const pn of NodeMan.getPostRenderNodes()) pn.postRender(view);
+    } else {
+        // 2D view (witness video): no camera, just draw its canvas at this frame
+        view.renderCanvas(sf);
+    }
 }
 
 // The Google-photorealistic 3D tiles (buildings3DTiles) get their own per-view
@@ -70,22 +75,23 @@ function tame3DTiles(sv) {
     }
 }
 
-// Composite the view's canvas into the fixed-size output ctx (letterboxed),
-// at the given alpha (used for running-average accumulation / motion blur).
-function compositeView(ctx, view, width, height, alpha = 1) {
+// Composite the view's canvas into a destination rect of the output ctx
+// (letterboxed within it), at the given alpha (used for running-average
+// accumulation / motion blur).
+function compositeView(ctx, view, dx, dy, dw, dh, alpha = 1) {
     if (!view || !view.canvas) return;
     const cw = view.canvas.width, ch = view.canvas.height;
     if (cw <= 0 || ch <= 0) return;
-    const s = Math.min(width / cw, height / ch);
-    const dw = cw * s, dh = ch * s;
+    const s = Math.min(dw / cw, dh / ch);
+    const w = cw * s, h = ch * s;
     ctx.globalAlpha = alpha;
-    ctx.drawImage(view.canvas, (width - dw) / 2, (height - dh) / 2, dw, dh);
+    ctx.drawImage(view.canvas, dx + (dw - w) / 2, dy + (dh - h) / 2, w, h);
     ctx.globalAlpha = 1;
 }
 
 export async function renderScriptedVideo(sv) {
     sv._exitAllModes();
-    sv.parse();
+    await sv.parse();
     sv.prepare();
     if (sv.totalDuration <= 0) { alert("Scripted Video: nothing to render (no timed commands)."); return; }
 
@@ -120,7 +126,8 @@ export async function renderScriptedVideo(sv) {
     // camera.aspect and render size come from widthPx/heightPx, so we drive
     // those to 1920x1080 right before each renderCanvas (see renderViewAt). We
     // save the live values here and restore them at the end.
-    const sizedViews = [mainV, lookV].filter(Boolean);
+    const videoV = NodeMan.get("video", false);   // witness-video view ("view video")
+    const sizedViews = [mainV, lookV, videoV].filter(Boolean);
     const savedViewSize = sizedViews.map((v) => ({v, wp: v.widthPx, hp: v.heightPx}));
 
     const progress = new ExportProgressWidget("Rendering scripted video (1080P60)…", totalFrames);
@@ -175,9 +182,9 @@ export async function renderScriptedVideo(sv) {
             if (savedEleDetail !== undefined) terrainUINode.elevationDetail = savedEleDetail;
         };
 
-        const settleAt = async (view, viewId, sf, t, cap) => {
+        const settleAt = async (view, viewId, sf, t, cap, vw, vh) => {
             if (!view) return;
-            const r = async () => { await renderViewAt(sv, view, sf, t, width, height); };
+            const r = async () => { await renderViewAt(sv, view, sf, t, vw, vh); };
             await r();
             // Don't gate the settle on the video frame: renderViewAt already awaits
             // videoData.waitForFrame(sf), and video.isFrameCached() can return null
@@ -195,31 +202,44 @@ export async function renderScriptedVideo(sv) {
             const t = i / fps;
             sv._currentT = t;
             const sf = sv.sitFrameAt(t);
-            const vName = sv.activeViewAt(t);
-            const viewId = VIEW_MAP[vName].viewId;
-            const view = NodeMan.get(viewId, false);
+            sv.applySettingsForTime(t);   // scripted set/show/hide at this time
+            // the active layout: one or more views, each in a sub-rect of the frame
+            const layout = sv.activeLayoutAt(t);
 
-            // Settle this frame's terrain (subdivide for this camera + finish
-            // loading) before capture. Consecutive frames mostly hit cache, so
-            // after the first frame of a shot this is fast.
-            if (sv.waitForLoading) await settleAt(view, viewId, sf, t, 8000);
-
-            // Composite the frame. Optional accumulation motion blur (mbSamples>1)
-            // averages sub-frames across the shutter for a cinematic look; it is
-            // NOT the flicker fix (that's the settle above) — default off.
             ctx.fillStyle = "#000"; ctx.fillRect(0, 0, width, height);
-            if (mbSamples === 1 && sv.waitForLoading) {
-                // settleAt() already left the view rendered at exactly (sf, t) —
-                // composite it directly instead of paying for another full render
-                compositeView(ctx, view, width, height, 1);
-            } else {
-                for (let k = 0; k < mbSamples; k++) {
-                    const subT = t + (mbSamples > 1 ? (k / mbSamples) / fps : 0);
-                    sv._currentT = subT;
-                    await renderViewAt(sv, view, sv.sitFrameAt(subT), subT, width, height);
-                    compositeView(ctx, view, width, height, 1 / (k + 1)); // running average
+            for (const [viewId, rect] of Object.entries(layout)) {
+                const view = NodeMan.get(viewId, false);
+                if (!view) continue;
+                // scripted opacity (fade command); fully faded views are skipped
+                const opacity = sv.viewOpacityAt(viewId, t);
+                if (opacity <= 0.004) continue;
+                const px = rect.left * width, py = rect.top * height;
+                const pw = Math.max(2, Math.round(rect.width * width));
+                const ph = Math.max(2, Math.round(rect.height * height));
+
+                // Settle this frame's terrain (subdivide for this camera + finish
+                // loading) before capture. Consecutive frames mostly hit cache, so
+                // after the first frame of a shot this is fast.
+                if (sv.waitForLoading) await settleAt(view, viewId, sf, t, 8000, pw, ph);
+
+                // Composite. Optional accumulation motion blur (mbSamples>1)
+                // averages sub-frames across the shutter for a cinematic look; it
+                // is NOT the flicker fix (that's the settle above) — default off.
+                if (mbSamples === 1 && sv.waitForLoading) {
+                    // settleAt() already left the view rendered at exactly (sf, t) —
+                    // composite it directly instead of paying for another full render
+                    compositeView(ctx, view, px, py, pw, ph, opacity);
+                } else {
+                    for (let k = 0; k < mbSamples; k++) {
+                        const subT = t + (mbSamples > 1 ? (k / mbSamples) / fps : 0);
+                        sv._currentT = subT;
+                        await renderViewAt(sv, view, sv.sitFrameAt(subT), subT, pw, ph);
+                        // running average; ×opacity is approximate when blur is on
+                        compositeView(ctx, view, px, py, pw, ph, (1 / (k + 1)) * opacity);
+                    }
                 }
             }
+            sv._currentT = t;
             sv._drawTexts(ctx, width, height, t);   // captions stay crisp
 
             await exporter.addFrame(out, i);

@@ -419,6 +419,12 @@ export function initKeyboard() {
 
             case 'Space' :
                 e.preventDefault();
+                // a scripted-video preview owns the clock: space pauses/resumes
+                // THAT, not the sim (which must stay paused under scripted control)
+                if (Globals.scriptedVideo && Globals.scriptedVideo._previewing) {
+                    Globals.scriptedVideo.togglePreviewPause();
+                    break;
+                }
                 par.paused = !par.paused;
                 break;
 

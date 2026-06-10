@@ -744,7 +744,7 @@ class CSitrecAPI {
             setMenuValue: {
                 doc: "Set a menu control value by menu ID and control name path.",
                 params: {
-                    menu: "Menu ID (e.g. 'view', 'satellites', 'terrain')",
+                    menu: "Menu ID (e.g. 'view', 'satellites', 'terrain'). Optional — omit/null to scan ALL menus and set the first control matching path",
                     path: "Control name or path with '/' for nested folders (e.g. 'showStarlink' or 'Views/showVideo')",
                     value: "New value (type depends on control: number, boolean, string, or color hex)"
                 },
@@ -1738,11 +1738,51 @@ class CSitrecAPI {
         return { success: false, error: 'Empty path' };
     }
 
-    _setMenuValue(menuId, path, value) {
-        const gui = guiMenus[menuId];
-        if (!gui) return { success: false, error: `Menu '${menuId}' not found` };
+    // Resolve (menuId, path) to a controller. With a falsy menuId, scan every
+    // menu — recursing into folders — and return the first match, so callers
+    // (e.g. the Scripted Video `set("Constellation Lines", false)` command) can
+    // address a control by name alone without knowing where it lives. Exact
+    // matches anywhere beat partial matches anywhere (two passes), so a loose
+    // substring in an early menu can't shadow an exact name in a later one.
+    _resolveControl(menuId, path) {
+        if (menuId) {
+            const gui = guiMenus[menuId];
+            if (!gui) return { success: false, error: `Menu '${menuId}' not found` };
+            return this._findController(gui, path);
+        }
+        const qualified = path.includes("/");
+        for (const allowPartial of [false, true]) {
+            for (const id of Object.keys(guiMenus)) {
+                const gui = guiMenus[id];
+                if (!gui || !gui.controllers) continue;
+                if (qualified) {
+                    const r = this._findController(gui, path);
+                    if (r.success) return r;
+                } else {
+                    const c = this._deepFindController(gui, path, allowPartial);
+                    if (c) return { success: true, controller: c };
+                }
+            }
+            if (qualified) break;   // _findController already tries partials itself
+        }
+        return { success: false, error: `Control '${path}' not found in any menu` };
+    }
 
-        const result = this._findController(gui, path);
+    // depth-first search of a GUI and all its sub-folders for a control name
+    _deepFindController(gui, name, allowPartial) {
+        const c = this._matchController(gui, name, allowPartial);
+        if (c) return c;
+        for (const child of gui.children) {
+            if (child instanceof GUI) {
+                const r = this._deepFindController(child, name, allowPartial);
+                if (r) return r;
+            }
+        }
+        return null;
+    }
+
+    _setMenuValue(menuId, path, value) {
+        const result = this._resolveControl(menuId, path);
         if (!result.success) return result;
 
         const controller = result.controller;
@@ -1772,10 +1812,7 @@ class CSitrecAPI {
     }
 
     _getMenuValue(menuId, path) {
-        const gui = guiMenus[menuId];
-        if (!gui) return { success: false, error: `Menu '${menuId}' not found` };
-
-        const result = this._findController(gui, path);
+        const result = this._resolveControl(menuId, path);
         if (!result.success) return result;
 
         return { success: true, value: result.controller.getValue() };

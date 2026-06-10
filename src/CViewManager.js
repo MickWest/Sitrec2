@@ -203,6 +203,11 @@ class CViewManager extends CManager {
         });
         
         nonOverlayViews.sort((a, b) => {
+            // scripted-video layouts impose an explicit stacking order (scriptZ);
+            // it outranks the size heuristic so e.g. the witness video can sit
+            // on top of an equal-sized look view during an overlay shot
+            const sz = (a.scriptZ || 0) - (b.scriptZ || 0);
+            if (sz !== 0) return sz;
             if (a.alwaysOnTop !== b.alwaysOnTop) {
                 return a.alwaysOnTop ? 1 : -1;
             }

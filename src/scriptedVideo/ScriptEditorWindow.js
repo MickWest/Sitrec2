@@ -19,16 +19,20 @@ import {makeDraggable, blockViewEvents, clampBelowMenuBar} from "../DragResizeUt
 export const STORAGE_KEY = "sitrec_scripted_video_script";
 
 export const DEFAULT_SCRIPT =
-`# Scripted Video demo  (Parse, then Preview or Render)
-# no & = wait for previous line;  & = start with it;  &N = N s after it
-view main
-zoom OE-LNC 6
-& text "OE-LNC" 4
-orbit OE-LNC 9 110
-&1 text "tracking inbound" 4
-track OE-LNC 4
-view look
-wait 2`;
+`// Scripted Video demo  (Parse, then Preview or Render)
+// The script is JS: await a command to wait for it to finish; un-awaited
+// commands run concurrently. Flat lines work too:  zoom OE-LNC 6
+view("main");
+const z = zoom("OE-LNC", 6);
+text("OE-LNC", 4);              // caption starts with the zoom
+await z;
+const o = orbit("OE-LNC", 9, 110);
+await sleep(1);
+text("tracking inbound", 4);    // 1 s after the orbit starts
+await o;
+await track("OE-LNC", 4);
+view("look");
+await wait(2);`;
 
 // keys that move the text cursor (used to sync the timeline to the cursor's line)
 const NAV_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
@@ -146,10 +150,15 @@ export class CScriptEditorWindow {
         ta.value = saved || DEFAULT_SCRIPT;
         for (const ev of ["keydown", "keyup", "keypress"]) ta.addEventListener(ev, (e) => e.stopPropagation());
         ta.addEventListener("input", () => { sv.doParse(); this._renderBackdrop(); });
-        ta.addEventListener("click", () => { sv._scrubToCursorLine(); this._renderBackdrop(); });
+        ta.addEventListener("click", () => {
+            // a completed number-drag must not re-scrub to the (unmoved) caret
+            if (this._suppressClick) { this._suppressClick = false; return; }
+            sv._scrubToCursorLine(); this._renderBackdrop();
+        });
         ta.addEventListener("keyup", (e) => { if (NAV_KEYS.has(e.key)) sv._scrubToCursorLine(); this._renderBackdrop(); });
         ta.addEventListener("scroll", () => { backdrop.scrollTop = ta.scrollTop; backdrop.scrollLeft = ta.scrollLeft; });
         ta.addEventListener("mousemove", (e) => this._onEditorHover(e));
+        ta.addEventListener("mousedown", (e) => this._onEditorMouseDown(e));
         ta.addEventListener("mouseleave", () => { if (sv._hoverNum || sv._hoverSeg) { sv._hoverNum = null; sv._hoverSeg = null; ta.style.cursor = ""; this._renderBackdrop(); sv.timeline.draw(); } });
         ta.addEventListener("wheel", (e) => this._onEditorWheel(e), { passive: false });
         this.textarea = ta;
@@ -202,7 +211,7 @@ export class CScriptEditorWindow {
 
     hide() {
         if (this.external && !this.external.closed) { this.dockWindow(); return; }
-        if (this.sv._scrubbing) this.sv._scrubExit();
+        this.sv._exitAllModes();   // closing the editor leaves preview mode
         if (this.panel) this.panel.style.display = "none";
     }
 
@@ -282,6 +291,8 @@ export class CScriptEditorWindow {
         const lines = ta.value.split("\n");
         const cur = this._cursorLine();
         const hov = this.sv._hoverNum;
+        // during preview, tint the lines active at the current time yellow
+        const active = this.sv._previewing ? this.sv._activeLineSet(this.sv._currentT) : null;
         const box = '<span style="outline:1.5px solid #ffd24a;border-radius:2px;background:rgba(255,210,74,0.18)">';
         let html = "";
         for (let i = 0; i < lines.length; i++) {
@@ -293,6 +304,7 @@ export class CScriptEditorWindow {
             } else {
                 h = this._escHtml(line);
             }
+            if (active && active.has(i + 1)) h = '<span style="color:#ffd24a">' + h + "</span>";
             if (i === cur) h = "<b>" + h + "</b>";
             html += h + (i < lines.length - 1 ? "\n" : "");
         }
@@ -345,6 +357,7 @@ export class CScriptEditorWindow {
     }
 
     _onEditorHover(e) {
+        if (this._numDragging) return;   // keep the dragged number hovered
         const sv = this.sv;
         const ta = this.textarea;
         const {cw, lh, padL, padT} = this._charMetrics();
@@ -374,6 +387,74 @@ export class CScriptEditorWindow {
         return 0.1;   // dur (and anything unlabelled)
     }
 
+    // Click-drag up/down on a control number adjusts it (the wheel still works).
+    // mousedown over a number prevents the textarea's native text selection, so
+    // a drag-less click places the caret manually — click-to-edit still works.
+    _onEditorMouseDown(e) {
+        const sv = this.sv;
+        if (e.button !== 0 || !sv._hoverNum) return;
+        e.preventDefault();
+        const PX_PER_STEP = 7;            // vertical pixels per value step
+        const startX = e.clientX, startY = e.clientY;
+        let lastY = e.clientY, accum = 0, dragged = false;
+        this._numDragging = true;
+        const move = (ev) => {
+            const dy = lastY - ev.clientY;
+            lastY = ev.clientY;
+            if (!dragged && Math.abs(ev.clientY - startY) < 3 && Math.abs(ev.clientX - startX) < 3) return;
+            dragged = true;
+            accum += dy;
+            let changed = false;
+            while (Math.abs(accum) >= PX_PER_STEP) {
+                // up = increment: synthesize the wheel's deltaY convention
+                const deltaY = accum > 0 ? -1 : 1;
+                accum -= accum > 0 ? PX_PER_STEP : -PX_PER_STEP;
+                const h = sv._hoverNum;
+                if (!h) break;
+                const res = this.adjustNumberToken(h.line, {start: h.start, end: h.end},
+                    deltaY, ev.shiftKey, this._minValForField(h.field));
+                if (!res) break;
+                h.start = res.start; h.end = res.end; h.text = res.text;
+                changed = true;
+            }
+            if (changed) {
+                (this._parsePromise || Promise.resolve()).then(() => {
+                    const h = sv._hoverNum;
+                    sv._hoverSeg = h ? sv._eventOnLine(h.line + 1) : null;
+                    this._renderBackdrop();
+                    sv.timeline.draw();
+                    if (sv._previewing) sv._scrubTo(sv._currentT);
+                });
+            }
+        };
+        const up = () => {
+            document.removeEventListener("pointermove", move);
+            document.removeEventListener("pointerup", up);
+            this._numDragging = false;
+            if (dragged) this._suppressClick = true;
+            else this._placeCaretAt(e);
+        };
+        document.addEventListener("pointermove", move);
+        document.addEventListener("pointerup", up);
+    }
+
+    // place the caret at the character under a mouse event (used because the
+    // number-drag mousedown suppressed the textarea's own caret placement)
+    _placeCaretAt(e) {
+        const ta = this.textarea;
+        const {cw, lh, padL, padT} = this._charMetrics();
+        const rect = ta.getBoundingClientRect();
+        const x = e.clientX - rect.left - padL + ta.scrollLeft;
+        const y = e.clientY - rect.top - padT + ta.scrollTop;
+        const lines = ta.value.split("\n");
+        const row = Math.max(0, Math.min(lines.length - 1, Math.floor(y / lh)));
+        const col = Math.max(0, Math.min(lines[row].length, Math.round(x / cw)));
+        let idx = 0;
+        for (let r = 0; r < row; r++) idx += lines[r].length + 1;
+        ta.focus();
+        try { ta.setSelectionRange(idx + col, idx + col); } catch (e2) {}
+    }
+
     _onEditorWheel(e) {
         const sv = this.sv;
         if (!sv._hoverNum) return;            // not over a control number → normal scroll
@@ -382,11 +463,14 @@ export class CScriptEditorWindow {
         const res = this.adjustNumberToken(h.line, {start: h.start, end: h.end}, e.deltaY, e.shiftKey, this._minValForField(h.field));
         if (!res) return;
         h.start = res.start; h.end = res.end; h.text = res.text;
-        sv._hoverSeg = sv._eventOnLine(h.line + 1);
-        if (!sv._hoverSeg) sv._hoverNum = null;   // keep both highlight surfaces consistent
-        this._renderBackdrop();
-        sv.timeline.draw();
-        if (sv._scrubbing || sv._previewing) sv._scrubTo(sv._currentT);
+        // the re-parse is async (JS scheduling run) — re-resolve against the new model
+        (this._parsePromise || Promise.resolve()).then(() => {
+            sv._hoverSeg = sv._eventOnLine(h.line + 1);
+            if (!sv._hoverSeg) sv._hoverNum = null;   // keep both highlight surfaces consistent
+            this._renderBackdrop();
+            sv.timeline.draw();
+            if (sv._previewing) sv._scrubTo(sv._currentT);
+        });
     }
 
     // Increment/decrement the number token at lines[row][span.start..span.end] by a
@@ -431,7 +515,7 @@ export class CScriptEditorWindow {
         lines[row] = line.slice(0, span.start) + out + line.slice(span.end);
         ta.value = lines.join("\n");
         try { ta.selectionStart = ta.selectionEnd = caret; } catch (e2) {}
-        this.sv.doParse();
+        this._parsePromise = this.sv.doParse();   // async; callers chain on it to see the new model
         return {start: span.start, end: span.start + out.length, text: out};
     }
 }

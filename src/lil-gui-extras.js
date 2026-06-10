@@ -1583,10 +1583,18 @@ export class CGuiMenuBar {
                 // First real movement on a docked folder: tear it out at the
                 // cursor and continue dragging the new floating container.
                 if (!container && hasDragged) {
+                    // Tearing a sub-menu out of a menubar-docked menu closes that
+                    // menu — its open dropdown would otherwise linger under the
+                    // newly floating folder. Sidebar-docked and floating parent
+                    // menus stay open (they're persistent windows, not dropdowns).
+                    const rootMenu = folder.root;
+                    const closeParent = rootMenu && rootMenu.mode === "DOCKED"
+                        && menuBar.slots.includes(rootMenu) && !rootMenu._closed;
                     container = menuBar._detachFolder(folder, {
                         x: e.clientX - dragOffsetX - menuBarRect.left,
                         y: e.clientY - dragOffsetY - menuBarRect.top,
                     });
+                    if (closeParent) rootMenu.close();
                 }
 
                 if (!container) return; // not yet a drag - may still be a click
