@@ -9,6 +9,23 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.81.0 (2026-06-10)
+
+### New Features
+- **Scripted Video scripts are now JavaScript** (Video → Scripted Video): scripts can use loops, variables, and functions, while the simple one-line commands (like *zoom OE-LNC 6*, *&* for "at the same time", and *#* comments) still work exactly as before — old saved scripts run unchanged, and timeline highlighting and number editing work for both styles.
+- **View cuts and layouts in scripts** (Video → Scripted Video): a new *view* command cuts to a single view (including the witness video), a saved view preset, or a custom multi-view layout — with optional animated transitions, plus a built-in overlay layout that places the witness video on top of the look view.
+- **Scripts can change any menu setting** (Video → Scripted Video): new *set*, *show*, and *hide* commands flip any Sitrec menu control at a chosen moment in the script — and everything touched is put back when the preview or render ends, so a script never permanently changes your scene.
+- **New camera commands** (Video → Scripted Video): *flyto* flies (or snaps) the scripted camera to the witness camera's viewpoint, *rise* climbs straight up to a wide shot, and *fade* fades a view in or out. Commands can leave out the target to reuse the previous one, and every command has a sensible default duration.
+
+### Improvements
+- The script editor now previews live whenever its timeline is open: moving the text cursor or clicking the timeline jumps a paused preview to that moment — with view layouts applied, so you see exactly what the render will show. Space pauses and resumes the preview, the script lines active at the current time are highlighted, and the caption on the line you're editing stays fully visible even mid-fade.
+- Numbers in scripts can now be adjusted by clicking and dragging up or down on them (the scroll wheel still works).
+- Dragging a sub-menu out of a menu-bar menu now closes that menu's dropdown instead of leaving it hanging open underneath the new floating window.
+
+### Bug Fixes
+- Fixed edits to a Scripted Video script not counting as unsaved work — leaving the page after editing a script now warns about unsaved changes.
+- Fixed the popped-out script editor window staying open, but useless, after the main Sitrec window closed; it now closes with it.
+
 ## Version 2.80.1 (2026-06-10)
 
 ### Bug Fixes
