@@ -61,6 +61,7 @@ import {deserializeMotionAnalysis, serializeMotionAnalysis} from "./CMotionAnaly
 import {deserializeAutoTracking, serializeAutoTracking} from "./CObjectTracking";
 import {deserializeHorizonExtractor, serializeHorizonExtractor} from "./CHorizonExtractor";
 import {deserializeScriptedVideo, serializeScriptedVideo} from "./CScriptedVideo";
+import {deserializeLongExposure, serializeLongExposure} from "./LongExposure";
 import {getCursorPositionFromTopView} from "./mouseMoveView";
 import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightSidebar} from "./PageStructure";
 import {CNodeControllerCelestial} from "./nodes/CNodeControllerVarious";
@@ -586,6 +587,9 @@ export const serializeMethods = {
         // Falls back to Sit.scriptedVideoScript (from a previous load) if the
         // editor holds nothing save-worthy (e.g. the unmodified demo script).
         out.scriptedVideoScript = serializeScriptedVideo() ?? Sit.scriptedVideoScript ?? null
+
+        // Long Exposure / Camera Nudge parameters (null when all defaults)
+        out.longExposure = serializeLongExposure() ?? Sit.longExposure ?? null
 
         // Serialize sub sitches
         out.subSitchesData = this.serializeSubSitches()
@@ -1487,6 +1491,10 @@ export const serializeMethods = {
 
         if (sitchData.scriptedVideoScript) {
             deserializeScriptedVideo(sitchData.scriptedVideoScript);
+        }
+
+        if (sitchData.longExposure) {
+            deserializeLongExposure(sitchData.longExposure);
         }
 
         if (sitchData.subSitchesData) {

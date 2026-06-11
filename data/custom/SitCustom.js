@@ -126,7 +126,7 @@ sitch = {
                 inputs: {
                     amount: {
                         kind: "GUIValue",
-                        value: 0.01,
+                        value: 0,
                         start: 0.0,
                         end: 1.0,
                         step: 0.01,

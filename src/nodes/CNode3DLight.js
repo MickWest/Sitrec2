@@ -241,8 +241,11 @@ export class CNode3DLight extends CNode3D {
     // Method to update visibility based on control variables and strobe state
     updateVisibility() {
         // Billboard visibility is controlled by lightVisible
+        // (suppressBillboard hides just the billboard — set by the Long Exposure
+        // renderer, which splats the light's true HDR flux instead; the
+        // illumination of the scene is unaffected)
          if (this._object) {
-            this._object.visible = this.lightVisible;
+            this._object.visible = this.lightVisible && !this.suppressBillboard;
         }
         
         // Light illumination is controlled by both lightVisible and lightIlluminates
@@ -305,7 +308,7 @@ export class CNode3DLight extends CNode3D {
 
             // Apply strobe to both billboard and light visibility
             if (this._object) {
-                this._object.visible = this.lightVisible && strobeOn;
+                this._object.visible = this.lightVisible && strobeOn && !this.suppressBillboard;
             }
             this.light.visible = this.lightVisible && this.lightIlluminates && strobeOn;
 
