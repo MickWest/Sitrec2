@@ -41,19 +41,19 @@ const SUMMARY_TOOLTIPS = {
 };
 
 const TABLE_HEADER_TOOLTIPS = {
-    "File": "The file path (within the selected folder, or the file name).",
-    "Status": "The current or final analysis state for this file.",
-    "Verdict": "A short plain-English summary of the file's timing result.",
-    "Records": "The number of decoded MISB metadata records.",
-    "PES PTS Rec": "The percentage of MISB records with KLV PES-header PTS values.",
-    "Frame Pair": "The percentage of video PTS rows that can be paired to a nearby KLV PES PTS record.",
-    "KLV Span": "The elapsed time covered by the KLV UnixTimeStamp metadata.",
-    "Gaps": "The number of large gaps found in KLV UnixTimeStamp timing.",
-    "CV": "Coefficient of variation for KLV UnixTimeStamp intervals; higher means more timing scatter.",
-    "Video PTS": "The number of video PTS rows found in the transport stream.",
-    "Diff": "KLV span minus video PTS span, in seconds.",
-    "Frames": "Export a per-frame CSV (virtual frames + MISB columns) for this file.",
-    "Report": "Open the detailed timing report for this file.",
+    "File": "The file's path relative to the chosen folder (or just the file name for single-file analysis).",
+    "Status": "The analysis state for this file: progress text while scanning, then the final state (analyzed, error, unsupported, no MISB, etc.).",
+    "Verdict": "A short plain-English summary of the file's timing health. On error, shows the error message instead.",
+    "Records": "The number of decoded MISB ST 0601 metadata records (KLV packets) found in the file.",
+    "PES PTS Rec": "The percentage of MISB records that carry a PTS (Presentation Time Stamp) in their KLV PES header. PES-header PTS allows precise, synchronous pairing of metadata to video frames; without it, pairing falls back to looser methods.",
+    "Frame Pair": "The percentage of video PTS rows (frames) that can be matched to a nearby KLV PES PTS record. High coverage means nearly every frame has directly paired metadata.",
+    "KLV Span": "The elapsed time (seconds) covered by the KLV UnixTimeStamp metadata (MISB Tag 2), from the first to last timestamp in the metadata stream.",
+    "Gaps": "The number of large discontinuities detected in the KLV UnixTimeStamp sequence — places where metadata timing jumps instead of advancing smoothly.",
+    "CV": "Coefficient of variation (as a %) of the intervals between consecutive KLV UnixTimeStamps. Near 0% means metronome-regular metadata; higher values mean scattered/jittery timing.",
+    "Video PTS": "The count of video presentation timestamps found in the transport stream — effectively the number of video frame timing entries.",
+    "Diff": "KLV span minus video PTS span, in seconds. Near zero means metadata and video cover the same duration; a large value means one stream runs longer than the other (a timing red flag).",
+    "Frames": "Export a per-frame CSV for this file: virtual frame timing fields plus every populated MISB tag column.",
+    "Report": "Open the detailed text timing report for this file.",
 };
 
 const TABLE_HEADERS = [

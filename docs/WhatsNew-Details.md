@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.83.1 (2026-06-11)
+
+### Improvements
+- Rewrote all 13 column-header tooltips in the "Analyze Video FMV Data" table (File → File Analysis → Analyze Video FMV Data...) for clarity. The `TABLE_HEADER_TOOLTIPS` map in `src/analysis/VideoFolderAnalysisUI.js` now explains each column in full: *PES PTS Rec* describes what a KLV PES-header PTS is and why it enables precise synchronous frame pairing (vs. looser fallback pairing); *CV* explains coefficient of variation of KLV UnixTimeStamp intervals (near 0% = metronome-regular, higher = jittery); *Diff* explains that KLV span minus video PTS span near zero is healthy while a large value is a timing red flag; *Records*, *KLV Span*, *Gaps*, *Video PTS*, *Frames*, *Report*, *File*, *Status*, *Verdict*, and *Frame Pair* similarly gained fuller, more specific descriptions (e.g. MISB ST 0601 / Tag 2 references, per-frame CSV contents). Tooltip strings only — no behavior change.
+
+---
+
 ## Version 2.83.0 (2026-06-11)
 
 ### New Features

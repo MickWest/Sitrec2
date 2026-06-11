@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.83.1 (2026-06-11)
+
+### Improvements
+- Clearer hover tooltips on every column header in the **Analyze Video FMV Data** table (File → File Analysis): each column — including *PES PTS Rec*, *CV*, and *Diff* — now gets a full plain-English explanation of what it measures and what good or bad values mean.
+
+---
+
 ## Version 2.83.0 (2026-06-11)
 
 ### New Features
