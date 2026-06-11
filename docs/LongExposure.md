@@ -1,16 +1,17 @@
 # Long Exposure Simulation
 
-Sitrec can simulate a **long-exposure photograph** taken with the look camera: every frame
-of the A-B range is rendered and averaged into a single still image, as if the camera's
-shutter had been open for the whole range in real time. Anything that moves — aircraft,
+Sitrec can simulate a **long-exposure photograph** taken with the look camera: the scene
+is sampled across the exposure and averaged into a single still image, as if the camera's
+shutter had been open for that long in real time. Anything that moves — aircraft,
 satellites, stars, or the camera itself — leaves a trail, with physically correct brightness.
 
 You'll find it under **Video → Long Exposure**.
 
 ## Quick start
 
-1. Set the **A-B in/out points** to the time span you want to expose (the whole sitch by default).
-2. Open **Video → Long Exposure** and click **Render Long Exposure (A-B)**.
+1. Set **Duration (Minutes)** (default 5). The exposure runs from the **start of the
+   sitch** for that long — extending past the sitch's own end if necessary.
+2. Open **Video → Long Exposure** and click **Render Long Exposure**.
 3. While it renders, a preview of the developing exposure is shown, updated every 30 frames.
    The progress widget's **Enough** button stops early and keeps a correctly-exposed
    shorter exposure.
@@ -34,7 +35,10 @@ the exposure and each source is instead drawn with its **true linear flux**, com
 its astronomical magnitude:
 
 - **Stars** — the full catalog (not just the stars bright enough to display), with
-  atmospheric extinction dimming them toward the horizon.
+  atmospheric extinction dimming them toward the horizon (and optionally reddening
+  them too — see *Horizon Reddening*). Extinction scales with the camera's altitude —
+  an airborne observer sits above most of the air — and the horizon dips
+  correspondingly below 0°.
 - **Planets** — at their refracted apparent positions. They are rendered white: the colored
   display sprites (green Venus, etc.) are identification aids, not photometry.
 - **The Moon** — stays as the rendered textured disk, scaled so its total light matches its
@@ -56,11 +60,17 @@ trails are smooth curves even during fast camera motion.
 
 | Control | Meaning |
 |---|---|
+| **Duration (Minutes)** | The exposure (shutter) time in minutes of sitch time, from the start of the sitch. If longer than the sitch itself, the timeline is extended for the render. |
+| **Horizon Reddening** | Chromatic extinction (off by default): sources near the horizon redden as well as dim. In real star-trail photos the effect is largely masked by blue star colors and sky glow, so the default is dimming only. |
+| **Star Tint** | Intrinsic blue-white color of star trails (0 = flat white, 1 = bright-star population average). With Horizon Reddening on, extinction neutralizes the blue before warming, as in real star-trail photos. |
 | **Saturation Magnitude** | The star magnitude whose light just saturates one pixel in a single frame — the "ISO" of the simulated camera. Default 4: Venus (−4.4) is then ~2300× saturation. Lower = a less sensitive camera. |
 | **Light Brightness** | Multiplier on model-light brightness. 1 = realistic candela (~100 cd navigation light ≈ magnitude 0 at 15 km). |
 | **Moon Gain** | Multiplier on the magnitude-calibrated Moon disk (1 = physical). |
 | **Point Spread (px)** | The Gaussian point-spread width of splatted sources, in pixels. |
 | **Wait For Loading** | Settle terrain/3D-tiles each frame before capture (slower, but stable terrain). |
+| **Frame Step** | Sample every Nth frame of the range (default 30, ~30× faster). Exposure brightness is unaffected, and point-source trails (stars, lights, satellite flares — including strobe dashes) are integrated continuously between samples so they stay smooth and photometrically exact. Only background/scene motion becomes stepped. Set to 1 for a full-quality render. |
+| **Refraction** | The same setting as View → Atmospheric Refraction. When on, splatted sources use refracted apparent positions, and horizon culling and extinction follow the refracted direction. |
+| **Occlusion Mask** | Hide splatted sources behind terrain and other opaque foreground (a planet setting behind a hill stays hidden). Exact under camera rotation, and recalculated automatically whenever the camera position moves. |
 
 ## Camera Nudge
 
@@ -112,17 +122,21 @@ grid are automatically excluded from exposures — chart overlays aren't light.
 
 ## Nuances and limitations
 
-- **Exposures are real time.** The A-B range *is* the shutter time; playback speed is
-  ignored. 900 frames at 30 fps is a 30-second exposure.
+- **Exposures are real time.** Duration is sitch (wall-clock) time; playback speed is
+  ignored. The exposure starts at the first frame of the sitch; if it is longer than the
+  sitch, the timeline is temporarily extended (the world keeps evolving — sky rotation,
+  satellites, tracks hold their last position) and restored after the render.
 - The result is the **time-average** of the scene — the same brightness convention as a
   single frame. A static scene looks identical to one frame; trails dim in proportion to
   how fast they move (dwell time). Use the EV slider to "push" the exposure.
 - Anything that saturates in the **base render** (bright clouds, city glow, terrain) is
   clipped at single-frame white — only catalogued point sources, model lights, satellites
   and the Moon carry true HDR values.
-- **Occlusion of point sources is not simulated**: a star trail can cross a foreground
-  mountain that hides it in the live view, and an aircraft's body does not hide its own
-  far-side lights.
+- **Occlusion** uses a screen-space mask of opaque foreground (on by default): anything
+  the look view renders as solid — terrain, buildings, models — blocks splatted sources
+  behind it. The mask is sampled once per camera position (recomputed if the camera
+  moves), so objects that move *during* the exposure occlude at their sampled positions
+  only, and an aircraft's body still doesn't hide its own far-side lights.
 - Non-flaring satellites are omitted entirely (they are far below the visibility of the
   star field in a real exposure of this kind).
 - Long Exposure and Camera Nudge settings are saved with custom sitches.

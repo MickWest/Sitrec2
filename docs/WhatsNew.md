@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.83.0 (2026-06-11)
+
+### New Features
+- **Duration (Minutes)** (Video → Long Exposure): set the exposure length in minutes — it runs from the start of the sitch (extending past the sitch's end if needed) instead of the old A-B range, and the button is now simply *Render Long Exposure*.
+- **Frame Step** (Video → Long Exposure): render long exposures up to ~30× faster by sampling every Nth frame — brightness is unchanged and star/light/satellite trails stay smooth and accurate; only background motion becomes stepped.
+- **Occlusion Mask** (Video → Long Exposure, on by default): stars, planets, satellites, and lights are now hidden behind terrain and other foreground — a planet setting behind a hill has its trail end at the ridge.
+- **Horizon Reddening** (Video → Long Exposure, off by default): optionally make sources near the horizon redden as well as dim, as the atmosphere removes blue light first.
+- **Star Tint** (Video → Long Exposure): dial in the intrinsic blue-white color of star trails, from flat white to the realistic bright-star average.
+- **Refraction** (Video → Long Exposure): the View menu's Atmospheric Refraction switch is now also available right in the Long Exposure panel.
+
+### Improvements
+- Long-exposure atmospheric dimming is far more physically accurate: it now accounts for the camera's altitude (an airborne camera sits above most of the air, with a correspondingly dipped horizon), and horizon colors match real-world measurements instead of turning blood-red.
+
+---
+
 ## Version 2.82.1 (2026-06-11)
 
 ### New Features
