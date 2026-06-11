@@ -1,0 +1,128 @@
+# Long Exposure Simulation
+
+Sitrec can simulate a **long-exposure photograph** taken with the look camera: every frame
+of the A-B range is rendered and averaged into a single still image, as if the camera's
+shutter had been open for the whole range in real time. Anything that moves — aircraft,
+satellites, stars, or the camera itself — leaves a trail, with physically correct brightness.
+
+You'll find it under **Video → Long Exposure**.
+
+## Quick start
+
+1. Set the **A-B in/out points** to the time span you want to expose (the whole sitch by default).
+2. Open **Video → Long Exposure** and click **Render Long Exposure (A-B)**.
+3. While it renders, a preview of the developing exposure is shown, updated every 30 frames.
+   The progress widget's **Enough** button stops early and keeps a correctly-exposed
+   shorter exposure.
+4. The result opens in a window with an **Exposure (EV)** slider and **Save PNG**.
+
+The EV slider re-tone-maps the kept high-dynamic-range result live — push it up to reveal
+faint trails and stars, down to isolate only the brightest sources, without re-rendering.
+Bright values roll off through a soft photographic shoulder rather than clipping hard.
+
+## Why "HDR Point Sources" matters
+
+A simple average of the rendered frames is *not* what a real camera records. Sitrec's live
+view draws stars, planets, and aircraft lights as small **fuzzy discs bright enough to see**
+— a display convention. Venus's real brightness is more like **2300× pixel saturation**: in a
+real exposure it stays a blinding point no matter how you average, and when it trails, the
+trail stays bright. If you just average the display's fuzzy discs, a moving Venus smears
+into a barely-visible blob and faint stars vanish entirely.
+
+With **HDR Point Sources** enabled (the default), the fuzzy display discs are hidden during
+the exposure and each source is instead drawn with its **true linear flux**, computed from
+its astronomical magnitude:
+
+- **Stars** — the full catalog (not just the stars bright enough to display), with
+  atmospheric extinction dimming them toward the horizon.
+- **Planets** — at their refracted apparent positions. They are rendered white: the colored
+  display sprites (green Venus, etc.) are identification aids, not photometry.
+- **The Moon** — stays as the rendered textured disk, scaled so its total light matches its
+  actual phase-dependent magnitude. In any exposure long enough to show stars, the Moon
+  burns out — just like a real photo.
+- **Aircraft / model lights** — navigation, beacon, strobe, and landing lights on 3D models,
+  with realistic candela, inverse-square falloff and distance haze. **Strobes leave dashed
+  trails** (the dash spacing is the strobe period), and colored lights trail in
+  their own color — red/green wingtips make aircraft trails instantly recognizable.
+- **Satellites** — only the ones that are actually **flaring** (sun-glint within the flare
+  cone), plus the **ISS when sunlit**. Everything else is omitted, as in a real photograph.
+  A flare streak brightens smoothly from nothing, holds full brightness through the heart
+  of the flare, and fades back to nothing.
+
+All sources are positioned **continuously between frames** (not just at frame instants), so
+trails are smooth curves even during fast camera motion.
+
+### Calibration controls
+
+| Control | Meaning |
+|---|---|
+| **Saturation Magnitude** | The star magnitude whose light just saturates one pixel in a single frame — the "ISO" of the simulated camera. Default 4: Venus (−4.4) is then ~2300× saturation. Lower = a less sensitive camera. |
+| **Light Brightness** | Multiplier on model-light brightness. 1 = realistic candela (~100 cd navigation light ≈ magnitude 0 at 15 km). |
+| **Moon Gain** | Multiplier on the magnitude-calibrated Moon disk (1 = physical). |
+| **Point Spread (px)** | The Gaussian point-spread width of splatted sources, in pixels. |
+| **Wait For Loading** | Settle terrain/3D-tiles each frame before capture (slower, but stable terrain). |
+
+## Camera Nudge
+
+**Video → Long Exposure → Camera Nudge** jolts the look camera at a chosen time: it bounces
+around and settles, like a tripod that's been bumped — and every light in the frame writes
+that bounce into the exposure as a decaying zigzag trail.
+
+- **Nudge Time (s)** — when the bump happens (sitch time).
+- **Magnitude (°)** — peak deflection of the first swing.
+- **Frequency (Hz)** — how fast it oscillates (the "elasticity" of the mount).
+- **Damping** — how quickly it settles: low values ring for a long time.
+- **Direction (°)** — rotates the bounce pattern.
+
+While the Camera Nudge folder is open (and the nudge enabled), the full bounce trajectory is
+drawn live on the look view: a cyan path fading as it settles, a yellow dot at the impulse
+start, and a green dot showing where the camera offset is at the current frame. The nudge
+also works during normal playback, so you can scrub through the bounce.
+
+The nudge is deterministic — the same parameters always produce exactly the same bounce, so
+renders are repeatable.
+
+## Examples
+
+### Stars and planets, with a camera nudge
+
+A 5.5° telephoto view of Venus (large trail) and a second planet. The camera was nudged 2°
+one second into the exposure: every point source traces the same decaying bounce, ending at
+a bright settled point. Note how the trail dims where the camera was moving fastest —
+brightness is dwell-time-correct photometry.
+
+![Long exposure of stars and planets with a camera nudge](docimages/longexposure-stars.jpg)
+
+### Aircraft at night
+
+Live ADS-B aircraft with 3D models. The nearby aircraft's lights saturate and trail; strobes
+leave dashes; red/green navigation lights trail in color. Distant aircraft fade with
+inverse-square falloff and atmospheric extinction, just as a camera would record them.
+
+![Long exposure of aircraft lights at night](docimages/longexposure-planes.jpg)
+
+### Starlink flares
+
+A Starlink Horizon Flares scenario: only the satellites that actually flare during the
+exposure appear, each leaving a streak that swells from nothing to full brightness and fades
+out again as the sun-glint sweeps past the observer. Constellation lines and the equatorial
+grid are automatically excluded from exposures — chart overlays aren't light.
+
+![Long exposure of Starlink satellite flares](docimages/longexposure-shf.jpg)
+
+## Nuances and limitations
+
+- **Exposures are real time.** The A-B range *is* the shutter time; playback speed is
+  ignored. 900 frames at 30 fps is a 30-second exposure.
+- The result is the **time-average** of the scene — the same brightness convention as a
+  single frame. A static scene looks identical to one frame; trails dim in proportion to
+  how fast they move (dwell time). Use the EV slider to "push" the exposure.
+- Anything that saturates in the **base render** (bright clouds, city glow, terrain) is
+  clipped at single-frame white — only catalogued point sources, model lights, satellites
+  and the Moon carry true HDR values.
+- **Occlusion of point sources is not simulated**: a star trail can cross a foreground
+  mountain that hides it in the live view, and an aircraft's body does not hide its own
+  far-side lights.
+- Non-flaring satellites are omitted entirely (they are far below the visibility of the
+  star field in a real exposure of this kind).
+- Long Exposure and Camera Nudge settings are saved with custom sitches.

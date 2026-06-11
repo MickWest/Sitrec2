@@ -9,6 +9,23 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.82.1 (2026-06-11)
+
+### New Features
+- **Flaring satellites in HDR long exposures** (`src/LongExposure.js`, inside the *HDR Point Sources* path of `renderLongExposure`). During an HDR exposure the LDR satellite point cloud (`nightSky.satellites.lightCloud` points and mainViewPoints) is hidden, and only satellites that are actually flaring — glint angle inside the flare cone (`sats.flareAngle`) — plus the ISS when sunlit (`sd.number === 25544`, constant `ISS_MAG = -2`) are splatted as HDR point sources; everything else is omitted from the photograph, as in reality. The glint is recomputed fresh every frame for every lit satellite (`getSatelliteNormal` + camera-ray reflection vs `Globals.toSun`) rather than reusing the display's `isFlaring` state, which `updateSatellites` staggers across ~10 frames — so streak entry/exit are exact, not stagger-truncated. Flare flux peaks at `SAT_FLARE_PEAK_MAG = -4` using the shared `flareRamp` cone falloff from `tools/shf/flarePhysics.js` (the same function the live night-sky display uses), but the falloff band fades in MAGNITUDE space by `SAT_FLARE_TAPER_MAGS = 13` mags: a linear flux ramp is photometrically instantaneous here (peak is ~1600× pixel saturation, so it crosses the entire visible range in its last ~1%) and streaks would start and end at full brightness — the magnitude-space taper makes each streak brighten smoothly from nothing, hold full peak through the core, and fade back to nothing. Satellites get the same Kasten-Young `extinctionFactor` as stars and the same sub-frame `splatInterval` continuous splatting (per-satellite `prevSatPos`), so fast movers leave smooth flare streaks. Active only when the night sky has TLE data loaded and satellites are displayed (`showSatellites !== false`).
+
+### Improvements
+- Long-exposure renders now hide the night sky's constellation lines (`nightSky.constellationsGroup`) and equatorial grid (`nightSky.equatorialSphereGroup`) for the duration of the exposure, in both simple-average and HDR modes, restoring their visibility afterwards — chart furniture never belongs in a simulated photograph.
+- The long-exposure tone map replaces its hard highlight clamp with a soft shoulder. Previously the non-ACES path in `tonemapBufferInto` (`src/LongExposure.js`) clamped each channel with `min(1, x)`, so any saturated streak flat-topped into identical featureless white. A new `softClip` function (knee at `SHOULDER_KNEE = 0.7`) keeps values linear below the knee and applies a Reinhard-style rolloff `t / (1 + t)` above it, so highlights grade smoothly into white instead of clipping. Because `tonemapBufferInto` is shared, the shoulder applies to both the in-progress preview (scale = 1/framesSoFar) and the result window (gain = 2^EV). The ACES path is unchanged — ACES has its own built-in shoulder.
+
+### Bug Fixes
+- Fixed the Long Exposure menu (folder, all its controls, and the Camera Nudge subfolder and its controls) disappearing after switching sitches. The menu is built once at startup (`addLongExposureMenu()` in `src/index.js`) and the GUI rebuild on sitch change destroys all non-permanent controllers; every item in `CLongExposureManager.setupMenu()` is now flagged `.perm()` so the menu survives the rebuild.
+
+### Documentation
+- New user guide `docs/LongExposure.md` ("Long Exposure Simulation") covering the A-B averaged exposure workflow, HDR point sources, satellite flare streaks, and Camera Nudge, with three example renders (`docs/docimages/longexposure-stars.jpg`, `-planes.jpg`, `-shf.jpg`). Linked from the in-app Help menu via `addHelpLink("menus.help.documentation.longExposure", "docs/LongExposure")` in `src/index.js`, with the new i18n key `menus.help.documentation.longExposure` in `src/i18n/en.js`.
+
+---
+
 ## Version 2.82.0 (2026-06-11)
 
 ### New Features

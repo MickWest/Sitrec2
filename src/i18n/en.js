@@ -112,6 +112,7 @@ const en = {
                 starlink: "How to Investigate Starlink Flares",
                 customModels: "Objects and 3D Models (Planes)",
                 cameraModes: "Camera Modes (Normal & Satellite)",
+                longExposure: "Long Exposure Simulation",
                 wind: "Wind",
                 traverseMethods: "Traverse Methods",
                 gimbalRecreate: "Recreating Gimbal Step-by-Step",

@@ -1820,6 +1820,7 @@ async function initializeOnce() {
     addHelpLink("menus.help.documentation.starlink", "docs/Starlink")
     addHelpLink("menus.help.documentation.customModels", "docs/CustomModels")
     addHelpLink("menus.help.documentation.cameraModes", "docs/satcam")
+    addHelpLink("menus.help.documentation.longExposure", "docs/LongExposure")
     addHelpLink("menus.help.documentation.wind", "docs/Wind")
     addHelpLink("menus.help.documentation.traverseMethods", "docs/TraverseMethods")
     addHelpLink("menus.help.documentation.gimbalRecreate", "docs/gimbal-recreate")

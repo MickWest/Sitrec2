@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.82.1 (2026-06-11)
+
+### New Features
+- **Satellite flares in long exposures** (Video → Long Exposure): with *HDR Point Sources* on, flaring satellites now appear in the exposure — each streak brightens smoothly from nothing, peaks through the heart of the flare, and fades back out — and the International Space Station is included whenever it's sunlit. Satellites that aren't flaring are left out, just as in a real photograph.
+- **Long Exposure Simulation guide** (Help → Documentation): a new illustrated guide to the long-exposure feature, with example star-trail, aircraft, and satellite-flare renders.
+
+### Improvements
+- Long-exposure renders no longer include the constellation lines or the equatorial grid — chart overlays don't belong in a simulated photograph. They reappear once the render finishes.
+- Bright streaks in long exposures now fade smoothly into white instead of clipping to flat featureless white, in both the result window and the in-progress preview.
+
+### Bug Fixes
+- Fixed the Long Exposure menu (including its Camera Nudge controls) disappearing from the Video menu after switching sitches.
+
+---
+
 ## Version 2.82.0 (2026-06-11)
 
 ### New Features

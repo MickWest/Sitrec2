@@ -48,7 +48,8 @@ import {applyRefractionECI, refractionOptsFromUniforms, refractionUniforms} from
 import {raDec2Celestial} from "./CelestialMath";
 import {CNode3DLight} from "./nodes/CNode3DLight";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
-import {radians} from "./mathUtils";
+import {degrees, radians} from "./mathUtils";
+import {flareRamp} from "../tools/shf/flarePhysics.js";
 
 // ---------------------------------------------------------------------------
 // Parameters
@@ -88,33 +89,33 @@ class CLongExposureManager {
 
     setupMenu() {
         if (!guiMenus || !guiMenus.video) return;
-        const folder = guiMenus.video.addFolder("Long Exposure").close();
+        const folder = guiMenus.video.addFolder("Long Exposure").close().perm();
         this.folder = folder;
         const dirty = () => { markSitchDirty(); setRenderOne(true); };
 
-        folder.add({render: () => this.render()}, "render").name("Render Long Exposure (A-B)")
+        folder.add({render: () => this.render()}, "render").name("Render Long Exposure (A-B)").perm()
             .tooltip("Render every frame of the A-B range into one averaged long-exposure still.\n" +
                 "Shown in a window with an EV (exposure) slider and Save PNG.");
-        folder.add(this.params, "hdrPoints").name("HDR Point Sources").listen().onChange(dirty)
+        folder.add(this.params, "hdrPoints").name("HDR Point Sources").perm().listen().onChange(dirty)
             .tooltip("Replace the cosmetic star/planet/light sprites with physically-bright point\n" +
                 "splats (true linear flux) so bright sources stay visible in the average and\n" +
                 "leave correct trails. Disable for a plain frame average.");
-        folder.add(this.params, "satMag", -6, 6, 0.1).name("Saturation Magnitude").listen().onChange(dirty)
+        folder.add(this.params, "satMag", -6, 6, 0.1).name("Saturation Magnitude").perm().listen().onChange(dirty)
             .tooltip("Calibration: the star magnitude whose light just saturates one pixel in a\n" +
                 "single frame. Lower = brighter stars overall. Venus (-4.4) with the default +1\n" +
                 "is ~144x saturation.");
-        folder.add(this.params, "lightGain", 0, 20, 0.1).name("Light Brightness").listen().onChange(dirty)
+        folder.add(this.params, "lightGain", 0, 20, 0.1).name("Light Brightness").perm().listen().onChange(dirty)
             .tooltip("Brightness multiplier on model lights in the exposure. 1 = realistic:\n" +
                 "model intensities are mapped to real effective candela (~100cd nav,\n" +
                 "~200cd beacon), with inverse-square falloff and slant-path extinction.");
-        folder.add(this.params, "moonGain", 0, 10, 0.05).name("Moon Gain").listen().onChange(dirty)
+        folder.add(this.params, "moonGain", 0, 10, 0.05).name("Moon Gain").perm().listen().onChange(dirty)
             .tooltip("Multiplier on the magnitude-calibrated HDR moon disk (1 = physical).");
-        folder.add(this.params, "psfSigma", 0.3, 2, 0.05).name("Point Spread (px)").listen().onChange(dirty)
+        folder.add(this.params, "psfSigma", 0.3, 2, 0.05).name("Point Spread (px)").perm().listen().onChange(dirty)
             .tooltip("Gaussian point-spread sigma in pixels for splatted sources.");
-        folder.add(this.params, "settle").name("Wait For Loading").listen()
+        folder.add(this.params, "settle").name("Wait For Loading").perm().listen()
             .tooltip("Settle terrain/3D-tiles each frame before capture (slower, stable).");
 
-        const nf = folder.addFolder("Camera Nudge").close();
+        const nf = folder.addFolder("Camera Nudge").close().perm();
         this.nudgeFolder = nf;
         // opening/closing the folder shows/hides the trajectory preview, which
         // only redraws on a render — poke one (render-on-demand)
@@ -122,18 +123,18 @@ class CLongExposureManager {
             if (f.$title) f.$title.addEventListener("click", () => setRenderOne(true));
         }
         const nudgeChanged = () => { this.ensureNudgeController(); dirty(); };
-        nf.add(this.nudge, "enabled").name("Nudge Enabled").listen().onChange(nudgeChanged)
+        nf.add(this.nudge, "enabled").name("Nudge Enabled").perm().listen().onChange(nudgeChanged)
             .tooltip("Jolt the look camera at the given time: it bounces around and settles\n" +
                 "(damped spring impulse). Works live and in the long-exposure render,\n" +
                 "where it draws light trails.");
-        nf.add(this.nudge, "time", 0, 120, 0.1).name("Nudge Time (s)").listen().onChange(nudgeChanged);
-        nf.add(this.nudge, "magnitude", 0, 10, 0.05).name("Magnitude (°)").listen().onChange(nudgeChanged)
+        nf.add(this.nudge, "time", 0, 120, 0.1).name("Nudge Time (s)").perm().listen().onChange(nudgeChanged);
+        nf.add(this.nudge, "magnitude", 0, 10, 0.05).name("Magnitude (°)").perm().listen().onChange(nudgeChanged)
             .tooltip("Peak deflection of the first swing, degrees.");
-        nf.add(this.nudge, "frequency", 0.2, 10, 0.1).name("Frequency (Hz)").listen().onChange(nudgeChanged)
+        nf.add(this.nudge, "frequency", 0.2, 10, 0.1).name("Frequency (Hz)").perm().listen().onChange(nudgeChanged)
             .tooltip("Elasticity — natural frequency of the bounce.");
-        nf.add(this.nudge, "damping", 0.02, 0.8, 0.01).name("Damping").listen().onChange(nudgeChanged)
+        nf.add(this.nudge, "damping", 0.02, 0.8, 0.01).name("Damping").perm().listen().onChange(nudgeChanged)
             .tooltip("Damping ratio: low = rings for a long time, high = settles quickly.");
-        nf.add(this.nudge, "direction", -180, 180, 1).name("Direction (°)").listen().onChange(nudgeChanged);
+        nf.add(this.nudge, "direction", -180, 180, 1).name("Direction (°)").perm().listen().onChange(nudgeChanged);
 
         this.ensureNudgeController();
     }
@@ -286,6 +287,18 @@ function strobeOnFraction(t0, t1, every, length, offset) {
 // clear-air extinction along a horizontal-ish slant path, magnitudes per km
 // (applied to in-atmosphere model lights; stars use the airmass model below)
 const LIGHT_EXT_MAG_PER_KM = 0.015;
+
+// satellite splat calibration: apparent magnitude of a full (ramp=1) flare,
+// and of the sunlit ISS. Only flaring satellites (+ the lit ISS) are splatted.
+const SAT_FLARE_PEAK_MAG = -4;
+const ISS_MAG = -2;
+// The flare cone's falloff band fades the flare by this many MAGNITUDES.
+// A linear ramp is photometrically instantaneous here (peak is ~1600x pixel
+// saturation, so the square-law band crosses the whole visible range in its
+// last ~1%) — streaks would start and end at full brightness. Fading in
+// magnitude space makes the streak taper smoothly to zero at both ends
+// while the core still flares at full peak.
+const SAT_FLARE_TAPER_MAGS = 13;
 
 // Model-light intensity -> candela for the exposure. GLB light intensities are
 // tuned for DISPLAY visibility and run hot photometrically: the 737 models use
@@ -448,6 +461,20 @@ async function renderLongExposure(mgr) {
                 n.suppressBillboard = true;
             }
         }
+        // hide the LDR satellite cloud: only flaring satellites (+ lit ISS)
+        // are splatted; everything else is omitted from the exposure
+        if (nightSky?.satellites?.lightCloud) {
+            for (const pts of [nightSky.satellites.lightCloud.points, nightSky.satellites.lightCloud.mainViewPoints]) {
+                if (pts) hiddenSprites.push({obj: pts, was: pts.visible});
+            }
+        }
+    }
+    // chart furniture never belongs in a photograph: constellation lines and
+    // the equatorial grid are hidden for the exposure (both modes), restored after
+    if (nightSky) {
+        for (const g of [nightSky.constellationsGroup, nightSky.equatorialSphereGroup]) {
+            if (g) hiddenSprites.push({obj: g, was: g.visible});
+        }
     }
     const reHide = () => { for (const h of hiddenSprites) h.obj.visible = false; };
 
@@ -599,6 +626,7 @@ async function renderLongExposure(mgr) {
 
     let prevPose = null;             // {qBase, pos, t}
     const prevLightPos = new Map();  // light node id -> Vector3 (last frame's world pos)
+    const prevSatPos = new Map();    // satellite number -> Vector3 (last frame's apparent pos)
     let framesDone = 0;              // frames actually accumulated (early "Enough" stop)
 
     try {
@@ -729,6 +757,54 @@ async function renderLongExposure(mgr) {
                             splatInterval(celSrc, pPose, pose, t0, t, flux, 1, 1, 1, null);
                         }
                     }
+
+                    // Satellites: only FLARING ones, plus the ISS when sunlit —
+                    // everything else is omitted (the LDR cloud is hidden above).
+                    // The glint ramp is recomputed fresh per frame (the display's
+                    // updateSatellites staggers each sat every ~10 frames), and the
+                    // flare flux ramps with the same shared cone falloff the live
+                    // view uses. Fast-moving sats get the same sub-frame interval
+                    // splatting as everything else -> smooth flare streaks.
+                    const sats = nightSky?.satellites;
+                    if (sats?.TLEData?.satData && sats.showSatellites !== false && Globals.toSun) {
+                        const spread = sats.flareAngle;
+                        const fluxFlarePeak = Math.pow(10, -0.4 * (SAT_FLARE_PEAK_MAG - P.satMag));
+                        const fluxISS = Math.pow(10, -0.4 * (ISS_MAG - P.satMag));
+                        for (const sd of sats.TLEData.satData) {
+                            if (!sd || sd.invalidPosition || !sd.ecef) continue;
+                            // isLit is staggered (~10 frame refresh) but the shadow
+                            // boundary moves slowly; the glint itself is recomputed
+                            // fresh for EVERY lit satellite every frame so streak
+                            // entry/exit are exact, not stagger-truncated.
+                            if (!sd.isLit) continue;
+                            const isISS = sd.number === 25544;
+                            const pos = sd.ecefApparent ?? sd.ecef;
+                            _v.copy(pos).sub(camera.position).normalize();
+                            const sinAlt = _v.dot(up);
+                            if (sinAlt < -0.01) continue;
+                            let flux = isISS ? fluxISS : 0;
+                            const satNormal = sats.getSatelliteNormal(sd.ecef, nightSky.globe.center);
+                            const reflected = _v2.copy(sd.ecef).sub(camera.position).reflect(satNormal).normalize();
+                            const dotS = Math.max(-1, Math.min(1, reflected.dot(Globals.toSun)));
+                            const glintAngle = Math.abs(degrees(Math.acos(dotS)));
+                            if (glintAngle < spread) {
+                                // magnitude-space taper: the falloff band fades the
+                                // flare by SAT_FLARE_TAPER_MAGS mags -> the streak
+                                // brightens smoothly from nothing, flares at full
+                                // peak through the core, and fades back to nothing
+                                flux += fluxFlarePeak * Math.pow(10,
+                                    -0.4 * SAT_FLARE_TAPER_MAGS * (1 - flareRamp(glintAngle, spread)));
+                            }
+                            if (flux <= 0) continue;
+                            flux *= extinctionFactor(Math.max(0.01, sinAlt), P.extinctionK);
+                            if (flux < 1e-4) continue;
+                            const pPos = prevSatPos.get(sd.number);
+                            const cur = pos.clone();
+                            prevSatPos.set(sd.number, cur);
+                            const src = {isDir: false, pos: cur, prevPos: pPos || cur};
+                            splatInterval(src, pPose, pose, t0, t, flux, 1, 1, 1, null);
+                        }
+                    }
                 }
 
                 // Aircraft/model lights: photometric, same calibration as stars.
@@ -844,6 +920,18 @@ function boostMoonDisk(frameLin, W, H, planets, nightSky, camera, projElements, 
 // Tone-map a linear buffer (× scale × gain) into an ImageData and blit it.
 // Shared by the in-progress preview (scale = 1/framesSoFar) and the result
 // window (scale = 1, gain = 2^EV).
+//
+// A hard clamp makes HDR streaks look unrealistic: every pixel >= 1 goes
+// identical flat white. A soft highlight shoulder (linear below SHOULDER_KNEE,
+// Reinhard-style rolloff above) lets values grade smoothly into white instead
+// of flat-topping. (The ACES path has its own shoulder.)
+
+const SHOULDER_KNEE = 0.7;
+function softClip(x) {
+    if (x <= SHOULDER_KNEE) return x;
+    const t = (x - SHOULDER_KNEE) / (1 - SHOULDER_KNEE);
+    return SHOULDER_KNEE + (1 - SHOULDER_KNEE) * (t / (1 + t));
+}
 
 const _tmPx = new Float32Array(3);
 function tonemapBufferInto(buf, scale, W, H, gain, opts, ctx, img) {
@@ -855,11 +943,11 @@ function tonemapBufferInto(buf, scale, W, H, gain, opts, ctx, img) {
         _tmPx[1] = buf[p * 3 + 1] * k;
         _tmPx[2] = buf[p * 3 + 2] * k;
         if (opts.useACES) {
-            acesForward(_tmPx, 0, opts.acesExposure);
+            acesForward(_tmPx, 0, opts.acesExposure);   // ACES has its own shoulder
         } else {
-            _tmPx[0] = Math.min(1, _tmPx[0]);
-            _tmPx[1] = Math.min(1, _tmPx[1]);
-            _tmPx[2] = Math.min(1, _tmPx[2]);
+            _tmPx[0] = softClip(_tmPx[0]);
+            _tmPx[1] = softClip(_tmPx[1]);
+            _tmPx[2] = softClip(_tmPx[2]);
         }
         for (let c = 0; c < 3; c++) {
             const v = _tmPx[c];
