@@ -61,6 +61,7 @@ trails are smooth curves even during fast camera motion.
 | Control | Meaning |
 |---|---|
 | **Duration (Minutes)** | The exposure (shutter) time in minutes of sitch time, from the start of the sitch. If longer than the sitch itself, the timeline is extended for the render. |
+| **Lock Camera Heading** | On by default: the camera holds the heading it has *right now* for the whole exposure — a tripod doesn't track. Works in any camera mode (To Target, Celestial Lock, Horizon Flare Region…), behaving as if Use Angles were locked on the current spot in the sky. The Camera Nudge still applies on top. Turn off to let the active camera mode steer during the exposure. |
 | **Horizon Reddening** | Chromatic extinction (off by default): sources near the horizon redden as well as dim. In real star-trail photos the effect is largely masked by blue star colors and sky glow, so the default is dimming only. |
 | **Star Tint** | Intrinsic blue-white color of star trails (0 = flat white, 1 = bright-star population average). With Horizon Reddening on, extinction neutralizes the blue before warming, as in real star-trail photos. |
 | **Saturation Magnitude** | The star magnitude whose light just saturates one pixel in a single frame — the "ISO" of the simulated camera. Default 4: Venus (−4.4) is then ~2300× saturation. Lower = a less sensitive camera. |

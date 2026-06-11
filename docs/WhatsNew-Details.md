@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.83.2 (2026-06-11)
+
+### New Features
+- **Lock Camera Heading** (Video → Long Exposure, `lockHeading`, default ON) in `src/LongExposure.js`: the exposure holds the camera orientation exactly as it is when the render starts — a tripod doesn't track. At render start `renderLongExposure` captures `lockQuat = camera.quaternion.clone()` with any live Camera Nudge offset removed (`nudgeQuaternion((par.frame ?? 0)/fps).invert()`), so the lock is the un-nudged base heading at the current frame. A new `applyHeadingLock(t)` runs after `updateWorld(f)` and before `renderOnce(f)` on both the direct render path and the settle `renderFrame` callback: it sets `camera.quaternion = lockQuat × nudge(t)` and calls `updateMatrix()` / `updateMatrixWorld(true)`, so whatever camera mode is active (To Target, Celestial Lock, Horizon Flare Region…) the exposure behaves as if *Use Angles* were locked on the current spot in the sky, with the Camera Nudge shake still composed on top. Only orientation is overridden — camera POSITION still follows its controllers. The HDR splat math is consistent automatically: the existing per-sample pose recovery (`qBase = qRendered × nudge(t)⁻¹`) yields exactly `lockQuat`, so the sub-frame slerp between samples is rotation-free as it should be. `docs/LongExposure.md` gains a matching controls-table row.
+
+---
+
 ## Version 2.83.1 (2026-06-11)
 
 ### Improvements

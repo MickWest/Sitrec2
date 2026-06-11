@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.83.2 (2026-06-11)
+
+### New Features
+- **Lock Camera Heading** (Video → Long Exposure, on by default): the exposure holds the camera pointing exactly where it points right now — a tripod doesn't track. Works in any camera mode (To Target, Celestial Lock, Horizon Flare Region…), with the Camera Nudge shake still applied on top; turn it off to let the active camera mode steer during the exposure.
+
+---
+
 ## Version 2.83.1 (2026-06-11)
 
 ### Improvements

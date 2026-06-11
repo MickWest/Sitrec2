@@ -59,6 +59,10 @@ import {MeshBasicMaterial, WebGLRenderTarget, Color} from "three";
 
 const defaultParams = () => ({
     durationMin: 5,      // exposure length in minutes, from the start of the sitch
+    lockHeading: true,   // hold the camera heading AS IT IS NOW for the whole
+                         // exposure (a tripod doesn't track): even in To Target /
+                         // Celestial Lock / Horizon Flare Region modes the camera
+                         // acts like "Use Angles" pointed at the current spot
     hdrPoints: true,     // splat stars/planets/lights with true flux
     satMag: 4.0,         // magnitude that just saturates one frame's exposure
                          // (Venus at -4.4 is then ~2300x saturation — a real
@@ -119,6 +123,12 @@ class CLongExposureManager {
         folder.add(this.params, "durationMin", 0.1, 720, 0.1).name("Duration (Minutes)").perm().listen().onChange(dirty)
             .tooltip("Exposure length in minutes of real (sitch) time, from the start of\n" +
                 "the sitch. May extend past the sitch's own end.");
+        folder.add(this.params, "lockHeading").name("Lock Camera Heading").perm().listen().onChange(dirty)
+            .tooltip("Hold the camera heading exactly as it is RIGHT NOW for the whole\n" +
+                "exposure — a tripod doesn't track. Works in any camera mode (To Target,\n" +
+                "Celestial Lock, Horizon Flare Region...): the exposure behaves as if\n" +
+                "Use Angles were locked on the current spot in the sky. The Camera\n" +
+                "Nudge still applies on top.");
         folder.add(this.params, "hdrPoints").name("HDR Point Sources").perm().listen().onChange(dirty)
             .tooltip("Replace the cosmetic star/planet/light sprites with physically-bright point\n" +
                 "splats (true linear flux) so bright sources stay visible in the average and\n" +
@@ -506,6 +516,17 @@ async function renderLongExposure(mgr) {
 
     mgr.ensureNudgeController();
 
+    // Lock Camera Heading: capture the orientation AS IT IS RIGHT NOW (before
+    // the exposure loop re-runs the controllers at exposure frames), minus any
+    // live nudge offset, and hold it for every sample — a tripod doesn't track,
+    // whatever camera mode (To Target / Celestial Lock / ...) is active.
+    let lockQuat = null;
+    if (P.lockHeading && camera) {
+        lockQuat = camera.quaternion.clone();
+        const nqNow = nudgeQuaternion((par.frame ?? 0) / fps);
+        if (nqNow) lockQuat.multiply(nqNow.invert());
+    }
+
     // ---- save / take over state ----
     const savedFrame = par.frame, savedPaused = par.paused, savedTime = par.time;
     par.paused = true;
@@ -812,6 +833,14 @@ async function renderLongExposure(mgr) {
         }
         reHide();
     }
+    function applyHeadingLock(t) {
+        if (!lockQuat) return;
+        camera.quaternion.copy(lockQuat);
+        const nq = nudgeQuaternion(t);           // the nudge still bounces the locked heading
+        if (nq) camera.quaternion.multiply(nq);
+        camera.updateMatrix();
+        camera.updateMatrixWorld(true);
+    }
     function renderOnce(f) {
         for (const pn of NodeMan.getPreRenderNodes()) pn.preRender(lookView);
         lookView.renderCanvas(f);
@@ -832,11 +861,12 @@ async function renderLongExposure(mgr) {
             const t = f / fps;
 
             await updateWorld(f);
+            applyHeadingLock(t);
             renderOnce(f);
             if (P.settle) {
                 await waitForExportFrameSettled({
                     frame: null, viewIds: [lookView.id],
-                    renderFrame: async () => { await updateWorld(f); renderOnce(f); },
+                    renderFrame: async () => { await updateWorld(f); applyHeadingLock(t); renderOnce(f); },
                     maxWaitMs: 8000, stableChecks: 2, postSettleRenders: 1,
                     logPrefix: "Long exposure",
                 });
