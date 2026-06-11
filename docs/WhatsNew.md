@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.82.0 (2026-06-11)
+
+### New Features
+- **Long Exposure** (Video → Long Exposure): simulate a real long-exposure photograph of the look view across the A-B range — every frame is rendered and averaged into a single still, shown in a window with an exposure slider and *Save PNG*. With *HDR Point Sources* on, stars (the whole catalog), planets, and aircraft lights are drawn at their true relative brightness — Venus really is thousands of times brighter than a faint star — with atmospheric dimming near the horizon, so star trails and light trails come out photographically correct, and strobe lights leave accurately dashed trails.
+- **Camera Nudge** (Video → Long Exposure → Camera Nudge): give the camera a realistic bump — a bumped-tripod bounce at a chosen time, with adjustable strength, frequency, damping, and direction. It works live and inside long exposures (producing the classic squiggly light trails), and while the controls are open the full bounce path is drawn on the look view.
+
+### Improvements
+- Long Exposure and Camera Nudge settings are saved with custom sitches.
+- New custom sitches now start with the *Noise Amount* effect at zero, so simulated video noise no longer veils long exposures.
+
+### Bug Fixes
+- Fixed some built-in sitches starting at the wrong date and time: sitches that define their own start time (such as 29 Palms) were instead loading at the time of the last aircraft track file they loaded.
+
 ## Version 2.81.0 (2026-06-10)
 
 ### New Features

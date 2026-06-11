@@ -492,6 +492,7 @@ class CTrackManager extends CManager {
 
         let settingSitchEstablished = false;
         const showDialog = options.showDialog !== false && !Globals.deserializing;
+        const syncTime = options.syncTime !== false;
 
         console.log("-----------------------------------------------------")
         console.log("addTracks called with ", trackFiles)
@@ -629,7 +630,8 @@ class CTrackManager extends CManager {
                     // to ensure we have the correct start time, and hence we can get good track positions for use
                     // with determining the initial terrain
                     // Only sync for the primary track (index 0), not for supplementary tracks like center tracks
-                    if (!Globals.sitchEstablished && trackIndex === 0) {
+                    // (and not when the caller suppresses it, e.g. legacy sitch setup with an explicit startTime)
+                    if (syncTime && !Globals.sitchEstablished && trackIndex === 0) {
                         GlobalDateTimeNode.syncStartTimeTrack();
                     }
 

@@ -1109,7 +1109,13 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             SSLog();
             const sphereMask = data.sphereMask ?? LAYER.MASK_HELPERS;
             const removeDuplicates = data.removeDuplicates ?? false;
-            await TrackManager.addTracks(data.tracks, removeDuplicates, sphereMask, { showDialog: false });
+            // Tracks loaded as part of the sitch definition must not override an
+            // explicit Sit.startTime (e.g. 29palms); only sync the start time to
+            // the first track when the sitch doesn't pin a specific time.
+            await TrackManager.addTracks(data.tracks, removeDuplicates, sphereMask, {
+                showDialog: false,
+                syncTime: Sit.startTime === undefined || Sit.startTime === "current",
+            });
             break;
 
         case "targetWind":
