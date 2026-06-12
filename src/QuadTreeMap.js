@@ -1584,17 +1584,31 @@ export class QuadTreeMap {
             } else {
                 // Cull below-horizon and globe-occluded tiles for distant cases.
                 const cameraAltitude = altitudeAboveSphere(_cameraPositionClone.copy(camera.position));
-                const horizon = distanceToHorizon(cameraAltitude);
 
-                if (horizon > closestDistance ||
-                    hiddenByGlobe(cameraAltitude, closestDistance) <= tile.highestAltitude) {
+                // The horizon/globe-occlusion formulas assume the observer is
+                // above the ellipsoid. Some look-camera setups sit below HAE
+                // because the scene uses local terrain/geoid offsets; in that
+                // case the formulas produce NaN and incorrectly reject tiles
+                // that still intersect the actual frustum.
+                if (cameraAltitude <= 0) {
                     visible = true;
                     if (diag) {
                         if (inStrict) diag.inStrictFrustum++;
                         else diag.inDilatedMargin++;
                     }
-                } else if (diag) {
-                    diag.horizonOccluded++;
+                } else {
+                    const horizon = distanceToHorizon(cameraAltitude);
+
+                    if (horizon > closestDistance ||
+                        hiddenByGlobe(cameraAltitude, closestDistance) <= tile.highestAltitude) {
+                        visible = true;
+                        if (diag) {
+                            if (inStrict) diag.inStrictFrustum++;
+                            else diag.inDilatedMargin++;
+                        }
+                    } else if (diag) {
+                        diag.horizonOccluded++;
+                    }
                 }
             }
         } else if (diag) {
@@ -1784,6 +1798,9 @@ export class QuadTreeMap {
                     return true; // camera essentially inside the sphere
                 }
                 const cameraAltitude = altitudeAboveSphere(_cameraPositionClone.copy(camera.position));
+                if (cameraAltitude <= 0) {
+                    return true;
+                }
                 const horizon = distanceToHorizon(cameraAltitude);
                 // A freshly-created child has highestAltitude 0 (the same value
                 // PASS 3 uses for it), so the globe-peek term compares against 0.
