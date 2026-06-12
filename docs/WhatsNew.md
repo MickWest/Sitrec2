@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.83.3 (2026-06-11)
+
+### Bug Fixes
+- Fixed terrain disappearing — or refusing to sharpen to full detail — when the camera sits at or slightly below the Earth reference surface, as can happen with ground-level cameras in areas where the local ground is below it.
+
+---
+
 ## Version 2.83.2 (2026-06-11)
 
 ### New Features

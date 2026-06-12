@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.83.3 (2026-06-11)
+
+### Bug Fixes
+- Fixed terrain tiles being wrongly culled — and tile subdivision being wrongly blocked — when the camera sits below the WGS84 ellipsoid. The distant-tile horizon/globe-occlusion cull in `QuadTreeMap.calculateTileVisibility` (`src/QuadTreeMap.js`) feeds the camera's geodetic altitude (`altitudeAboveSphere`, an alias of `altitudeHAE`) into `distanceToHorizon` and `hiddenByGlobe`, formulas that assume the observer is above the surface. With a negative altitude, `distanceToHorizon` takes the square root of a negative number and `hiddenByGlobe` takes `acos` of a value greater than 1 — both return NaN, every NaN comparison is false, and tiles that genuinely intersect the view frustum fell through to the `horizonOccluded` rejection path, making the terrain vanish. Some look-camera setups legitimately sit below HAE because the scene uses local terrain/geoid offsets. Both gates now short-circuit when `cameraAltitude <= 0`: `calculateTileVisibility` accepts frustum-passing tiles without applying the horizon formulas, and the prospective-child subdivision guard `anyProspectiveChildVisible` returns `true` instead of blocking subdivision (which left the parent rendered as a coarse leaf). A new unit test, `tests/QuadTreeMapVisibility.test.js`, exercises both paths with a camera 10 m below the ellipsoid.
+
+---
+
 ## Version 2.83.2 (2026-06-11)
 
 ### New Features
