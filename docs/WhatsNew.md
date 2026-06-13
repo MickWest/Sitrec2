@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.83.5 (2026-06-12)
+
+### New Features
+- **Moonlight** (Video → Long Exposure, off by default): a long-exposure mode that lights the scene with only the Moon — ambient light is removed and the light is re-aimed at the Moon at its true, phase-dependent brightness (a full moon is about 20 stops dimmer than the sun). Stars, planets, and lights are re-calibrated to the same physical scale as the moonlit ground, so a single exposure shows the dim moonlit landscape and the brighter star trails together, the way a real moonlit photo does. The result window opens already developed to the moonlit exposure. Surfaces facing away from the Moon go dark, shadows fall from the Moon, and a Moon below the horizon gives a dark scene with stars still recording.
+
+### Bug Fixes
+- Fixed the Moon rendering too dim in long exposures — its disk now burns out and trails at its true brightness whenever it is in frame.
+
+---
+
 ## Version 2.83.4 (2026-06-12)
 
 ### Improvements

@@ -7,6 +7,10 @@ import {degrees} from "../utils";
 import {altitudeHAE, getLocalUpVector} from "../SphericalMath";
 import {Color, MathUtils, Vector3} from "three";
 
+// apparent V magnitude of the Sun, the anchor for the Moonlight-mode
+// illuminance ratio (moon mag -12.7 full -> ~20 stops below daylight)
+const SUN_APPARENT_MAG = -26.74;
+
 // will exist as a singleton node: "theSun"
 export class CNodeSunlight extends CNode {
     constructor(v) {
@@ -208,6 +212,25 @@ export class CNodeSunlight extends CNode {
                 }
 
                 const sun = this.calculateSunAt(camera.position, date);
+
+                // Moonlight mode (Long Exposure): light the scene with ONLY the
+                // Moon — no ambient, the directional light re-aimed at the Moon
+                // with its true phase-dependent brightness relative to the sun
+                // (a full moon is ~14 magnitudes = ~400,000x dimmer). This has
+                // to live HERE because every view render re-runs this update,
+                // overwriting any external write to the global lights. The
+                // intensity scales with this.sunIntensity, so the Long Exposure
+                // HDR-background boost flows through linearly.
+                if (this.moonlightMode) {
+                    const moonDir = getCelestialDirection("Moon", date, camera.position);
+                    const moonAngle = 90 - degrees(moonDir.angleTo(getLocalUpVector(camera.position)));
+                    const moonMag = NodeMan.get("NightSkyNode", false)?.planets?.planetSprites?.Moon?.mag ?? -12.7;
+                    const ratio = Math.pow(10, -0.4 * (moonMag - SUN_APPARENT_MAG));
+                    sun.sunPos = moonDir.clone().multiplyScalar(60000);
+                    sun.sunIntensity = this.sunIntensity * brightnessOfSun(moonAngle, this.darkeningAngle) * Math.PI * this.sunBoost * ratio;
+                    sun.ambientIntensity = 0;
+                    sun.sunTotal = sun.sunIntensity;
+                }
 
                 Globals.sunLight.position.copy(sun.sunPos)
                 Globals.sunAngle = sun.sunAngle;

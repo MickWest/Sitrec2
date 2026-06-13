@@ -77,6 +77,11 @@ const defaultParams = () => ({
                          // scale it back down in the float buffer — pushing the
                          // EV up reveals smooth detail instead of quantized
                          // bands (calibrated on the first frame, restored after)
+    moonlight: false,    // light the scene with ONLY the Moon: no ambient, the
+                         // sun light re-aimed at the Moon with its true
+                         // phase-dependent brightness (~20 stops below daylight
+                         // at full moon). Uses the HDR Background machinery to
+                         // make that renderable; the result window auto-develops
     satMag: 4.0,         // magnitude that just saturates one frame's exposure
                          // (Venus at -4.4 is then ~2300x saturation — a real
                          // "2000+ on a 0-255 scale" point source)
@@ -152,6 +157,14 @@ class CLongExposureManager {
                 "range, then scaled back down in the HDR buffer — pushing the EV slider up\n" +
                 "then reveals smooth ground detail instead of quantized color bands.\n" +
                 "Calibrated once on the first frame; the lighting is restored afterwards.");
+        folder.add(this.params, "moonlight").name("Moonlight").perm().listen().onChange(dirty)
+            .tooltip("Light the scene with ONLY the Moon: ambient light is removed and the\n" +
+                "sun light is re-aimed at the Moon's position with the Moon's true\n" +
+                "phase-dependent brightness (a full moon is ~20 stops dimmer than the\n" +
+                "sun; shadows, if enabled, fall from the Moon). The HDR Background\n" +
+                "calibration makes this renderable, and the result window opens with\n" +
+                "the EV pre-set to a developed moonlit exposure. Moon below the\n" +
+                "horizon = a dark scene (stars still record).");
         folder.add(this.params, "reddening").name("Horizon Reddening").perm().listen().onChange(dirty)
             .tooltip("Chromatic extinction: sources near the horizon redden as well as dim\n" +
                 "(Rayleigh removes blue first, with broadband Forbes correction). Off =\n" +
@@ -663,8 +676,27 @@ async function renderLongExposure(mgr) {
     // Content that does NOT respond to the lights (the atmosphere's sky glow,
     // emissive sprites) ends up boost x darker in the buffer — at night that
     // is near-black anyway, and stars/planets/lights are splatted in HDR.
-    const BG_BOOST_CAP = 1024;
+    // Moonlight mode needs a far higher cap: physical moonlight is ~20+ stops
+    // below the daylight calibration (more for a crescent), and the boost is
+    // what brings it back into the 8-bit render.
+    const BG_BOOST_CAP = P.moonlight ? 1e9 : 1024;
     let bgBoost = 1, bgProbed = false;
+
+    // Point-source ↔ rendered-scene tie (Moonlight mode). The splat flux scale
+    // (satMag, an astronomical zero-point) and the rendered ground (the engine's
+    // physical lighting, scaled by the HDR boost) are otherwise on unrelated
+    // absolute scales — a mag-4 star deposits 1.0 while moonlit ground sits at
+    // ~1e-6, an ~20-stop gap, so no single EV shows both stars AND landscape the
+    // way a real moonlit long exposure does. For a real camera the recorded
+    // signal of a POINT source vs an EXTENDED surface differs by the plate
+    // scale: star/ground = E_star / (L_ground · ω_pixel). Working it through
+    // (the moon's own brightness cancels), the physically-correct splat scale is
+    //   splatScale = 10^(0.4(moonMag − satMag)) · π · bgTarget / (albedo · boost · ω_pixel)
+    // applied to every point-source deposit. 1.0 in every other mode.
+    let splatScale = 1;
+    const GROUND_ALBEDO_REF = 0.3;   // assumed albedo of the brightest patch
+                                     // that set the boost; only affects the
+                                     // star/ground RATIO, EV absorbs the rest
     let bgTargetLin = 0.9;     // decoded-linear value the p99.9 pixel should reach
     let bgClipLin = 0.98;      // decoded-linear value that means "clipped, back off"
     if (useACES) {
@@ -674,6 +706,15 @@ async function renderLongExposure(mgr) {
         _tmPx[0] = _tmPx[1] = _tmPx[2] = 0.98;
         acesInverse(_tmPx, 0, acesExposure);
         bgClipLin = _tmPx[0];
+    }
+    // Moonlight mode: the override lives INSIDE the sun pipeline
+    // (CNodeSunlight.update honors theSun.moonlightMode) because every view
+    // render re-runs that update, clobbering any external light writes. Set
+    // the flag for the whole exposure; cleared in the finally.
+    const theSunNode = NodeMan.get("theSun", false);
+    if (P.moonlight) {
+        if (theSunNode) theSunNode.moonlightMode = true;
+        else console.warn("Long exposure: Moonlight mode needs a theSun node — ignoring");
     }
     const savedLights = [];
     function scaleSceneLights(ratio) {
@@ -881,7 +922,7 @@ async function renderLongExposure(mgr) {
         // cap scales with Frame Step: inter-sample intervals are step× longer,
         // so a fast streak can legitimately cover step× more pixels per interval
         const nSub = Math.min(4096, Math.max(1, Math.ceil(est / 0.6)));
-        const eSub = flux / nSub;
+        const eSub = flux * splatScale / nSub;
         const dt = (t1 - t0);
         for (let k = 0; k < nSub; k++) {
             const s = (k + 0.5) / nSub;
@@ -1016,14 +1057,18 @@ async function renderLongExposure(mgr) {
             decodeFrame();
 
             // ---- HDR background: calibrate the lighting boost (first sample) ----
-            if (P.hdrBackground && !bgProbed) {
+            // (moonlight mode depends on it: physical moonlight would render black)
+            if ((P.hdrBackground || P.moonlight) && !bgProbed) {
                 bgProbed = true;
-                for (let iter = 0; iter < 4; iter++) {
+                for (let iter = 0; iter < 10; iter++) {
                     const ref = bgPercentile();
                     let next;
-                    if (ref >= bgClipLin) next = bgBoost * 0.5;                 // clipped: back off
-                    else if (ref > 1e-7) next = bgBoost * (bgTargetLin / ref);  // linear lighting: exact step
-                    else next = BG_BOOST_CAP;                                   // black frame: full boost
+                    if (ref <= 1e-7) next = bgBoost * 1024;                     // unmeasurably dark (all code 0):
+                                                                                // step up by a measurable factor —
+                                                                                // jumping straight to a huge cap
+                                                                                // can't walk back down by halving
+                    else if (ref >= bgClipLin) next = bgBoost * 0.5;            // clipped: back off
+                    else next = bgBoost * (bgTargetLin / ref);                  // linear lighting: exact step
                     next = Math.min(BG_BOOST_CAP, Math.max(1, next));
                     if (Math.abs(next / bgBoost - 1) < 0.05) break;
                     scaleSceneLights(next / bgBoost);
@@ -1039,6 +1084,16 @@ async function renderLongExposure(mgr) {
                 } else if (bgBoost !== 1) {
                     restoreSceneLights();
                     bgBoost = 1;
+                }
+                // tie the point-source scale to the now-calibrated ground
+                if (P.moonlight && bgBoost > 1) {
+                    const e = projElements;
+                    const omegaPix = (2 * Math.atan(1 / e[0]) / W) * (2 * Math.atan(1 / e[5]) / H);
+                    const moonMag = nightSky?.planets?.planetSprites?.Moon?.mag ?? -12.7;
+                    splatScale = Math.pow(10, 0.4 * (moonMag - P.satMag)) *
+                        Math.PI * bgTargetLin / (GROUND_ALBEDO_REF * bgBoost * omegaPix);
+                    console.log(`Long exposure: moonlight splat scale ${splatScale.toExponential(2)} ` +
+                        `(moonMag ${moonMag.toFixed(2)}, ωpix ${omegaPix.toExponential(2)})`);
                 }
             }
             if (bgBoost !== 1) {
@@ -1221,9 +1276,12 @@ async function renderLongExposure(mgr) {
             prevPose = pose;
             framesDone++;
 
-            // live preview of the developing exposure (running average so far)
+            // live preview of the developing exposure (running average so far);
+            // moonlight mode previews at the developed gain (raw values are
+            // ~20 stops down and would preview black)
             if (previewCtx && framesDone % previewEvery === 0) {
-                tonemapBufferInto(acc, 1 / framesDone, W, H, 1, {useACES, acesExposure}, previewCtx, previewImg);
+                const previewGain = (P.moonlight && bgBoost > 1) ? bgBoost : 1;
+                tonemapBufferInto(acc, 1 / framesDone, W, H, previewGain, {useACES, acesExposure}, previewCtx, previewImg);
                 coverLabel.textContent = `Rendering long exposure… ${framesDone} / ${numSamples} samples`;
             }
 
@@ -1235,12 +1293,18 @@ async function renderLongExposure(mgr) {
             // normalize by frames actually accumulated (early "Enough" stop included)
             const inv = 1 / framesDone;
             for (let p = 0; p < acc.length; p++) acc[p] *= inv;
-            showResultWindow(acc, W, H, {useACES, acesExposure});
+            // moonlight mode: open pre-developed (EV = the calibrated boost,
+            // i.e. the moonlit ground exposed like the boosted render), with
+            // the slider range extended to reach it
+            const evInit = (P.moonlight && bgBoost > 1) ? Math.round(Math.log2(bgBoost) * 10) / 10 : 0;
+            const evMax = Math.max(10, Math.ceil(evInit) + 4);
+            showResultWindow(acc, W, H, {useACES, acesExposure, evInit, evMax});
         }
     } finally {
         progress.remove();
         if (cover.parentNode) cover.parentNode.removeChild(cover);
         restoreSceneLights();
+        if (theSunNode) theSunNode.moonlightMode = false;
         for (const h of hiddenSprites) h.obj.visible = h.was;
         for (const ln of lightNodes) ln.suppressBillboard = false;
         lookView.setVisible(savedVisible);
@@ -1362,7 +1426,7 @@ function showResultWindow(avg, W, H, opts) {
     const ctx = canvas.getContext("2d");
     const img = ctx.createImageData(W, H);
 
-    let ev = 0;
+    let ev = opts.evInit ?? 0;
     function tonemap() {
         tonemapBufferInto(avg, 1, W, H, Math.pow(2, ev), opts, ctx, img);
     }
@@ -1372,9 +1436,10 @@ function showResultWindow(avg, W, H, opts) {
     bar.style.cssText = "display:flex;align-items:center;gap:14px;background:#222;padding:8px 16px;" +
         "border-radius:6px;border:1px solid #444;";
     const label = document.createElement("span");
-    label.textContent = "Exposure: 0.0 EV";
+    label.textContent = `Exposure: ${ev.toFixed(1)} EV`;
     const slider = document.createElement("input");
-    slider.type = "range"; slider.min = "-6"; slider.max = "10"; slider.step = "0.1"; slider.value = "0";
+    slider.type = "range"; slider.min = "-6"; slider.max = String(opts.evMax ?? 10); slider.step = "0.1";
+    slider.value = String(ev);
     slider.style.width = "260px";
     slider.oninput = () => {
         ev = parseFloat(slider.value);

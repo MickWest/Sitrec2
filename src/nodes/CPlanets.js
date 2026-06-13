@@ -576,6 +576,11 @@ export class CPlanets {
             if (storeState) {
                 this.planetSprites["Moon"].ra = ra;
                 this.planetSprites["Moon"].dec = dec;
+                // phase-dependent apparent magnitude (~ -12.7 full, -10 quarter):
+                // the regular planet path stores illumination.mag but the Moon
+                // branches here and was leaving mag at its init value of 0 —
+                // consumers (HDR moon disk, Moonlight mode) need the real one
+                this.planetSprites["Moon"].mag = Astronomy.Illumination("Moon", date).mag;
             }
         }
     }
