@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.83.4 (2026-06-12)
+
+### Improvements
+- **HDR Background** (Video → Long Exposure, on by default): in dark scenes the background now renders with far finer color precision, so brightening a long-exposure result with the EV slider reveals smooth ground detail instead of banded, posterized color. Calibrated automatically on the first frame and inert in bright scenes; the scene lighting is always restored after the render.
+
+---
+
 ## Version 2.83.3 (2026-06-11)
 
 ### Bug Fixes

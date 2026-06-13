@@ -62,6 +62,7 @@ trails are smooth curves even during fast camera motion.
 |---|---|
 | **Duration (Minutes)** | The exposure (shutter) time in minutes of sitch time, from the start of the sitch. If longer than the sitch itself, the timeline is extended for the render. |
 | **Lock Camera Heading** | On by default: the camera holds the heading it has *right now* for the whole exposure — a tripod doesn't track. Works in any camera mode (To Target, Celestial Lock, Horizon Flare Region…), behaving as if Use Angles were locked on the current spot in the sky. The Camera Nudge still applies on top. Turn off to let the active camera mode steer during the exposure. |
+| **HDR Background** | On by default: in a dark scene the lighting (Sun + Ambient) is temporarily boosted so the background renders using the full 8-bit range, then scaled back down in the HDR buffer. Pushing the EV slider up then reveals smooth ground detail instead of quantized color bands. Calibrated on the first frame; the lighting is restored after the render (including Enough/cancel). |
 | **Horizon Reddening** | Chromatic extinction (off by default): sources near the horizon redden as well as dim. In real star-trail photos the effect is largely masked by blue star colors and sky glow, so the default is dimming only. |
 | **Star Tint** | Intrinsic blue-white color of star trails (0 = flat white, 1 = bright-star population average). With Horizon Reddening on, extinction neutralizes the blue before warming, as in real star-trail photos. |
 | **Saturation Magnitude** | The star magnitude whose light just saturates one pixel in a single frame — the "ISO" of the simulated camera. Default 4: Venus (−4.4) is then ~2300× saturation. Lower = a less sensitive camera. |
@@ -133,6 +134,10 @@ grid are automatically excluded from exposures — chart overlays aren't light.
 - Anything that saturates in the **base render** (bright clouds, city glow, terrain) is
   clipped at single-frame white — only catalogued point sources, model lights, satellites
   and the Moon carry true HDR values.
+- **HDR Background** boosts only what the scene lights illuminate. Content that doesn't
+  respond to lighting (the atmosphere's sky glow) is recorded proportionally darker —
+  negligible at night, which is the only time the boost engages (in a bright scene it
+  calibrates to 1× and changes nothing).
 - **Occlusion** uses a screen-space mask of opaque foreground (on by default): anything
   the look view renders as solid — terrain, buildings, models — blocks splatted sources
   behind it. The mask is sampled once per camera position (recomputed if the camera

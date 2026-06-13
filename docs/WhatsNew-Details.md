@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.83.4 (2026-06-12)
+
+### Improvements
+- **Long Exposure: HDR Background** (Video → Long Exposure, default on) — recovers background dynamic range in dark scenes. In a night scene (e.g. ambient 0.01) the entire lit background of the 8-bit base render lands in a handful of codes, so pushing the result's EV slider up reveals posterized color bands. Because Three.js lighting is linear, `renderLongExposure` (`src/LongExposure.js`) now temporarily boosts the scene lighting so the background renders using the full 8-bit range, then divides every decoded frame by the same factor before accumulation (and before the Moon-disk renormalization), leaving the float buffer at true brightness with ~boost× finer quantization. Calibration runs on the first sample: `bgPercentile()` measures the decoded scene-linear frame's 99.9th-percentile per-pixel max channel (stride-2 sampling), and up to 4 iterations re-render that sample via the new `decodeFrame()` closure — an exact ratio step toward a target just under saturation (display-linear 0.9, mapped through `acesInverse` when the look view tone-maps), backing off ×0.5 when the percentile reads clipped (≥ `bgClipLin`), capped at `BG_BOOST_CAP = 1024`. A final boost ≤ 1.01 is treated as 1, so the feature is inert in bright scenes. `scaleSceneLights()` applies the boost to the `theSun` node's `sunIntensity`/`ambientIntensity` (that node rewrites the global light intensities every update) AND to the `lighting` node's matching properties (so a mid-render `recalculate()` can't push unboosted values back), falling back to `Globals.sunLight`/`ambientLight` directly when neither node exists; `restoreSceneLights()` runs in the `finally`, so lighting is restored on completion, Enough, or error. New `hdrBackground` param in `defaultParams` (default true), serialized with custom sitches like the other Long Exposure params. Measured on the LE HDR Background Test sitch: boost calibrated to 268.9×; unique colors in the dark region at EV+8 went from 712 (off) to 85,892 (on) with mean luma preserved (70.4 vs 77.6); lights verified restored after the render. `docs/LongExposure.md` gains an HDR Background controls-table row and a nuances bullet: content that doesn't respond to the scene lights (the atmosphere's sky glow) is recorded proportionally darker — negligible at night, the only time the boost engages.
+
+---
+
 ## Version 2.83.3 (2026-06-11)
 
 ### Bug Fixes

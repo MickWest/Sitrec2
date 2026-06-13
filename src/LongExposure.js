@@ -28,6 +28,14 @@
 //    the LDR render but its disk pixels are scaled so the disk's total energy
 //    matches its catalog magnitude under the same calibration.
 //
+// 3) HDR background: a night scene's lit content may quantize into a handful
+//    of 8-bit codes (EV-pushing the result shows color bands). The scene
+//    lighting (Sun + Ambient) is temporarily boosted so the first frame's
+//    brightest lit content just fills the 8-bit range, every decoded frame is
+//    divided by the same factor, and the lights are restored afterwards —
+//    true brightness, far finer quantization (lighting is linear, so the
+//    division is exact for everything the lights illuminate).
+//
 // Physically-accurate notes / v1 approximations:
 //  - splat energy is deposited per frame and averaged like the background, so
 //    a static star keeps exactly flux F while a moving one spreads F along its
@@ -64,6 +72,11 @@ const defaultParams = () => ({
                          // Celestial Lock / Horizon Flare Region modes the camera
                          // acts like "Use Angles" pointed at the current spot
     hdrPoints: true,     // splat stars/planets/lights with true flux
+    hdrBackground: true, // boost the scene lighting (Sun + Ambient) so a dark
+                         // background renders using the full 8-bit range, then
+                         // scale it back down in the float buffer — pushing the
+                         // EV up reveals smooth detail instead of quantized
+                         // bands (calibrated on the first frame, restored after)
     satMag: 4.0,         // magnitude that just saturates one frame's exposure
                          // (Venus at -4.4 is then ~2300x saturation — a real
                          // "2000+ on a 0-255 scale" point source)
@@ -133,6 +146,12 @@ class CLongExposureManager {
             .tooltip("Replace the cosmetic star/planet/light sprites with physically-bright point\n" +
                 "splats (true linear flux) so bright sources stay visible in the average and\n" +
                 "leave correct trails. Disable for a plain frame average.");
+        folder.add(this.params, "hdrBackground").name("HDR Background").perm().listen().onChange(dirty)
+            .tooltip("Recover dynamic range in dark scenes: the Sun/Ambient lighting is\n" +
+                "temporarily boosted so the night background renders using the full 8-bit\n" +
+                "range, then scaled back down in the HDR buffer — pushing the EV slider up\n" +
+                "then reveals smooth ground detail instead of quantized color bands.\n" +
+                "Calibrated once on the first frame; the lighting is restored afterwards.");
         folder.add(this.params, "reddening").name("Horizon Reddening").perm().listen().onChange(dirty)
             .tooltip("Chromatic extinction: sources near the horizon redden as well as dim\n" +
                 "(Rayleigh removes blue first, with broadband Forbes correction). Off =\n" +
@@ -631,6 +650,70 @@ async function renderLongExposure(mgr) {
         acesExposure = skyExposure * (lookView.atmosphereExposure ?? 1.0) * sceneExposure;
     }
 
+    // ---- HDR background: temporary lighting boost ----
+    // A night scene's lit content may land in just a few 8-bit codes (ambient
+    // 0.01 -> the whole ground in codes 0-5), so pushing the result's EV up
+    // shows quantized color bands. Because Three.js lighting is linear, we can
+    // temporarily multiply the scene lighting (Sun + Ambient) so the first
+    // frame's brightest lit content sits just under saturation — using the
+    // full 8-bit range — then divide the decoded frame by the same factor:
+    // true brightness, far finer quantization. Calibrated on the first sample
+    // (re-rendering it until the 99.9th-percentile pixel hits the target),
+    // held for the whole exposure, restored in the finally.
+    // Content that does NOT respond to the lights (the atmosphere's sky glow,
+    // emissive sprites) ends up boost x darker in the buffer — at night that
+    // is near-black anyway, and stars/planets/lights are splatted in HDR.
+    const BG_BOOST_CAP = 1024;
+    let bgBoost = 1, bgProbed = false;
+    let bgTargetLin = 0.9;     // decoded-linear value the p99.9 pixel should reach
+    let bgClipLin = 0.98;      // decoded-linear value that means "clipped, back off"
+    if (useACES) {
+        _tmPx[0] = _tmPx[1] = _tmPx[2] = 0.9;
+        acesInverse(_tmPx, 0, acesExposure);
+        bgTargetLin = _tmPx[0];
+        _tmPx[0] = _tmPx[1] = _tmPx[2] = 0.98;
+        acesInverse(_tmPx, 0, acesExposure);
+        bgClipLin = _tmPx[0];
+    }
+    const savedLights = [];
+    function scaleSceneLights(ratio) {
+        // theSun (when present) rewrites the global light intensities from its
+        // own properties every update, so the boost must go on the node
+        // properties; the lighting node is scaled too so a mid-render
+        // recalculate() can't push unboosted values back onto theSun.
+        const targets = [];
+        const theSun = NodeMan.get("theSun", false);
+        const lighting = NodeMan.get("lighting", false);
+        if (theSun) targets.push([theSun, "sunIntensity"], [theSun, "ambientIntensity"]);
+        if (lighting) targets.push([lighting, "sunIntensity"], [lighting, "ambientIntensity"]);
+        if (!theSun && !lighting) {
+            if (Globals.sunLight) targets.push([Globals.sunLight, "intensity"]);
+            if (Globals.ambientLight) targets.push([Globals.ambientLight, "intensity"]);
+        }
+        for (const [o, k] of targets) {
+            if (!savedLights.some(([so, sk]) => so === o && sk === k)) savedLights.push([o, k, o[k]]);
+            o[k] *= ratio;
+        }
+    }
+    function restoreSceneLights() {
+        for (const [o, k, v] of savedLights) o[k] = v;
+        savedLights.length = 0;
+    }
+    // 99.9th-percentile per-pixel max channel of the decoded frame: robust to
+    // a few stray bright pixels (sprite edges, a tiny moon), and inert
+    // (boost ~1) when genuinely bright content fills the frame
+    function bgPercentile() {
+        const nPix = W * H;
+        const vals = new Float32Array(Math.ceil(nPix / 2));
+        let n = 0;
+        for (let p = 0; p < nPix; p += 2) {
+            const r = frameLin[p * 3], g = frameLin[p * 3 + 1], b = frameLin[p * 3 + 2];
+            vals[n++] = r > g ? (r > b ? r : b) : (g > b ? g : b);
+        }
+        vals.subarray(0, n).sort();
+        return vals[Math.min(n - 1, Math.floor(n * 0.999))];
+    }
+
     // ---- per-run state, sized after the first render ----
     let W = 0, H = 0, acc = null, frameLin = null, readCanvas = null, readCtx = null;
 
@@ -915,18 +998,52 @@ async function renderLongExposure(mgr) {
             }
 
             // ---- readback + decode to scene-linear ----
-            readCtx.fillStyle = "#000";
-            readCtx.fillRect(0, 0, W, H);
-            readCtx.drawImage(lookView.canvas, 0, 0, W, H);
-            const data = readCtx.getImageData(0, 0, W, H).data;
             const nPix = W * H;
-            for (let p = 0; p < nPix; p++) {
-                frameLin[p * 3] = srgbLut[data[p * 4]];
-                frameLin[p * 3 + 1] = srgbLut[data[p * 4 + 1]];
-                frameLin[p * 3 + 2] = srgbLut[data[p * 4 + 2]];
+            const decodeFrame = () => {
+                readCtx.fillStyle = "#000";
+                readCtx.fillRect(0, 0, W, H);
+                readCtx.drawImage(lookView.canvas, 0, 0, W, H);
+                const data = readCtx.getImageData(0, 0, W, H).data;
+                for (let p = 0; p < nPix; p++) {
+                    frameLin[p * 3] = srgbLut[data[p * 4]];
+                    frameLin[p * 3 + 1] = srgbLut[data[p * 4 + 1]];
+                    frameLin[p * 3 + 2] = srgbLut[data[p * 4 + 2]];
+                }
+                if (useACES) {
+                    for (let p = 0; p < nPix; p++) acesInverse(frameLin, p * 3, acesExposure);
+                }
+            };
+            decodeFrame();
+
+            // ---- HDR background: calibrate the lighting boost (first sample) ----
+            if (P.hdrBackground && !bgProbed) {
+                bgProbed = true;
+                for (let iter = 0; iter < 4; iter++) {
+                    const ref = bgPercentile();
+                    let next;
+                    if (ref >= bgClipLin) next = bgBoost * 0.5;                 // clipped: back off
+                    else if (ref > 1e-7) next = bgBoost * (bgTargetLin / ref);  // linear lighting: exact step
+                    else next = BG_BOOST_CAP;                                   // black frame: full boost
+                    next = Math.min(BG_BOOST_CAP, Math.max(1, next));
+                    if (Math.abs(next / bgBoost - 1) < 0.05) break;
+                    scaleSceneLights(next / bgBoost);
+                    bgBoost = next;
+                    // re-render this sample under the adjusted lighting
+                    await updateWorld(f);
+                    applyHeadingLock(t);
+                    renderOnce(f);
+                    decodeFrame();
+                }
+                if (bgBoost > 1.01) {
+                    console.log(`Long exposure: HDR background lighting boost ${bgBoost.toFixed(1)}x`);
+                } else if (bgBoost !== 1) {
+                    restoreSceneLights();
+                    bgBoost = 1;
+                }
             }
-            if (useACES) {
-                for (let p = 0; p < nPix; p++) acesInverse(frameLin, p * 3, acesExposure);
+            if (bgBoost !== 1) {
+                const ib = 1 / bgBoost;
+                for (let p = 0; p < nPix * 3; p++) frameLin[p] *= ib;
             }
 
             // ---- HDR moon disk: scale so the disk's total energy matches its magnitude ----
@@ -1123,6 +1240,7 @@ async function renderLongExposure(mgr) {
     } finally {
         progress.remove();
         if (cover.parentNode) cover.parentNode.removeChild(cover);
+        restoreSceneLights();
         for (const h of hiddenSprites) h.obj.visible = h.was;
         for (const ln of lightNodes) ln.suppressBillboard = false;
         lookView.setVisible(savedVisible);
