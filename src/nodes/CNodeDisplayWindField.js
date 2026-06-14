@@ -122,6 +122,13 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.linesMesh = null;
         this.dataSource = "none";
         this.fetching = false;
+        // True for the whole duration of the deferred post-deserialize GFS
+        // re-fetch (_reloadGFSAfterDeserialize), whose per-level network fetches
+        // run BEFORE the final fetchWindForAltitude sets this.fetching — so
+        // without it the settle gate (getPendingLoadState) sees a gap and can
+        // screenshot a wind field whose streamlines aren't built yet (the
+        // "wind test" concurrency flake: streamlines entirely absent under load).
+        this._reloadInFlight = false;
         this._lastDateCycle = null;  // "YYYYMMDD_HH" of the last-fetched GFS cycle
         this._levelCache = {};       // level string → GFS json (one per pressure level)
 
@@ -1082,6 +1089,25 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     }
 
     // ── streamline geometry with multi-LOD ───────────────────────────
+    // Settle-gate hook (run.mjs settleStateFn + ExportFrameSettler). The wind
+    // field's data is fetched ASYNCHRONOUSLY and its streamline mesh is only
+    // built once that fetch lands — a window the generic load/tile/texture
+    // gates can't see. Without this, under concurrent load the scene settles
+    // and the screenshot is taken BEFORE the streamlines exist, so they're
+    // entirely missing from the capture (the long-standing "wind test"
+    // regression flake — a fixed ~30351px diff because the streamlines are
+    // binary present/absent, not subtly shifted). Report pending across the
+    // entire load: the queued deferred fetch, the GFS multi-level reload, and
+    // any in-flight fetchWindForAltitude.
+    getPendingLoadState(viewIds = null) {
+        const hasPending =
+            !!this._needsPostDeserializeFetch ||
+            Array.isArray(this._needsPostDeserializeReloadGFS) ||
+            !!this._reloadInFlight ||
+            !!this.fetching;
+        return {hasPending};
+    }
+
     rebuildStreamlines() {
         if (this.linesMesh) {
             this.group.remove(this.linesMesh);
@@ -2157,6 +2183,15 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // saved altitude from cache. Reports progress and a final summary that
     // distinguishes "all loaded", "partial — closest is X", and pure failure.
     async _reloadGFSAfterDeserialize(savedLevels) {
+        this._reloadInFlight = true;
+        try {
+            await this._reloadGFSAfterDeserializeInner(savedLevels);
+        } finally {
+            this._reloadInFlight = false;
+        }
+    }
+
+    async _reloadGFSAfterDeserializeInner(savedLevels) {
         const dateNow = GlobalDateTimeNode?.dateNow ?? new Date();
         const fallbackDate = dateNow.toISOString().slice(0, 10).replace(/-/g, "");
         const fallbackHour = Math.floor(dateNow.getUTCHours() / 6) * 6;
