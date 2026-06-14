@@ -15,7 +15,16 @@
 // timeline widget reads/writes it too.
 
 import {makeDraggable, blockViewEvents, clampBelowMenuBar} from "../DragResizeUtils";
-import {markSitchDirty} from "../Globals";
+import {CustomManager, guiMenus, markSitchDirty, NodeMan, TrackManager} from "../Globals";
+import {VIEW_MAP} from "./ScriptCommands";
+import {
+    buildScriptSnippet,
+    deleteLine,
+    duplicateLine,
+    ensureAmpOffsetSpan,
+    insertLineAfter,
+    replaceNumberSpan,
+} from "./ScriptAuthoring";
 
 export const STORAGE_KEY = "sitrec_scripted_video_script";
 
@@ -46,7 +55,9 @@ export class CScriptEditorWindow {
         this.textarea = null;
         this.backdrop = null;
         this.statusEl = null;
+        this.detailEl = null;
         this._content = null;        // movable editor content (panel <-> popup)
+        this._palette = null;
         this._charW = null;          // cached character width for hover hit-testing
     }
 
@@ -126,6 +137,7 @@ export class CScriptEditorWindow {
         toolbar.appendChild(this._winButton("Preview", () => sv.startPreview()));
         toolbar.appendChild(this._winButton("Stop", () => sv.stopAll()));
         toolbar.appendChild(this._winButton("Render", () => sv.renderVideo()));
+        toolbar.appendChild(this._winButton("Insert", () => this.openInsertPalette()));
         this._popoutBtn = this._winButton("⧉ New Window", () => this._togglePopout());
         this._popoutBtn.style.marginLeft = "auto";
         toolbar.appendChild(this._popoutBtn);
@@ -173,6 +185,10 @@ export class CScriptEditorWindow {
         st.textContent = "Press Parse";
         this.statusEl = st;
 
+        const detail = document.createElement("div");
+        detail.style.cssText = "display:none; align-items:center; gap:6px; padding:3px 8px 5px; flex:0 0 auto; border-top:1px solid rgba(255,255,255,0.04); font:11px sans-serif; color:#cbd3df;";
+        this.detailEl = detail;
+
         const tl = document.createElement("canvas");
         tl.style.cssText = "display:block; width:calc(100% - 16px); height:60px; margin:0 8px 10px; border:1px solid #333; border-radius:4px; flex:0 0 auto;";
         sv.timeline.attach(tl);
@@ -181,6 +197,7 @@ export class CScriptEditorWindow {
         content.appendChild(toolbar);
         content.appendChild(editWrap);
         content.appendChild(st);
+        content.appendChild(detail);
         content.appendChild(tl);
         setTimeout(() => this._renderBackdrop(), 0);
         return content;
@@ -195,6 +212,367 @@ export class CScriptEditorWindow {
         b.addEventListener("mouseleave", () => b.style.background = "rgba(255,255,255,0.10)");
         b.addEventListener("click", onClick);
         return b;
+    }
+
+    _miniButton(label, onClick, title = "") {
+        const b = this._winButton(label, onClick);
+        b.style.padding = "2px 7px";
+        b.style.font = "11px sans-serif";
+        if (title) b.title = title;
+        return b;
+    }
+
+    _setText(nextText, caretRow = null, caretCol = null) {
+        const ta = this.textarea;
+        if (!ta) return Promise.resolve();
+        ta.value = nextText;
+        if (caretRow != null) {
+            const lines = ta.value.split("\n");
+            const row = Math.max(0, Math.min(lines.length - 1, caretRow));
+            const col = Math.max(0, Math.min(lines[row].length, caretCol == null ? lines[row].length : caretCol));
+            let idx = 0;
+            for (let r = 0; r < row; r++) idx += lines[r].length + 1;
+            try { ta.setSelectionRange(idx + col, idx + col); } catch (e) {}
+        }
+        markSitchDirty();
+        this._parsePromise = this.sv.doParse();
+        this._renderBackdrop();
+        return this._parsePromise;
+    }
+
+    _insertSnippet(snippet) {
+        const ta = this.textarea;
+        if (!ta || !snippet) return;
+        const sel = this.sv.selectedEvent();
+        const row = sel && sel.line ? sel.line - 1 : Math.max(0, this._cursorLine());
+        const next = insertLineAfter(ta.value, row, snippet);
+        this.sv.selectEvent(null);
+        this._setText(next, row + 1, snippet.length).then(() => {
+            const inserted = this.sv._anyEventOnLine(row + 2);
+            if (inserted) this.sv.selectEvent(inserted);
+            if (this.sv._previewing) this.sv._scrubTo(inserted ? inserted.start : this.sv._currentT);
+        });
+    }
+
+    selectLine(line1) {
+        const ta = this.textarea;
+        if (!ta || line1 < 1) return;
+        const lines = ta.value.split("\n");
+        const row = Math.max(0, Math.min(lines.length - 1, line1 - 1));
+        let idx = 0;
+        for (let r = 0; r < row; r++) idx += lines[r].length + 1;
+        ta.focus();
+        try { ta.setSelectionRange(idx, idx + lines[row].length); } catch (e) {}
+        this._renderBackdrop();
+    }
+
+    deleteLine(row) {
+        const ta = this.textarea;
+        if (!ta) return;
+        const next = deleteLine(ta.value, row);
+        this.sv.selectEvent(null);
+        this._setText(next, Math.max(0, Math.min(row, next.split("\n").length - 1)));
+    }
+
+    duplicateLine(row) {
+        const ta = this.textarea;
+        if (!ta) return;
+        const next = duplicateLine(ta.value, row);
+        this._setText(next, row + 1).then(() => {
+            const dupe = this.sv._anyEventOnLine(row + 2);
+            if (dupe) this.sv.selectEvent(dupe);
+        });
+    }
+
+    setNumberToken(row, span, value, minVal = 0) {
+        const ta = this.textarea;
+        if (!ta || !span) return null;
+        const res = replaceNumberSpan(ta.value, row, span, value, {min: minVal});
+        if (!res) return null;
+        this._setText(res.text);
+        return res.span;
+    }
+
+    ensureOffsetToken(row) {
+        const ta = this.textarea;
+        if (!ta) return null;
+        const res = ensureAmpOffsetSpan(ta.value, row);
+        if (!res) return null;
+        if (res.text !== ta.value) {
+            ta.value = res.text;
+            markSitchDirty();
+        }
+        return res.span;
+    }
+
+    updateSelectionDetails() {
+        const detail = this.detailEl;
+        if (!detail) return;
+        const e = this.sv.selectedEvent();
+        detail.replaceChildren();
+        if (!e) {
+            detail.style.display = "none";
+            return;
+        }
+        detail.style.display = "flex";
+        const label = document.createElement("span");
+        label.style.cssText = "flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;";
+        const bits = [`line ${e.line}`, e.type, `${(e.start || 0).toFixed(1)}s`];
+        if (e.dur > 0) bits.push(`${e.dur.toFixed(1)}s`);
+        if (e.target) bits.push(String(e.target));
+        if (e.view || e.preset) bits.push(String(e.view || e.preset));
+        if (e.text) bits.push(`"${e.text}"`);
+        label.textContent = bits.join("  ");
+        detail.appendChild(label);
+        detail.appendChild(this._miniButton("Line", () => this.selectLine(e.line), "Select the script line"));
+        detail.appendChild(this._miniButton("Copy", () => this.duplicateLine(e.line - 1), "Duplicate this script line"));
+        detail.appendChild(this._miniButton("Delete", () => this.deleteLine(e.line - 1), "Delete this script line"));
+    }
+
+    _targetOptions() {
+        const seen = new Set();
+        const out = [];
+        const add = (label, value = label) => {
+            if (!value || seen.has(value)) return;
+            seen.add(value);
+            out.push({label: String(label || value), value: String(value)});
+        };
+        try {
+            TrackManager?.iterate?.((id, trackOb) => {
+                const shortName = trackOb?.shortName || trackOb?.menuText || trackOb?.trackNode?.shortName;
+                add(shortName || id, shortName || id);
+                if (id !== shortName) add(id, id);
+                if (trackOb?.trackDataNode?.id) add(trackOb.trackDataNode.id, trackOb.trackDataNode.id);
+            });
+        } catch (e) {}
+        try {
+            NodeMan?.iterate?.((id, node) => {
+                if (id.startsWith("Track_")) add(id.slice(6), id.slice(6));
+                if (id.endsWith("_ob")) add(id.slice(0, -3), id.slice(0, -3));
+                if (typeof node?.p === "function" || typeof node?.getValueFrame === "function") add(id, id);
+            });
+        } catch (e) {}
+        return out.sort((a, b) => a.label.localeCompare(b.label)).slice(0, 200);
+    }
+
+    _viewOptions() {
+        const out = [];
+        const seen = new Set();
+        const add = (label, value = label) => {
+            if (!value || seen.has(value)) return;
+            seen.add(value);
+            out.push({label: String(label), value: String(value)});
+        };
+        for (const k of Object.keys(VIEW_MAP)) add(k, k);
+        add("VideoOverlay", "VideoOverlay");
+        try {
+            for (const k of Object.keys(CustomManager?.viewPresets || {})) add(k, k);
+        } catch (e) {}
+        return out;
+    }
+
+    _settingOptions() {
+        const out = [];
+        const seen = new Set();
+        const walk = (menuId, gui, prefix = []) => {
+            if (!gui) return;
+            for (const c of gui.controllers || []) {
+                const name = c._name || c.property;
+                if (!name) continue;
+                const path = [...prefix, name].join("/");
+                const key = `${menuId}:${path}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                let value = null;
+                try { value = c.getValue?.(); } catch (e) {}
+                out.push({label: `${path}`, value: path, menuId, currentValue: value, values: c._values || null});
+            }
+            for (const child of gui.children || []) {
+                if (child && child.controllers) walk(menuId, child, [...prefix, child._title || child._name || "Folder"]);
+            }
+        };
+        try {
+            for (const [menuId, gui] of Object.entries(guiMenus || {})) walk(menuId, gui);
+        } catch (e) {}
+        return out.sort((a, b) => a.label.localeCompare(b.label)).slice(0, 500);
+    }
+
+    _parsePaletteValue(raw) {
+        const s = String(raw ?? "").trim();
+        if (s === "true") return true;
+        if (s === "false") return false;
+        if (s !== "" && isFinite(+s)) return +s;
+        return s;
+    }
+
+    openInsertPalette() {
+        this.closeInsertPalette();
+        const doc = this._content?.ownerDocument || document;
+        const overlay = doc.createElement("div");
+        overlay.style.cssText = "position:fixed; inset:0; z-index:2147483600; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.45);";
+        const box = doc.createElement("div");
+        box.style.cssText = "width:min(520px, calc(100vw - 30px)); max-height:calc(100vh - 40px); overflow:auto; background:#181d24; color:#edf2f7; border:1px solid rgba(255,255,255,0.18); border-radius:8px; box-shadow:0 18px 50px rgba(0,0,0,0.55); font:12px sans-serif;";
+        overlay.appendChild(box);
+        this._palette = overlay;
+
+        const header = doc.createElement("div");
+        header.style.cssText = "display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.08); font-weight:600;";
+        const title = doc.createElement("div");
+        title.textContent = "Insert Script Step";
+        title.style.flex = "1 1 auto";
+        header.appendChild(title);
+        header.appendChild(this._miniButton("Close", () => this.closeInsertPalette()));
+        box.appendChild(header);
+
+        const form = doc.createElement("div");
+        form.style.cssText = "display:grid; grid-template-columns:110px 1fr; gap:8px 10px; padding:10px;";
+        box.appendChild(form);
+
+        const addLabel = (text) => {
+            const l = doc.createElement("label");
+            l.textContent = text;
+            l.style.cssText = "align-self:center; color:#b8c0cc;";
+            form.appendChild(l);
+            return l;
+        };
+        const addInput = (el) => {
+            el.style.cssText = "box-sizing:border-box; width:100%; padding:5px 7px; border:1px solid #3a414d; border-radius:5px; background:#0f1217; color:#edf2f7; font:12px sans-serif;";
+            form.appendChild(el);
+            return el;
+        };
+        const makeRow = (label, el) => ({label: addLabel(label), input: addInput(el)});
+
+        const command = doc.createElement("select");
+        [
+            ["text", "Caption"],
+            ["wait", "Wait"],
+            ["view", "View Cut"],
+            ["zoom", "Zoom To Target"],
+            ["orbit", "Orbit Target"],
+            ["track", "Track Target"],
+            ["rise", "Rise From Target"],
+            ["flyto", "Fly To Look Camera"],
+            ["fade", "Fade View"],
+            ["show", "Show Setting"],
+            ["hide", "Hide Setting"],
+            ["set", "Set Setting"],
+        ].forEach(([value, label]) => {
+            const o = doc.createElement("option");
+            o.value = value; o.textContent = label;
+            command.appendChild(o);
+        });
+        const commandRow = makeRow("Command", command);
+
+        const caption = makeRow("Caption", doc.createElement("input"));
+        caption.input.value = "Caption";
+
+        const targets = this._targetOptions();
+        const targetListId = "script-targets-" + Math.random().toString(36).slice(2);
+        const targetList = doc.createElement("datalist");
+        targetList.id = targetListId;
+        targets.forEach((t) => {
+            const o = doc.createElement("option");
+            o.value = t.value; o.label = t.label;
+            targetList.appendChild(o);
+        });
+        box.appendChild(targetList);
+        const target = makeRow("Target", doc.createElement("input"));
+        target.input.setAttribute("list", targetListId);
+        target.input.value = targets[0]?.value || "target";
+
+        const view = makeRow("View", doc.createElement("select"));
+        this._viewOptions().forEach((v) => {
+            const o = doc.createElement("option");
+            o.value = v.value; o.textContent = v.label;
+            view.input.appendChild(o);
+        });
+
+        const duration = makeRow("Seconds", doc.createElement("input"));
+        duration.input.type = "number"; duration.input.min = "0"; duration.input.step = "0.1"; duration.input.value = "3";
+
+        const extra = makeRow("Extra", doc.createElement("input"));
+        extra.input.type = "number"; extra.input.step = "1"; extra.input.value = "90";
+
+        const settings = this._settingOptions();
+        const setting = makeRow("Setting", doc.createElement("select"));
+        settings.forEach((s) => {
+            const o = doc.createElement("option");
+            o.value = s.value; o.textContent = s.label;
+            setting.input.appendChild(o);
+        });
+
+        const value = makeRow("Value", doc.createElement("input"));
+        value.input.value = "true";
+
+        const concurrent = doc.createElement("input");
+        concurrent.type = "checkbox";
+        const concurrentWrap = doc.createElement("label");
+        concurrentWrap.style.cssText = "display:flex; align-items:center; gap:6px; color:#cbd3df;";
+        concurrentWrap.appendChild(concurrent);
+        concurrentWrap.appendChild(doc.createTextNode("start with previous line"));
+        addLabel("");
+        form.appendChild(concurrentWrap);
+
+        const footer = doc.createElement("div");
+        footer.style.cssText = "display:flex; justify-content:flex-end; gap:8px; padding:0 10px 10px;";
+        const insert = this._winButton("Insert", () => {
+            const kind = command.value;
+            const opt = {
+                caption: caption.input.value,
+                target: target.input.value,
+                view: view.input.value,
+                duration: Number(duration.input.value),
+                control: setting.input.value,
+                value: this._parsePaletteValue(value.input.value),
+            };
+            if (kind === "orbit") opt.degrees = Number(extra.input.value);
+            if (kind === "rise") opt.meters = Number(extra.input.value);
+            if (kind === "zoom" && extra.input.value !== "") opt.distance = Number(extra.input.value);
+            if (kind === "fade") opt.to = this._parsePaletteValue(extra.input.value);
+            let line = buildScriptSnippet(kind, opt);
+            if (concurrent.checked) line = "& " + line;
+            this._insertSnippet(line);
+            this.closeInsertPalette();
+        });
+        footer.appendChild(insert);
+        box.appendChild(footer);
+
+        const setRow = (row, show) => {
+            row.label.style.display = show ? "" : "none";
+            row.input.style.display = show ? "" : "none";
+        };
+        const refresh = () => {
+            const k = command.value;
+            const needsTarget = ["zoom", "orbit", "track", "rise"].includes(k);
+            const needsView = ["view", "fade"].includes(k);
+            const needsCaption = k === "text";
+            const needsSetting = ["show", "hide", "set"].includes(k);
+            const needsValue = k === "set";
+            setRow(caption, needsCaption);
+            setRow(target, needsTarget);
+            setRow(view, needsView);
+            setRow(duration, !["show", "hide", "set"].includes(k));
+            setRow(setting, needsSetting);
+            setRow(value, needsValue);
+            setRow(extra, ["zoom", "orbit", "rise", "fade"].includes(k));
+            extra.label.textContent = k === "orbit" ? "Degrees" : k === "rise" ? "Meters" : k === "fade" ? "Opacity" : "Distance";
+            extra.input.value = k === "orbit" ? "90" : k === "rise" ? "800" : k === "fade" ? "0" : "";
+            duration.input.value = k === "view" ? "0" : k === "wait" ? "1" : k === "flyto" ? "0" : "3";
+            const current = settings.find((s) => s.value === setting.input.value)?.currentValue;
+            if (k === "set" && current !== null && current !== undefined) value.input.value = typeof current === "boolean" ? String(!current) : String(current);
+            commandRow.input.focus();
+        };
+        command.addEventListener("change", refresh);
+        setting.input.addEventListener("change", refresh);
+        overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) this.closeInsertPalette(); });
+        overlay.addEventListener("keydown", (e) => { if (e.key === "Escape") this.closeInsertPalette(); }, true);
+        doc.body.appendChild(overlay);
+        refresh();
+    }
+
+    closeInsertPalette() {
+        if (this._palette && this._palette.parentNode) this._palette.parentNode.removeChild(this._palette);
+        this._palette = null;
     }
 
     // -----------------------------------------------------------------------
@@ -304,6 +682,7 @@ export class CScriptEditorWindow {
         const lines = ta.value.split("\n");
         const cur = this._cursorLine();
         const hov = this.sv._hoverNum;
+        const selectedLine = this.sv._selectedEventLine;
         // during preview, tint the lines active at the current time yellow
         const active = this.sv._previewing ? this.sv._activeLineSet(this.sv._currentT) : null;
         const box = '<span style="outline:1.5px solid #ffd24a;border-radius:2px;background:rgba(255,210,74,0.18)">';
@@ -318,6 +697,7 @@ export class CScriptEditorWindow {
                 h = this._escHtml(line);
             }
             if (active && active.has(i + 1)) h = '<span style="color:#ffd24a">' + h + "</span>";
+            if (selectedLine === i + 1) h = '<span style="background:rgba(120,170,255,0.18)">' + h + "</span>";
             if (i === cur) h = "<b>" + h + "</b>";
             html += h + (i < lines.length - 1 ? "\n" : "");
         }

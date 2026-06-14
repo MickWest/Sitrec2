@@ -30,6 +30,7 @@ export class CScriptTimelineWidget {
         this.tlOffset = 0;            // left-edge time (seconds) of the visible window
         this._tlDragging = false;     // dragging the playhead
         this._dragCanvas = null;
+        this._editDragging = false;   // dragging a segment edge/body edit
     }
 
     draw() {
@@ -55,6 +56,11 @@ export class CScriptTimelineWidget {
 
     // The timeline segment (event bar) at a client position, or null.
     _segAtTimeline(c, clientX, clientY) {
+        const hit = this._hitAtTimeline(c, clientX, clientY);
+        return hit ? hit.seg : null;
+    }
+
+    _hitAtTimeline(c, clientX, clientY) {
         if (this.sv.totalDuration <= 0 || !this.sv.events) return null;
         const r = c.getBoundingClientRect();
         const px = clientX - r.left - (c.clientLeft || 0);   // strip the canvas border
@@ -67,9 +73,19 @@ export class CScriptTimelineWidget {
             if (!(e.dur > 0)) continue;
             const y0 = g.padTop + (e._lane || 0) * (g.laneH + g.gap);
             const x0 = g.x(e.start), bw = Math.max(2, g.x(e.start + e.dur) - x0);
-            if (px >= x0 && px <= x0 + bw && py >= y0 && py <= y0 + g.laneH) return e;
+            if (px >= x0 && px <= x0 + bw && py >= y0 && py <= y0 + g.laneH) {
+                const edge = Math.min(7, Math.max(3, bw / 3));
+                const part = px >= x0 + bw - edge ? "right" : "body";
+                return {seg: e, part, x0, bw};
+            }
         }
         return null;
+    }
+
+    _canMoveEvent(e) {
+        if (!e || !e.line) return false;
+        const line = (this.sv.getScriptText().split("\n")[e.line - 1]) || "";
+        return /^\s*&/.test(line);
     }
 
     _drawTimelineTo(c) {
@@ -98,6 +114,10 @@ export class CScriptTimelineWidget {
             if (sv._hoverSeg && e.line === sv._hoverSeg.line) {
                 ctx.strokeStyle = "#ffd24a"; ctx.lineWidth = 2;
                 ctx.strokeRect(x0 + 1, y + 1, Math.max(1, bw - 2), Math.max(1, laneH - 2));
+            }
+            if (sv._selectedEventLine === e.line && (!sv._selectedEventType || sv._selectedEventType === e.type)) {
+                ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2;
+                ctx.strokeRect(x0 + 1.5, y + 1.5, Math.max(1, bw - 3), Math.max(1, laneH - 3));
             }
             if (bw > 24 && laneH >= 11) {
                 ctx.fillStyle = "#fff"; ctx.font = "10px sans-serif";
@@ -171,11 +191,14 @@ export class CScriptTimelineWidget {
     // Hovering a timeline segment highlights it + its duration number in the editor,
     // and arms the wheel to edit that duration. Hovering elsewhere = scrub/pan cursor.
     _updateTimelineHover(c, clientX, clientY) {
-        if (this._tlDragging) return;
+        if (this._tlDragging || this._editDragging) return;
         const sv = this.sv;
-        const seg = this._segAtTimeline(c, clientX, clientY);
+        const hit = this._hitAtTimeline(c, clientX, clientY);
+        const seg = hit ? hit.seg : null;
         // only show the wheel-edit affordance when there's a duration token to edit
-        c.style.cursor = (seg && seg.spans && seg.spans.dur) ? "ns-resize" : "ew-resize";
+        if (hit && hit.part === "right" && seg.spans && seg.spans.dur) c.style.cursor = "ew-resize";
+        else if (hit && hit.part === "body" && this._canMoveEvent(seg)) c.style.cursor = "grab";
+        else c.style.cursor = (seg && seg.spans && seg.spans.dur) ? "ns-resize" : "ew-resize";
         const prevLine = sv._hoverSeg ? sv._hoverSeg.line : null;
         const newLine = seg ? seg.line : null;
         // the boxed duration only changes via a wheel edit (which re-renders itself),
@@ -204,9 +227,76 @@ export class CScriptTimelineWidget {
         // bottom strip drags the scrollbar (only meaningful when zoomed in)
         if (this.tlZoom > 1.001 && y >= r.height - CScriptTimelineWidget.SCROLLBAR_H) {
             this._beginScrollDrag(c, ev);
+            return;
+        }
+        const hit = this._hitAtTimeline(c, ev.clientX, ev.clientY);
+        if (hit && hit.seg) {
+            this.sv.selectEvent(hit.seg);
+            if (hit.part === "right" && hit.seg.spans && hit.seg.spans.dur) {
+                this._beginDurationDrag(c, ev, hit.seg);
+            } else if (hit.part === "body" && this._canMoveEvent(hit.seg)) {
+                this._beginOffsetDrag(c, ev, hit.seg);
+            } else {
+                this.sv._scrubTo(hit.seg.start);
+            }
         } else {
             this._beginTimelineDrag(c, ev);
         }
+    }
+
+    _beginDurationDrag(c, ev, seg) {
+        ev.preventDefault();
+        this._editDragging = true;
+        c.style.cursor = "ew-resize";
+        const doc = c.ownerDocument || document;
+        const row = seg.line - 1;
+        let span = {...seg.spans.dur};
+        const apply = (e) => {
+            const dur = Math.max(0.1, this._timeAtX(c, e.clientX) - seg.start);
+            const nextSpan = this.sv.editor.setNumberToken(row, span, dur, 0.1);
+            if (nextSpan) span = nextSpan;
+            this.draw();
+            if (this.sv._previewing) this.sv._scrubTo(this.sv._currentT);
+        };
+        apply(ev);
+        const up = (e) => {
+            this._editDragging = false;
+            doc.removeEventListener("mousemove", apply, true);
+            doc.removeEventListener("mouseup", up, true);
+            if (e) this._updateTimelineHover(c, e.clientX, e.clientY);
+        };
+        doc.addEventListener("mousemove", apply, true);
+        doc.addEventListener("mouseup", up, true);
+    }
+
+    _beginOffsetDrag(c, ev, seg) {
+        ev.preventDefault();
+        this._editDragging = true;
+        c.style.cursor = "grabbing";
+        const doc = c.ownerDocument || document;
+        const row = seg.line - 1;
+        let span = seg.offSpan ? {...seg.offSpan} : this.sv.editor.ensureOffsetToken(row);
+        if (!span) { this._editDragging = false; return; }
+        const line = (this.sv.getScriptText().split("\n")[row]) || "";
+        const startOffset = parseFloat(line.slice(span.start, span.end)) || 0;
+        const grabDt = this._timeAtX(c, ev.clientX) - seg.start;
+        const apply = (e) => {
+            const newStart = this._timeAtX(c, e.clientX) - grabDt;
+            const newOffset = Math.max(0, startOffset + (newStart - seg.start));
+            const nextSpan = this.sv.editor.setNumberToken(row, span, newOffset, 0);
+            if (nextSpan) span = nextSpan;
+            this.draw();
+            if (this.sv._previewing) this.sv._scrubTo(this.sv._currentT);
+        };
+        apply(ev);
+        const up = (e) => {
+            this._editDragging = false;
+            doc.removeEventListener("mousemove", apply, true);
+            doc.removeEventListener("mouseup", up, true);
+            if (e) this._updateTimelineHover(c, e.clientX, e.clientY);
+        };
+        doc.addEventListener("mousemove", apply, true);
+        doc.addEventListener("mouseup", up, true);
     }
 
     // NOTE: listeners are added in the CAPTURE phase because the in-page panel calls

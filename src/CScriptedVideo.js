@@ -81,6 +81,8 @@ class CScriptedVideoManager {
         // timeline widget (segment under the mouse) — each highlights the other
         this._hoverNum = null;       // number token under the mouse in the editor
         this._hoverSeg = null;       // timeline segment linked to the hovered number
+        this._selectedEventLine = null;
+        this._selectedEventType = null;
 
         // UI components (built in setupMenu)
         this.timeline = new CScriptTimelineWidget(this);
@@ -243,6 +245,22 @@ class CScriptedVideoManager {
     _anyEventOnLine(line1) {
         if (!this.events) return null;
         return this.events.find((e) => e.line === line1) || null;
+    }
+
+    selectEvent(e) {
+        this._selectedEventLine = e && e.line ? e.line : null;
+        this._selectedEventType = e && e.type ? e.type : null;
+        this.editor?.updateSelectionDetails();
+        this.editor?._renderBackdrop();
+        this.timeline?.draw();
+    }
+
+    selectedEvent() {
+        if (!this._selectedEventLine || !this.events) return null;
+        return this.events.find((e) => e.line === this._selectedEventLine
+            && (!this._selectedEventType || e.type === this._selectedEventType))
+            || this.events.find((e) => e.line === this._selectedEventLine)
+            || null;
     }
 
     // the duration number token of an event, as an editor hover descriptor
@@ -738,6 +756,7 @@ class CScriptedVideoManager {
         this._lastTickT = null;   // model changed → a paused preview tick must re-draw
         this.timeline.draw();
         this.editor._renderBackdrop();
+        this.editor.updateSelectionDetails();
         if (errs.length) this.setStatus("⚠ " + errs[0] + (errs.length > 1 ? ` (+${errs.length - 1} more)` : ""));
         else this.setStatus(`Ready — ${this.totalDuration.toFixed(1)}s, ${this.cameraBeats.length} beats`);
     }
