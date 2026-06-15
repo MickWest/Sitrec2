@@ -98,6 +98,15 @@ const SUNDOG_STOPS = [
     [1.00, 0.55, 0.75, 1.00, 0.15],  // faint blue tail away from Sun
 ];
 
+// Moon-dog (paraselenae) color — the lunar counterpart of sun dogs: faint and
+// nearly colorless, only a hint of red on the moonward side.
+const MOONDOG_STOPS = [
+    [0.00, 0.95, 0.60, 0.50, 0.75],  // faint reddish, toward the Moon
+    [0.22, 0.95, 0.85, 0.78, 1.00],  // pale core
+    [0.50, 0.92, 0.95, 0.95, 0.90],  // whitish
+    [1.00, 0.72, 0.82, 1.00, 0.15],  // faint blue tail away from Moon
+];
+
 // Interpolate a stops table [[pos, c0, c1, ...], ...] at position x.
 function evalStops(stops, x) {
     x = MathUtils.clamp(x, 0, 1);
@@ -150,8 +159,9 @@ export class CNodeAtmosphericOptics extends CNode {
         this.sunPillar = v.sunPillar ?? false;
         this.upperTangentArc = v.upperTangentArc ?? false;
 
-        // Moon halo — renders at night (in the night-sky scene), not by day.
+        // Moon halo + moon dogs — render at night (in the night-sky scene).
         this.moonHalo = v.moonHalo ?? false;
+        this.moonDogs = v.moonDogs ?? false;
 
         this.addSimpleSerial("enabled");
         this.addSimpleSerial("intensity");
@@ -164,6 +174,7 @@ export class CNodeAtmosphericOptics extends CNode {
         this.addSimpleSerial("sunPillar");
         this.addSimpleSerial("upperTangentArc");
         this.addSimpleSerial("moonHalo");
+        this.addSimpleSerial("moonDogs");
 
         // GUI — a submenu under the existing Lighting menu. Guarded so the node
         // is still usable in headless/console contexts where the menu bar may
@@ -192,6 +203,8 @@ export class CNodeAtmosphericOptics extends CNode {
                 .tooltip("An arc tangent to the top of the 22° halo (approximate). Shape varies with Sun altitude.");
             this.addGUIBoolean("moonHalo", "Moon Halo (22°)")
                 .tooltip("A faint 22° halo around the Moon, drawn on the night sky. The same ice-crystal physics as the Sun's halo, but nearly colorless because moonlight is dim.");
+            this.addGUIBoolean("moonDogs", "Moon Dogs (Paraselenae)")
+                .tooltip("Faint bright spots either side of the Moon at ±22°, the lunar counterpart of sun dogs. Rare and nearly colorless. Brightest near a full Moon.");
         }
 
         // Two scene groups, added lazily (the scenes are created by the
@@ -278,8 +291,9 @@ export class CNodeAtmosphericOptics extends CNode {
         if (!sunDir) return;
         const zenith = getLocalUpVector(camera.position);
 
-        // Only compute the Moon direction when the Moon halo is enabled.
-        const moonDir = this.moonHalo ? getCelestialDirection("Moon", date, camera.position) : null;
+        // Only compute the Moon direction when a Moon optic is enabled.
+        const moonDir = (this.moonHalo || this.moonDogs)
+            ? getCelestialDirection("Moon", date, camera.position) : null;
 
         const moved = sunDir.distanceToSquared(this._lastSun) > 1e-10
             || zenith.distanceToSquared(this._lastZenith) > 1e-10
@@ -345,15 +359,15 @@ export class CNodeAtmosphericOptics extends CNode {
             if (this.upperTangentArc) this._buildUpperTangentArc();
             if (this.parhelicCircle) this._buildParhelicCircle();
             if (this.sunPillar) this._buildSunPillar();
-            if (this.sunDogs) this._buildSunDogs();
+            if (this.sunDogs) this._buildDogs(SUNDOG_STOPS, 0.85);
             if (this.circumzenithal) this._buildCircumzenithalArc();
             if (this.circumhorizontal) this._buildCircumhorizontalArc();
         }
 
-        // ---- Moon halo — night sky scene. -------------------------------
+        // ---- Moon optics — night sky scene. -----------------------------
         // The night-sky scene is only rendered when the sky is dark enough
-        // (skyOpacity < 1), so the Moon halo is naturally night-only.
-        if (this.moonHalo && moonDir) {
+        // (skyOpacity < 1), so the Moon halo/dogs are naturally night-only.
+        if ((this.moonHalo || this.moonDogs) && moonDir) {
             this._setBasis(moonDir, zenith);
             const moonVis = MathUtils.smoothstep(this._elevDeg, -1.5, 2);
             if (moonVis > 0.01) {
@@ -366,7 +380,8 @@ export class CNodeAtmosphericOptics extends CNode {
                 this._sourceFade = moonVis * illum;
                 // Much fainter base than the Sun optics — the Moon halo sits on
                 // a near-black sky, where additive blending reads far brighter.
-                this._buildRing(22.0, 20.8, 25.5, MOON22_STOPS, 0.17, 240, 12);
+                if (this.moonHalo) this._buildRing(22.0, 20.8, 25.5, MOON22_STOPS, 0.17, 240, 12);
+                if (this.moonDogs) this._buildDogs(MOONDOG_STOPS, 0.20);
             }
         }
     }
@@ -534,19 +549,21 @@ export class CNodeAtmosphericOptics extends CNode {
         );
     }
 
-    // ---- Sun dogs (parhelia). -------------------------------------------
-    _buildSunDogs() {
+    // ---- Sun/Moon dogs (parhelia / paraselenae). ------------------------
+    // Shared by sun dogs and moon dogs — uses the current source basis, so the
+    // caller just supplies the color table and base brightness.
+    _buildDogs(stops, baseBrightness) {
         const e = radians(this._elevDeg);
         const cosE = Math.cos(e);
         const sinE = Math.sin(e);
-        // Azimuth separation Δ where the great-circle distance to the Sun is
+        // Azimuth separation Δ where the great-circle distance to the source is
         // 22° along constant elevation: cos22 = sin²e + cos²e·cosΔ.
-        if (cosE < 1e-4) return;                       // Sun at zenith
+        if (cosE < 1e-4) return;                       // source at zenith
         const cosDelta = (Math.cos(radians(22)) - sinE * sinE) / (cosE * cosE);
-        if (cosDelta < -1) return;                     // Sun too high: no sun dogs
+        if (cosDelta < -1) return;                     // source too high: no dogs
         const delta = Math.acos(MathUtils.clamp(cosDelta, -1, 1)) + radians(0.6);
 
-        const base = 0.85 * this.intensity;
+        const base = baseBrightness * this.intensity;
         const tmp = new Vector3();
         // Patch is generous (±5.5° vertically, ~11° along the parhelic circle)
         // so the soft falloff and edgeFade windows reach zero well inside the
@@ -567,7 +584,7 @@ export class CNodeAtmosphericOptics extends CNode {
                     const gu = Math.exp(-(du * du) / (tail * tail));
                     const dv = (v - 0.5);
                     const gv = Math.exp(-(dv * dv) / (0.22 * 0.22));
-                    const c = evalStops(SUNDOG_STOPS, u);
+                    const c = evalStops(stops, u);
                     // edgeFade guarantees zero brightness at every patch edge.
                     const win = edgeFade(u, 0.14) * edgeFade(v, 0.16);
                     const b = c[3] * base * gu * gv * win;
