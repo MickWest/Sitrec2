@@ -129,7 +129,7 @@
     "three": "^0.183.1"
   },
   "devDependencies": {
-    "@babel/core": "^7.28.3",
+    "@babel/core": "^7.29.6",
     "@babel/plugin-transform-modules-commonjs": "^7.27.1",
     "@babel/preset-typescript": "^7.28.5",
     "@biomejs/biome": "^2.4.4",
