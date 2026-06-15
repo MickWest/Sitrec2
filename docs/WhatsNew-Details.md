@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.84.1 (2026-06-15)
+
+### Developer / Internal
+- CI test-tooling fix only — no shipped/runtime code changed (`src/` untouched). The GitHub CI smoke test (`tests/node-smoke.test.js`) was failing with `SyntaxError: Cannot use 'import.meta' outside a module` when loading `CNodeLensGhost.js`, which transitively imports `CNodeVideoView` → `CNodeVideoViewAnalysis`; those use `import.meta.url` to spawn Web Workers, and Jest's test-env `@babel/plugin-transform-modules-commonjs` cannot parse bare `import.meta` after rewriting ESM to CommonJS. Fix: added devDependency `babel-plugin-transform-import-meta@^2.3.3` and wired it into the `test` env plugins in `babel.config.json` (alongside `@babel/plugin-transform-modules-commonjs`) so Jest can now parse `import.meta`. With that in place, the 9 `import.meta`-related entries were removed from the `SKIP_FILES` set in `tests/node-smoke.test.js` (CNodeAnnotateOverlay, CNodeMaskOverlay, CNodeMirrorVideoView, CNodeSpeedOverlay, CNodeTrackingOverlay, CNodeVideoView, CNodeVideoViewAnalysis, CNodeVideoWebCodecView, and CNodeLensGhost) so those nodes are now smoke-tested; only the 5 unrelated nested-ESM / 3d-tiles-renderer skips remain. Affects CI and local `npm test` only — no user-facing behavior change.
+
 ## Version 2.84.0 (2026-06-15)
 
 ### New Features

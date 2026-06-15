@@ -71,27 +71,21 @@ if (typeof window !== "undefined" && !window.matchMedia) {
 // safely, remove from the skip list.
 //
 // Reasons:
-//   import.meta         — webpack-only syntax used by worker bundling; Jest
-//                         refuses to parse.
 //   export in .mjs path — some dependency is a raw .mjs that our moduleName
 //                         mapper didn't catch; not worth chasing for this
 //                         test's module-graph-integrity scope.
 //   3d-tiles-renderer   — npm package with an "exports" field Jest can't
 //                         resolve the same way webpack does.
+//
+// NOTE: files using `import.meta` (worker bundling) used to be skipped too,
+// but babel-plugin-transform-import-meta (wired into the "test" env in
+// babel.config.json) now lets Jest parse them, so they are smoke-tested.
 const SKIP_FILES = new Set([
-    "CNodeAnnotateOverlay.js",  // import.meta (via CNodeTrackingOverlay -> CNodeVideoView -> CNodeVideoViewAnalysis)
     "CNodeBuildings3DTiles.js", // 3d-tiles-renderer resolve
-    "CNodeMaskOverlay.js",      // import.meta
-    "CNodeMirrorVideoView.js",  // import.meta
-    "CNodeSpeedOverlay.js",     // import.meta
     "CNodeTerrain.js",          // nested ESM path
     "CNodeTerrainUI.js",        // nested ESM path
     "CNodeTrackFromMISB.js",    // nested ESM path
     "CNodeLazyMISBFlightTrack.js", // extends CNodeTrackFromMISB (nested ESM path)
-    "CNodeTrackingOverlay.js",  // import.meta
-    "CNodeVideoView.js",        // import.meta
-    "CNodeVideoViewAnalysis.js",// import.meta
-    "CNodeVideoWebCodecView.js",// import.meta
 ]);
 
 // Mock the absolute minimum so that module top-level code can run without
