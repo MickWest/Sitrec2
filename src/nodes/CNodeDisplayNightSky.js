@@ -1,4 +1,5 @@
 import {CNode3DGroup} from "./CNode3DGroup";
+import {CNodeAtmosphericOptics} from "./CNodeAtmosphericOptics";
 import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene, setupNightSkyScene, setupSunSkyScene} from "../LocalFrame";
 import {Color, Group, Matrix4, Ray, Raycaster, Scene, Sphere, Vector3} from "three";
 import {degrees, radians} from "../utils";
@@ -1675,6 +1676,13 @@ export function addNightSky(def) {
             });
         }
     })
+
+    // Atmospheric optics (halos, arcs, sun dogs) drawn on the daytime sky,
+    // centered on the Sun. Created alongside the night sky so GlobalSunSkyScene
+    // already exists. Master toggle defaults OFF.
+    if (!NodeMan.exists("theHalos")) {
+        new CNodeAtmosphericOptics({id: "theHalos"});
+    }
 
     return nightSky;
 }
