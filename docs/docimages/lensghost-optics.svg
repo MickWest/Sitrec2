@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="430" viewBox="0 0 860 430" font-family="Helvetica, Arial, sans-serif">
+  <rect width="860" height="430" fill="#ffffff"/>
+  <text x="430" y="30" text-anchor="middle" font-size="20" font-weight="700" fill="#1a1a1a">Sun ghost in a catadioptric (mirror) telescope</text>
+
+  <!-- telescope tube -->
+  <rect x="250" y="95" width="540" height="250" rx="10" fill="#f4f6f8" stroke="#9fb0bd" stroke-width="1.5"/>
+
+  <!-- flat germanium window (tilted forward = lean) -->
+  <line x1="262" y1="108" x2="246" y2="332" stroke="#16a085" stroke-width="7" stroke-linecap="round"/>
+  <text x="180" y="360" font-size="14" fill="#16a085" font-weight="600">flat germanium</text>
+  <text x="195" y="377" font-size="14" fill="#16a085" font-weight="600">window (lean θ)</text>
+
+  <!-- primary mirror (concave) at right end -->
+  <path d="M 786 110 Q 740 220 786 330" fill="none" stroke="#34495e" stroke-width="8" stroke-linecap="round"/>
+  <text x="770" y="360" text-anchor="middle" font-size="14" fill="#34495e" font-weight="600">primary mirror</text>
+
+  <!-- secondary mirror (small convex) -->
+  <path d="M 470 195 Q 486 220 470 245" fill="none" stroke="#34495e" stroke-width="6" stroke-linecap="round"/>
+  <text x="486" y="180" text-anchor="middle" font-size="13" fill="#34495e" font-weight="600">secondary</text>
+
+  <!-- sensor -->
+  <rect x="300" y="200" width="9" height="40" fill="#2c3e50"/>
+  <text x="305" y="262" text-anchor="middle" font-size="13" fill="#2c3e50" font-weight="600">sensor</text>
+
+  <!-- Sun -->
+  <circle cx="95" cy="78" r="22" fill="#f5b301"/>
+  <g stroke="#f5b301" stroke-width="3" stroke-linecap="round">
+    <line x1="95" y1="44" x2="95" y2="32"/><line x1="95" y1="124" x2="95" y2="112"/>
+    <line x1="61" y1="78" x2="49" y2="78"/><line x1="141" y1="78" x2="129" y2="78"/>
+    <line x1="71" y1="54" x2="62" y2="45"/><line x1="119" y1="102" x2="128" y2="111"/>
+    <line x1="119" y1="54" x2="128" y2="45"/><line x1="71" y1="102" x2="62" y2="111"/>
+  </g>
+  <text x="95" y="150" text-anchor="middle" font-size="15" fill="#c98a00" font-weight="700">Sun</text>
+  <text x="95" y="168" text-anchor="middle" font-size="12" fill="#777">~58° off-axis, above the FOV</text>
+
+  <!-- incoming sunlight to window -->
+  <defs>
+    <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#e8920c"/></marker>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#c0392b"/></marker>
+    <marker id="ab" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2c3e50"/></marker>
+  </defs>
+  <line x1="118" y1="98" x2="250" y2="205" stroke="#e8920c" stroke-width="3" marker-end="url(#ah)"/>
+  <text x="150" y="135" font-size="13" fill="#e8920c" font-weight="600">incoming sunlight</text>
+
+  <!-- transmitted (most light) -> primary -> secondary -> sensor : focused scene -->
+  <line x1="252" y1="208" x2="782" y2="170" stroke="#2c3e50" stroke-width="2"/>
+  <line x1="782" y1="170" x2="472" y2="214" stroke="#2c3e50" stroke-width="2"/>
+  <line x1="468" y1="220" x2="312" y2="222" stroke="#2c3e50" stroke-width="2" marker-end="url(#ab)"/>
+  <text x="560" y="150" font-size="13" fill="#2c3e50" font-weight="600">most light → focused scene</text>
+
+  <!-- reflected fraction -> ghost (defocused disc) -->
+  <line x1="250" y1="205" x2="252" y2="270" stroke="#c0392b" stroke-width="2.5" stroke-dasharray="6 4"/>
+  <line x1="252" y1="270" x2="315" y2="235" stroke="#c0392b" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#ar)"/>
+  <!-- defocused disc cone on sensor -->
+  <circle cx="305" cy="232" r="13" fill="#c0392b" fill-opacity="0.25" stroke="#c0392b" stroke-width="1.5"/>
+  <circle cx="305" cy="232" r="4.5" fill="#fff" stroke="#c0392b" stroke-width="1"/>
+  <text x="200" y="248" font-size="13" fill="#c0392b" font-weight="700">reflected fraction</text>
+  <text x="330" y="300" font-size="13" fill="#c0392b" font-weight="700">ghost</text>
+  <text x="330" y="317" font-size="12" fill="#c0392b">(round, defocused disc;</text>
+  <text x="330" y="333" font-size="12" fill="#c0392b">dark centre = 2ndary mirror)</text>
+</svg>

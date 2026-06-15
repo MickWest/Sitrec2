@@ -547,6 +547,23 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         this.updateCurve();
     }
 
+    // Public accessor for the interpolated track point (original-video pixels) at frame f.
+    // Lets other nodes (e.g. CNodeLensGhost's fit) read the track without reaching into the
+    // private pointsXY buffer. Returns [x,y] or null if not available.
+    getTrackPixelXY(f) {
+        this.updateCurve();
+        const i = Math.floor(f);
+        if (!this.pointsXY || i < 0 || i >= this.pointsXY.length) return null;
+        return this.pointsXY[i];
+    }
+
+    // Frame range that actually has keyframe data (outside this the track is extrapolated).
+    getKeyframeSpan() {
+        if (!this.keyframes || this.keyframes.length < 2) return null;
+        const fr = this.keyframes.map(k => k.frame).sort((a, b) => a - b);
+        return [fr[0], fr[fr.length - 1]];
+    }
+
     // we now use video coordiantes
     updateCurve() {
         // Get the total number of frames

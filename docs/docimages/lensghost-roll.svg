@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="430" viewBox="0 0 840 430" font-family="Helvetica, Arial, sans-serif">
+  <rect width="840" height="430" fill="#ffffff"/>
+  <text x="420" y="30" text-anchor="middle" font-size="20" font-weight="700" fill="#1a1a1a">Image roll makes the disc reverse horizontally (the scene never does)</text>
+  <defs>
+    <marker id="sv" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#e8920c"/></marker>
+    <marker id="rot" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#8e44ad"/></marker>
+  </defs>
+
+  <!-- ===== Panel A: mechanism ===== -->
+  <text x="200" y="72" text-anchor="middle" font-size="15" font-weight="700" fill="#444">Mechanism</text>
+  <!-- frame -->
+  <rect x="95" y="95" width="210" height="210" fill="#f7f9fa" stroke="#9fb0bd" stroke-width="1.5"/>
+  <circle cx="200" cy="200" r="4" fill="#2980b9"/>
+  <text x="200" y="320" text-anchor="middle" font-size="12" fill="#2980b9">frame centre</text>
+  <!-- sun offset vector (large, up, slight right) at phi=0 (faint) -->
+  <line x1="200" y1="200" x2="223" y2="60" stroke="#e8920c" stroke-width="2.5" stroke-dasharray="6 4" opacity="0.55" marker-end="url(#sv)"/>
+  <!-- rolled vector phi=-14 (rotate CW ~14 deg about centre): (223,60) rotated -->
+  <line x1="200" y1="200" x2="257" y2="73" stroke="#e8920c" stroke-width="3" marker-end="url(#sv)"/>
+  <text x="262" y="70" font-size="12" fill="#c98a00" font-weight="700">Sun offset</text>
+  <text x="262" y="86" font-size="11" fill="#c98a00">(rolled by φ)</text>
+  <text x="150" y="58" font-size="11" fill="#c98a00" opacity="0.8">φ=0</text>
+  <!-- roll arc -->
+  <path d="M 223 60 A 145 145 0 0 1 257 73" fill="none" stroke="#8e44ad" stroke-width="2" marker-end="url(#rot)"/>
+  <text x="232" y="44" font-size="13" fill="#8e44ad" font-weight="700">φ</text>
+  <!-- X projections -->
+  <line x1="223" y1="60" x2="223" y2="305" stroke="#bbb" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="257" y1="73" x2="257" y2="305" stroke="#bbb" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="200" y="356" text-anchor="middle" font-size="13" fill="#444" font-weight="600">sr′ = sr·cos φ + su·sin φ</text>
+  <text x="200" y="375" text-anchor="middle" font-size="11" fill="#777">large vertical su bleeds into the X channel</text>
+
+  <!-- ===== Panel B: result ===== -->
+  <text x="640" y="72" text-anchor="middle" font-size="15" font-weight="700" fill="#444">Result — disc X vs frame</text>
+  <!-- axes -->
+  <line x1="470" y1="100" x2="470" y2="320" stroke="#888" stroke-width="1.5"/>
+  <line x1="470" y1="320" x2="800" y2="320" stroke="#888" stroke-width="1.5"/>
+  <text x="455" y="210" text-anchor="middle" font-size="12" fill="#888" transform="rotate(-90 455 210)">disc X (px)</text>
+  <text x="635" y="345" text-anchor="middle" font-size="12" fill="#888">frame</text>
+  <!-- no-roll monotonic line -->
+  <line x1="478" y1="300" x2="795" y2="150" stroke="#888" stroke-width="2.5" stroke-dasharray="7 5"/>
+  <text x="690" y="135" font-size="12" fill="#888" font-weight="600">no roll → monotonic</text>
+  <!-- with-roll V curve (real Pr055 disc-X shape) -->
+  <polyline points="478,212 533,272 590,307 645,272 705,205 795,118" fill="none" stroke="#c0392b" stroke-width="3"/>
+  <circle cx="590" cy="307" r="4.5" fill="#c0392b"/>
+  <text x="560" y="300" text-anchor="end" font-size="11" fill="#c0392b" font-weight="700">turnaround</text>
+  <text x="610" y="135" font-size="12" fill="#c0392b" font-weight="700">with measured roll → reverses</text>
+  <text x="640" y="405" text-anchor="middle" font-size="12" fill="#555">R² of fit:  no roll ≈ 0.44   ·   with roll ≈ 0.99</text>
+</svg>

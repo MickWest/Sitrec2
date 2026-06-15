@@ -63,6 +63,11 @@ import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightS
 import {CNodeControllerCelestial, CNodeControllerHorizonFlareRegion} from "./nodes/CNodeControllerVarious";
 import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
 import {CNodeAnnotateOverlay} from "./nodes/CNodeAnnotateOverlay";
+import {CNodeLensGhost} from "./nodes/CNodeLensGhost";
+import {makeBespoke3DView} from "./BespokeView";
+import {DebugArrow} from "./threeExt";
+import {getCelestialDirection} from "./CelestialMath";
+import * as LAYER from "./LayerMasks";
 import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
 import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
 import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
@@ -178,6 +183,77 @@ export const setupMethods = {
             new CNodeAnnotateOverlay({
                 id: "annotateOverlay",
                 overlayView: "video",
+            });
+        }
+
+        // Lens-ghost (sun-reflection) simulator overlay on the video. Hidden until the
+        // user enables it from the Video > Lens Ghost menu, so creating it unconditionally
+        // for any custom sitch with a camera LOS + FOV + video is harmless. Models the
+        // internal reflection of the Sun in a mirror telescope (e.g. MQ-9 MTS); see
+        // CNodeLensGhost. Created here (not SitCustom.js) so older saves get it on reload.
+        if (Sit.isCustom && isAdmin() && NodeMan.exists("video") && NodeMan.exists("JetLOSCameraCenter")
+            && NodeMan.exists("fovSwitch") && !NodeMan.exists("lensGhost")) {
+            new CNodeLensGhost({
+                id: "lensGhost",
+                overlayView: "video",
+                cameraLOSNode: "JetLOSCameraCenter",
+                fovNode: "fovSwitch",
+                trackNode: "trackingOverlay",
+            });
+        }
+
+        // Bespoke 3D view: an MQ-9 close-up showing the sun light path at the MTS turret.
+        // Generic factory (BespokeView.js) frames the camera platform; the perFrame hook
+        // draws the boresight (where the MTS looks) and the incoming sun ray, so the
+        // ~60deg angle between them (the off-axis flare condition) is visible in 3D.
+        // Hidden until enabled from the Views menu ("MQ-9 Light Path").
+        if (Sit.isCustom && isAdmin() && NodeMan.exists("JetLOSCameraCenter") && !NodeMan.exists("mtsLightPathView")) {
+            const losNode = NodeMan.get("JetLOSCameraCenter");
+            const ARROW = 60;   // metres
+            let upgraded = false;   // one-shot guard for the MQ-9 model upgrade
+
+            makeBespoke3DView({
+                id: "mtsLightPathView",
+                menuName: "[BETA] MQ-9 Light Path",
+                left: 0.5, top: 0.5, width: 0.25, height: 0.5,
+                distance: 90,
+                // View from the SIDE of the Sun so we don't look into the low-sun glare,
+                // and the angle between the boresight and the sun ray reads clearly.
+                azDeg: 150, elDeg: 18,
+                background: "#0a0a12",
+                target: (f) => losNode.getValueFrame(f).position,
+                perFrame: (view, f) => {
+                    // Show the camera platform as an MQ-9 (it carries the MTS). Done here,
+                    // ONCE, after load — doing it at setup time gets reverted by the sitch's
+                    // saved cameraObject mods. Only upgrade the default placeholder geometry.
+                    if (!upgraded) {
+                        upgraded = true;
+                        const camObj = NodeMan.get("cameraObject", false);
+                        if (camObj && camObj.modelOrGeometry === "geometry") {
+                            camObj.selectModel = "MQ-9 (clean)";
+                            camObj.modelOrGeometry = "model";
+                            if (camObj.modelLengthNode?.setValue) camObj.modelLengthNode.setValue(25);
+                            else camObj.common.modelLength = 25;
+                            camObj.rebuild?.();
+                        }
+                    }
+
+                    const los = losNode.getValueFrame(f);
+                    if (!los || !los.position) return;
+                    const pos = los.position;
+                    // Boresight: the MTS line of sight (where the camera looks).
+                    if (los.heading) {
+                        DebugArrow("mtsBoresight", los.heading, pos, ARROW, "#33ddff",
+                            true, undefined, ARROW * 0.12, LAYER.MASK_HELPERS);
+                    }
+                    // Incoming sun ray: sunlight arriving at the turret (arrowhead at the turret).
+                    const sun = getCelestialDirection("Sun", GlobalDateTimeNode.dateNow, pos);
+                    if (sun) {
+                        const sunStart = pos.clone().add(sun.clone().normalize().multiplyScalar(ARROW * 1.7));
+                        DebugArrowAB("mtsSunRay", sunStart, pos, "#ffd000",
+                            true, undefined, ARROW * 0.12, LAYER.MASK_HELPERS);
+                    }
+                },
             });
         }
 
