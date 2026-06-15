@@ -12,7 +12,7 @@ lockstep with docs/WhatsNew-Details.md.
 ## Version 2.84.0 (2026-06-15)
 
 ### New Features
-- **Atmospheric Optics (Halos)** (Lighting → Atmospheric Optics (Halos)): renders ice-crystal sky optics around the real Sun and Moon — a 22° halo, sun dogs, circumzenithal and circumhorizontal arcs, parhelic circle, 46° halo, sun pillar, and upper tangent arc by day, plus a faint Moon halo and moon dogs at night. Each effect only appears at the Sun or Moon elevation where it physically forms, and fades cleanly at the horizon. Turn it on with **Show Halos** (off by default).
+- **Atmospheric Optics (Halos)** (Lighting → Atmospheric Optics (Halos)): renders ice-crystal sky optics around the real Sun and Moon — a 22° halo, sun dogs, circumzenithal and circumhorizontal arcs, parhelic circle, 46° halo, sun pillar, and tangent arcs (which close into the circumscribed halo when the Sun is high) by day, plus a faint Moon halo and moon dogs at night. Each effect only appears at the Sun or Moon elevation where it physically forms, and fades cleanly at the horizon. Turn it on with **Show Halos** (off by default).
 - **Lens Ghost** (Video → Lens Ghost) — *beta, admin-only*: overlays a simulated Sun-reflection disc on the video and can fit it to a tracked disc, to help assess whether a tracked object could be an internal lens reflection. Hidden by default and currently available only to admin users on custom sitches.
 
 ### Improvements

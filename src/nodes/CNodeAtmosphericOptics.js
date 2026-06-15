@@ -199,8 +199,8 @@ export class CNodeAtmosphericOptics extends CNode {
                 .tooltip("A larger, fainter ring 46° from the Sun.");
             this.addGUIBoolean("sunPillar", "Sun Pillar")
                 .tooltip("A vertical shaft of light through the Sun (reflection from horizontal plate crystals).");
-            this.addGUIBoolean("upperTangentArc", "Upper Tangent Arc")
-                .tooltip("An arc tangent to the top of the 22° halo (approximate). Shape varies with Sun altitude.");
+            this.addGUIBoolean("upperTangentArc", "Tangent Arcs / Circumscribed")
+                .tooltip("Tangent arcs from horizontal column crystals (physical refraction model): a narrow 'V' at low Sun, opening into gull-wings, then closing into the circumscribed halo (a drooping oval around the 22° halo) once the Sun rises above ~29°.");
             this.addGUIBoolean("moonHalo", "Moon Halo (22°)")
                 .tooltip("A faint 22° halo around the Moon, drawn on the night sky. The same ice-crystal physics as the Sun's halo, but nearly colorless because moonlight is dim.");
             this.addGUIBoolean("moonDogs", "Moon Dogs (Paraselenae)")
@@ -356,7 +356,7 @@ export class CNodeAtmosphericOptics extends CNode {
             this._sourceFade = sunVis;
             if (this.halo22) this._buildRing(22.0, 20.8, 25.5, HALO22_STOPS, 0.55, 240, 12);
             if (this.halo46) this._buildRing(46.0, 44.6, 50.0, HALO46_STOPS, 0.20, 280, 12);
-            if (this.upperTangentArc) this._buildUpperTangentArc();
+            if (this.upperTangentArc) this._buildTangentArcs();
             if (this.parhelicCircle) this._buildParhelicCircle();
             if (this.sunPillar) this._buildSunPillar();
             if (this.sunDogs) this._buildDogs(SUNDOG_STOPS, 0.85);
@@ -490,29 +490,77 @@ export class CNodeAtmosphericOptics extends CNode {
         );
     }
 
-    // ---- Upper tangent arc (approximate). -------------------------------
-    // A short arc tangent to the top of the 22° halo, flaring outward at the
-    // wings. Crude but recognizable; true shape depends on Sun altitude.
-    _buildUpperTangentArc() {
-        if (this._elevDeg > 50) return; // collapses into the halo at high Sun
-        const base = 0.45 * this.intensity;
-        const tmp = new Vector3();
-        const wing = radians(55);
-        this._buildBand(
-            120, 6,
+    // ---- Tangent arcs & circumscribed halo (physical refraction model). --
+    // Formed by horizontally-oriented hexagonal COLUMN crystals (long c-axis
+    // horizontal, random azimuth). Each column refracts through a 60° side-face
+    // prism; both side faces are parallel to the c-axis, so the ray's component
+    // ALONG the axis is preserved and only the perpendicular part is deviated.
+    // Sweeping the crystal azimuth ψ traces the locus; the two refraction
+    // branches (±D) are the UPPER and LOWER tangent arcs.
+    //
+    //   p   = S·a                              (skew: Sun component along the axis)
+    //   nₑ  = √(n²−p²)/√(1−p²)                 (Bravais effective index)
+    //   D   = 2·asin(nₑ·sin30°) − 60°          (minimum deviation, ≥ ~21.8°)
+    //   r   = p·a + rot(S−p·a, ±D, a)          (refracted ray)
+    // ψ=0 (axis ⟂ to the Sun azimuth) gives the bright tangent points at the top
+    // (upper) and bottom (lower) of the 22° halo (D=21.8°). As the Sun rises the
+    // upper arc opens from a narrow "V" into gull-wings; past ~29° the upper and
+    // lower wings meet and close into the CIRCUMSCRIBED HALO — a drooping oval
+    // that tightens onto the 22° halo as the Sun climbs. All of it falls out of
+    // the geometry, no per-elevation tuning.
+    _buildTangentArcs() {
+        const N_ICE = 1.31, APEX = radians(60), SIN_HALF_APEX = 0.5;
+        const D_MIN = radians(21.84), SIGMA = radians(15);
+        const base = 0.5 * this.intensity;
+        const S = this._S, H = this._H, W = this._W, Z = this._Z;
+        const a = new Vector3(), sPerp = new Vector3(), out = new Vector3(), rad = new Vector3();
+
+        // Refracted ray (and its deviation) for crystal azimuth ψ and branch sign
+        // (+1/−1). null where total internal reflection ends the wing.
+        const arc = (psi, sign, store) => {
+            a.copy(W).multiplyScalar(Math.cos(psi)).addScaledVector(H, Math.sin(psi));
+            const p = S.dot(a);
+            const denom = Math.max(1e-6, 1 - p * p);
+            const ne = Math.sqrt(Math.max(0, N_ICE * N_ICE - p * p) / denom);
+            const arg = ne * SIN_HALF_APEX;
+            if (arg >= 1) return null;
+            const D = 2 * Math.asin(arg) - APEX;
+            sPerp.copy(S).addScaledVector(a, -p);
+            store.copy(sPerp).applyAxisAngle(a, sign * D).addScaledVector(a, p).normalize();
+            return D;
+        };
+
+        // Which branch sign is the UPPER one at the tangent point (ψ=0).
+        const rp = new Vector3(), rm = new Vector3();
+        arc(0, 1, rp); arc(0, -1, rm);
+        const upperSign = rp.dot(Z) >= rm.dot(Z) ? 1 : -1;
+
+        const span = radians(90);
+        const halfWidth = radians(0.85);
+        const buildBranch = (sign) => this._buildBand(
+            220, 4,
             (u, v) => {
-                const phi = -wing + u * 2 * wing;        // 0 at top
-                const flare = (1 - Math.cos(phi)) * radians(9);
-                const theta = radians(21.7) + flare + v * radians(2.6);
-                return this._ringDir(theta, phi, tmp);
+                const psi = (u - 0.5) * 2 * span;
+                if (arc(psi, sign, out) === null) return this._ringDir(D_MIN, 0, out);
+                rad.copy(out).addScaledVector(S, -out.dot(S));   // radial (away from Sun) for width
+                if (rad.lengthSq() < 1e-9) rad.copy(Z);
+                rad.normalize();
+                return out.addScaledVector(rad, (v - 0.5) * 2 * halfWidth).normalize();
             },
             (u, v) => {
+                const psi = (u - 0.5) * 2 * span;
+                const D = arc(psi, sign, out);
                 const c = evalStops(HALO22_STOPS, v);
-                const endFade = bump(0.5 + 0.5 * (1 - Math.abs((u - 0.5) * 2))); // brighter mid
-                const b = c[3] * base * (0.4 + 0.6 * endFade);
+                if (D === null) return [0, 0, 0];
+                // Brightest at minimum deviation (the tangent points); fades as the
+                // wings spread (D grows) — soft ends, and faint sides on the oval.
+                const dFade = Math.exp(-Math.pow((D - D_MIN) / SIGMA, 2));
+                const b = c[3] * base * dFade * bump(v);
                 return [c[0] * b, c[1] * b, c[2] * b];
             }
         );
+        buildBranch(upperSign);    // upper tangent arc (top of the halo)
+        buildBranch(-upperSign);   // lower tangent arc (bottom) — closes the oval at high Sun
     }
 
     // ---- Parhelic circle (white circle at the Sun's altitude). ----------
