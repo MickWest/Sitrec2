@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.84.3 (2026-06-15)
+
+A security maintenance release.
+
+### Security
+- Updated bundled dependencies to patch six security advisories, including a patched HTTP library in the PHP server used by full-server and Docker installs, and patched build tooling. There is no change to how the app behaves.
+
 ## Version 2.84.2 (2026-06-15)
 
 A refinement pass on Atmospheric Optics (Halos).

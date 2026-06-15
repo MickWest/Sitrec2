@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.84.3 (2026-06-15)
+
+A security and CI-maintenance release. No shipped/runtime application code changed (`src/` is untouched).
+
+### Security
+- Dependency-only updates resolving six Dependabot advisories (commit `eaee79e4`; touches `package.json`, `package-lock.json`, `sitrecServer/composer.lock`, `tools/SitrecBridge/package.json`, `tools/SitrecBridge/package-lock.json`, no `src/` changes):
+  - **esbuild `0.27.4 → 0.28.1`** in the main repo (pulled via `esbuild-loader 4.4.2 → 4.5.0`), fixing RCE via `NPM_CONFIG_REGISTRY` (high) and a Windows dev-server arbitrary-file-read (low). These are build-time-only tools, so production builds were never exposed at runtime, but the dev/build toolchain is now patched.
+  - **esbuild `0.25 → 0.28.1`** in `tools/SitrecBridge` (same two advisories).
+  - **guzzlehttp/psr7 `2.9.0 → 2.11.0`** in the PHP runtime (`sitrecServer/composer.lock`), fixing CRLF injection and Host-confusion-via-authority-reinterpretation (medium ×2). This is the one change that touches shipped server-side code: full-server and Docker deployments now run the patched PSR-7 HTTP library.
+  - **ws `8.20.1 → 8.21.0`** in `tools/SitrecBridge`, fixing a memory-exhaustion DoS (high).
+  - Verification: main app and SitrecBridge builds pass; production `npm audit --omit=dev` is clean; `composer` reports no advisories.
+
+### Developer / Internal
+- CI-robustness fix for the Docker image smoke test (`.github/workflows/docker.yml`), no shipped/runtime code. The job pulls the external Playwright base image (`mcr.microsoft.com/playwright:v1.58.2-noble`) from Microsoft Container Registry (MCR), which periodically rate-limits (`toomanyrequests`) or WAF-blocks (`unauthorized`) GitHub runners' shared egress IPs, intermittently failing the build. The fix: (1) a job-level `PLAYWRIGHT_IMAGE` env var as the single source of truth, referenced by the cache key, the load/pull step, and the test run; (2) an `actions/cache@v4` of the image tarball (`/tmp/playwright-image.tar`) keyed by `playwright-image-${PLAYWRIGHT_IMAGE}`, so the common path (`docker load` from cache) never contacts MCR; (3) on cache miss, the renamed *Load or pull Playwright image* step pulls with six attempts and `i*20 + jitter` backoff (was three short `i*15` tries), then `docker save`s the tarball for the next run. Bump `PLAYWRIGHT_IMAGE` in lockstep with the `playwright` devDependency.
+
 ## Version 2.84.2 (2026-06-15)
 
 A refinement pass on the Atmospheric Optics (Halos) feature from 2.84.0. All changes are in `CNodeAtmosphericOptics.js`; the two new optics default OFF, so existing sitches and regression baselines are unaffected.

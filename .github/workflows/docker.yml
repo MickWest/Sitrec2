@@ -151,6 +151,11 @@ jobs:
     permissions:
       contents: read
       packages: read
+    env:
+      # Playwright base image (external, hosted on MCR). Bump in lockstep with
+      # the `playwright` devDependency in package.json. Single source of truth:
+      # referenced by the cache key, the cache/pull step, and the test run.
+      PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.58.2-noble
 
     steps:
       - uses: actions/checkout@v6
@@ -216,19 +221,37 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD: true
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
 
-      - name: Pre-pull Playwright image (with retry)
-        # MCR is occasionally blocked by Azure Front Door WAF for runner IPs,
-        # surfacing as "pull access denied" with an HTML body. Retrying with
-        # backoff almost always clears it within a minute.
+      # MCR rate-limits (toomanyrequests) and occasionally WAF-blocks
+      # (unauthorized) GitHub runners' shared egress IPs, and the throttle
+      # window can outlast a short retry budget. Cache the image tarball keyed
+      # by version so the common path (unchanged Playwright version) never
+      # touches MCR; only the first run after a version bump pulls.
+      - name: Cache Playwright image
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/playwright-image.tar
+          key: playwright-image-${{ env.PLAYWRIGHT_IMAGE }}
+
+      - name: Load or pull Playwright image (with retry)
         run: |
-          for i in 1 2 3; do
-            if docker pull mcr.microsoft.com/playwright:v1.58.2-noble; then
+          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ] && [ -f /tmp/playwright-image.tar ]; then
+            echo "Loading Playwright image from cache"
+            docker load -i /tmp/playwright-image.tar
+            exit 0
+          fi
+          # Cache miss: pull from MCR with exponential-ish backoff + jitter,
+          # then save the tarball so actions/cache persists it for next time.
+          for i in $(seq 1 6); do
+            if docker pull "$PLAYWRIGHT_IMAGE"; then
+              docker save "$PLAYWRIGHT_IMAGE" -o /tmp/playwright-image.tar
               exit 0
             fi
-            echo "Pull attempt $i failed, retrying in $((i*15))s..."
-            sleep $((i*15))
+            backoff=$(( i * 20 + (RANDOM % 15) ))
+            echo "Pull attempt $i failed, retrying in ${backoff}s..."
+            sleep "$backoff"
           done
-          echo "All 3 pull attempts failed"
+          echo "All pull attempts failed"
           exit 1
 
       - name: Run Playwright smoke test
@@ -237,7 +260,7 @@ jobs:
             -v "${{ github.workspace }}:/work" \
             -w /work \
             -e DOCKER_SMOKE_URL=http://localhost:8080 \
-            mcr.microsoft.com/playwright:v1.58.2-noble \
+            "$PLAYWRIGHT_IMAGE" \
             npx playwright test --config=playwright.docker.config.js
 
       - name: Upload smoke test snapshots
