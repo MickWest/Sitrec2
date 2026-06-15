@@ -9,6 +9,25 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.84.2 (2026-06-15)
+
+A refinement pass on the Atmospheric Optics (Halos) feature from 2.84.0. All changes are in `CNodeAtmosphericOptics.js`; the two new optics default OFF, so existing sitches and regression baselines are unaffected.
+
+### New Features
+- **Parry Arc** (Lighting → Atmospheric Optics (Halos) → *Parry Arc*): a new suncave arc riding just above the upper tangent arc, from rare "Parry-oriented" column crystals (c-axis horizontal with two side faces also horizontal). Drawn by the new `_buildParryArc()` as a parametric suncave band (apex `24°` above the Sun, drooping `12°` to the sides so it stays above the tangent arc) with a red lower edge from `SPECTRUM_STOPS`. This is an approximate shape, not a full ray-trace, but it is correctly placed above the tangent arc and correctly coloured. New serialized property `parryArc` (`addSimpleSerial("parryArc")`, default `false`).
+- **Sun Glare** (Lighting → Atmospheric Optics (Halos) → *Sun Glare*): a new cosmetic warm aureole of forward-scattered light around the Sun, as seen through thin ice cloud — explicitly **not** a refraction optic (no toggle-dependent geometry). Drawn by `_buildSunGlare()` as a tight bright core (`exp(−v²·26)`) plus a broad faint aureole (`exp(−v²·2.2)·0.32`) out to `16°`, warm-white tinted (`[b, b·0.96, b·0.86]`). The aureole is windowed to zero at its rim with `1 − MathUtils.smoothstep(v, 0.45, 1.0)` so the additive mesh fades into the sky with no hard ring edge. New serialized property `sunGlare` (`addSimpleSerial("sunGlare")`, default `false`).
+
+### Bug Fixes
+- **Sun-dog refraction physics corrected.** `_buildDogs()` previously pinned each sun dog's great-circle distance from the Sun to a constant `22°` at all elevations (with a fixed `+0.6°` fudge), so the dogs never detached from the 22° halo as the Sun rose. The new code models plate-crystal (c-axis vertical) refraction through the 60° vertical-edge side-face prism: only the horizontal projection is deviated, via the Bravais effective index `nₑ = √(n²−sin²e)/cos e` (ice `N_ICE = 1.31`) giving the azimuth offset `Δaz = 2·asin(nₑ·sin30°) − 60°`. The on-sky distance then falls out of `cos D = sin²e + cos²e·cos(Δaz)` — so `D = 22°` only on the horizon and grows slowly *outside* the 22° halo as the Sun rises (≈22° at 10°, 23° at 20°, 25° at 30°, 28° at 40°), with the dogs lost to total internal reflection (early `return` when `nₑ·sin30° ≥ 1`) near 61° Sun elevation. The dog patch still anchors its sunward base ~1.5° inside the halo crossing (`deltaHalo`) so head and ring blend into a single pointed brightening at low Sun.
+
+### Improvements
+- **Sun dogs reshaped.** Each dog is now a compact, vertically-elongated teardrop (±8.5° elevation span, taller than wide) with a sharp reddish sunward head falling into a brief bluish tail, using pure additive Gaussian falloff (`sig = 0.11` head / `0.17` tail, colour graded red→white-blue by `cIdx`). The old hard `edgeFade` window and "comet tail" are gone, so nothing darkens at the patch edges — brightness simply reaches the sky value and blends with the halo on the sunward side. `_buildDogs` base brightness raised `0.85 → 0.9` so the dogs read ≥2× the 22° halo.
+- **22° halo dimmed** so it reads as a delicate ring rather than a solid one: `_buildRing` base brightness for the sun halo lowered `0.55 → 0.33`.
+- **Circumzenithal arc rebalanced**: base brightness lowered `1.0 → 0.5` (it was over-bright versus the halo and arcs) and narrowed to match the real CZA (`halfW` `1.9° → 1.2°`, real arc ~1.5° wide).
+
+### Documentation
+- The circumscribed-halo onset elevation was corrected from "~29°" to "~32°" in the *Tangent Arcs / Circumscribed* tooltip and the accompanying tangent-arc code comment, matching the WMO Cloud Atlas / Cowley / Tape references.
+
 ## Version 2.84.1 (2026-06-15)
 
 ### Developer / Internal

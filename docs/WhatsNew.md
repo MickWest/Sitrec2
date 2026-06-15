@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.84.2 (2026-06-15)
+
+A refinement pass on Atmospheric Optics (Halos).
+
+### New Features
+- **Parry Arc** (Lighting → Atmospheric Optics (Halos)): a suncave arc that rides just above the upper tangent arc, from rare well-aligned "Parry" ice crystals. Off by default.
+- **Sun Glare** (Lighting → Atmospheric Optics (Halos)): a soft warm glow around the Sun, as seen through thin ice cloud. Cosmetic, off by default.
+
+### Bug Fixes
+- Fixed the sun dogs staying stuck on the 22° halo at all Sun heights. They now sit on the halo only when the Sun is near the horizon and drift slowly outward (and fade away) as the Sun climbs, matching how real sun dogs behave.
+
+### Improvements
+- Sun dogs now look like compact, upright teardrops with a sharp reddish sunward edge and are bright enough to stand out clearly from the halo.
+- The 22° halo is now a more delicate ring, and the circumzenithal arc is dimmer and thinner so it no longer overpowers the other optics.
+
 ## Version 2.84.0 (2026-06-15)
 
 ### New Features
