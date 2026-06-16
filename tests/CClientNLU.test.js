@@ -269,8 +269,8 @@ describe('CClientNLU parsing', () => {
             expect(result.slots.result).toBeCloseTo(12.124, 3);
         });
 
-        test('parses "sin(pi/2)"', () => {
-            const result = clientNLU.parse('sin(pi/2)');
+        test('parses "sin(90)" in degrees (calculator-style)', () => {
+            const result = clientNLU.parse('sin(90)');
             expect(result.intent).toBe('MATH');
             expect(result.slots.result).toBeCloseTo(1, 10);
         });
