@@ -885,6 +885,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // meshes to the camera that is actually being rendered right now.
                 // Without this, the main view can inherit the look-camera observer.
                 nightSkyNode.syncPlanetSpritesToObserver(lookCamera.position, undefined, {storeState: false});
+                NodeMan.get("theHalos", true)?.syncToObserver(lookCamera.position);
                 nightSkyNode.starField.updateStarScales(this);
                 nightSkyNode.updateSatelliteScales(this);
             }
@@ -3108,6 +3109,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // view's observer, but keep global arrow/debug ephemeris state
                 // owned by the NightSkyNode update step.
                 nightSkyNode.syncPlanetSpritesToObserver(this.camera.position, undefined, {storeState: false});
+                NodeMan.get("theHalos", true)?.syncToObserver(this.camera.position);
             }
             
             if (Globals.renderDebugFlags.dbg_updateStarScales) {

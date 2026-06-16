@@ -6,17 +6,17 @@
 // The geometry is built in WORLD space directly from:
 //   - the Sun direction:  getCelestialDirection("Sun", date, observerPos)
 //   - the local zenith:    getLocalUpVector(observerPos)
-// getCelestialDirection() already includes the GMST rotation, so the Sun
-// direction (scaled to the celestial-sphere radius) lands exactly where the
-// daytime Sun *sprite* is drawn. By adding our mesh group directly to
-// GlobalSunSkyScene (an identity-transform sibling of the GMST-rotated
-// celestialDaySphere) the halos stay perfectly centered on the Sun without
-// us ever needing to know whether the world frame is ECEF or EUS.
+// getCelestialDirection() already includes the GMST rotation. renderSky()
+// re-syncs this node for the camera currently being rendered, so the shared sky
+// scenes do not inherit the look-camera observer in main/VR views. When the
+// night-sky refraction shader is enabled, the halo mesh directions are bent with
+// the same refraction state as the rendered Sun/Moon disks.
 //
 // GlobalSunSkyScene is rendered by CNodeView3D.renderSky() with the camera at
 // the origin (celestial-sphere style) and a clearDepth afterwards, so the
-// halos draw over the daytime sky yet are correctly occluded by terrain and
-// the horizon. No render-pipeline changes are required.
+// halos draw over the daytime sky; later main-scene rendering covers them with
+// terrain/objects, while a per-vertex horizon fade handles sky-only portions
+// below the apparent horizon. No render-pipeline changes are required.
 //
 // Each optic is a reasonably-dense, indexed triangle mesh with per-vertex RGB
 // colors, drawn additively (refracted/reflected sunlight ADDS to the sky).
@@ -36,9 +36,11 @@ import {
     MathUtils,
 } from "three";
 import {GlobalNightSkyScene, GlobalSunSkyScene} from "../LocalFrame";
-import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne} from "../Globals";
+import {GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne} from "../Globals";
 import {getCelestialDirection} from "../CelestialMath";
 import {getLocalUpVector} from "../SphericalMath";
+import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
+import {applyRefractionECI, refractionOptsFromUniforms, refractionUniforms} from "../atmosphere/refraction";
 import {radians, degrees} from "../utils";
 
 // Radius of the celestial sphere used for the Sun/Moon/star sprites. Matches
@@ -46,6 +48,75 @@ import {radians, degrees} from "../utils";
 // value only affects depth (and we render depth-test-off), but matching keeps
 // the halos coplanar with the Sun sprite.
 const SPHERE_RADIUS = 100;
+export const HALO_ICE_INDEX = 1.31;
+const HALO_PRISM_APEX_RAD = radians(60);
+const HALO_PRISM_SIN_HALF_APEX = 0.5;
+
+const CZA_MAX_ELEV_DEG = degrees(Math.acos(Math.sqrt(HALO_ICE_INDEX * HALO_ICE_INDEX - 1)));
+const CHA_MIN_ELEV_DEG = degrees(Math.asin(Math.sqrt(HALO_ICE_INDEX * HALO_ICE_INDEX - 1)));
+
+function safeAsinDeg(x) {
+    if (x > 1) return null;
+    return degrees(Math.asin(MathUtils.clamp(x, -1, 1)));
+}
+
+// Centerline for the circumzenithal arc from a horizontal plate crystal:
+// light enters the horizontal top face and exits a vertical side face (90° prism).
+// h=0° -> ~58° altitude; h≈22° -> ~68°; h≈32° -> close to zenith.
+export function circumzenithalCenterAltitudeDeg(elevDeg, n = HALO_ICE_INDEX) {
+    const h = radians(elevDeg);
+    return safeAsinDeg(Math.sqrt(Math.max(0, n * n - Math.cos(h) * Math.cos(h))));
+}
+
+// Centerline for the circumhorizontal arc, the reciprocal 90° plate-prism path:
+// light enters a vertical side face and exits the horizontal lower face.
+// It starts near the horizon at h≈58° and reaches ~32° altitude at zenith Sun.
+export function circumhorizontalCenterAltitudeDeg(elevDeg, n = HALO_ICE_INDEX) {
+    const h = radians(elevDeg);
+    const exitFromVertical = safeAsinDeg(Math.sqrt(Math.max(0, n * n - Math.sin(h) * Math.sin(h))));
+    return exitFromVertical === null ? null : 90 - exitFromVertical;
+}
+
+export function sunDogOffsetsDeg(elevDeg, n = HALO_ICE_INDEX) {
+    const e = radians(elevDeg);
+    const cosE = Math.cos(e);
+    const sinE = Math.sin(e);
+    if (cosE < 1e-4) return null;
+    const ne = Math.sqrt(Math.max(0, n * n - sinE * sinE)) / cosE;
+    const arg = ne * HALO_PRISM_SIN_HALF_APEX;
+    if (arg >= 1) return null;
+    const azimuth = 2 * Math.asin(arg) - HALO_PRISM_APEX_RAD;
+    const greatCircle = Math.acos(MathUtils.clamp(sinE * sinE + cosE * cosE * Math.cos(azimuth), -1, 1));
+    return {azimuthDeg: degrees(azimuth), greatCircleDeg: degrees(greatCircle)};
+}
+
+// Minimum-deviation ray for a 60° ice prism whose refracting edge is unit `prismAxis`.
+// The component of the source direction along that edge is conserved (Bravais).
+// `extraDeviationRad` approximates off-minimum prism incidence for the faint tail.
+export function platePrismDeviationRay(sourceDir, prismAxis, branchSign, extraDeviationRad = 0, out = new Vector3(), n = HALO_ICE_INDEX) {
+    const p = sourceDir.dot(prismAxis);
+    const denom = Math.max(1e-9, 1 - p * p);
+    const ne = Math.sqrt(Math.max(0, n * n - p * p) / denom);
+    const arg = ne * HALO_PRISM_SIN_HALF_APEX;
+    if (arg >= 1) return null;
+
+    const deviation = 2 * Math.asin(arg) - HALO_PRISM_APEX_RAD + extraDeviationRad;
+    out.copy(sourceDir).addScaledVector(prismAxis, -p);
+    if (out.lengthSq() < 1e-12) return null;
+    return out.applyAxisAngle(prismAxis, branchSign * deviation)
+        .addScaledVector(prismAxis, p)
+        .normalize();
+}
+
+export function lunarOpticsPhaseScale(sunMoonDot) {
+    const elongation = Math.acos(MathUtils.clamp(sunMoonDot, -1, 1));
+    const phaseAngleDeg = degrees(Math.PI - elongation); // 0 full, 180 new
+    // Empirical visual phase curve approximation. This is intentionally much
+    // steeper than illuminated fraction: first quarter is only about a tenth of
+    // full-Moon flux, and thin crescents should contribute almost nothing.
+    const magDrop = 0.026 * phaseAngleDeg + 4e-9 * Math.pow(phaseAngleDeg, 4);
+    return MathUtils.clamp(Math.pow(10, -0.4 * magDrop), 0, 1);
+}
 
 // A simple, hand-tuned spectral ramp for refraction colors.
 // t = 0 -> deep red, t = 1 -> violet. Values are linear-ish RGB.
@@ -92,10 +163,10 @@ const MOON22_STOPS = [
 
 // Sun-dog color along the parhelic circle (u = 0 sunward red -> 1 bluish tail).
 const SUNDOG_STOPS = [
-    [0.00, 1.00, 0.20, 0.10, 0.85],  // red, toward the Sun
-    [0.22, 1.00, 0.72, 0.30, 1.00],  // yellow-white core
-    [0.50, 1.00, 1.00, 0.95, 0.85],  // bright white
-    [1.00, 0.55, 0.75, 1.00, 0.15],  // faint blue tail away from Sun
+    [0.00, 1.00, 0.22, 0.12, 0.30],  // soft red shoulder, toward the Sun
+    [0.20, 1.00, 0.58, 0.22, 0.82],  // orange/yellow ramp
+    [0.42, 1.00, 0.96, 0.78, 1.00],  // yellow-white core
+    [1.00, 0.55, 0.75, 1.00, 0.12],  // faint blue tail away from Sun
 ];
 
 // Moon-dog (paraselenae) color — the lunar counterpart of sun dogs: faint and
@@ -133,13 +204,6 @@ function bump(s) {
     return Math.sin(MathUtils.clamp(s, 0, 1) * Math.PI);
 }
 
-// Window that is 1 in the interior and ramps smoothly to 0 within a margin m
-// of each end of [0,1]. Used to guarantee a feature's brightness reaches zero
-// at its mesh boundary so there are no hard edges.
-function edgeFade(x, m) {
-    return MathUtils.smoothstep(x, 0, m) * (1 - MathUtils.smoothstep(x, 1 - m, 1));
-}
-
 // will exist as a singleton node: "theHalos"
 export class CNodeAtmosphericOptics extends CNode {
     constructor(v) {
@@ -165,53 +229,57 @@ export class CNodeAtmosphericOptics extends CNode {
         this.moonHalo = v.moonHalo ?? false;
         this.moonDogs = v.moonDogs ?? false;
 
-        this.addSimpleSerial("enabled");
-        this.addSimpleSerial("intensity");
-        this.addSimpleSerial("halo22");
-        this.addSimpleSerial("halo46");
-        this.addSimpleSerial("sunDogs");
-        this.addSimpleSerial("circumzenithal");
-        this.addSimpleSerial("circumhorizontal");
-        this.addSimpleSerial("parhelicCircle");
-        this.addSimpleSerial("sunPillar");
-        this.addSimpleSerial("upperTangentArc");
-        this.addSimpleSerial("parryArc");
-        this.addSimpleSerial("sunGlare");
-        this.addSimpleSerial("moonHalo");
-        this.addSimpleSerial("moonDogs");
+        this.addSimpleSerials([
+            "enabled",
+            "intensity",
+            "halo22",
+            "halo46",
+            "sunDogs",
+            "circumzenithal",
+            "circumhorizontal",
+            "parhelicCircle",
+            "sunPillar",
+            "upperTangentArc",
+            "parryArc",
+            "sunGlare",
+            "moonHalo",
+            "moonDogs",
+        ]);
 
         // GUI — a submenu under the existing Lighting menu. Guarded so the node
         // is still usable in headless/console contexts where the menu bar may
         // not exist (the optics still serialize via the properties above).
         this.gui = guiMenus.lighting ? guiMenus.lighting.addFolder("Atmospheric Optics (Halos)") : undefined;
         if (this.gui) {
-            this.addGUIBoolean("enabled", "Show Halos")
+            const addBool = (property, name) => this.gui.add(this, property).name(name).listen().onChange(() => this.recalculate());
+            const addValue = (property, start, end, step, name) => this.gui.add(this, property, start, end, step).name(name).listen().onChange(() => this.recalculate());
+            addBool("enabled", "Show Halos")
                 .tooltip("Master toggle for ice-crystal atmospheric optics: Sun halos/arcs by day, and an optional Moon halo at night.");
-            this.addGUIValue("intensity", 0, 3, 0.01, "Intensity")
+            addValue("intensity", 0, 3, 0.01, "Intensity")
                 .tooltip("Overall brightness of the halos, arcs and sun dogs.");
-            this.addGUIBoolean("halo22", "22° Halo")
+            addBool("halo22", "22° Halo")
                 .tooltip("The common ring 22° from the Sun (random-oriented hexagonal crystals). Reddish inside, bluish-white outside.");
-            this.addGUIBoolean("sunDogs", "Sun Dogs (Parhelia)")
+            addBool("sunDogs", "Sun Dogs (Parhelia)")
                 .tooltip("Bright spots either side of the Sun at the same altitude, just outside the 22° halo. Red on the sunward side.");
-            this.addGUIBoolean("circumzenithal", "Circumzenithal Arc")
-                .tooltip("An 'upside-down rainbow' centered on the zenith, ~46° above the Sun. Only forms when the Sun is below ~32°; brightest near 22°.");
-            this.addGUIBoolean("circumhorizontal", "Circumhorizontal Arc")
-                .tooltip("A band parallel to the horizon ~46° below the Sun ('fire rainbow'). Only forms when the Sun is above ~58°.");
-            this.addGUIBoolean("parhelicCircle", "Parhelic Circle")
+            addBool("circumzenithal", "Circumzenithal Arc")
+                .tooltip("An 'upside-down rainbow' centered on the zenith from horizontal plate crystals. Only forms when the Sun is below ~32°; brightest near 22°.");
+            addBool("circumhorizontal", "Circumhorizontal Arc")
+                .tooltip("A horizon-parallel band from horizontal plate crystals ('fire rainbow'). Only forms when the Sun is above ~58°.");
+            addBool("parhelicCircle", "Parhelic Circle")
                 .tooltip("A white circle parallel to the horizon passing through the Sun at constant altitude.");
-            this.addGUIBoolean("halo46", "46° Halo")
+            addBool("halo46", "46° Halo")
                 .tooltip("A larger, fainter ring 46° from the Sun.");
-            this.addGUIBoolean("sunPillar", "Sun Pillar")
+            addBool("sunPillar", "Sun Pillar")
                 .tooltip("A vertical shaft of light through the Sun (reflection from horizontal plate crystals).");
-            this.addGUIBoolean("upperTangentArc", "Tangent Arcs / Circumscribed")
-                .tooltip("Tangent arcs from horizontal column crystals (physical refraction model): a narrow 'V' at low Sun, opening into gull-wings, then closing into the circumscribed halo (a drooping oval around the 22° halo) once the Sun rises above ~32°.");
-            this.addGUIBoolean("parryArc", "Parry Arc")
-                .tooltip("A suncave arc riding just above the upper tangent arc, from rare 'Parry-oriented' columns (c-axis horizontal with two side faces also horizontal). A sign of well-aligned crystals.");
-            this.addGUIBoolean("sunGlare", "Sun Glare")
+            addBool("upperTangentArc", "Tangent Arcs / Circumscribed")
+                .tooltip("Tangent arcs from horizontal column crystals (physical refraction model): a narrow 'V' at low Sun, opening into gull-wings, then closing into the circumscribed halo (a drooping oval around the 22° halo) in the high-20s to low-30s.");
+            addBool("parryArc", "Parry Arc")
+                .tooltip("An approximate suncave arc just above the upper tangent arc, from rare 'Parry-oriented' columns (c-axis horizontal with two side faces also horizontal). A sign of well-aligned crystals.");
+            addBool("sunGlare", "Sun Glare")
                 .tooltip("A soft bright aureole of forward-scattered light around the Sun, as seen through thin ice cloud. Cosmetic — not a refraction optic.");
-            this.addGUIBoolean("moonHalo", "Moon Halo (22°)")
+            addBool("moonHalo", "Moon Halo (22°)")
                 .tooltip("A faint 22° halo around the Moon, drawn on the night sky. The same ice-crystal physics as the Sun's halo, but nearly colorless because moonlight is dim.");
-            this.addGUIBoolean("moonDogs", "Moon Dogs (Paraselenae)")
+            addBool("moonDogs", "Moon Dogs (Paraselenae)")
                 .tooltip("Faint bright spots either side of the Moon at ±22°, the lunar counterpart of sun dogs. Rare and nearly colorless. Brightest near a full Moon.");
         }
 
@@ -249,7 +317,10 @@ export class CNodeAtmosphericOptics extends CNode {
         this._lastSun = new Vector3();
         this._lastMoon = new Vector3();
         this._lastZenith = new Vector3();
+        this._lastObserver = new Vector3();
         this._lastIntensity = -1;
+        this._lastRefractionKey = "";
+        this._lastHorizonKey = "";
 
         // Working basis (world space), set per source (Sun or Moon) each build.
         this._S = new Vector3();   // source (Sun/Moon) direction
@@ -259,6 +330,10 @@ export class CNodeAtmosphericOptics extends CNode {
         this._Usun = new Vector3(); // in-ring "up" (zenith component perpendicular to source)
         this._Vsun = new Vector3(); // in-ring "side" (= S x Usun)
         this._elevDeg = 0;
+        this._horizonSinLo = Math.sin(radians(-0.6));
+        this._horizonSinHi = Math.sin(radians(2.5));
+        this._refractionOpts = refractionOptsFromUniforms();
+        this._refractionZenith = new Vector3(0, 0, 1);
     }
 
     // GUI changes route here (addGUIBoolean/addGUIValue call recalculate()).
@@ -294,25 +369,76 @@ export class CNodeAtmosphericOptics extends CNode {
             return;
         }
 
-        const date = GlobalDateTimeNode.dateNow;
-        const sunDir = getCelestialDirection("Sun", date, camera.position);
+        this.syncToObserver(camera.position);
+    }
+
+    _updateHorizonFade(observerPos) {
+        let horizonElev = 0;
+        if (observerPos && observerPos.lengthSq() > 1e12) {
+            const lla = ECEFToLLAVD_radii(observerPos);
+            const observerR = observerPos.length();
+            const surfaceR = Math.max(1, observerR - lla.z);
+            if (lla.z > 1 && observerR > surfaceR) {
+                horizonElev = -Math.acos(MathUtils.clamp(surfaceR / observerR, 0, 1));
+            }
+        }
+        this._horizonSinLo = Math.sin(horizonElev + radians(-0.6));
+        this._horizonSinHi = Math.sin(horizonElev + radians(2.5));
+    }
+
+    _updateRefractionState(zenith) {
+        this._refractionOpts = refractionOptsFromUniforms();
+        this._refractionZenith.copy(refractionUniforms.uZenithECEF.value);
+        if (this._refractionZenith.lengthSq() < 0.5) {
+            this._refractionZenith.copy(zenith);
+        }
+        this._refractionZenith.normalize();
+    }
+
+    _refractionKey() {
+        return `${this._refractionOpts.enabled ? 1 : 0}:${this._refractionOpts.pressureHPa}:${this._refractionOpts.tempC}`;
+    }
+
+    _applyOpticRefraction(dir) {
+        if (this._refractionOpts?.enabled) {
+            applyRefractionECI(dir, this._refractionZenith, this._refractionOpts);
+        }
+        return dir;
+    }
+
+    syncToObserver(observerPos, date = GlobalDateTimeNode.dateNow) {
+        if (!this.enabled || !observerPos) return;
+
+        const sunDir = getCelestialDirection("Sun", date, observerPos);
         if (!sunDir) return;
-        const zenith = getLocalUpVector(camera.position);
+        const zenith = getLocalUpVector(observerPos);
+        this._updateHorizonFade(observerPos);
+        this._updateRefractionState(zenith);
 
         // Only compute the Moon direction when a Moon optic is enabled.
         const moonDir = (this.moonHalo || this.moonDogs)
-            ? getCelestialDirection("Moon", date, camera.position) : null;
+            ? getCelestialDirection("Moon", date, observerPos) : null;
 
         const moved = sunDir.distanceToSquared(this._lastSun) > 1e-10
             || zenith.distanceToSquared(this._lastZenith) > 1e-10
+            || observerPos.distanceToSquared(this._lastObserver) > 1
             || (moonDir ? moonDir.distanceToSquared(this._lastMoon) > 1e-10 : false);
+        const refractionKey = this._refractionKey();
+        const horizonKey = `${this._horizonSinLo.toFixed(8)}:${this._horizonSinHi.toFixed(8)}`;
         if (this._dirty || moved || this.intensity !== this._lastIntensity) {
             this._rebuild(sunDir, moonDir, zenith);
             this._lastSun.copy(sunDir);
             if (moonDir) this._lastMoon.copy(moonDir);
             this._lastZenith.copy(zenith);
+            this._lastObserver.copy(observerPos);
             this._lastIntensity = this.intensity;
+            this._lastRefractionKey = refractionKey;
+            this._lastHorizonKey = horizonKey;
             this._dirty = false;
+        } else if (refractionKey !== this._lastRefractionKey || horizonKey !== this._lastHorizonKey) {
+            this._rebuild(sunDir, moonDir, zenith);
+            this._lastRefractionKey = refractionKey;
+            this._lastHorizonKey = horizonKey;
         }
     }
 
@@ -335,7 +461,11 @@ export class CNodeAtmosphericOptics extends CNode {
         const H = this._H.copy(S).addScaledVector(Z, -sinE);
         if (H.lengthSq() < 1e-8) {
             // Source at (or very near) the zenith — pick an arbitrary horizontal.
-            H.set(1, 0, 0).addScaledVector(Z, -Z.x).normalize();
+            if (Math.abs(Z.x) < 0.9) {
+                H.set(1, 0, 0).addScaledVector(Z, -Z.x).normalize();
+            } else {
+                H.set(0, 1, 0).addScaledVector(Z, -Z.y).normalize();
+            }
         } else {
             H.normalize();
         }
@@ -381,11 +511,11 @@ export class CNodeAtmosphericOptics extends CNode {
             this._setBasis(moonDir, zenith);
             const moonVis = MathUtils.smoothstep(this._elevDeg, -1.5, 2);
             if (moonVis > 0.01) {
-                // Scale with how lit the Moon is: a thin crescent gives a much
-                // fainter halo than a full Moon. k = illuminated fraction from
-                // the Sun–Moon elongation. Floor at 0.35 so it never vanishes.
-                const k = (1 - MathUtils.clamp(sunDir.dot(moonDir), -1, 1)) * 0.5;
-                const illum = 0.35 + 0.65 * k;
+                // Scale by visual lunar phase brightness, not illuminated fraction.
+                // Quarter Moon is far dimmer than 50% of full; crescents should
+                // almost vanish for lunar halos and dogs.
+                const illum = lunarOpticsPhaseScale(sunDir.dot(moonDir));
+                if (illum <= 0.002) return;
                 this._activeGroup = this.moonGroup;
                 this._sourceFade = moonVis * illum;
                 // Much fainter base than the Sun optics — the Moon halo sits on
@@ -407,8 +537,8 @@ export class CNodeAtmosphericOptics extends CNode {
         const colors = new Float32Array(nVerts * 3);
         const indices = [];
         const Z = this._Z;
-        const sinLo = Math.sin(radians(-0.6));
-        const sinHi = Math.sin(radians(2.5));
+        const sinLo = this._horizonSinLo;
+        const sinHi = this._horizonSinHi;
         const sourceFade = this._sourceFade;
 
         let p = 0;
@@ -416,7 +546,7 @@ export class CNodeAtmosphericOptics extends CNode {
             const u = i / nu;
             for (let j = 0; j <= nv; j++) {
                 const v = j / nv;
-                const d = dirFn(u, v);
+                const d = this._applyOpticRefraction(dirFn(u, v));
                 positions[p * 3] = d.x * SPHERE_RADIUS;
                 positions[p * 3 + 1] = d.y * SPHERE_RADIUS;
                 positions[p * 3 + 2] = d.z * SPHERE_RADIUS;
@@ -514,10 +644,10 @@ export class CNodeAtmosphericOptics extends CNode {
     //   r   = p·a + rot(S−p·a, ±D, a)          (refracted ray)
     // ψ=0 (axis ⟂ to the Sun azimuth) gives the bright tangent points at the top
     // (upper) and bottom (lower) of the 22° halo (D=21.8°). As the Sun rises the
-    // upper arc opens from a narrow "V" into gull-wings; past ~32° the upper and
-    // lower wings meet and close into the CIRCUMSCRIBED HALO — a drooping oval
-    // that tightens onto the 22° halo as the Sun climbs. All of it falls out of
-    // the geometry, no per-elevation tuning.
+    // upper arc opens from a narrow "V" into gull-wings; in the high-20s to
+    // low-30s the upper and lower wings meet and close into the CIRCUMSCRIBED
+    // HALO — a drooping oval that tightens onto the 22° halo as the Sun climbs.
+    // All of it falls out of the geometry, no per-elevation tuning.
     _buildTangentArcs() {
         const N_ICE = 1.31, APEX = radians(60), SIN_HALF_APEX = 0.5;
         const D_MIN = radians(21.84), SIGMA = radians(15);
@@ -578,15 +708,18 @@ export class CNodeAtmosphericOptics extends CNode {
     // also horizontal). The common suncave Parry arc rides just above the upper
     // tangent arc and is flatter than the halo. Modelled here as a suncave arc
     // whose apex sits a touch above the 22° tangent point and droops gently to
-    // the sides so it stays above the tangent arc. Approximate shape (not a
-    // full ray-trace), but correctly placed and coloured (red lower edge).
+    // the sides. Approximate shape (not a full ray-trace), faded out before
+    // high-Sun cases where this simple parametrization stops being trustworthy.
     _buildParryArc() {
+        const validityFade = MathUtils.smoothstep(this._elevDeg, -2, 2)
+            * (1 - MathUtils.smoothstep(this._elevDeg, 42, 50));
+        if (validityFade <= 0.001) return;
         const e = radians(this._elevDeg);
         const apex = radians(24.0);        // apex angular height above the Sun
         const droop = radians(12.0);       // sideways droop (suncave smile, flatter than the halo)
         const betaMax = radians(32);
         const halfW = radians(0.65);
-        const base = 0.45 * this.intensity;
+        const base = 0.45 * this.intensity * validityFade;
         const tmp = new Vector3();
         this._buildBand(
             140, 4,
@@ -649,10 +782,12 @@ export class CNodeAtmosphericOptics extends CNode {
 
     // ---- Sun pillar (vertical shaft through the Sun). -------------------
     _buildSunPillar() {
+        const lowSunFade = 1 - MathUtils.smoothstep(this._elevDeg, 10, 18);
+        if (lowSunFade <= 0.001) return;
         const el = radians(this._elevDeg);
         const len = radians(15);
         const half = radians(0.6);
-        const base = 0.40 * this.intensity;
+        const base = 0.40 * this.intensity * lowSunFade;
         const tmp = new Vector3();
         this._buildBand(
             48, 4,
@@ -687,68 +822,88 @@ export class CNodeAtmosphericOptics extends CNode {
         // 25° at 30°, 28° at 40°), the dog detaching from the halo and finally
         // lost to total internal reflection near 61°. (Δaz is the azimuth, NOT
         // the on-sky distance — conflating them pushes the dog ~2× too far out.)
-        const N_ICE = 1.31;
-        const ne = Math.sqrt(Math.max(0, N_ICE * N_ICE - sinE * sinE)) / cosE;
-        const arg = ne * 0.5;                          // nₑ·sin(30°)
-        if (arg >= 1) return;                          // TIR: Sun too high, no dogs
-        const delta = 2 * Math.asin(arg) - radians(60); // azimuth offset of the parhelion
+        const offsets = sunDogOffsetsDeg(this._elevDeg);
+        if (offsets === null) return;                   // TIR: Sun too high, no dogs
+        const delta = radians(offsets.azimuthDeg);      // azimuth offset of the parhelion
 
-        const base = baseBrightness * this.intensity;
-        const tmp = new Vector3();
-        // Azimuth where the 22° halo crosses the source's own altitude
-        // (cos22 = sin²e + cos²e·cosΔ). The dog patch starts ~3° INSIDE this so
-        // its faint sunward base overlaps the halo and the two blend into a
-        // single pointed brightening — on the horizon the head lands right on
-        // the halo; as the Sun rises the head detaches outward but still tapers
-        // back toward the ring rather than floating as a separate blob.
-        const cosHalo = (Math.cos(radians(22)) - sinE * sinE) / (cosE * cosE);
-        const deltaHalo = cosHalo > 1 ? delta : Math.acos(MathUtils.clamp(cosHalo, -1, 1));
-        const azStart = deltaHalo - radians(1.5);      // just inside the halo
-        const azEnd = delta + radians(3.0);            // brief tail away from the Sun
-        const azSpan = azEnd - azStart;
-        const uHead = (delta - azStart) / azSpan;      // bright reddish head = the sundog
+        const altitudeFade = 1 - MathUtils.smoothstep(this._elevDeg, 38, 55);
+        if (altitudeFade <= 0.001) return;
+        const base = baseBrightness * this.intensity * altitudeFade;
+
+        // Perfectly level plate crystals collapse to the bright minimum-deviation
+        // head. Real dogs get their vertical extent from slight plate wobble: the
+        // prism edge is near the zenith, not exactly the zenith. We draw a few
+        // weighted physical ribbons through that tilt distribution. Positive tilt
+        // is chosen so upper rays have larger |azimuth offset| than lower rays,
+        // giving the observed outward lean on both sides.
+        const tiltMax = radians(4.2);
+        const innerFeatherDeviation = radians(1.6);
+        const headSoftDeviation = radians(1.35);
+        const extraDeviationMax = radians(2.5);
+        const tiltSideBias = 3.2;
+        const tiltPlaneOffsets = [
+            {angle: radians(-12), weight: 0.22},
+            {angle: 0, weight: 0.56},
+            {angle: radians(12), weight: 0.22},
+        ];
+
         for (const sign of [1, -1]) {
-            this._buildBand(
-                28, 28,
-                (u, v) => {
-                    const az = sign * (azStart + u * azSpan);
-                    const el = e + (v - 0.5) * radians(8.5);    // taller than wide (sundogs elongate vertically)
-                    return this._azElDir(az, el, tmp);
-                },
-                (u, v) => {
-                    // Teardrop: a sharp reddish head on the sunward side falling
-                    // smoothly into a long bluish tail away from the Sun. Pure
-                    // Gaussian falloff (additive) — no hard window, so nothing
-                    // "darkens"; brightness simply reaches the sky value at the
-                    // edges and blends with the halo on the sunward side.
-                    const du = u - uHead;
-                    const sig = du < 0 ? 0.11 : 0.17;           // compact head, brief tail
-                    const gu = Math.exp(-(du * du) / (sig * sig));
-                    const dv = v - 0.5;
-                    const gv = Math.exp(-(dv * dv) / (0.20 * 0.20));
-                    // Red at/sunward of the head, grading to a white-blue tail.
-                    const cIdx = MathUtils.clamp(du / (1 - uHead), 0, 1);
-                    const c = evalStops(stops, cIdx);
-                    const b = c[3] * base * gu * gv;
-                    return [c[0] * b, c[1] * b, c[2] * b];
-                }
-            );
+            for (const plane of tiltPlaneOffsets) {
+                const beta = Math.atan2(-sign * tiltSideBias, 1) + plane.angle;
+                const tiltDir = new Vector3()
+                    .copy(this._H).multiplyScalar(Math.cos(beta))
+                    .addScaledVector(this._W, Math.sin(beta))
+                    .normalize();
+                const axis = new Vector3();
+                const tmp = new Vector3();
+                this._buildBand(
+                    30, 28,
+                    (u, v) => {
+                        const tilt = (v - 0.5) * 2 * tiltMax;
+                        const t = u * (extraDeviationMax + innerFeatherDeviation) - innerFeatherDeviation;
+                        const extraDeviation = t < 0 ? t : Math.pow(t / extraDeviationMax, 1.15) * extraDeviationMax;
+                        axis.copy(this._Z).multiplyScalar(Math.cos(tilt))
+                            .addScaledVector(tiltDir, Math.sin(tilt))
+                            .normalize();
+                        return platePrismDeviationRay(this._S, axis, sign, extraDeviation, tmp)
+                            ?? this._azElDir(sign * delta, e, tmp);
+                    },
+                    (u, v) => {
+                        // The ideal minimum-deviation caustic is too sharp for a
+                        // visual sky render; finite solar diameter, imperfect ice
+                        // plates and camera/atmospheric scatter soften the red side.
+                        const t = u * (extraDeviationMax + innerFeatherDeviation) - innerFeatherDeviation;
+                        const outward = MathUtils.clamp(t / extraDeviationMax, 0, 1);
+                        const redShoulder = MathUtils.smoothstep(t, -innerFeatherDeviation, headSoftDeviation);
+                        const along = redShoulder * Math.exp(-(outward * outward) / (0.62 * 0.62));
+                        const dv = v - 0.5;
+                        const across = Math.exp(-(dv * dv) / (0.25 * 0.25));
+                        const c = evalStops(stops, outward);
+                        const b = c[3] * base * plane.weight * along * across;
+                        return [c[0] * b, c[1] * b, c[2] * b];
+                    }
+                );
+            }
         }
     }
 
     // ---- Circumzenithal arc. --------------------------------------------
-    // A circle centered on the zenith passing 46° above the Sun. Forms only
-    // when the Sun is below ~32°; brightest near 22°. Red on the outer (sun-
-    // ward) edge, violet toward the zenith.
+    // A zenith-centered arc from the 90° plate-prism path (top face → side
+    // face). It is near 58° altitude for a horizon Sun, about 46° above the Sun
+    // near the bright 22° case, and collapses toward zenith at the ~32° limit.
+    // Red on the outer (sunward) edge, violet toward the zenith.
     _buildCircumzenithalArc() {
         const elev = this._elevDeg;
-        // Vividness: peaks at 22°, fades out above 32° and below the horizon.
+        const centerAlt = circumzenithalCenterAltitudeDeg(elev);
+        if (centerAlt === null) return;
+        // Vividness: peaks at 22°, fades out above the physical high-Sun limit
+        // and below the horizon.
         const vivid = MathUtils.smoothstep(elev, -3, 2)
-            * (1 - MathUtils.smoothstep(elev, 30, 34));
+            * (1 - MathUtils.smoothstep(elev, CZA_MAX_ELEV_DEG - 2, CZA_MAX_ELEV_DEG + 0.4));
         if (vivid <= 0.001) return;
         const peak = 1 - MathUtils.clamp(Math.abs(elev - 22) / 26, 0, 0.7);
 
-        const rho0 = radians(44 - elev);
+        const rho0 = radians(90 - centerAlt);
         const halfW = radians(1.2);   // real CZA is a thin band (~1.5° wide)
         const span = radians(46);
         // The CZA is vivid but it was over-bright relative to the halo/arcs;
@@ -772,15 +927,18 @@ export class CNodeAtmosphericOptics extends CNode {
     }
 
     // ---- Circumhorizontal arc. ------------------------------------------
-    // A band parallel to the horizon ~46° below the Sun. Forms only when the
-    // Sun is above ~58°. Red on top (toward the Sun), violet on the bottom.
+    // A horizon-parallel arc from the reciprocal 90° plate-prism path (side
+    // face → lower face). It starts near the horizon at the ~58° low-Sun limit
+    // and rises with the Sun. Red on top (toward the Sun), violet below.
     _buildCircumhorizontalArc() {
         const elev = this._elevDeg;
-        const vivid = MathUtils.smoothstep(elev, 55, 60);
+        const centerAlt = circumhorizontalCenterAltitudeDeg(elev);
+        if (centerAlt === null) return;
+        const vivid = MathUtils.smoothstep(elev, CHA_MIN_ELEV_DEG - 1, CHA_MIN_ELEV_DEG + 2);
         if (vivid <= 0.001) return;
         const peak = 1 - MathUtils.clamp(Math.abs(elev - 70) / 30, 0, 0.6);
 
-        const rho0 = radians(136 - elev); // zenith distance of the arc center
+        const rho0 = radians(90 - centerAlt); // zenith distance of the physical plate-prism centerline
         const halfW = radians(1.9);
         const span = radians(60);
         const base = 1.0 * this.intensity * vivid * peak;
