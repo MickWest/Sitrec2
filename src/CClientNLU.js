@@ -221,6 +221,38 @@ const COMMAND_KEYWORDS = ["set", "show", "hide", "enable", "disable", "turn", "l
     "zoom", "play", "pause", "stop", "start", "resume", "go", "move", "point", "look", "frame",
     "make", "change", "calculate", "evaluate", "what", "ambient"];
 
+// Question / function words that must NEVER be "corrected" into a command keyword.
+// Without this, fuzzy matching maps "how" -> "show" (kw.slice(1) === "how", one edit),
+// turning every "how do I ..." question into a bogus "show ..." toggle command.
+const NEVER_CORRECT = new Set([
+    "how", "why", "who", "whom", "whose", "what", "which", "when", "where",
+    "is", "are", "am", "was", "were", "be", "do", "does", "did",
+    "can", "could", "should", "would", "will", "may", "might",
+]);
+
+// Calculator-style math instance: trig functions take DEGREES by default, so
+// "cos(30)" means cos(30°) (like Google's calculator). Explicit angle units still
+// win — "cos(1 rad)" and "cos(30 deg)" are honoured — and inverse trig (asin/acos/
+// atan...) returns degrees. This is a LOCAL mathjs instance so the global mathjs used
+// elsewhere (e.g. CNodeMath) keeps standard radians behaviour.
+const mathDeg = math.create(math.all);
+(function configureDegreesTrig() {
+    const replacements = {};
+    const argToRad = (x) => (typeof x === "number" ? x / 180 * Math.PI : x);
+    ["sin", "cos", "tan", "sec", "cot", "csc"].forEach((name) => {
+        const fn = mathDeg[name];
+        replacements[name] = (x) => fn(argToRad(x));
+    });
+    ["asin", "acos", "atan", "acot", "acsc", "asec"].forEach((name) => {
+        const fn = mathDeg[name];
+        replacements[name] = (x) => {
+            const r = fn(x);
+            return typeof r === "number" ? r / Math.PI * 180 : r;
+        };
+    });
+    mathDeg.import(replacements, { override: true });
+})();
+
 function levenshtein(a, b) {
     if (a.length === 0) return b.length;
     if (b.length === 0) return a.length;
@@ -252,6 +284,7 @@ function isTransposition(a, b) {
 function fuzzyMatchKeyword(word) {
     const lower = word.toLowerCase();
     if (COMMAND_KEYWORDS.includes(lower)) return null;
+    if (NEVER_CORRECT.has(lower)) return null;
     for (const kw of COMMAND_KEYWORDS) {
         if (lower.length >= 3 && kw.length >= 3) {
             if (isTransposition(lower, kw)) {
@@ -419,7 +452,7 @@ class CClientNLU {
                     const cleaned = text.replace(/^(?:what(?:'s|\s+is)\s+|calculate\s+|eval(?:uate)?\s+)/i, '').replace(/[?!]$/, '').trim();
                     if (!cleaned || /^[a-z]+$/i.test(cleaned)) return null;
                     try {
-                        const result = math.evaluate(cleaned);
+                        const result = mathDeg.evaluate(cleaned);
                         if (typeof result === 'number' && isFinite(result)) {
                             return {expression: cleaned, result};
                         }

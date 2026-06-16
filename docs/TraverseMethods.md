@@ -30,12 +30,16 @@ Sitrec offers two families of traverse:
 
 ### Global Fits
 
+In the menu these appear with a "Global Fit:" prefix (e.g. "Global Fit: Constant Velocity").
+
 | Method | Min Frames | Key Parameters | What It Does |
 |--------|-----------|---------------|--------------|
 | **Constant Velocity** | 2 | (none) | Fits a straight-line trajectory P(t) = P0 + V*t that minimizes perpendicular distance to all LOS rays. |
-| **Constant Acceleration** | 3 | (none) | Fits a parabolic trajectory P(t) = P0 + V*t + 0.5*A*t^2. Captures turns, climbs, decelerations. |
+| **Const Acceleration** | 3 | (none) | Fits a parabolic trajectory P(t) = P0 + V*t + 0.5*A*t^2. Captures turns, climbs, decelerations. |
 | **Kalman Smoother** | 2 | Process Noise, Measurement Noise | Runs a Kalman filter forward then backward (RTS smoother). Every point benefits from all measurements past and future. Tunable noise balance. |
-| **Monte Carlo** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Randomly samples points along perturbed LOS rays, fits polynomials, keeps the best trial. Robust to outliers. |
+| **Monte Carlo 1** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Randomly samples points along perturbed LOS rays (using a CV fit for focused per-frame range estimates), fits polynomials, and keeps the best trial. Robust to outliers. |
+| **Monte Carlo 2** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Least-squares variant: perturbs all frames each trial and fits an overdetermined polynomial, giving more stable results at higher polynomial orders. |
+| **Physics** | 2 | Physics Model, Max Iterations, Wind, Initial Range | Nelder-Mead optimisation with RK4 integration of a physical dynamics model (currently a "Chinese Lantern" buoyancy/drag model) to fit a physically-plausible trajectory. |
 
 ---
 

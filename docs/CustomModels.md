@@ -14,9 +14,12 @@ With "Model or Geometry" set to "Geometry" you can experiment with a variety of 
 
 You can also adjust the material (the surface appearance of the object). There are various different types.
 - Basic: No lighting, the object will simply appear all the same color
-- Lambert: Simple illumination where the object is affected by the sunlight. There's an additional color "missive", which is how much light the object itself emits (i.e. if it's self-illuminating, like a lantern)
+- Lambert: Simple illumination where the object is affected by the sunlight. There's an additional "emissive" color, which is how much light the object itself emits (i.e. if it's self-illuminating, like a lantern)
 - Phong: Similar to Lambert  
 - Physical: A more physically realistic material, with more parameters. 
+- EnvMap: A reflective, environment-mapped material - mirror-like at low roughness, controlled by roughness and metalness.
+- Gradient: A custom shader that maps a color gradient across the object, with thermal-imaging palettes (Ironbow, Black Hot, White Hot, etc.). Useful for approximating an IR/thermal appearance.
+- Checkerboard: A simple two-color checkerboard pattern. 
 
 When experimenting with these settings, use the "Lighting" and "Time" menus to experiment with different lighting situations. For example, here's a very rough approximation of a lantern with an orange glow illuminated by low sun.
 ![SuperEgg with low lighting.jpg](docimages/SuperEgg with low lighting.jpg)

@@ -1,7 +1,9 @@
 # Lens Ghost — Simulating a Sun Reflection in a Mirror Telescope
 
 > **[BETA] — admin only.** The Lens Ghost overlay and the companion "MQ-9 Light Path"
-> 3D view are experimental and currently created only for admin users.
+> 3D view are experimental and currently created only for admin users. In the live UI
+> both carry a "[BETA]" prefix: the overlay folder is **Video → [BETA] Lens Ghost**, and
+> the 3D view is **[BETA] MQ-9 Light Path** in the Views menu.
 
 ## What this is
 
@@ -283,7 +285,7 @@ modelled disc is never mistaken for the tracked object.
 
 ## 10. The MQ-9 light-path 3D view
 
-A companion bespoke 3D view ("MQ-9 Light Path", in the Views menu — see
+A companion bespoke 3D view ("[BETA] MQ-9 Light Path", in the Views menu — see
 `BespokeView.js`) shows a close-up of the MQ-9 with the **boresight** (where the MTS
 looks) and the **incoming sun ray** drawn from the turret, so the ~58° angle between
 them — the off-axis flare condition — is visible in 3D and animates over the clip.

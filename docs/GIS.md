@@ -6,7 +6,7 @@ Sitrec models the Earth as either a sphere or an oblate ellipsoid depending on t
 
 The **World Geodetic System 1984 (WGS84)** defines a reference ellipsoid that approximates the shape of the Earth. It is the coordinate system used by GPS and by most mapping services (Google Earth, Mapbox, Cesium, etc.).
 
-Key parameters used in Sitrec (`LLA-ECEF-ENU.js`):
+Key parameters used in Sitrec (`LLA-ECEF-ENU.ts`):
 
 | Parameter | Value |
 |-----------|-------|
@@ -93,7 +93,7 @@ Sitrec uses several coordinate systems internally:
 | **ECEF** | Earth-Centered Earth-Fixed (Cartesian, origin at Earth's center) |
 | **ENU** | East-North-Up (local tangent plane) |
 
-The conversion chain is: **LLA <-> ECEF <-> ENU**, implemented in `LLA-ECEF-ENU.js`. The LLA-to-ECEF conversion depends on the Earth model (sphere or WGS84 ellipsoid) because geodetic latitude and altitude are defined relative to that surface. ECEF itself is just Cartesian — no ellipsoid needed to interpret the coordinates.
+The conversion chain is: **LLA <-> ECEF <-> ENU**, implemented in `LLA-ECEF-ENU.ts`. The LLA-to-ECEF conversion depends on the Earth model (sphere or WGS84 ellipsoid) because geodetic latitude and altitude are defined relative to that surface. ECEF itself is just Cartesian — no ellipsoid needed to interpret the coordinates.
 
 ## 3D Tiles (Cesium / Google)
 

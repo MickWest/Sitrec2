@@ -6,7 +6,7 @@ Two paths: one-click preset (fastest) or piece-by-piece manual build (understand
 ## Path A — One-click preset
 
 1. Open Sitrec with the base custom sitch (`/?sitch=custom`, or the "Custom" button).
-2. Open **Physics > Gimbal Analysis Preset**.
+2. Open **Physics > Gimbal Analysis**.
 3. (Optional) Tweak wind / traverse / target parameters.
 4. Click **>> Create Gimbal Sitch**.
 
@@ -23,7 +23,7 @@ The page reloads into a fresh sitch with:
 ## Path B — Manual build (piece-by-piece)
 
 1. Open Sitrec with the base custom sitch.
-2. Open **Physics > Gimbal Analysis Preset**.
+2. Open **Physics > Gimbal Analysis**.
 3. Click **>> Create Gimbal Base (manual build)**.
    - Creates a sitch with the jet origin, altitude, terrain, camera, views,
      Gimbal CSVs and FA-18F/ATFLIR models already loaded — but **no pipeline nodes**.

@@ -54,7 +54,7 @@ Local folder access uses the browser File System Access API. Not all browsers su
 | Chrome  | Yes |
 | Opera   | Yes |
 | Edge    | Yes |
-| Safari  | Yes |
+| Safari  | No  |
 | Firefox | No  |
 | Brave   | No by default (see below) |
 

@@ -49,6 +49,7 @@ import {
 } from "./Globals";
 import {disableScroll, f2m, stripComments, updateDocumentTitle} from './utils'
 import {CSituation} from "./CSituation";
+import {helpDocs} from "./docsRegistry";
 import {parseFromAppParams, buildFromAppSitch, finishFromApp} from "./fromApp.js";
 import {par, resetPar} from "./par";
 
@@ -1793,11 +1794,16 @@ async function initializeOnce() {
         }
     }
 
-    // Top-level "What's New" link (concise, user-facing release notes) — sits
-    // directly under the Help menu, above the Documentation folder, so casual
-    // users see release notes without drilling in. The long-form engineering
-    // changelog (WhatsNew-Details) lives inside Documentation below.
-    addDocLink(guiMenus.help, "menus.help.whatsNew", "docs/WhatsNew");
+    // The user-facing docs are defined in one place — src/docsRegistry.js — which
+    // also feeds the in-app AI assistant's getHelpDoc list (src/nodes/CNodeVIewChat.js),
+    // so the menu and the AI can't drift apart. To add a doc: add an entry there and a
+    // matching label key under menus.help.* in src/i18n/en.js.
+
+    // Top-level links (e.g. "What's New") sit directly under the Help menu, above the
+    // Documentation folder, so casual users see release notes without drilling in.
+    for (const d of helpDocs) {
+        if (d.top) addDocLink(guiMenus.help, d.labelKey, d.file);
+    }
 
     const docs = addTranslatedGUIFolder("doumentation", "menus.help.documentation.title", "help")
         .tooltip(localDocsEnabled
@@ -1805,29 +1811,9 @@ async function initializeOnce() {
             : t("menus.help.documentation.githubTooltip")
         ).perm();
 
-
-    function addHelpLink(nameKey, file) {
-        return addDocLink(docs, nameKey, file);
+    for (const d of helpDocs) {
+        if (!d.top) addDocLink(docs, d.labelKey, d.file);
     }
-
-    // When you add a new user-facing doc under docs/, link it here and add a
-    // matching key under menus.help.documentation in src/i18n/en.js. Internal
-    // architecture/plan docs (docs/dev/, docs/plans/, *Internals.md, *Plan.md)
-    // and other developer-only references should NOT be linked.
-    addHelpLink("menus.help.documentation.about", "README")
-    addHelpLink("menus.help.documentation.whatsNewDetails", "docs/WhatsNew-Details")
-    addHelpLink("menus.help.documentation.uiBasics", "docs/UserInterface")
-    addHelpLink("menus.help.documentation.savingLoading", "docs/SavingAndLoading")
-    addHelpLink("menus.help.documentation.customSitch", "docs/CustomSitchTool")
-    addHelpLink("menus.help.documentation.tracks", "docs/Tracks")
-    addHelpLink("menus.help.documentation.gis", "docs/GIS")
-    addHelpLink("menus.help.documentation.starlink", "docs/Starlink")
-    addHelpLink("menus.help.documentation.customModels", "docs/CustomModels")
-    addHelpLink("menus.help.documentation.cameraModes", "docs/satcam")
-    addHelpLink("menus.help.documentation.longExposure", "docs/LongExposure")
-    addHelpLink("menus.help.documentation.wind", "docs/Wind")
-    addHelpLink("menus.help.documentation.traverseMethods", "docs/TraverseMethods")
-    addHelpLink("menus.help.documentation.gimbalRecreate", "docs/gimbal-recreate")
 
     if (localDocsEnabled) {
         docs.addExternalLink(t("menus.help.documentation.thirdPartyNotices"), "./ThirdPartyNotices.txt").perm()

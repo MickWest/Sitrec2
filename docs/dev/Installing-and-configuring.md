@@ -181,6 +181,48 @@ By default Sitrec uses the latest release. To lock to a specific version, edit t
 image: ghcr.io/mickwest/sitrec2:2.36.0
 ```
 
+### Baking a Pre-Configured Image
+
+By default the published image (`ghcr.io/mickwest/sitrec2`) is **unconfigured**: its
+entrypoint reads your environment variables (from `.env` / `env_file`) at *container
+start* and writes them into `shared.env.php` (PHP) and `window.__SITREC_ENV__` (JS).
+
+Sometimes you instead want a **self-configured image** that already contains your
+settings, so it can be stored in your own registry and deployed without supplying a
+`.env` at all — for example to push a ready-to-run image to a private registry, or to
+hand a pre-configured tarball to an air-gapped site. The `bake` command does this:
+
+```bash
+# Build a new image FROM the published one, with .env baked in:
+./sitrec.sh bake registry.example.com/sitrec:configured
+
+# Build and push it to its registry in one step:
+./sitrec.sh bake --push registry.example.com/sitrec:configured
+
+# Use a different env file and pin a specific base version:
+./sitrec.sh bake --env-file prod.env --base 2.84.4 --push myregistry.io/team/sitrec:1.0
+```
+
+| Option | Meaning |
+|--------|---------|
+| `--env-file <file>` | Env file to bake in (default: `.env`) |
+| `--base <tag>` | Base image tag to build `FROM` (default: `latest`) |
+| `--push` | Push the resulting image to its registry after building |
+
+How it works: `bake` generates a tiny derived `Dockerfile` (`FROM
+ghcr.io/mickwest/sitrec2:<tag>` plus one `ENV` line per variable) and builds it. No
+rebuild of the app is needed — the same runtime entrypoint that normally reads `.env`
+simply reads the baked-in `ENV` values instead. Because Docker `ENV` is the
+lowest-priority source, a deployment can still **override** any baked value by passing
+`-e`/`env_file` at run time, so the image is pre-configured but not frozen.
+
+> ⚠️ **Security:** every value in the env file is embedded in the image as build-time
+> `ENV` layers, recoverable by anyone who can pull the image or read its `docker
+> history` / `docker inspect`. Since the env set includes secrets (API keys, S3
+> credentials, etc.), only push baked images to a **private** registry you trust. If
+> you only need banners/map tokens baked in, bake a secrets-free env file and keep the
+> secrets in the runtime `.env`.
+
 ### Using Podman Instead of Docker
 
 [Podman](https://podman.io/) is a drop-in Docker alternative commonly used on systems where Docker is unavailable (e.g. secure environments, RHEL, Fedora). Sitrec's install script and compose file are compatible with both. See [Installing Podman](#installing-podman) above for setup instructions.
@@ -203,6 +245,7 @@ image: ghcr.io/mickwest/sitrec2:2.36.0
 | Stop | `./sitrec.sh stop` |
 | Restart (after .env changes) | `./sitrec.sh restart` |
 | Update to latest | `./sitrec.sh pull` |
+| Bake a configured image | `./sitrec.sh bake [--push] <target-image>` |
 | View logs | `./sitrec.sh logs` |
 | Show status | `./sitrec.sh status` |
 

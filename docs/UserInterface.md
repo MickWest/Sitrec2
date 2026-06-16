@@ -105,7 +105,7 @@ You can also set a default using "Snapshot camera".
 
 # Changing the Terrain
 
-Under the Terrain menu you can change "Map Type". This defaults to MapBox, but you can also choose a street map view. The Settings EOX, Wireframe, and RGB Test are not particularly useful, but EOX can be used if MapBox is not available - of if you just want a different satellite view time.  
+Under the Terrain menu you can change "Map Type". The standard Metabunk installation defaults to "ESRI World Imagery" (satellite), but you can also choose MapBox satellite imagery or a street map view (the exact list depends on the installation's configuration). The Settings EOX, Wireframe, and RGB Test are not particularly useful, but EOX can be used as an alternative satellite source - or if you just want a different satellite view time.  
 
 There are more terrain editing options in the [Custom Sitch Tool](CustomSitchTool.md)
 

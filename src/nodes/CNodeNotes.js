@@ -3,6 +3,7 @@ import {guiShowHide, setRenderOne} from "../Globals";
 import {blockViewEvents, makeDraggable, clampBelowMenuBar} from "../DragResizeUtils";
 import {ViewMan} from "../CViewManager";
 import {t} from "../i18n";
+import {linkifyToHTML, hasLinks} from "../linkify";
 
 class CNodeNotes extends CNodeView {
     constructor(v) {
@@ -289,26 +290,13 @@ class CNodeNotes extends CNodeView {
             return;
         }
 
-        const urlPattern = /(https?:\/\/[^\s<]+[^\s<.,;:!?\])>"'])/gi;
-        const hasLinks = urlPattern.test(this.notesText);
-        
-        if (!hasLinks) {
+        if (!hasLinks(this.notesText)) {
             this.showTextArea();
             return;
         }
 
-        const escaped = this.notesText
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-        
-        const linked = escaped.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?\])>"'])/gi, (url) => {
-            const decodedUrl = url.replace(/&amp;/g, '&');
-            return `<a href="${decodedUrl}" target="_blank" rel="noopener noreferrer" style="color: #6cf; text-decoration: underline;">${url}</a>`;
-        });
-
-        this.linkOverlay.innerHTML = linked;
+        // Shared with the AI chat (CNodeViewChat) so links look and behave identically.
+        this.linkOverlay.innerHTML = linkifyToHTML(this.notesText);
         this.textArea.style.display = 'none';
         this.linkOverlay.style.display = 'block';
     }

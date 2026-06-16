@@ -11,14 +11,16 @@ $OPENAI_API_KEY = getenv("OPENAI_API");
 $ANTHROPIC_API_KEY = getenv("ANTHROPIC_API");
 $GROQ_API_KEY = getenv("GROQ_API");
 $GROK_API_KEY = getenv("GROK_API");
+$GEMINI_API_KEY = getenv("GEMINI_API"); // Google Gemini; models hidden until this is set
 
 // SECURITY: Derive API key from provider name so we never store keys in session
 function getApiKeyForProvider($provider) {
-    global $OPENAI_API_KEY, $ANTHROPIC_API_KEY, $GROQ_API_KEY, $GROK_API_KEY;
+    global $OPENAI_API_KEY, $ANTHROPIC_API_KEY, $GROQ_API_KEY, $GROK_API_KEY, $GEMINI_API_KEY;
     return match($provider) {
         'anthropic' => $ANTHROPIC_API_KEY,
         'groq' => $GROQ_API_KEY,
         'grok' => $GROK_API_KEY,
+        'gemini' => $GEMINI_API_KEY,
         default => $OPENAI_API_KEY
     };
 }
@@ -26,40 +28,51 @@ function getApiKeyForProvider($provider) {
 // Model permissions by user group
 // Groups: admin=3, registered=2, verified=9, sitrec=14, sitrec-plus=19
 $MODEL_PERMISSIONS = [
+    // NOTE on cost/value (per 1M tokens, in/out, mid-2026): gpt-5-mini $0.25/$2 is the
+    // best-value default (big upgrade over the old gpt-4o at lower cost); gpt-5-nano
+    // $0.05/$0.40 and gemini-2.5-flash-lite $0.10/$0.40 are the cheapest capable models;
+    // claude-haiku-4-5 $1/$5 is higher quality with strong prompt caching; sonnet 4.6
+    // ($3/$15) and opus 4.8 ($5/$25) are admin-only premium. The FIRST entry in a user's
+    // highest tier is their default model. grok-4-fast may alias to pricier Grok-4.3 —
+    // kept admin-only. Gemini entries are hidden until GEMINI_API is set (see shared.env).
     3 => [ // admin - all models
-        ['provider' => 'openai', 'model' => 'gpt-4o', 'label' => 'GPT-4o'],
-        ['provider' => 'openai', 'model' => 'gpt-4o-mini', 'label' => 'GPT-4o Mini'],
-        ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-20250514', 'label' => 'Claude Sonnet 4'],
-        ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-5-20250929', 'label' => 'Claude Sonnet 4.5'],
+        ['provider' => 'openai', 'model' => 'gpt-5-mini', 'label' => 'GPT-5 Mini'],
+        ['provider' => 'openai', 'model' => 'gpt-5-nano', 'label' => 'GPT-5 Nano'],
+        ['provider' => 'gemini', 'model' => 'gemini-2.5-flash-lite', 'label' => 'Gemini 2.5 Flash-Lite'],
         ['provider' => 'anthropic', 'model' => 'claude-haiku-4-5-20251001', 'label' => 'Claude Haiku 4.5'],
+        ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-6', 'label' => 'Claude Sonnet 4.6'],
+        ['provider' => 'anthropic', 'model' => 'claude-opus-4-8', 'label' => 'Claude Opus 4.8'],
         ['provider' => 'groq', 'model' => 'llama-3.3-70b-versatile', 'label' => 'Llama 3.3 70B (Groq)'],
-        ['provider' => 'groq', 'model' => 'llama-3.1-8b-instant', 'label' => 'Llama 3.1 8B (Groq)'],
-        ['provider' => 'grok', 'model' => 'grok-2-latest', 'label' => 'Grok 2'],
+        ['provider' => 'grok', 'model' => 'grok-4-fast', 'label' => 'Grok 4 Fast'],
     ],
     19 => [ // sitrec-plus - same models as sitrec, 10x rate limits
-        ['provider' => 'openai', 'model' => 'gpt-4o', 'label' => 'GPT-4o'],
-        ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-20250514', 'label' => 'Claude Sonnet 4'],
+        ['provider' => 'openai', 'model' => 'gpt-5-mini', 'label' => 'GPT-5 Mini'],
+        ['provider' => 'gemini', 'model' => 'gemini-2.5-flash-lite', 'label' => 'Gemini 2.5 Flash-Lite'],
+        ['provider' => 'anthropic', 'model' => 'claude-haiku-4-5-20251001', 'label' => 'Claude Haiku 4.5'],
         ['provider' => 'groq', 'model' => 'llama-3.3-70b-versatile', 'label' => 'Llama 3.3 70B (Groq)'],
     ],
     14 => [ // sitrec - premium models
-        ['provider' => 'openai', 'model' => 'gpt-4o', 'label' => 'GPT-4o'],
-        ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-20250514', 'label' => 'Claude Sonnet 4'],
+        ['provider' => 'openai', 'model' => 'gpt-5-mini', 'label' => 'GPT-5 Mini'],
+        ['provider' => 'gemini', 'model' => 'gemini-2.5-flash-lite', 'label' => 'Gemini 2.5 Flash-Lite'],
+        ['provider' => 'anthropic', 'model' => 'claude-haiku-4-5-20251001', 'label' => 'Claude Haiku 4.5'],
         ['provider' => 'groq', 'model' => 'llama-3.3-70b-versatile', 'label' => 'Llama 3.3 70B (Groq)'],
     ],
-    9 => [ // verified - mid-tier models
-        ['provider' => 'openai', 'model' => 'gpt-4o-mini', 'label' => 'GPT-4o Mini'],
+    9 => [ // verified - cheapest capable models (default = cheapest available)
+        ['provider' => 'gemini', 'model' => 'gemini-2.5-flash-lite', 'label' => 'Gemini 2.5 Flash-Lite'],
+        ['provider' => 'openai', 'model' => 'gpt-5-nano', 'label' => 'GPT-5 Nano'],
         ['provider' => 'groq', 'model' => 'llama-3.3-70b-versatile', 'label' => 'Llama 3.3 70B (Groq)'],
     ],
     2 => [ // registered - same as verified
-        ['provider' => 'openai', 'model' => 'gpt-4o-mini', 'label' => 'GPT-4o Mini'],
+        ['provider' => 'gemini', 'model' => 'gemini-2.5-flash-lite', 'label' => 'Gemini 2.5 Flash-Lite'],
+        ['provider' => 'openai', 'model' => 'gpt-5-nano', 'label' => 'GPT-5 Nano'],
         ['provider' => 'groq', 'model' => 'llama-3.3-70b-versatile', 'label' => 'Llama 3.3 70B (Groq)'],
     ],
 ];
 
 // Get available models for a user based on their groups
 function getAvailableModels($userGroups) {
-    global $MODEL_PERMISSIONS, $OPENAI_API_KEY, $ANTHROPIC_API_KEY, $GROQ_API_KEY, $GROK_API_KEY;
-    
+    global $MODEL_PERMISSIONS, $OPENAI_API_KEY, $ANTHROPIC_API_KEY, $GROQ_API_KEY, $GROK_API_KEY, $GEMINI_API_KEY;
+
     $models = [];
     $seen = [];
     
@@ -76,6 +89,7 @@ function getAvailableModels($userGroups) {
                         'anthropic' => !empty($ANTHROPIC_API_KEY),
                         'groq' => !empty($GROQ_API_KEY),
                         'grok' => !empty($GROK_API_KEY),
+                        'gemini' => !empty($GEMINI_API_KEY),
                         default => false
                     };
                     if ($hasKey) {
@@ -354,8 +368,8 @@ function getHelpDocContent($docName, $availableDocs) {
     $content = file_get_contents($docPath);
     $content = preg_replace('/<!--[\s\S]*?-->/', '', $content);
     
-    if (strlen($content) > 8000) {
-        $content = substr($content, 0, 8000) . "\n\n[Content truncated - showing first 8000 characters]";
+    if (strlen($content) > 20000) {
+        $content = substr($content, 0, 20000) . "\n\n[Content truncated - showing first 20000 characters]";
     }
     
     return ['content' => $content];
@@ -566,6 +580,111 @@ function convertToolsForAnthropic($tools) {
     return $anthropicTools;
 }
 
+// Convert the OpenAI-style tools array into Gemini's tools.functionDeclarations form.
+function convertToolsForGemini($tools) {
+    $decls = [];
+    foreach ($tools as $tool) {
+        $decls[] = [
+            "name" => $tool["function"]["name"],
+            "description" => $tool["function"]["description"],
+            "parameters" => $tool["function"]["parameters"]
+        ];
+    }
+    return [["functionDeclarations" => $decls]];
+}
+
+// Call Google Gemini (generativelanguage REST). Same contract as the other providers:
+// take the text chat history + OpenAI-style tools, return {text, apiCalls, debug}. The
+// chatbot's tool loop feeds tool *results* back as plain text messages (see runToolLoop),
+// so we only parse the model's function CALLS here — no native functionResponse threading
+// is needed. Hidden from users unless GEMINI_API is set (see getAvailableModels()).
+function callGemini($apiKey, $systemPrompt, $history, $tools, $model = 'gemini-2.5-flash-lite') {
+    $contents = [];
+    foreach ($history as $msg) {
+        $role = $msg['role'] === 'bot' ? 'model' : 'user';
+        $contents[] = ["role" => $role, "parts" => [["text" => $msg['text']]]];
+    }
+
+    if (empty($contents)) {
+        return [
+            'text' => 'Error: No messages to send',
+            'apiCalls' => [],
+            'debug' => ['provider' => 'gemini', 'model' => $model, 'error' => 'No messages']
+        ];
+    }
+
+    $requestBody = [
+        "system_instruction" => ["parts" => [["text" => $systemPrompt]]],
+        "contents" => $contents,
+        "tools" => convertToolsForGemini($tools),
+        "generationConfig" => ["maxOutputTokens" => 1024]
+    ];
+
+    $url = "https://generativelanguage.googleapis.com/v1beta/models/" . rawurlencode($model) . ":generateContent";
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_TIMEOUT => 60,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_HTTPHEADER => [
+            "x-goog-api-key: $apiKey",
+            "Content-Type: application/json"
+        ],
+        CURLOPT_POSTFIELDS => json_encode($requestBody)
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlError) {
+        return [
+            'text' => "Error: $curlError",
+            'apiCalls' => [],
+            'debug' => ['provider' => 'gemini', 'curlError' => $curlError]
+        ];
+    }
+
+    $parsed = json_decode($response, true);
+
+    if (isset($parsed['error'])) {
+        return [
+            'text' => "Gemini API error: " . ($parsed['error']['message'] ?? 'Unknown error'),
+            'apiCalls' => [],
+            'debug' => ['provider' => 'gemini', 'httpCode' => $httpCode, 'error' => $parsed['error']]
+        ];
+    }
+
+    $parts = $parsed['candidates'][0]['content']['parts'] ?? [];
+    $text = '';
+    $calls = [];
+    foreach ($parts as $part) {
+        if (isset($part['text'])) {
+            $text .= $part['text'];
+        } elseif (isset($part['functionCall'])) {
+            $calls[] = [
+                "fn" => $part['functionCall']['name'],
+                "args" => $part['functionCall']['args'] ?? []
+            ];
+        }
+    }
+
+    return [
+        'text' => trim($text),
+        'apiCalls' => $calls,
+        'debug' => [
+            'provider' => 'gemini',
+            'model' => $model,
+            'hasToolCalls' => !empty($calls),
+            'toolCallCount' => count($calls),
+            'finishReason' => $parsed['candidates'][0]['finishReason'] ?? null,
+            'httpCode' => $httpCode
+        ]
+    ];
+}
+
 $tools = buildToolsFromDoc($sitrecDoc, $menuSummary);
 
 // Build menu documentation for system prompt (limit size to avoid token limits)
@@ -674,21 +793,43 @@ $systemPrompt .= $menuDocForPrompt;
 
 if (!empty($availableDocs)) {
     $systemPrompt .= "\n\nAVAILABLE HELP DOCUMENTATION:\n";
-    $systemPrompt .= "Use getHelpDoc to read these docs when answering questions about features or how to do things:\n";
+    $systemPrompt .= "Use getHelpDoc to read these docs when answering questions about features or how to do things. Each doc's link is shown in parentheses:\n";
     foreach ($availableDocs as $docName => $description) {
-        $systemPrompt .= "- $docName: $description\n";
+        $systemPrompt .= "- $docName (docs/$docName.html): $description\n";
     }
     $systemPrompt .= "\nFor questions like 'what's new' or 'how do I do X', use getHelpDoc to get accurate information.\n";
+    $systemPrompt .= "When your answer uses or refers to one of these docs, include its link (the docs/<Name>.html path shown above) as a plain URL — inline where you first mention the doc, and again in a short 'See also:' list at the end of your answer. Use the exact path from the list; never invent a link or link to a doc that is not listed.\n";
 }
 
 // Call OpenAI API
-function callOpenAI($apiKey, $systemPrompt, $history, $tools, $model = 'gpt-4o') {
+function callOpenAI($apiKey, $systemPrompt, $history, $tools, $model = 'gpt-5-mini') {
     $messages = [["role" => "system", "content" => $systemPrompt]];
     foreach ($history as $msg) {
         $role = $msg['role'] === 'bot' ? 'assistant' : $msg['role'];
         $messages[] = ["role" => $role, "content" => $msg['text']];
     }
     
+    $requestBody = [
+        "model" => $model,
+        "messages" => $messages,
+        "tools" => $tools,
+        "tool_choice" => "auto",
+    ];
+    // GPT-5 and o-series are reasoning models that only accept the DEFAULT temperature
+    // (1) and reject a custom value with a 400. Older chat models (gpt-4o, etc.) accept
+    // 0.2. So only send a custom temperature for models that support it — otherwise the
+    // request 400s and (without the error check below) comes back as empty text.
+    if (!preg_match('/^(gpt-5|o\d)/i', $model)) {
+        $requestBody["temperature"] = 0.2;
+    }
+    // GPT-5 reasoning models default to "medium" effort (~10-15s per call), which makes
+    // the multi-step tool loop slow enough to hit PHP/proxy timeouts, and burns reasoning
+    // tokens. The chatbot's work (doc Q&A, simple menu commands) doesn't need deep
+    // reasoning, so request minimal effort — much faster and cheaper.
+    if (preg_match('/^gpt-5/i', $model)) {
+        $requestBody["reasoning_effort"] = "minimal";
+    }
+
     $ch = curl_init("https://api.openai.com/v1/chat/completions");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -699,19 +840,24 @@ function callOpenAI($apiKey, $systemPrompt, $history, $tools, $model = 'gpt-4o')
             "Authorization: Bearer $apiKey",
             "Content-Type: application/json"
         ],
-        CURLOPT_POSTFIELDS => json_encode([
-            "model" => $model,
-            "messages" => $messages,
-            "tools" => $tools,
-            "tool_choice" => "auto",
-            "temperature" => 0.2
-        ])
+        CURLOPT_POSTFIELDS => json_encode($requestBody)
     ]);
-    
+
     $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-    
+
     $parsed = json_decode($response, true);
+
+    // Surface API errors instead of silently returning empty text.
+    if (isset($parsed['error'])) {
+        return [
+            'text' => "OpenAI API error: " . ($parsed['error']['message'] ?? 'Unknown error'),
+            'apiCalls' => [],
+            'debug' => ['provider' => 'openai', 'model' => $model, 'httpCode' => $httpCode, 'error' => $parsed['error']]
+        ];
+    }
+
     $message = $parsed['choices'][0]['message'] ?? [];
     $text = $message['content'] ?? '';
     $calls = [];
@@ -745,7 +891,7 @@ function callOpenAI($apiKey, $systemPrompt, $history, $tools, $model = 'gpt-4o')
 // Claude Opus 4.5	    claude-opus-4-5-20251101	Most intelligent, higher cost
 
 // Call Anthropic (Claude) API
-function callAnthropic($apiKey, $systemPrompt, $history, $tools, $model = 'claude-sonnet-4-20250514') {
+function callAnthropic($apiKey, $systemPrompt, $history, $tools, $model = 'claude-haiku-4-5-20251001') {
     $messages = [];
     foreach ($history as $msg) {
         $role = $msg['role'] === 'bot' ? 'assistant' : 'user';
@@ -762,11 +908,16 @@ function callAnthropic($apiKey, $systemPrompt, $history, $tools, $model = 'claud
     }
     
     $anthropicTools = convertToolsForAnthropic($tools);
-    
+
+    // Prompt caching: the system prompt (menu controls + doc list) and the tools are
+    // large and identical across turns. A cache_control breakpoint on the system block
+    // caches the tools+system prefix, so repeated turns pay ~10% of its input cost.
+    $systemBlocks = [["type" => "text", "text" => $systemPrompt, "cache_control" => ["type" => "ephemeral"]]];
+
     $requestBody = [
         "model" => $model,
         "max_tokens" => 1024,
-        "system" => $systemPrompt,
+        "system" => $systemBlocks,
         "messages" => $messages,
         "tools" => $anthropicTools
     ];
@@ -931,7 +1082,7 @@ function callGroq($apiKey, $systemPrompt, $history, $tools, $model = 'llama-3.3-
 // grok-beta - Beta version
 
 // Call xAI Grok API (OpenAI-compatible)
-function callGrok($apiKey, $systemPrompt, $history, $tools, $model = 'grok-2-latest') {
+function callGrok($apiKey, $systemPrompt, $history, $tools, $model = 'grok-4-fast') {
     $messages = [["role" => "system", "content" => $systemPrompt]];
     foreach ($history as $msg) {
         $role = $msg['role'] === 'bot' ? 'assistant' : $msg['role'];
@@ -1051,6 +1202,9 @@ function runToolLoop($provider, $apiKey, $systemPrompt, $history, $tools, $model
         } elseif ($provider === 'grok') {
             global $GROK_API_KEY;
             $result = callGrok($GROK_API_KEY, $systemPrompt, $currentHistory, $tools, $model);
+        } elseif ($provider === 'gemini') {
+            global $GEMINI_API_KEY;
+            $result = callGemini($GEMINI_API_KEY, $systemPrompt, $currentHistory, $tools, $model);
         } else {
             global $OPENAI_API_KEY;
             $result = callOpenAI($OPENAI_API_KEY, $systemPrompt, $currentHistory, $tools, $model);

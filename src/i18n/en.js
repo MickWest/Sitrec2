@@ -96,6 +96,7 @@ const en = {
             title: "Help",
             tooltip: "Links to the documentation and other help resources",
             whatsNew: "What's New",
+            gettingStarted: "Getting Started",
             documentation: {
                 title: "Documentation",
                 localTooltip: "Links to the documentation (local)",

@@ -6,6 +6,8 @@ import {getEnvBool} from "../envUtils";
 import {ModelFiles} from "./CNode3DObject";
 import {clientNLU} from "../CClientNLU";
 import {t} from "../i18n";
+import {getChatAvailableDocs} from "../docsRegistry";
+import {linkifyToHTML} from "../linkify";
 
 class CNodeViewChat extends CNodeViewText {
     constructor(v) {
@@ -238,7 +240,10 @@ class CNodeViewChat extends CNodeViewText {
     // Add bot/system message to chat log
     addSystemMessage(text) {
         const div = document.createElement('div');
-        div.textContent = `Bot: ${text}`;
+        // Render clickable links (help-doc links, URLs) the same way the Notes view
+        // does. linkifyToHTML HTML-escapes the text before inserting anchors, so
+        // assigning innerHTML here is safe from injection.
+        div.innerHTML = 'Bot: ' + linkifyToHTML(text);
         div.style.margin = '4px 0';
         div.style.color = `var(--cnodeview-bot-color)`;
         this.chatLog.insertBefore(div, this.promptLine);
@@ -267,6 +272,15 @@ class CNodeViewChat extends CNodeViewText {
 
     async handleMessage(text) {
         this.historyPosition = 0;
+
+        // Interrogatives ("how ...", "why ...") are knowledge / how-to questions, not
+        // UI commands. Send them straight to the LLM (which can answer or read a help
+        // doc) instead of letting the command-matching NLU fuzzy-match them into a
+        // toggle. Without this, "how do I have a track of az/el" became "Enabled ...".
+        if (/^\s*(?:how|why)\b/i.test(text)) {
+            await this.sendToLLM(text);
+            return;
+        }
 
         const parseResult = clientNLU.parse(text);
         this.addDebugMessage(`NLU: ${parseResult.patternName || 'none'} (${parseResult.confidence})`);
@@ -310,16 +324,12 @@ class CNodeViewChat extends CNodeViewText {
                 : [null, null];
 
             const history = this.chatHistory.slice(-10);
-            const availableDocs = {
-                "WhatsNew": "Recent changes and new features in Sitrec",
-                "UserInterface": "User interface basics and navigation",
-                "CustomSitchTool": "How to set up a custom situation (sitch)",
-                "Starlink": "How to investigate Starlink satellite flares",
-                "CustomModels": "Using custom 3D models like aircraft",
-                "SavingLoadingSharing": "Saving, loading, and sharing sitches",
-                "ObjectTracking": "Object tracking in video overlays",
-                "LocalCustomSitches": "Setting up local custom sitches",
-            };
+            // Help docs the AI assistant may read via the getHelpDoc tool to answer
+            // "how do I..." / UI / feature questions. The list (and its descriptions)
+            // lives in src/docsRegistry.js — the same source the Help menu is built
+            // from — so the menu and the AI can't drift apart, and every doc name is
+            // guaranteed to match a real docs/<name>.md.
+            const availableDocs = getChatAvailableDocs();
             const body = JSON.stringify({
                 history,
                 prompt: text,

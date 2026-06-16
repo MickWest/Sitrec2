@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.85.0 (2026-06-16)
+
+### New Features
+- **Getting Started** (Help → Getting Started): a new top-level Help link opens the rewritten Getting Started guide — loading a Featured example, importing your own data, setting a location by name, getting the date and time right, syncing video, terrain, and adding satellites.
+- **Google Gemini in the AI assistant**: the in-app assistant can now use Google Gemini models (where the server is configured for it), alongside the refreshed line-up of GPT-5, Claude, Llama, and Grok models.
+- **Pre-configured Docker images**: self-hosters can bake their settings into a ready-to-run image with `./sitrec.sh bake` and optionally push it to a private registry. (Heads-up: baked images contain your secrets, so only push to a registry you trust.)
+
+### Improvements
+- AI assistant replies now include clickable links to the relevant help docs, and the assistant is much better at opening the right doc for "how do I…" questions.
+- "How…" and "why…" questions now go straight to the AI assistant instead of occasionally being mistaken for a menu command.
+- The chat calculator now treats trig functions as degrees by default (e.g. cos(30) is cos(30°)), matching common calculators; you can still write "cos(1 rad)".
+
+### Bug Fixes
+- Fixed an error when dragging a link in the sitch browser sidebar (All, Featured, Private, etc.); those links are now click-only and no longer trigger a spurious file-load error.
+
 ## Version 2.84.4 (2026-06-16)
 
 A correctness pass on Atmospheric Optics (Halos), plus an opt-in admin usage-stats feature.

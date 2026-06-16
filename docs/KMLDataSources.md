@@ -448,7 +448,7 @@ lands.
 - **Names are frozen for back-compat.** `getShortName()` output is preserved byte-for-byte across
   the refactor via `legacyTrackName()`. Saved sitches reference tracks by `Track_<shortName>`, so
   changing a name would orphan them; improvements are deferred behind an `exportTagNumber` gate.
-- **`isSupplementaryTrack()` is always `false`** for KML (`:145`): every KML track is a distinct
+- **`isSupplementaryTrack()` is always `false`** for KML (`:124-126`): every KML track is a distinct
   aircraft, never a FrameCenter-style supplementary.
 - **Geometry is taken verbatim.** The parser does no outlier rejection or smoothing — bad-data
   filtering and the g-force check live downstream in `TrackManager`/`CNodeMISBData`.

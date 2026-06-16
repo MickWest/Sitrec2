@@ -44,25 +44,54 @@ Military-standard metadata (STANAG 0601) from surveillance platforms. Contains s
 
 NATO track exchange format. A single file can contain up to three sub-tracks: platform position (posHigh), dynamics/center, and ground position (posLow).
 
+### ASTERIX radar (PCAP)
+
+EUROCONTROL ASTERIX surveillance data (CAT-048 and CAT-062) captured as network packets — `.pcap` or `.pcapng` files (and raw ASTERIX byte streams). A single capture typically contains many aircraft, so it is imported as a multi-aircraft file: Sitrec extracts one track per detected target.
+
 ### Generic CSV
 
-Flexible format with auto-detected columns. Sitrec recognizes common column names (case-insensitive):
+A flexible format for **position tracks**, with auto-detected columns. Header names are matched case-insensitively, and most fields accept several aliases:
 
-| Column Names | Data |
-|-------------|------|
-| `DATETIME`, `UTC`, `TIME`, `DATE`, `DTG` | Timestamp (ISO, epoch, or relative) |
-| `LAT` / `LATITUDE`, `LON` / `LONGITUDE` | Position in degrees |
-| `MGRS` | Military Grid Reference System coordinates |
-| `ALTITUDE`, `ALT`, `ALTITUDE(FT)`, `ALTITUDEKM` | Altitude (various units) |
-| `AIRCRAFT`, `CALLSIGN` | Identification |
-| `TRACK_ID` | For multiple tracks in one CSV |
-| `AZIMUTH` | Camera azimuth angle |
+| Data | Recognized column headers |
+|------|---------------------------|
+| **Time** (required) | `DATETIMEUTC`, `UTC`, `DATETIME`, `DATE_TIME`, `TIMESTAMP`, `TIME`, `DATE`, `DTG`, `DT`, or `FRAME` (a frame number) |
+| **Latitude / Longitude** | `LAT` / `LATITUDE` / `TPLAT` / `LATITUDEDEGS`, and `LON` / `LONG` / `LONGITUDE` / `TPLON` / `LONGITUDEDEGS` |
+| **Grid** (instead of lat/lon) | `MGRS` / `GRID` / `GRIDREF` (military grid), or `REGGRID` / `GRID56` (Maidenhead / ham-radio locators) |
+| **Altitude** | `ALTITUDE` / `ALT` / `TPHAE` / `alt_m` (metres), `ALTITUDE (FT)` / `ALT (FT)` (feet), `ALTITUDEKM` (km), or `AGL` / `ALT (m/agl)` (above ground level) |
+| **Identification** | `AIRCRAFT` / `AIRCRAFTSPECIFICTYPE`, `CALLSIGN` / `TAILNUMBER` |
+| **Multiple tracks** | `TRACK_ID` / `THRESHERID` / `STAGENUMBER` (one track per distinct ID) |
+| **Speed** | `SPEED_KTS` (knots; stored as airspeed) |
 
-**Multiple tracks in one CSV**: If a `TRACK_ID` column is present, Sitrec splits the data into separate tracks by ID.
+A generic CSV needs, at minimum, a **time** column plus either **lat + lon** or a **grid** column. Altitude defaults to ground/sea level if absent.
 
-**Time formats**: Sitrec auto-detects ISO dates, Unix epoch (seconds, milliseconds, or microseconds), and relative/frame-based timestamps.
+**Multiple tracks in one CSV**: if a track-ID column is present, Sitrec splits the data into separate tracks by ID.
 
-**Grid coordinates**: Both MGRS and Maidenhead (ham radio) grid locators are supported.
+**Time formats**: Sitrec auto-detects ISO dates, Unix epoch (seconds, milliseconds, or microseconds), relative seconds, and `FRAME` numbers (converted to time using the sitch's fps).
+
+**Grid coordinates**: both MGRS and Maidenhead (ham radio) grid locators are accepted in place of lat/lon.
+
+> A generic position CSV says *where the camera (or object) is*, not where it is **looking**. To give the look-camera a track of pointing angles (azimuth/elevation), use a Camera Angle Track — see below.
+
+### Camera Angle Tracks (Az / El / Heading / FOV)
+
+This is how you give the look-camera a **track of azimuth/elevation** (or heading, or field of view). The CSV's first column is `frame` (a frame number) or `time`, followed by one or more angle columns:
+
+| Header | Drives |
+|--------|--------|
+| `az` | Azimuth, in degrees |
+| `el` | Elevation, in degrees |
+| `heading` | Camera heading, in degrees |
+| `fov` or `zoom` | Field of view |
+
+You can combine several columns in one file — e.g. a header of `frame,az,el` with one row per frame:
+
+```
+frame,az,el
+0,123.4,5.2
+1,123.6,5.3
+```
+
+Sitrec feeds these into the look camera's Az/El controller, so it pans/tilts to follow your angles. If the first column is `time`, the values may be ISO datetimes or seconds, and are converted to frames using the sitch's fps. Import it by dragging it in (or **File → Import File**), exactly like any other track.
 
 ### FlightRadar24 CSV
 
@@ -219,7 +248,7 @@ Each data track has a **Filter Bad Data** folder with:
 - The filter runs **multiple passes**, iteratively removing the worst points
 - Filtered points are hidden from the display but the original data is preserved
 - If "Try Altitude First" is enabled, the filter attempts to **correct** altitude before removing the point entirely
-- A typical bad ADS-B point generates 100g+ of apparent acceleration, well above the 3g default threshold
+- A typical bad ADS-B point generates 100g+ of apparent acceleration, well above the 10g default threshold
 
 ## Smoothing and Interpolation
 
@@ -227,14 +256,16 @@ Track data is often noisy or sparse. Sitrec provides several smoothing methods t
 
 ### Available Methods
 
+The smoothing-method dropdown shows these option keys directly:
+
 | Method | Description |
 |--------|-------------|
-| **None** | No smoothing — raw data points |
-| **Moving Average** | Rolling average with polynomial edge handling |
-| **Sliding Average** | Sliding window average |
-| **Savitzky-Golay** | Polynomial-fitting filter that preserves peaks better than simple averaging |
-| **Spline (Catmull-Rom)** | Smooth curve through interpolated control points |
-| **Spline (Data-Driven)** | Chordal Catmull-Rom spline through the actual data points |
+| **none** | No smoothing — raw data points |
+| **moving** | Rolling moving average |
+| **movingPolyEdge** | Moving average with polynomial edge handling (better behaviour at the ends of the track) |
+| **sliding** | Sliding window average |
+| **savgol** | Savitzky-Golay polynomial-fitting filter that preserves peaks better than simple averaging |
+| **spline** | Catmull-Rom spline. With no associated data track it fits a smooth curve through interpolated control points; when a data track is present it does a chordal Catmull-Rom spline through the actual data points |
 
 ### Smoothing Parameters
 

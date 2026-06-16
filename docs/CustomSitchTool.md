@@ -1,17 +1,25 @@
-# The Sitrec Custom Sitch Tool
+# Getting Started with Sitrec
 
-Sitrec is a powerful tool that allows you to set up sitches (situations) by either coding them directly, or by setting up a custom JSON file. 
+Sitrec recreates a real-world situation (a "sitch") in an interactive 3D view, so you can line it up against a video or photo — terrain, sky, aircraft, satellites, the Sun, and stars, all at the right **place** and **time**. It was originally built to analyze US Navy UAP videos.
 
-Both those methods are powerful, but cumbersome. A simpler way that will work for many sitches is to use the _Custom Sitch Tool_.
+You build a sitch by importing your own data — a flight track, a video, satellite data, and so on — with the **Custom Sitch** tool. Just use **File → Import File**, or simply **drag and drop** the data into the browser window. This is the normal, recommended way to create a sitch.
 
-The custom sitch tool is designed so you can simply import data (either via the "import" option on the file menu, or by dragging and dropping it directly into the browser window)
+> Two older approaches — hand-coding a sitch in JavaScript, or writing a custom JSON file — are deprecated legacy methods and are not covered here. Drag-and-drop is what you want.
 
-Before reading this, it's a good idea to familiarize yourself with the [User Interface](UserInterface.md) documentation. 
+Before going further, it's a good idea to read the [User Interface](UserInterface.md) guide, so you're comfortable opening menus, dragging sliders, and navigating the 3D **Main View** (the big "god's-eye" view of the world). 
 
 
 Here's an informal video demonstrating many of the concepts described here:
 <https://www.youtube.com/watch?v=EMjTDRKbK5U>
 
+
+## See it in action first (optional)
+
+Before building your own, it helps to load a finished example and just watch it:
+
+1. From the **File** menu, choose **Open** (in the **Server** section) to bring up the sitch browser, then select the **Featured** category in the sidebar — these are hand-picked, complete scenarios.
+2. Load one, then press the **spacebar** (or drag the large slider at the bottom of the screen) to play it through.
+3. Drag inside the **Main View** with the mouse to look around.
 
 ## Custom Sitch Basics
 
@@ -60,7 +68,7 @@ You can adjust the camera heading using the PTZ controls. These default to absol
 
 Changing the PTZ mode to "Relative" (check the box) means that the heading is relative to the ground track of the jet. This allows you to simulate looking forward (Pan = 0°), or to the pilot's left or right. 
 
-In the above image you will see red lines. These are _lines of sight_ and essentially show where the plane's camera is looking. There's also a blue line, which is the _Traverse_ of the lines of sight. There are various ways of calculating a Traverse, but the default here is to stay a fixed distance from the camera. Mor on Traverses later. 
+In the above image you will see red lines. These are _lines of sight_ and essentially show where the plane's camera is looking. There's also a blue line, which is the _Traverse_ of the lines of sight. There are various ways of calculating a Traverse (described in detail in [Traverse Methods](TraverseMethods.md)); the default is "Const Air Spd" (constant air speed). More on Traverses later. 
 
 In addition, there is the Traverse Object, which defaults to a cube. You can change this in the Objects menu. For example if you wanted to simulate a plane flying 1NM to the pilot's left, you could change:
 
@@ -93,6 +101,14 @@ Here the camera is fixed on the ground, and the target track is set to the plane
 
 Note since the PTZ controls are disabled, you can now adjust the FOV with the "vFOV" slider in the camera menu. 
 
+### Setting the camera or target location by name
+
+You don't have to know coordinates. The **Camera** menu (and, for the target, the **Target** menu) has three handy controls for positioning a fixed camera or target:
+
+- **Lookup** — type a **place name** (e.g. "Phoenix, AZ"), `lat,lon` coordinates, or an MGRS grid reference, and Sitrec jumps there.
+- **Geolocate from browser** — uses your device's location to set the current position.
+- **Go To the above position** — moves the view to it.
+
 ## Two Simple Tracks
 
 The basic configurations above really become more powerful when you have two tracks (or a complex track, see later). With two tracks typically one will be the camera, and one will be the target (a potential UAP). 
@@ -105,6 +121,15 @@ With the correct target set, we can add models, and zoom in.
 ![michigan-add-models-and-zoom.jpg](docimages/michigan-add-models-and-zoom.jpg)
 
 Here you can just barely see the 737 by the mouth of the estuary. This small Tic-Tac shape with no apparent wings is a common type of UFO reported. 
+
+## Setting the date and time
+
+Getting the time right is **crucial** — it determines where the Sun, Moon, stars, and satellites are, and how shadows fall. There are two key times, both shown in yellow at the top of the **Time** menu:
+
+- **Start Time** — the real-world time at frame 0 (the first frame of the video).
+- **Now Time** — the time at the *current* frame: Start Time plus the elapsed frame time.
+
+The Year / Month / Day / Hour / Minute / Second sliders in the Time menu edit the **Now Time**; the large slider at the bottom of the screen (and the arrow keys) move you through the frames. A common workflow is to scrub (drag) to a frame with something distinctive on screen, then adjust the time until the simulation matches — Sitrec works out the Start Time for you. You'll do exactly this when syncing video, next.
 
 ## Adding and Syncing Video
 
@@ -153,22 +178,13 @@ In this instance we see the road is correct, but a bit low resolution. We need t
 
 ## Adjusting the terrain
 
-"Terrain" in Sitrec is the background graphics - i.e. the ground. Sitrec displays detailed background similar to Google Earth. This is defined by the contents of the "Terrain" menu:
+"Terrain" in Sitrec is the background graphics — i.e. the ground. Sitrec displays detailed background similar to Google Earth, controlled by the **Terrain** menu:
 
 ![terrain-menu.jpg](docimages/terrain-menu.jpg)
 
+Terrain always uses **dynamic subdivision**: as you move and zoom the camera, Sitrec automatically loads higher-resolution tiles where you're looking, so you don't normally need to set a center point or zoom level by hand. The main control you'll use is **Map Type**, which selects the imagery source (satellite, street map, etc.).
 
-# Legacy Terrain Mode
-
-If you disable Dynamic Subdivision, you will just see a small local square of terrain set on a larger low-resolution globe. 
-
-- lat and lon = Latitude and Longitude of the _center_ of the square of terrain
-- zoom = zoom level. Higher levels are higher resolution, and smaller squares. 15 is the highest currently available.
-- nTiles = Number of terrain tiles on the side of the square. Here 6 means a 6x6 square or 36 tiles. 
-
-We can adjust the lat/lon manually, of by pressing "T" while pointing at where we want it in the main view. 
-
-In this case we are already centered, and can simply change the zoom to 15, the smaller square of terrain still encompasses the track. 
+For the MISB truck example the default terrain already covers the track; zooming in loads the detail automatically:
 
 ![MISB-zoomed-terrain.jpg](docimages/MISB-zoomed-terrain.jpg)
 
@@ -185,7 +201,7 @@ The file also has FOV data, so this is automatically selected for "Camera FOV" -
 
 Since we have a target track, then the Camera Heading is set to "To Target".
 
-The "Traverse" setup starts out as the default, "Constant Distance", and 1 NM. Since we don't have a UAP in this case, and we know we are sut following the truck, then it would actually make sense to change the traverse mode to "Target Object", and the traverse object would simply drive along the road. 
+The "Traverse" setup starts out as the default, "Const Air Spd", with a start distance of 1 NM. Since we don't have a UAP in this case, and we know we are just following the truck, the traverse doesn't matter much here — the MISB center track is already used as the target (as noted above), so the traverse object simply drives along the road. 
 
 However, if we _did_ have a suspected UAP in the frame, then we would select one of the various form of LOS traversal (ways of traversing the lines of sight). For example, constant altitude:
 
@@ -193,3 +209,21 @@ However, if we _did_ have a suspected UAP in the frame, then we would select one
 
 Here we still have a start distance of 1NM, and with the constraint that the altitude must remain constant, this creates the blue path seen here. We can then add a traverse model to see what it looks like (again, this is assuming your video has some unidentified object in it)
 ![MISB-traverse-object.jpg](docimages/MISB-traverse-object.jpg)
+
+## Adding satellites
+
+Many sitches involve satellites — Starlink flares are the most common satellite-related UAP report. Satellites are loaded from orbital data (TLE — "Two-Line Element" sets), not from a file you usually provide:
+
+- In the **Satellite** menu, click **Load LEO Satellites For Date** to download the low-Earth-orbit satellites for the simulation's current date/time — use this for past events. **Load ACTIVE Satellites** loads current, real-time positions instead.
+- You can also **drag in your own TLE file** if you have specific orbital data.
+- **Show Satellites (Global)** toggles satellite display on and off.
+
+Because TLE accuracy degrades over time, always load the data for the date you're investigating. For the full Starlink-flare workflow, see [Investigating Starlink Flares](Starlink.md).
+
+## Where to go next
+
+- [User Interface](UserInterface.md) — menus, sliders, views, 3D navigation, and the time controls.
+- [Loading and Filtering Tracks](Tracks.md) — supported formats, filtering bad data, smoothing, and multi-track setups.
+- [Investigating Starlink Flares](Starlink.md) — the most common satellite scenario.
+- [Saving and Loading](SavingAndLoading.md) — keeping and sharing your work.
+- [Camera View Modes](satcam.md) and [Traverse Methods](TraverseMethods.md) — pointing the camera and reconstructing a target's path.
