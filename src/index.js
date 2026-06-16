@@ -108,6 +108,7 @@ import {DragDropHandler} from "./DragDropHandler";
 // See FpsMismatchDialog.js for the rationale and detection logic.
 import "./FpsMismatchDialog";
 import {CGuiMenuBar, setupHelpSearch} from "./lil-gui-extras";
+import {initUILogging} from "./UILogging";
 import {assert} from "./assert";
 import {CNodeFactory} from "./nodes/CNodeFactory";
 import {extraCSS} from "./extra.css";
@@ -1678,6 +1679,9 @@ async function initializeOnce() {
 
     initI18n();
     Globals.menuBar = new CGuiMenuBar();
+
+    // Opt-in logging of menu-item clicks (gated by LOG_UI_INTERACTIONS env var).
+    initUILogging();
 
 
     // these area accessed like:

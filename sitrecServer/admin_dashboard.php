@@ -12,6 +12,14 @@ if (!isAdmin($userInfo)) {
     die('Admin access required');
 }
 
+// Drill-down "Top 200" view. Each "Top 10 ..." card title links here via
+// ?expand=<type>; the page then renders just that one list, up to 200 rows.
+// Admin-only is already enforced above. $EXPAND_LIMIT bumps the per-list limits.
+$VALID_EXPANDS = ['ai', 'tiles', 'menu', 's3'];
+$expand = $_GET['expand'] ?? '';
+if (!in_array($expand, $VALID_EXPANDS, true)) $expand = '';
+$EXPAND_LIMIT = 200;
+
 $AI_RATE_LIMIT_DIR = sys_get_temp_dir() . '/sitrec_ratelimit/';
 $TILE_USAGE_DIR = sys_get_temp_dir() . '/sitrec_tile_usage/';
 $AI_LOG_FILE = sys_get_temp_dir() . '/sitrec_ai_requests.json';
@@ -81,6 +89,33 @@ function loadAIRequestLogs($file, $limit = 50) {
     if (!file_exists($file)) return [];
     $logs = json_decode(file_get_contents($file), true) ?: [];
     return array_reverse(array_slice($logs, -$limit));
+}
+
+// Aggregate UI menu-item click logs (written by uilog.php as per-day JSON-Lines
+// files) into a "path => click count" map, returning the top $top entries.
+// Limited to the $days most recent daily files to bound the work on this page.
+function loadTopMenuItems($dir, $top = 10, $days = 28) {
+    $counts = [];
+    if (!is_dir($dir)) return $counts;
+    $files = glob($dir . 'ui-*.jsonl');
+    if (!$files) return $counts;
+    rsort($files);                        // most recent day first (filenames sort by date)
+    $files = array_slice($files, 0, $days);
+    foreach ($files as $file) {
+        $fh = @fopen($file, 'r');
+        if (!$fh) continue;
+        while (($line = fgets($fh)) !== false) {   // stream line-by-line, memory-friendly
+            $line = trim($line);
+            if ($line === '') continue;
+            $rec = json_decode($line, true);
+            if (!$rec || empty($rec['path'])) continue;
+            $p = $rec['path'];
+            $counts[$p] = ($counts[$p] ?? 0) + 1;
+        }
+        fclose($fh);
+    }
+    arsort($counts);
+    return array_slice($counts, 0, $top, true);
 }
 
 function getUserNames($userIds) {
@@ -154,7 +189,7 @@ function getDiskSpace() {
     return $paths;
 }
 
-function getS3Usage() {
+function getS3Usage($limit = 10) {
     global $s3creds;
     
     $result = [
@@ -224,7 +259,7 @@ function getS3Usage() {
         $result['region'] = $s3creds['region'];
         
         uasort($result['users'], fn($a, $b) => $b['size'] <=> $a['size']);
-        $result['users'] = array_slice($result['users'], 0, 10, true);
+        $result['users'] = array_slice($result['users'], 0, $limit, true);
         
     } catch (Exception $e) {
         $result['error'] = $e->getMessage();
@@ -274,6 +309,10 @@ $tileUsage = loadTileUsageData($TILE_USAGE_DIR);
 $statsHistory = getStatsHistory28();
 $todayVisits = getVisitDetails(date('Y-m-d'));
 
+// UI menu-item click stats (written by uilog.php to sitrec-upload/ui-stats/).
+global $UPLOAD_PATH;
+$topMenuItems = loadTopMenuItems($UPLOAD_PATH . 'ui-stats/', $expand === 'menu' ? $EXPAND_LIMIT : 10);
+
 $aiTotalHour = array_sum(array_column($aiUsage, 'hour_count'));
 $tileTotalHour = [];
 $tileTotalDay = [];
@@ -316,7 +355,7 @@ $cesiumOSMBytesHour = $tileTotalHour['cesium_osm_3d_bytes'] ?? 0;
 $cesiumOSMBytesDay = $tileTotalDay['cesium_osm_3d_bytes'] ?? 0;
 
 $diskSpace = getDiskSpace();
-$s3Usage = getS3Usage();
+$s3Usage = getS3Usage($expand === 's3' ? $EXPAND_LIMIT : 10);
 $aiRequestLogs = loadAIRequestLogs($AI_LOG_FILE, 50);
 
 $allUserIds = array_unique(array_merge(
@@ -424,6 +463,9 @@ $userNames = getUserNames($allUserIds);
         .sitch-link { color: #64ffda; text-decoration: none; }
         .sitch-link:hover { text-decoration: underline; }
         .highlight { color: #64ffda; font-weight: 600; }
+        .card-title-link { color: inherit; text-decoration: none; }
+        .card-title-link:hover { color: #64ffda; text-decoration: underline; }
+        .card-title-link::after { content: " \2197"; opacity: 0.5; font-size: 0.9em; }
         .prompt-text {
             max-width: 500px;
             white-space: nowrap;
@@ -473,7 +515,73 @@ $userNames = getUserNames($allUserIds);
 <body>
     <div class="dashboard">
         <h1>Sitrec Admin Dashboard</h1>
-        
+
+<?php if ($expand): ?>
+        <p><a href="admin_dashboard.php" class="refresh-btn">&larr; Back to Dashboard</a></p>
+        <div class="grid">
+            <div class="card full-width">
+<?php if ($expand === 'ai'): ?>
+                <h2>Top 200 AI Users (Hour)</h2>
+                <table>
+                    <tr><th>#</th><th>User</th><th>Requests</th></tr>
+                    <?php foreach (array_slice($aiUsage, 0, $EXPAND_LIMIT) as $i => $u): ?>
+                    <tr>
+                        <td class="user-id"><?= $i + 1 ?></td>
+                        <td><?= renderUserLink($u['user_id'], $userNames) ?></td>
+                        <td class="highlight"><?= number_format($u['hour_count']) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($aiUsage)): ?><tr><td colspan="3">No data</td></tr><?php endif; ?>
+                </table>
+<?php elseif ($expand === 'tiles'): ?>
+                <h2>Top 200 Tile Users (Day)</h2>
+                <table>
+                    <tr><th>#</th><th>User</th><th>Tiles</th></tr>
+                    <?php foreach (array_slice($tileUsage, 0, $EXPAND_LIMIT) as $i => $u): ?>
+                    <tr>
+                        <td class="user-id"><?= $i + 1 ?></td>
+                        <td><?= renderUserLink($u['user_id'], $userNames) ?></td>
+                        <td class="highlight"><?= number_format(sumTilesOnly($u['daily'], $byteServices)) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($tileUsage)): ?><tr><td colspan="3">No data</td></tr><?php endif; ?>
+                </table>
+<?php elseif ($expand === 'menu'): ?>
+                <h2>Top 200 Clicked Menu Items</h2>
+                <table>
+                    <tr><th>#</th><th>Menu Item</th><th>Clicks</th></tr>
+                    <?php $rank = 0; foreach ($topMenuItems as $path => $clicks): $rank++; ?>
+                    <tr>
+                        <td class="user-id"><?= $rank ?></td>
+                        <td><?= htmlspecialchars($path) ?></td>
+                        <td class="highlight"><?= number_format($clicks) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($topMenuItems)): ?><tr><td colspan="3">No data</td></tr><?php endif; ?>
+                </table>
+<?php elseif ($expand === 's3'): ?>
+                <h2>Top 200 S3 Users by Space</h2>
+                <?php if ($s3Usage['error']): ?>
+                <div class="stat-label"><?= htmlspecialchars($s3Usage['error']) ?></div>
+                <?php else: ?>
+                <table>
+                    <tr><th>#</th><th>User</th><th>Size</th><th>Files</th></tr>
+                    <?php $rank = 0; foreach ($s3Usage['users'] as $uid => $info): $rank++; ?>
+                    <tr>
+                        <td class="user-id"><?= $rank ?></td>
+                        <td><?= renderUserLink($uid, $userNames) ?></td>
+                        <td class="highlight"><?= formatBytes($info['size']) ?></td>
+                        <td><?= number_format($info['files']) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($s3Usage['users'])): ?><tr><td colspan="4">No data</td></tr><?php endif; ?>
+                </table>
+                <?php endif; ?>
+<?php endif; ?>
+            </div>
+        </div>
+<?php else: ?>
+
         <div class="grid">
             <div class="card">
                 <h2>AI Usage (This Hour)</h2>
@@ -636,7 +744,7 @@ $userNames = getUserNames($allUserIds);
         
         <div class="grid">
             <div class="card">
-                <h2>Top 10 AI Users (Hour)</h2>
+                <h2><a class="card-title-link" href="?expand=ai">Top 10 AI Users (Hour)</a></h2>
                 <table>
                     <tr><th>User</th><th>Requests</th></tr>
                     <?php foreach (array_slice($aiUsage, 0, 10) as $u): ?>
@@ -652,7 +760,7 @@ $userNames = getUserNames($allUserIds);
             </div>
             
             <div class="card">
-                <h2>Top 10 Tile Users (Day)</h2>
+                <h2><a class="card-title-link" href="?expand=tiles">Top 10 Tile Users (Day)</a></h2>
                 <table>
                     <tr><th>User</th><th>Tiles</th></tr>
                     <?php foreach (array_slice($tileUsage, 0, 10) as $u): ?>
@@ -667,7 +775,25 @@ $userNames = getUserNames($allUserIds);
                 </table>
             </div>
         </div>
-        
+
+        <div class="grid">
+            <div class="card">
+                <h2><a class="card-title-link" href="?expand=menu">Top 10 Clicked Menu Items</a></h2>
+                <table>
+                    <tr><th>Menu Item</th><th>Clicks</th></tr>
+                    <?php foreach ($topMenuItems as $path => $clicks): ?>
+                    <tr>
+                        <td><?= htmlspecialchars($path) ?></td>
+                        <td class="highlight"><?= number_format($clicks) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($topMenuItems)): ?>
+                    <tr><td colspan="2">No data</td></tr>
+                    <?php endif; ?>
+                </table>
+            </div>
+        </div>
+
         <div class="grid">
             <div class="card">
                 <h2>S3 Storage Summary</h2>
@@ -680,7 +806,7 @@ $userNames = getUserNames($allUserIds);
             </div>
             
             <div class="card">
-                <h2>Top 10 S3 Users by Space</h2>
+                <h2><a class="card-title-link" href="?expand=s3">Top 10 S3 Users by Space</a></h2>
                 <?php if ($s3Usage['error']): ?>
                 <div class="stat-label"><?= htmlspecialchars($s3Usage['error']) ?></div>
                 <?php else: ?>
@@ -746,10 +872,11 @@ $userNames = getUserNames($allUserIds);
                 </div>
             </div>
         </div>
-        
+<?php endif; // end !$expand dashboard body ?>
+
         <div class="timestamp">
             Last updated: <?= date('Y-m-d H:i:s') ?>
-            <a href="?" class="refresh-btn">Refresh</a>
+            <a href="<?= $expand ? '?expand=' . htmlspecialchars($expand) : '?' ?>" class="refresh-btn">Refresh</a>
         </div>
     </div>
 </body>

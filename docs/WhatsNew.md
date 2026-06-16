@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.84.4 (2026-06-16)
+
+A correctness pass on Atmospheric Optics (Halos), plus an opt-in admin usage-stats feature.
+
+### Bug Fixes
+- Fixed the Sun and Moon halos drifting off-centre in the main view when a separate look-view camera was active — each view's halos now lock onto the Sun and Moon as seen from that view's own camera.
+- Halos now bend with atmospheric refraction (when the refracting sky is enabled) and fade at the correct horizon when you view from altitude, instead of being clipped at a flat sea-level horizon.
+- Corrected the shapes and onset heights of the plate-crystal optics (sun dogs, circumzenithal and circumhorizontal arcs), and fixed a glitch when the Sun or Moon was almost directly overhead.
+- Moon halos and moon dogs now fade realistically with the Moon's phase — a thin crescent now produces almost no halo, where before it stayed too bright.
+
+### New Features
+- **Usage statistics** (admin, opt-in): self-hosted full-server installs can optionally log which menu items get clicked and review a **Top 10 Clicked Menu Items** panel (with a Top 200 drill-down) in the admin dashboard. Off by default, enabled by a server setting, and never available on serverless or desktop builds.
+
 ## Version 2.84.3 (2026-06-15)
 
 A security maintenance release.
