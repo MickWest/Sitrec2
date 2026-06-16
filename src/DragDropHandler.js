@@ -36,6 +36,12 @@ class CDragDropHandler {
         this.pendingDropTexts = []; // Text/URLs dropped before a sitch was loaded (e.g. on sitch browser)
         this.keepDropZoneTextVisible = false;
         this._mediaImportListenerAdded = false;
+        // True while a drag that ORIGINATED inside our own page is in progress
+        // (e.g. accidentally click-dragging a link or selected text). Only
+        // internal drags fire 'dragstart' in this document; external file/URL
+        // drags from the OS or another window never do. Used to silently
+        // ignore such drags instead of trying to import them as files/URLs.
+        this.internalDragActive = false;
     }
 
     /**
@@ -293,7 +299,24 @@ class CDragDropHandler {
             event.preventDefault(); // Necessary to allow a drop
         }
 
+        // A 'dragstart' only fires for drags that BEGIN on an element in this
+        // document (sidebar links, selected text, images, …). External drags
+        // (files from the OS, links from another window/tab) never fire it
+        // here. We flag those internal drags so onDrop can ignore them. If the
+        // source already cancelled the native drag (preventDefault — e.g. the
+        // sitch tiles' custom pointer-drag), there is no native drop to guard,
+        // so we leave the flag clear.
+        document.addEventListener('dragstart', (event) => {
+            if (event.defaultPrevented) return;
+            this.internalDragActive = true;
+        });
+        document.addEventListener('dragend', () => {
+            this.internalDragActive = false;
+        });
+
         document.body.addEventListener('dragenter', (event) => {
+            // Don't flash the "DROP FILES OR URLS HERE" zone for internal drags.
+            if (this.internalDragActive) return;
             this.showDropZone();
         });
 
@@ -409,6 +432,20 @@ class CDragDropHandler {
         this.dropQueue = [];
         e.preventDefault();
         this.clearPersistentDropZoneText();
+
+        // Silently ignore drops that started by dragging an element inside our
+        // own page (e.g. accidentally click-dragging a sidebar link in the
+        // sitch browser, which hands us the page's own URL). Such drags must
+        // not be treated as a file/URL to import. Genuine external drags don't
+        // fire 'dragstart' here, so they are unaffected and still work. Always
+        // clear the flag so one drop consumes it and it can never get stuck.
+        const wasInternalDrag = this.internalDragActive;
+        this.internalDragActive = false;
+        if (wasInternalDrag) {
+            this.hideDropZone();
+            return;
+        }
+
         // Don't mark dirty here — wait until a file is actually processed
         // (cancelled dialogs, unsupported files, or invalid drops shouldn't arm beforeunload)
         // we defer the checkDrop to a check in the main loop

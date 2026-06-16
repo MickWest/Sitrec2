@@ -1737,6 +1737,11 @@ export class CSitchBrowser {
         const a = document.createElement("a");
         a.textContent = text;
         a.href = "#";
+        // Anchors are natively draggable: click-dragging one would start a
+        // browser link-drag carrying the page's own URL, which the drop
+        // handler then tries (and fails) to load as a file. These links are
+        // click-only, so disable native drag entirely.
+        a.draggable = false;
         Object.assign(a.style, {
             color: active ? "#e0e0e0" : "#8ab4f8", textDecoration: "none",
             fontSize: "14px", padding: "6px 12px", borderRadius: "6px",
@@ -2185,15 +2190,16 @@ export class CSitchBrowser {
         };
 
         overlay.addEventListener("dragenter", (e) => {
-            // Only show hint for external drops, not internal sitch-card drags.
-            if (!hasExternalDropData(e.dataTransfer)) return;
+            // Only show hint for external drops, not internal drags (sitch-card
+            // pointer drags, or click-dragging a link/selected text in the UI).
+            if (DragDropHandler.internalDragActive || !hasExternalDropData(e.dataTransfer)) return;
             e.preventDefault();
             dragCounter++;
             dropHint.style.display = "flex";
         });
 
         overlay.addEventListener("dragover", (e) => {
-            if (!hasExternalDropData(e.dataTransfer)) return;
+            if (DragDropHandler.internalDragActive || !hasExternalDropData(e.dataTransfer)) return;
             e.preventDefault();
             e.dataTransfer.dropEffect = "copy";
         });
@@ -2211,6 +2217,13 @@ export class CSitchBrowser {
             e.stopPropagation(); // prevent body-level drop handlers
             dragCounter = 0;
             dropHint.style.display = "none";
+
+            // Ignore drags that originated inside the page (e.g. click-dragging
+            // a sidebar link or selected text) — never treat those as an import.
+            if (DragDropHandler.internalDragActive) {
+                DragDropHandler.internalDragActive = false;
+                return;
+            }
 
             const files = e.dataTransfer?.files;
             let queuedCount = 0;
