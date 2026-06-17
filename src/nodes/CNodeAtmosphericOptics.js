@@ -32,10 +32,12 @@ import {
     Group,
     Mesh,
     MeshBasicMaterial,
+    NormalBlending,
+    ShaderMaterial,
     Vector3,
     MathUtils,
 } from "three";
-import {GlobalNightSkyScene, GlobalSunSkyScene} from "../LocalFrame";
+import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame";
 import {GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne} from "../Globals";
 import {getCelestialDirection} from "../CelestialMath";
 import {getLocalUpVector} from "../SphericalMath";
@@ -178,6 +180,18 @@ const MOONDOG_STOPS = [
     [1.00, 0.72, 0.82, 1.00, 0.15],  // faint blue tail away from Moon
 ];
 
+// Glory ring color (a single diffraction order): position 0 = inner edge
+// (bluish), position 1 = outer edge (red). The glory is a backscatter
+// diffraction phenomenon, so each successive ring repeats this blue->red
+// sweep, opposite in feel to the refraction halos. Columns: [pos, r, g, b].
+const GLORY_STOPS = [
+    [0.00, 0.40, 0.55, 1.00],  // blue/violet inner
+    [0.30, 0.45, 0.95, 0.75],  // cyan-green
+    [0.55, 0.85, 1.00, 0.45],  // yellow-green
+    [0.78, 1.00, 0.80, 0.30],  // orange
+    [1.00, 1.00, 0.30, 0.22],  // red outer
+];
+
 // Interpolate a stops table [[pos, c0, c1, ...], ...] at position x.
 function evalStops(stops, x) {
     x = MathUtils.clamp(x, 0, 1);
@@ -204,6 +218,30 @@ function bump(s) {
     return Math.sin(MathUtils.clamp(s, 0, 1) * Math.PI);
 }
 
+// Bessel function J1(x) — Abramowitz & Stegun 9.4.4 / 9.4.6 polynomial
+// approximations (|error| < 1e-7). Used for the glory's Airy diffraction pattern.
+function besselJ1(x) {
+    const ax = Math.abs(x);
+    if (ax < 3) {
+        const t = x / 3, t2 = t * t;
+        return x * (0.5 + t2 * (-0.56249985 + t2 * (0.21093573 + t2 * (-0.03954289
+            + t2 * (0.00443319 + t2 * (-0.00031761 + t2 * 0.00001109))))));
+    }
+    const z = 3 / ax;
+    const f = 0.79788456 + z * (0.00000156 + z * (0.01659667 + z * (0.00017105
+        + z * (-0.00249511 + z * (0.00113653 + z * -0.00020033)))));
+    const theta = ax - 2.35619449 + z * (0.12499612 + z * (0.0000565 + z * (-0.00637879
+        + z * (0.00074348 + z * (0.00079824 + z * -0.00029166)))));
+    const j1 = f * Math.cos(theta) / Math.sqrt(ax);
+    return x < 0 ? -j1 : j1;
+}
+
+// The glory's ring pattern is, to good approximation, the Airy diffraction of the
+// fog droplets in x = π·d·sinθ/λ (d = droplet diameter, θ = angle from the
+// antisolar point). The bright rings sit where x = 5.14, 8.42, 11.6, ...; since
+// that scales with λ, each color peaks at a slightly different θ, which is what
+// tints the rings (blue inner -> red outer). See _buildBrockenGlory.
+
 // will exist as a singleton node: "theHalos"
 export class CNodeAtmosphericOptics extends CNode {
     constructor(v) {
@@ -229,6 +267,23 @@ export class CNodeAtmosphericOptics extends CNode {
         this.moonHalo = v.moonHalo ?? false;
         this.moonDogs = v.moonDogs ?? false;
 
+        // Brocken spectre — the observer's shadow + a colored glory cast on a
+        // cloud/fog bank BELOW the observer, centered on the antisolar point
+        // (directly opposite the Sun). Unlike the halos, this is a real
+        // world-space object at the fog distance (see _rebuildBrocken), so it
+        // depth-sorts against terrain: it sits behind far peaks and is occluded
+        // by nearer ones, the way a real spectre does on valley fog.
+        this.brocken = v.brocken ?? false;          // master toggle
+        this.brockenGlory = v.brockenGlory ?? true; // the colored diffraction rings
+        this.brockenShadow = v.brockenShadow ?? true; // the dark observer-shadow figure
+        this.brockenFog = v.brockenFog ?? true;     // synthetic fog bank for the figure to show on
+        this.brockenFogOpacity = v.brockenFogOpacity ?? 0.6; // brightness of that fog patch
+        this.brockenDistance = v.brockenDistance ?? 350;  // slant distance to the fog (m)
+        this.brockenRadius = v.brockenRadius ?? 5;        // spectre FIGURE angular size (deg)
+        // Fog droplet diameter (µm) — sets the glory ring scale by diffraction:
+        // smaller droplets -> bigger glory. ~10µm is typical hill fog.
+        this.brockenDroplet = v.brockenDroplet ?? 10;
+
         this.addSimpleSerials([
             "enabled",
             "intensity",
@@ -244,6 +299,14 @@ export class CNodeAtmosphericOptics extends CNode {
             "sunGlare",
             "moonHalo",
             "moonDogs",
+            "brocken",
+            "brockenGlory",
+            "brockenShadow",
+            "brockenFog",
+            "brockenFogOpacity",
+            "brockenDistance",
+            "brockenRadius",
+            "brockenDroplet",
         ]);
 
         // GUI — a submenu under the existing Lighting menu. Guarded so the node
@@ -281,6 +344,28 @@ export class CNodeAtmosphericOptics extends CNode {
                 .tooltip("A faint 22° halo around the Moon, drawn on the night sky. The same ice-crystal physics as the Sun's halo, but nearly colorless because moonlight is dim.");
             addBool("moonDogs", "Moon Dogs (Paraselenae)")
                 .tooltip("Faint bright spots either side of the Moon at ±22°, the lunar counterpart of sun dogs. Rare and nearly colorless. Brightest near a full Moon.");
+
+            // Brocken spectre gets its own subfolder — it has a few extra
+            // controls and is a world-space object rather than a sky optic.
+            const bf = this.gui.addFolder("Brocken Spectre").close();
+            const bBool = (property, name) => bf.add(this, property).name(name).listen().onChange(() => this.recalculate());
+            const bVal = (property, start, end, step, name) => bf.add(this, property, start, end, step).name(name).listen().onChange(() => this.recalculate());
+            bBool("brocken", "Show Brocken Spectre")
+                .tooltip("The observer's shadow and a colored 'glory' cast on a cloud/fog bank below, opposite the Sun. Needs the Sun above the horizon and (in reality) fog below you. Drawn at a real distance so terrain occludes it correctly.");
+            bBool("brockenGlory", "Glory (rings)")
+                .tooltip("The concentric colored diffraction rings centered on the antisolar point — the shadow of your own head. Blue inside, red outside, repeating.");
+            bBool("brockenShadow", "Shadow Figure")
+                .tooltip("The magnified, fog-projected shadow of the observer at the center of the glory — the 'spectre' itself.");
+            bBool("brockenFog", "Fog Bank")
+                .tooltip("A soft synthetic fog patch behind the spectre so the shadow figure is visible even when the scene has no cloud/fog geometry. Turn off if the scene already has real fog below you.");
+            bVal("brockenFogOpacity", 0, 1, 0.01, "Fog Brightness")
+                .tooltip("How bright/opaque the synthetic fog bank is.");
+            bVal("brockenDistance", 50, 5000, 10, "Fog Distance (m)")
+                .tooltip("Slant distance to the cloud/fog bank the spectre is projected onto. Sets how big it appears and which terrain occludes it.");
+            bVal("brockenRadius", 1, 15, 0.1, "Spectre Size°")
+                .tooltip("Angular size of the shadow figure (the observer's magnified shadow — depends on the observer and how far the fog is, not the droplets).");
+            bVal("brockenDroplet", 3, 40, 0.5, "Droplet Size (µm)")
+                .tooltip("Fog droplet diameter. The glory is a diffraction ring pattern whose angular size is set by this: smaller droplets give a larger glory. ~10µm is typical hill fog (first red ring ≈6°).");
         }
 
         // Two scene groups, added lazily (the scenes are created by the
@@ -296,17 +381,126 @@ export class CNodeAtmosphericOptics extends CNode {
         this._sunAttached = false;
         this._moonAttached = false;
 
+        // The Brocken spectre is world-space geometry (so it depth-sorts against
+        // terrain), parented into the MAIN GlobalScene rather than the celestial
+        // sphere scenes. Built once per frame relative to the real observer.
+        this.brockenGroup = new Group();
+        this.brockenGroup.name = "atmosphericOpticsBrocken";
+        this._brockenAttached = false;
+        this._lastBrockenSun = new Vector3();
+        this._lastBrockenObserver = new Vector3();
+        this._lastBrockenKey = "";
+        this._brockenDirty = true;
+
         // Set per-group while building: target group and a source-visibility
         // scalar (fades the whole group as its light source nears the horizon).
         this._activeGroup = this.sunGroup;
         this._sourceFade = 1;
 
-        // One shared additive material for every optic.
+        // One shared additive material for every sky optic.
         this.material = new MeshBasicMaterial({
             vertexColors: true,
             transparent: true,
             blending: AdditiveBlending,
             depthTest: false,
+            depthWrite: false,
+            side: DoubleSide,
+            toneMapped: false,
+        });
+
+        // The Brocken layers live in the depth-tested main scene (unlike the sky
+        // optics): depthTest ON so nearer terrain occludes them, depthWrite OFF so
+        // they don't block what's behind. The shadow figure DARKENS the fog, so it
+        // uses normal alpha blending toward black (additive can't subtract light).
+        this.shadowMaterial = new MeshBasicMaterial({
+            vertexColors: true,         // per-vertex RGBA: black with a darkness alpha
+            transparent: true,
+            blending: NormalBlending,
+            depthTest: true,
+            depthWrite: false,
+            side: DoubleSide,
+            toneMapped: false,
+        });
+        // The glory is rendered as a SINGLE quad with a per-pixel diffraction
+        // shader, NOT a tessellated colored mesh: an additive tessellated mesh
+        // shows its internal triangle edges as bright seams (MSAA double-counts
+        // shared edges), which looked like radial streaks. A single quad has no
+        // internal edges. The shader computes the Airy ring pattern per fragment.
+        this.gloryShaderMaterial = new ShaderMaterial({
+            transparent: true,
+            blending: AdditiveBlending,
+            depthTest: true,
+            depthWrite: false,
+            side: DoubleSide,
+            toneMapped: false,
+            uniforms: {
+                uDroplet: {value: 10},   // droplet diameter (µm)
+                uBase: {value: 0.6},     // brightness
+            },
+            vertexShader: `
+                #include <common>
+                #include <logdepthbuf_pars_vertex>
+                attribute vec2 aXY;
+                varying vec2 vXY;
+                void main() {
+                    vXY = aXY;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    #include <logdepthbuf_vertex>
+                }
+            `,
+            fragmentShader: `
+                #include <common>
+                #include <logdepthbuf_pars_fragment>
+                varying vec2 vXY;
+                uniform float uDroplet;
+                uniform float uBase;
+                // PI comes from three.js's <common> chunk.
+                // Airy bright-ring maxima at x=π·d·sinθ/λ = 0, 5.14, 8.42, 11.62.
+                // Widths are kept NARROW (< the ~3.28 maxima spacing) so the dark
+                // Airy minima between them stay dark and the rings read as SEPARATE
+                // bands. The outer rings are physically much fainter (intensity
+                // ~1 : 0.25 : 0.10 per ring); these amplitudes lift that a little so
+                // the secondary (and a hint of a third) are visible, as in a real
+                // glory, without merging into the primary.
+                float ringSum(float xc) {
+                    float s = 0.0;
+                    float t;
+                    // The central backscatter peak is the BRIGHTEST part (as in the
+                    // true Airy pattern), so it must outshine the first ring — a
+                    // dimmer center reads as a dark hole.
+                    t = (xc - 0.0)    / 1.9;  s += 1.05 * exp(-t * t);
+                    t = (xc - 5.136)  / 1.05; s += 0.95 * exp(-t * t);
+                    t = (xc - 8.417)  / 1.05; s += 0.42 * exp(-t * t);
+                    t = (xc - 11.620) / 1.05; s += 0.20 * exp(-t * t);
+                    return s;
+                }
+                void main() {
+                    #include <logdepthbuf_fragment>
+                    float rt = length(vXY);
+                    float sinT = rt / sqrt(1.0 + rt * rt);
+                    float k = PI * uDroplet * sinT;   // = π·d·sinθ (divide by λ per channel)
+                    // Five wavelength samples -> RGB primaries. Each ring's radius
+                    // scales with λ, so red lands further out: blue inner, red outer.
+                    vec3 col = vec3(0.0);
+                    col += ringSum(k / 0.66) * vec3(1.00, 0.05, 0.00);
+                    col += ringSum(k / 0.59) * vec3(0.85, 0.60, 0.00);
+                    col += ringSum(k / 0.53) * vec3(0.15, 1.00, 0.10);
+                    col += ringSum(k / 0.49) * vec3(0.00, 0.70, 0.85);
+                    col += ringSum(k / 0.45) * vec3(0.25, 0.15, 1.00);
+                    col.r /= 2.25; col.g /= 2.50; col.b /= 1.95;   // per-channel weight sums -> white center
+                    gl_FragColor = vec4(uBase * col, 1.0);
+                }
+            `,
+        });
+
+        // Optional synthetic fog bank behind the spectre — a soft bright patch so
+        // the shadow figure has something to darken when the scene has no real
+        // cloud geometry. Same depth-tested, normal-blended setup.
+        this.fogMaterial = new MeshBasicMaterial({
+            vertexColors: true,         // per-vertex RGBA: light grey with a soft alpha
+            transparent: true,
+            blending: NormalBlending,
+            depthTest: true,
             depthWrite: false,
             side: DoubleSide,
             toneMapped: false,
@@ -339,6 +533,7 @@ export class CNodeAtmosphericOptics extends CNode {
     // GUI changes route here (addGUIBoolean/addGUIValue call recalculate()).
     recalculate() {
         this._dirty = true;
+        this._brockenDirty = true;
         setRenderOne(true);
     }
 
@@ -354,9 +549,14 @@ export class CNodeAtmosphericOptics extends CNode {
             GlobalNightSkyScene.add(this.moonGroup);
             this._moonAttached = true;
         }
+        if (!this._brockenAttached && GlobalScene !== undefined) {
+            GlobalScene.add(this.brockenGroup);
+            this._brockenAttached = true;
+        }
 
         this.sunGroup.visible = this.enabled;
         this.moonGroup.visible = this.enabled;
+        this.brockenGroup.visible = this.enabled && this.brocken;
         if (!this.enabled) return;
 
         // Observer — match CNodeSunlight (lookCamera, falling back to mainCamera).
@@ -370,6 +570,11 @@ export class CNodeAtmosphericOptics extends CNode {
         }
 
         this.syncToObserver(camera.position);
+
+        // The Brocken is world-space and observer-anchored, so it is built only
+        // here (from the real observer camera) and NOT in renderSky()'s per-camera
+        // re-sync — it must not follow whichever camera is currently rendering.
+        if (this.brocken) this._syncBrocken(camera.position);
     }
 
     _updateHorizonFade(observerPos) {
@@ -524,6 +729,233 @@ export class CNodeAtmosphericOptics extends CNode {
                 if (this.moonDogs) this._buildDogs(MOONDOG_STOPS, 0.20);
             }
         }
+    }
+
+    // ---- Brocken spectre (world-space, on the fog below the observer). ----
+    // Centered on the ANTISOLAR point (directly opposite the Sun) — the shadow
+    // of the observer's own head. Built as real geometry a finite distance away
+    // (this.brockenDistance) so the depth buffer occludes it with nearer terrain
+    // and lets it sit in front of farther terrain, exactly like a real spectre
+    // on a valley fog bank. Rebuilt only from the real observer camera.
+    _syncBrocken(observerPos, date = GlobalDateTimeNode.dateNow) {
+        if (!observerPos) return;
+        const sunDir = getCelestialDirection("Sun", date, observerPos);
+        if (!sunDir) { this._clearGroup(this.brockenGroup); return; }
+        const zenith = getLocalUpVector(observerPos);
+
+        const key = `${this.brockenDistance}:${this.brockenRadius}:${this.brockenDroplet}:`
+            + `${this.brockenGlory ? 1 : 0}:${this.brockenShadow ? 1 : 0}:${this.intensity}`;
+        const moved = sunDir.distanceToSquared(this._lastBrockenSun) > 1e-10
+            || observerPos.distanceToSquared(this._lastBrockenObserver) > 1;
+        if (!this._brockenDirty && !moved && key === this._lastBrockenKey) return;
+
+        this._rebuildBrocken(sunDir, zenith, observerPos);
+        this._lastBrockenSun.copy(sunDir);
+        this._lastBrockenObserver.copy(observerPos);
+        this._lastBrockenKey = key;
+        this._brockenDirty = false;
+    }
+
+    _rebuildBrocken(sunDir, zenith, observerPos) {
+        this._clearGroup(this.brockenGroup);
+
+        const S = sunDir.clone().normalize();
+        const Z = zenith.clone().normalize();
+        const sinE = MathUtils.clamp(S.dot(Z), -1, 1);
+        const elevDeg = degrees(Math.asin(sinE));
+        // The spectre needs the Sun above the horizon, so the antisolar point is
+        // below it, out on the fog. Fade in over the first few degrees.
+        const sunVis = MathUtils.smoothstep(elevDeg, -0.5, 3);
+        if (sunVis <= 0.01) return;
+
+        // Antisolar billboard basis: A toward the shadow (away from the Sun),
+        // bUp the in-plane direction toward the zenith, bRight completing it.
+        const A = S.clone().multiplyScalar(-1).normalize();
+        const bUp = Z.clone().addScaledVector(A, -Z.dot(A));
+        if (bUp.lengthSq() < 1e-8) bUp.set(0, 0, 1).addScaledVector(A, -A.z);
+        bUp.normalize();
+        const bRight = new Vector3().crossVectors(bUp, A).normalize();
+
+        this._bObs = observerPos.clone();
+        this._bA = A;
+        this._bUp = bUp;
+        this._bRight = bRight;
+        this._bR = Math.max(1, this.brockenDistance);
+        this._bSunVis = sunVis;
+
+        // Layer order via renderOrder (all at the same depth, depthWrite off):
+        // fog backdrop (0) -> glory rings (1) -> shadow figure (2). The figure is
+        // drawn LAST so it darkens the bright additive glory too — the spectre's
+        // head then reads as a dark form within the glory's bright center (as in a
+        // real photo), and the body slightly dims the lower rings it crosses.
+        if (this.brockenFog && this.brockenFogOpacity > 0.001) this._buildBrockenFog();
+        if (this.brockenGlory) this._buildBrockenGlory();
+        if (this.brockenShadow) this._buildBrockenShadow();
+    }
+
+    // Soft synthetic fog patch centered on the antisolar point, large enough to
+    // back the whole figure, with a smooth radial falloff to transparent so it
+    // reads as haze rather than a hard disc. Depth-tested, so nearer terrain
+    // (foreground rocks) still occludes its lower edge like real fog.
+    _buildBrockenFog() {
+        const rMax = Math.tan(radians(this.brockenRadius * 5.0));
+        const opacity = MathUtils.clamp(this.brockenFogOpacity, 0, 1) * this._bSunVis;
+        // Bias the patch downward so it covers the figure hanging below the head.
+        const yBias = Math.tan(radians(this.brockenRadius * 1.4));
+        // Cartesian grid (uniform triangles, no converging center) to avoid radial
+        // streak artifacts.
+        this._buildBrockenBand(
+            48, 48,
+            (u, v) => [(u * 2 - 1) * rMax, (v * 2 - 1) * rMax - yBias],
+            (u, v) => {
+                const X = (u * 2 - 1) * rMax, Y = (v * 2 - 1) * rMax;
+                const t = Math.hypot(X, Y) / rMax;        // 0 center -> 1 rim
+                const a = opacity * Math.exp(-(t * t) * 2.2) * (1 - MathUtils.smoothstep(t, 0.75, 1.0));
+                return [0.72, 0.73, 0.75, a];   // light warm grey
+            },
+            this.fogMaterial, 0
+        );
+    }
+
+    // World-space billboard band at the fog distance. dirFn(u,v) -> [X,Y] angular
+    // offsets (tan-space) along (bRight, bUp) from the antisolar point; colFn(u,v)
+    // -> [r,g,b,a]. Builds an indexed grid placed at observer + dir*R.
+    _buildBrockenBand(nu, nv, dirFn, colFn, material, renderOrder) {
+        const nVerts = (nu + 1) * (nv + 1);
+        const positions = new Float32Array(nVerts * 3);
+        const colors = new Float32Array(nVerts * 4);
+        const indices = [];
+        const obs = this._bObs, A = this._bA, up = this._bUp, right = this._bRight, R = this._bR;
+        const dir = new Vector3();
+
+        let p = 0;
+        for (let i = 0; i <= nu; i++) {
+            const u = i / nu;
+            for (let j = 0; j <= nv; j++) {
+                const v = j / nv;
+                const off = dirFn(u, v);
+                dir.copy(A).addScaledVector(right, off[0]).addScaledVector(up, off[1]).normalize();
+                positions[p * 3] = obs.x + dir.x * R;
+                positions[p * 3 + 1] = obs.y + dir.y * R;
+                positions[p * 3 + 2] = obs.z + dir.z * R;
+                const c = colFn(u, v);
+                colors[p * 4] = c[0];
+                colors[p * 4 + 1] = c[1];
+                colors[p * 4 + 2] = c[2];
+                colors[p * 4 + 3] = c[3];
+                p++;
+            }
+        }
+
+        const stride = nv + 1;
+        for (let i = 0; i < nu; i++) {
+            for (let j = 0; j < nv; j++) {
+                const a = i * stride + j;
+                const b = a + stride;
+                const c = a + 1;
+                const dd = b + 1;
+                // Alternate the split diagonal per quad. A single fixed diagonal
+                // biases linear color interpolation one way across every quad,
+                // which additive blending shows as directional "hatching" streaks
+                // over steep gradients (the glory rings). Alternating cancels it.
+                if ((i + j) & 1) {
+                    indices.push(a, b, c, c, b, dd);
+                } else {
+                    indices.push(a, b, dd, a, dd, c);
+                }
+            }
+        }
+
+        const geometry = new BufferGeometry();
+        geometry.setAttribute("position", new BufferAttribute(positions, 3));
+        geometry.setAttribute("color", new BufferAttribute(colors, 4));
+        geometry.setIndex(indices);
+        geometry.computeBoundingSphere();
+
+        const mesh = new Mesh(geometry, material);
+        mesh.frustumCulled = false;
+        mesh.renderOrder = renderOrder ?? 0;
+        this.brockenGroup.add(mesh);
+        return mesh;
+    }
+
+    // The colored diffraction rings around the antisolar point — a PHYSICAL
+    // model evaluated per-pixel in gloryShaderMaterial. The glory is, to good
+    // approximation, the Airy diffraction of the fog droplets in x = π·d·sinθ/λ,
+    // with the ring angular radii set by the droplet diameter d (sinθₙ = xₙ·λ/(π·d),
+    // x₁≈5.14, x₂≈8.42, ...). Each wavelength peaks at a slightly different θ,
+    // giving the blue-inner / red-outer rings. Rendered as ONE quad (no internal
+    // edges) so additive MSAA edge-bleed can't streak it.
+    _buildBrockenGlory() {
+        const d = MathUtils.clamp(this.brockenDroplet, 2, 60);   // droplet diameter (µm)
+        const base = 0.6 * this.intensity * this._bSunVis;
+        // Quad half-extent: out to just past the (faint) red third ring (x≈14, λ=0.66).
+        const sinMax = Math.min(0.45, 14.0 * 0.66 / (Math.PI * d));
+        const rMaxTan = Math.tan(Math.asin(sinMax));
+
+        this.gloryShaderMaterial.uniforms.uDroplet.value = d;
+        this.gloryShaderMaterial.uniforms.uBase.value = base;
+
+        const obs = this._bObs, A = this._bA, up = this._bUp, right = this._bRight, R = this._bR;
+        const corners = [[-rMaxTan, -rMaxTan], [rMaxTan, -rMaxTan], [-rMaxTan, rMaxTan], [rMaxTan, rMaxTan]];
+        const positions = new Float32Array(12);
+        const aXY = new Float32Array(8);
+        const dir = new Vector3();
+        for (let i = 0; i < 4; i++) {
+            const X = corners[i][0], Y = corners[i][1];
+            dir.copy(A).addScaledVector(right, X).addScaledVector(up, Y).normalize();
+            positions[i * 3] = obs.x + dir.x * R;
+            positions[i * 3 + 1] = obs.y + dir.y * R;
+            positions[i * 3 + 2] = obs.z + dir.z * R;
+            aXY[i * 2] = X; aXY[i * 2 + 1] = Y;
+        }
+        const geometry = new BufferGeometry();
+        geometry.setAttribute("position", new BufferAttribute(positions, 3));
+        geometry.setAttribute("aXY", new BufferAttribute(aXY, 2));
+        geometry.setIndex([0, 1, 2, 2, 1, 3]);
+        geometry.computeBoundingSphere();
+        const mesh = new Mesh(geometry, this.gloryShaderMaterial);
+        mesh.frustumCulled = false;
+        mesh.renderOrder = 1;
+        this.brockenGroup.add(mesh);
+    }
+
+    // The observer's magnified shadow at the glory center — the "spectre". A soft
+    // dark humanoid silhouette hanging DOWN from the antisolar point (the head
+    // shadow), darkening the fog via normal alpha blending. Sized relative to the
+    // glory so the two scale together.
+    _buildBrockenShadow() {
+        const base = MathUtils.clamp(0.5 * this.intensity, 0, 0.7) * this._bSunVis;
+        const headR = Math.tan(radians(this.brockenRadius * 0.32));  // head radius (tan-space)
+        const len = Math.tan(radians(this.brockenRadius * 3.6));     // head-top to feet
+        // Half-width profile (in head radii) from the top of the head (s=0) to the
+        // feet (s=1): rounded head, narrow neck, shoulders, tapering legs. A real
+        // spectre is a slim, distant silhouette, so the figure is kept narrow.
+        const PROFILE = [
+            [0.00, 0.00], [0.05, 0.55], [0.11, 0.80], [0.18, 0.55],
+            [0.24, 0.40], [0.32, 1.10], [0.52, 0.85], [0.72, 0.62],
+            [0.92, 0.42], [1.00, 0.00],
+        ];
+        this._buildBrockenBand(
+            72, 24,
+            (u, v) => {
+                const s = u;                              // 0 head-top -> 1 feet
+                const across = v * 2 - 1;                 // -1 .. 1
+                const hw = evalStops(PROFILE, s)[0] * headR;
+                const y = headR - (len + headR) * s;      // hang downward from center
+                return [across * hw, y];
+            },
+            (u, v) => {
+                const across = v * 2 - 1;
+                // A soft, fuzzy silhouette (real spectres are diffuse): wide feather
+                // on the rim, fading at the very top and bottom so there are no hard
+                // polygon ends.
+                const rim = 1 - MathUtils.smoothstep(Math.abs(across), 0.35, 1.0);
+                const ends = MathUtils.smoothstep(u, 0.0, 0.08) * (1 - MathUtils.smoothstep(u, 0.9, 1.0));
+                return [0, 0, 0, base * rim * ends];
+            },
+            this.shadowMaterial, 2
+        );
     }
 
     // ---- Generic band-mesh builder. -------------------------------------
@@ -966,18 +1398,26 @@ export class CNodeAtmosphericOptics extends CNode {
     modDeserialize(v) {
         super.modDeserialize(v);
         this._dirty = true;
+        this._brockenDirty = true;
     }
 
     dispose() {
         this._clearGroup(this.sunGroup);
         this._clearGroup(this.moonGroup);
+        this._clearGroup(this.brockenGroup);
         if (this._sunAttached && GlobalSunSkyScene !== undefined) {
             GlobalSunSkyScene.remove(this.sunGroup);
         }
         if (this._moonAttached && GlobalNightSkyScene !== undefined) {
             GlobalNightSkyScene.remove(this.moonGroup);
         }
+        if (this._brockenAttached && GlobalScene !== undefined) {
+            GlobalScene.remove(this.brockenGroup);
+        }
         this.material?.dispose();
+        this.gloryShaderMaterial?.dispose();
+        this.shadowMaterial?.dispose();
+        this.fogMaterial?.dispose();
         super.dispose();
     }
 }
