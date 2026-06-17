@@ -464,14 +464,20 @@ npm install
 
 ### Configure Paths
 
-Edit `config/config-install.js` to point at your web server:
+`config/config-install.js` controls where the build is written. By default it derives the output folder from your current git branch — `main` builds to `dist/sitrec`, any other branch to `dist/<branch>` — inside the repo:
 
 ```javascript
+const buildFolder = (branch === 'main' || branch === 'HEAD') ? 'sitrec' : branch;
 module.exports = {
-    dev_path: '/path/to/your/webserver/sitrec',
-    prod_path: '/path/to/staging/folder'
+    dev_path:  path.resolve(__dirname, '..', 'dist', buildFolder),   // npm run build
+    prod_path: path.resolve(__dirname, '..', 'dist', buildFolder),   // npm run deploy
+    buildFolder: buildFolder,
 }
 ```
+
+These paths apply to `npm run build` and `npm run deploy` only — those produce **static files that your own web server serves** (Apache/Nginx + PHP), so point `dev_path` / `prod_path` at a directory your web server serves: a docroot like `/var/www/html/sitrec`, or serve the default `dist/<branch>` directly. The two can differ if you want development and production builds in separate locations.
+
+> The **Standalone** and **Serverless** builds ignore `config-install.js` — they always write to fixed `dist-standalone/` and `dist-serverless/` and bundle their own Node server, so they need no external web server.
 
 ### Create Server Directory Structure
 
@@ -523,7 +529,7 @@ After building, verify with these URL tests (adjust the path if not at `/sitrec/
 
 | Command | Description |
 |---------|-------------|
-| `npm run build` | Build to `dev_path` (requires web server) |
+| `npm run build` | Dev build to `dev_path` — static files served by your web server (default `dist/<branch>`) |
 | `npm run start` | Webpack dev server with hot reload (port 3000) |
 | `npm run copy` | Copy data/PHP files only (no JS rebuild) |
 
@@ -624,4 +630,4 @@ npm run dev-standalone-debug   # Build + run with full debugging
 - **Node.js:** Connect Chrome DevTools via `chrome://inspect`
 - **VS Code:** Use a launch config targeting `standalone-server.js`
 
-Debug endpoints (standalone/serverless): `/debug/status`, `/debug/files`, `/api/health`
+Debug endpoints: `/debug/status` and `/debug/files` (standalone and serverless); `/api/health` (serverless)
