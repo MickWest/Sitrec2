@@ -130,10 +130,11 @@ The example below shows some commonly used settings. For the full list of availa
 #S3_REGION=us-west-2
 ```
 
-After editing `.env`, you must recreate the container (not just restart it). Environment variables are baked in at creation time. The easiest way is to use the included management script:
+After editing `.env`, apply your changes with the management script — it safely recreates the container and your `.env` file is never modified:
 ```bash
 ./sitrec.sh restart
 ```
+(Settings are read when the container is created, so `restart` recreates it for you; a plain container restart would not pick up `.env` changes. Your saved settings stay in `.env`.)
 
 Or manually:
 ```bash
@@ -181,47 +182,102 @@ By default Sitrec uses the latest release. To lock to a specific version, edit t
 image: ghcr.io/mickwest/sitrec2:2.36.0
 ```
 
-### Baking a Pre-Configured Image
+### Baking a Pre-Configured Image (Advanced)
 
-By default the published image (`ghcr.io/mickwest/sitrec2`) is **unconfigured**: its
-entrypoint reads your environment variables (from `.env` / `env_file`) at *container
-start* and writes them into `shared.env.php` (PHP) and `window.__SITREC_ENV__` (JS).
+> **Most people don't need this.** If you just want to run Sitrec and keep a few
+> settings, edit the `.env` file (see [Configuration](#configuration-optional) above)
+> and skip this section. *Baking* is for I.T. staff deploying a ready-to-run Sitrec to
+> **other** machines — a private registry, a fleet of servers, or an offline/air-gapped
+> system — without copying a `.env` file around.
 
-Sometimes you instead want a **self-configured image** that already contains your
-settings, so it can be stored in your own registry and deployed without supplying a
-`.env` at all — for example to push a ready-to-run image to a private registry, or to
-hand a pre-configured tarball to an air-gapped site. The `bake` command does this:
+Normally the published image is **unconfigured**: you supply settings in a `.env` file
+and Sitrec reads them each time it starts. *Baking* instead builds a new **image** (a
+packaged, ready-to-run copy of Sitrec) with your settings already inside it, so it runs
+configured anywhere with no `.env` needed.
+
+**Quickest path** — from inside your `sitrec/` install folder (where `sitrec.sh` lives),
+bake the `.env` you already configured into a **tarball** (a single `.tar` file you can
+copy on a USB stick or `scp`):
 
 ```bash
-# Build a new image FROM the published one, with .env baked in:
-./sitrec.sh bake registry.example.com/sitrec:configured
-
-# Build and push it to its registry in one step:
-./sitrec.sh bake --push registry.example.com/sitrec:configured
-
-# Use a different env file and pin a specific base version:
-./sitrec.sh bake --env-file prod.env --base 2.84.4 --push myregistry.io/team/sitrec:1.0
+./sitrec.sh bake sitrec-configured:latest --tarball sitrec-configured.tar
 ```
+
+That writes `sitrec-configured.tar` to the current folder. To install it on the target
+machine, see [Air-Gapped / Offline Install](#air-gapped--offline-install) below.
+
+**Or push to a registry** (an online store for images) instead of making a tarball:
+
+```bash
+docker login registry.example.com          # one time (or: podman login registry.example.com)
+./sitrec.sh bake --push registry.example.com/sitrec:configured
+```
+
+**Or bake straight from the one-line installer** — without installing Sitrec first. The
+env file must already exist in the current directory:
+
+```bash
+curl -sL https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh | bash -s -- --bake registry.example.com/sitrec:configured --env-file prod.env
+```
+
+**Options** (`./sitrec.sh bake` and `install.sh --bake` accept the same ones):
 
 | Option | Meaning |
 |--------|---------|
-| `--env-file <file>` | Env file to bake in (default: `.env`) |
-| `--base <tag>` | Base image tag to build `FROM` (default: `latest`) |
-| `--push` | Push the resulting image to its registry after building |
+| `<target-image>` | Name:tag for the image you're creating (required) — e.g. `sitrec-configured:latest`, or `registry.example.com/sitrec:configured` to push |
+| `--env-file <file>` | Settings file to bake in (default: the `.env` in the current folder) |
+| `--base <tag>` | Which published version to build on top of (default: `latest`) |
+| `--push` | Push to the target's registry after building (run `docker login`/`podman login` first) |
+| `--tarball [file]` | Save the image to a `.tar` file (written to the current folder; default name `<image-name>.tar`) |
 
-How it works: `bake` generates a tiny derived `Dockerfile` (`FROM
-ghcr.io/mickwest/sitrec2:<tag>` plus one `ENV` line per variable) and builds it. No
-rebuild of the app is needed — the same runtime entrypoint that normally reads `.env`
-simply reads the baked-in `ENV` values instead. Because Docker `ENV` is the
-lowest-priority source, a deployment can still **override** any baked value by passing
-`-e`/`env_file` at run time, so the image is pre-configured but not frozen.
+> **Podman + local registries:** Docker auto-trusts `localhost` registries, but Podman
+> does not. To `--push` to a plain-HTTP or LAN registry under Podman, first mark it
+> insecure in `registries.conf` (`/etc/containers/registries.conf` or a drop-in):
+> ```toml
+> [[registry]]
+> location = "registry.example.com:5000"
+> insecure = true
+> ```
+> Private registries also need `podman login` first (credentials go to
+> `$XDG_RUNTIME_DIR/containers/auth.json`). On macOS, `podman` runs inside the
+> `podman machine` VM, so keep tarball paths under your home directory (the shared
+> mount), and remember "localhost" means localhost *inside the VM*.
 
-> ⚠️ **Security:** every value in the env file is embedded in the image as build-time
-> `ENV` layers, recoverable by anyone who can pull the image or read its `docker
-> history` / `docker inspect`. Since the env set includes secrets (API keys, S3
-> credentials, etc.), only push baked images to a **private** registry you trust. If
-> you only need banners/map tokens baked in, bake a secrets-free env file and keep the
-> secrets in the runtime `.env`.
+**Deploying a baked image** — point an install at it with `--image` (works for a
+registry image or one loaded from a tarball):
+
+```bash
+./install.sh --image registry.example.com/sitrec:configured   # pulls from your registry
+./install.sh --offline --image sitrec-configured:latest       # uses an already-loaded image
+```
+
+**Keep secrets out of the image (recommended).** Because baked values are readable by
+anyone who can pull the image (see warning), bake only non-secret settings and supply
+secrets at runtime:
+
+```bash
+# bake-public.env: banners, map tokens — no secrets
+./sitrec.sh bake --env-file bake-public.env --push registry.example.com/sitrec:configured
+# On deploy, secrets (OpenAI / S3 keys) stay in the runtime .env the container reads.
+```
+
+**How it works:** `bake` writes a tiny `Dockerfile` (`FROM ghcr.io/mickwest/sitrec2:<tag>`
+plus one `ENV` line per setting) and builds it — no app rebuild; the same entrypoint that
+normally reads `.env` reads the baked-in values instead. It works identically under
+Podman (`podman build`/`history`/`inspect`). Baked values are the **lowest-priority**
+source, so a deployment can still override any of them with `-e`/`env_file` at run time —
+pre-configured, but not frozen.
+
+> **Single architecture:** a baked image is built for the CPU architecture you bake on
+> (it adds layers on your machine rather than copying the base's multi-arch manifest).
+> To deploy to a different CPU type — e.g. baking on Apple Silicon for x86 servers —
+> bake on a host that matches the target architecture, or bake once per architecture.
+
+> ⚠️ **Security:** every baked value is embedded in the image and is recoverable by
+> anyone who can pull it or run `docker history` / `docker inspect` (`podman history` /
+> `podman inspect` too). Since settings can include secrets (API keys, S3 credentials),
+> only push baked images to a **private** registry you trust — or use the
+> secrets-out-of-the-image pattern above.
 
 ### Using Podman Instead of Docker
 
@@ -245,7 +301,7 @@ lowest-priority source, a deployment can still **override** any baked value by p
 | Stop | `./sitrec.sh stop` |
 | Restart (after .env changes) | `./sitrec.sh restart` |
 | Update to latest | `./sitrec.sh pull` |
-| Bake a configured image | `./sitrec.sh bake [--push] <target-image>` |
+| Bake a configured image | `./sitrec.sh bake [--push] <target-image> [--tarball [file]]` |
 | View logs | `./sitrec.sh logs` |
 | Show status | `./sitrec.sh status` |
 
@@ -262,29 +318,43 @@ podman save ghcr.io/mickwest/sitrec2:latest -o sitrec-image.tar
 ```
 (Substitute `docker` for `podman` if using Docker.)
 
-2. Download the install files:
+To transfer a pre-configured image instead, put `prod.env` in the current directory
+and bake the tarball in one step:
 ```bash
-curl -sLO https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh
-curl -sLO https://raw.githubusercontent.com/MickWest/Sitrec2/main/sitrec.sh
-curl -sL https://raw.githubusercontent.com/MickWest/Sitrec2/main/config/shared.env.example -o shared.env.example
+curl -sL https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh | bash -s -- --podman --bake sitrec-configured:latest --env-file prod.env --tarball sitrec-image.tar
 ```
 
-3. Transfer `sitrec-image.tar`, `install.sh`, `sitrec.sh`, and `shared.env.example` to the target system. Optionally include a pre-configured `.env` file.
+2. Download the installer:
+```bash
+curl -sLO https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh
+```
+
+3. Transfer `sitrec-image.tar` and `install.sh` to the target system. Optionally include a pre-configured `.env` file.
 
 **On the air-gapped system:**
 
-1. Load the image:
+1. Load the image, then check the exact name it loaded under:
 ```bash
 podman load -i sitrec-image.tar
+podman images          # note the name:tag — Podman may show it as localhost/sitrec-configured:latest
 ```
+Use that exact name with `--image` below.
 
-2. Place `install.sh`, `sitrec.sh`, and `shared.env.example` in the same directory, then run:
+2. Place `install.sh` in the same directory, then run:
 ```bash
 chmod +x install.sh
 ./install.sh --offline --podman
 ```
 
-The `--offline` flag skips image pull and file downloads. It copies `sitrec.sh` and `shared.env.example` from alongside `install.sh` instead.
+If you transferred a pre-configured image with a custom tag, tell the installer which
+loaded image to run:
+```bash
+./install.sh --offline --podman --image sitrec-configured:latest
+```
+
+The `--offline` flag skips image pull and expects the selected image to already be
+loaded locally. The installer extracts `sitrec.sh` and `shared.env.example` from
+that image.
 
 ---
 
@@ -299,7 +369,7 @@ Build the Docker image locally from the source code. Useful for testing changes 
 **Prerequisites:** Docker Desktop, Git
 
 ```bash
-git clone https://github.com/MickWest/sitrec2 sitrec-test-dev
+git clone https://github.com/MickWest/Sitrec2 sitrec-test-dev
 cd sitrec-test-dev
 docker compose up --build
 ```
@@ -332,7 +402,7 @@ Creates a version of Sitrec that runs without PHP. All data is stored in the bro
 ### Node.js Server Mode
 
 ```bash
-git clone https://github.com/MickWest/sitrec2 sitrec-test-dev
+git clone https://github.com/MickWest/Sitrec2 sitrec-test-dev
 cd sitrec-test-dev
 for f in config/*.example; do cp "$f" "${f%.example}"; done
 npm install
@@ -357,7 +427,7 @@ Self-contained build using Node.js + your system's PHP. No separate web server n
 **Prerequisites:** Node.js, PHP 8.3+ in PATH
 
 ```bash
-git clone https://github.com/MickWest/sitrec2 sitrec-test-dev
+git clone https://github.com/MickWest/Sitrec2 sitrec-test-dev
 cd sitrec-test-dev
 for f in config/*.example; do cp "$f" "${f%.example}"; done
 npm install
@@ -384,7 +454,7 @@ Full development environment with Nginx/Apache + PHP. This is the setup used for
 ### Setup
 
 ```bash
-git clone https://github.com/MickWest/sitrec2 sitrec-test-dev
+git clone https://github.com/MickWest/Sitrec2 sitrec-test-dev
 cd sitrec-test-dev
 for f in config/*.example; do cp "$f" "${f%.example}"; done
 npm install

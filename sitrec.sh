@@ -9,7 +9,7 @@
 #   pull        Pull the latest image and recreate the container
 #   versions    List available versions and switch to one
 #   bake        Bake a .env file into a new, self-configured image and
-#               (optionally) push it to a registry
+#               (optionally) push it to a registry or save it to a tarball
 #   update      Update this script and shared.env.example from GitHub
 #   logs        Follow container logs
 #   status      Show container status
@@ -294,12 +294,25 @@ for t in tags:
         ENV_FILE=".env"
         BASE_TAG="latest"
         PUSH=false
+        TARBALL=false
+        TARBALL_PATH=""
         TARGET=""
         while [ $# -gt 0 ]; do
             case "$1" in
                 --env-file) ENV_FILE="$2"; shift 2 ;;
                 --base)     BASE_TAG="$2"; shift 2 ;;
                 --push)     PUSH=true; shift ;;
+                --tarball|--save-tarball)
+                    TARBALL=true
+                    # Only treat the next token as the tarball path once the
+                    # target image is known; otherwise a bare `--tarball` placed
+                    # before the target would swallow the target as its path.
+                    if [ -n "$TARGET" ] && [ -n "${2:-}" ] && [ "${2#--}" = "$2" ]; then
+                        TARBALL_PATH="$2"
+                        shift
+                    fi
+                    shift
+                    ;;
                 -*)         echo "[sitrec] Unknown bake option: $1"; exit 1 ;;
                 *)          TARGET="$1"; shift ;;
             esac
@@ -308,11 +321,12 @@ for t in tags:
         if [ -z "$TARGET" ]; then
             echo "[sitrec] ERROR: bake requires a target image name."
             echo ""
-            echo "  Usage: ./sitrec.sh bake [--env-file <file>] [--base <tag>] [--push] <target-image>"
+            echo "  Usage: ./sitrec.sh bake [--env-file <file>] [--base <tag>] [--push] <target-image> [--tarball [file]]"
             echo ""
             echo "  Examples:"
             echo "    ./sitrec.sh bake registry.example.com/sitrec:configured"
             echo "    ./sitrec.sh bake --push --env-file prod.env myregistry.io/team/sitrec:1.0"
+            echo "    ./sitrec.sh bake --env-file prod.env sitrec-configured:latest --tarball sitrec-configured.tar"
             exit 1
         fi
 
@@ -389,6 +403,16 @@ for t in tags:
         $RUNTIME_CMD build --pull -f "$DF" -t "$TARGET" "$BUILD_DIR"
         echo "[sitrec] Built $TARGET"
 
+        if [ "$TARBALL" = true ]; then
+            if [ -z "$TARBALL_PATH" ]; then
+                safe_name=$(printf '%s' "$TARGET" | sed 's|[^A-Za-z0-9_.-]|_|g')
+                TARBALL_PATH="${safe_name}.tar"
+            fi
+            echo "[sitrec] Saving $TARGET to $TARBALL_PATH ..."
+            $RUNTIME_CMD save -o "$TARBALL_PATH" "$TARGET"
+            echo "[sitrec] Saved $TARBALL_PATH"
+        fi
+
         if [ "$PUSH" = true ]; then
             echo "[sitrec] Pushing $TARGET ..."
             $RUNTIME_CMD push "$TARGET"
@@ -439,7 +463,7 @@ for t in tags:
         echo "  pull      Pull latest image and recreate"
         echo "  versions  List available versions and switch"
         echo "  bake      Bake a .env file into a new, self-configured image"
-        echo "            (./sitrec.sh bake [--env-file <f>] [--base <tag>] [--push] <target-image>)"
+        echo "            (./sitrec.sh bake [--env-file <f>] [--base <tag>] [--push] <target-image> [--tarball [file]])"
         echo "  update    Update this script from GitHub"
         echo "  logs      Follow container logs"
         echo "  status    Show container status"

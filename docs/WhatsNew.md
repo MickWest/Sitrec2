@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.87.0 (2026-06-17)
+
+### New Features
+- **Bake a configured Docker image straight from the installer**: the one-line install command can now build a ready-to-run, pre-configured image from your settings file without installing Sitrec first — push it to a private registry or save it as a single `.tar` file to carry to another machine. (Heads-up: baked images contain your secrets, so only push to a registry you trust.)
+- **Install or run a specific image**: the installer now accepts an image name, so you can deploy a baked image pulled from your registry or loaded from a tarball — including on air-gapped systems.
+
+### Improvements
+- **Save a baked image to a tarball**: the `bake` management command can now write your configured image to a single `.tar` file (in addition to pushing it to a registry), making it easy to copy to an offline or air-gapped server.
+
 ## Version 2.86.0 (2026-06-16)
 
 ### New Features

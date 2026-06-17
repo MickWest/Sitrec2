@@ -3,6 +3,8 @@
 # Usage: curl -sL https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh | bash
 #   or:  curl -sL ... | bash -s -- --podman    (force Podman)
 #   or:  curl -sL ... | bash -s -- --docker    (force Docker)
+#   or:  curl -sL ... | bash -s -- --bake registry.example.com/sitrec:configured --env-file prod.env
+#   or:  curl -sL ... | bash -s -- --bake sitrec-configured:latest --env-file prod.env --tarball sitrec-configured.tar
 #   or:  ./install.sh --tarball                 (install from local .tar image)
 #   or:  ./install.sh --tarball sitrec-image.tar  (specify tarball path)
 #   or:  ./install.sh --offline                 (image already loaded, skip pull)
@@ -21,39 +23,120 @@
 # Options:
 #   --podman      Force Podman (default: auto-detect)
 #   --docker      Force Docker
+#   --image <image>  Install/run a specific image (default: ghcr.io/mickwest/sitrec2:latest)
 #   --tarball [path]  Load image from a .tar file (auto-detected if path omitted)
 #   --offline     Air-gapped install (skip pull, image must already be loaded)
 #   --videos      Mount sitrec-videos/ volume for legacy sitches
 #   --no-selinux  Skip :Z volume labels even on SELinux systems
+#
+# Bake mode:
+#   --bake <image>       Build a pre-configured image from the published GHCR image and exit
+#   --env-file <file>    Env file to bake in (default: .env)
+#   --base <tag>         Base Sitrec image tag to build FROM (default: latest)
+#   --push               Push the baked image after building
+#   --tarball [path]     In bake mode, save the baked image to a tarball
 
 set -e
 
 DIR="sitrec"
+IMAGE="ghcr.io/mickwest/sitrec2"
+INSTALL_IMAGE="${IMAGE}:latest"
 FORCE_RUNTIME=""
 OFFLINE=false
 USE_TARBALL=false
 TARBALL_PATH=""
 NO_SELINUX=false
 MOUNT_VIDEOS=false
+BAKE_MODE=false
+BAKE_TARGET=""
+BAKE_ENV_FILE=".env"
+BAKE_BASE_TAG="latest"
+BAKE_PUSH=false
+BAKE_TARBALL=false
+BAKE_TARBALL_PATH=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --podman)     FORCE_RUNTIME="podman" ;;
         --docker)     FORCE_RUNTIME="docker" ;;
         --offline)    OFFLINE=true ;;
-        --tarball)
-            USE_TARBALL=true
-            # If the next arg exists and doesn't start with --, treat it as the path
+        --image)
+            if [ -z "${2:-}" ] || [ "${2#--}" != "$2" ]; then
+                echo "[sitrec] ERROR: --image requires an image name."
+                exit 1
+            fi
+            INSTALL_IMAGE="$2"
+            shift
+            ;;
+        --bake)
+            BAKE_MODE=true
             if [ -n "${2:-}" ] && [ "${2#--}" = "$2" ]; then
-                TARBALL_PATH="$2"
+                BAKE_TARGET="$2"
+                shift
+            fi
+            ;;
+        --env-file)
+            if [ -z "${2:-}" ] || [ "${2#--}" != "$2" ]; then
+                echo "[sitrec] ERROR: --env-file requires a path."
+                exit 1
+            fi
+            BAKE_ENV_FILE="$2"
+            shift
+            ;;
+        --base)
+            if [ -z "${2:-}" ] || [ "${2#--}" != "$2" ]; then
+                echo "[sitrec] ERROR: --base requires a tag."
+                exit 1
+            fi
+            BAKE_BASE_TAG="$2"
+            shift
+            ;;
+        --push)       BAKE_PUSH=true ;;
+        --tarball)
+            if [ "$BAKE_MODE" = true ]; then
+                BAKE_TARBALL=true
+                # In bake mode, --tarball is an output path for the baked image.
+                if [ -n "${2:-}" ] && [ "${2#--}" = "$2" ]; then
+                    BAKE_TARBALL_PATH="$2"
+                    shift
+                fi
+            else
+                USE_TARBALL=true
+                # If the next arg exists and doesn't start with --, treat it as the path
+                if [ -n "${2:-}" ] && [ "${2#--}" = "$2" ]; then
+                    TARBALL_PATH="$2"
+                    shift
+                fi
+            fi
+            ;;
+        --bake-tarball|--save-tarball)
+            BAKE_TARBALL=true
+            if [ -n "${2:-}" ] && [ "${2#--}" = "$2" ]; then
+                BAKE_TARBALL_PATH="$2"
                 shift
             fi
             ;;
         --no-selinux) NO_SELINUX=true ;;
         --videos)     MOUNT_VIDEOS=true ;;
+        *)
+            if [ "$BAKE_MODE" = true ] && [ -z "$BAKE_TARGET" ]; then
+                BAKE_TARGET="$1"
+            fi
+            ;;
     esac
     shift
 done
+
+# In bake mode, a plain --tarball means "save the baked image" regardless of
+# where it appeared on the command line. If it was parsed before --bake (so it
+# landed in the install-from-tar variables), reinterpret it here as a bake
+# output path — otherwise bake mode exits before the install path and the
+# tarball would be silently dropped.
+if [ "$BAKE_MODE" = true ] && [ "$USE_TARBALL" = true ] && [ "$BAKE_TARBALL" = false ]; then
+    BAKE_TARBALL=true
+    BAKE_TARBALL_PATH="$TARBALL_PATH"
+    USE_TARBALL=false
+fi
 
 # ---------------------------------------------------------------------------
 # Detect container runtime: prefer docker, fall back to podman.
@@ -208,6 +291,98 @@ detect_runtime() {
     fi
 }
 
+bake_image() {
+    if [ -z "$BAKE_TARGET" ]; then
+        echo "[sitrec] ERROR: --bake requires a target image name."
+        echo ""
+        echo "  Usage:"
+        echo "    ./install.sh --bake <target-image> [--env-file <file>] [--base <tag>] [--push] [--tarball [file]]"
+        echo ""
+        echo "  Examples:"
+        echo "    curl -sL https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh | bash -s -- --bake registry.example.com/sitrec:configured --env-file prod.env"
+        echo "    curl -sL https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh | bash -s -- --bake sitrec-configured:latest --env-file prod.env --tarball sitrec-configured.tar"
+        exit 1
+    fi
+
+    if [ ! -f "$BAKE_ENV_FILE" ]; then
+        echo "[sitrec] ERROR: env file '$BAKE_ENV_FILE' not found."
+        exit 1
+    fi
+
+    BASE_IMAGE="${IMAGE}:${BAKE_BASE_TAG}"
+
+    echo "[sitrec] Baking '$BAKE_ENV_FILE' into $BASE_IMAGE  ->  $BAKE_TARGET"
+    echo "[sitrec] WARNING: every value in '$BAKE_ENV_FILE' is embedded in the image as"
+    echo "          build-time ENV layers. Anyone who can pull '$BAKE_TARGET' (or read its"
+    echo "          'docker history' / 'inspect') can recover these values, including"
+    echo "          secrets such as API keys and S3 credentials. Only push baked"
+    echo "          images to a PRIVATE registry you trust."
+    echo ""
+
+    BUILD_DIR="$(mktemp -d)"
+    trap 'rm -rf "$BUILD_DIR"' EXIT
+    DF="$BUILD_DIR/Dockerfile"
+
+    {
+        echo "# Auto-generated by install.sh --bake - do not edit."
+        echo "# Bakes '$BAKE_ENV_FILE' into $BASE_IMAGE so the image is self-configured."
+        echo "FROM ${BASE_IMAGE}"
+    } > "$DF"
+
+    # Parse the env file into ENV lines, mirroring docker/entrypoint.sh and
+    # ./sitrec.sh bake: skip blanks/comments/empty values, allow optional
+    # 'export ', split on the first '=', and strip one surrounding quote layer.
+    while IFS= read -r line || [ -n "$line" ]; do
+        while case "$line" in " "*|$'\t'*) true ;; *) false ;; esac; do
+            line="${line#?}"
+        done
+        [ -z "$line" ] && continue
+        case "$line" in \#*) continue ;; esac
+        line="${line#export }"
+        case "$line" in *=*) ;; *) continue ;; esac
+        key="${line%%=*}"
+        val="${line#*=}"
+        case "$val" in
+            \"*\") val="${val#\"}"; val="${val%\"}" ;;
+            \'*\') val="${val#\'}"; val="${val%\'}" ;;
+        esac
+        [ -z "$val" ] && continue
+        esc="${val//\\/\\\\}"
+        esc="${esc//\"/\\\"}"
+        esc="${esc//\$/\\\$}"
+        printf 'ENV %s="%s"\n' "$key" "$esc" >> "$DF"
+    done < "$BAKE_ENV_FILE"
+
+    BAKED_COUNT=$(grep -c '^ENV ' "$DF" || true)
+    if [ "$BAKED_COUNT" -eq 0 ]; then
+        echo "[sitrec] ERROR: no usable KEY=value lines found in '$BAKE_ENV_FILE'."
+        exit 1
+    fi
+    echo "[sitrec] Generated Dockerfile with $BAKED_COUNT baked env var(s)."
+
+    $RUNTIME build --pull -f "$DF" -t "$BAKE_TARGET" "$BUILD_DIR"
+    echo "[sitrec] Built $BAKE_TARGET"
+
+    if [ "$BAKE_TARBALL" = true ]; then
+        if [ -z "$BAKE_TARBALL_PATH" ]; then
+            safe_name=$(printf '%s' "$BAKE_TARGET" | sed 's|[^A-Za-z0-9_.-]|_|g')
+            BAKE_TARBALL_PATH="${safe_name}.tar"
+        fi
+        echo "[sitrec] Saving $BAKE_TARGET to $BAKE_TARBALL_PATH ..."
+        $RUNTIME save -o "$BAKE_TARBALL_PATH" "$BAKE_TARGET"
+        echo "[sitrec] Saved $BAKE_TARBALL_PATH"
+    fi
+
+    if [ "$BAKE_PUSH" = true ]; then
+        echo "[sitrec] Pushing $BAKE_TARGET ..."
+        $RUNTIME push "$BAKE_TARGET"
+        echo "[sitrec] Pushed $BAKE_TARGET"
+    else
+        echo "[sitrec] Not pushed (no --push). To push it yourself:"
+        echo "           $RUNTIME push $BAKE_TARGET"
+    fi
+}
+
 if [ "$FORCE_RUNTIME" = "podman" ]; then
     if command -v podman-compose &>/dev/null; then
         COMPOSE="podman-compose"
@@ -233,6 +408,11 @@ else
 fi
 
 echo "[sitrec] Using $RUNTIME ($COMPOSE)"
+
+if [ "$BAKE_MODE" = true ]; then
+    bake_image
+    exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # Create install directory
@@ -282,7 +462,7 @@ fi
 cat > docker-compose.yml <<COMPOSE
 services:
   sitrec:
-    image: ghcr.io/mickwest/sitrec2:latest
+    image: ${INSTALL_IMAGE}
     ports:
       - '8080:80'
     env_file:
@@ -382,8 +562,8 @@ fi
 
 # Extract support files from the image
 echo "[sitrec] Extracting support files from image..."
-_cid=$($RUNTIME create ghcr.io/mickwest/sitrec2:latest --entrypoint /bin/true 2>/dev/null) || \
-_cid=$($RUNTIME create ghcr.io/mickwest/sitrec2:latest 2>/dev/null)
+_cid=$($RUNTIME create "$INSTALL_IMAGE" --entrypoint /bin/true 2>/dev/null) || \
+_cid=$($RUNTIME create "$INSTALL_IMAGE" 2>/dev/null)
 $RUNTIME cp "$_cid":/usr/local/share/sitrec/sitrec.sh sitrec.sh
 $RUNTIME cp "$_cid":/usr/local/share/sitrec/shared.env.example shared.env.example
 $RUNTIME rm "$_cid" >/dev/null 2>&1 || true
