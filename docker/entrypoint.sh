@@ -104,7 +104,14 @@ GROK_API
 # 1. Generate shared.env.php from ALL environment variables (client + server)
 #    PHP's injectEnv.php reads this file via putenv().
 #    We wrap it in a PHP comment so it can't be served as plain text.
+#
+#    rm -f first, then write a fresh file: the copy shipped in the image is owned
+#    by root, and a non-root UID (rootless Podman --user, OpenShift's arbitrary
+#    assigned UIDs, etc.) cannot modify it in place — rootless overlay copy-up of
+#    a file you don't own is denied even at mode 666. Deleting it and creating a
+#    new file in the world-writable webroot works for both root and non-root UIDs.
 # ---------------------------------------------------------------------------
+rm -f "$ENV_PHP_FILE"
 echo "<?php /*;" > "$ENV_PHP_FILE"
 
 for var in $CLIENT_VARS $SERVER_VARS; do
@@ -150,9 +157,15 @@ if [ -f "$HTML_FILE" ]; then
     # Inject a <script> tag right after <head> in index.html
     SCRIPT_TAG="<script>window.__SITREC_ENV__=${JSON};<\/script>"
 
-    # Use sed to insert after the opening <head> tag
-    # The built index.html has <head> on a single line
-    sed -i "s|<head>|<head>${SCRIPT_TAG}|" "$HTML_FILE"
+    # Insert after the opening <head> tag (the built index.html has <head> on a
+    # single line). Read, then delete-and-recreate (not `sed -i`, and not an
+    # in-place truncate): the image's index.html is root-owned, so a non-root UID
+    # can neither rewrite it in place (overlay copy-up denied) nor let sed -i
+    # rename a temp over it — but it CAN remove it and write a fresh file in the
+    # world-writable webroot. Works for both root and non-root UIDs.
+    NEW_HTML=$(sed "s|<head>|<head>${SCRIPT_TAG}|" "$HTML_FILE")
+    rm -f "$HTML_FILE"
+    printf '%s\n' "$NEW_HTML" > "$HTML_FILE"
 
     echo "[entrypoint] Injected runtime env into $HTML_FILE"
 else

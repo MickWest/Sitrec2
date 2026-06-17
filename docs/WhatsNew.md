@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.87.2 (2026-06-17)
+
+### Bug Fixes
+- Fixed the Docker image failing to start with a "Permission denied" error when run under a non-root user (rootless Podman with `--user`, OpenShift's assigned user IDs, and similar). The container now starts correctly whether it runs as root or as a non-root user.
+
 ## Version 2.87.0 (2026-06-17)
 
 ### New Features

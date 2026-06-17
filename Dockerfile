@@ -88,6 +88,14 @@ RUN mkdir -p ./sitrec-cache && chmod 777 ./sitrec-cache \
     && mkdir -p ./sitrec-upload && chmod 777 ./sitrec-upload \
     && mkdir -p ./data/wind && chmod 777 ./data/wind
 
+# The entrypoint regenerates shared.env.php and re-injects index.html at every
+# container start. Make the webroot world-writable and non-sticky so a non-root UID
+# (rootless Podman with --user, OpenShift's arbitrary assigned UIDs, etc.) can
+# delete-and-recreate those root-owned files: a non-owner cannot modify them in
+# place under rootless overlay (copy-up is denied even at mode 666), but it CAN
+# replace them in a writable, non-sticky directory.
+RUN chmod 0777 /var/www/html
+
 # Install the entrypoint script that converts Docker env vars
 # into shared.env.php (for PHP) and window.__SITREC_ENV__ (for JS)
 # Suppress Apache ServerName warning

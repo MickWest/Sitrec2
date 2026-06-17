@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.87.2 (2026-06-17)
+
+### Bug Fixes
+- Fixed the Docker entrypoint crashing at startup with `/var/www/html/shared.env.php: Permission denied` when the image runs under a non-root UID (rootless Podman with `--user`, OpenShift's arbitrary assigned UIDs, etc.). `docker/entrypoint.sh` regenerates `shared.env.php` and re-injects the `window.__SITREC_ENV__` `<script>` into `index.html` on every container start, but both files ship root-owned in the image. A non-owner UID cannot modify them in place — rootless overlay copy-up of a file you don't own is denied even at mode 666 — and the webroot's sticky bit also blocked deleting them. The fix is two-part: (1) the entrypoint now **delete-and-recreates** both files instead of overwriting in place — `rm -f "$ENV_PHP_FILE"` before writing the fresh `shared.env.php`, and for `index.html` it captures the `sed` output into `NEW_HTML`, then `rm -f "$HTML_FILE"` and `printf` a fresh file rather than using `sed -i`; (2) `Dockerfile` and `Dockerfile.release` add `RUN chmod 0777 /var/www/html`, which clears the sticky bit on the already-world-writable (1777) webroot so a non-owner UID can remove and recreate those files. Verified by reproducing the original error under `--user 1000:1000`, confirming the entrypoint then completes (both files generated correctly) for non-root and root, and that a full root run still serves HTTP with no regression.
+
 ## Version 2.87.0 (2026-06-17)
 
 ### New Features
