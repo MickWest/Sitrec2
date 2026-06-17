@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.86.0 (2026-06-16)
+
+### New Features
+- **Brocken Spectre** (Lighting → Atmospheric Optics (Halos)): renders a Brocken spectre — your own shadow cast onto fog ringed by a colored glory — that sits out in the world on the fog below you, so it is correctly hidden behind nearer terrain and shows behind far peaks like the real thing. A new *Brocken Spectre* panel lets you toggle the glory rings, the shadow figure, and a synthetic fog bank, and adjust fog distance and brightness, the spectre size, and the fog droplet size that sets the glory's ring spacing.
+
 ## Version 2.85.0 (2026-06-16)
 
 ### New Features

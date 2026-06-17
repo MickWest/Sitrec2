@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.86.0 (2026-06-16)
+
+### New Features
+- **Brocken Spectre** (Lighting → Atmospheric Optics (Halos) → Brocken Spectre): adds a physically-modelled Brocken spectre — the observer's own shadow cast onto fog with a colored glory around the antisolar point — to `CNodeAtmosphericOptics` (`src/nodes/CNodeAtmosphericOptics.js`, +442). Unlike the existing sky-dome halos, the spectre is built as **world-space, depth-tested geometry** in `GlobalScene` (a `brockenGroup`, named `atmosphericOpticsBrocken`, anchored at the antisolar point a settable slant distance below/in-front of the observer), so it depth-sorts correctly against terrain — hidden behind far peaks, occluded by nearer ones — like a real spectre on valley fog. `_syncBrocken(observerPos)` rebuilds it (via `_rebuildBrocken`) only when the Sun direction, observer position, or a parameter key changes, and only when the Sun is above the horizon. Three layered, depth-write-off components ordered by `renderOrder`:
+  - **Glory** (`_buildBrockenGlory`): a per-pixel Airy-diffraction shader (`gloryShaderMaterial`, `uDroplet` uniform) on a single quad. Ring radii come from fog-droplet diffraction (x = π·d·sinθ/λ, intensity maxima at 5.14, 8.42, 11.62), with blue-inner/red-outer tinting and fainter secondary/tertiary rings; droplet diameter sets the angular scale (smaller droplets → larger glory). A single quad (rather than a tessellated mesh) avoids additive-MSAA edge streaks, and the shader includes the `logdepthbuf` chunks required by Sitrec's logarithmic depth buffer.
+  - **Shadow Figure** (`_buildBrockenShadow`): a soft, diffuse humanoid silhouette hanging down from the antisolar point, drawn last so it darkens the bright glory center (the head reads as a dark form inside the rings).
+  - **Fog Bank** (`_buildBrockenFog` / `_buildBrockenBand`): an optional synthetic fog patch centered on the antisolar point so the spectre is visible even when the scene has no real cloud/fog geometry.
+  - GUI subfolder (added under the existing "Atmospheric Optics (Halos)" Lighting folder) with literal English labels: master toggle **Show Brocken Spectre** (`brocken`), **Glory (rings)** (`brockenGlory`), **Shadow Figure** (`brockenShadow`), **Fog Bank** (`brockenFog`), and sliders **Fog Brightness** (`brockenFogOpacity`, 0–1), **Fog Distance (m)** (`brockenDistance`, 50–5000, default 350), **Spectre Size°** (`brockenRadius`, 1–15°, default 5), and **Droplet Size (µm)** (`brockenDroplet`, 3–40, default 10, with a tooltip explaining the diffraction relationship — ~10µm hill fog gives a first red ring ≈6°). All nine properties are in `simpleSerials` and persist in saved sitches.
+
 ## Version 2.85.0 (2026-06-16)
 
 ### New Features
