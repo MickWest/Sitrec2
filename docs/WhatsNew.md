@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.87.3 (2026-06-17)
+
+### Improvements
+- **Rotate** (Video → Long Exposure → Camera Nudge): the Camera Nudge controls can now apply a smooth roll of the image during the exposure, turning otherwise-straight star and satellite light trails into arcs. Set **Rotate Total Angle (°)** to the amount of roll, with **Rotate Start (s)**, **Rotate Duration (s)**, and **Rotate Ease** controlling when it happens, how long it takes, and how gently it ramps up and down. It is off by default, so existing scenes are unchanged.
+
 ## Version 2.87.2 (2026-06-17)
 
 ### Bug Fixes

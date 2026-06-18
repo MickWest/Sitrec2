@@ -30,10 +30,19 @@ export const nudgeParams = {
     frequency: 3,     // Hz — natural frequency ("elasticity")
     damping: 0.15,    // dimensionless damping ratio ζ (underdamped < 1)
     direction: 0,     // degrees — rotates the yaw/pitch bounce basis
+    // Smooth roll about the view axis, layered on top of the jolt. A constant
+    // pan of the image plane that turns straight star trails into arcs.
+    rotateStart: 0,        // seconds — when the roll begins
+    rotateDuration: 1,     // seconds — time to sweep the full angle
+    rotateEase: 0.1,       // eased fraction at each end (0..0.5), trapezoidal velocity
+    rotateTotalAngle: 0,   // degrees — total roll swept, then held (0 = off)
 };
 
 export function defaultNudgeParams() {
-    return {enabled: false, time: 5, magnitude: 1, frequency: 3, damping: 0.15, direction: 0};
+    return {
+        enabled: false, time: 5, magnitude: 1, frequency: 3, damping: 0.15, direction: 0,
+        rotateStart: 0, rotateDuration: 1, rotateEase: 0.1, rotateTotalAngle: 0,
+    };
 }
 
 // Nudge offset {yaw, pitch} in radians at time t (seconds), pure & deterministic.
@@ -60,17 +69,48 @@ export function nudgeOffsetAngles(t, p = nudgeParams) {
     return {yaw: c * yaw0 - s * pitch0, pitch: s * yaw0 + c * pitch0};
 }
 
-// The nudge offset as a quaternion (local-space, rotateY then rotateX order).
+// Smooth roll (about the view axis) at time t, in radians — pure & deterministic.
+// Sweeps `rotateTotalAngle` over `rotateDuration` starting at `rotateStart`, then
+// HOLDS at the full angle. Easing is a trapezoidal velocity profile: the angular
+// rate ramps up over the first `rotateEase` fraction of the duration and back down
+// over the last, constant in between (ease=0 → constant rate, 0.5 → full ease).
+export function rotateOffsetRoll(t, p = nudgeParams) {
+    if (!p.enabled || !p.rotateTotalAngle) return 0;
+    const total = radians(p.rotateTotalAngle);
+    const dt = t - p.rotateStart;
+    if (dt <= 0) return 0;
+    const dur = p.rotateDuration;
+    if (!(dur > 0) || dt >= dur) return total;   // instantaneous, or held after the sweep
+    const u = dt / dur;                          // normalized progress 0..1
+    const e = Math.min(0.5, Math.max(0, p.rotateEase));
+    let s;
+    if (e <= 0) {
+        s = u;                                   // pure linear (constant rate)
+    } else {
+        const vmax = 1 / (1 - e);                // peak rate (area under velocity = 1)
+        if (u < e)            s = vmax * u * u / (2 * e);
+        else if (u <= 1 - e)  s = vmax * (e / 2 + (u - e));
+        else { const d = 1 - u; s = 1 - vmax * d * d / (2 * e); }
+    }
+    return total * s;
+}
+
+// The nudge offset as a quaternion (local-space, rotateY then rotateX then rotateZ).
 const _qYaw = new Quaternion();
 const _qPitch = new Quaternion();
+const _qRoll = new Quaternion();
 const _Y = {x: 0, y: 1, z: 0};
 const _X = {x: 1, y: 0, z: 0};
+const _Z = {x: 0, y: 0, z: 1};
 export function nudgeQuaternion(t, p = nudgeParams) {
     const a = nudgeOffsetAngles(t, p);
-    if (!a) return null;
-    _qYaw.setFromAxisAngle(_Y, a.yaw);
-    _qPitch.setFromAxisAngle(_X, a.pitch);
-    return _qYaw.clone().multiply(_qPitch);   // rotateY(yaw) then rotateX(pitch)
+    const roll = rotateOffsetRoll(t, p);
+    if (!a && !roll) return null;
+    _qYaw.setFromAxisAngle(_Y, a ? a.yaw : 0);
+    _qPitch.setFromAxisAngle(_X, a ? a.pitch : 0);
+    _qRoll.setFromAxisAngle(_Z, roll);
+    // rotateY(yaw) then rotateX(pitch) then rotateZ(roll)
+    return _qYaw.clone().multiply(_qPitch).multiply(_qRoll);
 }
 
 export class CNodeControllerCameraNudge extends CNodeController {
@@ -97,12 +137,17 @@ export class CNodeControllerCameraNudge extends CNodeController {
         }
         this._postQuat = null;
 
-        const a = nudgeOffsetAngles(f / Sit.fps, this.params);
-        if (!a) return;
+        const t = f / Sit.fps;
+        const a = nudgeOffsetAngles(t, this.params);
+        const roll = rotateOffsetRoll(t, this.params);
+        if (!a && !roll) return;
 
         this._preQuat = camera.quaternion.clone();
-        camera.rotateY(a.yaw);
-        camera.rotateX(a.pitch);
+        if (a) {
+            camera.rotateY(a.yaw);
+            camera.rotateX(a.pitch);
+        }
+        if (roll) camera.rotateZ(roll);          // smooth roll about the view axis
         camera.updateMatrix();
         this._postQuat = camera.quaternion.clone();
     }

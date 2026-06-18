@@ -233,6 +233,18 @@ class CLongExposureManager {
             .tooltip("Damping ratio: low = rings for a long time, high = settles quickly.");
         nf.add(this.nudge, "direction", -180, 180, 1).name("Direction (°)").perm().listen().onChange(nudgeChanged);
 
+        // Smooth roll about the view axis — a separate transform from the jolt
+        // above. Curves otherwise-straight star/satellite trails into arcs.
+        nf.add(this.nudge, "rotateStart", 0, 120, 0.1).name("Rotate Start (s)").perm().listen().onChange(nudgeChanged)
+            .tooltip("Time the smooth roll begins, in seconds.");
+        nf.add(this.nudge, "rotateDuration", 0, 120, 0.1).name("Rotate Duration (s)").perm().listen().onChange(nudgeChanged)
+            .tooltip("How long the roll takes to sweep the full angle. The angle is then held.");
+        nf.add(this.nudge, "rotateEase", 0, 0.5, 0.01).name("Rotate Ease").perm().listen().onChange(nudgeChanged)
+            .tooltip("Eased fraction at each end: 0 = constant rate, 0.5 = full ease in/out.");
+        nf.add(this.nudge, "rotateTotalAngle", -360, 360, 1).name("Rotate Total Angle (°)").perm().listen().onChange(nudgeChanged)
+            .tooltip("Total roll about the view axis, swept over the duration then held.\n" +
+                "Turns straight trails into arcs in the long-exposure render. 0 = off.");
+
         this.ensureNudgeController();
     }
 

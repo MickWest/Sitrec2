@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.87.3 (2026-06-17)
+
+### Improvements
+- Added a smooth **Rotate** (roll-about-view-axis) transform to **Camera Nudge** in the Long Exposure feature (Video ▸ Long Exposure ▸ Camera Nudge). Previously Camera Nudge produced only the damped-spring angular *jolt* (the bumped-tripod bounce from `nudgeOffsetAngles`); it can now additionally apply a steady roll about the camera's view axis, which curves otherwise-straight star/satellite light trails into arcs in the long-exposure render. In `src/nodes/CNodeControllerCameraNudge.js`, four params were added to `nudgeParams` and `defaultNudgeParams()` — `rotateStart` (default 0 s), `rotateDuration` (default 1 s), `rotateEase` (default 0.1), and `rotateTotalAngle` (default 0°, i.e. off) — driven by a new pure, deterministic `rotateOffsetRoll(t, p)`. That function sweeps `rotateTotalAngle` over `rotateDuration` starting at `rotateStart`, using a trapezoidal-velocity easing profile (the angular rate ramps up over the first `rotateEase` fraction of the duration and back down over the last, constant in between; `ease=0` → constant rate, `0.5` → full ease-in/out), and then HOLDS at the full angle for the remainder of the exposure. The roll is folded into `nudgeQuaternion()` as a `rotateZ` composed *after* the existing `rotateY(yaw)·rotateX(pitch)`, and the live controller's `apply()` matches that order (`rotateY`, `rotateX`, then `rotateZ`). `src/LongExposure.js` adds the four matching sliders (*Rotate Start (s)*, *Rotate Duration (s)*, *Rotate Ease*, *Rotate Total Angle (°)*) to the Camera Nudge folder. Because everything routes through the single analytic `nudgeQuaternion(t)`, the offline sub-frame splat renderer that draws the curved trails, the live look-view, and the trajectory overlay all pick up the roll with no renderer changes. Serialization flows through the existing `nudgeParams` mechanism; the default `rotateTotalAngle` of 0 is a no-op (`rotateOffsetRoll` early-returns 0), so existing sitches are unaffected and the change is regression-safe.
+
 ## Version 2.87.2 (2026-06-17)
 
 ### Bug Fixes
