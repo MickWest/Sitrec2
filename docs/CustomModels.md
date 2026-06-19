@@ -22,7 +22,7 @@ You can also adjust the material (the surface appearance of the object). There a
 - Checkerboard: A simple two-color checkerboard pattern. 
 
 When experimenting with these settings, use the "Lighting" and "Time" menus to experiment with different lighting situations. For example, here's a very rough approximation of a lantern with an orange glow illuminated by low sun.
-![SuperEgg with low lighting.jpg](docimages/SuperEgg with low lighting.jpg)
+![SuperEgg with low lighting.jpg](docimages/SuperEgg%20with%20low%20lighting.jpg)
 
 ### Built-in Models
 
@@ -112,4 +112,3 @@ PLY files don't go through the Blender export pipeline. They are typically produ
 Sitrec auto-detects which type of PLY it is by inspecting the file header. If the PLY has face elements, it's loaded as a mesh. If it has `scale_0`/`rot_0` attributes, it's treated as a Gaussian splat. Otherwise it's rendered as a point cloud.
 
 Gaussian splat PLY files are rendered with proper elliptical splatting and per-frame back-to-front sorting for correct transparency. The filename length parameter (`~L...~`) works with PLY files too.
-

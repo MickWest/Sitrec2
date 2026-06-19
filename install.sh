@@ -26,7 +26,8 @@
 #   --image <image>  Install/run a specific image (default: ghcr.io/mickwest/sitrec2:latest)
 #   --tarball [path]  Load image from a .tar file (auto-detected if path omitted)
 #   --offline     Air-gapped install (skip pull, image must already be loaded)
-#   --videos      Mount sitrec-videos/ volume for legacy sitches
+#   --videos      Mount sitrec-videos/ volume for legacy sitches (default)
+#   --no-videos   Do not mount sitrec-videos/
 #   --no-selinux  Skip :Z volume labels even on SELinux systems
 #
 # Bake mode:
@@ -46,7 +47,7 @@ OFFLINE=false
 USE_TARBALL=false
 TARBALL_PATH=""
 NO_SELINUX=false
-MOUNT_VIDEOS=false
+MOUNT_VIDEOS=true
 BAKE_MODE=false
 BAKE_TARGET=""
 BAKE_ENV_FILE=".env"
@@ -118,6 +119,7 @@ while [ $# -gt 0 ]; do
             ;;
         --no-selinux) NO_SELINUX=true ;;
         --videos)     MOUNT_VIDEOS=true ;;
+        --no-videos)  MOUNT_VIDEOS=false ;;
         *)
             if [ "$BAKE_MODE" = true ] && [ -z "$BAKE_TARGET" ]; then
                 BAKE_TARGET="$1"
@@ -439,7 +441,8 @@ cd "$DIR"
 # ---------------------------------------------------------------------------
 # Write docker-compose.yml
 # Uses simple string-form env_file (compatible with both Docker and Podman).
-# Volumes are only added with --videos flag (needed for legacy sitches only).
+# Mount the local video folder by default. It can stay empty, and this keeps the
+# later download-videos step from silently writing files the container cannot see.
 # ---------------------------------------------------------------------------
 VOLUMES_BLOCK=""
 if [ "$MOUNT_VIDEOS" = true ]; then

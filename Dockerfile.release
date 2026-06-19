@@ -33,8 +33,10 @@ RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 COPY docker/entrypoint.sh /usr/local/bin/sitrec-entrypoint.sh
 RUN chmod +x /usr/local/bin/sitrec-entrypoint.sh
 
-# Bundle installer-support files so install.sh can extract them from the image
+# Bundle installer-support files so install.sh/install.ps1 can extract them from the image
 COPY sitrec.sh /usr/local/share/sitrec/sitrec.sh
+COPY sitrec.ps1 /usr/local/share/sitrec/sitrec.ps1
+COPY sitrec.cmd /usr/local/share/sitrec/sitrec.cmd
 COPY config/shared.env.example /usr/local/share/sitrec/shared.env.example
 
 VOLUME /var/www/html/sitrec-videos

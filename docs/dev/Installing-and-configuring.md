@@ -62,18 +62,24 @@ curl -sL https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh | ba
 irm https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.ps1 | iex
 ```
 
-If you have both Docker and Podman installed, the script defaults to Docker. Use `--podman` or `--docker` to override:
+If you have both Docker and Podman installed, the script defaults to Docker. Use `--podman` / `--docker` for the Mac/Linux/WSL script, or `-Podman` / `-Docker` for PowerShell:
 ```bash
 curl -sL https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh | bash -s -- --podman
 ```
-Or if you have `install.sh` locally:
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.ps1))) -Podman
+```
+Or if you have the installer locally:
 ```bash
 ./install.sh --podman
+```
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Podman
 ```
 
 If you have a pre-configured `.env` file, place it in the current directory before running the installer — it will be copied into the `sitrec/` folder automatically instead of generating a new template.
 
-This creates a `sitrec/` folder in your current directory, downloads Sitrec, and starts it. Once you see "resuming normal operations" in the output, open **http://localhost:8080** in your browser.
+This creates a `sitrec/` folder in your current directory, downloads Sitrec, and starts it. On Windows it also creates `sitrec.cmd`; use that for daily commands so PowerShell execution policy does not block the management script. Once the container is running, open **http://localhost:8080** in your browser.
 
 ### Manual Install
 
@@ -101,7 +107,7 @@ docker compose up        # Docker
 podman-compose up        # Podman
 ```
 
-4. Once you see "resuming normal operations", open **http://localhost:8080** in your browser.
+4. Once the container is running, open **http://localhost:8080** in your browser.
 
 ### Configuration (Optional)
 
@@ -134,6 +140,9 @@ After editing `.env`, apply your changes with the management script — it safel
 ```bash
 ./sitrec.sh restart
 ```
+```powershell
+.\sitrec.cmd restart
+```
 (Settings are read when the container is created, so `restart` recreates it for you; a plain container restart would not pick up `.env` changes. Your saved settings stay in `.env`.)
 
 Or manually:
@@ -148,7 +157,7 @@ Map sources that require an API token (e.g. MapBox, MapTiler) only appear in the
 
 Sitrec works fully without any video files — you can create and view custom sitches, load tracks, and explore 3D terrain. Video files are only needed to view legacy analysis sitches (Gimbal, GoFast, Aguadilla, etc.). These sitches can also be viewed online at [metabunk.org/sitrec](https://www.metabunk.org/sitrec).
 
-If you want to run legacy sitches locally, download the public video files into a `sitrec-videos` folder next to your `docker-compose.yml`:
+If you want to run legacy sitches locally, download the public video files into a `sitrec-videos` folder next to your `docker-compose.yml`. The installer and manual compose example mount this folder by default. Run the downloader from either your `sitrec/` install folder or the folder that contains it; the script detects the install folder before downloading.
 
 **Mac / Linux / WSL:**
 ```bash
@@ -160,13 +169,16 @@ curl -sL https://raw.githubusercontent.com/MickWest/Sitrec2/main/download-videos
 irm https://raw.githubusercontent.com/MickWest/Sitrec2/main/download-videos.ps1 | iex
 ```
 
-Or download manually from [this Dropbox folder](https://www.dropbox.com/scl/fo/biko4zk689lgh5m5ojgzw/h?rlkey=stuaqfig0f369jzujgizsicyn&dl=0) and place the files in `sitrec-videos/public/`. Then restart the container.
+Or download manually from [this Dropbox folder](https://www.dropbox.com/scl/fo/biko4zk689lgh5m5ojgzw/h?rlkey=stuaqfig0f369jzujgizsicyn&dl=0) and place the files in `sitrec-videos/public/`. Then restart the container with `./sitrec.sh restart` or `.\sitrec.cmd restart`.
 
 ### Updating to the Latest Version
 
 To get the newest release:
 ```bash
 ./sitrec.sh pull
+```
+```powershell
+.\sitrec.cmd pull
 ```
 
 Or manually:
@@ -195,12 +207,16 @@ and Sitrec reads them each time it starts. *Baking* instead builds a new **image
 packaged, ready-to-run copy of Sitrec) with your settings already inside it, so it runs
 configured anywhere with no `.env` needed.
 
-**Quickest path** — from inside your `sitrec/` install folder (where `sitrec.sh` lives),
+**Quickest path** — from inside your `sitrec/` install folder (where `sitrec.sh` or
+`sitrec.cmd` lives),
 bake the `.env` you already configured into a **tarball** (a single `.tar` file you can
 copy on a USB stick or `scp`):
 
 ```bash
 ./sitrec.sh bake sitrec-configured:latest --tarball sitrec-configured.tar
+```
+```powershell
+.\sitrec.cmd bake sitrec-configured:latest -Tarball sitrec-configured.tar
 ```
 
 That writes `sitrec-configured.tar` to the current folder. To install it on the target
@@ -212,6 +228,10 @@ machine, see [Air-Gapped / Offline Install](#air-gapped--offline-install) below.
 docker login registry.example.com          # one time (or: podman login registry.example.com)
 ./sitrec.sh bake --push registry.example.com/sitrec:configured
 ```
+```powershell
+docker login registry.example.com          # one time (or: podman login registry.example.com)
+.\sitrec.cmd bake -Push registry.example.com/sitrec:configured
+```
 
 **Or bake straight from the one-line installer** — without installing Sitrec first. The
 env file must already exist in the current directory:
@@ -219,8 +239,13 @@ env file must already exist in the current directory:
 ```bash
 curl -sL https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh | bash -s -- --bake registry.example.com/sitrec:configured --env-file prod.env
 ```
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.ps1))) -Bake registry.example.com/sitrec:configured -EnvFile prod.env
+```
 
-**Options** (`./sitrec.sh bake` and `install.sh --bake` accept the same ones):
+**Options** (`./sitrec.sh bake`, `install.sh --bake`, `.\sitrec.cmd bake`, and
+`install.ps1 -Bake` accept the same options; PowerShell examples use single-dash
+parameter names):
 
 | Option | Meaning |
 |--------|---------|
@@ -250,6 +275,10 @@ registry image or one loaded from a tarball):
 ./install.sh --image registry.example.com/sitrec:configured   # pulls from your registry
 ./install.sh --offline --image sitrec-configured:latest       # uses an already-loaded image
 ```
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Image registry.example.com/sitrec:configured   # pulls from your registry
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Offline -Image sitrec-configured:latest        # uses an already-loaded image
+```
 
 **Keep secrets out of the image (recommended).** Because baked values are readable by
 anyone who can pull the image (see warning), bake only non-secret settings and supply
@@ -258,6 +287,11 @@ secrets at runtime:
 ```bash
 # bake-public.env: banners, map tokens — no secrets
 ./sitrec.sh bake --env-file bake-public.env --push registry.example.com/sitrec:configured
+# On deploy, secrets (OpenAI / S3 keys) stay in the runtime .env the container reads.
+```
+```powershell
+# bake-public.env: banners, map tokens - no secrets
+.\sitrec.cmd bake -EnvFile bake-public.env -Push registry.example.com/sitrec:configured
 # On deploy, secrets (OpenAI / S3 keys) stay in the runtime .env the container reads.
 ```
 
@@ -281,7 +315,7 @@ pre-configured, but not frozen.
 
 ### Using Podman Instead of Docker
 
-[Podman](https://podman.io/) is a drop-in Docker alternative commonly used on systems where Docker is unavailable (e.g. secure environments, RHEL, Fedora). Sitrec's install script and compose file are compatible with both. See [Installing Podman](#installing-podman) above for setup instructions.
+[Podman](https://podman.io/) is a drop-in Docker alternative commonly used on systems where Docker is unavailable (e.g. secure environments, RHEL, Fedora). Sitrec's install script and compose file are compatible with both. See [Installing Podman](#installing-podman-optional) above for setup instructions.
 
 **Key differences from Docker:**
 
@@ -293,17 +327,17 @@ pre-configured, but not frozen.
 - **GHCR access:** If you get "403 Forbidden" pulling the image, clear stale credentials with `podman logout ghcr.io` and retry.
 - **Rootless by default:** Podman runs without root privileges. This is normally transparent, but if you see permission errors on mounted volumes, ensure the directories exist before starting the container.
 
-**Daily usage** — the `sitrec.sh` management script handles Docker/Podman differences automatically:
+**Daily usage** — the management scripts handle Docker/Podman differences automatically:
 
-| Task | Command |
-|------|---------|
-| Start | `./sitrec.sh start` |
-| Stop | `./sitrec.sh stop` |
-| Restart (after .env changes) | `./sitrec.sh restart` |
-| Update to latest | `./sitrec.sh pull` |
-| Bake a configured image | `./sitrec.sh bake [--push] <target-image> [--tarball [file]]` |
-| View logs | `./sitrec.sh logs` |
-| Show status | `./sitrec.sh status` |
+| Task | Mac / Linux / WSL | Windows PowerShell |
+|------|-------------------|--------------------|
+| Start | `./sitrec.sh start` | `.\sitrec.cmd start` |
+| Stop | `./sitrec.sh stop` | `.\sitrec.cmd stop` |
+| Restart (after .env changes) | `./sitrec.sh restart` | `.\sitrec.cmd restart` |
+| Update to latest | `./sitrec.sh pull` | `.\sitrec.cmd pull` |
+| Bake a configured image | `./sitrec.sh bake [--push] <target-image> [--tarball [file]]` | `.\sitrec.cmd bake [-Push] <target-image> [-Tarball [file]]` |
+| View logs | `./sitrec.sh logs` | `.\sitrec.cmd logs` |
+| Show status | `./sitrec.sh status` | `.\sitrec.cmd status` |
 
 ### Air-Gapped / Offline Install
 
@@ -323,13 +357,19 @@ and bake the tarball in one step:
 ```bash
 curl -sL https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh | bash -s -- --podman --bake sitrec-configured:latest --env-file prod.env --tarball sitrec-image.tar
 ```
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.ps1))) -Podman -Bake sitrec-configured:latest -EnvFile prod.env -Tarball sitrec-image.tar
+```
 
 2. Download the installer:
 ```bash
 curl -sLO https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh
 ```
+```powershell
+irm https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.ps1 -OutFile install.ps1
+```
 
-3. Transfer `sitrec-image.tar` and `install.sh` to the target system. Optionally include a pre-configured `.env` file.
+3. Transfer `sitrec-image.tar` and the installer (`install.sh` or `install.ps1`) to the target system. Optionally include a pre-configured `.env` file.
 
 **On the air-gapped system:**
 
@@ -338,12 +378,19 @@ curl -sLO https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.sh
 podman load -i sitrec-image.tar
 podman images          # note the name:tag — Podman may show it as localhost/sitrec-configured:latest
 ```
-Use that exact name with `--image` below.
+```powershell
+podman load -i sitrec-image.tar
+podman images          # note the name:tag - Podman may show it as localhost/sitrec-configured:latest
+```
+Use that exact name with `--image` / `-Image` below.
 
-2. Place `install.sh` in the same directory, then run:
+2. Place the installer in the same directory, then run:
 ```bash
 chmod +x install.sh
 ./install.sh --offline --podman
+```
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Offline -Podman
 ```
 
 If you transferred a pre-configured image with a custom tag, tell the installer which
@@ -351,10 +398,14 @@ loaded image to run:
 ```bash
 ./install.sh --offline --podman --image sitrec-configured:latest
 ```
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Offline -Podman -Image sitrec-configured:latest
+```
 
 The `--offline` flag skips image pull and expects the selected image to already be
 loaded locally. The installer extracts `sitrec.sh` and `shared.env.example` from
-that image.
+that image on Mac/Linux/WSL, and extracts `sitrec.ps1`, `sitrec.cmd`, and
+`shared.env.example` on Windows PowerShell.
 
 ---
 

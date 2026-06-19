@@ -11,6 +11,21 @@ DROPBOX_URL="https://www.dropbox.com/scl/fo/biko4zk689lgh5m5ojgzw/h?rlkey=stuaqf
 DEST="sitrec-videos/public"
 ZIP_FILE="sitrec-videos-public.zip"
 
+if [ -f "docker-compose.yml" ]; then
+    :
+elif [ -f "sitrec/docker-compose.yml" ]; then
+    cd sitrec
+else
+    echo "[sitrec] ERROR: run this from your Sitrec install folder, or from the folder that contains it."
+    echo "[sitrec] Expected to find docker-compose.yml or sitrec/docker-compose.yml."
+    exit 1
+fi
+
+if ! grep -q "sitrec-videos" docker-compose.yml; then
+    echo "[sitrec] WARNING: docker-compose.yml does not mount sitrec-videos/."
+    echo "[sitrec] The current installer adds this by default; older installs may need reinstalling or manual compose edits."
+fi
+
 if [ -d "$DEST" ] && [ "$(ls -A "$DEST" 2>/dev/null)" ]; then
     echo "[sitrec] $DEST already exists and is not empty. Skipping download."
     echo "[sitrec] To re-download, remove the folder first: rm -rf sitrec-videos"
@@ -41,4 +56,8 @@ rm -f "$ZIP_FILE"
 echo ""
 echo "[sitrec] Videos downloaded to $DEST/"
 echo "[sitrec] Restart the container to pick them up:"
-echo "  docker compose down && docker compose up"
+if [ -x "./sitrec.sh" ]; then
+    echo "  ./sitrec.sh restart"
+else
+    echo "  docker compose down && docker compose up"
+fi
