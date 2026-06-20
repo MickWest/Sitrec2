@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.87.5 (2026-06-20)
+
+### Improvements
+- **Easier-to-grab replay-sun slider** in the SHF Starlink-flare predictor tool: the draggable sun used to scrub replay time is now larger with a bigger touch area, making it easier to adjust on phones and tablets.
+
 ## Version 2.87.4 (2026-06-20)
 
 ### Bug Fixes

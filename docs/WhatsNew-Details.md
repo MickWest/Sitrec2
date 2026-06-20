@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.87.5 (2026-06-20)
+
+### Improvements
+- **Larger, finger-friendly replay-sun slider in the SHF Starlink-flare predictor** (`tools/shf/skyview.js`, `horizonView`): the draggable "replay sun" below the horizon — the control that scrubs replay time — was enlarged for touch use. The sun disc radius grew 6.5 → 10, its rays and stalk scaled ~1.5×, and the transparent `replay-sun-hit` grab `<rect>` went from 32×50 px (`x=-16, y=horizonY`) to 68×62 px (`x=-34, y=horizonY-12`), now extending slightly above the horizon. The hit zone rides inside the translated `replay-sun` group, so it continues to follow the Sun as time scrubs. No behavioural change beyond the larger, easier-to-grab target on phones.
+
+### Internal
+- Removed the `setLayerMaskRecursive` import from `src/nodes/CNodeAtmosphericOptics.js` (added by the 2.87.4 Brocken-spectre look-layer fix). That helper lives in `threeExt`, which transitively imports `three/addons` ESM (`LineMaterial` etc.); Jest does not transform `node_modules` ESM, so `tests/atmospheric-optics.test.js` failed to parse in CI ("Cannot use import statement outside a module"). The webpack/browser build was unaffected. The call is now inlined as `this.brockenGroup.traverse(o => { o.layers.mask = LAYER.MASK_LOOK; })`, which is runtime-identical (visits the group root and every descendant mesh). CI-only; no user-facing change.
+
 ## Version 2.87.4 (2026-06-20)
 
 ### Bug Fixes
