@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.87.4 (2026-06-20)
+
+### Bug Fixes
+- Fixed the Brocken spectre and glory appearing in the main (god's-eye) view; this observer-relative effect now shows only in the look view, as it should.
+- Fixed the **Camera Motion (Background)** menu (Video menu) disappearing after loading a second sitch in the same session.
+
+### Improvements
+- **Windows management script** (`sitrec.cmd` / PowerShell): start, stop, update, switch versions, and bake images on Windows, matching the Mac/Linux tooling. The Docker install now mounts the local videos folder by default.
+- Clearer Windows error messages when Docker Desktop or Podman is installed but its engine isn't running, telling you exactly how to start it and rerun.
+
 ## Version 2.87.3 (2026-06-17)
 
 ### Improvements

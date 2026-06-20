@@ -44,6 +44,8 @@ import {getLocalUpVector} from "../SphericalMath";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {applyRefractionECI, refractionOptsFromUniforms, refractionUniforms} from "../atmosphere/refraction";
 import {radians, degrees} from "../utils";
+import {setLayerMaskRecursive} from "../threeExt";
+import * as LAYER from "../LayerMasks";
 
 // Radius of the celestial sphere used for the Sun/Moon/star sprites. Matches
 // CPlanets/CStarField sphereRadius. With the camera at the origin the exact
@@ -384,8 +386,13 @@ export class CNodeAtmosphericOptics extends CNode {
         // The Brocken spectre is world-space geometry (so it depth-sorts against
         // terrain), parented into the MAIN GlobalScene rather than the celestial
         // sphere scenes. Built once per frame relative to the real observer.
+        // It is an OBSERVER-RELATIVE phenomenon (the glory sits at the antisolar
+        // point of the look camera), so it lives on the LOOK layer only — the
+        // main/god's-eye view must not show it. setLayerMaskRecursive re-applies
+        // this to the rebuilt child meshes after each _rebuildBrocken.
         this.brockenGroup = new Group();
         this.brockenGroup.name = "atmosphericOpticsBrocken";
+        this.brockenGroup.layers.set(LAYER.LOOK);
         this._brockenAttached = false;
         this._lastBrockenSun = new Vector3();
         this._lastBrockenObserver = new Vector3();
@@ -791,6 +798,11 @@ export class CNodeAtmosphericOptics extends CNode {
         if (this.brockenFog && this.brockenFogOpacity > 0.001) this._buildBrockenFog();
         if (this.brockenGlory) this._buildBrockenGlory();
         if (this.brockenShadow) this._buildBrockenShadow();
+
+        // Newly-built meshes default to the WORLD layer; force the whole group
+        // onto LOOK-only so the spectre/glory render in the observer (look) view
+        // and never leak into the main/god's-eye view. It's observer-relative.
+        setLayerMaskRecursive(this.brockenGroup, LAYER.MASK_LOOK);
     }
 
     // Soft synthetic fog patch centered on the antisolar point, large enough to

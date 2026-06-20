@@ -845,6 +845,21 @@ export function setupCameraMotionMenu() {
     folder.add(rebuild, "rebuild").name("Rebuild Path (no re-analyze)");
     folder.add(rebuild, "clear").name("Clear Path");
 
+    // This menu is created once per session (guarded by the module-level `folder`,
+    // which is never reset). Its parent guiMenus.video is a permanent shell, but
+    // disposeEverything()'s menuBar.destroy(false) on every sitch reload recurses
+    // into children with the same all=false flag — so without an explicit perm the
+    // folder + controllers get destroyed on the next sitch load and the `if (folder)
+    // return` guard then keeps them from ever being rebuilt (menu vanishes for the
+    // rest of the session). Mark the folder and all its controllers permanent.
+    // (Same fix pattern as the Render Debug folder in CNodeView3D and the File
+    // Analysis menu in VideoFolderAnalysisUI.)
+    const permAll = (node) => {
+        if (typeof node.perm === "function") node.perm();
+        if (node.children) node.children.forEach(permAll);
+    };
+    permAll(folder);
+
     // If a previous analysis was cached for this video, restore the path automatically.
     // The video filename (used as the cache key) may not be populated at setup time, so retry
     // a few times until it resolves.

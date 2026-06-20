@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.87.4 (2026-06-20)
+
+### Bug Fixes
+- Fixed the Brocken spectre / glory leaking into the main (god's-eye) view. The spectre is an observer-relative phenomenon — the glory sits at the antisolar point of the *look* camera — so it must only appear in the look (observer) view. In `CNodeAtmosphericOptics`, the world-space `brockenGroup` (the fog patch, glory rings, and shadow figure parented into `GlobalScene` so they depth-sort against terrain) was on the default WORLD layer and therefore rendered in every view. The group is now created with `this.brockenGroup.layers.set(LAYER.LOOK)`, and because each per-frame `_rebuildBrocken()` rebuilds child meshes that default back to the WORLD layer, `setLayerMaskRecursive(this.brockenGroup, LAYER.MASK_LOOK)` is re-applied at the end of every rebuild. Net effect: the spectre/glory (Atmospheric Optics → *Brocken Spectre*) now shows only in the look view, never the main view.
+- Fixed the **Camera Motion (Background)** menu (Video menu) disappearing after the first custom sitch load of a session. `setupCameraMotionMenu()` in `CameraMotionFromVideo.js` builds the folder once, guarded by a module-level `folder` reference that is never reset. The folder lives under the permanent `guiMenus.video` shell, but neither the folder nor its controllers were themselves marked permanent — so `disposeEverything()`'s `menuBar.destroy(false)` recurses into them with `all=false` and destroys them on the next sitch reload. The never-reset `if (folder) return` guard then prevented any rebuild, so the menu vanished for the rest of the session after the first custom sitch. A `permAll(folder)` recursion now calls `.perm()` on the folder and every controller so they survive sitch reloads (same fix pattern as the Render Debug folder in `CNodeView3D` and the File Analysis menu in `VideoFolderAnalysisUI`).
+
+### Improvements
+- Windows install/management parity with the Unix scripts. `7cf21bda` adds a `sitrec.ps1` PowerShell management script (with a `sitrec.cmd` launcher that prefers `pwsh.exe`, falling back to `powershell.exe`) supporting `start`/`stop`/`restart`/`pull`/`versions`/`bake`/`update`/`logs`/`status`, substantially expands `install.ps1`, and brings `download-videos.ps1` in line with the shell versions. The shell installer (`install.sh`) now mounts the local `sitrec-videos/` folder by default with a new `--no-videos` opt-out (previously `--videos` was opt-in), so the later `download-videos` step no longer silently writes files the container cannot see.
+- Clearer Docker/Podman "engine not running" errors on Windows. `c0675c8c` adds `Test-DockerReady`/`Test-PodmanReady` (`docker info` / `podman info` probes) and an `Assert-RuntimeReady` gate to `install.ps1` and `sitrec.ps1`. When the runtime is installed but its engine isn't running, the scripts now print an actionable message (start Docker Desktop / `podman machine start`, the WSL 2 engine hint, and the exact command to rerun) instead of a generic command-failed error.
+
 ## Version 2.87.3 (2026-06-17)
 
 ### Improvements
