@@ -125,6 +125,12 @@ function Test-DockerCompose {
     return $LASTEXITCODE -eq 0
 }
 
+function Test-DockerReady {
+    if (-not (Test-NativeCommand "docker")) { return $false }
+    & docker info *> $null
+    return $LASTEXITCODE -eq 0
+}
+
 function Test-PodmanCompose {
     if (Test-NativeCommand "podman-compose") { return "podman-compose" }
     if (Test-NativeCommand "podman") {
@@ -134,11 +140,61 @@ function Test-PodmanCompose {
     return ""
 }
 
+function Test-PodmanReady {
+    if (-not (Test-NativeCommand "podman")) { return $false }
+    & podman info *> $null
+    return $LASTEXITCODE -eq 0
+}
+
 function Set-Runtime {
     param([string]$RuntimeName, [string]$ComposeText)
     $script:Runtime = $RuntimeName
     $script:ComposeText = $ComposeText
     $script:ComposeCommand = @($ComposeText -split ' ')
+}
+
+function Get-RuntimeNotReadyMessage {
+    param([string]$Context)
+
+    if ($script:Runtime -eq "docker") {
+        $rerun = "irm https://raw.githubusercontent.com/MickWest/Sitrec2/main/install.ps1 | iex"
+        if ($Context -ne "install") { $rerun = ".\sitrec.cmd start" }
+        return @"
+[sitrec] ERROR: Docker Desktop is installed, but the Docker engine is not running.
+
+Start Docker Desktop from the Start menu, wait until it says it is running, then run:
+  $rerun
+
+If Docker Desktop is open but this keeps failing, check Docker Desktop Settings -> General
+and make sure the WSL 2 based engine is enabled.
+"@
+    }
+
+    return @"
+[sitrec] ERROR: Podman is installed, but the Podman machine/service is not running.
+
+Start Podman Desktop or run:
+  podman machine start
+
+Then rerun the Sitrec command.
+"@
+}
+
+function Assert-RuntimeReady {
+    param([string]$Context)
+
+    if ($script:Runtime -eq "docker") {
+        if (-not (Test-DockerReady)) {
+            throw (Get-RuntimeNotReadyMessage $Context)
+        }
+        return
+    }
+
+    if ($script:Runtime -eq "podman") {
+        if (-not (Test-PodmanReady)) {
+            throw (Get-RuntimeNotReadyMessage $Context)
+        }
+    }
 }
 
 function Detect-Runtime {
@@ -177,6 +233,10 @@ function Invoke-Native {
     param([string]$File, [string[]]$Arguments)
     & $File @Arguments
     if ($LASTEXITCODE -ne 0) {
+        if (($script:Runtime -eq "docker" -and -not (Test-DockerReady)) -or
+            ($script:Runtime -eq "podman" -and -not (Test-PodmanReady))) {
+            throw (Get-RuntimeNotReadyMessage "command")
+        }
         throw "[sitrec] Command failed: $File $($Arguments -join ' ')"
     }
 }
@@ -304,6 +364,7 @@ function Bake-Image {
 
 Detect-Runtime
 Write-Host "[sitrec] Using $Runtime ($ComposeText)"
+Assert-RuntimeReady "install"
 
 if ($BakeMode) {
     Bake-Image

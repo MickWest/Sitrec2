@@ -31,6 +31,12 @@ function Test-DockerCompose {
     return $LASTEXITCODE -eq 0
 }
 
+function Test-DockerReady {
+    if (-not (Test-NativeCommand "docker")) { return $false }
+    & docker info *> $null
+    return $LASTEXITCODE -eq 0
+}
+
 function Test-PodmanCompose {
     if (Test-NativeCommand "podman-compose") { return "podman-compose" }
     if (Test-NativeCommand "podman") {
@@ -40,11 +46,55 @@ function Test-PodmanCompose {
     return ""
 }
 
+function Test-PodmanReady {
+    if (-not (Test-NativeCommand "podman")) { return $false }
+    & podman info *> $null
+    return $LASTEXITCODE -eq 0
+}
+
 function Set-Runtime {
     param([string]$RuntimeName, [string]$ComposeText)
     $script:Runtime = $RuntimeName
     $script:ComposeText = $ComposeText
     $script:ComposeCommand = @($ComposeText -split ' ')
+}
+
+function Get-RuntimeNotReadyMessage {
+    if ($script:Runtime -eq "docker") {
+        return @"
+[sitrec] ERROR: Docker Desktop is installed, but the Docker engine is not running.
+
+Start Docker Desktop from the Start menu, wait until it says it is running, then run:
+  .\sitrec.cmd start
+
+If Docker Desktop is open but this keeps failing, check Docker Desktop Settings -> General
+and make sure the WSL 2 based engine is enabled.
+"@
+    }
+
+    return @"
+[sitrec] ERROR: Podman is installed, but the Podman machine/service is not running.
+
+Start Podman Desktop or run:
+  podman machine start
+
+Then rerun the Sitrec command.
+"@
+}
+
+function Assert-RuntimeReady {
+    if ($script:Runtime -eq "docker") {
+        if (-not (Test-DockerReady)) {
+            throw (Get-RuntimeNotReadyMessage)
+        }
+        return
+    }
+
+    if ($script:Runtime -eq "podman") {
+        if (-not (Test-PodmanReady)) {
+            throw (Get-RuntimeNotReadyMessage)
+        }
+    }
 }
 
 function Detect-Runtime {
@@ -84,6 +134,10 @@ function Invoke-Native {
     param([string]$File, [string[]]$Arguments)
     & $File @Arguments
     if ($LASTEXITCODE -ne 0) {
+        if (($script:Runtime -eq "docker" -and -not (Test-DockerReady)) -or
+            ($script:Runtime -eq "podman" -and -not (Test-PodmanReady))) {
+            throw (Get-RuntimeNotReadyMessage)
+        }
         throw "[sitrec] Command failed: $File $($Arguments -join ' ')"
     }
 }
@@ -385,6 +439,7 @@ if ($command -eq "help" -or $command -eq "--help" -or $command -eq "-h") {
 }
 
 Detect-Runtime
+Assert-RuntimeReady
 
 switch ($command) {
     "start" {
