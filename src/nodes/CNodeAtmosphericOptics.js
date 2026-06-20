@@ -44,7 +44,6 @@ import {getLocalUpVector} from "../SphericalMath";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {applyRefractionECI, refractionOptsFromUniforms, refractionUniforms} from "../atmosphere/refraction";
 import {radians, degrees} from "../utils";
-import {setLayerMaskRecursive} from "../threeExt";
 import * as LAYER from "../LayerMasks";
 
 // Radius of the celestial sphere used for the Sun/Moon/star sprites. Matches
@@ -802,7 +801,11 @@ export class CNodeAtmosphericOptics extends CNode {
         // Newly-built meshes default to the WORLD layer; force the whole group
         // onto LOOK-only so the spectre/glory render in the observer (look) view
         // and never leak into the main/god's-eye view. It's observer-relative.
-        setLayerMaskRecursive(this.brockenGroup, LAYER.MASK_LOOK);
+        // Inlined (rather than threeExt.setLayerMaskRecursive) so this node — and
+        // its Jest unit test — don't transitively import three/addons ESM, which
+        // Jest can't transform (it lives under node_modules). traverse() visits the
+        // group root and every descendant mesh.
+        this.brockenGroup.traverse(o => { o.layers.mask = LAYER.MASK_LOOK; });
     }
 
     // Soft synthetic fog patch centered on the antisolar point, large enough to

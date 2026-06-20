@@ -459,14 +459,17 @@ export function horizonView(opts) {
             + `</radialGradient></defs>`;
         svg += `<g class="replay-flares" clip-path="url(#skyClip)"></g>`
             + `<g class="replay-sun" transform="translate(${cx0},0)">`
-            + `<line x1="0" y1="${horizonY}" x2="0" y2="${sunY - 7}" stroke="#ffcf3f" stroke-width="1.5" stroke-opacity="0.6"/>`
-            + `<circle cx="0" cy="${sunY}" r="6.5" fill="#ffd24a"/>`
-            + `<g stroke="#ffd24a" stroke-width="1.4" stroke-linecap="round">`
-            + `<line x1="-11" y1="${sunY}" x2="-8.5" y2="${sunY}"/><line x1="8.5" y1="${sunY}" x2="11" y2="${sunY}"/>`
-            + `<line x1="0" y1="${sunY + 8.5}" x2="0" y2="${sunY + 11}"/>`
-            + `<line x1="-7.5" y1="${sunY + 7.5}" x2="-6" y2="${sunY + 6}"/><line x1="7.5" y1="${sunY + 7.5}" x2="6" y2="${sunY + 6}"/>`
+            + `<line x1="0" y1="${horizonY}" x2="0" y2="${sunY - 11}" stroke="#ffcf3f" stroke-width="1.8" stroke-opacity="0.6"/>`
+            + `<circle cx="0" cy="${sunY}" r="10" fill="#ffd24a"/>`
+            + `<g stroke="#ffd24a" stroke-width="1.8" stroke-linecap="round">`
+            + `<line x1="-16.5" y1="${sunY}" x2="-12.75" y2="${sunY}"/><line x1="12.75" y1="${sunY}" x2="16.5" y2="${sunY}"/>`
+            + `<line x1="0" y1="${sunY + 12.75}" x2="0" y2="${sunY + 16.5}"/>`
+            + `<line x1="-11.25" y1="${sunY + 11.25}" x2="-9" y2="${sunY + 9}"/><line x1="11.25" y1="${sunY + 11.25}" x2="9" y2="${sunY + 9}"/>`
             + `</g>`
-            + `<rect class="replay-sun-hit" x="-16" y="${horizonY}" width="32" height="${H - horizonY}" fill="transparent" style="cursor:grab"/>`
+            // Finger-friendly grab zone: wider (±34) and extended a little above the
+            // horizon so it's an easy touch target on a phone. It rides inside the
+            // translated replay-sun group, so the zone follows the Sun as time scrubs.
+            + `<rect class="replay-sun-hit" x="-34" y="${horizonY - 12}" width="68" height="${H - horizonY + 12}" fill="transparent" style="cursor:grab"/>`
             + liveBadge(-23, 281)                    // a LIVE badge below the Sun (moves with it; shown only in real time)
             + `</g>`;
         // Live time readout (with seconds), top-left above the horizon — the app sets its text
