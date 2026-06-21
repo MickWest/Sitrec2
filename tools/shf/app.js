@@ -20,7 +20,7 @@ const [
   { compass16, greatCircleDistanceKm },
   { equatorialToAltAz, planetEquatorial, moonEquatorial, sunEquatorial },
   { BRIGHT_STARS },
-  { compassRose, horizonView, horizonWindow, flareSimSky, horizonProjection, flareBrightnessAt, skyBodiesSVG, MOTION_SAMPLE_MS },
+  { compassRose, compassViewBox, horizonView, horizonWindow, flareSimSky, horizonProjection, flareBrightnessAt, skyBodiesSVG, MOTION_SAMPLE_MS },
   { generateDummyTLE },
 ] = await Promise.all([
   import("./location.js" + VERSION),
@@ -1138,6 +1138,44 @@ function openInSitrec(req, flares, origin, dest, peakMs) {
 // model (flareEngine sets f.visible via isFlareVisible), so SHF and Sitrec agree on the
 // definition. The display simply filters on f.visible.
 
+// Size the results compass so the whole results stack (down to the "Synthetic
+// satellites" / "Actual TLE" note box) fits the viewport when possible: grow the
+// rose into spare vertical room, shrink it when the content would overflow. Because
+// the rose sits in normal flow ABOVE the notes, one measure-then-resize pass is
+// exact (a height change shifts the results bottom 1:1). The flare-dot sprinkle is
+// re-rendered counter-scaled so it keeps its small on-screen size at any rose size.
+let _fitState = null;            // { arrows, flares } for the current results screen
+let _fitQueued = false;
+function fitResultsCompass() {
+  if (!_fitState || els.results.dataset.state !== "final") return;
+  const wrap = els.results.querySelector(".rose-wrap");
+  let rose = wrap && wrap.querySelector(".compass-rose");
+  if (!rose) return;
+  const vb = compassViewBox(_fitState.arrows);
+  const aspect = vb.w / vb.h;
+  const curH = rose.getBoundingClientRect().height;
+  if (!curH) return;
+  // Spare vertical room left below the whole results stack.
+  const safeBottom = 12;
+  const slack = (window.innerHeight - safeBottom) - els.results.getBoundingClientRect().bottom;
+  let newW = (curH + slack) * aspect;
+  const maxW = Math.min(wrap.clientWidth || 9999, 460);
+  newW = Math.max(150, Math.min(maxW, newW));
+  // Keep the sprinkle dots at their original on-screen size regardless of rose size:
+  // dotScale = (original px-per-unit) / (this render's px-per-unit). Capped at 1 so a
+  // small rose never gets bigger-than-original dots.
+  const dotScale = Math.min(1, (196 / 220) * vb.w / newW);
+  wrap.innerHTML = compassRose(_fitState.arrows, _fitState.flares, { dotScale });
+  wrap.querySelector(".compass-rose").style.width = newW + "px";
+}
+function scheduleFit() {
+  if (_fitQueued) return;
+  _fitQueued = true;
+  requestAnimationFrame(() => { _fitQueued = false; fitResultsCompass(); });
+}
+window.addEventListener("resize", scheduleFit);
+window.addEventListener("orientationchange", scheduleFit);
+
 // Full results screen: verdict, one-sentence summary, compass rose, horizon view.
 function renderResults(flares, stats, req, origin, dest) {
   if (!flares || flares.length === 0) { renderNoFlares(stats, req, origin, dest); return; }
@@ -1198,6 +1236,9 @@ function renderResults(flares, stats, req, origin, dest) {
      ${notesHTML(req)}`;
 
   els.results.dataset.state = "final";   // real results screen is up (see setupLiveResults)
+  // Size the compass to use the available height (flare dots kept small); re-runs on resize.
+  _fitState = { arrows, flares: hvFlares };
+  scheduleFit();
   const openBtn = els.results.querySelector("#opensitrec");
   if (openBtn) openBtn.addEventListener("click", () => openInSitrec(req, shown, origin, dest, peakMs));
 
@@ -1303,6 +1344,7 @@ function flareCard(f, tz) {
 }
 
 function renderNoFlares(stats, req, origin, dest) {
+  _fitState = null;   // no compass on this screen; stop resize-fit from acting on stale state
   stopLiveBurst();   // the live DOM (and its .replay-flares target) is about to be replaced
   const div = document.createElement("div");
   div.className = "no-flares";

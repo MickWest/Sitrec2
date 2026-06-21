@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.87.6 (2026-06-21)
+
+### Improvements
+- **Auto Tracking "Center on Bright / Dark / Color" now honor the Search Radius** (Tracking menu). These centroid modes are reworked into a two-stage tracker in `ObjectTracker._trackCentroid` (`src/CObjectTracking.js`): a new `findBestWeightedPixel` re-acquisition pass scans the whole **Search Radius** disk around the previous position for the best-scoring pixel — score = the mode's weight (`_brightWeight` / `_darkWeight` / `_colorWeight`) × a radial falloff (1 at centre, 0 at the rim) that biases the seed toward the previous position, so a near target beats a brighter-but-distant blob — then `calculateWeightedCentroid` refines to the weighted centroid within the **Track Radius** of that seed. Previously `_trackCentroid` computed the centroid over only the Track Radius around the previous position, so Search Radius had no effect for these modes and any feature that moved more than a Track Radius between frames was silently lost (the track latched to the stale position). (The dead `calculateBrightCentroid` / `calculateDarkCentroid` / `calculateColorCentroid` wrappers were removed; the weight rules are now passed as closures.)
+- **Search Radius is now drawn on the video overlay** as a dashed outer circle, with the Track Radius as the solid inner circle plus crosshair. A new shared `drawTrackingCircles(ctx, cx, cy)` helper replaces the inline circle drawing in `renderOverlay`, and a `methodUsesSearchRadius()` gate draws the dashed Search Radius circle only for methods that actually consult it (Template, Optical Flow, High/Low Peak, and all three Center-on-* modes — SAM2 segments the whole frame and uses neither radius).
+- Tooltips for **Track Radius** and **Search Radius** (`trackRadius` / `searchRadius` in `src/i18n/en.js`) rewritten to describe the inner solid / outer dashed circles and to list which tracking methods use each.
+- **SHF (Starlink flare predictor) results compass auto-sizes to the available height.** A new `fitResultsCompass` / `scheduleFit` pair in `tools/shf/app.js` measures the spare vertical room below the whole results stack (down to the "Synthetic satellites" / "Actual TLE" data-source note) and sets the `.compass-rose` width inline so the rose grows into spare room and shrinks when the content would overflow; it re-runs on `resize` and `orientationchange`. A new exported `compassViewBox(arrows)` in `tools/shf/skyview.js` computes an adaptive SVG viewBox that puts the spare room on the flare-direction side (sampling the arrow azimuths and their mean direction): south flares float the rose up with the sprinkle below it, north floats it down, E/W shift sideways, while the rose stays horizontally centred. The animated flare "sprinkle" dots are counter-scaled via a new `dotScale` option (`compassRose` → `flareDots` → `twinkleFlare`'s `rScale`) so they keep a constant on-screen size regardless of rose size. `style.css` baseline `.compass-rose` width changed to `min(340px, 80vw)` (the results screen overrides it inline).
+
+### Bug Fixes
+- **Fixed the Brightness Threshold live preview ignoring the video view's zoom/pan.** The black/white above-threshold mask in `src/CObjectTracking.js` was blitted across the whole canvas (`ctx.drawImage(tempCanvas, 0, 0, width, height)`), so it drifted out of registration with the video whenever the view was zoomed or panned. It now maps the original-video corners through `videoView.videoToCanvasCoordsOriginal(...)` and draws the mask into that rectangle, keeping it aligned with the video; it also overlays the Search/Track radius circles (via `drawTrackingCircles`) at the cursor so the user can see which above-threshold blobs fall in range.
+
+---
+
 ## Version 2.87.5 (2026-06-20)
 
 ### Improvements

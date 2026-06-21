@@ -553,7 +553,12 @@ button.sim-note.synth-load.load-err {
 }
 
 .rose-wrap { display: flex; justify-content: center; margin: 0; }
-.compass-rose { width: 196px; max-width: 56vw; height: auto; }
+/* Baseline size for the rose (info-screen demo + live scanning preview). On the
+   RESULTS screen, fitResultsCompass() overrides the width inline so the whole stack
+   (down to the data-source note) fits the viewport — growing into spare room or
+   shrinking when it would overflow. height:auto keeps the viewBox aspect (which is
+   taller when the flares are off to one side). */
+.compass-rose { width: min(340px, 80vw); height: auto; }
 
 .horizon-wrap {
   position: relative;          /* anchors the star toggle overlay */

@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.87.6 (2026-06-21)
+
+### Improvements
+- **Auto Tracking "Center on Bright / Dark / Color" now use the Search Radius** (Tracking menu): these modes re-acquire the target anywhere within the Search Radius each frame and then refine to the bright/dark/colored center, so a feature that jumps more than the Track Radius between frames is no longer lost.
+- The **Search Radius** is now shown on the video overlay as a dashed outer circle (the solid inner circle is the Track Radius), for every tracking method that uses it.
+- **Starlink flare predictor results compass** now grows to fill the available space (and shrinks to avoid overflow), shifts toward the flare direction so the flare sprinkle has room to show, and keeps the animated flare dots a constant size as the compass resizes.
+
+### Bug Fixes
+- Fixed the Brightness Threshold preview so the black/white mask stays lined up with the video when the view is zoomed or panned, and it now shows the Search/Track radius circles.
+
+---
+
 ## Version 2.87.5 (2026-06-20)
 
 ### Improvements

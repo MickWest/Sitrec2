@@ -628,23 +628,6 @@ class ObjectTracker {
         return dist < this.colorDistance ? this.colorDistance - dist : 0;
     }
 
-    // Thin wrappers — preserved so existing call sites keep working.
-    // Each just supplies the appropriate weight rule.
-    calculateBrightCentroid(image, centerX, centerY, radius) {
-        return this.calculateWeightedCentroid(image, centerX, centerY, radius,
-            (r, g, b) => this._brightWeight(r, g, b));
-    }
-
-    calculateDarkCentroid(image, centerX, centerY, radius) {
-        return this.calculateWeightedCentroid(image, centerX, centerY, radius,
-            (r, g, b) => this._darkWeight(r, g, b));
-    }
-
-    calculateColorCentroid(image, centerX, centerY, radius) {
-        return this.calculateWeightedCentroid(image, centerX, centerY, radius,
-            (r, g, b) => this._colorWeight(r, g, b));
-    }
-
     trackFrame(frame, force = false) {
         if (!this.tracking || !this.enabled) return;
 
@@ -890,32 +873,97 @@ class ObjectTracker {
         }
     }
 
-    // Shared "compute centroid → commit position" wrapper for all three
-    // centroid-based methods. Falls back to the previous position when no
-    // pixel passed the weight rule, matching the legacy behavior.
-    _trackCentroid(frame, currImage, prevPos, calcFn) {
-        const centroid = calcFn.call(this, currImage, prevPos.x, prevPos.y, this.trackRadius);
+    // Scan the disk of `radius` around (centerX, centerY) for the best-scoring
+    // pixel under `weightFn`, where score = weight × radial falloff. The falloff
+    // (1 at the centre, 0 at the rim) biases the seed toward the previous
+    // position, so a bright-and-near target beats a brighter-but-distant cloud
+    // — without it a global maximum over a large window jumps to whatever blob
+    // happens to be brightest anywhere in range. Returns {x, y} in image coords,
+    // or null if nothing qualified.
+    //
+    // This is the "catch" pass for the Center-on-* methods: it is run over the
+    // SEARCH radius so a feature that moved more than a Track Radius between
+    // frames is still re-acquired (the old code only looked inside the Track
+    // Radius, so any motion larger than that silently lost the track).
+    findBestWeightedPixel(image, centerX, centerY, radius, weightFn) {
+        const imgWidth = image.width || image.videoWidth;
+        const imgHeight = image.height || image.videoHeight;
+
+        const minX = Math.max(0, Math.floor(centerX - radius));
+        const maxX = Math.min(imgWidth - 1, Math.ceil(centerX + radius));
+        const minY = Math.max(0, Math.floor(centerY - radius));
+        const maxY = Math.min(imgHeight - 1, Math.ceil(centerY + radius));
+        const roiWidth = maxX - minX + 1;
+        const roiHeight = maxY - minY + 1;
+        if (roiWidth < 1 || roiHeight < 1) return null;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = imgWidth;
+        canvas.height = imgHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(image, 0, 0, imgWidth, imgHeight);
+        const data = ctx.getImageData(minX, minY, roiWidth, roiHeight).data;
+
+        const radiusSquared = radius * radius;
+        const invRadius = radius > 0 ? 1 / radius : 0;
+        let bestScore = 0, bestX = -1, bestY = -1;
+        for (let roiY = 0; roiY < roiHeight; roiY++) {
+            for (let roiX = 0; roiX < roiWidth; roiX++) {
+                const imgX = minX + roiX;
+                const imgY = minY + roiY;
+                const dx = imgX - centerX;
+                const dy = imgY - centerY;
+                const dist2 = dx * dx + dy * dy;
+                if (dist2 > radiusSquared) continue;
+                const index = (roiY * roiWidth + roiX) * 4;
+                const w = weightFn(data[index], data[index + 1], data[index + 2]);
+                if (w <= 0) continue;
+                const falloff = 1 - Math.sqrt(dist2) * invRadius;  // 1 at centre → 0 at rim
+                const score = w * falloff;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestX = imgX;
+                    bestY = imgY;
+                }
+            }
+        }
+        if (bestX < 0) return null;
+        return {x: bestX, y: bestY};
+    }
+
+    // Shared two-stage tracker for all three centroid-based methods:
+    //   1. SEARCH RADIUS pass — find the strongest matching pixel anywhere
+    //      within searchRadius of the previous position (re-acquisition).
+    //   2. TRACK RADIUS pass — refine to the weighted centroid of the matching
+    //      pixels within trackRadius of that seed, so the reported point isn't
+    //      dragged off by unrelated bright pixels elsewhere in the window.
+    // Falls back to the seed (then the previous position) when nothing matched.
+    _trackCentroid(frame, currImage, prevPos, weightFn) {
+        const seed = this.findBestWeightedPixel(
+            currImage, prevPos.x, prevPos.y, this.searchRadius, weightFn) ?? prevPos;
+        const centroid = this.calculateWeightedCentroid(
+            currImage, seed.x, seed.y, this.trackRadius, weightFn);
         if (centroid) {
             this.trackX = centroid.x;
             this.trackY = centroid.y;
         } else {
-            this.trackX = prevPos.x;
-            this.trackY = prevPos.y;
+            this.trackX = seed.x;
+            this.trackY = seed.y;
         }
         this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
         this.updateSliderStatus();
     }
 
     trackBrightCentroid(frame, currImage, prevPos) {
-        this._trackCentroid(frame, currImage, prevPos, this.calculateBrightCentroid);
+        this._trackCentroid(frame, currImage, prevPos, (r, g, b) => this._brightWeight(r, g, b));
     }
 
     trackDarkCentroid(frame, currImage, prevPos) {
-        this._trackCentroid(frame, currImage, prevPos, this.calculateDarkCentroid);
+        this._trackCentroid(frame, currImage, prevPos, (r, g, b) => this._darkWeight(r, g, b));
     }
 
     trackColorCentroid(frame, currImage, prevPos) {
-        this._trackCentroid(frame, currImage, prevPos, this.calculateColorCentroid);
+        this._trackCentroid(frame, currImage, prevPos, (r, g, b) => this._colorWeight(r, g, b));
     }
 
     trackTemplateMatch(frame, currImage, prevPos, videoData) {
@@ -1178,7 +1226,22 @@ class ObjectTracker {
         }
 
         tempCtx.putImageData(imageData, 0, 0);
-        ctx.drawImage(tempCanvas, 0, 0, width, height);
+
+        // Draw the binary mask through the SAME zoom/pan transform the rest of
+        // the overlay uses, instead of stretching it across the whole canvas.
+        // The mask spans original-video coords 0..origW / 0..origH, so map those
+        // corners to canvas space and blit into that rectangle — now it stays
+        // registered with the video underneath when the view is zoomed/panned.
+        const origW = videoData.originalVideoWidth || imgWidth;
+        const origH = videoData.originalVideoHeight || imgHeight;
+        const [x0, y0] = this.videoView.videoToCanvasCoordsOriginal(0, 0);
+        const [x1, y1] = this.videoView.videoToCanvasCoordsOriginal(origW, origH);
+        ctx.drawImage(tempCanvas, x0, y0, x1 - x0, y1 - y0);
+
+        // Overlay the Search/Track radii at the current cursor so the user can
+        // see which white (above-threshold) blobs actually fall in range.
+        const [cx, cy] = this.videoView.videoToCanvasCoordsOriginal(this.trackX, this.trackY);
+        this.drawTrackingCircles(ctx, cx, cy);
     }
 
     // Live preview of the High/Low Peak detector while the Feature Size slider
@@ -1274,6 +1337,69 @@ class ObjectTracker {
         draw(false, 'rgba(255, 0, 0, 0.85)');
     }
 
+    // True for every method that actually consults searchRadius, so the GUI /
+    // overlay only advertises the Search Radius when it has an effect. (SAM2
+    // segments the whole frame and ignores both radii.)
+    methodUsesSearchRadius() {
+        switch (this.trackingMethod) {
+            case 'centerOnBright':
+            case 'centerOnDark':
+            case 'centerOnColor':
+            case 'highPeak':
+            case 'lowPeak':
+            case 'template':
+            case 'opticalflow':
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Draw the Search Radius (dashed, outer "catch" range) and Track Radius
+    // (solid, inner feature/centroid disk) plus crosshair at a canvas point.
+    // Shared by the live overlay and the threshold preview so both radii are
+    // always visible and the user can see how a bright blob relates to each.
+    // Returns the canvas-space Track Radius (callers reuse it for labels etc.).
+    drawTrackingCircles(ctx, cx, cy) {
+        const {dWidth} = this.videoView;
+        const refW = this.videoView.originalVideoWidth || this.videoView.videoWidth || 1;
+        const scale = dWidth / refW;
+        const trackColor = this.tracking ? '#00ff00' : '#ffff00';
+        const dimColor = this.tracking ? 'rgba(0, 255, 0, 0.5)' : 'rgba(255, 255, 0, 0.5)';
+
+        // Search Radius — only drawn for methods that use it.
+        if (this.methodUsesSearchRadius()) {
+            ctx.strokeStyle = this.tracking ? 'rgba(0, 255, 0, 0.4)' : 'rgba(255, 255, 0, 0.4)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([6, 6]);
+            ctx.beginPath();
+            ctx.arc(cx, cy, this.searchRadius * scale, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // Track Radius — solid circle + crosshair.
+        const canvasRadius = this.trackRadius * scale;
+        ctx.strokeStyle = trackColor;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, canvasRadius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = dimColor;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(cx - canvasRadius - 5, cy);
+        ctx.lineTo(cx + canvasRadius + 5, cy);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - canvasRadius - 5);
+        ctx.lineTo(cx, cy + canvasRadius + 5);
+        ctx.stroke();
+
+        return canvasRadius;
+    }
+
     renderOverlay(frame) {
         if (!this.enabled || !this.overlay) return;
 
@@ -1351,27 +1477,8 @@ class ObjectTracker {
         const stabOffset = getStabOffset(frame);
         const [cx, cy] = this.videoView.videoToCanvasCoordsOriginal(this.trackX + stabOffset.x, this.trackY + stabOffset.y);
 
-        const {dWidth} = this.videoView;
-        const refW = this.videoView.originalVideoWidth || this.videoView.videoWidth || 1;
-        const canvasRadius = this.trackRadius * dWidth / refW;
-        
-        ctx.strokeStyle = this.tracking ? '#00ff00' : '#ffff00';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(cx, cy, canvasRadius, 0, Math.PI * 2);
-        ctx.stroke();
-        
-        ctx.strokeStyle = this.tracking ? 'rgba(0, 255, 0, 0.5)' : 'rgba(255, 255, 0, 0.5)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(cx - canvasRadius - 5, cy);
-        ctx.lineTo(cx + canvasRadius + 5, cy);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - canvasRadius - 5);
-        ctx.lineTo(cx, cy + canvasRadius + 5);
-        ctx.stroke();
-        
+        const canvasRadius = this.drawTrackingCircles(ctx, cx, cy);
+
         ctx.font = '12px monospace';
         ctx.fillStyle = this.tracking ? '#00ff00' : '#ffff00';
         const status = this.tracking ? 'TRACKING' : 'ENABLED';
@@ -1542,6 +1649,10 @@ function toggleEnableTracking() {
     
     if (!objectTracker) {
         objectTracker = new ObjectTracker(videoView);
+        // Local-only debug hook so MCP / console can reach the module-scoped
+        // tracker (mirrors the tools-page window.shf pattern). Never exposed in
+        // production builds.
+        if (isLocal) window._objectTracker = objectTracker;
     }
     
     objectTracker.enable();
@@ -2410,6 +2521,10 @@ export async function deserializeAutoTracking(data) {
     // Create and enable the tracker
     if (!objectTracker) {
         objectTracker = new ObjectTracker(videoView);
+        // Local-only debug hook so MCP / console can reach the module-scoped
+        // tracker (mirrors the tools-page window.shf pattern). Never exposed in
+        // production builds.
+        if (isLocal) window._objectTracker = objectTracker;
     }
     objectTracker.enable();
     if (enableMenuItem) enableMenuItem.name(t("tracking.enable.disableLabel"));

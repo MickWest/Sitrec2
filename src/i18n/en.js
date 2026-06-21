@@ -331,11 +331,11 @@ const en = {
         },
         trackRadius: {
             label: "Track Radius",
-            tooltip: "Size of the template to match (object size)",
+            tooltip: "Inner solid circle: the object/feature size. Template Match uses it as the template size; Center on Bright/Dark/Color average the centroid within it",
         },
         searchRadius: {
             label: "Search Radius",
-            tooltip: "How far from previous position to search (increase for fast motion)",
+            tooltip: "Outer dashed circle: how far from the previous position to look for the feature each frame. Increase for fast motion. Used by Template, Optical Flow, Peak and all Center on Bright/Dark/Color modes",
         },
         trackingMethod: {
             label: "Tracking Method",

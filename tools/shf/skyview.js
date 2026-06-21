@@ -131,7 +131,9 @@ function twinkleFlare(px, py, PERIOD, SPEED, upMin = 1, upRange = 1, opts = {}) 
     const dir = opts.upOnly ? Math.PI + Math.random() * Math.PI : Math.random() * 2 * Math.PI;
     const dist = SPEED * D;                            // same speed -> distance ∝ D
     const dx = Math.cos(dir) * dist, dy = Math.sin(dir) * dist;
-    const rDot = 1.1 + Math.random() * 0.9;
+    // rScale keeps the dot a constant on-screen size when the SVG is drawn larger
+    // (the compass passes 1/scale so big roses don't get giant flare dots).
+    const rDot = (1.1 + Math.random() * 0.9) * (opts.rScale || 1);
     const rMax = rDot * 1.7;
     // key times (normalised to the loop): idle, rise, hold, fall, idle
     const t1 = (t0 / PERIOD).toFixed(4);
@@ -154,7 +156,7 @@ function twinkleFlare(px, py, PERIOD, SPEED, upMin = 1, upRange = 1, opts = {}) 
 // Animated "sprinkle" of small white flares in the angular sector BETWEEN the
 // arrows (just outside the rim). Every dot at the SAME speed but a random
 // direction/moment within a single 60 s loop (SMIL, repeats indefinitely).
-function flareDots(arrows, cx, cy, R) {
+function flareDots(arrows, cx, cy, R, dotScale = 1) {
     if (!arrows || !arrows.length) return "";
     const a0 = arrows[0].azDeg;
     const a1 = arrows.length >= 2 ? arrows[arrows.length - 1].azDeg : a0;
@@ -171,7 +173,7 @@ function flareDots(arrows, cx, cy, R) {
         const rad = R + 4 + Math.random() * 22;            // just beyond the outer ring
         const px = cx + Math.sin(az) * rad;
         const py = cy - Math.cos(az) * rad;
-        out += twinkleFlare(px, py, PERIOD, SPEED);
+        out += twinkleFlare(px, py, PERIOD, SPEED, 1, 1, { rScale: dotScale });
     }
     return out;
 }
@@ -224,12 +226,44 @@ function flareArc(flares, cx, cy, R) {
 }
 
 // --- compass rose ----------------------------------------------------------
+// Shared rose geometry (SVG units). compassViewBox() and compassRose() both use it.
+const ROSE = { cx: 110, cy: 112, R: 84 };
+
+// Adaptive viewBox for the rose given the arrow azimuths. The flare sprinkle +
+// density arc sit just beyond the rim in the flare DIRECTION, so the spare room goes
+// on THAT side instead of always padding the top: south flares -> rose floats up and
+// the sprinkle shows below it; north -> floats down; E/W -> shifts sideways. The rose
+// stays horizontally centred. Returns {x, y, w, h} in SVG units. Exported so the page
+// can read the aspect ratio when fitting the rose to the available screen height.
+export function compassViewBox(arrows) {
+    const { cx, cy, R } = ROSE;
+    const SPR = R + 36;                          // outer reach of sprinkle + a little drift
+    // Sample the arrow azimuths (which bracket the flare sector) plus their mean
+    // direction (the deepest reach). Fall back to due-south if there are no arrows.
+    const azList = (arrows && arrows.length) ? arrows.map(a => a.azDeg) : [180];
+    let mx = 0, my = 0;
+    for (const az of azList) { mx += Math.sin(az * DEG); my += -Math.cos(az * DEG); }
+    const meanAz = Math.atan2(mx, -my) / DEG;    // screen vector -> azimuth
+    let minX = cx - R, maxX = cx + R, minY = cy - R, maxY = cy + R;   // the circle
+    for (const az of [...azList, meanAz]) {
+        const px = cx + Math.sin(az * DEG) * SPR, py = cy - Math.cos(az * DEG) * SPR;
+        if (px < minX) minX = px; if (px > maxX) maxX = px;
+        if (py < minY) minY = py; if (py > maxY) maxY = py;
+    }
+    const m = 6;                                 // uniform margin
+    const halfW = Math.max(maxX - cx, cx - minX) + m;   // keep the rose centred in X
+    return { x: cx - halfW, y: minY - m, w: 2 * halfW, h: (maxY - minY) + 2 * m };
+}
+
 // arrows: [{ azDeg, color?, label? }] (1 or 2). Yellow by default.
 // flares: optional [{azDeg, ...}] — used to draw the density arc along the rim.
 // opts.live: skip the animated (SMIL) flare sprinkle — used for the 10 Hz live
 //   re-render during scanning, where restarting the animation every frame would flicker.
+// opts.dotScale: multiplier on the flare-dot RADII (default 1). The page passes
+//   <1 when the rose is drawn large so the sprinkle dots keep a constant on-screen
+//   size instead of scaling up with the rose.
 export function compassRose(arrows, flares, opts = {}) {
-    const W = 220, cx = 110, cy = 112, R = 84;
+    const { cx, cy, R } = ROSE;
     const pts = [];
     // tick marks every 22.5°
     for (let a = 0; a < 360; a += 22.5) {
@@ -263,16 +297,15 @@ export function compassRose(arrows, flares, opts = {}) {
             + `<polygon points="${n(tipx)},${n(tipy)} ${n(bx + hx)},${n(by + hy)} ${n(bx - hx)},${n(by - hy)}" fill="${col}"/>`;
     }).join("");
 
-    // Expand the viewBox upward so the sprinkle of flares (just beyond the rim,
-    // in the wedge between the arrows) has room to appear and drift. The bottom is
-    // trimmed close to the circle (nothing draws below it) to cut dead vertical space.
-    return `<svg viewBox="0 -30 ${W} ${W + 12}" class="compass-rose" role="img" aria-label="Compass showing the flare direction">
+    const vb = compassViewBox(arrows);
+    const vbStr = `${n(vb.x)} ${n(vb.y)} ${n(vb.w)} ${n(vb.h)}`;
+    return `<svg viewBox="${vbStr}" class="compass-rose" role="img" aria-label="Compass showing the flare direction">
       <circle cx="${cx}" cy="${cy}" r="${R}" fill="#0c1224" stroke="#2a3550" stroke-width="2"/>
       <circle cx="${cx}" cy="${cy}" r="${R - 30}" fill="none" stroke="#1c2740" stroke-width="1"/>
       ${pts.join("")}
       ${labels}
       ${flareArc(flares, cx, cy, R)}
-      ${opts.live ? "" : flareDots(arrows, cx, cy, R)}
+      ${opts.live ? "" : flareDots(arrows, cx, cy, R, opts.dotScale || 1)}
       ${arr}
       <circle cx="${cx}" cy="${cy}" r="3.5" fill="#cfe0ff"/>
     </svg>`;
