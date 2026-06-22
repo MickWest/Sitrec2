@@ -107,5 +107,21 @@ export default {
             }`,
             equals: {mainGrew: true, rightColumnShrank: true},
         },
+        // rect→tree reconstruction (guillotine): the Layout Test rects recover the canonical
+        // tree (main left | video over look right).
+        {
+            type: 'assert', name: 'guillotineRecoversCanonicalTree',
+            fn: `() => {
+                const L = window.LayoutMan;
+                const ok = L.tileFromViews();
+                const t = L.serialize();
+                L.clearLayout();
+                const shape = (n) => n.type === 'leaf'
+                    ? n.viewId
+                    : n.dir + '[' + n.children.map(shape).join(',') + ']';
+                return {ok, shape: t ? shape(t) : null};
+            }`,
+            equals: {ok: true, shape: 'v[mainView,h[video,lookView]]'},
+        },
     ],
 };

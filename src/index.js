@@ -1697,6 +1697,20 @@ async function initializeOnce() {
         .tooltip(t("menus.view.tooltip"));
     setupHUDColor(guiMenus.view);
 
+    // Split-tree tiling toggle (UI redesign Phase 2): tile the current top-level views into a
+    // Blender-style grid with draggable seams, or return to the free-floating layout. Opt-in
+    // and non-destructive — clearing returns every view to its fractional rect.
+    const _layoutTileToggle = {tiled: false};
+    guiMenus.view.add(_layoutTileToggle, "tiled").name("Tile Layout")
+        .onChange((v) => {
+            if (v) {
+                if (!LayoutMan.tileFromViews()) _layoutTileToggle.tiled = false; // not guillotine-separable
+            } else {
+                LayoutMan.clearLayout();
+            }
+        }).listen()
+        .tooltip("Tile the open views into a Blender-style grid with draggable dividers");
+
 
 
     addTranslatedGUIMenu("video", "menus.video.title")

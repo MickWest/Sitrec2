@@ -16,6 +16,7 @@ import {setRenderOne} from "./Globals";
 
 export const LAYOUT_DIVIDER_PX = 4;   // divider thickness reserved between adjacent tiles
 const MIN_TILE_FRAC = 0.05;           // a tile can't be dragged smaller than this fraction of its split
+const DIVIDER_GRAB_PX = 10;           // interactive grab zone width centred on each seam
 
 class CLayoutManager {
     constructor() {
@@ -40,6 +41,7 @@ class CLayoutManager {
         this.tree = null;
         this._rects.clear();
         this._dividers = [];
+        this._syncDividerDOM();   // hides the seam layer
         setRenderOne(true);
     }
 
@@ -70,8 +72,10 @@ class CLayoutManager {
     recompute() {
         this._rects.clear();
         this._dividers = [];
-        if (!this.tree) return;
-        this._walk(this.tree, ViewMan.leftPx, ViewMan.topPx, ViewMan.widthPx, ViewMan.heightPx);
+        if (this.tree) {
+            this._walk(this.tree, ViewMan.leftPx, ViewMan.topPx, ViewMan.widthPx, ViewMan.heightPx);
+        }
+        this._syncDividerDOM();
     }
 
     _walk(node, x, y, w, h) {
@@ -230,6 +234,139 @@ class CLayoutManager {
         return out;
     }
 
+    // --- Reconstruct a tree from the current view rects (Phase 2.6 rect→tree) ---
+    // Tile the currently visible top-level views: read their fractional rects and recover a
+    // split-tree by recursive guillotine cuts. Default layouts (main left | video over look
+    // right) recover cleanly. Returns true if a tree was installed; false if the current
+    // layout isn't guillotine-separable (then nothing changes — legacy mode stays).
+    tileFromViews() {
+        const rects = [];
+        ViewMan.iterate((id, v) => {
+            if (!v.visible || v.overlayView || v.in.relativeTo || v.dockedSidebar) return;
+            if (v.noUIBar && v.constructor && /UI$/.test(v.constructor.name)) return; // HUD instruments
+            const W = v.containerWidth(), H = v.containerHeight();
+            if (!(W > 0 && H > 0)) return;
+            rects.push({
+                viewId: id,
+                left:   (v.leftPx - v.containerLeft()) / W,
+                top:    (v.topPx  - v.containerTop())  / H,
+                width:  v.widthPx  / W,
+                height: v.heightPx / H,
+            });
+        });
+        if (rects.length < 2) return false;
+        const tree = buildGuillotineTree(rects);
+        if (!tree) return false;
+        this.setLayout(tree);
+        return true;
+    }
+
+    // --- Interactive divider DOM (Blender-style draggable seams) ---
+    // Each seam gets a thin transparent grab strip (wider than the 4px gap) on top of the
+    // tiles, with a col/row-resize cursor. Dragging it calls dragDivider. Elements are reused
+    // across recomputes (only added/removed when the seam COUNT changes) so an in-progress
+    // drag isn't destroyed when the geometry re-walks.
+    _syncDividerDOM() {
+        if (typeof document === "undefined") return;
+        const container = ViewMan.container;
+        if (!container) return;
+
+        if (!this._dividers.length) {
+            if (this._dividerLayer) this._dividerLayer.style.display = "none";
+            return;
+        }
+
+        if (!this._dividerLayer || !this._dividerLayer.isConnected) {
+            const layer = document.createElement("div");
+            layer.className = "sitrec-divider-layer";
+            Object.assign(layer.style, {
+                position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
+                pointerEvents: "none", zIndex: "55",
+            });
+            container.appendChild(layer);
+            this._dividerLayer = layer;
+            this._dividerEls = [];
+        }
+        this._dividerLayer.style.display = "block";
+
+        // Grow/shrink the pool of grab strips to match the seam count.
+        while (this._dividerEls.length < this._dividers.length) {
+            this._dividerEls.push(this._makeDividerEl(this._dividerEls.length));
+        }
+        while (this._dividerEls.length > this._dividers.length) {
+            this._dividerEls.pop().remove();
+        }
+
+        // Position each strip over its seam (centred, widened to the grab zone). Coordinates
+        // are container-relative (the divider rects are in container px, which already start
+        // at ViewMan.leftPx/topPx = the container origin).
+        const grab = DIVIDER_GRAB_PX;
+        for (let i = 0; i < this._dividers.length; i++) {
+            const d = this._dividers[i];
+            const el = this._dividerEls[i];
+            if (d.dir === "v") {
+                Object.assign(el.style, {
+                    left: `${Math.round(d.x + d.w / 2 - grab / 2)}px`, top: `${Math.round(d.y)}px`,
+                    width: `${grab}px`, height: `${Math.round(d.h)}px`, cursor: "col-resize",
+                });
+            } else {
+                Object.assign(el.style, {
+                    left: `${Math.round(d.x)}px`, top: `${Math.round(d.y + d.h / 2 - grab / 2)}px`,
+                    width: `${Math.round(d.w)}px`, height: `${grab}px`, cursor: "row-resize",
+                });
+            }
+        }
+    }
+
+    _makeDividerEl(index) {
+        const el = document.createElement("div");
+        el.className = "sitrec-layout-divider";
+        Object.assign(el.style, {
+            position: "absolute", pointerEvents: "auto", background: "transparent",
+            zIndex: "1", touchAction: "none",
+        });
+        el.addEventListener("pointerdown", (e) => this._onDividerPointerDown(e, index));
+        return el;
+    }
+
+    _onDividerPointerDown(e, index) {
+        const divider = this._dividers[index];
+        if (!divider) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const node = divider.node;
+        const dir = divider.dir;
+        const usablePx = divider.usablePx;
+        const i = divider.index;
+        const startX = e.clientX, startY = e.clientY;
+        // Snapshot the split's sizes so cumulative pointer delta maps to absolute sizes
+        // (avoids drift from re-reading mutated sizes each move).
+        const n = (node.children || []).length;
+        const startSizes = (Array.isArray(node.sizes) && node.sizes.length === n)
+            ? node.sizes.slice() : new Array(n).fill(1 / n);
+
+        const onMove = (ev) => {
+            const deltaPx = dir === "v" ? ev.clientX - startX : ev.clientY - startY;
+            let dFrac = deltaPx / (usablePx || 1);
+            dFrac = Math.max(dFrac, MIN_TILE_FRAC - startSizes[i]);
+            dFrac = Math.min(dFrac, startSizes[i + 1] - MIN_TILE_FRAC);
+            if (!Array.isArray(node.sizes) || node.sizes.length !== n) node.sizes = startSizes.slice();
+            node.sizes[i] = startSizes[i] + dFrac;
+            node.sizes[i + 1] = startSizes[i + 1] - dFrac;
+            this._dirty = true;
+            this.recompute();
+            setRenderOne(true);
+        };
+        const onUp = () => {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            document.removeEventListener("pointercancel", onUp);
+        };
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+        document.addEventListener("pointercancel", onUp);
+    }
+
     // Serializable copy of the tree (view ids + sizes only; strips transient walk state).
     serialize() {
         const clean = (node) => {
@@ -243,6 +380,56 @@ class CLayoutManager {
         };
         return this.tree ? clean(this.tree) : null;
     }
+}
+
+// Recover a split-tree from a set of fractional rects via recursive guillotine cuts. Returns
+// a LayoutNode, or null if the set isn't guillotine-separable (overlapping / pinwheel layout).
+function buildGuillotineTree(rects) {
+    if (rects.length === 1) {
+        return {type: "leaf", viewId: rects[0].viewId};
+    }
+    // Try a vertical cut (a clean x where every rect is fully left or fully right of it).
+    const vCut = findCut(rects, "x");
+    if (vCut) {
+        return makeSplit("v", vCut.groups, "left", "width");
+    }
+    // Then a horizontal cut.
+    const hCut = findCut(rects, "y");
+    if (hCut) {
+        return makeSplit("h", hCut.groups, "top", "height");
+    }
+    return null;   // not guillotine-separable
+}
+
+// Find a clean cut along axis 'x' (using left/width → vertical seam) or 'y' (top/height →
+// horizontal seam): the rects partition into two non-empty groups separated by a gap.
+function findCut(rects, axis) {
+    const lo = axis === "x" ? "left" : "top";
+    const ext = axis === "x" ? "width" : "height";
+    const eps = 1e-3;
+    // Candidate cut lines = the right/bottom edges of each rect.
+    const edges = [...new Set(rects.map(r => r[lo] + r[ext]))].sort((a, b) => a - b);
+    for (const cut of edges) {
+        const before = rects.filter(r => r[lo] + r[ext] <= cut + eps);
+        const after = rects.filter(r => r[lo] >= cut - eps);
+        if (before.length && after.length && before.length + after.length === rects.length) {
+            return {groups: [before, after]};
+        }
+    }
+    return null;
+}
+
+function makeSplit(dir, groups, lo, ext) {
+    const children = groups.map(g => buildGuillotineTree(g));
+    if (children.some(c => c === null)) return null;   // a subgroup wasn't separable
+    // group extent = (max far edge - min near edge); sizes proportional to that.
+    const spans = groups.map(g => {
+        const near = Math.min(...g.map(r => r[lo]));
+        const far = Math.max(...g.map(r => r[lo] + r[ext]));
+        return far - near;
+    });
+    const total = spans.reduce((a, b) => a + b, 0) || 1;
+    return {type: "split", dir, sizes: spans.map(s => s / total), children};
 }
 
 export const LayoutMan = new CLayoutManager();
