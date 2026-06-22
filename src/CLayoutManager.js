@@ -351,7 +351,9 @@ class CLayoutManager {
 
         // Grow/shrink the pool of grab strips to match the seam count.
         while (this._dividerEls.length < this._dividers.length) {
-            this._dividerEls.push(this._makeDividerEl(this._dividerEls.length));
+            const el = this._makeDividerEl(this._dividerEls.length);
+            this._dividerLayer.appendChild(el);
+            this._dividerEls.push(el);
         }
         while (this._dividerEls.length > this._dividers.length) {
             this._dividerEls.pop().remove();
