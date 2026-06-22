@@ -3,21 +3,18 @@ import GUI from "./js/lil-gui.esm";
 /**
  * CUIBar — a per-view header / UI bar (Blender-style "area header").
  *
- * It is an OVERLAY strip that floats above the top edge of a view's content. It NEVER
- * insets the canvas: the viewport always renders at full size and the bar is drawn on
- * top (optionally — hover-reveal + pin are driven by the owner, e.g. CNodeView). Showing
- * or hiding the bar therefore changes NO rendering.
+ * An OVERLAY strip floating above the top edge of a view's content. It NEVER insets the
+ * canvas: the viewport always renders full-size and the bar is drawn on top (shown when
+ * pinned, or revealed on hover — driven by the owner, e.g. CNodeView). Showing/hiding it
+ * changes NO rendering. Nothing here is serialized — pure runtime chrome.
  *
- * It is a "more complex UIBar that supports menus plus icons":
- *   - addTitle(text)            — a label on the left.
- *   - addMenu(title)            — a lil-gui menu hosted as a tab on the bar (same pattern
- *                                 as the main menu bar / createStandaloneMenu / the old
- *                                 CNodeTabbedCanvasView.createTabMenu). Returns the GUI so
- *                                 callers add controls to it (e.g. the FOV editor's menu).
- *   - addIcon(html,onClick,tip) — an icon button on the right.
- *
- * Styling uses the shared design tokens (--sitrec-bg-header etc.). Nothing here is
- * serialized — it is pure runtime chrome, so saved/legacy sitches are unaffected.
+ * Layout: [ titleMenu | extra menus … ][ spacer ][ … icons | pin | close ]
+ *   - The TITLE is itself a lil-gui menu (the view's primary menu) — the home for per-view
+ *     options (like the old custom-graph tab menu). Named with a friendly, capitalised view
+ *     name ("Main", "Look", "Video", "Assistant", …).
+ *   - addMenu(title)            — host another lil-gui menu as a tab.
+ *   - addIcon(html,onClick,tip,action) — an icon button (appended right, in call order).
+ *   - addPinIcon / addCloseIcon — the standard chrome icons.
  */
 export class CUIBar {
     constructor(host, options = {}) {
@@ -25,6 +22,7 @@ export class CUIBar {
         this.menus = [];
         this.icons = [];
         this.onPinToggle = null;
+        this.onClose = null;
 
         const bar = document.createElement('div');
         bar.className = 'view-uibar';
@@ -43,7 +41,7 @@ export class CUIBar {
         });
         this.bar = bar;
 
-        // Left section (title + menus), elastic spacer, right section (icons + pin).
+        // Left section (title menu + extra menus), elastic spacer, right section (icons).
         this.left = section('flex-start');
         this.spacer = document.createElement('div');
         this.spacer.style.flex = '1 1 auto';
@@ -52,44 +50,27 @@ export class CUIBar {
         host.appendChild(bar);
 
         // Swallow the mouse events the document-level view handlers act on, so clicking the
-        // header doesn't orbit the camera (mousedown), open a context menu (contextmenu), or
-        // fullscreen the view via onDocumentDoubleClick (dblclick). WHEEL is intentionally NOT
-        // blocked — the header is a thin transient overlay, so scrolling over it should still
-        // zoom the view underneath. Pointer events are NOT blocked either, so the drag handle
-        // (pointerdown on the bar) still works.
+        // header doesn't orbit the camera (mousedown), open a context menu, or fullscreen via
+        // onDocumentDoubleClick (dblclick). WHEEL is NOT blocked (the header is a thin overlay
+        // — scrolling over it should still zoom the view). Pointer events are NOT blocked, so
+        // the drag handle works.
         for (const type of ['mousedown', 'mouseup', 'dblclick', 'contextmenu']) {
             bar.addEventListener(type, (e) => e.stopPropagation());
         }
 
-        if (options.title) this.addTitle(options.title);
-        if (options.pin !== false) {
-            this._pin = this.addIcon('\u{1F4CC}', () => this.onPinToggle && this.onPinToggle(), 'Pin this header (keep it shown)', 'pin');
-        }
+        // The title is itself the view's primary lil-gui menu (like the custom-graph tab menu).
+        if (options.title) this.titleMenu = this.addMenu(options.title);
     }
 
-    addTitle(text) {
-        const el = document.createElement('span');
-        el.className = 'view-uibar-title';
-        el.textContent = text;
-        Object.assign(el.style, {
-            display: 'flex', alignItems: 'center', padding: '0 8px',
-            fontWeight: '600', whiteSpace: 'nowrap',
-            overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '45%',
-        });
-        this.left.appendChild(el);
-        this.title = el;
-        return el;
-    }
-
-    // Host a lil-gui menu as a tab on the bar. Mirrors createStandaloneMenu's hosting
-    // pattern: a relative slot whose GUI title acts as the tab, dropdown opens below.
+    // Host a lil-gui menu as a tab on the bar. Mirrors createStandaloneMenu's hosting pattern:
+    // a relative slot whose GUI title acts as the tab, dropdown opens below.
     addMenu(title) {
         const slot = document.createElement('div');
         slot.className = 'view-uibar-menuslot';
         slot.style.position = 'relative';
         slot.style.pointerEvents = 'auto';
-        // A menu interaction must NOT start a header drag (the bar is the drag handle).
-        slot.addEventListener('pointerdown', (e) => e.stopPropagation());
+        // NOTE: the slot does NOT stop pointerdown — the whole bar (title included) is a drag
+        // handle. Only the dropdown ITEMS block dragging (below).
         this.left.appendChild(slot);
 
         const gui = new GUI({ container: slot, autoPlace: false, title, closeFolders: false });
@@ -97,14 +78,37 @@ export class CUIBar {
         gui.domElement.style.pointerEvents = 'auto';
         gui.close();
 
-        // The forked lil-gui does NOT toggle a hosted root menu on title click (the main
-        // menu bar drives open/close itself), so wire an explicit click-to-toggle. This
-        // replaces the old CNodeTabbedCanvasView.toggleTabMenu that the FOV/curve editors
-        // relied on. (pointerdown on the slot already stops a header drag from starting.)
-        gui.$title.style.cursor = 'pointer';
-        gui.$title.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (gui._closed) gui.open(); else gui.close();
+        // Float the dropdown BELOW the title (absolute) so OPENING the menu doesn't push the
+        // title (or the rest of the bar) around, and the dropdown isn't constrained by the
+        // bar height. Interacting with the dropdown ITEMS must NOT start a header drag.
+        gui.$children.style.position = 'absolute';
+        gui.$children.style.top = '100%';
+        gui.$children.style.left = '0';
+        gui.$children.style.minWidth = '180px';
+        gui.$children.style.zIndex = '70';
+        gui.$children.addEventListener('pointerdown', (e) => e.stopPropagation());
+
+        // The title is BOTH a drag handle (the whole bar drags) and a menu toggle. To keep
+        // both: suppress lil-gui's native mousedown toggle (openAnimated is gated so only our
+        // tap path may open it) and toggle on a TAP — a pointerup with no movement — so
+        // *dragging* the title moves the view without opening the menu. An empty menu never
+        // opens.
+        const _openAnimated = gui.openAnimated.bind(gui);
+        gui.openAnimated = (open = true) => {
+            if (open && (!gui.children || gui.children.length === 0)) return gui;  // empty
+            if (!gui._uibarAllowToggle) return gui;                                // only via tap
+            return _openAnimated(open);
+        };
+        let tapX = null, tapY = null;
+        gui.$title.addEventListener('pointerdown', (e) => { tapX = e.clientX; tapY = e.clientY; });
+        gui.$title.addEventListener('pointerup', (e) => {
+            if (tapX === null) return;
+            const moved = Math.abs(e.clientX - tapX) + Math.abs(e.clientY - tapY);
+            tapX = null;
+            if (moved > 5) return;   // it was a drag, not a tap
+            gui._uibarAllowToggle = true;
+            gui.openAnimated(gui._closed);
+            gui._uibarAllowToggle = false;
         });
 
         this.menus.push(gui);
@@ -126,13 +130,24 @@ export class CUIBar {
             opacity: '0.7', pointerEvents: 'auto', borderRadius: '3px',
         });
         btn.addEventListener('pointerenter', () => { btn.style.opacity = '1'; });
-        btn.addEventListener('pointerleave', () => { btn.style.opacity = '0.7'; });
+        btn.addEventListener('pointerleave', () => { btn.style.opacity = btn.dataset.uibarPinned === 'true' ? '1' : '0.7'; });
         btn.addEventListener('pointerdown', (e) => e.stopPropagation());
         btn.addEventListener('click', (e) => { e.stopPropagation(); if (onClick) onClick(e); });
-        // keep the pin button rightmost: insert new icons before it.
-        this.right.insertBefore(btn, this._pin || null);
+        this.right.appendChild(btn);   // rightmost, in call order
         this.icons.push(btn);
         return btn;
+    }
+
+    addPinIcon(onToggle) {
+        this.onPinToggle = onToggle;
+        this._pin = this.addIcon('\u{1F4CC}', () => this.onPinToggle && this.onPinToggle(), 'Pin this header (keep it shown)', 'pin');
+        return this._pin;
+    }
+
+    addCloseIcon(onClose) {
+        this.onClose = onClose;
+        this._close = this.addIcon('✕', () => this.onClose && this.onClose(), 'Close this view', 'close');
+        return this._close;
     }
 
     setShown(shown) {
@@ -143,6 +158,7 @@ export class CUIBar {
     setPinned(pinned) {
         if (!this._pin) return;
         // Make the pinned state legible (opacity alone matched a normal idle icon).
+        this._pin.dataset.uibarPinned = pinned ? 'true' : 'false';
         this._pin.style.opacity = pinned ? '1' : '0.7';
         this._pin.style.background = pinned ? 'var(--sitrec-hover, #4f4f4f)' : 'transparent';
         this._pin.setAttribute('aria-pressed', pinned ? 'true' : 'false');

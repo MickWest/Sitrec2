@@ -9,6 +9,8 @@ import {resolveHUDColor} from "../HUDColor";
 export class CNodeViewUI extends CNodeViewCanvas2D {
     // constructor is passed a CView object or id, if null then this is stand-alone
     constructor(v) {
+        // HUD instruments (compass, OSD, info overlays) are not windows — no per-view UIBar.
+        if (v && typeof v === 'object') v.noUIBar = true;
         super(v)
         
         // UI overlays should not intercept mouse events by default

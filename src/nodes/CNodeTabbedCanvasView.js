@@ -1,5 +1,4 @@
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
-import {t} from "../i18n";
 
 class CNodeTabbedCanvasView extends CNodeViewCanvas2D {
     constructor(v) {
@@ -12,24 +11,18 @@ class CNodeTabbedCanvasView extends CNodeViewCanvas2D {
     }
 
     createTabMenu() {
-        // Phase 3: the per-view menu now lives on the shared CUIBar header (created by
-        // CNodeView); moving is the header drag handle, and lil-gui's title click (wired in
-        // CUIBar.addMenu) toggles it. Subclasses (FOV / curve editors) add their controls to
-        // this.tabMenu via addMenuItems(). This replaced the old bespoke menuContainer/tabMenu
-        // DOM + setupTabDragging + updateDraggableWithMenuExclude machinery (now removed).
-        if (!this.uiBar) return;   // overlay / passThrough views have no header bar
-        this.tabMenu = this.uiBar.addMenu(this.menuName);
+        // Phase 3: the per-view menu IS the CUIBar TITLE menu (named with the friendly view
+        // name by CNodeView). Subclasses (FOV / curve editors) add their controls to
+        // this.tabMenu via addMenuItems(). Closing is the header ✕ icon now, so no "close"
+        // item here. Moving is the header drag handle; lil-gui's title click (wired in
+        // CUIBar.addMenu) toggles the dropdown.
+        if (!this.uiBar || !this.uiBar.titleMenu) return;   // overlay / passThrough: no header
+        this.tabMenu = this.uiBar.titleMenu;
 
-        const closeObj = {
-            close: () => {
-                this.tabMenu.close();
-                this.show(false);
-            }
-        };
-        this.tabMenu.add(closeObj, 'close').name(t("misc.hide.label"))
-            .tooltip(t("misc.hide.tooltip"));
-
-        this.tabMenu.close();
+        // A "Close" item that hides the view. (The header ✕ icon does the same; the menu item
+        // is kept because the per-view menu is the primary control surface for these editors —
+        // e.g. the custom graph — and also keeps the title menu non-empty so it opens.)
+        this.tabMenu.add({ close: () => this.show(false) }, 'close').name('Close');
 
         // isMenuInteraction() (in subclasses) walks up to this.menuContainer to let canvas
         // handlers ignore clicks on the menu; the header bar is that region now.

@@ -5,10 +5,10 @@
 // take their size from the div.
 //
 import {CNode} from './CNode'
-import {Globals, guiShowHideGraphs, guiShowHideViews, NodeMan, setRenderOne} from "../Globals";
+import {Globals, guiShowHideGraphs, guiShowHideViews, NodeMan, setRenderOne, UndoManager} from "../Globals";
 import {assert} from "../assert";
 import {ViewMan} from "../CViewManager";
-import {makeDraggable, makeResizable, removeDraggable, removeResizable, VIEW_EDIT_KEY} from "../DragResizeUtils";
+import {makeDraggable, makeResizable, removeDraggable, removeResizable, VIEW_EDIT_KEY, clampBelowMenuBar} from "../DragResizeUtils";
 import {CUIBar} from "../CUIBar";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {
@@ -27,6 +27,20 @@ import {
 const DOCK_EDGE_PX = 36;
 const DOCK_MARGIN_PX = 8;
 const CLOSE_OFF_TOP_PX = -5;
+
+// Friendly, capitalised view names for the per-view header (UIBar). Falls back to the
+// view's menuName, then a prettified id ("altitudeGraphView" → "Altitude Graph").
+const FRIENDLY_VIEW_NAMES = {
+    mainView: "Main", lookView: "Look", video: "Video", video2: "Video 2",
+    chatView: "Assistant",
+};
+function friendlyViewName(v, id) {
+    if (FRIENDLY_VIEW_NAMES[id]) return FRIENDLY_VIEW_NAMES[id];
+    if (v && v.menuName) return v.menuName;
+    let s = String(id).replace(/View$/, '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([a-zA-Z])([0-9])/g, '$1 $2').replace(/[_-]+/g, ' ').trim();
+    if (!s) s = String(id);
+    return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 const defaultCViewParams = {
     visible: true,
@@ -257,6 +271,8 @@ class CNodeView extends CNode {
     // After this view moves (Q-drag or header-drag), refresh dependents: overlay children
     // inherit the new size, relativeTo children re-layout. Shared by both drag wirings.
     _propagateDragToDependents() {
+        // Don't let the view be dragged above the menu bar — snap it under instead.
+        clampBelowMenuBar(this.div);
         this.setFromDiv(this.div);
         ViewMan.iterate((id, v) => {
             if (v.overlayView === this) v.inheritSize();
@@ -273,20 +289,23 @@ class CNodeView extends CNode {
     createViewHeader(v) {
         if (this.overlayView) return;   // overlay views share the parent div
         if (this.passThrough) return;   // pointer events disabled — nothing to hover
+        if (v.noUIBar) return;          // HUD instruments (compass, OSD, info) opt out
         if (this.uiBar) return;
 
-        const bar = new CUIBar(this.div, {title: v.menuName || this.id});
-        bar.onPinToggle = () => this.setHeaderPinned(!this.headerPinned);
-        // Surface fullscreen as an icon (reuses the existing double-click behaviour).
+        // Title is a lil-gui menu named with a friendly, capitalised view name.
+        const title = friendlyViewName(v, this.id);
+        const bar = new CUIBar(this.div, {title});
+        // Standard chrome, left→right: fullscreen, pin, close.
         if (this.doubleClickFullScreen || this.doubleClickResizes) {
             bar.addIcon('⛶', () => this.doubleClick(), 'Toggle fullscreen', 'fullscreen');
         }
+        bar.addPinIcon(() => this.setHeaderPinned(!this.headerPinned));
+        bar.addCloseIcon(() => this.closeViewWithUndo(title));
         this.uiBar = bar;
 
-        // The header bar is a DRAG HANDLE: drag it to move the view (no modifier — the
-        // bar is an explicit affordance). Interactive children (menus, icons, pin)
-        // stopPropagation on pointerdown so they don't start a drag. This coexists with
-        // the Phase-1 Q-drag-anywhere wired on the div in the constructor.
+        // The header bar is a DRAG HANDLE: drag it to move the view (no modifier — the bar is
+        // an explicit affordance). Interactive children (menus, icons) stopPropagation on
+        // pointerdown so they don't start a drag. Coexists with the Phase-1 Q-drag-anywhere.
         if (this.draggable) {
             bar.bar.style.cursor = 'move';
             makeDraggable(this.div, {
@@ -304,16 +323,31 @@ class CNodeView extends CNode {
                 },
             });
         }
+
         this.headerPinned = false;
         this._headerHovering = false;
+        // Default: pinned (always shown) for most views; opt out with `pinHeader: false`.
+        this.setHeaderPinned(v.pinHeader !== false);
 
-        // Hover-reveal — overlay opacity only, never touches geometry or the renderer.
-        // pointercancel (gesture interrupted / OS take-over, common on touch) is treated as
-        // a leave so the header can't get stuck shown.
-        const setHeaderHover = (hovering) => { this._headerHovering = hovering; this._updateHeaderShown(); };
-        this.div.addEventListener('pointerenter', () => setHeaderHover(true));
-        this.div.addEventListener('pointerleave', () => setHeaderHover(false));
-        this.div.addEventListener('pointercancel', () => setHeaderHover(false));
+        // Hover-reveal (only when NOT pinned): the bar fades in while the pointer is over the
+        // BAR STRIP itself — not the whole view — AND no mouse button is held. So it won't
+        // appear while interacting with view content, nor while a drag passes over the strip
+        // (button held). Leaving the strip hides it; mid-strip with a button held leaves the
+        // state unchanged (so a header-drag-in-progress isn't hidden out from under itself).
+        const updateReveal = (e) => {
+            if (this.headerPinned) return;
+            const r = bar.bar.getBoundingClientRect();
+            const inBar = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+            if (!inBar) {
+                if (this._headerHovering) { this._headerHovering = false; this._updateHeaderShown(); }
+            } else if (e.buttons === 0 && !this._headerHovering) {
+                this._headerHovering = true; this._updateHeaderShown();
+            }
+        };
+        const hideReveal = () => { if (!this.headerPinned && this._headerHovering) { this._headerHovering = false; this._updateHeaderShown(); } };
+        this.div.addEventListener('pointermove', updateReveal);
+        this.div.addEventListener('pointerleave', hideReveal);
+        this.div.addEventListener('pointercancel', hideReveal);
     }
 
     _updateHeaderShown() {
@@ -324,6 +358,19 @@ class CNodeView extends CNode {
         this.headerPinned = !!pinned;
         if (this.uiBar) this.uiBar.setPinned(this.headerPinned);
         this._updateHeaderShown();
+    }
+
+    // Close (hide) this view via the header ✕, recorded as an undoable action so Undo
+    // reopens it (and Redo closes it again). UndoManager.add is a no-op while undoing/redoing.
+    closeViewWithUndo(name) {
+        this.show(false);
+        if (UndoManager) {
+            UndoManager.add({
+                undo: () => this.show(true),
+                redo: () => this.show(false),
+                description: "Close " + (name || this.id) + " view",
+            });
+        }
     }
 
     // virtual functions for mouseMouveView.js onDocumentMouseMove
@@ -1038,11 +1085,10 @@ class CNodeView extends CNode {
             return;
         }
 
+        // Don't allow the view above the menu bar — snap it back under (instead of the old
+        // "drag off the top to close" behaviour, which the header ✕ button now covers).
+        clampBelowMenuBar(this.div);
         this.setFromDiv(this.div);
-        if (this.div.getBoundingClientRect().top < CLOSE_OFF_TOP_PX) {
-            this.setVisible(false);
-            return;
-        }
 
         if (!this.dockable) return;
 
