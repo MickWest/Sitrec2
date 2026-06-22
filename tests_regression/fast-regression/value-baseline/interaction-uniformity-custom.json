@@ -1,0 +1,124 @@
+{
+  "schema": 1,
+  "scenarioId": "interaction-uniformity-custom",
+  "sitch": "custom",
+  "frame": 10,
+  "captures": {
+    "movableViewInteraction": {
+      "altitudeGraphView": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "azValueGraphView": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "chatView": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "dagView": {
+        "dragKey": "Q",
+        "draggable": false,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "debugView": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "elValueGraphView": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "fovEditorView": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "lookView": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "mainView": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "mtsLightPathView": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "notesView": {
+        "dragKey": "Q",
+        "draggable": false,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "speedGraph_cameraTrackSwitchSmoothView": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "speedGraph_traverseSmoothedTrackView": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "targetDistanceGraphView": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "video": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "video2": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "videoCurveEditor": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "videoHistogram": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      },
+      "videoLevelsEditor": {
+        "dragKey": "Q",
+        "draggable": true,
+        "resizable": true,
+        "shiftDrag": false
+      }
+    }
+  }
+}

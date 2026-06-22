@@ -26,6 +26,15 @@ export let isViewDragging = false;
 // Snap distance in pixels
 const SNAP_DISTANCE = 10;
 
+// Phase 1 — unified view interaction. The SINGLE modifier key that puts a movable
+// view into "edit layout" mode: hold it to highlight edges, move the view, and
+// edge-resize with snapping. Every movable CNodeView uses this same key (legacy
+// per-view shiftDrag / bare-drag configs are mapped onto it in CNodeView), so the
+// interaction is identical across 3D, look, video, graph, and 2D views.
+// (Value matches the historical mainView/lookView dragKey, so behaviour is unchanged
+// for views that already used Q.)
+export const VIEW_EDIT_KEY = "Q";
+
 // Resize handle thickness in pixels
 const HANDLE_SIZE = 10;
 const HANDLE_HALF = HANDLE_SIZE / 2;
@@ -582,7 +591,12 @@ export function makeDraggable(element, options = {}) {
     // Add event listener to handle using pointerdown for better off-screen support
     handleElement.addEventListener('pointerdown', onPointerDown);
     
-    // Store cleanup function on element
+    // Store cleanup function on element.
+    // A single element can have makeDraggable called more than once (e.g. a view div with
+    // the Phase-1 Q-drag on the whole div AND a header-bar drag handle). Chain any previous
+    // cleanup so the earlier wiring's listeners — including the document keydown/keyup added
+    // for requiredKey — are removed too, instead of being orphaned by this reassignment.
+    const _previousDragCleanup = element._dragCleanup;
     element._dragCleanup = () => {
         handleElement.removeEventListener('pointerdown', onPointerDown);
         document.removeEventListener('pointermove', onPointerMove);
@@ -592,6 +606,7 @@ export function makeDraggable(element, options = {}) {
             document.removeEventListener('keyup', updateCursorAndBorder);
         }
         hideDragBorder(element);
+        if (_previousDragCleanup) _previousDragCleanup();
         delete element._dragData;
         delete element._dragCleanup;
     };

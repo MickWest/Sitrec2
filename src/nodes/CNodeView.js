@@ -5,10 +5,11 @@
 // take their size from the div.
 //
 import {CNode} from './CNode'
-import {Globals, guiShowHideGraphs, guiShowHideViews, NodeMan} from "../Globals";
+import {Globals, guiShowHideGraphs, guiShowHideViews, NodeMan, setRenderOne} from "../Globals";
 import {assert} from "../assert";
 import {ViewMan} from "../CViewManager";
-import {makeDraggable, makeResizable, removeDraggable, removeResizable} from "../DragResizeUtils";
+import {makeDraggable, makeResizable, removeDraggable, removeResizable, VIEW_EDIT_KEY} from "../DragResizeUtils";
+import {CUIBar} from "../CUIBar";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {
     getCenterSidebarAdjustment,
@@ -100,6 +101,18 @@ class CNodeView extends CNode {
         this.alwaysOnTop = v.alwaysOnTop ?? false;
         this.shiftDrag = v.shiftDrag;
         this.dragKey = v.dragKey;
+
+        // --- Phase 1: unified view interaction ---
+        // All movable views share ONE edit gesture: hold VIEW_EDIT_KEY (Q) to highlight
+        // edges, move, and edge-resize with snapping. Legacy per-view configs are mapped
+        // onto it so the interaction is identical everywhere: shiftDrag:true (was "hold
+        // Shift") and bare-drag (no modifier at all) BOTH become the single Q gesture.
+        // Done in one place rather than at ~40 view-definition call sites.
+        if (this.draggable || this.resizable) {
+            this.dragKey = VIEW_EDIT_KEY;
+            this.shiftDrag = false;
+        }
+
         this.freeAspect = v.freeAspect;
         this.dockable = v.dockable ?? this.draggable;
         this.dockedSidebar = null;
@@ -179,15 +192,7 @@ class CNodeView extends CNode {
                         } else if (view.shiftDrag && !event.shiftKey) {
                             return false;
                         }
-                        view.setFromDiv(view.div);
-                        ViewMan.iterate((id, v) => {
-                            if (v.overlayView === view) {
-                                v.inheritSize();
-                            }
-                            if (v.in.relativeTo === view) {
-                                v.updateWH();
-                            }
-                        });
+                        view._propagateDragToDependents();
                         return true;
                     },
                     onDragEnd: (event, data) => {
@@ -207,6 +212,10 @@ class CNodeView extends CNode {
                     }
                 });
             }
+
+            // Phase 3: per-view header overlay (hover-reveal + pin). Additive chrome —
+            // does NOT inset the canvas or change geometry/rendering/serialization.
+            this.createViewHeader(v);
 
             const visibleToSet = this.visible;
             this.visible = undefined; // force update
@@ -243,6 +252,78 @@ class CNodeView extends CNode {
         }
 
         this.applyEarlyMods();
+    }
+
+    // After this view moves (Q-drag or header-drag), refresh dependents: overlay children
+    // inherit the new size, relativeTo children re-layout. Shared by both drag wirings.
+    _propagateDragToDependents() {
+        this.setFromDiv(this.div);
+        ViewMan.iterate((id, v) => {
+            if (v.overlayView === this) v.inheritSize();
+            if (v.in.relativeTo === this) v.updateWH();
+        });
+    }
+
+    // --- Phase 3: per-view header / UI bar (Blender-style) ---
+    // The header is a CUIBar: an OVERLAY strip above the canvas (it never insets the
+    // canvas, so showing/hiding changes NO rendering — the viewport renders full-size
+    // underneath). The bar supports a title, menus, and icon buttons. Hover-reveals; the
+    // pin keeps it shown. Runtime chrome only — nothing here is serialized, so saved and
+    // legacy sitches are unaffected.
+    createViewHeader(v) {
+        if (this.overlayView) return;   // overlay views share the parent div
+        if (this.passThrough) return;   // pointer events disabled — nothing to hover
+        if (this.uiBar) return;
+
+        const bar = new CUIBar(this.div, {title: v.menuName || this.id});
+        bar.onPinToggle = () => this.setHeaderPinned(!this.headerPinned);
+        // Surface fullscreen as an icon (reuses the existing double-click behaviour).
+        if (this.doubleClickFullScreen || this.doubleClickResizes) {
+            bar.addIcon('⛶', () => this.doubleClick(), 'Toggle fullscreen', 'fullscreen');
+        }
+        this.uiBar = bar;
+
+        // The header bar is a DRAG HANDLE: drag it to move the view (no modifier — the
+        // bar is an explicit affordance). Interactive children (menus, icons, pin)
+        // stopPropagation on pointerdown so they don't start a drag. This coexists with
+        // the Phase-1 Q-drag-anywhere wired on the div in the constructor.
+        if (this.draggable) {
+            bar.bar.style.cursor = 'move';
+            makeDraggable(this.div, {
+                handle: bar.bar,
+                viewInstance: this,
+                onDrag: (event, data) => {
+                    const view = data.viewInstance;
+                    if (!view.draggable) return false;
+                    if (view.dockedSidebar) return true;
+                    view._propagateDragToDependents();
+                    return true;
+                },
+                onDragEnd: (event, data) => {
+                    data.viewInstance?.onViewDragEnd?.(event, data);
+                },
+            });
+        }
+        this.headerPinned = false;
+        this._headerHovering = false;
+
+        // Hover-reveal — overlay opacity only, never touches geometry or the renderer.
+        // pointercancel (gesture interrupted / OS take-over, common on touch) is treated as
+        // a leave so the header can't get stuck shown.
+        const setHeaderHover = (hovering) => { this._headerHovering = hovering; this._updateHeaderShown(); };
+        this.div.addEventListener('pointerenter', () => setHeaderHover(true));
+        this.div.addEventListener('pointerleave', () => setHeaderHover(false));
+        this.div.addEventListener('pointercancel', () => setHeaderHover(false));
+    }
+
+    _updateHeaderShown() {
+        if (this.uiBar) this.uiBar.setShown(this.headerPinned || this._headerHovering);
+    }
+
+    setHeaderPinned(pinned) {
+        this.headerPinned = !!pinned;
+        if (this.uiBar) this.uiBar.setPinned(this.headerPinned);
+        this._updateHeaderShown();
     }
 
     // virtual functions for mouseMouveView.js onDocumentMouseMove
@@ -319,13 +400,20 @@ class CNodeView extends CNode {
             this._resizeTimeout = null;
         }
 
+        // Dispose the per-view header/UI bar (destroys its hosted lil-gui menus) so they
+        // don't leak on sitch reload. Owns its own DOM removal; null it so nothing reuses it.
+        if (this.uiBar) {
+            this.uiBar.dispose();
+            this.uiBar = null;
+        }
+
         // if it's an overlay view, then we don't want to remove the div
         if (this.overlayView === undefined && this.div) {
             // Clean up draggable and resizable functionality
             if (this.draggable) {
                 removeDraggable(this.div);
             }
-            
+
             if (this.resizable) {
                 removeResizable(this.div);
             }
@@ -842,6 +930,14 @@ class CNodeView extends CNode {
                     ViewMan.fullscreenView = null;
                 }
             }
+
+            // Fullscreen/double toggles visibility, geometry AND z-order — all applied in
+            // renderMain (computeEffectiveVisibility / updateDOMVisibility / updateZOrder),
+            // which under render-on-demand only runs when a render is armed. The native
+            // double-click path arms it (onDocumentDoubleClick), but the header fullscreen
+            // ICON and API callers don't — so arm it here so the toggle ALWAYS takes effect
+            // (otherwise fullscreen sets fullscreenView but the other views never hide).
+            setRenderOne(true);
         }
     }
 
@@ -850,6 +946,13 @@ class CNodeView extends CNode {
             return;
 
         this.visible = visible;
+
+        // Hiding a view (display:none) suppresses the pointerleave that would normally
+        // clear the hover state, so the header would pop up unprompted on re-show. Clear it.
+        if (!visible && this._headerHovering) {
+            this._headerHovering = false;
+            this._updateHeaderShown();
+        }
 
         // Immediate DOM update for responsiveness.
         // Central DOM updates happen in ViewMan.updateDOMVisibility() each frame.

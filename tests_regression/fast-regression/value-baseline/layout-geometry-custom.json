@@ -1,0 +1,543 @@
+{
+  "schema": 1,
+  "scenarioId": "layout-geometry-custom",
+  "sitch": "custom",
+  "frame": 10,
+  "captures": {
+    "liveGeometry": [
+      {
+        "height": -1,
+        "id": "altitudeGraphView",
+        "left": 0.4,
+        "top": 0,
+        "visible": false,
+        "width": 0.15
+      },
+      {
+        "height": -1,
+        "id": "azValueGraphView",
+        "left": 0.25,
+        "top": 0,
+        "visible": false,
+        "width": 0.15
+      },
+      {
+        "height": 0.85,
+        "id": "chatView",
+        "left": 0.25,
+        "top": 0.1,
+        "visible": false,
+        "width": 0.25
+      },
+      {
+        "height": 0.15,
+        "id": "compassLook",
+        "left": 0,
+        "top": 0.8,
+        "visible": true,
+        "width": -1
+      },
+      {
+        "height": 0.1,
+        "id": "compassMain",
+        "left": 0,
+        "top": 0.82,
+        "visible": true,
+        "width": -1
+      },
+      {
+        "height": 0.2,
+        "id": "dagView",
+        "left": 0.8,
+        "top": 0,
+        "visible": false,
+        "width": 0.2
+      },
+      {
+        "height": 0.8,
+        "id": "debugView",
+        "left": 0.05,
+        "top": 0.1,
+        "visible": false,
+        "width": 0.5
+      },
+      {
+        "height": -1,
+        "id": "elValueGraphView",
+        "left": 0.25,
+        "top": 0.2,
+        "visible": false,
+        "width": 0.15
+      },
+      {
+        "height": 0.5,
+        "id": "fovEditorView",
+        "left": 0,
+        "top": 0.5,
+        "visible": false,
+        "width": -1
+      },
+      {
+        "height": 1,
+        "id": "lookView",
+        "left": 0.5,
+        "top": 0,
+        "visible": true,
+        "width": 0.5
+      },
+      {
+        "height": 1,
+        "id": "mainView",
+        "left": 0,
+        "top": 0,
+        "visible": true,
+        "width": 0.5
+      },
+      {
+        "height": 1,
+        "id": "MQ9UI",
+        "left": 0,
+        "top": 0,
+        "visible": false,
+        "width": 1
+      },
+      {
+        "height": 0.5,
+        "id": "mtsLightPathView",
+        "left": 0.5,
+        "top": 0.5,
+        "visible": false,
+        "width": 0.25
+      },
+      {
+        "height": 0.5,
+        "id": "notesView",
+        "left": 0.6,
+        "top": 0.1,
+        "visible": false,
+        "width": 0.35
+      },
+      {
+        "height": -1,
+        "id": "speedGraph_cameraTrackSwitchSmoothView",
+        "left": 0.25,
+        "top": 0,
+        "visible": false,
+        "width": 0.15
+      },
+      {
+        "height": -1,
+        "id": "speedGraph_traverseSmoothedTrackView",
+        "left": 0.25,
+        "top": 0,
+        "visible": false,
+        "width": 0.15
+      },
+      {
+        "height": 0.25,
+        "id": "targetDistanceGraphView",
+        "left": 0,
+        "top": 0,
+        "visible": false,
+        "width": 0.25
+      },
+      {
+        "height": 0.5,
+        "id": "video",
+        "left": 0.5,
+        "top": 0,
+        "visible": false,
+        "width": -1.793
+      },
+      {
+        "height": 0.5,
+        "id": "video2",
+        "left": 0.5,
+        "top": 0.5,
+        "visible": false,
+        "width": 0.5
+      },
+      {
+        "height": -1,
+        "id": "videoCurveEditor",
+        "left": 0.68,
+        "top": 0.38,
+        "visible": false,
+        "width": 0.3
+      },
+      {
+        "height": -0.34,
+        "id": "videoHistogram",
+        "left": 0.68,
+        "top": 0.035,
+        "visible": false,
+        "width": 0.3
+      },
+      {
+        "height": 1,
+        "id": "videoInfo",
+        "left": 0,
+        "top": 0,
+        "visible": true,
+        "width": 1
+      },
+      {
+        "height": -1,
+        "id": "videoLevelsEditor",
+        "left": 0.68,
+        "top": 0.38,
+        "visible": false,
+        "width": 0.3
+      }
+    ],
+    "serializedGeometry": {
+      "MQ9UI": {
+        "height": 1,
+        "left": 0,
+        "top": 0,
+        "visible": false,
+        "width": 1
+      },
+      "altitudeGraphView": {
+        "height": -1,
+        "left": 0.4,
+        "top": 0,
+        "visible": false,
+        "width": 0.15
+      },
+      "azValueGraphView": {
+        "height": -1,
+        "left": 0.25,
+        "top": 0,
+        "visible": false,
+        "width": 0.15
+      },
+      "chatView": {
+        "height": 0.85,
+        "left": 0.25,
+        "top": 0.1,
+        "visible": false,
+        "width": 0.25
+      },
+      "compassLook": {
+        "height": 0.15,
+        "left": 0,
+        "top": 0.8,
+        "visible": true,
+        "width": -1
+      },
+      "compassMain": {
+        "height": 0.1,
+        "left": 0,
+        "top": 0.82,
+        "visible": true,
+        "width": -1
+      },
+      "dagView": {
+        "height": 0.2,
+        "left": 0.8,
+        "top": 0,
+        "visible": false,
+        "width": 0.2
+      },
+      "debugView": {
+        "height": 0.8,
+        "left": 0.05,
+        "top": 0.1,
+        "visible": false,
+        "width": 0.5
+      },
+      "elValueGraphView": {
+        "height": -1,
+        "left": 0.25,
+        "top": 0.2,
+        "visible": false,
+        "width": 0.15
+      },
+      "fovEditorView": {
+        "height": 0.5,
+        "left": 0,
+        "top": 0.5,
+        "visible": false,
+        "width": -1
+      },
+      "lookView": {
+        "height": 1,
+        "left": 0.5,
+        "top": 0,
+        "visible": true,
+        "width": 0.5
+      },
+      "mainView": {
+        "height": 1,
+        "left": 0,
+        "top": 0,
+        "visible": true,
+        "width": 0.5
+      },
+      "mtsLightPathView": {
+        "height": 0.5,
+        "left": 0.5,
+        "top": 0.5,
+        "visible": false,
+        "width": 0.25
+      },
+      "notesView": {
+        "height": 0.5,
+        "left": 0.6,
+        "top": 0.1,
+        "visible": false,
+        "width": 0.35
+      },
+      "speedGraph_cameraTrackSwitchSmoothView": {
+        "height": -1,
+        "left": 0.25,
+        "top": 0,
+        "visible": false,
+        "width": 0.15
+      },
+      "speedGraph_traverseSmoothedTrackView": {
+        "height": -1,
+        "left": 0.25,
+        "top": 0,
+        "visible": false,
+        "width": 0.15
+      },
+      "targetDistanceGraphView": {
+        "height": 0.25,
+        "left": 0,
+        "top": 0,
+        "visible": false,
+        "width": 0.25
+      },
+      "video": {
+        "height": 0.5,
+        "left": 0.5,
+        "top": 0,
+        "visible": false,
+        "width": -1.793
+      },
+      "video2": {
+        "height": 0.5,
+        "left": 0.5,
+        "top": 0.5,
+        "visible": false,
+        "width": 0.5
+      },
+      "videoCurveEditor": {
+        "height": -1,
+        "left": 0.68,
+        "top": 0.38,
+        "visible": false,
+        "width": 0.3
+      },
+      "videoHistogram": {
+        "height": -0.34,
+        "left": 0.68,
+        "top": 0.035,
+        "visible": false,
+        "width": 0.3
+      },
+      "videoInfo": {
+        "height": 1,
+        "left": 0,
+        "top": 0,
+        "visible": true,
+        "width": 1
+      },
+      "videoLevelsEditor": {
+        "height": -1,
+        "left": 0.68,
+        "top": 0.38,
+        "visible": false,
+        "width": 0.3
+      }
+    },
+    "afterMove": [
+      {
+        "height": -1,
+        "id": "altitudeGraphView",
+        "left": 0.4,
+        "top": 0,
+        "visible": false,
+        "width": 0.15
+      },
+      {
+        "height": -1,
+        "id": "azValueGraphView",
+        "left": 0.25,
+        "top": 0,
+        "visible": false,
+        "width": 0.15
+      },
+      {
+        "height": 0.85,
+        "id": "chatView",
+        "left": 0.25,
+        "top": 0.1,
+        "visible": false,
+        "width": 0.25
+      },
+      {
+        "height": 0.15,
+        "id": "compassLook",
+        "left": 0,
+        "top": 0.8,
+        "visible": true,
+        "width": -1
+      },
+      {
+        "height": 0.1,
+        "id": "compassMain",
+        "left": 0,
+        "top": 0.82,
+        "visible": true,
+        "width": -1
+      },
+      {
+        "height": 0.2,
+        "id": "dagView",
+        "left": 0.8,
+        "top": 0,
+        "visible": false,
+        "width": 0.2
+      },
+      {
+        "height": 0.8,
+        "id": "debugView",
+        "left": 0.05,
+        "top": 0.1,
+        "visible": false,
+        "width": 0.5
+      },
+      {
+        "height": -1,
+        "id": "elValueGraphView",
+        "left": 0.25,
+        "top": 0.2,
+        "visible": false,
+        "width": 0.15
+      },
+      {
+        "height": 0.5,
+        "id": "fovEditorView",
+        "left": 0,
+        "top": 0.5,
+        "visible": false,
+        "width": -1
+      },
+      {
+        "height": 1,
+        "id": "lookView",
+        "left": 0.5,
+        "top": 0,
+        "visible": true,
+        "width": 0.5
+      },
+      {
+        "height": 0.5,
+        "id": "mainView",
+        "left": 0.1,
+        "top": 0.2,
+        "visible": true,
+        "width": 0.4
+      },
+      {
+        "height": 1,
+        "id": "MQ9UI",
+        "left": 0,
+        "top": 0,
+        "visible": false,
+        "width": 1
+      },
+      {
+        "height": 0.5,
+        "id": "mtsLightPathView",
+        "left": 0.5,
+        "top": 0.5,
+        "visible": false,
+        "width": 0.25
+      },
+      {
+        "height": 0.5,
+        "id": "notesView",
+        "left": 0.6,
+        "top": 0.1,
+        "visible": false,
+        "width": 0.35
+      },
+      {
+        "height": -1,
+        "id": "speedGraph_cameraTrackSwitchSmoothView",
+        "left": 0.25,
+        "top": 0,
+        "visible": false,
+        "width": 0.15
+      },
+      {
+        "height": -1,
+        "id": "speedGraph_traverseSmoothedTrackView",
+        "left": 0.25,
+        "top": 0,
+        "visible": false,
+        "width": 0.15
+      },
+      {
+        "height": 0.25,
+        "id": "targetDistanceGraphView",
+        "left": 0,
+        "top": 0,
+        "visible": false,
+        "width": 0.25
+      },
+      {
+        "height": 0.5,
+        "id": "video",
+        "left": 0.5,
+        "top": 0,
+        "visible": false,
+        "width": -1.79
+      },
+      {
+        "height": 0.5,
+        "id": "video2",
+        "left": 0.5,
+        "top": 0.5,
+        "visible": false,
+        "width": 0.5
+      },
+      {
+        "height": -1,
+        "id": "videoCurveEditor",
+        "left": 0.68,
+        "top": 0.38,
+        "visible": false,
+        "width": 0.3
+      },
+      {
+        "height": -0.34,
+        "id": "videoHistogram",
+        "left": 0.68,
+        "top": 0.04,
+        "visible": false,
+        "width": 0.3
+      },
+      {
+        "height": 1,
+        "id": "videoInfo",
+        "left": 0,
+        "top": 0,
+        "visible": true,
+        "width": 1
+      },
+      {
+        "height": -1,
+        "id": "videoLevelsEditor",
+        "left": 0.68,
+        "top": 0.38,
+        "visible": false,
+        "width": 0.3
+      }
+    ]
+  }
+}
