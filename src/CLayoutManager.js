@@ -14,9 +14,12 @@
 import {ViewMan} from "./CViewManager";
 import {setRenderOne} from "./Globals";
 
-export const LAYOUT_DIVIDER_PX = 4;   // divider thickness reserved between adjacent tiles
+// Tiles are edge-to-edge (Blender-style "snapped"): no reserved gap, so a tiled layout has
+// the SAME geometry as the snapped fractional layout it was reconstructed from. The seam is a
+// grab zone straddling the shared edge, not a gap.
+export const LAYOUT_DIVIDER_PX = 0;   // reserved gap between adjacent tiles (0 = touching)
 const MIN_TILE_FRAC = 0.05;           // a tile can't be dragged smaller than this fraction of its split
-const DIVIDER_GRAB_PX = 10;           // interactive grab zone width centred on each seam
+const DIVIDER_GRAB_PX = 8;            // interactive grab zone width centred on each shared edge
 
 class CLayoutManager {
     constructor() {
@@ -34,6 +37,7 @@ class CLayoutManager {
         this.tree = tree || null;
         this._dirty = true;
         this.recompute();
+        this._applyResizeSuppression();
         setRenderOne(true);
     }
 
@@ -42,7 +46,30 @@ class CLayoutManager {
         this._rects.clear();
         this._dividers = [];
         this._syncDividerDOM();   // hides the seam layer
+        this._applyResizeSuppression();
         setRenderOne(true);
+    }
+
+    // When tiled, a leaf view's own edge-resize handles are hidden — the only resize affordance
+    // is the shared seam (which moves BOTH adjacent tiles together). Restored when untiled.
+    _applyResizeSuppression() {
+        const hidden = this._resizeHiddenIds || (this._resizeHiddenIds = new Set());
+        // Restore any view we previously hid that is no longer a tiled leaf.
+        for (const id of [...hidden]) {
+            if (!this.hasLeaf(id)) {
+                const v = ViewMan.get(id, false);
+                if (v && v.setResizeHandlesVisible) v.setResizeHandlesVisible(true);
+                hidden.delete(id);
+            }
+        }
+        // Hide handles for current leaves.
+        for (const id of this.leafViewIds()) {
+            const v = ViewMan.get(id, false);
+            if (v && v.setResizeHandlesVisible) {
+                v.setResizeHandlesVisible(false);
+                hidden.add(id);
+            }
+        }
     }
 
     // Pixel rect for a leaf view in the active tree, or null (not tiled / legacy mode).
@@ -235,26 +262,59 @@ class CLayoutManager {
     }
 
     // --- Reconstruct a tree from the current view rects (Phase 2.6 rect→tree) ---
-    // Tile the currently visible top-level views: read their fractional rects and recover a
-    // split-tree by recursive guillotine cuts. Default layouts (main left | video over look
-    // right) recover cleanly. Returns true if a tree was installed; false if the current
-    // layout isn't guillotine-separable (then nothing changes — legacy mode stays).
-    tileFromViews() {
+
+    // Collect the container-relative fractional rects of views eligible to tile: visible,
+    // top-level (not overlay / relativeTo / docked), and NOT aspect-locked (negative width/
+    // height encoding can't tile). Read straight from the stored fractions so the result
+    // doesn't depend on a render frame having run.
+    _collectTileableRects() {
         const rects = [];
+        let aspectLocked = false;
         ViewMan.iterate((id, v) => {
             if (!v.visible || v.overlayView || v.in.relativeTo || v.dockedSidebar) return;
             if (v.noUIBar && v.constructor && /UI$/.test(v.constructor.name)) return; // HUD instruments
-            const W = v.containerWidth(), H = v.containerHeight();
-            if (!(W > 0 && H > 0)) return;
-            rects.push({
-                viewId: id,
-                left:   (v.leftPx - v.containerLeft()) / W,
-                top:    (v.topPx  - v.containerTop())  / H,
-                width:  v.widthPx  / W,
-                height: v.heightPx / H,
-            });
+            if (v.width < 0 || v.height < 0) { aspectLocked = true; return; }
+            rects.push({viewId: id, left: v.left, top: v.top, width: v.width, height: v.height});
         });
+        return {rects, aspectLocked};
+    }
+
+    // True if the rects form a COMPLETE tiling of the container (cover it, no overlaps) — i.e.
+    // the views are genuinely snapped together, not floating with gaps. Sum-of-areas ≈ 1 and a
+    // full bounding box ⇒ full coverage with no overlap.
+    _isSnappedTiling(rects) {
         if (rects.length < 2) return false;
+        const eps = 0.02;
+        const area = rects.reduce((a, r) => a + r.width * r.height, 0);
+        if (Math.abs(area - 1) > eps) return false;
+        const minL = Math.min(...rects.map(r => r.left));
+        const minT = Math.min(...rects.map(r => r.top));
+        const maxR = Math.max(...rects.map(r => r.left + r.width));
+        const maxB = Math.max(...rects.map(r => r.top + r.height));
+        return Math.abs(minL) < eps && Math.abs(minT) < eps
+            && Math.abs(maxR - 1) < eps && Math.abs(maxB - 1) < eps;
+    }
+
+    // Tile the currently visible top-level views: recover a split-tree by recursive guillotine
+    // cuts. Returns true if a tree was installed; false if the layout isn't guillotine-separable
+    // (then nothing changes — legacy mode stays). Used by the View ▸ Tile Layout toggle.
+    tileFromViews() {
+        const {rects} = this._collectTileableRects();
+        if (rects.length < 2) return false;
+        const tree = buildGuillotineTree(rects);
+        if (!tree) return false;
+        this.setLayout(tree);
+        return true;
+    }
+
+    // Auto-tile on sitch load ONLY when the open views already form a complete snapped grid
+    // (so it never changes a free-floating layout). No-op if a tree is already active or the
+    // layout isn't a clean tiling. Edge-to-edge ⇒ no geometry change, just coupled seams.
+    autoTileIfSnapped() {
+        if (this.tree) return false;
+        const {rects, aspectLocked} = this._collectTileableRects();
+        if (aspectLocked) return false;
+        if (!this._isSnappedTiling(rects)) return false;
         const tree = buildGuillotineTree(rects);
         if (!tree) return false;
         this.setLayout(tree);
@@ -309,11 +369,13 @@ class CLayoutManager {
                     left: `${Math.round(d.x + d.w / 2 - grab / 2)}px`, top: `${Math.round(d.y)}px`,
                     width: `${grab}px`, height: `${Math.round(d.h)}px`, cursor: "col-resize",
                 });
+                Object.assign(el._line.style, {width: "1px", height: "100%"});
             } else {
                 Object.assign(el.style, {
                     left: `${Math.round(d.x)}px`, top: `${Math.round(d.y + d.h / 2 - grab / 2)}px`,
                     width: `${Math.round(d.w)}px`, height: `${grab}px`, cursor: "row-resize",
                 });
+                Object.assign(el._line.style, {width: "100%", height: "1px"});
             }
         }
     }
@@ -323,7 +385,23 @@ class CLayoutManager {
         el.className = "sitrec-layout-divider";
         Object.assign(el.style, {
             position: "absolute", pointerEvents: "auto", background: "transparent",
-            zIndex: "1", touchAction: "none",
+            zIndex: "1", touchAction: "none", display: "flex",
+            alignItems: "center", justifyContent: "center",
+        });
+        // A thin line marks the shared edge: faint normally, accent-highlighted on hover.
+        const line = document.createElement("div");
+        line.className = "sitrec-layout-divider-line";
+        Object.assign(line.style, {
+            background: "var(--sitrec-border-area, rgba(255,255,255,0.18))",
+            transition: "background 0.1s",
+        });
+        el.appendChild(line);
+        el._line = line;
+        el.addEventListener("pointerenter", () => {
+            line.style.background = "var(--sitrec-accent, #2cc9ff)";
+        });
+        el.addEventListener("pointerleave", () => {
+            if (!el._dragging) line.style.background = "var(--sitrec-border-area, rgba(255,255,255,0.18))";
         });
         el.addEventListener("pointerdown", (e) => this._onDividerPointerDown(e, index));
         return el;
@@ -334,6 +412,8 @@ class CLayoutManager {
         if (!divider) return;
         e.preventDefault();
         e.stopPropagation();
+        const el = this._dividerEls[index];
+        if (el) { el._dragging = true; if (el._line) el._line.style.background = "var(--sitrec-accent, #2cc9ff)"; }
         const node = divider.node;
         const dir = divider.dir;
         const usablePx = divider.usablePx;
@@ -358,6 +438,7 @@ class CLayoutManager {
             setRenderOne(true);
         };
         const onUp = () => {
+            if (el) { el._dragging = false; if (el._line) el._line.style.background = "var(--sitrec-border-area, rgba(255,255,255,0.18))"; }
             document.removeEventListener("pointermove", onMove);
             document.removeEventListener("pointerup", onUp);
             document.removeEventListener("pointercancel", onUp);

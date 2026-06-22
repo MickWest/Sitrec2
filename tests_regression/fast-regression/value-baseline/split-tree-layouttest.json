@@ -7,42 +7,42 @@
     "splitTree": {
       "afterHorizontal": {
         "lookView": {
-          "height": 0.351,
-          "left": 0.605,
-          "top": 0.649,
-          "width": 0.395
+          "height": 0.353,
+          "left": 0.604,
+          "top": 0.647,
+          "width": 0.396
         },
         "mainView": {
           "height": 1,
           "left": 0,
           "top": 0,
-          "width": 0.603
+          "width": 0.604
         },
         "video": {
-          "height": 0.645,
-          "left": 0.605,
+          "height": 0.647,
+          "left": 0.604,
           "top": 0,
-          "width": 0.395
+          "width": 0.396
         }
       },
       "afterVertical": {
         "lookView": {
-          "height": 0.498,
-          "left": 0.605,
-          "top": 0.502,
-          "width": 0.395
+          "height": 0.5,
+          "left": 0.604,
+          "top": 0.5,
+          "width": 0.396
         },
         "mainView": {
           "height": 1,
           "left": 0,
           "top": 0,
-          "width": 0.603
+          "width": 0.604
         },
         "video": {
-          "height": 0.498,
-          "left": 0.605,
+          "height": 0.5,
+          "left": 0.604,
           "top": 0,
-          "width": 0.395
+          "width": 0.396
         }
       },
       "innerSizes": [
@@ -61,22 +61,22 @@
       ],
       "tiled": {
         "lookView": {
-          "height": 0.498,
-          "left": 0.501,
-          "top": 0.502,
-          "width": 0.499
+          "height": 0.5,
+          "left": 0.5,
+          "top": 0.5,
+          "width": 0.5
         },
         "mainView": {
           "height": 1,
           "left": 0,
           "top": 0,
-          "width": 0.499
+          "width": 0.5
         },
         "video": {
-          "height": 0.498,
-          "left": 0.501,
+          "height": 0.5,
+          "left": 0.5,
           "top": 0,
-          "width": 0.499
+          "width": 0.5
         }
       }
     }

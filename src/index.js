@@ -2135,6 +2135,10 @@ function legacySetup() {
 async function setupFunctions() {
     resetPar();
 
+    // Each sitch starts in legacy (free-floating) layout mode; auto-tiling (if any) is
+    // re-evaluated at the end of setup once this sitch's views + positions are established.
+    LayoutMan.clearLayout();
+
     const title = urlParams.get("regression") ? "Sitrec Regression Test" : process.env.BUILD_VERSION_STRING;
     Globals.menuBar.infoGUI.title(title);
 
@@ -2394,6 +2398,15 @@ async function setupFunctions() {
         ["cameraLocation", "cameraHeading", "cameraFOV", "cameraTweaks"].forEach(showFolderIfPopulated);
     updateCameraFolders();
     setTimeout(updateCameraFolders, 0);
+
+    // Auto-couple snapped views (UI redesign Phase 2): if the open top-level views already
+    // form a complete tiled grid, reconstruct a split-tree so their shared edges become single
+    // handles that resize both sides together. No-op on a free-floating layout, and skipped in
+    // regression mode so the legacy-geometry baselines stay deterministic. Edge-to-edge ⇒ no
+    // geometry change, so this never alters how a snapped sitch renders.
+    if (!Globals.regression) {
+        LayoutMan.autoTileIfSnapped();
+    }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 }
