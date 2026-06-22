@@ -29,6 +29,11 @@ class CNodeViewDebug extends CNodeViewText {
      * Override to add a clear button to the tab instead of floating button
      */
     addTabButtons() {
+        // With a UIBar, the "Clear" action lives in the title menu (no legacy tab).
+        if (this.uiBar && this.uiBar.titleMenu) {
+            this.uiBar.titleMenu.add({clear: () => this.clearOutput()}, 'clear').name('Clear');
+            return;
+        }
         // Add clear button to tab (instead of floating button)
         const clearButton = document.createElement('span');
         clearButton.textContent = 'Clear';

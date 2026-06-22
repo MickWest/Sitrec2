@@ -67,7 +67,18 @@ class CNodeViewChat extends CNodeViewText {
      * Override to add "New Chat" button instead of "Clear" button
      */
     addTabButtons() {
-        // Add a "New Chat" button to the top right corner of the chat log
+        // With the UIBar: New Chat as a "+" icon (next to the "Assistant" title) plus
+        // "New Chat" / "Clear" in the Assistant menu. The floating button is the fallback.
+        if (this.uiBar) {
+            this.uiBar.addIcon('+', () => this.newChat(), 'New chat', 'new-chat', true);
+            const m = this.uiBar.titleMenu;
+            if (m) {
+                m.add({newChat: () => this.newChat()}, 'newChat').name('New Chat');
+                m.add({clear: () => this.clearOutput()}, 'clear').name('Clear');
+            }
+            return;
+        }
+        // Fallback: floating "New Chat" button (no UIBar).
         const newChatButton = document.createElement('button');
         newChatButton.textContent = 'New Chat';
         newChatButton.style.position = 'absolute';
@@ -81,15 +92,20 @@ class CNodeViewChat extends CNodeViewText {
         newChatButton.style.color = 'var(--cnodeview-tab-color)';
         newChatButton.style.cursor = 'pointer';
         newChatButton.style.boxShadow = '0 1px 4px rgba(0,0,0,0.08)';
-        newChatButton.addEventListener('click', () => {
-            this.clearOutput();
-            this.chatHistory = []; // Reset chat history
-            this.addSystemMessage("New chat started.\n");
-            this.inputBox.value = ''; // Reset the input box
-            this.inputBox.focus(); // Focus the input box
-        });
+        newChatButton.addEventListener('click', () => this.newChat());
         this.div.appendChild(newChatButton);
         this.newChatButton = newChatButton;
+    }
+
+    // Start a new chat (clear the log + history, reset the input).
+    newChat() {
+        this.clearOutput();
+        this.chatHistory = [];
+        this.addSystemMessage("New chat started.\n");
+        if (this.inputBox) {
+            this.inputBox.value = '';
+            this.inputBox.focus();
+        }
     }
 
     /**

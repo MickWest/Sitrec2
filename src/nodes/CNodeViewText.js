@@ -35,13 +35,9 @@ const THEMES = {
  */
 export class CNodeViewText extends CNodeView {
     constructor(v) {
-        // Store draggable setting for later
-        const wasDraggable = v.draggable;
-        // Temporarily disable draggable during super() call
-        v.draggable = false;
-        v.dockable = v.dockable ?? wasDraggable;
+        v.dockable = v.dockable ?? v.draggable;
         v.dockedTextScale = v.dockedTextScale ?? 0.8;
-        
+
         super(v);
         this.alwaysOnTop = true;
         this.div.id = (v.idPrefix || 'text-view') + '-' + v.id;
@@ -49,7 +45,7 @@ export class CNodeViewText extends CNodeView {
 
         // Default theme
         this.theme = v.theme || 'dark';
-        
+
         // Configure whether this view should hide when files are dropped
         // Default is true for backward compatibility
         this.hideOnFileDrop = v.hideOnFileDrop !== undefined ? v.hideOnFileDrop : true;
@@ -60,12 +56,13 @@ export class CNodeViewText extends CNodeView {
         // Configure manual scrolling mode (default false = auto-scroll to bottom)
         this.manualScroll = v.manualScroll || false;
 
-        // Create the tab with title
-        this.createTab(v.title || 'Text View');
-
-        // Set up dragging if requested
-        if (wasDraggable) {
-            this.setupDragging();
+        // The UIBar header (created by CNodeView) provides the title, ✕ close and the drag
+        // handle, so the legacy in-view .cnodeview-tab is redundant — skip it (and its
+        // tab-drag) when a UIBar is present. CNodeView already wired the header-drag/Q-drag
+        // for a draggable view. Fall back to the tab only when there's no UIBar.
+        if (!this.uiBar) {
+            this.createTab(v.title || 'Text View');
+            if (v.draggable) this.setupDragging();
         }
 
         // Create the main output area
@@ -139,7 +136,16 @@ export class CNodeViewText extends CNodeView {
     createOutputArea() {
         this.outputArea = document.createElement('div');
         this.outputArea.style.overflowY = 'auto';
-        this.outputArea.style.height = this.getOutputAreaHeight();
+        if (this.uiBar) {
+            // No in-flow tab — fill below the header overlay. (DOM content can inset below the
+            // bar; only canvases must render full-size.)
+            Object.assign(this.outputArea.style, {
+                position: 'absolute', top: 'var(--sitrec-header-h, 26px)',
+                left: '0', right: '0', bottom: '0', boxSizing: 'border-box',
+            });
+        } else {
+            this.outputArea.style.height = this.getOutputAreaHeight();
+        }
         this.outputArea.style.padding = '8px';
         this.outputArea.style.fontFamily = 'monospace';
         this.outputArea.style.fontSize = '13px';
@@ -162,6 +168,11 @@ export class CNodeViewText extends CNodeView {
      * Add additional buttons to the tab (can be overridden by subclasses)
      */
     addTabButtons() {
+        // With a UIBar, the "Clear" action lives in the title menu instead of a floating button.
+        if (this.uiBar && this.uiBar.titleMenu) {
+            this.uiBar.titleMenu.add({clear: () => this.clearOutput()}, 'clear').name('Clear');
+            return;
+        }
         // Add a "Clear" button to the top right corner of the output area
         const clearButton = document.createElement('button');
         clearButton.textContent = 'Clear';
@@ -187,12 +198,14 @@ export class CNodeViewText extends CNodeView {
      * Set up common event listeners
      */
     setupEventListeners() {
-        // Double click events on title will close the view
-        this.tab.addEventListener('dblclick', (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            this.hide();
-        });
+        // Double click events on title will close the view (legacy tab only; the UIBar has ✕)
+        if (this.tab) {
+            this.tab.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                this.hide();
+            });
+        }
 
         // Global capture of the Escape key to hide
         document.addEventListener('keydown', (e) => {
@@ -229,9 +242,11 @@ export class CNodeViewText extends CNodeView {
 
         // Apply base colors using CSS variables
         this.div.style.backgroundColor = `var(--cnodeview-bg)`;
-        this.tab.style.backgroundColor = `var(--cnodeview-tab-bg)`;
-        this.tab.style.color = `var(--cnodeview-tab-color)`;
-        this.tab.style.borderBottom = `1px solid var(--cnodeview-tab-border)`;
+        if (this.tab) {
+            this.tab.style.backgroundColor = `var(--cnodeview-tab-bg)`;
+            this.tab.style.color = `var(--cnodeview-tab-color)`;
+            this.tab.style.borderBottom = `1px solid var(--cnodeview-tab-border)`;
+        }
         this.outputArea.style.backgroundColor = `var(--cnodeview-bg)`;
         this.outputArea.style.color = `var(--cnodeview-text-color)`;
     }

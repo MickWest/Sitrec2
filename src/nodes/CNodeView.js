@@ -271,8 +271,8 @@ class CNodeView extends CNode {
     // After this view moves (Q-drag or header-drag), refresh dependents: overlay children
     // inherit the new size, relativeTo children re-layout. Shared by both drag wirings.
     _propagateDragToDependents() {
-        // Don't let the view be dragged above the menu bar — snap it under instead.
-        clampBelowMenuBar(this.div);
+        // Don't let the view be dragged above the menu bar — snap it flush under (pad 0).
+        clampBelowMenuBar(this.div, 0);
         this.setFromDiv(this.div);
         ViewMan.iterate((id, v) => {
             if (v.overlayView === this) v.inheritSize();
@@ -1085,9 +1085,9 @@ class CNodeView extends CNode {
             return;
         }
 
-        // Don't allow the view above the menu bar — snap it back under (instead of the old
+        // Don't allow the view above the menu bar — snap it flush under (instead of the old
         // "drag off the top to close" behaviour, which the header ✕ button now covers).
-        clampBelowMenuBar(this.div);
+        clampBelowMenuBar(this.div, 0);
         this.setFromDiv(this.div);
 
         if (!this.dockable) return;

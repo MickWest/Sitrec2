@@ -117,7 +117,8 @@ export class CUIBar {
 
     // action: optional stable identifier set as data-uibar-action (for tests / per-view
     // control wiring) so behaviour doesn't depend on the user-facing tooltip string.
-    addIcon(html, onClick, tooltip, action) {
+    // left: place the icon in the LEFT section (next to the title) instead of the right.
+    addIcon(html, onClick, tooltip, action, left = false) {
         const btn = document.createElement('button');
         btn.className = 'view-uibar-icon';
         btn.type = 'button';
@@ -133,7 +134,7 @@ export class CUIBar {
         btn.addEventListener('pointerleave', () => { btn.style.opacity = btn.dataset.uibarPinned === 'true' ? '1' : '0.7'; });
         btn.addEventListener('pointerdown', (e) => e.stopPropagation());
         btn.addEventListener('click', (e) => { e.stopPropagation(); if (onClick) onClick(e); });
-        this.right.appendChild(btn);   // rightmost, in call order
+        (left ? this.left : this.right).appendChild(btn);
         this.icons.push(btn);
         return btn;
     }
