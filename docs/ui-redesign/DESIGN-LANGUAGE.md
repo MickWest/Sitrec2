@@ -89,7 +89,7 @@ Today **four** font conventions coexist (lil-gui sans 11px, body Monospace 20px,
 - **Pinned by default** (most views) so the bar is shown; opt out with `pinHeader: false`.
 - **Hover-reveal (when not pinned).** Fades in only while the pointer is over the **bar strip** (not the whole view) and **only with no mouse button held** — so it won't appear while interacting with content or while a drag passes over the strip. Leaving the strip hides it; a header-drag in progress (button held, in strip) is not hidden.
 - **Mobile (later).** No true touch hover: default the bar **pinned** on coarse pointers (or a tap-toggle/edge affordance), and size icons for touch (≥32px).
-- **Non-serialized chrome.** Header visibility / pin state is runtime UI, NOT in `toSerialCNodeView`. Saved + old sitches are unaffected ("hideable, so saved sitches won't have it").
+- **Pin state IS serialized** (`headerPinned` in `toSerialCNodeView`). Default **OFF** for the big content views (Main/Look/Video — a persistent bar is intrusive there), **ON** for other panels (editors/graphs/assistant). Old sitches (no `headerPinned` field) keep that per-view default; new sitches restore the saved state. The transient hover-shown state is NOT serialized.
 - This design is why it's safe: it's purely additive overlay chrome — it can't break existing sitches.
 - **In-viewport controls** (nav gizmo, zoom/pan, fullscreen — Phase 4) live in this same hover-revealed overlay layer (Blender floats them top-right), not in the header strip.
 

@@ -34,6 +34,17 @@ const FRIENDLY_VIEW_NAMES = {
     mainView: "Main", lookView: "Look", video: "Video", video2: "Video 2",
     chatView: "Assistant",
 };
+
+// The big content views default to an UNpinned (hover-reveal) header — a persistent bar is
+// intrusive there. Other views (editors/panels) default pinned. The state is serialized;
+// old sitches (no serialized value) assume off (see modDeserialize).
+const HEADER_DEFAULT_OFF = new Set(["mainView", "lookView", "video", "video2"]);
+
+// A header/Q drag must move the pointer past MOVE_THRESHOLD before it moves the view at all
+// (so a click with tiny jitter doesn't nudge it), and past the much larger DOCK_THRESHOLD
+// before a drag can dock the view to a sidebar (so a click near a screen edge can't dock it).
+const HEADER_DRAG_MOVE_THRESHOLD = 5;
+const HEADER_DRAG_DOCK_THRESHOLD = 60;
 function friendlyViewName(v, id) {
     if (FRIENDLY_VIEW_NAMES[id]) return FRIENDLY_VIEW_NAMES[id];
     if (v && v.menuName) return v.menuName;
@@ -206,8 +217,7 @@ class CNodeView extends CNode {
                         } else if (view.shiftDrag && !event.shiftKey) {
                             return false;
                         }
-                        view._propagateDragToDependents();
-                        return true;
+                        return view._applyDragMove(data);
                     },
                     onDragEnd: (event, data) => {
                         data.viewInstance?.onViewDragEnd?.(event, data);
@@ -280,6 +290,42 @@ class CNodeView extends CNode {
         });
     }
 
+    // Apply a drag move only once the pointer has moved past a small threshold, so a click
+    // (no / tiny jitter) doesn't nudge the view. Records the displacement so onViewDragEnd
+    // can gate sidebar docking behind a much larger threshold. Returns false (→ makeDraggable
+    // reverts to the start position) while under threshold.
+    _applyDragMove(data) {
+        const moved = Math.hypot(data.dx || 0, data.dy || 0);
+        this._dragDisplacement = moved;
+        if (moved < HEADER_DRAG_MOVE_THRESHOLD) return false;
+        this._propagateDragToDependents();
+        return true;
+    }
+
+    // Keep this view's header bar reachable: at least partly visible horizontally and fully
+    // visible vertically (below the menu bar, above the bottom of the screen). Used after a
+    // drag-end and after undocking from a sidebar.
+    _ensureUIBarVisible() {
+        if (!this.uiBar || !this.div) return;
+        const barH = this.uiBar.bar.offsetHeight || 26;
+        const mb = document.getElementById("menuBarBlackBar");
+        const menuBottom = mb ? mb.getBoundingClientRect().bottom : 0;
+        const screenW = window.innerWidth, screenH = window.innerHeight;
+        const minVisible = 80;   // px of the bar that must stay on screen horizontally
+        const rect = this.div.getBoundingClientRect();
+        let dx = 0, dy = 0;
+        if (rect.left > screenW - minVisible) dx = (screenW - minVisible) - rect.left;
+        else if (rect.right < minVisible) dx = minVisible - rect.right;
+        if (rect.top < menuBottom) dy = menuBottom - rect.top;
+        else if (rect.top + barH > screenH) dy = screenH - (rect.top + barH);
+        if (dx === 0 && dy === 0) return;
+        const left = (parseFloat(this.div.style.left) || this.leftPx) + dx;
+        const top = (parseFloat(this.div.style.top) || this.topPx) + dy;
+        this.div.style.left = `${Math.round(left)}px`;
+        this.div.style.top = `${Math.round(top)}px`;
+        this.setFromDiv(this.div);
+    }
+
     // --- Phase 3: per-view header / UI bar (Blender-style) ---
     // The header is a CUIBar: an OVERLAY strip above the canvas (it never insets the
     // canvas, so showing/hiding changes NO rendering — the viewport renders full-size
@@ -315,8 +361,7 @@ class CNodeView extends CNode {
                     const view = data.viewInstance;
                     if (!view.draggable) return false;
                     if (view.dockedSidebar) return true;
-                    view._propagateDragToDependents();
-                    return true;
+                    return view._applyDragMove(data);
                 },
                 onDragEnd: (event, data) => {
                     data.viewInstance?.onViewDragEnd?.(event, data);
@@ -326,8 +371,9 @@ class CNodeView extends CNode {
 
         this.headerPinned = false;
         this._headerHovering = false;
-        // Default: pinned (always shown) for most views; opt out with `pinHeader: false`.
-        this.setHeaderPinned(v.pinHeader !== false);
+        // Default pinned for most views; OFF for the big content views (Main/Look/Video).
+        // A saved sitch overrides this in modDeserialize; old sitches assume off.
+        this.setHeaderPinned(v.pinHeader ?? !HEADER_DEFAULT_OFF.has(this.id));
 
         // Hover-reveal (only when NOT pinned): the bar fades in while the pointer is over the
         // BAR STRIP itself — not the whole view — AND no mouse button is held. So it won't
@@ -395,7 +441,7 @@ class CNodeView extends CNode {
     //     }
     // }
 
-    toSerialCNodeView = ["left","top","width","height","visible","doubled","preDoubledLeft","preDoubledTop","preDoubledWidth","preDoubledHeight"];
+    toSerialCNodeView = ["left","top","width","height","visible","doubled","preDoubledLeft","preDoubledTop","preDoubledWidth","preDoubledHeight","headerPinned"];
 
 
 
@@ -432,6 +478,14 @@ class CNodeView extends CNode {
         }
         this.visible = !visible; // ensure we toggle the visibility
         this.setVisible(visible);
+
+        // Header pin state: a NEW sitch carries `headerPinned` (already applied by
+        // simpleDeserialize above); an OLD sitch (no field) keeps the per-view DEFAULT —
+        // Main/Look/Video off, other panels on. Apply whatever's now in this.headerPinned.
+        if (this.uiBar) {
+            this.setHeaderPinned(this.headerPinned);
+        }
+
         // Don't restore fullscreen here — that's deferred to
         // restoreFullscreenFromMods() which runs after ALL mods are applied,
         // so it can detect corrupted saves with multiple doubled views.
@@ -1076,6 +1130,10 @@ class CNodeView extends CNode {
     onViewDragEnd(event) {
         if (!this.visible) return;
 
+        // How far this drag actually moved (0 for a click). Reset for next time.
+        const moved = this._dragDisplacement || 0;
+        this._dragDisplacement = 0;
+
         if (this.dockedSidebar) {
             if (!this.isEventInDockSidebar(event, this.dockedSidebar)) {
                 this.undockFromSidebar(event);
@@ -1085,12 +1143,14 @@ class CNodeView extends CNode {
             return;
         }
 
-        // Don't allow the view above the menu bar — snap it flush under (instead of the old
-        // "drag off the top to close" behaviour, which the header ✕ button now covers).
-        clampBelowMenuBar(this.div, 0);
         this.setFromDiv(this.div);
+        // Keep the header bar on screen (below the menu bar, partly visible L/R).
+        this._ensureUIBarVisible();
 
         if (!this.dockable) return;
+
+        // Docking requires a DELIBERATE drag, not a click that happens to land near an edge.
+        if (moved < HEADER_DRAG_DOCK_THRESHOLD) return;
 
         const side = this.dockSideForEvent(event);
         if (side) {
@@ -1166,6 +1226,10 @@ class CNodeView extends CNode {
             height: `${this.heightPx}px`,
             display: this.visible ? "block" : "none",
         });
+
+        // Never restore to a state where the header bar is off the top (or off-screen) —
+        // the saved floating rect (or pointer drop) could place it under the menu bar.
+        this._ensureUIBarVisible();
 
         this.changedSize();
         this.deferFloatingPixelSizeRestore(widthPx, heightPx);
