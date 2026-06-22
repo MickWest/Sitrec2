@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "scenarioId": "split-tree-layouttest",
+  "sitch": "Layout Test",
+  "frame": 10,
+  "captures": {
+    "splitTree": {
+      "afterHorizontal": {
+        "lookView": {
+          "height": 0.351,
+          "left": 0.605,
+          "top": 0.649,
+          "width": 0.395
+        },
+        "mainView": {
+          "height": 1,
+          "left": 0,
+          "top": 0,
+          "width": 0.603
+        },
+        "video": {
+          "height": 0.645,
+          "left": 0.605,
+          "top": 0,
+          "width": 0.395
+        }
+      },
+      "afterVertical": {
+        "lookView": {
+          "height": 0.498,
+          "left": 0.605,
+          "top": 0.502,
+          "width": 0.395
+        },
+        "mainView": {
+          "height": 1,
+          "left": 0,
+          "top": 0,
+          "width": 0.603
+        },
+        "video": {
+          "height": 0.498,
+          "left": 0.605,
+          "top": 0,
+          "width": 0.395
+        }
+      },
+      "innerSizes": [
+        0.647,
+        0.353
+      ],
+      "leaves": [
+        "mainView",
+        "video",
+        "lookView"
+      ],
+      "legacyRestored": true,
+      "rootSizes": [
+        0.604,
+        0.396
+      ],
+      "tiled": {
+        "lookView": {
+          "height": 0.498,
+          "left": 0.501,
+          "top": 0.502,
+          "width": 0.499
+        },
+        "mainView": {
+          "height": 1,
+          "left": 0,
+          "top": 0,
+          "width": 0.499
+        },
+        "video": {
+          "height": 0.498,
+          "left": 0.501,
+          "top": 0,
+          "width": 0.499
+        }
+      }
+    }
+  }
+}

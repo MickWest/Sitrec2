@@ -8,6 +8,7 @@ import {CNode} from './CNode'
 import {Globals, guiShowHideGraphs, guiShowHideViews, NodeMan, setRenderOne, UndoManager} from "../Globals";
 import {assert} from "../assert";
 import {ViewMan} from "../CViewManager";
+import {LayoutMan} from "../CLayoutManager";
 import {makeDraggable, makeResizable, removeDraggable, removeResizable, VIEW_EDIT_KEY, clampBelowMenuBar} from "../DragResizeUtils";
 import {CUIBar} from "../CUIBar";
 import {isKeyHeld} from "../KeyBoardHandler";
@@ -703,8 +704,49 @@ class CNodeView extends CNode {
     }
 
     // Updates the Pixel and Div values from the fractional and window values
+    // If this view is a leaf in the active split-tree layout, place it at the tile rect and
+    // mirror that rect back into the legacy left/top/width/height fractions (so serialization
+    // and any non-tree code path stay consistent, and a later detach has a sane floating rect).
+    // Returns true if it handled placement (caller skips the legacy fractional path).
+    applyLayoutRect() {
+        if (this.in.relativeTo || this.overlayView) return false;
+        const rect = LayoutMan.rectFor(this.id);
+        if (!rect) return false;
+
+        const oldWidth = this.widthPx, oldHeight = this.heightPx;
+        this.leftPx = rect.leftPx;
+        this.topPx = rect.topPx;
+        this.widthPx = rect.widthPx;
+        this.heightPx = rect.heightPx;
+
+        const W = this.containerWidth(), H = this.containerHeight();
+        if (W > 0 && H > 0) {
+            this.left = (this.leftPx - this.containerLeft()) / W;
+            this.top = (this.topPx - this.containerTop()) / H;
+            this.width = this.widthPx / W;
+            this.height = this.heightPx / H;
+        }
+
+        if (this.div) {
+            this.div.style.top = this.topPx + 'px';
+            this.div.style.left = this.leftPx + 'px';
+            this.div.style.width = this.widthPx + 'px';
+            this.div.style.height = this.heightPx + 'px';
+        }
+
+        if (oldWidth !== this.widthPx || oldHeight !== this.heightPx) {
+            this.changedSize();
+        }
+        return true;
+    }
+
     updateWH() {
         if (this.updateDockedWH?.()) return;
+
+        // Split-tree tiling (optional, see CLayoutManager). When this view is a leaf in the
+        // active layout tree it takes its rect from the tree instead of the legacy fractional
+        // path. Floating/detached views, overlays, and relativeTo children are never leaves.
+        if (this.applyLayoutRect()) return;
 
         this.leftPx = Math.floor(this.containerLeft() + this.containerWidth()  * this.left);
         this.topPx  = Math.floor(this.containerTop()  + this.containerHeight() * this.top);

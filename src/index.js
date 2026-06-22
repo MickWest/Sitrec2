@@ -115,6 +115,7 @@ import {CNodeFactory} from "./nodes/CNodeFactory";
 import {extraCSS} from "./extra.css";
 import {_TrackManager} from "./TrackManager";
 import {ViewMan} from "./CViewManager";
+import {LayoutMan} from "./CLayoutManager";
 import {glareSprite, targetSphere} from "./JetStuffVars";
 import {CCustomManager} from "./CustomSupport";
 import {EventManager} from "./CEventManager";
@@ -1538,6 +1539,7 @@ async function initializeOnce() {
         window.SitchMan = SitchMan;
         window.TrackManager = TrackManager;
         window.ViewMan = ViewMan;
+        window.LayoutMan = LayoutMan;
         window.CustomManager = CustomManager;
         window.EventManager = EventManager;
         window.NodeFactory = NodeFactory;
