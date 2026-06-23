@@ -319,9 +319,9 @@ pre-configured, but not frozen.
 > Kubernetes (K8s) cluster. If you're running Sitrec on a single machine with Docker or
 > Podman, use the `.env` file (see [Configuration](#configuration-optional)) and skip this.
 
-**Is this you?** Kubernetes and Docker aren't alternatives — Kubernetes *runs* the same
-Sitrec image, it's just a different thing in charge of running it. This section applies to
-you **only if all of these are true**:
+**Is this you?** Kubernetes is one way to run the Sitrec container — an alternative to
+`docker compose` on a single machine, not a replacement for the image itself (Kubernetes
+runs that same image). This section applies to you **only if all of these are true**:
 
 - You deploy with `kubectl` (not `docker run` or `docker compose`).
 - You have a **cluster** — multiple machines, or a managed service like EKS, GKE, AKS, or
