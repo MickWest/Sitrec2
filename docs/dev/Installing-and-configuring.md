@@ -313,6 +313,161 @@ pre-configured, but not frozen.
 > only push baked images to a **private** registry you trust — or use the
 > secrets-out-of-the-image pattern above.
 
+### Running on Kubernetes (Advanced)
+
+> **Most people don't need this.** This section is for I.T. staff deploying Sitrec on a
+> Kubernetes (K8s) cluster. If you're running Sitrec on a single machine with Docker or
+> Podman, use the `.env` file (see [Configuration](#configuration-optional)) and skip this.
+
+**Is this you?** Kubernetes and Docker aren't alternatives — Kubernetes *runs* the same
+Sitrec image, it's just a different thing in charge of running it. This section applies to
+you **only if all of these are true**:
+
+- You deploy with `kubectl` (not `docker run` or `docker compose`).
+- You have a **cluster** — multiple machines, or a managed service like EKS, GKE, AKS, or
+  OpenShift — rather than a single Docker/Podman host.
+- Your S3 credentials are (or will be) a Kubernetes **Secret**, not a `.env` file.
+
+If any of those is "no," you're running Sitrec under plain Docker or Podman — use the
+[Configuration](#configuration-optional) `.env` file instead and skip this section. The
+Sitrec image and how it reads settings are identical either way; only *how the environment
+variables are supplied* differs.
+
+Sitrec reads its settings from **environment variables** at container startup — the same
+ones you'd normally put in a `.env` file. Kubernetes doesn't use `.env` files; instead you
+supply those environment variables from the Deployment, and supply **secrets** (like S3
+credentials) from a Kubernetes **Secret**. The container's entrypoint reads them all the
+same way, so nothing inside Sitrec changes.
+
+The recommended split is the same two-layer pattern as everywhere else:
+
+- **Non-secret settings** (`SAVE_TO_S3`, `S3_BUCKET`, `S3_REGION`, banners, map tokens):
+  bake them into a pre-configured image (see [Baking](#baking-a-pre-configured-image-advanced)
+  above) **or** list them as plain `env:` entries in the Deployment.
+- **Secrets** (`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, API keys): keep them in a
+  Kubernetes Secret and inject them at run time. They never go in the image.
+
+#### Step 1 — Create the Secret with your S3 credentials
+
+A Secret is an object stored **in the cluster**, not a file on a server. Create it
+directly so the credential values never sit in a YAML file you might commit to git:
+
+```bash
+kubectl create secret generic sitrec-s3 \
+  --from-literal=S3_ACCESS_KEY_ID=AKIA... \
+  --from-literal=S3_SECRET_ACCESS_KEY=...
+```
+
+> The Secret must live in the **same namespace** as the Deployment that uses it. Add
+> `-n your-namespace` to the command (and to the Deployment) if you're not using `default`.
+
+#### Step 2 — Reference the Secret from your Deployment
+
+There are two ways to wire the Secret into the container, depending on whether the keys in
+your Secret are **named exactly as Sitrec expects** or not.
+
+**Method A — keys named exactly as Sitrec expects (simplest).** If the Secret's keys are
+already `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` (as in Step 1 above), use `envFrom`
+to inject *every* key in the Secret as an environment variable in one line:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sitrec
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: sitrec }
+  template:
+    metadata:
+      labels: { app: sitrec }
+    spec:
+      containers:
+        - name: sitrec
+          image: registry.example.com/sitrec:configured   # your baked image, or ghcr.io/mickwest/sitrec2:latest
+          ports:
+            - containerPort: 8080
+          env:                          # non-secret settings (omit any you baked into the image)
+            - { name: SAVE_TO_S3, value: "true" }
+            - { name: S3_BUCKET,  value: "your-bucket" }
+            - { name: S3_REGION,  value: "us-west-2" }
+          envFrom:
+            - secretRef:
+                name: sitrec-s3         # injects S3_ACCESS_KEY_ID + S3_SECRET_ACCESS_KEY
+```
+
+**Method B — Secret keys have different names.** If you already have an S3 Secret with its
+own naming (e.g. an existing `aws-creds` Secret with keys `aws_access_key_id` /
+`aws_secret_access_key`), map each one to the variable name Sitrec expects with
+`secretKeyRef`:
+
+```yaml
+          env:                          # non-secret settings as above, plus:
+            - { name: SAVE_TO_S3, value: "true" }
+            - { name: S3_BUCKET,  value: "your-bucket" }
+            - { name: S3_REGION,  value: "us-west-2" }
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-creds            # the existing Secret
+                  key: aws_access_key_id     # its key name
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-creds
+                  key: aws_secret_access_key
+```
+
+The left side (`name:`) is always the Sitrec variable; the right side (`key:`) is whatever
+your Secret happens to call it. Use Method B whenever you can't (or don't want to) rename
+the keys in an existing Secret.
+
+Apply the Deployment:
+
+```bash
+kubectl apply -f sitrec-deployment.yaml
+```
+
+Either way, by the time Sitrec's entrypoint runs, `S3_ACCESS_KEY_ID` and the rest are
+ordinary environment variables in the container — Sitrec assembles them into its S3
+configuration automatically. No `config.php` editing, no secrets in the image.
+
+> The Deployment YAML contains **no secret values** — only the image name and the Secret's
+> *name*. That makes it safe to keep in git. The credentials live only in the cluster
+> (in the `sitrec-s3` / `aws-creds` Secret).
+
+#### Step 3 — Test that it worked
+
+```bash
+# 1. Is the pod running?
+kubectl get pods -l app=sitrec
+
+# 2. Did the credentials reach the container? This file should list all five S3 lines
+#    between a "<?php /*;" header and a "*/" footer.
+kubectl exec deploy/sitrec -- cat /var/www/html/shared.env.php
+
+# 3. Quick functional check — confirm Sitrec is serving:
+kubectl port-forward deploy/sitrec 8080:8080
+#    then open http://localhost:8080 in a browser and try saving a sitch ("Save" menu).
+#    With SAVE_TO_S3=true and valid keys, the file is written to your S3 bucket.
+```
+
+If `S3_ACCESS_KEY_ID` is **missing** from `shared.env.php`, the most common causes are:
+the Secret name is misspelled, the Secret is in a different namespace than the pod, or
+(Method B) the `key:` name doesn't match a key that actually exists in the Secret. Check
+`kubectl describe pod -l app=sitrec` — it will report a Secret it couldn't find.
+
+#### Rotating credentials
+
+Environment variables are read **once, at container startup**, so updating the Secret does
+not affect already-running pods. After changing the Secret, restart the Deployment to pick
+up the new values (the image and Deployment YAML stay untouched):
+
+```bash
+kubectl rollout restart deployment/sitrec
+```
+
 ### Using Podman Instead of Docker
 
 [Podman](https://podman.io/) is a drop-in Docker alternative commonly used on systems where Docker is unavailable (e.g. secure environments, RHEL, Fedora). Sitrec's install script and compose file are compatible with both. See [Installing Podman](#installing-podman-optional) above for setup instructions.
