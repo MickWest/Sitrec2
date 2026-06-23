@@ -20,6 +20,10 @@ import {setRenderOne} from "./Globals";
 export const LAYOUT_DIVIDER_PX = 0;   // reserved gap between adjacent tiles (0 = touching)
 const MIN_TILE_FRAC = 0.05;           // a tile can't be dragged smaller than this fraction of its split
 const DIVIDER_GRAB_PX = 8;            // interactive grab zone width centred on each shared edge
+// A floating view only re-docks (splits a tile) when the cursor is within this fraction of a
+// tile edge, IN the direction of that edge. Dropping anywhere in the central region leaves the
+// view free-floating — so you can position a window without it snapping.
+const DROP_EDGE_BAND = 0.10;
 
 class CLayoutManager {
     constructor() {
@@ -57,6 +61,7 @@ class CLayoutManager {
         this._rects.clear();
         this._dividers = [];
         this._syncDividerDOM();   // hides the seam layer
+        this.hideDropPreview();
         this._applyResizeSuppression();
         setRenderOne(true);
     }
@@ -405,39 +410,105 @@ class CLayoutManager {
         return null;
     }
 
-    // Dock a currently-floating view into the grid by splitting the tile under the drop point
-    // (clientX/clientY). The split axis + side come from which edge of the target tile the drop
-    // landed nearest (Blender-style: drop on the left → new view on the left, etc.). Returns
-    // true if it docked. No-op if no tree is active or the view is already tiled.
-    dockViewAt(viewId, clientX, clientY) {
-        if (!this.tree || this.hasLeaf(viewId)) return false;
+    // Resolve a drop at (clientX,clientY) into a dock target: the tile under the cursor, the
+    // split axis/side, and the px rect the floating view would occupy. Returns null when no tree
+    // is active, the view is already tiled, the cursor isn't over a tile, or it's in the central
+    // region (only the outer DROP_EDGE_BAND of a tile snaps, in that edge's direction).
+    _dropSpec(viewId, clientX, clientY) {
+        if (!this.tree || this.hasLeaf(viewId)) return null;
         const cont = ViewMan.container;
         const cr = cont ? cont.getBoundingClientRect() : {left: 0, top: 0};
         const x = clientX - cr.left, y = clientY - cr.top;
         const target = this._leafNodeAt(x, y);
-        if (!target || target.viewId === viewId) return false;
+        if (!target || target.viewId === viewId) return null;
 
         const r = target.rect;
         const relX = (x - r.leftPx) / r.widthPx;
         const relY = (y - r.topPx) / r.heightPx;
-        // Split along whichever axis the drop is nearer an edge of; new view goes on that side.
-        const vertical = Math.min(relX, 1 - relX) <= Math.min(relY, 1 - relY);
-        const newLeaf = {type: "leaf", viewId};
-        const oldLeaf = {type: "leaf", viewId: target.viewId};
-        const firstIsNew = vertical ? relX < 0.5 : relY < 0.5;
-        const children = firstIsNew ? [newLeaf, oldLeaf] : [oldLeaf, newLeaf];
+        // Nearest edge of the tile and how far the cursor is into that 10% band.
+        const edges = [
+            {dist: relX,     dir: "v", firstIsNew: true},   // left   → new view on the left
+            {dist: 1 - relX, dir: "v", firstIsNew: false},  // right  → new view on the right
+            {dist: relY,     dir: "h", firstIsNew: true},   // top    → new view on the top
+            {dist: 1 - relY, dir: "h", firstIsNew: false},  // bottom → new view on the bottom
+        ];
+        let best = edges[0];
+        for (const e of edges) if (e.dist < best.dist) best = e;
+        if (best.dist > DROP_EDGE_BAND) return null;        // central region → don't snap
 
-        delete target.node.viewId;
-        target.node.type = "split";
-        target.node.dir = vertical ? "v" : "h";
-        target.node.sizes = [0.5, 0.5];
-        target.node.children = children;
+        const vertical = best.dir === "v";
+        let dropRect;
+        if (vertical) {
+            const halfW = r.widthPx / 2;
+            dropRect = {leftPx: best.firstIsNew ? r.leftPx : r.leftPx + halfW,
+                topPx: r.topPx, widthPx: halfW, heightPx: r.heightPx};
+        } else {
+            const halfH = r.heightPx / 2;
+            dropRect = {leftPx: r.leftPx, topPx: best.firstIsNew ? r.topPx : r.topPx + halfH,
+                widthPx: r.widthPx, heightPx: halfH};
+        }
+        return {target, vertical, firstIsNew: best.firstIsNew, dropRect};
+    }
+
+    // Dock a currently-floating view into the grid by splitting the tile at the drop point.
+    // Returns true if it docked (cursor was in a tile's edge band), false otherwise.
+    dockViewAt(viewId, clientX, clientY) {
+        const spec = this._dropSpec(viewId, clientX, clientY);
+        this.hideDropPreview();
+        if (!spec) return false;
+        const newLeaf = {type: "leaf", viewId};
+        const oldLeaf = {type: "leaf", viewId: spec.target.viewId};
+        const children = spec.firstIsNew ? [newLeaf, oldLeaf] : [oldLeaf, newLeaf];
+
+        delete spec.target.node.viewId;
+        spec.target.node.type = "split";
+        spec.target.node.dir = spec.vertical ? "v" : "h";
+        spec.target.node.sizes = [0.5, 0.5];
+        spec.target.node.children = children;
 
         this._dirty = true;
         this.recompute();
         this._applyResizeSuppression();
         setRenderOne(true);
         return true;
+    }
+
+    // --- Drop-zone preview (the blue highlight shown while dragging a floating view) ---
+
+    // While a floating view is being dragged, show a translucent blue rectangle over the exact
+    // region it would dock into if released here — or hide it when the cursor is in a tile's
+    // central (no-snap) region. Returns true if a drop target is shown.
+    updateDropPreview(viewId, clientX, clientY) {
+        const spec = this._dropSpec(viewId, clientX, clientY);
+        if (!spec) { this.hideDropPreview(); return false; }
+        this._showDropPreview(spec.dropRect);
+        return true;
+    }
+
+    _showDropPreview(rect) {
+        if (typeof document === "undefined") return;
+        const cont = ViewMan.container;
+        if (!cont) return;
+        if (!this._dropPreviewEl || !this._dropPreviewEl.isConnected) {
+            const el = document.createElement("div");
+            el.className = "sitrec-drop-preview";
+            Object.assign(el.style, {
+                position: "absolute", pointerEvents: "none", zIndex: "58", boxSizing: "border-box",
+                border: "4px solid rgba(70,140,255,0.9)", background: "rgba(70,140,255,0.22)",
+                borderRadius: "3px",
+            });
+            cont.appendChild(el);
+            this._dropPreviewEl = el;
+        }
+        Object.assign(this._dropPreviewEl.style, {
+            display: "block",
+            left: `${Math.round(rect.leftPx)}px`, top: `${Math.round(rect.topPx)}px`,
+            width: `${Math.round(rect.widthPx)}px`, height: `${Math.round(rect.heightPx)}px`,
+        });
+    }
+
+    hideDropPreview() {
+        if (this._dropPreviewEl) this._dropPreviewEl.style.display = "none";
     }
 
     // --- Interactive divider DOM (Blender-style draggable seams) ---

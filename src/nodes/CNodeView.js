@@ -222,7 +222,7 @@ class CNodeView extends CNode {
                         } else if (view.shiftDrag && !event.shiftKey) {
                             return false;
                         }
-                        return view._applyDragMove(data);
+                        return view._applyDragMove(data, event);
                     },
                     onDragEnd: (event, data) => {
                         data.viewInstance?.onViewDragEnd?.(event, data);
@@ -299,7 +299,7 @@ class CNodeView extends CNode {
     // (no / tiny jitter) doesn't nudge the view. Records the displacement so onViewDragEnd
     // can gate sidebar docking behind a much larger threshold. Returns false (→ makeDraggable
     // reverts to the start position) while under threshold.
-    _applyDragMove(data) {
+    _applyDragMove(data, event) {
         const moved = Math.hypot(data.dx || 0, data.dy || 0);
         this._dragDisplacement = moved;
 
@@ -310,6 +310,16 @@ class CNodeView extends CNode {
             if (moved < HEADER_DRAG_DETACH_THRESHOLD) return false;
             LayoutMan.removeLeaf(this.id);
             this.setResizeHandlesVisible(true);
+        }
+
+        // While dragging a floating view in a tiled layout, preview where it would re-dock (the
+        // blue zone) so the snap is never a surprise — only when the cursor is in a tile's edge
+        // band; the central region shows nothing and leaves the view free-floating.
+        if (event && event.clientX !== undefined && moved >= HEADER_DRAG_MOVE_THRESHOLD
+            && LayoutMan.active && !LayoutMan.hasLeaf(this.id)) {
+            LayoutMan.updateDropPreview(this.id, event.clientX, event.clientY);
+        } else {
+            LayoutMan.hideDropPreview();
         }
 
         if (moved < HEADER_DRAG_MOVE_THRESHOLD) return false;
@@ -376,7 +386,7 @@ class CNodeView extends CNode {
                     const view = data.viewInstance;
                     if (!view.draggable) return false;
                     if (view.dockedSidebar) return true;
-                    return view._applyDragMove(data);
+                    return view._applyDragMove(data, event);
                 },
                 onDragEnd: (event, data) => {
                     data.viewInstance?.onViewDragEnd?.(event, data);
@@ -1209,14 +1219,17 @@ class CNodeView extends CNode {
             return;
         }
 
+        LayoutMan.hideDropPreview();
+
         this.setFromDiv(this.div);
         // Keep the header bar on screen (below the menu bar, partly visible L/R).
         this._ensureUIBarVisible();
 
         // Re-dock into the split-tree grid: if tiling is active and this floating view was
-        // dropped (after a deliberate drag) over an existing tile, split that tile to insert it
-        // — the inverse of detach. Takes precedence over sidebar docking when over a tile.
-        if (moved >= HEADER_DRAG_DOCK_THRESHOLD && LayoutMan.active && !LayoutMan.hasLeaf(this.id)
+        // dropped over a tile's EDGE band (the blue preview was showing), split that tile to
+        // insert it — the inverse of detach. dockViewAt no-ops for a central (no-snap) drop, so
+        // the view stays free-floating there. Takes precedence over sidebar docking.
+        if (moved >= HEADER_DRAG_MOVE_THRESHOLD && LayoutMan.active && !LayoutMan.hasLeaf(this.id)
             && event && event.clientX !== undefined) {
             if (LayoutMan.dockViewAt(this.id, event.clientX, event.clientY)) {
                 this.setResizeHandlesVisible(false);   // tiled views resize via the seams

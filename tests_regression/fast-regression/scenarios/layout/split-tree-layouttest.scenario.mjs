@@ -214,13 +214,36 @@ export default {
                 L.removeLeaf('video');
                 const cont = V.container, cr = cont.getBoundingClientRect();
                 const m = L.rectFor('mainView');
-                const ok = L.dockViewAt('video', cr.left + m.leftPx + m.widthPx * 0.8, cr.top + m.topPx + m.heightPx * 0.5);
+                // Drop in the right 10% edge band of mainView → split with video on the right.
+                const ok = L.dockViewAt('video', cr.left + m.leftPx + m.widthPx * 0.95, cr.top + m.topPx + m.heightPx * 0.5);
                 const tree = shape(L.tree);
                 const videoTiled = L.hasLeaf('video');
                 L.clearLayout();
                 return {ok, tree, videoTiled};
             }`,
             equals: {ok: true, tree: 'v[v[mainView,video],lookView]', videoTiled: true},
+        },
+        // Edge-gating: a drop in the central region of a tile does NOT dock (the view stays
+        // free-floating); only the outer 10% edge band snaps. Pairs with the preview.
+        {
+            type: 'assert', name: 'centerDropDoesNotDock',
+            fn: `() => {
+                const L = window.LayoutMan, V = window.ViewMan;
+                L.setLayout({type:'split', dir:'v', sizes:[0.5,0.5], children:[
+                    {type:'leaf', viewId:'mainView'},
+                    {type:'split', dir:'h', sizes:[0.5,0.5], children:[
+                        {type:'leaf', viewId:'video'}, {type:'leaf', viewId:'lookView'}]}]});
+                L.removeLeaf('video');
+                const cont = V.container, cr = cont.getBoundingClientRect();
+                const m = L.rectFor('mainView');
+                const center = L.dockViewAt('video', cr.left + m.leftPx + m.widthPx * 0.5, cr.top + m.topPx + m.heightPx * 0.5);
+                const previewAtCenter = L.updateDropPreview('video', cr.left + m.leftPx + m.widthPx * 0.5, cr.top + m.topPx + m.heightPx * 0.5);
+                const previewAtEdge = L.updateDropPreview('video', cr.left + m.leftPx + m.widthPx * 0.03, cr.top + m.topPx + m.heightPx * 0.5);
+                L.hideDropPreview();
+                L.clearLayout();
+                return {centerDocked: center, previewAtCenter, previewAtEdge};
+            }`,
+            equals: {centerDocked: false, previewAtCenter: false, previewAtEdge: true},
         },
     ],
 };
