@@ -1758,6 +1758,16 @@ async function initializeOnce() {
     addTranslatedGUIMenu("camera", "menus.camera.title")
         .tooltip(t("menus.camera.tooltip"));
 
+    // Three permanent, open sub-folders that organize the look-camera controls by
+    // aspect: Location (position), Heading (orientation), FOV (Zoom). Each is led by
+    // its Source selector (Position / Camera Heading / Camera FOV), then the relevant
+    // manual controls — which grey out when a computed source drives that aspect.
+    // Created as permanent shells so they survive menuBar.destroy(false); their
+    // contents are routed in per sitch by the camera nodes/switches (gui: "cameraX").
+    addGUIFolder("cameraLocation", "Location", "camera").open();
+    addGUIFolder("cameraHeading", "Heading", "camera").open();
+    addGUIFolder("cameraFOV", "FOV (Zoom)", "camera").open();
+
     // Permanent sub-folder inside Camera for the less-common per-camera tweaks
     // (look-camera Y-compress, lens X/Y offset, near plane, orbit camera, and
     // the ground-track switch). Created here as a permanent shell so it survives
@@ -2342,6 +2352,32 @@ async function setupFunctions() {
         guiMenus.cameraTweaks.moveToEnd();
         setTimeout(() => guiMenus.cameraTweaks?.moveToEnd(), 0);
     }
+
+    // Each Source selector leads its sub-folder. The manual controls (Lat/Lon,
+    // Pan/Tilt) are created before their switch in SitCustom order, so pull each
+    // selector to the top of its folder once everything has been added.
+    const leadSelector = (id) => {
+        const c = NodeMan.get(id, false)?.controller;
+        if (c?.moveToFirst) { c.moveToFirst(); setTimeout(() => c.moveToFirst(), 0); }
+    };
+    leadSelector("cameraTrackSwitch");   // "Position" leads Location
+    leadSelector("CameraLOSController");  // "Camera Heading" leads Heading
+    leadSelector("fovSwitch");            // "Camera FOV" leads FOV (Zoom)
+
+    // The Location/Heading/FOV (and Camera Tweaks) sub-folders are permanent shells,
+    // but only the custom sitch populates them. Hide any that a sitch leaves empty
+    // (e.g. gimbal/gofast) so they don't show as bare empty folders. Re-evaluated
+    // each load; the deferred pass catches controls added on a setTimeout(0).
+    const showFolderIfPopulated = (id) => {
+        const f = guiMenus[id];
+        if (!f) return;
+        const hasContent = (f.controllers?.some(c => !c._hidden)) || (f.folders?.length > 0);
+        hasContent ? f.show() : f.hide();
+    };
+    const updateCameraFolders = () =>
+        ["cameraLocation", "cameraHeading", "cameraFOV", "cameraTweaks"].forEach(showFolderIfPopulated);
+    updateCameraFolders();
+    setTimeout(updateCameraFolders, 0);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 }

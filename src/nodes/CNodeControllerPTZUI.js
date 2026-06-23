@@ -144,7 +144,11 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             this.azController = guiPTZ.add(this, "az", -180, 180, 0.01, false).listen().name(t("ptzUI.panAz.label")).tooltip(t("ptzUI.panAz.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor).wrap()
             this.elController = guiPTZ.add(this, "el", -89, 89, 0.01, false).listen().name(t("ptzUI.tiltEl.label")).tooltip(t("ptzUI.tiltEl.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
             if (this.fov !== undefined) {
-                guiPTZ.add(this, "fov", 0.0001, 170, 0.01, false).listen().name(t("ptzUI.zoomFov.label")).tooltip(t("ptzUI.zoomFov.tooltip")).onChange(v => {
+                // The Zoom (fov) slider lives in the FOV (Zoom) sub-folder, not with
+                // the Pan/Tilt/Roll heading controls. Falls back to the PTZ folder if
+                // that permanent shell isn't present (e.g. cut-down menu setups).
+                const fovFolder = guiMenus.cameraFOV ?? guiPTZ;
+                this.fovController = fovFolder.add(this, "fov", 0.0001, 170, 0.01, false).listen().name(t("ptzUI.zoomFov.label")).tooltip(t("ptzUI.zoomFov.tooltip")).onChange(v => {
                     this.refresh()
                 }).setLabelColor(pszUIColor) // .elastic(0.0001, 170)
             }
@@ -158,8 +162,8 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             tweaksFolder.add(this, "xOffset", -20, 20, 0.001).listen().name(t("ptzUI.xOffset.label")).tooltip(t("ptzUI.xOffset.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
             tweaksFolder.add(this, "yOffset", -20, 20, 0.001).listen().name(t("ptzUI.yOffset.label")).tooltip(t("ptzUI.yOffset.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
             tweaksFolder.add(this, "nearPlane", 0.001, 1, 0.001).listen().name(t("ptzUI.nearPlane.label")).tooltip(t("ptzUI.nearPlane.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
-            guiPTZ.add(this, "relative").listen().name(t("ptzUI.relative.label")).tooltip(t("ptzUI.relative.tooltip")).onChange(v => this.refresh())
-            guiPTZ.add(this, "satellite").listen().name(t("ptzUI.satellite.label")).tooltip(t("ptzUI.satellite.tooltip")).onChange(v => {
+            this.relativeController = guiPTZ.add(this, "relative").listen().name(t("ptzUI.relative.label")).tooltip(t("ptzUI.relative.tooltip")).onChange(v => this.refresh())
+            this.satelliteController = guiPTZ.add(this, "satellite").listen().name(t("ptzUI.satellite.label")).tooltip(t("ptzUI.satellite.tooltip")).onChange(v => {
                 this.syncModeTransition();
             }).setLabelColor(pszUIColor)
             this.rotationController = guiPTZ.add(this, "rotation", -180, 180, 0.1).listen().name(t("ptzUI.rotation.label")).tooltip(t("ptzUI.rotation.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)

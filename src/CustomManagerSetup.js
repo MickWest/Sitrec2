@@ -142,6 +142,7 @@ export const setupMethods = {
                         id: "celestialController",
                         celestialObject: "Moon",
                         camera: "lookCamera",
+                        gui: "cameraHeading",   // the "Celestial Object" box lives with Heading
                     });
                 lookCamera.addControllerNode(celestialController);
                 cameraLOSController.addOption("Celestial Lock", celestialController);
@@ -180,6 +181,59 @@ export const setupMethods = {
                 azElController.enableController(false);
             }
         }
+
+        // ── Grey-out manual camera controls when a computed source drives them ──
+        // Each Camera sub-folder (Location / Heading / FOV) leads with a Source
+        // selector; its manual sliders only do anything when the source is the
+        // "Manual" option. Disable (grey out) the rest rather than hide them, so the
+        // panel layout stays stable and the controls remain discoverable. (Genuinely
+        // absent options — Custom Az/El with no file, Rotation outside Satellite Mode —
+        // are hidden elsewhere; this is purely enable/disable.)
+        const syncCameraControlGreyout = () => {
+            const set = (c, on) => { if (c && c.enable && c.disable) { on ? c.enable() : c.disable(); } };
+
+            // Location: Lat/Lon/Alt/AGL/Lookup/Geolocate are editable only for the
+            // Manual (fixed) position. "Go To" is a viewport action — always enabled.
+            const posSwitch = NodeMan.get("cameraTrackSwitch", false);
+            const pos = NodeMan.get("fixedCameraPosition", false);
+            if (posSwitch && pos) {
+                const manual = posSwitch.choice === "fixedCamera";
+                set(pos.guiLat?.guiEntry, manual);
+                set(pos.guiLon?.guiEntry, manual);
+                set(pos.guiAlt?.guiEntry, manual);
+                set(pos.aglController, manual);
+                set(pos.lookupController, manual);
+                set(pos.geolocateController, manual);
+                set(pos.goToController, true);
+            }
+
+            // Heading: Pan/Tilt/Relative/Satellite/Rotation are Manual-only. Roll stays
+            // enabled for any source that actually consumes ptzAngles.roll (Manual and
+            // "To Target"); greyed for sources that fully define orientation.
+            const headSwitch = NodeMan.get("CameraLOSController", false);
+            const ptz = NodeMan.get("ptzAngles", false);
+            if (headSwitch && ptz) {
+                const manual = headSwitch.choice === "Manual";
+                const consumesRoll = manual || headSwitch.choice === "To Target";
+                set(ptz.azController, manual);
+                set(ptz.elController, manual);
+                set(ptz.relativeController, manual);
+                set(ptz.satelliteController, manual);
+                set(ptz.rotationController, manual);
+                set(ptz.rollController, consumesRoll);
+            }
+
+            // FOV: the Zoom slider is editable only for the Manual (userFOV) source.
+            const fovSwitch = NodeMan.get("fovSwitch", false);
+            if (fovSwitch && ptz) {
+                set(ptz.fovController, fovSwitch.choice === "userFOV");
+            }
+        };
+        EventManager.addEventListener("Switch.choiceChanged.cameraTrackSwitch", syncCameraControlGreyout);
+        EventManager.addEventListener("Switch.choiceChanged.CameraLOSController", syncCameraControlGreyout);
+        EventManager.addEventListener("Switch.choiceChanged.fovSwitch", syncCameraControlGreyout);
+        // Apply the initial state once all controllers + deserialized choices exist.
+        setTimeout(syncCameraControlGreyout, 0);
 
         // Create the "Camera + Point Track" LOS adapter node and wire it into the JetLOS switch.
         // Added here (rather than in SitCustom.js) so that sitches saved before this node was
@@ -1840,7 +1894,7 @@ export const setupMethods = {
 
             const cameraTrackSwitch = NodeMan.get("cameraTrackSwitch", false);
             if (cameraTrackSwitch) {
-                cameraTrackSwitch.addOption("orbitCamera", NodeMan.get("orbitCameraPosition"));
+                cameraTrackSwitch.addOption("orbitCamera", NodeMan.get("orbitCameraPosition"), "Orbit");
             }
         }
 

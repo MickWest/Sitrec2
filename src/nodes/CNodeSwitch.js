@@ -235,10 +235,17 @@ class CNodeSwitch extends CNode {
         return this
     }
 
-    addOption(option, value) {
+    // A runtime option can carry a display-only `label` (the GUI shows it while the
+    // stored `choice` keeps `option` as the key) — same display/value split as the
+    // static `labels` map. e.g. "orbitCamera" shown as "Orbit", "Angles_N123" as
+    // "N123 angles". guiLabels is the single source of truth for the display name, so
+    // removeOption can find the right GUI row.
+    addOption(option, value, label = undefined) {
         this.addInput(option, value)
+        if (this.guiLabels === undefined) this.guiLabels = {};
+        if (label !== undefined) this.guiLabels[option] = label;
 //        console.log("+++ ADDING   "+option+" to   "+this.id)
-        addOptionToGUIMenu(this.controller, option, option)
+        addOptionToGUIMenu(this.controller, this.guiLabels[option] ?? option, option)
         this.applyPendingChoiceIfAvailable();
     }
 
@@ -246,7 +253,7 @@ class CNodeSwitch extends CNode {
         if (this.inputs[option] !== undefined) {
 //            console.log("--- REMOVING "+option+" from "+this.id)
             this.removeInput(option)
-            removeOptionFromGUIMenu(this.controller, option)
+            removeOptionFromGUIMenu(this.controller, this.guiLabels?.[option] ?? option)
         }
 
         if (!dontSelectFirst && this.choice === option) {

@@ -1372,11 +1372,14 @@ class CTrackManager extends CManager {
             const dropTargets = Sit.dropTargets["angles"]
             const autoTrackFile = FileManager.get(trackOb.trackFileName);
             const forceAngles = autoTrackFile && autoTrackFile.autoSelectAsCamera;
+            // Display the per-track angle option as "<shortName> angles" rather than
+            // the raw "Angles_<shortName>" key (which reads like a leaked variable).
+            const anglesLabel = shortName + " angles";
             for (const dropTargetSwitch of dropTargets) {
                 if (NodeMan.exists(dropTargetSwitch)) {
                     const switchNode = NodeMan.get(dropTargetSwitch);
                     switchNode.removeOption(anglesID)
-                    switchNode.addOption(anglesID, NodeMan.get(anglesID))
+                    switchNode.addOption(anglesID, NodeMan.get(anglesID), anglesLabel)
                     if (!Globals.sitchEstablished || forceAngles) {
                         switchNode.selectOption(anglesID)
                     }

@@ -301,7 +301,7 @@ sitch = {
         kind: "PositionLLA",
         LLA: [31.980814, -118.428486, 10000],
         desc: "Cam",
-        gui: "camera",
+        gui: "cameraLocation",
         tipName: "Camera",
         key: "C"
     },
@@ -424,8 +424,14 @@ sitch = {
             "flightSimCamera": "flightSimCameraPosition",
       //      "satelliteTrack": "satelliteTrack",
         },
-        desc: "Camera Track",
-        gui: "camera",
+        // Display-only labels (stored choice keys are unchanged). "orbitCamera"
+        // is added at runtime in CustomManagerSetup and labeled "Orbit" there.
+        labels: {
+            "fixedCamera": "Manual",
+            "flightSimCamera": "Flight Sim",
+        },
+        desc: "Position",
+        gui: "cameraLocation",
     },
 
     // Smoothed version of the camera track
@@ -435,7 +441,7 @@ sitch = {
         kind: "SmoothedPositionTrack",
         method: "savgol",
         source: "cameraTrackSwitch",
-        window: {kind: "GUIValue", value: 20, start:0, end:1000, step:1, desc:"Camera Smooth Window", gui:"camera"},
+        window: {kind: "GUIValue", value: 20, start:0, end:1000, step:1, desc:"Camera Smooth Window", gui:"cameraLocation"},
         // iterations: {kind: "GUIValue", value: 6, start:1, end:100, step:1, desc:"Target Smooth Iterations", gui:"traverse"}
     },
 
@@ -506,7 +512,7 @@ sitch = {
     // note, it's only used in the Custom sitch, and is hard linked in the code
     // to any instance of the CNodeControllerPTZUI
 //    fovUI: {kind: "GUIValue", value: 30, start: 0.00001, end: 40, step: 0.001, elastic: true, elasticMin: 5, elasticMax: 170, desc: "vFOVx",gui:"camera", hidden: true},
-    fovUI: {kind: "GUIValue", value: 30, start: 0.00000, end: 180, step: 0.001, desc: "vFOV",gui:"camera", hidden: true},
+    fovUI: {kind: "GUIValue", value: 30, start: 0.00000, end: 180, step: 0.001, desc: "vFOV",gui:"cameraFOV", hidden: true},
 
     fovSwitch: {
         kind: "Switch",
@@ -520,7 +526,7 @@ sitch = {
             "userFOV": "Manual",
         },
         desc: "Camera FOV",
-        gui: "camera",
+        gui: "cameraFOV",
     },
 
     fovController: {
@@ -543,10 +549,10 @@ sitch = {
     // we orient the camera to the track by default
     // either the PTZ controller or the trackToTrack controller will override this
     // execpt when PTZ is set to relative, then it's relative to whatever comes out of this
-    orientCameraController: {kind: "ObjectTilt", track: "cameraTrackSwitchSmooth", gui:"camera"},
+    orientCameraController: {kind: "ObjectTilt", track: "cameraTrackSwitchSmooth", gui:"cameraHeading"},
 
     // put pTZ after fov controller, so it will override it if both are enabled
-    ptzAngles: {kind: "PTZUI", az: 0, el: 0, roll: 0, fov: 30, showGUI: true, gui: "camera"},
+    ptzAngles: {kind: "PTZUI", az: 0, el: 0, roll: 0, fov: 30, showGUI: true, gui: "cameraHeading"},
 
     // this order is not important, as ptzAngles and trackToTrackController cannot be
     // active at the same time
@@ -613,7 +619,7 @@ sitch = {
         },
         default: "Manual",
         desc: "Camera Heading",
-        gui: "camera"
+        gui: "cameraHeading"
     },
 
     // Since we are controlling the camera with the LOS controller, we can extract the LOS
