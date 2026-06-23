@@ -8,6 +8,7 @@ import {clientNLU} from "../CClientNLU";
 import {t} from "../i18n";
 import {getChatAvailableDocs} from "../docsRegistry";
 import {linkifyToHTML} from "../linkify";
+import {mirrorMenuItem} from "../MenuMirror";
 
 class CNodeViewChat extends CNodeViewText {
     constructor(v) {
@@ -75,6 +76,9 @@ class CNodeViewChat extends CNodeViewText {
             if (m) {
                 m.add({newChat: () => this.newChat()}, 'newChat').name('New Chat');
                 m.add({clear: () => this.clearOutput()}, 'clear').name('Clear');
+                // Mirror the Settings "AI Model" dropdown here so the model can be switched
+                // straight from the Assistant header; it stays in sync with Settings.
+                mirrorMenuItem('chatModel', m, {name: 'AI Model'});
             }
             return;
         }

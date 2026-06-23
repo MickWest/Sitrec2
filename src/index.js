@@ -116,6 +116,7 @@ import {extraCSS} from "./extra.css";
 import {_TrackManager} from "./TrackManager";
 import {ViewMan} from "./CViewManager";
 import {LayoutMan} from "./CLayoutManager";
+import {clearMenuMirrors} from "./MenuMirror";
 import {glareSprite, targetSphere} from "./JetStuffVars";
 import {CCustomManager} from "./CustomSupport";
 import {EventManager} from "./CEventManager";
@@ -2138,6 +2139,10 @@ async function setupFunctions() {
     // Each sitch starts in legacy (free-floating) layout mode; auto-tiling (if any) is
     // re-evaluated at the end of setup once this sitch's views + positions are established.
     LayoutMan.clearLayout();
+
+    // Drop menu-mirror registrations from the previous sitch (its controllers/menus are being
+    // disposed); they re-register as this sitch's menus are rebuilt.
+    clearMenuMirrors();
 
     const title = urlParams.get("regression") ? "Sitrec Regression Test" : process.env.BUILD_VERSION_STRING;
     Globals.menuBar.infoGUI.title(title);

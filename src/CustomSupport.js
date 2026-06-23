@@ -45,6 +45,7 @@ import {
     withTestUser
 } from "./Globals";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
+import {registerMirrorSource} from "./MenuMirror";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {GlobalScene} from "./LocalFrame";
@@ -603,6 +604,10 @@ export class CCustomManager {
             .onChange(() => {
                 this.saveGlobalSettings(true);
             });
+
+        // Make this control mirrorable into other menus (e.g. the Assistant view header).
+        // The mirror stays in sync with this dropdown — value, option list, and onChange.
+        registerMirrorSource("chatModel", this.chatModelController);
 
         // Add Center Sidebar toggle
         settingsFolder.add(Globals.settings, "centerSidebar")
