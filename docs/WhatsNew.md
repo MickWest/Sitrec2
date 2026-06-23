@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.88.0 (2026-06-23)
+
+### Improvements
+- **Reorganized the Camera menu** (custom sitches): the look-camera controls are now grouped into three clearly-labeled, source-led folders — **Location**, **Heading**, and **FOV (Zoom)** — each starting with its source selector followed by the manual controls, which grey out automatically when a computed source is driving them. A new **Camera Tweaks** folder holds the less-common controls (lens offsets, near plane, orbit camera, ground-track switch). Existing saved sitches are migrated automatically and get the same new layout — nothing for you to do.
+- **Simpler camera heading control**: the old separate "Angles Source" dropdown is merged into a single **Camera Heading** selector (Camera → Heading) — Manual, To Target, Celestial Lock, Horizon Flare Region, per-track angles, and Custom Az/El (shown only when you've loaded an az/el file).
+- **Separate vertical-squash control for the look view**: the look camera now has its own **Look Y-comp** slider (Camera → Camera Tweaks), alongside the main view's **Main Y-comp** (View menu).
+- **Clearer camera tooltips and labels** for Relative Heading, Satellite Mode, and the lens offset / near-plane controls.
+
+---
+
 ## Version 2.87.9 (2026-06-22)
 
 ### Bug Fixes

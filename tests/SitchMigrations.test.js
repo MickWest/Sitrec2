@@ -5,6 +5,7 @@
 import {
     migrateCameraHeadingReorg,
     migrateFovSwitchLabel,
+    migrateCameraMenuFolders,
     objHasNestedChoice,
 } from "../src/SitchMigrations";
 
@@ -221,5 +222,65 @@ describe("migrateFovSwitchLabel", () => {
         migrateFovSwitchLabel(obj);
         migrateFovSwitchLabel(obj);
         expect(obj.fovSwitch.labels).toEqual({ userFOV: "Manual" });
+    });
+});
+
+describe("migrateCameraMenuFolders", () => {
+    // An old save embeds gui:"camera" for every camera node.
+    const oldCameraSave = () => ({
+        fixedCameraPosition: { kind: "PositionLLA", gui: "camera" },
+        cameraTrackSwitch: { kind: "Switch", inputs: { fixedCamera: "fixedCameraPosition", flightSimCamera: "flightSimCameraPosition" }, desc: "Camera Track", gui: "camera" },
+        cameraTrackSwitchSmooth: { kind: "SmoothedPositionTrack", window: { kind: "GUIValue", desc: "Camera Smooth Window", gui: "camera" } },
+        ptzAngles: { kind: "PTZUI", gui: "camera" },
+        CameraLOSController: { kind: "Switch", inputs: {}, gui: "camera" },
+        orientCameraController: { kind: "ObjectTilt", gui: "camera" },
+        fovUI: { kind: "GUIValue", gui: "camera" },
+        fovSwitch: { kind: "Switch", inputs: { userFOV: "fovUI" }, gui: "camera" },
+    });
+
+    test("routes each camera node into its new sub-folder", () => {
+        const obj = oldCameraSave();
+        migrateCameraMenuFolders(obj);
+        expect(obj.fixedCameraPosition.gui).toBe("cameraLocation");
+        expect(obj.cameraTrackSwitch.gui).toBe("cameraLocation");
+        expect(obj.cameraTrackSwitchSmooth.window.gui).toBe("cameraLocation");
+        expect(obj.ptzAngles.gui).toBe("cameraHeading");
+        expect(obj.CameraLOSController.gui).toBe("cameraHeading");
+        expect(obj.orientCameraController.gui).toBe("cameraHeading");
+        expect(obj.fovUI.gui).toBe("cameraFOV");
+        expect(obj.fovSwitch.gui).toBe("cameraFOV");
+    });
+
+    test("applies the Position rename + Manual/Flight Sim labels", () => {
+        const obj = oldCameraSave();
+        migrateCameraMenuFolders(obj);
+        expect(obj.cameraTrackSwitch.desc).toBe("Position");
+        expect(obj.cameraTrackSwitch.labels).toEqual({ fixedCamera: "Manual", flightSimCamera: "Flight Sim" });
+    });
+
+    test("is idempotent and leaves an already-migrated (new) save untouched", () => {
+        const neu = {
+            fixedCameraPosition: { gui: "cameraLocation" },
+            cameraTrackSwitch: { desc: "Position", gui: "cameraLocation", labels: { fixedCamera: "Manual", flightSimCamera: "Flight Sim" } },
+            ptzAngles: { gui: "cameraHeading" },
+            fovSwitch: { gui: "cameraFOV" },
+        };
+        const copy = JSON.parse(JSON.stringify(neu));
+        migrateCameraMenuFolders(neu);
+        expect(neu).toEqual(copy);
+    });
+
+    test("does not touch a custom user label / desc that isn't the old default", () => {
+        const obj = oldCameraSave();
+        obj.cameraTrackSwitch.desc = "My Camera";       // user-customized desc, not "Camera Track"
+        migrateCameraMenuFolders(obj);
+        expect(obj.cameraTrackSwitch.desc).toBe("My Camera"); // unchanged
+        // gui still routed
+        expect(obj.cameraTrackSwitch.gui).toBe("cameraLocation");
+    });
+
+    test("does not throw on null / empty input", () => {
+        expect(() => migrateCameraMenuFolders(null)).not.toThrow();
+        expect(() => migrateCameraMenuFolders({})).not.toThrow();
     });
 });

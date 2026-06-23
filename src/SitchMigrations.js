@@ -156,3 +156,50 @@ export function migrateFovSwitchLabel(obj) {
     fov.labels = fov.labels ?? {};
     if (fov.labels.userFOV === undefined) fov.labels.userFOV = "Manual";
 }
+
+/**
+ * Route an OLD saved custom sitch's camera controls into the new Camera-menu
+ * sub-folders (Location / Heading / FOV (Zoom)). A save embeds each node's `gui`
+ * target, so a sitch saved before 2.88.0 carries `gui: "camera"` for the camera
+ * nodes and would land them in the top-level Camera menu — leaving the new
+ * sub-folders empty (and hidden). Rewrite those gui targets so old saves get the
+ * SAME layout as freshly-created ones, and apply the "Position" rename + the
+ * Manual / Flight Sim display labels on the position switch.
+ *
+ * Only the embedded node defs need this — the runtime-added options (Celestial
+ * Lock, Orbit, per-track angles, Custom Az/El) are placed by CustomManagerSetup /
+ * CFileManagerParse, which already target the new folders. The removed nodes
+ * (CameraPositionController, anglesSwitch) keep gui:"camera" harmlessly — they are
+ * never created (see migrateCameraHeadingReorg / REMOVED_NODE_IDS).
+ *
+ * Idempotent: only rewrites the old "camera" value, so a new save (already
+ * "cameraLocation"/etc.) is untouched.
+ *
+ * @param {Object} obj - parsed sitch object
+ */
+export function migrateCameraMenuFolders(obj) {
+    if (!obj || typeof obj !== "object") return;
+    const reGui = (node, newGui) => {
+        if (node && typeof node === "object" && node.gui === "camera") node.gui = newGui;
+    };
+    // Location
+    reGui(obj.fixedCameraPosition, "cameraLocation");
+    reGui(obj.cameraTrackSwitch, "cameraLocation");
+    reGui(obj.cameraTrackSwitchSmooth?.window, "cameraLocation"); // nested Smooth Window
+    // Heading
+    reGui(obj.ptzAngles, "cameraHeading");
+    reGui(obj.CameraLOSController, "cameraHeading");
+    reGui(obj.orientCameraController, "cameraHeading");
+    // FOV (Zoom)
+    reGui(obj.fovUI, "cameraFOV");
+    reGui(obj.fovSwitch, "cameraFOV");
+
+    // Position rename + display labels (display-only; choice values unchanged).
+    const cts = obj.cameraTrackSwitch;
+    if (cts && typeof cts === "object") {
+        if (cts.desc === "Camera Track") cts.desc = "Position";
+        cts.labels = cts.labels ?? {};
+        if (cts.labels.fixedCamera === undefined) cts.labels.fixedCamera = "Manual";
+        if (cts.labels.flightSimCamera === undefined) cts.labels.flightSimCamera = "Flight Sim";
+    }
+}

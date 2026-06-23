@@ -4,7 +4,7 @@ import {parseJavascriptObject} from "./Serialize";
 import {checkForModding} from "./utils";
 import {showError} from "./showError";
 import {isServerless} from "./configUtils";
-import {migrateCameraHeadingReorg, migrateFovSwitchLabel} from "./SitchMigrations";
+import {migrateCameraHeadingReorg, migrateFovSwitchLabel, migrateCameraMenuFolders} from "./SitchMigrations";
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Note. This failed once due to what seemed to be a circular dependency
@@ -124,6 +124,8 @@ export function textSitchToObject(text, canMod = true) {
         migrateCameraHeadingReorg(obj);
         // Relabel the Camera FOV switch's "userFOV" option as "Manual" (display only).
         migrateFovSwitchLabel(obj);
+        // Route old saves' camera controls into the new Location/Heading/FOV folders.
+        migrateCameraMenuFolders(obj);
         if (canMod) {
             return checkForModding(obj);
         } else {
