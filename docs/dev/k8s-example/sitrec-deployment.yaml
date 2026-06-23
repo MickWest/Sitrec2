@@ -1,0 +1,80 @@
+# Sitrec on Kubernetes — Deployment + Service (Method A).
+#
+# This is the manifest from docs/dev/Installing-and-configuring.md, validated end-to-end
+# against a local `kind` cluster (k8s v1.36): credential injection, Service routing,
+# non-root securityContext, and the health probes all confirmed working.
+#
+# Before applying, create the S3 Secret (see README.md):
+#   kubectl create secret generic sitrec-s3 \
+#     --from-literal=S3_ACCESS_KEY_ID=AKIA... \
+#     --from-literal=S3_SECRET_ACCESS_KEY=...
+#
+# Then:  kubectl apply -f sitrec-deployment.yaml
+# (add `-n your-namespace` to the secret command and these objects if not using `default`).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sitrec
+spec:
+  replicas: 1                      # see README: don't scale >1 without S3-only storage
+  selector:
+    matchLabels: { app: sitrec }
+  template:
+    metadata:
+      labels: { app: sitrec }
+    spec:
+      # imagePullSecrets:          # uncomment for a private (baked) image — see README
+      #   - name: regcred
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: sitrec
+          image: ghcr.io/mickwest/sitrec2:latest   # or your baked private image
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          ports:
+            - containerPort: 8080
+          env:                     # non-secret settings (omit any you baked into the image)
+            - { name: SAVE_TO_S3, value: "true" }
+            - { name: S3_BUCKET,  value: "your-bucket" }
+            - { name: S3_REGION,  value: "us-west-2" }
+          envFrom:
+            - secretRef:
+                name: sitrec-s3    # injects S3_ACCESS_KEY_ID + S3_SECRET_ACCESS_KEY
+          # Probe the web root `/` — it returns 200 to anyone. Do NOT probe
+          # /sitrecServer/info.php: it is admin-only and returns 403 to the kubelet,
+          # which would leave the pod permanently NotReady.
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 15
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { memory: "512Mi" }
+          # Uploads and the tile cache are written inside the pod and are wiped on
+          # restart. Either rely on SAVE_TO_S3=true (above) or mount PVCs:
+          # volumeMounts:
+          #   - { name: uploads, mountPath: /var/www/html/sitrec-upload }
+          #   - { name: cache,   mountPath: /var/www/html/sitrec-cache }
+      # volumes:
+      #   - name: uploads
+      #     persistentVolumeClaim: { claimName: sitrec-uploads }
+      #   - name: cache
+      #     persistentVolumeClaim: { claimName: sitrec-cache }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sitrec
+spec:
+  selector: { app: sitrec }
+  ports:
+    - name: http
+      port: 80                     # the Service's port
+      targetPort: 8080             # the container's port

@@ -1,0 +1,21 @@
+# Optional: expose Sitrec outside the cluster with an Ingress.
+# Requires an ingress controller (nginx-ingress, Traefik, or your cloud provider's)
+# already installed. Sitrec serves at the container web root, so no /sitrec path prefix.
+#
+#   kubectl apply -f sitrec-ingress.yaml
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sitrec
+spec:
+  rules:
+    - host: sitrec.example.com     # your DNS name
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: sitrec
+                port: { number: 80 }

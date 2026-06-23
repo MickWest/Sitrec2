@@ -18,11 +18,13 @@ For developers, there are additional options:
 
 The fastest way to run Sitrec. No source code, no build tools, no configuration required. A pre-built image is published on each release and works on Windows, Mac (Intel and Apple Silicon), and Linux.
 
-**Prerequisites:** Install either Docker or Podman (see below), then run the one-liner install.
+**Prerequisites:** Install either Docker or Podman (see below), then run the one-liner install. **If you're not sure which to use, choose Docker** — Podman is an alternative for advanced or restricted setups (no admin rights, RHEL/Fedora, etc.).
 
 ### Installing Docker (Simplest)
 
 Download and install [Docker Desktop](https://www.docker.com/) for your platform — it includes everything you need (engine, compose, and GUI). Available for Windows, Mac, and Linux.
+
+**After installing, launch Docker Desktop and wait until it reports "Engine running"** (the whale icon stops animating). The install commands below fail with a "cannot connect to the Docker daemon" error if Docker Desktop isn't actually running. On Windows, Docker Desktop requires WSL2 — its installer will prompt you to enable it.
 
 ### Installing Podman (Optional)
 
@@ -50,7 +52,7 @@ Download the Podman installer from [podman.io](https://podman.io/) or use `winge
 
 ### One-liner Install
 
-Open a terminal and paste the command for your platform. This downloads a small install script that sets everything up automatically. The script auto-detects whether you have Docker or Podman installed.
+Open a terminal and paste the command for your platform. (On **Mac**, open *Terminal* — press Cmd-Space and type "Terminal". On **Windows**, open *PowerShell* — press the Start button and type "PowerShell". "WSL" in the headings below means Windows Subsystem for Linux, an advanced option — if you're on Windows and unsure, use the **Windows PowerShell** command.) This downloads a small install script that sets everything up automatically, auto-detecting whether you have Docker or Podman installed.
 
 **Mac / Linux / WSL:**
 ```bash
@@ -79,13 +81,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Podman
 
 If you have a pre-configured `.env` file, place it in the current directory before running the installer — it will be copied into the `sitrec/` folder automatically instead of generating a new template.
 
-This creates a `sitrec/` folder in your current directory, downloads Sitrec, and starts it. On Windows it also creates `sitrec.cmd`; use that for daily commands so PowerShell execution policy does not block the management script. Once the container is running, open **http://localhost:8080** in your browser.
+This creates a `sitrec/` folder in your current directory, downloads Sitrec, and starts it. On Windows it also creates `sitrec.cmd`; use that for daily commands (Windows can otherwise block the management script for security reasons). Once the container is running, open **http://localhost:8080** in your browser.
+
+The first launch may take a minute while the image downloads; when it's ready you'll see the Sitrec 3D globe view. If the page doesn't load, wait a moment and refresh, or run `./sitrec.sh logs` (`.\sitrec.cmd logs` on Windows) to see what the container is doing. To stop Sitrec later, run `./sitrec.sh stop` (`.\sitrec.cmd stop`). Run these management commands from inside the `sitrec/` folder the installer created.
 
 ### Manual Install
 
 If you prefer to set things up yourself instead of using the install script:
 
-1. Create a new folder (e.g. `sitrec`), and inside it create a text file named `docker-compose.yml` with this content:
+1. Create a new folder (e.g. `sitrec`), and inside it create a text file named `docker-compose.yml` with this content (on Windows, in Notepad choose **Save as type: All Files** so it isn't saved as `docker-compose.yml.txt`; keep the indentation exactly as shown):
 
 ```yaml
 services:
@@ -97,6 +101,9 @@ services:
       - .env
     volumes:
       - ./sitrec-videos:/var/www/html/sitrec-videos
+      # Optional: keep user uploads across container recreation. Without this (and
+      # without S3) uploads live inside the container and are lost on `down`.
+      #- ./sitrec-upload:/var/www/html/sitrec-upload
 ```
 
 2. Create an empty `.env` file in the same folder (required by the compose file; you can add settings to it later).
@@ -181,6 +188,8 @@ To get the newest release:
 .\sitrec.cmd pull
 ```
 
+`pull` updates the **Sitrec image**. To update the management script itself (and your local `shared.env.example`), run `./sitrec.sh update` (`.\sitrec.cmd update`).
+
 Or manually:
 ```bash
 docker compose pull && docker compose down && docker compose up      # Docker
@@ -189,10 +198,11 @@ podman-compose pull && podman-compose down && podman-compose up      # Podman
 
 ### Pinning a Specific Version
 
-By default Sitrec uses the latest release. To lock to a specific version, edit the `image:` line in `docker-compose.yml`:
+By default Sitrec uses the latest release. To lock to a specific version, edit the `image:` line in `docker-compose.yml` (replace `<version>` with a published release tag such as `2.87.0`):
 ```yaml
-image: ghcr.io/mickwest/sitrec2:2.36.0
+image: ghcr.io/mickwest/sitrec2:<version>
 ```
+Or run `./sitrec.sh versions` (`.\sitrec.cmd versions`) to pick a version interactively.
 
 ### Baking a Pre-Configured Image (Advanced)
 
@@ -253,7 +263,7 @@ parameter names):
 | `--env-file <file>` | Settings file to bake in (default: the `.env` in the current folder) |
 | `--base <tag>` | Which published version to build on top of (default: `latest`) |
 | `--push` | Push to the target's registry after building (run `docker login`/`podman login` first) |
-| `--tarball [file]` | Save the image to a `.tar` file (written to the current folder; default name `<image-name>.tar`) |
+| `--tarball [file]` | Save the image to a `.tar` file (written to the current folder; the default name is the target image with `/` and `:` replaced by `_` — e.g. `registry.example.com/sitrec:configured` → `registry.example.com_sitrec_configured.tar`) |
 
 > **Podman + local registries:** Docker auto-trusts `localhost` registries, but Podman
 > does not. To `--push` to a plain-HTTP or LAN registry under Podman, first mark it
@@ -296,11 +306,12 @@ secrets at runtime:
 ```
 
 **How it works:** `bake` writes a tiny `Dockerfile` (`FROM ghcr.io/mickwest/sitrec2:<tag>`
-plus one `ENV` line per setting) and builds it — no app rebuild; the same entrypoint that
-normally reads `.env` reads the baked-in values instead. It works identically under
-Podman (`podman build`/`history`/`inspect`). Baked values are the **lowest-priority**
-source, so a deployment can still override any of them with `-e`/`env_file` at run time —
-pre-configured, but not frozen.
+plus one `ENV` line per setting) and builds it — no app rebuild. The entrypoint reads the
+same environment variables as always; they're just supplied by the image's `ENV` layers now
+instead of by `.env` (values are escaped, so a secret containing `$` is baked literally). It
+works identically under Podman (`podman build`/`history`/`inspect`). Baked values are the
+**lowest-priority** source, so a deployment can still override any of them with
+`-e`/`env_file` (or Kubernetes `env:`) at run time — pre-configured, but not frozen.
 
 > **Single architecture:** a baked image is built for the CPU architecture you bake on
 > (it adds layers on your machine rather than copying the base's multi-arch manifest).
@@ -347,6 +358,12 @@ The recommended split is the same two-layer pattern as everywhere else:
 - **Secrets** (`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, API keys): keep them in a
   Kubernetes Secret and inject them at run time. They never go in the image.
 
+> **Ready-to-use manifests:** the steps below are explained from scratch, but a complete,
+> copy-paste version of everything here — Deployment, Service, optional Ingress, plus the
+> non-root, probe, and resource settings from *Production hardening* — lives in
+> [`docs/dev/k8s-example/`](k8s-example/), validated end-to-end against a local `kind`
+> cluster.
+
 #### Step 1 — Create the Secret with your S3 credentials
 
 A Secret is an object stored **in the cluster**, not a file on a server. Create it
@@ -360,6 +377,12 @@ kubectl create secret generic sitrec-s3 \
 
 > The Secret must live in the **same namespace** as the Deployment that uses it. Add
 > `-n your-namespace` to the command (and to the Deployment) if you're not using `default`.
+
+> ⚠️ **Kubernetes Secrets are base64-encoded, not encrypted.** Anyone with `get secret`
+> permission on the namespace — or direct etcd access — can read them in clear text. For
+> production, enable [etcd encryption at rest](https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/),
+> restrict `get`/`list` on secrets via RBAC, and consider an external secrets manager
+> (External Secrets Operator, HashiCorp Vault) rather than hand-created secrets.
 
 #### Step 2 — Reference the Secret from your Deployment
 
@@ -437,7 +460,73 @@ configuration automatically. No `config.php` editing, no secrets in the image.
 > *name*. That makes it safe to keep in git. The credentials live only in the cluster
 > (in the `sitrec-s3` / `aws-creds` Secret).
 
-#### Step 3 — Test that it worked
+Two things to know about the manifest above:
+
+- `envFrom: secretRef` injects **every** key in the Secret as an environment variable —
+  keep `sitrec-s3` limited to Sitrec's variables, don't park unrelated keys in it.
+- `replicas: 1` is deliberate. Don't scale beyond one replica unless `SAVE_TO_S3=true` and
+  you use no local-filesystem storage — user uploads and the tile cache are written inside
+  each pod and aren't shared between replicas (see [Production hardening](#production-hardening-recommended) below).
+
+**Private registry?** If you used the baked-image pattern above, your image lives in a
+private registry and the cluster needs pull credentials — without them the pod fails with
+`ImagePullBackOff`. Create a pull secret and reference it from the Deployment `spec`:
+
+```bash
+kubectl create secret docker-registry regcred \
+  --docker-server=registry.example.com \
+  --docker-username=<user> --docker-password=<token-or-password>
+```
+```yaml
+    spec:
+      imagePullSecrets:
+        - name: regcred       # must be in the same namespace as the Deployment
+      containers:
+        - name: sitrec
+          # ...as above
+```
+
+#### Step 3 — Expose Sitrec so you can reach it
+
+A Deployment only *runs* the container — nothing can reach it yet except
+`kubectl port-forward` (used in testing below). To serve it to users, add a **Service** (a
+stable in-cluster address) and usually an **Ingress** (an external URL, typically with TLS).
+Sitrec serves at the container's web root on port 8080, so there's no `/sitrec` path prefix:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: sitrec
+spec:
+  selector: { app: sitrec }      # matches the Deployment's pod labels
+  ports:
+    - name: http
+      port: 80                   # the Service's port
+      targetPort: 8080           # the container's port
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sitrec
+spec:
+  rules:
+    - host: sitrec.example.com   # your DNS name
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: sitrec
+                port: { number: 80 }
+```
+
+Apply them like any other manifest (`kubectl apply -f sitrec-service.yaml`, or put
+everything in one file separated by `---`). The Ingress needs an ingress controller
+(nginx-ingress, Traefik, or your cloud provider's) already installed in the cluster.
+
+#### Step 4 — Test that it worked
 
 ```bash
 # 1. Is the pod running?
@@ -447,16 +536,93 @@ kubectl get pods -l app=sitrec
 #    between a "<?php /*;" header and a "*/" footer.
 kubectl exec deploy/sitrec -- cat /var/www/html/shared.env.php
 
-# 3. Quick functional check — confirm Sitrec is serving:
+# 3. Is Sitrec actually serving? (no browser needed)
+kubectl exec deploy/sitrec -- curl -sf http://localhost:8080/ >/dev/null && echo OK
+
+# 4. Full functional check via a temporary tunnel:
 kubectl port-forward deploy/sitrec 8080:8080
 #    then open http://localhost:8080 in a browser and try saving a sitch ("Save" menu).
 #    With SAVE_TO_S3=true and valid keys, the file is written to your S3 bucket.
+#    (If you added the Ingress in Step 3, open https://sitrec.example.com instead.)
 ```
 
 If `S3_ACCESS_KEY_ID` is **missing** from `shared.env.php`, the most common causes are:
 the Secret name is misspelled, the Secret is in a different namespace than the pod, or
 (Method B) the `key:` name doesn't match a key that actually exists in the Secret. Check
 `kubectl describe pod -l app=sitrec` — it will report a Secret it couldn't find.
+
+#### Production hardening (recommended)
+
+The minimal Deployment runs, but a real deployment should add four things. They all slot
+into the same Deployment `spec`/container:
+
+**1. Persistent storage — or accept that uploads/cache are scratch.** Sitrec writes user
+uploads to `/var/www/html/sitrec-upload` and a tile cache to `/var/www/html/sitrec-cache`,
+both *inside the pod* — so both are **wiped on every pod restart or reschedule**. Either set
+`SAVE_TO_S3=true` (saves go to S3; local uploads/cache stay disposable) or attach
+PersistentVolumeClaims:
+
+```yaml
+          volumeMounts:
+            - { name: uploads, mountPath: /var/www/html/sitrec-upload }
+            - { name: cache,   mountPath: /var/www/html/sitrec-cache }
+      volumes:
+        - name: uploads
+          persistentVolumeClaim: { claimName: sitrec-uploads }
+        - name: cache
+          persistentVolumeClaim: { claimName: sitrec-cache }
+```
+
+A `ReadWriteOnce` PVC ties the pod to one node, so it can't be shared across scaled-out
+replicas — another reason to keep `replicas: 1` unless you go S3-only.
+
+**2. Run as non-root.** The image is built to run as an unprivileged user on port 8080, but
+a vanilla cluster still starts the pod as root unless you ask otherwise:
+
+```yaml
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: sitrec
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+```
+
+(Running non-root, the container listens *only* on 8080 — exactly what the Service's
+`targetPort: 8080` already targets.)
+
+**3. Health probes** so Kubernetes routes traffic only to ready pods and restarts wedged
+ones. Probe the web root `/` — it returns the app's index page to anyone. (Don't probe
+`/sitrecServer/info.php`: it's admin-only and returns **403** to the kubelet, which would
+leave the pod permanently *NotReady* and crash-loop on the liveness check.)
+
+```yaml
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 15
+```
+
+**4. Resource requests/limits** so the pod schedules predictably and isn't first evicted
+under node pressure (Sitrec's heavy 3D runs in the browser, so the container — Apache + PHP
+— stays modest):
+
+```yaml
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { memory: "512Mi" }
+```
+
+> **Tip:** for the many *non-secret* variables (banners, `S3_BUCKET`/`S3_REGION`, map
+> tokens), a ConfigMap + `envFrom: [{ configMapRef: { name: sitrec-cfg } }]` is cleaner than
+> a long inline `env:` list. Treat rate-limited map API tokens as semi-secret — if that
+> matters, keep them in the Secret rather than a ConfigMap. Every referenced object (Secret,
+> imagePullSecret, ConfigMap, PVCs) must live in the Deployment's namespace.
 
 #### Rotating credentials
 
@@ -490,6 +656,8 @@ kubectl rollout restart deployment/sitrec
 | Stop | `./sitrec.sh stop` | `.\sitrec.cmd stop` |
 | Restart (after .env changes) | `./sitrec.sh restart` | `.\sitrec.cmd restart` |
 | Update to latest | `./sitrec.sh pull` | `.\sitrec.cmd pull` |
+| Pick / pin a version | `./sitrec.sh versions` | `.\sitrec.cmd versions` |
+| Update the management script | `./sitrec.sh update` | `.\sitrec.cmd update` |
 | Bake a configured image | `./sitrec.sh bake [--push] <target-image> [--tarball [file]]` | `.\sitrec.cmd bake [-Push] <target-image> [-Tarball [file]]` |
 | View logs | `./sitrec.sh logs` | `.\sitrec.cmd logs` |
 | Show status | `./sitrec.sh status` | `.\sitrec.cmd status` |
