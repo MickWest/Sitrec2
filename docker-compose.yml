@@ -3,7 +3,9 @@ services:
   sitrec:
     build: .
     ports:
-      - '8080:80'
+      # host:container — the container now listens on 8080 (unprivileged, so it
+      # can run as a non-root UID). Change the host side (left) freely.
+      - '8080:8080'
     env_file:
       - .env
     volumes:

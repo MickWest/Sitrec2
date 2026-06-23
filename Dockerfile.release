@@ -30,6 +30,16 @@ RUN chmod 0777 /var/www/html
 # Suppress Apache ServerName warning
 RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 
+# Listen on an unprivileged port (8080) by default so the container can run as a
+# non-root UID (rootless Podman --user, OpenShift's arbitrary assigned UIDs).
+# Port 80 is privileged and only root can bind it. The entrypoint exports
+# SITREC_LISTEN_PORT (default 8080, overridable via SITREC_DOCKER_INTERNAL_PORT)
+# and Apache expands ${SITREC_LISTEN_PORT} below. The envvars line is a fallback
+# default so the variable is always defined even if the entrypoint is bypassed.
+RUN sed -i 's/^Listen 80$/Listen ${SITREC_LISTEN_PORT}/' /etc/apache2/ports.conf \
+    && sed -i 's/<VirtualHost \*:80>/<VirtualHost *:${SITREC_LISTEN_PORT}>/' /etc/apache2/sites-available/000-default.conf \
+    && echo 'export SITREC_LISTEN_PORT=${SITREC_LISTEN_PORT:-8080}' >> /etc/apache2/envvars
+
 COPY docker/entrypoint.sh /usr/local/bin/sitrec-entrypoint.sh
 RUN chmod +x /usr/local/bin/sitrec-entrypoint.sh
 
@@ -41,7 +51,9 @@ COPY config/shared.env.example /usr/local/share/sitrec/shared.env.example
 
 VOLUME /var/www/html/sitrec-videos
 
-EXPOSE 80
+# Canonical container port is 8080 (unprivileged, runs as any UID). When started
+# as root, the entrypoint also listens on 80 for back-compat with older mappings.
+EXPOSE 8080
 
 ENTRYPOINT ["sitrec-entrypoint.sh"]
 CMD ["apache2-foreground"]

@@ -402,7 +402,7 @@ services:
   sitrec:
     image: $InstallImage
     ports:
-      - '8080:80'
+      - '8080:8080'
     env_file:
       - .env
 $volumesBlock

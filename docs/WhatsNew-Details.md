@@ -9,6 +9,22 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.87.9 (2026-06-22)
+
+### Bug Fixes
+- **Fixed the published Docker image (`ghcr.io/mickwest/sitrec2`) failing to start when run as a non-root UID** (rootless Podman `--user`, OpenShift's arbitrary assigned UIDs). The base `php:8.4-apache` image hard-codes Apache to port 80, a privileged port only UID 0 can bind, so a non-root container died with *"Could not bind to address [::]:80 ... No listening sockets available, shutting down"*. This is the second half of the non-root-support effort begun in 2.87.2 (which handled the delete-and-recreate file-permission fix for `shared.env.php` / `index.html`); this release moves Apache off the privileged port.
+  - **`Dockerfile` / `Dockerfile.release`** now rewrite Apache to listen on an unprivileged port via config-variable expansion at build time: `sed` changes `Listen 80` → `Listen ${SITREC_LISTEN_PORT}` in `/etc/apache2/ports.conf` and `<VirtualHost *:80>` → `<VirtualHost *:${SITREC_LISTEN_PORT}>` in `000-default.conf`, and appends `export SITREC_LISTEN_PORT=${SITREC_LISTEN_PORT:-8080}` to `/etc/apache2/envvars` as a fallback default so the variable is always defined even if the entrypoint is bypassed. `EXPOSE 80` → `EXPOSE 8080`. Apache expands `${SITREC_LISTEN_PORT}` from its environment exactly as it does the stock `${APACHE_RUN_USER}` directive, so the container listens on **8080 by default** — unprivileged, bindable as any UID.
+  - **`docker/entrypoint.sh`** gained a new pre-handoff section (step 3, before `exec docker-php-entrypoint`):
+    - Computes `SITREC_LISTEN_PORT` from the optional override env var **`SITREC_DOCKER_INTERNAL_PORT`** (default 8080), validates it is a bare integer (a `case` glob warns and falls back to 8080 otherwise), and `export`s it so Apache's config expansion picks it up. This is deliberately **not** `SITREC_PORT` — `SITREC_PORT` keeps its existing dev-server meaning (host port, default 3000); the container-side override is a distinct, rarely-needed variable.
+    - **Preflight abort:** if running non-root (`id -u` ≠ 0) and the target port is < 1024, it prints a clear `FATAL` banner (*"cannot listen on port N as a non-root user ... set SITREC_DOCKER_INTERNAL_PORT >= 1024, or run the container as root"*) and `exit 1`, instead of letting Apache emit its cryptic bind crash.
+    - **Root-only back-compat:** when running as root and the listen port isn't already 80, it writes a drop-in conf `/etc/apache2/conf-enabled/zz-sitrec-port80-compat.conf` adding `Listen 80` plus a `<VirtualHost *:80>`, so existing installs whose compose file still maps to container port 80 keep working unchanged. Gated on root because a non-root UID can't bind 80; the file is `rm -f`'d when non-root so a stale copy can't make Apache abort.
+    - **Startup banner:** prints the listen port and UID, and when non-root explicitly warns that the port mapping must target the listen port (not `:80`) — so a wrong mapping is diagnosable from `docker logs` / `podman logs` rather than presenting as a silent dead page.
+  - **`docker-compose.yml`, `install.sh`, `install.ps1`** change the generated/source port mapping `'8080:80'` → `'8080:8080'` (the host URL is unchanged at `localhost:8080`; only the container side moves to 8080 to match the new listen port).
+  - **`docs/dev/Installing-and-configuring.md`** updates the manual-install compose snippet to `8080:8080`, refreshes the Port Configuration table (Docker row now shows container port 8080 + `SITREC_DOCKER_INTERNAL_PORT`; dev-server row keeps `SITREC_PORT`=3000), and adds an upgrade-migration note that existing installs on `'8080:80'` must change to `'8080:8080'` when running non-root (root keeps working via the dual-listen back-compat).
+  - Verified against real Podman with `php:8.4-apache`: non-root default `8080:8080` → HTTP 200; rootful legacy `:80` mapping still works (dual-listen); non-root legacy `:80` mapping is refused but the container stays up and logs the cause; non-root `SITREC_DOCKER_INTERNAL_PORT=80` → FATAL preflight abort (exit 1); non-root `SITREC_DOCKER_INTERNAL_PORT=9090` serves on 9090; `SITREC_PORT=9090` is ignored (stays 8080, dev var decoupled from the container).
+
+---
+
 ## Version 2.87.8 (2026-06-22)
 
 ### Improvements

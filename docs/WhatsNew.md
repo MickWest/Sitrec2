@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.87.9 (2026-06-22)
+
+### Bug Fixes
+- Fixed the Docker image failing to start when run as a non-root user (rootless Podman or OpenShift). The container now listens on port 8080 by default, which doesn't require root, while existing root-based setups keep working unchanged. If you run the container as a non-root user, update your port mapping to `8080:8080` (the address in your browser stays the same).
+
+---
+
 ## Version 2.87.8 (2026-06-22)
 
 ### Improvements
