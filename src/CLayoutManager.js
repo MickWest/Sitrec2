@@ -35,10 +35,21 @@ class CLayoutManager {
     // Install a layout tree (or null to return to legacy mode). Wakes a render.
     setLayout(tree) {
         this.tree = tree || null;
+        this._pruneMissingLeaves();   // drop leaves whose view doesn't exist (stale saved tree)
         this._dirty = true;
         this.recompute();
         this._applyResizeSuppression();
         setRenderOne(true);
+    }
+
+    // Remove leaves referencing a view that doesn't exist (e.g. a restored layout from a sitch
+    // version that no longer creates that view), collapsing emptied splits. Keeps a stale
+    // saved tree from leaving phantom tiles / dead seams.
+    _pruneMissingLeaves() {
+        if (!this.tree) return;
+        for (const id of this.leafViewIds()) {
+            if (!ViewMan.get(id, false)) this.removeLeaf(id);
+        }
     }
 
     clearLayout() {
@@ -211,8 +222,18 @@ class CLayoutManager {
             return false;
         }
         const removed = this._removeLeafFrom(this.tree, viewId);
-        if (removed) { this._dirty = true; this.recompute(); setRenderOne(true); }
-        return removed;
+        if (!removed) return false;
+        if (this.tree.type === "leaf") {
+            // Collapsed to a single view — no seams left to manage, so drop tiling entirely
+            // and return every view (including the lone survivor) to free-floating.
+            this.clearLayout();
+        } else {
+            this._dirty = true;
+            this.recompute();
+            this._applyResizeSuppression();   // restore the detached view's edge handles
+            setRenderOne(true);
+        }
+        return true;
     }
 
     _removeLeafFrom(split, viewId) {

@@ -37,6 +37,7 @@ import {CNode3DObject, ModelAliases} from "./nodes/CNode3DObject";
 import {UpdateHUD} from "./JetStuff";
 import {degrees, getDateTimeFilename} from "./utils";
 import {ViewMan} from "./CViewManager";
+import {LayoutMan} from "./CLayoutManager";
 import {EventManager} from "./CEventManager";
 import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
@@ -592,6 +593,12 @@ export const serializeMethods = {
         // Long Exposure / Camera Nudge parameters (null when all defaults)
         out.longExposure = serializeLongExposure() ?? Sit.longExposure ?? null
 
+        // Split-tree tiling layout (UI redesign Phase 2): the optional view-tiling tree (view
+        // ids + seam sizes). null when not tiled ⇒ legacy free-floating behaviour on reload.
+        // Each leaf's fractions are already serialized per-view (toSerialCNodeView), so an
+        // older build that ignores this field still renders the views at ~the same rects.
+        out.layout = LayoutMan.serialize()
+
         // Serialize sub sitches
         out.subSitchesData = this.serializeSubSitches()
 
@@ -1029,6 +1036,11 @@ export const serializeMethods = {
             // otherwise we get multiple recalculations of the same thing
             // here we are applying the mods, and then we will recalculate everything
             Globals.dontRecalculate = true;
+
+            // Stash the saved split-tree tiling layout (if any) on Sit; it's applied at the end
+            // of setupFunctions once all views + their positions are established (a tree must be
+            // installed AFTER the views it references exist).
+            Sit.layout = sitchData.layout ?? null;
 
             // apply the units first, as some controllers are dependent on them
             // i.e. Target Speed, which use a GUIValue for speed in whatever units

@@ -46,6 +46,10 @@ const HEADER_DEFAULT_OFF = new Set(["mainView", "lookView", "video", "video2"]);
 // before a drag can dock the view to a sidebar (so a click near a screen edge can't dock it).
 const HEADER_DRAG_MOVE_THRESHOLD = 5;
 const HEADER_DRAG_DOCK_THRESHOLD = 60;
+// A tiled view is locked in the grid; dragging its header past this distance pops it out into
+// a free-floating window (Blender-style detach). Larger than the move threshold so a small
+// nudge doesn't accidentally tear a tile out of the layout.
+const HEADER_DRAG_DETACH_THRESHOLD = 30;
 function friendlyViewName(v, id) {
     if (FRIENDLY_VIEW_NAMES[id]) return FRIENDLY_VIEW_NAMES[id];
     if (v && v.menuName) return v.menuName;
@@ -298,6 +302,16 @@ class CNodeView extends CNode {
     _applyDragMove(data) {
         const moved = Math.hypot(data.dx || 0, data.dy || 0);
         this._dragDisplacement = moved;
+
+        // A tiled view is locked in the grid (the seams resize it). Dragging its header far
+        // enough detaches it: it pops out of the tree into a free-floating window and then
+        // follows the pointer. Below the threshold it stays put (returns false → revert).
+        if (LayoutMan.hasLeaf(this.id)) {
+            if (moved < HEADER_DRAG_DETACH_THRESHOLD) return false;
+            LayoutMan.removeLeaf(this.id);
+            this.setResizeHandlesVisible(true);
+        }
+
         if (moved < HEADER_DRAG_MOVE_THRESHOLD) return false;
         this._propagateDragToDependents();
         return true;

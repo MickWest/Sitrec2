@@ -2399,13 +2399,17 @@ async function setupFunctions() {
     updateCameraFolders();
     setTimeout(updateCameraFolders, 0);
 
-    // Auto-couple snapped views (UI redesign Phase 2): if the open top-level views already
-    // form a complete tiled grid, reconstruct a split-tree so their shared edges become single
-    // handles that resize both sides together. No-op on a free-floating layout, and skipped in
-    // regression mode so the legacy-geometry baselines stay deterministic. Edge-to-edge ⇒ no
-    // geometry change, so this never alters how a snapped sitch renders.
+    // Split-tree tiling (UI redesign Phase 2). A saved sitch may carry an explicit tiling tree
+    // (Sit.layout, restored verbatim so seam positions persist); otherwise, if the open views
+    // already form a complete snapped grid, auto-couple their shared edges. Both no-op on a
+    // free-floating layout and are skipped in regression mode so the legacy-geometry baselines
+    // stay deterministic. Edge-to-edge ⇒ no geometry change either way.
     if (!Globals.regression) {
-        LayoutMan.autoTileIfSnapped();
+        if (Sit.layout) {
+            LayoutMan.setLayout(Sit.layout);
+        } else {
+            LayoutMan.autoTileIfSnapped();
+        }
     }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////

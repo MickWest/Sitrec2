@@ -123,5 +123,39 @@ export default {
             }`,
             equals: {ok: true, shape: 'v[mainView,h[video,lookView]]'},
         },
+        // Detach (2.5): removing the video leaf collapses the inner split → main | look.
+        {
+            type: 'assert', name: 'detachCollapsesTree',
+            fn: `() => {
+                const L = window.LayoutMan;
+                L.tileFromViews();
+                const removed = L.removeLeaf('video');
+                const shape = (n) => !n ? null : (n.type === 'leaf'
+                    ? n.viewId : n.dir + '[' + n.children.map(shape).join(',') + ']');
+                const after = shape(L.tree);
+                const videoTiled = L.hasLeaf('video');
+                L.clearLayout();
+                return {removed, after, videoTiled};
+            }`,
+            equals: {removed: true, after: 'v[mainView,lookView]', videoTiled: false},
+        },
+        // Serialization roundtrip (2.4): serialize a dragged tree, clear, restore → same sizes.
+        {
+            type: 'assert', name: 'serializeRoundTripPreservesSeams',
+            fn: `() => {
+                const L = window.LayoutMan;
+                L.tileFromViews();
+                L.dragDivider(L._dividers.find(d => d.dir === 'v'), 200, 0);
+                const saved = JSON.parse(JSON.stringify(L.serialize()));
+                const savedSizes = L.tree.sizes.map(s => +s.toFixed(4));
+                L.clearLayout();
+                const cleared = L.active;
+                L.setLayout(saved);
+                const restoredSizes = L.tree.sizes.map(s => +s.toFixed(4));
+                L.clearLayout();
+                return {cleared, match: JSON.stringify(savedSizes) === JSON.stringify(restoredSizes)};
+            }`,
+            equals: {cleared: false, match: true},
+        },
     ],
 };
