@@ -308,6 +308,39 @@ class CNodeNotes extends CNodeView {
         }
     }
 
+    // Append text to the notes (preceded by a blank line when there's existing
+    // content), make the window visible, and scroll to the end so the newly
+    // added text is in view. Used e.g. when stashing an unrecognized dropped URL.
+    appendAndShow(text) {
+        const addition = String(text ?? "");
+        const separator = this.notesText && this.notesText.length ? "\n\n" : "";
+        this.notesText += separator + addition;
+        if (this.textArea) {
+            this.textArea.value = this.notesText;
+        }
+        this.setVisible(true);   // un-hide and clamp below the menu bar if needed
+        this.show(true);         // also runs linkifyContent() (URLs become links)
+        setRenderOne();
+        // Scroll after layout has settled so scrollHeight is correct.
+        this.scrollToEnd();
+        requestAnimationFrame(() => this.scrollToEnd());
+    }
+
+    // Scroll whichever content element is currently displayed (the editable
+    // textarea, or the linkified read-only overlay) to its bottom.
+    scrollToEnd() {
+        if (this.textArea && this.textArea.style.display !== 'none') {
+            this.textArea.scrollTop = this.textArea.scrollHeight;
+            try {
+                const end = this.textArea.value.length;
+                this.textArea.selectionStart = this.textArea.selectionEnd = end;
+            } catch (e) { /* selection not supported while hidden */ }
+        }
+        if (this.linkOverlay && this.linkOverlay.style.display !== 'none') {
+            this.linkOverlay.scrollTop = this.linkOverlay.scrollHeight;
+        }
+    }
+
     // When the window (re)appears as a floating panel, make sure it isn't stranded
     // off the top of the screen (e.g. after being dragged up under the menu bar).
     setVisible(visible) {

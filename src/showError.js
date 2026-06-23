@@ -154,6 +154,130 @@ export function showError(message, error=null) {
     console.error(message);
 }
 
+/**
+ * Show a styled Yes/No confirmation dialog. Returns a Promise that resolves to
+ * true (Yes) or false (No). Unlike the native blocking confirm() used elsewhere,
+ * this is promise-based so callers can await it without freezing the event loop.
+ * @param {string} message - The question/body text (newlines preserved)
+ * @param {object} [opts]
+ * @param {string} [opts.title="Confirm"]
+ * @param {string} [opts.yesLabel="Yes"]
+ * @param {string} [opts.noLabel="No"]
+ * @returns {Promise<boolean>}
+ */
+export function showConfirm(message, {title = "Confirm", yesLabel = "Yes", noLabel = "No"} = {}) {
+    return new Promise((resolve) => {
+        // In validation/regression runs there is no user to click; default to No
+        // so we never block or mutate state behind the harness's back.
+        if (Globals.validationMode) {
+            console.log("showConfirm (suppressed dialog, auto-No): " + message);
+            resolve(false);
+            return;
+        }
+
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        `;
+
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            width: 60vw;
+            max-width: 700px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            font-family: Arial, sans-serif;
+        `;
+
+        const titleElement = document.createElement('h3');
+        titleElement.textContent = title;
+        titleElement.style.cssText = `
+            margin: 0 0 15px 0;
+            color: #1976d2;
+            font-size: 18px;
+        `;
+
+        const messageElement = document.createElement('div');
+        messageElement.textContent = message;
+        messageElement.style.cssText = `
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #222;
+            font-size: 14px;
+            line-height: 1.5;
+            max-height: 300px;
+            overflow-y: auto;
+        `;
+
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = `
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        `;
+
+        const yesButton = document.createElement('button');
+        yesButton.textContent = yesLabel;
+        yesButton.style.cssText = `
+            background: #1976d2;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        `;
+
+        const noButton = document.createElement('button');
+        noButton.textContent = noLabel;
+        noButton.style.cssText = `
+            background: #757575;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        `;
+
+        const cleanup = (result) => {
+            document.removeEventListener('keydown', onKey);
+            if (overlay.parentNode) document.body.removeChild(overlay);
+            resolve(result);
+        };
+        const onKey = (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); cleanup(false); }
+            else if (e.key === 'Enter') { e.preventDefault(); cleanup(true); }
+        };
+
+        yesButton.onclick = () => cleanup(true);
+        noButton.onclick = () => cleanup(false);
+        document.addEventListener('keydown', onKey);
+
+        buttonContainer.appendChild(noButton);
+        buttonContainer.appendChild(yesButton);
+        modal.appendChild(titleElement);
+        modal.appendChild(messageElement);
+        modal.appendChild(buttonContainer);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        yesButton.focus();
+    });
+}
+
 const shownErrors = new Set();
 
 /**

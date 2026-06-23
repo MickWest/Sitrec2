@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.87.8 (2026-06-22)
+
+### Improvements
+- **Save unrecognized links to the Notes** (drag or paste a URL): when a dropped or pasted URL can't be loaded as a video or file (for example a Facebook reel), Sitrec now asks whether to add it to the Notes instead of just showing an error — and on Yes it appends the link to the Notes panel and opens it as a clickable link.
+- **Satellites "List" filter is now case-insensitive and understands "SL-"** (Satellites → List): you can type names in any case, and "SL-" works as shorthand for "STARLINK-", so "sl-1008" or "starlink-1008" both match STARLINK-1008.
+
+---
+
 ## Version 2.87.7 (2026-06-22)
 
 ### Bug Fixes

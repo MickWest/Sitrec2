@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.87.8 (2026-06-22)
+
+### Improvements
+- **Dropped or pasted URLs that can't be loaded can now be saved to the Notes.** Previously, dragging or pasting a URL that didn't resolve to loadable media (e.g. a Facebook reel, `https://www.facebook.com/reel/...`, which fails with "Unsupported URL host or page type") popped a raw `showError` dialog and dead-ended. `CDragDropHandler.showDroppedURLResolveError` (`src/DragDropHandler.js`) now shows a Yes/No confirmation instead — *"URL did not resolve to a loadable video or file: <url> — Do you want to add it to the notes?"* (title *Unsupported URL*). On Yes, `CDragDropHandler.addURLToNotes(url)` looks up `notesView` and calls the new `CNodeNotes.appendAndShow(text)` (`src/nodes/CNodeNotes.js`), which appends the URL (separated from existing content by a blank line — no leading blank line when the notes are empty), un-hides the Notes window via `setVisible(true)`/`show(true)` (re-running `linkifyContent()` so the URL becomes a clickable link), marks the sitch dirty, and scrolls to the end via the new `scrollToEnd()` (which targets whichever of the textarea / linkified overlay is visible, with a `requestAnimationFrame` follow-up so `scrollHeight` is correct after layout). The full technical error is still logged to the console by the caller (unchanged). Backing this is a new reusable `showConfirm(message, {title, yesLabel, noLabel})` in `src/showError.js`: a promise-based, `showError`-styled modal (so it doesn't freeze the event loop like native `confirm()`), Enter = Yes / Escape = No, that auto-resolves to No under `Globals.validationMode` so validation/regression runs never block or mutate state. If the sitch has no Notes panel, a `showError` explains the URL couldn't be saved.
+- **The Satellites "List" filter is now case-insensitive and accepts "SL-" as shorthand for "STARLINK-".** The Satellites menu's *List* field (`showSatelliteList`, a comma-separated list of names or NORAD numbers, consumed by `CSatellite.filterSatellites` → `CTLEData.getMatchingRecords` in `src/TLEUtils.ts`) previously matched names with a case-*sensitive* `name.startsWith(prefix)`, so `starlink-1008` or `sl-1008` matched nothing. `getMatchingRecords` now upper-cases both the query and each catalog name before prefix-matching, and when the query begins with `SL-` it matches against *both* the literal `SL-...` prefix and the expanded `STARLINK-...` prefix (a push, not a replace) — so `sl-1008` and `starlink-1008` both match `STARLINK-1008`, while literal Soviet `SL-16 R/B` rocket-body names still match too. The `nightSky.list` tooltip in `src/i18n/en.js` was rewritten from the old/misleading *"Show a text list of visible satellites"* to describe the comma-separated filter, case-insensitive prefix matching, and the `SL-` shorthand.
+
+---
+
 ## Version 2.87.7 (2026-06-22)
 
 ### Bug Fixes

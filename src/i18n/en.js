@@ -961,7 +961,7 @@ const en = {
         showISS: { label: "ISS", tooltip: "Show the International Space Station" },
         celestrackBrightest: { label: "Celestrack's Brightest", tooltip: "Show Celestrack's list of brightest satellites" },
         otherSatellites: { label: "Other Satellites", tooltip: "Show satellites not in the above categories" },
-        list: { label: "List", tooltip: "Show a text list of visible satellites" },
+        list: { label: "List", tooltip: "Show only satellites matching this comma-separated list of names or NORAD numbers.\nName matching is case-insensitive and by prefix (e.g. \"starlink-30\" matches STARLINK-30xx).\n\"SL-\" is shorthand for Starlink, so \"SL-1234\" matches STARLINK-1234." },
         satelliteArrows: { label: "Satellite Arrows", tooltip: "Show arrows indicating satellite trajectories" },
         flareLines: { label: "Flare Lines", tooltip: "Show lines connecting flaring satellites to the camera and the Sun" },
         satelliteGroundArrows: { label: "Satellite Ground Arrows", tooltip: "Show arrows to the ground below each satellite" },

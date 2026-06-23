@@ -18,7 +18,7 @@ import {sniffFileType} from "./sniffFileType";
 import {isDvidsVideoPageURL, resolveDvidsVideoURL} from "./DVIDSUtils";
 import {isWarGovUFOPageURL, resolveWarGovUFOVideoURL} from "./WarGovUFOUtils";
 import {isMetabunkThreadURL, resolveMetabunkThreadVideoURL} from "./MetabunkThreadUtils";
-import {showError} from "./showError";
+import {showError, showConfirm} from "./showError";
 
 // Image file extensions
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'jp2', 'j2k', 'jpx', 'jpc', 'j2c'];
@@ -838,12 +838,29 @@ class CDragDropHandler {
 
 
     showDroppedURLResolveError(droppedURL, error, resolvedURL = null) {
-        const detail = error?.message || String(error || "No loadable media or data URL was found.");
-        const resolvedDetail = resolvedURL && resolvedURL !== droppedURL
-            ? `\n\nResolved URL:\n${resolvedURL}`
-            : "";
+        // The full technical detail is already logged to the console by the caller.
+        // Rather than surfacing a raw error, offer to stash the URL in the notes so
+        // the user can keep a reference to a link we can't load (e.g. a Facebook reel).
+        showConfirm(
+            `URL did not resolve to a loadable video or file:\n\n${droppedURL}\n\nDo you want to add it to the notes?`,
+            {title: "Unsupported URL", yesLabel: "Yes", noLabel: "No"}
+        ).then((addToNotes) => {
+            if (addToNotes) {
+                this.addURLToNotes(droppedURL);
+            }
+        });
+    }
 
-        showError(`Dropped URL did not resolve to a loadable video or file:\n\n${droppedURL}${resolvedDetail}\n\n${detail}`, error);
+    // Append a URL to the notes panel (preceded by a blank line), then open the
+    // notes window scrolled to the end so the newly added link is visible.
+    addURLToNotes(url) {
+        const notesView = NodeMan.get("notesView", false);
+        if (!notesView) {
+            showError("Notes panel is not available in this sitch, so the URL could not be saved:\n\n" + url);
+            return;
+        }
+        notesView.appendAndShow(url);
+        markSitchDirty();
     }
 
     isVideoURLForDropParam(url) {

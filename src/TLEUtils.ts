@@ -521,16 +521,26 @@ export class CTLEData {
         return this.getRecordFromNORAD(NORAD);
     }
 
-    // get array of NORAD numbers that start with the given name
+    // get array of NORAD numbers whose name starts with the given prefix.
+    // Matching is case-insensitive. "SL-" is accepted as a shorthand for
+    // Starlink and expands to the catalog's "STARLINK-" prefix — while still
+    // matching any literal "SL-..." names (e.g. Soviet "SL-16 R/B" rocket bodies).
     getMatchingRecords(name: string): number[] {
         if (this.satData === null) {
             return [];
         }
 
+        const prefix = name.trim().toUpperCase();
+        const prefixes = [prefix];
+        if (prefix.startsWith("SL-")) {
+            prefixes.push("STARLINK-" + prefix.slice(3));
+        }
+
         // now get all the records that match this NORAD number
         const records = [];
         for (const satData of this.satData) {
-            if (satData.name.startsWith(name)) {
+            const upperName = satData.name.toUpperCase();
+            if (prefixes.some(p => upperName.startsWith(p))) {
                 records.push(satData.number);
             }
         }
