@@ -175,8 +175,11 @@ jobs:
           IMAGE="${REGISTRY}/${IMAGE_NAME_LC}:build-amd64-${GITHUB_SHA}"
           echo "Pulling ${IMAGE}"
           docker pull "${IMAGE}"
+          # Canonical mapping emitted by docker-compose.yml / install.sh /
+          # install.ps1 / the docs: host:container both 8080 (the container now
+          # listens on the unprivileged 8080 by default so it runs as any UID).
           docker run -d --name sitrec-smoke \
-            -p 8080:80 \
+            -p 8080:8080 \
             -e NO_TERRAIN=true \
             "${IMAGE}"
 
@@ -209,6 +212,32 @@ jobs:
             || { echo "✗ Missing script tags in HTML"; exit 1; }
 
           echo "All HTTP smoke tests passed"
+
+      - name: Legacy port-80 back-compat smoke test
+        run: |
+          # Older installs (pre-8080) map the host to the container's legacy
+          # port 80. When the container runs as root — the default here, since
+          # GitHub runners use rootful Docker — the entrypoint also listens on
+          # 80 so those mappings keep working. Verify that compat shim so we
+          # don't silently break upgrading users.
+          IMAGE="${REGISTRY}/${IMAGE_NAME_LC}:build-amd64-${GITHUB_SHA}"
+          docker run -d --name sitrec-smoke-legacy \
+            -p 8081:80 \
+            -e NO_TERRAIN=true \
+            "${IMAGE}"
+          echo "Waiting for HTTP 200 via legacy :80 mapping..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8081/ > /dev/null 2>&1; then
+              echo "✓ Legacy 8080:80 mapping still serves (root dual-listen)"
+              docker rm -f sitrec-smoke-legacy
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Legacy port-80 back-compat mapping failed to respond"
+          docker logs sitrec-smoke-legacy
+          docker rm -f sitrec-smoke-legacy
+          exit 1
 
       - uses: actions/setup-node@v6
         with:

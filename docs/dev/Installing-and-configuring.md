@@ -626,11 +626,13 @@ of the `ports:` mapping) instead. In the rare case you must change the *containe
 Note this is **not** `SITREC_PORT`, which is the dev server's host port (default 3000).
 
 > **Upgrading an existing install?** Releases before this one mapped `'8080:80'` in
-> `docker-compose.yml`. If you pull the new image but keep an old compose file, the host
-> port will forward to container port 80 where nothing now listens, and the page won't
-> load. **Fix:** change the mapping to `'8080:8080'` (or just re-run the installer, which
-> rewrites it). When started as **root**, the container still also listens on 80, so old
-> mappings keep working unchanged; only **non-root** runs require the `:8080` mapping.
+> `docker-compose.yml`. **If you run the container as root** (the default for plain
+> `docker compose` / `docker run`), nothing changes: the container also listens on 80, so
+> an old `'8080:80'` mapping keeps working unchanged — no edit needed. **Only non-root
+> runs** (rootless Podman with `--user`, OpenShift's arbitrary UIDs, etc.) need the new
+> mapping: there the container listens *only* on 8080, so an old `'8080:80'` file forwards
+> to container port 80 where nothing listens and the page won't load. **Fix:** change the
+> mapping to `'8080:8080'` (or just re-run the installer, which rewrites it).
 
 ---
 
