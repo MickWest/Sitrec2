@@ -530,19 +530,9 @@ sitch = {
 
 
     // A controller for the camera position, TrackPosition just follows the track, updating the position and not
-    // the orientation of the camera
+    // the orientation of the camera. It auto-attaches to lookCamera (SituationSetup's default controller path),
+    // so it directly drives the camera position — no wrapping Switch is involved.
     trackPositionController: {kind: "TrackPosition", sourceTrack: "cameraTrackSwitchSmooth"},
-
-    // These are the types of controller for the camera
-    // which will reference the cameraTrackSwitchSmooth for source data
-    CameraPositionController: {
-        kind: "Switch",
-        inputs: {
-            "Follow Track": "trackPositionController",
-        },
-        desc: "Camera Position",
-        gui:"camera"
-    },
 
     // we orient the camera to the track by default
     // either the PTZ controller or the trackToTrack controller will override this

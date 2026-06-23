@@ -1514,27 +1514,27 @@ const en = {
         },
         xOffset: {
             label: "xOffset",
-            tooltip: "Horizontal offset of the camera from center",
+            tooltip: "Horizontal offset of the camera from center, useful for aligning the camera with a tracked target that is not centered in the video frame",
         },
         yOffset: {
             label: "yOffset",
-            tooltip: "Vertical offset of the camera from center",
+            tooltip: "Vertical offset of the camera from center, useful for aligning the camera with a tracked target that is not centered in the video frame",
         },
         nearPlane: {
             label: "Near Plane (m)",
-            tooltip: "Camera near clipping plane distance in meters",
+            tooltip: "Camera near clipping plane distance in meters, sometimes useful for very close objects, or to exclude near-field objects from the frustum",
         },
         relative: {
-            label: "Relative",
-            tooltip: "Use relative angles instead of absolute",
+            label: "Relative Heading",
+            tooltip: "The camera heading is relative to the camera path (e.g. a plane's ADSB track) instead of absolute.\nSo you can set the camera to always point forward along the path, or to the left/right of the path, etc.",
         },
         satellite: {
-            label: "Satellite",
-            tooltip: "Satellite mode: screen-space panning from nadir.\nRoll = heading, Az = left/right, El = up/down (-90 = nadir)",
+            label: "Satellite Mode",
+            tooltip: "Satellite mode: more intutive screen-space caemra movement when looking more directly up or down.\nAutomatically sets Pan/Tilt/Roll from screen-space mouse draggin and the 'Rotation' value. Useful for satellite tracking and other high-elevation camera angles.",
         },
         rotation: {
             label: "Rotation",
-            tooltip: "Screen-space rotation around the camera look axis",
+            tooltip: "Screen-space rotation around the camera look axis in Satellite Mode. This will update the PTZ 'Roll' value to match the screen-space rotation.",
         },
     },
 

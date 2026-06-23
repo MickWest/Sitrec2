@@ -47,7 +47,8 @@ import {MV3} from "./threeUtils";
 import {registerNodeConsole} from "./RegisterNodes"
 import {t} from "./i18n"
 import {Frame2Az} from "./JetUtils";
-import {isConsole} from "./configUtils";
+import {isConsole, isLocal} from "./configUtils";
+import {REMOVED_NODE_IDS} from "./RemovedNodes";
 import {CNodeMirrorVideoView} from "./nodes/CNodeMirrorVideoView";
 import {CNodeTerrainUI} from "./nodes/CNodeTerrainUI";
 import {showError} from "./showError";
@@ -165,6 +166,17 @@ export async function SituationSetupFromData(sitData, runDeferred) {
         // we can have undefined values in sitData, so skip them
         // this normally occurs when we have a base situation, and then override some values
         if (_data === undefined || _data === null) continue;
+
+        // Skip nodes that have been fully removed from the codebase but are still
+        // embedded in an old saved sitch (saved sitches serialize their whole graph,
+        // so a node deleted from SitCustom.js still lives in pre-existing saves).
+        // Not creating it here makes it vanish everywhere — and since it never enters
+        // NodeMan, it's never re-serialized, so old saves self-heal on the next save.
+        // See src/RemovedNodes.js.
+        if (REMOVED_NODE_IDS.has(key)) {
+            if (isLocal) console.log(`SituationSetup: skipping removed node "${key}" embedded in an old saved sitch`);
+            continue;
+        }
 
         const dataDeferred = _data.defer ?? false;
         // assert dataDeferred is a boolean

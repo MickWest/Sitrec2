@@ -1780,19 +1780,19 @@ export const setupMethods = {
                     "fixedCamera": NodeMan.get("fixedCameraPosition"),
                 },
                 desc: "Orbit Target",
-                gui: "camera",
+                gui: "cameraTweaks",
             });
 
             new CNodeGUIValue({
                 id: "orbitRadius",
                 value: 5000, start: 100, end: 100000, step: 100,
-                desc: "Orbit Radius (m)", gui: "camera",
+                desc: "Orbit Radius (m)", gui: "cameraTweaks",
             });
 
             new CNodeGUIValue({
                 id: "orbitPeriod",
                 value: 120, start: 60, end: 300, step: 1,
-                desc: "Orbit Period (s)", gui: "camera",
+                desc: "Orbit Period (s)", gui: "cameraTweaks",
             });
 
             new CNodeOrbitTrack({

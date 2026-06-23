@@ -7,7 +7,7 @@ import {
     getLocalUpVector,
     getNorthPole
 } from "../SphericalMath";
-import {NodeMan, Sit} from "../Globals";
+import {guiMenus, NodeMan, Sit} from "../Globals";
 
 import {CNodeController} from "./CNodeController";
 import {V3} from "../threeUtils";
@@ -151,9 +151,13 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             if (this.roll !== undefined ) {
                 this.rollController = guiPTZ.add(this, "roll", -180, 180, 0.005).listen().name(t("ptzUI.roll.label")).tooltip(t("ptzUI.roll.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
             }
-            guiPTZ.add(this, "xOffset", -20, 20, 0.001).listen().name(t("ptzUI.xOffset.label")).tooltip(t("ptzUI.xOffset.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
-            guiPTZ.add(this, "yOffset", -20, 20, 0.001).listen().name(t("ptzUI.yOffset.label")).tooltip(t("ptzUI.yOffset.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
-            guiPTZ.add(this, "nearPlane", 0.001, 1, 0.001).listen().name(t("ptzUI.nearPlane.label")).tooltip(t("ptzUI.nearPlane.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
+            // Lens X/Y offset and near plane are "tweaks" rather than primary
+            // pan/tilt/zoom controls, so they live in Camera ▸ Camera Tweaks (falls
+            // back to the PTZ folder if that permanent shell isn't present).
+            const tweaksFolder = guiMenus.cameraTweaks ?? guiPTZ;
+            tweaksFolder.add(this, "xOffset", -20, 20, 0.001).listen().name(t("ptzUI.xOffset.label")).tooltip(t("ptzUI.xOffset.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
+            tweaksFolder.add(this, "yOffset", -20, 20, 0.001).listen().name(t("ptzUI.yOffset.label")).tooltip(t("ptzUI.yOffset.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
+            tweaksFolder.add(this, "nearPlane", 0.001, 1, 0.001).listen().name(t("ptzUI.nearPlane.label")).tooltip(t("ptzUI.nearPlane.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
             guiPTZ.add(this, "relative").listen().name(t("ptzUI.relative.label")).tooltip(t("ptzUI.relative.tooltip")).onChange(v => this.refresh())
             guiPTZ.add(this, "satellite").listen().name(t("ptzUI.satellite.label")).tooltip(t("ptzUI.satellite.tooltip")).onChange(v => {
                 this.syncModeTransition();

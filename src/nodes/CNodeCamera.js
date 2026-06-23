@@ -158,9 +158,12 @@ export class CNodeCamera extends CNode3D {
     }
 
     addGroundTrackSwitchGUI() {
-        if (!guiMenus.camera) return;
+        // Lives in Camera ▸ Camera Tweaks (falls back to the Camera menu itself if
+        // that permanent shell isn't present, e.g. on cut-down menu setups).
+        const menu = guiMenus.cameraTweaks ?? guiMenus.camera;
+        if (!menu) return;
 
-        const controller = guiMenus.camera.add(
+        const controller = menu.add(
             this,
             "switchToGroundTrackFrame",
             0,

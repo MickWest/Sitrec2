@@ -234,17 +234,27 @@ export class CNodeView3D extends CNodeViewCanvas {
         // Y-compress: anamorphic vertical squash. 1 = no-op. Values >1 widen the
         // vertical view frustum by that factor while keeping the same output height,
         // packing more in vertically (the image looks vertically squashed).
-        // Only the mainView exposes the control; other views keep the default 1.
+        // This is a per-3D-view setting: the data lives on each CNodeView3D and the
+        // render/culling path reads this.yCompress directly. The main view's control
+        // ("Main Y-comp") lives in the View menu; the look view's ("Look Y-comp")
+        // lives in Camera ▸ Camera Tweaks (it tweaks the look camera). Other views
+        // keep the default 1 (no control).
         this.yCompress = v.yCompress ?? 1.0;
-        if (this.id === "mainView") {
-            guiMenus.view.add(this, "yCompress", 1, 20, 0.1)
-                .name("Y-compress")
+        const yCompressControl = {
+            mainView: {label: "Main Y-comp", menu: "view"},
+            lookView: {label: "Look Y-comp", menu: "cameraTweaks"},
+        }[this.id];
+        if (yCompressControl !== undefined) {
+            this._hasYCompressControl = true;
+            const menu = guiMenus[yCompressControl.menu] ?? guiMenus.view;
+            menu.add(this, "yCompress", 1, 20, 0.01)
+                .name(yCompressControl.label)
                 .listen()
                 .onChange(() => {
                     this.updateYCompressIndicator();
                     setRenderOne(true);
                 })
-                .tooltip("Vertically expand the view frustum to pack more into the same height (distorts the view). 1 = off.");
+                .tooltip("Vertically expand this view's frustum to pack more into the same height (distorts the view). 1 = off.");
             this.addSimpleSerial("yCompress");
             this.updateYCompressIndicator();
         }
@@ -3326,7 +3336,7 @@ export class CNodeView3D extends CNodeViewCanvas {
     // A DOM child of the view div (not a WebGL draw), so it's independent of the
     // composite render path. Dirty-checked so it's effectively free to call per-frame.
     updateYCompressIndicator() {
-        if (this.id !== "mainView") return;
+        if (!this._hasYCompressControl) return;
         const yc = this.yCompress ?? 1.0;
         if (yc === this._yCompressShown && this._yCompressIndicator !== undefined) return;
         this._yCompressShown = yc;

@@ -32,6 +32,7 @@ import {GlobalScene} from "./LocalFrame";
 import {refreshLabelsAfterLoading} from "./nodes/CNodeLabels3D";
 import {assert} from "./assert";
 import {getShortURL} from "./urlUtils";
+import {REMOVED_NODE_IDS} from "./RemovedNodes";
 import {CNode3DObject, ModelAliases} from "./nodes/CNode3DObject";
 import {UpdateHUD} from "./JetStuff";
 import {degrees, getDateTimeFilename} from "./utils";
@@ -1303,6 +1304,15 @@ export const serializeMethods = {
                 }
                 delete mods[oldId];
             }
+        }
+
+        // Drop mods for nodes that were fully REMOVED from the codebase. The node is
+        // skipped at creation time (see RemovedNodes.js / SituationSetupFromData), so
+        // without this its stale mod would just hit the "node does not exist" warning
+        // below. Removing it keeps the console clean on legacy saves. Removal-only —
+        // renames are handled by the deprecatedIds map above.
+        for (const removedId of REMOVED_NODE_IDS) {
+            if (mods[removedId] !== undefined) delete mods[removedId];
         }
 
         // Migration for older custom sitches saved before stable shortName metadata

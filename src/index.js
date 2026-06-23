@@ -1757,6 +1757,14 @@ async function initializeOnce() {
 
     addTranslatedGUIMenu("camera", "menus.camera.title")
         .tooltip(t("menus.camera.tooltip"));
+
+    // Permanent sub-folder inside Camera for the less-common per-camera tweaks
+    // (look-camera Y-compress, lens X/Y offset, near plane, orbit camera, and
+    // the ground-track switch). Created here as a permanent shell so it survives
+    // menuBar.destroy(false); its contents are (re)populated per sitch by the
+    // PTZ controller, the lookView, CCustomManager.setup(), and the camera node.
+    addGUIFolder("cameraTweaks", "Camera Tweaks", "camera");
+
     addTranslatedGUIMenu("target", "menus.target.title")
         .tooltip(t("menus.target.tooltip"));
     addTranslatedGUIMenu("traverse", "menus.traverse.title")
@@ -2325,6 +2333,15 @@ async function setupFunctions() {
 // i.e. load files, apply mods, etc.
         CustomManager.deserialize(Sit);
 
+    // "Camera Tweaks" is a permanent folder created at app init (it must be, to
+    // survive menuBar.destroy(false)), which leaves it at the TOP of the Camera
+    // menu. Now that every per-sitch camera control has been added, push it to the
+    // bottom. The deferred re-move catches any same-tick setTimeout(0) reorders
+    // (e.g. CNodeCamera's ground-track switch moving itself within the folder).
+    if (guiMenus.camera && guiMenus.cameraTweaks) {
+        guiMenus.cameraTweaks.moveToEnd();
+        setTimeout(() => guiMenus.cameraTweaks?.moveToEnd(), 0);
+    }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 }
