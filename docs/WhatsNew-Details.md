@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.87.7 (2026-06-22)
+
+### Bug Fixes
+- **Fixed the AI assistant locking onto the wrong point for most constellations** ("lock on / point at <constellation>" in the chat). The local sky-object catalog `SKY_CATALOG` in `src/CClientNLU.js` — consulted by `lookupSkyObject`, which backs the `LOCK_ON` / `POINT_AT` NLU intents — held only ~15 of the 88 IAU constellations. When a name was missing (the reported case was "lock on Sagitta"), the lookup fell through to the LLM, which returns eyeballed RA/Dec that can be off by a degree or two, so the camera locked onto something near the constellation rather than on it. Added the remaining ~72 constellations, each keyed to its brightest (alpha) star at J2000 (e.g. `"sagitta": [19.979, 19.492]` = Gamma Sagittae, `"draco": [17.943, 51.489]` = Eltanin), with `boötes`/`bootes`, `capricorn`/`capricornus` aliases. "Point at / lock on <constellation>" now resolves locally to exact coordinates for all 88.
+
+### Improvements
+- **AI-assistant celestial lock now drives — and reflects in — the "Camera Heading" GUI.** Previously the API lock path (`CNodeCamera.lockOnObject` / `lockOnRaDec`, called by the assistant's `lockCameraOnObject` / `lockCameraOnRaDec`) set a private `cam.celestialLock` flag and steered the camera by writing PTZ angles via `setFromDirection` each frame, never touching the menu — so after "lock on <star>" the **Camera Heading** switch still read "Use Angles" and the celestial-object dropdown still said "Moon". A new `CNodeCamera.celestialMenu()` detects the menu nodes when the sitch has them (`CameraLOSController` switch wired to `celestialController`); when present, the lock now calls `celestialController.setLockObject` / `setLockRaDec` and flips the switch with `sw.selectOption("Celestial Lock")`, so the GUI matches the camera state. The old PTZ-angle path is kept only as the `else` fallback for sitches without those menu nodes, so nothing regresses. `unlockCelestial()` and a manual one-shot `pointAt` (not `fromLock`) flip the switch back to "Use Angles" so the manual point holds instead of being overwritten by the lock controller on the next frame.
+- **`CNodeControllerCelestial` can now track a fixed RA/Dec, not just a named body** (`src/nodes/CNodeControllerVarious.js`). New `raDec` field (`{ra: hours, dec: degrees}`, `null` = track the named object), with `setLockObject` / `setLockRaDec` / `lockDirection` helpers; `apply()` now resolves direction through `lockDirection(...)` (which uses `getCelestialDirectionFromRaDec` in RA/Dec mode) instead of always `getDirection(this.lastValidObject, ...)`. When an RA/Dec lock is set the dropdown text field shows a readable label, e.g. "RA 19.98h Dec +19.5°"; typing a name back into the field clears RA/Dec mode. The `raDec` field is serialized in `modSerialize` / `modDeserialize` so an RA/Dec lock survives save/reload. This gives the menu and the API one shared source of truth for celestial pointing.
+
+### Internal
+- Two Dependabot dependency bumps (lockfiles only, no shipped-code change): `12293418` (webpack-dev-server 5.2.4→5.2.5, guzzle/psr7/promises, jmespath.php — `composer audit` now clean) and `011045e2` (undici, http-proxy-middleware, hono).
+
+---
+
 ## Version 2.87.6 (2026-06-21)
 
 ### Improvements

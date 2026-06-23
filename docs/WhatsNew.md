@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.87.7 (2026-06-22)
+
+### Bug Fixes
+- Fixed the AI assistant locking onto the wrong spot for most constellations. Asking it to "lock on" or "point at" a constellation (for example Sagitta) used to land a degree or two off; all 88 constellations now resolve to exact coordinates.
+
+### Improvements
+- When the AI assistant locks the camera onto a star, planet, or constellation, the **Camera Heading** control now switches to **Celestial Lock** and shows what it's locked onto, so the menu matches what the camera is actually doing.
+
+---
+
 ## Version 2.87.6 (2026-06-21)
 
 ### Improvements

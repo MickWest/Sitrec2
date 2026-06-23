@@ -141,6 +141,88 @@ const SKY_CATALOG = {
     "sagittarius":  [18.403,-34.384], // Kaus Australis
     "corona borealis": [15.578, 26.715], // Alphecca
     "southern cross": [12.443,-63.099], "crux": [12.443,-63.099], // Gacrux
+
+    // ── Remaining IAU constellations (brightest star, J2000) ──
+    // Completes the 88. Keyed to each constellation's brightest (alpha) star
+    // unless noted, so "lock on <constellation>" resolves locally instead of
+    // falling through to the LLM (which only eyeballs approximate coordinates).
+    // NOTE: andromeda, ursa major/minor as asterisms, orion, cassiopeia, cygnus,
+    // lyra, scorpius, leo, gemini, taurus, virgo, aquila, sagittarius, corona
+    // borealis and crux are defined above and intentionally not repeated here.
+    "antlia":       [10.453, -31.068], // Alpha Antliae
+    "apus":         [14.798, -79.045], // Alpha Apodis
+    "aquarius":     [21.526,  -5.571], // Sadalsuud (Beta Aqr)
+    "ara":          [17.421, -55.530], // Beta Arae
+    "aries":        [ 2.119,  23.463], // Hamal
+    "auriga":       [ 5.278,  45.998], // Capella
+    "bootes":       [14.261,  19.182], "boötes": [14.261, 19.182], // Arcturus
+    "caelum":       [ 4.676, -41.864], // Alpha Caeli
+    "camelopardalis":[5.057,  60.442], // Beta Camelopardalis
+    "cancer":       [ 8.275,   9.186], // Tarf (Beta Cnc)
+    "canes venatici":[12.934, 38.318], // Cor Caroli
+    "canis major":  [ 6.752, -16.716], // Sirius
+    "canis minor":  [ 7.655,   5.225], // Procyon
+    "capricornus":  [21.784, -16.127], "capricorn": [21.784, -16.127], // Deneb Algedi
+    "carina":       [ 6.399, -52.696], // Canopus
+    "centaurus":    [14.660, -60.835], // Rigil Kentaurus (Alpha Cen)
+    "cepheus":      [21.310,  62.585], // Alderamin
+    "cetus":        [ 0.726, -17.987], // Deneb Kaitos (Beta Cet)
+    "chamaeleon":   [ 8.309, -76.920], // Alpha Chamaeleontis
+    "circinus":     [14.708, -64.975], // Alpha Circini
+    "columba":      [ 5.660, -34.074], // Phact
+    "coma berenices":[13.198, 27.878], // Beta Comae Berenices
+    "corona australis":[19.158,-37.904], // Alpha Coronae Australis
+    "corvus":       [12.263, -17.542], // Gienah (Gamma Crv)
+    "crater":       [11.322, -14.847], // Delta Crateris
+    "delphinus":    [20.626,  14.595], // Rotanev (Beta Del)
+    "dorado":       [ 4.567, -55.045], // Alpha Doradus
+    "draco":        [17.943,  51.489], // Eltanin (Gamma Dra)
+    "equuleus":     [21.263,   5.250], // Kitalpha
+    "eridanus":     [ 1.629, -57.237], // Achernar
+    "fornax":       [ 3.201, -28.987], // Alpha Fornacis
+    "grus":         [22.137, -46.961], // Alnair
+    "hercules":     [16.504,  21.490], // Kornephoros (Beta Her)
+    "horologium":   [ 4.239, -42.294], // Alpha Horologii
+    "hydra":        [ 9.460,  -8.659], // Alphard
+    "hydrus":       [ 0.426, -77.255], // Beta Hydri
+    "indus":        [20.626, -47.292], // Alpha Indi
+    "lacerta":      [22.521,  50.283], // Alpha Lacertae
+    "leo minor":    [10.886,  34.215], // Praecipua (46 LMi)
+    "lepus":        [ 5.546, -17.822], // Arneb
+    "libra":        [15.283,  -9.383], // Zubeneschamali (Beta Lib)
+    "lupus":        [14.698, -47.388], // Alpha Lupi
+    "lynx":         [ 9.351,  34.393], // Alpha Lyncis
+    "mensa":        [ 6.171, -74.753], // Alpha Mensae
+    "microscopium": [21.017, -32.257], // Gamma Microscopii
+    "monoceros":    [ 6.480,  -7.033], // Beta Monocerotis
+    "musca":        [12.620, -69.136], // Alpha Muscae
+    "norma":        [16.320, -50.156], // Gamma2 Normae
+    "octans":       [21.691, -77.390], // Nu Octantis
+    "ophiuchus":    [17.582,  12.560], // Rasalhague
+    "pavo":         [20.427, -56.735], // Peacock
+    "pegasus":      [21.736,   9.875], // Enif (Epsilon Peg)
+    "perseus":      [ 3.405,  49.861], // Mirfak
+    "phoenix":      [ 0.438, -42.306], // Ankaa
+    "pictor":       [ 6.803, -61.941], // Alpha Pictoris
+    "pisces":       [ 1.524,  15.346], // Alpherg (Eta Psc)
+    "piscis austrinus":[22.961,-29.622], // Fomalhaut
+    "puppis":       [ 8.060, -40.003], // Naos (Zeta Pup)
+    "pyxis":        [ 8.726, -33.186], // Alpha Pyxidis
+    "reticulum":    [ 4.240, -62.474], // Alpha Reticuli
+    "sagitta":      [19.979,  19.492], // Gamma Sagittae (brightest)
+    "sculptor":     [ 0.977, -29.358], // Alpha Sculptoris
+    "scutum":       [18.586,  -8.244], // Alpha Scuti
+    "serpens":      [15.738,   6.426], // Unukalhai (Alpha Ser)
+    "sextans":      [10.132,  -0.372], // Alpha Sextantis
+    "telescopium":  [18.449, -45.968], // Alpha Telescopii
+    "triangulum":   [ 2.159,  34.987], // Beta Trianguli
+    "triangulum australe":[16.811,-69.028], // Atria
+    "tucana":       [22.308, -60.260], // Alpha Tucanae
+    "ursa major":   [12.900,  55.960], // Alioth (Epsilon UMa)
+    "ursa minor":   [ 2.530,  89.264], // Polaris
+    "vela":         [ 8.158, -47.337], // Suhail (Gamma Vel)
+    "volans":       [ 8.131, -66.137], // Beta Volantis
+    "vulpecula":    [19.478,  24.665], // Alpha Vulpeculae
 };
 
 // Build a normalized lookup map from the hardcoded catalog (Messier, NGC, constellations)

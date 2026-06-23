@@ -656,9 +656,16 @@ export class CNodeControllerCelestial extends CNodeController {
         super(v);
         this.celestialObject = v.celestialObject ?? "Moon";
         this.lastValidObject = this.celestialObject;
+        // When set to {ra (hours), dec (degrees)} the lock tracks a fixed sky
+        // position instead of a named body. Used by the API lock-on-RA/Dec path
+        // (e.g. the AI assistant "lock on <star/constellation>"), so the menu and
+        // the API share one source of truth. null = track the named object.
+        this.raDec = v.raDec ?? null;
         this.setGUI(v, "camera");
         if (this.gui) {
             this.textController = this.gui.add(this, "celestialObject").name(t("controllerVarious.celestialObject.label")).tooltip(t("controllerVarious.celestialObject.tooltip")).onFinishChange(() => {
+                // Typing a name in the box leaves RA/Dec-lock mode.
+                this.raDec = null;
                 this.validateAndUpdate();
             }).hide();
         }
@@ -685,6 +692,11 @@ export class CNodeControllerCelestial extends CNodeController {
     }
 
     validateAndUpdate() {
+        if (this.raDec) {
+            // RA/Dec lock is always valid; nothing to resolve.
+            this.recalculateCascade();
+            return;
+        }
         const dir = this.getDirection(this.celestialObject, GlobalDateTimeNode.dateNow);
         if (dir) {
             this.lastValidObject = this.celestialObject;
@@ -692,6 +704,34 @@ export class CNodeControllerCelestial extends CNodeController {
         } else {
             console.warn("Invalid celestial object: " + this.celestialObject + ", using " + this.lastValidObject);
         }
+    }
+
+    // Lock onto a named body/star (clears any RA/Dec lock).
+    setLockObject(name) {
+        this.raDec = null;
+        this.celestialObject = name;
+        this.validateAndUpdate();
+        this.textController?.updateDisplay();
+    }
+
+    // Lock onto a fixed sky position. ra in hours, dec in degrees.
+    setLockRaDec(ra, dec) {
+        this.raDec = {ra, dec};
+        // Show a human-readable label in the GUI text field.
+        const sign = dec >= 0 ? "+" : "−";
+        this.celestialObject = `RA ${ra.toFixed(2)}h Dec ${sign}${Math.abs(dec).toFixed(1)}°`;
+        this.lastValidObject = this.celestialObject;
+        this.recalculateCascade();
+        this.textController?.updateDisplay();
+    }
+
+    // The current lock direction (ECEF, normalized) or null.
+    lockDirection(date, pos) {
+        if (this.raDec) {
+            return getCelestialDirectionFromRaDec(
+                this.raDec.ra * (Math.PI / 12), this.raDec.dec * (Math.PI / 180), date);
+        }
+        return this.getDirection(this.lastValidObject, date, pos);
     }
 
     hide() {
@@ -725,7 +765,7 @@ export class CNodeControllerCelestial extends CNodeController {
 
     apply(f, objectNode) {
         const camera = objectNode.camera;
-        const dir = this.getDirection(this.lastValidObject, GlobalDateTimeNode.dateNow, camera.position);
+        const dir = this.lockDirection(GlobalDateTimeNode.dateNow, camera.position);
         if (!dir) {
             return;
         }
@@ -739,6 +779,7 @@ export class CNodeControllerCelestial extends CNodeController {
         return {
             ...super.modSerialize(),
             celestialObject: this.lastValidObject,
+            raDec: this.raDec,
         };
     }
 
@@ -747,6 +788,9 @@ export class CNodeControllerCelestial extends CNodeController {
         if (v.celestialObject !== undefined) {
             this.celestialObject = v.celestialObject;
             this.lastValidObject = v.celestialObject;
+        }
+        if (v.raDec !== undefined) {
+            this.raDec = v.raDec;
         }
     }
 }

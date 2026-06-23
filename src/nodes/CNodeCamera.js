@@ -319,25 +319,59 @@ export class CNodeCamera extends CNode3D {
         }
     }
 
+    // The "Camera Heading" switch and its "Celestial Lock" controller, if this
+    // sitch has them (the custom sitch does, built in CustomManagerSetup). When
+    // present we drive the lock through that menu mechanism so the GUI ("Camera
+    // Heading" → Celestial Lock) reflects reality, instead of the standalone
+    // ptzAngles hack below — which silently stayed on "Use Angles".
+    celestialMenu() {
+        const sw = NodeMan.get("CameraLOSController", false);
+        const controller = NodeMan.get("celestialController", false);
+        if (sw && controller && sw.inputs["Celestial Lock"] === controller) {
+            return { sw, controller };
+        }
+        return null;
+    }
+
     lockOnObject(objectName) {
         const dir = getCelestialDirection(objectName, GlobalDateTimeNode.dateNow);
         if (!dir) return false;
-        this.celestialLock = { type: "named", object: objectName };
-        this.setFromDirection(dir, true);
+        const menu = this.celestialMenu();
+        if (menu) {
+            this.celestialLock = null;
+            menu.controller.setLockObject(objectName);
+            menu.sw.selectOption("Celestial Lock");
+        } else {
+            // Fallback for sitches without the menu: drive PTZ angles each frame.
+            this.celestialLock = { type: "named", object: objectName };
+            this.setFromDirection(dir, true);
+        }
         return true;
     }
 
     lockOnRaDec(ra, dec) {
-        this.celestialLock = { type: "radec", ra, dec };
-        const raRad = ra * (Math.PI / 12);
-        const decRad = dec * (Math.PI / 180);
-        const dir = getCelestialDirectionFromRaDec(raRad, decRad, GlobalDateTimeNode.dateNow);
-        this.setFromDirection(dir, true);
+        const menu = this.celestialMenu();
+        if (menu) {
+            this.celestialLock = null;
+            menu.controller.setLockRaDec(ra, dec);
+            menu.sw.selectOption("Celestial Lock");
+        } else {
+            this.celestialLock = { type: "radec", ra, dec };
+            const raRad = ra * (Math.PI / 12);
+            const decRad = dec * (Math.PI / 180);
+            const dir = getCelestialDirectionFromRaDec(raRad, decRad, GlobalDateTimeNode.dateNow);
+            this.setFromDirection(dir, true);
+        }
         return true;
     }
 
     unlockCelestial() {
         this.celestialLock = null;
+        const menu = this.celestialMenu();
+        if (menu && menu.sw.choice === "Celestial Lock") {
+            // Leave the camera pointing where it is, on the manual-angle path.
+            menu.sw.selectOption("Use Angles");
+        }
     }
 
 
@@ -415,6 +449,13 @@ export class CNodeCamera extends CNode3D {
         // If this is a manual point-at (not from the lock update loop), clear any active lock
         if (!fromLock) {
             this.celestialLock = null;
+            // If a menu-driven Celestial Lock is active, drop back to "Use Angles"
+            // so this one-shot point actually holds (otherwise the lock controller
+            // would re-point the camera on the next frame).
+            const menu = this.celestialMenu();
+            if (menu && menu.sw.choice === "Celestial Lock") {
+                menu.sw.selectOption("Use Angles");
+            }
         }
 
         const target = this.camera.position.clone().add(dir.multiplyScalar(1000)); // 1000m away in the direction of the celestial body
