@@ -157,5 +157,27 @@ export default {
             }`,
             equals: {cleared: false, match: true},
         },
+        // Removing a leaf from a 3+-way split renormalizes the remaining sizes (sum stays 1) so a
+        // later seam drag maps pixels correctly (regression: raw sizes used to sum to <1, making
+        // the seam over-travel by 1/sum). Drag 100px → boundary moves 100px, not ~143px.
+        {
+            type: 'assert', name: 'removeLeafRenormalizesSizes',
+            fn: `() => {
+                const L = window.LayoutMan, V = window.ViewMan;
+                L.setLayout({type:'split', dir:'v', sizes:[0.2,0.3,0.5], children:[
+                    {type:'leaf', viewId:'mainView'}, {type:'leaf', viewId:'video'}, {type:'leaf', viewId:'lookView'}]});
+                L.removeLeaf('video');
+                const sum = L.tree.sizes.reduce((a,b)=>a+b,0);
+                const force = () => ['mainView','lookView'].forEach(id=>{const v=V.get(id,false); if(v) v.updateWH();});
+                force();
+                const w0 = V.get('mainView',false).widthPx;
+                L.dragDivider(L._dividers.find(d=>d.dir==='v'), 100, 0);
+                force();
+                const moved = V.get('mainView',false).widthPx - w0;
+                L.clearLayout();
+                return {sumIsOne: Math.abs(sum-1) < 1e-6, seamMoved100: Math.abs(moved-100) <= 1};
+            }`,
+            equals: {sumIsOne: true, seamMoved100: true},
+        },
     ],
 };

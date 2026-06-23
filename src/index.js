@@ -1701,15 +1701,15 @@ async function initializeOnce() {
     // Split-tree tiling toggle (UI redesign Phase 2): tile the current top-level views into a
     // Blender-style grid with draggable seams, or return to the free-floating layout. Opt-in
     // and non-destructive — clearing returns every view to its fractional rect.
-    const _layoutTileToggle = {tiled: false};
-    guiMenus.view.add(_layoutTileToggle, "tiled").name("Tile Layout")
-        .onChange((v) => {
-            if (v) {
-                if (!LayoutMan.tileFromViews()) _layoutTileToggle.tiled = false; // not guillotine-separable
-            } else {
-                LayoutMan.clearLayout();
-            }
-        }).listen()
+    // The checkbox is backed by a getter/setter onto LayoutMan.active (the source of truth) so
+    // it never lies about state: it reflects auto-tile on load and a detach-collapse back to
+    // legacy (both change LayoutMan.active without touching this control), and if tileFromViews
+    // can't separate the layout the getter stays false so .listen() un-checks it.
+    const _layoutTileToggle = {
+        get tiled() { return LayoutMan.active; },
+        set tiled(v) { if (v) LayoutMan.tileFromViews(); else LayoutMan.clearLayout(); },
+    };
+    guiMenus.view.add(_layoutTileToggle, "tiled").name("Tile Layout").listen()
         .tooltip("Tile the open views into a Blender-style grid with draggable dividers");
 
 

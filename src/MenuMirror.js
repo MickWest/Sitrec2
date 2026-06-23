@@ -50,6 +50,15 @@ export function clearMenuMirrors() {
     consumers.clear();
 }
 
+// Re-align a registered source and all its mirrors to the current bound value. Call this after
+// changing object[property] WITHOUT going through the controller (e.g. a direct settings
+// assignment + bare updateDisplay()), which otherwise updates only the source's own <select>
+// and leaves the mirrors stale.
+export function syncMirroredSource(key) {
+    const source = sources.get(key);
+    if (source) syncMirrors(source);
+}
+
 function isDropdown(controller) {
     return controller && controller._names !== undefined && controller._values !== undefined;
 }

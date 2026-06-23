@@ -119,6 +119,8 @@ class CLayoutManager {
     _walk(node, x, y, w, h) {
         if (!node) return;
         if (node.type === "leaf") {
+            // x/y/w/h arrive already floored from the parent split (or the integer container
+            // rect at the root), so a leaf rect is integer + gapless.
             this._rects.set(node.viewId, {
                 leftPx: Math.round(x), topPx: Math.round(y),
                 widthPx: Math.max(1, Math.round(w)), heightPx: Math.max(1, Math.round(h)),
@@ -132,31 +134,39 @@ class CLayoutManager {
         const sizes = this._normalizedSizes(node, n);
         const total = vertical ? w : h;
         const usable = Math.max(0, total - LAYOUT_DIVIDER_PX * (n - 1));
-        let cursor = vertical ? x : y;
+        const start = vertical ? x : y;
+        // Floor each child boundary and size it as (next floored edge − this floored edge), so
+        // tiles are integer + gapless AND pixel-identical to the legacy Math.floor fractional
+        // path (which floors each view's left/width independently). pos tracks the exact float
+        // near-edge of the current child.
+        let pos = start;
         for (let i = 0; i < n; i++) {
             const extent = usable * sizes[i];
+            const nearEdge = Math.floor(pos);
+            const farEdge = Math.floor(pos + extent);
+            const childExtent = Math.max(1, farEdge - nearEdge);
             if (vertical) {
-                this._walk(children[i], cursor, y, extent, h);
-                cursor += extent;
+                this._walk(children[i], nearEdge, y, childExtent, h);
                 if (i < n - 1) {
                     this._dividers.push({node, index: i, dir: "v", usablePx: usable,
-                        x: cursor, y, w: LAYOUT_DIVIDER_PX, h});
-                    cursor += LAYOUT_DIVIDER_PX;
+                        x: farEdge, y, w: LAYOUT_DIVIDER_PX, h});
                 }
             } else {
-                this._walk(children[i], x, cursor, w, extent);
-                cursor += extent;
+                this._walk(children[i], x, nearEdge, w, childExtent);
                 if (i < n - 1) {
                     this._dividers.push({node, index: i, dir: "h", usablePx: usable,
-                        x, y: cursor, w, h: LAYOUT_DIVIDER_PX});
-                    cursor += LAYOUT_DIVIDER_PX;
+                        x, y: farEdge, w, h: LAYOUT_DIVIDER_PX});
                 }
             }
+            pos += extent + LAYOUT_DIVIDER_PX;
         }
     }
 
-    // Return sizes normalised to sum 1 (without mutating the stored array, so serialization
-    // stays stable). Repairs a missing/degenerate array by writing back equal sizes.
+    // Return sizes normalised to sum 1. Writes the normalised array BACK to node.sizes so the
+    // stored tree never diverges from what the walk uses — important after removeLeaf splices a
+    // size out (leaving sum<1), since the divider-drag math reads node.sizes directly and would
+    // otherwise map pixel deltas through the wrong total. Normalisation is idempotent (once
+    // sum==1 it's a no-op), so this doesn't churn. Also repairs a missing/degenerate array.
     _normalizedSizes(node, n) {
         let sizes = node.sizes;
         if (!Array.isArray(sizes) || sizes.length !== n) {
@@ -170,7 +180,10 @@ class CLayoutManager {
             node.sizes = sizes;
             return sizes;
         }
-        if (Math.abs(sum - 1) > 1e-6) return sizes.map(s => (s > 0 ? s : 0) / sum);
+        if (Math.abs(sum - 1) > 1e-6) {
+            sizes = sizes.map(s => (s > 0 ? s : 0) / sum);
+            node.sizes = sizes;
+        }
         return sizes;
     }
 

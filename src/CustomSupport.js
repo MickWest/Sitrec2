@@ -45,7 +45,7 @@ import {
     withTestUser
 } from "./Globals";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
-import {registerMirrorSource} from "./MenuMirror";
+import {registerMirrorSource, syncMirroredSource} from "./MenuMirror";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {GlobalScene} from "./LocalFrame";
@@ -690,6 +690,11 @@ export class CCustomManager {
             this.chatModelController.updateDisplay();
             this.saveGlobalSettings(true);
         }
+
+        // The value changes above bypass the controller's onChange, so any mirror of this
+        // dropdown (e.g. the Assistant header "AI Model") would keep showing the old value.
+        // Re-align all mirrors to the now-current chatModel.
+        syncMirroredSource("chatModel");
     }
 
     // Upgrade legacy camera smoothing tracks to dynamic smoothing controls.
