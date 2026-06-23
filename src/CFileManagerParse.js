@@ -644,6 +644,19 @@ export const parseMethods = {
                         if (elCol !== -1) {
                             azElController.setElFile(parsedFile, elCol);
                         }
+
+                        // Surface the "Custom Az/El" Camera Heading option only now that
+                        // real az/el data exists — an empty Custom Az/El just falls through
+                        // to the manual PTZ angle, so it's hidden until a file feeds it.
+                        // Guarded: addInput() asserts on a duplicate key (re-parse / reload).
+                        // A saved sitch that had it selected has a pending "Custom Az/El"
+                        // choice that resolves the moment this option is (re-)added.
+                        if (azCol !== -1 || elCol !== -1) {
+                            const headingSwitch = NodeMan.get("CameraLOSController", false);
+                            if (headingSwitch && headingSwitch.inputs["Custom Az/El"] === undefined) {
+                                headingSwitch.addOption("Custom Az/El", azElController);
+                            }
+                        }
                     }
 
                     if (fovCol !== -1 || zoomCol !== -1) {

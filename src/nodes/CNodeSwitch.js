@@ -42,9 +42,18 @@ class CNodeSwitch extends CNode {
         if (this.gui !== undefined) {
             this.guiOptions = {}
 
-            // build the list of "key","key" pairs for the gui drop-down menu
+            // Optional per-option DISPLAY-label overrides: { optionKey: "Shown Label" }.
+            // lil-gui's OptionController is index-based — it shows _names[index] for the
+            // value at _values[index] — so we can show a friendlier label while still
+            // storing the original key in `this.choice`. This is display-only: the choice
+            // value, serialization, wiring, and `this.inputs` keys are all unchanged.
+            // (e.g. fovSwitch shows its single "userFOV" option as "Manual".)
+            this.guiLabels = v.labels ?? {};
+
+            // build the list of "label","key" pairs for the gui drop-down menu
             Object.keys(this.inputs).forEach(key => {
-                this.guiOptions[key] = key
+                const label = this.guiLabels[key] ?? key;
+                this.guiOptions[label] = key
 
                 // if any of the inputs are controllers, then this switch is a controller
                 if (this.inputs[key].isController) {

@@ -123,29 +123,62 @@ export const setupMethods = {
         // Backfill newer camera smoothing controls for legacy custom sitches.
         this.upgradeCameraSmoothingControls();
 
-        // Add celestial controller to CameraLOSController sweitch
-        // switches automatically disable unselected controllers
+        // Add the runtime "Camera Heading" options to the CameraLOSController switch.
+        // The switch's static def (SitCustom.js) only carries the two always-built
+        // options ("Manual" = ptzAngles, "To Target" = trackToTrackController). These
+        // three are added here — not in the def — because their controllers need the
+        // lookCamera reference and (for Celestial/Flare) bespoke construction. The
+        // switch enables only the selected controller; the rest stay disabled.
+        //
+        // Each addOption is guarded: addInput() asserts on a duplicate key, and a
+        // re-loaded save (or a half-migrated old save) could already carry one of
+        // these in its embedded inputs.
         const cameraLOSController = NodeMan.get("CameraLOSController", false);
         if (cameraLOSController) {
-            const celestialController = new CNodeControllerCelestial({
-                    id: "celestialController",
-                    celestialObject: "Moon",
-                    camera: "lookCamera",
-                });
             const lookCamera = NodeMan.get("lookCamera", false);
-            lookCamera.addControllerNode(celestialController);
-            cameraLOSController.addOption("Celestial Lock", celestialController);
+
+            if (cameraLOSController.inputs["Celestial Lock"] === undefined) {
+                const celestialController = new CNodeControllerCelestial({
+                        id: "celestialController",
+                        celestialObject: "Moon",
+                        camera: "lookCamera",
+                    });
+                lookCamera.addControllerNode(celestialController);
+                cameraLOSController.addOption("Celestial Lock", celestialController);
+            }
 
             // "Horizon Flare Region": points at the Sun's azimuth but just above the
             // horizon (10% up), where Starlink horizon flares appear — and follows the
             // Sun along the horizon over time. Used by the "Open in Sitrec" handoff.
-            const horizonFlareController = new CNodeControllerHorizonFlareRegion({
-                id: "horizonFlareController",
-                el: 9,
-                camera: "lookCamera",
-            });
-            lookCamera.addControllerNode(horizonFlareController);
-            cameraLOSController.addOption("Horizon Flare Region", horizonFlareController);
+            if (cameraLOSController.inputs["Horizon Flare Region"] === undefined) {
+                const horizonFlareController = new CNodeControllerHorizonFlareRegion({
+                    id: "horizonFlareController",
+                    el: 9,
+                    camera: "lookCamera",
+                });
+                lookCamera.addControllerNode(horizonFlareController);
+                cameraLOSController.addOption("Horizon Flare Region", horizonFlareController);
+            }
+
+            // NOTE: "Custom Az/El" is NOT added here. An empty customAzElController just
+            // passes through to the manual PTZ angle (its per-element fallback), so the
+            // option does nothing until a file with Az/El columns is dropped. It is added
+            // to this switch on demand, when CFileManagerParse feeds the controller real
+            // az/el data (see setAzFile/setElFile). For a saved sitch that used it, the
+            // file re-parses on load and re-adds the option, resolving the pending choice.
+            //
+            // CRITICAL: customAzElController is a DIRECT lookCamera controller, and the
+            // ONLY thing that gates its `enabled` flag is this switch's enableController
+            // (which runs over the switch's inputs). While it is NOT a switch option it is
+            // ungated, so it would stay enabled and apply its ptzAngles-fallback az/el on
+            // top of the real selected heading — silently clobbering To-Target / track-angle
+            // cameras. Disable it here until it becomes a real (gated) option. Once a file
+            // adds it and it is selected, the switch's recalculate re-enables it; when any
+            // other option is selected the switch disables it again.
+            const azElController = NodeMan.get("customAzElController", false);
+            if (azElController && cameraLOSController.inputs["Custom Az/El"] === undefined) {
+                azElController.enableController(false);
+            }
         }
 
         // Create the "Camera + Point Track" LOS adapter node and wire it into the JetLOS switch.
@@ -279,21 +312,23 @@ export const setupMethods = {
                 }
             };
 
-            // Camera Heading: "To Target" -> "Use Angles" should preserve the
-            // current camera orientation, mirroring how syncModeTransition
-            // preserves orientation when toggling PTZ Satellite mode. The
-            // per-frame sync in postApplyControllers above keeps ptz angles
-            // warm while "To Target" drives the camera, but that's not enough
-            // on its own: between the last "To Target" frame and the first
-            // "Use Angles" frame the camera *position* can shift (any moving
-            // track), which makes the previous-frame's az/el slightly wrong
-            // against the new local frame. Capture orientation at the moment
-            // of switch so the transition is exact in both normal and
-            // satellite (near-vertical) cases — syncFromCamera handles both.
-            // Use choiceChanged (not onChange) so the same fix-up also fires
-            // for programmatic switches (e.g. TrackManager auto-selecting).
+            // Camera Heading: switching to "Manual" should preserve the current
+            // camera orientation, mirroring how syncModeTransition preserves
+            // orientation when toggling PTZ Satellite mode. ("Manual" is the
+            // flattened equivalent of the old "Use Angles" + "Manual PTZ", i.e.
+            // ptzAngles driving the camera.) The per-frame sync in
+            // postApplyControllers above keeps ptz angles warm while another
+            // source (e.g. "To Target") drives the camera, but that's not enough
+            // on its own: between the last driven frame and the first "Manual"
+            // frame the camera *position* can shift (any moving track), which
+            // makes the previous-frame's az/el slightly wrong against the new
+            // local frame. Capture orientation at the moment of switch so the
+            // transition is exact in both normal and satellite (near-vertical)
+            // cases — syncFromCamera handles both. Use choiceChanged (not
+            // onChange) so the same fix-up also fires for programmatic switches
+            // (e.g. TrackManager auto-selecting).
             EventManager.addEventListener("Switch.choiceChanged.CameraLOSController", (choice) => {
-                if (choice !== "Use Angles") return;
+                if (choice !== "Manual") return;
                 if (Globals.deserializing) return;
                 lookCamera.camera.updateMatrixWorld();
                 ptzController.syncFromCamera(lookCamera.camera);

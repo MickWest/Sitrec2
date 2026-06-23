@@ -145,8 +145,8 @@ class CLongExposureManager {
             .tooltip("Hold the camera heading exactly as it is RIGHT NOW for the whole\n" +
                 "exposure — a tripod doesn't track. Works in any camera mode (To Target,\n" +
                 "Celestial Lock, Horizon Flare Region...): the exposure behaves as if\n" +
-                "Use Angles were locked on the current spot in the sky. The Camera\n" +
-                "Nudge still applies on top.");
+                "the heading were locked (Manual) on the current spot in the sky. The\n" +
+                "Camera Nudge still applies on top.");
         folder.add(this.params, "hdrPoints").name("HDR Point Sources").perm().listen().onChange(dirty)
             .tooltip("Replace the cosmetic star/planet/light sprites with physically-bright point\n" +
                 "splats (true linear flux) so bright sources stay visible in the average and\n" +

@@ -1184,15 +1184,16 @@ class CTrackManager extends CManager {
                 }
 
                 // if it's a simple track with no angles (i.e. not MISB)
-                // then switch to "Use Angles" for the camera heading
+                // then switch to "Manual" for the camera heading
                 // which will use the PTZ control as no angles track will be loaded yet
+                // ("Manual" is the flattened "Use Angles" + "Manual PTZ".)
                 // Only do this for the very first track (trackNumber === 1), not for
                 // subsequent tracks from multi-track files like STANAG
                 if (!hasAngles && trackNumber === 1) {
-                    console.log("FIRST TRACK LOADED, setting camera heading to use angles")
+                    console.log("FIRST TRACK LOADED, setting camera heading to Manual")
                     const headingSwitch = NodeMan.get("CameraLOSController", true);
                     if (headingSwitch) {
-                        headingSwitch.selectOption("Use Angles");
+                        headingSwitch.selectOption("Manual");
                     }
                 }
 

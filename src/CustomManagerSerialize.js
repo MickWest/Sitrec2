@@ -1157,16 +1157,20 @@ export const serializeMethods = {
             console.warn(`CustomSupport: remapping legacy fovSwitch choice '${legacyFovChoice}' -> '${resolvedFovChoice}'`);
         }
 
-        const anglesSwitchMod = mods?.anglesSwitch ?? mods?.angelsSwitch;
-        const legacyAnglesChoice = anglesSwitchMod?.choice;
-        const anglesSwitchId = NodeMan.exists("anglesSwitch") ? "anglesSwitch" : "angelsSwitch";
-        const resolvedAnglesChoice = this.resolveLegacySwitchChoice(anglesSwitchId, legacyAnglesChoice, "Angles_");
+        // Per-track angle sources ("Angles_<name>") now live on the unified
+        // CameraLOSController — the legacy anglesSwitch was flattened into it on
+        // load (migrateCameraHeadingReorg, RegisterSitches.js), which also moved
+        // this choice across. Remap a legacy track-root here too so very old saves
+        // whose track shortNames changed still resolve their angle source.
+        const anglesChoiceMod = mods?.CameraLOSController;
+        const legacyAnglesChoice = anglesChoiceMod?.choice;
+        const resolvedAnglesChoice = this.resolveLegacySwitchChoice("CameraLOSController", legacyAnglesChoice, "Angles_");
         if (resolvedAnglesChoice && resolvedAnglesChoice !== legacyAnglesChoice) {
             const oldRoot = legacyAnglesChoice.substring("Angles_".length);
             const newRoot = resolvedAnglesChoice.substring("Angles_".length);
             remapRoot(oldRoot, newRoot);
-            anglesSwitchMod.choice = resolvedAnglesChoice;
-            console.warn(`CustomSupport: remapping legacy angles switch choice '${legacyAnglesChoice}' -> '${resolvedAnglesChoice}'`);
+            anglesChoiceMod.choice = resolvedAnglesChoice;
+            console.warn(`CustomSupport: remapping legacy Camera Heading angles choice '${legacyAnglesChoice}' -> '${resolvedAnglesChoice}'`);
         }
 
         // The "Auto Tracking" menu folder + LOS dropdown option were renamed to "Point Track"

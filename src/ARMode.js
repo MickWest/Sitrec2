@@ -111,7 +111,7 @@ class ARModeManager {
         const elevationAngle = readings.elevation;
         
         // Instead of directly rotating the camera, update the PTZ controller
-        // This allows AR mode to work with the Manual PTZ "Use Angles" system
+        // This allows AR mode to work with the "Manual" (ptzAngles) camera-heading system
         const ptzController = NodeMan.get("ptzAngles", false);
         if (ptzController) {
             // Update PTZ controller with device orientation

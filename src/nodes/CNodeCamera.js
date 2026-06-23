@@ -326,7 +326,7 @@ export class CNodeCamera extends CNode3D {
     // sitch has them (the custom sitch does, built in CustomManagerSetup). When
     // present we drive the lock through that menu mechanism so the GUI ("Camera
     // Heading" → Celestial Lock) reflects reality, instead of the standalone
-    // ptzAngles hack below — which silently stayed on "Use Angles".
+    // ptzAngles hack below — which silently stayed on "Manual".
     celestialMenu() {
         const sw = NodeMan.get("CameraLOSController", false);
         const controller = NodeMan.get("celestialController", false);
@@ -373,7 +373,7 @@ export class CNodeCamera extends CNode3D {
         const menu = this.celestialMenu();
         if (menu && menu.sw.choice === "Celestial Lock") {
             // Leave the camera pointing where it is, on the manual-angle path.
-            menu.sw.selectOption("Use Angles");
+            menu.sw.selectOption("Manual");
         }
     }
 
@@ -452,12 +452,12 @@ export class CNodeCamera extends CNode3D {
         // If this is a manual point-at (not from the lock update loop), clear any active lock
         if (!fromLock) {
             this.celestialLock = null;
-            // If a menu-driven Celestial Lock is active, drop back to "Use Angles"
+            // If a menu-driven Celestial Lock is active, drop back to "Manual"
             // so this one-shot point actually holds (otherwise the lock controller
             // would re-point the camera on the next frame).
             const menu = this.celestialMenu();
             if (menu && menu.sw.choice === "Celestial Lock") {
-                menu.sw.selectOption("Use Angles");
+                menu.sw.selectOption("Manual");
             }
         }
 

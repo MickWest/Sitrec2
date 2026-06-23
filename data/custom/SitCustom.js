@@ -247,7 +247,7 @@ sitch = {
         },
 
         // NOTE: Don't use camera shake effect, as there's an issue with the useRecorded that
-        // needs to be resolved first. (Switching from "To Target" to "Use Angles" causes the LOS to be incorrect)
+        // needs to be resolved first. (Switching from "To Target" to "Manual" causes the LOS to be incorrect)
 
         syncPixelZoomWithVideo: true,
     },
@@ -513,6 +513,12 @@ sitch = {
         inputs: {
             "userFOV": "fovUI",
         },
+        // Display-only: show the manual "userFOV" option as "Manual" in the dropdown.
+        // The stored choice value stays "userFOV" (no migration of saved choices).
+        // Dropped per-track FOV sources add their own named options alongside it.
+        labels: {
+            "userFOV": "Manual",
+        },
         desc: "Camera FOV",
         gui: "camera",
     },
@@ -585,29 +591,27 @@ sitch = {
         azSmooth: "customAzSmooth",
         elSmooth: "customElSmooth",},
 
-    // Switch for angles controllers
-    anglesSwitch: {
-        kind: "Switch",
-        inputs: {
-            "Manual PTZ": "ptzAngles",
-            "Custom Az/El" : "customAzElController",
-            // when we add tracks, if they have angles, then we'll add a losTrackMISB node and
-            // then a matrixController
-        },
-        desc: "Angles Source",
-        gui:"camera",
-    },
-
-
-    // The LOS controller will reference the cameraTrackSwitch and targetTrackSwitchSmooth
-    // for source data
-    // can be track-to-track, fixed angles, Az/El/Roll track, etc.
+    // The unified "Camera Heading" switch. It used to be two nested switches —
+    // "Camera Heading" (To Target / Use Angles) wrapping an "Angles Source"
+    // switch (Manual PTZ / Custom Az/El / per-track angles) — but every option
+    // is just one of lookCamera's controllers, gated on/off by the switch, so
+    // the two levels collapse into one flat list with no behaviour change.
+    //
+    //   "Manual"   = the old "Use Angles" + "Angles Source: Manual PTZ" (ptzAngles)
+    //   "To Target"= the old "Camera Heading: To Target" (trackToTrackController)
+    //
+    // Other entries are added at runtime in CustomManagerSetup.setup():
+    //   "Celestial Lock", "Horizon Flare Region", "Custom Az/El"
+    // and per-track angle sources ("Angles_<shortName>") are added on drop via
+    // dropTargets.angles (below) — same deferred-choice mechanism as before.
+    // Old saves embedding the nested anglesSwitch are flattened on load by
+    // migrateCameraHeadingReorg() in RegisterSitches.js.
     CameraLOSController: {kind: "Switch",
         inputs: {
+            "Manual": "ptzAngles",
             "To Target": "trackToTrackController",
-            "Use Angles": "anglesSwitch",
         },
-        default: "Use Angles",
+        default: "Manual",
         desc: "Camera Heading",
         gui: "camera"
     },
@@ -851,7 +855,9 @@ sitch = {
 //        "track": ["cameraTrackSwitch", "targetTrackSwitch"],
         "fov": ["fovSwitch"],
         "wind": ["windSwitch"],
-        "angles": ["anglesSwitch"],
+        // Per-track angle sources now drop straight onto the unified Camera
+        // Heading switch (formerly the nested "Angles Source" / anglesSwitch).
+        "angles": ["CameraLOSController"],
     },
 
 

@@ -4,6 +4,7 @@ import {parseJavascriptObject} from "./Serialize";
 import {checkForModding} from "./utils";
 import {showError} from "./showError";
 import {isServerless} from "./configUtils";
+import {migrateCameraHeadingReorg, migrateFovSwitchLabel} from "./SitchMigrations";
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Note. This failed once due to what seemed to be a circular dependency
@@ -118,6 +119,11 @@ export function textSitchToObject(text, canMod = true) {
 
     try {
         const obj = parseJavascriptObject(data)
+        // Flatten the legacy two-switch camera-heading model before the object is
+        // used to build nodes or apply mods. Idempotent / no-op on new saves.
+        migrateCameraHeadingReorg(obj);
+        // Relabel the Camera FOV switch's "userFOV" option as "Manual" (display only).
+        migrateFovSwitchLabel(obj);
         if (canMod) {
             return checkForModding(obj);
         } else {
