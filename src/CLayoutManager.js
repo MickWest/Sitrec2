@@ -23,7 +23,7 @@ const DIVIDER_GRAB_PX = 8;            // interactive grab zone width centred on 
 // A floating view only re-docks (splits a tile) when the cursor is within this fraction of a
 // tile edge, IN the direction of that edge. Dropping anywhere in the central region leaves the
 // view free-floating — so you can position a window without it snapping.
-const DROP_EDGE_BAND = 0.10;
+const DROP_EDGE_BAND = 0.05;
 
 class CLayoutManager {
     constructor() {
@@ -425,7 +425,7 @@ class CLayoutManager {
         const r = target.rect;
         const relX = (x - r.leftPx) / r.widthPx;
         const relY = (y - r.topPx) / r.heightPx;
-        // Nearest edge of the tile and how far the cursor is into that 10% band.
+        // Nearest edge of the tile and how far the cursor is into that edge band.
         const edges = [
             {dist: relX,     dir: "v", firstIsNew: true},   // left   → new view on the left
             {dist: 1 - relX, dir: "v", firstIsNew: false},  // right  → new view on the right

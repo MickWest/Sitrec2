@@ -214,8 +214,8 @@ export default {
                 L.removeLeaf('video');
                 const cont = V.container, cr = cont.getBoundingClientRect();
                 const m = L.rectFor('mainView');
-                // Drop in the right 10% edge band of mainView → split with video on the right.
-                const ok = L.dockViewAt('video', cr.left + m.leftPx + m.widthPx * 0.95, cr.top + m.topPx + m.heightPx * 0.5);
+                // Drop in the right edge band of mainView → split with video on the right.
+                const ok = L.dockViewAt('video', cr.left + m.leftPx + m.widthPx * 0.97, cr.top + m.topPx + m.heightPx * 0.5);
                 const tree = shape(L.tree);
                 const videoTiled = L.hasLeaf('video');
                 L.clearLayout();
