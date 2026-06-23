@@ -355,6 +355,91 @@ class CLayoutManager {
         return true;
     }
 
+    // Force the visible top-level views into a clean default grid, IGNORING their current
+    // positions — so it always works even when they overlap (e.g. after a detach left a floating
+    // window). mainView (if present) takes the left half and the rest stack on the right; else
+    // equal columns. Recovery action for the "Reset Layout" command. Aspect-locked views can't
+    // tile and stay free-floating.
+    resetLayout() {
+        const {rects} = this._collectTileableRects();
+        const ids = rects.map(r => r.viewId);
+        if (ids.length < 2) { this.clearLayout(); return false; }
+        let tree;
+        if (ids.includes("mainView")) {
+            const rest = ids.filter(id => id !== "mainView");
+            const right = rest.length === 1
+                ? {type: "leaf", viewId: rest[0]}
+                : {type: "split", dir: "h", sizes: rest.map(() => 1 / rest.length),
+                   children: rest.map(id => ({type: "leaf", viewId: id}))};
+            tree = {type: "split", dir: "v", sizes: [0.5, 0.5],
+                    children: [{type: "leaf", viewId: "mainView"}, right]};
+        } else {
+            tree = {type: "split", dir: "v", sizes: ids.map(() => 1 / ids.length),
+                    children: ids.map(id => ({type: "leaf", viewId: id}))};
+        }
+        this.setLayout(tree);
+        return true;
+    }
+
+    // --- Re-dock a floating view back into the grid (inverse of detach) ---
+
+    // Find the leaf node (and its rect) whose tile contains the container-relative point.
+    _leafNodeAt(x, y) {
+        for (const [viewId, rect] of this._rects) {
+            if (x >= rect.leftPx && x < rect.leftPx + rect.widthPx &&
+                y >= rect.topPx && y < rect.topPx + rect.heightPx) {
+                const node = this._findLeafNode(this.tree, viewId);
+                if (node) return {node, viewId, rect};
+            }
+        }
+        return null;
+    }
+
+    _findLeafNode(node, viewId) {
+        if (!node) return null;
+        if (node.type === "leaf") return node.viewId === viewId ? node : null;
+        for (const c of (node.children || [])) {
+            const f = this._findLeafNode(c, viewId);
+            if (f) return f;
+        }
+        return null;
+    }
+
+    // Dock a currently-floating view into the grid by splitting the tile under the drop point
+    // (clientX/clientY). The split axis + side come from which edge of the target tile the drop
+    // landed nearest (Blender-style: drop on the left → new view on the left, etc.). Returns
+    // true if it docked. No-op if no tree is active or the view is already tiled.
+    dockViewAt(viewId, clientX, clientY) {
+        if (!this.tree || this.hasLeaf(viewId)) return false;
+        const cont = ViewMan.container;
+        const cr = cont ? cont.getBoundingClientRect() : {left: 0, top: 0};
+        const x = clientX - cr.left, y = clientY - cr.top;
+        const target = this._leafNodeAt(x, y);
+        if (!target || target.viewId === viewId) return false;
+
+        const r = target.rect;
+        const relX = (x - r.leftPx) / r.widthPx;
+        const relY = (y - r.topPx) / r.heightPx;
+        // Split along whichever axis the drop is nearer an edge of; new view goes on that side.
+        const vertical = Math.min(relX, 1 - relX) <= Math.min(relY, 1 - relY);
+        const newLeaf = {type: "leaf", viewId};
+        const oldLeaf = {type: "leaf", viewId: target.viewId};
+        const firstIsNew = vertical ? relX < 0.5 : relY < 0.5;
+        const children = firstIsNew ? [newLeaf, oldLeaf] : [oldLeaf, newLeaf];
+
+        delete target.node.viewId;
+        target.node.type = "split";
+        target.node.dir = vertical ? "v" : "h";
+        target.node.sizes = [0.5, 0.5];
+        target.node.children = children;
+
+        this._dirty = true;
+        this.recompute();
+        this._applyResizeSuppression();
+        setRenderOne(true);
+        return true;
+    }
+
     // --- Interactive divider DOM (Blender-style draggable seams) ---
     // Each seam gets a thin transparent grab strip (wider than the 4px gap) on top of the
     // tiles, with a col/row-resize cursor. Dragging it calls dragDivider. Elements are reused

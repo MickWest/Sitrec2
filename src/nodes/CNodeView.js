@@ -1213,6 +1213,17 @@ class CNodeView extends CNode {
         // Keep the header bar on screen (below the menu bar, partly visible L/R).
         this._ensureUIBarVisible();
 
+        // Re-dock into the split-tree grid: if tiling is active and this floating view was
+        // dropped (after a deliberate drag) over an existing tile, split that tile to insert it
+        // — the inverse of detach. Takes precedence over sidebar docking when over a tile.
+        if (moved >= HEADER_DRAG_DOCK_THRESHOLD && LayoutMan.active && !LayoutMan.hasLeaf(this.id)
+            && event && event.clientX !== undefined) {
+            if (LayoutMan.dockViewAt(this.id, event.clientX, event.clientY)) {
+                this.setResizeHandlesVisible(false);   // tiled views resize via the seams
+                return;
+            }
+        }
+
         if (!this.dockable) return;
 
         // Docking requires a DELIBERATE drag, not a click that happens to land near an edge.

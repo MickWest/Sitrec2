@@ -179,5 +179,48 @@ export default {
             }`,
             equals: {sumIsOne: true, seamMoved100: true},
         },
+        // Reset Layout rebuilds a clean grid from all visible views, ignoring positions — so it
+        // recovers even after a detach left a floating view that overlaps the grid.
+        {
+            type: 'assert', name: 'resetLayoutRebuildsGrid',
+            fn: `() => {
+                const L = window.LayoutMan;
+                const shape = (n) => !n ? null : (n.type === 'leaf' ? n.viewId : n.dir + '[' + n.children.map(shape).join(',') + ']');
+                L.setLayout({type:'split', dir:'v', sizes:[0.5,0.5], children:[
+                    {type:'leaf', viewId:'mainView'},
+                    {type:'split', dir:'h', sizes:[0.5,0.5], children:[
+                        {type:'leaf', viewId:'video'}, {type:'leaf', viewId:'lookView'}]}]});
+                L.removeLeaf('video');               // video floats, tree collapses
+                const collapsed = shape(L.tree);
+                L.resetLayout();                     // all views back into a clean grid
+                const reset = shape(L.tree);
+                const allTiled = ['mainView','video','lookView'].every(id => L.hasLeaf(id));
+                L.clearLayout();
+                return {collapsed, reset, allTiled};
+            }`,
+            equals: {collapsed: 'v[mainView,lookView]', reset: 'v[mainView,h[video,lookView]]', allTiled: true},
+        },
+        // Re-dock: dropping a detached (floating) view over a tile splits that tile to re-insert
+        // it — the inverse of detach. Drop on the right of mainView → split with video on the right.
+        {
+            type: 'assert', name: 'reDockSplitsTargetTile',
+            fn: `() => {
+                const L = window.LayoutMan, V = window.ViewMan;
+                const shape = (n) => !n ? null : (n.type === 'leaf' ? n.viewId : n.dir + '[' + n.children.map(shape).join(',') + ']');
+                L.setLayout({type:'split', dir:'v', sizes:[0.5,0.5], children:[
+                    {type:'leaf', viewId:'mainView'},
+                    {type:'split', dir:'h', sizes:[0.5,0.5], children:[
+                        {type:'leaf', viewId:'video'}, {type:'leaf', viewId:'lookView'}]}]});
+                L.removeLeaf('video');
+                const cont = V.container, cr = cont.getBoundingClientRect();
+                const m = L.rectFor('mainView');
+                const ok = L.dockViewAt('video', cr.left + m.leftPx + m.widthPx * 0.8, cr.top + m.topPx + m.heightPx * 0.5);
+                const tree = shape(L.tree);
+                const videoTiled = L.hasLeaf('video');
+                L.clearLayout();
+                return {ok, tree, videoTiled};
+            }`,
+            equals: {ok: true, tree: 'v[v[mainView,video],lookView]', videoTiled: true},
+        },
     ],
 };

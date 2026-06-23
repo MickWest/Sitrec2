@@ -1712,6 +1712,12 @@ async function initializeOnce() {
     guiMenus.view.add(_layoutTileToggle, "tiled").name("Tile Layout").listen()
         .tooltip("Tile the open views into a Blender-style grid with draggable dividers");
 
+    // Reset Layout: force the open views back into a clean tiled grid, ignoring their current
+    // positions — recovery for a layout that got messy (e.g. a detached floating window that
+    // overlaps the grid and can no longer be re-tiled by the toggle).
+    guiMenus.view.add({reset: () => LayoutMan.resetLayout()}, "reset").name("Reset Layout")
+        .tooltip("Snap all open views back into a clean tiled grid");
+
 
 
     addTranslatedGUIMenu("video", "menus.video.title")
