@@ -710,6 +710,10 @@ class CNodeView extends CNode {
     // Returns true if it handled placement (caller skips the legacy fractional path).
     applyLayoutRect() {
         if (this.in.relativeTo || this.overlayView) return false;
+        // The fullscreen view must take the whole screen, not its tile rect — let the legacy
+        // (doubled) path place it. The other tiles are hidden by computeEffectiveVisibility
+        // while fullscreen, so their tile geometry doesn't matter.
+        if (ViewMan.fullscreenView === this) return false;
         const rect = LayoutMan.rectFor(this.id);
         if (!rect) return false;
 
@@ -1025,6 +1029,12 @@ class CNodeView extends CNode {
                 this.preDoubledWidth = this.width;
                 this.preDoubledHeight = this.height;
 
+                // Mark fullscreen BEFORE updateWH so applyLayoutRect lets this view take the
+                // full screen instead of pinning it to (and mirroring back) its tile rect.
+                if (this.doubleClickFullScreen) {
+                    ViewMan.fullscreenView = this;
+                }
+
                 if (this.doubleClickResizes) {
                     if (this.width > 0) {
                         this.width *= 2;
@@ -1057,10 +1067,6 @@ class CNodeView extends CNode {
                 this.updateWH();
                 this.snapInsidePx(0, 0, this.containerWidth(), this.containerHeight());
 
-                if (this.doubleClickFullScreen) {
-                    ViewMan.fullscreenView = this;
-                }
-
             } else {
                 this.doubled = false;
                 this.left = this.preDoubledLeft;
@@ -1073,6 +1079,10 @@ class CNodeView extends CNode {
                     ViewMan.fullscreenView = null;
                 }
             }
+
+            // Hide/show the split-tree seam overlay to match fullscreen (the seams must not
+            // draw over a fullscreen view, and must come back on exit).
+            LayoutMan.updateDividerVisibility();
 
             // Fullscreen/double toggles visibility, geometry AND z-order — all applied in
             // renderMain (computeEffectiveVisibility / updateDOMVisibility / updateZOrder),

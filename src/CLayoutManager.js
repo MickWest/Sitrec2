@@ -347,7 +347,6 @@ class CLayoutManager {
             this._dividerLayer = layer;
             this._dividerEls = [];
         }
-        this._dividerLayer.style.display = "block";
 
         // Grow/shrink the pool of grab strips to match the seam count.
         while (this._dividerEls.length < this._dividers.length) {
@@ -380,6 +379,16 @@ class CLayoutManager {
                 Object.assign(el._line.style, {width: "100%", height: "1px"});
             }
         }
+        this.updateDividerVisibility();
+    }
+
+    // Hide the seam overlay while a view is fullscreen (the strips sit at z=55 above the
+    // canvas and would otherwise draw their lines over the fullscreen view). Called from
+    // _syncDividerDOM and on fullscreen toggle (CNodeView.doubleClick).
+    updateDividerVisibility() {
+        if (!this._dividerLayer) return;
+        const hide = !this.active || !this._dividers.length || !!ViewMan.fullscreenView;
+        this._dividerLayer.style.display = hide ? "none" : "block";
     }
 
     _makeDividerEl(index) {
