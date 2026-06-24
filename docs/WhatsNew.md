@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.88.3 (2026-06-24)
+
+### Improvements
+- On installs without local terrain data, the **Local** elevation option now bows out gracefully: if its tiles aren't present, Sitrec quietly drops Local from the elevation source list and falls back to Flat, instead of showing a "service unavailable" error.
+
+### Bug Fixes
+- Fixed Windows-edited server configuration files corrupting Docker/container settings. A `shared.env` saved with Windows line endings used to bake stray characters into values, which made custom map source names show a trailing quote, broke custom map and elevation URLs, and caused the configured default map type and the offline source toggles to be silently ignored. Such files are now handled correctly across every container install path.
+
+---
+
 ## Version 2.88.2 (2026-06-24)
 
 ### Bug Fixes
