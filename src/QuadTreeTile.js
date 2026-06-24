@@ -2165,7 +2165,17 @@ export class QuadTreeTile {
             this.updateDebugGeometry(); // Update debug geometry to remove elevation loading indicator
             return this;
         } catch (error) {
-            ServiceAvailability.recordFailureByUrl(elevationURL);
+            // "Local" elevation tiles are served from our own origin (SITREC_TERRAIN),
+            // so a load failure means the data isn't present (e.g. no sitrec-terrain
+            // volume mounted) rather than a transient outage. Drop "Local" quietly
+            // (console warning, fall back to Flat) instead of tripping the
+            // cross-service "offline fallback", which would show a user-facing error.
+            const ui = this.map && this.map.terrainNode && this.map.terrainNode.UI;
+            if (ui && ui.elevationType === "Local" && typeof ui.handleLocalElevationMissing === "function") {
+                ui.handleLocalElevationMissing();
+            } else {
+                ServiceAvailability.recordFailureByUrl(elevationURL);
+            }
             this.isLoadingElevation = false; // Clear elevation loading state on error
             this.updateDebugGeometry(); // Update debug geometry to remove elevation loading indicator
             throw error;

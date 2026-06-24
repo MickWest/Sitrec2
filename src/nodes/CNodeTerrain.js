@@ -398,6 +398,11 @@ export class CNodeTerrain extends CNode {
         // get the elevation source for the current type
         const sourceDef = this.UI.elevationSources[this.UI.elevationType];
 
+        // The selected source may have been pruned (e.g. "Local" removed when its
+        // local tiles are absent) before the dropdown selection caught up — treat
+        // a missing source as "no elevation" rather than throwing.
+        if (!sourceDef) return null;
+
         if (!sourceDef.mapURL) {
             if (sourceDef.url === "" || sourceDef.url === undefined) {
                 return null;

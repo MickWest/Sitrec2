@@ -509,18 +509,7 @@ export class CNodeTerrainUI extends CNode {
         this.elevationTypeMenu = this.gui.add(this, "elevationType", this.elevationTypesKV).listen().name(t("terrainUI.elevationType.label"))
             .tooltip(t("terrainUI.elevationType.tooltip"))
 
-        this.elevationTypeMenu.onChange(v => {
-
-            // elevation map has changed, so kill the old one
-            this.log("Elevation type changed to " + v + " so unloading the elevation map")
-            this.terrainNode.reloadMap(this.mapType)
-            this.updateAttribution();
-            // Force a subdivision/render pass — when paused with no camera
-            // motion, the camera-fingerprint gate would otherwise block the
-            // new tiles from loading until the user nudges the view. Same
-            // reason doRefresh() calls this for the Refresh button.
-            this.requestSubdivisionPass();
-        })
+        this.elevationTypeMenu.onChange(() => this.onElevationTypeChanged())
 
 
 /////////////////////////////////////////////////////
@@ -870,6 +859,63 @@ export class CNodeTerrainUI extends CNode {
             ServiceAvailability.onUnavailable(svcName, mapFallback);
         }
 
+    }
+
+    // Shared handler for an elevation-source change (the dropdown's onChange and
+    // the programmatic fallbacks both call this). Unloads the old elevation map
+    // and forces a subdivision pass so the new tiles load even when paused — the
+    // camera-fingerprint gate would otherwise block them until the view moves
+    // (same reason doRefresh() does this for the Refresh button).
+    onElevationTypeChanged() {
+        this.log("Elevation type changed to " + this.elevationType + " so unloading the elevation map");
+        this.terrainNode.reloadMap(this.mapType);
+        this.updateAttribution();
+        this.requestSubdivisionPass();
+    }
+
+    // Rebuild the elevation dropdown from the current elevationSources (e.g. after
+    // a source has been removed). lil-gui's .options() destroys and recreates the
+    // controller, so we re-apply listen/name/tooltip/onChange.
+    rebuildElevationMenu() {
+        this.elevationTypesKV = {};
+        for (const elevationType in this.elevationSources) {
+            const def = this.elevationSources[elevationType];
+            if (hasRequiredToken(def)) {
+                this.elevationTypesKV[def.name] = elevationType;
+            }
+        }
+        if (this.elevationTypeMenu && typeof this.elevationTypeMenu.options === "function") {
+            this.elevationTypeMenu = this.elevationTypeMenu
+                .options(this.elevationTypesKV)
+                .listen()
+                .name(t("terrainUI.elevationType.label"))
+                .tooltip(t("terrainUI.elevationType.tooltip"));
+            this.elevationTypeMenu.onChange(() => this.onElevationTypeChanged());
+        }
+    }
+
+    // Called when a "Local" elevation tile fails to load. Local tiles are served
+    // from our own origin (SITREC_TERRAIN), so a failure means the data simply
+    // isn't present (e.g. no sitrec-terrain volume mounted) rather than a transient
+    // network outage. Quietly drop "Local" as an elevation source — a console
+    // warning, NOT a user-facing error and NOT the cross-service "offline fallback"
+    // modal — and fall back to "Flat" if Local was the selected source. The missing
+    // source itself is the guard: once removed, repeat calls (from other in-flight
+    // tiles) are no-ops, so this runs its work only once per terrain instance.
+    handleLocalElevationMissing() {
+        if (!this.elevationSources || !this.elevationSources["Local"]) return;
+        delete this.elevationSources["Local"];
+        console.warn('[Sitrec] "Local" elevation tiles not found (no local terrain data present) — ' +
+            'removing "Local" as an elevation source. Mount a sitrec-terrain volume to enable it.');
+
+        const wasSelected = (this.elevationType === "Local");
+        if (wasSelected && this.elevationSources["Flat"]) {
+            this.elevationType = "Flat";
+        }
+        this.rebuildElevationMenu();
+        if (wasSelected) {
+            this.onElevationTypeChanged();
+        }
     }
 
     // gettor and settor for layer
