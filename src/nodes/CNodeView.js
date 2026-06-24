@@ -1108,12 +1108,10 @@ class CNodeView extends CNode {
             // draw over a fullscreen view, and must come back on exit).
             LayoutMan.updateDividerVisibility();
 
-            // Fullscreen/double toggles visibility, geometry AND z-order — all applied in
-            // renderMain (computeEffectiveVisibility / updateDOMVisibility / updateZOrder),
-            // which under render-on-demand only runs when a render is armed. The native
-            // double-click path arms it (onDocumentDoubleClick), but the header fullscreen
-            // ICON and API callers don't — so arm it here so the toggle ALWAYS takes effect
-            // (otherwise fullscreen sets fullscreenView but the other views never hide).
+            // Fullscreen toggles visibility, geometry AND z-order — all applied in renderMain
+            // (computeEffectiveVisibility / updateDOMVisibility / updateZOrder). Arm a render;
+            // the render-loop fix (renderLoopControl: a pending renderOne always runs, even
+            // unfocused) guarantees it actually paints.
             setRenderOne(true);
         }
     }

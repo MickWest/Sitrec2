@@ -311,21 +311,14 @@ function scheduleAnimationLoop(delay = 0) {
     }, Math.max(0, delay));
 }
 
-// Tracks window focus so we can pause the loop when paused AND the user is
-// looking at another window. Blur alone doesn't pause (the user may still be
-// watching playback in a partially-visible window), but blur+paused does.
-let windowFocused = typeof document !== "undefined" ? document.hasFocus() : true;
-
+// Render-on-demand sleep/wake. The loop is gated ONLY on tab VISIBILITY (document.hidden), not on
+// OS window focus: a visible-but-unfocused window (e.g. driven alongside another app) must still
+// run requested renders AND finite background work (terrain LOD subdivision, video decode), or
+// changes don't paint and tiles never finish loading. The idle paused tab still sleeps because the
+// background-work producers self-disable updateWhilePaused once settled (see renderLoopControl).
 function shouldSleepAnimationLoop() {
     return shouldSleepRenderLoopState({
         hidden: document.hidden,
-        // MCP-driven sessions: the SitrecBridge extension navigates and
-        // queries the page from a Claude Code instance running in another
-        // window. The Sitrec tab is intentionally not focused, but we still
-        // want the render loop alive so terrain LOD subdivision, video
-        // decoding, and other paused-but-active work proceeds. Treat the
-        // MCP flag as "focused enough" to skip the paused+unfocused sleep.
-        focused: windowFocused || !!window._mcpDebug,
         paused: par.paused,
         renderOne: par.renderOne,
         nodeList: NodeMan?.list,
@@ -334,7 +327,6 @@ function shouldSleepAnimationLoop() {
 
 function wakeAnimationLoop() {
     if (document.hidden) return;
-    if (par.paused && !windowFocused && !window._mcpDebug) return;
     scheduleAnimationLoop(0);
 }
 
@@ -346,22 +338,9 @@ document.addEventListener("visibilitychange", () => {
         return;
     }
 
+    // Tab became visible again — re-arm a render and revive the (possibly slept) loop.
     setRenderOne(true);
     wakeAnimationLoop();
-});
-
-window.addEventListener("blur", () => {
-    windowFocused = false;
-    // Don't clear the timer: if playing, the loop should continue. If paused,
-    // the next animate tick observes shouldSleepAnimationLoop() and self-suspends.
-});
-
-window.addEventListener("focus", () => {
-    windowFocused = true;
-    if (!document.hidden) {
-        setRenderOne(true);
-        wakeAnimationLoop();
-    }
 });
 
 // Adaptive frame rate control

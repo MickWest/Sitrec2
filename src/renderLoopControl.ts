@@ -12,7 +12,6 @@ type NodeList = Record<string, NodeListEntry> | undefined | null;
 
 type SleepAnimationLoopArgs = {
     hidden: boolean;
-    focused: boolean;
     paused: boolean;
     renderOne: boolean | number | undefined;
     nodeList: NodeList;
@@ -33,16 +32,25 @@ export function hasPausedBackgroundWork(nodeList: NodeList): boolean {
     return false;
 }
 
-export function shouldSleepAnimationLoop({hidden, focused, paused, renderOne, nodeList}: SleepAnimationLoopArgs): boolean {
+export function shouldSleepAnimationLoop({hidden, paused, renderOne, nodeList}: SleepAnimationLoopArgs): boolean {
+    // A hidden tab (background tab / minimised window) can't be seen, so sleep — the
+    // visibilitychange handler re-arms + wakes the loop when it becomes visible again.
     if (hidden) {
         return true;
     }
 
-    // Paused + window unfocused: user isn't viewing playback or interacting,
-    // so skip background updates too (e.g. terrain tile loading can wait).
-    if (paused && !focused) {
-        return true;
+    // An explicitly-requested render (renderOne) must ALWAYS run — the user changed something
+    // (toggled a layer, FOV, fullscreen, …) and expects to see it.
+    if (renderOne) {
+        return false;
     }
 
-    return paused && !renderOne && !hasPausedBackgroundWork(nodeList);
+    // A VISIBLE tab does its work regardless of OS window focus: stay awake while paused if any
+    // node still needs background updates (terrain LOD subdivision, video decode). Those producers
+    // self-disable updateWhilePaused once they settle (see CNodeTerrainUI / CNodeBuildings3DTiles),
+    // so an idle paused tab still sleeps. NOTE: this relies on hasPausedBackgroundWork() eventually
+    // returning false — a node that sets updateWhilePaused permanently would keep a visible tab
+    // awake forever. (We do NOT gate on window focus: doing so froze finite terrain-tile loading on
+    // a visible-but-unfocused window, leaving tiles missing until the user interacted.)
+    return paused && !hasPausedBackgroundWork(nodeList);
 }
