@@ -29,6 +29,8 @@ T = exp(-beta_extinction * ray_distance_meters)
 
 The constant 3.912 corresponds to 2% contrast at the meteorological optical range. This makes the Atmo Visibility value a physical input rather than an arbitrary artistic slider.
 
+Note: the in-app `Atmo Visibility (km)` tooltip currently reads "Distance where atmospheric contrast drops to about 50%". That describes Sitrec's separate fog-density path (`getAtmosphereDensity()`, which uses `sqrt(ln 2) / visibility`), not the aerial-perspective composite documented here, which uses the 2%-contrast Koschmieder constant 3.912.
+
 ## Current Implementation
 
 The look view renders the sky with a horizon-to-zenith gradient. The aerial-perspective pass then renders a lightweight distance prepass and composites the scene with the same per-ray sky color:
@@ -64,9 +66,9 @@ This keeps nadir-looking ground bright from high altitude, while tangent and lim
 
 ## How To Use
 
-Enable Lighting -> Effects -> Atmosphere. Horizon haze is always active with Atmosphere; Sky Gradient remains a separate control for the visible sky gradient presentation.
+Enable Lighting -> Atmosphere. Horizon haze is always active with Atmosphere; Sky Gradient remains a separate control for the visible sky gradient presentation.
 
-Use Atmo Visibility as meteorological visibility in kilometers:
+Use `Atmo Visibility (km)` (in the Lighting -> Atmosphere Tweaks subfolder) as meteorological visibility in kilometers:
 
 - `5 km`: heavy haze or light fog
 - `10-20 km`: hazy urban/lowland air

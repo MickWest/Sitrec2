@@ -59,7 +59,7 @@ When another controller (such as a track) is driving the camera and it reaches a
 
 ### Manual Toggle
 
-The **Satellite** checkbox appears in the PTZ controller panel (under Camera > Use Angles). Check it to enter satellite mode; uncheck to return to normal mode.
+The **Satellite Mode** checkbox appears in the **Camera > Heading** folder, alongside the Pan, Tilt, Roll, and Rotation controls. Check it to enter satellite mode; uncheck to return to normal mode.
 
 ---
 

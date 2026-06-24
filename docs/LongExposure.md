@@ -61,13 +61,14 @@ trails are smooth curves even during fast camera motion.
 | Control | Meaning |
 |---|---|
 | **Duration (Minutes)** | The exposure (shutter) time in minutes of sitch time, from the start of the sitch. If longer than the sitch itself, the timeline is extended for the render. |
-| **Lock Camera Heading** | On by default: the camera holds the heading it has *right now* for the whole exposure — a tripod doesn't track. Works in any camera mode (To Target, Celestial Lock, Horizon Flare Region…), behaving as if Use Angles were locked on the current spot in the sky. The Camera Nudge still applies on top. Turn off to let the active camera mode steer during the exposure. |
+| **Lock Camera Heading** | On by default: the camera holds the heading it has *right now* for the whole exposure — a tripod doesn't track. Works in any camera mode (To Target, Celestial Lock, Horizon Flare Region…), behaving as if the heading were locked (Manual) on the current spot in the sky. The Camera Nudge still applies on top. Turn off to let the active camera mode steer during the exposure. |
+| **HDR Point Sources** | On by default: replaces the cosmetic star/planet/light sprites with physically-bright point splats (true linear flux) so bright sources stay visible in the average and leave correct trails. Off = a plain frame average. |
 | **HDR Background** | On by default: in a dark scene the lighting (Sun + Ambient) is temporarily boosted so the background renders using the full 8-bit range, then scaled back down in the HDR buffer. Pushing the EV slider up then reveals smooth ground detail instead of quantized color bands. Calibrated on the first frame; the lighting is restored after the render (including Enough/cancel). |
 | **Moonlight** | Off by default: light the scene with ONLY the Moon — ambient light is removed and the directional light is re-aimed at the Moon with its true phase-dependent brightness (a full moon is ~20 stops dimmer than the sun). The point sources (stars, planets, lights) are re-calibrated to the same physical scale as the moonlit ground using the camera's plate scale, so a *single* exposure shows the dim moonlit landscape **and** the brighter star trails together, the way a real moonlit long exposure does. The result window opens pre-developed at the moonlit exposure. Surfaces facing away from the Moon go fully dark, shadows (if enabled) fall from the Moon, and a Moon below the horizon gives a dark scene (stars still record). |
 | **Horizon Reddening** | Chromatic extinction (off by default): sources near the horizon redden as well as dim. In real star-trail photos the effect is largely masked by blue star colors and sky glow, so the default is dimming only. |
 | **Star Tint** | Intrinsic blue-white color of star trails (0 = flat white, 1 = bright-star population average). With Horizon Reddening on, extinction neutralizes the blue before warming, as in real star-trail photos. |
 | **Saturation Magnitude** | The star magnitude whose light just saturates one pixel in a single frame — the "ISO" of the simulated camera. Default 4: Venus (−4.4) is then ~2300× saturation. Lower = a less sensitive camera. |
-| **Light Brightness** | Multiplier on model-light brightness. 1 = realistic candela (~100 cd navigation light ≈ magnitude 0 at 15 km). |
+| **Light Brightness** | Multiplier on model-light brightness. 1 = realistic candela (~100 cd effective navigation light, ~200 cd beacon), with inverse-square falloff and slant-path extinction. |
 | **Moon Gain** | Multiplier on the magnitude-calibrated Moon disk (1 = physical). |
 | **Point Spread (px)** | The Gaussian point-spread width of splatted sources, in pixels. |
 | **Wait For Loading** | Settle terrain/3D-tiles each frame before capture (slower, but stable terrain). |
@@ -81,11 +82,20 @@ trails are smooth curves even during fast camera motion.
 around and settles, like a tripod that's been bumped — and every light in the frame writes
 that bounce into the exposure as a decaying zigzag trail.
 
+- **Nudge Enabled** — turn the bump on (off by default; with it off the other controls do nothing).
 - **Nudge Time (s)** — when the bump happens (sitch time).
 - **Magnitude (°)** — peak deflection of the first swing.
 - **Frequency (Hz)** — how fast it oscillates (the "elasticity" of the mount).
 - **Damping** — how quickly it settles: low values ring for a long time.
 - **Direction (°)** — rotates the bounce pattern.
+
+A separate **smooth roll** about the view axis, layered on top of the jolt, curves
+otherwise-straight star/satellite trails into arcs:
+
+- **Rotate Start (s)** — when the roll begins.
+- **Rotate Duration (s)** — how long it takes to sweep the full angle, which is then held.
+- **Rotate Ease** — eased fraction at each end (0 = constant rate, 0.5 = full ease in/out).
+- **Rotate Total Angle (°)** — total roll swept over the duration, then held (0 = off).
 
 While the Camera Nudge folder is open (and the nudge enabled), the full bounce trajectory is
 drawn live on the look view: a cyan path fading as it settles, a yellow dot at the impulse

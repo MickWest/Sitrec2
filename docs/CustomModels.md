@@ -1,6 +1,6 @@
 To simulate a potential UAP, Sitrec can display a variety of 3D models. There's some built-in, like planes and aerostats. You can also create simple geometric shapes like spheres and boxes. For full flexibility, you can import a custom 3D model. 
 
-To experiment with this functionality, start with the model inspector, found at Sitrec->Tools->Model Inspector. 
+To experiment with this functionality, start with the model inspector, found at Sitrec->Model Inspector. 
 
 Once in the Model Inspector, you will get the default object, and two views on that object. You can double-click on a view to make it full screen. 
 
@@ -53,7 +53,7 @@ Both formats can be dragged and dropped into the Model Inspector or any moddable
 
 ### Filename Length Parameter
 
-You can embed the real-world length of a model directly in its filename using the format `~L<value><units>~`. When Sitrec loads the model, it reads this parameter and automatically sets the model scale so the longest dimension matches the specified length.
+You can embed the real-world length of a model directly in its filename using the format `~L<value><units>~`. When Sitrec loads the model, it reads this parameter and automatically sets the model scale so the model's length along its forward (local Z) axis matches the specified length. Note this is the fore-aft length, not necessarily the longest dimension of the model.
 
 **Format:** `modelname~L<number><units>~.glb` (or `.ply`)
 

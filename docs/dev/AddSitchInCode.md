@@ -12,7 +12,7 @@ To create a new sitch, the simplest way is to copy and rename an existing one th
 
 Let's call the new stitch "Springfield" (just an example name), and assume you have KML files for the two planes, along with a location and time.
 
-- Copy sitch/SitLakeMichigan.js to sitch/SitSpringfield.js (Sitch files must start with "Sit")
+- Copy data/lakemichigan/SitLakeMichigan.js to data/springfield/SitSpringfield.js (Sitch files must start with "Sit")
 - Edit three names at the start of the Sitch definition:
     - SitLakeMichigan -> SitSpringfield
     - "lakemichigan" -> "springfield" (lower case)
@@ -47,10 +47,12 @@ A sitch will generally have multiple views, each view has an id, specifically:
 
 This is the preferred naming convention, but some older bits of code or comments might refer to lookView as the NAR view (as it was NAR mode on the ATFLIR system in the original "Gimbal" sitch)
 
-The camera position is specified by two lines:
+The camera position is specified by two lines, nested inside the `mainCamera` descriptor:
 ```javascript
-startCameraPositionLLA:[42.647359,-86.678554,23575.039421],
-startCameraTargetLLA:[42.653377,-86.670554,23235.005817],
+mainCamera: {
+    startCameraPositionLLA:[42.647359,-86.678554,23575.039421],
+    startCameraTargetLLA:[42.653377,-86.670554,23235.005817],
+},
 ```
 
 These are LLA (Latitude, Longitude, Altitude in meters) positions. Note some sitches have the position specified as EUS local coordinates. LLA is preferred as the EUS coordinate system can change if you do things like adjust the resolution of the terrain.
@@ -73,12 +75,12 @@ Note in the above, mainView covers the entire screen (width:1), but it's also ty
 
 ## EXAMPLE NEW SITCH: WestJet
 
-Note: This was originally a sitch specified in code, but the same format is used for the dynamically loaded files that are parsed as text. This was in src/sitch/SitWestJet.js (as a code module), but is now in data/sitWestJet.js (as a text file)
+Note: This was originally a sitch specified in code, but the same format is used for the dynamically loaded files that are parsed as text. This was in src/sitch/SitWestJet.js (as a code module), but is now in data/westjet/Sitwestjet.js (as a text file)
 
 ![WestJet Screenshot](../readmeImages/westjet.jpg)
 
 ```javascript
-export const SitWestJet = {
+sitch = {
     include_pvs14:true,
     name: "westjet",
     menuName: "WestJet Triangle",
@@ -117,7 +119,7 @@ The remaining lines show everything that needs to change
     - startCamera... etc - the absolute position of the camera for the mainView (i.e. the world view on the left)
     - fov - the _vertical_ field of view of the mainView
     - near - near plane distance in meters (defaults to 1)
-    - far - far plane distance in meters (defaults to 8000000. i.e. 8000km)
+    - far - far plane distance in meters (defaults to 80000000, i.e. 80,000km for the mainCamera; the lookCamera default is 8000000 / 8,000km)
 - lookCamera - definition of the look camera
     - fov, far, etc, same as mainCamera
 - cameraTrack - creates a camera track, defaulting to one from cameraFile using startTime and frames for the interval.

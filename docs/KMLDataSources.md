@@ -80,7 +80,7 @@ they produce *scene features*, not tracks — see
 
 You obtain these files by exporting/downloading from the service's website. None of them are
 fetched automatically by Sitrec — you export the KML and then drag-and-drop it (or use
-**File → Import**) into Sitrec.
+**File → Import File**) into Sitrec.
 
 - **ADS-B Exchange** — From the globe replay view
   (`https://globe.adsbexchange.com/?replay=…`), select aircraft and download the track KML.
@@ -94,7 +94,7 @@ fetched automatically by Sitrec — you export the KML and then drag-and-drop it
   connecting line segments, which carry no timestamps and are ignored for the track).
 
 > Note: pasting a *live map URL* from `globe.adsbexchange.com` or `www.flightradar24.com` into
-> Sitrec does **not** import a track. The URL handler in `DragDropHandler.js` (≈ lines 927–957)
+> Sitrec does **not** import a track. The URL handler in `DragDropHandler.js` (≈ lines 982–1016)
 > only extracts the **camera lat/lon/zoom** from those URLs to reposition the view. To get the
 > track itself you must export the KML file.
 
@@ -104,7 +104,7 @@ fetched automatically by Sitrec — you export the KML and then drag-and-drop it
 
 ### Stage 1 — "Is this a KML at all?"
 
-`CTrackFileKML.canHandle(filename, data)` (`CTrackFileKML.js:12`) checks only that the parsed
+`CTrackFileKML.canHandle(filename, data)` (`CTrackFileKML.js:11`) checks only that the parsed
 object has a top-level `kml` property:
 
 ```js
@@ -114,7 +114,7 @@ static canHandle(filename, data) {
 }
 ```
 
-`detectTrackFile()` (`CFileManagerParse.js:1619`) asserts that *exactly one* `CTrackFile` subclass
+`detectTrackFile()` (`CFileManagerParse.js:1632`) asserts that *exactly one* `CTrackFile` subclass
 claims a file, so `CTrackFileKML` is the sole owner of anything with a `kml` root.
 
 ### Stage 2 — Recursive descent (`extractTrackGroups`, `:187`)
@@ -271,7 +271,7 @@ sequence for the timed-point path. This avoids zero-duration steps that would br
    object — hence the `asArray`/`textOf` helpers).
 2. **Detect type** — `CTrackFileKML` claims anything with a `kml` root.
 3. **Count tracks** — `getTrackCount()` returns the number of groups the walk found. For
-   multi-track files the UI shows a selection dialog.
+   files with 3 or more tracks the UI shows a selection dialog (2-track files load all tracks directly).
 4. **Convert to MISB** — for each selected track index, `toMISB(trackIndex)` (`:27`) calls
    `getKMLTrackWhenCoord()` and copies the group's samples into a MISB row array:
 
@@ -298,7 +298,7 @@ avoid breaking saved sitches (which key node IDs on `Track_<shortName>`).
 
 - **`getShortName()`** (`:49`) is unchanged: it runs a regex ladder over the file structure —
   `/([A-Z0-9]+) track/` on an ADS-B Exchange folder name, `/FlightAware ✈ ([A-Z0-9]+) /` and
-  `/CALLSIGN\/ICAO/` on a `<Document>` name — and uses a seed value as the fallback.
+  `/([A-Z0-9]+)\/[A-Z0-9]+/` (the X/Y callsign-or-ICAO form) on a `<Document>` name — and uses a seed value as the fallback.
 - **`legacyTrackName()`** (`:268`) supplies that seed, faithfully reproducing the *exact* value the
   old branch ladder produced for each shape (including quirks like `folder.name.split(' ')[0]` and
   `Document.name.split(' ')[2]`). This is what keeps names **byte-identical** across the refactor
@@ -317,7 +317,7 @@ Sitrec doesn't only *read* KML — it also **writes** it, and those exports re-i
 | Generator | Output shape | Re-import behaviour |
 |---|---|---|
 | `CNodeTrack.exportTrackKML` (`CNodeTrack.js:158`) | `<Folder><Placemark><gx:Track>` — single folder, single placemark, `altitudeMode=absolute`, `extrude=1` | imports as a 1-track group |
-| `CNodeMISBData` track export (`CNodeMISBData.js:1813`) | Same `<Folder>…<gx:Track>` shape | imports as a 1-track group |
+| `CNodeMISBData` track export (`CNodeMISBData.js:1810`) | Same `<Folder>…<gx:Track>` shape | imports as a 1-track group |
 | `CNode3DObject` (`CNode3DObject.js:443`) | `<Document><Placemark><Model><Link href=…dae>` | No time+geometry → a scene object, not a track |
 | `CustomManagerMenus` "Sitrec Pin" (`CustomManagerMenus.js:538`) | `<Document><Placemark><Point>` (no time) | A point landmark feature, not a track |
 

@@ -84,8 +84,8 @@ Available sources:
 | **GFS (NOAA)** | Global atmospheric grid from the NOAA Global Forecast System. Whole-Earth coverage, 6-hour cycles. | Default for most modern dates. Good when you need wind at altitudes other than the ground. |
 | **UWYO Soundings** | Radiosonde profiles from University of Wyoming. Auto-fetches the nearest stations and IDW-blends them. | Historical dates back to ~1973, good vertical resolution near launch sites. |
 | **IGRA2 Soundings** | NOAA NCEI's Integrated Global Radiosonde Archive. Same idea as UWYO but a different upstream archive. | Older dates UWYO doesn't have, or when you want a second opinion against UWYO. |
-| **Manual Soundings** | Soundings *you* dragged in (.csv from UWYO, IGRA2 .txt, .json). | When you want curated profiles instead of automatic nearest-station fetches. |
-| **Open-Meteo** | Per-track-point fetches from the Open-Meteo public API (no key, rate-limited). | Useful for one-off lookups; not great for filling a whole grid. |
+| **Manual Soundings** | Soundings *you* dragged in (a UWYO `.csv`/`.txt` or an IGRA2 `.txt`). | When you want curated profiles instead of automatic nearest-station fetches. |
+| **open-meteo** | Per-track-point fetches from the Open-Meteo public API (no key, rate-limited). | Useful for one-off lookups; not great for filling a whole grid. |
 | **Manual** | A single uniform wind defined by **Target Wind From / Knots**. | Quick experiments, sitches without specific weather, or when the real data is missing/wrong. |
 | **Track: \<name\>** | If your sitch has a track file with embedded wind columns (MISB-formatted WindDirection / WindSpeed), each loaded track shows up as its own option. The wind value comes straight from the track row at the current frame. | Aircraft data files (e.g. military pod metadata) that already contain wind telemetry. If no track has those columns, no Track: entry appears. |
 
@@ -98,7 +98,7 @@ These are easy to confuse — they share the same four GUI sliders.
 
 #### Manual Soundings
 
-A pass-through. Drag a UWYO `.csv`, an IGRA2 `.txt.zip`, or a Sitrec sounding `.json` onto the page; Sitrec parses it and adds it to the loaded-soundings pool. Picking **Manual Soundings** uses *only* what you've dropped in (no auto-fetch). Useful when you want curated profiles rather than nearest-station fetches.
+A pass-through. Drag a UWYO `.csv`/`.txt` or an IGRA2 `.txt` (a zipped `.txt.zip` is auto-extracted) onto the page; Sitrec parses it and adds it to the loaded-soundings pool. Picking **Manual Soundings** uses *only* what you've dropped in (no auto-fetch). Useful when you want curated profiles rather than nearest-station fetches.
 
 **Selecting an atmospheric source for the first time** auto-toggles **Show Wind Lines** on once and triggers the data load — both happen in one step, so the streamlines appear as soon as the data arrives. If you turn the lines off explicitly, that auto-show won't fire again for that source in the same session.
 
@@ -181,11 +181,11 @@ How many of the nearest soundings to fetch when an auto-loading sounding source 
 
 ### Import Sounding…
 
-Opens a dialog to fetch a *specific* sounding by station + date + hour. Two-step:
+Opens a dialog to fetch a *specific* sounding by station + date + hour. Three-step:
 
 1. **Station picker** — type to filter, pick from the list (sorted by distance to your camera).
-2. **Date / hour** — defaults to the sitch's start date and the closest 00Z/12Z launch.
-3. **Source** — UWYO (fastest) or IGRA2 (NCEI archive, possibly more accurate).
+2. **Source** — UWYO (fastest) or IGRA2 (NCEI archive, possibly more accurate).
+3. **Date / hour** — defaults to the sitch's start date and the closest 00Z/12Z launch.
 
 After fetching, Sitrec auto-switches your Wind Source to **Manual Soundings** so you can keep dropping more in without each one being clobbered by an auto-fetch.
 
@@ -234,8 +234,8 @@ If UWYO returns nothing for the requested station/date, Sitrec walks the next-ne
 
 ### Sources
 
-- **Sounding rate limits.** UWYO rate-limits aggressive callers; if you hit it, Sitrec waits ~60 s and retries. The Status field shows the countdown.
-- **No PHP proxy?** UWYO needs the bundled PHP proxy for CORS. In serverless / static-build deployments, the source dialog hides UWYO and falls through to IGRA2 (which is fetched directly from NCEI).
+- **Sounding rate limits.** UWYO rate-limits aggressive callers; if you hit it, Sitrec waits ~66 s and retries, showing the countdown in the loading-progress overlay.
+- **No PHP proxy?** UWYO needs the bundled PHP proxy for CORS. In serverless / static-build deployments, the **Import Sounding…** dialog's Source step skips the UWYO/IGRA2 prompt and silently defaults to IGRA2 (which is fetched directly from NCEI). The main Wind Source dropdown still lists UWYO, but it won't fetch without the proxy.
 - **Sounding count slider doesn't seem to change anything.** Sounding Count only takes effect on the *next* fetch — change it, then **Refresh Wind Data** (or change the source).
 - **Track: \<name\> isn't there.** That entry only appears for tracks whose underlying file carries MISB-format WindDirection / WindSpeed columns. Most generic GPS / KML tracks don't.
 

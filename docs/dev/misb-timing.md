@@ -165,7 +165,7 @@ debugging a sync issue in a TS-sourced sitch.
 - **Node / Node graph** — Sitrec's computation model. Most data and
   rendering is expressed as a graph of `CNode` instances connected by
   inputs/outputs. Specific nodes mentioned here:
-  - `CNodeMISBData` — wraps a parsed KLV record array.
+  - `CNodeMISBDataTrack` — wraps a parsed KLV record array.
   - `CNodeTrackFromMISB` — derives a per-frame position track from a
     MISB data node.
   - `CNodeVideoView` / `CVideoData` / `CVideoWebCodecBase` — the video
@@ -557,9 +557,9 @@ in the run, the platform is in the right spot but it's pointing at where
 the gimbal was looking many seconds ago.
 
 The fix (`CTrackFileMISB.toMISB(trackIndex=1)`) builds a parallel
-`centerPesPTSus` array alongside the row copy, applying the same
+`centerPES` array alongside the row copy, applying the same
 filter-by-valid-center predicate, then attaches it to the returned array
-as `centerMisb.pesPTSus = centerPesPTSus`. After this, `hasRecordPTS()`
+as `centerMisb.pesPTSus = centerPES`. After this, `hasRecordPTS()`
 is true on both nodes and PTS pairing runs for both. Any future
 `toMISB(N)` paths that synthesize derived arrays must apply the same
 forwarding pattern, or the derived track silently regresses to UTS
@@ -623,7 +623,7 @@ isn't available.
    │   from FileManager  │                  └───────────┬───────────┘
    │   → real PTS into   │                              │
    │   createEncoded-    │                  ┌───────────▼─────────┐
-   │   VideoChunks       │                  │ CNodeMISBData       │
+   │   VideoChunks       │                  │ CNodeMISBDataTrack  │
    │ → chunks have real  │                  │ exposes             │
    │   PCR timestamps    │                  │   getRecordPTSms()  │
    │ → framePTSus[] real │                  │   hasRecordPTS()    │
@@ -925,7 +925,7 @@ captures zero entries because none of the PES packets carry PTS); the
 synchronous one will have one entry per record.
 
 `hasRecordPTS()` is the straightforward way to tell at the data-node
-level. The Timing Analysis "Multiple MISB Data Nodes" prelude lists
+level. The Timing Analysis "MULTIPLE MISB DATA STREAMS LOADED" prelude lists
 every loaded one. If the user's camera platform is locked to a track
 backed by the async-mode node, only the UTS wall-clock fallback is
 available (nominal-rate UTS lookup); PTS pairing needs the sync-mode node on

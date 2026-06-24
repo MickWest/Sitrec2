@@ -35,10 +35,10 @@ You can also get to this from the default Sitrec by going to the Sitrec menu and
 
 This does the following for you:
 
-- Enables "Live" mode **(Time Menu)**, which locks the time to your computer clock until you change it. This will show you flares as they are happening, and can be used on a mobile device in AR mode. 
-- Loads the current satellites, based on their NORAD tracking data. **(Satellite Menu)**
-- Turns on constellation lines and the equatorial grid display to aid with orienting where you are looking in the sky **(Show/Hide Menu-> Celestial)**
-- Enables "Sun Angle Arrows" and "Flare Band", two vital tools for recreating flare situations. **(Satellite Menu)**
+- Enables "Live Mode" **(Time Menu)**, which locks the time to your computer clock until you change it. This will show you flares as they are happening, and can be used on a mobile device in AR mode. 
+- Loads the current satellites, based on their NORAD tracking data. **(Satellites Menu)**
+- Turns on constellation lines and the equatorial grid display to aid with orienting where you are looking in the sky **(Show Menu-> Celestial)**
+- Enables "Sun Angle Arrows" and "Flare Band", two vital tools for recreating flare situations. **(Satellites Menu)**
 
 ### Flare Band and Sun Angle Arrows
 
@@ -80,7 +80,7 @@ Time in Sitrec is UTC or Zulu time. But it can also be displayed in the local ti
 
 ### Step 2 - Load the satellites
 
-The Starlink sitch will load the **current** satellites, but often we are investigating a past event. If it's more than a day or two, you will need to click "Load LEO Satellites For Date" in the Satellite menu. 
+The Starlink sitch will load the **current** satellites, but often we are investigating a past event. If it's more than a day or two, you will need to click "Load LEO Satellites For Date" in the Satellites menu. 
 
 Note the text in the top right of the main view; this shows the accuracy of the satellite data. If it does not say In Range 100% then you need to load the satellites. 
 
@@ -94,24 +94,24 @@ If you don't know the exact location, just use the best guess. For a fixed locat
 
 You can look up a city or street address using the "Lookup" option in the Camera menu. 
 
-The camera's altitude defaults to 6m above sea level (about 20 feet) to clear the inaccurate terrain. You might want to raise this a bit or lower it to eye level as you refine things. If you're recreating an aerial sighting without a track file (i.e., ADSB or MISB FMV), then you should uncheck Above Ground Level, and set the altitude to whatever was reported, or a typical 30,000 feet if unknown (less for small planes) 
+The camera's altitude defaults to 6m above ground level (about 20 feet, with the "Above Ground Level" box checked) to clear the inaccurate terrain. You might want to raise this a bit or lower it to eye level as you refine things. If you're recreating an aerial sighting without a track file (i.e., ADSB or MISB FMV), then you should uncheck Above Ground Level, and set the altitude to whatever was reported, or a typical 30,000 feet if unknown (less for small planes) 
 
-If the camera is on a plane, then you can drag in the track. The camera will automatically be set to follow that track if you've not edited anything yet. But you'll usually want to set the time first. So drag it in, then under the camera menu, select the track from the "Camera Track" drop-down.
+If the camera is on a plane, then you can drag in the track. The camera will automatically be set to follow that track if you've not edited anything yet. But you'll usually want to set the time first. So drag it in, then under the Camera menu, select the track from the "Position" drop-down (in the Location sub-folder).
 
 If the camera is off in space, that means you've got the date/time very wrong. You can go to the Time menu and then Sync Time to (select track) to sync to the start time of the track to figure out what went wrong.  
 
 
 ### Step 4 - Set the Direction
 
-You can move the camera direction in the look view by dragging it. Use the mouse wheel to zoom in and out (or "zoom" in the camera menu). You will want to be looking at the region of the sky where flares occur. To aid with this, there's a "flare region" you can toggle in the Satellite menu. You can also toggle "Flare Region in Look View" to see it in the look view. 
+You can move the camera direction in the look view by dragging it. Use the mouse wheel to zoom in and out (or the "Zoom (fov)" slider in the Camera ▸ FOV (Zoom) sub-folder). You will want to be looking at the region of the sky where flares occur. To aid with this, there's a "flare region" you can toggle in the Satellites menu. You can also toggle "Flare Region in Look View" to see it in the look view. 
 
 ![flare-region-views.jpg](docimages/flare-region-views.jpg)
 
 You can also scrub the time with the seconds slider, and you'll see the satellites flaring. 
 
-If you are on a plane, it works the same. But you can also click on "Relative" in the camera menu if you want to simulate looking in a particular direction relative to the plane (e.g., if the plane is turning, and you want to look forward)
+If you are on a plane, it works the same. But you can also check "Relative Heading" in the Camera menu (Heading sub-folder) if you want to simulate looking in a particular direction relative to the plane (e.g., if the plane is turning, and you want to look forward)
 
-If dealing with FMV video, you can use the recorded camera direction with the Camera Heading and Angles Source options in the Camera menu. 
+If dealing with FMV video, you can use the recorded camera direction with the "Camera Heading" selector in the Camera menu (in the Heading sub-folder). 
 
 ### Step 5 - Add Video
 
@@ -123,7 +123,7 @@ To add a video (or a photo) just drag it in. The viewports will reconfigure to t
 
 You will often be missing the exact time, location, direction, and field of view, so you will have to adjust one or more of these to match. Even if you have the time down to the second, you may need to adjust the millisecond (ms) value to get things perfectly aligned. 
 
-A helpful tool is the video overlay, in the View menu as "Vid overlay transparency". This allows you to overlay the video on the live view. 
+A helpful tool is the video overlay, in the View menu as "Vid Overlay Trans %". This allows you to overlay the video on the live view. 
 
 You can often use stars to line things up. Be aware that this might not be a perfect match if the original video was cropped or the lens introduces distortion. 
 
@@ -135,10 +135,10 @@ If there's another plane in the view, then it's very helpful to drop in the trac
 
 ### Step 7 - Adjust Visuals
 
-Satellite and star visibility vary with lighting conditions, the weather, and the camera used. To match it, you can adjust the star brightness (View Menu) and limits (a cut-off for dim stars). For satellites, there are similar adjustments in the Satellite menu. Just adjust these to get a good match with the video. 
+Satellite and star visibility vary with lighting conditions, the weather, and the camera used. To match it, you can adjust the star brightness (View Menu) and limits (a cut-off for dim stars). For satellites, there are similar adjustments in the Satellites menu. Just adjust these to get a good match with the video. 
 
-You can also adjust the video itself under Effects->Video adjustment, mostly just for brightness in this case, but some of the other options (like the emboss convolution filter) can be helpful in spotting stars and satellites. 
+You can also adjust the video itself under Video->Video Adjustments, mostly just for brightness in this case, but some of the other options (like the emboss convolution filter) can be helpful in spotting stars and satellites. 
 
-Star names can be turned on with Show/Hide->Celestial->lookView and mainView Star Names. Satellite names can be toggled in the Satellite menu. Note that it is limited to nearby satellites unless you toggle "Show all labels".
+Star names can be turned on with Show->Celestial->lookView Star names and mainView Star names. Satellite names can be toggled in the Satellites menu. Note that only the nearest satellites are labeled; raise the "Max Labels Displayed" slider in the Satellites menu to show more.
 
-To Display _just_ the flaring satellite labels, use the "Label Flares Only" flag in the satellite menu.
+To Display _just_ the flaring satellite labels, use the "Label Flares Only" flag in the Satellites menu.

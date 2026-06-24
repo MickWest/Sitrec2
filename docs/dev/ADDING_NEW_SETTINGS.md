@@ -8,11 +8,11 @@ Settings in Sitrec are:
 - Stored on the server (S3) for logged-in users
 - Stored in browser cookies as a fallback
 - Sanitized on both client and server to prevent exploits
-- Only available in custom sitches (when `Sit.isCustom || Sit.canMod`)
+- Always available: the Settings menu/folder (language, performance, etc.) is created unconditionally on every sitch load. (`Sit.isCustom || Sit.canMod` gates the broader custom-sitch setup, not the settings menu.)
 
 ## Required Changes
 
-When adding a new setting, you must update **5 files**:
+When adding a new setting, you must make **6 changes across 5 files** (steps 1 and 2 both edit `SettingsManager.js`):
 
 ### 1. SettingsManager.js - Add Default Value
 
@@ -24,7 +24,7 @@ In the `initializeSettings()` function, add your default value:
 export async function initializeSettings() {
     if (!Globals.settings) {
         Globals.settings = {
-            maxDetails: 15,
+            maxDetails: 20,
             yourNewSetting: defaultValue  // ← Add here
         };
     }
@@ -92,11 +92,13 @@ function sanitizeSettings($settings) {
 
 **File:** `sitrec/src/CustomSupport.js`
 
-In the `setupSettingsMenu()` method, add a UI control:
+In the `setupSettingsMenu()` method, add a UI control. The folder, labels, and
+tooltips are internationalized: use `t("custom.settings.<yourSetting>.label")`
+and `t("custom.settings.<yourSetting>.tooltip")` (you'll add those keys in step 6):
 
 ```javascript
 setupSettingsMenu() {
-    const settingsFolder = guiMenus.main.addFolder("Settings")
+    const settingsFolder = guiMenus.main.addFolder(t("custom.settings.title"))
         .tooltip(tooltipText)
         .close();
     
@@ -104,30 +106,50 @@ setupSettingsMenu() {
     
     // For boolean (checkbox):
     settingsFolder.add(Globals.settings, "yourNewSetting")
-        .name("Your Setting Name")
-        .tooltip("Description of what this setting does")
+        .name(t("custom.settings.yourNewSetting.label"))
+        .tooltip(t("custom.settings.yourNewSetting.tooltip"))
         .onChange((value) => {
             Globals.settings.yourNewSetting = Boolean(value);
             this.saveGlobalSettings(true); // Immediate save for toggles
         })
         .listen();
     
-    // For number (slider):
+    // For number (slider) — see the real maxDetails/tileSegments sliders:
+    // don't save on every onChange frame; force an immediate save on release.
     // settingsFolder.add(Globals.settings, "yourNewSetting", min, max, step)
-    //     .name("Your Setting Name")
-    //     .tooltip("Description")
+    //     .name(t("custom.settings.yourNewSetting.label"))
+    //     .tooltip(t("custom.settings.yourNewSetting.tooltip"))
     //     .onChange((value) => {
+    //         // Sanitize/clamp here, but do NOT save (this fires every frame of the drag)
     //         Globals.settings.yourNewSetting = value;
-    //         this.saveGlobalSettings(); // Debounced save for sliders
     //     })
     //     .onFinishChange(() => {
-    //         this.saveGlobalSettings(true); // Force save when done
+    //         this.saveGlobalSettings(true); // Force immediate save on release
     //     })
     //     .listen();
 }
 ```
 
-### 5. SettingsManager.test.js - Add Tests
+### 5. i18n/en.js - Add Label & Tooltip Strings
+
+**File:** `sitrec/src/i18n/en.js`
+
+The UI control's `.name()`/`.tooltip()` use `t(...)` keys, so add the strings
+under the `custom.settings` object:
+
+```javascript
+custom: {
+    settings: {
+        // ... existing settings ...
+        yourNewSetting: { label: "Your Setting Name", tooltip: "Description of what this setting does" },
+    },
+}
+```
+
+(Add matching keys to the other locale files if you want the setting translated;
+untranslated keys fall back to English.)
+
+### 6. SettingsManager.test.js - Add Tests
 
 **File:** `sitrec/tests/SettingsManager.test.js`
 
@@ -173,6 +195,7 @@ When adding a new setting, use this checklist:
 - [ ] Add client-side sanitization in `sanitizeSettings()` (SettingsManager.js)
 - [ ] Add server-side sanitization in `sanitizeSettings()` (settings.php) ⚠️
 - [ ] Add UI control in `setupSettingsMenu()` (CustomSupport.js)
+- [ ] Add label & tooltip strings under `custom.settings` (i18n/en.js)
 - [ ] Add tests in SettingsManager.test.js
 - [ ] Run `npm test` to verify all tests pass
 - [ ] Run `npm run build` to verify build succeeds
@@ -189,7 +212,7 @@ When adding a new setting, use this checklist:
 
 3. **Not using `.listen()`** - GUI controls need `.listen()` to update when the value changes programmatically.
 
-4. **Wrong save timing** - Use `saveGlobalSettings(true)` for immediate saves (checkboxes), `saveGlobalSettings()` for debounced saves (sliders).
+4. **Wrong save timing** - Use `saveGlobalSettings(true)` for immediate saves: call it directly from `.onChange()` for checkboxes/dropdowns, and from `.onFinishChange()` (on release) for sliders. Don't save on every slider `onChange` frame.
 
 ## Example: Adding a "Dark Mode" Setting
 
@@ -198,8 +221,8 @@ Here's a complete example:
 ```javascript
 // 1. SettingsManager.js - initializeSettings()
 Globals.settings = {
-    maxDetails: 15,
-    startFullScreen: false,
+    maxDetails: 20,
+    centerSidebar: false,
     darkMode: false  // ← New setting
 };
 
@@ -215,8 +238,8 @@ if (isset($settings['darkMode'])) {
 
 // 4. CustomSupport.js - setupSettingsMenu()
 settingsFolder.add(Globals.settings, "darkMode")
-    .name("Dark Mode")
-    .tooltip("Enable dark color scheme")
+    .name(t("custom.settings.darkMode.label"))
+    .tooltip(t("custom.settings.darkMode.tooltip"))
     .onChange((value) => {
         Globals.settings.darkMode = Boolean(value);
         this.saveGlobalSettings(true);
@@ -225,7 +248,10 @@ settingsFolder.add(Globals.settings, "darkMode")
     })
     .listen();
 
-// 5. SettingsManager.test.js
+// 5. i18n/en.js - custom.settings
+darkMode: { label: "Dark Mode", tooltip: "Enable dark color scheme" },
+
+// 6. SettingsManager.test.js
 test('should sanitize darkMode as boolean', () => {
     const input = { darkMode: true };
     const result = sanitizeSettings(input);
@@ -247,4 +273,4 @@ test('should sanitize darkMode as boolean', () => {
 
 ## Questions?
 
-If you're unsure about any step, refer to the existing `maxDetails` or `startFullScreen` settings as examples.
+If you're unsure about any step, refer to the existing `maxDetails`, `centerSidebar`, or `showAttribution` settings as examples.

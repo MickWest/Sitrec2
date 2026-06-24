@@ -26,7 +26,7 @@ The most common track source. Export a KML or KMZ file from a flight tracking se
 - **FlightAware** (flightaware.com)
 - **ADSB Exchange** (adsbexchange.com)
 
-KML files can contain **multiple tracks** (e.g., all flights in an area during a time window). When you import a multi-track KML, Sitrec shows a selection dialog so you can choose which tracks to load.
+KML files can contain **multiple tracks** (e.g., all flights in an area during a time window). When you import a KML with three or more tracks, Sitrec shows a selection dialog so you can choose which tracks to load.
 
 ### DJI Drone Data (CSV)
 
@@ -132,7 +132,7 @@ When a track is loaded, Sitrec automatically centers the 3D view over the track 
 
 ### File Menu Import
 
-Use **File > Import** to open a file picker. This works identically to drag and drop.
+Use **File > Import File** to open a file picker. This works identically to drag and drop.
 
 ### What Happens When a Track Loads
 
@@ -174,7 +174,7 @@ The filter panel (available during multi-track import and later from the Content
 | **Altitude Range (ft)** | Only show tracks with points within the specified altitude range |
 | **Crosses Frustum** | Only show tracks that pass through the camera's field of view |
 | **Towards Camera** | Only show tracks moving towards the camera position |
-| **Away from Camera** | Only show tracks moving away from the camera position |
+| **Away From Camera** | Only show tracks moving away from the camera position |
 
 These filters use preview data and work within the current sitch time window.
 
@@ -186,7 +186,7 @@ Each loaded track gets its own folder in the **Contents** menu. You can:
 - **Recolor** tracks using the Line Color picker (the folder label color updates to match)
 - **Remove** a track with the Remove button (with confirmation)
 - **Highlight** a track by hovering over its folder label (the track line turns white temporarily)
-- **Center camera** on a track using the "Go to Track" button
+- **Center camera** on a track using the "Go to track" button
 
 ## Track Display Controls
 
@@ -271,11 +271,12 @@ The smoothing-method dropdown shows these option keys directly:
 
 | Parameter | Description |
 |-----------|-------------|
-| **Window** | Rolling window size (larger = smoother) |
-| **Iterations** | Number of smoothing passes |
-| **Poly Order** | Polynomial degree for Savitzky-Golay |
-| **Tension** | Catmull-Rom spline tension (0 = loose, 1 = tight) |
-| **Intervals** | Number of control points for spline fitting |
+| **Smoothing window** | Rolling window size (larger = smoother) |
+| **SavGol Poly Order** | Polynomial degree for Savitzky-Golay |
+| **Catmull Tension** | Catmull-Rom spline tension (0 = loose, 1 = tight) |
+| **Catmull Intervals** | Number of control points for spline fitting |
+| **Edge Fit Order** | Polynomial order used for the edge fit at the ends of the track |
+| **Edge Fit Window** | Window size for the edge fit |
 
 ## Altitude Handling
 
@@ -318,13 +319,13 @@ Most track formats include absolute timestamps (UTC). Sitrec uses these to:
 
 Some formats (frame numbers, seconds from zero) don't have absolute times. For these tracks:
 
-- A **Track Start Time** field appears in the track's GUI folder
+- A **Start Time** field appears in the track's GUI folder
 - Enter an ISO datetime (e.g., `2024-03-15T14:30:00Z`) or partial time (e.g., `14:30`) to anchor the track
 - Sitrec uses the [chrono-node](https://github.com/wanasit/chrono) library to parse flexible date/time input
 
 ### Time Offset
 
-Every track has a **Time offset** slider (-600 to +600 seconds) for fine-tuning synchronization. This is useful when:
+Every track has a **Time offset (sec)** slider (-600 to +600 seconds) for fine-tuning synchronization. This is useful when:
 
 - Video and track timestamps are slightly out of sync
 - Different data sources have clock drift
@@ -332,7 +333,7 @@ Every track has a **Time offset** slider (-600 to +600 seconds) for fine-tuning 
 
 ## Exporting Tracks
 
-Sitrec can export tracks in several formats via the export buttons in each track's folder:
+Sitrec can export tracks in several formats via the export buttons in the **Export** folder (each track gets its own sub-folder there):
 
 ### Export Formats
 

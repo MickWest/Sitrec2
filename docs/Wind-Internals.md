@@ -21,7 +21,7 @@ Three lanes:
 1. **Browser (Sitrec)** — `CNodeDisplayWindField` (`src/nodes/CNodeDisplayWindField.js`) is the wind node. It owns the wind grid, the streamline mesh's `ShaderMaterial`, the screen-space arrow grid, and the inspect-mode arrows. The Wind GUI binds directly to its fields.
 2. **Same-origin proxy (PHP)** — two scripts in `sitrecServer/`:
    - `windProxy.php` — wraps `tools/fetch_wind.py` to give the browser a stable JSON endpoint for GFS data, and caches every result in `data/wind/` keyed by date / cycle hour / level.
-   - `proxySounding.php` — CORS-bridges the University of Wyoming sounding endpoints (the browser cannot fetch them directly because UWYO sets no CORS headers). 24 h disk cache keyed by URL hash in `data/sondes/`.
+   - `proxySounding.php` — CORS-bridges the University of Wyoming sounding endpoints (the browser cannot fetch them directly because UWYO sets no CORS headers). 24 h disk cache keyed by URL hash in `sitrec-cache/`.
 3. **Upstream public sources** — NOMADS (NOAA NCEP), AWS S3 (NOAA Big Data Program), University of Wyoming, NOAA NCEI (IGRA2), Open-Meteo.
 
 IGRA2 and Open-Meteo are fetched *directly from the browser* — both serve `Access-Control-Allow-Origin: *`, so no PHP proxy is required. Manual and Manual-Soundings sources never touch the network at all.
@@ -32,21 +32,24 @@ Each entry in `WIND_SOURCES` (`src/nodes/WindSources.js`) maps to one branch ins
 
 | Internal key | Branch | Upstream | Goes through | Grid build |
 |---|---|---|---|---|
-| `gfs` | `_fillFromGFS(altFt)` | NOMADS GRIB filter, AWS S3 fallback | `windProxy.php` → `fetch_wind.py` → eccodes | direct (already gridded) |
+| `gfs` | `_fillFromGridSource(altFt)` | NOMADS GRIB filter, AWS S3 fallback | `windProxy.php` → `fetch_wind.py` → eccodes | direct (already gridded) |
+| `custom` | `_fillFromGridSource(altFt)` | env `CUSTOM_WIND_URL` template | `customWindProxy.php` | direct (already gridded) |
 | `uwyo` | `_fillFromSoundings(altFt, "uwyo")` | weather.uwyo.edu (cgi-bin or wsgi) | `proxySounding.php` (CORS) | **IDW** |
 | `igra2` | `_fillFromSoundings(altFt, "igra2")` | ncei.noaa.gov IGRA2 zips | direct browser `fetch()` | **IDW** |
-| `manual-soundings` | `_fillFromSoundings(altFt, null)` | files the user dropped in (`.csv` UWYO, `.txt` IGRA2, `.json`) | `FileManager.parseResult()` | **IDW** |
+| `manual-soundings` | `_fillFromSoundings(altFt, "manual-soundings")` | files the user dropped in (IGRA2, UWYO-CSV, or UWYO-LIST — content-detected) | `FileManager.parseResult()` → `CTrackFileSonde` | **IDW** |
 | `openmeteo` | `_fillFromOpenMeteo(altFt)` | api.open-meteo.com / historical-forecast-api.open-meteo.com | direct browser `fetch()` | **IDW** |
-| `manual` | `_fillFromManual(altFt)` | nothing — reads `targetWind.from` / `.knots` | none | uniform (every cell = same vector) |
-| `track:<id>` | `targetWind.trackSource = id` | MISB columns 35 / 36 on the named track | none | bypasses the wind field |
+| `manual` | `_fillFromManual(altFt)` | nothing — reads `targetWind.from` / `.knots` | none | IDW (or uniform if no wind-node positions) |
+| `track:<id>` | `_fillFromTrackSource(altFt)` | MISB columns 35 / 36 on the named track | none | IDW (or uniform if no wind-node positions) |
 
-The four IDW sources land in **`_buildGridFromSamples(samples, sourceLabel)`**; manual lands in `_buildUniformGrid(u, v, sourceLabel)`; GFS calls `_applyWindJSON` directly with the gridded JSON the proxy returns. All three paths produce the same 5° / 72×37 grid the streamline mesh and arrow overlay sample. **The shader code never sees source-specific logic** — by the time it's drawing, every source looks identical.
+The `custom` source row is only present when `SITREC_USE_CUSTOM_WIND=true`; its dropdown label comes from `SITREC_CUSTOM_WIND_MENU_NAME` (default "Custom Wind"). It shares `_fillFromGridSource` with `gfs` — both expect the same earth.nullschool-format gridded JSON. The `manual-soundings` key is resolved internally to "accept all loaded profiles" (`_resolveSoundingProfiles` maps it to `_gatherSondeProfiles(null)`).
+
+The four IDW sources land in **`_buildGridFromSamples(samples, sourceLabel)`**; manual usually does too (it anchors its one vector at the wind-node positions), falling back to `_buildUniformGrid(u, v, sourceLabel)` only when there are no such positions; GFS calls `_applyWindJSON` directly with the gridded JSON the proxy returns. The IDW and uniform paths produce a 5° / 72×37 grid, while GFS keeps its native 360×181 grid — but either way the streamline mesh and arrow overlay sample it identically. **The shader code never sees source-specific logic** — by the time it's drawing, every source looks identical.
 
 ### GFS (the heavy path)
 
 ```
 Browser:
-  CNodeDisplayWindField._fillFromGFS(altFt)
+  CNodeDisplayWindField._fillFromGridSource(altFt)   // shared by gfs + custom
   ├ pick pressure level bracketing altFt (10 m, 1000, 925, 850, 700, 500, 300, 250, 200 hPa…)
   ├ check FileManager for cached fileId  → hit: parse and apply
   └ miss: fetch  sitrecServer/windProxy.php?date=YYYYMMDD&hour=HH&level=…
@@ -68,7 +71,7 @@ fetch_wind.py:
 
 Browser (continued):
   ├ FileManager.add(fileId, json) — `skipSerialization = true` (don't bake the URL into save files)
-  ├ this._levelCache[level] = json
+  ├ this._levelCache[`${dateStr}_${hour}_${level}`] = json
   ├ this.windU / windV = arrays
   └ rebuildStreamlines() + propagateToWindNodes()
 ```
@@ -98,7 +101,7 @@ If they request data 12 hours later for the same date, the cycle walk lands on 1
 
 #### GFS resolution
 
-`fetch_wind.py --resolution` defaults to `1p00` (1 °) — the most reliably-cached level on NOMADS. `0p25` and `0p50` are also accepted by the URL builder but are not currently surfaced through `windProxy.php`. The 1 ° grid (`Ni = 360, Nj = 181`) is plenty for visualization at typical viewport scales — Sitrec downsamples it onto its own 72 × 37 (5 °) grid via direct sampling at GFS grid points (no IDW for GFS). The 5 ° grid is what the streamline shader and arrow overlay sample against.
+`fetch_wind.py --resolution` defaults to `1p00` (1 °) — the most reliably-cached level on NOMADS. `0p25` and `0p50` are also accepted by the URL builder but are not currently surfaced through `windProxy.php`. The 1 ° grid (`Ni = 360, Nj = 181`) is plenty for visualization at typical viewport scales. Sitrec uses the GFS grid *at its native resolution* — it does **not** downsample it to 72 × 37; `_fillFromGridSource` applies the proxy JSON's `nx`/`ny` verbatim. The 72 × 37 (5 °) grid is exclusive to the IDW sources and Manual. The streamline shader and arrow overlay sample whatever grid is loaded (full-res for GFS, 72 × 37 for the IDW sources) bilinearly via `sampleWind()`.
 
 #### GFS retention
 
@@ -121,7 +124,8 @@ User-side fetching (separate from the above):
   CustomManagerSetup._ensureSoundingsForWind(sourceKey)
   ├ if profiles of that kind already exist → return true
   └ else: getNearbyWeatherBalloons(par.balloonCount, autoKey)
-            ├ pick K nearest stations from data/uwyo-stations.json or igra2-stations.json
+            ├ pick K nearest stations from data/igra2-stations.json
+            │   (one station database for both UWYO and IGRA2 — UWYO has no separate file)
             ├ for each: fetchUWYOSounding(...) or fetchIGRA2Data(...)
             │   on UWYO 429 → uwyoRateLimitUntil = now + 66 s, retry later
             │   on no-data → walk to the next-nearest station
@@ -133,7 +137,7 @@ User-side fetching (separate from the above):
 UWYO's web endpoints don't allow cross-origin requests, so the browser hits `sitrecServer/proxySounding.php` instead. The proxy:
 
 1. Builds the upstream URL (CGI-bin LIST format, or the newer WSGI per-second CSV).
-2. Hashes the URL with MD5 and looks for `data/sondes/<md5>.html`. Cache lifetime is 24 h.
+2. Hashes the URL with MD5 and looks for `sitrec-cache/<md5>.html`. Cache lifetime is 24 h.
 3. On miss, makes a curl request to UWYO and writes the response to the cache.
 4. Returns the response as `text/html`, with `X-Sounding-Cache: hit|miss`.
 
@@ -153,7 +157,7 @@ The zip is decompressed in-browser, the requested sounding is selected from the 
 
 #### Manual Soundings
 
-A pass-through. The user drag-and-drops a `.csv` (UWYO format), a `.txt` (IGRA2 format), or a Sitrec sounding `.json`. `FileManager.parseResult()` uses `detectSondeFormat()` to figure out which parser to invoke. The result is a `CNodeAtmosphericProfile` node, same as if it had been fetched. Picking **Manual Soundings** in the source dropdown disables the auto-fetch, leaving whatever the user has already loaded.
+A pass-through. The user drag-and-drops a sounding file in one of three text formats: IGRA2, UWYO-CSV (the per-second GPS CSV), or UWYO-LIST (the older HTML table). As the parse pipeline runs, `CTrackFileSonde.canHandle()` calls `detectSondeFormat()` to figure out which format it is — detection is **content-based**, not by file extension — and picks the matching parser. The result is a `CNodeAtmosphericProfile` node, same as if it had been fetched. Picking **Manual Soundings** in the source dropdown disables the auto-fetch, leaving whatever the user has already loaded.
 
 ### Open-Meteo
 
@@ -176,7 +180,7 @@ This is a *per-point* request — Open-Meteo doesn't supply gridded fields the w
 
 ### Track-derived winds
 
-If a sitch has a track file with MISB columns **35 (WindDirection)** and **36 (WindSpeed)**, the dropdown automatically gets a **Track: \<shortName\>** entry. Picking it sets `targetWind.trackSource` (or `localWind.trackSource` in separate mode) to the `TrackData_<shortName>` node id. The wind node's `update(f)` then reads MISB row at the current frame and writes the result into `from`/`knots` directly, bypassing the windField grid entirely.
+If a sitch has a track file with MISB columns **35 (WindDirection)** and **36 (WindSpeed)**, the dropdown automatically gets a **Track: \<shortName\>** entry. Picking it sets `this.source` to the `track:TrackData_<shortName>` key. `_fillFromTrackSource(altFt)` then reads the MISB WindDirection (35) / WindSpeed (36) row at the current frame, converts it to (u, v), and builds the wind grid from it — uniform if there are no wind-node positions, otherwise IDW over the wind-relevant track points. The streamline mesh and arrow overlay sample it like any other source.
 
 ## Debugging wind end-to-end
 
@@ -189,7 +193,7 @@ A checklist for "wind isn't working" reports, pre-checked against the layers abo
 5. **Did `fetch_wind.py` succeed?** Run it by hand: `python3 tools/fetch_wind.py --date 20260427 --hour 12 --level 500 --output /tmp/`. If eccodes import fails, the deployer's missing the system library.
 6. **Did the JSON make it back?** `ls -la data/wind/` for an entry matching the date / hour / level. Truncated files (`size < 1KB`) usually mean a partial GRIB decode — delete and retry.
 7. **Did the browser register it in FileManager?** `FileManager.list[fileId]` should be present after a successful load. Stale `_levelCache` entries can survive a source switch — `wn._levelCache = {}` followed by **Refresh Wind Data** is the nuclear option.
-8. **Does the IDW grid have the expected shape?** `wn.windU.length === 72*37 === 2664`. If it's some other size, the source-specific `_fillFrom*` wrote a non-standard grid.
+8. **Does the grid have the expected shape?** Check against the source: IDW/Manual sources produce `wn.windU.length === 72*37 === 2664`, while GFS/custom keep the native 1 ° grid `360*181 === 65160`. If the length doesn't match the active source's expected shape, the source-specific `_fillFrom*` wrote a non-standard grid.
 
 External dependencies that can fail silently:
 - **PHP `curl` extension** — without it, `proxySounding.php` fails to talk to UWYO. Some minimal PHP installs omit it.
@@ -235,19 +239,19 @@ The implementation choices in `_buildGridFromSamples` (`src/nodes/CNodeDisplayWi
 - **Power: `wᵢ = 1 / dᵢ²`.** A common choice (sometimes called *Shepard's method* with p = 2). Higher `p` makes the field hug each sample more tightly; lower `p` smears them. `p = 2` strikes the standard balance.
 - **`u = Σ wᵢ uᵢ / Σ wᵢ`, same for `v`.** Wind is a 2-D vector, so each component IDW's independently.
 - **K = 3 nearest only** (`K = min(3, samples.length)`). Plain IDW averages every sample into every cell, which smears one distant sounding's wind into the whole globe at low weight. Restricting to the 3 nearest keeps each region's value driven by its locally relevant samples and lets the field actually vary across the map. With fewer than 3 samples we just use what we have.
-- **Coverage: `cov = exp(-d_min / L)`, `L = 5°` (≈ 550 km).** A separate per-cell number (not a wind value) representing "how trustworthy is this cell's estimate". 1.0 at a sample, ≈ 0.37 at L degrees away, ≈ 0.14 at 2L. The shader multiplies streamline alpha by `cov` so streamlines fade out smoothly in regions far from any sample, and the arrow overlay drops cells with `cov < 0.5`. This is what stops the IDW field from producing confident-looking wind in oceans where there are no soundings.
+- **Coverage: `cov = exp(-d_min / L)`, `L = 5°` (≈ 550 km).** A separate per-cell number (not a wind value) representing "how trustworthy is this cell's estimate". 1.0 at a sample, ≈ 0.37 at L degrees away, ≈ 0.14 at 2L. The shader multiplies streamline alpha by `cov` so streamlines fade out smoothly in regions far from any sample, and streamline *seeding* skips cells with `cov < 0.02` (effectively zero coverage). This is what stops the IDW field from producing confident-looking wind in oceans where there are no soundings. (The screen-space arrow overlay doesn't use coverage — it only drops cells whose wind speed is below a ~0.5 m/s noise floor.)
 
-**Why not GFS?** GFS already arrives as a regular 1° lat/lon grid covering the entire globe — there's nothing to interpolate. `_fillFromGFS` skips IDW entirely and just downsamples by direct sampling at the GFS grid points (every 5th cell). Coverage is a flat 1.0 everywhere because GFS has data everywhere.
+**Why not GFS?** GFS already arrives as a regular 1° lat/lon grid covering the entire globe — there's nothing to interpolate. `_fillFromGridSource` (the shared gfs/custom path) skips IDW entirely and applies the proxy JSON's grid as-is (at its native 360×181 resolution — no downsampling). Coverage is a flat 1.0 everywhere because GFS has data everywhere (the `windCov` array is simply absent, and `sampleCoverage()` returns 1.0).
 
-**Why not Manual?** Manual is a single user-typed (from, knots) value with no spatial structure to recover. `_buildUniformGrid` writes the same (u, v) into every cell.
+**Why not Manual?** Manual is a single user-typed (from, knots) value. When target/local wind-node track positions exist, `_fillFromManual` anchors that one (u, v) at those positions and runs IDW via `_buildGridFromSamples` — just like the sounding sources — so the field fades with distance via coverage. Only when there are no wind-node positions does it fall back to `_buildUniformGrid`, which writes the same (u, v) into every cell.
 
 ### Cache layers
 
 ![Cache layers](wind-images/cache-layout.svg)
 
-- **Server disk cache** — `data/wind/wind_<DATE>_<HH>z_<LEVEL>.json` (no expiry on exact-cycle hits, 4 h staleness on fallback hits) and `data/sondes/<md5>.html` (24 h).
+- **Server disk cache** — `data/wind/wind_<DATE>_<HH>z_<LEVEL>.json` (no expiry on exact-cycle hits, 4 h staleness on fallback hits) and `sitrec-cache/<md5>.html` (24 h).
 - **Browser FileManager** — every successful GFS level is registered with a deterministic `fileId = "windGrid_${source}_${suffix}"` and `entry.skipSerialization = true` (so the blob doesn't bloat save files). `entry.staticURL = "data/wind/..."` lets a reload re-fetch the same JSON deterministically.
-- **In-flight node state** — `wn._levelCache[level]` holds the last-applied JSON per pressure level; `wn.windU`, `wn.windV`, `wn.windCov` are the three flat arrays the shader and `sampleWind()` read from.
+- **In-flight node state** — `wn._levelCache["<date>_<hour>_<level>"]` holds the last-applied JSON, keyed by a composite `dateStr_hour_level` string (e.g. `"20260427_12_500"`); `wn.windU`, `wn.windV`, `wn.windCov` are the three flat arrays the shader and `sampleWind()` read from.
 
 ### Time / units
 
@@ -275,14 +279,14 @@ The combination means rapid slider drags collapse to one network round-trip per 
 
 - **Time-varying GFS** — only the f000 analysis is fetched; forecasts (f003, f006, …) are not currently used.
 - **Wind animation across cycles** — Sitrec snapshots one cycle at the sitch's start time and keeps it for the whole sitch. Long sitches that span multiple cycles see static wind.
-- **Anything below 10 m AGL or above 100 hPa** — outside that range, GFS levels exist (50 hPa, 30 hPa, 10 hPa) and Open-Meteo levels exist (50, 30 hPa) but the sounding profiles often don't, and the GUI altitude slider stops at 38 600 ft (200 hPa equivalent) by convention.
+- **Anything below 10 m AGL or above 100 hPa** — outside that range, GFS levels exist (50 hPa, 30 hPa, 10 hPa) and Open-Meteo levels exist (50, 30 hPa) but the sounding profiles often don't, and the GUI altitude slider stops at 60,000 ft (roughly the 70 hPa level) by convention.
 - **Resolution > 1°** — code paths exist (`build_nomads_url(... resolution="0p25")`) but PHP doesn't expose a `resolution` parameter to the browser.
 
 ---
 
 # Toward configurable data sources
 
-Right now the upstream URLs and the source list are hard-coded in three places:
+A first step already exists: a single env-driven custom gridded source (`SITREC_USE_CUSTOM_WIND` + `CUSTOM_WIND_URL` template + `sitrecServer/customWindProxy.php`), which lets a deployer add one extra GFS-format source without a code change. The proposal below generalizes that one-off into a full registry. Apart from that custom hook, the upstream URLs and the source list are still hard-coded in three places:
 
 1. `src/nodes/WindSources.js` — the dropdown menu.
 2. `tools/fetch_wind.py` (`build_nomads_url`, `build_aws_url`) — GFS endpoints.

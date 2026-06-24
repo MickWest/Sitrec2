@@ -254,9 +254,11 @@ for a fixed lean and roll, the fit is cheap:
 variance (e.g. an X-only track) is skipped and left unchanged. The fit reports R²,
 RMSE, frame range, and which axes were fitted, and flags:
 
-- **stabilized video** (camera roll ≈ 0 → the reversal can't be reproduced);
 - **rollScale hit the scan edge** (no real roll signal to fit);
 - **magX ≈ −1 degeneracy** (principal point indeterminate — see below).
+
+A separate on-video HUD warning (not part of the fit report) flags **stabilized video**
+(camera roll ≈ 0 → the reversal can't be reproduced).
 
 ---
 
@@ -272,7 +274,7 @@ RMSE, frame range, and which axes were fitted, and flags:
    Centre Offset Y  principal-point offset, px                   — FITTED
    Disc Diameter    defocus disc size, px                        — ASSUMED (cosmetic)
    Obstruction      central donut ratio (secondary mirror)       — ASSUMED (cosmetic)
-   Softness         disc edge softness                           — cosmetic
+   Edge Softness    disc edge softness                           — cosmetic
    Opacity, Colour  appearance                                   — cosmetic
 ```
 

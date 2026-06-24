@@ -5,9 +5,12 @@ Two paths: one-click preset (fastest) or piece-by-piece manual build (understand
 
 ## Path A — One-click preset
 
-1. Open Sitrec with the base custom sitch (`/?sitch=custom`, or the "Custom" button).
+1. Open Sitrec with the base custom sitch (`/?sitch=custom`, or the "Custom (Drag and Drop)" menu entry).
 2. Open **Physics > Gimbal Analysis**.
-3. (Optional) Tweak wind / traverse / target parameters.
+3. (Optional) Tweak parameters. Only Cloud Wind From / Cloud Wind Knots,
+   Show Glare and Show ATFLIR Pod live in the Gimbal Analysis menu;
+   target/local wind are at the top of the Physics menu, and start distance /
+   target speed / traverse mode are in the Traverse menu.
 4. Click **>> Create Gimbal Sitch**.
 
 The page reloads into a fresh sitch with:
@@ -56,8 +59,13 @@ you've pressed, so saving the sitch and reloading reproduces the same partial
 pipeline.
 
 Individual view/pod toggles still live alongside these steps:
-- **Show/Hide > Views > SA Page** — toggles the SA page view.
-- **Physics > Add ATFLIR Pod (reload)** — enables the pod + HUD overlays.
+- **Show > Views > SA Page** — toggles the SA page view.
+- **Physics > Gimbal Analysis > Add ATFLIR Pod (reload)** — enables the pod + HUD overlays.
+  This button only appears on the plain base custom sitch (before any gimbal
+  sitch is created, when neither `Sit.showATFLIR` nor `Sit.jetStuff` is set).
+  Once you've created a gimbal sitch (`jetStuff` is set), the pod comes in via
+  the "Jet Views (chart + ATFLIR pod)" manual-build step / "Show ATFLIR Pod"
+  toggle instead.
 
 ## Adding the Gimbal video
 
@@ -76,14 +84,15 @@ it'll work through the normal drop path.
 ## Working on an existing Gimbal sitch
 
 Once `gimbalSetup` is active, the **Create Gimbal Sitch** button is replaced
-by **Apply Parameter Changes**. Edit wind / traverse / target knobs in the
-same menu, click that button, and the sitch resaves and reloads with the new
-values. The Manual Build sub-folder is also shown here so you can add any
-pipeline steps that weren't activated yet.
+by **Apply Parameter Changes**. Edit the cloud-wind / glare knobs in this
+menu (target/local wind are at the top of the Physics menu; start distance /
+target speed / traverse mode are in the Traverse menu), click that button, and
+the sitch resaves and reloads with the new values. The Manual Build sub-folder
+is also shown here so you can add any pipeline steps that weren't activated yet.
 
 ## What's different vs. built-in `gimbal`
 
-- `targetSize` defaults to 56 ft (matches Gimbal Far); built-in sets it implicitly via `setup2`.
+- `targetSize` defaults to 1 ft (the CSituation default; the `?? 56` fallback in `setupTargetModel` never fires because `situationDefaults` always sets `targetSize: 1`). Built-in Gimbal Far resolves to the same 1 ft default — it doesn't set `targetSize` either.
 - Target model is FA-18F (same as built-in Gimbal Far); no SR-71 / saucer variants.
 - `cameraFrustumATFLIR` and overlays use property-based checks
   (`Sit.showATFLIR`, `Sit.showGimbalCharts`, `Sit.showGimbalDragMesh`), set by `gimbalSetup`.

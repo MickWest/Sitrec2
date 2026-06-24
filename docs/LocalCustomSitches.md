@@ -1,6 +1,6 @@
 # Local Custom Sitches in Sitrec
 
-> **⚠️ Deprecated.** Hand-authoring `Sit*.js` files is no longer the recommended way to build a sitch. Use the drag-and-drop **Custom Sitch** tool instead — see [How to set up a sitch](CustomSitchTool.md). This document is retained for historical reference and for the small number of bundled sitches that still ship as `Sit*.js`; new sitches should not be created this way.
+> **⚠️ Deprecated.** Hand-authoring `Sit*.js` files is no longer the recommended way to build a sitch. Use the drag-and-drop **Custom Sitch** tool instead — see [Getting Started with Sitrec](CustomSitchTool.md). This document is retained for historical reference and for the small number of bundled sitches that still ship as `Sit*.js`; new sitches should not be created this way.
 
 Sitrec allows the user to create and interact with a variety of situations, called "sitches"
 
@@ -84,7 +84,7 @@ Notice that the value for the **mainCamera:** key is over four lines. This is no
 ### Creating a Local Custom Sitch
 
 The create your own sitch, the simplest way it to start with an existing sitch. You can do this in two ways:
-1) Copy an existing sitch, e.g. data/SitSWR.js, and rename it.
+1) Copy an existing sitch, e.g. data/swr/SitSWR.js, and rename it.
 2) Use the include_ directive to include an existing sitch and just override the parts you need. 
 
 Either way, you will need to create a local folder (i.e. a folder on your computer) and put the sitch file in it. This folder will also contain any other local assets you might want to use, like a .KML or .CSV file
@@ -108,7 +108,7 @@ isTextable: true,               // true if we can export and edit this sitch as 
     mainView: {left:0.0, top:0, width:1,height:1, background: [0.53, 0.81, 0.92],},
 }
 ```
-Then in Sitrec, under **File Manager** click **Open Local Sitch Folder** and navigate to the folder and click "Open" (you are opening the folder, so you don't need to select the .js file)
+Then in Sitrec, under the **File** menu open the **Local** submenu and click **Select Local Sitch Folder**, then navigate to the folder and click "Open" (you are opening the folder, so you don't need to select the .js file)
 
 Since Sitrec runs in a browser, it needs your permission to access the folder, so you'll get a dialog like:
 ![Folder permission dialog](docimages%2F2024-03-28_10-53-07.jpg)
@@ -181,7 +181,7 @@ export const SitKansas = {
     startTime: "2022-09-01T20:07:32.3Z",
 }
 ```
-When we save and run that it does not work. You'll see an error in the console: "ASSERT: Missing Managed object TargetObjectFile," and you'll note that the original sitch had a line in files of **TargetObjectFile: './models/737 MAX 8 BA.glb**', along with a later line that uses this "**targetObject: {file: "TargetObjectFile"},**". This might happen when you inherit a sitch. You need to manually add the missing file reference, or remove where it's used. The latter is simplest, and we can just add a line: **    targetObject: null,**
+When we save and run that it does not work. You'll see an error in the console: "ASSERT: Missing Managed object TargetObjectFile," and you'll note that the original sitch had a line in files of **TargetObjectFile: './models/B737Max8.glb**', along with a later line that uses this "**targetObject: {file: "TargetObjectFile"},**". This might happen when you inherit a sitch. You need to manually add the missing file reference, or remove where it's used. The latter is simplest, and we can just add a line: **    targetObject: null,**
 
 The final steps to get this working is to add the terrain, and to reset the mainCamera to defaults {}, so we have:
 ```javascript
@@ -240,14 +240,11 @@ export const SitKansas = {
 
 ### Sharing and Rehosting
 
-As it's a local sitch on your computer, it's visible only to you. To share it you need to upload the files. You can do this manually, and replace the local file names with URLs, or it can be done automatically by clicking on "Rehost Local Sitch" under the File Manager. This will rehost all the files. If you look in the console output you should see:
+As it's a local sitch on your computer, it's visible only to you. To share it you need to upload the files. You can do this manually, and replace the local file names with URLs, or it can be done automatically when you save the sitch to the server (**File** menu → **Save**). Saving rehosts all the referenced local files to the server. If you look in the console output you should see:
 
 ```File uploaded: https://www.metabunk.org/sitrec-upload/1/N615UX-track-EGM96-25efc1ed94a7d3fb1ef17d58ff34595f.kml
-index.f2a65a27ee1778ea26ac.bundle.js:1 replacing "N615UX-track-EGM96.kml" with "https://www.metabunk.org/sitrec-upload/1/N615UX-track-EGM96-25efc1ed94a7d3fb1ef17d58ff34595f.kml"
 index.f2a65a27ee1778ea26ac.bundle.js:1 File uploaded: https://www.metabunk.org/sitrec-upload/1/N121DZ-track-EGM96-ea86eea74ff5ab3e1541395441f46e57.kml
-index.f2a65a27ee1778ea26ac.bundle.js:1 replacing "N121DZ-track-EGM96.kml" with "https://www.metabunk.org/sitrec-upload/1/N121DZ-track-EGM96-ea86eea74ff5ab3e1541395441f46e57.kml"
 index.f2a65a27ee1778ea26ac.bundle.js:1 File uploaded: https://www.metabunk.org/sitrec-upload/1/124984_Kansas-f2cecfa7d0852782a4a05f984ce93819.mp4
-index.f2a65a27ee1778ea26ac.bundle.js:1 replacing "124984_Kansas.mp4" with "https://www.metabunk.org/sitrec-upload/1/124984_Kansas-f2cecfa7d0852782a4a05f984ce93819.mp4"
 index.f2a65a27ee1778ea26ac.bundle.js:1 All files have been successfully rehosted.
 index.f2a65a27ee1778ea26ac.bundle.js:1 File uploaded: https://www.metabunk.org/sitrec-upload/1/Sitkansas2-e0d6bdfa107f13987ab9be49429f1fbd.js
 index.f2a65a27ee1778ea26ac.bundle.js:1 Sitch rehosted as https://www.metabunk.org/sitrec-upload/1/Sitkansas2-e0d6bdfa107f13987ab9be49429f1fbd.js

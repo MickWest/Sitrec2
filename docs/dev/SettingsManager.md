@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Settings Manager module provides a centralized system for managing user settings in Sitrec. It supports both server-side storage (using S3 via PHP backend) and client-side cookie storage as a fallback.
+The Settings Manager module provides a centralized system for managing user settings in Sitrec. It supports three storage backends, each gated by an environment-variable flag (`SETTINGS_SERVER_ENABLED`, `SETTINGS_DB_ENABLED`, `SETTINGS_COOKIES_ENABLED`): server-side storage via the PHP backend (S3, or local filesystem when S3 is not configured), browser IndexedDB (used in serverless mode), and client-side cookies as a fallback.
 
 ## Architecture
 
@@ -14,10 +14,10 @@ The Settings Manager module provides a centralized system for managing user sett
    - Manages fallback between server and cookies
 
 2. **`sitrecServer/settings.php`** - PHP backend endpoint
-   - GET: Fetches user settings from S3
-   - POST: Saves user settings to S3
+   - GET: Fetches user settings (from S3 if configured, otherwise from local filesystem)
+   - POST: Saves user settings (to S3 if configured, otherwise to local filesystem)
    - Requires user authentication
-   - Stores settings at `settings/<userID>.json` in S3
+   - Stores settings at `settings/<userID>.json` (in S3, or under `$UPLOAD_PATH/settings/` locally)
 
 3. **`src/CustomSupport.js`** - Integration point
    - Uses SettingsManager for initialization and saving
@@ -30,8 +30,8 @@ The Settings Manager module provides a centralized system for managing user sett
 ## Features
 
 ### Server-Side Storage
-- Settings are stored in S3 bucket under `settings/<userID>.json`
-- Files are stored with `ACL => 'private'` for security
+- Stored at `settings/<userID>.json` in S3 when AWS is configured, otherwise on the local filesystem under `$UPLOAD_PATH/settings/`
+- S3 objects are written with a private ACL (`ACL => 'private'`) when an ACL is configured
 - Requires user to be logged in (userID > 0)
 - Graceful fallback to cookies if server unavailable
 
@@ -98,20 +98,84 @@ await initializeSettings();
 // Globals.settings is now populated
 ```
 
-#### `saveGlobalSettings(settings)`
-Saves settings to server (if logged in) and/or cookies.
+#### `saveSettings()`
+Saves `Globals.settings` to the active backend (IndexedDB in serverless mode, else server if logged in, else cookies), with cookie backup. No-ops if settings are unchanged.
 
 ```javascript
-await saveGlobalSettings(Globals.settings);
+await saveSettings();
 ```
+
+(The debounced wrapper `CCustomManager.saveGlobalSettings(immediate)` in `CustomSupport.js` delegates to the `SettingsSaver` class, which calls `saveSettings()`.)
 
 ## Current Settings
 
+The defaults below match the **Balanced** performance preset (see `PERFORMANCE_PRESETS` in `CustomSupport.js`). The whitelist lives in `sanitizeSettings()` and the defaults block in `initializeSettings()` (both in `SettingsManager.js`).
+
 ### maxDetails
 - **Type**: Number
-- **Range**: 5-30
-- **Default**: 15
+- **Range**: 5-30 (clamped)
+- **Default**: 20
 - **Description**: Maximum level of detail for terrain subdivision
+
+### fpsLimit
+- **Type**: Number (one of 60, 30, 20, 15)
+- **Default**: 30
+- **Description**: Frame-rate cap
+
+### tileSegments
+- **Type**: Number (clamped 16-256)
+- **Default**: 32
+- **Description**: Terrain tile subdivision segments
+
+### renderScale
+- **Type**: Number (snapped to one of 1, 0.85, 0.7, 0.5, 0.35)
+- **Default**: 0.85
+- **Description**: Render resolution scale (1 = native)
+
+### msaaSamples
+- **Type**: Number (one of 0, 2, 4, 8)
+- **Default**: 2
+- **Description**: Multisample anti-aliasing samples
+
+### performancePreset
+- **Type**: String (one of Quality, Balanced, Fast, Potato, Custom)
+- **Default**: Balanced
+- **Description**: Named bundle of the performance knobs above
+
+### videoMaxSize
+- **Type**: String (one of None, 1080P, 720P, 480P, 360P)
+- **Default**: 720P
+- **Description**: Maximum decoded video resolution
+
+### lastBuildingRotation
+- **Type**: Number (radians)
+- **Default**: 0
+- **Description**: Last building rotation, persisted across sessions
+
+### chatModel
+- **Type**: String (`provider:model` or empty)
+- **Default**: `""` (use first available)
+- **Description**: AI chat model selection
+
+### centerSidebar
+- **Type**: Boolean
+- **Default**: false
+- **Description**: Enable center sidebar between split views
+
+### showAttribution
+- **Type**: Boolean
+- **Default**: true
+- **Description**: Show map/elevation data source attribution overlay
+
+### showFilename
+- **Type**: Boolean
+- **Default**: true
+- **Description**: Show the current video filename in the bottom overlay
+
+### language
+- **Type**: String (2-letter code)
+- **Default**: `en`
+- **Description**: UI language
 
 ## Adding New Settings
 
@@ -171,7 +235,7 @@ setupSettingsMenu() {
         .tooltip("Description of new setting")
         .onChange((value) => {
             Globals.settings.newSetting = value;
-            this.saveGlobalSettings();
+            this.saveGlobalSettings(true);
         });
 }
 ```

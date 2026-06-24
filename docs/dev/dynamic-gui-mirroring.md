@@ -107,13 +107,13 @@ Universal function to create dynamic mirrors.
 - `title` (string): Title for the mirrored menu
 - `x` (number): X position (default: 200)
 - `y` (number): Y position (default: 200)
-- Returns: GUI object or null if source not found
+- Returns: GUI object, or null if the source is not found or `sourceType` is not 'menu'/'node'
 
 ## How It Works
 
 ### Detection Methods
 
-1. **Event-Based Detection** (Preferred): Hooks into GUI methods like `add()`, `addColor()`, `addFolder()`, and `destroy()` to detect changes immediately.
+1. **Event-Based Detection** (Preferred): Hooks into GUI structure methods (`add()`, `addColor()`, `addFolder()`, `remove()`) and each controller's `destroy()` to detect changes immediately.
 
 2. **Polling Detection** (Fallback): If event-based detection fails, falls back to checking for changes every 100ms using GUI signatures.
 
@@ -136,7 +136,7 @@ Mirrors automatically clean up when destroyed:
 
 ## Examples
 
-See `examples/dynamic-mirroring-example.js` for comprehensive usage examples.
+See `tests/dynamic-mirroring.test.js` for usage examples, or use the console examples below.
 
 ## Console Usage
 
@@ -163,7 +163,7 @@ CustomManager.createDynamicMirror('menu', 'effects', 'Effects Mirror');
 
 ### Performance Issues
 
-1. Reduce polling frequency by modifying `checkInterval` in `setupDynamicMirroring`
+1. Increase the polling interval by editing the hard-coded `checkInterval` value (default 100ms) in `setupDynamicMirroring` in `src/CustomManagerMirror.js`. Note this only affects the polling fallback; event-based detection is used when available.
 2. Limit the number of active mirrors
 3. Destroy unused mirrors to free resources
 

@@ -1022,4 +1022,4 @@ npm run dev-standalone-debug   # Build + run with full debugging
 - **Node.js:** Connect Chrome DevTools via `chrome://inspect`
 - **VS Code:** Use a launch config targeting `standalone-server.js`
 
-Debug endpoints: `/debug/status` and `/debug/files` (standalone and serverless); `/api/health` (serverless)
+Debug endpoints: `/debug/status` and `/debug/files` (standalone); `/api/debug/status`, `/api/debug/files`, and `/api/health` (serverless)

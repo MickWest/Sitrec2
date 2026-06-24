@@ -18,18 +18,20 @@ Uploading is initiated from the client via a CRehoster object in CRehoster.js, t
             formData.append('fileContent', new Blob([data]));
             formData.append('filename', filename);
 
-            const serverURL = SITREC_SERVER +'rehost.php'
+            const serverURL = SITREC_SERVER + 'rehost.php?unique=' + Date.now();
 
-            let response = await fetch(serverURL, {
-                method: 'POST',
-                body: formData  // Send FormData with file and filename
-            });
+            // The simple-POST path uploads via XMLHttpRequest so it can report
+            // upload-progress events (rather than a plain fetch).
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', serverURL);
+            xhr.send(formData);  // Send FormData with file and filename
 ```
 
-This is called via FileManager.rehoster.rehostFile, which returns a promise
+This is called via FileManager.rehoster.rehostFile, which returns a promise. Before queuing the promise it enforces a client-side size limit (MAX_FILE_SIZE_MB, with the ADMIN_MAX_FILE_SIZE_MB override for admins) and trims any trailing space/dot from the filename
 ```javascript
-    rehostFile(filename, data) {
-        var promise = this.rehostFilePromise(filename, data)
+    rehostFile(filename, data, version, options) {
+        // ... size-limit check + filename sanitization ...
+        var promise = this.rehostFilePromise(filename, data, version, options)
         this.rehostPromises.push(promise);
         return promise;
     }
@@ -40,11 +42,15 @@ You can use the promise returned by the function FileManager.rehoster.waitForAll
 Currently, error handling is minimal.
 
 
-The uploading to the server is done with a simple POST, and so it is limited by two variables:
+The simple-POST path is limited by two variables:
  - **client_max_body_size** in the Nginx .conf file (or Apache equivalent)
  - **upload_max_filesize** in php.ini (e.g in /etc/php/8.3/fpm/php.ini)
 
-In the Metabunk implementation, these are both set to 100M
+In the Metabunk implementation, these are both set to 100M.
+
+Large files can instead use an S3 presigned-URL / multipart-upload path (gated by `SAVE_TO_S3` + `USE_S3_PRESIGNED_URLS`, with the multipart size threshold set by `S3_MULTIPART_THRESHOLD_MB`), which uploads directly to S3 and so bypasses the simple-POST size limit. See rehost.php (`action=getPresignedUrl` / `initiateMultipart` / `completeMultipart`).
+
+Regardless of the path, there is also a client-side cap **MAX_FILE_SIZE_MB** (with an **ADMIN_MAX_FILE_SIZE_MB** override for admins) enforced in `CRehoster.rehostFile()` before any upload.
 
 ## Server Rehosting Configuration
 
@@ -55,37 +61,64 @@ The server can be configured to either rehost to the server's filesystem or to a
 
 To upload a file, the user must be authenticated. This is done by a function that returns a user ID. The ID can be a number, or a string. This ID is used as the name of the user's upload folder. Each user can only upload to their own folder, so determination of the ID is entirely server-side. 
 
-A custom authentication method can be implemented with a function getUserIDCustom() in config.php, which returns a user ID, or 0 if not logged in. For example, this is the Metabunk authenticator. 
-```javascript
+A custom authentication method can be implemented with a function getUserInfoCustom() in config.php, which returns an array with the user ID and the user's groups (user_id = 0 if not logged in). getUserIDCustom() is a thin wrapper that just returns its user_id. For example, this is the Metabunk authenticator. 
+```php
 function getUserIDCustom()
+{
+    $info = getUserInfoCustom();
+    return $info['user_id'];
+}
+
+// Returns user ID and user groups
+// Groups example: admin=3, registered=2, verified=9, sitrec=14
+function getUserInfoCustom()
 {
     // a default user id for testing
     // and for if there's no xenforo
-    $user_id = 99999999;
+    $user_id = 0; // default to not logged in
+    $user_groups = [];
 
-    if ($_SERVER['HTTP_HOST'] === getenv('LOCALHOST') || $_SERVER['SERVER_NAME'] === getenv('LOCALHOST')) {
-        // for local testing
-    } else {
-        $fileDir = getenv('XENFORO_PATH');
-        if ($fileDir) {
-            // check if the file exists
-            $xf_file = $fileDir . 'src/XF.php';
-            if (file_exists($xf_file)) {
-                require($xf_file);
-                XF::start($fileDir);
-                $app = XF::setupApp('XF\Pub\App');
-                $app->start();
-                $user = XF::visitor();
-                $user_id = $user->user_id;
+    // More secure localhost check
+    $isLocalhost = ($_SERVER['REMOTE_ADDR'] === '127.0.0.1' ||
+                    $_SERVER['REMOTE_ADDR'] === '::1');
+
+    $fileDir = getenv('XENFORO_PATH');
+    if ($fileDir) {
+        // check if the file exists
+        $xf_file = $fileDir . 'src/XF.php';
+        if (file_exists($xf_file)) {
+            require($xf_file);
+            XF::start($fileDir);
+            $app = XF::setupApp('XF\Pub\App');
+            $app->start();
+            $user = XF::visitor();
+            $user_id = $user->user_id;
+
+            // Get user groups (primary + secondary)
+            $user_groups = [$user->user_group_id];
+            if (!empty($user->secondary_group_ids)) {
+                $user_groups = array_merge($user_groups, $user->secondary_group_ids);
             }
         }
     }
-    return $user_id;
+
+    // If not authenticated, use SITREC_DEFAULT_USERID env var (defaults to 0 = not logged in)
+    if ($user_id == 0) {
+        $defaultUserId = getenv('SITREC_DEFAULT_USERID');
+        if ($defaultUserId !== false && $defaultUserId !== '') {
+            $user_id = intval($defaultUserId);
+            // ... optionally read SITREC_DEFAULT_USER_GROUPS ...
+        } elseif ($isLocalhost) {
+            $user_id = 99999999;
+        }
+    }
+
+    return ['user_id' => $user_id, 'user_groups' => $user_groups];
 }
 ```
-Note I return 99999999 if we are running a on local host, this is just for testing. If deployed then it used the Xenforo forum framework (i.e. the software that runs Metabunk.org) to get the i.d. of the user (assuming they are logged in). It returns 0 if not logged in, and that will disable file rehosting. 
+The user id defaults to 0 (not logged in, which disables file rehosting). When deployed, the Xenforo forum framework (i.e. the software that runs Metabunk.org) supplies the real user id and groups (assuming the user is logged in). For non-authenticated requests it falls back to the user id set by the SITREC_DEFAULT_USERID env var, and only uses 99999999 as a local-testing fallback (localhost detected via REMOTE_ADDR, not the spoofable HTTP_HOST). 
 
-Supplying a getUserIDCustom() is required in config.php, but you can just return any value as the default user id. Return 0 means they are not logged in. If you don't have rehosting of files available, then return 0
+Supplying a getUserInfoCustom() is required in config.php — it returns the user_id (plus user_groups, used for admin/role checks); getUserIDCustom() just returns its user_id. Returning 0 means they are not logged in. If you don't have rehosting of files available, then return 0.
 
 ### Filesystem Rehosting
 
@@ -100,20 +133,19 @@ apt-get install composer
 
 Then in the sitrecServer folder, where you should have a **composer.json** and a **composer.lock** file, run 
 ```shell
-composer update
+composer install
 ```
-This will install the AWS SDK in a folder called vendor. 
+This will install the AWS SDK in a folder called vendor. (Use `composer update` only when you intentionally want to upgrade the locked dependency versions.) 
 
 Configuring the AWS S3 connection is done with a set of credentials. These are set in config/shared.env, for example:
 
-```php
+```shell
 SAVE_TO_S3=true
 S3_ACCESS_KEY_ID="Aasd...6D6"
 S3_SECRET_ACCESS_KEY="GRF...sKyX"
 S3_REGION="us-west-2"
 S3_BUCKET="sitrec"
 S3_ACL="public-read"
-}
 ```
 if you don't supply these credentials file then the server will just attempt to use the filesystem rehosting.
 

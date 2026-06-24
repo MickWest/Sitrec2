@@ -54,28 +54,28 @@ Sitrec will center the main view over the track you just loaded. The Look View w
 If you zoom in you'll see more of the initial setup:
 ![Close-up-of-single-track-defaults.jpg](docimages/Close-up-of-single-track-defaults.jpg)
 
-The Camera essentially has three sets of parameters: Position, Heading, and Field of View (FOV). You see these three listed in the Camera menu. Each one is a drop-down menu, because each one is a _data source_. 
+The Camera essentially has three sets of parameters: Position, Heading, and Field of View (FOV). You see these three sources in the Camera menu, which is organized into sub-folders: **Location** (led by the **Position** selector), **Heading** (led by the **Camera Heading** selector), and **FOV (Zoom)** (led by the **Camera FOV** selector). There's also a **Camera Tweaks** sub-folder for less-common adjustments. Each selector is a drop-down menu, because each one is a _data source_. 
 
 By default when you load a single simple track (i.e. a track with no heading or FOV info embedded in it), you get the following setup:
 
-- Camera position: Follow Track - meaning the camera will move along the track you just loaded
-- Camera FOV: userFOV - meaning you manually control the FOV with the slider above
-- Camera Heading: Use Angles - meaning the heading will come from what is specified in "Angles Source". Since there no FOV data in the track, the only option there is "Manual PTZ"
+- **Position**: the loaded track's name (e.g. the flight number) - meaning the camera will move along the track you just loaded
+- **Camera FOV**: Manual - meaning you manually control the FOV with the slider in the FOV (Zoom) folder
+- **Camera Heading**: Manual - meaning you set the heading yourself with the PTZ (pan/tilt/roll) controls below
 
-### Camera Heading: Use Angles & PTZ
+### Camera Heading: Manual & PTZ
 
-You can adjust the camera heading using the PTZ controls. These default to absolute values (the "Relative" check box is off). So a pan of 0° means north, and a tilt of 0° means level with the ground under the camera. A positive tilt goes up, negative goes down. 
+You can adjust the camera heading using the PTZ controls. These default to absolute values (the "Relative Heading" check box is off). So a pan of 0° means north, and a tilt of 0° means level with the ground under the camera. A positive tilt goes up, negative goes down. 
 
-Changing the PTZ mode to "Relative" (check the box) means that the heading is relative to the ground track of the jet. This allows you to simulate looking forward (Pan = 0°), or to the pilot's left or right. 
+Changing the PTZ mode to "Relative Heading" (check the box) means that the heading is relative to the ground track of the jet. This allows you to simulate looking forward (Pan = 0°), or to the pilot's left or right. 
 
-In the above image you will see red lines. These are _lines of sight_ and essentially show where the plane's camera is looking. There's also a blue line, which is the _Traverse_ of the lines of sight. There are various ways of calculating a Traverse (described in detail in [Traverse Methods](TraverseMethods.md)); the default is "Const Air Spd" (constant air speed). More on Traverses later. 
+In the above image you will see red lines. These are _lines of sight_ and essentially show where the plane's camera is looking. There's also a blue line, which is the _Traverse_ of the lines of sight. There are various ways of calculating a Traverse (described in detail in [Traverse Methods](TraverseMethods.md)); the default is "Target Object" (the traverse follows the target track); other options include "Constant Air Speed", "Constant Altitude", etc. More on Traverses later. 
 
 In addition, there is the Traverse Object, which defaults to a cube. You can change this in the Objects menu. For example if you wanted to simulate a plane flying 1NM to the pilot's left, you could change:
 
 - PTZ to "relative"
 - Pan to -90° (i.e. 90° left of the plane)
-- Traverse Start Distance to 1NM
-- Traverse Object "Object/Model or Geometry" to "Model"
+- Tgt Start Distance to 1NM
+- Traverse Object "Model or Geometry" to "model"
 - Model to "737 MAX 8 BA"
 
 ![simple-plane-on-the-left.jpg](docimages/simple-plane-on-the-left.jpg)
@@ -92,18 +92,18 @@ Here the target has been set to the end of the pier. The traverse object then ap
 
 ### Fixed camera
 
-You can fix the camera to a particular point by selecting "fixedCamera" from the "Camera Track" dropdown.  You can leave the target fixed to create a static scene, or you can change the target track to the plane's track.
+You can fix the camera to a particular point by selecting "Manual" from the "Position" dropdown (in the Camera menu's Location folder).  You can leave the target fixed to create a static scene, or you can change the target track to the plane's track.
 
 Example:
 ![fixed-camera-red-ball.jpg](docimages/fixed-camera-red-ball.jpg)
 
 Here the camera is fixed on the ground, and the target track is set to the plane's track (AAL5511, the flight number). The traverse is set to "constant altitude" and the traverse object is set to a large red balloon. 
 
-Note since the PTZ controls are disabled, you can now adjust the FOV with the "vFOV" slider in the camera menu. 
+Note since the PTZ controls are disabled (greyed out), you can now adjust the FOV with the "Zoom (fov)" slider in the Camera menu's FOV (Zoom) folder. 
 
 ### Setting the camera or target location by name
 
-You don't have to know coordinates. The **Camera** menu (and, for the target, the **Target** menu) has three handy controls for positioning a fixed camera or target:
+You don't have to know coordinates. The **Camera** menu's **Location** folder (and, for the target, the **Target** menu) has three handy controls for positioning a fixed camera or target:
 
 - **Lookup** — type a **place name** (e.g. "Phoenix, AZ"), `lat,lon` coordinates, or an MGRS grid reference, and Sitrec jumps there.
 - **Geolocate from browser** — uses your device's location to set the current position.
@@ -124,12 +124,12 @@ Here you can just barely see the 737 by the mouth of the estuary. This small Tic
 
 ## Setting the date and time
 
-Getting the time right is **crucial** — it determines where the Sun, Moon, stars, and satellites are, and how shadows fall. There are two key times, both shown in yellow at the top of the **Time** menu:
+Getting the time right is **crucial** — it determines where the Sun, Moon, stars, and satellites are, and how shadows fall. There are two key times, both shown at the top of the **Time** menu:
 
-- **Start Time** — the real-world time at frame 0 (the first frame of the video).
-- **Now Time** — the time at the *current* frame: Start Time plus the elapsed frame time.
+- **startTime** — the real-world time at frame 0 (the first frame of the video).
+- **nowTime** — the time at the *current* frame: the start time plus the elapsed frame time.
 
-The Year / Month / Day / Hour / Minute / Second sliders in the Time menu edit the **Now Time**; the large slider at the bottom of the screen (and the arrow keys) move you through the frames. A common workflow is to scrub (drag) to a frame with something distinctive on screen, then adjust the time until the simulation matches — Sitrec works out the Start Time for you. You'll do exactly this when syncing video, next.
+The Year / Month / Day / Hour / Minute / Second sliders in the Time menu edit the **nowTime**; the large slider at the bottom of the screen (and the arrow keys) move you through the frames. A common workflow is to scrub (drag) to a frame with something distinctive on screen, then adjust the time until the simulation matches — Sitrec works out the start time for you. You'll do exactly this when syncing video, next.
 
 ## Adding and Syncing Video
 
@@ -201,7 +201,7 @@ The file also has FOV data, so this is automatically selected for "Camera FOV" -
 
 Since we have a target track, then the Camera Heading is set to "To Target".
 
-The "Traverse" setup starts out as the default, "Const Air Spd", with a start distance of 1 NM. Since we don't have a UAP in this case, and we know we are just following the truck, the traverse doesn't matter much here — the MISB center track is already used as the target (as noted above), so the traverse object simply drives along the road. 
+The "Traverse" setup starts out as the default, "Target Object", with a start distance of 1 NM. Since we don't have a UAP in this case, and we know we are just following the truck, the traverse doesn't matter much here — the MISB center track is already used as the target (as noted above), so the traverse object simply drives along the road. 
 
 However, if we _did_ have a suspected UAP in the frame, then we would select one of the various form of LOS traversal (ways of traversing the lines of sight). For example, constant altitude:
 
