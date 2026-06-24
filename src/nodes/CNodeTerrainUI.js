@@ -316,10 +316,12 @@ export class CNodeTerrainUI extends CNode {
         // Add custom map sources from SITREC_CUSTOM_MAP_<NAME>_* env vars.
         // Scans Globals.env for keys matching SITREC_CUSTOM_MAP_<NAME>_URL,
         // groups related properties by <NAME>, and creates a source entry for each.
+        // Exclude _TERMS_URL: it's a per-source property that also ends in _URL, so it
+        // would otherwise be misread as a separate source named "<NAME>_TERMS".
         if (Globals.env) {
             for (const key in Globals.env) {
                 const match = key.match(/^SITREC_CUSTOM_MAP_(.+)_URL$/);
-                if (match && Globals.env[key]) {
+                if (match && !key.endsWith('_TERMS_URL') && Globals.env[key]) {
                     const name = match[1];
                     const prefix = `SITREC_CUSTOM_MAP_${name}_`;
                     const template = Globals.env[key];
@@ -435,10 +437,11 @@ export class CNodeTerrainUI extends CNode {
             }
         }
         // Add custom elevation sources from SITREC_CUSTOM_ELEVATION_<NAME>_* env vars.
+        // Exclude _TERMS_URL (a per-source property that also ends in _URL), as for maps.
         if (Globals.env) {
             for (const key in Globals.env) {
                 const match = key.match(/^SITREC_CUSTOM_ELEVATION_(.+)_URL$/);
-                if (match && Globals.env[key]) {
+                if (match && !key.endsWith('_TERMS_URL') && Globals.env[key]) {
                     const name = match[1];
                     const prefix = `SITREC_CUSTOM_ELEVATION_${name}_`;
                     const template = Globals.env[key];

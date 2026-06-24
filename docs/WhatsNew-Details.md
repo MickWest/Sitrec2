@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.88.2 (2026-06-24)
+
+### Bug Fixes
+- Fixed a spurious duplicate entry in the terrain/elevation map-source dropdowns when a custom source defines a terms-of-use link. In `CNodeTerrainUI.js`, the custom-source scanner matched env keys against `^SITREC_CUSTOM_MAP_(.+)_URL$` (and the `SITREC_CUSTOM_ELEVATION_` equivalent). Because a source's optional terms-of-use property is named `SITREC_CUSTOM_MAP_<NAME>_TERMS_URL` — which also ends in `_URL` — the greedy `(.+)` captured `<NAME>_TERMS`, so the terms link was misread as a *second*, distinct custom source (e.g. an extra "Custom Map (ESRI_TERMS)" entry). Both the map loop and the elevation loop now guard with `&& !key.endsWith('_TERMS_URL')`, so `_TERMS_URL` is treated only as a per-source property and the menu shows just the single intended source. Pre-existing since the custom-source parser was written; only surfaces for sources that define a `_TERMS_URL`. Verified end-to-end on a real build.
+
+---
+
 ## Version 2.88.1 (2026-06-23)
 
 ### Bug Fixes

@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.88.2 (2026-06-24)
+
+### Bug Fixes
+- Fixed a stray duplicate map/elevation source appearing in the terrain source list when a custom map source includes a terms-of-use link.
+
+---
+
 ## Version 2.88.1 (2026-06-23)
 
 ### Bug Fixes
