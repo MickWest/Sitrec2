@@ -15,7 +15,12 @@ import {showHider} from "../KeyBoardHandler";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import * as LAYER from "../LayerMasks";
 import {BufferGeometry, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshPhongMaterial} from "three";
-import {filterSourcesForServerless, pickAvailableSourceType} from "../terrainSourceUtils";
+import {
+    defaultSourcesEnabled,
+    filterSourcesForServerless,
+    filterToCustomAndOfflineSources,
+    pickAvailableSourceType,
+} from "../terrainSourceUtils";
 import {getEnv} from "../envUtils";
 import {ServiceAvailability} from "../ServiceAvailability";
 import {identifyServiceFromUrl} from "../TileUsageTracker";
@@ -132,6 +137,7 @@ export class CNodeTerrainUI extends CNode {
             },
             FlatShading: {
                 allowInServerless: true,
+                offlineSafe: true,
                 name: "Flat Shading",
                 mapURL: (z, x, y) => {
                     return SITREC_APP + "data/images/grey-256x256.png?v=1";
@@ -140,6 +146,7 @@ export class CNodeTerrainUI extends CNode {
             },
             OceanSurface: {
                 allowInServerless: true,
+                offlineSafe: true,
                 name: "Ocean Surface",
                 mapURL: (z, x, y) => {
                     return SITREC_APP + "data/images/28_sea water texture-seamless.jpg";
@@ -196,6 +203,7 @@ export class CNodeTerrainUI extends CNode {
 
                 Debug: {
                     allowInServerless: true,
+                    offlineSafe: true,
                     name: "Debug Info",
                     isDebug: true,
                     maxZoom: 20,
@@ -203,6 +211,7 @@ export class CNodeTerrainUI extends CNode {
 
                 Local: {
                     allowInServerless: true,
+                    offlineSafe: true,
                     name: "Local",
                     mapURL: (z,x,y) => {
                         return `${SITREC_TERRAIN}imagery/esri/${z}/${y}/${x}.jpg`
@@ -328,6 +337,13 @@ export class CNodeTerrainUI extends CNode {
             }
         }
 
+        // SITREC_ENABLE_DEFAULT_MAP_SOURCES=false strips the built-in internet providers
+        // (ESRI, MapBox, MapTiler, EOX, …), keeping only the env-defined CustomMap_* sources
+        // and the offline-safe built-ins (Local, Debug, Flat Shading, Ocean Surface).
+        if (!defaultSourcesEnabled(getEnv("SITREC_ENABLE_DEFAULT_MAP_SOURCES", process.env.SITREC_ENABLE_DEFAULT_MAP_SOURCES))) {
+            this.mapSources = filterToCustomAndOfflineSources(this.mapSources, /^CustomMap_/);
+        }
+
         if (isServerless) {
             this.mapSources = filterSourcesForServerless(this.mapSources);
         }
@@ -346,11 +362,19 @@ export class CNodeTerrainUI extends CNode {
 
         // This is the default map type if none specificed in the Sit file
         // Use DOCKER_MAP_TYPE if building for Docker, otherwise use DEFAULT_MAP_TYPE
+        // Map type precedence: runtime DOCKER_MAP_TYPE override -> runtime DEFAULT_MAP_TYPE
+        // (the documented main knob, incl. CustomMap_<NAME>) -> build-time values -> "Debug".
+        // getEnv("X") with no fallback is a RUNTIME-only read (window.__SITREC_ENV__ from the
+        // Docker entrypoint). Runtime values must win over build-time baked ones, so a
+        // DEFAULT_MAP_TYPE in a container .env is honoured even if the image happened to bake
+        // a legacy DOCKER_MAP_TYPE. DOCKER_* is only an optional Docker-only override.
         const defaultMapType = isServerless
             ? "Local"
-            : (process.env.DOCKER_BUILD
-                ? (getEnv("DOCKER_MAP_TYPE", process.env.DOCKER_MAP_TYPE) ?? "Debug")
-                : (getEnv("DEFAULT_MAP_TYPE", process.env.DEFAULT_MAP_TYPE) ?? "Debug"));
+            : (getEnv("DOCKER_MAP_TYPE")
+                || getEnv("DEFAULT_MAP_TYPE")
+                || (process.env.DOCKER_BUILD ? process.env.DOCKER_MAP_TYPE : "")
+                || process.env.DEFAULT_MAP_TYPE
+                || "Debug");
 
         // map type from the terrain object in a saved sitch, or default to configured default.
         // quickTerrain mode (testAll=2) always forces Debug terrain for speed.
@@ -386,6 +410,7 @@ export class CNodeTerrainUI extends CNode {
             // and some defaults
             Flat: {
                 allowInServerless: true,
+                offlineSafe: true,
                 name: "Flat",
                 url: "",
                 maxZoom: 20,
@@ -395,6 +420,7 @@ export class CNodeTerrainUI extends CNode {
             },
             Local: {
                 allowInServerless: true,
+                offlineSafe: true,
                 name: "Local",
                 // Tiles stored in sitrec-terrain/elevation/z/x/y.png
                 mapURL: (z,x,y) => {
@@ -436,6 +462,13 @@ export class CNodeTerrainUI extends CNode {
             }
         }
 
+        // SITREC_ENABLE_DEFAULT_ELEVATION_SOURCES=false strips the built-in internet elevation
+        // providers (AWS Terrarium, etc.), keeping only the env-defined CustomElevation_* sources
+        // and the offline-safe built-ins (Flat, Local).
+        if (!defaultSourcesEnabled(getEnv("SITREC_ENABLE_DEFAULT_ELEVATION_SOURCES", process.env.SITREC_ENABLE_DEFAULT_ELEVATION_SOURCES))) {
+            this.elevationSources = filterToCustomAndOfflineSources(this.elevationSources, /^CustomElevation_/);
+        }
+
         if (isServerless) {
             this.elevationSources = filterSourcesForServerless(this.elevationSources);
         }
@@ -448,11 +481,15 @@ export class CNodeTerrainUI extends CNode {
             }
         }
 
+        // Same precedence as the map type: runtime DOCKER_ELEVATION_TYPE -> runtime
+        // DEFAULT_ELEVATION_TYPE -> build-time values -> "Flat". Runtime wins over build-time.
         const defaultElevationType = isServerless
             ? "Local"
-            : (process.env.DOCKER_BUILD
-                ? (getEnv("DOCKER_ELEVATION_TYPE", process.env.DOCKER_ELEVATION_TYPE) ?? "Flat")
-                : (getEnv("DEFAULT_ELEVATION_TYPE", process.env.DEFAULT_ELEVATION_TYPE) ?? "Flat"));
+            : (getEnv("DOCKER_ELEVATION_TYPE")
+                || getEnv("DEFAULT_ELEVATION_TYPE")
+                || (process.env.DOCKER_BUILD ? process.env.DOCKER_ELEVATION_TYPE : "")
+                || process.env.DEFAULT_ELEVATION_TYPE
+                || "Flat");
 
         // quickTerrain mode (testAll=2) always forces Flat elevation for speed.
         // Regression mode no longer forces Local globally; tests that need Local should pass

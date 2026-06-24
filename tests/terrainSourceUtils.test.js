@@ -1,4 +1,9 @@
-import {filterSourcesForServerless, pickAvailableSourceType} from "../src/terrainSourceUtils";
+import {
+    defaultSourcesEnabled,
+    filterSourcesForServerless,
+    filterToCustomAndOfflineSources,
+    pickAvailableSourceType,
+} from "../src/terrainSourceUtils";
 
 describe("terrainSourceUtils", () => {
     test("filters out sources that are not allowed in serverless mode", () => {
@@ -38,5 +43,31 @@ describe("terrainSourceUtils", () => {
             requestedType: "Debug",
             defaultType: "Local",
         })).toBe("Debug");
+    });
+
+    test("filterToCustomAndOfflineSources keeps custom + offlineSafe, drops internet sources", () => {
+        const sources = {
+            ESRI: {name: "ESRI"},                       // internet provider -> dropped
+            MapBox: {name: "MapBox"},                   // internet provider -> dropped
+            Local: {name: "Local", offlineSafe: true},  // offline -> kept
+            Debug: {name: "Debug", offlineSafe: true},  // offline -> kept
+            CustomMap_WORLD: {name: "World"},           // user's custom -> kept
+        };
+
+        expect(filterToCustomAndOfflineSources(sources, /^CustomMap_/)).toEqual({
+            Local: {name: "Local", offlineSafe: true},
+            Debug: {name: "Debug", offlineSafe: true},
+            CustomMap_WORLD: {name: "World"},
+        });
+    });
+
+    test("defaultSourcesEnabled defaults to true, only explicit false disables", () => {
+        expect(defaultSourcesEnabled(undefined)).toBe(true);   // unset -> keep defaults
+        expect(defaultSourcesEnabled("")).toBe(true);
+        expect(defaultSourcesEnabled("true")).toBe(true);
+        expect(defaultSourcesEnabled(true)).toBe(true);
+        expect(defaultSourcesEnabled("false")).toBe(false);    // env arrives as a string
+        expect(defaultSourcesEnabled("False")).toBe(false);
+        expect(defaultSourcesEnabled(false)).toBe(false);
     });
 });
