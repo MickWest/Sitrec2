@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.88.1 (2026-06-23)
+
+### Bug Fixes
+- Fixed the configured default map and elevation source being ignored on Docker/container installs, so a server's chosen default (including a custom source) is now honoured on every deploy type.
+
+### New Features
+- Added options for offline and locked-down server installs to hide the built-in internet map and elevation providers, leaving only the operator's own custom sources plus the offline-safe built-ins. (Server/deployment configuration only — set via environment variables, not an in-app menu.)
+
+---
+
 ## Version 2.88.0 (2026-06-23)
 
 ### Improvements

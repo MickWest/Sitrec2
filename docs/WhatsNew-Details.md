@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.88.1 (2026-06-23)
+
+### Bug Fixes
+- Fixed `DEFAULT_MAP_TYPE` / `DEFAULT_ELEVATION_TYPE` being silently ignored on Docker/container deploys. The bundle is built with `DOCKER_BUILD=true`, and `CNodeTerrainUI` previously read *only* `DOCKER_MAP_TYPE` / `DOCKER_ELEVATION_TYPE` in that case, so a container that set `DEFAULT_MAP_TYPE=CustomMap_<NAME>` (or the elevation equivalent) had no effect. The default-type selection in `src/nodes/CNodeTerrainUI.js` now resolves with the precedence: runtime `DOCKER_*` → runtime `DEFAULT_*` → build-time `DOCKER_*` (only when `DOCKER_BUILD`) → build-time `DEFAULT_*` → hardcoded fallback (`Debug` for map, `Flat` for elevation). "Runtime" reads come from `window.__SITREC_ENV__`, injected by `docker/entrypoint.sh`, so runtime values always win over values baked into the image. `DOCKER_MAP_TYPE` / `DOCKER_ELEVATION_TYPE` are now optional Docker-only overrides; `config/shared.env.example` comments out their defaults and documents `DEFAULT_*` as the single knob that applies to every deploy type. Verified end-to-end against a live container in a kind cluster.
+
+### New Features
+- Added `SITREC_ENABLE_DEFAULT_MAP_SOURCES` and `SITREC_ENABLE_DEFAULT_ELEVATION_SOURCES` env flags (default `true`, mirroring the existing `SITREC_ENABLE_DEFAULT_TLE_SOURCES`) for offline / locked-down deployments. Setting either to `false` strips the built-in internet tile providers (ESRI, MapBox, MapTiler, EOX, AWS Terrarium, …) from the terrain dropdowns, keeping only the operator's env-defined custom sources (`CustomMap_*` / `CustomElevation_*`) plus the offline-safe built-ins — Map: Local, Debug, Flat Shading, Ocean Surface; Elevation: Flat, Local. Implemented in `CNodeTerrainUI` via two new helpers in `src/terrainSourceUtils.js`: `filterToCustomAndOfflineSources(sources, customKeyRegex)` (keeps keys matching `/^CustomMap_/` or `/^CustomElevation_/`, plus any source def flagged with the new `offlineSafe: true` property) and `defaultSourcesEnabled(value)` (treats only an explicit string/boolean `false` as disabled). The offline-safe built-in source definitions are tagged with `offlineSafe: true`, and `docker/entrypoint.sh` forwards both new vars in `CLIENT_VARS`. Unit-tested in `tests/terrainSourceUtils.test.js`.
+
+---
+
 ## Version 2.88.0 (2026-06-23)
 
 ### Improvements
