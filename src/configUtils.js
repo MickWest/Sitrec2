@@ -138,6 +138,19 @@ export async function setupConfigPaths() {
     if (!isServerless) {
         const serverConfig = await getConfigFromServer();
         if (serverConfig !== null) {
+            // Strip a trailing CR/newline from every string value BEFORE anything
+            // reads from serverConfig. A Windows (CRLF) env file passed via
+            // docker-compose `env_file:` leaves a \r on each value, which
+            // config_paths.php forwards verbatim; a trailing \r silently breaks
+            // custom map/elevation source names & URLs, path values, and
+            // exact-string flag checks. (The bake path is already cleaned upstream
+            // in install.sh/sitrec.sh; this defends the env_file: path.)
+            for (const k in serverConfig) {
+                if (typeof serverConfig[k] === 'string') {
+                    serverConfig[k] = serverConfig[k].replace(/[\r\n]+$/, '');
+                }
+            }
+
             SITREC_UPLOAD = serverConfig.UPLOAD;
             SITREC_CACHE = serverConfig.CACHE;
             SITREC_TERRAIN = serverConfig.TERRAIN;

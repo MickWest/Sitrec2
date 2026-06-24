@@ -5,8 +5,21 @@
 
 set -e
 
-HTML_FILE="/var/www/html/index.html"
-ENV_PHP_FILE="/var/www/html/shared.env.php"
+# Paths are overridable so the entrypoint can be exercised end-to-end by
+# automated tests (tests/dockerEntrypointEnv.test.js) without a real
+# /var/www/html. Defaults are unchanged for the real container.
+HTML_FILE="${SITREC_HTML_FILE:-/var/www/html/index.html}"
+ENV_PHP_FILE="${SITREC_ENV_PHP_FILE:-/var/www/html/shared.env.php}"
+
+# Literal carriage return. Used to strip a trailing CR from values that arrive
+# from a Windows (CRLF) env file via docker-compose `env_file:` / `docker run
+# --env-file` (these bypass the install.sh/sitrec.sh bake parser and feed the
+# raw value straight into the container env). Without stripping it first, the CR
+# sits after the closing quote and defeats the end-anchored quote-strip below,
+# leaving a stray quote + CR that silently breaks downstream exact-string checks
+# (getEnvBool, map-type lookups) and can corrupt the injected JS string literal.
+# $(printf '\r') is portable to every shell.
+CR=$(printf '\r')
 
 # ---------------------------------------------------------------------------
 # CLIENT_VARS: safe to expose in the browser (injected into both PHP and JS).
@@ -118,6 +131,9 @@ echo "<?php /*;" > "$ENV_PHP_FILE"
 
 for var in $CLIENT_VARS $SERVER_VARS; do
     val="${!var}"
+    # Strip a trailing CR (CRLF env files) BEFORE the quote-strip, so the closing
+    # quote is once again the last character and the strip below actually matches.
+    val="${val%"$CR"}"
     # Strip surrounding quotes (some compose tools pass them literally)
     val="${val#\"}" ; val="${val%\"}"
     val="${val#\'}" ; val="${val%\'}"
@@ -140,6 +156,8 @@ if [ -f "$HTML_FILE" ]; then
     FIRST=true
     for var in $CLIENT_VARS; do
         val="${!var}"
+        # Strip a trailing CR (CRLF env files) BEFORE the quote-strip (see above).
+        val="${val%"$CR"}"
         # Strip surrounding quotes (some compose tools pass them literally)
         val="${val#\"}" ; val="${val%\"}"
         val="${val#\'}" ; val="${val%\'}"
@@ -156,20 +174,34 @@ if [ -f "$HTML_FILE" ]; then
     done
     JSON+="}"
 
-    # Inject a <script> tag right after <head> in index.html
-    SCRIPT_TAG="<script>window.__SITREC_ENV__=${JSON};<\/script>"
+    # Inject a <script> tag right after the opening <head> in index.html.
+    SCRIPT_TAG="<script>window.__SITREC_ENV__=${JSON};</script>"
 
-    # Insert after the opening <head> tag (the built index.html has <head> on a
-    # single line). Read, then delete-and-recreate (not `sed -i`, and not an
-    # in-place truncate): the image's index.html is root-owned, so a non-root UID
-    # can neither rewrite it in place (overlay copy-up denied) nor let sed -i
-    # rename a temp over it — but it CAN remove it and write a fresh file in the
+    # Split on the FIRST <head> and re-assemble with the script tag inserted,
+    # using pure shell parameter expansion rather than sed. A value can legally
+    # contain &, \, and | — e.g. a custom map URL like ...?token=a&style=b — all
+    # of which are special on sed's REPLACEMENT side (& expands to the whole
+    # match, so the URL would get "<head>" spliced into it). Parameter expansion
+    # treats the value as a literal, so it is injection-safe.
+    #
+    # Delete-and-recreate (not `sed -i`, not in-place truncate): the image's
+    # index.html is root-owned, so a non-root UID can't rewrite it in place
+    # (overlay copy-up denied) but CAN remove it and write a fresh file in the
     # world-writable webroot. Works for both root and non-root UIDs.
-    NEW_HTML=$(sed "s|<head>|<head>${SCRIPT_TAG}|" "$HTML_FILE")
-    rm -f "$HTML_FILE"
-    printf '%s\n' "$NEW_HTML" > "$HTML_FILE"
-
-    echo "[entrypoint] Injected runtime env into $HTML_FILE"
+    HTML_CONTENT=$(cat "$HTML_FILE")
+    case "$HTML_CONTENT" in
+        *"<head>"*)
+            HTML_HEAD="${HTML_CONTENT%%<head>*}"   # everything before the first <head>
+            HTML_TAIL="${HTML_CONTENT#*<head>}"    # everything after the first <head>
+            NEW_HTML="${HTML_HEAD}<head>${SCRIPT_TAG}${HTML_TAIL}"
+            rm -f "$HTML_FILE"
+            printf '%s\n' "$NEW_HTML" > "$HTML_FILE"
+            echo "[entrypoint] Injected runtime env into $HTML_FILE"
+            ;;
+        *)
+            echo "[entrypoint] WARNING: no <head> tag in $HTML_FILE, skipping JS env injection" >&2
+            ;;
+    esac
 else
     echo "[entrypoint] WARNING: $HTML_FILE not found, skipping JS env injection"
 fi
@@ -194,6 +226,7 @@ fi
 #    keep that meaning). The rare override is SITREC_DOCKER_INTERNAL_PORT.
 # ---------------------------------------------------------------------------
 SITREC_LISTEN_PORT="${SITREC_DOCKER_INTERNAL_PORT:-8080}"
+SITREC_LISTEN_PORT="${SITREC_LISTEN_PORT%"$CR"}"   # tolerate a trailing CR (CRLF env file)
 
 # Validate: must be a bare integer, else fall back to the safe default.
 case "$SITREC_LISTEN_PORT" in
@@ -259,4 +292,9 @@ echo "============================================================"
 # ---------------------------------------------------------------------------
 # 4. Hand off to the default Apache entrypoint
 # ---------------------------------------------------------------------------
+# Test hook: let automated tests run the env-injection logic above without
+# execing Apache (which isn't present outside the container).
+if [ -n "${SITREC_ENTRYPOINT_NO_EXEC:-}" ]; then
+    exit 0
+fi
 exec docker-php-entrypoint "$@"

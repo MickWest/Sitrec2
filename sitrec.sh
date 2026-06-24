@@ -27,7 +27,9 @@ IMAGE="ghcr.io/mickwest/sitrec2"
 # ---------------------------------------------------------------------------
 # Read the compose command from .runtime (written by install.sh)
 # ---------------------------------------------------------------------------
-if [ -f ".runtime" ]; then
+if [ -n "${SITREC_BAKE_DRY_RUN:-}" ]; then
+    COMPOSE="dry-run"   # bake dry-run / preview: no container runtime needed
+elif [ -f ".runtime" ]; then
     COMPOSE="$(cat .runtime)"
 else
     # Fall back to auto-detection if .runtime is missing
@@ -371,7 +373,16 @@ for t in tags:
         # NOTE: deliberately avoids the [![:space:]] parameter-expansion trim
         # idiom — macOS ships bash 3.2, which mishandles negated POSIX classes
         # in ${%%}/${##}. The leading-whitespace strip below is a portable loop.
+        #
+        # CR (a literal carriage return) is stripped from each line so Windows
+        # (CRLF) env files parse correctly — otherwise a trailing CR sits after
+        # the closing quote, defeats the quote-strip below, and bakes literal
+        # quotes + CR into the ENV value. $(printf '\r') is portable to every
+        # shell, unlike $'\r' which silently no-ops under dash/busybox-ash.
+        CR=$(printf '\r')
+        crlf_seen=0
         while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in *"$CR") crlf_seen=1; line="${line%"$CR"}" ;; esac  # strip trailing CR (CRLF files)
             while case "$line" in " "*|$'\t'*) true ;; *) false ;; esac; do
                 line="${line#?}"                              # strip a leading space/tab
             done
@@ -391,6 +402,7 @@ for t in tags:
             esc="${esc//\$/\\\$}"                             # escape '$' (no expansion)
             printf 'ENV %s="%s"\n' "$key" "$esc" >> "$DF"
         done < "$ENV_FILE"
+        [ "$crlf_seen" = 1 ] && echo "[sitrec] note: '$ENV_FILE' has Windows (CRLF) line endings — stripped them while baking."
 
         BAKED_COUNT=$(grep -c '^ENV ' "$DF" || true)
         if [ "$BAKED_COUNT" -eq 0 ]; then
@@ -398,6 +410,13 @@ for t in tags:
             exit 1
         fi
         echo "[sitrec] Generated Dockerfile with $BAKED_COUNT baked env var(s)."
+
+        # Test/preview hook: print the generated Dockerfile and stop before
+        # building, so the env-file parser can be exercised without a runtime.
+        if [ -n "${SITREC_BAKE_DRY_RUN:-}" ]; then
+            cat "$DF"
+            exit 0
+        fi
 
         # Build the derived image. --pull refreshes the base for the chosen tag.
         $RUNTIME_CMD build --pull -f "$DF" -t "$TARGET" "$BUILD_DIR"

@@ -16,18 +16,22 @@
  * @returns {string|undefined}
  */
 export function getEnv(name, fallback) {
-    // Runtime override from Docker entrypoint injection
-    if (typeof window !== 'undefined' && window.__SITREC_ENV__ && window.__SITREC_ENV__[name] !== undefined) {
-        return window.__SITREC_ENV__[name];
-    }
+    // Runtime override from the Docker entrypoint injection (window.__SITREC_ENV__),
+    // else the build-time value from dotenv-webpack. process.env.X is replaced at
+    // compile time, so this can't do a dynamic lookup — the caller passes the
+    // build-time value as the fallback:  getEnv("MAPBOX_TOKEN", process.env.MAPBOX_TOKEN)
+    let value = (typeof window !== 'undefined' && window.__SITREC_ENV__ && window.__SITREC_ENV__[name] !== undefined)
+        ? window.__SITREC_ENV__[name]
+        : fallback;
 
-    // Build-time value from dotenv-webpack (process.env.X is replaced at compile time,
-    // so we can't do a dynamic lookup — this function must be used with literal names
-    // and the caller passes the build-time value as the fallback).
-    // However, for new code, callers should pass process.env.X as the fallback:
-    //   getEnv("MAPBOX_TOKEN", process.env.MAPBOX_TOKEN)
-
-    return fallback;
+    // Strip a trailing CR/newline. A Windows (CRLF) env file — passed via
+    // docker-compose `env_file:`, or read at build time by dotenv-webpack — can
+    // leave a trailing \r on the value, which silently breaks exact-string checks
+    // downstream: getEnvBool("true\r") !== true, and map/elevation-type key lookups
+    // (sources["NoClouds\r"]) miss and fall back to the default. Strip only the
+    // trailing line-ending — never interior characters or legitimate trailing spaces.
+    if (typeof value === 'string') value = value.replace(/[\r\n]+$/, '');
+    return value;
 }
 
 /**

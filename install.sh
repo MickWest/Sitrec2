@@ -334,7 +334,18 @@ bake_image() {
     # Parse the env file into ENV lines, mirroring docker/entrypoint.sh and
     # ./sitrec.sh bake: skip blanks/comments/empty values, allow optional
     # 'export ', split on the first '=', and strip one surrounding quote layer.
+    #
+    # CR is a literal carriage return. A trailing CR is stripped from every line
+    # so Windows (CRLF) env files parse correctly: otherwise the CR sits AFTER
+    # the closing quote, defeats the quote-strip below (its closing-quote glob is
+    # end-anchored), and the literal quotes + CR get baked into the ENV value
+    # (e.g. a map name shows up as 'OpenStreetMap"' and DOCKER_MAP_TYPE /
+    # SITREC_ENABLE_DEFAULT_*_SOURCES are silently ignored). $(printf '\r') is
+    # portable to every shell, unlike $'\r' which silently no-ops under dash/ash.
+    CR=$(printf '\r')
+    crlf_seen=0
     while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in *"$CR") crlf_seen=1; line="${line%"$CR"}" ;; esac
         while case "$line" in " "*|$'\t'*) true ;; *) false ;; esac; do
             line="${line#?}"
         done
@@ -354,6 +365,7 @@ bake_image() {
         esc="${esc//\$/\\\$}"
         printf 'ENV %s="%s"\n' "$key" "$esc" >> "$DF"
     done < "$BAKE_ENV_FILE"
+    [ "$crlf_seen" = 1 ] && echo "[sitrec] note: '$BAKE_ENV_FILE' has Windows (CRLF) line endings — stripped them while baking."
 
     BAKED_COUNT=$(grep -c '^ENV ' "$DF" || true)
     if [ "$BAKED_COUNT" -eq 0 ]; then
@@ -361,6 +373,13 @@ bake_image() {
         exit 1
     fi
     echo "[sitrec] Generated Dockerfile with $BAKED_COUNT baked env var(s)."
+
+    # Test/preview hook: print the generated Dockerfile and stop before building,
+    # so the env-file parser can be exercised without a container runtime.
+    if [ -n "${SITREC_BAKE_DRY_RUN:-}" ]; then
+        cat "$DF"
+        exit 0
+    fi
 
     $RUNTIME build --pull -f "$DF" -t "$BAKE_TARGET" "$BUILD_DIR"
     echo "[sitrec] Built $BAKE_TARGET"
@@ -385,7 +404,13 @@ bake_image() {
     fi
 }
 
-if [ "$FORCE_RUNTIME" = "podman" ]; then
+if [ "$BAKE_MODE" = true ] && [ -n "${SITREC_BAKE_DRY_RUN:-}" ]; then
+    # Bake dry-run (test/preview): emit the generated Dockerfile and stop, with
+    # no container runtime needed. Skip detection — detect_runtime would try to
+    # INSTALL podman if none is found, which must never happen under test.
+    RUNTIME="dry-run"
+    COMPOSE="dry-run"
+elif [ "$FORCE_RUNTIME" = "podman" ]; then
     if command -v podman-compose &>/dev/null; then
         COMPOSE="podman-compose"
     elif command -v podman &>/dev/null && podman compose --help &>/dev/null 2>&1; then
