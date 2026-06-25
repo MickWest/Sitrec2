@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.88.6 (2026-06-25)
+
+### Improvements
+- The in-app AI assistant is now faster and cheaper on follow-up questions: repeated turns reuse a cached copy of the large background context instead of re-sending it every time. The assistant still knows the real current date, time, and your timezone when a question needs them — it now looks them up on demand.
+- Custom map and elevation sources defined by server environment variables can now set a lowest zoom level to request; below it the terrain shows a placeholder instead of asking the source for a tile it doesn't serve. (Server/deployment configuration only — set via environment variables, not an in-app menu.)
+
+### Bug Fixes
+- Fixed a custom map or elevation source with a negative zoom-level offset trying to request an invalid tile when zoomed far out. Any zoom offset is now safe automatically — operators no longer need to also set a minimum zoom to make a negative offset work.
+
+---
+
 ## Version 2.88.5 (2026-06-25)
 
 ### Improvements
