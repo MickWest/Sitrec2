@@ -17,6 +17,8 @@ import {GLTFExtensionsPlugin, TilesFadePlugin} from "3d-tiles-renderer/plugins";
 import {DRACOLoader} from "three/addons/loaders/DRACOLoader.js";
 import {TilesDayNightPlugin} from "../TilesDayNightPlugin";
 import {TilesEdgesPlugin} from "../TilesEdgesPlugin";
+import {TreeFlattener, makeDefaultTreeFlattenParams} from "../TilesTreeFlatten";
+import {TreeManualBrush} from "../TreeManualBrush";
 import {
     getSharedGooglePhotorealisticState,
     SharedGoogleCloudAuthPlugin,
@@ -44,7 +46,7 @@ class PerViewTiles {
      * @param {number|null} flatColor
      */
     constructor(parentGroup, layerMask, source, cesiumIonToken, googleApiKey, googleSharedState,
-                materialMode = "photo", flatColor = null) {
+                materialMode = "photo", flatColor = null, treeFlattenParams = null) {
         this.renderer = new TilesRenderer();
         // Monotonic counter used by export settling to detect LOD visibility churn.
         this.visibilityVersion = 0;
@@ -142,6 +144,21 @@ class PerViewTiles {
         });
 
         parentGroup.add(this.renderer.group);
+
+        // "Flatten Trees" post-processor. Only meaningful for the photogrammetric
+        // Google tiles (OSM buildings have no tree geometry), so gate by source
+        // to avoid ever touching building meshes.
+        this.treeFlattener = (source === "google-photorealistic" && treeFlattenParams)
+            ? new TreeFlattener(treeFlattenParams, this.renderer)
+            : null;
+    }
+
+    // Analyse loaded tiles within cull distance of the view camera and
+    // flatten/remove trees. Cheap when nothing new is in range (per-mesh hash
+    // skip). Returns the number of meshes modified this call.
+    processTreeFlatten(view) {
+        if (!this.treeFlattener || !view || !view.camera) return 0;
+        return this.treeFlattener.processVisible(view.camera);
     }
 
     update(view) {
@@ -201,6 +218,10 @@ class PerViewTiles {
     dispose(parentGroup) {
         parentGroup.remove(this.renderer.group);
         this.renderer.removeEventListener("tile-visibility-change", this._onTileVisibilityChange);
+        if (this.treeFlattener) {
+            this.treeFlattener.dispose();
+            this.treeFlattener = null;
+        }
         this.renderer.dispose();
         if (this.dracoLoader && typeof this.dracoLoader.dispose === "function") {
             this.dracoLoader.dispose();
@@ -223,6 +244,11 @@ export class CNodeBuildings3DTiles extends CNode {
         this.materialMode = v.materialMode ?? "photo";
         this.flatColor = v.flatColor ?? null;
 
+        // Shared "Tree Removal" heuristic params. Owned by CNodeTerrainUI (which
+        // serializes them) and passed in by reference so GUI edits are picked up
+        // live by every per-view TreeFlattener.
+        this.treeFlattenParams = v.treeFlattenParams ?? makeDefaultTreeFlattenParams();
+
         this.group = new Group();
         this.group.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
         GlobalScene.add(this.group);
@@ -233,6 +259,10 @@ export class CNodeBuildings3DTiles extends CNode {
         this.updateWhilePaused = true;
 
         this.initTilesRenderers();
+
+        // Manual-edit brush. Installs document-level pointer listeners that only
+        // act while the Tree Removal "Manual Edit" checkbox is on.
+        this.manualBrush = new TreeManualBrush(this);
     }
 
     // Resolve which source to actually use: prefer the requested source,
@@ -268,7 +298,7 @@ export class CNodeBuildings3DTiles extends CNode {
             this._perView[id] = new PerViewTiles(
                 this.group, mask, activeSource,
                 this.cesiumIonToken, this.googleApiKey, googleSharedState,
-                this.materialMode, this.flatColor
+                this.materialMode, this.flatColor, this.treeFlattenParams
             );
         }
 
@@ -353,6 +383,65 @@ export class CNodeBuildings3DTiles extends CNode {
         }
     }
 
+    // --- Flatten Trees control surface (called from CNodeTerrainUI) ---
+
+    // Toggle the feature. Turning it OFF restores all modified tiles; turning
+    // it ON wakes the loop so update() starts processing in-range tiles.
+    setTreeFlattenEnabled(on) {
+        this.treeFlattenParams.flattenTrees = on;
+        if (!on) {
+            this.restoreTreeFlatten();
+        } else {
+            setRenderOne(true);
+        }
+    }
+
+    // A heuristic parameter changed: restore originals so stale edits revert,
+    // then wake the loop to re-process with the new param hash.
+    applyTreeFlattenParams() {
+        if (this.treeFlattenParams.flattenTrees) {
+            this.restoreTreeFlatten();
+            setRenderOne(true);
+        }
+    }
+
+    // Manual Edit toggled. The brush reads treeFlattenParams.manualEdit live, so
+    // we just keep the flag in sync and wake the loop (so the suspended/resumed
+    // auto pass re-evaluates on the next frame).
+    setManualEditEnabled(on) {
+        this.treeFlattenParams.manualEdit = on;
+        if (!on && this.manualBrush) this.manualBrush.hidePreview();
+        setRenderOne(true);
+    }
+
+    // Renderer group for a view, only when that view carries a Google
+    // TreeFlattener (manual editing is meaningless for OSM buildings). Used by
+    // the manual brush to raycast tile geometry.
+    getViewRendererGroup(viewId) {
+        const pv = this._perView[viewId];
+        return (pv && pv.treeFlattener) ? pv.renderer.group : null;
+    }
+
+    // Apply a manual brush stroke (world-space sphere) across every view's
+    // renderer so the main and look views stay consistent.
+    applyManualBrush(worldCenter, radius) {
+        const action = this.treeFlattenParams.action;
+        let edited = 0;
+        for (const pv of Object.values(this._perView)) {
+            if (pv.treeFlattener) edited += pv.treeFlattener.applyBrush(worldCenter, radius, action);
+        }
+        if (edited > 0) setRenderOne(true);
+        return edited;
+    }
+
+    // Restore every modified tile in every view to its original geometry.
+    restoreTreeFlatten() {
+        for (const pv of Object.values(this._perView)) {
+            if (pv.treeFlattener) pv.treeFlattener.restoreAll();
+        }
+        setRenderOne(true);
+    }
+
     // Switch between data sources at runtime
     setSource(source) {
         if (source === this.source) return;
@@ -370,11 +459,31 @@ export class CNodeBuildings3DTiles extends CNode {
         if (!this._initialized) return;
 
         let active = false;
+        // Automatic analysis is suspended while Manual Edit is on — the brush is
+        // the sole editor then, so the auto pass can't clobber painted edits.
+        const flattenOn = this.treeFlattenParams
+            && this.treeFlattenParams.flattenTrees
+            && !this.treeFlattenParams.manualEdit;
+        let flattened = 0;
         for (const [viewId, pv] of Object.entries(this._perView)) {
             const view = NodeMan.get(viewId, false);
             pv.update(view);
             if ((pv._updateGraceFrames ?? 0) > 0 || pv._isUpdatePending()) active = true;
+            // Tree flattening runs even when the camera is static + tileset
+            // settled (pv.update may early-return), so tiles that finished
+            // loading after the camera stopped still get processed.
+            if (flattenOn) flattened += pv.processTreeFlatten(view);
         }
+        // If we modified geometry, draw it; and keep the loop awake one more pass
+        // in case there are more in-range tiles past this call's per-pass budget.
+        if (flattened > 0) {
+            setRenderOne(true);
+            active = true;
+        }
+
+        // Per-frame manual-brush preview refresh — tracks the cursor surface as
+        // the camera moves with the mouse held still. Cheap no-op when off.
+        if (this.manualBrush) this.manualBrush.refreshPreview();
 
         // Self-disable the paused keep-alive once the tileset is fully settled and
         // the camera is static, so the render loop can actually sleep
@@ -455,6 +564,11 @@ export class CNodeBuildings3DTiles extends CNode {
     }
 
     dispose() {
+        if (this.manualBrush) {
+            this.manualBrush.dispose();
+            this.manualBrush = null;
+        }
+
         this.disposeTilesRenderers();
 
         if (this.group) {

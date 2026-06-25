@@ -8,6 +8,7 @@ import {CNodeSwitch} from "./CNodeSwitch";
 import {ECEFToLLAVD_radii, LLAToECEF, updateEarthRadii} from "../LLA-ECEF-ENU";
 import {CNodeTerrain} from "./CNodeTerrain";
 import {CNodeBuildings3DTiles} from "./CNodeBuildings3DTiles";
+import {TREE_FLATTEN_DEFS, makeDefaultTreeFlattenParams} from "../TilesTreeFlatten";
 import {GlobalScene} from "../LocalFrame";
 import {par} from "../par";
 import {addAlignedGlobe, updateAlignedGlobe} from "../Globe";
@@ -708,6 +709,10 @@ export class CNodeTerrainUI extends CNode {
         // 3D Buildings support
         this.buildingsSource = v.buildingsSource ?? "google-photorealistic";
         this.buildingsNode = null;
+        // "Flatten Trees" heuristics — one stable object shared by reference
+        // with the buildings node and all GUI controls. Serialized as a whole
+        // via modSerialize/modDeserialize (merged, not replaced, on load).
+        this.treeFlattenParams = makeDefaultTreeFlattenParams();
         // V5 material modes for buildings: "photo" / "flat" / "halfPhoto".
         // Mode change applies to future tile loads only.
         this.buildingsMaterialMode = v.buildingsMaterialMode ?? "photo";
@@ -809,6 +814,12 @@ export class CNodeTerrainUI extends CNode {
                         this.buildingsNode.setMaterialMode(this.buildingsMaterialMode, c);
                     }
                 });
+
+            // "Tree Removal" — flatten/remove tree geometry from Google
+            // Photorealistic tiles (meaningless for OSM, so Google-only).
+            if (hasGoogle) {
+                this.buildTreeRemovalGUI();
+            }
         }
 
         // Ellipsoid Earth Model toggle (moved here from global settings)
@@ -1087,6 +1098,7 @@ export class CNodeTerrainUI extends CNode {
                 googleApiKey: googleKey,
                 materialMode: this.buildingsMaterialMode,
                 flatColor: this.buildingsFlatColor,
+                treeFlattenParams: this.treeFlattenParams,
             });
             this.buildingsNode.setShowEdges(this.showBuildingEdges);
         } else if (!show && this.buildingsNode) {
@@ -1106,6 +1118,82 @@ export class CNodeTerrainUI extends CNode {
 
     isGooglePhotorealisticActive() {
         return !!this.buildingsNode && this.buildingsNode._activeSource === "google-photorealistic";
+    }
+
+    // Build the "Tree Removal" GUI folder, data-driven from TREE_FLATTEN_DEFS so
+    // the controls and the algorithm never drift. Controls bind directly to the
+    // shared this.treeFlattenParams object; edits propagate live to the
+    // buildings node's per-view TreeFlatteners.
+    buildTreeRemovalGUI() {
+        const tf = this.treeFlattenParams;
+        const root = this.gui.addFolder("Tree Removal").close();
+        const subFolders = {};
+        const folderFor = (name) => {
+            if (!name) return root;
+            if (!subFolders[name]) subFolders[name] = root.addFolder(name).close();
+            return subFolders[name];
+        };
+        // A heuristic changed — restore originals and re-run with new params.
+        const onParamChange = () => {
+            if (this.buildingsNode) this.buildingsNode.applyTreeFlattenParams();
+        };
+
+        for (const def of TREE_FLATTEN_DEFS) {
+            const f = folderFor(def.folder);
+            let ctrl;
+            if (def.key === "flattenTrees") {
+                ctrl = f.add(tf, def.key).name(def.label).onChange(v => {
+                    if (this.buildingsNode) this.buildingsNode.setTreeFlattenEnabled(v);
+                });
+            } else if (def.key === "manualEdit") {
+                // Manual-edit mode toggle: enables the paint brush and suspends
+                // the automatic analysis. Does NOT restore/reprocess tiles.
+                ctrl = f.add(tf, def.key).name(def.label).onChange(v => {
+                    if (this.buildingsNode) this.buildingsNode.setManualEditEnabled(v);
+                });
+            } else if (def.manual) {
+                // Other manual-brush controls (e.g. Brush Radius): bind the value
+                // only — read live by the brush, no restore/reprocess on change.
+                ctrl = (def.type === "bool")
+                    ? f.add(tf, def.key).name(def.label)
+                    : f.add(tf, def.key, def.min, def.max, def.step).name(def.label);
+            } else if (def.type === "bool") {
+                ctrl = f.add(tf, def.key).name(def.label).onChange(onParamChange);
+            } else if (def.type === "enum") {
+                ctrl = f.add(tf, def.key, def.options).name(def.label).onChange(onParamChange);
+            } else {
+                // Numeric: re-run on release (onFinishChange) so dragging a
+                // slider doesn't restore+reprocess every tile on every tick.
+                ctrl = f.add(tf, def.key, def.min, def.max, def.step).name(def.label).onFinishChange(onParamChange);
+            }
+            if (def.tooltip && ctrl.tooltip) ctrl.tooltip(def.tooltip);
+            if (ctrl.listen) ctrl.listen();
+        }
+
+        root.add({restore: () => { if (this.buildingsNode) this.buildingsNode.restoreTreeFlatten(); }}, "restore")
+            .name("Restore Originals")
+            .tooltip("Undo all tree flattening on currently loaded tiles");
+        root.add({rerun: () => { if (this.buildingsNode) this.buildingsNode.applyTreeFlattenParams(); }}, "rerun")
+            .name("Re-run")
+            .tooltip("Restore and re-process visible tiles with the current parameters");
+    }
+
+    // treeFlattenParams is serialized as a whole object, but MERGED into the
+    // existing instance on load so GUI controllers and the buildings node keep
+    // their shared reference (replacing it would orphan both).
+    modSerialize() {
+        return {
+            ...super.modSerialize(),
+            treeFlattenParams: {...this.treeFlattenParams},
+        };
+    }
+
+    modDeserialize(v) {
+        super.modDeserialize(v);
+        if (v.treeFlattenParams) {
+            Object.assign(this.treeFlattenParams, v.treeFlattenParams);
+            if (this.buildingsNode) this.buildingsNode.applyTreeFlattenParams();
+        }
     }
 
     ensureOceanSurface() {
