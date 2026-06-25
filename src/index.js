@@ -1677,25 +1677,12 @@ async function initializeOnce() {
         .tooltip(t("menus.view.tooltip"));
     setupHUDColor(guiMenus.view);
 
-    // Split-tree tiling toggle (UI redesign Phase 2): tile the current top-level views into a
-    // Blender-style grid with draggable seams, or return to the free-floating layout. Opt-in
-    // and non-destructive — clearing returns every view to its fractional rect.
-    // The checkbox is backed by a getter/setter onto LayoutMan.active (the source of truth) so
-    // it never lies about state: it reflects auto-tile on load and a detach-collapse back to
-    // legacy (both change LayoutMan.active without touching this control), and if tileFromViews
-    // can't separate the layout the getter stays false so .listen() un-checks it.
-    const _layoutTileToggle = {
-        get tiled() { return LayoutMan.active; },
-        set tiled(v) { if (v) LayoutMan.tileFromViews(); else LayoutMan.clearLayout(); },
-    };
-    guiMenus.view.add(_layoutTileToggle, "tiled").name("Tile Layout").listen()
-        .tooltip("Tile the open views into a Blender-style grid with draggable dividers");
-
-    // Reset Layout: force the open views back into a clean tiled grid, ignoring their current
-    // positions — recovery for a layout that got messy (e.g. a detached floating window that
-    // overlaps the grid and can no longer be re-tiled by the toggle).
+    // Reset Layout: snap the open views back into a clean default grid (Main on the left, the
+    // rest stacked on the right), ignoring their current positions — recovery for a layout that
+    // got messy. Views are free rectangles; shared edges become draggable seams automatically
+    // (see CLayoutManager), so there is no separate "tiled" mode to toggle.
     guiMenus.view.add({reset: () => LayoutMan.resetLayout()}, "reset").name("Reset Layout")
-        .tooltip("Snap all open views back into a clean tiled grid");
+        .tooltip("Snap all open views back into a clean default grid");
 
 
 

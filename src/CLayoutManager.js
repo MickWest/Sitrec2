@@ -1,532 +1,153 @@
-// Explicit split-tree tiling layout (Strategy B). See docs/ui-redesign/LAYOUT-MODEL.md.
+// Adjacency-based shared-edge layout (Strategy C — replaces the old guillotine split-tree).
 //
-// A LayoutNode tree partitions the Content rect into tiles; each leaf binds a tile to an
-// existing view by its stable id. This is OPTIONAL: when no tree is set every view uses its
-// legacy fractional rect exactly as before, so no existing sitch is affected.
+// Views are FREE rectangles (their existing fractional left/top/width/height). There is no
+// tree and no required tiling: each layout update we scan the visible views' pixel rects and
+// detect SHARED EDGES — places where one view's edge is flush against another's (even if only
+// part of the length). Every shared edge gets a draggable seam; dragging it moves the coupled
+// views' edges together (one grows into adjacent empty space while the other shrinks, clamped
+// at a minimum size). This is what lets a small view share a partial edge with a larger one
+// and still have a single grab handle that moves both — impossible under the old full-length
+// guillotine cuts.
 //
-//   LayoutNode =
-//     | { type:'split', dir:'v'|'h', sizes:[f,...], children:[LayoutNode,...] }  // sizes sum to 1
-//     | { type:'leaf',  viewId:string }
-//
-//   dir:'v' → vertical dividers, children laid out left→right
-//   dir:'h' → horizontal dividers, children laid out top→bottom
+// The old tree-based public API (setLayout/clearLayout/serialize/dockViewAt/…) is kept as thin
+// no-op stubs so existing callers (sitch load/save, the View menu, CNodeView drag handling)
+// keep working unchanged: views simply persist and restore via their own fractional rects.
 
 import {ViewMan} from "./CViewManager";
 import {setRenderOne} from "./Globals";
 
-// Tiles are edge-to-edge (Blender-style "snapped"): no reserved gap, so a tiled layout has
-// the SAME geometry as the snapped fractional layout it was reconstructed from. The seam is a
-// grab zone straddling the shared edge, not a gap.
-export const LAYOUT_DIVIDER_PX = 0;   // reserved gap between adjacent tiles (0 = touching)
-const MIN_TILE_FRAC = 0.05;           // a tile can't be dragged smaller than this fraction of its split
-const DIVIDER_GRAB_PX = 8;            // interactive grab zone width centred on each shared edge
-// A floating view only re-docks (splits a tile) when the cursor is within this fraction of a
-// tile edge, IN the direction of that edge. Dropping anywhere in the central region leaves the
-// view free-floating — so you can position a window without it snapping.
-const DROP_EDGE_BAND = 0.05;
+export const LAYOUT_DIVIDER_PX = 0;   // kept for import compatibility (no reserved gap)
+
+const EDGE_TOL = 6;       // px: how close two edges must be to count as a shared edge
+const MIN_OVERLAP = 16;   // px: minimum perpendicular overlap for a seam to form
+const MIN_TILE_PX = 40;   // px: a view can't be dragged smaller than this via a seam
+const GRAB_PX = 8;        // px: interactive grab-zone width centred on each shared edge
 
 class CLayoutManager {
     constructor() {
-        this.tree = null;            // root LayoutNode, or null (= legacy fractional mode)
-        this._rects = new Map();     // viewId -> {leftPx, topPx, widthPx, heightPx}
-        this._dividers = [];         // {node, index, dir, x, y, w, h, usablePx} for divider hit-testing
-        this._lastW = this._lastH = this._lastT = this._lastL = -1;
-        this._dirty = false;
+        this._seams = [];        // [{dir:'v'|'h', coord, start, end, before:[ids], after:[ids]}]
+        this._seamEls = [];      // pooled DOM grab-strips, parallel to _seams
+        this._seamLayer = null;  // absolute overlay holding the strips
+        this._sig = "";          // signature of the last rect set (skip redundant recompute)
     }
 
-    get active() { return !!this.tree; }
+    // The old "is the tree active" flag. There is no tree now (views are always free), so the
+    // tree code paths in callers (CNodeView detach/dock) stay dormant.
+    get active() { return false; }
 
-    // Install a layout tree (or null to return to legacy mode). Wakes a render.
-    setLayout(tree) {
-        this.tree = tree || null;
-        this._pruneMissingLeaves();   // drop leaves whose view doesn't exist (stale saved tree)
-        this._dirty = true;
-        this.recompute();
-        this._applyResizeSuppression();
-        setRenderOne(true);
+    // --- Shared-edge detection (run once per frame from indexRender, after view layout) ---
+
+    // Rebuild the seam set from the current view pixel rects, then sync the grab-strip DOM.
+    // Cheap: skips entirely when no rect moved (signature match).
+    updateSeams() {
+        if (typeof document === "undefined") return;
+        const rects = this._collectRects();
+        const sig = this._signature(rects);
+        if (sig === this._sig) return;
+        this._sig = sig;
+        this._seams = this._computeSeams(rects);
+        this._syncSeamDOM();
     }
 
-    // Remove leaves referencing a view that doesn't exist (e.g. a restored layout from a sitch
-    // version that no longer creates that view), collapsing emptied splits. Keeps a stale
-    // saved tree from leaving phantom tiles / dead seams.
-    _pruneMissingLeaves() {
-        if (!this.tree) return;
-        for (const id of this.leafViewIds()) {
-            if (!ViewMan.get(id, false)) this.removeLeaf(id);
-        }
-    }
-
-    clearLayout() {
-        this.tree = null;
-        this._rects.clear();
-        this._dividers = [];
-        this._syncDividerDOM();   // hides the seam layer
-        this.hideDropPreview();
-        this._applyResizeSuppression();
-        setRenderOne(true);
-    }
-
-    // When tiled, a leaf view's own edge-resize handles are hidden — the only resize affordance
-    // is the shared seam (which moves BOTH adjacent tiles together). Restored when untiled.
-    _applyResizeSuppression() {
-        const hidden = this._resizeHiddenIds || (this._resizeHiddenIds = new Set());
-        // Restore any view we previously hid that is no longer a tiled leaf.
-        for (const id of [...hidden]) {
-            if (!this.hasLeaf(id)) {
-                const v = ViewMan.get(id, false);
-                if (v && v.setResizeHandlesVisible) v.setResizeHandlesVisible(true);
-                hidden.delete(id);
-            }
-        }
-        // Hide handles for current leaves.
-        for (const id of this.leafViewIds()) {
-            const v = ViewMan.get(id, false);
-            if (v && v.setResizeHandlesVisible) {
-                v.setResizeHandlesVisible(false);
-                hidden.add(id);
-            }
-        }
-    }
-
-    // Pixel rect for a leaf view in the active tree, or null (not tiled / legacy mode).
-    rectFor(viewId) {
-        if (!this.tree) return null;
-        this._recomputeIfNeeded();
-        return this._rects.get(viewId) || null;
-    }
-
-    // True if this view is currently a leaf in the active tree.
-    hasLeaf(viewId) {
-        return this.rectFor(viewId) !== null;
-    }
-
-    // Recompute only when the container rect changed (or explicitly dirtied). Cheap to call
-    // per-view per-frame: it just compares four ints and walks once when they move.
-    _recomputeIfNeeded() {
-        const w = ViewMan.widthPx, h = ViewMan.heightPx, t = ViewMan.topPx, l = ViewMan.leftPx;
-        if (this._dirty || w !== this._lastW || h !== this._lastH || t !== this._lastT || l !== this._lastL) {
-            this._lastW = w; this._lastH = h; this._lastT = t; this._lastL = l;
-            this._dirty = false;
-            this.recompute();
-        }
-    }
-
-    // Walk the tree from the Content rect, filling _rects + _dividers.
-    recompute() {
-        this._rects.clear();
-        this._dividers = [];
-        if (this.tree) {
-            this._walk(this.tree, ViewMan.leftPx, ViewMan.topPx, ViewMan.widthPx, ViewMan.heightPx);
-        }
-        this._syncDividerDOM();
-    }
-
-    _walk(node, x, y, w, h) {
-        if (!node) return;
-        if (node.type === "leaf") {
-            // x/y/w/h arrive already floored from the parent split (or the integer container
-            // rect at the root), so a leaf rect is integer + gapless.
-            this._rects.set(node.viewId, {
-                leftPx: Math.round(x), topPx: Math.round(y),
-                widthPx: Math.max(1, Math.round(w)), heightPx: Math.max(1, Math.round(h)),
-            });
-            return;
-        }
-        const children = node.children || [];
-        const n = children.length;
-        if (n === 0) return;
-        const vertical = node.dir === "v";   // 'v' = vertical dividers → children left→right
-        const sizes = this._normalizedSizes(node, n);
-        const total = vertical ? w : h;
-        const usable = Math.max(0, total - LAYOUT_DIVIDER_PX * (n - 1));
-        const start = vertical ? x : y;
-        // Floor each child boundary and size it as (next floored edge − this floored edge), so
-        // tiles are integer + gapless AND pixel-identical to the legacy Math.floor fractional
-        // path (which floors each view's left/width independently). pos tracks the exact float
-        // near-edge of the current child.
-        let pos = start;
-        for (let i = 0; i < n; i++) {
-            const extent = usable * sizes[i];
-            const nearEdge = Math.floor(pos);
-            const farEdge = Math.floor(pos + extent);
-            const childExtent = Math.max(1, farEdge - nearEdge);
-            if (vertical) {
-                this._walk(children[i], nearEdge, y, childExtent, h);
-                if (i < n - 1) {
-                    this._dividers.push({node, index: i, dir: "v", usablePx: usable,
-                        x: farEdge, y, w: LAYOUT_DIVIDER_PX, h});
-                }
-            } else {
-                this._walk(children[i], x, nearEdge, w, childExtent);
-                if (i < n - 1) {
-                    this._dividers.push({node, index: i, dir: "h", usablePx: usable,
-                        x, y: farEdge, w, h: LAYOUT_DIVIDER_PX});
-                }
-            }
-            pos += extent + LAYOUT_DIVIDER_PX;
-        }
-    }
-
-    // Return sizes normalised to sum 1. Writes the normalised array BACK to node.sizes so the
-    // stored tree never diverges from what the walk uses — important after removeLeaf splices a
-    // size out (leaving sum<1), since the divider-drag math reads node.sizes directly and would
-    // otherwise map pixel deltas through the wrong total. Normalisation is idempotent (once
-    // sum==1 it's a no-op), so this doesn't churn. Also repairs a missing/degenerate array.
-    _normalizedSizes(node, n) {
-        let sizes = node.sizes;
-        if (!Array.isArray(sizes) || sizes.length !== n) {
-            sizes = new Array(n).fill(1 / n);
-            node.sizes = sizes;
-            return sizes;
-        }
-        const sum = sizes.reduce((a, b) => a + (b > 0 ? b : 0), 0);
-        if (sum <= 0) {
-            sizes = new Array(n).fill(1 / n);
-            node.sizes = sizes;
-            return sizes;
-        }
-        if (Math.abs(sum - 1) > 1e-6) {
-            sizes = sizes.map(s => (s > 0 ? s : 0) / sum);
-            node.sizes = sizes;
-        }
-        return sizes;
-    }
-
-    // --- Divider drag (Q edit-mode, Phase 2.3) ---
-
-    // Find the divider near a container-relative point (px,py), or null.
-    dividerAt(px, py, tol = 6) {
-        for (const d of this._dividers) {
-            if (px >= d.x - tol && px <= d.x + d.w + tol &&
-                py >= d.y - tol && py <= d.y + d.h + tol) return d;
-        }
-        return null;
-    }
-
-    // Resize the two tiles adjacent to a divider by dragging it dxPx/dyPx. The split's total
-    // is preserved (we add to one neighbour and subtract from the other); neither neighbour
-    // collapses below MIN_TILE_FRAC. Recomputes + wakes a render.
-    dragDivider(divider, dxPx, dyPx) {
-        const node = divider.node;
-        const i = divider.index;
-        const n = (node.children || []).length;
-        if (n < 2) return;
-        if (!Array.isArray(node.sizes) || node.sizes.length !== n) {
-            node.sizes = new Array(n).fill(1 / n);
-        }
-        const sizes = node.sizes;
-        const usable = divider.usablePx || 1;
-        const deltaPx = divider.dir === "v" ? dxPx : dyPx;
-        let dFrac = deltaPx / usable;
-        // clamp so sizes[i] >= MIN and sizes[i+1] >= MIN
-        dFrac = Math.max(dFrac, MIN_TILE_FRAC - sizes[i]);
-        dFrac = Math.min(dFrac, sizes[i + 1] - MIN_TILE_FRAC);
-        sizes[i] += dFrac;
-        sizes[i + 1] -= dFrac;
-        this._dirty = true;
-        this.recompute();
-        setRenderOne(true);
-    }
-
-    // --- Tree maintenance (detach / Phase 2.5) ---
-
-    // Remove a leaf (by viewId) from the tree; collapse any split left with a single child.
-    // Returns true if the view was a leaf and removed. Does NOT reposition the view — the
-    // caller turns it into a floating window.
-    removeLeaf(viewId) {
-        if (!this.tree) return false;
-        if (this.tree.type === "leaf") {
-            if (this.tree.viewId === viewId) { this.clearLayout(); return true; }
-            return false;
-        }
-        const removed = this._removeLeafFrom(this.tree, viewId);
-        if (!removed) return false;
-        if (this.tree.type === "leaf") {
-            // Collapsed to a single view — no seams left to manage, so drop tiling entirely
-            // and return every view (including the lone survivor) to free-floating.
-            this.clearLayout();
-        } else {
-            this._dirty = true;
-            this.recompute();
-            this._applyResizeSuppression();   // restore the detached view's edge handles
-            setRenderOne(true);
-        }
-        return true;
-    }
-
-    _removeLeafFrom(split, viewId) {
-        const children = split.children;
-        for (let i = 0; i < children.length; i++) {
-            const c = children[i];
-            if (c.type === "leaf" && c.viewId === viewId) {
-                children.splice(i, 1);
-                if (Array.isArray(split.sizes)) split.sizes.splice(i, 1);
-                this._collapse(split);
-                return true;
-            }
-            if (c.type === "split" && this._removeLeafFrom(c, viewId)) {
-                this._collapse(c);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // If a split is down to one child, replace it (in place) with that child's contents.
-    _collapse(split) {
-        if (split.type !== "split") return;
-        if (split.children.length === 1) {
-            const only = split.children[0];
-            delete split.dir; delete split.sizes;
-            if (only.type === "leaf") {
-                split.type = "leaf"; split.viewId = only.viewId;
-                delete split.children;
-            } else {
-                split.type = "split"; split.dir = only.dir;
-                split.sizes = only.sizes; split.children = only.children;
-            }
-        }
-    }
-
-    // List the view ids currently bound to leaves (in tree order).
-    leafViewIds() {
+    // Visible, top-level, non-aspect-locked views' absolute pixel rects. Mirrors the old
+    // tileable-view filter (skips overlays, relative children, docked sidebars, HUD instruments
+    // and aspect-locked views, which can't be freely resized).
+    _collectRects() {
         const out = [];
-        const recur = (node) => {
-            if (!node) return;
-            if (node.type === "leaf") out.push(node.viewId);
-            else (node.children || []).forEach(recur);
-        };
-        recur(this.tree);
+        ViewMan.iterate((id, v) => {
+            if (!v.visible || v.overlayView || v.in.relativeTo || v.dockedSidebar) return;
+            if (v.noUIBar && v.constructor && /UI$/.test(v.constructor.name)) return;
+            if (v.width < 0 || v.height < 0) return;                 // aspect-locked encoding
+            if (!(v.widthPx > 0) || !(v.heightPx > 0)) return;
+            out.push({id, l: v.leftPx, t: v.topPx, r: v.leftPx + v.widthPx, b: v.topPx + v.heightPx});
+        });
         return out;
     }
 
-    // --- Reconstruct a tree from the current view rects (Phase 2.6 rect→tree) ---
-
-    // Collect the container-relative fractional rects of views eligible to tile: visible,
-    // top-level (not overlay / relativeTo / docked), and NOT aspect-locked (negative width/
-    // height encoding can't tile). Read straight from the stored fractions so the result
-    // doesn't depend on a render frame having run.
-    _collectTileableRects() {
-        const rects = [];
-        let aspectLocked = false;
-        ViewMan.iterate((id, v) => {
-            if (!v.visible || v.overlayView || v.in.relativeTo || v.dockedSidebar) return;
-            if (v.noUIBar && v.constructor && /UI$/.test(v.constructor.name)) return; // HUD instruments
-            if (v.width < 0 || v.height < 0) { aspectLocked = true; return; }
-            rects.push({viewId: id, left: v.left, top: v.top, width: v.width, height: v.height});
-        });
-        return {rects, aspectLocked};
+    _signature(rects) {
+        return rects.map(r => `${r.id}:${r.l},${r.t},${r.r},${r.b}`).join("|")
+            + `|${!!ViewMan.fullscreenView}`;
     }
 
-    // True if the rects form a COMPLETE tiling of the container (cover it, no overlaps) — i.e.
-    // the views are genuinely snapped together, not floating with gaps. Sum-of-areas ≈ 1 and a
-    // full bounding box ⇒ full coverage with no overlap.
-    _isSnappedTiling(rects) {
-        if (rects.length < 2) return false;
-        const eps = 0.02;
-        const area = rects.reduce((a, r) => a + r.width * r.height, 0);
-        if (Math.abs(area - 1) > eps) return false;
-        const minL = Math.min(...rects.map(r => r.left));
-        const minT = Math.min(...rects.map(r => r.top));
-        const maxR = Math.max(...rects.map(r => r.left + r.width));
-        const maxB = Math.max(...rects.map(r => r.top + r.height));
-        return Math.abs(minL) < eps && Math.abs(minT) < eps
-            && Math.abs(maxR - 1) < eps && Math.abs(maxB - 1) < eps;
+    _computeSeams(rects) {
+        return [
+            ...this._seamsForAxis(rects, "v"),
+            ...this._seamsForAxis(rects, "h"),
+        ];
     }
 
-    // Tile the currently visible top-level views: recover a split-tree by recursive guillotine
-    // cuts. Returns true if a tree was installed; false if the layout isn't guillotine-separable
-    // (then nothing changes — legacy mode stays). Used by the View ▸ Tile Layout toggle.
-    tileFromViews() {
-        const {rects} = this._collectTileableRects();
-        if (rects.length < 2) return false;
-        const tree = buildGuillotineTree(rects);
-        if (!tree) return false;
-        this.setLayout(tree);
-        return true;
-    }
+    // Find shared edges along one axis. dir 'v' = vertical seams (a view's RIGHT edge flush
+    // against another's LEFT, overlapping vertically); 'h' = horizontal (BOTTOM against TOP).
+    // Adjacencies at (nearly) the same coordinate whose spans overlap/touch are merged into one
+    // connected seam, so the grab handle and the coupling cover exactly the shared run.
+    _seamsForAxis(rects, dir) {
+        const isV = dir === "v";
+        const far = r => isV ? r.r : r.b;     // A's far edge meets...
+        const near = r => isV ? r.l : r.t;    // ...B's near edge
+        const lo = r => isV ? r.t : r.l;      // perpendicular span start
+        const hi = r => isV ? r.b : r.r;      // perpendicular span end
 
-    // Auto-tile on sitch load ONLY when the open views already form a complete snapped grid
-    // (so it never changes a free-floating layout). No-op if a tree is already active or the
-    // layout isn't a clean tiling. Edge-to-edge ⇒ no geometry change, just coupled seams.
-    autoTileIfSnapped() {
-        if (this.tree) return false;
-        const {rects, aspectLocked} = this._collectTileableRects();
-        if (aspectLocked) return false;
-        if (!this._isSnappedTiling(rects)) return false;
-        const tree = buildGuillotineTree(rects);
-        if (!tree) return false;
-        this.setLayout(tree);
-        return true;
-    }
-
-    // Force the visible top-level views into a clean default grid, IGNORING their current
-    // positions — so it always works even when they overlap (e.g. after a detach left a floating
-    // window). mainView (if present) takes the left half and the rest stack on the right; else
-    // equal columns. Recovery action for the "Reset Layout" command. Aspect-locked views can't
-    // tile and stay free-floating.
-    resetLayout() {
-        const {rects} = this._collectTileableRects();
-        const ids = rects.map(r => r.viewId);
-        if (ids.length < 2) { this.clearLayout(); return false; }
-        let tree;
-        if (ids.includes("mainView")) {
-            const rest = ids.filter(id => id !== "mainView");
-            const right = rest.length === 1
-                ? {type: "leaf", viewId: rest[0]}
-                : {type: "split", dir: "h", sizes: rest.map(() => 1 / rest.length),
-                   children: rest.map(id => ({type: "leaf", viewId: id}))};
-            tree = {type: "split", dir: "v", sizes: [0.5, 0.5],
-                    children: [{type: "leaf", viewId: "mainView"}, right]};
-        } else {
-            tree = {type: "split", dir: "v", sizes: ids.map(() => 1 / ids.length),
-                    children: ids.map(id => ({type: "leaf", viewId: id}))};
-        }
-        this.setLayout(tree);
-        return true;
-    }
-
-    // --- Re-dock a floating view back into the grid (inverse of detach) ---
-
-    // Find the leaf node (and its rect) whose tile contains the container-relative point.
-    _leafNodeAt(x, y) {
-        for (const [viewId, rect] of this._rects) {
-            if (x >= rect.leftPx && x < rect.leftPx + rect.widthPx &&
-                y >= rect.topPx && y < rect.topPx + rect.heightPx) {
-                const node = this._findLeafNode(this.tree, viewId);
-                if (node) return {node, viewId, rect};
+        const adj = [];
+        for (const A of rects) {
+            for (const B of rects) {
+                if (A.id === B.id) continue;
+                if (Math.abs(far(A) - near(B)) > EDGE_TOL) continue;   // A is just-left-of B
+                const top = Math.max(lo(A), lo(B));
+                const bottom = Math.min(hi(A), hi(B));
+                if (bottom - top < MIN_OVERLAP) continue;
+                adj.push({coord: (far(A) + near(B)) / 2, before: A.id, after: B.id, top, bottom});
             }
         }
-        return null;
-    }
+        if (!adj.length) return [];
 
-    _findLeafNode(node, viewId) {
-        if (!node) return null;
-        if (node.type === "leaf") return node.viewId === viewId ? node : null;
-        for (const c of (node.children || [])) {
-            const f = this._findLeafNode(c, viewId);
-            if (f) return f;
+        // Cluster by coordinate (consecutive within EDGE_TOL), then within each coordinate
+        // cluster merge adjacencies whose perpendicular intervals overlap or touch — those form
+        // one connected seam coupling all the views that meet along it.
+        adj.sort((a, b) => a.coord - b.coord);
+        const groups = [];
+        for (const a of adj) {
+            const g = groups[groups.length - 1];
+            if (g && a.coord - g.lastCoord <= EDGE_TOL) { g.items.push(a); g.lastCoord = a.coord; }
+            else groups.push({items: [a], lastCoord: a.coord});
         }
-        return null;
-    }
 
-    // Resolve a drop at (clientX,clientY) into a dock target: the tile under the cursor, the
-    // split axis/side, and the px rect the floating view would occupy. Returns null when no tree
-    // is active, the view is already tiled, the cursor isn't over a tile, or it's in the central
-    // region (only the outer DROP_EDGE_BAND of a tile snaps, in that edge's direction).
-    _dropSpec(viewId, clientX, clientY) {
-        if (!this.tree || this.hasLeaf(viewId)) return null;
-        const cont = ViewMan.container;
-        const cr = cont ? cont.getBoundingClientRect() : {left: 0, top: 0};
-        const x = clientX - cr.left, y = clientY - cr.top;
-        const target = this._leafNodeAt(x, y);
-        if (!target || target.viewId === viewId) return null;
-
-        const r = target.rect;
-        const relX = (x - r.leftPx) / r.widthPx;
-        const relY = (y - r.topPx) / r.heightPx;
-        // Nearest edge of the tile and how far the cursor is into that edge band.
-        const edges = [
-            {dist: relX,     dir: "v", firstIsNew: true},   // left   → new view on the left
-            {dist: 1 - relX, dir: "v", firstIsNew: false},  // right  → new view on the right
-            {dist: relY,     dir: "h", firstIsNew: true},   // top    → new view on the top
-            {dist: 1 - relY, dir: "h", firstIsNew: false},  // bottom → new view on the bottom
-        ];
-        let best = edges[0];
-        for (const e of edges) if (e.dist < best.dist) best = e;
-        if (best.dist > DROP_EDGE_BAND) return null;        // central region → don't snap
-
-        const vertical = best.dir === "v";
-        let dropRect;
-        if (vertical) {
-            const halfW = r.widthPx / 2;
-            dropRect = {leftPx: best.firstIsNew ? r.leftPx : r.leftPx + halfW,
-                topPx: r.topPx, widthPx: halfW, heightPx: r.heightPx};
-        } else {
-            const halfH = r.heightPx / 2;
-            dropRect = {leftPx: r.leftPx, topPx: best.firstIsNew ? r.topPx : r.topPx + halfH,
-                widthPx: r.widthPx, heightPx: halfH};
+        const seams = [];
+        for (const g of groups) {
+            g.items.sort((a, b) => a.top - b.top);
+            let cur = null;
+            for (const a of g.items) {
+                if (cur && a.top <= cur.bottom) {          // overlapping / touching → same seam
+                    cur.bottom = Math.max(cur.bottom, a.bottom);
+                    cur.before.add(a.before); cur.after.add(a.after); cur.coords.push(a.coord);
+                } else {
+                    cur = {top: a.top, bottom: a.bottom, coords: [a.coord],
+                        before: new Set([a.before]), after: new Set([a.after])};
+                    seams.push(cur);
+                }
+            }
         }
-        return {target, vertical, firstIsNew: best.firstIsNew, dropRect};
+
+        return seams.map(s => ({
+            dir,
+            coord: Math.round(s.coords.reduce((a, b) => a + b, 0) / s.coords.length),
+            start: Math.round(s.top), end: Math.round(s.bottom),
+            before: [...s.before], after: [...s.after],
+        }));
     }
 
-    // Dock a currently-floating view into the grid by splitting the tile at the drop point.
-    // Returns true if it docked (cursor was in a tile's edge band), false otherwise.
-    dockViewAt(viewId, clientX, clientY) {
-        const spec = this._dropSpec(viewId, clientX, clientY);
-        this.hideDropPreview();
-        if (!spec) return false;
-        const newLeaf = {type: "leaf", viewId};
-        const oldLeaf = {type: "leaf", viewId: spec.target.viewId};
-        const children = spec.firstIsNew ? [newLeaf, oldLeaf] : [oldLeaf, newLeaf];
+    // --- Seam grab-strip DOM (reuses the old divider-layer styling) ---
 
-        delete spec.target.node.viewId;
-        spec.target.node.type = "split";
-        spec.target.node.dir = spec.vertical ? "v" : "h";
-        spec.target.node.sizes = [0.5, 0.5];
-        spec.target.node.children = children;
-
-        this._dirty = true;
-        this.recompute();
-        this._applyResizeSuppression();
-        setRenderOne(true);
-        return true;
-    }
-
-    // --- Drop-zone preview (the blue highlight shown while dragging a floating view) ---
-
-    // While a floating view is being dragged, show a translucent blue rectangle over the exact
-    // region it would dock into if released here — or hide it when the cursor is in a tile's
-    // central (no-snap) region. Returns true if a drop target is shown.
-    updateDropPreview(viewId, clientX, clientY) {
-        const spec = this._dropSpec(viewId, clientX, clientY);
-        if (!spec) { this.hideDropPreview(); return false; }
-        this._showDropPreview(spec.dropRect);
-        return true;
-    }
-
-    _showDropPreview(rect) {
-        if (typeof document === "undefined") return;
-        const cont = ViewMan.container;
-        if (!cont) return;
-        if (!this._dropPreviewEl || !this._dropPreviewEl.isConnected) {
-            const el = document.createElement("div");
-            el.className = "sitrec-drop-preview";
-            Object.assign(el.style, {
-                position: "absolute", pointerEvents: "none", zIndex: "58", boxSizing: "border-box",
-                border: "4px solid rgba(70,140,255,0.9)", background: "rgba(70,140,255,0.22)",
-                borderRadius: "3px",
-            });
-            cont.appendChild(el);
-            this._dropPreviewEl = el;
-        }
-        Object.assign(this._dropPreviewEl.style, {
-            display: "block",
-            left: `${Math.round(rect.leftPx)}px`, top: `${Math.round(rect.topPx)}px`,
-            width: `${Math.round(rect.widthPx)}px`, height: `${Math.round(rect.heightPx)}px`,
-        });
-    }
-
-    hideDropPreview() {
-        if (this._dropPreviewEl) this._dropPreviewEl.style.display = "none";
-    }
-
-    // --- Interactive divider DOM (Blender-style draggable seams) ---
-    // Each seam gets a thin transparent grab strip (wider than the 4px gap) on top of the
-    // tiles, with a col/row-resize cursor. Dragging it calls dragDivider. Elements are reused
-    // across recomputes (only added/removed when the seam COUNT changes) so an in-progress
-    // drag isn't destroyed when the geometry re-walks.
-    _syncDividerDOM() {
+    _syncSeamDOM() {
         if (typeof document === "undefined") return;
         const container = ViewMan.container;
         if (!container) return;
 
-        if (!this._dividers.length) {
-            if (this._dividerLayer) this._dividerLayer.style.display = "none";
+        if (!this._seams.length) {
+            if (this._seamLayer) this._seamLayer.style.display = "none";
             return;
         }
 
-        if (!this._dividerLayer || !this._dividerLayer.isConnected) {
+        if (!this._seamLayer || !this._seamLayer.isConnected) {
             const layer = document.createElement("div");
             layer.className = "sitrec-divider-layer";
             Object.assign(layer.style, {
@@ -534,37 +155,34 @@ class CLayoutManager {
                 pointerEvents: "none", zIndex: "55",
             });
             container.appendChild(layer);
-            this._dividerLayer = layer;
-            this._dividerEls = [];
+            this._seamLayer = layer;
+            this._seamEls = [];
         }
 
-        // Grow/shrink the pool of grab strips to match the seam count.
-        while (this._dividerEls.length < this._dividers.length) {
-            const el = this._makeDividerEl(this._dividerEls.length);
-            this._dividerLayer.appendChild(el);
-            this._dividerEls.push(el);
+        while (this._seamEls.length < this._seams.length) {
+            const el = this._makeSeamEl(this._seamEls.length);
+            this._seamLayer.appendChild(el);
+            this._seamEls.push(el);
         }
-        while (this._dividerEls.length > this._dividers.length) {
-            this._dividerEls.pop().remove();
+        while (this._seamEls.length > this._seams.length) {
+            this._seamEls.pop().remove();
         }
 
-        // Position each strip over its seam (centred, widened to the grab zone). Coordinates
-        // are container-relative (the divider rects are in container px, which already start
-        // at ViewMan.leftPx/topPx = the container origin).
-        const grab = DIVIDER_GRAB_PX;
-        for (let i = 0; i < this._dividers.length; i++) {
-            const d = this._dividers[i];
-            const el = this._dividerEls[i];
-            if (d.dir === "v") {
+        const grab = GRAB_PX;
+        for (let i = 0; i < this._seams.length; i++) {
+            const s = this._seams[i];
+            const el = this._seamEls[i];
+            const len = Math.max(1, s.end - s.start);
+            if (s.dir === "v") {
                 Object.assign(el.style, {
-                    left: `${Math.round(d.x + d.w / 2 - grab / 2)}px`, top: `${Math.round(d.y)}px`,
-                    width: `${grab}px`, height: `${Math.round(d.h)}px`, cursor: "col-resize",
+                    left: `${Math.round(s.coord - grab / 2)}px`, top: `${s.start}px`,
+                    width: `${grab}px`, height: `${len}px`, cursor: "col-resize",
                 });
                 Object.assign(el._line.style, {width: "1px", height: "100%"});
             } else {
                 Object.assign(el.style, {
-                    left: `${Math.round(d.x)}px`, top: `${Math.round(d.y + d.h / 2 - grab / 2)}px`,
-                    width: `${Math.round(d.w)}px`, height: `${grab}px`, cursor: "row-resize",
+                    left: `${s.start}px`, top: `${Math.round(s.coord - grab / 2)}px`,
+                    width: `${len}px`, height: `${grab}px`, cursor: "row-resize",
                 });
                 Object.assign(el._line.style, {width: "100%", height: "1px"});
             }
@@ -572,16 +190,16 @@ class CLayoutManager {
         this.updateDividerVisibility();
     }
 
-    // Hide the seam overlay while a view is fullscreen (the strips sit at z=55 above the
-    // canvas and would otherwise draw their lines over the fullscreen view). Called from
-    // _syncDividerDOM and on fullscreen toggle (CNodeView.doubleClick).
+    // Hide the seam overlay while a view is fullscreen (the strips sit above the canvas and
+    // would otherwise draw their lines over it). Kept under the old name — CNodeView.doubleClick
+    // calls it on the fullscreen toggle.
     updateDividerVisibility() {
-        if (!this._dividerLayer) return;
-        const hide = !this.active || !this._dividers.length || !!ViewMan.fullscreenView;
-        this._dividerLayer.style.display = hide ? "none" : "block";
+        if (!this._seamLayer) return;
+        const hide = !this._seams.length || !!ViewMan.fullscreenView;
+        this._seamLayer.style.display = hide ? "none" : "block";
     }
 
-    _makeDividerEl(index) {
+    _makeSeamEl(index) {
         const el = document.createElement("div");
         el.className = "sitrec-layout-divider";
         Object.assign(el.style, {
@@ -589,7 +207,6 @@ class CLayoutManager {
             zIndex: "1", touchAction: "none", display: "flex",
             alignItems: "center", justifyContent: "center",
         });
-        // A thin line marks the shared edge: faint normally, accent-highlighted on hover.
         const line = document.createElement("div");
         line.className = "sitrec-layout-divider-line";
         Object.assign(line.style, {
@@ -604,39 +221,78 @@ class CLayoutManager {
         el.addEventListener("pointerleave", () => {
             if (!el._dragging) line.style.background = "var(--sitrec-border-area, rgba(255,255,255,0.18))";
         });
-        el.addEventListener("pointerdown", (e) => this._onDividerPointerDown(e, index));
+        el.addEventListener("pointerdown", (e) => this._onSeamPointerDown(e, index));
         return el;
     }
 
-    _onDividerPointerDown(e, index) {
-        const divider = this._dividers[index];
-        if (!divider) return;
+    // Snapshot a view's current geometry + container metrics, so a drag maps the absolute
+    // pointer delta onto fixed start values (no drift, and the per-frame seam recompute can't
+    // pull the rug out mid-drag).
+    _snapView(v) {
+        return {v, l: v.leftPx, t: v.topPx, w: v.widthPx, h: v.heightPx,
+            cw: v.containerWidth(), ch: v.containerHeight(),
+            cl: v.containerLeft(), ct: v.containerTop()};
+    }
+
+    // Clamp a desired seam delta so the SHRINKING side never goes below MIN_TILE_PX. d>0 moves
+    // the seam toward the 'after' side (after shrinks); d<0 toward 'before' (before shrinks).
+    // The growing side grows freely into whatever empty space (or neighbour) is there.
+    _clampSeamDelta(before, after, d, isV) {
+        const minBefore = Math.min(...before.map(s => isV ? s.w : s.h));
+        const minAfter = Math.min(...after.map(s => isV ? s.w : s.h));
+        d = Math.min(d, minAfter - MIN_TILE_PX);
+        d = Math.max(d, -(minBefore - MIN_TILE_PX));
+        return d;
+    }
+
+    // Apply a (clamped) delta to the snapshotted views' fractions: 'before' views move their far
+    // edge (right/bottom), 'after' views move their near edge (left/top); the opposite edge of
+    // each stays put, so the views grow/shrink in place and stay flush along the seam.
+    _applySeam(before, after, d, isV) {
+        for (const s of before) {
+            if (isV) s.v.width = (s.w + d) / s.cw;
+            else     s.v.height = (s.h + d) / s.ch;
+        }
+        for (const s of after) {
+            if (isV) { s.v.left = (s.l + d - s.cl) / s.cw; s.v.width = (s.w - d) / s.cw; }
+            else     { s.v.top  = (s.t + d - s.ct) / s.ch; s.v.height = (s.h - d) / s.ch; }
+        }
+        this._sig = "";              // geometry changed → force a seam recompute next frame
+        setRenderOne(true);
+    }
+
+    // Resolve a seam's view ids to current snapshots (skipping any that vanished).
+    _snapSeam(seam) {
+        const snap = (ids) => ids.map(id => ViewMan.get(id, false)).filter(Boolean).map(v => this._snapView(v));
+        return {before: snap(seam.before), after: snap(seam.after), isV: seam.dir === "v"};
+    }
+
+    // Single-shot programmatic seam drag (used by the live pointer handler's first move and by
+    // tests / API): move the seam by dPx, clamped. Returns the delta actually applied.
+    dragSeamBy(seam, dPx) {
+        const {before, after, isV} = this._snapSeam(seam);
+        if (!before.length || !after.length) return 0;
+        const d = this._clampSeamDelta(before, after, dPx, isV);
+        this._applySeam(before, after, d, isV);
+        return d;
+    }
+
+    // Live drag of a shared edge via its grab strip.
+    _onSeamPointerDown(e, index) {
+        const seam = this._seams[index];
+        if (!seam) return;
         e.preventDefault();
         e.stopPropagation();
-        const el = this._dividerEls[index];
+        const el = this._seamEls[index];
         if (el) { el._dragging = true; if (el._line) el._line.style.background = "var(--sitrec-accent, #2cc9ff)"; }
-        const node = divider.node;
-        const dir = divider.dir;
-        const usablePx = divider.usablePx;
-        const i = divider.index;
+
+        const {before, after, isV} = this._snapSeam(seam);
+        if (!before.length || !after.length) return;
         const startX = e.clientX, startY = e.clientY;
-        // Snapshot the split's sizes so cumulative pointer delta maps to absolute sizes
-        // (avoids drift from re-reading mutated sizes each move).
-        const n = (node.children || []).length;
-        const startSizes = (Array.isArray(node.sizes) && node.sizes.length === n)
-            ? node.sizes.slice() : new Array(n).fill(1 / n);
 
         const onMove = (ev) => {
-            const deltaPx = dir === "v" ? ev.clientX - startX : ev.clientY - startY;
-            let dFrac = deltaPx / (usablePx || 1);
-            dFrac = Math.max(dFrac, MIN_TILE_FRAC - startSizes[i]);
-            dFrac = Math.min(dFrac, startSizes[i + 1] - MIN_TILE_FRAC);
-            if (!Array.isArray(node.sizes) || node.sizes.length !== n) node.sizes = startSizes.slice();
-            node.sizes[i] = startSizes[i] + dFrac;
-            node.sizes[i + 1] = startSizes[i + 1] - dFrac;
-            this._dirty = true;
-            this.recompute();
-            setRenderOne(true);
+            const raw = isV ? ev.clientX - startX : ev.clientY - startY;
+            this._applySeam(before, after, this._clampSeamDelta(before, after, raw, isV), isV);
         };
         const onUp = () => {
             if (el) { el._dragging = false; if (el._line) el._line.style.background = "var(--sitrec-border-area, rgba(255,255,255,0.18))"; }
@@ -649,69 +305,54 @@ class CLayoutManager {
         document.addEventListener("pointercancel", onUp);
     }
 
-    // Serializable copy of the tree (view ids + sizes only; strips transient walk state).
-    serialize() {
-        const clean = (node) => {
-            if (!node) return null;
-            if (node.type === "leaf") return {type: "leaf", viewId: node.viewId};
-            return {
-                type: "split", dir: node.dir,
-                sizes: Array.isArray(node.sizes) ? node.sizes.slice() : undefined,
-                children: (node.children || []).map(clean),
-            };
-        };
-        return this.tree ? clean(this.tree) : null;
-    }
-}
+    // --- View ▸ Reset Layout: snap the open views back into a clean default grid ---
 
-// Recover a split-tree from a set of fractional rects via recursive guillotine cuts. Returns
-// a LayoutNode, or null if the set isn't guillotine-separable (overlapping / pinwheel layout).
-function buildGuillotineTree(rects) {
-    if (rects.length === 1) {
-        return {type: "leaf", viewId: rects[0].viewId};
+    _tileableViews() {
+        const out = [];
+        ViewMan.iterate((id, v) => {
+            if (!v.visible || v.overlayView || v.in.relativeTo || v.dockedSidebar) return;
+            if (v.noUIBar && v.constructor && /UI$/.test(v.constructor.name)) return;
+            if (v.width < 0 || v.height < 0) return;
+            out.push(v);
+        });
+        return out;
     }
-    // Try a vertical cut (a clean x where every rect is fully left or fully right of it).
-    const vCut = findCut(rects, "x");
-    if (vCut) {
-        return makeSplit("v", vCut.groups, "left", "width");
-    }
-    // Then a horizontal cut.
-    const hCut = findCut(rects, "y");
-    if (hCut) {
-        return makeSplit("h", hCut.groups, "top", "height");
-    }
-    return null;   // not guillotine-separable
-}
 
-// Find a clean cut along axis 'x' (using left/width → vertical seam) or 'y' (top/height →
-// horizontal seam): the rects partition into two non-empty groups separated by a gap.
-function findCut(rects, axis) {
-    const lo = axis === "x" ? "left" : "top";
-    const ext = axis === "x" ? "width" : "height";
-    const eps = 1e-3;
-    // Candidate cut lines = the right/bottom edges of each rect.
-    const edges = [...new Set(rects.map(r => r[lo] + r[ext]))].sort((a, b) => a - b);
-    for (const cut of edges) {
-        const before = rects.filter(r => r[lo] + r[ext] <= cut + eps);
-        const after = rects.filter(r => r[lo] >= cut - eps);
-        if (before.length && after.length && before.length + after.length === rects.length) {
-            return {groups: [before, after]};
+    _setViewFrac(v, l, t, w, h) { v.left = l; v.top = t; v.width = w; v.height = h; }
+
+    resetLayout() {
+        const views = this._tileableViews();
+        if (views.length < 2) return false;
+        const main = views.find(v => v.id === "mainView");
+        if (main) {
+            this._setViewFrac(main, 0, 0, 0.5, 1);
+            const rest = views.filter(v => v !== main);
+            const n = rest.length;
+            rest.forEach((v, i) => this._setViewFrac(v, 0.5, i / n, 0.5, 1 / n));
+        } else {
+            const n = views.length;
+            views.forEach((v, i) => this._setViewFrac(v, i / n, 0, 1 / n, 1));
         }
+        this._sig = "";
+        setRenderOne(true);
+        return true;
     }
-    return null;
-}
 
-function makeSplit(dir, groups, lo, ext) {
-    const children = groups.map(g => buildGuillotineTree(g));
-    if (children.some(c => c === null)) return null;   // a subgroup wasn't separable
-    // group extent = (max far edge - min near edge); sizes proportional to that.
-    const spans = groups.map(g => {
-        const near = Math.min(...g.map(r => r[lo]));
-        const far = Math.max(...g.map(r => r[lo] + r[ext]));
-        return far - near;
-    });
-    const total = spans.reduce((a, b) => a + b, 0) || 1;
-    return {type: "split", dir, sizes: spans.map(s => s / total), children};
+    // --- Compatibility stubs for the retired guillotine-tree API ---
+    // Views persist/restore via their own fractional rects, so these are all no-ops. Old saved
+    // sitches with a serialized `layout` tree just ignore it and come back as free rects at the
+    // same positions; the seam engine re-couples any edges that are flush.
+    serialize() { return null; }
+    setLayout() {}
+    clearLayout() {}
+    autoTileIfSnapped() { return false; }
+    tileFromViews() { return false; }
+    hasLeaf() { return false; }
+    rectFor() { return null; }
+    removeLeaf() { return false; }
+    dockViewAt() { return false; }
+    updateDropPreview() {}
+    hideDropPreview() {}
 }
 
 export const LayoutMan = new CLayoutManager();
