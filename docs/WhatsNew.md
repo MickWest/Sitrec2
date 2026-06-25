@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.88.5 (2026-06-25)
+
+### Improvements
+- Custom map and elevation sources defined by server environment variables can now apply a fixed zoom-level offset. A new optional `ZOFFSET` setting (integer, default 0) is added to each tile's zoom level before the request is built, so an operator can align a source whose tiling is shifted from Sitrec's standard zoom (for example, request one level coarser) without any code changes.
+
+---
+
 ## Version 2.88.4 (2026-06-25)
 
 ### Bug Fixes

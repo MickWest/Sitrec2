@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.88.5 (2026-06-25)
+
+### Improvements
+- **Env-var custom map/elevation sources gain an optional `_ZOFFSET` zoom-level shift.** The env-var custom-source feature builds a tile-URL function from a template containing `{z}`/`{x}`/`{y}` placeholders, substituting the tile coordinates verbatim — which fails for a server whose tiling is offset by a fixed number of zoom levels from Sitrec's standard slippy-map zoom. In `src/nodes/CNodeTerrainUI.js`, both the custom-map scan loop (`SITREC_CUSTOM_MAP_<NAME>_URL`) and the custom-elevation scan loop (`SITREC_CUSTOM_ELEVATION_<NAME>_URL`) now read a per-source `SITREC_CUSTOM_MAP_<NAME>_ZOFFSET` / `SITREC_CUSTOM_ELEVATION_<NAME>_ZOFFSET` via `parseInt(Globals.env[prefix + 'ZOFFSET']) || 0` (so a missing or non-numeric value defaults to `0`) and ADD it to the zoom in the `mapURL` closure: `template.replace('{z}', z + zOffset)`. `0` is a no-op; e.g. `_ZOFFSET=-1` requests one zoom level coarser. Only `{z}` is affected — `{x}`/`{y}` are unchanged. This is operator/config-facing only: there is no GUI control or i18n key — the value is supplied through the existing `SITREC_CUSTOM_*` env-var pipeline and forwards to the browser through the unchanged Docker env path (no `docker/entrypoint.sh` change needed). Documented in `config/shared.env.example` (added to the `_URL, _NAME, _MAX_ZOOM, _ATTRIBUTION, _TERMS_URL` list for both source types, with worked `SITREC_CUSTOM_MAP_ESRI_ZOFFSET` / `SITREC_CUSTOM_ELEVATION_AWS_ZOFFSET` examples) and in `docs/dev/CustomTerrainSources.md` (noting the declarative `_ZOFFSET` mirrors the `z - 1`-style shift a `config.js` `mapURL` function can do by hand). Verified end-to-end: applies on the local build and forwards cleanly into the 2.88.4 container.
+
+---
+
 ## Version 2.88.4 (2026-06-25)
 
 ### Bug Fixes

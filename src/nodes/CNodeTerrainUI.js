@@ -325,10 +325,16 @@ export class CNodeTerrainUI extends CNode {
                     const name = match[1];
                     const prefix = `SITREC_CUSTOM_MAP_${name}_`;
                     const template = Globals.env[key];
+                    // SITREC_CUSTOM_MAP_<NAME>_ZOFFSET (integer, default 0) is ADDED to
+                    // the tile z before it is substituted into the {z} placeholder; e.g.
+                    // ZOFFSET=-1 requests one zoom level coarser. 0 is a no-op. Lets a
+                    // source whose tiling is offset from Sitrec's standard slippy-map z
+                    // be aligned without code changes.
+                    const zOffset = parseInt(Globals.env[prefix + 'ZOFFSET']) || 0;
                     const sourceKey = `CustomMap_${name}`;
                     this.mapSources[sourceKey] = {
                         name: Globals.env[prefix + 'NAME'] || `Custom Map (${name})`,
-                        mapURL: (z, x, y) => template.replace('{z}', z).replace('{x}', x).replace('{y}', y),
+                        mapURL: (z, x, y) => template.replace('{z}', z + zOffset).replace('{x}', x).replace('{y}', y),
                         maxZoom: parseInt(Globals.env[prefix + 'MAX_ZOOM']) || 20,
                         attribution: Globals.env[prefix + 'ATTRIBUTION'] || "",
                         termsURL: Globals.env[prefix + 'TERMS_URL'] || "",
@@ -445,10 +451,14 @@ export class CNodeTerrainUI extends CNode {
                     const name = match[1];
                     const prefix = `SITREC_CUSTOM_ELEVATION_${name}_`;
                     const template = Globals.env[key];
+                    // SITREC_CUSTOM_ELEVATION_<NAME>_ZOFFSET (integer, default 0) is ADDED
+                    // to the tile z before it is substituted into {z}, exactly like the
+                    // custom-map ZOFFSET above. 0 is a no-op.
+                    const zOffset = parseInt(Globals.env[prefix + 'ZOFFSET']) || 0;
                     const sourceKey = `CustomElevation_${name}`;
                     const source = {
                         name: Globals.env[prefix + 'NAME'] || `Custom Elevation (${name})`,
-                        mapURL: (z, x, y) => template.replace('{z}', z).replace('{x}', x).replace('{y}', y),
+                        mapURL: (z, x, y) => template.replace('{z}', z + zOffset).replace('{x}', x).replace('{y}', y),
                         maxZoom: parseInt(Globals.env[prefix + 'MAX_ZOOM']) || 15,
                         minZoom: 0,
                         tileSize: 256,
