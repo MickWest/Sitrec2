@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.88.4 (2026-06-25)
+
+### Bug Fixes
+- **Fixed the Docker image shipping with no PHP `vendor/`, so every endpoint that `require`s `vendor/autoload.php` fataled inside the container.** `sitrecServer/vendor/` is gitignored and the Docker images never ran `composer install`, so the AWS SDK (`Aws\S3\S3Client`) and Guzzle (`GuzzleHttp\Client`) were entirely absent from the published/local image. As a result every server PHP endpoint that does `require 'vendor/autoload.php'` — S3 uploads plus `settings.php`, `object.php`, `rehost.php`, `metadata.php`, `getsitches.php`, and `admin_*` — fataled in the container, which broke the S3-backed storage the Docker install actively recommends for persistence. Non-Docker server deploys were unaffected, because their rsync deploy step runs `composer install` on the server. The fix adds a dedicated `FROM composer:2 AS phpdeps` build stage to **both** `Dockerfile` (local builds) and `Dockerfile.release` (CI builds): it copies in `sitrecServer/composer.json` + `composer.lock` and runs `composer install --no-dev --prefer-dist --optimize-autoloader --ignore-platform-reqs` from the committed lock (reproducible; `--ignore-platform-reqs` installs exactly what the lock pins on the alpine composer image, and the only lock extensions it lacks — `awscrt`/`pcntl`/`sockets`/`intl` — are optional and unused here). Each Dockerfile then `COPY --from=phpdeps /sitrecServer/vendor /var/www/html/sitrecServer/vendor`, placing the built `vendor/` alongside the PHP files (the build's `dist/` carries `composer.json`/`composer.lock` but no `vendor/`). The runtime `php:8.4-apache` image independently provides the PHP extensions S3 actually uses (curl/json/simplexml/mbstring/openssl). This is an operator/deployment-only fix with no end-user-visible app behavior change; it affects only the Docker image, which is rebuilt on the next version-tag push. Verified on a full representative build that PHP endpoints and `vendor/` coexist and that `Aws\S3\S3Client` + `GuzzleHttp\Client` autoload correctly inside the image.
+
+---
+
 ## Version 2.88.3 (2026-06-24)
 
 ### Improvements

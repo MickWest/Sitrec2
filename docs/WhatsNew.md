@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.88.4 (2026-06-25)
+
+### Bug Fixes
+- Fixed the Docker/container image shipping without its server-side dependencies, which broke S3-backed storage (the persistence option the Docker install recommends). The image now bundles them, so uploads, settings, rehosting, and the sitch list work on a fresh container install.
+
+---
+
 ## Version 2.88.3 (2026-06-24)
 
 ### Improvements
