@@ -96,15 +96,15 @@ export default {
             }`,
             equals: {beforeWidth: 0.6, afterLeft: 0.6, afterWidth: 0.4},
         },
-        // Clamp: dragging +100 toward a 60px-wide 'after' view is clamped so it can't shrink
-        // below the 40px minimum → only 20px is applied.
+        // Clamp: dragging +100 toward a 200px-wide 'after' view is clamped so it can't shrink
+        // below the 128px MIN_VIEW_PX minimum → only 72px (200-128) is applied.
         {
             type: 'assert', name: 'seamDragClampsAtMinimumSize',
             fn: `() => {
-                const d = window.LayoutMan._clampSeamDelta([{w:500,h:0}], [{w:60,h:0}], 100, true);
+                const d = window.LayoutMan._clampSeamDelta([{w:500,h:0}], [{w:200,h:0}], 100, true);
                 return {d};
             }`,
-            equals: {d: 20},
+            equals: {d: 72},
         },
         // View ▸ Reset Layout: snap the open views into a default grid — Main takes the left half.
         {

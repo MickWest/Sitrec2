@@ -15,13 +15,14 @@
 
 import {ViewMan} from "./CViewManager";
 import {setRenderOne} from "./Globals";
+import {MIN_VIEW_PX} from "./DragResizeUtils";
 
 export const LAYOUT_DIVIDER_PX = 0;   // kept for import compatibility (no reserved gap)
 
 const EDGE_TOL = 6;       // px: how close two edges must be to count as a shared edge
 const MIN_OVERLAP = 16;   // px: minimum perpendicular overlap for a seam to form
-const MIN_TILE_PX = 40;   // px: a view can't be dragged smaller than this via a seam
 const GRAB_PX = 8;        // px: interactive grab-zone width centred on each shared edge
+// A seam drag can't shrink a view below MIN_VIEW_PX (shared with edge-resize, see DragResizeUtils).
 
 class CLayoutManager {
     constructor() {
@@ -234,14 +235,14 @@ class CLayoutManager {
             cl: v.containerLeft(), ct: v.containerTop()};
     }
 
-    // Clamp a desired seam delta so the SHRINKING side never goes below MIN_TILE_PX. d>0 moves
+    // Clamp a desired seam delta so the SHRINKING side never goes below MIN_VIEW_PX. d>0 moves
     // the seam toward the 'after' side (after shrinks); d<0 toward 'before' (before shrinks).
     // The growing side grows freely into whatever empty space (or neighbour) is there.
     _clampSeamDelta(before, after, d, isV) {
         const minBefore = Math.min(...before.map(s => isV ? s.w : s.h));
         const minAfter = Math.min(...after.map(s => isV ? s.w : s.h));
-        d = Math.min(d, minAfter - MIN_TILE_PX);
-        d = Math.max(d, -(minBefore - MIN_TILE_PX));
+        d = Math.min(d, minAfter - MIN_VIEW_PX);
+        d = Math.max(d, -(minBefore - MIN_VIEW_PX));
         return d;
     }
 

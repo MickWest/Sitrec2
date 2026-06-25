@@ -26,6 +26,11 @@ export let isViewDragging = false;
 // Snap distance in pixels
 const SNAP_DISTANCE = 10;
 
+// Minimum on-screen size (px) for a view in EITHER dimension — enforced by edge-resize
+// (makeResizable, below) and by shared-edge seam dragging (CLayoutManager imports this), so a
+// view can't be shrunk into an unusable sliver.
+export const MIN_VIEW_PX = 128;
+
 // Phase 1 — unified view interaction. The SINGLE modifier key that puts a movable
 // view into "edit layout" mode: hold it to highlight edges, move the view, and
 // edge-resize with snapping. Every movable CNodeView uses this same key (legacy
@@ -880,8 +885,8 @@ export function makeResizable(element, options = {}) {
             }
             
             // Enforce minimum size
-            const minWidth = 20;
-            const minHeight = 20;
+            const minWidth = MIN_VIEW_PX;
+            const minHeight = MIN_VIEW_PX;
             
             if (newWidth < minWidth) {
                 newWidth = minWidth;

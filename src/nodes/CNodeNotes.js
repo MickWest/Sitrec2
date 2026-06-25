@@ -1,13 +1,16 @@
 import {CNodeView} from "./CNodeView";
 import {guiShowHide, setRenderOne} from "../Globals";
-import {blockViewEvents, makeDraggable, clampBelowMenuBar} from "../DragResizeUtils";
+import {blockViewEvents, clampBelowMenuBar} from "../DragResizeUtils";
 import {ViewMan} from "../CViewManager";
 import {t} from "../i18n";
 import {linkifyToHTML, hasLinks} from "../linkify";
 
 class CNodeNotes extends CNodeView {
     constructor(v) {
-        v.draggable = false;
+        // Standard consolidated-window chrome: draggable via the base CUIBar header (which the
+        // base CNodeView builds) + Q-body-drag, instead of the old bespoke .cnodeview-tab with
+        // its own close button and its own makeDraggable.
+        v.draggable = v.draggable ?? true;
         v.dockable = true;
         v.dockedTextScale = v.dockedTextScale ?? 0.8;
         v.excludeFromViewsMenu = true;
@@ -16,7 +19,7 @@ class CNodeNotes extends CNodeView {
         this.alwaysOnTop = true;
         this.notesText = v.notesText || "";
         this.addSimpleSerial("notesText");
-        
+
         this.dockedMode = false;
         this.savedViewPositions = null;
 
@@ -24,9 +27,10 @@ class CNodeNotes extends CNodeView {
         this.div.style.backgroundColor = '#222';
         this.div.style.borderRadius = '8px';
 
-        this.createTab();
+        // Keep clicks/drags inside the notes panel from leaking through to the 3D view behind.
+        blockViewEvents(this.div);
+
         this.createTextArea();
-        this.setupDragging();
         this.setupEventListeners();
 
         guiShowHide.add(this, 'visible')
@@ -45,45 +49,11 @@ class CNodeNotes extends CNodeView {
         this.setVisible(this.visible);
     }
 
-    createTab() {
-        const tab = document.createElement('div');
-        tab.textContent = 'Notes';
-        tab.className = 'cnodeview-tab';
-        tab.style.cssText = `
-            user-select: none;
-            padding: 8px;
-            height: 40px;
-            box-sizing: border-box;
-            font-size: 14px;
-            font-weight: bold;
-            background-color: #333;
-            color: #eee;
-            border-bottom: 1px solid #444;
-            cursor: move;
-            border-radius: 8px 8px 0 0;
-        `;
-        this.tab = tab;
-        this.div.appendChild(tab);
-
-        const closeButton = document.createElement('span');
-        closeButton.textContent = 'X';
-        closeButton.style.cssText = `
-            float: right;
-            cursor: pointer;
-            margin-left: 8px;
-        `;
-        closeButton.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.hide();
-        });
-        tab.appendChild(closeButton);
-    }
-
     createTextArea() {
         this.textArea = document.createElement('textarea');
         this.textArea.style.cssText = `
             position: absolute;
-            top: 40px;
+            top: var(--sitrec-header-h, 26px);
             left: 0;
             right: 0;
             bottom: 0;
@@ -118,7 +88,7 @@ class CNodeNotes extends CNodeView {
         this.linkOverlay.style.cssText = `
             display: none;
             position: absolute;
-            top: 40px;
+            top: var(--sitrec-header-h, 26px);
             left: 0;
             right: 0;
             bottom: 0;
@@ -137,33 +107,7 @@ class CNodeNotes extends CNodeView {
         this.div.appendChild(this.linkOverlay);
     }
 
-    setupDragging() {
-        blockViewEvents(this.div);
-        makeDraggable(this.div, {
-            handle: '.cnodeview-tab',
-            viewInstance: this,
-            // drag the tab up under the menu bar to dismiss (re-opening drops it back
-            // below the menu bar); not while docked to a sidebar
-            closeOnDragOffTop: () => { if (!this.dockedMode && !this.dockedSidebar) this.hide(); },
-            onDrag: (event, data) => {
-                const view = data.viewInstance;
-                if (view.dockedSidebar) return true;
-                view.setFromDiv(view.div);
-                return true;
-            },
-            onDragEnd: (event, data) => {
-                data.viewInstance?.onViewDragEnd?.(event, data);
-            }
-        });
-    }
-
     setupEventListeners() {
-        this.tab.addEventListener('dblclick', (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            this.hide();
-        });
-
         this.keydownHandler = (e) => {
             if (e.key === 'Escape' && this.visible && document.activeElement !== this.textArea) {
                 this.hide();
@@ -195,11 +139,9 @@ class CNodeNotes extends CNodeView {
 
     setBorderRadius(r) {
         this.div.style.borderRadius = r;
-        const topR = r === '0' ? '0' : `${r} ${r} 0 0`;
         const botR = r === '0' ? '0' : `0 0 ${r} ${r}`;
-        this.tab.style.borderRadius = topR;
-        this.textArea.style.borderRadius = botR;
-        this.linkOverlay.style.borderRadius = botR;
+        if (this.textArea) this.textArea.style.borderRadius = botR;
+        if (this.linkOverlay) this.linkOverlay.style.borderRadius = botR;
     }
 
     showTextArea() {

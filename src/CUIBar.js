@@ -76,6 +76,11 @@ export class CUIBar {
         const gui = new GUI({ container: slot, autoPlace: false, title, closeFolders: false });
         gui.domElement.style.position = 'relative';
         gui.domElement.style.pointerEvents = 'auto';
+        // Fit the title to its TEXT, not lil-gui's fixed 245px default width. The left/right bar
+        // sections are flex:0 0 auto (don't shrink), so a 245px title overflows a narrow view and
+        // shoves the icons off the right edge; max-content lets the icons abut the title instead.
+        // (The dropdown is absolute with its own min-width, so it's unaffected.)
+        gui.domElement.style.width = 'max-content';
         gui.close();
 
         // Float the dropdown BELOW the title (absolute) so OPENING the menu doesn't push the

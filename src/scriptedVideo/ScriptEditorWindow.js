@@ -15,6 +15,7 @@
 // timeline widget reads/writes it too.
 
 import {makeDraggable, blockViewEvents, clampBelowMenuBar} from "../DragResizeUtils";
+import {CUIBar} from "../CUIBar";
 import {CustomManager, guiMenus, markSitchDirty, NodeMan, TrackManager} from "../Globals";
 import {VIEW_MAP} from "./ScriptCommands";
 import {
@@ -95,30 +96,30 @@ export class CScriptEditorWindow {
             background:rgba(20,24,29,0.96); color:#eef2f6; border:1px solid rgba(255,255,255,0.15);
             border-radius:9px; box-shadow:0 14px 40px rgba(0,0,0,0.5); overflow:hidden; resize:both; z-index:2000;`;
 
-        // header / drag handle
-        const header = document.createElement("div");
-        header.style.cssText = `display:flex; align-items:center; gap:8px; padding:7px 10px; cursor:move;
-            background:rgba(255,255,255,0.06); border-bottom:1px solid rgba(255,255,255,0.08);
-            font:600 13px sans-serif; user-select:none; flex:0 0 auto;`;
-        const title = document.createElement("div");
-        title.textContent = "Scripted Video";
-        title.style.cssText = "flex:1 1 auto;";
-        const closeBtn = this._winButton("Close", () => this.hide());
-        header.appendChild(title); header.appendChild(closeBtn);
+        // Header: the SAME CUIBar the views use (title menu + ✕), instead of a bespoke header —
+        // so this floating tool window shares the consolidated chrome. CUIBar defaults to an
+        // absolute hover-reveal overlay (for view canvases); here we lay it in-flow as a pinned
+        // header strip that takes its own space at the top, and the whole bar is the drag handle.
+        const bar = new CUIBar(panel, {title: "Scripted Video"});
+        bar.bar.style.position = "relative";
+        bar.bar.style.flex = "0 0 auto";
+        bar.setShown(true);                       // a standalone window header is always visible
+        bar.addCloseIcon(() => this.hide());
+        this.uiBar = bar;
 
         // movable content container (adopted into a popup when popped out)
         const content = this._buildEditorContent();
         this._content = content;
 
-        panel.appendChild(header);
-        panel.appendChild(content);
+        panel.appendChild(content);               // the CUIBar is already panel's first child
         document.body.appendChild(panel);
         this.panel = panel;
 
-        // make it draggable by the header, and don't let the 3D view eat mouse events.
-        // Dragging it up under the menu bar closes it (re-opening drops it back below).
+        // make it draggable by the header bar, and don't let the 3D view eat mouse events.
+        // The bar's icons/menu stopPropagation on pointerdown, so clicking ✕ doesn't start a
+        // drag. Dragging it up under the menu bar closes it (re-opening drops it back below).
         blockViewEvents(panel);
-        makeDraggable(panel, { handle: header, excludeElements: [closeBtn], closeOnDragOffTop: () => this.hide() });
+        makeDraggable(panel, { handle: bar.bar, closeOnDragOffTop: () => this.hide() });
 
         // redraw timeline when the window is resized
         try { new ResizeObserver(() => this.sv.timeline.draw()).observe(panel); } catch (e) {}
