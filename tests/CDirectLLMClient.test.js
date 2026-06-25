@@ -62,14 +62,16 @@ describe('convertToolsForAnthropic', () => {
 });
 
 describe('buildSystemPrompt', () => {
-    test('substitutes dateTime and simDateTime placeholders', () => {
+    test('omits the real wall-clock time (keeps the prefix cacheable) but keeps simDateTime', () => {
         const prompt = buildSystemPrompt({
-            dateTime: '2026-04-16 12:00 PT',
             simDateTime: '2004-11-14T20:30:00Z',
             menuSummary: {},
             availableDocs: {},
         });
-        expect(prompt).toContain('2026-04-16 12:00 PT');
+        // The real wall-clock time is fetched on demand via getCurrentDateTime, not injected
+        // into the prompt (injecting it would change the cached prefix every request).
+        expect(prompt).toContain('getCurrentDateTime');
+        // Simulation time stays in the prompt (changes infrequently).
         expect(prompt).toContain('2004-11-14T20:30:00Z');
         expect(prompt).not.toContain('{{dateTime}}');
         expect(prompt).not.toContain('{{simDateTime}}');
@@ -188,11 +190,13 @@ describe('chat (tool loop)', () => {
         expect(asstMsg.content.some(b => b.type === 'tool_use' && b.id === 'toolu_01')).toBe(true);
         const toolResultMsg = secondBody.messages[secondBody.messages.length - 1];
         expect(toolResultMsg.role).toBe('user');
+        // The last message's last block carries the prompt-caching breakpoint (#2).
         expect(toolResultMsg.content[0]).toEqual({
             type: 'tool_result',
             tool_use_id: 'toolu_01',
             content: JSON.stringify({ loaded: 42 }),
             is_error: false,
+            cache_control: { type: 'ephemeral' },
         });
     });
 
@@ -301,8 +305,11 @@ describe('chat (tool loop)', () => {
 
         const body = JSON.parse(fetch.mock.calls[0][1].body);
         expect(body.messages.map(m => m.role)).toEqual(['user', 'assistant', 'user']);
+        // Middle messages keep plain-string content; only the LAST message is converted to
+        // block form to carry the cache breakpoint (#2).
         expect(body.messages[1].content).toBe('first a');
-        expect(body.messages[2].content).toBe('second q');
+        expect(body.messages[2].content[0].text).toBe('second q');
+        expect(body.messages[2].content[0].cache_control).toEqual({ type: 'ephemeral' });
     });
 
     test('rejects non-Anthropic providers', async () => {

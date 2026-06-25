@@ -125,6 +125,19 @@ class CSitrecAPI {
                 }
             },
 
+            getCurrentDateTime: {
+                doc: "Get the user's CURRENT REAL-WORLD ('wall-clock') date and time, including their local timezone offset. This is NOT the simulation time. Call this whenever a request depends on the actual present moment (e.g. 'what's overhead right now', 'tonight', 'in an hour'), or when you need the user's local timezone. The current SIMULATION date/time is given separately in the system prompt.",
+                fn: () => {
+                    const now = new Date();
+                    return {
+                        // ISO 8601 with the user's timezone offset, e.g. 2026-06-25T14:30:00-07:00
+                        dateTime: GlobalDateTimeNode.timeWithTimeZone(now),
+                        timezoneOffsetHours: GlobalDateTimeNode.getTimeZoneOffset(),
+                        note: "Real-world current date/time. Distinct from the simulation time.",
+                    };
+                }
+            },
+
             pointCameraAtRaDec: {
                 doc: "Set the camera orientation (one-shot, no tracking) based on Right Ascension and Declination. Use for looking at stars and other fixed sky objects (not planets or the Sun). RA can be decimal hours (e.g. 3.79) or sexagesimal ('3h47m' or '03:47:00'). Dec can be decimal degrees (e.g. 24.12) or sexagesimal ('+24d07m' or '24:07:00').",
                 params: {
@@ -2804,6 +2817,7 @@ class CSitrecAPI {
             "getCameraLLA",
             "setCameraAltitude",
             "setDateTime",
+            "getCurrentDateTime",
             "pointCameraAtRaDec",
             "pointCameraAtNamedObject",
             "lockCameraOnObject",

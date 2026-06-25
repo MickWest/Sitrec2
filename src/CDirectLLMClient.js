@@ -21,7 +21,7 @@ const BASE_SYSTEM_PROMPT = `You are a helpful assistant for the Sitrec app.
 
 You should reply in the same language as the user's prompt, unless instructed otherwise.
 
-The user's current real date and time (not the simulation time) is: {{dateTime}}. Use the timezone specified here, or any specified in the prompt or location context.
+You are NOT automatically given the current real-world (wall-clock) date and time. If a request depends on the actual present moment (e.g. "right now", "tonight", "in an hour"), or you need the user's local timezone, call the getCurrentDateTime function — it returns the real date/time as an ISO 8601 string with the user's timezone offset. (Keeping this out of the prompt by default lets the request prefix be cached; fetch it on demand.)
 
 The current SIMULATION date/time is: {{simDateTime}}. This is the date the app is showing - satellites are loaded for this date. If this changes between requests, the user may need to reload satellites.
 
@@ -243,9 +243,12 @@ export function convertToolsForAnthropic(tools) {
     }));
 }
 
-export function buildSystemPrompt({ dateTime, simDateTime, menuSummary, availableDocs }) {
+export function buildSystemPrompt({ simDateTime, menuSummary, availableDocs }) {
+    // NOTE: the real wall-clock time is deliberately NOT injected here — it would change
+    // the cached prefix every request. The AI fetches it on demand via getCurrentDateTime.
+    // simDateTime stays (it changes infrequently and is core context); when it does change
+    // it invalidates the cache for that turn only.
     let prompt = BASE_SYSTEM_PROMPT
-        .replace('{{dateTime}}', dateTime || '')
         .replace('{{simDateTime}}', simDateTime || '');
 
     // Menu controls appendix (matches chatbot.php:537-557 formatting).
@@ -301,12 +304,55 @@ function historyToAnthropicMessages(history) {
     return collapsed;
 }
 
+// Apply a prompt-caching breakpoint to a message's content. Returns a NEW content value
+// (never mutates the input) with cache_control on the last content block:
+//   - string content -> a single text block carrying cache_control
+//   - array content  -> a shallow copy whose LAST block carries cache_control
+// Returns null for empty/uncacheable content so the caller can skip it.
+function withCacheBreakpoint(content) {
+    if (typeof content === 'string') {
+        if (content === '') return null;
+        return [{ type: 'text', text: content, cache_control: { type: 'ephemeral' } }];
+    }
+    if (Array.isArray(content) && content.length > 0) {
+        const copy = content.map(b => ({ ...b }));
+        const last = copy.length - 1;
+        copy[last] = { ...copy[last], cache_control: { type: 'ephemeral' } };
+        return copy;
+    }
+    return null;
+}
+
 export async function callAnthropic({ apiKey, systemPrompt, messages, tools, model, maxTokens = 1024 }) {
+    // ── PARITY WITH THE SERVER PROXY ──────────────────────────────────────────────────
+    // This is the browser BYOK sibling of sitrecServer/chatbot.php callAnthropic(). The
+    // two MUST stay behaviorally in sync — mirror changes to request shaping, the system
+    // prompt, the getCurrentDateTime convention, or the tool loop (see chat() below)
+    // across both, and vice-versa.
+    // ──────────────────────────────────────────────────────────────────────────────────
+    //
+    // Prompt caching (max 4 breakpoints; prefix match over tools -> system -> messages):
+    //   - Breakpoint 1 (system): tools render before system, so one marker on the system
+    //     block caches the whole tools+system prefix. With the wall-clock time no longer in
+    //     the prompt, that prefix is byte-stable across turns, so it caches cross-turn too.
+    //   - Breakpoint 2 (last message): each of the up-to-5 tool-loop iterations re-sends the
+    //     growing message history; marking the final message caches that conversation prefix
+    //     so later iterations read it at ~0.1x instead of full price.
+    // IMPORTANT: chat() reuses `messages` across iterations, so do NOT mutate it — build a
+    // shallow copy with only the last message replaced by a cache-marked clone (otherwise
+    // stale breakpoints accumulate on middle messages and can exceed the 4-breakpoint cap).
+    const cachedMessages = messages.slice();
+    const lastIdx = cachedMessages.length - 1;
+    if (lastIdx >= 0) {
+        const marked = withCacheBreakpoint(cachedMessages[lastIdx].content);
+        if (marked) cachedMessages[lastIdx] = { ...cachedMessages[lastIdx], content: marked };
+    }
+
     const body = {
         model,
         max_tokens: maxTokens,
-        system: systemPrompt,
-        messages,
+        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+        messages: cachedMessages,
         tools: convertToolsForAnthropic(tools),
     };
 

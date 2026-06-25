@@ -483,6 +483,12 @@ describe('CSitrecAPI transient state classification', () => {
             {success: true, result: {success: true}}
         )).toBe(false);
 
+        // Reading the real-world clock must not dirty the sitch.
+        expect(sitrecAPI.callChangesSerializedState(
+            {fn: 'getCurrentDateTime'},
+            {success: true, result: {success: true}}
+        )).toBe(false);
+
         expect(sitrecAPI.callChangesSerializedState(
             {fn: 'setNotes'},
             {success: true, result: {success: true}}

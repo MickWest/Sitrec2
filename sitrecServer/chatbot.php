@@ -715,7 +715,7 @@ You are a helpful assistant for the Sitrec app.
 
 You should reply in the same language as the user's prompt, unless instructed otherwise.
 
-The user's current real date and time (not the simulation time) is: {$date}. Use the timezone specified here, or any specified in the prompt or location context.
+You are NOT automatically given the current real-world (wall-clock) date and time. If a request depends on the actual present moment (e.g. "right now", "tonight", "in an hour"), or you need the user's local timezone, call the getCurrentDateTime function — it returns the real date/time as an ISO 8601 string with the user's timezone offset. (Keeping this out of the prompt by default lets the request prefix be cached; fetch it on demand.)
 
 The current SIMULATION date/time is: {$simDateTime}. This is the date the app is showing - satellites are loaded for this date. If this changes between requests, the user may need to reload satellites.
 
@@ -909,10 +909,40 @@ function callAnthropic($apiKey, $systemPrompt, $history, $tools, $model = 'claud
     
     $anthropicTools = convertToolsForAnthropic($tools);
 
-    // Prompt caching: the system prompt (menu controls + doc list) and the tools are
-    // large and identical across turns. A cache_control breakpoint on the system block
-    // caches the tools+system prefix, so repeated turns pay ~10% of its input cost.
+    // ── PARITY WITH THE BROWSER BYOK CLIENT ───────────────────────────────────────────
+    // This Anthropic request-shaping logic has a sibling in the client-side BYOK path:
+    // src/CDirectLLMClient.js (callAnthropic() + chat()). The two MUST stay behaviorally
+    // in sync — when you change the prompt-caching breakpoints, the system-prompt
+    // structure, or the tool loop here, mirror the change there (and update its Jest
+    // tests in tests/CDirectLLMClient.test.js), and vice-versa. Both paths now carry
+    // the same two cache_control breakpoints and the same getCurrentDateTime tool /
+    // "no wall-clock time in the prompt" convention — keep them aligned.
+    // ──────────────────────────────────────────────────────────────────────────────────
+    //
+    // Prompt caching uses up to two prefix breakpoints (max 4 allowed). Caching is a
+    // prefix match over the rendered request, whose block order is tools -> system ->
+    // messages, so a breakpoint caches everything from the start of the prompt up to it.
+    //
+    // Breakpoint 1 (system block): because tools render before system, this one marker
+    // caches the tools+system prefix together. That prefix is large and byte-identical
+    // across turns, so repeated turns pay ~10% (cache read) instead of full input price.
     $systemBlocks = [["type" => "text", "text" => $systemPrompt, "cache_control" => ["type" => "ephemeral"]]];
+
+    // Breakpoint 2 (last message): one user message fans out to up to 5 tool-loop
+    // iterations (see runToolLoop maxIterations), and each iteration re-sends the GROWING
+    // message history. Without a marker here that history is re-billed at full price every
+    // iteration. Marking the final message caches the conversation prefix too, so each
+    // iteration reads the prior one's messages at ~0.1x (the 5-min ephemeral TTL stays warm
+    // because the iterations are seconds apart). cache_control requires block-form content,
+    // so convert just the final message; earlier messages stay plain strings (allowed).
+    $lastIdx = count($messages) - 1;
+    if (is_string($messages[$lastIdx]['content']) && $messages[$lastIdx]['content'] !== '') {
+        $messages[$lastIdx]['content'] = [[
+            "type" => "text",
+            "text" => $messages[$lastIdx]['content'],
+            "cache_control" => ["type" => "ephemeral"],
+        ]];
+    }
 
     $requestBody = [
         "model" => $model,
@@ -990,7 +1020,15 @@ function callAnthropic($apiKey, $systemPrompt, $history, $tools, $model = 'claud
             'hasToolCalls' => !empty($calls),
             'toolCallCount' => count($calls),
             'stopReason' => $parsed['stop_reason'] ?? null,
-            'httpCode' => $httpCode
+            'httpCode' => $httpCode,
+            // Cache verification: if cacheReadTokens stays 0 across repeated turns, a silent
+            // invalidator is changing the prefix (e.g. the menu-doc system prompt differs
+            // between turns). inputTokens is the UNCACHED remainder only — the full prompt
+            // size is inputTokens + cacheWriteTokens + cacheReadTokens.
+            'cacheReadTokens' => $parsed['usage']['cache_read_input_tokens'] ?? null,
+            'cacheWriteTokens' => $parsed['usage']['cache_creation_input_tokens'] ?? null,
+            'inputTokens' => $parsed['usage']['input_tokens'] ?? null,
+            'outputTokens' => $parsed['usage']['output_tokens'] ?? null
         ]
     ];
 }
@@ -1177,6 +1215,16 @@ function simulateToolCall($fn, $args, $menuSummary, $availableModels, $available
             $docName = $args['docName'] ?? '';
             $result = getHelpDocContent($docName, $availableDocs);
             return ['handled' => true, 'result' => $result];
+        case 'getCurrentDateTime':
+            // Real-world "now" as reported by the client in this request's payload
+            // ($date = $data['dateTime'], an ISO 8601 string with timezone offset).
+            // Handled server-side as a query so the result feeds straight back into
+            // the tool loop. (The BYOK path implements this client-side in CSitrecAPI.)
+            global $date;
+            return ['handled' => true, 'result' => [
+                'dateTime' => $date,
+                'note' => "Real-world current date/time reported by the client. Distinct from the simulation time.",
+            ]];
         case 'listObjectFolders':
             return ['handled' => false, 'result' => null];
         default:
