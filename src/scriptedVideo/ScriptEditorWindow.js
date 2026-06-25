@@ -58,12 +58,12 @@ export class CScriptEditorWindow extends CNodeView {
             draggable: true, resizable: true, freeAspect: true,
             visible: false,
             alwaysOnTop: true,               // a tool window — keep it above the other views
+            poppable: true,                  // ⧉ pop out into a window (same path as the other views)
             left: 0.04, top: 0.10, width: 0.32, height: 0.62,
             excludeFromViewsMenu: true,
         });
         this.panel = this.div;       // alias — the view div IS the editor panel
         this.sv = sv;                // the CScriptedVideoManager
-        this.external = null;        // popped-out browser window (or null)
         this.textarea = null;
         this.backdrop = null;
         this.statusEl = null;
@@ -85,7 +85,7 @@ export class CScriptEditorWindow extends CNodeView {
 
     // is the editor visible anywhere (in-page panel shown, or popped out)?
     isOpen() {
-        return !!this.visible || (this.external && !this.external.closed);
+        return !!this.visible || !!this.windowed;   // visible in-page, or popped out into a window
     }
 
     setStatus(text) {
@@ -138,9 +138,7 @@ export class CScriptEditorWindow extends CNodeView {
         toolbar.appendChild(this._winButton("Stop", () => sv.stopAll()));
         toolbar.appendChild(this._winButton("Render", () => sv.renderVideo()));
         toolbar.appendChild(this._winButton("Insert", () => this.openInsertPalette()));
-        this._popoutBtn = this._winButton("⧉ New Window", () => this._togglePopout());
-        this._popoutBtn.style.marginLeft = "auto";
-        toolbar.appendChild(this._popoutBtn);
+        // (Pop-out is the ⧉ icon in the CUIBar header — same as the other poppable views.)
 
         // --- editor: a transparent textarea over a styled backdrop ---
         const editWrap = document.createElement("div");
@@ -580,13 +578,8 @@ export class CScriptEditorWindow extends CNodeView {
     // -----------------------------------------------------------------------
 
     // Single visibility hook — the base show()/hide() both route through setVisible(). Opening
-    // parses + draws the timeline; closing leaves preview mode. While popped out to a separate
-    // window, the in-page view stays closed (focus the popup instead).
+    // parses + draws the timeline; closing leaves preview mode.
     setVisible(visible) {
-        if (visible && this.external && !this.external.closed) {
-            this.external.focus();
-            visible = false;                 // never open in-page while the popup is up
-        }
         if (!visible && this.visible) {
             this.sv?._exitAllModes?.();      // closing the editor leaves preview mode
         }
@@ -599,82 +592,31 @@ export class CScriptEditorWindow extends CNodeView {
     }
 
     hide() {
-        if (this.external && !this.external.closed) { this.dockWindow(); return; }
-        super.hide();                        // → setVisible(false)
+        if (this.windowed) this.dockWindow();   // pull the content back from the popup first
+        super.hide();                           // → setVisible(false)
     }
 
-    toggle() {
-        if (this.external && !this.external.closed) { this.external.focus(); return; }
-        this.setVisible(!this.visible);
-    }
+    toggle() { this.setVisible(!this.visible); }
 
-    _togglePopout() {
-        if (this.external && !this.external.closed) this.dockWindow();
-        else this.openExternalWindow();
-    }
-
-    // Pop the editor out into a real, separate browser window.
-    openExternalWindow() {
-        if (this.external && !this.external.closed) { this.external.focus(); return; }
-        const win = window.open("", "SitrecScriptEditor", "popup,width=520,height=640");
-        if (!win) { alert("Popup blocked — please allow popups for this site, then try again."); return; }
-        this.external = win;
-        try { win.document.title = "Sitrec — Scripted Video"; } catch (e) {}
-        win.document.body.style.cssText = "margin:0; background:#14181d; color:#eef2f6; height:100vh; display:flex; flex-direction:column; overflow:hidden;";
-        // In the popup the content fills the whole window — drop the in-page header offset.
-        this._content.style.position = '';
-        this._content.style.inset = '';
-        win.document.body.appendChild(win.document.adoptNode(this._content));
-        this._charW = null;   // remeasure in the popup (zoom/DPI may differ)
-        super.setVisible(false);   // in-page view closed for layout (popup now shows the editor)
-        this.sv.timeline.attachKeyZoom(win);
-        win.addEventListener("resize", () => this.sv.timeline.draw());
-        this._setPopoutLabel(true);
-        win.addEventListener("beforeunload", () => this._dockFromExternal());
-        // fallback poll in case beforeunload doesn't fire
-        this._extPoll = setInterval(() => {
-            if (!this.external || this.external.closed) this._dockFromExternal();
-        }, 600);
-        // The popup has no scripts of its own — if the MAIN window goes away its
-        // editor becomes an inert orphan, so take it along. pagehide fires only
-        // AFTER the global beforeunload unsaved-work dialog (which script edits
-        // arm via markSitchDirty) has been confirmed, or immediately when there
-        // is nothing unsaved — cancelling the dialog keeps both windows.
-        if (!this._closePopupOnUnloadWired) {
-            this._closePopupOnUnloadWired = true;
-            window.addEventListener("pagehide", () => {
-                if (this.external && !this.external.closed) this.external.close();
-            });
+    // Pop-out / dock reuse the generic CNodeView path (the ⧉ header icon — same as the other
+    // poppable views, e.g. Notes / the AI chat). We only add the editor-specific extras: the
+    // timeline canvas needs its key-zoom + resize re-wired to the popup window, and the hover
+    // hit-testing's cached character width must be re-measured (popup DPI/zoom may differ).
+    popOut() {
+        super.popOut();
+        const win = this._poppedWindow;
+        if (win && !win.closed) {
+            this._charW = null;
+            this.sv.timeline.attachKeyZoom(win);
+            win.addEventListener("resize", () => this.sv.timeline.draw());
+            setTimeout(() => this.sv.timeline.draw(), 60);
         }
-        setTimeout(() => this.sv.timeline.draw(), 60);
     }
 
     dockWindow() {
-        this._dockShow = true;   // explicit dock → bring the in-page panel back up
-        if (this.external && !this.external.closed) this.external.close();   // → beforeunload → _dockFromExternal
-        else this._dockFromExternal();
-    }
-
-    _dockFromExternal() {
-        if (this._extPoll) { clearInterval(this._extPoll); this._extPoll = null; }
-        if (this._content && this._content.ownerDocument !== document) {
-            this.div.appendChild(document.adoptNode(this._content));
-            // restore the in-page positioning (fill below the CUIBar header strip)
-            this._content.style.position = 'absolute';
-            this._content.style.inset = 'var(--sitrec-header-h, 26px) 0 0 0';
-        }
-        this._charW = null;   // remeasure back in the main document
-        this.external = null;
-        this._setPopoutLabel(false);
-        // explicit Dock re-opens the in-page view; closing the popup just parks it hidden/closed.
-        if (this._dockShow) this.setVisible(true);
-        else super.setVisible(false);
-        this._dockShow = false;
-        setTimeout(() => this.sv.timeline.draw(), 60);
-    }
-
-    _setPopoutLabel(popped) {
-        if (this._popoutBtn) this._popoutBtn.textContent = popped ? "⧉ Dock" : "⧉ New Window";
+        super.dockWindow();
+        this._charW = null;                      // remeasure back in the main document
+        setTimeout(() => this.sv?.timeline?.draw?.(), 60);
     }
 
     // -----------------------------------------------------------------------

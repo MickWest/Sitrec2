@@ -129,6 +129,8 @@ class CNodeView extends CNode {
         this.doubleClickResizes = v.doubleClickResizes;
         if (v.doubleClickFullScreen !== undefined) this.doubleClickFullScreen = v.doubleClickFullScreen;
         this.alwaysOnTop = v.alwaysOnTop ?? false;
+        this.poppable = v.poppable ?? false;   // adds a ⧉ "pop out into a browser window" header icon
+        this.windowed = false;                 // true while popped out — the in-page view is closed for layout
         this.shiftDrag = v.shiftDrag;
         this.dragKey = v.dragKey;
 
@@ -369,6 +371,9 @@ class CNodeView extends CNode {
         // Standard chrome, left→right: fullscreen, pin, close.
         if (this.doubleClickFullScreen || this.doubleClickResizes) {
             bar.addIcon('⛶', () => this.doubleClick(), 'Toggle fullscreen', 'fullscreen');
+        }
+        if (this.poppable) {
+            this._popIcon = bar.addIcon('⧉', () => this.togglePopout(), 'Pop out into a window', 'popout');
         }
         bar.addPinIcon(() => this.setHeaderPinned(!this.headerPinned));
         bar.addCloseIcon(() => this.closeViewWithUndo(title));
@@ -1169,7 +1174,7 @@ class CNodeView extends CNode {
     _updateOwnDOM() {
         if (!this.overlayView) {
             if (this.div) {
-                this.div.style.display = this.visible ? 'block' : 'none';
+                this.div.style.display = (this.visible && !this.windowed) ? 'block' : 'none';
             }
         } else if (this.separateVisibility) {
             if (this.canvas) {
@@ -1466,6 +1471,63 @@ class CNodeView extends CNode {
 
     hide() {
         this.show(false)
+    }
+
+    // --- Pop out into a real separate browser window (poppable DOM views) ---
+    // Moves the view's CONTENT (everything under the CUIBar header) into a window.open popup and
+    // marks the in-page view `windowed`, so it drops out of the layout/seams (treated as closed)
+    // and its div hides. Docking — or closing the popup — moves the content back. Only meaningful
+    // for DOM-content views; WebGL views (their canvas context is bound to this document) are not
+    // made poppable.
+    togglePopout() {
+        if (this._poppedWindow && !this._poppedWindow.closed) this.dockWindow();
+        else this.popOut();
+    }
+
+    popOut() {
+        if (this._poppedWindow && !this._poppedWindow.closed) { this._poppedWindow.focus(); return; }
+        const w = Math.max(240, Math.round(this.widthPx || 480));
+        const h = Math.max(180, Math.round(this.heightPx || 360));
+        const win = window.open("", "sitrec_view_" + this.id, `popup,width=${w},height=${h}`);
+        if (!win) { alert("Popup blocked — please allow popups for this site, then try again."); return; }
+        this._poppedWindow = win;
+        try { win.document.title = "Sitrec — " + friendlyViewName(this.in, this.id); } catch (e) { /* cross-doc */ }
+        // --sitrec-header-h:0 → content positioned below the (now absent) header fills the window.
+        win.document.body.style.cssText = "margin:0; height:100vh; overflow:hidden;"
+            + "background:var(--sitrec-bg-app,#1a1a1a); color:var(--sitrec-text,#ebebeb); --sitrec-header-h:0px;";
+        const bar = this.uiBar && this.uiBar.bar;
+        this._poppedContent = [...this.div.children].filter(c => c !== bar);
+        for (const c of this._poppedContent) win.document.body.appendChild(win.document.adoptNode(c));
+        // (Closing the popup window docks it back — see the beforeunload handler below — so no
+        //  separate in-popup dock button is needed.)
+        this.windowed = true;
+        this._updateOwnDOM();                 // hide the in-page div
+        setRenderOne(true);                   // re-layout the remaining views (seams)
+        win.addEventListener("beforeunload", () => this.dockWindow());
+        // fallback poll in case beforeunload doesn't fire
+        this._popPoll = setInterval(() => { if (!this._poppedWindow || this._poppedWindow.closed) this.dockWindow(); }, 600);
+        // the popup has no JS of its own — if the main window goes away, take it along
+        if (!this._popUnloadWired) {
+            this._popUnloadWired = true;
+            window.addEventListener("pagehide", () => { if (this._poppedWindow && !this._poppedWindow.closed) this._poppedWindow.close(); });
+        }
+        if (this._popIcon) this._popIcon.title = "Dock the window back";
+    }
+
+    dockWindow() {
+        if (this._popPoll) { clearInterval(this._popPoll); this._popPoll = null; }
+        if (this._poppedContent) {
+            for (const c of this._poppedContent) {
+                if (c.ownerDocument !== document) this.div.appendChild(document.adoptNode(c));
+            }
+            this._poppedContent = null;
+        }
+        if (this._poppedWindow && !this._poppedWindow.closed) { try { this._poppedWindow.close(); } catch (e) { /* gone */ } }
+        this._poppedWindow = null;
+        this.windowed = false;
+        this._updateOwnDOM();
+        setRenderOne(true);
+        if (this._popIcon) this._popIcon.title = "Pop out into a window";
     }
 
 }

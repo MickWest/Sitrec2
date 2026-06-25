@@ -118,7 +118,9 @@ class CViewManager extends CManager {
     _computeEV(view) {
         if (view._evComputed) return view._effectivelyVisible;
 
-        let effective = view.visible;
+        // A popped-out (windowed) view is "closed" in-page: its content lives in a separate
+        // browser window, so it drops out of the layout and its div hides.
+        let effective = view.visible && !view.windowed;
 
         // Overlay children inherit parent visibility (unless separateVisibility)
         if (view.overlayView && !view.separateVisibility) {

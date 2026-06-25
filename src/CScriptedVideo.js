@@ -791,9 +791,7 @@ class CScriptedVideoManager {
 
         const folder = guiMenus.video.addFolder("Scripted Video").close().perm();
         folder.add({ open: () => this.toggleWindow() }, "open").name("Script Window…").perm()
-            .tooltip("Open/close the in-page Scripted Video script editor window.");
-        folder.add({ pop: () => this.ensureEditor().openExternalWindow() }, "pop").name("Script Window (New Window)").perm()
-            .tooltip("Open the script editor in a separate browser window (drag it to another monitor).");
+            .tooltip("Open/close the Scripted Video script editor (use its ⧉ header icon to pop it out into a separate window).");
         folder.add({ render: () => this.renderVideo() }, "render").name("Render Video (1080P60)").perm();
 
         // --- quality knobs ---

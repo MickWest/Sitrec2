@@ -37,6 +37,8 @@ export class CNodeViewText extends CNodeView {
     constructor(v) {
         v.dockable = v.dockable ?? v.draggable;
         v.dockedTextScale = v.dockedTextScale ?? 0.8;
+        v.poppable = v.poppable ?? true;       // ⧉ pop out into a separate browser window
+
 
         super(v);
         this.alwaysOnTop = true;

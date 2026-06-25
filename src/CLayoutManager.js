@@ -56,7 +56,7 @@ class CLayoutManager {
     _collectRects() {
         const out = [];
         ViewMan.iterate((id, v) => {
-            if (!v.visible || v.overlayView || v.in.relativeTo || v.dockedSidebar) return;
+            if (!v.visible || v.windowed || v.overlayView || v.in.relativeTo || v.dockedSidebar) return;
             if (v.noUIBar && v.constructor && /UI$/.test(v.constructor.name)) return;
             if (v.width < 0 || v.height < 0) return;                 // aspect-locked encoding
             if (!(v.widthPx > 0) || !(v.heightPx > 0)) return;

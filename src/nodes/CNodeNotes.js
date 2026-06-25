@@ -11,6 +11,7 @@ class CNodeNotes extends CNodeView {
         // base CNodeView builds) + Q-body-drag, instead of the old bespoke .cnodeview-tab with
         // its own close button and its own makeDraggable.
         v.draggable = v.draggable ?? true;
+        v.poppable = v.poppable ?? true;       // ⧉ pop out into a separate browser window
         v.dockable = true;
         v.dockedTextScale = v.dockedTextScale ?? 0.8;
         v.excludeFromViewsMenu = true;
