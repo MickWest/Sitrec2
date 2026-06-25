@@ -1,2 +1,19 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Files that are run or parsed on Linux MUST keep LF line endings even when checked
+# out on a Windows machine. Git's default there is core.autocrlf=true, which would
+# otherwise convert these to CRLF on checkout — and a CRLF shebang ("#!/bin/bash\r")
+# makes Linux fail with "bad interpreter: No such file or directory". This is what
+# broke the "git pull on Windows -> zip -> copy to a Linux server -> build" workflow
+# (the operator had to dos2unix/sed install.sh before it would run). Setting eol=lf
+# overrides core.autocrlf, so these stay LF regardless of the user's git config.
+*.sh          eol=lf
+*.bash        eol=lf
+Dockerfile    eol=lf
+Dockerfile.*  eol=lf
+*.env         eol=lf
+shared.env*   eol=lf
+
+# Windows-only scripts intentionally stay CRLF.
+*.cmd         eol=crlf
