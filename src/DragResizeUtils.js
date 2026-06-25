@@ -485,9 +485,11 @@ export function makeDraggable(element, options = {}) {
         isDragging = true;
         isViewDragging = true;
 
-        // Call onDragStart callback if provided
+        // Call onDragStart callback if provided. Pass viewInstance for parity with onDrag /
+        // onDragEnd — without it `data.viewInstance` is undefined at drag start, silently
+        // no-opping any callback that relies on it (e.g. CNodeView's header-drag pin guard).
         if (options.onDragStart && typeof options.onDragStart === 'function') {
-            options.onDragStart(e, { left: startLeft, top: startTop, element });
+            options.onDragStart(e, { left: startLeft, top: startTop, element, viewInstance });
         }
 
         // Add global event listeners using pointer events for better off-screen support

@@ -382,6 +382,9 @@ class CNodeView extends CNode {
             makeDraggable(this.div, {
                 handle: bar.bar,
                 viewInstance: this,
+                onDragStart: (event, data) => {
+                    data.viewInstance?._setHeaderDragging(true, event);
+                },
                 onDrag: (event, data) => {
                     const view = data.viewInstance;
                     if (!view.draggable) return false;
@@ -389,6 +392,7 @@ class CNodeView extends CNode {
                     return view._applyDragMove(data, event);
                 },
                 onDragEnd: (event, data) => {
+                    data.viewInstance?._setHeaderDragging(false, event);
                     data.viewInstance?.onViewDragEnd?.(event, data);
                 },
             });
@@ -396,6 +400,7 @@ class CNodeView extends CNode {
 
         this.headerPinned = false;
         this._headerHovering = false;
+        this._headerDragging = false;
         // Default pinned for most views; OFF for the big content views (Main/Look/Video).
         // A saved sitch overrides this in modDeserialize; old sitches assume off.
         this.setHeaderPinned(v.pinHeader ?? !HEADER_DEFAULT_OFF.has(this.id));
@@ -406,7 +411,9 @@ class CNodeView extends CNode {
         // (button held). Leaving the strip hides it; mid-strip with a button held leaves the
         // state unchanged (so a header-drag-in-progress isn't hidden out from under itself).
         const updateReveal = (e) => {
-            if (this.headerPinned) return;
+            // While dragging the bar it acts as if pinned (see _setHeaderDragging): don't let a
+            // fast drag that briefly moves the pointer off the (moving) strip hide it mid-drag.
+            if (this.headerPinned || this._headerDragging) return;
             const r = bar.bar.getBoundingClientRect();
             const inBar = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
             if (!inBar) {
@@ -415,14 +422,30 @@ class CNodeView extends CNode {
                 this._headerHovering = true; this._updateHeaderShown();
             }
         };
-        const hideReveal = () => { if (!this.headerPinned && this._headerHovering) { this._headerHovering = false; this._updateHeaderShown(); } };
+        const hideReveal = () => { if (!this.headerPinned && !this._headerDragging && this._headerHovering) { this._headerHovering = false; this._updateHeaderShown(); } };
         this.div.addEventListener('pointermove', updateReveal);
         this.div.addEventListener('pointerleave', hideReveal);
         this.div.addEventListener('pointercancel', hideReveal);
     }
 
     _updateHeaderShown() {
-        if (this.uiBar) this.uiBar.setShown(this.headerPinned || this._headerHovering);
+        if (this.uiBar) this.uiBar.setShown(this.headerPinned || this._headerHovering || this._headerDragging);
+    }
+
+    // A header drag must keep the bar visible for the whole gesture, even if the pointer
+    // briefly slips off the strip as the view follows it — otherwise an unpinned bar hides
+    // out from under the drag. So while dragging we treat the bar like a pinned one (forced
+    // shown, hover-reveal suppressed). On drag end we recompute hover from the final pointer
+    // position (the strip may have moved) so the bar settles into the right revealed state.
+    _setHeaderDragging(dragging, event) {
+        this._headerDragging = dragging;
+        if (!dragging && event && this.uiBar) {
+            const r = this.uiBar.bar.getBoundingClientRect();
+            this._headerHovering = !this.headerPinned
+                && event.clientX >= r.left && event.clientX <= r.right
+                && event.clientY >= r.top && event.clientY <= r.bottom;
+        }
+        this._updateHeaderShown();
     }
 
     setHeaderPinned(pinned) {
