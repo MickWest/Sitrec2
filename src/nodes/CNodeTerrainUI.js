@@ -1625,6 +1625,14 @@ export class CNodeTerrainUI extends CNode {
                     // Hash a few matrix elements that change on any move/rotate/zoom
                     cameraFingerprint += e[0] + e[5] + e[10] + e[12] + e[13] + e[14];
                     cameraFingerprint += view.camera.fov + view.camera.zoom;
+                    // ...AND the viewport pixel size. Screen-space LOD error is measured in
+                    // real pixels (camera._viewportHeightPx = view.heightPx in
+                    // subdivideTilesViewSpecific), so a resize WITHOUT a camera move —
+                    // fullscreen toggle, window resize, tiling layout change — still needs
+                    // finer/coarser tiles. Omitting this left the terrain coarse after
+                    // fullscreen until the camera moved. Weighted so width/height changes
+                    // can't cancel out in the sum.
+                    cameraFingerprint += (view.widthPx ?? 0) + (view.heightPx ?? 0) * 1.31;
                 }
             }
             if (cameraFingerprint !== this._lastCameraFingerprint) {

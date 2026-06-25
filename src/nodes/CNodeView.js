@@ -873,6 +873,14 @@ class CNodeView extends CNode {
     }
 
     changedSize() {
+        // A size change must (re)arm a render. Under render-on-demand a PAUSED resize that
+        // doesn't move the camera — fullscreen toggle, tiling layout change, window resize —
+        // otherwise wouldn't repaint, and (critically) the terrain LOD wouldn't re-evaluate:
+        // terrain's update() reads view.heightPx BEFORE updateWH refreshes it this frame, sees
+        // no change, and self-sleeps. Arming one more frame lets update() run again next frame
+        // with the NEW heightPx, where the viewport now feeds the subdivision fingerprint (see
+        // CNodeTerrainUI). Gated by an actual dimension change above, so no continuous render.
+        setRenderOne(true);
         if (this.renderer) {
             // For WebGL renderers: debounce renderer.setSize() to avoid flickering
             // Problem: During window resize drag gestures, widthPx/heightPx change 1-2 pixels every frame

@@ -371,6 +371,17 @@ class CameraMapControls {
 		return { pinchDelta, rotateDelta, tiltDelta };
 	}
 
+	// True when (clientX,clientY) is inside the owning view's header strip (UIBar). Used to
+	// suppress double-tap-to-zoom when the user double-clicks the header — that toggles
+	// fullscreen instead. Reads the bar's live rect, which is present even when the header is
+	// hidden (opacity:0/pointerEvents:none), so it works in both pinned and hover-reveal states.
+	pointInHeaderStrip(clientX, clientY) {
+		const bar = this.view?.uiBar?.bar;
+		if (!bar) return false;
+		const r = bar.getBoundingClientRect();
+		return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+	}
+
 	// ===== SINGLE-FINGER TAP DETECTION =====
 
 	handleSingleTap(event) {
@@ -780,8 +791,14 @@ class CameraMapControls {
 		// Check for tap gesture (left button, minimal movement) before handling context menu
 		// Don't trigger if long press was triggered
 		if (event.button === 0 && this.state === STATE.NONE && !this.isLongPressTriggered) {
-			// It was a tap gesture - check for double-tap zoom
-			this.handleSingleTap(event);
+			// It was a tap gesture - check for double-tap zoom, UNLESS the tap landed on the
+			// view's header strip (the UIBar). Double-clicking the header toggles fullscreen
+			// (handled at the document level, onDocumentDoubleClick) and must NOT zoom/recenter
+			// the camera. The strip is a thin absolute overlay that is a CHILD of the view div,
+			// so its pointerups bubble (revealed) or pass through (hidden) to here either way.
+			if (!this.pointInHeaderStrip(event.clientX, event.clientY)) {
+				this.handleSingleTap(event);
+			}
 		}
 
 		// Reset long press flag
