@@ -213,6 +213,22 @@ jobs:
 
           echo "All HTTP smoke tests passed"
 
+      - name: PHP dependency smoke test (AWS SDK vendor bundled)
+        run: |
+          # Guards against the image shipping with no PHP vendor/: every server
+          # endpoint that does `require 'vendor/autoload.php'` (S3 uploads, settings,
+          # rehost, object, metadata, getsitches, admin) fatals without it, which
+          # breaks the S3-backed storage the Docker install recommends. The HTTP and
+          # Playwright checks never exercise those endpoints, so assert here that the
+          # SDK is present and autoloads inside the running container.
+          docker exec sitrec-smoke test -f /var/www/html/sitrecServer/vendor/autoload.php \
+            && echo "✓ sitrecServer/vendor/autoload.php present" \
+            || { echo "✗ Missing sitrecServer/vendor/ (composer install did not run in the image)"; exit 1; }
+
+          docker exec sitrec-smoke php -r 'require "/var/www/html/sitrecServer/vendor/autoload.php"; exit((class_exists("Aws\\S3\\S3Client") && class_exists("GuzzleHttp\\Client")) ? 0 : 1);' \
+            && echo "✓ AWS SDK + Guzzle autoload" \
+            || { echo "✗ AWS SDK / Guzzle did not autoload from the image"; exit 1; }
+
       - name: Legacy port-80 back-compat smoke test
         run: |
           # Older installs (pre-8080) map the host to the container's legacy
