@@ -14,8 +14,8 @@
 // shared hover state (_hoverSeg/_hoverNum) lives on the manager because the
 // timeline widget reads/writes it too.
 
-import {makeDraggable, blockViewEvents, clampBelowMenuBar} from "../DragResizeUtils";
-import {CUIBar} from "../CUIBar";
+import {blockViewEvents, clampBelowMenuBar} from "../DragResizeUtils";
+import {CNodeView} from "../nodes/CNodeView";
 import {CustomManager, guiMenus, markSitchDirty, NodeMan, TrackManager} from "../Globals";
 import {VIEW_MAP} from "./ScriptCommands";
 import {
@@ -48,18 +48,33 @@ await wait(2);`;
 // keys that move the text cursor (used to sync the timeline to the cursor's line)
 const NAV_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
 
-export class CScriptEditorWindow {
+export class CScriptEditorWindow extends CNodeView {
     constructor(sv) {
+        // A tileable view: it registers in ViewMan and joins the seam/layout system, hosting the
+        // editor content below the standard CUIBar header. Hidden until opened from the Video menu.
+        super({
+            id: "scriptEditor",
+            menuName: "Scripted Video",      // CUIBar title
+            draggable: true, resizable: true, freeAspect: true,
+            visible: false,
+            alwaysOnTop: true,               // a tool window — keep it above the other views
+            left: 0.04, top: 0.10, width: 0.32, height: 0.62,
+            excludeFromViewsMenu: true,
+        });
+        this.panel = this.div;       // alias — the view div IS the editor panel
         this.sv = sv;                // the CScriptedVideoManager
-        this.panel = null;           // the floating in-page window
         this.external = null;        // popped-out browser window (or null)
         this.textarea = null;
         this.backdrop = null;
         this.statusEl = null;
         this.detailEl = null;
-        this._content = null;        // movable editor content (panel <-> popup)
+        this._content = null;        // movable editor content (view div <-> popup)
         this._palette = null;
         this._charW = null;          // cached character width for hover hit-testing
+        // A runtime tool window, NOT sitch content — never serialize it. (If it were saved, the
+        // node-graph factory would recreate it via new CScriptEditorWindow(nodeDef), with no
+        // manager reference.) The manager wires + builds it via ensureEditor() on first use.
+        this.modSerialize = undefined;
     }
 
     // current script text (used by the parser; falls back to the demo script)
@@ -70,8 +85,7 @@ export class CScriptEditorWindow {
 
     // is the editor visible anywhere (in-page panel shown, or popped out)?
     isOpen() {
-        return (this.panel && this.panel.style.display !== "none")
-            || (this.external && !this.external.closed);
+        return !!this.visible || (this.external && !this.external.closed);
     }
 
     setStatus(text) {
@@ -90,39 +104,24 @@ export class CScriptEditorWindow {
     // -----------------------------------------------------------------------
 
     build() {
-        const panel = document.createElement("div");
-        panel.style.cssText = `position:fixed; top:70px; left:70px; width:400px; height:440px;
-            min-width:280px; min-height:240px; display:none; flex-direction:column;
-            background:rgba(20,24,29,0.96); color:#eef2f6; border:1px solid rgba(255,255,255,0.15);
-            border-radius:9px; box-shadow:0 14px 40px rgba(0,0,0,0.5); overflow:hidden; resize:both; z-index:2000;`;
+        // The view div + CUIBar header (title "Scripted Video", ⛶/pin/✕) were created by the
+        // CNodeView base constructor — and the base also wires the header drag-handle, Q-body-
+        // drag and edge-resize. Here we just fill the editor content in below the header strip.
+        this.div.style.background = 'rgba(20,24,29,0.96)';
+        this.div.style.color = '#eef2f6';
+        blockViewEvents(this.div);               // don't let editor clicks leak to the 3D view
 
-        // Header: the SAME CUIBar the views use (title menu + ✕), instead of a bespoke header —
-        // so this floating tool window shares the consolidated chrome. CUIBar defaults to an
-        // absolute hover-reveal overlay (for view canvases); here we lay it in-flow as a pinned
-        // header strip that takes its own space at the top, and the whole bar is the drag handle.
-        const bar = new CUIBar(panel, {title: "Scripted Video"});
-        bar.bar.style.position = "relative";
-        bar.bar.style.flex = "0 0 auto";
-        bar.setShown(true);                       // a standalone window header is always visible
-        bar.addCloseIcon(() => this.hide());
-        this.uiBar = bar;
-
-        // movable content container (adopted into a popup when popped out)
         const content = this._buildEditorContent();
         this._content = content;
+        content.style.position = 'absolute';
+        content.style.inset = 'var(--sitrec-header-h, 26px) 0 0 0';   // fill below the header
+        this.div.appendChild(content);
+    }
 
-        panel.appendChild(content);               // the CUIBar is already panel's first child
-        document.body.appendChild(panel);
-        this.panel = panel;
-
-        // make it draggable by the header bar, and don't let the 3D view eat mouse events.
-        // The bar's icons/menu stopPropagation on pointerdown, so clicking ✕ doesn't start a
-        // drag. Dragging it up under the menu bar closes it (re-opening drops it back below).
-        blockViewEvents(panel);
-        makeDraggable(panel, { handle: bar.bar, closeOnDragOffTop: () => this.hide() });
-
-        // redraw timeline when the window is resized
-        try { new ResizeObserver(() => this.sv.timeline.draw()).observe(panel); } catch (e) {}
+    // Re-fit the timeline canvas whenever the view resizes (base fires changedSize on any resize).
+    changedSize() {
+        super.changedSize();
+        this.sv?.timeline?.draw();
     }
 
     // The editor content (toolbar + textarea + status + timeline) as a single div so it
@@ -580,25 +579,33 @@ export class CScriptEditorWindow {
     // SHOW / HIDE / POPOUT
     // -----------------------------------------------------------------------
 
-    show() {
-        if (this.external && !this.external.closed) { this.external.focus(); return; }
-        if (this.panel) {
-            this.panel.style.display = "flex";
-            clampBelowMenuBar(this.panel);   // never re-open off the top of the screen
-            this.sv.parse();
-            setTimeout(() => { this.sv.timeline.draw(); this._renderBackdrop(); }, 0);
+    // Single visibility hook — the base show()/hide() both route through setVisible(). Opening
+    // parses + draws the timeline; closing leaves preview mode. While popped out to a separate
+    // window, the in-page view stays closed (focus the popup instead).
+    setVisible(visible) {
+        if (visible && this.external && !this.external.closed) {
+            this.external.focus();
+            visible = false;                 // never open in-page while the popup is up
+        }
+        if (!visible && this.visible) {
+            this.sv?._exitAllModes?.();      // closing the editor leaves preview mode
+        }
+        super.setVisible(visible);
+        if (visible) {
+            clampBelowMenuBar(this.div);     // never open off the top of the screen
+            this.sv?.parse?.();
+            setTimeout(() => { this.sv?.timeline?.draw?.(); this._renderBackdrop(); }, 0);
         }
     }
 
     hide() {
         if (this.external && !this.external.closed) { this.dockWindow(); return; }
-        this.sv._exitAllModes();   // closing the editor leaves preview mode
-        if (this.panel) this.panel.style.display = "none";
+        super.hide();                        // → setVisible(false)
     }
 
     toggle() {
         if (this.external && !this.external.closed) { this.external.focus(); return; }
-        if (this.panel) (this.panel.style.display === "none" ? this.show() : this.hide());
+        this.setVisible(!this.visible);
     }
 
     _togglePopout() {
@@ -614,9 +621,12 @@ export class CScriptEditorWindow {
         this.external = win;
         try { win.document.title = "Sitrec — Scripted Video"; } catch (e) {}
         win.document.body.style.cssText = "margin:0; background:#14181d; color:#eef2f6; height:100vh; display:flex; flex-direction:column; overflow:hidden;";
+        // In the popup the content fills the whole window — drop the in-page header offset.
+        this._content.style.position = '';
+        this._content.style.inset = '';
         win.document.body.appendChild(win.document.adoptNode(this._content));
         this._charW = null;   // remeasure in the popup (zoom/DPI may differ)
-        if (this.panel) this.panel.style.display = "none";
+        super.setVisible(false);   // in-page view closed for layout (popup now shows the editor)
         this.sv.timeline.attachKeyZoom(win);
         win.addEventListener("resize", () => this.sv.timeline.draw());
         this._setPopoutLabel(true);
@@ -648,13 +658,17 @@ export class CScriptEditorWindow {
     _dockFromExternal() {
         if (this._extPoll) { clearInterval(this._extPoll); this._extPoll = null; }
         if (this._content && this._content.ownerDocument !== document) {
-            this.panel.appendChild(document.adoptNode(this._content));
+            this.div.appendChild(document.adoptNode(this._content));
+            // restore the in-page positioning (fill below the CUIBar header strip)
+            this._content.style.position = 'absolute';
+            this._content.style.inset = 'var(--sitrec-header-h, 26px) 0 0 0';
         }
         this._charW = null;   // remeasure back in the main document
         this.external = null;
         this._setPopoutLabel(false);
-        // explicit Dock shows the panel; closing the popup just parks it hidden
-        if (this.panel) this.panel.style.display = this._dockShow ? "flex" : "none";
+        // explicit Dock re-opens the in-page view; closing the popup just parks it hidden/closed.
+        if (this._dockShow) this.setVisible(true);
+        else super.setVisible(false);
         this._dockShow = false;
         setTimeout(() => this.sv.timeline.draw(), 60);
     }

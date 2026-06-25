@@ -84,16 +84,18 @@ class CScriptedVideoManager {
         this._selectedEventLine = null;
         this._selectedEventType = null;
 
-        // UI components (built in setupMenu)
+        // UI components. The timeline widget persists with the manager; the editor is now a
+        // CNodeView (sitch-scoped — disposed on sitch reload), so it is (re)created per sitch in
+        // setupMenu rather than once here.
         this.timeline = new CScriptTimelineWidget(this);
-        this.editor = new CScriptEditorWindow(this);
+        this.editor = null;
     }
 
     // -----------------------------------------------------------------------
     // SCRIPT MODEL  (parse + queries — the language lives in scriptedVideo/)
     // -----------------------------------------------------------------------
 
-    getScriptText() { return this.editor.getText(); }
+    getScriptText() { return this.ensureEditor().getText(); }
 
     // Run the script's scheduling pass and commit the resulting model. Async
     // because the script is JS (executed once, record-only, virtual clock) —
@@ -408,6 +410,7 @@ class CScriptedVideoManager {
         // hide every root view not in the layout. Overlay children follow parents.
         this._previewHidden = this._previewHidden || [];
         ViewMan.iterate((vid, v) => {
+            if (vid === "scriptEditor") return;   // the editor window stays open (and on top) during preview
             if (layout[vid]) return;
             if (v.overlayView && !v.separateVisibility) return;
             if (v.visible && typeof v.setVisible === "function") {
@@ -744,10 +747,25 @@ class CScriptedVideoManager {
     // -----------------------------------------------------------------------
 
     drawTimeline() { this.timeline.draw(); }
-    setStatus(text) { this.editor.setStatus(text); }
-    showWindow() { this.editor.show(); }
-    hideWindow() { this.editor.hide(); }
-    toggleWindow() { this.editor.toggle(); }
+    setStatus(text) { this.editor?.setStatus(text); }
+    showWindow() { this.ensureEditor().show(); }
+    hideWindow() { this.editor?.hide(); }
+    toggleWindow() { this.ensureEditor().toggle(); }
+
+    // The editor is a CNodeView, so it's disposed when the sitch reloads. Recreate it lazily
+    // (registering a fresh 'scriptEditor' view, content built in its constructor) whenever it's
+    // missing or has been disposed — the persistent manager outlives any single sitch.
+    ensureEditor() {
+        // The editor is a sitch-scoped CNodeView (disposed on reload). Reuse the registered view
+        // if present (never double-register the id), (re)wire this manager into it, and build its
+        // content lazily on first use.
+        let ed = ViewMan.get("scriptEditor", false);
+        if (!ed) ed = new CScriptEditorWindow(this);
+        ed.sv = this;
+        if (!ed._content) ed.build();
+        this.editor = ed;
+        return ed;
+    }
     stopAll() { this._exitAllModes(); }
 
     async doParse() {
@@ -767,13 +785,14 @@ class CScriptedVideoManager {
 
     setupMenu() {
         if (!guiMenus.video) return;
-        this.editor.build();
+        // The editor is a CNodeView (disposed on sitch reload), created lazily on first use via
+        // ensureEditor() — nothing to build here.
         this.timeline.attachKeyZoom(window);
 
         const folder = guiMenus.video.addFolder("Scripted Video").close().perm();
         folder.add({ open: () => this.toggleWindow() }, "open").name("Script Window…").perm()
             .tooltip("Open/close the in-page Scripted Video script editor window.");
-        folder.add({ pop: () => this.editor.openExternalWindow() }, "pop").name("Script Window (New Window)").perm()
+        folder.add({ pop: () => this.ensureEditor().openExternalWindow() }, "pop").name("Script Window (New Window)").perm()
             .tooltip("Open the script editor in a separate browser window (drag it to another monitor).");
         folder.add({ render: () => this.renderVideo() }, "render").name("Render Video (1080P60)").perm();
 
