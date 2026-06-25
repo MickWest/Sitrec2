@@ -61,6 +61,20 @@ ENV DOCKER_BUILD=true
 RUN npm run deploy
 
 
+# --- PHP dependencies (AWS SDK for S3, Guzzle) -------------------------------
+# composer.json/composer.lock ship in sitrecServer, but vendor/ is gitignored and
+# never committed — so it must be built into the image. Without it, every PHP
+# endpoint that does `require 'vendor/autoload.php'` (S3 uploads, settings, rehost,
+# object, metadata, getsitches, admin) fatals. Built from the committed lock.
+# --ignore-platform-reqs: install exactly what the lock pins; the runtime
+# php:8.4-apache below provides the extensions S3 actually uses (curl, json,
+# simplexml, mbstring, openssl) and the only lock exts it lacks are optional
+# (awscrt/pcntl/sockets/intl), unused here.
+FROM composer:2 AS phpdeps
+WORKDIR /sitrecServer
+COPY sitrecServer/composer.json sitrecServer/composer.lock ./
+RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-progress --ignore-platform-reqs
+
 # The second stage is to build the image
 # We're using the official PHP 8.4 image with Apache
 # This is the image that will be used to run the app
@@ -74,6 +88,10 @@ RUN apt-get update && apt-get install -y libzip-dev libonig-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /build/dist /var/www/html
+
+# vendor/ (AWS SDK etc.) is gitignored, so the built dist carries composer.json/lock
+# but no vendor — add the PHP dependencies built in the phpdeps stage above.
+COPY --from=phpdeps /sitrecServer/vendor /var/www/html/sitrecServer/vendor
 
 WORKDIR /var/www/html
 
