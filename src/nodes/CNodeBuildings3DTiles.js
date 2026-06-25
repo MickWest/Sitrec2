@@ -434,8 +434,29 @@ export class CNodeBuildings3DTiles extends CNode {
         return edited;
     }
 
+    // Non-destructive hover preview: hide the triangles the brush covers across
+    // every view's renderer and collect their edges for the wireframe ghost.
+    // Returns a flat [x,y,z,...] array of world-space line-segment positions.
+    previewManualBrush(worldCenter, radius) {
+        const positions = [];
+        for (const pv of Object.values(this._perView)) {
+            if (pv.treeFlattener) pv.treeFlattener.previewBrush(worldCenter, radius, positions);
+        }
+        return positions;
+    }
+
+    // Restore any geometry hidden by previewManualBrush across all views.
+    clearManualBrushPreview() {
+        let restored = false;
+        for (const pv of Object.values(this._perView)) {
+            if (pv.treeFlattener) restored = pv.treeFlattener._restorePreview() || restored;
+        }
+        return restored;
+    }
+
     // Restore every modified tile in every view to its original geometry.
     restoreTreeFlatten() {
+        if (this.manualBrush) this.manualBrush.hidePreview(); // drop any hover ghost first
         for (const pv of Object.values(this._perView)) {
             if (pv.treeFlattener) pv.treeFlattener.restoreAll();
         }

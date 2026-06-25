@@ -12,24 +12,30 @@
 // off — or the press isn't over a tile hit — we do nothing and let the normal
 // camera controls run, so the user can still orbit by dragging empty space.
 //
-// While Manual Edit is on, a 25%-transparent wireframe sphere tracks the cursor
-// at the brush radius so the user can see exactly what will be edited. It is
-// refreshed on pointer-move and once per frame (refreshPreview, called from the
-// buildings node) so it also follows the surface as the camera orbits with the
-// mouse held still.
+// HOVER PREVIEW. While hovering (not yet painting) the brush shows a live
+// "ghost" of the geometry it would affect — those triangles are temporarily
+// hidden from the solid tiles (cheap + reversible) and redrawn as wireframe line
+// segments. It updates as the cursor / camera move and is fully restored when
+// the brush moves away, the window loses focus, or Manual Edit is turned off.
+// Nothing is committed until a click.
 //
 // Mouse coordinates are tracked HERE (this._sx/_sy) rather than read from the
 // global getMousePosition(): while painting we stopPropagation(), which stops
 // Sitrec's own move handler from updating that global, leaving it stale. A stale
-// position can re-pick in the OTHER view (different camera → large offset), which
-// previously caused the preview to jump/flicker mid-stroke.
+// position can re-pick in the OTHER view (different camera → large offset).
 //
 // Raycasting is done against the per-view TilesRenderer group of whichever view
 // the cursor is over; the resulting world-space hit point + brush radius are
-// handed to the buildings node, which applies the edit to every per-view
-// renderer so both the main and look views stay consistent.
+// handed to the buildings node, which applies the edit (and the preview) to every
+// per-view renderer so both the main and look views stay consistent.
 
-import {Mesh, MeshBasicMaterial, Raycaster, SphereGeometry} from "three";
+import {
+    BufferAttribute,
+    BufferGeometry,
+    LineBasicMaterial,
+    LineSegments,
+    Raycaster,
+} from "three";
 import {ViewMan} from "./CViewManager";
 import {mouseInViewOnly} from "./ViewUtils";
 import {GlobalScene} from "./LocalFrame";
@@ -48,33 +54,34 @@ export class TreeManualBrush {
         this.overCanvas = false; // is the cursor currently over a render canvas?
         this._sx = 0;            // our own tracked pointer position (screen coords)
         this._sy = 0;
+        this._lastFp = null;     // fingerprint of mouse+cameras, to skip idle rebuilds
+        this._previewActive = false; // is a geometry "ghost" preview currently applied?
 
-        // Wireframe preview sphere — unit radius, scaled to the brush radius.
-        // depthTest off so the whole sphere reads as an overlay gizmo regardless
-        // of where it sits relative to the tiles; raycast no-op so it never
-        // interferes with any picking (including our own brush ray). Its layer
-        // mask is set per-pick to the hovered view only.
-        const geo = new SphereGeometry(1, 24, 16);
-        const mat = new MeshBasicMaterial({
-            color: 0x00ff88,
-            wireframe: true,
+        // "Ghost" wireframe of the affected (would-be-removed) triangles, drawn in
+        // world space at their original positions. depthTest on so it sits in the
+        // scene where the removed geometry was; shown in both views.
+        const wireGeo = new BufferGeometry();
+        wireGeo.setAttribute("position", new BufferAttribute(new Float32Array(0), 3));
+        const wireMat = new LineBasicMaterial({
+            color: 0x66ffcc,
             transparent: true,
-            opacity: 0.1, // 10% opacity
-            depthTest: false,
+            opacity: 0.85,
+            depthTest: true,
             depthWrite: false,
         });
-        this.brushMesh = new Mesh(geo, mat);
-        this.brushMesh.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
-        this.brushMesh.renderOrder = 999;
-        this.brushMesh.visible = false;
-        this.brushMesh.raycast = () => {};
-        GlobalScene.add(this.brushMesh);
+        this.wireMesh = new LineSegments(wireGeo, wireMat);
+        this.wireMesh.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
+        this.wireMesh.renderOrder = 998;
+        this.wireMesh.frustumCulled = false;
+        this.wireMesh.visible = false;
+        this.wireMesh.raycast = () => {};
+        GlobalScene.add(this.wireMesh);
 
         this._onPointerDown = (e) => this.onPointerDown(e);
         this._onPointerMove = (e) => this.onPointerMove(e);
         this._onPointerUp = (e) => this.onPointerUp(e);
         // Hide the preview as soon as the window loses focus (e.g. alt-tab) — a
-        // stale sphere sitting in an unfocused window is just noise.
+        // stale ghost sitting in an unfocused window is just noise.
         this._onBlur = () => { this.painting = false; this.hidePreview(); };
         document.addEventListener("pointerdown", this._onPointerDown, true);
         document.addEventListener("pointermove", this._onPointerMove, true);
@@ -103,10 +110,10 @@ export class TreeManualBrush {
     //     to an offscreen target and shows a magnified central crop, so the live
     //     camera projection is ~2x too wide for picking. prepareCameraForLOD() /
     //     restoreCameraAfterLOD() set the camera to exactly the displayed
-    //     projection (full videoZoom + fov-coverage + pan + yCompress) — it's the
-    //     same setup the terrain LOD uses to match what the user sees. We bracket
-    //     the unproject with it and restore immediately. For the main view this is
-    //     just the ordinary projection, so it's correct there too.
+    //     projection (full videoZoom + fov-coverage + pan + yCompress) — the same
+    //     setup the terrain LOD uses to match what the user sees. We bracket the
+    //     unproject with it and restore immediately. For the main view this is just
+    //     the ordinary projection, so it's correct there too.
     pick(screenX, screenY) {
         let best = null, bestZ = -Infinity, bestRect = null;
         for (const id of BRUSH_VIEW_IDS) {
@@ -147,6 +154,23 @@ export class TreeManualBrush {
         return {point: hits[0].point, mask: cam.layers.mask};
     }
 
+    // Cheap fingerprint of everything that moves the hit point: the pointer
+    // position and both candidate cameras. Used to skip the per-frame rebuild
+    // when nothing has changed (otherwise the preview would re-pick + re-edit
+    // geometry every frame and never let the render loop sleep).
+    _fingerprint() {
+        let fp = this._sx * 7919 + this._sy * 104729;
+        for (const id of BRUSH_VIEW_IDS) {
+            const v = ViewMan.get(id, false);
+            if (v && v.camera) {
+                const e = v.camera.matrixWorld.elements;
+                fp += e[12] + e[13] * 1.7 + e[14] * 2.3 + e[0] * 5.1 + e[6] * 9.3
+                    + (v.camera.fov || 0) + (v.camera.zoom || 0);
+            }
+        }
+        return fp;
+    }
+
     onPointerDown(e) {
         if (!this.active || e.button !== 0) return;
         // Only paint when the press lands on a render canvas — never hijack a
@@ -155,11 +179,13 @@ export class TreeManualBrush {
         // lil-gui's own handlers, so this guard is what keeps the menu usable.
         if (!(e.target instanceof HTMLCanvasElement)) return;
         this._sx = e.clientX; this._sy = e.clientY;
+        // Restore the hover ghost so the pick + commit see the real geometry.
+        this._clearGhost();
         const hit = this.pick(e.clientX, e.clientY);
-        this.showPreviewAt(hit);
-        if (!hit) return; // no tile hit → let the camera controls have the drag
+        if (!hit) { this.hidePreview(); return; } // no tile hit → camera gets the drag
         this.painting = true;
         this.applyAt(hit.point);
+        setRenderOne(true);
         // Own this stroke: block the view's camera-drag / selection handlers.
         e.stopPropagation();
         e.preventDefault();
@@ -174,15 +200,12 @@ export class TreeManualBrush {
             if (this.painting) e.stopPropagation();
             return;
         }
-        const hit = this.pick(e.clientX, e.clientY);
-        this.showPreviewAt(hit);
+        this._lastFp = this._fingerprint();
+        const hit = this._hover(e.clientX, e.clientY);
         if (this.painting) {
             if (hit) this.applyAt(hit.point);
             e.stopPropagation();
         }
-        // Hover doesn't otherwise wake the render-on-demand loop, so request a
-        // redraw to keep the preview tracking the cursor.
-        setRenderOne(true);
     }
 
     onPointerUp(e) {
@@ -193,32 +216,74 @@ export class TreeManualBrush {
 
     // Per-frame refresh (called from the buildings node update) so the preview
     // follows the surface as the camera orbits with the mouse held still. Skips
-    // during a stroke — the pointer-move handler drives the preview then, and the
-    // global mouse position is stale anyway because we stopPropagation().
+    // during a stroke (the pointer-move handler drives it then) and when nothing
+    // has moved since the last refresh, so the render loop can settle.
     refreshPreview() {
         if (!this.active || !this.overCanvas || this.painting || !document.hasFocus()) {
             if (!this.active || !document.hasFocus()) this.hidePreview();
             return;
         }
-        this.showPreviewAt(this.pick(this._sx, this._sy));
+        const fp = this._fingerprint();
+        if (fp === this._lastFp) return;
+        this._lastFp = fp;
+        this._hover(this._sx, this._sy);
     }
 
-    showPreviewAt(hit) {
-        if (!hit) { this.hidePreview(); return; }
-        const radius = this.buildingsNode.treeFlattenParams.brushRadius;
-        this.brushMesh.position.copy(hit.point);
-        this.brushMesh.scale.setScalar(radius);
-        this.brushMesh.layers.mask = hit.mask; // show only in the hovered view
-        if (!this.brushMesh.visible) this.brushMesh.visible = true;
-        this.brushMesh.updateMatrixWorld();
+    // Restore the previous ghost, pick on clean geometry (so the hit doesn't
+    // oscillate through the hole the ghost would leave), then build the new
+    // ghost. Returns the hit (or null).
+    _hover(screenX, screenY) {
+        this._clearGhost();
+        const hit = this.pick(screenX, screenY);
+        if (!hit) { this.hidePreview(); return null; }
+        // Hide + wireframe the affected triangles (skip while painting — the real
+        // edit is happening and is visible on its own).
+        if (!this.painting) {
+            const radius = this.buildingsNode.treeFlattenParams.brushRadius;
+            const positions = this.buildingsNode.previewManualBrush(hit.point, radius);
+            this._setGhost(positions);
+        }
         setRenderOne(true);
+        return hit;
+    }
+
+    // Update the ghost wireframe line segments from a flat [x,y,z,...] array.
+    // Uses a growable persistent buffer + drawRange so we don't churn GPU
+    // buffers each hover. The mesh is frustumCulled=false, so no bounding sphere
+    // is needed (stale tail data past drawRange is never drawn).
+    _setGhost(positions) {
+        const n = positions.length;
+        this._previewActive = n > 0;
+        if (n === 0) {
+            this.wireMesh.visible = false;
+            return;
+        }
+        const geo = this.wireMesh.geometry;
+        let attr = geo.getAttribute("position");
+        if (!attr || attr.array.length < n) {
+            const cap = Math.max(n, attr ? attr.array.length * 2 : 0, 6 * 512);
+            attr = new BufferAttribute(new Float32Array(cap), 3);
+            geo.setAttribute("position", attr);
+        }
+        attr.array.set(positions);
+        attr.needsUpdate = true;
+        geo.setDrawRange(0, n / 3);
+        this.wireMesh.visible = true;
+    }
+
+    // Restore the solid geometry hidden by the ghost and clear the wireframe.
+    _clearGhost() {
+        if (this.wireMesh.visible) this.wireMesh.visible = false;
+        if (this._previewActive) {
+            this.buildingsNode.clearManualBrushPreview();
+            this._previewActive = false;
+        }
     }
 
     hidePreview() {
-        if (this.brushMesh.visible) {
-            this.brushMesh.visible = false;
-            setRenderOne(true);
-        }
+        const wasVisible = this.wireMesh.visible || this._previewActive;
+        this._clearGhost();
+        if (wasVisible) setRenderOne(true);
     }
 
     applyAt(point) {
@@ -231,11 +296,12 @@ export class TreeManualBrush {
         document.removeEventListener("pointermove", this._onPointerMove, true);
         document.removeEventListener("pointerup", this._onPointerUp, true);
         window.removeEventListener("blur", this._onBlur);
-        if (this.brushMesh) {
-            GlobalScene.remove(this.brushMesh);
-            this.brushMesh.geometry.dispose();
-            this.brushMesh.material.dispose();
-            this.brushMesh = null;
+        this._clearGhost();
+        if (this.wireMesh) {
+            GlobalScene.remove(this.wireMesh);
+            this.wireMesh.geometry.dispose();
+            this.wireMesh.material.dispose();
+            this.wireMesh = null;
         }
         this.buildingsNode = null;
     }

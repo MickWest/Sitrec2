@@ -733,12 +733,19 @@ export class TreeFlattener {
         this.params = params;
         this.renderer = renderer;
         this.modified = new Set(); // meshes with a stashed ORIGINAL_GEOMETRY
+        // Transient manual-brush HOVER preview state: mesh -> {geometry, tris}.
+        // `tris` is a flat [triIndex, i0, i1, i2, ...] log of index entries we
+        // collapsed to degenerate (to hide them) so they can be restored. Kept
+        // entirely separate from the committed ORIGINAL_GEOMETRY backup.
+        this._preview = new Map();
 
         // Free backup clones when a tile is evicted, so they don't leak as the
         // camera moves through Google's constant LOD re-tiling.
         this._onDisposeModel = ({scene}) => {
             scene.traverse(child => {
-                if (child.isMesh && child[ORIGINAL_GEOMETRY]) {
+                if (!child.isMesh) return;
+                this._preview.delete(child); // ghost geometry is going away anyway
+                if (child[ORIGINAL_GEOMETRY]) {
                     child[ORIGINAL_GEOMETRY].dispose();
                     child[ORIGINAL_GEOMETRY] = undefined;
                     child[PROCESSED_HASH] = undefined;
@@ -910,10 +917,134 @@ export class TreeFlattener {
         return edited;
     }
 
+    // Manual-brush HOVER preview (non-destructive). For every loaded mesh near
+    // the brush, temporarily HIDE the triangles the brush covers (>=2 verts in
+    // the sphere — the same set delete would remove) by collapsing them to a
+    // degenerate (zero-area) triangle, and append their edges (world space,
+    // original positions) to `posOut` for a wireframe "ghost".
+    //
+    // Cheap and fully reversible via _restorePreview(), never touching the
+    // committed backup. Handles both layouts (Google tiles are NON-indexed):
+    //   • indexed     → collapse the 3 index entries to one vertex (save them).
+    //   • non-indexed → collapse the triangle's two trailing vertex positions
+    //                   onto the first (save the originals). Safe because
+    //                   non-indexed vertices aren't shared between triangles.
+    // Caller must _restorePreview() before the next pick/commit.
+    previewBrush(worldCenter, radius, posOut) {
+        const invWorld = new Matrix4();
+        const localCenter = new Vector3();
+        const wa = new Vector3(), wb = new Vector3(), wc = new Vector3();
+        this.renderer.forEachLoadedModel((scene) => {
+            scene.traverse((mesh) => {
+                if (!mesh.isMesh || !mesh.geometry) return;
+                const geometry = mesh.geometry;
+                const posAttr = geometry.attributes.position;
+                if (!posAttr) return;
+                const index = geometry.index;
+                const idx = index ? index.array : null;
+
+                mesh.updateWorldMatrix(true, false);
+                invWorld.copy(mesh.matrixWorld).invert();
+                localCenter.copy(worldCenter).applyMatrix4(invWorld);
+                const e = mesh.matrixWorld.elements;
+                const s = Math.hypot(e[0], e[1], e[2]) || 1;
+                const localRadius = radius / s;
+                const r2 = localRadius * localRadius;
+
+                geometry.boundingSphere || geometry.computeBoundingSphere();
+                const bs = geometry.boundingSphere;
+                if (bs && localCenter.distanceTo(bs.center) > bs.radius + localRadius) return;
+
+                const pos = posAttr.array;
+                const triCount = idx ? (idx.length / 3) | 0 : (posAttr.count / 3) | 0;
+                const within = (vi) => {
+                    const x = pos[vi * 3] - localCenter.x;
+                    const y = pos[vi * 3 + 1] - localCenter.y;
+                    const z = pos[vi * 3 + 2] - localCenter.z;
+                    return x * x + y * y + z * z <= r2;
+                };
+
+                let entries = null;
+                for (let t = 0; t < triCount; t++) {
+                    const a = idx ? idx[t * 3] : t * 3;
+                    const b = idx ? idx[t * 3 + 1] : t * 3 + 1;
+                    const c = idx ? idx[t * 3 + 2] : t * 3 + 2;
+                    const cnt = (within(a) ? 1 : 0) + (within(b) ? 1 : 0) + (within(c) ? 1 : 0);
+                    if (cnt < 2) continue;
+                    if (!entries) entries = [];
+
+                    // Wireframe edges from the ORIGINAL positions (before collapse).
+                    wa.set(pos[a * 3], pos[a * 3 + 1], pos[a * 3 + 2]).applyMatrix4(mesh.matrixWorld);
+                    wb.set(pos[b * 3], pos[b * 3 + 1], pos[b * 3 + 2]).applyMatrix4(mesh.matrixWorld);
+                    wc.set(pos[c * 3], pos[c * 3 + 1], pos[c * 3 + 2]).applyMatrix4(mesh.matrixWorld);
+                    posOut.push(
+                        wa.x, wa.y, wa.z, wb.x, wb.y, wb.z,
+                        wb.x, wb.y, wb.z, wc.x, wc.y, wc.z,
+                        wc.x, wc.y, wc.z, wa.x, wa.y, wa.z,
+                    );
+
+                    if (idx) {
+                        entries.push(t, a, b, c);
+                        idx[t * 3] = a; idx[t * 3 + 1] = a; idx[t * 3 + 2] = a;
+                    } else {
+                        // Save b & c originals (vertexIndex + xyz), collapse onto a.
+                        entries.push(
+                            b, pos[b * 3], pos[b * 3 + 1], pos[b * 3 + 2],
+                            c, pos[c * 3], pos[c * 3 + 1], pos[c * 3 + 2],
+                        );
+                        const ax = pos[a * 3], ay = pos[a * 3 + 1], az = pos[a * 3 + 2];
+                        pos[b * 3] = ax; pos[b * 3 + 1] = ay; pos[b * 3 + 2] = az;
+                        pos[c * 3] = ax; pos[c * 3 + 1] = ay; pos[c * 3 + 2] = az;
+                    }
+                }
+                if (entries) {
+                    this._preview.set(mesh, {geometry, indexed: !!idx, entries});
+                    if (idx) index.needsUpdate = true;
+                    else posAttr.needsUpdate = true;
+                }
+            });
+        });
+    }
+
+    // Undo previewBrush(): write the saved index/position entries back. Returns
+    // true if anything was restored.
+    _restorePreview() {
+        let restored = false;
+        for (const [mesh, rec] of this._preview) {
+            const geom = rec.geometry;
+            if (mesh.geometry !== geom) continue; // geometry swapped / evicted
+            const ent = rec.entries;
+            if (rec.indexed) {
+                if (!geom.index) continue;
+                const idx = geom.index.array;
+                for (let k = 0; k < ent.length; k += 4) {
+                    const t = ent[k];
+                    idx[t * 3] = ent[k + 1];
+                    idx[t * 3 + 1] = ent[k + 2];
+                    idx[t * 3 + 2] = ent[k + 3];
+                }
+                geom.index.needsUpdate = true;
+            } else {
+                const pos = geom.attributes.position.array;
+                for (let k = 0; k < ent.length; k += 4) {
+                    const vi = ent[k];
+                    pos[vi * 3] = ent[k + 1];
+                    pos[vi * 3 + 1] = ent[k + 2];
+                    pos[vi * 3 + 2] = ent[k + 3];
+                }
+                geom.attributes.position.needsUpdate = true;
+            }
+            restored = true;
+        }
+        this._preview.clear();
+        return restored;
+    }
+
     dispose() {
         if (this.renderer && this._onDisposeModel) {
             this.renderer.removeEventListener("dispose-model", this._onDisposeModel);
         }
+        this._restorePreview();
         // Restore originals so disposing the renderer frees the right geometries.
         for (const mesh of [...this.modified]) this._restoreMesh(mesh);
         this.modified.clear();
