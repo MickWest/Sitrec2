@@ -495,6 +495,10 @@ export function makeDraggable(element, options = {}) {
         // Add global event listeners using pointer events for better off-screen support
         document.addEventListener('pointermove', onPointerMove);
         document.addEventListener('pointerup', onPointerUp);
+        // pointercancel: the gesture can be aborted (OS / browser / touch takeover) with NO
+        // pointerup to follow — end the drag there too so state, listeners and onDragEnd don't
+        // get left dangling.
+        document.addEventListener('pointercancel', onPointerCancel);
     };
 
     const onPointerMove = (e) => {
@@ -562,6 +566,7 @@ export function makeDraggable(element, options = {}) {
             if (willCloseOffTop(element, handleElement)) {
                 document.removeEventListener('pointermove', onPointerMove);
                 document.removeEventListener('pointerup', onPointerUp);
+                document.removeEventListener('pointercancel', onPointerCancel);
                 options.closeOnDragOffTop({
                     left: parseFloat(element.style.left) || 0,
                     top: parseFloat(element.style.top) || 0,
@@ -588,6 +593,35 @@ export function makeDraggable(element, options = {}) {
         // Remove global event listeners
         document.removeEventListener('pointermove', onPointerMove);
         document.removeEventListener('pointerup', onPointerUp);
+        document.removeEventListener('pointercancel', onPointerCancel);
+    };
+
+    // Pointer interaction interrupted (OS / browser / touch takeover): per the Pointer Events
+    // spec no pointerup follows, so without this the drag is left half-finished — isDragging
+    // stuck true, document listeners orphaned, and onDragEnd never fired (so a consumer's drag
+    // flag, e.g. CNodeView._headerDragging, stays stuck → bar permanently shown). End the drag
+    // like pointerup, but WITHOUT the closeOnDragOffTop close action (a cancel is an abort, not
+    // a deliberate drop), and always fire onDragEnd so consumers can clean up.
+    const onPointerCancel = (e) => {
+        if (!isDragging) return;
+        isDragging = false;
+        isViewDragging = false;
+        if (options.closeOnDragOffTop) {
+            element.style.opacity = "";
+        }
+        if (options.onDragEnd && typeof options.onDragEnd === 'function') {
+            options.onDragEnd(e, {
+                left: parseInt(element.style.left),
+                top: parseInt(element.style.top),
+                element,
+                viewInstance: element._dragData?.viewInstance,
+                cancelled: true,
+            });
+        }
+        updateAllHandlePositions();
+        document.removeEventListener('pointermove', onPointerMove);
+        document.removeEventListener('pointerup', onPointerUp);
+        document.removeEventListener('pointercancel', onPointerCancel);
     };
 
     // Add event listener to handle using pointerdown for better off-screen support
@@ -603,6 +637,7 @@ export function makeDraggable(element, options = {}) {
         handleElement.removeEventListener('pointerdown', onPointerDown);
         document.removeEventListener('pointermove', onPointerMove);
         document.removeEventListener('pointerup', onPointerUp);
+        document.removeEventListener('pointercancel', onPointerCancel);
         if (requiresKey) {
             document.removeEventListener('keydown', updateCursorAndBorder);
             document.removeEventListener('keyup', updateCursorAndBorder);
