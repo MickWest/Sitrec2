@@ -1049,6 +1049,13 @@ export class CNodeTerrainUI extends CNode {
         this.markOceanSurfaceDirty();
         this.rebuildOceanSurfaceTiles(true);
 
+        // World coords for a given lat/lon/alt change with the radii, so rebuild
+        // the manual-edit dab cache and re-apply at the new positions.
+        if (this.buildingsNode) {
+            this.buildingsNode.rebuildDabsWorld();
+            this.buildingsNode.restoreTreeFlatten();
+        }
+
         setRenderOne(true);
     }
 
@@ -1120,36 +1127,46 @@ export class CNodeTerrainUI extends CNode {
         return !!this.buildingsNode && this.buildingsNode._activeSource === "google-photorealistic";
     }
 
-    // Build the "Tree Removal" GUI folder, data-driven from TREE_FLATTEN_DEFS so
-    // the controls and the algorithm never drift. Controls bind directly to the
-    // shared this.treeFlattenParams object; edits propagate live to the
-    // buildings node's per-view TreeFlatteners.
+    // Build the "Edit Geometry (Trees)" GUI folder, data-driven from
+    // TREE_FLATTEN_DEFS so the controls and the algorithm never drift. Manual-edit
+    // controls (`top`) sit at the folder root; the tree-specific automatic-removal
+    // heuristics live in an "Automatic Tree Removal" sub-menu. Controls bind
+    // directly to the shared this.treeFlattenParams object.
     buildTreeRemovalGUI() {
         const tf = this.treeFlattenParams;
-        const root = this.gui.addFolder("Tree Removal").close();
+        const root = this.gui.addFolder("Edit Geometry (Trees)").close();
+        const autoRoot = root.addFolder("Automatic Tree Removal").close();
         const subFolders = {};
-        const folderFor = (name) => {
-            if (!name) return root;
-            if (!subFolders[name]) subFolders[name] = root.addFolder(name).close();
-            return subFolders[name];
+        // `top` defs → root; everything else → the auto sub-menu (with its own
+        // sub-sub-folders by def.folder).
+        const folderFor = (def) => {
+            if (def.top) return root;
+            if (!def.folder) return autoRoot;
+            if (!subFolders[def.folder]) subFolders[def.folder] = autoRoot.addFolder(def.folder).close();
+            return subFolders[def.folder];
         };
-        // A heuristic changed — restore originals and re-run with new params.
+        // An automatic-heuristic param changed — restore and re-run with new params.
         const onParamChange = () => {
             if (this.buildingsNode) this.buildingsNode.applyTreeFlattenParams();
         };
 
         for (const def of TREE_FLATTEN_DEFS) {
-            const f = folderFor(def.folder);
+            const f = folderFor(def);
             let ctrl;
             if (def.key === "flattenTrees") {
                 ctrl = f.add(tf, def.key).name(def.label).onChange(v => {
                     if (this.buildingsNode) this.buildingsNode.setTreeFlattenEnabled(v);
                 });
             } else if (def.key === "manualEdit") {
-                // Manual-edit mode toggle: enables the paint brush and suspends
-                // the automatic analysis. Does NOT restore/reprocess tiles.
+                // Manual-edit mode toggle: enables the paint brush. Does NOT
+                // restore/reprocess tiles.
                 ctrl = f.add(tf, def.key).name(def.label).onChange(v => {
                     if (this.buildingsNode) this.buildingsNode.setManualEditEnabled(v);
+                });
+            } else if (def.key === "applyEdits") {
+                // Master toggle for re-applying the persistent manual edits.
+                ctrl = f.add(tf, def.key).name(def.label).onChange(v => {
+                    if (this.buildingsNode) this.buildingsNode.setApplyEdits(v);
                 });
             } else if (def.manual) {
                 // Other manual-brush controls (e.g. Brush Radius): bind the value
@@ -1170,12 +1187,14 @@ export class CNodeTerrainUI extends CNode {
             if (ctrl.listen) ctrl.listen();
         }
 
-        root.add({restore: () => { if (this.buildingsNode) this.buildingsNode.restoreTreeFlatten(); }}, "restore")
-            .name("Restore Originals")
-            .tooltip("Undo all tree flattening on currently loaded tiles");
-        root.add({rerun: () => { if (this.buildingsNode) this.buildingsNode.applyTreeFlattenParams(); }}, "rerun")
+        // Root: reset everything (drop saved edits + restore original geometry).
+        root.add({restore: () => { if (this.buildingsNode) this.buildingsNode.clearAllEdits(); }}, "restore")
+            .name("Restore Geometry")
+            .tooltip("Reset everything: discard the saved manual edits and restore all tiles to their original geometry");
+        // Auto sub-menu: restore + re-run the automatic pass with current params.
+        autoRoot.add({rerun: () => { if (this.buildingsNode) this.buildingsNode.applyTreeFlattenParams(); }}, "rerun")
             .name("Re-run")
-            .tooltip("Restore and re-process visible tiles with the current parameters");
+            .tooltip("Restore and re-process visible tiles with the current automatic parameters");
     }
 
     // treeFlattenParams is serialized as a whole object, but MERGED into the
@@ -1192,7 +1211,13 @@ export class CNodeTerrainUI extends CNode {
         super.modDeserialize(v);
         if (v.treeFlattenParams) {
             Object.assign(this.treeFlattenParams, v.treeFlattenParams);
-            if (this.buildingsNode) this.buildingsNode.applyTreeFlattenParams();
+            if (!Array.isArray(this.treeFlattenParams.dabs)) this.treeFlattenParams.dabs = [];
+            if (this.buildingsNode) {
+                // Rebuild the world-space dab cache from the loaded lat/lon/alt
+                // list so the saved manual edits re-apply as tiles load.
+                this.buildingsNode.rebuildDabsWorld();
+                this.buildingsNode.applyTreeFlattenParams();
+            }
         }
     }
 

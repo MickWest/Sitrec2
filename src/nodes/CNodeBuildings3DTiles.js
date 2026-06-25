@@ -19,6 +19,9 @@ import {TilesDayNightPlugin} from "../TilesDayNightPlugin";
 import {TilesEdgesPlugin} from "../TilesEdgesPlugin";
 import {TreeFlattener, makeDefaultTreeFlattenParams} from "../TilesTreeFlatten";
 import {TreeManualBrush} from "../TreeManualBrush";
+import {ECEFToLLAVD_radii, RLLAToECEF_radii} from "../LLA-ECEF-ENU";
+
+const DEG2RAD = Math.PI / 180;
 import {
     getSharedGooglePhotorealisticState,
     SharedGoogleCloudAuthPlugin,
@@ -244,10 +247,15 @@ export class CNodeBuildings3DTiles extends CNode {
         this.materialMode = v.materialMode ?? "photo";
         this.flatColor = v.flatColor ?? null;
 
-        // Shared "Tree Removal" heuristic params. Owned by CNodeTerrainUI (which
-        // serializes them) and passed in by reference so GUI edits are picked up
-        // live by every per-view TreeFlattener.
+        // Shared "Edit Geometry" params. Owned by CNodeTerrainUI (which serializes
+        // them) and passed in by reference so GUI edits are picked up live by
+        // every per-view TreeFlattener. Includes the persistent `dabs` edit list.
         this.treeFlattenParams = v.treeFlattenParams ?? makeDefaultTreeFlattenParams();
+        if (!Array.isArray(this.treeFlattenParams.dabs)) this.treeFlattenParams.dabs = [];
+        // World-space form of the dab list (LLA → ECEF), rebuilt when it changes.
+        this._dabsWorld = [];
+        this._lastDab = null;
+        this.rebuildDabsWorld();
 
         this.group = new Group();
         this.group.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
@@ -422,16 +430,64 @@ export class CNodeBuildings3DTiles extends CNode {
         return (pv && pv.treeFlattener) ? pv.renderer.group : null;
     }
 
-    // Apply a manual brush stroke (world-space sphere) across every view's
-    // renderer so the main and look views stay consistent.
+    // Record a manual brush stroke as a persistent dab (world-space sphere). The
+    // actual geometry edit is done by the per-frame reapply pass (update()), which
+    // also re-applies to tiles as they stream in. Deduped against the previous dab
+    // so a drag doesn't store hundreds of overlapping spheres. Stored as lat/lon/alt
+    // (frame-independent) for serialization.
     applyManualBrush(worldCenter, radius) {
         const action = this.treeFlattenParams.action;
-        let edited = 0;
-        for (const pv of Object.values(this._perView)) {
-            if (pv.treeFlattener) edited += pv.treeFlattener.applyBrush(worldCenter, radius, action);
+        const last = this._lastDab;
+        if (last && last.a === action && last.r === radius
+            && last.center.distanceTo(worldCenter) < radius * 0.3) {
+            return 0; // too close to the previous dab — skip
         }
-        if (edited > 0) setRenderOne(true);
-        return edited;
+        const lla = ECEFToLLAVD_radii(worldCenter);
+        this.treeFlattenParams.dabs.push({
+            lla: [+lla.x.toFixed(7), +lla.y.toFixed(7), +lla.z.toFixed(2)],
+            r: radius,
+            a: action,
+        });
+        const entry = {center: worldCenter.clone(), r: radius, a: action};
+        this._dabsWorld.push(entry);
+        this._lastDab = entry;
+        setRenderOne(true); // reapply pass edits the geometry next update
+        return 1;
+    }
+
+    // Rebuild the world-space dab cache from the serialized lat/lon/alt list.
+    // Called on construction, after deserialize, and on ellipsoid/radii change.
+    rebuildDabsWorld() {
+        const dabs = this.treeFlattenParams.dabs || [];
+        this._dabsWorld = dabs.map(d => ({
+            center: RLLAToECEF_radii(d.lla[0] * DEG2RAD, d.lla[1] * DEG2RAD, d.lla[2]),
+            r: d.r,
+            a: d.a,
+        }));
+        this._lastDab = this._dabsWorld.length ? this._dabsWorld[this._dabsWorld.length - 1] : null;
+    }
+
+    // "Apply Edits" toggle. Restore so the change shows immediately; the update
+    // reapply pass re-applies when on, and leaves geometry original when off.
+    setApplyEdits(on) {
+        this.treeFlattenParams.applyEdits = on;
+        for (const pv of Object.values(this._perView)) {
+            if (pv.treeFlattener) pv.treeFlattener.restoreAll();
+        }
+        setRenderOne(true);
+    }
+
+    // "Restore Geometry" — reset everything: drop the saved dab list and restore
+    // all tiles to their original geometry (the auto pass re-runs if still on).
+    clearAllEdits() {
+        if (this.manualBrush) this.manualBrush.hidePreview();
+        this.treeFlattenParams.dabs.length = 0;
+        this._dabsWorld = [];
+        this._lastDab = null;
+        for (const pv of Object.values(this._perView)) {
+            if (pv.treeFlattener) pv.treeFlattener.restoreAll();
+        }
+        setRenderOne(true);
     }
 
     // Non-destructive hover preview: hide the triangles the brush covers across
@@ -485,6 +541,10 @@ export class CNodeBuildings3DTiles extends CNode {
         const flattenOn = this.treeFlattenParams
             && this.treeFlattenParams.flattenTrees
             && !this.treeFlattenParams.manualEdit;
+        // Re-apply the persistent manual edits as tiles stream in. Runs whether or
+        // not Manual Edit is on (the edits are committed state); gated by the
+        // "Apply Edits" toggle.
+        const applyDabs = this.treeFlattenParams.applyEdits !== false && this._dabsWorld.length > 0;
         let flattened = 0;
         for (const [viewId, pv] of Object.entries(this._perView)) {
             const view = NodeMan.get(viewId, false);
@@ -494,6 +554,7 @@ export class CNodeBuildings3DTiles extends CNode {
             // settled (pv.update may early-return), so tiles that finished
             // loading after the camera stopped still get processed.
             if (flattenOn) flattened += pv.processTreeFlatten(view);
+            if (applyDabs && pv.treeFlattener) flattened += pv.treeFlattener.reapplyDabs(this._dabsWorld);
         }
         // If we modified geometry, draw it; and keep the loop awake one more pass
         // in case there are more in-range tiles past this call's per-pass budget.

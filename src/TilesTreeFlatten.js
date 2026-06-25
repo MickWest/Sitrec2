@@ -35,6 +35,17 @@ import {fastComputeVertexNormals} from "./FastComputeVertexNormals";
 // (same pattern as TilesDayNightPlugin's ORIGINAL_MATERIAL).
 const ORIGINAL_GEOMETRY = Symbol("treeFlatten_originalGeometry");
 const PROCESSED_HASH = Symbol("treeFlatten_processedHash");
+// How many manual-brush dabs (from the persistent list) have been applied to a
+// mesh. The dab list is append-only during a session, so a mesh with
+// DAB_COUNT < dabs.length just needs the new tail applied. Reset on restore.
+const DAB_COUNT = Symbol("treeFlatten_dabCount");
+
+// Reusable scratch vectors for the per-mesh brush apply (no per-call allocation;
+// safe because the apply is synchronous and non-reentrant).
+const _bm_invWorld = new Matrix4();
+const _bm_localCenter = new Vector3();
+const _bm_up = new Vector3();
+const _bm_center = new Vector3();
 
 // Aggregate diagnostics (exposed as window._treeFlattenDebug for MCP probing).
 export const treeFlattenDebug = {
@@ -56,19 +67,23 @@ if (typeof window !== "undefined") window._treeFlattenDebug = treeFlattenDebug;
 // `folder` groups controls into sub-folders of "Tree Removal".
 // ---------------------------------------------------------------------------
 export const TREE_FLATTEN_DEFS = [
-    // --- master ---
+    // --- manual brush edit (top level of "Edit Geometry"; `top`). The `manual`
+    //     ones are excluded from the auto heuristic hash. ---
+    {key: "manualEdit", type: "bool", default: false, folder: null, top: true, manual: true,
+        label: "Manual Edit", tooltip: "Paint the Edit Action onto the tiles. While on, left-click-dragging over the Google tiles removes the geometry under the brush; hovering shows a wireframe preview of what would be removed"},
+    {key: "brushRadius", type: "num", default: 15, min: 1, max: 100, step: 1, folder: null, top: true, manual: true,
+        label: "Brush Radius (m)", tooltip: "World-space radius of the manual-edit brush"},
+    {key: "action", type: "enum", default: "snap", folder: null, top: true,
+        options: {"Snap to ground": "snap", "Delete triangles": "delete"},
+        label: "Edit Action", tooltip: "Snap geometry down to the ground plane, or delete the triangles. Used by both the brush and the automatic pass"},
+    {key: "applyEdits", type: "bool", default: true, folder: null, top: true, manual: true,
+        label: "Apply Edits", tooltip: "Re-apply the saved manual edits to tiles as they load (persists with Manual Edit off). Turn off to temporarily see the original geometry without discarding the edits"},
+
+    // --- automatic tree removal (the "Automatic Tree Removal" sub-menu) ---
     {key: "flattenTrees", type: "bool", default: false, folder: null,
         label: "Flatten Trees", tooltip: "Analyse Google Photorealistic tiles and remove/flatten trees"},
-    {key: "action", type: "enum", default: "snap", folder: null,
-        options: {"Snap to ground": "snap", "Delete triangles": "delete"},
-        label: "Tree Action", tooltip: "Snap tree vertices down to the ground plane, or delete the tree triangles"},
-    // --- manual brush edit (not part of the heuristic hash; see `manual`) ---
-    {key: "manualEdit", type: "bool", default: false, folder: null, manual: true,
-        label: "Manual Edit", tooltip: "Manually paint the Tree Action onto tiles. While on, the automatic analysis is suspended and left-click-dragging over the Google tiles applies the Tree Action (snap/delete) to the geometry under the brush"},
-    {key: "brushRadius", type: "num", default: 15, min: 1, max: 100, step: 1, folder: null, manual: true,
-        label: "Brush Radius (m)", tooltip: "World-space radius of the manual-edit brush"},
     {key: "cullDistance", type: "num", default: 100, min: 10, max: 2000, step: 10, folder: null,
-        label: "Cull Distance (m)", tooltip: "Only process tiles within this distance of the camera. Raise it for elevated or distant cameras (the camera may be hundreds of metres from the terrain)"},
+        label: "Cull Distance (m)", tooltip: "Only auto-process tiles within this distance of the camera. Raise it for elevated or distant cameras (the camera may be hundreds of metres from the terrain)"},
     {key: "minTileVertices", type: "num", default: 500, min: 50, max: 20000, step: 50, folder: null,
         label: "Min Tile Verts", tooltip: "Skip coarse/low-resolution tiles below this vertex count"},
 
@@ -121,6 +136,10 @@ export const TREE_FLATTEN_DEFS = [
 export function makeDefaultTreeFlattenParams() {
     const p = {};
     for (const d of TREE_FLATTEN_DEFS) p[d.key] = d.default;
+    // Persistent manual-brush edit list. Each dab is {lla:[lat,lon,alt], r, a}
+    // (a = "snap"|"delete"). Serialized with the sitch; not a `def` so it isn't
+    // part of the heuristic hash.
+    p.dabs = [];
     return p;
 }
 
@@ -794,17 +813,18 @@ export class TreeFlattener {
         mesh.geometry = orig;
         mesh[ORIGINAL_GEOMETRY] = undefined;
         mesh[PROCESSED_HASH] = undefined;
+        mesh[DAB_COUNT] = undefined; // so manual dabs re-apply onto the restored mesh
         this.modified.delete(mesh);
     }
 
     // Restore every modified mesh in this renderer to its original geometry and
-    // clear all processed stamps (so a re-enable reprocesses from scratch).
+    // clear all processed/dab stamps (so a re-enable reprocesses from scratch).
     restoreAll() {
         for (const mesh of [...this.modified]) this._restoreMesh(mesh);
         // Also clear stamps on noop'd tiles so toggling off/on re-analyses.
         this.renderer.forEachLoadedModel((scene) => {
             scene.traverse((mesh) => {
-                if (mesh.isMesh) mesh[PROCESSED_HASH] = undefined;
+                if (mesh.isMesh) { mesh[PROCESSED_HASH] = undefined; mesh[DAB_COUNT] = undefined; }
             });
         });
     }
@@ -818,100 +838,127 @@ export class TreeFlattener {
     // Restore Originals, tile eviction, and stale-stamp handling all undo manual
     // edits exactly as they do automatic ones. Returns the number of meshes
     // modified this call.
-    applyBrush(worldCenter, radius, action) {
+    // Apply one brush dab (world-space sphere) to ONE mesh. Returns true if the
+    // mesh geometry was modified. Stashes the pristine geometry on first edit so
+    // the shared restore/eviction paths can undo it.
+    _brushMesh(mesh, worldCenter, radius, action) {
+        const geometry = mesh.geometry;
+        const posAttr = geometry && geometry.attributes.position;
+        if (!posAttr) return false;
+
+        mesh.updateWorldMatrix(true, false);
+        const invWorld = _bm_invWorld.copy(mesh.matrixWorld).invert();
+        const localCenter = _bm_localCenter.copy(worldCenter).applyMatrix4(invWorld);
+
+        // World→local radius scale (derive from the matrix rather than assume 1).
+        const e = mesh.matrixWorld.elements;
+        const s = Math.hypot(e[0], e[1], e[2]) || 1;
+        const localRadius = radius / s;
+        const r2 = localRadius * localRadius;
+
+        // Quick reject against the geometry bounding sphere.
+        geometry.boundingSphere || geometry.computeBoundingSphere();
+        const bs = geometry.boundingSphere;
+        if (bs && localCenter.distanceTo(bs.center) > bs.radius + localRadius) return false;
+
+        const Nv = posAttr.count;
+        const pos = posAttr.array;
+
+        // Local geodetic up at the hit point (the snap direction).
+        const up = _bm_up.copy(getLocalUpVector(worldCenter)).transformDirection(invWorld).normalize();
+
+        const affected = new Uint8Array(Nv);
+        let count = 0;
+        let minH = Infinity;
+        for (let v = 0; v < Nv; v++) {
+            const dx = pos[v * 3] - localCenter.x, dy = pos[v * 3 + 1] - localCenter.y, dz = pos[v * 3 + 2] - localCenter.z;
+            if (dx * dx + dy * dy + dz * dz > r2) continue;
+            affected[v] = 1;
+            count++;
+            const h = pos[v * 3] * up.x + pos[v * 3 + 1] * up.y + pos[v * 3 + 2] * up.z;
+            if (h < minH) minH = h;
+        }
+        if (count === 0) return false;
+
+        if (!mesh[ORIGINAL_GEOMETRY]) {
+            mesh[ORIGINAL_GEOMETRY] = geometry.clone();
+            this.modified.add(mesh);
+        }
+
+        if (action === "delete") {
+            const index = geometry.index;
+            const idx = index ? index.array : null;
+            const triCount = idx ? (idx.length / 3) | 0 : (Nv / 3) | 0;
+            const keepTri = new Uint8Array(triCount);
+            let removed = 0;
+            for (let t = 0; t < triCount; t++) {
+                const i0 = idx ? idx[t * 3] : t * 3;
+                const i1 = idx ? idx[t * 3 + 1] : t * 3 + 1;
+                const i2 = idx ? idx[t * 3 + 2] : t * 3 + 2;
+                if (affected[i0] + affected[i1] + affected[i2] >= 2) { removed++; continue; }
+                keepTri[t] = 1;
+            }
+            if (removed === 0) return false;
+            const newGeom = filterTriangles(geometry, keepTri, triCount, index);
+            fastComputeVertexNormals(newGeom);
+            geometry.dispose();
+            mesh.geometry = newGeom;
+        } else {
+            let moved = 0;
+            for (let v = 0; v < Nv; v++) {
+                if (!affected[v]) continue;
+                const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
+                const drop = (x * up.x + y * up.y + z * up.z) - minH;
+                if (drop <= 0) continue; // already at/below the snap floor
+                pos[v * 3] = x - drop * up.x;
+                pos[v * 3 + 1] = y - drop * up.y;
+                pos[v * 3 + 2] = z - drop * up.z;
+                moved++;
+            }
+            if (moved === 0) return false;
+            posAttr.needsUpdate = true;
+            fastComputeVertexNormals(geometry);
+            geometry.computeBoundingBox();
+            geometry.computeBoundingSphere();
+        }
+        return true;
+    }
+
+    // Re-apply the persistent manual-brush dab list to loaded tiles. Each mesh is
+    // stamped with how many dabs it has had applied (DAB_COUNT); since the list is
+    // append-only, a mesh only needs the tail [DAB_COUNT .. dabs.length) applied.
+    // This is what makes manual edits persist as tiles stream in/out and across
+    // sessions. `dabsWorld` is [{center:Vector3, r, a}, ...] in world space.
+    // Bounded by `budget` meshes brought up to date per call. Returns the number
+    // of meshes edited.
+    reapplyDabs(dabsWorld, budget = 8) {
+        const n = dabsWorld.length;
+        if (n === 0) return 0;
         let edited = 0;
-        const invWorld = new Matrix4();
-        const localCenter = new Vector3();
-        const up = new Vector3();
-        const d = new Vector3();
+        const center = _bm_center;
         this.renderer.forEachLoadedModel((scene) => {
+            if (budget <= 0) return;
             scene.traverse((mesh) => {
-                if (!mesh.isMesh || !mesh.geometry) return;
-                const geometry = mesh.geometry;
-                const posAttr = geometry.attributes.position;
-                if (!posAttr) return;
+                if (budget <= 0 || !mesh.isMesh || !mesh.geometry) return;
+                const applied = mesh[DAB_COUNT] || 0;
+                if (applied >= n) return;
 
+                // World bounding sphere for the per-dab reject.
                 mesh.updateWorldMatrix(true, false);
-                invWorld.copy(mesh.matrixWorld).invert();
-                localCenter.copy(worldCenter).applyMatrix4(invWorld);
+                const geo = mesh.geometry;
+                geo.boundingSphere || geo.computeBoundingSphere();
+                const me = mesh.matrixWorld.elements;
+                const ms = Math.hypot(me[0], me[1], me[2]) || 1;
+                center.copy(geo.boundingSphere.center).applyMatrix4(mesh.matrixWorld);
+                const meshR = geo.boundingSphere.radius * ms;
 
-                // World→local radius scale. Google tiles are effectively unit
-                // scale in ECEF, but derive it from the matrix rather than assume.
-                const e = mesh.matrixWorld.elements;
-                const s = Math.hypot(e[0], e[1], e[2]) || 1;
-                const localRadius = radius / s;
-                const r2 = localRadius * localRadius;
-
-                // Quick reject against the geometry bounding sphere.
-                geometry.boundingSphere || geometry.computeBoundingSphere();
-                const bs = geometry.boundingSphere;
-                if (bs && localCenter.distanceTo(bs.center) > bs.radius + localRadius) return;
-
-                const Nv = posAttr.count;
-                const pos = posAttr.array;
-
-                // Local geodetic up at the hit point (the snap direction).
-                up.copy(getLocalUpVector(worldCenter)).transformDirection(invWorld).normalize();
-
-                // Affected = vertices inside the brush sphere; track the lowest
-                // (along up) as the snap target.
-                const affected = new Uint8Array(Nv);
-                let count = 0;
-                let minH = Infinity;
-                for (let v = 0; v < Nv; v++) {
-                    d.set(pos[v * 3] - localCenter.x, pos[v * 3 + 1] - localCenter.y, pos[v * 3 + 2] - localCenter.z);
-                    if (d.lengthSq() > r2) continue;
-                    affected[v] = 1;
-                    count++;
-                    const h = pos[v * 3] * up.x + pos[v * 3 + 1] * up.y + pos[v * 3 + 2] * up.z;
-                    if (h < minH) minH = h;
+                for (let i = applied; i < n; i++) {
+                    const dab = dabsWorld[i];
+                    if (center.distanceTo(dab.center) > meshR + dab.r) continue;
+                    if (this._brushMesh(mesh, dab.center, dab.r, dab.a)) edited++;
                 }
-                if (count === 0) return;
-
-                // First edit to this mesh → stash the pristine geometry so the
-                // shared restore/eviction paths can undo it.
-                if (!mesh[ORIGINAL_GEOMETRY]) {
-                    mesh[ORIGINAL_GEOMETRY] = geometry.clone();
-                    this.modified.add(mesh);
-                }
-
-                if (action === "delete") {
-                    const index = geometry.index;
-                    const idx = index ? index.array : null;
-                    const triCount = idx ? (idx.length / 3) | 0 : (Nv / 3) | 0;
-                    const keepTri = new Uint8Array(triCount);
-                    let removed = 0;
-                    for (let t = 0; t < triCount; t++) {
-                        const i0 = idx ? idx[t * 3] : t * 3;
-                        const i1 = idx ? idx[t * 3 + 1] : t * 3 + 1;
-                        const i2 = idx ? idx[t * 3 + 2] : t * 3 + 2;
-                        if (affected[i0] + affected[i1] + affected[i2] >= 2) { removed++; continue; }
-                        keepTri[t] = 1;
-                    }
-                    if (removed === 0) return;
-                    const newGeom = filterTriangles(geometry, keepTri, triCount, index);
-                    fastComputeVertexNormals(newGeom);
-                    geometry.dispose();
-                    mesh.geometry = newGeom;
-                } else {
-                    let moved = 0;
-                    for (let v = 0; v < Nv; v++) {
-                        if (!affected[v]) continue;
-                        const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
-                        const drop = (x * up.x + y * up.y + z * up.z) - minH;
-                        if (drop <= 0) continue; // already at/below the snap floor
-                        pos[v * 3] = x - drop * up.x;
-                        pos[v * 3 + 1] = y - drop * up.y;
-                        pos[v * 3 + 2] = z - drop * up.z;
-                        moved++;
-                    }
-                    if (moved === 0) return;
-                    posAttr.needsUpdate = true;
-                    fastComputeVertexNormals(geometry);
-                    geometry.computeBoundingBox();
-                    geometry.computeBoundingSphere();
-                }
-                edited++;
+                mesh[DAB_COUNT] = n;
+                budget--;
             });
         });
         return edited;
