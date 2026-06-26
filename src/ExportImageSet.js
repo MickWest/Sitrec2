@@ -1,5 +1,4 @@
 import {saveAs} from "file-saver";
-import JSZip from "jszip";
 import {Vector3} from "three";
 import {GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
@@ -977,6 +976,7 @@ export class ImageSetExporter {
         }
 
         const progress = new ExportProgressWidget("Exporting image set...", shots.length);
+        const {default: JSZip} = await import("jszip");
         const zip = new JSZip();
         const prefix = getExportPrefix();
 

@@ -9,7 +9,6 @@
 
 import {cleanCSVText, ExpandKeyframes, getFileExtension} from "./utils";
 import {fromArrayBuffer as geotiffFromArrayBuffer} from "geotiff";
-import JSZip from "jszip";
 import {
     CTrackFile,
     CTrackFileJSON,
@@ -1118,8 +1117,8 @@ export const parseMethods = {
         }
 
         if (isZip) {
-            const zip = new JSZip();
-            return zip.loadAsync(buffer)
+            return import("jszip")
+                .then(({default: JSZip}) => new JSZip().loadAsync(buffer))
                 .then(async (zipContents) => {
                     const allFiles = Object.keys(zipContents.files).filter(f => {
                         const entry = zipContents.files[f];

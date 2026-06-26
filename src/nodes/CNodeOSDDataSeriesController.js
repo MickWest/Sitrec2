@@ -8,7 +8,6 @@ import {CNodeDisplayTrack} from "./CNodeDisplayTrack";
 import {CNode3DObject} from "./CNode3DObject";
 import {Color} from "three";
 import * as LAYER from "../LayerMasks";
-import JSZip from "jszip";
 import {saveAs} from "file-saver";
 import {t} from "../i18n";
 import {parseSingleCoordinate} from "../CoordinateParser";
@@ -1075,9 +1074,10 @@ export class CNodeOSDDataSeriesController extends CNode {
         }
     }
 
-    exportAllData() {
+    async exportAllData() {
         if (this.tracks.length === 0) return;
 
+        const {default: JSZip} = await import("jszip");
         const zip = new JSZip();
 
         // A-B range (original frame numbers preserved)

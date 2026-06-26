@@ -1,5 +1,6 @@
 import {assert} from "./assert";
-import * as chrono from 'chrono-node';
+// chrono-node (~400KB) is lazy-imported inside parsePartialDateTime (the only user) —
+// it is reached via MISB track-start-time parsing, never on the browse/startup path.
 
 export function splitOnCommas(str) {
     // Regular expression to match commas that are not inside parentheses
@@ -143,7 +144,8 @@ export async function parsePartialDateTime(input, referenceDate) {
         return null;
     }
     
-    // Use chrono-node to parse with referenceDate as context
+    // Use chrono-node to parse with referenceDate as context (lazy-loaded chunk)
+    const chrono = await import('chrono-node');
     const results = chrono.parse(trimmed, referenceDate, { forwardDate: false });
     
     if (results.length > 0 && results[0].start) {

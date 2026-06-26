@@ -428,6 +428,20 @@ University Observatory and distributed via NASA ADC / Harvard CDS.
 The data are facts (stellar positions, magnitudes, etc.) and are not
 subject to copyright restrictions.`,
     },
+    {
+        name: "EGM96 geoid (15-arc-minute grid)",
+        version: "EGM96",
+        license: "Public Domain",
+        copyright: "U.S. National Geospatial-Intelligence Agency (NGA) / NASA / Ohio State University",
+        repository: "https://earth-info.nga.mil/",
+        notes: "Earth Gravitational Model 1996 geoid-undulation grid, extracted from the egm96-universal package and repacked for Sitrec as data/egm96/egm96-15.bin (gzip(planar(rowDelta(721x1440 int16))), see scripts/extractEGM96Geoid.js).",
+        licenseTextOverride: `The EGM96 (Earth Gravitational Model 1996) geoid is a public-domain
+geophysical model produced by the U.S. National Geospatial-Intelligence
+Agency (NGA, formerly NIMA), NASA Goddard Space Flight Center, and Ohio
+State University. The grid values are scientific facts (geoid undulation
+heights) and are not subject to copyright restrictions.
+See: https://earth-info.nga.mil/`,
+    },
 ];
 
 // ---------------------------------------------------------------------------

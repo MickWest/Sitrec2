@@ -2,7 +2,10 @@ import {sitrecAPI} from "./CSitrecAPI";
 import {FileManager, guiMenus} from "./Globals";
 import GUI from "./js/lil-gui.esm";
 import {ModelFiles} from "./nodes/CNode3DObject";
-import * as math from 'mathjs';
+// number-only mathjs entry (see CNodeMath.js). create(math.all) below would re-pull
+// the full ~2.4MB mathjs (BigNumber/Complex/Fraction/units) if this used 'mathjs'.
+// The degrees-trig calculator only needs scalar number functions.
+import * as math from 'mathjs/number';
 
 const GEOMETRY_TYPES = ["sphere", "ellipsoid", "box", "capsule", "circle", "cone", "cylinder",
     "dodecahedron", "icosahedron", "octahedron", "ring", "tictac",
