@@ -16,6 +16,7 @@ type SleepAnimationLoopArgs = {
     paused: boolean;
     renderOne: boolean | number | undefined;
     nodeList: NodeList;
+    forceRender?: boolean;
 };
 
 export function hasPausedBackgroundWork(nodeList: NodeList): boolean {
@@ -33,7 +34,13 @@ export function hasPausedBackgroundWork(nodeList: NodeList): boolean {
     return false;
 }
 
-export function shouldSleepAnimationLoop({hidden, focused, paused, renderOne, nodeList}: SleepAnimationLoopArgs): boolean {
+export function shouldSleepAnimationLoop({hidden, focused, paused, renderOne, nodeList, forceRender}: SleepAnimationLoopArgs): boolean {
+    // Debug/MCP override: never sleep, even when the tab is hidden, so the render
+    // loop keeps running and terrain LOD subdivision / tile loading / etc. proceed
+    // while the scene is inspected via the bridge in a backgrounded tab.
+    if (forceRender) {
+        return false;
+    }
     if (hidden) {
         return true;
     }

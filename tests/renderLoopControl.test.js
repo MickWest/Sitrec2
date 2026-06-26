@@ -13,6 +13,19 @@ describe("render loop sleep control", () => {
         })).toBe(true);
     });
 
+    test("forceRender keeps the loop awake even when hidden, paused, and unfocused", () => {
+        // Debug/MCP override: __sitrecForceRender(true) sets this so a backgrounded
+        // tab keeps rendering (terrain subdivision / tile loading) for inspection.
+        expect(shouldSleepAnimationLoop({
+            hidden: true,
+            focused: false,
+            paused: true,
+            renderOne: false,
+            nodeList: {},
+            forceRender: true,
+        })).toBe(false);
+    });
+
     test("sleeps when paused and nothing requested a redraw", () => {
         expect(shouldSleepAnimationLoop({
             hidden: false,

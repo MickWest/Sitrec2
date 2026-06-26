@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.89.1 (2026-06-26)
+
+### Improvements
+- Custom map sources defined by server environment variables can now declare their tile projection, so equirectangular (EPSG:4326 / CRS84) sources — such as the NRL WMTS BlueMarble layers — work alongside the standard web-mercator ones. (Server/deployment configuration only — set via environment variables, not an in-app menu.)
+
+### Bug Fixes
+- Fixed equirectangular (EPSG:4326) map sources rendering as blank or black terrain that never resolved into detail (Terrain → Map Type).
+- Fixed changing the map *Layer* or toggling *Dynamic Subdivision* (Terrain) leaving coarse, low-detail terrain on a still camera until you moved the view or clicked *Refresh* — the terrain now refines right away.
+
+---
+
 ## Version 2.89.0 (2026-06-26)
 
 ### New Features

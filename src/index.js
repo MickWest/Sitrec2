@@ -314,6 +314,14 @@ function scheduleAnimationLoop(delay = 0) {
 // watching playback in a partially-visible window), but blur+paused does.
 let windowFocused = typeof document !== "undefined" ? document.hasFocus() : true;
 
+// Debug/MCP override: when true, the render loop keeps running continuously,
+// ignoring the hidden-tab and paused/unfocused sleeps below. A hidden tab's
+// render loop normally force-sleeps (so terrain LOD subdivision and tile loading
+// stall), which makes it impossible to debug rendering via the SitrecBridge in a
+// backgrounded tab. Toggle with globalThis.__sitrecForceRender(true|false);
+// window.__sitrecForceRenderLoop mirrors the state for querying.
+let forceRenderLoop = false;
+
 function shouldSleepAnimationLoop() {
     return shouldSleepRenderLoopState({
         hidden: document.hidden,
@@ -327,16 +335,36 @@ function shouldSleepAnimationLoop() {
         paused: par.paused,
         renderOne: par.renderOne,
         nodeList: NodeMan?.list,
+        forceRender: forceRenderLoop,
     });
 }
 
 function wakeAnimationLoop() {
-    if (document.hidden) return;
-    if (par.paused && !windowFocused && !window._mcpDebug) return;
+    // forceRenderLoop bypasses the hidden/paused gates so the loop can be
+    // (re)started for debugging in a backgrounded MCP tab.
+    if (document.hidden && !forceRenderLoop) return;
+    if (par.paused && !windowFocused && !window._mcpDebug && !forceRenderLoop) return;
     scheduleAnimationLoop(0);
 }
 
 globalThis.__sitrecWakeRenderLoop = wakeAnimationLoop;
+
+// Debug/MCP: force the render loop to run continuously (see forceRenderLoop above),
+// overriding the hidden-tab and paused/unfocused sleeps so the scene keeps updating
+// and rendering while a backgrounded tab is inspected via the bridge. Note: a hidden
+// tab still throttles the setTimeout scheduler (~1 fps in Chrome), but that is enough
+// to drive terrain subdivision/tile loading over a few seconds. Returns the new state;
+// call __sitrecForceRender(false) to restore normal render-on-demand behaviour.
+globalThis.__sitrecForceRender = (on = true) => {
+    forceRenderLoop = !!on;
+    window.__sitrecForceRenderLoop = forceRenderLoop;
+    if (forceRenderLoop) {
+        setRenderOne(true);
+        wakeAnimationLoop();
+    }
+    return forceRenderLoop;
+};
+window.__sitrecForceRenderLoop = forceRenderLoop;
 
 document.addEventListener("visibilitychange", () => {
     if (document.hidden) {

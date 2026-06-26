@@ -350,6 +350,12 @@ export class CNodeTerrainUI extends CNode {
                         termsURL: Globals.env[prefix + 'TERMS_URL'] || "",
                         allowInServerless: true,
                     };
+                    // MAPPING (EPSG number, e.g. 4326) selects the tile projection, like a
+                    // config.js source's `mapping`. Default is web-mercator (3857); set 4326 for
+                    // equirectangular / CRS84 tile sources (e.g. a WMTS GoogleCRS84Quad layer).
+                    if (Globals.env[prefix + 'MAPPING']) {
+                        this.mapSources[sourceKey].mapping = parseInt(Globals.env[prefix + 'MAPPING']);
+                    }
                     console.log(`Added custom map source from env: ${sourceKey}`, this.mapSources[sourceKey].name);
                 }
             }
@@ -698,6 +704,11 @@ export class CNodeTerrainUI extends CNode {
 
             this.updateUIVisibility();
             this.terrainNode.reloadMap(this.mapType);
+            // Toggling dynamic ON rebuilds the texture map down to its coarse
+            // root; re-arm the subdivision grace so it refines on a static
+            // camera (same fix as the Layer/Map Type handlers). Harmless when
+            // toggling OFF — the subdivision driver ignores grace when !dynamic.
+            this.requestSubdivisionPass();
 
             // Update globe visibility based on new state
             this.updateGlobeVisibility();
@@ -1565,6 +1576,12 @@ export class CNodeTerrainUI extends CNode {
 
             this.terrainNode.unloadMap(this.mapType)
             this.terrainNode.loadMap(this.mapType)
+            // Re-arm the subdivision grace so the new layer's tiles refine even
+            // when the camera is static — mirrors the Map Type handler. Without
+            // this, loadMap rebuilds the texture map down to its coarse root and
+            // the static-camera grace gate (already decayed) blocks any further
+            // subdivision until the camera moves or the user clicks Refresh.
+            this.requestSubdivisionPass();
         })
 
     }

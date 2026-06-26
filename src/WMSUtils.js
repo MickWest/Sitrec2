@@ -178,12 +178,17 @@ export class CTileMappingGoogleCRS84Quad extends CTileMapping {
     // GoogleCRS84Quad is equirectangular, EPSG:4326
     // so latitude is linear;y mapped to y
     getNorthLatitude(y, z) {
-        // Calculate the number of vertical tiles at zoom level z
-        let numTiles = Math.pow(2, z-1);
+        // Number of vertical tiles (rows) at this zoom. The GoogleCRS84Quad grid
+        // is 2:1, so rows = 2^(z-1) for z>=1. But at z=0 that formula gives 0.5,
+        // which makes the root tile's south edge compute as latitude -270deg —
+        // LLAToECEF wraps that back to the north pole, collapsing the whole tile
+        // to a zero-radius point. The horizon cull then marks it (and every
+        // descendant) invisible, so a dynamic 4326 map never renders.
+        // Clamp to >=1 so z0 (and z1) is a single full-height row spanning
+        // [90,-90] — exactly the row count the tile-URL maxY assert and
+        // subdivideTile's z0->z1 special case already assume.
+        let numTiles = Math.max(1, Math.pow(2, z-1));
         // Calculate the latitude of the northern edge of the tile
-
-
-
         const latNorth =  90 - ( y / numTiles) * 180;
         return latNorth;
 
@@ -199,8 +204,9 @@ export class CTileMappingGoogleCRS84Quad extends CTileMapping {
     // simple linear mapping of latitude to y
     // latitude of 90 shoudl return 0
     lat2Tile(lat, zoom) {
-        // linear mapping of latitude to y
-        let numTiles = Math.pow(2, zoom-1);
+        // linear mapping of latitude to y. Clamp the row count to >=1 to match
+        // getNorthLatitude (see note there): z0/z1 are a single full-height row.
+        let numTiles = Math.max(1, Math.pow(2, zoom-1));
         return (1 - (lat + 90) / 180) * numTiles;
     }
 
