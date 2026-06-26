@@ -53,7 +53,7 @@ import {CNodeMirrorVideoView} from "./nodes/CNodeMirrorVideoView";
 import {CNodeTerrainUI} from "./nodes/CNodeTerrainUI";
 import {showError} from "./showError";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
-import {meanSeaLevelOffset} from "./EGM96Geoid";
+import {meanSeaLevelOffset, ensureGeoidLoaded} from "./EGM96Geoid";
 
 export async function SituationSetup(runDeferred = false) {
     console.log("++++++ SituationSetup")
@@ -153,6 +153,15 @@ export async function startLoadingInlineAssets(sitData) {
 
 
 export async function SituationSetupFromData(sitData, runDeferred) {
+
+    // The EGM96 geoid grid is now a lazily-fetched binary asset (see EGM96Geoid.js).
+    // Every node in this loop is built AFTER this await, so this single gate makes the
+    // grid available to all ~30 synchronous meanSeaLevelOffset / geoidCorrectionForTile
+    // callers (terrain, tracks, LLA, etc.). It is idempotent (cached promise) and runs
+    // in parallel with the rest of setup. We load unconditionally rather than gating on
+    // sitch keys: a missed elevation-using key would silently corrupt altitudes, which
+    // is far worse than one cached 849KB fetch on the rare elevation-free sitch.
+    await ensureGeoidLoaded();
 
     // const sitDataExpanded = expandSitData(sitData); // see CSituation constructor
     const sitDataExpanded = sitData;  //

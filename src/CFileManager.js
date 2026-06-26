@@ -21,7 +21,6 @@ import {
 } from "./utils";
 import {CNodeArray} from "./nodes/CNodeArray";
 import {fileSystemFetch} from "./fileSystemFetch";
-import JSZip from "jszip";
 import {ImageSetExporter} from "./ExportImageSet";
 import {addFileAnalysisMenu} from "./analysis/VideoFolderAnalysisUI";
 import {

@@ -45,6 +45,9 @@ jest.mock('../src/LLA-ECEF-ENU', () => ({
 
 jest.mock('../src/EGM96Geoid', () => ({
     meanSeaLevelOffset: (...args) => mockMeanSeaLevelOffset(...args),
+    // The geoid grid is now lazily fetched; extractJPEGImportMetadata awaits this
+    // before the synchronous meanSeaLevelOffset calls. No grid needed in this mock.
+    ensureGeoidLoaded: () => Promise.resolve(),
 }));
 
 jest.mock('../src/Globals', () => ({

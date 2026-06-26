@@ -6,6 +6,18 @@ import {
 import {meanSeaLevelOffset} from "../../src/EGM96Geoid";
 import {Vector3} from "three";
 
+// The production EGM96Geoid loader fetches its grid binary lazily over the network,
+// which isn't available under Jest. Delegate to the original egm96-universal package
+// (bit-identical values — see scripts/extractEGM96Geoid.js validation) so these tests
+// exercise real geoid undulations without needing the async loader.
+jest.mock("../../src/EGM96Geoid", () => {
+    const {meanSeaLevel} = require("egm96-universal");
+    return {
+        meanSeaLevelOffset: (lat, lon) => meanSeaLevel(Math.max(-90, Math.min(90, lat)), lon),
+        ensureGeoidLoaded: () => Promise.resolve(),
+    };
+});
+
 describe("clampTerrainElevationHAE", () => {
     test("preserves negative HAE sea-level terrain for cached 0 AGL reconstruction", () => {
         const lat = 25.2048;

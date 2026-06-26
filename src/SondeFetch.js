@@ -8,7 +8,6 @@ import {detectSondeFormat, listIGRA2Soundings, parseIGRA2, parseUWYOList, parseU
 import {reconstructTrajectory} from "./SondeTrajectory";
 import {initProgress, updateProgress, hideProgress} from "./CProgressIndicator";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
-import JSZip from "jszip";
 
 // Escape HTML metacharacters to prevent XSS when interpolating into innerHTML
 function esc(s) {
@@ -134,6 +133,7 @@ export async function fetchIGRA2Data(igra2Id, year) {
     }
 
     var arrayBuffer = await response.arrayBuffer();
+    const {default: JSZip} = await import("jszip");
     var zip = new JSZip();
     var contents = await zip.loadAsync(arrayBuffer);
 

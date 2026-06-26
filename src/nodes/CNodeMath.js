@@ -23,7 +23,13 @@ import {NodeMan} from "../Globals";
 
 import {assert} from "../assert";
 import {stripComments} from "../utils";
-import * as math from 'mathjs';
+// Use the number-only mathjs entry: it keeps every scalar function, evaluate(),
+// parse() and parser() that slider/value expressions rely on, but drops the
+// BigNumber/decimal.js, Complex, Fraction and any-type matrix/unit machinery —
+// ~2.4MB of mathjs source that nothing on the expression path uses. NOTE:
+// CClientNLU.js must import the SAME entry, else its create(math.all) re-pulls
+// full mathjs back into the bundle.
+import * as math from 'mathjs/number';
 
 
 export class CNodeMath extends CNode {

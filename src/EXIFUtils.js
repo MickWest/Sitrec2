@@ -1,7 +1,7 @@
 import {Vector3} from "three";
 import {ViewMan} from "./CViewManager";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
-import {meanSeaLevelOffset} from "./EGM96Geoid";
+import {meanSeaLevelOffset, ensureGeoidLoaded} from "./EGM96Geoid";
 import {GlobalDateTimeNode, NodeMan, setRenderOne} from "./Globals";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {intersectSurface} from "./threeExt";
@@ -548,6 +548,11 @@ export async function extractJPEGImportMetadata(arrayBuffer, filename = "") {
     if (!/\.jpe?g$/i.test(filename)) {
         return null;
     }
+    // Geotagged-image import computes MSL/HAE altitudes via the EGM96 geoid in the
+    // synchronous apply* helpers that always run after this async extract step. Ensure
+    // the lazily-fetched grid is loaded now so those sync calls have it (covers the
+    // case of dropping a photo before any elevation-using sitch has loaded it).
+    await ensureGeoidLoaded();
 
     const exifr = await getExifr();
     const [raw, rotation] = await Promise.all([
