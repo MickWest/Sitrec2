@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.89.2 (2026-06-26)
+
+### Improvements
+- Sitrec now starts faster and downloads about half as much code on first load; large data tables are fetched only when a scene actually needs them and are reused across updates instead of being re-downloaded each release.
+- **Edit Geometry (Trees)** (Terrain → Edit Geometry (Trees)): *Snap to ground* now reaches the real street level even when you brush a tree, instead of stopping part-way down at the trunk base.
+- **Restore geometry by hand** (Terrain → Edit Geometry (Trees) → Manual Edit): hold Option/Alt while painting to put the geometry under the brush back to its original height — handy for recovering a building a snap accidentally flattened.
+
+### Bug Fixes
+- Fixed the *Delete triangles* brush leaving behind stray wall and spike slivers around what it removed (Terrain → Edit Geometry (Trees)).
+- Fixed the brush hover preview showing a doubled, mismatched wireframe ghost when more than one view was open; the preview now appears only in the view you are hovering over.
+
 ## Version 2.89.1 (2026-06-26)
 
 ### Improvements
