@@ -1,4 +1,5 @@
 import GUI from "./js/lil-gui.esm";
+import {Globals} from "./Globals";
 
 /**
  * CUIBar — a per-view header / UI bar (Blender-style "area header").
@@ -157,6 +158,12 @@ export class CUIBar {
     }
 
     setShown(shown) {
+        // In regression mode keep every view header hidden. The bar is hover-reveal chrome, so
+        // whether it's visible at screenshot time is timing-dependent — that non-determinism makes
+        // the visual baselines flake. Hiding it deterministically (the same way split-tree tiling
+        // is skipped under Globals.regression) keeps the compared viewport stable. It changes no
+        // 3D rendering — the bar is a pure DOM overlay above the canvas.
+        if (Globals.regression) shown = false;
         this.bar.style.opacity = shown ? '1' : '0';
         this.bar.style.pointerEvents = shown ? 'auto' : 'none';
     }

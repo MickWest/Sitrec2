@@ -898,7 +898,13 @@ export function serializeScriptedVideo() {
 
 export function deserializeScriptedVideo(data) {
     if (!scriptedVideo || !data || typeof data.script !== "string") return;
-    const ta = scriptedVideo.editor.textarea;
+    // The editor is now lazily created (this.editor starts null — see ensureEditor()), so we must
+    // route through ensureEditor() rather than touching scriptedVideo.editor directly. Reaching
+    // into the null editor here threw during finishDeserialization, and because that call is not
+    // awaited the throw became an unhandled rejection that aborted the rest of deserialization
+    // (skipping the camera-controller gating recalc and other post-load finalization).
+    const ed = scriptedVideo.ensureEditor();
+    const ta = ed.textarea;
     if (!ta) return;
     ta.value = data.script;
     scriptedVideo.doParse();
