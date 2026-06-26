@@ -9,6 +9,29 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.90.0 (2026-06-26)
+
+### New Features
+- **Redesigned per-view header bars**: every view now has a header strip with the view's name and menu, plus fullscreen, pin, and close buttons. Big views (Main, Look, Video) reveal their header on hover; panels keep theirs pinned.
+- **Tiling layout with draggable seams**: drag the seam between two views that share an edge to resize both at once. Snap views together edge to edge and grab the shared border to rebalance them.
+- **Reset Layout** (View → Reset Layout): snaps the open views back into a clean default grid.
+- **Pop a panel out into its own window** (the ⧉ button on a panel header): pop the Notes, chat, debug, ephemeris, or Scripted Video editor panels out into a separate browser window so you can drag them to another monitor; close that window to dock the panel back.
+- **Drag a view's header to move it**, and drag a tiled view's header far enough to detach it into a free-floating window.
+- **Double-click a view's header** to toggle fullscreen for that view, without moving the camera.
+- **Close a view from its header** (the ✕ button); Undo reopens it.
+
+### Improvements
+- **Scripted Video editor** is now a normal tileable, always-on-top window with the standard header, instead of a separate floating panel.
+- Views can no longer be shrunk into an unusable sliver — there's now a sensible minimum view size.
+- The Assistant view's header now includes the AI Model picker, mirrored from Settings and always in sync.
+- Terrain now sharpens up right away after a fullscreen, window resize, or layout change, instead of staying coarse until you move the camera.
+
+### Bug Fixes
+- Fixed changes not painting (and terrain tiles never finishing loading) when the Sitrec window was visible but not the focused window — toggling a layer, FOV, or fullscreen no longer waits until you click back into the window.
+- Fixed a crash loading sitches that contained a saved Scripted Video script, which left the Look camera pointing the wrong way and the scene never finishing loading.
+
+---
+
 ## Version 2.89.2 (2026-06-26)
 
 ### Improvements
