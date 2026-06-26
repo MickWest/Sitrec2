@@ -71,11 +71,11 @@ export const TREE_FLATTEN_DEFS = [
     //     ones are excluded from the auto heuristic hash. ---
     {key: "manualEdit", type: "bool", default: false, folder: null, top: true, manual: true,
         label: "Manual Edit", tooltip: "Paint the Edit Action onto the tiles. While on, left-click-dragging over the Google tiles removes the geometry under the brush; hovering shows a wireframe preview of what would be removed"},
-    {key: "brushRadius", type: "num", default: 15, min: 1, max: 100, step: 1, folder: null, top: true, manual: true,
+    {key: "brushRadius", type: "num", default: 8, min: 1, max: 20, step: 1, folder: null, top: true, manual: true,
         label: "Brush Radius (m)", tooltip: "World-space radius of the manual-edit brush"},
     {key: "action", type: "enum", default: "snap", folder: null, top: true,
         options: {"Snap to ground": "snap", "Delete triangles": "delete"},
-        label: "Edit Action", tooltip: "Snap geometry down to the ground plane, or delete the triangles. Used by both the brush and the automatic pass"},
+        label: "Edit Action", tooltip: "Snap the geometry down to the ground plane, or delete the triangles under the brush. Used by both the brush and the automatic pass"},
     {key: "applyEdits", type: "bool", default: true, folder: null, top: true, manual: true,
         label: "Apply Edits", tooltip: "Re-apply the saved manual edits to tiles as they load (persists with Manual Edit off). Turn off to temporarily see the original geometry without discarding the edits"},
 

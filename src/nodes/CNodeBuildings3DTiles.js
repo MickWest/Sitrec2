@@ -451,8 +451,15 @@ export class CNodeBuildings3DTiles extends CNode {
         const entry = {center: worldCenter.clone(), r: radius, a: action};
         this._dabsWorld.push(entry);
         this._lastDab = entry;
-        setRenderOne(true); // reapply pass edits the geometry next update
-        return 1;
+        // Apply to currently-loaded tiles right now for immediate feedback. This
+        // is idempotent via the DAB_COUNT stamps, so the per-frame reapply pass
+        // (which catches tiles that stream in later) won't double-apply.
+        let edited = 0;
+        for (const pv of Object.values(this._perView)) {
+            if (pv.treeFlattener) edited += pv.treeFlattener.reapplyDabs(this._dabsWorld, Infinity);
+        }
+        setRenderOne(true);
+        return edited;
     }
 
     // Rebuild the world-space dab cache from the serialized lat/lon/alt list.
