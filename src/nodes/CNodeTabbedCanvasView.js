@@ -1,7 +1,4 @@
-import GUI from "../js/lil-gui.esm";
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
-import {makeDraggable, removeDraggable} from "../DragResizeUtils";
-import {t} from "../i18n";
 
 class CNodeTabbedCanvasView extends CNodeViewCanvas2D {
     constructor(v) {
@@ -11,93 +8,25 @@ class CNodeTabbedCanvasView extends CNodeViewCanvas2D {
         this._dragHandle = v.dragHandle;
 
         this.createTabMenu();
-        this.setupTabDragging();
-        this.updateDraggableWithMenuExclude();
     }
 
     createTabMenu() {
-        const menuContainer = document.createElement('div');
-        menuContainer.style.position = 'absolute';
-        menuContainer.style.left = '0px';
-        menuContainer.style.top = '0px';
-        menuContainer.style.zIndex = '1000';
-        menuContainer.style.pointerEvents = 'none';
-        this.div.appendChild(menuContainer);
+        // Phase 3: the per-view menu IS the CUIBar TITLE menu (named with the friendly view
+        // name by CNodeView). Subclasses (FOV / curve editors) add their controls to
+        // this.tabMenu via addMenuItems(). Closing is the header ✕ icon now, so no "close"
+        // item here. Moving is the header drag handle; lil-gui's title click (wired in
+        // CUIBar.addMenu) toggles the dropdown.
+        if (!this.uiBar || !this.uiBar.titleMenu) return;   // overlay / passThrough: no header
+        this.tabMenu = this.uiBar.titleMenu;
 
-        this.tabMenu = new GUI({
-            container: menuContainer,
-            autoPlace: false,
-            title: this.menuName ?? 'Menu',
-            closeFolders: false
-        });
-        this.tabMenu.domElement.style.position = 'relative';
-        this.tabMenu.domElement.style.pointerEvents = 'auto';
+        // A "Close" item that hides the view. (The header ✕ icon does the same; the menu item
+        // is kept because the per-view menu is the primary control surface for these editors —
+        // e.g. the custom graph — and also keeps the title menu non-empty so it opens.)
+        this.tabMenu.add({ close: () => this.show(false) }, 'close').name('Close');
 
-        const closeObj = {
-            close: () => {
-                this.tabMenu.close();
-                this.show(false);
-            }
-        };
-        this.tabMenu.add(closeObj, 'close').name(t("misc.hide.label"))
-            .tooltip(t("misc.hide.tooltip"));
-
-        this.tabMenu.close();
-
-        this.menuContainer = menuContainer;
-    }
-
-    setupTabDragging() {
-        this.isDraggingTab = false;
-        this.dragStartX = 0;
-        this.dragStartY = 0;
-
-        this.boundTabPointerMove = (e) => this.onTabPointerMove(e);
-        this.boundTabPointerUp = (e) => this.onTabPointerUp(e);
-
-        const titleElement = this.tabMenu.domElement.querySelector('.title');
-        if (titleElement) {
-            titleElement.style.cursor = 'pointer';
-            titleElement.addEventListener('pointerdown', (e) => this.onTabPointerDown(e));
-        }
-    }
-
-    onTabPointerDown(e) {
-        e.preventDefault();
-        e.stopPropagation();
-
-        this.dragStartX = e.clientX;
-        this.dragStartY = e.clientY;
-
-        document.addEventListener('pointermove', this.boundTabPointerMove);
-        document.addEventListener('pointerup', this.boundTabPointerUp);
-    }
-
-    onTabPointerMove(e) {
-        const dx = Math.abs(e.clientX - this.dragStartX);
-        const dy = Math.abs(e.clientY - this.dragStartY);
-
-        if (!this.isDraggingTab && (dx > 5 || dy > 5)) {
-            this.isDraggingTab = true;
-        }
-
-        if (this.isDraggingTab) {
-            const deltaX = e.clientX - this.dragStartX;
-            const deltaY = e.clientY - this.dragStartY;
-
-            const currentLeft = parseInt(this.div.style.left || 0);
-            const currentTop = parseInt(this.div.style.top || 0);
-
-            let newLeft = currentLeft + deltaX;
-            let newTop = currentTop + deltaY;
-
-            const constrainedPos = this.constrainToScreen(newLeft, newTop);
-            this.div.style.left = constrainedPos.left + 'px';
-            this.div.style.top = constrainedPos.top + 'px';
-
-            this.dragStartX = e.clientX;
-            this.dragStartY = e.clientY;
-        }
+        // isMenuInteraction() (in subclasses) walks up to this.menuContainer to let canvas
+        // handlers ignore clicks on the menu; the header bar is that region now.
+        this.menuContainer = this.uiBar.bar;
     }
 
     constrainToScreen(left, top) {
@@ -128,73 +57,27 @@ class CNodeTabbedCanvasView extends CNodeViewCanvas2D {
         const currentTop = parseInt(this.div.style.top || 0);
 
         const constrainedPos = this.constrainToScreen(currentLeft, currentTop);
-        
+
         if (constrainedPos.left !== currentLeft || constrainedPos.top !== currentTop) {
             this.div.style.left = constrainedPos.left + 'px';
             this.div.style.top = constrainedPos.top + 'px';
         }
     }
 
-    onTabPointerUp(e) {
-        document.removeEventListener('pointermove', this.boundTabPointerMove);
-        document.removeEventListener('pointerup', this.boundTabPointerUp);
-
-        if (!this.isDraggingTab) {
-            this.toggleTabMenu();
-        }
-
-        this.isDraggingTab = false;
-    }
-
-    toggleTabMenu() {
-        if (this.tabMenu._closed) {
-            this.tabMenu.open();
-        } else {
-            this.tabMenu.close();
-        }
-    }
-
-    updateDraggableWithMenuExclude() {
-        if (!this.draggable || !this.menuContainer) {
-            return;
-        }
-        
-        removeDraggable(this.div);
-        
-        makeDraggable(this.div, {
-            handle: this._dragHandle,
-            viewInstance: this,
-            shiftKey: this.shiftDrag,
-            excludeElements: [this.menuContainer],
-            onDrag: (event, data) => {
-                const view = data.viewInstance;
-                if (!view.draggable) return false;
-                if (view.shiftDrag && !event.shiftKey) return false;
-                return true;
-            }
-        });
-    }
-
     renderCanvas(frame) {
         super.renderCanvas(frame);
-        
+
         if (this.visible) {
             this.ensureOnScreen();
         }
     }
 
     dispose() {
-        document.removeEventListener('pointermove', this.boundTabPointerMove);
-        document.removeEventListener('pointerup', this.boundTabPointerUp);
-
-        if (this.tabMenu) {
-            this.tabMenu.destroy();
-        }
-
-        if (this.menuContainer && this.div.contains(this.menuContainer)) {
-            this.div.removeChild(this.menuContainer);
-        }
-
+        // The tab menu + its container live on the shared CUIBar header; CNodeView.dispose()
+        // disposes the uiBar (destroying the menu and removing the bar), so there's nothing to
+        // tear down here beyond dropping our references.
+        this.tabMenu = null;
+        this.menuContainer = null;
         super.dispose();
     }
 }

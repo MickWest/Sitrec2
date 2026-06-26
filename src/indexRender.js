@@ -24,6 +24,7 @@ import {glareSprite, targetSphere} from "./JetStuffVars";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
 import {VideoLoadingManager} from "./CVideoLoadingManager";
 import {ViewMan} from "./CViewManager";
+import {LayoutMan} from "./CLayoutManager";
 import {globalProfiler} from "./VisualProfiler";
 import {GPUMemoryMonitor} from "./GPUMemoryMonitor";
 import * as LAYER from "./LayerMasks";
@@ -554,6 +555,10 @@ export function renderMain(elapsed) {
                 if (globalProfiler) globalProfiler.pop();
             }
         })
+
+        // Adjacency-based shared-edge seams: rebuild the draggable seam overlay from the views'
+        // freshly-laid-out pixel rects. Cheap — skips entirely when no rect moved.
+        LayoutMan.updateSeams();
     }
     
     if (globalProfiler) globalProfiler.pop();

@@ -115,6 +115,8 @@ import {CNodeFactory} from "./nodes/CNodeFactory";
 import {extraCSS} from "./extra.css";
 import {_TrackManager} from "./TrackManager";
 import {ViewMan} from "./CViewManager";
+import {LayoutMan} from "./CLayoutManager";
+import {clearMenuMirrors} from "./MenuMirror";
 import {glareSprite, targetSphere} from "./JetStuffVars";
 import {CCustomManager} from "./CustomSupport";
 import {EventManager} from "./CEventManager";
@@ -309,29 +311,22 @@ function scheduleAnimationLoop(delay = 0) {
     }, Math.max(0, delay));
 }
 
-// Tracks window focus so we can pause the loop when paused AND the user is
-// looking at another window. Blur alone doesn't pause (the user may still be
-// watching playback in a partially-visible window), but blur+paused does.
-let windowFocused = typeof document !== "undefined" ? document.hasFocus() : true;
-
-// Debug/MCP override: when true, the render loop keeps running continuously,
-// ignoring the hidden-tab and paused/unfocused sleeps below. A hidden tab's
-// render loop normally force-sleeps (so terrain LOD subdivision and tile loading
-// stall), which makes it impossible to debug rendering via the SitrecBridge in a
-// backgrounded tab. Toggle with globalThis.__sitrecForceRender(true|false);
-// window.__sitrecForceRenderLoop mirrors the state for querying.
+// Render-on-demand sleep/wake. The loop is gated ONLY on tab VISIBILITY (document.hidden), not on
+// OS window focus: a visible-but-unfocused window (e.g. driven alongside another app) must still
+// run requested renders AND finite background work (terrain LOD subdivision, video decode), or
+// changes don't paint and tiles never finish loading. The idle paused tab still sleeps because the
+// background-work producers self-disable updateWhilePaused once settled (see renderLoopControl).
+//
+// Debug/MCP override: when forceRenderLoop is true, the render loop keeps running continuously,
+// ignoring the hidden-tab and paused sleeps below. A hidden tab's render loop normally
+// force-sleeps (so terrain LOD subdivision and tile loading stall), which makes it impossible to
+// debug rendering via the SitrecBridge in a backgrounded tab. Toggle with
+// globalThis.__sitrecForceRender(true|false); window.__sitrecForceRenderLoop mirrors the state.
 let forceRenderLoop = false;
 
 function shouldSleepAnimationLoop() {
     return shouldSleepRenderLoopState({
         hidden: document.hidden,
-        // MCP-driven sessions: the SitrecBridge extension navigates and
-        // queries the page from a Claude Code instance running in another
-        // window. The Sitrec tab is intentionally not focused, but we still
-        // want the render loop alive so terrain LOD subdivision, video
-        // decoding, and other paused-but-active work proceeds. Treat the
-        // MCP flag as "focused enough" to skip the paused+unfocused sleep.
-        focused: windowFocused || !!window._mcpDebug,
         paused: par.paused,
         renderOne: par.renderOne,
         nodeList: NodeMan?.list,
@@ -340,17 +335,16 @@ function shouldSleepAnimationLoop() {
 }
 
 function wakeAnimationLoop() {
-    // forceRenderLoop bypasses the hidden/paused gates so the loop can be
+    // forceRenderLoop bypasses the hidden gate so the loop can be
     // (re)started for debugging in a backgrounded MCP tab.
     if (document.hidden && !forceRenderLoop) return;
-    if (par.paused && !windowFocused && !window._mcpDebug && !forceRenderLoop) return;
     scheduleAnimationLoop(0);
 }
 
 globalThis.__sitrecWakeRenderLoop = wakeAnimationLoop;
 
 // Debug/MCP: force the render loop to run continuously (see forceRenderLoop above),
-// overriding the hidden-tab and paused/unfocused sleeps so the scene keeps updating
+// overriding the hidden-tab and paused sleeps so the scene keeps updating
 // and rendering while a backgrounded tab is inspected via the bridge. Note: a hidden
 // tab still throttles the setTimeout scheduler (~1 fps in Chrome), but that is enough
 // to drive terrain subdivision/tile loading over a few seconds. Returns the new state;
@@ -372,22 +366,9 @@ document.addEventListener("visibilitychange", () => {
         return;
     }
 
+    // Tab became visible again — re-arm a render and revive the (possibly slept) loop.
     setRenderOne(true);
     wakeAnimationLoop();
-});
-
-window.addEventListener("blur", () => {
-    windowFocused = false;
-    // Don't clear the timer: if playing, the loop should continue. If paused,
-    // the next animate tick observes shouldSleepAnimationLoop() and self-suspends.
-});
-
-window.addEventListener("focus", () => {
-    windowFocused = true;
-    if (!document.hidden) {
-        setRenderOne(true);
-        wakeAnimationLoop();
-    }
 });
 
 // Adaptive frame rate control
@@ -1566,6 +1547,7 @@ async function initializeOnce() {
         window.SitchMan = SitchMan;
         window.TrackManager = TrackManager;
         window.ViewMan = ViewMan;
+        window.LayoutMan = LayoutMan;
         window.CustomManager = CustomManager;
         window.EventManager = EventManager;
         window.NodeFactory = NodeFactory;
@@ -1722,6 +1704,13 @@ async function initializeOnce() {
     addTranslatedGUIMenu("view", "menus.view.title")
         .tooltip(t("menus.view.tooltip"));
     setupHUDColor(guiMenus.view);
+
+    // Reset Layout: snap the open views back into a clean default grid (Main on the left, the
+    // rest stacked on the right), ignoring their current positions — recovery for a layout that
+    // got messy. Views are free rectangles; shared edges become draggable seams automatically
+    // (see CLayoutManager), so there is no separate "tiled" mode to toggle.
+    guiMenus.view.add({reset: () => LayoutMan.resetLayout()}, "reset").name("Reset Layout")
+        .tooltip("Snap all open views back into a clean default grid");
 
 
 
@@ -2147,6 +2136,14 @@ function legacySetup() {
 async function setupFunctions() {
     resetPar();
 
+    // Each sitch starts in legacy (free-floating) layout mode; auto-tiling (if any) is
+    // re-evaluated at the end of setup once this sitch's views + positions are established.
+    LayoutMan.clearLayout();
+
+    // Drop menu-mirror registrations from the previous sitch (its controllers/menus are being
+    // disposed); they re-register as this sitch's menus are rebuilt.
+    clearMenuMirrors();
+
     const title = urlParams.get("regression") ? "Sitrec Regression Test" : process.env.BUILD_VERSION_STRING;
     Globals.menuBar.infoGUI.title(title);
 
@@ -2406,6 +2403,19 @@ async function setupFunctions() {
         ["cameraLocation", "cameraHeading", "cameraFOV", "cameraTweaks"].forEach(showFolderIfPopulated);
     updateCameraFolders();
     setTimeout(updateCameraFolders, 0);
+
+    // Split-tree tiling (UI redesign Phase 2). A saved sitch may carry an explicit tiling tree
+    // (Sit.layout, restored verbatim so seam positions persist); otherwise, if the open views
+    // already form a complete snapped grid, auto-couple their shared edges. Both no-op on a
+    // free-floating layout and are skipped in regression mode so the legacy-geometry baselines
+    // stay deterministic. Edge-to-edge ⇒ no geometry change either way.
+    if (!Globals.regression) {
+        if (Sit.layout) {
+            LayoutMan.setLayout(Sit.layout);
+        } else {
+            LayoutMan.autoTileIfSnapped();
+        }
+    }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 }

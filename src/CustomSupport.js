@@ -45,6 +45,8 @@ import {
     withTestUser
 } from "./Globals";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
+import {registerMirrorSource, syncMirroredSource} from "./MenuMirror";
+import {LayoutMan} from "./CLayoutManager";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {GlobalScene} from "./LocalFrame";
@@ -604,6 +606,10 @@ export class CCustomManager {
                 this.saveGlobalSettings(true);
             });
 
+        // Make this control mirrorable into other menus (e.g. the Assistant view header).
+        // The mirror stays in sync with this dropdown — value, option list, and onChange.
+        registerMirrorSource("chatModel", this.chatModelController);
+
         // Add Center Sidebar toggle
         settingsFolder.add(Globals.settings, "centerSidebar")
             .name(t("custom.settings.centerSidebar.label"))
@@ -685,6 +691,11 @@ export class CCustomManager {
             this.chatModelController.updateDisplay();
             this.saveGlobalSettings(true);
         }
+
+        // The value changes above bypass the controller's onChange, so any mirror of this
+        // dropdown (e.g. the Assistant header "AI Model") would keep showing the old value.
+        // Re-align all mirrors to the now-current chatModel.
+        syncMirroredSource("chatModel");
     }
 
     // Upgrade legacy camera smoothing tracks to dynamic smoothing controls.
@@ -1119,6 +1130,11 @@ export class CCustomManager {
     updateViewFromPreset() {
         const preset = this.viewPresets[this.currentViewPreset];
         if (preset) {
+            // A split-tree tiling would otherwise override the preset's positions every frame
+            // (applyLayoutRect), so clear it first; the preset is applied to free-floating views,
+            // then re-tiled below if it forms a snapped grid.
+            LayoutMan.clearLayout();
+
             // Clear any fullscreen state before applying preset
             ViewMan.fullscreenView = null;
             ViewMan.iterate((id, v) => {
@@ -1146,6 +1162,13 @@ export class CCustomManager {
             }
 
             forceUpdateUIText();
+
+            // If the preset's views form a complete snapped grid, re-couple their shared edges
+            // (matches the auto-tile-on-load behaviour). No-op for free-floating / aspect-locked
+            // presets. Skipped in regression mode for deterministic baselines.
+            if (!Globals.regression) {
+                LayoutMan.autoTileIfSnapped();
+            }
         } else {
             console.warn("No view preset found for " + this.currentViewPreset);
         }

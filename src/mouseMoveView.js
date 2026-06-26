@@ -59,7 +59,11 @@ export function SetupMouseHandler() {
     document.addEventListener( 'pointermove', onDocumentMouseMove, false );
     document.addEventListener( 'pointerdown', onDocumentMouseDown, false );
     document.addEventListener( 'pointerup', onDocumentMouseUp, false );
-    document.addEventListener( 'dblclick', onDocumentDoubleClick, false );
+    // CAPTURE phase: a hover-revealed CUIBar stops 'dblclick' in the bubble phase (so header
+    // clicks don't fullscreen-via-content), and the video canvas has its own bubble dblclick
+    // (pan/zoom reset). Capturing at the document lets the header-strip handler run first and
+    // swallow the event so neither of those fires on a header double-click.
+    document.addEventListener( 'dblclick', onDocumentDoubleClick, true );
     document.addEventListener( 'wheel', onDocumentWheel, false );
 
     // Initial press of a cursor-consuming key needs an immediate cursor
@@ -192,23 +196,38 @@ export function onDocumentMouseUp(event) {
     mouseDown = false;
 }
 
+// Double-clicking a view's HEADER STRIP (its UIBar) toggles fullscreen — the same action as
+// the ⛶ icon. This is registered in the CAPTURE phase (see SetupMouseHandler) so it runs
+// before a hover-revealed bar's bubble-phase stopPropagation and before any content dblclick
+// handler. We gate on the bar's live bounding rect, which exists even when the bar is hidden
+// (opacity:0/pointerEvents:none), so it behaves identically whether the header is pinned or
+// hover-revealed. Double-clicking the CONTENT does nothing here — the old "double-click inside
+// the window to fullscreen" behaviour is intentionally removed.
 export function onDocumentDoubleClick(event) {
-    mouseX = event.clientX;
-    mouseY = event.clientY;
+    const x = event.clientX, y = event.clientY;
 
-    let done=false;
+    let done = false;
     ViewMan.iterate((key, view) => {
-        if (!done && view._effectivelyVisible) {
-            if (mouseInViewOnly(view, mouseX, mouseY)) {
-                //  console.log("Dbl " + key)
-                view.doubleClick();
-                done = true;
-            } else {
-                //  console.log("NOT " + key)
-            }
+        if (done || !view._effectivelyVisible) return;
+        const bar = view.uiBar?.bar;
+        if (!bar) return;                          // only views WITH a header strip
+        if (!mouseInViewOnly(view, x, y)) return;  // top-most view under the cursor
+        const r = bar.getBoundingClientRect();     // the ~26px header strip rect
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+            view.doubleClick();                    // self-gates on doubleClickResizes||doubleClickFullScreen
+            done = true;
         }
-    })
-    setRenderOne(true);
+    });
+
+    if (done) {
+        // Swallow so the underlying content handler doesn't ALSO fire — e.g. a hidden video
+        // header strip would otherwise pass the dblclick through to the canvas and reset
+        // pan/zoom on top of the fullscreen toggle. (The camera double-tap zoom on 3D views
+        // is suppressed separately in CameraControls.handleMouseUp / pointInHeaderStrip.)
+        event.stopPropagation();
+        event.preventDefault();
+        setRenderOne(true);
+    }
 }
 
 /**

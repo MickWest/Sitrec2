@@ -26,6 +26,20 @@ export let isViewDragging = false;
 // Snap distance in pixels
 const SNAP_DISTANCE = 10;
 
+// Minimum on-screen size (px) for a view in EITHER dimension — enforced by edge-resize
+// (makeResizable, below) and by shared-edge seam dragging (CLayoutManager imports this), so a
+// view can't be shrunk into an unusable sliver.
+export const MIN_VIEW_PX = 128;
+
+// Phase 1 — unified view interaction. The SINGLE modifier key that puts a movable
+// view into "edit layout" mode: hold it to highlight edges, move the view, and
+// edge-resize with snapping. Every movable CNodeView uses this same key (legacy
+// per-view shiftDrag / bare-drag configs are mapped onto it in CNodeView), so the
+// interaction is identical across 3D, look, video, graph, and 2D views.
+// (Value matches the historical mainView/lookView dragKey, so behaviour is unchanged
+// for views that already used Q.)
+export const VIEW_EDIT_KEY = "Q";
+
 // Resize handle thickness in pixels
 const HANDLE_SIZE = 10;
 const HANDLE_HALF = HANDLE_SIZE / 2;
@@ -476,14 +490,20 @@ export function makeDraggable(element, options = {}) {
         isDragging = true;
         isViewDragging = true;
 
-        // Call onDragStart callback if provided
+        // Call onDragStart callback if provided. Pass viewInstance for parity with onDrag /
+        // onDragEnd — without it `data.viewInstance` is undefined at drag start, silently
+        // no-opping any callback that relies on it (e.g. CNodeView's header-drag pin guard).
         if (options.onDragStart && typeof options.onDragStart === 'function') {
-            options.onDragStart(e, { left: startLeft, top: startTop, element });
+            options.onDragStart(e, { left: startLeft, top: startTop, element, viewInstance });
         }
 
         // Add global event listeners using pointer events for better off-screen support
         document.addEventListener('pointermove', onPointerMove);
         document.addEventListener('pointerup', onPointerUp);
+        // pointercancel: the gesture can be aborted (OS / browser / touch takeover) with NO
+        // pointerup to follow — end the drag there too so state, listeners and onDragEnd don't
+        // get left dangling.
+        document.addEventListener('pointercancel', onPointerCancel);
     };
 
     const onPointerMove = (e) => {
@@ -551,6 +571,7 @@ export function makeDraggable(element, options = {}) {
             if (willCloseOffTop(element, handleElement)) {
                 document.removeEventListener('pointermove', onPointerMove);
                 document.removeEventListener('pointerup', onPointerUp);
+                document.removeEventListener('pointercancel', onPointerCancel);
                 options.closeOnDragOffTop({
                     left: parseFloat(element.style.left) || 0,
                     top: parseFloat(element.style.top) || 0,
@@ -577,21 +598,57 @@ export function makeDraggable(element, options = {}) {
         // Remove global event listeners
         document.removeEventListener('pointermove', onPointerMove);
         document.removeEventListener('pointerup', onPointerUp);
+        document.removeEventListener('pointercancel', onPointerCancel);
+    };
+
+    // Pointer interaction interrupted (OS / browser / touch takeover): per the Pointer Events
+    // spec no pointerup follows, so without this the drag is left half-finished — isDragging
+    // stuck true, document listeners orphaned, and onDragEnd never fired (so a consumer's drag
+    // flag, e.g. CNodeView._headerDragging, stays stuck → bar permanently shown). End the drag
+    // like pointerup, but WITHOUT the closeOnDragOffTop close action (a cancel is an abort, not
+    // a deliberate drop), and always fire onDragEnd so consumers can clean up.
+    const onPointerCancel = (e) => {
+        if (!isDragging) return;
+        isDragging = false;
+        isViewDragging = false;
+        if (options.closeOnDragOffTop) {
+            element.style.opacity = "";
+        }
+        if (options.onDragEnd && typeof options.onDragEnd === 'function') {
+            options.onDragEnd(e, {
+                left: parseInt(element.style.left),
+                top: parseInt(element.style.top),
+                element,
+                viewInstance: element._dragData?.viewInstance,
+                cancelled: true,
+            });
+        }
+        updateAllHandlePositions();
+        document.removeEventListener('pointermove', onPointerMove);
+        document.removeEventListener('pointerup', onPointerUp);
+        document.removeEventListener('pointercancel', onPointerCancel);
     };
 
     // Add event listener to handle using pointerdown for better off-screen support
     handleElement.addEventListener('pointerdown', onPointerDown);
     
-    // Store cleanup function on element
+    // Store cleanup function on element.
+    // A single element can have makeDraggable called more than once (e.g. a view div with
+    // the Phase-1 Q-drag on the whole div AND a header-bar drag handle). Chain any previous
+    // cleanup so the earlier wiring's listeners — including the document keydown/keyup added
+    // for requiredKey — are removed too, instead of being orphaned by this reassignment.
+    const _previousDragCleanup = element._dragCleanup;
     element._dragCleanup = () => {
         handleElement.removeEventListener('pointerdown', onPointerDown);
         document.removeEventListener('pointermove', onPointerMove);
         document.removeEventListener('pointerup', onPointerUp);
+        document.removeEventListener('pointercancel', onPointerCancel);
         if (requiresKey) {
             document.removeEventListener('keydown', updateCursorAndBorder);
             document.removeEventListener('keyup', updateCursorAndBorder);
         }
         hideDragBorder(element);
+        if (_previousDragCleanup) _previousDragCleanup();
         delete element._dragData;
         delete element._dragCleanup;
     };
@@ -828,8 +885,8 @@ export function makeResizable(element, options = {}) {
             }
             
             // Enforce minimum size
-            const minWidth = 20;
-            const minHeight = 20;
+            const minWidth = MIN_VIEW_PX;
+            const minHeight = MIN_VIEW_PX;
             
             if (newWidth < minWidth) {
                 newWidth = minWidth;

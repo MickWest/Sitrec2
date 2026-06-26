@@ -1,5 +1,50 @@
 
 export const extraCSS = `
+/* ============================================================================
+   SITREC DESIGN TOKENS  (single source of truth — see docs/ui-redesign/DESIGN-LANGUAGE.md)
+   D1: the app stays DARK; only per-window headers are light-grey.
+   Values for existing surfaces preserve the current appearance (no visual change);
+   tokens tagged NEW are Blender-5.1.2-grounded and consumed by later phases.
+   NOTE: this string is run through stripComments() before injection — block and
+   line comments are fine in source but never use // inside a CSS value.
+   lil-gui's OWN theme vars are intentionally NOT re-pointed here yet (it has touch
+   font-size and hover-color variants); that aliasing is a careful later step.
+   ============================================================================ */
+:root {
+    /* Surfaces */
+    --sitrec-bg-app: #000000;
+    --sitrec-bg-menubar: #1f1f1f;
+    --sitrec-bg-panel: #1f1f1f;          /* mirrors lil-gui --background-color */
+    --sitrec-bg-title: #111111;          /* mirrors lil-gui --title-background-color */
+    --sitrec-bg-folder: #202030;         /* nested-folder dark blue */
+    --sitrec-bg-widget: #424242;         /* mirrors lil-gui --widget-color */
+    --sitrec-hover: #4f4f4f;             /* mirrors lil-gui --hover-color */
+    --sitrec-bg-header: #303030;         /* per-view header — Blender 5.1.2 area-header colour (lighter than the menubar) */
+
+    /* Text */
+    --sitrec-text: #ebebeb;              /* mirrors lil-gui --text-color */
+    --sitrec-text-strong: #ffffff;
+    --sitrec-text-dim: #a0a0a0;
+
+    /* Lines & accents */
+    --sitrec-border: #666666;            /* menu tab / dropdown borders */
+    --sitrec-border-folder: #ffffff;     /* nested-folder border */
+    --sitrec-border-area: rgba(255, 255, 255, 0.08);   /* NEW: Blender area seam — Phase 2/3 */
+    --sitrec-accent: #2cc9ff;            /* mirrors lil-gui --number-color (sliders/numbers) */
+    --sitrec-primary: #1976d2;
+    --sitrec-danger: #d32f2f;
+    --sitrec-link: #0080ff;
+    --sitrec-drag-highlight: rgba(100, 150, 255, 0.6);
+
+    /* Metrics */
+    --sitrec-header-h: 26px;             /* NEW: Blender header height — Phase 3 */
+    --sitrec-font-size: 11px;            /* mirrors lil-gui --font-size */
+    --sitrec-radius: 4px;
+    --sitrec-space-1: 4px;
+    --sitrec-space-2: 8px;
+    --sitrec-space-3: 12px;
+}
+
 .uplot {
     font-family: monospace;
 }
@@ -44,7 +89,7 @@ body {
 }
 a {
 
-    color: #0080ff;
+    color: var(--sitrec-link);
 }
 .label {
     color: #FFF;
@@ -124,7 +169,7 @@ a {
 .lil-gui .name {
     text-align: left;
     padding-left: 5px;
-    background: #1f1f1f;    // same as --background-color
+    background: var(--sitrec-bg-panel);
     // Prevent long file/track names from wrapping to a second line.
     // The default lil-gui rule uses white-space:pre on .controller > .name,
     // but that selector misses .name inside FunctionController buttons, so
@@ -136,7 +181,7 @@ a {
 
 .lil-gui button {
     text-align: left;
-    background: #1f1f1f;
+    background: var(--sitrec-bg-panel);
     // Constrain children (the .name div) so text-overflow:ellipsis can engage.
     overflow: hidden;
 }
@@ -152,45 +197,45 @@ a {
 }
 
 .lil-gui.transition > .children {
-        transition-duration: 1ms;  // changed from 300ms to 1ms 
+        transition-duration: 1ms;  // changed from 300ms to 1ms
 }
 
 .lil-gui.closed > .title:before {
-  content: ""; 
+  content: "";
 }
 .lil-gui .lil-gui.closed > .title:before {
-  content: "▸";  
+  content: "▸";
 }
 
 .lil-gui .title:before {
   font-family: "lil-gui";
-  content: "";  
+  content: "";
   padding-right: 2px;
   display: inline-block;
 }
 
 .lil-gui .lil-gui .title:before {
   font-family: "lil-gui";
-  content: "▾";  
+  content: "▾";
   padding-right: 2px;
   display: inline-block;
 }
 
-// INDENT TOP-LEVEL FOLDERS 
-// THIS IS LIKE .lil-gui .lil-gui .lil-gui > .children, BUT WITH ONE LESS .lil-gui 
+// INDENT TOP-LEVEL FOLDERS
+// THIS IS LIKE .lil-gui .lil-gui .lil-gui > .children, BUT WITH ONE LESS .lil-gui
 // I also use a dark blue background and a thicker white left border
 // to ensure the folder is visually distinctive
 
 .lil-gui .lil-gui > .children {
     border: none;
-    border: 1px solid #FFFFFF;
-    background: #202030;
+    border: 1px solid var(--sitrec-border-folder);
+    background: var(--sitrec-bg-folder);
 }
 
 .lil-gui .lil-gui .lil-gui > .children {
 
     border-left: none;
-    border: 1px solid #FFFFFF;
+    border: 1px solid var(--sitrec-border-folder);
 }
 
 body.hide-cursor {
@@ -218,8 +263,8 @@ html, body {
     min-width: fit-content !important;
     max-width: none !important;
     padding: 4px 12px 4px 8px !important;
-    background: var(--title-background-color) !important;
-    border: 1px solid #666 !important;
+    background: var(--sitrec-bg-title) !important;
+    border: 1px solid var(--sitrec-border) !important;
     border-bottom: none !important;
     border-radius: 4px 4px 0 0 !important;
     position: relative !important;
@@ -249,8 +294,8 @@ html, body {
 
 /* Ensure the dropdown content has proper background and connects to the tab */
 .lil-gui.root > .children {
-    background: var(--background-color) !important;
-    border: 1px solid #666 !important;
+    background: var(--sitrec-bg-panel) !important;
+    border: 1px solid var(--sitrec-border) !important;
     border-top: none !important;
     margin-top: 0 !important;
 }

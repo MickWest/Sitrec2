@@ -123,7 +123,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         this.positioned = false;
         this.autoFill = v.autoFill ?? true; // default to autofill
-        this.shiftDrag = true;
+        // Phase 1: the window-move gesture is unified to the edit key (Q) in CNodeView.
+        // The old `this.shiftDrag = true` override is removed — it was already dead
+        // (CNodeView wires makeDraggable with requiredKey "Q", which takes precedence
+        // over shiftDrag in onDrag), and it only made this view's config look non-uniform.
 
         this.scrubFrame = 0; // storing fractiona accumulation of frames while scrubbing
 

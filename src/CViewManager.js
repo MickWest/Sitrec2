@@ -118,7 +118,9 @@ class CViewManager extends CManager {
     _computeEV(view) {
         if (view._evComputed) return view._effectivelyVisible;
 
-        let effective = view.visible;
+        // A popped-out (windowed) view is "closed" in-page: its content lives in a separate
+        // browser window, so it drops out of the layout and its div hides.
+        let effective = view.visible && !view.windowed;
 
         // Overlay children inherit parent visibility (unless separateVisibility)
         if (view.overlayView && !view.separateVisibility) {
@@ -203,14 +205,17 @@ class CViewManager extends CManager {
         });
         
         nonOverlayViews.sort((a, b) => {
-            // scripted-video layouts impose an explicit stacking order (scriptZ);
-            // it outranks the size heuristic so e.g. the witness video can sit
-            // on top of an equal-sized look view during an overlay shot
-            const sz = (a.scriptZ || 0) - (b.scriptZ || 0);
-            if (sz !== 0) return sz;
+            // alwaysOnTop tool windows (the script editor, notes, …) stay above EVERYTHING,
+            // including scripted-video preview layouts — which assign scriptZ and would
+            // otherwise cover them. Checked first so scriptZ can't sink them.
             if (a.alwaysOnTop !== b.alwaysOnTop) {
                 return a.alwaysOnTop ? 1 : -1;
             }
+            // scripted-video layouts impose an explicit stacking order (scriptZ) among the
+            // non-alwaysOnTop views; it outranks the size heuristic so e.g. the witness video
+            // can sit on top of an equal-sized look view during an overlay shot.
+            const sz = (a.scriptZ || 0) - (b.scriptZ || 0);
+            if (sz !== 0) return sz;
             const areaA = (a.widthPx || 0) * (a.heightPx || 0);
             const areaB = (b.widthPx || 0) * (b.heightPx || 0);
             return areaB - areaA;

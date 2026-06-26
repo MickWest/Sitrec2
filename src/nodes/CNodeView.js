@@ -5,10 +5,12 @@
 // take their size from the div.
 //
 import {CNode} from './CNode'
-import {Globals, guiShowHideGraphs, guiShowHideViews, NodeMan} from "../Globals";
+import {Globals, guiShowHideGraphs, guiShowHideViews, NodeMan, setRenderOne, UndoManager} from "../Globals";
 import {assert} from "../assert";
 import {ViewMan} from "../CViewManager";
-import {makeDraggable, makeResizable, removeDraggable, removeResizable} from "../DragResizeUtils";
+import {LayoutMan} from "../CLayoutManager";
+import {makeDraggable, makeResizable, removeDraggable, removeResizable, VIEW_EDIT_KEY, clampBelowMenuBar} from "../DragResizeUtils";
+import {CUIBar} from "../CUIBar";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {
     getCenterSidebarAdjustment,
@@ -26,6 +28,35 @@ import {
 const DOCK_EDGE_PX = 36;
 const DOCK_MARGIN_PX = 8;
 const CLOSE_OFF_TOP_PX = -5;
+
+// Friendly, capitalised view names for the per-view header (UIBar). Falls back to the
+// view's menuName, then a prettified id ("altitudeGraphView" → "Altitude Graph").
+const FRIENDLY_VIEW_NAMES = {
+    mainView: "Main", lookView: "Look", video: "Video", video2: "Video 2",
+    chatView: "Assistant",
+};
+
+// The big content views default to an UNpinned (hover-reveal) header — a persistent bar is
+// intrusive there. Other views (editors/panels) default pinned. The state is serialized;
+// old sitches (no serialized value) assume off (see modDeserialize).
+const HEADER_DEFAULT_OFF = new Set(["mainView", "lookView", "video", "video2"]);
+
+// A header/Q drag must move the pointer past MOVE_THRESHOLD before it moves the view at all
+// (so a click with tiny jitter doesn't nudge it), and past the much larger DOCK_THRESHOLD
+// before a drag can dock the view to a sidebar (so a click near a screen edge can't dock it).
+const HEADER_DRAG_MOVE_THRESHOLD = 5;
+const HEADER_DRAG_DOCK_THRESHOLD = 60;
+// A tiled view is locked in the grid; dragging its header past this distance pops it out into
+// a free-floating window (Blender-style detach). Larger than the move threshold so a small
+// nudge doesn't accidentally tear a tile out of the layout.
+const HEADER_DRAG_DETACH_THRESHOLD = 30;
+function friendlyViewName(v, id) {
+    if (FRIENDLY_VIEW_NAMES[id]) return FRIENDLY_VIEW_NAMES[id];
+    if (v && v.menuName) return v.menuName;
+    let s = String(id).replace(/View$/, '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([a-zA-Z])([0-9])/g, '$1 $2').replace(/[_-]+/g, ' ').trim();
+    if (!s) s = String(id);
+    return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 const defaultCViewParams = {
     visible: true,
@@ -98,8 +129,22 @@ class CNodeView extends CNode {
         this.doubleClickResizes = v.doubleClickResizes;
         if (v.doubleClickFullScreen !== undefined) this.doubleClickFullScreen = v.doubleClickFullScreen;
         this.alwaysOnTop = v.alwaysOnTop ?? false;
+        this.poppable = v.poppable ?? false;   // adds a ⧉ "pop out into a browser window" header icon
+        this.windowed = false;                 // true while popped out — the in-page view is closed for layout
         this.shiftDrag = v.shiftDrag;
         this.dragKey = v.dragKey;
+
+        // --- Phase 1: unified view interaction ---
+        // All movable views share ONE edit gesture: hold VIEW_EDIT_KEY (Q) to highlight
+        // edges, move, and edge-resize with snapping. Legacy per-view configs are mapped
+        // onto it so the interaction is identical everywhere: shiftDrag:true (was "hold
+        // Shift") and bare-drag (no modifier at all) BOTH become the single Q gesture.
+        // Done in one place rather than at ~40 view-definition call sites.
+        if (this.draggable || this.resizable) {
+            this.dragKey = VIEW_EDIT_KEY;
+            this.shiftDrag = false;
+        }
+
         this.freeAspect = v.freeAspect;
         this.dockable = v.dockable ?? this.draggable;
         this.dockedSidebar = null;
@@ -179,16 +224,7 @@ class CNodeView extends CNode {
                         } else if (view.shiftDrag && !event.shiftKey) {
                             return false;
                         }
-                        view.setFromDiv(view.div);
-                        ViewMan.iterate((id, v) => {
-                            if (v.overlayView === view) {
-                                v.inheritSize();
-                            }
-                            if (v.in.relativeTo === view) {
-                                v.updateWH();
-                            }
-                        });
-                        return true;
+                        return view._applyDragMove(data, event);
                     },
                     onDragEnd: (event, data) => {
                         data.viewInstance?.onViewDragEnd?.(event, data);
@@ -207,6 +243,10 @@ class CNodeView extends CNode {
                     }
                 });
             }
+
+            // Phase 3: per-view header overlay (hover-reveal + pin). Additive chrome —
+            // does NOT inset the canvas or change geometry/rendering/serialization.
+            this.createViewHeader(v);
 
             const visibleToSet = this.visible;
             this.visible = undefined; // force update
@@ -245,6 +285,193 @@ class CNodeView extends CNode {
         this.applyEarlyMods();
     }
 
+    // After this view moves (Q-drag or header-drag), refresh dependents: overlay children
+    // inherit the new size, relativeTo children re-layout. Shared by both drag wirings.
+    _propagateDragToDependents() {
+        // Don't let the view be dragged above the menu bar — snap it flush under (pad 0).
+        clampBelowMenuBar(this.div, 0);
+        this.setFromDiv(this.div);
+        ViewMan.iterate((id, v) => {
+            if (v.overlayView === this) v.inheritSize();
+            if (v.in.relativeTo === this) v.updateWH();
+        });
+    }
+
+    // Apply a drag move only once the pointer has moved past a small threshold, so a click
+    // (no / tiny jitter) doesn't nudge the view. Records the displacement so onViewDragEnd
+    // can gate sidebar docking behind a much larger threshold. Returns false (→ makeDraggable
+    // reverts to the start position) while under threshold.
+    _applyDragMove(data, event) {
+        const moved = Math.hypot(data.dx || 0, data.dy || 0);
+        this._dragDisplacement = moved;
+
+        // A tiled view is locked in the grid (the seams resize it). Dragging its header far
+        // enough detaches it: it pops out of the tree into a free-floating window and then
+        // follows the pointer. Below the threshold it stays put (returns false → revert).
+        if (LayoutMan.hasLeaf(this.id)) {
+            if (moved < HEADER_DRAG_DETACH_THRESHOLD) return false;
+            LayoutMan.removeLeaf(this.id);
+            this.setResizeHandlesVisible(true);
+        }
+
+        // While dragging a floating view in a tiled layout, preview where it would re-dock (the
+        // blue zone) so the snap is never a surprise — only when the cursor is in a tile's edge
+        // band; the central region shows nothing and leaves the view free-floating.
+        if (event && event.clientX !== undefined && moved >= HEADER_DRAG_MOVE_THRESHOLD
+            && LayoutMan.active && !LayoutMan.hasLeaf(this.id)) {
+            LayoutMan.updateDropPreview(this.id, event.clientX, event.clientY);
+        } else {
+            LayoutMan.hideDropPreview();
+        }
+
+        if (moved < HEADER_DRAG_MOVE_THRESHOLD) return false;
+        this._propagateDragToDependents();
+        return true;
+    }
+
+    // Keep this view's header bar reachable: at least partly visible horizontally and fully
+    // visible vertically (below the menu bar, above the bottom of the screen). Used after a
+    // drag-end and after undocking from a sidebar.
+    _ensureUIBarVisible() {
+        if (!this.uiBar || !this.div) return;
+        const barH = this.uiBar.bar.offsetHeight || 26;
+        const mb = document.getElementById("menuBarBlackBar");
+        const menuBottom = mb ? mb.getBoundingClientRect().bottom : 0;
+        const screenW = window.innerWidth, screenH = window.innerHeight;
+        const minVisible = 80;   // px of the bar that must stay on screen horizontally
+        const rect = this.div.getBoundingClientRect();
+        let dx = 0, dy = 0;
+        if (rect.left > screenW - minVisible) dx = (screenW - minVisible) - rect.left;
+        else if (rect.right < minVisible) dx = minVisible - rect.right;
+        if (rect.top < menuBottom) dy = menuBottom - rect.top;
+        else if (rect.top + barH > screenH) dy = screenH - (rect.top + barH);
+        if (dx === 0 && dy === 0) return;
+        const left = (parseFloat(this.div.style.left) || this.leftPx) + dx;
+        const top = (parseFloat(this.div.style.top) || this.topPx) + dy;
+        this.div.style.left = `${Math.round(left)}px`;
+        this.div.style.top = `${Math.round(top)}px`;
+        this.setFromDiv(this.div);
+    }
+
+    // --- Phase 3: per-view header / UI bar (Blender-style) ---
+    // The header is a CUIBar: an OVERLAY strip above the canvas (it never insets the
+    // canvas, so showing/hiding changes NO rendering — the viewport renders full-size
+    // underneath). The bar supports a title, menus, and icon buttons. Hover-reveals; the
+    // pin keeps it shown. Runtime chrome only — nothing here is serialized, so saved and
+    // legacy sitches are unaffected.
+    createViewHeader(v) {
+        if (this.overlayView) return;   // overlay views share the parent div
+        if (this.passThrough) return;   // pointer events disabled — nothing to hover
+        if (v.noUIBar) return;          // HUD instruments (compass, OSD, info) opt out
+        if (this.uiBar) return;
+
+        // Title is a lil-gui menu named with a friendly, capitalised view name.
+        const title = friendlyViewName(v, this.id);
+        const bar = new CUIBar(this.div, {title});
+        // Standard chrome, left→right: fullscreen, pin, close.
+        if (this.doubleClickFullScreen || this.doubleClickResizes) {
+            bar.addIcon('⛶', () => this.doubleClick(), 'Toggle fullscreen', 'fullscreen');
+        }
+        if (this.poppable) {
+            this._popIcon = bar.addIcon('⧉', () => this.togglePopout(), 'Pop out into a window', 'popout');
+        }
+        bar.addPinIcon(() => this.setHeaderPinned(!this.headerPinned));
+        bar.addCloseIcon(() => this.closeViewWithUndo(title));
+        this.uiBar = bar;
+
+        // The header bar is a DRAG HANDLE: drag it to move the view (no modifier — the bar is
+        // an explicit affordance). Interactive children (menus, icons) stopPropagation on
+        // pointerdown so they don't start a drag. Coexists with the Phase-1 Q-drag-anywhere.
+        if (this.draggable) {
+            bar.bar.style.cursor = 'move';
+            makeDraggable(this.div, {
+                handle: bar.bar,
+                viewInstance: this,
+                onDragStart: (event, data) => {
+                    data.viewInstance?._setHeaderDragging(true, event);
+                },
+                onDrag: (event, data) => {
+                    const view = data.viewInstance;
+                    if (!view.draggable) return false;
+                    if (view.dockedSidebar) return true;
+                    return view._applyDragMove(data, event);
+                },
+                onDragEnd: (event, data) => {
+                    data.viewInstance?._setHeaderDragging(false, event);
+                    data.viewInstance?.onViewDragEnd?.(event, data);
+                },
+            });
+        }
+
+        this.headerPinned = false;
+        this._headerHovering = false;
+        this._headerDragging = false;
+        // Default pinned for most views; OFF for the big content views (Main/Look/Video).
+        // A saved sitch overrides this in modDeserialize; old sitches assume off.
+        this.setHeaderPinned(v.pinHeader ?? !HEADER_DEFAULT_OFF.has(this.id));
+
+        // Hover-reveal (only when NOT pinned): the bar fades in while the pointer is over the
+        // BAR STRIP itself — not the whole view — AND no mouse button is held. So it won't
+        // appear while interacting with view content, nor while a drag passes over the strip
+        // (button held). Leaving the strip hides it; mid-strip with a button held leaves the
+        // state unchanged (so a header-drag-in-progress isn't hidden out from under itself).
+        const updateReveal = (e) => {
+            // While dragging the bar it acts as if pinned (see _setHeaderDragging): don't let a
+            // fast drag that briefly moves the pointer off the (moving) strip hide it mid-drag.
+            if (this.headerPinned || this._headerDragging) return;
+            const r = bar.bar.getBoundingClientRect();
+            const inBar = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+            if (!inBar) {
+                if (this._headerHovering) { this._headerHovering = false; this._updateHeaderShown(); }
+            } else if (e.buttons === 0 && !this._headerHovering) {
+                this._headerHovering = true; this._updateHeaderShown();
+            }
+        };
+        const hideReveal = () => { if (!this.headerPinned && !this._headerDragging && this._headerHovering) { this._headerHovering = false; this._updateHeaderShown(); } };
+        this.div.addEventListener('pointermove', updateReveal);
+        this.div.addEventListener('pointerleave', hideReveal);
+        this.div.addEventListener('pointercancel', hideReveal);
+    }
+
+    _updateHeaderShown() {
+        if (this.uiBar) this.uiBar.setShown(this.headerPinned || this._headerHovering || this._headerDragging);
+    }
+
+    // A header drag must keep the bar visible for the whole gesture, even if the pointer
+    // briefly slips off the strip as the view follows it — otherwise an unpinned bar hides
+    // out from under the drag. So while dragging we treat the bar like a pinned one (forced
+    // shown, hover-reveal suppressed). On drag end we recompute hover from the final pointer
+    // position (the strip may have moved) so the bar settles into the right revealed state.
+    _setHeaderDragging(dragging, event) {
+        this._headerDragging = dragging;
+        if (!dragging && event && this.uiBar) {
+            const r = this.uiBar.bar.getBoundingClientRect();
+            this._headerHovering = !this.headerPinned
+                && event.clientX >= r.left && event.clientX <= r.right
+                && event.clientY >= r.top && event.clientY <= r.bottom;
+        }
+        this._updateHeaderShown();
+    }
+
+    setHeaderPinned(pinned) {
+        this.headerPinned = !!pinned;
+        if (this.uiBar) this.uiBar.setPinned(this.headerPinned);
+        this._updateHeaderShown();
+    }
+
+    // Close (hide) this view via the header ✕, recorded as an undoable action so Undo
+    // reopens it (and Redo closes it again). UndoManager.add is a no-op while undoing/redoing.
+    closeViewWithUndo(name) {
+        this.show(false);
+        if (UndoManager) {
+            UndoManager.add({
+                undo: () => this.show(true),
+                redo: () => this.show(false),
+                description: "Close " + (name || this.id) + " view",
+            });
+        }
+    }
+
     // virtual functions for mouseMouveView.js onDocumentMouseMove
     onMouseMove(event, x, y, dx, dy) {
    //      console.log("UNIMPLEMENTED Mouse Move in view "+this.id)
@@ -267,7 +494,7 @@ class CNodeView extends CNode {
     //     }
     // }
 
-    toSerialCNodeView = ["left","top","width","height","visible","doubled","preDoubledLeft","preDoubledTop","preDoubledWidth","preDoubledHeight"];
+    toSerialCNodeView = ["left","top","width","height","visible","doubled","preDoubledLeft","preDoubledTop","preDoubledWidth","preDoubledHeight","headerPinned"];
 
 
 
@@ -304,6 +531,14 @@ class CNodeView extends CNode {
         }
         this.visible = !visible; // ensure we toggle the visibility
         this.setVisible(visible);
+
+        // Header pin state: a NEW sitch carries `headerPinned` (already applied by
+        // simpleDeserialize above); an OLD sitch (no field) keeps the per-view DEFAULT —
+        // Main/Look/Video off, other panels on. Apply whatever's now in this.headerPinned.
+        if (this.uiBar) {
+            this.setHeaderPinned(this.headerPinned);
+        }
+
         // Don't restore fullscreen here — that's deferred to
         // restoreFullscreenFromMods() which runs after ALL mods are applied,
         // so it can detect corrupted saves with multiple doubled views.
@@ -319,13 +554,20 @@ class CNodeView extends CNode {
             this._resizeTimeout = null;
         }
 
+        // Dispose the per-view header/UI bar (destroys its hosted lil-gui menus) so they
+        // don't leak on sitch reload. Owns its own DOM removal; null it so nothing reuses it.
+        if (this.uiBar) {
+            this.uiBar.dispose();
+            this.uiBar = null;
+        }
+
         // if it's an overlay view, then we don't want to remove the div
         if (this.overlayView === undefined && this.div) {
             // Clean up draggable and resizable functionality
             if (this.draggable) {
                 removeDraggable(this.div);
             }
-            
+
             if (this.resizable) {
                 removeResizable(this.div);
             }
@@ -514,8 +756,53 @@ class CNodeView extends CNode {
     }
 
     // Updates the Pixel and Div values from the fractional and window values
+    // If this view is a leaf in the active split-tree layout, place it at the tile rect and
+    // mirror that rect back into the legacy left/top/width/height fractions (so serialization
+    // and any non-tree code path stay consistent, and a later detach has a sane floating rect).
+    // Returns true if it handled placement (caller skips the legacy fractional path).
+    applyLayoutRect() {
+        if (this.in.relativeTo || this.overlayView) return false;
+        // The fullscreen view must take the whole screen, not its tile rect — let the legacy
+        // (doubled) path place it. The other tiles are hidden by computeEffectiveVisibility
+        // while fullscreen, so their tile geometry doesn't matter.
+        if (ViewMan.fullscreenView === this) return false;
+        const rect = LayoutMan.rectFor(this.id);
+        if (!rect) return false;
+
+        const oldWidth = this.widthPx, oldHeight = this.heightPx;
+        this.leftPx = rect.leftPx;
+        this.topPx = rect.topPx;
+        this.widthPx = rect.widthPx;
+        this.heightPx = rect.heightPx;
+
+        const W = this.containerWidth(), H = this.containerHeight();
+        if (W > 0 && H > 0) {
+            this.left = (this.leftPx - this.containerLeft()) / W;
+            this.top = (this.topPx - this.containerTop()) / H;
+            this.width = this.widthPx / W;
+            this.height = this.heightPx / H;
+        }
+
+        if (this.div) {
+            this.div.style.top = this.topPx + 'px';
+            this.div.style.left = this.leftPx + 'px';
+            this.div.style.width = this.widthPx + 'px';
+            this.div.style.height = this.heightPx + 'px';
+        }
+
+        if (oldWidth !== this.widthPx || oldHeight !== this.heightPx) {
+            this.changedSize();
+        }
+        return true;
+    }
+
     updateWH() {
         if (this.updateDockedWH?.()) return;
+
+        // Split-tree tiling (optional, see CLayoutManager). When this view is a leaf in the
+        // active layout tree it takes its rect from the tree instead of the legacy fractional
+        // path. Floating/detached views, overlays, and relativeTo children are never leaves.
+        if (this.applyLayoutRect()) return;
 
         this.leftPx = Math.floor(this.containerLeft() + this.containerWidth()  * this.left);
         this.topPx  = Math.floor(this.containerTop()  + this.containerHeight() * this.top);
@@ -614,6 +901,14 @@ class CNodeView extends CNode {
     }
 
     changedSize() {
+        // A size change must (re)arm a render. Under render-on-demand a PAUSED resize that
+        // doesn't move the camera — fullscreen toggle, tiling layout change, window resize —
+        // otherwise wouldn't repaint, and (critically) the terrain LOD wouldn't re-evaluate:
+        // terrain's update() reads view.heightPx BEFORE updateWH refreshes it this frame, sees
+        // no change, and self-sleeps. Arming one more frame lets update() run again next frame
+        // with the NEW heightPx, where the viewport now feeds the subdivision fingerprint (see
+        // CNodeTerrainUI). Gated by an actual dimension change above, so no continuous render.
+        setRenderOne(true);
         if (this.renderer) {
             // For WebGL renderers: debounce renderer.setSize() to avoid flickering
             // Problem: During window resize drag gestures, widthPx/heightPx change 1-2 pixels every frame
@@ -794,6 +1089,12 @@ class CNodeView extends CNode {
                 this.preDoubledWidth = this.width;
                 this.preDoubledHeight = this.height;
 
+                // Mark fullscreen BEFORE updateWH so applyLayoutRect lets this view take the
+                // full screen instead of pinning it to (and mirroring back) its tile rect.
+                if (this.doubleClickFullScreen) {
+                    ViewMan.fullscreenView = this;
+                }
+
                 if (this.doubleClickResizes) {
                     if (this.width > 0) {
                         this.width *= 2;
@@ -826,10 +1127,6 @@ class CNodeView extends CNode {
                 this.updateWH();
                 this.snapInsidePx(0, 0, this.containerWidth(), this.containerHeight());
 
-                if (this.doubleClickFullScreen) {
-                    ViewMan.fullscreenView = this;
-                }
-
             } else {
                 this.doubled = false;
                 this.left = this.preDoubledLeft;
@@ -842,6 +1139,16 @@ class CNodeView extends CNode {
                     ViewMan.fullscreenView = null;
                 }
             }
+
+            // Hide/show the split-tree seam overlay to match fullscreen (the seams must not
+            // draw over a fullscreen view, and must come back on exit).
+            LayoutMan.updateDividerVisibility();
+
+            // Fullscreen toggles visibility, geometry AND z-order — all applied in renderMain
+            // (computeEffectiveVisibility / updateDOMVisibility / updateZOrder). Arm a render;
+            // the render-loop fix (renderLoopControl: a pending renderOne always runs, even
+            // unfocused) guarantees it actually paints.
+            setRenderOne(true);
         }
     }
 
@@ -850,6 +1157,13 @@ class CNodeView extends CNode {
             return;
 
         this.visible = visible;
+
+        // Hiding a view (display:none) suppresses the pointerleave that would normally
+        // clear the hover state, so the header would pop up unprompted on re-show. Clear it.
+        if (!visible && this._headerHovering) {
+            this._headerHovering = false;
+            this._updateHeaderShown();
+        }
 
         // Immediate DOM update for responsiveness.
         // Central DOM updates happen in ViewMan.updateDOMVisibility() each frame.
@@ -860,7 +1174,7 @@ class CNodeView extends CNode {
     _updateOwnDOM() {
         if (!this.overlayView) {
             if (this.div) {
-                this.div.style.display = this.visible ? 'block' : 'none';
+                this.div.style.display = (this.visible && !this.windowed) ? 'block' : 'none';
             }
         } else if (this.separateVisibility) {
             if (this.canvas) {
@@ -926,6 +1240,10 @@ class CNodeView extends CNode {
     onViewDragEnd(event) {
         if (!this.visible) return;
 
+        // How far this drag actually moved (0 for a click). Reset for next time.
+        const moved = this._dragDisplacement || 0;
+        this._dragDisplacement = 0;
+
         if (this.dockedSidebar) {
             if (!this.isEventInDockSidebar(event, this.dockedSidebar)) {
                 this.undockFromSidebar(event);
@@ -935,13 +1253,28 @@ class CNodeView extends CNode {
             return;
         }
 
+        LayoutMan.hideDropPreview();
+
         this.setFromDiv(this.div);
-        if (this.div.getBoundingClientRect().top < CLOSE_OFF_TOP_PX) {
-            this.setVisible(false);
-            return;
+        // Keep the header bar on screen (below the menu bar, partly visible L/R).
+        this._ensureUIBarVisible();
+
+        // Re-dock into the split-tree grid: if tiling is active and this floating view was
+        // dropped over a tile's EDGE band (the blue preview was showing), split that tile to
+        // insert it — the inverse of detach. dockViewAt no-ops for a central (no-snap) drop, so
+        // the view stays free-floating there. Takes precedence over sidebar docking.
+        if (moved >= HEADER_DRAG_MOVE_THRESHOLD && LayoutMan.active && !LayoutMan.hasLeaf(this.id)
+            && event && event.clientX !== undefined) {
+            if (LayoutMan.dockViewAt(this.id, event.clientX, event.clientY)) {
+                this.setResizeHandlesVisible(false);   // tiled views resize via the seams
+                return;
+            }
         }
 
         if (!this.dockable) return;
+
+        // Docking requires a DELIBERATE drag, not a click that happens to land near an edge.
+        if (moved < HEADER_DRAG_DOCK_THRESHOLD) return;
 
         const side = this.dockSideForEvent(event);
         if (side) {
@@ -1017,6 +1350,10 @@ class CNodeView extends CNode {
             height: `${this.heightPx}px`,
             display: this.visible ? "block" : "none",
         });
+
+        // Never restore to a state where the header bar is off the top (or off-screen) —
+        // the saved floating rect (or pointer drop) could place it under the menu bar.
+        this._ensureUIBarVisible();
 
         this.changedSize();
         this.deferFloatingPixelSizeRestore(widthPx, heightPx);
@@ -1134,6 +1471,63 @@ class CNodeView extends CNode {
 
     hide() {
         this.show(false)
+    }
+
+    // --- Pop out into a real separate browser window (poppable DOM views) ---
+    // Moves the view's CONTENT (everything under the CUIBar header) into a window.open popup and
+    // marks the in-page view `windowed`, so it drops out of the layout/seams (treated as closed)
+    // and its div hides. Docking — or closing the popup — moves the content back. Only meaningful
+    // for DOM-content views; WebGL views (their canvas context is bound to this document) are not
+    // made poppable.
+    togglePopout() {
+        if (this._poppedWindow && !this._poppedWindow.closed) this.dockWindow();
+        else this.popOut();
+    }
+
+    popOut() {
+        if (this._poppedWindow && !this._poppedWindow.closed) { this._poppedWindow.focus(); return; }
+        const w = Math.max(240, Math.round(this.widthPx || 480));
+        const h = Math.max(180, Math.round(this.heightPx || 360));
+        const win = window.open("", "sitrec_view_" + this.id, `popup,width=${w},height=${h}`);
+        if (!win) { alert("Popup blocked — please allow popups for this site, then try again."); return; }
+        this._poppedWindow = win;
+        try { win.document.title = "Sitrec — " + friendlyViewName(this.in, this.id); } catch (e) { /* cross-doc */ }
+        // --sitrec-header-h:0 → content positioned below the (now absent) header fills the window.
+        win.document.body.style.cssText = "margin:0; height:100vh; overflow:hidden;"
+            + "background:var(--sitrec-bg-app,#1a1a1a); color:var(--sitrec-text,#ebebeb); --sitrec-header-h:0px;";
+        const bar = this.uiBar && this.uiBar.bar;
+        this._poppedContent = [...this.div.children].filter(c => c !== bar);
+        for (const c of this._poppedContent) win.document.body.appendChild(win.document.adoptNode(c));
+        // (Closing the popup window docks it back — see the beforeunload handler below — so no
+        //  separate in-popup dock button is needed.)
+        this.windowed = true;
+        this._updateOwnDOM();                 // hide the in-page div
+        setRenderOne(true);                   // re-layout the remaining views (seams)
+        win.addEventListener("beforeunload", () => this.dockWindow());
+        // fallback poll in case beforeunload doesn't fire
+        this._popPoll = setInterval(() => { if (!this._poppedWindow || this._poppedWindow.closed) this.dockWindow(); }, 600);
+        // the popup has no JS of its own — if the main window goes away, take it along
+        if (!this._popUnloadWired) {
+            this._popUnloadWired = true;
+            window.addEventListener("pagehide", () => { if (this._poppedWindow && !this._poppedWindow.closed) this._poppedWindow.close(); });
+        }
+        if (this._popIcon) this._popIcon.title = "Dock the window back";
+    }
+
+    dockWindow() {
+        if (this._popPoll) { clearInterval(this._popPoll); this._popPoll = null; }
+        if (this._poppedContent) {
+            for (const c of this._poppedContent) {
+                if (c.ownerDocument !== document) this.div.appendChild(document.adoptNode(c));
+            }
+            this._poppedContent = null;
+        }
+        if (this._poppedWindow && !this._poppedWindow.closed) { try { this._poppedWindow.close(); } catch (e) { /* gone */ } }
+        this._poppedWindow = null;
+        this.windowed = false;
+        this._updateOwnDOM();
+        setRenderOne(true);
+        if (this._popIcon) this._popIcon.title = "Pop out into a window";
     }
 
 }

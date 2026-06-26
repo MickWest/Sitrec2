@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "scenarioId": "fullscreen-toggle-custom",
+  "sitch": "custom",
+  "frame": 10,
+  "captures": {
+    "fullscreenArmsRender": {
+      "armsRenderOnExit": true,
+      "armsRenderOnFullscreen": true,
+      "fullscreenCleared": true,
+      "fullscreenSet": true,
+      "hasButton": true
+    }
+  }
+}
