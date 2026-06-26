@@ -52,6 +52,7 @@ export class TreeManualBrush {
         this.raycaster = new Raycaster();
         this.painting = false;
         this.overCanvas = false; // is the cursor currently over a render canvas?
+        this._altKey = false;    // Option/Alt held → restore mode
         this._sx = 0;            // our own tracked pointer position (screen coords)
         this._sy = 0;
         this._lastFp = null;     // fingerprint of mouse+cameras, to skip idle rebuilds
@@ -93,6 +94,13 @@ export class TreeManualBrush {
     get active() {
         const p = this.buildingsNode && this.buildingsNode.treeFlattenParams;
         return !!(p && p.manualEdit);
+    }
+
+    // Holding Option/Alt overrides the dropdown action to "restore" — putting the
+    // brushed geometry back to its original height (e.g. to recover a building a
+    // snap dab flattened).
+    _effectiveAction() {
+        return this._altKey ? "restore" : this.buildingsNode.treeFlattenParams.action;
     }
 
     // Raycast the Google-tile geometry of the top-most view under the cursor.
@@ -151,7 +159,7 @@ export class TreeManualBrush {
         this.raycaster.layers.mask = cam.layers.mask;
         const hits = this.raycaster.intersectObject(group, true);
         if (!hits.length) return null;
-        return {point: hits[0].point, mask: cam.layers.mask};
+        return {point: hits[0].point, mask: cam.layers.mask, id: best.id};
     }
 
     // Cheap fingerprint of everything that moves the hit point: the pointer
@@ -179,12 +187,18 @@ export class TreeManualBrush {
         // lil-gui's own handlers, so this guard is what keeps the menu usable.
         if (!(e.target instanceof HTMLCanvasElement)) return;
         this._sx = e.clientX; this._sy = e.clientY;
+        this._altKey = e.altKey; // Option/Alt → restore geometry instead of edit
         // Restore the hover ghost so the pick + commit see the real geometry.
         this._clearGhost();
-        const hit = this.pick(e.clientX, e.clientY);
-        if (!hit) { this.hidePreview(); return; } // no tile hit → camera gets the drag
+        // Begin a paint stroke on every left-press over a render canvas, even if
+        // the press itself isn't over geometry — so a swipe that STARTS on empty
+        // sky still removes the tree as the brush crosses it (onPointerMove applies
+        // wherever there's a hit). Left-drag is thus the paint gesture in Manual
+        // Edit mode; camera navigation stays on the middle (rotate) / right (look)
+        // buttons, which we don't intercept.
         this.painting = true;
-        this.applyAt(hit.point);
+        const hit = this.pick(e.clientX, e.clientY);
+        if (hit) this.applyAt(hit.point);
         setRenderOne(true);
         // Own this stroke: block the view's camera-drag / selection handlers.
         e.stopPropagation();
@@ -194,6 +208,7 @@ export class TreeManualBrush {
     onPointerMove(e) {
         if (!this.active) { this.hidePreview(); return; }
         this._sx = e.clientX; this._sy = e.clientY;
+        this._altKey = e.altKey;
         this.overCanvas = e.target instanceof HTMLCanvasElement;
         if (!this.overCanvas) {
             this.hidePreview();
@@ -240,7 +255,7 @@ export class TreeManualBrush {
         // edit is happening and is visible on its own).
         if (!this.painting) {
             const radius = this.buildingsNode.treeFlattenParams.brushRadius;
-            const positions = this.buildingsNode.previewManualBrush(hit.point, radius);
+            const positions = this.buildingsNode.previewManualBrush(hit.point, radius, hit.id, this._effectiveAction());
             this._setGhost(positions);
         }
         setRenderOne(true);
@@ -288,7 +303,7 @@ export class TreeManualBrush {
 
     applyAt(point) {
         const radius = this.buildingsNode.treeFlattenParams.brushRadius;
-        this.buildingsNode.applyManualBrush(point, radius);
+        this.buildingsNode.applyManualBrush(point, radius, this._effectiveAction());
     }
 
     dispose() {
