@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.89.0 (2026-06-26)
+
+### New Features
+- **Edit Geometry (Trees)** (Terrain → Edit Geometry (Trees)): a new terrain tool that edits Google Photorealistic 3D Tiles to strip trees while keeping buildings. An automatic pass detects tree foliage and either flattens it to the ground or deletes it, with all its tuning controls under the *Automatic Tree Removal* sub-menu.
+- **Manual Edit brush** (Terrain → Edit Geometry (Trees) → Manual Edit): paint *Snap to ground* or *Delete triangles* onto the 3D tiles by left-click-dragging a brush, and hover to see a live wireframe preview of exactly what will be removed before you click.
+- Manual edits stick: they re-apply automatically as Google tiles stream in and out and are saved and restored with your sitch. Turn *Apply Edits* off to peek at the original geometry without losing your edits, or use *Restore Geometry* to discard them all.
+
+---
+
 ## Version 2.88.6 (2026-06-25)
 
 ### Improvements
