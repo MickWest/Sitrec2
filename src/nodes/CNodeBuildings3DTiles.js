@@ -17,9 +17,10 @@ import {GLTFExtensionsPlugin, TilesFadePlugin} from "3d-tiles-renderer/plugins";
 import {DRACOLoader} from "three/addons/loaders/DRACOLoader.js";
 import {TilesDayNightPlugin} from "../TilesDayNightPlugin";
 import {TilesEdgesPlugin} from "../TilesEdgesPlugin";
-import {TreeFlattener, makeDefaultTreeFlattenParams} from "../TilesTreeFlatten";
+import {TreeFlattener, makeDefaultTreeFlattenParams, GROUND_SEARCH_RADIUS} from "../TilesTreeFlatten";
 import {TreeManualBrush} from "../TreeManualBrush";
 import {ECEFToLLAVD_radii, RLLAToECEF_radii} from "../LLA-ECEF-ENU";
+import {getLocalUpVector} from "../SphericalMath";
 
 const DEG2RAD = Math.PI / 180;
 import {
@@ -435,20 +436,31 @@ export class CNodeBuildings3DTiles extends CNode {
     // also re-applies to tiles as they stream in. Deduped against the previous dab
     // so a drag doesn't store hundreds of overlapping spheres. Stored as lat/lon/alt
     // (frame-independent) for serialization.
-    applyManualBrush(worldCenter, radius) {
-        const action = this.treeFlattenParams.action;
+    applyManualBrush(worldCenter, radius, actionOverride) {
+        const action = actionOverride || this.treeFlattenParams.action;
         const last = this._lastDab;
         if (last && last.a === action && last.r === radius
             && last.center.distanceTo(worldCenter) < radius * 0.3) {
             return 0; // too close to the previous dab — skip
         }
         const lla = ECEFToLLAVD_radii(worldCenter);
-        this.treeFlattenParams.dabs.push({
+        const dab = {
             lla: [+lla.x.toFixed(7), +lla.y.toFixed(7), +lla.z.toFixed(2)],
             r: radius,
             a: action,
-        });
+        };
         const entry = {center: worldCenter.clone(), r: radius, a: action};
+        // For snap, find the true ground NOW (cross-mesh, since canopy and street
+        // are separate tile meshes) and persist it as the ground altitude `g`, so it
+        // stays stable as tiles stream / on reload. entry.floorH is the world height.
+        if (action === "snap") {
+            const gr = this._groundFloorH(worldCenter);
+            if (gr) {
+                dab.g = +ECEFToLLAVD_radii(gr.point).z.toFixed(2);
+                entry.floorH = gr.floorH;
+            }
+        }
+        this.treeFlattenParams.dabs.push(dab);
         this._dabsWorld.push(entry);
         this._lastDab = entry;
         // Apply to currently-loaded tiles right now for immediate feedback. This
@@ -466,12 +478,31 @@ export class CNodeBuildings3DTiles extends CNode {
     // Called on construction, after deserialize, and on ellipsoid/radii change.
     rebuildDabsWorld() {
         const dabs = this.treeFlattenParams.dabs || [];
-        this._dabsWorld = dabs.map(d => ({
-            center: RLLAToECEF_radii(d.lla[0] * DEG2RAD, d.lla[1] * DEG2RAD, d.lla[2]),
-            r: d.r,
-            a: d.a,
-        }));
+        this._dabsWorld = dabs.map(d => {
+            const center = RLLAToECEF_radii(d.lla[0] * DEG2RAD, d.lla[1] * DEG2RAD, d.lla[2]);
+            const entry = {center, r: d.r, a: d.a};
+            // Persisted snap ground altitude → world floor height (along up at center).
+            if (d.g !== undefined) {
+                const groundWorld = RLLAToECEF_radii(d.lla[0] * DEG2RAD, d.lla[1] * DEG2RAD, d.g);
+                entry.floorH = groundWorld.dot(getLocalUpVector(center));
+            }
+            return entry;
+        });
         this._lastDab = this._dabsWorld.length ? this._dabsWorld[this._dabsWorld.length - 1] : null;
+    }
+
+    // Cross-mesh ground for a snap dab at worldCenter: the lowest ORIGINAL vertex
+    // world-height (along the geodetic up) within GROUND_SEARCH_RADIUS, across the
+    // per-view renderers. Returns {floorH, point} or null.
+    _groundFloorH(worldCenter) {
+        const up = getLocalUpVector(worldCenter);
+        let best = null, bestH = Infinity;
+        for (const pv of Object.values(this._perView)) {
+            if (!pv.treeFlattener) continue;
+            const p = pv.treeFlattener.lowestGroundPoint(worldCenter, up, GROUND_SEARCH_RADIUS);
+            if (p) { const h = p.dot(up); if (h < bestH) { bestH = h; best = p.clone(); } }
+        }
+        return best ? {floorH: bestH, point: best} : null;
     }
 
     // "Apply Edits" toggle. Restore so the change shows immediately; the update
@@ -497,13 +528,16 @@ export class CNodeBuildings3DTiles extends CNode {
         setRenderOne(true);
     }
 
-    // Non-destructive hover preview: hide the triangles the brush covers across
-    // every view's renderer and collect their edges for the wireframe ghost.
-    // Returns a flat [x,y,z,...] array of world-space line-segment positions.
-    previewManualBrush(worldCenter, radius) {
+    // Non-destructive hover preview: hide the triangles the brush covers in the
+    // HOVERED view's renderer only (each view holds the tiles at its own LOD, so
+    // previewing both overlays a different-LOD wireframe that doesn't match the
+    // displayed solid) and collect their edges for the wireframe ghost. Returns a
+    // flat [x,y,z,...] array of world-space line-segment positions.
+    previewManualBrush(worldCenter, radius, viewId, action) {
         const positions = [];
-        for (const pv of Object.values(this._perView)) {
-            if (pv.treeFlattener) pv.treeFlattener.previewBrush(worldCenter, radius, positions);
+        const pv = this._perView[viewId];
+        if (pv && pv.treeFlattener) {
+            pv.treeFlattener.previewBrush(worldCenter, radius, action || this.treeFlattenParams.action, positions);
         }
         return positions;
     }

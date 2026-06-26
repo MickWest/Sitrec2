@@ -40,12 +40,28 @@ const PROCESSED_HASH = Symbol("treeFlatten_processedHash");
 // DAB_COUNT < dabs.length just needs the new tail applied. Reset on restore.
 const DAB_COUNT = Symbol("treeFlatten_dabCount");
 
+// Fixed horizontal search radius (metres) for the snap-to-ground floor, decoupled
+// from the brush radius — a small brush's footprint usually has no ground vertex
+// under it, so the ground must be searched over a wider, fixed neighbourhood.
+export const GROUND_SEARCH_RADIUS = 20;
+// Reject ground-search vertices seen more than this far (metres) below the hit —
+// guards against snapping to a vertex across a cliff / down a hole.
+const MAX_COLUMN_DEPTH = 80;
+
+// Scratch for the cross-mesh ground search (per-dab, not per-vertex).
+const _gp_inv = new Matrix4();
+const _gp_p = new Vector3();
+const _gp_bc = new Vector3();
+const _gp_lc = new Vector3();
+const _gp_upL = new Vector3();
+
 // Reusable scratch vectors for the per-mesh brush apply (no per-call allocation;
 // safe because the apply is synchronous and non-reentrant).
 const _bm_invWorld = new Matrix4();
 const _bm_localCenter = new Vector3();
 const _bm_up = new Vector3();
 const _bm_center = new Vector3();
+const _bm_groundW = new Vector3();
 
 // Aggregate diagnostics (exposed as window._treeFlattenDebug for MCP probing).
 export const treeFlattenDebug = {
@@ -70,7 +86,7 @@ export const TREE_FLATTEN_DEFS = [
     // --- manual brush edit (top level of "Edit Geometry"; `top`). The `manual`
     //     ones are excluded from the auto heuristic hash. ---
     {key: "manualEdit", type: "bool", default: false, folder: null, top: true, manual: true,
-        label: "Manual Edit", tooltip: "Paint the Edit Action onto the tiles. While on, left-click-dragging over the Google tiles removes the geometry under the brush; hovering shows a wireframe preview of what would be removed"},
+        label: "Manual Edit", tooltip: "Paint the Edit Action onto the tiles. While on, left-click-dragging over the Google tiles edits the geometry under the brush; hovering shows a wireframe preview. Hold Option/Alt while painting to RESTORE geometry back to its original height (e.g. to recover a building a snap flattened)"},
     {key: "brushRadius", type: "num", default: 8, min: 1, max: 20, step: 1, folder: null, top: true, manual: true,
         label: "Brush Radius (m)", tooltip: "World-space radius of the manual-edit brush"},
     {key: "action", type: "enum", default: "snap", folder: null, top: true,
@@ -838,10 +854,63 @@ export class TreeFlattener {
     // Restore Originals, tile eviction, and stale-stamp handling all undo manual
     // edits exactly as they do automatic ones. Returns the number of meshes
     // modified this call.
-    // Apply one brush dab (world-space sphere) to ONE mesh. Returns true if the
-    // mesh geometry was modified. Stashes the pristine geometry on first edit so
-    // the shared restore/eviction paths can undo it.
-    _brushMesh(mesh, worldCenter, radius, action) {
+    // Lowest ORIGINAL-geometry WORLD point within the horizontal cylinder (radius
+    // metres, about `up` through `worldCenter`), across ALL loaded meshes in this
+    // renderer. The canopy and the street are usually SEPARATE tile meshes, so the
+    // snap floor must be found across meshes — a within-mesh search only finds the
+    // tree's own trunk base (≈ half way). Returns the lowest world Vector3 (by
+    // height along `up`) or null; verts > MAX_COLUMN_DEPTH below the hit are ignored.
+    lowestGroundPoint(worldCenter, up, radius) {
+        const minH = worldCenter.dot(up) - MAX_COLUMN_DEPTH;
+        let best = null, bestH = Infinity;
+        this.renderer.forEachLoadedModel((scene) => {
+            scene.traverse((mesh) => {
+                if (!mesh.isMesh || !mesh.geometry) return;
+                const posAttr = mesh.geometry.attributes.position;
+                if (!posAttr) return;
+                const Nv = posAttr.count;
+                const orig = mesh[ORIGINAL_GEOMETRY];
+                const arr = (orig && orig.attributes.position.count === Nv) ? orig.attributes.position.array : posAttr.array;
+                mesh.updateWorldMatrix(true, false);
+                const mw = mesh.matrixWorld;
+                const me = mw.elements;
+                const ms = Math.hypot(me[0], me[1], me[2]) || 1;
+                // World bounding-sphere reject against the cylinder.
+                mesh.geometry.boundingSphere || mesh.geometry.computeBoundingSphere();
+                const bs = mesh.geometry.boundingSphere;
+                _gp_bc.copy(bs.center).applyMatrix4(mw);
+                const bx = _gp_bc.x - worldCenter.x, by = _gp_bc.y - worldCenter.y, bz = _gp_bc.z - worldCenter.z;
+                const bal = bx * up.x + by * up.y + bz * up.z;
+                const bhx = bx - bal * up.x, bhy = by - bal * up.y, bhz = bz - bal * up.z;
+                if (Math.sqrt(bhx * bhx + bhy * bhy + bhz * bhz) > bs.radius * ms + radius) return;
+                // Cylinder test in LOCAL space (cheap); world-transform only the verts
+                // that pass, to get their height for comparison across meshes.
+                _gp_inv.copy(mw).invert();
+                const lc = _gp_lc.copy(worldCenter).applyMatrix4(_gp_inv);
+                const upL = _gp_upL.copy(up).transformDirection(_gp_inv).normalize();
+                const lr = radius / ms, lr2 = lr * lr;
+                for (let i = 0; i < Nv; i++) {
+                    const rx = arr[i * 3] - lc.x, ry = arr[i * 3 + 1] - lc.y, rz = arr[i * 3 + 2] - lc.z;
+                    const al = rx * upL.x + ry * upL.y + rz * upL.z;
+                    const hx = rx - al * upL.x, hy = ry - al * upL.y, hz = rz - al * upL.z;
+                    if (hx * hx + hy * hy + hz * hz > lr2) continue;
+                    _gp_p.set(arr[i * 3], arr[i * 3 + 1], arr[i * 3 + 2]).applyMatrix4(mw);
+                    const h = _gp_p.dot(up);
+                    if (h < minH || h >= bestH) continue;
+                    bestH = h;
+                    best = (best || new Vector3()).copy(_gp_p);
+                }
+            });
+        });
+        return best;
+    }
+
+    // Apply one brush dab to ONE mesh. Returns true if the mesh geometry was
+    // modified. Stashes the pristine geometry on first edit so the shared restore/
+    // eviction paths can undo it. `floorWorldH` (optional) is the cross-mesh ground
+    // height (world units, along the geodetic up at worldCenter) for snap — when
+    // given, snap drops verts to that level instead of the within-mesh minimum.
+    _brushMesh(mesh, worldCenter, radius, action, floorWorldH) {
         const geometry = mesh.geometry;
         const posAttr = geometry && geometry.attributes.position;
         if (!posAttr) return false;
@@ -867,16 +936,25 @@ export class TreeFlattener {
         // Local geodetic up at the hit point (the snap direction).
         const up = _bm_up.copy(getLocalUpVector(worldCenter)).transformDirection(invWorld).normalize();
 
+        // Affected vertices. SNAP uses a vertical CYLINDER about the brush axis so
+        // "snap to ground" pulls the whole column down (and reaches a street deeper
+        // than the brush radius). DELETE and RESTORE use a 3D SPHERE (surgical).
+        const isSnap = action === "snap";
         const affected = new Uint8Array(Nv);
         let count = 0;
-        let minH = Infinity;
         for (let v = 0; v < Nv; v++) {
-            const dx = pos[v * 3] - localCenter.x, dy = pos[v * 3 + 1] - localCenter.y, dz = pos[v * 3 + 2] - localCenter.z;
-            if (dx * dx + dy * dy + dz * dz > r2) continue;
+            const rx = pos[v * 3] - localCenter.x, ry = pos[v * 3 + 1] - localCenter.y, rz = pos[v * 3 + 2] - localCenter.z;
+            let d2;
+            if (isSnap) {
+                const along = rx * up.x + ry * up.y + rz * up.z;
+                const hx = rx - along * up.x, hy = ry - along * up.y, hz = rz - along * up.z;
+                d2 = hx * hx + hy * hy + hz * hz; // horizontal distance² from the axis
+            } else {
+                d2 = rx * rx + ry * ry + rz * rz;
+            }
+            if (d2 > r2) continue;
             affected[v] = 1;
             count++;
-            const h = pos[v * 3] * up.x + pos[v * 3 + 1] * up.y + pos[v * 3 + 2] * up.z;
-            if (h < minH) minH = h;
         }
         if (count === 0) return false;
 
@@ -895,7 +973,11 @@ export class TreeFlattener {
                 const i0 = idx ? idx[t * 3] : t * 3;
                 const i1 = idx ? idx[t * 3 + 1] : t * 3 + 1;
                 const i2 = idx ? idx[t * 3 + 2] : t * 3 + 2;
-                if (affected[i0] + affected[i1] + affected[i2] >= 2) { removed++; continue; }
+                // Delete a triangle if ANY vertex is inside the brush. This is
+                // aggressive enough to remove the long, sparse "pillar" wall
+                // triangles (which only have one vertex near the click) — a
+                // stricter >=2 test would leave them behind.
+                if (affected[i0] || affected[i1] || affected[i2]) { removed++; continue; }
                 keepTri[t] = 1;
             }
             if (removed === 0) return false;
@@ -903,13 +985,65 @@ export class TreeFlattener {
             fastComputeVertexNormals(newGeom);
             geometry.dispose();
             mesh.geometry = newGeom;
+        } else if (action === "restore") {
+            // RESTORE. Put the affected (sphere) vertices back to their pristine
+            // positions — undoing a snap that flattened, say, a building. Needs the
+            // original backup with a matching vertex layout (snap preserves it; a
+            // delete that rebuilt the geometry does not, so we bail there).
+            const orig = mesh[ORIGINAL_GEOMETRY];
+            if (!orig || orig.attributes.position.count !== Nv) return false;
+            const oArr = orig.attributes.position.array;
+            let moved = 0;
+            for (let v = 0; v < Nv; v++) {
+                if (!affected[v]) continue;
+                if (pos[v * 3] === oArr[v * 3] && pos[v * 3 + 1] === oArr[v * 3 + 1] && pos[v * 3 + 2] === oArr[v * 3 + 2]) continue;
+                pos[v * 3] = oArr[v * 3];
+                pos[v * 3 + 1] = oArr[v * 3 + 1];
+                pos[v * 3 + 2] = oArr[v * 3 + 2];
+                moved++;
+            }
+            if (moved === 0) return false;
+            posAttr.needsUpdate = true;
+            fastComputeVertexNormals(geometry);
+            geometry.computeBoundingBox();
+            geometry.computeBoundingSphere();
         } else {
+            // SNAP TO GROUND. Drop every affected (cylinder) vertex down to the local
+            // ground. The ground is the CROSS-MESH lowest vertex in a 20 m cylinder,
+            // computed once at paint time and passed in as `floorWorldH` (a world
+            // height along the geodetic up) — because the canopy and street are often
+            // SEPARATE tile meshes, a within-mesh search would only find the tree's own
+            // trunk base (≈ half way). If no cross-mesh floor was supplied (legacy
+            // dabs / no ground found), fall back to the within-mesh fixed-radius search.
+            const orig = mesh[ORIGINAL_GEOMETRY];
+            const oArr = (orig && orig.attributes.position.count === Nv) ? orig.attributes.position.array : pos;
+            let floor;
+            if (floorWorldH !== undefined && Number.isFinite(floorWorldH)) {
+                // Convert the world-space ground height into THIS mesh's local frame.
+                const worldUp = getLocalUpVector(worldCenter);
+                const hitWorldH = worldCenter.dot(worldUp);
+                _bm_groundW.copy(worldCenter).addScaledVector(worldUp, floorWorldH - hitWorldH).applyMatrix4(invWorld);
+                floor = _bm_groundW.x * up.x + _bm_groundW.y * up.y + _bm_groundW.z * up.z;
+            } else {
+                const groundR = Math.max(radius, GROUND_SEARCH_RADIUS) / s;
+                const gr2 = groundR * groundR;
+                floor = Infinity;
+                for (let v = 0; v < Nv; v++) {
+                    const rx = oArr[v * 3] - localCenter.x, ry = oArr[v * 3 + 1] - localCenter.y, rz = oArr[v * 3 + 2] - localCenter.z;
+                    const along = rx * up.x + ry * up.y + rz * up.z;
+                    const hx = rx - along * up.x, hy = ry - along * up.y, hz = rz - along * up.z;
+                    if (hx * hx + hy * hy + hz * hz > gr2) continue;
+                    const oh = oArr[v * 3] * up.x + oArr[v * 3 + 1] * up.y + oArr[v * 3 + 2] * up.z;
+                    if (oh < floor) floor = oh;
+                }
+            }
+            if (floor === Infinity) return false; // no ground found in range
             let moved = 0;
             for (let v = 0; v < Nv; v++) {
                 if (!affected[v]) continue;
                 const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
-                const drop = (x * up.x + y * up.y + z * up.z) - minH;
-                if (drop <= 0) continue; // already at/below the snap floor
+                const drop = (x * up.x + y * up.y + z * up.z) - floor;
+                if (drop <= 0) continue; // already at/below the ground
                 pos[v * 3] = x - drop * up.x;
                 pos[v * 3 + 1] = y - drop * up.y;
                 pos[v * 3 + 2] = z - drop * up.z;
@@ -955,7 +1089,7 @@ export class TreeFlattener {
                 for (let i = applied; i < n; i++) {
                     const dab = dabsWorld[i];
                     if (center.distanceTo(dab.center) > meshR + dab.r) continue;
-                    if (this._brushMesh(mesh, dab.center, dab.r, dab.a)) edited++;
+                    if (this._brushMesh(mesh, dab.center, dab.r, dab.a, dab.floorH)) edited++;
                 }
                 mesh[DAB_COUNT] = n;
                 budget--;
@@ -965,10 +1099,11 @@ export class TreeFlattener {
     }
 
     // Manual-brush HOVER preview (non-destructive). For every loaded mesh near
-    // the brush, temporarily HIDE the triangles the brush covers (>=2 verts in
-    // the sphere — the same set delete would remove) by collapsing them to a
-    // degenerate (zero-area) triangle, and append their edges (world space,
-    // original positions) to `posOut` for a wireframe "ghost".
+    // the brush, temporarily HIDE the triangles the brush covers (any vertex in
+    // it — the same set the edit would touch) by collapsing them to a degenerate
+    // (zero-area) triangle, and append their edges (world space, original
+    // positions) to `posOut` for a wireframe "ghost". The affected region matches
+    // the edit: a 3D SPHERE for delete, a vertical CYLINDER for snap.
     //
     // Cheap and fully reversible via _restorePreview(), never touching the
     // committed backup. Handles both layouts (Google tiles are NON-indexed):
@@ -977,9 +1112,11 @@ export class TreeFlattener {
     //                   onto the first (save the originals). Safe because
     //                   non-indexed vertices aren't shared between triangles.
     // Caller must _restorePreview() before the next pick/commit.
-    previewBrush(worldCenter, radius, posOut) {
+    previewBrush(worldCenter, radius, action, posOut) {
+        const isSnap = action === "snap";
         const invWorld = new Matrix4();
         const localCenter = new Vector3();
+        const up = new Vector3();
         const wa = new Vector3(), wb = new Vector3(), wc = new Vector3();
         this.renderer.forEachLoadedModel((scene) => {
             scene.traverse((mesh) => {
@@ -993,6 +1130,7 @@ export class TreeFlattener {
                 mesh.updateWorldMatrix(true, false);
                 invWorld.copy(mesh.matrixWorld).invert();
                 localCenter.copy(worldCenter).applyMatrix4(invWorld);
+                up.copy(getLocalUpVector(worldCenter)).transformDirection(invWorld).normalize();
                 const e = mesh.matrixWorld.elements;
                 const s = Math.hypot(e[0], e[1], e[2]) || 1;
                 const localRadius = radius / s;
@@ -1008,6 +1146,11 @@ export class TreeFlattener {
                     const x = pos[vi * 3] - localCenter.x;
                     const y = pos[vi * 3 + 1] - localCenter.y;
                     const z = pos[vi * 3 + 2] - localCenter.z;
+                    if (isSnap) {
+                        const along = x * up.x + y * up.y + z * up.z;
+                        const hx = x - along * up.x, hy = y - along * up.y, hz = z - along * up.z;
+                        return hx * hx + hy * hy + hz * hz <= r2;
+                    }
                     return x * x + y * y + z * z <= r2;
                 };
 
@@ -1016,8 +1159,9 @@ export class TreeFlattener {
                     const a = idx ? idx[t * 3] : t * 3;
                     const b = idx ? idx[t * 3 + 1] : t * 3 + 1;
                     const c = idx ? idx[t * 3 + 2] : t * 3 + 2;
-                    const cnt = (within(a) ? 1 : 0) + (within(b) ? 1 : 0) + (within(c) ? 1 : 0);
-                    if (cnt < 2) continue;
+                    // Any vertex in the brush — matches the aggressive delete and
+                    // catches the sparse "pillar" wall triangles in the ghost too.
+                    if (!within(a) && !within(b) && !within(c)) continue;
                     if (!entries) entries = [];
 
                     // Wireframe edges from the ORIGINAL positions (before collapse).
