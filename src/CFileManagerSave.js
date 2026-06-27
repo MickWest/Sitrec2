@@ -1300,8 +1300,19 @@ export const saveMethods = {
                     
                     let rehostFilename = entry.fileName;
                     if (rehostFilename.length > 100) {
-                        const extension = getFileExtension(rehostFilename);
-                        rehostFilename = rehostFilename.substring(0, 100) + "-" + todayDateStr + "." + extension;
+                        // entry.fileName here is a freshly-dropped LOCAL filename
+                        // (URL/sitrec sources were handled by the external-URL branch
+                        // above or already carry a staticURL), so a '?' is a literal
+                        // character, not a query separator. getFileExtension() routes
+                        // through stripURLSuffixPreservingHashParameters() and would
+                        // treat everything after a '?' as a query string — for a name
+                        // like "...UAP o IA?.mp4" that strips the real ".mp4" and then
+                        // derives a garbage extension from an earlier dot. Derive the
+                        // extension from the last dot directly, and crop the base.
+                        const lastDot = rehostFilename.lastIndexOf(".");
+                        const extension = lastDot >= 0 ? rehostFilename.substring(lastDot + 1) : "";
+                        const base = lastDot >= 0 ? rehostFilename.substring(0, lastDot) : rehostFilename;
+                        rehostFilename = base.substring(0, 100) + "-" + todayDateStr + (extension ? "." + extension : "");
                         console.warn(`Rehosting video ${i} with cropped filename: ${rehostFilename}`);
                     }
                     

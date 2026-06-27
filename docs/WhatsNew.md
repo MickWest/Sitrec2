@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.91.1 (2026-06-27)
+
+### Bug Fixes
+- Fixed certain MP4 videos (notably variable-frame-rate phone or social-media re-encodes) loading with the wrong frame count and playing back jerky or in slow motion; they now load with the correct frame count and play smoothly.
+- Fixed irregular-frame-rate videos going missing after saving and reloading a sitch.
+- Fixed saved sitches eventually showing a black video or image view when the original was dragged in from a web link (such as a Facebook image or video). Sitrec now saves a permanent copy at save time so it keeps working after the original link expires.
+
+---
+
 ## Version 2.91.0 (2026-06-27)
 
 ### New Features

@@ -314,10 +314,27 @@ export class MP4Source {
           type = this._detectKeyframeFromBitstream(sample.data);
         }
 
+        // mp4box reports cts/duration in the track's media timescale, but
+        // WebCodecs EncodedVideoChunk.timestamp/duration are defined in
+        // MICROSECONDS. For the common timescale of 1,000,000 these coincide,
+        // which is why most videos worked; but a track with any other timescale
+        // (e.g. 9,000,000 — seen on some phone/social re-encodes) yields
+        // timestamps scaled by timescale/1e6. Downstream that corrupts
+        // framePTSus, so CVideoPatchedData.shouldWrap sees giant inter-frame
+        // gaps and pads the stream with held frames (jerky playback + red
+        // squares). Convert to integer microseconds here. Rounding keeps the
+        // value an exact integer so the decoder echoes the same timestamp back
+        // on the output VideoFrame and timestampToChunkIndex still matches.
+        const ts = sample.timescale
+          ? Math.round((sample.cts * 1e6) / sample.timescale)
+          : sample.cts;
+        const dur = (sample.timescale && sample.duration != null)
+          ? Math.round((sample.duration * 1e6) / sample.timescale)
+          : sample.duration;
         const chunk = new EncodedVideoChunk({
           type: type,
-          timestamp: sample.cts,
-          duration: sample.duration,
+          timestamp: ts,
+          duration: dur,
           data: sample.data
         });
 

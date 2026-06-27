@@ -82,6 +82,20 @@ export class CVideoPatchedData extends CVideoData {
         this.metadataRotation = source.metadataRotation || 0;
     }
 
+    // The original dropped/streamed bytes live on the wrapped source, not the
+    // wrapper. Save-time rehosting (CFileManagerSave.rehostDynamicLinks /
+    // rehostVideoNodeLocal / findHeldBytesForSource), object tracking, and the
+    // export-detection in CFileManagerParse all read videoDroppedData /
+    // videoDroppedURL straight off the live videoData — which becomes this
+    // wrapper once a dropped-frame video is patched. Without delegation the
+    // bytes look absent, the rehost is skipped, and the saved sitch references
+    // a bare local filename that cannot be restored on reload. Delegate so the
+    // wrapper is transparent to every consumer of these properties.
+    get videoDroppedData() { return this.source ? this.source.videoDroppedData : undefined; }
+    set videoDroppedData(v) { if (this.source) this.source.videoDroppedData = v; }
+    get videoDroppedURL() { return this.source ? this.source.videoDroppedURL : undefined; }
+    set videoDroppedURL(v) { if (this.source) this.source.videoDroppedURL = v; }
+
     // Source <-> virtual frame translation. Persisted frame numbers (saved
     // keyframes, URL ?frame=, MCP set_frame) are source-indexed; runtime
     // playback indices are virtual. These two methods are the boundary.
