@@ -18,12 +18,14 @@
 // Cost note: Street View TILE fetches are billed against the project's key, and one op=image
 // request fans out to many tile fetches. To limit abuse of this unauthenticated endpoint we
 // (a) restrict CORS to the app's own origin, (b) clamp zoom and cap output pixels, (c) cache
-// completed stitches to disk, and (d) apply a per-IP rate limit AND a global cap on the number
-// of fresh (cache-miss) stitches per minute. This is prototype-grade hardening, not a
-// substitute for a proper auth/billing-budget on the Google key.
+// completed stitches to disk, and (d) apply PER-GROUP rate limits — admin & Sitrec groups are
+// unlimited, other logged-in users get the standard caps, anonymous callers get 1/10th — plus
+// a global backstop on fresh (cache-miss) stitches/min from non-privileged callers. This is
+// prototype-grade hardening, not a substitute for a proper billing-budget cap on the Google key.
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
+require_once __DIR__ . '/user.php';
 
 // ---- CORS: only the app's own origin (and configured LOCALHOST), never '*'. ----
 $requestOrigin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -65,10 +67,29 @@ function rateLimit($key, $max, $window) {
     return $ok;
 }
 
+// ---- Per-group throttle tier. Admin (group 3) and the Sitrec groups (14 = Members,
+//      19 = Plus) are UNLIMITED. Other logged-in users get the standard limits; anonymous
+//      callers get one tenth. getUserInfo() reads the same-origin forum session and must be
+//      called once per request. ----
+$userInfo = getUserInfo();
+$userGroups = is_array($userInfo['user_groups'] ?? null) ? $userInfo['user_groups'] : [];
+$unlimitedUser = isAdmin($userInfo) || count(array_intersect($userGroups, [14, 19])) > 0;
+$loggedIn = ($userInfo['user_id'] ?? 0) > 0;
+$tier = $unlimitedUser ? 'unlimited' : ($loggedIn ? 'logged_in' : 'anon');
+
+// Per-minute caps by tier: 'req' = all requests per IP, 'stitch' = fresh (cache-miss,
+// billed) stitches per IP. Anonymous = 1/10th of logged-in. 'unlimited' bypasses both.
+$TIER_LIMITS = [
+    'logged_in' => ['req' => 120, 'stitch' => 60],
+    'anon'      => ['req' => 12,  'stitch' => 6],
+];
+
 $clientIP = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-if (!rateLimit('ip_' . $clientIP, 120, 60)) {
-    http_response_code(429);
-    exit('Rate limit exceeded. Please wait.');
+if ($tier !== 'unlimited') {
+    if (!rateLimit('ip_' . $tier . '_' . $clientIP, $TIER_LIMITS[$tier]['req'], 60)) {
+        http_response_code(429);
+        exit('Rate limit exceeded. Please wait.');
+    }
 }
 
 // ---- Config ----
@@ -77,7 +98,7 @@ $REFERER = getenv('GOOGLE_MAPS_REFERER');
 if (!$REFERER) { $REFERER = 'https://www.metabunk.org/'; }
 $TILE_BASE = 'https://tile.googleapis.com/v1';
 $MAX_PIXELS = 40000000;   // ~8960x4480 cap on the stitched canvas (memory guard)
-$MAX_STITCHES_PER_MIN = 60; // global cap on fresh (cache-miss) stitches across all callers
+$MAX_STITCHES_PER_MIN = 60; // global backstop on fresh stitches from all NON-privileged callers (anti IP-rotation abuse)
 
 function fail($code, $msg, $upstream = null) {
     if ($upstream !== null) {
@@ -233,9 +254,15 @@ if ($op === 'image') {
         exit();
     }
 
-    // Cache miss => this will hit the billed Google tile API. Apply the global stitch budget.
-    if (!rateLimit('global_image', $MAX_STITCHES_PER_MIN, 60)) {
-        fail(429, 'Server busy (panorama stitch limit reached). Please try again shortly.');
+    // Cache miss => this will hit the billed Google tile API. Privileged users (admin/Sitrec)
+    // bypass; others get a per-IP per-minute stitch cap (tiered) plus a shared global backstop.
+    if ($tier !== 'unlimited') {
+        if (!rateLimit('stitch_' . $tier . '_' . $clientIP, $TIER_LIMITS[$tier]['stitch'], 60)) {
+            fail(429, 'Panorama stitch rate limit reached for your access level. Please try again shortly.');
+        }
+        if (!rateLimit('global_image', $MAX_STITCHES_PER_MIN, 60)) {
+            fail(429, 'Server busy (panorama stitch limit reached). Please try again shortly.');
+        }
     }
 
     $session = getSession();
