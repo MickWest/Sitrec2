@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.90.1 (2026-06-26)
+
+### Bug Fixes
+- Fixed a crash that occurred every time the app loaded a fresh session.
+
+---
+
 ## Version 2.90.0 (2026-06-26)
 
 ### New Features

@@ -166,7 +166,11 @@ class CNode {
     }
 
     applyEarlyMods() {
-        if (Sit.mods && Sit.mods[this.id]) {
+        // Sit may not be assigned yet: a node can be constructed before any sitch is loaded
+        // (e.g. the lazily-created Scripted Video editor view, built during the initial parse
+        // in CScriptedVideoManager.setupMenu at app-init time — Sit is still undefined then).
+        // No sitch ⇒ no mods to apply, so just skip rather than dereferencing undefined Sit.
+        if (Sit?.mods && Sit.mods[this.id]) {
             this.modDeserialize(Sit.mods[this.id]);
         }
     }

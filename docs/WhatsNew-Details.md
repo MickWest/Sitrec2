@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.90.1 (2026-06-26)
+
+### Bug Fixes
+- **Fixed a crash on every default app load (`?action=new`) introduced by the 2.90.0 UI redesign.** `CNode.applyEarlyMods()` (`src/nodes/CNode.js`) dereferenced the global `Sit` unconditionally (`if (Sit.mods && Sit.mods[this.id])`). The 2.90.0 lazy-editor refactor made the Scripted Video editor a `CNodeView` created on first use, and `CScriptedVideoManager.setupMenu()` runs an initial `parse()` at app-init time, which now calls `getScriptText()` → `ensureEditor()` and constructs the editor `CNodeView` **before any sitch is loaded**. The `CNodeView` constructor calls `applyEarlyMods()` while `Sit` is still `undefined`, throwing `TypeError: Cannot read properties of undefined (reading 'mods')`. The guard is now `if (Sit?.mods && Sit.mods[this.id])` — with no sitch loaded there are no mods to apply, so early-mod application is simply skipped. The error was non-fatal to rendering (so the pixel-only fast visual-regression suite never caught it), but it surfaced as an uncaught page error on load, which the Docker-image Playwright smoke test (which asserts zero console errors) flagged.
+
+---
+
 ## Version 2.90.0 (2026-06-26)
 
 ### New Features
