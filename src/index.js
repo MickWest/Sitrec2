@@ -1352,6 +1352,15 @@ async function checkFornewSitchObject() {
 async function newSitch(situation, customSetup = false ) {
     setIsTransitioning(true);
 
+    // Everything from here runs inside a try/finally so that isTransitioning is
+    // ALWAYS cleared, even if the transition throws partway through (e.g. a
+    // stale async handler from a superseded load corrupts state, or
+    // setupFunctions() rejects). renderMain() short-circuits while
+    // isTransitioning is true, so leaving it stuck = permanently black views
+    // plus a half-built (blank) sidebar with no way to recover but a reload.
+    // Resetting it on failure converts that dead-end into a logged, recoverable
+    // error.
+    try {
     setSitchEstablished(false);
 
     // for the built-in sitches, we change the url, but we don't reload the page
@@ -1427,8 +1436,14 @@ async function newSitch(situation, customSetup = false ) {
     loadStartupDropURLAfterSitchSetup();
     Globals.sitchDirty = false; // Reset after setup — initialization triggers onChange callbacks
     startAnimating(Sit.fps);
-    setIsTransitioning(false);
     setTimeout( checkForTest, Globals.quickTerrain?1:testCheckInterval);
+    } catch (e) {
+        console.error("newSitch: transition failed; the sitch may be only partially built. Resetting transition state so rendering can resume. Error:", e);
+        throw e;
+    } finally {
+        // ALWAYS clear the transition flag — see the note where the try opens.
+        setIsTransitioning(false);
+    }
 }
 
 async function initializeOnce() {
@@ -2783,6 +2798,15 @@ function disposeEverything() {
 
     // Clear any fullscreen/double-click zoom state so new sitch views are all visible
     ViewMan.fullscreenView = null;
+
+    // Bump the load generation so any async work still in flight from the
+    // sitch we're tearing down (asset fetches resolving late, or the deferred
+    // mod-deserialize loop parked on waitForPendingActions) detects it has been
+    // superseded and bails instead of writing its state onto the next sitch.
+    // This is the fix for the "load A, switch to B before A finishes" race that
+    // left the new sitch with a stale doubled/fullscreen view (black look/video
+    // views) and a half-applied graph.
+    Globals.loadGeneration++;
 
    // ViewMan.disposeAll()
     assert(ViewMan.size() === 0, "ViewMan.size() should be zero, it's " + ViewMan.size());

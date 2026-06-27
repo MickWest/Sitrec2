@@ -2163,7 +2163,35 @@ export class CFileManager extends CManager {
                         return null;
                     }
 
-                    // We now have a full parsed asset in a {filename: filename, parsed: parsed} structure
+                    // We now have a full parsed asset in a {filename: filename, parsed: parsed} structure.
+                    //
+                    // Guard against a late/duplicate add. The dedup checks at the
+                    // top of loadAsset run synchronously *at call time* and are
+                    // keyed on filename (`#loadingPromises`/`exists(id)`), but
+                    // this add happens much later in the async chain. Two cases
+                    // reach here with `id` already present:
+                    //   1. Two concurrent loads share an `id` but have different
+                    //      filenames (e.g. two scene objects referencing the same
+                    //      model under the same id) — the filename-keyed dedup
+                    //      misses, so both resolve and both try to add `id`.
+                    //   2. A load started under a previous sitch finishes *after*
+                    //      a sitch transition ran disposeEverything()/disposeAll()
+                    //      (which clears this.list) and the new sitch re-added the
+                    //      same id. The stale handler must not clobber the live
+                    //      entry.
+                    // In both cases the underlying data is equivalent, so reuse
+                    // the existing entry instead of calling CManager.add() again
+                    // (which asserts on a double-add and, in production where
+                    // asserts are stripped, would silently overwrite live state).
+                    if (this.exists(id)) {
+                        console.warn(`[loadAsset] '${id}' already registered when its async load resolved (filename: ${resolvedFilename}); reusing existing entry instead of re-adding.`);
+                        Globals.parsing--;
+                        Globals.pendingActions--;
+                        LoadingManager.completeLoading(loadingId);
+                        parsedAsset.id = id;
+                        parsedAsset.parsed = this.list[id].data;
+                        return parsedAsset;
+                    }
                     this.add(id, parsedAsset.parsed, original);
                     this.list[id].dynamicLink = dynamicLink;
                     this.list[id].staticURL = null;

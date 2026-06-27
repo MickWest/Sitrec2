@@ -1091,7 +1091,15 @@ export const serializeMethods = {
             // console.log("Promised files loaded in Custom Manager deserialize")
             if (sitchData.mods) {
                 // apply the mods
-                this.deserializeMods(sitchData.mods).then(() => {
+                this.deserializeMods(sitchData.mods).then((completed) => {
+                    // deserializeMods returns false when a newer sitch load superseded
+                    // this one mid-flight. finishDeserialization applies pars, restores
+                    // fullscreen-from-mods, etc. — all of which would land on the NEW
+                    // sitch's graph/views, so skip it for a dead load.
+                    if (completed === false) {
+                        console.warn("Deserialization superseded by a newer sitch load; skipping finishDeserialization for the stale load.");
+                        return;
+                    }
                     setSitchEstablished(true); // flag that we've done some editing, so any future drag-and-drop will not mess with the sitch
                     this.finishDeserialization(sitchData);
                 }).catch((err) => {
@@ -1291,9 +1299,20 @@ export const serializeMethods = {
     /**
      * Asynchronously deserialize mods, waiting for any pending actions to complete
      * @param {Object} mods - The mods object from sitchData
-     * @returns {Promise} - Promise that resolves when all mods are applied and pending actions are complete
+     * @returns {Promise<boolean>} - Resolves true when all mods were applied; false if a
+     *          newer sitch load superseded this one mid-flight (mods were NOT fully applied).
      */
     async deserializeMods(mods) {
+        // Snapshot the load generation. This loop awaits waitForPendingActions()
+        // between mods (e.g. when a mod kicks off an async model/video load), so it
+        // can be parked across a sitch transition. If the user switches sitches
+        // before a slow load finishes, NodeMan is disposed and rebuilt for the new
+        // sitch; resuming this loop would then apply THIS sitch's mods (e.g. a
+        // doubled/fullscreen mainView) onto the NEW sitch's nodes — black look/video
+        // views + a half-applied graph. Bail out if the generation changed. See
+        // Globals.loadGeneration and disposeEverything().
+        const myGeneration = Globals.loadGeneration;
+
         // If a wind field mod exists, auto-create the node before the standard
         // deserialize loop so its modDeserialize can restore source/altitude/
         // grids. The wind node is otherwise created lazily on first "Show Wind"
@@ -1347,6 +1366,13 @@ export const serializeMethods = {
         for (let i = 0; i < modIds.length; i++) {
             const id = modIds[i];
 
+            // A newer sitch load has superseded this one (we were parked on an
+            // await below). Stop applying this dead sitch's mods to the live graph.
+            if (Globals.loadGeneration !== myGeneration) {
+                console.warn(`deserializeMods: sitch load superseded mid-deserialize (gen ${myGeneration} -> ${Globals.loadGeneration}); aborting stale mod application at mod ${i}/${modIds.length}`);
+                return false;
+            }
+
             if (!NodeMan.exists(id)) {
                 console.warn("Node " + id + " does not exist in the current sitch (deprecated?), so cannot apply mod");
                 continue;
@@ -1385,6 +1411,7 @@ export const serializeMethods = {
                 }
             }
         }
+        return true; // all mods applied for this (still-current) sitch load
     },
 
     /**

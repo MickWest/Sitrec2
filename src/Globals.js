@@ -49,6 +49,11 @@ export const Globals = {
     tileDelay: 0,  // Additional delay before loading tiles (0-5 seconds)
     screenshotting: false, // true during batch screenshot generation (skips menu rebuilds)
     disposing: false, // true during disposeEverything() to suppress side-effects
+    loadGeneration: 0, // bumped by disposeEverything() on every sitch teardown. Long-running
+                       // async work started by one sitch load (asset fetches, the deferred
+                       // mod-deserialize loop's waitForPendingActions awaits) captures this at
+                       // start and bails if it changed — so a superseded load can't apply its
+                       // state onto the next sitch's freshly-built node graph / views.
     testUserID: 0, // Admin-only: operate as this user ID when > 1
     sitchDirty: false, // true when user has made meaningful changes (not just camera/frame)
     hasByokKeys: false, // true when the user has at least one BYOK LLM API key stored in IndexedDB
