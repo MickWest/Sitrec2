@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.90.2 (2026-06-27)
+
+### Bug Fixes
+- Fixed a problem where switching to a new sitch before a previous one finished loading could leave the new sitch with black "look" and "video" views and a blank sidebar.
+
+---
+
 ## Version 2.90.1 (2026-06-26)
 
 ### Bug Fixes

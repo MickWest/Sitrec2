@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.90.2 (2026-06-27)
+
+### Bug Fixes
+- **Fixed a sitch-load race where a superseded load could corrupt the next sitch — black "look" and "video" views and a blank left sidebar.** Loading a saved/custom sitch, switching to another sitch (e.g. *Tree Test*) before the first finished loading, then loading the first again could leave the new sitch with hidden look/video views and an empty sidebar. In-session loads serialize via the 500ms `newSitchObject` poll, but two pieces of a load's work are deferred and *not* awaited by that serialization, so they outlive the transition: (1) `CFileManager.loadAsset()`'s `add()` happens in a late `.then()` long after its call-time, filename-keyed dedup checks (`#loadingPromises`/`exists(id)`), so a stale or duplicate-id load reaching `add()` either asserted "adding X twice" or, in production (asserts stripped), silently clobbered the live entry; (2) `CustomManagerSerialize.deserializeMods()` awaits `waitForPendingActions()` between mods (e.g. while a video decodes) and is launched fire-and-forget, so when parked across a transition it resumed and applied the OLD sitch's mods (including a doubled/fullscreen `mainView`) onto the NEW sitch's nodes, hiding look/video. The fix adds a monotonic `Globals.loadGeneration` counter bumped by `disposeEverything()` on every teardown (`src/Globals.js`, `src/index.js`): `deserializeMods()` snapshots the generation, bails after each await if it changed (returning `false`), and `finishDeserialization()` is skipped for a superseded load (`src/CustomManagerSerialize.js`); `loadAsset()`'s late `.then()` now reuses an existing entry instead of re-adding (`src/CFileManager.js`); and `newSitch()` is wrapped in `try/finally` so `isTransitioning` always clears — a throw mid-transition previously left `renderMain()` permanently short-circuited into all-black views with a blank sidebar and no recovery but a reload (`src/index.js`). Verified via MCP repro (assert and sampled fullscreen-leak gone) and fast-regression (40 pass, 0 real regressions).
+
+---
+
 ## Version 2.90.1 (2026-06-26)
 
 ### Bug Fixes
