@@ -9,7 +9,7 @@
 
 import {areArrayBuffersEqual, disableAllInput, enableAllInput, getDateTimeFilename, getFileExtension, isHttpOrHttps, updateDocumentTitle} from "./utils";
 import {CustomManager, Globals, NodeMan, Sit, withTestUser} from "./Globals";
-import {SITREC_SERVER} from "./configUtils";
+import {SITREC_SERVER, SITREC_UPLOAD} from "./configUtils";
 import {par} from "./par";
 import {assert} from "./assert";
 import {addOptionToGUIMenu} from "./lil-gui-extras";
@@ -1084,6 +1084,132 @@ export const saveMethods = {
     },
 
     /**
+     * True when `url` is a remote http(s) source that is NOT already permanently
+     * hosted by Sitrec and so should be rehosted before a sitch is saved.
+     *
+     * Excludes Sitrec object references / legacy S3 URLs (already permanent) and
+     * anything already under our own upload area, so repeated saves never
+     * re-upload an already-rehosted asset.
+     * @param {*} url
+     * @returns {boolean}
+     */
+    isRehostableExternalURL(url) {
+        if (typeof url !== "string" || url.length === 0) return false;
+        if (!isHttpOrHttps(url)) return false;              // only remote http(s) sources
+        if (isResolvableSitrecReference(url)) return false; // our object refs / legacy S3 URLs
+        if (url.includes("/sitrec-upload/")) return false;  // already on our upload area
+        if (SITREC_UPLOAD && url.startsWith(SITREC_UPLOAD)) return false;
+        return true;
+    },
+
+    /**
+     * Finds the original bytes for a video/image source, if Sitrec still holds
+     * them (loadAsset stores fetched bytes in the FileManager entry's `.original`).
+     * @param {{imageFileID?:string, fileName?:string}} entry
+     * @param {string} source - The source URL the entry was loaded from.
+     * @returns {ArrayBuffer|null}
+     */
+    findHeldBytesForSource(entry, source) {
+        const keys = [entry.imageFileID, entry.fileName, source];
+        for (const key of keys) {
+            if (key && this.list[key] && this.list[key].original) {
+                return this.list[key].original;
+            }
+        }
+        // Remote video loads stash the fetched bytes on the videoData and then
+        // disposeRemove() the temporary "video" FileManager entry (see
+        // CVideoMp4Data / CVideoH264Data), so by save time the bytes are no
+        // longer in this.list at all. The held dropped-data buffer is the exact
+        // bytes for THIS entry, so it beats the fuzzy cross-entry match below.
+        if (entry.videoData && entry.videoData.videoDroppedData) {
+            return entry.videoData.videoDroppedData;
+        }
+        // Signed-CDN URLs (Facebook `_nc_ohc`/`oh`/`oe`, presigned S3, ...) hand
+        // out the SAME image under URLs that differ only by volatile query
+        // tokens, and the URL stored on the entry can drift from the key the
+        // bytes were actually fetched under (token rotation / redirect). Exact
+        // matching then misses bytes we genuinely hold. Fall back to matching on
+        // scheme+host+path (query stripped) against any held entry — but ONLY
+        // when the query is a known signing token on BOTH sides. Without that
+        // guard, stripping the query would wrongly equate distinct resources
+        // that differ only by a meaningful query (e.g. `image?id=1` vs
+        // `image?id=2`), returning the wrong bytes.
+        const wantUrl = entry.imageFileID || entry.fileName || source;
+        const wantPath = this.stripQuery(wantUrl);
+        if (wantPath && this.hasVolatileSignedQuery(wantUrl)) {
+            for (const key of Object.keys(this.list)) {
+                const e = this.list[key];
+                if (e && e.original && this.stripQuery(key) === wantPath
+                    && this.hasVolatileSignedQuery(key)) {
+                    return e.original;
+                }
+            }
+        }
+        return null;
+    },
+
+    /** Returns the URL with its query string and fragment removed. */
+    stripQuery(url) {
+        if (typeof url !== "string" || url.length === 0) return "";
+        return url.split("?")[0].split("#")[0];
+    },
+
+    // Known query parameter names used by CDNs/object stores to SIGN a URL — i.e.
+    // volatile tokens that rotate while still addressing the same underlying
+    // resource. Used to decide when stripping the query for identity comparison
+    // is safe (a signed URL) versus when the query is meaningful (a plain
+    // `?id=2`, which must NOT be stripped). Lower-cased for case-insensitive match.
+    _SIGNED_QUERY_PARAMS: new Set([
+        // Facebook / Meta CDN
+        "_nc_ohc", "oh", "oe", "_nc_oc", "_nc_sid", "_nc_ht", "_nc_gid", "ccb", "stp", "efg",
+        // AWS SigV4 presigned
+        "x-amz-signature", "x-amz-credential", "x-amz-expires", "x-amz-date",
+        "x-amz-security-token", "x-amz-algorithm",
+        // Google signed
+        "x-goog-signature", "googleaccessid",
+        // CloudFront / generic CDN signing
+        "signature", "key-pair-id", "policy", "expires",
+        // Azure SAS
+        "sig", "se", "sv", "sp",
+        // generic
+        "token",
+    ]),
+
+    /**
+     * True when `url` carries a known signing/volatile-token query parameter —
+     * meaning the query is rotation noise, not a resource selector, so two URLs
+     * with the same scheme+host+path but different queries are the same asset.
+     * @param {*} url
+     * @returns {boolean}
+     */
+    hasVolatileSignedQuery(url) {
+        if (typeof url !== "string") return false;
+        const q = url.split("?")[1];
+        if (!q) return false;
+        for (const pair of q.split("#")[0].split("&")) {
+            const name = pair.split("=")[0].toLowerCase();
+            if (name && this._SIGNED_QUERY_PARAMS.has(name)) return true;
+        }
+        return false;
+    },
+
+    /**
+     * Derives a clean rehost filename from an external (often signed) URL by
+     * stripping the query/hash tail and dating the basename.
+     * @param {string} url
+     * @param {string} dateStr - e.g. "2026-06-27"
+     * @returns {string}
+     */
+    deriveExternalRehostFilename(url, dateStr) {
+        const clean = url.split("?")[0].split("#")[0];
+        const ext = getFileExtension(clean) || "jpg";
+        let base = clean.substring(clean.lastIndexOf("/") + 1).replace(/\.[^.]*$/, "");
+        if (!base) base = "image";
+        if (base.length > 80) base = base.substring(0, 80);
+        return `${base}-${dateStr}.${ext}`;
+    },
+
+    /**
      * Uploads all dynamic (non-static) files to the server for permanent hosting.
      * Called before saving a sitch to ensure all local/temporary files have static URLs.
      * Sets staticURL on each file entry after successful upload.
@@ -1112,8 +1238,50 @@ export const saveMethods = {
                 
                 for (let i = 0; i < videosToRehost.length; i++) {
                     const entry = videosToRehost[i];
+
+                    // External-URL sources (e.g. an image dragged in from a web
+                    // page) keep the remote URL as their staticURL and are NOT
+                    // flagged dynamicLink, so the dropped-data path below skips
+                    // them. But third-party URLs are frequently ephemeral/signed
+                    // (Facebook CDN, presigned S3, ...) and 403 once they expire,
+                    // leaving the saved sitch with a black video view. If we still
+                    // hold the original bytes (loadAsset fetched them at import),
+                    // rehost them now so the sitch references a permanent copy.
+                    const externalSource = entry.staticURL || entry.fileName;
+                    if (this.isRehostableExternalURL(externalSource)) {
+                        const heldBytes = this.findHeldBytesForSource(entry, externalSource);
+                        if (heldBytes) {
+                            const rehostFilename = this.deriveExternalRehostFilename(externalSource, todayDateStr);
+                            console.log(`[CFileManager.rehostDynamicLinks] Rehosting external-URL source for ${vid}[${i}]: ${externalSource.substring(0, 80)}`);
+                            const entryRef = entry;
+                            const sourceKey = externalSource;
+                            const isCurrent = (i === videoNode.currentVideoIndex);
+                            const usingVideosArray = !!(videoNode.videos && videoNode.videos.length > 0);
+                            rehostPromises.push(this.rehoster.rehostFile(rehostFilename, heldBytes).then((staticURL) => {
+                                console.log("EXTERNAL-URL SOURCE REHOSTED AS PROMISED: " + staticURL);
+                                entryRef.staticURL = staticURL;
+                                // Keep the FileManager entry in sync so a later save
+                                // recognises this source as already hosted and skips it.
+                                const fmEntry = this.list[entryRef.imageFileID] || this.list[entryRef.fileName] || this.list[sourceKey];
+                                if (fmEntry) fmEntry.staticURL = staticURL;
+                                // Legacy single-video saves serialize videoNode.staticURL
+                                // directly, so update the live node when this entry is
+                                // the one currently selected.
+                                if (!usingVideosArray || isCurrent) {
+                                    videoNode.staticURL = staticURL;
+                                }
+                            }).catch((error) => {
+                                console.error(`[CFileManager.rehostDynamicLinks] External-URL rehost failed for ${rehostFilename}:`, error);
+                                throw error;
+                            }));
+                        } else {
+                            console.warn(`[CFileManager.rehostDynamicLinks] External-URL source for ${vid}[${i}] has no held bytes; cannot rehost (will remain a remote link): ${externalSource.substring(0, 80)}`);
+                        }
+                        continue;
+                    }
+
                     const vData = entry.videoData;
-                    
+
                     if (!vData) {
                         console.log(`[CFileManager.rehostDynamicLinks] Video ${i}: no videoData, skipping`);
                         continue;
