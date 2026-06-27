@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.91.0 (2026-06-27)
+
+### New Features
+- **Street View panorama background** (Terrain → Street View Pano): fetch a Google Street View panorama for any location and render it as a 360° background sphere around the scene. *Fetch At Camera* grabs the panorama nearest the current view, *Center Camera On Street View* snaps the view to the panorama's exact captured spot, and you can adjust heading, radius, and opacity.
+
+### Improvements
+- **Remove Geometry** (Terrain → Remove Geometry): the terrain tree-editing tool — formerly "Edit Geometry (Trees)" — is renamed to *Remove Geometry*, its brush toggle to *Manual Remove*, and the advanced *Automatic Tree Removal* options are moved to the bottom.
+- Manual geometry-removal brush strokes can now be undone and redone with Ctrl/Cmd+Z — each paint stroke is a single undo step.
+- **Terrain Tweaks** (Terrain → Terrain Tweaks): the assorted advanced terrain controls (elevation scale, opacity, detail, building material, ellipsoid model, and so on) are tidied into one collapsible sub-folder at the bottom of the Terrain menu.
+
+---
+
 ## Version 2.90.2 (2026-06-27)
 
 ### Bug Fixes
