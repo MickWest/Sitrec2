@@ -1138,38 +1138,31 @@ export class CNodeTerrainUI extends CNode {
         return !!this.buildingsNode && this.buildingsNode._activeSource === "google-photorealistic";
     }
 
-    // Build the "Edit Geometry (Trees)" GUI folder, data-driven from
-    // TREE_FLATTEN_DEFS so the controls and the algorithm never drift. Manual-edit
-    // controls (`top`) sit at the folder root; the tree-specific automatic-removal
-    // heuristics live in an "Automatic Tree Removal" sub-menu. Controls bind
-    // directly to the shared this.treeFlattenParams object.
+    // Build the "Remove Geometry" GUI folder, data-driven from TREE_FLATTEN_DEFS
+    // so the controls and the algorithm never drift. Manual-remove controls
+    // (`top`) sit at the folder root, followed by the "Restore Geometry" reset;
+    // the tree-specific automatic-removal heuristics live in an "Automatic Tree
+    // Removal" sub-menu at the BOTTOM. Controls bind directly to the shared
+    // this.treeFlattenParams object.
     buildTreeRemovalGUI() {
         const tf = this.treeFlattenParams;
-        const root = this.gui.addFolder("Edit Geometry (Trees)").close();
-        const autoRoot = root.addFolder("Automatic Tree Removal").close();
-        const subFolders = {};
-        // `top` defs → root; everything else → the auto sub-menu (with its own
-        // sub-sub-folders by def.folder).
-        const folderFor = (def) => {
-            if (def.top) return root;
-            if (!def.folder) return autoRoot;
-            if (!subFolders[def.folder]) subFolders[def.folder] = autoRoot.addFolder(def.folder).close();
-            return subFolders[def.folder];
-        };
+        const root = this.gui.addFolder("Remove Geometry").close();
         // An automatic-heuristic param changed — restore and re-run with new params.
         const onParamChange = () => {
             if (this.buildingsNode) this.buildingsNode.applyTreeFlattenParams();
         };
 
-        for (const def of TREE_FLATTEN_DEFS) {
-            const f = folderFor(def);
+        // Create one lil-gui control for a def, in the given folder. Pulled out so
+        // the manual (`top`) controls and the automatic ones can be built in
+        // separate passes (and thus separate positions in the folder).
+        const addControl = (f, def) => {
             let ctrl;
             if (def.key === "flattenTrees") {
                 ctrl = f.add(tf, def.key).name(def.label).onChange(v => {
                     if (this.buildingsNode) this.buildingsNode.setTreeFlattenEnabled(v);
                 });
             } else if (def.key === "manualEdit") {
-                // Manual-edit mode toggle: enables the paint brush. Does NOT
+                // Manual-remove mode toggle: enables the paint brush. Does NOT
                 // restore/reprocess tiles.
                 ctrl = f.add(tf, def.key).name(def.label).onChange(v => {
                     if (this.buildingsNode) this.buildingsNode.setManualEditEnabled(v);
@@ -1196,12 +1189,32 @@ export class CNodeTerrainUI extends CNode {
             }
             if (def.tooltip && ctrl.tooltip) ctrl.tooltip(def.tooltip);
             if (ctrl.listen) ctrl.listen();
+            return ctrl;
+        };
+
+        // Pass 1 — manual-remove controls (`top`) at the folder root.
+        for (const def of TREE_FLATTEN_DEFS) {
+            if (def.top) addControl(root, def);
         }
 
         // Root: reset everything (drop saved edits + restore original geometry).
         root.add({restore: () => { if (this.buildingsNode) this.buildingsNode.clearAllEdits(); }}, "restore")
             .name("Restore Geometry")
             .tooltip("Reset everything: discard the saved manual edits and restore all tiles to their original geometry");
+
+        // Pass 2 — automatic tree-removal heuristics in a sub-menu at the BOTTOM,
+        // with their own sub-sub-folders grouped by def.folder.
+        const autoRoot = root.addFolder("Automatic Tree Removal").close();
+        const subFolders = {};
+        for (const def of TREE_FLATTEN_DEFS) {
+            if (def.top) continue;
+            let f = autoRoot;
+            if (def.folder) {
+                if (!subFolders[def.folder]) subFolders[def.folder] = autoRoot.addFolder(def.folder).close();
+                f = subFolders[def.folder];
+            }
+            addControl(f, def);
+        }
         // Auto sub-menu: restore + re-run the automatic pass with current params.
         autoRoot.add({rerun: () => { if (this.buildingsNode) this.buildingsNode.applyTreeFlattenParams(); }}, "rerun")
             .name("Re-run")

@@ -57,6 +57,7 @@ export class TreeManualBrush {
         this._sy = 0;
         this._lastFp = null;     // fingerprint of mouse+cameras, to skip idle rebuilds
         this._previewActive = false; // is a geometry "ghost" preview currently applied?
+        this._strokeBefore = null;   // dab-list snapshot taken at the start of a stroke (for undo)
 
         // "Ghost" wireframe of the affected (would-be-removed) triangles, drawn in
         // world space at their original positions. depthTest on so it sits in the
@@ -82,8 +83,9 @@ export class TreeManualBrush {
         this._onPointerMove = (e) => this.onPointerMove(e);
         this._onPointerUp = (e) => this.onPointerUp(e);
         // Hide the preview as soon as the window loses focus (e.g. alt-tab) — a
-        // stale ghost sitting in an unfocused window is just noise.
-        this._onBlur = () => { this.painting = false; this.hidePreview(); };
+        // stale ghost sitting in an unfocused window is just noise. End any
+        // in-progress stroke too so its undo entry is still recorded.
+        this._onBlur = () => { this._endStroke(); this.hidePreview(); };
         document.addEventListener("pointerdown", this._onPointerDown, true);
         document.addEventListener("pointermove", this._onPointerMove, true);
         document.addEventListener("pointerup", this._onPointerUp, true);
@@ -197,6 +199,10 @@ export class TreeManualBrush {
         // Edit mode; camera navigation stays on the middle (rotate) / right (look)
         // buttons, which we don't intercept.
         this.painting = true;
+        // Snapshot the dab list before the stroke edits anything, so the whole
+        // gesture (which may append many dabs as the brush drags) collapses into a
+        // single undo entry committed on pointer-up.
+        this._strokeBefore = this.buildingsNode.snapshotDabs();
         const hit = this.pick(e.clientX, e.clientY);
         if (hit) this.applyAt(hit.point);
         setRenderOne(true);
@@ -225,8 +231,19 @@ export class TreeManualBrush {
 
     onPointerUp(e) {
         if (!this.painting) return;
-        this.painting = false;
+        this._endStroke();
         e.stopPropagation();
+    }
+
+    // Finish the current paint stroke (if any) and record its undo entry. Safe to
+    // call when not painting. Driven from pointer-up and window-blur.
+    _endStroke() {
+        if (!this.painting) return;
+        this.painting = false;
+        if (this._strokeBefore) {
+            this.buildingsNode.commitStrokeUndo(this._strokeBefore);
+            this._strokeBefore = null;
+        }
     }
 
     // Per-frame refresh (called from the buildings node update) so the preview

@@ -21,6 +21,7 @@ import {TreeFlattener, makeDefaultTreeFlattenParams, GROUND_SEARCH_RADIUS} from 
 import {TreeManualBrush} from "../TreeManualBrush";
 import {ECEFToLLAVD_radii, RLLAToECEF_radii} from "../LLA-ECEF-ENU";
 import {getLocalUpVector} from "../SphericalMath";
+import {undoManager as UndoManager} from "../UndoManager";
 
 const DEG2RAD = Math.PI / 180;
 import {
@@ -526,6 +527,56 @@ export class CNodeBuildings3DTiles extends CNode {
             if (pv.treeFlattener) pv.treeFlattener.restoreAll();
         }
         setRenderOne(true);
+    }
+
+    // --- Undo/redo for manual brush strokes ---------------------------------
+    // The dab list is append-only and applied idempotently per tile mesh (each
+    // mesh carries a DAB_COUNT stamp; reapplyDabs only adds the new tail). So
+    // there is no "remove the last dab" operation — changing the list to any
+    // earlier or later state means restoring all tiles to their original
+    // geometry and replaying the chosen dab set from scratch. snapshotDabs() +
+    // restoreDabsState() are the primitives; the brush snapshots before a stroke
+    // and calls commitStrokeUndo() after, collapsing the whole gesture (which may
+    // append many deduped dabs) into a single undo entry.
+
+    // Deep copy of the serialized dab list (plain {lla:[..], r, a, g?} objects).
+    snapshotDabs() {
+        return this.treeFlattenParams.dabs.map(d => ({...d, lla: [...d.lla]}));
+    }
+
+    // Replace the dab list with a snapshot, rebuild the world-space cache, then
+    // restore original geometry and replay the chosen dabs onto all loaded tiles
+    // so the result is visible immediately. Used by both undo and redo.
+    restoreDabsState(snapshot) {
+        if (this.manualBrush) this.manualBrush.hidePreview();
+        this.treeFlattenParams.dabs = snapshot.map(d => ({...d, lla: [...d.lla]}));
+        this.rebuildDabsWorld();
+        for (const pv of Object.values(this._perView)) {
+            if (pv.treeFlattener) pv.treeFlattener.restoreAll();
+        }
+        // Replay the reduced/expanded set now (the per-frame reapply pass in
+        // update() would otherwise catch it, but immediate feedback is nicer).
+        // Gated by "Apply Edits" so an undo while edits are hidden stays hidden.
+        if (this.treeFlattenParams.applyEdits !== false && this._dabsWorld.length > 0) {
+            for (const pv of Object.values(this._perView)) {
+                if (pv.treeFlattener) pv.treeFlattener.reapplyDabs(this._dabsWorld, Infinity);
+            }
+        }
+        setRenderOne(true);
+    }
+
+    // Push an undo action for a completed brush stroke. `before` is the snapshot
+    // taken at pointer-down; the current dab list is the "after" state. No-op if
+    // the stroke appended nothing (e.g. a click that hit only sky, or every dab
+    // was deduped away) so empty gestures don't clutter the undo stack.
+    commitStrokeUndo(before) {
+        const after = this.snapshotDabs();
+        if (after.length === before.length) return;
+        UndoManager.add({
+            description: "Remove Geometry brush stroke",
+            undo: () => this.restoreDabsState(before),
+            redo: () => this.restoreDabsState(after),
+        });
     }
 
     // Non-destructive hover preview: hide the triangles the brush covers in the
