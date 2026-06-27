@@ -611,9 +611,14 @@ export class CNodeTerrainUI extends CNode {
 
 
 
+            // Group the assorted tweak/debug controls into a "Terrain Tweaks" sub-folder to
+            // keep the top-level Terrain menu uncluttered. Re-created each time the terrain UI
+            // builds (per sitch), like the controllers it holds, so it self-heals on reload.
+            this.terrainTweaks = this.gui.addFolder("Terrain Tweaks").close();
+
             // a toggle to show or hide the debug elevation grid
 
-            this.gui.add(this, "debugElevationGrid").name(t("terrainUI.debugGrids.label")).onChange(v => {
+            this.terrainTweaks.add(this, "debugElevationGrid").name(t("terrainUI.debugGrids.label")).onChange(v => {
                 this.terrainNode.refreshDebugGrids();
             }).tooltip(t("terrainUI.debugGrids.tooltip"))
 
@@ -627,13 +632,13 @@ export class CNodeTerrainUI extends CNode {
             })
         // }
 
-        this.elevationScaleController = this.gui.add(this, "elevationScale", 0, 10, 0.1).onFinishChange(v => {
+        this.elevationScaleController = this.terrainTweaks.add(this, "elevationScale", 0, 10, 0.1).onFinishChange(v => {
             this.flagForRecalculation()
             this.startLoading = true
         }).elastic(10, 100)
             .tooltip(t("terrainUI.elevationScale.tooltip"))
 
-        this.transparencyController = this.gui.add(this, "transparency", 0, 1, 0.01).name(t("terrainUI.terrainOpacity.label"))
+        this.transparencyController = this.terrainTweaks.add(this, "transparency", 0, 1, 0.01).name(t("terrainUI.terrainOpacity.label"))
             .tooltip(t("terrainUI.terrainOpacity.tooltip"))
             .onChange(v => {
                 if (this.terrainNode && this.terrainNode.maps) {
@@ -665,15 +670,15 @@ export class CNodeTerrainUI extends CNode {
         this.disableDynamicSubdivision = false;
         if (isLocal) {
 
-            this.textureDetailController = this.gui.add(this, "textureDetail", 0.1, 3, 0.1)
+            this.textureDetailController = this.terrainTweaks.add(this, "textureDetail", 0.1, 3, 0.1)
                 .tooltip(t("terrainUI.textureDetail.tooltip"))
                 .onChange(() => this.requestSubdivisionPass())
 
-            this.elevationDetailController = this.gui.add(this, "elevationDetail", 0.1, 3, 0.1)
+            this.elevationDetailController = this.terrainTweaks.add(this, "elevationDetail", 0.1, 3, 0.1)
                 .tooltip(t("terrainUI.elevationDetail.tooltip"))
                 .onChange(() => this.requestSubdivisionPass())
 
-            this.disableDynamicSubdivisionController = this.gui.add(this, "disableDynamicSubdivision").name(t("terrainUI.disableDynamicSubdivision.label"))
+            this.disableDynamicSubdivisionController = this.terrainTweaks.add(this, "disableDynamicSubdivision").name(t("terrainUI.disableDynamicSubdivision.label"))
                 .tooltip(t("terrainUI.disableDynamicSubdivision.tooltip"))
         }
 
@@ -689,7 +694,7 @@ export class CNodeTerrainUI extends CNode {
         // Mirror this.dynamic to Globals.dynamicSubdivision
         Globals.dynamicSubdivision = this.dynamic;
         
-        this.dynamicController = this.gui.add(this, "dynamic").name(t("terrainUI.dynamicSubdivision.label")).tooltip(t("terrainUI.dynamicSubdivision.tooltip")).onChange(v => {
+        this.dynamicController = this.terrainTweaks.add(this, "dynamic").name(t("terrainUI.dynamicSubdivision.label")).tooltip(t("terrainUI.dynamicSubdivision.tooltip")).onChange(v => {
             // 3D building tiles require dynamic subdivision.
             // Prevent disabling while buildings are active.
             if (!v && this.showBuildings) {
@@ -768,7 +773,7 @@ export class CNodeTerrainUI extends CNode {
             }).tooltip(t("terrainUI.showBuildings.tooltip"));
 
             this.showBuildingEdges = v.showBuildingEdges ?? true;
-            this.gui.add(this, "showBuildingEdges").name(t("terrainUI.buildingEdges.label")).onChange(v => {
+            this.terrainTweaks.add(this, "showBuildingEdges").name(t("terrainUI.buildingEdges.label")).onChange(v => {
                 if (this.buildingsNode) {
                     this.buildingsNode.setShowEdges(v);
                 }
@@ -780,7 +785,7 @@ export class CNodeTerrainUI extends CNode {
             // (mirrors the building-edges barycentric trick, but per-tile).
             this.showTileEdges = v.showTileEdges ?? false;
             sharedUniforms.showTileEdges.value = this.showTileEdges;
-            this.gui.add(this, "showTileEdges").name("Tile Edges").onChange(v => {
+            this.terrainTweaks.add(this, "showTileEdges").name("Tile Edges").onChange(v => {
                 sharedUniforms.showTileEdges.value = v;
                 setRenderOne(true);
             }).tooltip("Outline each terrain tile with a 1px magenta border");
@@ -807,7 +812,7 @@ export class CNodeTerrainUI extends CNode {
             materialModesKV[t("terrainUI.buildingMaterial.modes.photo")] = "photo";
             materialModesKV[t("terrainUI.buildingMaterial.modes.flat")] = "flat";
             materialModesKV[t("terrainUI.buildingMaterial.modes.halfPhoto")] = "halfPhoto";
-            this.gui.add(this, "buildingsMaterialMode", materialModesKV)
+            this.terrainTweaks.add(this, "buildingsMaterialMode", materialModesKV)
                 .name(t("terrainUI.buildingMaterial.label"))
                 .tooltip(t("terrainUI.buildingMaterial.tooltip"))
                 .listen()
@@ -816,7 +821,7 @@ export class CNodeTerrainUI extends CNode {
                         this.buildingsNode.setMaterialMode(mode, this.buildingsFlatColor);
                     }
                 });
-            this.gui.addColor(this, "buildingsFlatColor")
+            this.terrainTweaks.addColor(this, "buildingsFlatColor")
                 .name(t("terrainUI.buildingFlatColor.label"))
                 .tooltip(t("terrainUI.buildingFlatColor.tooltip"))
                 .listen()
@@ -834,7 +839,7 @@ export class CNodeTerrainUI extends CNode {
         }
 
         // Ellipsoid Earth Model toggle (moved here from global settings)
-        this.ellipsoidController = this.gui.add(Sit, "useEllipsoid")
+        this.ellipsoidController = this.terrainTweaks.add(Sit, "useEllipsoid")
             .name(t("terrainUI.useEllipsoid.label"))
             .tooltip(t("terrainUI.useEllipsoid.tooltip"))
             .listen()
@@ -1596,6 +1601,10 @@ export class CNodeTerrainUI extends CNode {
             // subdivision until the camera moves or the user clicks Refresh.
             this.requestSubdivisionPass();
         })
+
+        // Keep the advanced "Terrain Tweaks" sub-folder at the bottom of the Terrain menu,
+        // below all the primary controls (it is created early so the controls can go in it).
+        if (this.terrainTweaks) this.terrainTweaks.moveToEnd();
 
     }
 
