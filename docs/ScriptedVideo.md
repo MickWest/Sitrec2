@@ -183,6 +183,58 @@ change never permanently mutates the sitch; scrubbing backwards undoes them):
 > the real witness footage by its own camera controllers — that's why `flyto look` exists, to
 > hand the main camera the witness pose.
 
+## Scripting scene objects
+
+`set` / `show` / `hide` work on **scene objects** too, not just menu controls — name a 3D
+object by its id and its visibility becomes a boolean you can drive from the timeline:
+
+```text
+hide Viewer          # turn a 3D object off at this point (snapshot/restored like any setting)
+show Viewer          # ...and back on
+```
+
+An exact object id wins over a menu control that merely *contains* the same word, and the
+change is snapshotted on preview/render enter and restored on exit (scrubbing backwards
+un-does it) — exactly like a menu `set`.
+
+### Walkers (a marker that moves along a path)
+
+Create a moving marker — e.g. a viewer walking to a vantage point — with the **`createWalker`**
+API (callable from the console, MCP, or the in-app assistant). It builds a cylinder (or other
+geometry) that follows a linear track through lat/lon waypoints over a frame range and holds
+at the last waypoint:
+
+```js
+sitrecAPI.call("createWalker", {
+  name: "Viewer",                 // address it later as a target / with show·hide
+  waypoints: [[38.7199,-104.7856], [38.7199,-104.7851], [38.7197,-104.7850]],
+  alt: 1772, geometry: "cylinder", color: "#ff2020", height: 5, radius: 1,
+  startFrame: 0, endFrame: 700,   // reaches the last waypoint at frame 700, then holds
+});
+```
+
+Because the world's playhead advances across the scripted duration, the walker moves *while*
+the camera does. Then in the script you can frame it and switch it off:
+
+```text
+from Viewer 5 300 55 16     # fly to 55 m from the walker, 16° up, looking at it
+from witness 7 210 360 28   # back out and watch it walk to the camera position
+flyto look 4                # settle into the witness viewpoint...
+& hide Viewer               # ...and turn the marker off
+```
+
+## Timeline controls
+
+The timeline under the editor (and the strip that replaces the frame slider during preview):
+
+- **Scrub** by dragging the **top ruler strip**, or by grabbing the **playhead** (a fat hit
+  zone, so it works even over a segment). Scrubbing snaps to view-cut / segment edges
+  (hold ⌘/Ctrl for free positioning).
+- **Zoom** with **⌘/Ctrl + scroll** (centered on the cursor) or the **⌘/Ctrl +/-/0** keys.
+- **Pan** with a plain scroll (or Shift+scroll); when zoomed, drag the bottom scrollbar.
+- **Edit a duration** by dragging a segment's right edge, or scrolling over it; **move** a
+  concurrent `&` event by dragging its body. (Scroll up increases a value.)
+
 ## Rendering
 
 **Render Video (1080P60)** renders to MP4 (via the Mediabunny encoder). Quality knobs live

@@ -168,10 +168,15 @@ Functions accessible via `window.sitrecAPI.call(fn, args)`. Type coercion is aut
 
 ### 3D Objects
 - `addObjectAtLLA({lat, lon, alt, name})`
+- `createWalker({name, waypoints, alt, geometry, color, height, radius, startFrame, endFrame})` — a marker (default cylinder) that walks a lat/lon path over a frame range and holds at the last waypoint. Oriented upright; idempotent re-create. Address it later as a script target / with `show`·`hide` by `name`.
 - `listObjectFolders()`, `listAvailableModels()`, `listAvailableGeometries()`
 - `setObjectModel({object, model})`, `setAllObjectsModel({model})`
 - `setObjectGeometry({object, geometry})`, `setAllObjectsGeometry({geometry})`
 - `setObjectDimensions({object, width, height, depth})`
+
+### Scripting (cinematic camera) — see the full section below
+- `setScriptedVideoScript({script})` — set + parse the active Scripting tab's script
+- `previewScriptedVideo({at})`, `stopScriptedVideo()` — play / stop the preview
 
 ### Synthetic Scene Elements
 - `listSynthElements({type, includeSerialized})` — list synthetic `building`, `clouds`, `overlay`, or `all`
@@ -199,6 +204,79 @@ Path can be nested with `/` separator. Matching is flexible (case-insensitive, s
 
 ### Debug
 - `debug({show})` — toggle debug mode
+
+## Scripting (Cinematic Camera)
+
+The **Scripting** system (Video ▸ Scripting; `Globals.scriptedVideo`) drives a cinematic
+camera from a text script on its own timeline, independent of the frame slider. The world's
+playhead advances linearly across the whole scripted duration, so tracks/objects animate
+*while* the camera moves. Author it programmatically with `setScriptedVideoScript({script})`,
+then `previewScriptedVideo({at})` / `stopScriptedVideo()`. Multiple scripts live on tabs and
+save with the sitch.
+
+**The language is JavaScript**, but flat one-line "DSL" commands are rewritten to JS, so for
+linear shot lists just write one command per line:
+- a **plain line is sequential** (it's awaited); an **`& line` runs concurrently**, starting
+  *with* the previous plain line; **`&N`** starts N seconds after it; **`#`** is a comment.
+- multi-word captions need quotes; bare words (targets, option names) are auto-quoted.
+
+**Camera commands** (move/aim the main camera, consume time):
+
+| Command | Form | Notes |
+| --- | --- | --- |
+| `from` | `from target secs bearing dist elev` | place the camera ABSOLUTELY: compass `bearing` (0=N,90=E,180=S), `elev`° up, `dist` m out, looking at target. `secs 0` snaps. The only absolute-placement command — use it to establish an opening shot. |
+| `zoom` | `zoom target secs dist` | dolly to end `dist` metres from the target |
+| `orbit` | `orbit target secs degrees [rise]` | circle the target; optional `rise` (m) = helical climb in one beat |
+| `track` | `track target secs` | hold position, pan to keep the target framed |
+| `rise` | `rise target secs meters` | climb straight up while looking at the target |
+| `fov` | `fov degrees secs` | lens change (1–120°) |
+| `flyto` | `flyto look secs` | fly the main camera to the look (witness) camera pose — **matches the witness video** |
+| `wait`/`linger` | `wait secs` | hold the current pose |
+
+**Layout, captions, fades, settings:**
+
+| Command | Form | Notes |
+| --- | --- | --- |
+| `view` | `view name [secs]` | cut to a view (`main`/`look`/`video`), a preset, the dynamic **`view photo`** (witness photo letterboxed over the 3D), or an explicit `view({main:[l,t,w,h], video:[...]})` (JS form). Non-zero `secs` = animated transition. |
+| `text`/`title` | `text "caption" secs` | centred caption |
+| `fade` | `fade view secs to` | fade a view's opacity to `to` (0–1) |
+| `set`/`show`/`hide` | `hide Viewer` / `set "Control" value` | change a menu control **or a scene object's visibility by id** |
+
+**Targets** resolve to a 3-D position at the relevant frame: the aliases `object` (traverse
+object) and `witness`/`camera` (observer); a track short-name (`OE-LNC` → `Track_OE-LNC`); a
+node id directly (e.g. a `createWalker` name); or a `"lat,lon,alt"` literal.
+
+**Authoring rules for agents:**
+- NEVER run two camera beats concurrently (`& zoom` over a `from`) — they fight for the
+  camera. Only `& text` / `& fade` / `& set`·`show`·`hide` (non-camera) are safe to overlay.
+- To dissolve to the witness photo: arm `& fade video 0.01 0` early (pre-hide), then
+  `view photo` + `fade video 1.5 1` + `& fade main 1.5 0`, hold, reverse, `view main`.
+- A `createWalker` object is a normal target: `from Viewer …`, and `hide Viewer` to switch it
+  off once the camera reaches it.
+
+Example (witness walks to the camera, then a flythrough):
+```
+view main
+& fade video 0.01 0
+from witness 0 200 650 30          # high establishing shot, 30° down
+& text "Cheyenne Mountain, Colorado" 4
+from Viewer 5 300 55 16            # find the walker (a createWalker marker)
+& text "A witness walks to the spot" 4
+from witness 7 210 360 28         # back out, watch it walk in
+flyto look 4                      # settle into the witness viewpoint...
+& hide Viewer                     # ...turn the marker off
+view photo                        # cross-fade to the real witness photo
+fade video 1.5 1
+& fade main 1.5 0
+linger 2
+fade video 1.5 0
+& fade main 1.5 1
+view main
+zoom object 6 1500                # then push in on the object
+& text "The object" 4
+```
+
+See `docs/ScriptedVideo.md` for the full user reference.
 
 ## View System
 

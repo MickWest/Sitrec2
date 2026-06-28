@@ -648,6 +648,43 @@ class CSitrecAPI {
                 }
             },
 
+            setScriptedVideoScript: {
+                doc: "Set the active Scripting tab's cinematic camera script and parse it (use previewScriptedVideo to play it). DSL: one command per line; plain/await lines are sequential, '&' lines run concurrently, '#' comments, quote multi-word captions. Camera: from(target,secs,bearing,dist,elev) place absolutely, zoom(target,secs,dist), orbit(target,secs,deg,rise), track, rise(target,secs,m), fov(deg,secs), flyto(look,secs), wait/linger(secs). Layout/caption: view(name|'photo'|{layout}), text(\"cap\",secs), fade(view,secs,to). Settings/objects: set/show/hide a menu control OR a scene-object id. Targets: object, witness, a node id, or 'lat,lon,alt'.",
+                params: { script: "The full script text (string)" },
+                fn: (v) => {
+                    const sv = Globals.scriptedVideo;
+                    if (!sv) return { success: false, error: "Scripting system not available" };
+                    const ed = sv.ensureEditor();
+                    if (!ed || !ed.textarea) return { success: false, error: "Scripting editor not ready" };
+                    const text = String(v.script ?? "");
+                    ed._setText(text);
+                    sv.syncActiveFromEditor();
+                    return { success: true, length: text.length };
+                }
+            },
+
+            previewScriptedVideo: {
+                doc: "Start previewing the active Scripting script (the cinematic camera move), optionally from a given time in seconds. Use stopScriptedVideo to end.",
+                params: { at: "Start time in seconds (float, optional, defaults to 0)" },
+                fn: (v) => {
+                    const sv = Globals.scriptedVideo;
+                    if (!sv) return { success: false, error: "Scripting system not available" };
+                    sv.startPreview(v.at ?? 0);
+                    return { success: true, duration: sv.totalDuration };
+                }
+            },
+
+            stopScriptedVideo: {
+                doc: "Stop the Scripting preview and restore the normal views.",
+                params: {},
+                fn: () => {
+                    const sv = Globals.scriptedVideo;
+                    if (!sv) return { success: false, error: "Scripting system not available" };
+                    sv.stopAll();
+                    return { success: true };
+                }
+            },
+
             listSynthElements: {
                 doc: "List native synthetic scene elements managed by Synth3DManager. Types are building, clouds, overlay, or all.",
                 params: {
