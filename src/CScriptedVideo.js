@@ -37,7 +37,10 @@ import {VIEW_MAP, layoutForViewEvent, isSettingEvent} from "./scriptedVideo/Scri
 import {runScriptJS} from "./scriptedVideo/ScriptJSRunner";
 import {sitrecAPI} from "./CSitrecAPI";
 import {prepareEvents, computeCamera, applyPoseToCam, poseFromCamNode} from "./scriptedVideo/ScriptCameraEngine";
-import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
+import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
+import {getLocalUpVector} from "./SphericalMath";
+import {elevationAtLL} from "./threeExt";
+import {Vector3} from "three";
 import {CScriptTimelineWidget} from "./scriptedVideo/ScriptTimelineWidget";
 import {CScriptEditorWindow, STORAGE_KEY, TABS_KEY, DEFAULT_SCRIPT} from "./scriptedVideo/ScriptEditorWindow";
 import {renderScriptedVideo} from "./scriptedVideo/ScriptRenderer";
@@ -56,6 +59,14 @@ class CScriptedVideoManager {
         this.outW = 1920;
         this.outH = 1080;
         this.outFps = 60;
+
+        // CONTINUOUS-MOTION knobs (applied in applyCameraForTime, so preview AND
+        // render match). cameraSmoothing = half-width (seconds) of the temporal
+        // average over the camera path — turns the per-beat ease-in/ease-out (which
+        // stops at every boundary) into one flowing, drone-like glide; 0 = off.
+        // groundClearance = minimum metres the camera is kept above the terrain.
+        this.cameraSmoothing = 0.35;
+        this.groundClearance = 3;
 
         // render quality knobs (read by ScriptRenderer.js)
         this.waitForLoading = true;   // true (default) = settle each frame: subdivision
@@ -424,10 +435,48 @@ class CScriptedVideoManager {
         }
     }
 
+    // The camera at time t, temporally SMOOTHED so the path is continuous and
+    // drone-like (no stop-at-every-beat, no follow jitter). Weighted-average the
+    // raw poses over [t-W, t+W]; the model is deterministic so sampling ahead is
+    // free. Falls back to the raw pose when smoothing is off or degenerate.
+    _smoothedCamera(t) {
+        const base = this.computeCamera(t);
+        const W = this.cameraSmoothing || 0;
+        if (!base || W <= 0) return base;
+        const N = 4;
+        const pos = new Vector3(), look = new Vector3();
+        let fov = 0, wsum = 0;
+        for (let i = -N; i <= N; i++) {
+            const tt = clamp(t + (i / N) * W, 0, this.totalDuration);
+            const r = this.computeCamera(tt);
+            if (!r || r.camId !== base.camId) continue;
+            const x = i / N, wt = Math.exp(-2 * x * x);   // gaussian-ish weights
+            pos.addScaledVector(r.pose.position, wt);
+            look.addScaledVector(r.pose.lookTarget, wt);
+            fov += r.pose.fov * wt; wsum += wt;
+        }
+        if (wsum <= 0) return base;
+        pos.multiplyScalar(1 / wsum); look.multiplyScalar(1 / wsum);
+        const clamped = this._clampAboveGround(pos);
+        return {camId: base.camId, pose: {position: clamped, up: getLocalUpVector(clamped), lookTarget: look, fov: fov / wsum}};
+    }
+
+    // Keep an ECEF camera position at least groundClearance metres above the
+    // terrain (so a low/underground move never clips through the ground).
+    _clampAboveGround(pos) {
+        if (!(this.groundClearance > 0)) return pos;
+        try {
+            const lla = ECEFToLLAVD_radii(pos);
+            const minAlt = elevationAtLL(lla.x, lla.y) + this.groundClearance;
+            if (lla.z < minAlt) return LLAToECEF(lla.x, lla.y, minAlt);
+        } catch (e) { /* terrain not ready — leave as-is */ }
+        return pos;
+    }
+
     // apply the scripted camera for time t. We only drive mainCamera; lookCamera is
     // left to its own controllers so the look view stays matched to the witness video.
     applyCameraForTime(t) {
-        const r = this.computeCamera(t);
+        const r = this._smoothedCamera(t);
         if (!r || r.camId !== "mainCamera") return;
         const camNode = NodeMan.get(r.camId, false);
         if (camNode && camNode.camera) applyPoseToCam(camNode, r.pose);

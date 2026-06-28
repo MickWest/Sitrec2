@@ -137,6 +137,16 @@ Camera commands aim at a **target**, resolved (at the relevant frame) to a 3-D p
 > **Tip:** pick the end distance relative to the object's size. A model ~356 m long needs an
 > end distance around 900 m to frame nicely at FOV 30°; 200 m would overflow the frame.
 
+## Smooth, continuous motion
+
+Camera motion is **continuous and smooth by default** — like a drone with inertia. Each beat
+starts exactly where the previous one ended, and the whole path is run through a short
+temporal smoothing pass (`cameraSmoothing`, ~0.35 s) so consecutive moves *flow* into each
+other instead of decelerating to a stop at every boundary. The camera is also kept a few
+metres **above the terrain** (`groundClearance`), so a low move never clips through the
+ground. Both apply identically in preview and the final render. (For a hard cut, use a
+zero-second beat — e.g. `flyto look 0` — or cut the *view*, not the camera, with `view`.)
+
 ## Command reference
 
 **Camera moves** (these consume time on the timeline and move/aim the **main** camera):

@@ -22,6 +22,27 @@
 
 import {clamp, lerp, radians, smooth} from "./ScriptMath";
 
+// The settled third-person follow pose for the `follow` command at frame sf:
+// camera <distance> behind the target's heading and <height> up, looking just
+// ahead of it. The heading is sampled over a wide frame baseline (smooth around
+// corners) and falls back to the beat's overall direction when the target is
+// momentarily/finally stopped — so it is NEVER vertical (which would put the
+// camera underground).
+function followPose(e, sf, fov, targetPos, makePose, localUp) {
+    const o = targetPos(e.target, sf);
+    if (!o) return null;
+    const up = localUp(o);
+    const BASE = 12;   // frames each side — wide enough to glide through waypoint corners
+    const a = targetPos(e.target, sf + BASE), b = targetPos(e.target, sf - BASE);
+    let head = (a && b) ? a.clone().sub(b) : e._follow.fallbackDir.clone();
+    head.addScaledVector(up, -head.dot(up));   // flatten to the local horizontal
+    if (head.lengthSq() < 1e-6) head = e._follow.fallbackDir.clone();
+    head.normalize();
+    const camPos = o.clone().addScaledVector(head, -e.distance).addScaledVector(up, e.height);
+    const lookAt = o.clone().addScaledVector(head, e.distance * 0.4);   // look ahead, past the target
+    return makePose(camPos, lookAt, fov);
+}
+
 // map a friendly view name to {viewId, camId}
 // "video" is the witness-video panel (a 2D view, no scripted camera) — camera
 // beats that elapse while it's active still advance the unseen main camera so
@@ -182,6 +203,11 @@ export const COMMANDS = {
     // Third-person FOLLOW cam: trail a MOVING target, staying <distance> m behind
     // it along its direction of motion and <height> m up, looking just ahead of it.
     // The camera swings around as the target rounds a corner — "see what they see".
+    // It eases out of the previous beat's pose into the follow (no snap-in), and
+    // the heading is sampled over many frames + falls back to the beat's overall
+    // direction (never vertical) so the camera stays above ground even at the end
+    // where the target has stopped. Global path smoothing (the manager) removes
+    // any residual jitter, for a drone-like glide.
     follow: {
         cameraBeat: true,
         color: "#2aa0c0",
@@ -191,24 +217,28 @@ export const COMMANDS = {
             {name: "distance", type: "number", default: 18, role: "dist"},
             {name: "height", type: "number", default: 6},
         ],
-        prepare(e, {startPose, sfStart, sfEnd, targetPos, makePose, localUp}) {
-            if (!targetPos(e.target, sfStart)) { e.invalid = true; return startPose; }
-            e._follow = {};
-            // the END pose (so the next beat continues from it) is just a sample at sfEnd
-            return this.sample(e, {sp: startPose, sf: sfEnd, localT: 1, targetPos, makePose, localUp});
+        prepare(e, {startPose, sfStart, sfEnd, targetPos, makePose, localUp, localNorth}) {
+            const o0 = targetPos(e.target, sfStart);
+            if (!o0) { e.invalid = true; return startPose; }
+            const oE = targetPos(e.target, sfEnd) || o0;
+            const up = localUp(o0);
+            // deterministic fallback heading = the target's overall motion this beat
+            // (flattened); last resort = away from the start camera, else local north.
+            let fb = oE.clone().sub(o0); fb.addScaledVector(up, -fb.dot(up));
+            if (fb.lengthSq() < 1e-6) { fb = o0.clone().sub(startPose.position); fb.addScaledVector(up, -fb.dot(up)); }
+            if (fb.lengthSq() < 1e-6) fb = localNorth(o0);
+            e._follow = {fallbackDir: fb.normalize()};
+            // end pose (the next beat continues from it) = the fully-settled follow pose
+            return followPose(e, sfEnd, startPose.fov, targetPos, makePose, localUp);
         },
-        sample(e, {sp, sf, targetPos, makePose, localUp}) {
-            const o = targetPos(e.target, sf) || sp.lookTarget;
-            const up = localUp(o);
-            // direction of motion (horizontal), sampled across a few frames
-            let head = (targetPos(e.target, sf + 2) || o).clone().sub(targetPos(e.target, sf - 2) || o);
-            head.addScaledVector(up, -head.dot(up));     // flatten to the local horizontal
-            if (head.lengthSq() < 1e-7) head = e._follow.lastHead ? e._follow.lastHead.clone() : up.clone();
-            head.normalize();
-            e._follow.lastHead = head.clone();           // hold heading when the target is stopped
-            const camPos = o.clone().addScaledVector(head, -e.distance).addScaledVector(up, e.height);
-            const lookAt = o.clone().addScaledVector(head, e.distance * 0.4);   // look ahead, past the target
-            return makePose(camPos, lookAt, sp.fov);
+        sample(e, {sp, sf, localT, targetPos, makePose, localUp}) {
+            const ideal = followPose(e, sf, sp.fov, targetPos, makePose, localUp);
+            // ease OUT of the previous beat's pose into the follow over the first 35%
+            const blend = smooth(clamp(localT / 0.35, 0, 1));
+            return makePose(
+                sp.position.clone().lerp(ideal.position, blend),
+                sp.lookTarget.clone().lerp(ideal.lookTarget, blend),
+                sp.fov);
         },
     },
 
