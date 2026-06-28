@@ -808,8 +808,9 @@ export class CScriptEditorWindow extends CNodeView {
             accum += dy;
             let changed = false;
             while (Math.abs(accum) >= PX_PER_STEP) {
-                // up = increment: synthesize the wheel's deltaY convention
-                const deltaY = accum > 0 ? -1 : 1;
+                // dragging up (accum > 0) increments — synthesize the matching
+                // deltaY for adjustNumberToken (positive deltaY = increment)
+                const deltaY = accum > 0 ? 1 : -1;
                 accum -= accum > 0 ? PX_PER_STEP : -PX_PER_STEP;
                 const h = sv._hoverNum;
                 if (!h) break;
@@ -891,7 +892,9 @@ export class CScriptEditorWindow extends CNodeView {
         const hasDot = cur.includes(".");
         let step = hasDot ? 0.1 : 1;
         if (shiftKey) step *= 10;
-        const dir = deltaY < 0 ? 1 : -1;
+        // Scroll UP increases. macOS "natural scrolling" (the common case here)
+        // reports an upward scroll/swipe as deltaY > 0, so positive = increment.
+        const dir = deltaY > 0 ? 1 : -1;
         let val = parseFloat(cur) + dir * step;
         if (!isFinite(val)) return null;
         if (val < minVal) val = minVal;
