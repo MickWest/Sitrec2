@@ -18,7 +18,10 @@ import {
 import {isLocal, isServerless, SITREC_SERVER} from "./configUtils";
 import {showError} from "./showError";
 import GUI from "./js/lil-gui.esm";
-import {ModelFiles} from "./nodes/CNode3DObject";
+import {Vector3} from "three";
+import {ModelFiles, CNode3DObject} from "./nodes/CNode3DObject";
+import {LLAToECEF} from "./LLA-ECEF-ENU";
+import {getLocalUpVector} from "./SphericalMath";
 import {par} from "./par";
 import {ViewMan} from "./CViewManager";
 import {areControlsHidden, toggleControlsVisibility} from "./PageStructure";
@@ -566,6 +569,81 @@ class CSitrecAPI {
                         return { success: false, error: "Failed to create object" };
                     } catch (e) {
                         return { success: false, error: e.message };
+                    }
+                }
+            },
+
+            createWalker: {
+                doc: "Create a marker object that walks/moves through a list of lat/lon waypoints over a frame range — e.g. a viewer walking around to a vantage point. The object follows a linear track and holds at the last waypoint until the end. Address it later by name with show/hide/setMenuValue (e.g. hide it once the camera reaches it).",
+                params: {
+                    name: "Object id/name (string)",
+                    waypoints: "Ordered array of [lat, lon] pairs the object walks through (array, >= 2)",
+                    alt: "Altitude in meters MSL for the whole path (float, optional, defaults to 0)",
+                    geometry: "Geometry: cylinder, sphere, box, cone, capsule (string, optional, default 'cylinder')",
+                    color: "Color as a hex number or '#rrggbb' string (optional, default 0xffd24a)",
+                    height: "Object height in meters (float, optional, default 2)",
+                    radius: "Object radius in meters (float, optional, default 0.5)",
+                    startFrame: "Frame the walk starts (int, optional, default 0)",
+                    endFrame: "Frame the last waypoint is reached (int, optional, default 1/4 of the sitch length)",
+                    upright: "Orient the object's axis along local vertical (bool, optional, default true)"
+                },
+                fn: (v) => {
+                    try {
+                        const name = v.name || "Walker";
+                        const wps = v.waypoints;
+                        if (!Array.isArray(wps) || wps.length < 2) {
+                            return { success: false, error: "createWalker needs a 'waypoints' array of at least 2 [lat, lon] pairs" };
+                        }
+                        const frames = Sit.frames || 1;
+                        const startFrame = Math.max(0, v.startFrame ?? 0);
+                        const endFrame = Math.min(frames - 1, v.endFrame ?? Math.round(frames * 0.25));
+                        const alt = v.alt ?? 0;
+                        const geometry = v.geometry || "cylinder";
+                        const color = (typeof v.color === "string")
+                            ? parseInt(v.color.replace("#", "0x")) : (v.color ?? 0xffd24a);
+                        const height = v.height ?? 2, radius = v.radius ?? 0.5;
+                        // waypoints -> [frame, x, y, z], spread evenly across [startFrame, endFrame]
+                        const pts = wps.map((w, i) => {
+                            const e = LLAToECEF(w[0], w[1], alt);
+                            const f = Math.round(startFrame + (endFrame - startFrame) * (i / (wps.length - 1)));
+                            return [f, e.x, e.y, e.z];
+                        });
+                        // hold at the last waypoint until the final frame
+                        if (endFrame < frames - 1) { const L = pts[pts.length - 1]; pts.push([frames - 1, L[1], L[2], L[3]]); }
+                        // idempotent: fully tear down any existing walker with this id —
+                        // its track, the object node, AND the derived sub-nodes the object
+                        // creates (Viewer_size, Viewer_color_colorInput, Viewer_Controller…).
+                        // A bare dispose()/unlinkDisposeRemove leaves those registered and
+                        // they double-add on re-create. Sever links first so disposeRemove
+                        // doesn't assert on remaining inputs/outputs.
+                        const existing = NodeMan.get(name, false);
+                        if (existing) {
+                            const tid = existing._walkerTrackID;
+                            if (tid && TrackManager.exists(tid)) TrackManager.disposeRemove(tid);
+                            const ids = Object.keys(NodeMan.list).filter((id) => id === name || id.startsWith(name + "_"));
+                            for (const id of ids) { const n = NodeMan.get(id, false); if (n) { n.outputs = []; n.inputs = {}; } }
+                            for (const id of ids) { try { NodeMan.disposeRemove(id); } catch (e) { /* ignore */ } }
+                        }
+                        const start = new Vector3(pts[0][1], pts[0][2], pts[0][3]);
+                        const objectNode = new CNode3DObject({
+                            id: name, geometry, radiusTop: radius, radiusBottom: radius, radius, height,
+                            color, material: "phong", position: start,
+                        });
+                        if (v.upright ?? true) {
+                            // align the geometry's +Y axis with the local vertical so a
+                            // cylinder/capsule stands up instead of lying along world-Y
+                            objectNode.group.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), getLocalUpVector(start));
+                        }
+                        const trackOb = TrackManager.addSyntheticTrack({
+                            name: name + " path", curveType: "linear", initialPoints: pts,
+                            color, editMode: false, startFrame,
+                        });
+                        objectNode.addController("TrackPosition", { sourceTrack: trackOb.trackID });
+                        objectNode._walkerTrackID = trackOb.trackID;   // for idempotent re-create
+                        markSitchDirty();
+                        return { success: true, name, trackID: trackOb.trackID, waypoints: pts.length, startFrame, endFrame };
+                    } catch (e) {
+                        return { success: false, error: e?.message ?? String(e) };
                     }
                 }
             },
@@ -1765,26 +1843,35 @@ class CSitrecAPI {
             return r.success ? r : (this._resolveObjectControl(path) || r);
         }
         const qualified = path.includes("/");
-        for (const allowPartial of [false, true]) {
+        if (qualified) {
             for (const id of Object.keys(guiMenus)) {
                 const gui = guiMenus[id];
                 if (!gui || !gui.controllers) continue;
-                if (qualified) {
-                    const r = this._findController(gui, path);
-                    if (r.success) return r;
-                } else {
-                    const c = this._deepFindController(gui, path, allowPartial);
-                    if (c) return { success: true, controller: c };
-                }
+                const r = this._findController(gui, path);
+                if (r.success) return r;
             }
-            if (qualified) break;   // _findController already tries partials itself
+            return this._resolveObjectControl(path)
+                || { success: false, error: `Control '${path}' not found in any menu or scene object` };
         }
-        // Fallback: address a 3D SCENE OBJECT by its node id and treat its
-        // visibility as a boolean control. Lets set/show/hide (the Scripting
-        // `hide Viewer` command and MCP setMenuValue) toggle objects, not just
-        // menu controls.
-        return this._resolveObjectControl(path)
-            || { success: false, error: `Control '${path}' not found in any menu or scene object` };
+        // Unqualified: EXACT menu control wins; then an EXACT scene-object id (so an
+        // object named "Viewer" isn't shadowed by a menu button merely CONTAINING
+        // "Viewer"); then a partial menu match. set/show/hide and MCP setMenuValue
+        // can thus toggle scene objects by id, not just menu controls.
+        for (const id of Object.keys(guiMenus)) {
+            const gui = guiMenus[id];
+            if (!gui || !gui.controllers) continue;
+            const c = this._deepFindController(gui, path, false);
+            if (c) return { success: true, controller: c };
+        }
+        const obj = this._resolveObjectControl(path);
+        if (obj) return obj;
+        for (const id of Object.keys(guiMenus)) {
+            const gui = guiMenus[id];
+            if (!gui || !gui.controllers) continue;
+            const c = this._deepFindController(gui, path, true);
+            if (c) return { success: true, controller: c };
+        }
+        return { success: false, error: `Control '${path}' not found in any menu or scene object` };
     }
 
     // A 3D object node (by id) presented as a synthetic boolean controller backed
