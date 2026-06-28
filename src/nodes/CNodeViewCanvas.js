@@ -21,6 +21,12 @@ export class CNodeViewCanvas extends CNodeView {
         this.canvas.style.width = "100%";
         this.canvas.style.height = "100%";
 
+        // Single-pixel 25% transparent grey border so view edges are always visible.
+        // The canvas fills the div and would otherwise paint over the div's outline,
+        // so the inset outline is also applied here. Offset -1px keeps it inside bounds.
+        this.canvas.style.outline = '1px solid rgba(128, 128, 128, 0.25)';
+        this.canvas.style.outlineOffset = '-1px';
+
         // this.canvasWidth = v.canvasWidth;
         // this.canvasHeight = v.canvasHeight;
 

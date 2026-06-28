@@ -194,6 +194,12 @@ class CNodeView extends CNode {
             //this.div.style.borderStyle = 'solid'
             //this.div.style.color = '#404040';
 
+            // Single-pixel 25% transparent grey border so view edges are always visible.
+            // Use an inset outline (offset -1px) so it draws inside the bounds and does
+            // not affect layout the way a border would.
+            this.div.style.outline = '1px solid rgba(128, 128, 128, 0.25)';
+            this.div.style.outlineOffset = '-1px';
+
 
 
             if (this.container === window) {
