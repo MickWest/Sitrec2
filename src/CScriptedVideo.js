@@ -48,6 +48,7 @@ class CScriptedVideoManager {
         this.cameraBeats = [];     // just the time-consuming camera beats, in order
         this.totalDuration = 0;    // seconds
         this.parseErrors = [];
+        this.parseWarnings = [];   // author-facing warnings (silent footguns), not hard errors
         this._numLanes = 1;        // timeline display lanes (overlapping events stack)
         this.defaultView = "main";
 
@@ -872,14 +873,38 @@ class CScriptedVideoManager {
     }
     stopAll() { this._exitAllModes(); }
 
+    // Author-facing WARNINGS (not hard errors) for the two silent footguns:
+    // overlapping camera beats (they fight for the camera — only the latest-
+    // starting one is seen) and targets that didn't resolve at prepare time (the
+    // beat silently holds its start pose). Call after parse() + prepare().
+    _computeWarnings() {
+        const w = [];
+        for (const e of this.cameraBeats) {
+            if (e.invalid && e.target) w.push(`line ${e.line}: target "${e.target}" did not resolve — beat holds still`);
+        }
+        const timed = this.cameraBeats.filter((b) => b.dur > 0).slice().sort((a, b) => a.start - b.start);
+        for (let i = 0; i < timed.length; i++) {
+            const a = timed[i];
+            for (let j = i + 1; j < timed.length; j++) {
+                const b = timed[j];
+                if (b.start >= a.start + a.dur - 1e-3) break;   // sorted → nothing later overlaps a
+                w.push(`line ${a.line}: ${a.type} overlaps line ${b.line}'s ${b.type} — camera beats can't run together`);
+                break;   // one warning per beat is enough
+            }
+        }
+        return w;
+    }
+
     async doParse() {
         const errs = await this.parse();
         this.prepare();
+        this.parseWarnings = this._computeWarnings();
         this._lastTickT = null;   // model changed → a paused preview tick must re-draw
         this.timeline.draw();
         this.editor._renderBackdrop();
         this.editor.updateSelectionDetails();
         if (errs.length) this.setStatus("⚠ " + errs[0] + (errs.length > 1 ? ` (+${errs.length - 1} more)` : ""));
+        else if (this.parseWarnings.length) this.setStatus("⚠ " + this.parseWarnings[0] + (this.parseWarnings.length > 1 ? ` (+${this.parseWarnings.length - 1} more)` : ""));
         else this.setStatus(`Ready — ${this.totalDuration.toFixed(1)}s, ${this.cameraBeats.length} beats`);
     }
 

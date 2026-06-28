@@ -339,7 +339,7 @@ export const COMMANDS = {
             {name: "secs", type: "number", default: 3, field: "dur", role: "dur"},
             {name: "bearing", type: "number", default: 180, role: "deg"},
             {name: "distance", type: "number", default: 3000, role: "dist"},
-            {name: "elevation", type: "number", default: 20},
+            {name: "elevation", type: "number", default: 20, role: "deg"},
         ],
         prepare(e, {startPose, sfEnd, targetPos, makePose, localUp, localNorth, localEast}) {
             const obj = targetPos(e.target, sfEnd);
@@ -357,6 +357,34 @@ export const COMMANDS = {
             const obj = targetPos(e.target, sf) || sp.lookTarget;
             const pos = sp.position.clone().lerp(e._from.camPos, smooth(localT));
             return makePose(pos, obj, sp.fov);
+        },
+    },
+
+    // Move the camera to an ABSOLUTE position over <secs>, looking at <lookAt>.
+    // <pos> and <lookAt> are each a target (object/witness/a node id) or a
+    // "lat,lon,alt" literal. Unlike `from` (positioned RELATIVE to a target),
+    // moveto places the camera at an exact point — e.g. a known observer GPS or a
+    // rooftop: `moveto 38.72,-104.78,1850 4 object`.
+    moveto: {
+        cameraBeat: true,
+        color: "#6a8cc0",
+        label: (e) => "moveto " + e.pos,
+        args: [
+            {name: "pos", type: "string", required: true},
+            {name: "secs", type: "number", default: 4, field: "dur", role: "dur"},
+            {name: "lookAt", type: "string", default: null},
+        ],
+        prepare(e, {startPose, sfEnd, targetPos, makePose}) {
+            const p = targetPos(e.pos, sfEnd);
+            if (!p) { e.invalid = true; return startPose; }
+            const look = (e.lookAt && targetPos(e.lookAt, sfEnd)) || startPose.lookTarget;
+            e._moveto = {p};
+            return makePose(p, look, startPose.fov);
+        },
+        sample(e, {sp, sf, localT, targetPos, makePose}) {
+            const look = (e.lookAt && targetPos(e.lookAt, sf)) || sp.lookTarget;
+            const pos = sp.position.clone().lerp(e._moveto.p, smooth(localT));
+            return makePose(pos, look, sp.fov);
         },
     },
 

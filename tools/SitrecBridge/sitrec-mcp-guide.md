@@ -224,9 +224,11 @@ linear shot lists just write one command per line:
 
 | Command | Form | Notes |
 | --- | --- | --- |
-| `from` | `from target secs bearing dist elev` | place the camera ABSOLUTELY: compass `bearing` (0=N,90=E,180=S), `elev`° up, `dist` m out, looking at target. `secs 0` snaps. The only absolute-placement command — use it to establish an opening shot. |
+| `from` | `from target secs bearing dist elev` | place the camera at a vantage AROUND the target: compass `bearing` (0=N,90=E,180=S), `elev`° up, `dist` m out, looking at target. `secs 0` snaps. Use it to establish an opening shot. |
+| `moveto` | `moveto pos secs [lookAt]` | move the camera to an ABSOLUTE point — `pos`/`lookAt` are a target or `"lat,lon,alt"`. Exact placement (vs `from`'s target-relative). |
 | `zoom` | `zoom target secs dist` | dolly to end `dist` metres from the target |
 | `orbit` | `orbit target secs degrees [rise]` | circle the target; optional `rise` (m) = helical climb in one beat |
+| `follow` | `follow target secs distance height` | third-person follow-cam: trail a MOVING target (e.g. a createWalker marker) behind its motion, swinging around corners |
 | `track` | `track target secs` | hold position, pan to keep the target framed |
 | `rise` | `rise target secs meters` | climb straight up while looking at the target |
 | `fov` | `fov degrees secs` | lens change (1–120°) |
@@ -249,6 +251,8 @@ node id directly (e.g. a `createWalker` name); or a `"lat,lon,alt"` literal.
 **Authoring rules for agents:**
 - NEVER run two camera beats concurrently (`& zoom` over a `from`) — they fight for the
   camera. Only `& text` / `& fade` / `& set`·`show`·`hide` (non-camera) are safe to overlay.
+  The parser now emits a **warning** when camera beats overlap or a target doesn't resolve
+  (`scriptedVideo.parseWarnings`) — heed them; they're silent footguns otherwise.
 - To dissolve to the witness photo: arm `& fade video 0.01 0` early (pre-hide), then
   `view photo` + `fade video 1.5 1` + `& fade main 1.5 0`, hold, reverse, `view main`.
 - A `createWalker` object is a normal target: `from Viewer …`, and `hide Viewer` to switch it

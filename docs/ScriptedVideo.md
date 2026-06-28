@@ -136,7 +136,9 @@ Camera commands aim at a **target**, resolved (at the relevant frame) to a 3-D p
 
 | Command | Signature | Notes |
 | --- | --- | --- |
-| `from` | `from(target, secs=3, bearing=180, distance=3000, elevation=20)` | **place the camera at an absolute vantage** around the target and look at it: on compass `bearing` (0 = N, 90 = E, **180 = S**), `elevation`° above the horizon, `distance` m out. Flies there over `secs` (**0 = snap**). The only command that sets an absolute position — use it to establish an opening/cutaway shot, e.g. `from object 0 180 11000 24` for a high overview from the south |
+| `from` | `from(target, secs=3, bearing=180, distance=3000, elevation=20)` | **place the camera at a vantage around the target** and look at it: on compass `bearing` (0 = N, 90 = E, **180 = S**), `elevation`° above the horizon, `distance` m out. Flies there over `secs` (**0 = snap**). Use it to establish an opening/cutaway shot, e.g. `from object 0 180 11000 24` for a high overview from the south |
+| `moveto` | `moveto(pos, secs=4, lookAt?)` | **move the camera to an absolute point** — `pos` and `lookAt` are each a target or a `"lat,lon,alt"` literal. Unlike `from` (relative to a target), this places the camera *exactly*: `moveto 38.72,-104.78,1850 4 object` |
+| `follow` | `follow(target, secs=6, distance=18, height=6)` | **third-person follow-cam**: trail a *moving* target (e.g. a `createWalker` marker), staying `distance` m behind its direction of motion and `height` m up, looking just ahead — swings around as the target rounds a corner |
 | `zoom` | `zoom(target, secs=5, dist?)` | dolly toward/away along the current line to end **distance** `dist` metres from the target (defaults to 5% of the start distance, clamped 150–700 m) |
 | `orbit` | `orbit(target, secs=8, degrees=90, rise=0)` | circle the target by `degrees` around local vertical; an optional `rise` (metres) climbs during the orbit — a **helical "fly up and around" in one beat** (no need for a concurrent rise, which would fight for the camera) |
 | `track` | `track(target, secs=5)` | hold position, pan to keep the target framed |
