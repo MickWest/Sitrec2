@@ -685,6 +685,16 @@ export class CScriptEditorWindow extends CNodeView {
         return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
+    // 0-based line indices mentioned in a list of "line N: …" messages
+    _linesFrom(msgs) {
+        const s = new Set();
+        for (const m of (msgs || [])) {
+            const mm = /line (\d+)/.exec(m);
+            if (mm) s.add(parseInt(mm[1], 10) - 1);
+        }
+        return s;
+    }
+
     _renderBackdrop() {
         const ta = this.textarea, bd = this.backdrop;
         if (!ta || !bd) return;
@@ -694,6 +704,9 @@ export class CScriptEditorWindow extends CNodeView {
         const selectedLine = this.sv._selectedEventLine;
         // during preview, tint the lines active at the current time yellow
         const active = this.sv._previewing ? this.sv._activeLineSet(this.sv._currentT) : null;
+        // wavy-underline lines the parser flagged: red for errors, amber for warnings
+        const errLines = this._linesFrom(this.sv.parseErrors);
+        const warnLines = this._linesFrom(this.sv.parseWarnings);
         const box = '<span style="outline:1.5px solid #ffd24a;border-radius:2px;background:rgba(255,210,74,0.18)">';
         let html = "";
         for (let i = 0; i < lines.length; i++) {
@@ -705,6 +718,8 @@ export class CScriptEditorWindow extends CNodeView {
             } else {
                 h = this._escHtml(line);
             }
+            if (errLines.has(i)) h = '<span style="text-decoration:underline wavy #ff5a5a;text-decoration-skip-ink:none">' + h + "</span>";
+            else if (warnLines.has(i)) h = '<span style="text-decoration:underline wavy #ffb84a;text-decoration-skip-ink:none">' + h + "</span>";
             if (active && active.has(i + 1)) h = '<span style="color:#ffd24a">' + h + "</span>";
             if (selectedLine === i + 1) h = '<span style="background:rgba(120,170,255,0.18)">' + h + "</span>";
             if (i === cur) h = "<b>" + h + "</b>";
