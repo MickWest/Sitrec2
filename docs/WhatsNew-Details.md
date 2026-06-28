@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.91.3 (2026-06-27)
+
+### Improvements
+- **A thin border now outlines every view so its edges are always visible.** `CNodeView` (`src/nodes/CNodeView.js`) and `CNodeViewCanvas` (`src/nodes/CNodeViewCanvas.js`) apply a 1px 25%-transparent grey inset outline (`outline: '1px solid rgba(128,128,128,0.25)'` with `outlineOffset: '-1px'`). It is drawn as an *inset outline* rather than a CSS border so it paints inside the view bounds and does not shift content or change layout. The outline is duplicated on the canvas in `CNodeViewCanvas` because the full-size canvas fills the div and would otherwise paint over the div's outline.
+
+### Bug Fixes
+- **Fixed video filters not re-filtering the current frame.** Two related cache-staleness bugs in the video filter pipeline (`src/nodes/CNodeVideoView.js`, `src/nodes/CNodeVideoViewFilters.js`):
+  - **Stale frame during playback.** `applyConvolutionToImage()` (Convolution: sharpen / edge-detect / emboss) and `applyLevelsToImage()` (Levels) keyed their result cache on the input-image object identity plus their own params, but not the frame number. During playback the decoder reuses the same image object across frames, so identity alone returned a stale filtered result and the filtered video appeared frozen. Both functions now take a `frame` argument and add `_convLastFrame` / `_levelsLastFrame` to their cache checks, matching the existing curves/tonal/invert pattern.
+  - **Stale downstream stage on a filter change.** Each cached stage in the chain (convolution → levels → curves → tonal → invert) keys its cache on the *identity* of its input canvas, but every stage reuses the same output-canvas object across renders. So changing an upstream filter setting while paused left a downstream stage serving pixels computed from the old upstream input (same input-canvas identity, same frame, same own-params). New `getFilterStateKey()` builds a fingerprint of every cached-stage filter setting; `getAdjustedVideoFrameSource()` compares it against `_lastFilterStateKey` at the head of the chain and, on any change, calls `invalidateAllFilterCaches()` to flush every stage so the current frame is fully re-filtered. The key is stable across frames, so playback's per-frame caches are untouched and there is no spurious flushing.
+
+---
+
 ## Version 2.91.2 (2026-06-27)
 
 ### Bug Fixes

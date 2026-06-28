@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.91.3 (2026-06-27)
+
+### Improvements
+- Every view now has a faint one-pixel grey border so its edges are always visible, even against a matching background. It is drawn inside the view so nothing shifts or resizes.
+
+### Bug Fixes
+- Fixed video filters (sharpen, edge-detect, emboss, and Levels) appearing frozen during playback, and the picture not fully updating when you changed a filter setting while paused. The current frame now re-filters correctly in both cases.
+
+---
+
 ## Version 2.91.2 (2026-06-27)
 
 ### Bug Fixes
