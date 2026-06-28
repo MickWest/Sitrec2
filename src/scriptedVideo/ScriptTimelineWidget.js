@@ -47,11 +47,35 @@ export class CScriptTimelineWidget {
         const x = (t) => ((t - this.tlOffset) / span) * w;
         const compact = h < 44;
         const numLanes = this.sv._numLanes || 1;
-        const padTop = compact ? 1 : 3;
+        // top "ruler" strip: a dedicated always-scrub zone (~22% of height). Lanes
+        // start below it. ~10px on the compact strip, ~13px in the editor.
+        const rulerH = Math.max(9, Math.round(h * 0.22));
+        const padTop = rulerH;
         const padBot = compact ? 1 : 13;   // room for duration label when not compact
         const gap = compact ? 1 : 2;
         const laneH = Math.max(3, (h - padTop - padBot - gap * (numLanes - 1)) / numLanes);
-        return {w, h, total, span, x, compact, numLanes, padTop, padBot, gap, laneH};
+        return {w, h, total, span, x, compact, numLanes, rulerH, padTop, padBot, gap, laneH};
+    }
+
+    // x pixel of the playhead on canvas c (content-box coords)
+    _playheadX(c) { return this._timelineGeom(c).x(this.sv._currentT); }
+
+    // is a content-box x within the playhead's fat (±6px) grab zone?
+    _nearPlayhead(c, px) { return Math.abs(px - this._playheadX(c)) <= 6; }
+
+    // Snap a scrub time to nearby view-cut / segment edges (within ~5px), unless
+    // bypassed (Cmd/Ctrl held for free positioning).
+    _snapTime(c, t, bypass) {
+        if (bypass) return t;
+        const g = this._timelineGeom(c);
+        const tol = 5 / (g.w || 1) * g.span;   // 5px in seconds at the current zoom
+        let best = t, bestD = tol;
+        const consider = (tt) => { const d = Math.abs(tt - t); if (d < bestD) { bestD = d; best = tt; } };
+        for (const e of this.sv.events) {
+            if (e.type === "view") consider(e.start);
+            if (e.dur > 0) { consider(e.start); consider(e.start + e.dur); }
+        }
+        return best;
     }
 
     // The timeline segment (event bar) at a client position, or null.
@@ -68,7 +92,8 @@ export class CScriptTimelineWidget {
         const g = this._timelineGeom(c);
         // the bottom strip is the scrollbar when zoomed — don't treat it as a segment
         const sb = this.tlZoom > 1.001 ? CScriptTimelineWidget.SCROLLBAR_H : 0;
-        if (py < 0 || py > g.h - sb) return null;
+        // the top ruler is the dedicated scrub zone — never a segment
+        if (py < g.rulerH || py > g.h - sb) return null;
         for (const e of this.sv.events) {
             if (!(e.dur > 0)) continue;
             const y0 = g.padTop + (e._lane || 0) * (g.laneH + g.gap);
@@ -101,6 +126,11 @@ export class CScriptTimelineWidget {
         const total = g.total, span = g.span, x = g.x, compact = g.compact;
         const padTop = g.padTop, gap = g.gap, laneH = g.laneH;
 
+        // top ruler strip: the always-scrub zone (subtly tinted, with a divider)
+        ctx.fillStyle = "#202531"; ctx.fillRect(0, 0, w, g.rulerH);
+        ctx.strokeStyle = "rgba(255,255,255,0.10)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, g.rulerH + 0.5); ctx.lineTo(w, g.rulerH + 0.5); ctx.stroke();
+
         for (const e of sv.events) {
             if (!(e.dur > 0)) continue;
             const lane = e._lane || 0;
@@ -128,26 +158,29 @@ export class CScriptTimelineWidget {
             }
         }
 
-        // view cuts (full-height markers)
+        // view cuts: full-height line, label sits just BELOW the ruler (out of the
+        // scrub zone) so it never competes with the ruler / playhead handle
         for (const e of sv.events) {
             if (e.type !== "view") continue;
             const xx = x(e.start);
             ctx.strokeStyle = "#cfd3da"; ctx.lineWidth = 1.5;
-            ctx.beginPath(); ctx.moveTo(xx, 0); ctx.lineTo(xx, h); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(xx, g.rulerH); ctx.lineTo(xx, h); ctx.stroke();
             if (!compact) {
                 ctx.fillStyle = "#cfd3da"; ctx.font = "9px sans-serif";
                 ctx.textBaseline = "top"; ctx.textAlign = "left";
-                ctx.fillText(e.view, xx + 2, 1);
+                ctx.fillText(e.view, xx + 2, g.rulerH + 1);
             }
         }
 
-        // playhead (always shown so scrubbing position is visible too)
+        // playhead (always shown so scrubbing position is visible too); the grab
+        // triangle lives in the ruler. Brighter when hovered/dragging.
         const px = x(sv._currentT);
         if (px >= -1 && px <= w + 1) {
-            // grab handle at the top so it's clear it can be dragged
-            ctx.fillStyle = "#ffd24a";
-            ctx.beginPath(); ctx.moveTo(px - 4, 0); ctx.lineTo(px + 4, 0); ctx.lineTo(px, 6); ctx.closePath(); ctx.fill();
-            ctx.strokeStyle = "#ffd24a"; ctx.lineWidth = 1.5;
+            const hot = this._playheadHot || this._tlDragging;
+            ctx.fillStyle = hot ? "#ffe680" : "#ffd24a";
+            const th2 = Math.min(7, g.rulerH);
+            ctx.beginPath(); ctx.moveTo(px - 5, 0); ctx.lineTo(px + 5, 0); ctx.lineTo(px, th2); ctx.closePath(); ctx.fill();
+            ctx.strokeStyle = hot ? "#ffe680" : "#ffd24a"; ctx.lineWidth = hot ? 2 : 1.5;
             ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
         }
 
@@ -182,6 +215,7 @@ export class CScriptTimelineWidget {
     // attach mousedown (scrub or scrollbar-pan) + wheel-to-scroll handlers
     attach(c) {
         c.style.cursor = "ew-resize";
+        c.title = "Drag to scrub (top strip or the playhead) • ⌘/Ctrl-wheel to zoom • wheel to pan";
         c.addEventListener("mousedown", (ev) => this._onTimelineMouseDown(c, ev));
         c.addEventListener("wheel", (ev) => this._onTimelineWheel(c, ev), { passive: false });
         c.addEventListener("mousemove", (ev) => this._updateTimelineHover(c, ev.clientX, ev.clientY));
@@ -193,10 +227,18 @@ export class CScriptTimelineWidget {
     _updateTimelineHover(c, clientX, clientY) {
         if (this._tlDragging || this._editDragging) return;
         const sv = this.sv;
+        const r = c.getBoundingClientRect();
+        const px = clientX - r.left - (c.clientLeft || 0);
+        // playhead grab zone highlight (redraw only when it changes)
+        const wasHot = !!this._playheadHot;
+        this._playheadHot = this._nearPlayhead(c, px);
+        if (this._playheadHot !== wasHot) this.draw();
         const hit = this._hitAtTimeline(c, clientX, clientY);
         const seg = hit ? hit.seg : null;
-        // only show the wheel-edit affordance when there's a duration token to edit
-        if (hit && hit.part === "right" && seg.spans && seg.spans.dur) c.style.cursor = "ew-resize";
+        // cursor: playhead/ruler/empty = scrub (ew-resize); segment edge = resize;
+        // movable & body = grab; a segment with a duration = ns-resize (wheel-edit)
+        if (this._playheadHot) c.style.cursor = "ew-resize";
+        else if (hit && hit.part === "right" && seg.spans && seg.spans.dur) c.style.cursor = "ew-resize";
         else if (hit && hit.part === "body" && this._canMoveEvent(seg)) c.style.cursor = "grab";
         else c.style.cursor = (seg && seg.spans && seg.spans.dur) ? "ns-resize" : "ew-resize";
         const prevLine = sv._hoverSeg ? sv._hoverSeg.line : null;
@@ -215,6 +257,7 @@ export class CScriptTimelineWidget {
         if (this._tlDragging) return;
         const sv = this.sv;
         c.style.cursor = "ew-resize";
+        if (this._playheadHot) { this._playheadHot = false; this.draw(); }
         if (sv._hoverSeg || sv._hoverNum) {
             sv._hoverSeg = null; sv._hoverNum = null;
             sv.editor._renderBackdrop(); this.draw();
@@ -229,6 +272,10 @@ export class CScriptTimelineWidget {
             this._beginScrollDrag(c, ev);
             return;
         }
+        // the playhead's fat grab zone wins over everything below it, so you can
+        // grab and drag it even when it sits on top of a segment
+        const px = ev.clientX - r.left - (c.clientLeft || 0);
+        if (this._nearPlayhead(c, px)) { this._beginTimelineDrag(c, ev); return; }
         const hit = this._hitAtTimeline(c, ev.clientX, ev.clientY);
         if (hit && hit.seg) {
             this.sv.selectEvent(hit.seg);
@@ -309,9 +356,13 @@ export class CScriptTimelineWidget {
         if (sv.totalDuration <= 0) return;
         this._tlDragging = true;
         this._dragCanvas = c;
-        sv._scrubTo(this._timeAtX(c, ev.clientX));
+        const scrubAt = (e) => {
+            const cc = this._dragCanvas; if (!cc) return;
+            sv._scrubTo(this._snapTime(cc, this._timeAtX(cc, e.clientX), e.metaKey || e.ctrlKey));
+        };
+        scrubAt(ev);
         const doc = c.ownerDocument || document;   // may live in a popped-out window
-        const move = (e) => { if (this._dragCanvas) sv._scrubTo(this._timeAtX(this._dragCanvas, e.clientX)); };
+        const move = (e) => scrubAt(e);
         const up = (e) => {
             this._tlDragging = false; this._dragCanvas = null;
             doc.removeEventListener("mousemove", move, true);
@@ -366,6 +417,15 @@ export class CScriptTimelineWidget {
     _onTimelineWheel(c, ev) {
         const sv = this.sv;
         if (sv.totalDuration <= 0) return;
+        // Cmd/Ctrl + wheel → zoom centered on the cursor's time (matches the
+        // Cmd/Ctrl +/-/0 keys). Takes priority over duration-edit/pan.
+        if (ev.metaKey || ev.ctrlKey) {
+            ev.preventDefault();
+            // scroll up = zoom in. macOS natural scrolling reports up as deltaY > 0.
+            const factor = (ev.deltaY > 0 ? 1.5 : 1 / 1.5);
+            this._zoomTimelineAt(factor, this._timeAtX(c, ev.clientX));
+            return;
+        }
         // over a segment → the wheel edits that segment's duration (like the editor)
         const seg = this._segAtTimeline(c, ev.clientX, ev.clientY);
         if (seg && seg.spans && seg.spans.dur) {
@@ -394,11 +454,17 @@ export class CScriptTimelineWidget {
 
     // zoom the timeline about the playhead (or visible centre if it's off-screen)
     _zoomTimeline(factor) {
-        const total = this.sv.totalDuration || 1;
-        const span = total / this.tlZoom;
+        const span = (this.sv.totalDuration || 1) / this.tlZoom;
         let centerT = this.sv._currentT;
         if (centerT < this.tlOffset || centerT > this.tlOffset + span) centerT = this.tlOffset + span / 2;
-        const frac = span > 0 ? (centerT - this.tlOffset) / span : 0.5;
+        this._zoomTimelineAt(factor, centerT);
+    }
+
+    // zoom keeping the given time anchored under its current pixel (zoom-at-cursor)
+    _zoomTimelineAt(factor, centerT) {
+        const total = this.sv.totalDuration || 1;
+        const span = total / this.tlZoom;
+        const frac = span > 0 ? clamp((centerT - this.tlOffset) / span, 0, 1) : 0.5;
         const maxZoom = Math.max(1, total / 0.5);
         this.tlZoom = clamp(this.tlZoom * factor, 1, maxZoom);
         const newSpan = total / this.tlZoom;
