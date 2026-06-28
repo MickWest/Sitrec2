@@ -720,12 +720,15 @@ export function applyEchoEffect(videoView, currentImage, currentFrame, wantMin, 
     return videoView._echoCanvas;
 }
 
-export function applyConvolutionToImage(image, kernelName, params, videoView) {
+export function applyConvolutionToImage(image, kernelName, params, videoView, frame = undefined) {
     if (kernelName === 'none' || !CONVOLUTION_KERNELS[kernelName]) return image;
 
-    // Skip recalculation if the source image, kernel, and params are unchanged
+    // Skip recalculation if the source image, frame, kernel, and params are unchanged.
+    // The frame check is essential: during playback the decoder reuses the same image
+    // object across frames, so identity alone would return a stale cached result.
     if (videoView._convolutionCanvas &&
         videoView._convLastImage === image &&
+        videoView._convLastFrame === frame &&
         videoView._convLastKernel === kernelName &&
         videoView._convLastAmount === params.amount &&
         videoView._convLastThreshold === params.threshold &&
@@ -750,6 +753,7 @@ export function applyConvolutionToImage(image, kernelName, params, videoView) {
     applyConvolution(ctx, width, height, kernelName, params);
 
     videoView._convLastImage = image;
+    videoView._convLastFrame = frame;
     videoView._convLastKernel = kernelName;
     videoView._convLastAmount = params.amount;
     videoView._convLastThreshold = params.threshold;
@@ -1227,7 +1231,7 @@ export function areLevelsDefault(levels = {}) {
 
 // Photoshop-style Levels: input black/white remap, midpoint gamma, output black/white remap.
 // Uses a cached 256-entry LUT to skip 4M+ Math.pow calls per HD frame.
-export function applyLevelsToImage(image, levels, videoView) {
+export function applyLevelsToImage(image, levels, videoView, frame = undefined) {
     if (areLevelsDefault(levels)) return image;
 
     const width = image.width;
@@ -1253,7 +1257,7 @@ export function applyLevelsToImage(image, levels, videoView) {
         levels.outputWhite ?? 255,
     ].join(":");
 
-    if (videoView._levelsLastImage === image && videoView._levelsLastKey === key) {
+    if (videoView._levelsLastImage === image && videoView._levelsLastFrame === frame && videoView._levelsLastKey === key) {
         return videoView._levelsMidpointCanvas;
     }
 
@@ -1277,6 +1281,7 @@ export function applyLevelsToImage(image, levels, videoView) {
     ctx.putImageData(imageData, 0, 0);
 
     videoView._levelsLastImage = image;
+    videoView._levelsLastFrame = frame;
     videoView._levelsLastKey = key;
 
     return videoView._levelsMidpointCanvas;

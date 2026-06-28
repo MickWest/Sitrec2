@@ -365,6 +365,50 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this._curvesLastRevision = undefined;
     }
 
+    // A fingerprint of every cached-stage filter setting. Used to detect when the
+    // user has changed any video filter so the whole chain can be re-filtered.
+    // The cached filter stages (convolution → levels → curves → tonal → invert) each
+    // key their cache on the IDENTITY of their input canvas, but every stage reuses
+    // the same output-canvas object across renders. So when an upstream param changes
+    // while paused on a frame, a downstream stage sees the same input-canvas identity,
+    // same frame, and same own-params, and returns a STALE result. Flushing all caches
+    // whenever this key changes forces the current frame to be fully re-filtered.
+    getFilterStateKey() {
+        const effectsEnabled = this.in.enableVideoEffects ? this.in.enableVideoEffects.v0 : true;
+        if (!effectsEnabled) return "off";
+        const levels = this.getLevelsSettings();
+        return [
+            "on",
+            `conv:${this.in.convolutionFilter?.value ?? "none"}:${this.in.sharpenAmount?.v0 ?? 1}:${this.in.edgeDetectThreshold?.v0 ?? 0}:${this.in.embossDepth?.v0 ?? 1}`,
+            `echo:${this.in.echoMin?.value ?? false}:${this.in.echoMax?.value ?? false}:${Math.round(this.in.echoFrames?.v0 ?? 10)}`,
+            `levels:${this.hasActiveLevels()}:${levels.inputBlack}:${levels.inputWhite}:${levels.midpoint}:${levels.outputBlack}:${levels.outputWhite}`,
+            `curves:${this.in.curves?.value === true}:${this.curvesView?.curveRevision ?? 0}`,
+            `tonal:${this.in.shadows?.v0 ?? 0}:${this.in.highlights?.v0 ?? 0}:${this.in.dehaze?.v0 ?? 0}`,
+            `invert:${this.in.invert?.value === true || this.in.invert?.value === 1}`,
+        ].join("|");
+    }
+
+    // Flush every cached filter stage so the current frame is re-filtered from scratch.
+    invalidateAllFilterCaches() {
+        // Convolution
+        this._convLastImage = undefined;
+        this._convLastFrame = undefined;
+        this._convLastKernel = undefined;
+        this._convLastAmount = undefined;
+        this._convLastThreshold = undefined;
+        this._convLastStrength = undefined;
+        // Levels (also clears curves via invalidateCurveResult)
+        this.invalidateLevelsResult();
+        // Tonal adjustments
+        this._tonalAdjustLastImage = undefined;
+        this._tonalAdjustLastFrame = undefined;
+        this._tonalAdjustLastKey = undefined;
+        // Invert
+        this._invertLastImage = undefined;
+        this._invertLastFrame = undefined;
+        this._invertLastSourceKey = undefined;
+    }
+
     setClipWarningMaskEnabled(shadowEnabled, highlightEnabled) {
         this.showShadowClipMask = shadowEnabled;
         this.showHighlightClipMask = highlightEnabled;
@@ -1740,6 +1784,17 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     }
 
     getAdjustedVideoFrameSource(image, frame) {
+        // If any filter setting changed since the last render, flush every cached
+        // stage so the current frame is fully re-filtered. Without this, a downstream
+        // stage can return a stale result when an upstream param changes (it keys on
+        // its input-canvas identity, which is reused across renders). During playback
+        // the key is stable, so the normal per-frame caches are untouched.
+        const filterStateKey = this.getFilterStateKey();
+        if (filterStateKey !== this._lastFilterStateKey) {
+            this.invalidateAllFilterCaches();
+            this._lastFilterStateKey = filterStateKey;
+        }
+
         let sourceImage = image;
         let filter = "";
         let invertSourceKey = "";
@@ -1752,7 +1807,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
                 threshold: this.in.edgeDetectThreshold?.v0 ?? 0,
                 strength: (filterType === "emboss" ? this.in.embossDepth?.v0 : 1) ?? 1
             };
-            sourceImage = applyConvolutionToImage(image, filterType, params, this);
+            sourceImage = applyConvolutionToImage(image, filterType, params, this, frame);
             invertSourceKey += `conv:${filterType}:${params.amount}:${params.threshold}:${params.strength}|`;
         }
 
@@ -1773,7 +1828,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         if (effectsEnabled && this.hasActiveLevels()) {
             const levels = this.getLevelsSettings();
-            sourceImage = applyLevelsToImage(sourceImage, levels, this);
+            sourceImage = applyLevelsToImage(sourceImage, levels, this, frame);
             invertSourceKey += `levels:${levels.inputBlack}:${levels.inputWhite}:${levels.midpoint}:${levels.outputBlack}:${levels.outputWhite}|`;
         }
 
