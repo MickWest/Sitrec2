@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.91.2 (2026-06-27)
+
+### Bug Fixes
+- Fixed the **Center Camera On Street View** button (Terrain → Street View Pano) placing the camera far too high over high terrain when the camera was in above-ground-level mode; it now lands at the panorama's actual height.
+- Fixed the **Street View Pano** menu jumping to the top of the Terrain menu after reloading a scene; it now stays in its proper place.
+
+---
+
 ## Version 2.91.1 (2026-06-27)
 
 ### Bug Fixes

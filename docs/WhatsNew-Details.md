@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.91.2 (2026-06-27)
+
+### Bug Fixes
+- Fixed the "Center Camera On Street View" button (Terrain → Street View Pano) placing the look camera far too high when the camera was in AGL (above-ground-level) mode. The panorama centre altitude is HAE (height above the ellipsoid), but `fixedCameraPosition` stores its altitude in a mode-dependent datum: in AGL mode `_LLA[2]` is height *above terrain* (its recalc cascade adds the ground back), otherwise it is MSL (the cascade adds the geoid offset). `centerCameraOnPano()` in `src/StreetViewPanoUI.js` passed the raw HAE straight to `setLLA`, so in AGL mode the ground was double-counted and the camera ended up ~ground-level too high (dramatic over high terrain — about 1.3 km up over the Mexican highlands). It now converts to the node's datum first: in AGL mode it subtracts the terrain ground via `elevationAtLL(lat, lon, true)`, otherwise it subtracts the geoid offset via `meanSeaLevelOffset(lat, lon)`, so the camera lands at the panorama's actual height either way.
+- Fixed the "Street View Pano" folder jumping to the top of the Terrain menu after a sitch reload. The folder is built once and marked permanent so it survives reloads, but `setupStreetViewPanoMenu()` early-returned (`if (svFolder) return`) on every subsequent load and so never re-asserted its position; meanwhile the Terrain menu is rebuilt per sitch and re-appends its own folders *after* the permanent one, leaving Street View Pano floating to the top. A new `positionStreetViewFolder()` helper now runs on every load: it places the folder immediately after "Remove Geometry" (falling back to the bottom when that folder is absent — "Remove Geometry" only exists for Google Photorealistic 3D Tiles), then re-asserts "Terrain Tweaks" as the last entry. This required a new folder-aware `GUI.prototype.moveAfter(name)` in `src/lil-gui-extras.js`, because the existing `Controller.prototype.moveAfter` only matched a sibling controller's `.name` and could not target a sibling folder by its `.title`.
+
+---
+
 ## Version 2.91.1 (2026-06-27)
 
 ### Bug Fixes

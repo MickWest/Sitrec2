@@ -614,6 +614,29 @@ GUI.prototype.moveToEnd = function () {
     return this; // Return the controller to allow method chaining
 }
 
+// Move this folder to sit immediately after a named sibling in the same parent.
+// Unlike Controller.moveAfter (which only matches a sibling controller's `.name`),
+// this also matches a sibling FOLDER by its `.title` text, so a folder can be
+// positioned relative to another folder. Warns (and no-ops) if not found.
+GUI.prototype.moveAfter = function (name) {
+    const parentElement = this.domElement.parentElement;
+    if (!parentElement) return this;
+    const target = Array.from(parentElement.children).find(c => {
+        if (c === this.domElement) return false;
+        const title = c.querySelector(':scope > .title');     // sibling folder
+        if (title && title.textContent.trim() === name) return true;
+        const cname = c.querySelector(':scope > .name');      // sibling controller
+        return !!cname && cname.textContent.trim() === name;
+    });
+    if (target) {
+        parentElement.insertBefore(this.domElement, target.nextSibling);
+        this._triggerMirrorRefresh();
+    } else {
+        console.warn("GUI.moveAfter: Could not find sibling named " + name);
+    }
+    return this; // Return the folder to allow method chaining
+}
+
 // Helper method to trigger refresh of mirrored GUIs
 GUI.prototype._triggerMirrorRefresh = function () {
     // Dispatch a custom event that mirroring systems can listen for

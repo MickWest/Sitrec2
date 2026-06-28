@@ -9,6 +9,8 @@
 import {guiMenus, NodeMan, setRenderOne} from "./Globals";
 import {CNodeStreetViewPano} from "./nodes/CNodeStreetViewPano";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
+import {elevationAtLL} from "./threeExt";
+import {meanSeaLevelOffset} from "./EGM96Geoid";
 
 let svFolder = null;
 let statusController = null;
@@ -81,9 +83,23 @@ function centerCameraOnPano() {
     }
     const fixed = NodeMan.get("fixedCameraPosition", true);
     if (fixed && typeof fixed.setLLA === "function") {
+        // center.alt is HAE (height above the ellipsoid). fixedCameraPosition stores its
+        // altitude in a mode-dependent datum: in AGL mode _LLA[2] is height ABOVE TERRAIN
+        // (the recalc cascade adds the ground back), otherwise it is MSL (the cascade adds
+        // the geoid offset to get HAE). Passing the raw HAE altitude straight through
+        // double-counts the ground in AGL mode — the camera ends up ~groundLevel too high
+        // (e.g. ~1.3 km up over the Mexican highlands). Convert to the node's datum so the
+        // camera lands at the pano's actual height either way.
+        let alt = center.alt;
+        if (fixed.agl) {
+            const groundHAE = elevationAtLL(center.lat, center.lon, true); // terrain ground, HAE
+            if (isFinite(groundHAE)) alt = center.alt - groundHAE;         // height above ground
+        } else {
+            alt = center.alt - meanSeaLevelOffset(center.lat, center.lon); // HAE -> MSL
+        }
         // fixedCameraPosition is the look camera's "from" position; setLLA cascades so the
         // controller-driven camera actually moves (a direct camera.position write is clobbered).
-        fixed.setLLA(center.lat, center.lon, center.alt);
+        fixed.setLLA(center.lat, center.lon, alt);
         // Snap the sphere exactly onto the camera's resulting point => zero parallax.
         if (fixed.ecef) node.setCenterECEF(fixed.ecef.clone());
     } else {
@@ -96,7 +112,15 @@ function centerCameraOnPano() {
 
 export function setupStreetViewPanoMenu() {
     if (!guiMenus.terrain) return;
-    if (svFolder) return;   // idempotent (re-run on every sitch load)
+
+    // The folder itself is built once and marked permanent (it survives sitch
+    // reloads). But the Terrain menu is rebuilt per sitch and re-appends its own
+    // folders AFTER our permanent one, so the position must be re-asserted on
+    // EVERY load — see positionStreetViewFolder() at the end.
+    if (svFolder) {
+        positionStreetViewFolder();
+        return;
+    }
 
     svFolder = guiMenus.terrain.addFolder("Street View Pano")
         .close()
@@ -163,9 +187,23 @@ export function setupStreetViewPanoMenu() {
     centerCamController.moveToFirst();
     fetchHereController.moveToFirst();
 
-    // We are added to the Terrain menu AFTER its "Terrain Tweaks" sub-folder, so re-assert
-    // Terrain Tweaks to the bottom to keep it the last entry on a fresh load too.
-    const tweaks = (guiMenus.terrain?.folders || []).find(
-        f => (f.$title?.textContent || "").includes("Terrain Tweaks"));
+    positionStreetViewFolder();
+}
+
+// Keep the "Street View Pano" folder at a stable position in the Terrain menu on
+// every sitch load. It sits immediately after "Remove Geometry" (which only
+// exists for Google Photorealistic 3D Tiles); when that folder is absent it drops
+// to the bottom. Either way "Terrain Tweaks" is re-asserted as the last entry.
+function positionStreetViewFolder() {
+    if (!svFolder || !guiMenus.terrain) return;
+    const folders = guiMenus.terrain.folders || [];
+    const titleOf = (f) => (f.$title?.textContent || "").trim();
+    const hasRemoveGeometry = folders.some(f => titleOf(f) === "Remove Geometry");
+    if (hasRemoveGeometry) {
+        svFolder.moveAfter("Remove Geometry");
+    } else {
+        svFolder.moveToEnd();
+    }
+    const tweaks = folders.find(f => titleOf(f).includes("Terrain Tweaks"));
     if (tweaks && tweaks.moveToEnd) tweaks.moveToEnd();
 }
