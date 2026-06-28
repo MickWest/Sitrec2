@@ -145,6 +145,13 @@ export class CScriptEditorWindow extends CNodeView {
         toolbar.appendChild(this._winButton("Stop", () => sv.stopAll()));
         toolbar.appendChild(this._winButton("Render", () => sv.renderVideo()));
         toolbar.appendChild(this._winButton("Insert", () => this.openInsertPalette()));
+        // author by flying: capture the live main-view camera as a `moveto` line
+        const capBtn = this._winButton("Capture", () => {
+            const line = sv.captureCurrentView();
+            if (line) this._insertSnippet(line); else sv.setStatus("No main camera to capture");
+        });
+        capBtn.title = "Fly the main view, then click to insert a 'moveto' line that reproduces this exact camera";
+        toolbar.appendChild(capBtn);
         // (Pop-out is the ⧉ icon in the CUIBar header — same as the other poppable views.)
 
         // --- editor: a transparent textarea over a styled backdrop ---

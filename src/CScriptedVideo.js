@@ -36,7 +36,8 @@ import {clamp, smooth} from "./scriptedVideo/ScriptMath";
 import {VIEW_MAP, layoutForViewEvent, isSettingEvent} from "./scriptedVideo/ScriptCommands";
 import {runScriptJS} from "./scriptedVideo/ScriptJSRunner";
 import {sitrecAPI} from "./CSitrecAPI";
-import {prepareEvents, computeCamera, applyPoseToCam} from "./scriptedVideo/ScriptCameraEngine";
+import {prepareEvents, computeCamera, applyPoseToCam, poseFromCamNode} from "./scriptedVideo/ScriptCameraEngine";
+import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {CScriptTimelineWidget} from "./scriptedVideo/ScriptTimelineWidget";
 import {CScriptEditorWindow, STORAGE_KEY, TABS_KEY, DEFAULT_SCRIPT} from "./scriptedVideo/ScriptEditorWindow";
 import {renderScriptedVideo} from "./scriptedVideo/ScriptRenderer";
@@ -388,6 +389,20 @@ class CScriptedVideoManager {
 
     // Compute {camId, pose} at scripted time t. Returns null if no camera beats.
     computeCamera(t) { return computeCamera(this.cameraBeats, t, (tt) => this.sitFrameAt(tt)); }
+
+    // Capture the main view's CURRENT (free-fly) camera as a `moveto` line that
+    // reproduces it exactly — so you author by flying the real camera, then click
+    // Capture, instead of typing and guessing bearing/distance/elevation. Returns
+    // the line string, or null if the camera isn't available.
+    captureCurrentView() {
+        const pose = poseFromCamNode("mainCamera");
+        if (!pose) return null;
+        const fmt = (ecef) => {
+            const lla = ECEFToLLAVD_radii(ecef);
+            return `${lla.x.toFixed(6)},${lla.y.toFixed(6)},${lla.z.toFixed(1)}`;
+        };
+        return `moveto ${fmt(pose.position)} 3 ${fmt(pose.lookTarget)}`;
+    }
 
     // Apply the menu settings in effect at scripted time t: for each touched
     // control, the latest set/show/hide at or before t — or its pre-preview

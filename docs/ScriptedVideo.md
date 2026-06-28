@@ -25,6 +25,13 @@ The Scripting window has a **tab bar** — keep several named scripts in one sit
 - The **active** tab is the one that Parse / Preview / Render and the timeline operate on.
 - All tabs are saved to the sitch and to local storage automatically.
 
+## Author by flying (Capture)
+
+Instead of typing and guessing camera numbers, **fly the main view to the shot you want and
+click "Capture"** in the editor toolbar. It inserts a `moveto lat,lon,alt secs lat,lon,alt`
+line that reproduces that exact camera position and aim. Tweak the `secs` to set how long the
+move there takes, or change `moveto` to `from`/`zoom`/`orbit` to make it relative to a target.
+
 ## Quick start
 
 ```text
