@@ -1761,7 +1761,8 @@ class CSitrecAPI {
         if (menuId) {
             const gui = guiMenus[menuId];
             if (!gui) return { success: false, error: `Menu '${menuId}' not found` };
-            return this._findController(gui, path);
+            const r = this._findController(gui, path);
+            return r.success ? r : (this._resolveObjectControl(path) || r);
         }
         const qualified = path.includes("/");
         for (const allowPartial of [false, true]) {
@@ -1778,7 +1779,27 @@ class CSitrecAPI {
             }
             if (qualified) break;   // _findController already tries partials itself
         }
-        return { success: false, error: `Control '${path}' not found in any menu` };
+        // Fallback: address a 3D SCENE OBJECT by its node id and treat its
+        // visibility as a boolean control. Lets set/show/hide (the Scripting
+        // `hide Viewer` command and MCP setMenuValue) toggle objects, not just
+        // menu controls.
+        return this._resolveObjectControl(path)
+            || { success: false, error: `Control '${path}' not found in any menu or scene object` };
+    }
+
+    // A 3D object node (by id) presented as a synthetic boolean controller backed
+    // by its visibility, or null if `path` isn't a toggleable 3D object.
+    _resolveObjectControl(path) {
+        const node = NodeMan.get(path, false);
+        if (node && typeof node.show === "function" && node.group) {
+            return { success: true, controller: {
+                object: node,
+                initialValue: !!node.visible,
+                getValue: () => !!node.visible,
+                setValue: (v) => node.show(!!v),
+            }};
+        }
+        return null;
     }
 
     // depth-first search of a GUI and all its sub-folders for a control name
