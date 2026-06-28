@@ -179,6 +179,39 @@ export const COMMANDS = {
         },
     },
 
+    // Third-person FOLLOW cam: trail a MOVING target, staying <distance> m behind
+    // it along its direction of motion and <height> m up, looking just ahead of it.
+    // The camera swings around as the target rounds a corner — "see what they see".
+    follow: {
+        cameraBeat: true,
+        color: "#2aa0c0",
+        args: [
+            {name: "target", type: "string", required: true, assumeLast: true},
+            {name: "secs", type: "number", default: 6, field: "dur", role: "dur"},
+            {name: "distance", type: "number", default: 18, role: "dist"},
+            {name: "height", type: "number", default: 6},
+        ],
+        prepare(e, {startPose, sfStart, sfEnd, targetPos, makePose, localUp}) {
+            if (!targetPos(e.target, sfStart)) { e.invalid = true; return startPose; }
+            e._follow = {};
+            // the END pose (so the next beat continues from it) is just a sample at sfEnd
+            return this.sample(e, {sp: startPose, sf: sfEnd, localT: 1, targetPos, makePose, localUp});
+        },
+        sample(e, {sp, sf, targetPos, makePose, localUp}) {
+            const o = targetPos(e.target, sf) || sp.lookTarget;
+            const up = localUp(o);
+            // direction of motion (horizontal), sampled across a few frames
+            let head = (targetPos(e.target, sf + 2) || o).clone().sub(targetPos(e.target, sf - 2) || o);
+            head.addScaledVector(up, -head.dot(up));     // flatten to the local horizontal
+            if (head.lengthSq() < 1e-7) head = e._follow.lastHead ? e._follow.lastHead.clone() : up.clone();
+            head.normalize();
+            e._follow.lastHead = head.clone();           // hold heading when the target is stopped
+            const camPos = o.clone().addScaledVector(head, -e.distance).addScaledVector(up, e.height);
+            const lookAt = o.clone().addScaledVector(head, e.distance * 0.4);   // look ahead, past the target
+            return makePose(camPos, lookAt, sp.fov);
+        },
+    },
+
     track: {
         cameraBeat: true,
         color: "#c79a30",

@@ -43,8 +43,16 @@ export function targetPos(target, sf) {
     const candidates = ["Track_" + target, target, target + "_ob"];
     if (alias) candidates.unshift(alias);
     for (const id of candidates) {
-        const node = NodeMan.get(id, false);
+        let node = NodeMan.get(id, false);
         if (!node) continue;
+        // A 3D OBJECT's p(f) returns its CURRENT rendered position, not a frame
+        // sample — useless for velocity (the `follow` cam) or for sampling a frame
+        // other than the current one. A createWalker object carries its underlying
+        // track id, so sample that (which IS frame-accurate) instead.
+        if (node._walkerTrackID) {
+            const track = NodeMan.get(node._walkerTrackID, false);
+            if (track) node = track;
+        }
         try {
             if (typeof node.p === "function") {
                 const v = node.p(sf);
@@ -155,6 +163,7 @@ export function computeCamera(beats, t, sitFrameAt) {
         sf: sitFrameAt(t),
         localT: beat.dur > 0 ? (t - beat.start) / beat.dur : 1,
         targetPos, makePose,
+        localUp: getLocalUpVector,
     });
     return {camId: beat.camId, pose};
 }
