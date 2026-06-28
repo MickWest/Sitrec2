@@ -7,13 +7,26 @@
 
 import {Vector3} from "three";
 import {NodeMan} from "../Globals";
-import {getLocalUpVector} from "../SphericalMath";
+import {getLocalUpVector, getLocalNorthVector, getLocalEastVector} from "../SphericalMath";
 import {LLAToECEF} from "../LLA-ECEF-ENU";
 import {COMMANDS, VIEW_MAP} from "./ScriptCommands";
 
+// Friendly target aliases → the node ids most sitches use. Lets a script read
+// "zoom object" / "from object 180" / "flyto witness" instead of hard-coding the
+// synthetic node names. Resolution still falls through to the real id, so an
+// explicit "traverseObject" keeps working.
+const TARGET_ALIASES = {
+    object: "traverseObject",
+    target: "traverseObject",
+    witness: "cameraObject",
+    camera: "cameraObject",
+    observer: "cameraObject",
+};
+
 // Resolve a target name to an ECEF Vector3 at fractional sitch-frame sf.
-// <target> is a track short-name (e.g. OE-LNC, resolved to node "Track_OE-LNC")
-// or a "lat,lon,alt" triple. Returns null if it can't be resolved.
+// <target> is a track short-name (e.g. OE-LNC, resolved to node "Track_OE-LNC"),
+// a friendly alias (object/witness), a node id, or a "lat,lon,alt" triple.
+// Returns null if it can't be resolved.
 export function targetPos(target, sf) {
     if (!target) return null;
 
@@ -25,8 +38,10 @@ export function targetPos(target, sf) {
         }
     }
 
-    // try a few node-id conventions
+    // try a few node-id conventions (alias first, so "object" → "traverseObject")
+    const alias = TARGET_ALIASES[target.toLowerCase()];
     const candidates = ["Track_" + target, target, target + "_ob"];
+    if (alias) candidates.unshift(alias);
     for (const id of candidates) {
         const node = NodeMan.get(id, false);
         if (!node) continue;
@@ -101,6 +116,8 @@ export function prepareEvents(events, defaultView, sitFrameAt) {
             sfEnd: sitFrameAt(e.start + e.dur),
             targetPos, makePose,
             localUp: getLocalUpVector,
+            localNorth: getLocalNorthVector,
+            localEast: getLocalEastVector,
             livePose: poseFromCamNode,   // live pose of another camera (flyto look)
         });
 

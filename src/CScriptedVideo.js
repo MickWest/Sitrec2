@@ -38,7 +38,7 @@ import {runScriptJS} from "./scriptedVideo/ScriptJSRunner";
 import {sitrecAPI} from "./CSitrecAPI";
 import {prepareEvents, computeCamera, applyPoseToCam} from "./scriptedVideo/ScriptCameraEngine";
 import {CScriptTimelineWidget} from "./scriptedVideo/ScriptTimelineWidget";
-import {CScriptEditorWindow, STORAGE_KEY, DEFAULT_SCRIPT} from "./scriptedVideo/ScriptEditorWindow";
+import {CScriptEditorWindow, STORAGE_KEY, TABS_KEY, DEFAULT_SCRIPT} from "./scriptedVideo/ScriptEditorWindow";
 import {renderScriptedVideo} from "./scriptedVideo/ScriptRenderer";
 
 class CScriptedVideoManager {
@@ -89,6 +89,90 @@ class CScriptedVideoManager {
         // setupMenu rather than once here.
         this.timeline = new CScriptTimelineWidget(this);
         this.editor = null;
+
+        // multiple named scripts, one per editor tab. Lazily loaded from
+        // localStorage (migrating the legacy single-script key) on first use.
+        this.tabs = null;           // [{name, text}]
+        this.activeTab = 0;
+    }
+
+    // -----------------------------------------------------------------------
+    // SCRIPT TABS  (the manager owns the model; the editor renders the tab bar)
+    // -----------------------------------------------------------------------
+
+    // Ensure this.tabs exists, loading from localStorage and migrating the old
+    // single-script key. Safe to call repeatedly.
+    _loadTabs() {
+        if (this.tabs) return;
+        let parsed = null;
+        try { const raw = localStorage.getItem(TABS_KEY); if (raw) parsed = JSON.parse(raw); } catch (e) { /* ignore */ }
+        if (parsed && Array.isArray(parsed.tabs) && parsed.tabs.length) {
+            this.tabs = parsed.tabs.map((t) => ({name: String(t.name || "Script"), text: String(t.text || "")}));
+            this.activeTab = clamp(parsed.activeTab | 0, 0, this.tabs.length - 1);
+        } else {
+            let old = null;
+            try { old = localStorage.getItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+            this.tabs = [{name: "Script 1", text: old || DEFAULT_SCRIPT}];
+            this.activeTab = 0;
+        }
+    }
+
+    activeTabText() { this._loadTabs(); return this.tabs[this.activeTab]?.text ?? DEFAULT_SCRIPT; }
+
+    // Copy the live textarea back into the active tab's stored text (the textarea
+    // is the edit buffer for whichever tab is showing).
+    syncActiveFromEditor() {
+        this._loadTabs();
+        const ta = this.editor && this.editor.textarea;
+        if (ta && this.tabs[this.activeTab]) this.tabs[this.activeTab].text = ta.value;
+    }
+
+    saveTabs() {
+        this._loadTabs();
+        try { localStorage.setItem(TABS_KEY, JSON.stringify({tabs: this.tabs, activeTab: this.activeTab})); } catch (e) { /* ignore */ }
+    }
+
+    selectTab(i) {
+        this._loadTabs();
+        if (i < 0 || i >= this.tabs.length || i === this.activeTab) return;
+        this.syncActiveFromEditor();
+        this.activeTab = i;
+        this._loadTabIntoEditor();
+    }
+
+    addTab() {
+        this._loadTabs();
+        this.syncActiveFromEditor();
+        const n = this.tabs.length + 1;
+        this.tabs.push({name: "Script " + n, text: "// New script\n"});
+        this.activeTab = this.tabs.length - 1;
+        this._loadTabIntoEditor();
+    }
+
+    removeTab(i) {
+        this._loadTabs();
+        if (this.tabs.length <= 1 || i < 0 || i >= this.tabs.length) return;
+        this.syncActiveFromEditor();
+        this.tabs.splice(i, 1);
+        if (this.activeTab >= this.tabs.length) this.activeTab = this.tabs.length - 1;
+        this._loadTabIntoEditor();
+    }
+
+    renameTab(i, name) {
+        this._loadTabs();
+        if (i < 0 || i >= this.tabs.length) return;
+        this.tabs[i].name = name;
+        this.saveTabs();
+        this.editor?._refreshTabs();
+    }
+
+    // Load the active tab's text into the textarea and re-parse + redraw.
+    _loadTabIntoEditor() {
+        const ed = this.ensureEditor();
+        if (ed.textarea) ed.textarea.value = this.tabs[this.activeTab].text;
+        this.saveTabs();
+        ed._refreshTabs();
+        this.doParse();
     }
 
     // -----------------------------------------------------------------------
@@ -107,7 +191,7 @@ class CScriptedVideoManager {
         // VideoOverlay is a dynamic pseudo-preset (look view sized to the witness
         // video's aspect, video stacked on top) resolved in _resolveLayout
         const r = await runScriptJS(this.getScriptText(),
-            {viewPresets: {...((CustomManager && CustomManager.viewPresets) || {}), VideoOverlay: {}}});
+            {viewPresets: {...((CustomManager && CustomManager.viewPresets) || {}), VideoOverlay: {}, photo: {}}});
         if (seq !== this._parseSeq) return this.parseErrors;
         // A half-typed JS line is a syntax error on every keystroke: keep showing
         // the last good timeline, just surface the error (and still save the text).
@@ -135,12 +219,14 @@ class CScriptedVideoManager {
         return r.errors;
     }
 
-    // Persist the script to localStorage, debounced — parse() runs on every keystroke
-    // and there's no need to write the whole script each time.
+    // Persist the scripts to localStorage, debounced — parse() runs on every
+    // keystroke and there's no need to write the whole set each time. Keeps the
+    // active tab's stored text in sync with the live textarea.
     _saveScript() {
         clearTimeout(this._saveTimer);
         this._saveTimer = setTimeout(() => {
-            try { localStorage.setItem(STORAGE_KEY, this.getScriptText()); } catch (e) { /* ignore */ }
+            this.syncActiveFromEditor();
+            this.saveTabs();
         }, 400);
     }
 
@@ -177,9 +263,27 @@ class CScriptedVideoManager {
         };
     }
 
+    // The witness photo (video) letterboxed to its own aspect, stacked on top of
+    // the full-frame main (3D) view — the `view photo` shortcut. Draw order =
+    // insertion order, so the photo composites over the 3D; fade the video in/out
+    // to dissolve to/from the real photo.
+    _photoOverlayLayout() {
+        const vd = NodeMan.get("video", false)?.videoData;
+        const frameAR = this.outW / this.outH;
+        const ar = (vd && vd.videoWidth && vd.videoHeight) ? vd.videoWidth / vd.videoHeight : frameAR;
+        let left = 0, top = 0, width = 1, height = 1;
+        if (ar < frameAR) { width = ar / frameAR; left = (1 - width) / 2; }
+        else if (ar > frameAR) { height = frameAR / ar; top = (1 - height) / 2; }
+        return {
+            mainView: {left: 0, top: 0, width: 1, height: 1},   // 3D, full frame, underneath
+            video: {left, top, width, height},                  // witness photo on top
+        };
+    }
+
     // resolve one view event to a layout (dynamic pseudo-presets first)
     _resolveLayout(e) {
         if (e && e.preset === "VideoOverlay") return this._videoOverlayLayout();
+        if (e && e.preset === "photo") return this._photoOverlayLayout();
         const layout = layoutForViewEvent(e, CustomManager && CustomManager.viewPresets);
         return layout && Object.keys(layout).length ? layout
             : {[VIEW_MAP[this.defaultView].viewId]: {left: 0, top: 0, width: 1, height: 1}};
@@ -789,9 +893,9 @@ class CScriptedVideoManager {
         // ensureEditor() — nothing to build here.
         this.timeline.attachKeyZoom(window);
 
-        const folder = guiMenus.video.addFolder("Scripted Video").close().perm();
-        folder.add({ open: () => this.toggleWindow() }, "open").name("Script Window…").perm()
-            .tooltip("Open/close the Scripted Video script editor (use its ⧉ header icon to pop it out into a separate window).");
+        const folder = guiMenus.video.addFolder("Scripting").close().perm();
+        folder.add({ open: () => this.toggleWindow() }, "open").name("Scripting Window…").perm()
+            .tooltip("Open/close the Scripting editor — write JS/DSL camera scripts on multiple tabs (use its ⧉ header icon to pop it out into a separate window).");
         folder.add({ render: () => this.renderVideo() }, "render").name("Render Video (1080P60)").perm();
 
         // --- quality knobs ---
@@ -891,21 +995,33 @@ export function addScriptedVideoMenu() {
 // or the editor still holds the unmodified demo script).
 export function serializeScriptedVideo() {
     if (!scriptedVideo) return null;
-    const script = scriptedVideo.getScriptText();
-    if (!script || script === DEFAULT_SCRIPT) return null;
-    return {script};
+    scriptedVideo.syncActiveFromEditor();
+    scriptedVideo._loadTabs();
+    const tabs = scriptedVideo.tabs;
+    // nothing worth saving: a single tab still holding the unmodified demo script
+    if (tabs.length === 1 && (!tabs[0].text || tabs[0].text === DEFAULT_SCRIPT)) return null;
+    return {tabs: tabs.map((t) => ({name: t.name, text: t.text})), activeTab: scriptedVideo.activeTab};
 }
 
 export function deserializeScriptedVideo(data) {
-    if (!scriptedVideo || !data || typeof data.script !== "string") return;
+    if (!scriptedVideo || !data) return;
     // The editor is now lazily created (this.editor starts null — see ensureEditor()), so we must
     // route through ensureEditor() rather than touching scriptedVideo.editor directly. Reaching
     // into the null editor here threw during finishDeserialization, and because that call is not
     // awaited the throw became an unhandled rejection that aborted the rest of deserialization
     // (skipping the camera-controller gating recalc and other post-load finalization).
     const ed = scriptedVideo.ensureEditor();
-    const ta = ed.textarea;
-    if (!ta) return;
-    ta.value = data.script;
+    if (!ed.textarea) return;
+    scriptedVideo._loadTabs();
+    if (Array.isArray(data.tabs) && data.tabs.length) {
+        scriptedVideo.tabs = data.tabs.map((t) => ({name: String(t.name || "Script"), text: String(t.text || "")}));
+        scriptedVideo.activeTab = Math.max(0, Math.min(data.activeTab | 0, scriptedVideo.tabs.length - 1));
+    } else if (typeof data.script === "string") {
+        scriptedVideo.tabs = [{name: "Script 1", text: data.script}];   // legacy single-script payload
+        scriptedVideo.activeTab = 0;
+    } else return;
+    ed.textarea.value = scriptedVideo.activeTabText();
+    scriptedVideo.saveTabs();
+    ed._refreshTabs();
     scriptedVideo.doParse();
 }

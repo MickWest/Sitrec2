@@ -27,7 +27,8 @@ import {
     replaceNumberSpan,
 } from "./ScriptAuthoring";
 
-export const STORAGE_KEY = "sitrec_scripted_video_script";
+export const STORAGE_KEY = "sitrec_scripted_video_script";   // legacy single-script key (migrated to tabs)
+export const TABS_KEY = "sitrec_scripting_tabs";             // {tabs:[{name,text}], activeTab}
 
 export const DEFAULT_SCRIPT =
 `// Scripted Video demo  (Parse, then Preview or Render)
@@ -54,7 +55,7 @@ export class CScriptEditorWindow extends CNodeView {
         // editor content below the standard CUIBar header. Hidden until opened from the Video menu.
         super({
             id: "scriptEditor",
-            menuName: "Scripted Video",      // CUIBar title
+            menuName: "Scripting",           // CUIBar title
             draggable: true, resizable: true, freeAspect: true,
             visible: false,
             alwaysOnTop: true,               // a tool window — keep it above the other views
@@ -131,6 +132,12 @@ export class CScriptEditorWindow extends CNodeView {
         const content = document.createElement("div");
         content.style.cssText = "display:flex; flex-direction:column; flex:1 1 auto; min-height:0;";
 
+        // --- tab bar: one tab per script, "+" to add a new one ---
+        const tabBar = document.createElement("div");
+        tabBar.style.cssText = "display:flex; gap:3px; padding:4px 6px 0; flex-wrap:wrap; flex:0 0 auto;";
+        this.tabBar = tabBar;
+        content.appendChild(tabBar);
+
         const toolbar = document.createElement("div");
         toolbar.style.cssText = "display:flex; gap:6px; padding:6px 8px; flex-wrap:wrap; border-bottom:1px solid rgba(255,255,255,0.06); flex:0 0 auto;";
         toolbar.appendChild(this._winButton("Parse", () => sv.doParse()));
@@ -156,9 +163,8 @@ export class CScriptEditorWindow extends CNodeView {
         ta.wrap = "off";   // match the backdrop's white-space:pre so rows line up
         ta.style.cssText = EDIT_CSS + " color:transparent; background:transparent; caret-color:#fff;" +
             " border-color:transparent; resize:none; z-index:1;";
-        let saved = null;
-        try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
-        ta.value = saved || DEFAULT_SCRIPT;
+        sv._loadTabs();                         // ensure the tabs model exists (migrates legacy key)
+        ta.value = sv.activeTabText();
         for (const ev of ["keydown", "keyup", "keypress"]) ta.addEventListener(ev, (e) => e.stopPropagation());
         // script edits count as unsaved work (arms the leave-page warning)
         ta.addEventListener("input", () => { markSitchDirty(); sv.doParse(); this._renderBackdrop(); });
@@ -197,8 +203,53 @@ export class CScriptEditorWindow extends CNodeView {
         content.appendChild(st);
         content.appendChild(detail);
         content.appendChild(tl);
+        this._refreshTabs();
         setTimeout(() => this._renderBackdrop(), 0);
         return content;
+    }
+
+    // (Re)build the tab bar from the manager's tabs model. Click selects, the ×
+    // closes (kept when only one remains), double-click renames, "+" adds.
+    _refreshTabs() {
+        const bar = this.tabBar, sv = this.sv;
+        if (!bar) return;
+        bar.replaceChildren();
+        sv._loadTabs();
+        sv.tabs.forEach((t, i) => {
+            const active = i === sv.activeTab;
+            const tab = document.createElement("div");
+            tab.style.cssText = `display:flex; align-items:center; gap:4px; padding:2px 6px; border-radius:6px 6px 0 0;
+                cursor:pointer; font:11px sans-serif; user-select:none;
+                background:${active ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.06)"};
+                color:${active ? "#fff" : "#aeb6c2"};`;
+            const label = document.createElement("span");
+            label.textContent = t.name;
+            label.addEventListener("click", () => sv.selectTab(i));
+            label.addEventListener("dblclick", () => {
+                const n = prompt("Rename script:", t.name);
+                if (n && n.trim()) sv.renameTab(i, n.trim());
+            });
+            tab.appendChild(label);
+            if (sv.tabs.length > 1) {
+                const close = document.createElement("span");
+                close.textContent = "×";
+                close.title = "Close this script";
+                close.style.cssText = "opacity:0.6; padding:0 1px;";
+                close.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    if (confirm(`Close script "${t.name}"?`)) sv.removeTab(i);
+                });
+                tab.appendChild(close);
+            }
+            bar.appendChild(tab);
+        });
+        const add = document.createElement("div");
+        add.textContent = "+";
+        add.title = "New script";
+        add.style.cssText = `padding:2px 8px; border-radius:6px 6px 0 0; cursor:pointer; font:12px sans-serif;
+            background:rgba(255,255,255,0.06); color:#9aa;`;
+        add.addEventListener("click", () => sv.addTab());
+        bar.appendChild(add);
     }
 
     _winButton(label, onClick) {
@@ -363,6 +414,7 @@ export class CScriptEditorWindow extends CNodeView {
         };
         for (const k of Object.keys(VIEW_MAP)) add(k, k);
         add("VideoOverlay", "VideoOverlay");
+        add("photo", "photo");          // witness photo letterboxed over the 3D main view
         try {
             for (const k of Object.keys(CustomManager?.viewPresets || {})) add(k, k);
         } catch (e) {}

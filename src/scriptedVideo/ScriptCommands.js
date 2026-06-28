@@ -151,10 +151,14 @@ export const COMMANDS = {
     orbit: {
         cameraBeat: true,
         color: "#5db04a",
+        // An optional <rise> climbs the camera by that many metres (local vertical)
+        // over the course of the orbit — a helical "fly up and around" in one beat
+        // (so you never need a concurrent rise, which would fight for the camera).
         args: [
             {name: "target", type: "string", required: true, assumeLast: true},
             {name: "secs", type: "number", default: 8, field: "dur", role: "dur"},
             {name: "degrees", type: "number", default: 90, role: "deg"},
+            {name: "rise", type: "number", default: 0, role: "dist"},
         ],
         prepare(e, {startPose, sfStart, sfEnd, targetPos, makePose, localUp}) {
             const objStart = targetPos(e.target, sfStart);
@@ -163,12 +167,14 @@ export const COMMANDS = {
             const axis = localUp(objStart);
             e._orbit = {offset0, axis};
             const objEnd = targetPos(e.target, sfEnd) || objStart;
-            const offEnd = offset0.clone().applyAxisAngle(axis, radians(e.degrees));
+            const offEnd = offset0.clone().applyAxisAngle(axis, radians(e.degrees))
+                .addScaledVector(axis, e.rise || 0);
             return makePose(objEnd.clone().add(offEnd), objEnd, startPose.fov);
         },
         sample(e, {sp, sf, localT, targetPos, makePose}) {
             const obj = targetPos(e.target, sf) || sp.lookTarget;
-            const off = e._orbit.offset0.clone().applyAxisAngle(e._orbit.axis, radians(e.degrees) * localT);
+            const off = e._orbit.offset0.clone().applyAxisAngle(e._orbit.axis, radians(e.degrees) * localT)
+                .addScaledVector(e._orbit.axis, (e.rise || 0) * localT);
             return makePose(obj.clone().add(off), obj, sp.fov);
         },
     },
@@ -284,6 +290,43 @@ export const COMMANDS = {
         },
     },
 
+    // Place the camera at an ABSOLUTE vantage around the target and look at it:
+    // <bearing> compass degrees the camera sits on (0 = N, 90 = E, 180 = S, 270 = W),
+    // <elevation> degrees above the horizon, <distance> metres out. The camera
+    // flies there from its current pose over <secs> (0 = snap). This is the only
+    // command that sets an absolute position — every other move is relative to the
+    // live start pose — so it's how you establish an opening / cutaway shot, e.g.
+    //   from object 0 180 11000 24      # high wide overview from the south
+    from: {
+        cameraBeat: true,
+        color: "#c0573a",
+        label: (e) => "from " + e.target,
+        args: [
+            {name: "target", type: "string", required: true, assumeLast: true},
+            {name: "secs", type: "number", default: 3, field: "dur", role: "dur"},
+            {name: "bearing", type: "number", default: 180, role: "deg"},
+            {name: "distance", type: "number", default: 3000, role: "dist"},
+            {name: "elevation", type: "number", default: 20},
+        ],
+        prepare(e, {startPose, sfEnd, targetPos, makePose, localUp, localNorth, localEast}) {
+            const obj = targetPos(e.target, sfEnd);
+            if (!obj) { e.invalid = true; return startPose; }
+            const up = localUp(obj), north = localNorth(obj), east = localEast(obj);
+            const br = radians(e.bearing), el = radians(clamp(e.elevation, -89, 89));
+            // unit offset from the target toward where the camera should sit
+            const horiz = north.clone().multiplyScalar(Math.cos(br)).addScaledVector(east, Math.sin(br));
+            const dir = horiz.multiplyScalar(Math.cos(el)).addScaledVector(up, Math.sin(el));
+            const camPos = obj.clone().addScaledVector(dir, Math.max(1, e.distance));
+            e._from = {camPos};
+            return makePose(camPos, obj, startPose.fov);
+        },
+        sample(e, {sp, sf, localT, targetPos, makePose}) {
+            const obj = targetPos(e.target, sf) || sp.lookTarget;
+            const pos = sp.position.clone().lerp(e._from.camPos, smooth(localT));
+            return makePose(pos, obj, sp.fov);
+        },
+    },
+
     // Fade a view's opacity to <to> (default 0) over <secs>. Preview drives the
     // view's DOM opacity; the renderer composites with the same alpha.
     fade: {
@@ -355,7 +398,7 @@ export const COMMANDS = {
 };
 
 // command-name aliases → canonical registry key
-export const COMMAND_ALIASES = {title: "text", on: "show", off: "hide"};
+export const COMMAND_ALIASES = {title: "text", on: "show", off: "hide", linger: "wait"};
 
 // is this event a menu-setting change (set/show/hide)?
 export function isSettingEvent(e) {
