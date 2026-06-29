@@ -1,10 +1,11 @@
 // CameraControls
 
 import {Matrix4, Plane, Raycaster, Sphere, Vector2, Vector3} from "three";
-import {degrees, radians, vdump} from "../utils";
-import {clampAboveGround, DebugArrowAB, DebugSphere, getPointBelow, intersectSurface, pointAbove} from "../threeExt";
+import {degrees, f2m, radians, vdump} from "../utils";
+import {clampAboveGround, DebugArrowAB, DebugSphere, getTilesPointBelow, intersectSurface, pointAbove} from "../threeExt";
 import {par} from "../par";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {
 	altitudeAboveSphere,
 	altitudeHAE,
@@ -29,6 +30,10 @@ import {CNodePositionXYZ} from "../nodes/CNodePositionLLA";
 import {GlobalScene} from "../LocalFrame";
 import * as LAYER from "../LayerMasks";
 import {isViewDragging} from "../DragResizeUtils";
+
+// Eye height above the ground for WASD walking — 5 feet, the height the user
+// asked the camera to hold above the 3D tile surface directly below.
+const WASD_EYE_HEIGHT = f2m(5);
 
 const globalMeasureState = {
 	startPoint: null,
@@ -1306,11 +1311,7 @@ class CameraMapControls {
 
 		// Get current camera position
 		const currentPos = this.camera.position.clone();
-
-		// Calculate height above terrain at current position
-		const groundBelow = getPointBelow(currentPos);
 		const localUp = getLocalUpVector(currentPos);
-		const currentHeight = currentPos.clone().sub(groundBelow).dot(localUp);
 
 		// Get camera forward and right vectors
 		// Forward is the camera's looking direction projected onto the horizontal plane
@@ -1320,26 +1321,56 @@ class CameraMapControls {
 		// Project forward vector onto horizontal plane (perpendicular to local up)
 		const forwardHorizontal = cameraForward.clone().sub(
 			localUp.clone().multiplyScalar(cameraForward.dot(localUp))
-		).normalize();
+		);
+
+		// When looking almost straight up or down the horizontal projection is
+		// near-zero; normalizing it would produce NaN and fling the camera off the
+		// planet. Bail out rather than move in a garbage direction.
+		if (forwardHorizontal.lengthSq() < 1e-6) return;
+		forwardHorizontal.normalize();
 
 		// Right vector is perpendicular to both up and forward
 		const rightHorizontal = new Vector3().crossVectors(localUp, forwardHorizontal).normalize().negate();
 
-		// Calculate movement vector
+		// Calculate the (purely horizontal) movement vector
 		const movement = new Vector3();
 		movement.add(forwardHorizontal.multiplyScalar(moveForward * moveDistance));
 		movement.add(rightHorizontal.multiplyScalar(moveRight * moveDistance));
 
-		// Apply movement to camera position
+		// The horizontal target after this step.
 		const newPos = currentPos.add(movement);
 
-		// Snap to terrain-relative height
-		const newGroundBelow = getPointBelow(newPos);
-		const finalPos = pointAbove(newGroundBelow, currentHeight);
-
-		// Convert to LLA and update fixed camera track using gotoLLA
 		const fixedCamera = NodeMan.get("fixedCameraPosition");
-		fixedCamera.setFromECEF(finalPos);
+
+		// We want the walker to ride a fixed eye height above the actual 3D tile
+		// surface directly below — the rendered Google Photorealistic / OSM geometry,
+		// NOT the smooth elevation map (which ignores buildings and often disagrees
+		// with the tiles).
+		const tileGround = getTilesPointBelow(newPos);
+		if (fixedCamera.agl) {
+			// AGL camera: just move horizontally and let recalculate() hold it the
+			// user's AGL height above the ground — which, via _aglGroundPoint, is now
+			// the same 3D-tile surface the absolute-altitude branch snaps to.
+			fixedCamera.setFromECEF(newPos);
+		} else if (tileGround !== null) {
+			// Absolute-altitude camera: snap to 5 ft above the tile surface.
+			// getTilesPointBelow returns the LOWEST polygon intersection in the
+			// vertical column, so the walker follows the street rather than climbing
+			// onto a roof or tree canopy.
+			const upAtGround = getLocalUpVector(tileGround);
+			const eye = tileGround.add(upAtGround.multiplyScalar(WASD_EYE_HEIGHT));
+			const lla = ECEFToLLAVD_radii(eye);
+			// setLLA wants MSL altitude; ECEFToLLAVD_radii returns HAE (h = H + N).
+			const altMSL = lla.z - meanSeaLevelOffset(lla.x, lla.y);
+			fixedCamera.setLLA(lla.x, lla.y, altMSL);
+		} else {
+			// Absolute-altitude camera with no 3D tiles loaded directly below (or none
+			// in this sitch): move horizontally and keep the current MSL altitude. We
+			// deliberately do NOT fall back to the elevation map here — and never
+			// re-anchor via getPointBelow(), which returns a bogus point on an
+			// unloaded tile and once flung the camera into the ocean.
+			fixedCamera.setFromECEF(newPos);
+		}
 
 		// Trigger re-render
 		setRenderOne(true);

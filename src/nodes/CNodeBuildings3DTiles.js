@@ -10,7 +10,7 @@
 import {CNode} from "./CNode";
 import {Globals, markShadowCastersDirty, NodeMan, setRenderOne} from "../Globals";
 import {GlobalScene} from "../LocalFrame";
-import {DoubleSide, Group} from "three";
+import {DoubleSide, Group, Raycaster} from "three";
 import * as LAYER from "../LayerMasks";
 import {TilesRenderer} from "3d-tiles-renderer";
 import {GLTFExtensionsPlugin, TilesFadePlugin} from "3d-tiles-renderer/plugins";
@@ -24,6 +24,9 @@ import {getLocalUpVector} from "../SphericalMath";
 import {undoManager as UndoManager} from "../UndoManager";
 
 const DEG2RAD = Math.PI / 180;
+
+// Reused scratch raycaster for groundBelow() so WASD walking doesn't allocate one per frame.
+const _groundRaycaster = new Raycaster();
 import {
     getSharedGooglePhotorealisticState,
     SharedGoogleCloudAuthPlugin,
@@ -546,6 +549,35 @@ export class CNodeBuildings3DTiles extends CNode {
             if (p) { const h = p.dot(up); if (h < bestH) { bestH = h; best = p.clone(); } }
         }
         return best ? {floorH: bestH, point: best} : null;
+    }
+
+    // Ground directly below an ECEF world point, taken from the actual loaded 3D
+    // tile geometry (the rendered buildings/photogrammetry surface) — NOT the
+    // smooth elevation map, which ignores buildings and often disagrees with the
+    // tiles. Casts a ray straight down along the geodetic -up and returns the
+    // LOWEST polygon intersection in that vertical column, so a walker follows the
+    // street rather than snapping onto a roof, tree canopy, or overhang. Returns a
+    // fresh ECEF Vector3, or null if no tile is loaded directly below yet.
+    //
+    // this.group recursively holds every loaded tile mesh for all per-view
+    // TilesRenderers, so intersectObject(group, true) covers them all.
+    groundBelow(worldPos) {
+        if (!this.group || this.group.children.length === 0) return null;
+        const up = getLocalUpVector(worldPos);
+        // Start well above the query point so we still catch the ground if the
+        // camera has dipped slightly below the surface; the ray is unbounded below.
+        const origin = worldPos.clone().addScaledVector(up, 1000);
+        _groundRaycaster.set(origin, up.clone().negate());
+        _groundRaycaster.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
+        _groundRaycaster.firstHitOnly = false; // we need every hit to pick the lowest
+        const hits = _groundRaycaster.intersectObject(this.group, true);
+        if (hits.length === 0) return null;
+        let best = hits[0].point, bestH = best.dot(up);
+        for (let i = 1; i < hits.length; i++) {
+            const h = hits[i].point.dot(up);
+            if (h < bestH) { bestH = h; best = hits[i].point; }
+        }
+        return best.clone();
     }
 
     // "Apply Edits" toggle. Restore so the change shows immediately; the update
