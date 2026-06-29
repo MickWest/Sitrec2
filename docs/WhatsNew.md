@@ -9,6 +9,29 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.92.0 (2026-06-28)
+
+### New Features
+- **Scripting** (Video → Scripting): the cinematic-camera scripting system — formerly *Scripted Video* — is renamed and substantially expanded. Open *Scripting Window…* to write text scripts that fly a camera along its own timeline and render the result to a 1080p60 MP4.
+- **Multiple scripts in tabs**: the Scripting editor now holds several named scripts as tabs, saved with your sitch.
+- **New camera moves**: *from* and *moveto* place the camera at an exact spot, *follow* trails a moving target as a third-person follow-cam, *orbit* can spiral upward as it circles, *linger* holds a shot, and *view photo* overlays a witness photo letterboxed over the 3D scene.
+- **Capture button** (Scripting editor): fly the main view to the shot you want, click *Capture*, and Sitrec writes the matching camera line into your script — no typing coordinates.
+- **Show, hide, and set scene objects from a script**: scripts (and the in-app assistant) can now turn scene objects on and off, not just menu controls.
+- **Walking markers**: a script or the assistant can drop a marker that walks a path of map points over time, giving you a moving subject to follow or film.
+
+### Improvements
+- **Smooth, continuous camera motion**: scripted camera paths now glide as one flowing, drone-like move instead of easing to a stop at every step, and stay a few metres above the ground.
+- **Timeline editing** (Scripting editor): a dedicated ruler strip at the top always scrubs, Cmd/Ctrl+wheel zooms in on the cursor, the playhead has a fat grab zone so you can drag it even over a clip, and scrubbing snaps to edit boundaries.
+- **Inline error and warning marks**: the script editor underlines the offending line in red for errors and amber for warnings, and now warns about overlapping camera moves and targets that don't resolve.
+- **Sharper rendered video**: scripted-video renders now use the best terrain detail and cross-fade detail changes smoothly over time, instead of looking coarser than the live preview.
+
+### Bug Fixes
+- Fixed Google Photorealistic 3D Tiles terrain dropping out (a flat gray void) or staying low-detail at ground level after scrubbing the timeline back and forth.
+- Fixed the scripted-video preview being left stuck at coarse terrain detail after rendering a video.
+- Fixed scrolling up on a number in the script editor decreasing it instead of increasing it on macOS natural scrolling.
+
+---
+
 ## Version 2.91.3 (2026-06-27)
 
 ### Improvements
