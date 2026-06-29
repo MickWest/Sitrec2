@@ -12,7 +12,8 @@ import {CNodeTrack} from "./CNodeTrack";
 import {V3} from "../threeUtils";
 import {CNodeGUIValue} from "./CNodeGUIValue";
 import {isKeyHeld} from "../KeyBoardHandler";
-import {adjustHeightAboveGround, elevationAtLL} from "../threeExt";
+import {adjustHeightAboveGround, elevationAtLL, getTilesPointBelow} from "../threeExt";
+import {getLocalUpVector} from "../SphericalMath";
 import {assert} from "../assert";
 import {getCursorPositionFromTopView} from "../mouseMoveView";
 import {EventManager} from "../CEventManager";
@@ -417,6 +418,20 @@ export class CNodePositionLLA extends CNodeTrack {
         return this._LLA !== undefined && !this.in.wind;
     }
 
+    // Ground point for AGL mode: `agl` metres above the ground directly below `pos`.
+    // Prefers the actual 3D building/photogrammetry tiles (the rendered surface that
+    // WASD walking snaps to) when they are loaded directly below, and falls back to
+    // the cached elevation-map lookup otherwise. This makes AGL altitudes ride the
+    // same 3D-tile surface as WASD instead of the smooth elevation map, which ignores
+    // buildings and often disagrees with the tiles.
+    _aglGroundPoint(terrainNode, pos, agl, frame) {
+        const tilesGround = getTilesPointBelow(pos);
+        if (tilesGround !== null) {
+            return tilesGround.add(getLocalUpVector(tilesGround).multiplyScalar(agl));
+        }
+        return this.getPointBelowCached(terrainNode, pos, agl, frame);
+    }
+
     recalculate() {
         this.array = [];
         this.elevationCache = null; // flush cache for fresh terrain queries
@@ -428,7 +443,7 @@ export class CNodePositionLLA extends CNodeTrack {
             if (this.agl && terrainNode) {
                 // Use cached terrain query for ground level
                 const queryPos = LLAToECEF(this._LLA[0], this._LLA[1], 100000);
-                this.ecef = this.getPointBelowCached(terrainNode, queryPos, aglHeight, 0);
+                this.ecef = this._aglGroundPoint(terrainNode, queryPos, aglHeight, 0);
             } else if (this.agl) {
                 // No terrain node, use sphere-based ground level
                 this.updateGroundLevel();
@@ -458,7 +473,7 @@ export class CNodePositionLLA extends CNodeTrack {
                     pos.add(wind);
                     if (this.agl) {
                         if (terrainNode) {
-                            pos = this.getPointBelowCached(terrainNode, pos, aglHeight, f);
+                            pos = this._aglGroundPoint(terrainNode, pos, aglHeight, f);
                         } else {
                             pos = adjustHeightAboveGround(pos, this._LLA[2]);
                         }
@@ -494,7 +509,7 @@ export class CNodePositionLLA extends CNodeTrack {
                 if (this.agl) {
                     const terrainNode = NodeMan.get("TerrainModel", false);
                     if (terrainNode) {
-                        pos = this.getPointBelowCached(terrainNode, pos, this._LLA[2], Math.floor(f));
+                        pos = this._aglGroundPoint(terrainNode, pos, this._LLA[2], Math.floor(f));
                     } else {
                         pos = adjustHeightAboveGround(pos, this._LLA[2]);
                     }
