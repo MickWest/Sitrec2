@@ -969,7 +969,16 @@ function recalculateNodesBreadthFirstRecurse(list, f, noControllers, depth, debu
             // if the checkDisplayOutputs flag is set then we check if the node has any visible DISPLAY outputs
             // and skip the recalculation if it doesn't
             // for example, there might be a switch node that cuts this off
-            if (!node.checkDisplayOutputs || node.countVisibleOutputs(0, true) > 0) {
+            //
+            // EXCEPTION: the explicitly-cascaded ROOT node (recursion depth 0) must always
+            // recalculate — the caller asked for THIS node specifically. The checkDisplayOutputs
+            // gate is only meant to skip DOWNSTREAM nodes whose display chain is switched off.
+            // Applying it to the root left e.g. fixedCameraPosition.ecef stale whenever its display
+            // chain ran through a not-yet-active camera switch (countVisibleOutputs === 0): editing
+            // its position via WASD (setFromECEF -> recalculateCascade) skipped the node's own
+            // recalculate, so the stale (load-time) ecef survived and got fed through the smoothed
+            // camera track, flinging the look camera ~225 km into the ocean.
+            if (depth === 0 || !node.checkDisplayOutputs || node.countVisibleOutputs(0, true) > 0) {
                 node.recalculate();
                 node._needsRecalculate = false;
             }

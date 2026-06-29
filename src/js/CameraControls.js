@@ -2,7 +2,7 @@
 
 import {Matrix4, Plane, Raycaster, Sphere, Vector2, Vector3} from "three";
 import {degrees, radians, vdump} from "../utils";
-import {clampAboveGround, DebugArrowAB, DebugSphere, getPointBelow, intersectSurface, pointAbove} from "../threeExt";
+import {clampAboveGround, DebugArrowAB, DebugSphere, intersectSurface, pointAbove} from "../threeExt";
 import {par} from "../par";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {
@@ -1306,11 +1306,7 @@ class CameraMapControls {
 
 		// Get current camera position
 		const currentPos = this.camera.position.clone();
-
-		// Calculate height above terrain at current position
-		const groundBelow = getPointBelow(currentPos);
 		const localUp = getLocalUpVector(currentPos);
-		const currentHeight = currentPos.clone().sub(groundBelow).dot(localUp);
 
 		// Get camera forward and right vectors
 		// Forward is the camera's looking direction projected onto the horizontal plane
@@ -1320,26 +1316,37 @@ class CameraMapControls {
 		// Project forward vector onto horizontal plane (perpendicular to local up)
 		const forwardHorizontal = cameraForward.clone().sub(
 			localUp.clone().multiplyScalar(cameraForward.dot(localUp))
-		).normalize();
+		);
+
+		// When looking almost straight up or down the horizontal projection is
+		// near-zero; normalizing it would produce NaN and fling the camera off the
+		// planet. Bail out rather than move in a garbage direction.
+		if (forwardHorizontal.lengthSq() < 1e-6) return;
+		forwardHorizontal.normalize();
 
 		// Right vector is perpendicular to both up and forward
 		const rightHorizontal = new Vector3().crossVectors(localUp, forwardHorizontal).normalize().negate();
 
-		// Calculate movement vector
+		// Calculate the (purely horizontal) movement vector
 		const movement = new Vector3();
 		movement.add(forwardHorizontal.multiplyScalar(moveForward * moveDistance));
 		movement.add(rightHorizontal.multiplyScalar(moveRight * moveDistance));
 
-		// Apply movement to camera position
+		// Apply the horizontal move to the camera position.
+		//
+		// We deliberately do NOT re-derive the altitude from the terrain here.
+		// fixedCameraPosition is a CNodePositionLLA whose recalculate() already
+		// places the camera correctly for its mode: AGL cameras follow the new
+		// terrain (constant height above ground), absolute cameras keep their MSL
+		// altitude. Re-anchoring via getPointBelow() was both redundant and
+		// dangerous — when the terrain tile under the camera hasn't loaded yet (an
+		// LOD race) getPointBelow() returns a bogus ground point, which previously
+		// launched the camera thousands of metres up and out into the ocean.
 		const newPos = currentPos.add(movement);
 
-		// Snap to terrain-relative height
-		const newGroundBelow = getPointBelow(newPos);
-		const finalPos = pointAbove(newGroundBelow, currentHeight);
-
-		// Convert to LLA and update fixed camera track using gotoLLA
+		// Convert to LLA and update the fixed camera position
 		const fixedCamera = NodeMan.get("fixedCameraPosition");
-		fixedCamera.setFromECEF(finalPos);
+		fixedCamera.setFromECEF(newPos);
 
 		// Trigger re-render
 		setRenderOne(true);
