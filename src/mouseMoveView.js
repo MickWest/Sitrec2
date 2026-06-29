@@ -27,6 +27,11 @@ export function getMousePosition() {
     return { x: mouseX, y: mouseY };
 }
 
+function isTopMenuElementAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    return !!(el && el.closest && el.closest("#menuBar"));
+}
+
 export function getTopViewWithCursor() {
     const mouse = getMousePosition();
     let topView = null;
@@ -95,6 +100,8 @@ export function onDocumentWheel(event) {
     mouseX = (event.clientX);
     mouseY = (event.clientY);
 
+    if (!mouseDragView && isTopMenuElementAt(mouseX, mouseY)) return;
+
     // if we started dragging in a view, then send moves only to that
     if (mouseDragView) {
         if (mouseDragView.onMouseWheel) {
@@ -118,6 +125,12 @@ export function onDocumentMouseDown(event) {
     if (!mouseDown) {
         mouseX = (event.clientX);
         mouseY = (event.clientY);
+
+        if (isTopMenuElementAt(mouseX, mouseY)) {
+            mouseDragView = null;
+            setRenderOne(true);
+            return;
+        }
 
         const vm = ViewMan
 
@@ -152,6 +165,12 @@ export function onDocumentMouseMove(event) {
 
     mouseX = (event.clientX);
     mouseY = (event.clientY);
+
+    if (!mouseDragView && isTopMenuElementAt(mouseX, mouseY)) {
+        mouseLastX = mouseX;
+        mouseLastY = mouseY;
+        return;
+    }
 
     // console.log("onDocumentMouseMove " + mouseX + "," + mouseY)
 

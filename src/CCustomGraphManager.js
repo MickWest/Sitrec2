@@ -248,7 +248,20 @@ class CCustomGraphManager {
 
         if (this.list[id]) this.removeGraph(id);
 
+        // Spawn each new graph in a DISTINCT, mostly non-overlapping position so it is
+        // obviously a new independent window. The old 0.04*(n%6) step offset each graph only
+        // ~4% from the previous — but graphs are 0.4 (40%) wide, so they piled up ~90% on top
+        // of each other (and the 7th wrapped exactly onto the 1st), making "Add Custom Graph"
+        // look like it re-used the current graph. Cycle the four corners + centre (which do not
+        // overlap for a 0.4x0.4 graph), nudging each further cycle so later graphs don't land
+        // exactly on earlier ones. (Deserialized graphs get their saved position restored over
+        // this initial one by the view serialization layer, so this only affects fresh adds.)
         const n = Object.keys(this.list).length;
+        const ANCHORS = [[0.05, 0.05], [0.55, 0.05], [0.05, 0.50], [0.55, 0.50], [0.30, 0.28]];
+        const anchor = ANCHORS[n % ANCHORS.length];
+        const cycle = Math.floor(n / ANCHORS.length);
+        const left = Math.min(0.58, anchor[0] + 0.03 * cycle);
+        const top  = Math.min(0.55, anchor[1] + 0.03 * cycle);
         const view = new CNodeCustomGraphView({
             id,
             menuName: config.title ?? ("Graph " + id),
@@ -256,8 +269,8 @@ class CCustomGraphManager {
             dark: config.dark ?? true,
             showLegend: config.showLegend ?? true,
             visible: config.show ?? true,
-            left: 0.25 + 0.04 * (n % 6),
-            top: 0.05 + 0.04 * (n % 6),
+            left,
+            top,
             width: 0.4,
             height: 0.4,
             draggable: true, resizable: true, freeAspect: true, shiftDrag: false,

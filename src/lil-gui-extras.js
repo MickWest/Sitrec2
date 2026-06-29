@@ -819,6 +819,14 @@ export class CGuiMenuBar {
         this.menuBar.style.left = "0px";
         this.menuBar.style.height = "100%";
         this.menuBar.style.width = "100%"; // Added this to ensure full width
+        // #menuBar is a FULL-WINDOW (100%x100%) positioning container for dropdowns. Give it a high
+        // z-index so menus stack above ALL views (so a view can't cover a menu and steal its click),
+        // but pointer-events:none so the empty container does NOT become a screen-covering click
+        // shield — clicks fall through to the views beneath. Pointer handling is restored
+        // (pointerEvents:auto) on the actual menu SURFACES below (bar slots, detached folders,
+        // standalone/context menus), so menus get top click priority without blocking views elsewhere.
+        this.menuBar.style.zIndex = "9000";
+        this.menuBar.style.pointerEvents = "none";
         this.menuBar.style.overflowY = "hidden"; // Prevent scroll - menus handle their own overflow
         this.menuBar.style.overflowX = "hidden"; // Prevent horizontal scrollbar when dragging menus
 
@@ -842,7 +850,8 @@ export class CGuiMenuBar {
         bar.style.width = "100%";
         bar.style.backgroundColor = "black";
         bar.style.borderBottom = "1px solid grey";
-        bar.style.zIndex = 400; // behind the other menus
+        bar.style.zIndex = 8999; // visual bar, just under the high-z menu surfaces
+        bar.style.pointerEvents = "none";
         bar.id = "menuBarBlackBar";
 
         document.body.appendChild(bar);
@@ -910,6 +919,7 @@ export class CGuiMenuBar {
 
             //     div.style.overflowY = "auto"; // Allow scrolling if content overflows
             div.style.zIndex = this.baseZIndex;
+            this._markMenuSurface(div);
 
             this.menuBar.appendChild(div);
             this.divs.push(div);
@@ -932,6 +942,11 @@ export class CGuiMenuBar {
         // attach.appendChild( Globals.stats.dom );
 
 
+    }
+
+    _markMenuSurface(element) {
+        if (element) element.style.pointerEvents = "auto";
+        return element;
     }
 
     // Bring a menu to the front by updating its z-index
@@ -968,6 +983,7 @@ export class CGuiMenuBar {
     resetZIndex(gui) {
         const div = this.divs.find((div) => div === gui.domElement.parentElement);
         div.style.zIndex = this.baseZIndex;
+        this._markMenuSurface(div);
         gui.$children.style.zIndex = '';
         gui.$children.style.position = '';
     }
@@ -1524,6 +1540,7 @@ export class CGuiMenuBar {
         newDiv.style.width = '';
         newDiv.style.height = '1px';
         newDiv.style.zIndex = this.baseZIndex;
+        this._markMenuSurface(newDiv);
 
         newGUI.domElement.style.position = '';
         newGUI.domElement.style.width = '';
@@ -1626,6 +1643,7 @@ export class CGuiMenuBar {
                 // floating window that follows the cursor.
                 if ((wasInLeftSidebar || wasInRightSidebar || wasInCenterSidebar) && !hasUndockedFromSidebar && hasDragged) {
                     menuBar.menuBar.appendChild(container);
+                    menuBar._markMenuSurface(container);
                     container.style.position = "absolute";
                     container.style.left = (e.clientX - dragOffsetX - menuBarRect.left) + "px";
                     container.style.top = (e.clientY - dragOffsetY - menuBarRect.top) + "px";
@@ -1812,6 +1830,7 @@ export class CGuiMenuBar {
         container.style.width = "240px";
         container.style.height = "auto";
         container.style.zIndex = (this.baseZIndex + 1000);
+        this._markMenuSurface(container);
         this.menuBar.appendChild(container);
         container._gui = folder;
         folder._detachedContainer = container;
@@ -2087,6 +2106,7 @@ export class CGuiMenuBar {
 
             if ((wasInLeftSidebar || wasInRightSidebar || wasInCenterSidebar) && !hasUndockedFromSidebar && hasDragged) {
                 this.menuBar.appendChild(newDiv);
+                this._markMenuSurface(newDiv);
                 newDiv.style.position = 'absolute';
                 newDiv.style.left = (event.clientX - dragOffsetX - menuBarRect.left) + 'px';
                 newDiv.style.top = (event.clientY - dragOffsetY - menuBarRect.top) + 'px';
@@ -2458,6 +2478,7 @@ export class CGuiMenuBar {
                 gui.close();
                 gui.domElement.parentElement.style.left = data.left;
                 gui.domElement.parentElement.style.top = data.top;
+                this._markMenuSurface(gui.domElement.parentElement);
                 // Restore z-index if available, otherwise use base value
                 if (data.zIndex !== undefined) {
                     const zIndexValue = parseInt(data.zIndex) || this.baseZIndex;
@@ -2554,6 +2575,7 @@ export class CGuiMenuBar {
         containerDiv.style.left = x + "px";
         containerDiv.style.top = y + "px";
         containerDiv.style.zIndex = this.baseZIndex + 1000; // Higher than menu bar items
+        this._markMenuSurface(containerDiv);
         containerDiv.style.width = "240px"; // Default lil-gui width
         containerDiv.style.height = "auto";
 
@@ -2638,6 +2660,7 @@ export class CGuiMenuBar {
 
                 if ((wasInLeftSidebar || wasInRightSidebar || wasInCenterSidebar) && !hasUndockedFromSidebar && hasDragged) {
                     this.menuBar.appendChild(containerDiv);
+                    this._markMenuSurface(containerDiv);
                     containerDiv.style.position = 'absolute';
                     containerDiv.style.left = (event.clientX - dragOffsetX - menuBarRect.left) + 'px';
                     containerDiv.style.top = (event.clientY - dragOffsetY - menuBarRect.top) + 'px';
@@ -2939,4 +2962,3 @@ export class CGuiMenuBar {
 // time) and re-export setupHelpSearch so index.js keeps importing from this
 // file.
 export {setupHelpSearch} from "./lil-gui-slider-settings";
-
