@@ -53,6 +53,23 @@ class PerViewTiles {
     constructor(parentGroup, layerMask, source, cesiumIonToken, googleApiKey, googleSharedState,
                 materialMode = "photo", flatColor = null, treeFlattenParams = null) {
         this.renderer = new TilesRenderer();
+
+        // Raise the tile cache's BYTE budget. The library default (maxBytesSize
+        // 0.4GB) is sized for aerial/oblique views; a ground-level Google
+        // Photorealistic camera in a dense city legitimately needs a far larger
+        // working set (~0.8GB / ~1500 tiles observed). Once the LRU cache is byte-
+        // full, TilesRendererBase.update() stops requesting ANY new tiles (the
+        // request loop is gated on `!lruCache.isFull()`), so the near-field tiles
+        // for the current view never download and the terrain "drops out" / stays
+        // low-LOD. This is order-dependent: scrubbing the timeline fills the cache
+        // with tiles from the camera's other positions, locking out the tiles the
+        // current frame actually needs. A higher ceiling is cheap — it is a cap,
+        // not an allocation: the cache only ever holds what the visible working set
+        // demands, so views that don't need the headroom pay nothing for it.
+        const GIGABYTE = 1024 * 1024 * 1024;
+        this.renderer.lruCache.minBytesSize = 1.0 * GIGABYTE;
+        this.renderer.lruCache.maxBytesSize = 1.5 * GIGABYTE;
+
         // Monotonic counter used by export settling to detect LOD visibility churn.
         this.visibilityVersion = 0;
         // Timestamp retained for debugging/diagnostics when tracking transitions.
@@ -102,6 +119,25 @@ class PerViewTiles {
             setRenderOne(true);
         };
         this.renderer.addEventListener("tile-visibility-change", this._onTileVisibilityChange);
+
+        // The library fires "needs-update" from its async completion callbacks —
+        // a tile finished downloading+parsing, the root tileset loaded, or child
+        // nodes finished processing — i.e. OUTSIDE of update(). It means "new data
+        // arrived; a fresh update() traversal is required to place it in the scene".
+        // This is the critical signal our settle optimization (below) must honour:
+        // once the camera is static and the tileset looks settled, update() skips
+        // renderer.update(). A tile that finishes loading inside that window would
+        // otherwise be stuck loaded-but-invisible forever — tile-visibility-change
+        // can't rescue it because that event only fires DURING update() (the very
+        // call being skipped). Latch the signal so the next update() runs, and wake
+        // the render loop under render-on-demand. These events stop once streaming
+        // stops, so this never defeats the idle optimization.
+        this._needsLibUpdate = false;
+        this._onNeedsUpdate = () => {
+            this._needsLibUpdate = true;
+            setRenderOne(true);
+        };
+        this.renderer.addEventListener("needs-update", this._onNeedsUpdate);
 
         this.renderer.group.layers.mask = layerMask;
 
@@ -192,9 +228,13 @@ class PerViewTiles {
         } else if (this._updateGraceFrames > 0) {
             this._updateGraceFrames--;
         }
-        if ((this._updateGraceFrames ?? 0) <= 0 && !this._isUpdatePending()) {
+        if ((this._updateGraceFrames ?? 0) <= 0 && !this._isUpdatePending() && !this._needsLibUpdate) {
             return; // static camera + settled tileset: nothing to recompute
         }
+        // Consume the late-arrival signal: this update() will traverse and display
+        // whatever async work just completed. If it queues further work, the normal
+        // grace/pending path below keeps the loop alive until truly settled.
+        this._needsLibUpdate = false;
 
         this.renderer.setCamera(cam);
         this.renderer.setResolutionFromRenderer(cam, view.renderer);
@@ -223,6 +263,7 @@ class PerViewTiles {
     dispose(parentGroup) {
         parentGroup.remove(this.renderer.group);
         this.renderer.removeEventListener("tile-visibility-change", this._onTileVisibilityChange);
+        this.renderer.removeEventListener("needs-update", this._onNeedsUpdate);
         if (this.treeFlattener) {
             this.treeFlattener.dispose();
             this.treeFlattener = null;
@@ -234,6 +275,7 @@ class PerViewTiles {
         }
         this.fadePlugin = null;
         this._onTileVisibilityChange = null;
+        this._onNeedsUpdate = null;
     }
 }
 
