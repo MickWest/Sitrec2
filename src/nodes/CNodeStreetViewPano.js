@@ -7,7 +7,7 @@
 //   - builds an inside-viewed textured sphere centred at the pano's ECEF point, rotated so
 //     the imagery aligns to true north using the metadata heading,
 //   - renders it behind everything (renderOrder -1000, depthWrite:false) in the shared
-//     GlobalScene, visible in the main and look views.
+//     GlobalScene, visible ONLY in the look view (laid out of the main and all other views).
 //
 // The exact column-to-azimuth convention of Street View equirectangular imagery is not
 // documented by Google, so a tunable `headingOffsetDeg` is exposed for calibration.
@@ -21,11 +21,14 @@ import {LLAToECEF} from "../LLA-ECEF-ENU";
 import {getLocalUpVector, getLocalNorthVector, getLocalEastVector} from "../SphericalMath";
 import {SITREC_SERVER} from "../configUtils";
 import {Globals, setRenderOne} from "../Globals";
-import {MASK_WORLD, MASK_MAIN, MASK_LOOK} from "../LayerMasks";
+import {MASK_LOOK} from "../LayerMasks";
 
 export class CNodeStreetViewPano extends CNode3DGroup {
     constructor(v) {
-        v.layers = v.layers ?? (MASK_WORLD | MASK_MAIN | MASK_LOOK);
+        // Look view only — the pano is a first-person backdrop for the observer camera; it must
+        // NOT appear in the main (map) view or any other view. MASK_LOOK alone keeps it out of
+        // MASK_MAINRENDER while the look view (MASK_LOOKRENDER) still includes MASK_LOOK.
+        v.layers = v.layers ?? MASK_LOOK;
         super(v);
 
         // Observer / pano location. Either pass LLA:[lat,lon,alt] or lat/lon/alt directly.

@@ -42,3 +42,5 @@ AGENTS.md
 /tests_regression/snapshots-diffs/
 /tests_regression/snapshots-baseline/
 /analysis/
+# Local code-review / audit reports (not part of the codebase)
+/CODE-REVIEW-*.md

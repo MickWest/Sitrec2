@@ -15,13 +15,14 @@
 // requests therefore send a Referer header matching the allowed referrer; override with the
 // GOOGLE_MAPS_REFERER env var if the key allows a different referrer (or is IP-restricted).
 //
-// Cost note: Street View TILE fetches are billed against the project's key, and one op=image
-// request fans out to many tile fetches. To limit abuse of this unauthenticated endpoint we
-// (a) restrict CORS to the app's own origin, (b) clamp zoom and cap output pixels, (c) cache
-// completed stitches to disk, and (d) apply PER-GROUP rate limits — admin & Sitrec groups are
-// unlimited, other logged-in users get the standard caps, anonymous callers get 1/10th — plus
-// a global backstop on fresh (cache-miss) stitches/min from non-privileged callers. This is
-// prototype-grade hardening, not a substitute for a proper billing-budget cap on the Google key.
+// Cost note: only Street View TILE fetches are billed (metadata / panoId / session lookups are
+// free), and one op=image stitch fans out to ~32 tiles at the default zoom, up to ~162 at max zoom
+// / the 40 MP cap. To bound abuse of this unauthenticated endpoint we (a) restrict CORS to the
+// app's own origin, (b) clamp zoom and cap output pixels, (c) cache completed stitches to disk, and
+// (d) cap fresh (cache-miss) stitches for EVERY caller — there is NO unlimited tier: admin 60/hour,
+// logged-in 60/hour, anonymous 10/hour, plus a global 120/hour backstop across all callers. This
+// bounds the request RATE only; the authoritative spend cap is a Google Cloud billing budget + Map
+// Tiles key quota on the project key.
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
@@ -67,29 +68,35 @@ function rateLimit($key, $max, $window) {
     return $ok;
 }
 
-// ---- Per-group throttle tier. Admin (group 3) and the Sitrec groups (14 = Members,
-//      19 = Plus) are UNLIMITED. Other logged-in users get the standard limits; anonymous
-//      callers get one tenth. getUserInfo() reads the same-origin forum session and must be
-//      called once per request. ----
+// ---- Per-group throttle tier. NO tier is unlimited. Street View panoramas are generated only for
+//      specific locations on explicit user action, and every fresh stitch fans out to dozens of
+//      BILLED Google tile fetches (~32 at the default zoom, up to ~162 at max zoom / the 40 MP cap),
+//      so even admin is capped. getUserInfo() reads the same-origin forum session and must be called
+//      once per request. ----
 $userInfo = getUserInfo();
 $userGroups = is_array($userInfo['user_groups'] ?? null) ? $userInfo['user_groups'] : [];
-$unlimitedUser = isAdmin($userInfo) || count(array_intersect($userGroups, [14, 19])) > 0;
-$loggedIn = ($userInfo['user_id'] ?? 0) > 0;
-$tier = $unlimitedUser ? 'unlimited' : ($loggedIn ? 'logged_in' : 'anon');
+$isPrivileged = isAdmin($userInfo) || count(array_intersect($userGroups, [14, 19])) > 0; // admin / Members / Plus
+$userId = (int)($userInfo['user_id'] ?? 0);
+$loggedIn = $userId > 0;
+$tier = $isPrivileged ? 'admin' : ($loggedIn ? 'logged_in' : 'anon');
 
-// Per-minute caps by tier: 'req' = all requests per IP, 'stitch' = fresh (cache-miss,
-// billed) stitches per IP. Anonymous = 1/10th of logged-in. 'unlimited' bypasses both.
+// 'reqPerMin'    = ALL requests per caller per minute (flood guard; counts cache hits and the free
+//                  metadata/panoId lookups too). 'panosPerHour' = fresh (cache-miss) panorama
+//                  stitches per caller per hour — the ONLY billed operation. No tier bypasses these.
 $TIER_LIMITS = [
-    'logged_in' => ['req' => 120, 'stitch' => 60],
-    'anon'      => ['req' => 12,  'stitch' => 6],
+    'admin'     => ['reqPerMin' => 240, 'panosPerHour' => 60],
+    'logged_in' => ['reqPerMin' => 120, 'panosPerHour' => 60],
+    'anon'      => ['reqPerMin' => 30,  'panosPerHour' => 10],
 ];
 
+// Rate-limit identity: logged-in users key on their stable forum user_id (so the cap follows the
+// account and can't be reset by IP rotation / a shared Cloudflare edge IP); anonymous keys on IP.
 $clientIP = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-if ($tier !== 'unlimited') {
-    if (!rateLimit('ip_' . $tier . '_' . $clientIP, $TIER_LIMITS[$tier]['req'], 60)) {
-        http_response_code(429);
-        exit('Rate limit exceeded. Please wait.');
-    }
+$rlId = $loggedIn ? ('uid_' . $userId) : ('ip_' . $clientIP);
+
+if (!rateLimit('req_' . $tier . '_' . $rlId, $TIER_LIMITS[$tier]['reqPerMin'], 60)) {
+    http_response_code(429);
+    exit('Rate limit exceeded. Please wait.');
 }
 
 // ---- Config ----
@@ -98,7 +105,9 @@ $REFERER = getenv('GOOGLE_MAPS_REFERER');
 if (!$REFERER) { $REFERER = 'https://www.metabunk.org/'; }
 $TILE_BASE = 'https://tile.googleapis.com/v1';
 $MAX_PIXELS = 40000000;   // ~8960x4480 cap on the stitched canvas (memory guard)
-$MAX_STITCHES_PER_MIN = 60; // global backstop on fresh stitches from all NON-privileged callers (anti IP-rotation abuse)
+$GLOBAL_PANOS_PER_HOUR = 120; // global backstop across ALL callers (incl admin), per hour, so total
+                              // billed spend is bounded no matter how many accounts/IPs are active.
+                              // Authoritative cap is still a Google Cloud billing budget + key quota.
 
 function fail($code, $msg, $upstream = null) {
     if ($upstream !== null) {
@@ -254,15 +263,13 @@ if ($op === 'image') {
         exit();
     }
 
-    // Cache miss => this will hit the billed Google tile API. Privileged users (admin/Sitrec)
-    // bypass; others get a per-IP per-minute stitch cap (tiered) plus a shared global backstop.
-    if ($tier !== 'unlimited') {
-        if (!rateLimit('stitch_' . $tier . '_' . $clientIP, $TIER_LIMITS[$tier]['stitch'], 60)) {
-            fail(429, 'Panorama stitch rate limit reached for your access level. Please try again shortly.');
-        }
-        if (!rateLimit('global_image', $MAX_STITCHES_PER_MIN, 60)) {
-            fail(429, 'Server busy (panorama stitch limit reached). Please try again shortly.');
-        }
+    // Cache miss => this WILL hit the billed Google tile API. EVERY caller (incl admin) is capped:
+    // a per-caller per-hour panorama cap plus a global per-hour backstop. There is no bypass tier.
+    if (!rateLimit('panos_' . $tier . '_' . $rlId, $TIER_LIMITS[$tier]['panosPerHour'], 3600)) {
+        fail(429, 'Street View panorama limit reached for your access level (per hour). Please try again later.');
+    }
+    if (!rateLimit('global_panos', $GLOBAL_PANOS_PER_HOUR, 3600)) {
+        fail(429, 'Server Street View panorama limit reached (per hour). Please try again later.');
     }
 
     $session = getSession();
