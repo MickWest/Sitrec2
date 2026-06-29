@@ -376,13 +376,45 @@ export const _configParams = {
     // function name, then menu text, then tooltip text
     // You can define your own here, or remove those tha are not needed
     extraHelpFunctions: {
-        adsbReplay: [adsbReplay, "ADSB Replay for this time and location", "Generate a link to ADSB Exchange Replay"],
-        googleMapsLink: [googleMapsLink, "Google Maps for this location", "Create a Google Maps link to the current location"],
-        inTheSkyLink: [inTheSkyLink, "In-The-Sky for this time and location", "Create a In The Sky link to the current location"],
-    }
+        adsbReplay: [adsbReplay, "ADSB Replay Here", "Generate a link to ADSB Exchange Replay"],
+        fr24Replay: [fr24Replay, "FlightRadar24 Replay Here", "Generate a link to FlightRadar24 Replay"],
 
+        googleMapsLink: [googleMapsLink, "Google Maps Here", "Create a Google Maps link to the current location"],
+        inTheSkyLink: [inTheSkyLink, "In-The-Sky Here", "Create a In The Sky link to the current location"],
+        earthNullSchoolLink: [earthNullSchoolLink, "Earth Nullschool (Wind) Here", "Create an Earth Nullschool link to the current location and time"],
+    },
 
 };
+
+
+function fr24Replay() {
+// For FlightRadar24, we can generate a link like this:
+// https://www.flightradar24.com/{YYYY-MM-DD/HH:MM}/10x/{latitude},{longitude}/9
+    const date = GlobalDateTimeNode.frameToDate(par.frame)
+    // get the current camera position from the lookCamera in Lat and Lon
+    const lookCamera = NodeMan.get("lookCamera");
+    const pos = lookCamera.p(par.frame);
+    const LLA = ECEFToLLAVD_radii(pos);
+
+    // get date and time from the current frame
+    const dateString = date.toISOString().slice(0, 16).replace("T", "-");
+
+    // replace the 11th character with a slash to get the correct format
+    const dateStringFormatted = dateString.slice(0, 10) + "/" + dateString.slice(11);
+
+    const lat = LLA.x.toFixed(3);
+    const lon = LLA.y.toFixed(3);
+
+    const url = `https://www.flightradar24.com/${dateStringFormatted}/10x/${lat},${lon}/9`;
+    console.log("FlightRadar24 Replay URL: " + url);
+    // just open it in a new tab
+    window.open(url, "_blank");
+
+}
+
+
+
+
 
 // functions from the extraHelpFunctions above
 // remove any that you don't want. Or add them here.
@@ -459,6 +491,27 @@ function inTheSkyLink() {
     window.open(url, "_blank");
 
 }
+
+function earthNullSchoolLink() {
+    // example:
+    // https://earth.nullschool.net/#2026/02/25/1100Z/wind/isobaric/250hPa/orthographic=-1.22,52.82,4000/loc=-1.277,52.818
+    const lookCamera = NodeMan.get("lookCamera");
+    const pos = lookCamera.p(par.frame);
+    const LLA = ECEFToLLAVD_radii(pos);
+    const date = GlobalDateTimeNode.frameToDate(par.frame);
+    const year = date.getUTCFullYear();
+    const month = date.getUTCMonth() + 1; // months are 0-indexed
+    const day = date.getUTCDate();
+    const hour = date.getUTCHours();
+    const min = date.getUTCMinutes();
+    const latitude = LLA.x.toFixed(2);
+    const longitude = LLA.y.toFixed(2);
+    const url = `https://earth.nullschool.net/#${year}/${month}/${day}/${hour}${min}Z/wind/isobaric/250hPa/orthographic=${longitude},${latitude},4000/loc=${longitude},${latitude}`;
+    console.log("Earth Nullschool URL: " + url);
+    window.open(url, "_blank");
+
+}
+
 
 // given a lookup string, find the closest location [lat, lon]
 // or null if not found
