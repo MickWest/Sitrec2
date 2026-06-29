@@ -1354,9 +1354,9 @@ class CameraMapControls {
 			fixedCamera.setFromECEF(newPos);
 		} else if (tileGround !== null) {
 			// Absolute-altitude camera: snap to 5 ft above the tile surface.
-			// getTilesPointBelow returns the LOWEST polygon intersection in the
-			// vertical column, so the walker follows the street rather than climbing
-			// onto a roof or tree canopy.
+			// getTilesPointBelow returns the tile hit nearest the elevation-map ground,
+			// so the walker follows the street rather than climbing onto a roof/tree
+			// canopy or dropping through to a sub-building floor.
 			const upAtGround = getLocalUpVector(tileGround);
 			const eye = tileGround.add(upAtGround.multiplyScalar(WASD_EYE_HEIGHT));
 			const lla = ECEFToLLAVD_radii(eye);

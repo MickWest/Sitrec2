@@ -2464,6 +2464,17 @@ function animate(newtime) {
 
     now = newtime;
 
+    // No sitch is loaded yet: Sit is only assigned by setSit(). On the async
+    // ?custom= load path setSit() runs after an `await fetch(...)`, and the
+    // render-on-demand loop can be woken during that window (visibilitychange /
+    // setRenderOne / par.frame), firing this setTimeout-scheduled animate() while
+    // Sit is still undefined — which threw "Cannot read properties of undefined
+    // (reading 'fps')" at `Sit.fps` below. Nothing to render yet, so bail out;
+    // startAnimating() re-arms the loop once the sitch is established.
+    if (Sit === undefined) {
+        return;
+    }
+
     // Update rafInterval based on current fpsLimit setting
     let rafFps = 60;
     if (Globals.settings && Globals.settings.fpsLimit) {

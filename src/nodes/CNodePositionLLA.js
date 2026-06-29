@@ -335,7 +335,30 @@ export class CNodePositionLLA extends CNodeTrack {
         }
     }
 
+    // An AGL camera is first positioned at sitch-load, before the 3D building tiles
+    // have streamed in, so it initially sits on the smooth elevation map. The tiles
+    // then stream coarse→fine; we re-anchor onto the tile surface whenever the tile
+    // ground directly below changes by more than a few cm, CONVERGING onto the final
+    // settled tile rather than latching onto the first (possibly coarse) one — a
+    // one-shot refine made the witness flaky (it locked onto whatever LOD happened to
+    // be loaded first). The fully-settled tile geometry is deterministic, so once the
+    // tiles stop refining the height stops changing and this stops firing. Per-node
+    // recalc only — never the global elevationChanged broadcast (which re-runs every
+    // AGL track/label/MISB node and, fired on the hundreds of mid-stream tile events,
+    // would starve the tile loader).
+    _refineAGLToTiles() {
+        if (!this.agl || this.ecef === undefined || !NodeMan.exists("buildings3DTiles")) return;
+        const tg = getTilesPointBelow(this.ecef);
+        if (tg === null) return;
+        const h = tg.dot(getLocalUpVector(this.ecef));
+        if (this._lastTileGroundH === undefined || Math.abs(h - this._lastTileGroundH) > 0.05) {
+            this._lastTileGroundH = h;
+            this.recalculateCascade();
+        }
+    }
+
     update() {
+        this._refineAGLToTiles();
         if (this.key) {
             const posHeld = isKeyHeld(this.key.toLowerCase()) || isKeyHeld('l');
             if (posHeld) {
@@ -425,11 +448,22 @@ export class CNodePositionLLA extends CNodeTrack {
     // same 3D-tile surface as WASD instead of the smooth elevation map, which ignores
     // buildings and often disagrees with the tiles.
     _aglGroundPoint(terrainNode, pos, agl, frame) {
-        const tilesGround = getTilesPointBelow(pos);
-        if (tilesGround !== null) {
-            return tilesGround.add(getLocalUpVector(tilesGround).multiplyScalar(agl));
-        }
-        return this.getPointBelowCached(terrainNode, pos, agl, frame);
+        // The elevation-map ground directly below pos — a NEAR-SURFACE point. We
+        // raycast the 3D tiles from HERE, not from pos: callers pass pos at 100 km
+        // altitude (the elevation-map column query is lever-arm-immune), but a tile
+        // raycast from that height has a local-up that differs from the surface
+        // normal by ~5e-5 rad, which over the 100 km lever arm becomes a fixed ~5 m
+        // horizontal miss — that swamped the WASD step and walked the camera off in
+        // one direction regardless of the key pressed. Querying from the near-surface
+        // ground keeps the tile column directly below the camera.
+        const elevGround = this.getPointBelowCached(terrainNode, pos, 0, frame);
+        // Ride the 3D-tile surface when a believable tile is loaded directly below
+        // (groundBelow() rejects coarse-streaming garbage and roofs); otherwise fall
+        // back to the smooth elevation map. update() re-anchors as finer tiles stream
+        // in (see _refineAGLToTiles) so we converge onto the final settled tile.
+        const tilesGround = getTilesPointBelow(elevGround);
+        const ground = (tilesGround !== null) ? tilesGround : elevGround;
+        return ground.clone().add(getLocalUpVector(ground).multiplyScalar(agl));
     }
 
     recalculate() {

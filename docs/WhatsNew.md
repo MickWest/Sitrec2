@@ -9,11 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
-## Version 2.92.1 (2026-06-28)
+## Version 2.92.1 (2026-06-29)
 
 ### Bug Fixes
 - Fixed the look camera being flung far out to sea the first time you nudged it with the WASD walk keys after loading a saved scene.
-- Fixed the WASD walk camera and "above ground level" altitudes floating above or sinking into Google Photorealistic 3D Tiles buildings and streets. They now follow the actual rendered 3D surface (the street you can see) instead of the smoother underlying elevation map, so walking down a street stays on the street.
+- The WASD walk camera and "above ground level" altitudes now follow the visible Google Photorealistic / OSM 3D buildings and streets instead of the smoother underlying elevation map, so walking down a street stays on the street. This also fixes the witness camera sinking under buildings (an "N ft AGL" camera now sits N ft above the ground you can see, not under the building), fixes WASD walking drifting off in one direction regardless of which key you press (or stalling after a few inches) when 3D buildings are on, and fixes the on-screen "ft AGL" altitude readout disagreeing with where the camera actually sits.
+- The 3D-tile-riding camera now settles onto the final detailed building/street surface as tiles stream in, instead of latching onto whichever coarse tile happened to load first — which could land the witness camera in different spots from run to run, or shoot it hundreds of feet into the air.
+- Fixed a harmless console error that could appear while a scene was loading from a shared link.
 
 ---
 

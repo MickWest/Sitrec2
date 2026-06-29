@@ -801,10 +801,12 @@ export function getPointBelowLL(lat, lon) {
 
 // Ground directly below an ECEF point taken from the actual loaded 3D building
 // tiles (the rendered Google Photorealistic / OSM geometry), or null if there are
-// no 3D tiles or none loaded directly below. Unlike getPointBelow() — which uses
-// the smooth elevation map and ignores buildings — this raycasts the real tile
-// polygons, returning the LOWEST intersection in the vertical column (so a walker
-// follows the street, not a roof or tree canopy). See CNodeBuildings3DTiles.groundBelow.
+// no 3D tiles, none loaded directly below yet, or only implausible (coarse-stream /
+// roof) geometry there. Unlike getPointBelow() — which uses the smooth elevation map
+// and ignores buildings — this raycasts the real tile polygons and returns the hit
+// nearest the elevation-map ground (the walkable street surface). NOTE: query from
+// NEAR the surface, not 100 km up — a high query point's local-up differs from the
+// surface normal and biases the column sideways. See CNodeBuildings3DTiles.groundBelow.
 export function getTilesPointBelow(A) {
     if (NodeMan.exists("buildings3DTiles")) {
         return NodeMan.get("buildings3DTiles").groundBelow(A);

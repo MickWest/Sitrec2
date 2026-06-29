@@ -2,7 +2,7 @@
 // Uses the 2D canvas overlay system (CNodeDisplaySkyOverlay) for rendering
 
 import * as LAYER from "../LayerMasks";
-import {DebugArrowAB, DebugArrows, isVisible, propagateLayerMaskObject, removeDebugArrow} from "../threeExt";
+import {DebugArrowAB, DebugArrows, getTilesPointBelow, isVisible, propagateLayerMaskObject, removeDebugArrow} from "../threeExt";
 import {pointOnSphereBelow} from "../SphericalMath";
 import {CNodeMunge} from "./CNodeMunge";
 import {Globals, guiShowHide, NodeMan, setRenderOne, Units} from "../Globals";
@@ -485,11 +485,17 @@ export class CNodeMeasureAltitude extends CNodeMeasureAB {
                 let B;
                 const posNode = NodeMan.get(v.A); // cant use this.in.A as super hasnt been called yet
                 const A = posNode.p(f);
-                if (NodeMan.exists("TerrainModel")) {
-                    let terrainNode = NodeMan.get("TerrainModel")
-                    B = terrainNode.getPointBelow(A)
-                } else {
-                    B = pointOnSphereBelow(A);
+                // Ride the same 3D-tile surface the AGL camera sits on, so the AGL
+                // readout matches the camera's actual ground (otherwise the label
+                // measured the smooth elevation map while the camera rode the tiles,
+                // so it read e.g. "17 ft agl" with buildings on but "0 ft agl" off).
+                B = getTilesPointBelow(A);
+                if (B == null) {
+                    if (NodeMan.exists("TerrainModel")) {
+                        B = NodeMan.get("TerrainModel").getPointBelow(A);
+                    } else {
+                        B = pointOnSphereBelow(A);
+                    }
                 }
                 return B;
             }

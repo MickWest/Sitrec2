@@ -21,12 +21,19 @@ import {TreeFlattener, makeDefaultTreeFlattenParams, GROUND_SEARCH_RADIUS} from 
 import {TreeManualBrush} from "../TreeManualBrush";
 import {ECEFToLLAVD_radii, RLLAToECEF_radii} from "../LLA-ECEF-ENU";
 import {getLocalUpVector} from "../SphericalMath";
+import {getPointBelow} from "../threeExt";
 import {undoManager as UndoManager} from "../UndoManager";
 
 const DEG2RAD = Math.PI / 180;
 
 // Reused scratch raycaster for groundBelow() so WASD walking doesn't allocate one per frame.
 const _groundRaycaster = new Raycaster();
+// Max metres a tile ground hit may deviate from the elevation-map ground before
+// groundBelow() rejects it as not-a-real-ground-tile (coarse streaming tiles can sit
+// tens of km off; building roofs sit high). Generous enough to keep a real ground
+// tile (within ~1-2 m) and absorb elevation-map error / any residual geoid offset,
+// tight enough to reject roofs and coarse-LOD garbage.
+const GROUND_TOLERANCE = 40;
 import {
     getSharedGooglePhotorealisticState,
     SharedGoogleCloudAuthPlugin,
@@ -552,12 +559,28 @@ export class CNodeBuildings3DTiles extends CNode {
     }
 
     // Ground directly below an ECEF world point, taken from the actual loaded 3D
-    // tile geometry (the rendered buildings/photogrammetry surface) — NOT the
-    // smooth elevation map, which ignores buildings and often disagrees with the
-    // tiles. Casts a ray straight down along the geodetic -up and returns the
-    // LOWEST polygon intersection in that vertical column, so a walker follows the
-    // street rather than snapping onto a roof, tree canopy, or overhang. Returns a
-    // fresh ECEF Vector3, or null if no tile is loaded directly below yet.
+    // tile geometry (the rendered buildings/photogrammetry surface) — but only when
+    // the tile is a believable refinement of the elevation-map ground. Casts a ray
+    // straight down along the geodetic -up and returns the polygon intersection whose
+    // height is CLOSEST to the elevation-map ground (the street/tarmac level), or
+    // null if there is no tile loaded below yet OR the best hit is wildly off (see
+    // GROUND_TOLERANCE below) — in which case the caller falls back to the elevation
+    // map. Returns a fresh ECEF Vector3.
+    //
+    // Why anchor to the elevation map and not just take the highest or lowest hit:
+    //   - LOWEST dips through a building's watertight shell to a sub-surface skirt
+    //     polygon BELOW the surrounding tarmac → an AGL witness / WASD walker ends up
+    //     inside or under the building.
+    //   - HIGHEST grabs a building ROOF.
+    //   - Worst of all, 3D tiles stream coarse→fine: a coarse ancestor tile covering a
+    //     continent-scale region is ~planar and, sampled away from its centre, sits
+    //     TENS OF KILOMETRES below the true surface (measured: −50 km at Copenhagen).
+    //     Min/max/closest over those garbage hits is meaningless, and the one-shot AGL
+    //     refine would latch onto it ("458 ft agl", or worse, underground).
+    // The elevation map is buildings-free, complete, and always ~ground level, so it
+    // is the reliable anchor: pick the tile hit nearest it, and REJECT entirely if even
+    // the nearest is implausibly far (coarse-tile garbage / a tall roof). When a real
+    // fine tile is loaded the tarmac is within a metre or two and still wins on detail.
     //
     // this.group recursively holds every loaded tile mesh for all per-view
     // TilesRenderers, so intersectObject(group, true) covers them all.
@@ -569,14 +592,21 @@ export class CNodeBuildings3DTiles extends CNode {
         const origin = worldPos.clone().addScaledVector(up, 1000);
         _groundRaycaster.set(origin, up.clone().negate());
         _groundRaycaster.layers.mask = LAYER.MASK_MAIN | LAYER.MASK_LOOK;
-        _groundRaycaster.firstHitOnly = false; // we need every hit to pick the lowest
+        _groundRaycaster.firstHitOnly = false; // we need every hit to pick the best
         const hits = _groundRaycaster.intersectObject(this.group, true);
         if (hits.length === 0) return null;
-        let best = hits[0].point, bestH = best.dot(up);
+
+        // Reference: the smooth elevation-map ground at this column (buildings-free).
+        const refH = getPointBelow(worldPos).dot(up);
+        let best = hits[0].point, bestErr = Math.abs(hits[0].point.dot(up) - refH);
         for (let i = 1; i < hits.length; i++) {
-            const h = hits[i].point.dot(up);
-            if (h < bestH) { bestH = h; best = hits[i].point; }
+            const err = Math.abs(hits[i].point.dot(up) - refH);
+            if (err < bestErr) { bestErr = err; best = hits[i].point; }
         }
+        // Sanity gate: reject coarse-streaming-tile garbage and tall roofs. A real
+        // ground tile sits within a few metres of the elevation map; anything past
+        // this band means no usable ground tile is loaded → caller uses the elev map.
+        if (bestErr > GROUND_TOLERANCE) return null;
         return best.clone();
     }
 
