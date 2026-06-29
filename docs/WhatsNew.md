@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.92.1 (2026-06-28)
+
+### Bug Fixes
+- Fixed the look camera being flung far out to sea the first time you nudged it with the WASD walk keys after loading a saved scene.
+- Fixed the WASD walk camera and "above ground level" altitudes floating above or sinking into Google Photorealistic 3D Tiles buildings and streets. They now follow the actual rendered 3D surface (the street you can see) instead of the smoother underlying elevation map, so walking down a street stays on the street.
+
+---
+
 ## Version 2.92.0 (2026-06-28)
 
 ### New Features
