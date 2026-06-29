@@ -168,9 +168,15 @@ function getSession() {
     if (empty($json['session'])) {
         fail(502, 'createSession returned no session token.', $body);
     }
-    @file_put_contents($sessionFile,
-        json_encode(['session' => $json['session'], 'expiry' => (int)($json['expiry'] ?? (time() + 1209600))]),
-        LOCK_EX);
+    // Publish atomically (temp file + rename) so getSession()'s lock-free file_get_contents read
+    // above can never catch a half-written token file (a torn read -> failed createSession -> 502s).
+    $tmpSession = $sessionFile . '.tmp.' . getmypid() . '.' . bin2hex(random_bytes(4));
+    if (@file_put_contents($tmpSession,
+            json_encode(['session' => $json['session'], 'expiry' => (int)($json['expiry'] ?? (time() + 1209600))])) !== false) {
+        @rename($tmpSession, $sessionFile);
+    } else {
+        @unlink($tmpSession);
+    }
     return $json['session'];
 }
 
@@ -331,8 +337,16 @@ if ($op === 'image') {
         fail(502, 'panorama stitch incomplete (' . $ok . '/' . $expected . ' tiles).');
     }
 
-    @imagejpeg($canvas, $cacheFile, 90);
+    // Write atomically: encode to a unique temp file, then rename() into place. rename() is atomic
+    // on the same filesystem, so a concurrent reader sees either no cache file (miss -> restitch) or
+    // the COMPLETE jpeg — never a half-written file that would pass the filesize>0 cache-hit check.
+    $tmpFile = $cacheFile . '.tmp.' . getmypid() . '.' . bin2hex(random_bytes(4));
+    $wrote = @imagejpeg($canvas, $tmpFile, 90);
     imagedestroy($canvas);
+    if (!$wrote || !@rename($tmpFile, $cacheFile)) {
+        @unlink($tmpFile);
+        fail(500, 'Failed to write stitched panorama.');
+    }
 
     if (file_exists($cacheFile) && filesize($cacheFile) > 0) {
         header('Content-Type: image/jpeg');
