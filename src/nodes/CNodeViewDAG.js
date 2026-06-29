@@ -9,6 +9,13 @@ export class CNodeViewDAG extends CNodeViewCanvas2D {
         v.autoFillColor = v.autoFillColor ?? "#1a1a2e";
         v.draggable = v.draggable ?? true;
         v.resizable = v.resizable ?? true;
+        // Drag + pop-out like the Notes view (CNodeNotes). poppable adds the ⧉ icon and wires
+        // togglePopout()/popOut()/dockWindow() in the base class; dockable allows sidebar docking.
+        v.poppable = v.poppable ?? true;
+        v.dockable = v.dockable ?? true;
+        // The DAG is a live per-frame 2D canvas, not static DOM, so unlike Notes it must keep
+        // rendering while popped out (see indexRender.js render gate + adjustSize windowed branch).
+        v.renderWhileWindowed = v.renderWhileWindowed ?? true;
         v.freeAspect = true;
         super(v);
 

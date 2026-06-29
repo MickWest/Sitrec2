@@ -12,6 +12,7 @@ import {LayoutMan} from "../CLayoutManager";
 import {makeDraggable, makeResizable, removeDraggable, removeResizable, VIEW_EDIT_KEY, clampBelowMenuBar} from "../DragResizeUtils";
 import {CUIBar} from "../CUIBar";
 import {isKeyHeld} from "../KeyBoardHandler";
+import {par} from "../par";
 import {
     getCenterSidebarAdjustment,
     getLeftSidebar,
@@ -131,6 +132,10 @@ class CNodeView extends CNode {
         this.alwaysOnTop = v.alwaysOnTop ?? false;
         this.poppable = v.poppable ?? false;   // adds a ⧉ "pop out into a browser window" header icon
         this.windowed = false;                 // true while popped out — the in-page view is closed for layout
+        // Static-DOM views (Notes) keep their content when popped out and need no rendering while
+        // windowed. Live canvas views (the DAG) must keep being drawn each frame even while popped;
+        // they opt in here so the render loop renders them and sizes the canvas from the popup.
+        this.renderWhileWindowed = v.renderWhileWindowed ?? false;
         this.shiftDrag = v.shiftDrag;
         this.dragKey = v.dragKey;
 
@@ -196,9 +201,13 @@ class CNodeView extends CNode {
 
             // Single-pixel 25% transparent grey border so view edges are always visible.
             // Use an inset outline (offset -1px) so it draws inside the bounds and does
-            // not affect layout the way a border would.
-            this.div.style.outline = '1px solid rgba(128, 128, 128, 0.25)';
-            this.div.style.outlineOffset = '-1px';
+            // not affect layout the way a border would. Base (free-standing) views only:
+            // this else-branch already excludes overlayView; also exclude relativeTo views
+            // (e.g. the compass HUD), which attach to a parent view and should not get a box.
+            if (!this.in.relativeTo) {
+                this.div.style.outline = '1px solid rgba(128, 128, 128, 0.25)';
+                this.div.style.outlineOffset = '-1px';
+            }
 
 
 
@@ -1512,6 +1521,22 @@ class CNodeView extends CNode {
         win.addEventListener("beforeunload", () => this.dockWindow());
         // fallback poll in case beforeunload doesn't fire
         this._popPoll = setInterval(() => { if (!this._poppedWindow || this._poppedWindow.closed) this.dockWindow(); }, 600);
+        // Live canvas views (renderWhileWindowed, e.g. the DAG) must keep drawing while popped.
+        // The main render loop is render-on-demand and sleeps when this window is backgrounded
+        // (which happens as soon as the popup is focused), so the canvas would otherwise freeze as
+        // a fixed-size bitmap. Drive the render from the POPUP's OWN requestAnimationFrame — it
+        // keeps ticking while the popup is visible, so renderCanvas() runs every frame, adjustSize()
+        // sizes the canvas to the popup, and the view's own pointer handlers (pan/zoom/isolate) stay
+        // live — i.e. fully interactive, just like an in-page view.
+        if (this.renderWhileWindowed) {
+            this._popRendering = true;
+            const tick = () => {
+                if (!this._popRendering || !this._poppedWindow || this._poppedWindow.closed) return;
+                try { this.renderCanvas(par.frame); } catch (e) { /* keep the popup loop alive */ }
+                this._poppedWindow.requestAnimationFrame(tick);
+            };
+            this._poppedWindow.requestAnimationFrame(tick);
+        }
         // the popup has no JS of its own — if the main window goes away, take it along
         if (!this._popUnloadWired) {
             this._popUnloadWired = true;
@@ -1521,6 +1546,7 @@ class CNodeView extends CNode {
     }
 
     dockWindow() {
+        this._popRendering = false;   // stop the popup-driven render loop (renderWhileWindowed views)
         if (this._popPoll) { clearInterval(this._popPoll); this._popPoll = null; }
         if (this._poppedContent) {
             for (const c of this._poppedContent) {

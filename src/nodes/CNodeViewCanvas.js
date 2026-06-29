@@ -22,10 +22,16 @@ export class CNodeViewCanvas extends CNodeView {
         this.canvas.style.height = "100%";
 
         // Single-pixel 25% transparent grey border so view edges are always visible.
-        // The canvas fills the div and would otherwise paint over the div's outline,
-        // so the inset outline is also applied here. Offset -1px keeps it inside bounds.
-        this.canvas.style.outline = '1px solid rgba(128, 128, 128, 0.25)';
-        this.canvas.style.outlineOffset = '-1px';
+        // Base (free-standing) views ONLY. The canvas fills the div and would otherwise
+        // paint over the div's outline, so the inset outline is duplicated here. Skip it for
+        // attached views: overlay views (overlayView) share the parent's already-bordered div,
+        // and relativeTo views (e.g. the compass HUD) would otherwise draw their own distinct
+        // grey sub-box. Predicate matches the codebase's "is a real base window" test
+        // (DragResizeUtils/CLayoutManager/CViewManager). Offset -1px keeps it inside bounds.
+        if (!this.overlayView && !this.in.relativeTo) {
+            this.canvas.style.outline = '1px solid rgba(128, 128, 128, 0.25)';
+            this.canvas.style.outlineOffset = '-1px';
+        }
 
         // this.canvasWidth = v.canvasWidth;
         // this.canvasHeight = v.canvasHeight;
@@ -72,9 +78,15 @@ export class CNodeViewCanvas extends CNodeView {
         let oldWidth = this.widthPx;
         let oldHeight = this.heightPx;
 
+        // While popped out (renderWhileWindowed views like the DAG), the in-page div is hidden so
+        // its clientWidth/Height are 0; size the canvas from the popup window instead.
+        const windowed = this.windowed && this._poppedWindow && !this._poppedWindow.closed;
+
         let width, height;
         if (this.in.canvasWidth) {
             width = this.in.canvasWidth.v0;
+        } else if (windowed) {
+            width = this._poppedWindow.innerWidth;
         } else {
             width = this.div.clientWidth;
         }
@@ -88,6 +100,8 @@ export class CNodeViewCanvas extends CNodeView {
 
         if (this.in.canvasHeight) {
             height = this.in.canvasHeight.v0;
+        } else if (windowed) {
+            height = this._poppedWindow.innerHeight;
         } else {
             height = this.div.clientHeight;
         }

@@ -40,7 +40,7 @@ import {UpdateHUD} from "./JetStuff";
 import {degrees, getDateTimeFilename} from "./utils";
 import {ViewMan} from "./CViewManager";
 import {EventManager} from "./CEventManager";
-import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
+import {isAdmin, isServerless, SITREC_APP, SITREC_SERVER} from "./configUtils";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
@@ -1798,7 +1798,7 @@ export const setupMethods = {
                 top: 0,
                 width: 0.2,
                 height: 0.2,
-                draggable: false,
+                // draggable/poppable default true in CNodeViewDAG (drag + pop-out like Notes).
             });
         }
 
@@ -1856,7 +1856,9 @@ export const setupMethods = {
 
         setupCameraMotionMenu();
 
-        setupStreetViewPanoMenu();
+        // Street View pano needs the PHP stitcher endpoint (sitrecServer/streetview.php), which is
+        // absent in serverless/desktop (no-PHP) builds — gate the menu so it isn't a dead UI there.
+        if (!isServerless) setupStreetViewPanoMenu();
 
         // Custom graphs: populate the data-series registry, add the "Add Custom
         // Graph" button, and rebuild any graphs the sitch will deserialize.
