@@ -56,23 +56,48 @@ async function renderViewAt(sv, view, sf, t, width, height) {
 }
 
 // The Google-photorealistic 3D tiles (buildings3DTiles) get their own per-view
-// TilesRenderer (created lazily). Under a MOVING camera at full render resolution
-// the mainView renderer demands far more fine-LOD tiles than it can fetch within
-// budget, so its load queue never drains and the TilesFadePlugin keeps ~70 tiles
-// perpetually cross-fading (a dithered flicker) — and the per-frame settle never
-// quiesces. Raising errorTarget on the moving (main) view makes it request coarser,
-// already-available tiles so the tileset settles; the look view keeps full detail
-// (its camera is static during a `wait`, so it settles on its own). fadeDuration 0
-// removes the dithered cross-fade entirely.
+// TilesRenderer (created lazily). The render uses BEST LOD (renderTilesError ~20 —
+// the live preview value) for the moving (main) view, instead of the old coarse 80
+// that made renders look blobby. The LOD cross-fade is handled PER FRAME via
+// sv._tileFrameMode: a "warmup" frame (start + cuts) renders with fade OFF and is
+// settled fully → a crisp keyframe with no half-faded tiles; a "continuous" frame
+// keeps the cross-fade on so streaming LOD swaps don't pop. Originals are saved on
+// first touch and restored after the render (the old code leaked errorTarget=80,
+// leaving the live preview coarse afterwards). Called on every render pass.
 function tame3DTiles(sv) {
     const b = NodeMan.get("buildings3DTiles", false);
     if (!b || !b._perView) return;
+    if (!sv._tileSaved) sv._tileSaved = {};
     for (const [vid, pv] of Object.entries(b._perView)) {
-        if (pv.fadePlugin) pv.fadePlugin.fadeDuration = 0;
-        if (pv.renderer && vid === "mainView" && sv.tilesErrorTarget) {
-            pv.renderer.errorTarget = sv.tilesErrorTarget;
+        if (!pv.renderer) continue;
+        if (sv._tileSaved[vid] === undefined) {
+            sv._tileSaved[vid] = {
+                errorTarget: pv.renderer.errorTarget,
+                fadeDuration: pv.fadePlugin ? pv.fadePlugin.fadeDuration : undefined,
+            };
+        }
+        // best LOD for the moving (main) view; the look view is already fine
+        if (vid === "mainView" && sv.renderTilesError) pv.renderer.errorTarget = sv.renderTilesError;
+        if (pv.fadePlugin) {
+            pv.fadePlugin.fadeDuration = (sv._tileFrameMode === "continuous")
+                ? (sv._tileSaved[vid].fadeDuration || 250)   // keep the natural cross-fade
+                : 0;                                          // warmup: no fade (crisp keyframe)
         }
     }
+}
+
+// Restore the per-view 3D-tiles errorTarget + fadeDuration the render changed, so
+// the live preview returns to best LOD + fades afterwards (the old code leaked them).
+function restoreTiles(sv) {
+    const b = NodeMan.get("buildings3DTiles", false);
+    if (!b || !b._perView || !sv._tileSaved) return;
+    for (const [vid, pv] of Object.entries(b._perView)) {
+        const saved = sv._tileSaved[vid];
+        if (!saved || !pv.renderer) continue;
+        pv.renderer.errorTarget = saved.errorTarget;
+        if (pv.fadePlugin && saved.fadeDuration !== undefined) pv.fadePlugin.fadeDuration = saved.fadeDuration;
+    }
+    sv._tileSaved = null;
 }
 
 // Composite the view's canvas into a destination rect of the output ctx
@@ -96,7 +121,9 @@ export async function renderScriptedVideo(sv) {
     if (sv.totalDuration <= 0) { alert("Scripted Video: nothing to render (no timed commands)."); return; }
 
     const width = sv.outW, height = sv.outH, fps = sv.outFps;
-    const totalFrames = Math.max(1, Math.round(sv.totalDuration * fps));
+    let totalFrames = Math.max(1, Math.round(sv.totalDuration * fps));
+    // renderMaxFrames > 0 renders only the first N frames (for fast test renders)
+    if (sv.renderMaxFrames > 0) totalFrames = Math.min(totalFrames, sv.renderMaxFrames);
 
     const best = await getBestFormatForResolution("mp4-h264", width, height);
     if (!best.formatId) { alert("Scripted Video: " + (best.reason || "no codec for 1920x1080")); return; }
@@ -197,11 +224,54 @@ export async function renderScriptedVideo(sv) {
             });
         };
 
+        // --- CONTINUOUS-frame 3D-tiles handling (LOD cross-fade captured per frame) ---
+        // Freeze every buildings view's fade clock so the streaming-load loop below
+        // can't advance the cross-fade by real wall-clock (it's performance.now() based).
+        const freezeFades = () => {
+            const bb = NodeMan.get("buildings3DTiles", false);
+            if (!bb || !bb._perView) return;
+            const now = performance.now();
+            for (const pv of Object.values(bb._perView)) {
+                if (pv.fadePlugin && pv.fadePlugin._fadeManager) pv.fadePlugin._fadeManager._lastTick = now;
+            }
+        };
+        // Is the view's tileset still fetching/parsing NEW tiles (ignoring fade)?
+        const netPending = (viewId) => {
+            const bb = NodeMan.get("buildings3DTiles", false);
+            if (!bb) return false;
+            const st = bb.getPendingLoadState([viewId])?.perView?.[viewId];
+            return !!(st && (st.isLoading || st.queued > 0 || st.downloading > 0 || st.parsing > 0));
+        };
+        // A continuous frame: stream the incremental tiles for this camera (network/
+        // parse only, fade frozen), then advance the cross-fade by exactly ONE output
+        // frame and render that as the capture — so LOD swaps fade in over video time
+        // (deterministic), instead of popping (fade off) or being waited out (full settle).
+        const settleContinuous = async (view, viewId, sf, t, cap, vw, vh) => {
+            if (!view) return;
+            const render = async () => { freezeFades(); await renderViewAt(sv, view, sf, t, vw, vh); };
+            await render();
+            const start = performance.now();
+            let stable = 0;
+            while (performance.now() - start < cap) {
+                if (!netPending(viewId)) { if (++stable >= 2) break; } else stable = 0;
+                await new Promise((r) => setTimeout(r, 0));
+                await render();
+            }
+            // advance THIS view's cross-fade by one output frame; this render is the capture
+            const bb = NodeMan.get("buildings3DTiles", false);
+            const fm = bb?._perView?.[viewId]?.fadePlugin?._fadeManager;
+            if (fm) fm._lastTick = performance.now() - (1000 / fps);
+            await renderViewAt(sv, view, sf, t, vw, vh);
+        };
+
         for (let i = 0; i < totalFrames; i++) {
             if (progress.shouldStop()) break;
             const t = i / fps;
             sv._currentT = t;
             const sf = sv.sitFrameAt(t);
+            // classify for 3D-tiles LOD/fade: warmup (start+cuts) settles crisp with
+            // no fade; continuous streams + cross-fades. tame3DTiles reads _tileFrameMode.
+            const frameMode = sv._tileFrameMode = sv.classifyRenderFrame(i, t, 1 / fps);
             sv.applySettingsForTime(t);   // scripted set/show/hide at this time
             // the active layout: one or more views, each in a sub-rect of the frame
             const layout = sv.activeLayoutAt(t);
@@ -217,10 +287,13 @@ export async function renderScriptedVideo(sv) {
                 const pw = Math.max(2, Math.round(rect.width * width));
                 const ph = Math.max(2, Math.round(rect.height * height));
 
-                // Settle this frame's terrain (subdivide for this camera + finish
-                // loading) before capture. Consecutive frames mostly hit cache, so
-                // after the first frame of a shot this is fast.
-                if (sv.waitForLoading) await settleAt(view, viewId, sf, t, 8000, pw, ph);
+                // Settle this frame before capture. WARMUP frames (start/cuts) settle
+                // fully (terrain + all tiles + no fade) for a crisp keyframe; CONTINUOUS
+                // frames stream the incremental tiles and play a one-step LOD cross-fade.
+                if (sv.waitForLoading) {
+                    if (frameMode === "continuous") await settleContinuous(view, viewId, sf, t, 3000, pw, ph);
+                    else await settleAt(view, viewId, sf, t, 8000, pw, ph);
+                }
 
                 // Composite. Optional accumulation motion blur (mbSamples>1)
                 // averages sub-frames across the shutter for a cinematic look; it
@@ -270,6 +343,8 @@ export async function renderScriptedVideo(sv) {
         progress.remove();
         if (cover && cover.parentNode) cover.parentNode.removeChild(cover);
         if (restoreTerrain) restoreTerrain();
+        restoreTiles(sv);            // put back the 3D-tiles errorTarget + fadeDuration
+        sv._tileFrameMode = null;
         for (const {v, wp, hp} of savedViewSize) { v.widthPx = wp; v.heightPx = hp; }
         restore();
         Globals.scriptedVideoRendering = false;   // return control to the main loop

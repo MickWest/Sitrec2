@@ -81,6 +81,19 @@ class CScriptedVideoManager {
         this.motionBlurSamples = 1;   // optional cinematic motion blur (1 = off)
         this.superSample = 1;         // optional render at N x resolution then downscale
 
+        // 3D-tiles (Google buildings) LOD during render. renderTilesError is the
+        // screen-space-error the render requests for the MOVING (main) view —
+        // LOWER = finer/best LOD (the live preview uses ~20; the old render coarsened
+        // to tilesErrorTarget=80, which is why renders looked blobby). The render
+        // now uses best LOD and instead handles the cross-fade per frame: a START
+        // frame or a CUT settles fully at best LOD with NO fade (crisp keyframe),
+        // while CONTINUOUS frames stream tiles and play the LOD cross-fade so they
+        // don't pop. cutJumpThreshold (m) is the camera position jump that counts as
+        // a cut. renderMaxFrames>0 renders only the first N frames (for fast tests).
+        this.renderTilesError = 20;
+        this.cutJumpThreshold = 300;   // m; a smoothed-camera jump above this = a cut (fast moves are ~50 m/frame)
+        this.renderMaxFrames = 0;
+
         // live preview state
         this._previewing = false;
         this._previewRAF = null;
@@ -471,6 +484,30 @@ class CScriptedVideoManager {
             if (lla.z < minAlt) return LLAToECEF(lla.x, lla.y, minAlt);
         } catch (e) { /* terrain not ready — leave as-is */ }
         return pos;
+    }
+
+    // Classify an output render frame for 3D-tiles LOD handling:
+    //   "warmup"     = first frame OR a cut (view change / camera snap / big jump):
+    //                  the renderer settles fully at best LOD with NO fade (a crisp
+    //                  keyframe — no half-faded tiles popping in at the cut).
+    //   "continuous" = inside a continuous move: stream tiles + play the LOD
+    //                  cross-fade so LOD swaps don't pop.
+    classifyRenderFrame(i, t, dt) {
+        if (i <= 0) return "warmup";
+        const tp = Math.max(0, t - dt);
+        // a view cut: the active view event changed identity...
+        if (this._activeViewEventAt(t) !== this._activeViewEventAt(tp)) return "warmup";
+        // ...or a view became newly visible (e.g. main re-appears after a look segment)
+        const now = this.activeLayoutAt(t), prev = this.activeLayoutAt(tp);
+        for (const id in now) if (!(id in prev)) return "warmup";
+        // a zero-duration camera beat (a flyto/from/moveto secs 0 SNAP) starts this frame
+        for (const b of this.cameraBeats) {
+            if (b.dur === 0 && b.start > tp + 1e-6 && b.start <= t + 1e-6) return "warmup";
+        }
+        // catch-all: a large camera position jump (overlapping-beat handoff / any snap)
+        const a = this._smoothedCamera(t), c = this._smoothedCamera(tp);
+        if (a && c && a.pose.position.distanceTo(c.pose.position) > this.cutJumpThreshold) return "warmup";
+        return "continuous";
     }
 
     // apply the scripted camera for time t. We only drive mainCamera; lookCamera is
