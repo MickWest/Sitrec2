@@ -9,6 +9,25 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.92.3 (2026-06-30)
+
+### New Features
+- **"Sim Opacity" fades the look view's 3D building tiles so a Street View pano shows through** (`fe13cd8a`) (`src/StreetViewPanoUI.js`, `src/nodes/CNodeBuildings3DTiles.js`). A new `simOpacity` param/slider (Terrain → *Street View Pano* folder, label *Sim Opacity*, range 0–1) calls `setSimOpacity(v)` → `buildings.setLookSimOpacity(v)`, fading the Google/OSM 3D building tiles in the **look view only** so the panorama sphere behind them becomes visible; the main (map) view is left fully opaque. This is distinct from the shared *Terrain Opacity*, which fades terrain + buildings in all views.
+- **Admin-only "Building Detail (SSE)" global LOD control for 3D building tiles** (`fe13cd8a`) (`src/nodes/CNodeTerrainUI.js`, `src/nodes/CNodeBuildings3DTiles.js`). `buildingErrorTarget` drives the 3D-tiles renderer's global screen-space-error target (clamped 8–40, default 20, **not** serialized); lower = sharper near geometry but more billed Google tile fetches. It is gated behind `isAdmin()` and lives in the Terrain → *Terrain Tweaks* folder. This uses ordinary frustum-based loading — an experimental camera-centred `LoadRegionPlugin`/`SphereRegion` foveation prototype was implemented in this change and then reverted (it force-loaded tiles outside the frustum, costing extra root-tileset requests without reliably buying near detail), so it is not part of the shipped behavior.
+
+### Improvements
+- **Street View panorama renders as a camera-tracking skybox (two concentric spheres)** (`fe13cd8a`) (`src/nodes/CNodeStreetViewPano.js`, `src/StreetViewPanoUI.js`). The panorama is now drawn as two concentric spheres sharing one texture, both re-centred on the look camera every frame so they track the observer like a skybox: a "sky" sphere drawn before the 3D scene (`renderOrder -1000`, `depthTest` OFF while opaque) so fading the sim reveals it, plus the z-sorted "registered" sphere; where both are visible they overlap exactly. The sphere radius slider range widened to `5–50000 m` (step 1).
+- **"Opacity" renamed "Street Opacity"** (`fe13cd8a`) (`src/StreetViewPanoUI.js`). The existing panorama-sphere opacity control (`getNode().setOpacity`) is relabeled *Street Opacity* (tooltip: "Opacity of the Street View panorama sphere itself"), to disambiguate it from the new *Sim Opacity* control.
+- **"Terrain Opacity" now also fades the 3D building tiles** (`fe13cd8a`) (`src/nodes/CNodeTerrainUI.js`, `src/nodes/CNodeBuildings3DTiles.js`). The shared `transparency` control (*Terrain Opacity*, Terrain → Terrain Tweaks) now applies to the 3D building tiles as well as terrain, as tinted glass: `depthWrite` stays ON so a faded tile still occludes its own hidden lower-LOD geometry instead of popping coarse tiles through.
+- **3D-tiles LRU item-count cap raised 8000 → 16000** (`fe13cd8a`) (`src/nodes/CNodeBuildings3DTiles.js`). Raised alongside the byte cap so the byte cap is the binding memory bound rather than the item count, avoiding tile-admission-gate jams at low (sharp) error targets.
+- **Street View panoramas persist across save + reload** (`63b64046`) (`src/nodes/CNodeStreetViewPano.js`, `src/CustomManagerSerialize.js`). The pano's location and tuning are serialized via `simpleSerials`, and a `deserializeMods` hook recreates and re-fetches the pano on load. The stitched equirectangular image itself is not stored — it is re-resolved from the saved lat/lon (so the saved sitch stays small and always reflects current imagery).
+
+### Bug Fixes
+- **Fixed Street View panorama vertical misalignment on sloped streets** (`63b64046`) (`src/nodes/CNodeStreetViewPano.js`, `src/StreetViewPanoUI.js`). The pano dome was oriented from the metadata heading only, ignoring the capture pose, so a pano shot on a sloped street sat vertically offset from the 3D scene. The fix applies the metadata `tilt`: the true horizon sits `(tilt-90)°` above the equirectangular centre row, so the dome is pitched DOWN by `+(tilt-90)` about its right axis to land the horizon on the local horizontal (`roll` is already baked out of the published tiles, so it is stored for reference only). A new *Elevation Offset°* control (`elevationOffset`/`setElevationOffset`, range -20..20°, step 0.1, in the Terrain → *Street View Pano* folder) trims any residual offset (positive raises the dome).
+- **Fixed the look camera drifting vertically after "Center Camera On Street View"** (`63b64046`) (`src/StreetViewPanoUI.js`). The action placed the look camera in AGL mode, whose world height rides the terrain LOD; Google's 3D tiles refine their ground for a few seconds after centring, so the AGL camera drifted vertically and the once-snapped panorama backdrop fell out of alignment. The camera is now forced to a fixed (non-AGL) absolute altitude at the pano's captured height (HAE→MSL via `meanSeaLevelOffset`), so it cannot drift and the sphere snap cannot go stale.
+
+---
+
 ## Version 2.92.2 (2026-06-29)
 
 ### Improvements

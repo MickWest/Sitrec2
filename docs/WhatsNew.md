@@ -9,6 +9,23 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.92.3 (2026-06-30)
+
+### New Features
+- **Sim Opacity** (Terrain → Street View Pano): fades only the look (observer) view's 3D buildings so a Street View panorama shows through behind them, leaving the main map view untouched.
+
+### Improvements
+- Street View panoramas now track the observer camera like a skybox, so they stay aligned as the camera moves and remain visible when you fade down the 3D scene.
+- **Terrain Opacity** (Terrain → Terrain Tweaks) now also fades the 3D building tiles, not just the terrain — a faded building still hides its own coarse geometry instead of popping through.
+- The Street View panorama's **Opacity** control is renamed **Street Opacity**, and the panorama sphere radius can now be set as low as 5 m.
+- Saved sitches now remember their Street View panorama; it is re-fetched automatically on load.
+
+### Bug Fixes
+- Fixed Street View panoramas sitting too high or low against the 3D scene on sloped streets. A new **Elevation Offset** control (Terrain → Street View Pano) lets you trim any residual vertical misalignment.
+- Fixed the camera drifting vertically in the seconds after **Center Camera On Street View**, as the Google 3D terrain refined under it, which left the panorama backdrop out of alignment.
+
+---
+
 ## Version 2.92.2 (2026-06-29)
 
 ### Improvements
