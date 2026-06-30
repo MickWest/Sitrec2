@@ -3,7 +3,7 @@ import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {assert} from "../assert";
 import {configParams} from "../runtimeConfig";
-import {isLocal, isServerless, SITREC_APP, SITREC_TERRAIN} from "../configUtils";
+import {isAdmin, isLocal, isServerless, SITREC_APP, SITREC_TERRAIN} from "../configUtils";
 import {CNodeSwitch} from "./CNodeSwitch";
 import {ECEFToLLAVD_radii, LLAToECEF, updateEarthRadii} from "../LLA-ECEF-ENU";
 import {CNodeTerrain} from "./CNodeTerrain";
@@ -85,6 +85,9 @@ export class CNodeTerrainUI extends CNode {
         this.textureDetail = v.textureDetail ?? 1;
         this.elevationDetail = v.elevationDetail ?? 1;
         this.transparency = v.transparency ?? 1;
+        // Global tile-LOD detail for 3D buildings (screen-space-error target, px). Admin-only
+        // control (cost: lower = more billed tile fetches). Not serialized.
+        this.buildingErrorTarget = 20;
 
         this._layer = null;
 
@@ -662,6 +665,8 @@ export class CNodeTerrainUI extends CNode {
                         }
                     }
                 }
+                // The same control fades the 3D buildings (Google Photorealistic / OSM 3D Tiles).
+                if (this.buildingsNode) this.buildingsNode.setOpacity(v);
             })
 
         // Note: Tile Segments is controlled via the global settings menu in CustomSupport.js
@@ -789,6 +794,16 @@ export class CNodeTerrainUI extends CNode {
                 sharedUniforms.showTileEdges.value = v;
                 setRenderOne(true);
             }).tooltip("Outline each terrain tile with a 1px magenta border");
+
+            // ADMIN ONLY: 3D-building tile LOD detail = the renderer's global screen-space-error
+            // target (px). LOWER = sharper. A low global target multiplies the number of BILLED
+            // Google tile fetches across the whole frustum, so it's gated to admins, clamped
+            // conservatively (min 8), and not saved with the sitch.
+            if (isAdmin()) {
+                this.terrainTweaks.add(this, "buildingErrorTarget", 8, 40, 1).name("Building Detail (SSE)")
+                    .tooltip("ADMIN: 3D building tile detail = screen-space-error target (px). LOWER = sharper but MORE billed Google tile downloads. Default 20 (Google's recommended).")
+                    .onChange(v => { if (this.buildingsNode) this.buildingsNode.setErrorTarget(v); });
+            }
 
             if (hasGoogle) {
                 this.gui.add(this, "showOceanSurface").name(t("terrainUI.oceanSurface.label")).onChange(() => {
@@ -1122,6 +1137,8 @@ export class CNodeTerrainUI extends CNode {
                 materialMode: this.buildingsMaterialMode,
                 flatColor: this.buildingsFlatColor,
                 treeFlattenParams: this.treeFlattenParams,
+                opacity: this.transparency,   // inherit the current "Terrain Opacity"
+                errorTarget: this.buildingErrorTarget, // inherit the current detail (admin-tuned)
             });
             this.buildingsNode.setShowEdges(this.showBuildingEdges);
         } else if (!show && this.buildingsNode) {

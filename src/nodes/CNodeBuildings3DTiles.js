@@ -46,6 +46,27 @@ function createDracoLoader() {
     return dracoLoader;
 }
 
+// Apply a global opacity to a tile mesh's material(s). depthWrite is deliberately LEFT ON
+// (the default): the photogrammetric tileset keeps parent/coarser-LOD tiles rendered behind
+// the finer children and relies on depth occlusion to hide them. With depthWrite off, those
+// hidden LOD tiles blend in the moment opacity drops below 1 — a sudden "extra geometry" pop
+// (blobby green trees, doubled walls). Keeping depthWrite on makes a faded tile read as
+// tinted glass: it still occludes its own hidden geometry while letting the background through.
+// needsUpdate is only flipped when the transparent flag actually changes, so dragging the
+// slider doesn't recompile the shader on every step.
+function applyMeshOpacity(mesh, opacity) {
+    const transparent = opacity < 1;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+        if (!m) continue;
+        if (m.transparent !== transparent) {
+            m.transparent = transparent;
+            m.needsUpdate = true;
+        }
+        m.opacity = opacity;
+    }
+}
+
 
 
 // Per-view state: a TilesRenderer instance, its parent group, and the view it tracks.
@@ -59,9 +80,16 @@ class PerViewTiles {
      * @param {Object|null} googleSharedState
      * @param {string} materialMode
      * @param {number|null} flatColor
+     * @param {number} errorTarget  screen-space-error target (px) for tile LOD; lower = sharper
      */
     constructor(parentGroup, layerMask, source, cesiumIonToken, googleApiKey, googleSharedState,
-                materialMode = "photo", flatColor = null, treeFlattenParams = null) {
+                materialMode = "photo", flatColor = null, treeFlattenParams = null, opacity = 1,
+                errorTarget = 20) {
+        // Global building transparency (shared "Terrain Opacity" control). Applied to each tile
+        // mesh as it streams in (see the load-model handler) so newly-loaded tiles match the
+        // already-loaded ones. The fade plugin fades via shader dither, not material.opacity, so
+        // these don't fight.
+        this.opacity = opacity;
         this.renderer = new TilesRenderer();
 
         // Raise the tile cache's BYTE budget. The library default (maxBytesSize
@@ -79,6 +107,12 @@ class PerViewTiles {
         const GIGABYTE = 1024 * 1024 * 1024;
         this.renderer.lruCache.minBytesSize = 1.0 * GIGABYTE;
         this.renderer.lruCache.maxBytesSize = 1.5 * GIGABYTE;
+        // Also raise the ITEM-count cap. isFull() trips on EITHER cachedBytes>=maxBytesSize OR
+        // itemSet.size>=maxSize; at a low errorTarget the near field is many small tiles, so the
+        // default maxSize (8000) can hit the item cap (and re-jam the admission gate) while bytes
+        // are still low. Raise it so the BYTE cap — the real memory bound — is what binds.
+        this.renderer.lruCache.minSize = 12000;
+        this.renderer.lruCache.maxSize = 16000;
 
         // Monotonic counter used by export settling to detect LOD visibility churn.
         this.visibilityVersion = 0;
@@ -115,6 +149,17 @@ class PerViewTiles {
             maximumFadeOutTiles: 400,
         });
         this.renderer.registerPlugin(this.fadePlugin);
+
+        // Tile LOD: the renderer's global screen-space-error target. Lower = sharper but more
+        // (billed) tile fetches. Overrides the Google plugin's recommended 20. Ordinary
+        // frustum-based loading with progressive parent-to-child refinement — no off-screen
+        // load volume (an earlier camera-centred LoadRegionPlugin SphereRegion was reverted
+        // because a non-mask region force-loads tiles OUTSIDE the frustum too, costing extra
+        // root-tileset requests behind/beside the camera without reliably buying near detail).
+        this.renderer.errorTarget = errorTarget;
+        // Keep the default traversal strategy. It loads renderable parent tiles first, then
+        // progressively swaps in children as they arrive; the experimental optimized strategy
+        // skips much of that parent-placeholder path, leaving temporary holes while leaves stream in.
 
         // Track every tile visibility state change so export settle logic can wait for transition quiescence.
         this._onTileVisibilityChange = () => {
@@ -158,6 +203,8 @@ class PerViewTiles {
                 if (child.isMesh || child.isLine || child.isPoints) {
                     child.layers.mask = layerMask;
                 }
+                // Match the global building opacity on freshly-streamed tiles.
+                if (child.isMesh && this.opacity < 1) applyMeshOpacity(child, this.opacity);
                 // V5 shadows: opt tile meshes in to cast/receive ONLY when
                 // shadows are currently active. Defaults-off invariant: when
                 // off this branch is a single boolean check + no writes.
@@ -300,6 +347,18 @@ export class CNodeBuildings3DTiles extends CNode {
         // V5 material modes: "photo" (default), "flat", "halfPhoto".
         this.materialMode = v.materialMode ?? "photo";
         this.flatColor = v.flatColor ?? null;
+        // Global tile-LOD screen-space-error target (px): lower = sharper but more (billed)
+        // Google tile downloads. NOT serialized — resets per session so a saved sitch can't
+        // silently drive up another user's billed tile count.
+        this.errorTarget = v.errorTarget ?? 20;
+        // Global building transparency, driven by the shared "Terrain Opacity" control
+        // (CNodeTerrainUI). 1 = fully opaque.
+        this.opacity = v.opacity ?? 1;
+        // EXTRA look-view-only transparency ("Sim Opacity" under Street View Pano). The look
+        // view has its own TilesRenderer (separate meshes from the main view), so multiplying
+        // this in for that renderer only fades the buildings in the look view while the main
+        // view stays at the global opacity. 1 = no extra fade.
+        this.lookSimOpacity = v.lookSimOpacity ?? 1;
 
         // Shared "Edit Geometry" params. Owned by CNodeTerrainUI (which serializes
         // them) and passed in by reference so GUI edits are picked up live by
@@ -360,7 +419,8 @@ export class CNodeBuildings3DTiles extends CNode {
             this._perView[id] = new PerViewTiles(
                 this.group, mask, activeSource,
                 this.cesiumIonToken, this.googleApiKey, googleSharedState,
-                this.materialMode, this.flatColor, this.treeFlattenParams
+                this.materialMode, this.flatColor, this.treeFlattenParams, this._effectiveOpacity(id),
+                this.errorTarget   // global tile-LOD target (slider-driven)
             );
         }
 
@@ -443,6 +503,52 @@ export class CNodeBuildings3DTiles extends CNode {
                 pv.dayNightPlugin.setMaterialMode(this.materialMode, this.flatColor);
             }
         }
+    }
+
+    // Effective opacity for one view's tiles: the global opacity, times the look-view-only
+    // sim fade for the look view's renderer.
+    _effectiveOpacity(viewId) {
+        return viewId === "lookView" ? this.opacity * this.lookSimOpacity : this.opacity;
+    }
+
+    // Re-apply the effective opacity to one per-view renderer's currently-loaded tiles, and
+    // store it on the per-view so tiles that stream in later match (load-model handler).
+    _applyOpacityToPerView(viewId) {
+        const pv = this._perView[viewId];
+        if (!pv) return;
+        const eff = this._effectiveOpacity(viewId);
+        pv.opacity = eff;
+        if (pv.renderer && pv.renderer.group) {
+            pv.renderer.group.traverse(child => {
+                if (child.isMesh && child.material) applyMeshOpacity(child, eff);
+            });
+        }
+    }
+
+    // Global building transparency (shared "Terrain Opacity" control) — both views.
+    setOpacity(opacity) {
+        this.opacity = opacity;
+        for (const id in this._perView) this._applyOpacityToPerView(id);
+        setRenderOne(true);
+    }
+
+    // Look-view-only building transparency ("Sim Opacity" under Street View Pano) — fades the
+    // look view's tiles (so the Street View panorama shows through) without touching mainView.
+    setLookSimOpacity(opacity) {
+        this.lookSimOpacity = opacity;
+        this._applyOpacityToPerView("lookView");
+        setRenderOne(true);
+    }
+
+    // Tile LOD detail = the renderer's global screen-space-error target (px). Lower = sharper but
+    // more billed Google tile fetches. Ordinary frustum-based loading. Forces a fresh LOD pass.
+    setErrorTarget(errorTarget) {
+        this.errorTarget = errorTarget;
+        for (const pv of Object.values(this._perView)) {
+            pv.renderer.errorTarget = errorTarget;
+            pv._needsLibUpdate = true;   // wake the settle optimization so update() re-evaluates LOD
+        }
+        setRenderOne(true);
     }
 
     // --- Flatten Trees control surface (called from CNodeTerrainUI) ---

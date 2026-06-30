@@ -26,9 +26,20 @@ const params = {
     headingOffset: 0,
     elevationOffset: 0,
     opacity: 1.0,
+    simOpacity: 1.0,
     visible: true,
     status: "Not loaded",
 };
+
+// "Sim Opacity": fade the 3D world (Google/OSM 3D building tiles) in the LOOK VIEW ONLY, so the
+// Street View panorama shows through it there while the main/map view stays solid. The look view
+// has its own per-view TilesRenderer, so this is a look-only multiplier on the building opacity.
+// (The shared "Terrain Opacity" control fades terrain + buildings in ALL views; this is the
+// look-only counterpart for the buildings.)
+function setSimOpacity(v) {
+    const buildings = NodeMan.get("terrainUI", true)?.buildingsNode;
+    if (buildings && buildings.setLookSimOpacity) buildings.setLookSimOpacity(v);
+}
 
 // Persistence: the pano node is created lazily on Fetch with a fixed id and is NOT part of the
 // sitch graph, but it serializes its location + tuning via simpleSerials (see CNodeStreetViewPano),
@@ -181,13 +192,17 @@ export function setupStreetViewPanoMenu() {
         .tooltip("Fine-tune the panorama's vertical angle (positive raises it). The metadata tilt (capture-point slope) is corrected automatically; use this to trim any residual offset from the 3D scene.")
         .onChange(v => { getNode()?.setElevationOffset(v); });
 
-    svFolder.add(params, "radius", 100, 50000, 100).name("Sphere Radius (m)")
+    svFolder.add(params, "radius", 5, 50000, 1).name("Sphere Radius (m)")
         .tooltip("Radius of the background sphere")
         .onChange(v => { getNode()?.setRadius(v); });
 
-    svFolder.add(params, "opacity", 0, 1, 0.01).name("Opacity")
-        .tooltip("Blend the panorama with whatever is behind it")
+    svFolder.add(params, "opacity", 0, 1, 0.01).name("Street Opacity")
+        .tooltip("Opacity of the Street View panorama sphere itself — blend it with whatever is behind it")
         .onChange(v => { getNode()?.setOpacity(v); });
+
+    svFolder.add(params, "simOpacity", 0, 1, 0.01).name("Sim Opacity")
+        .tooltip("Fade the 3D world (buildings / 3D tiles) in the LOOK VIEW ONLY, so the panorama shows through it. The main view is unaffected.")
+        .onChange(v => { setSimOpacity(v); });
 
     svFolder.add(params, "visible").name("Visible")
         .tooltip("Show/hide the panorama sphere")

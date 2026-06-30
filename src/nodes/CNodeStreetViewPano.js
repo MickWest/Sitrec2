@@ -4,10 +4,14 @@
 //   - takes an LLA (or a position copied from the camera via the UI),
 //   - fetches an equirectangular panorama + metadata through the server-side stitcher
 //     (sitrecServer/streetview.php, which uses Google's licensed Map Tiles API),
-//   - builds an inside-viewed textured sphere centred at the pano's ECEF point, rotated so
-//     the imagery aligns to true north using the metadata heading,
-//   - renders it behind everything (renderOrder -1000, depthWrite:false) in the shared
-//     GlobalScene, visible ONLY in the look view (laid out of the main and all other views).
+//   - builds TWO inside-viewed textured spheres (sharing one texture), rotated so the imagery
+//     aligns to true north using the metadata heading, both CENTRED ON THE LOOK CAMERA every
+//     frame (preRender) so they move with the observer like a skybox:
+//       * a "sky" sphere drawn before the 3D scene with depthTest OFF (while opaque) — it sits
+//         behind everything, so fading the 3D sim (buildings/terrain) reveals it;
+//       * a "registered" sphere at renderOrder 0 with depthTest ON — it z-sorts with the
+//         environment (near terrain occludes it; it occludes geometry beyond its radius).
+//     Neither writes depth (objects/tracks drawn after are never hidden). Look view ONLY.
 //
 // The exact column-to-azimuth convention of Street View equirectangular imagery is not
 // documented by Google, so a tunable `headingOffsetDeg` is exposed for calibration.
@@ -20,7 +24,7 @@ import {CNode3DGroup} from "./CNode3DGroup";
 import {LLAToECEF} from "../LLA-ECEF-ENU";
 import {getLocalUpVector, getLocalNorthVector, getLocalEastVector} from "../SphericalMath";
 import {SITREC_SERVER} from "../configUtils";
-import {Globals, setRenderOne} from "../Globals";
+import {Globals, NodeMan, setRenderOne} from "../Globals";
 import {MASK_LOOK} from "../LayerMasks";
 
 export class CNodeStreetViewPano extends CNode3DGroup {
@@ -124,6 +128,18 @@ export class CNodeStreetViewPano extends CNode3DGroup {
             .finally(() => { Globals.pendingActions--; });
     }
 
+    // Two concentric panorama spheres, both centred on the look camera and sharing one texture:
+    //
+    //   skyMesh ("sky")        — drawn BEFORE the 3D scene (renderOrder -1000) and, while opaque,
+    //                            with depthTest OFF, so it sits behind everything like a skybox.
+    //                            Fading the 3D sim (buildings/terrain) reveals THIS sphere — a
+    //                            single z-tested sphere can't be revealed because it is depth-
+    //                            rejected wherever geometry is nearer than its radius.
+    //   mesh ("registered")    — the original z-sorted sphere (renderOrder 0, depthTest ON): near
+    //                            terrain occludes it and it occludes geometry beyond its radius.
+    //
+    // Both produce the same image (a camera-centred sphere's appearance is radius-independent), so
+    // where both are visible they overlap exactly — no doubling, just the two different z-behaviours.
     buildSphere(tex) {
         this.disposeSphere();
 
@@ -136,25 +152,64 @@ export class CNodeStreetViewPano extends CNode3DGroup {
             tex.repeat.x = -1;
             tex.offset.x = 1;
         }
+        this._tex = tex;   // shared by both spheres; disposed once in disposeSphere()
 
+        this.mesh = this._makeSphereMesh(tex, 0);          // registered / z-sorted
+        this.skyMesh = this._makeSphereMesh(tex, -1000);   // sky / behind everything
+
+        this._orientBoth();
+        this._applyMaterials(this.opacity);
+        this.group.add(this.mesh);
+        this.group.add(this.skyMesh);
+        this.propagateLayerMask();
+    }
+
+    _makeSphereMesh(tex, renderOrder) {
         const geo = new SphereGeometry(this.radius, 64, 48);
         const mat = new MeshBasicMaterial({
-            map: tex,
-            side: BackSide,            // we sit inside the sphere
-            depthWrite: false,         // never occlude real geometry
-            depthTest: true,           // but real geometry in front still hides it
-            fog: false,
-            toneMapped: false,
-            transparent: this.opacity < 1,
-            opacity: this.opacity,
+            map: tex, side: BackSide, depthWrite: false, fog: false, toneMapped: false,
         });
-
         const mesh = new Mesh(geo, mat);
-        mesh.renderOrder = -1000;      // drawn first, behind the whole scene
-        this.orientMesh(mesh);
-        this.group.add(mesh);
-        this.propagateLayerMask();
-        this.mesh = mesh;
+        mesh.renderOrder = renderOrder;
+        return mesh;
+    }
+
+    _orientBoth() {
+        if (this.mesh) this.orientMesh(this.mesh);
+        if (this.skyMesh) this.orientMesh(this.skyMesh);
+    }
+
+    // Opacity / blend state for both spheres. The sky sphere ignores the depth buffer (true
+    // skybox) ONLY while fully opaque: a transparent depth-test-off mesh moves to the transparent
+    // pass and would draw OVER the whole scene, so below opacity 1 it falls back to depth-tested
+    // (it then behaves like the registered sphere — the skybox reveal is a Street-Opacity-1 mode).
+    _applyMaterials(o) {
+        this.opacity = o;
+        const setMat = (mesh, skybox) => {
+            if (!mesh) return;
+            const m = mesh.material;
+            const transparent = o < 1;
+            const depthTest = skybox ? (o < 1) : true;
+            if (m.transparent !== transparent || m.depthTest !== depthTest) {
+                m.transparent = transparent;
+                m.depthTest = depthTest;
+                m.needsUpdate = true;
+            }
+            m.opacity = o;
+        };
+        setMat(this.mesh, false);
+        setMat(this.skyMesh, true);
+    }
+
+    // Centre both spheres on the look camera every frame so they track the observer like a
+    // skybox (orientation, set by orientMesh, is position-independent). Runs per view render,
+    // after the camera matrices are updated (see CNodeView3D).
+    preRender(view) {
+        const cam = NodeMan.get("lookCamera", true);
+        const camPos = cam?.camera?.position;
+        if (!camPos) return;
+        if (this.mesh) this.mesh.position.copy(camPos);
+        if (this.skyMesh) this.skyMesh.position.copy(camPos);
     }
 
     // Centre the sphere at the pano's ECEF point and rotate so the texture centre column
@@ -203,31 +258,28 @@ export class CNodeStreetViewPano extends CNode3DGroup {
     // ---- live UI setters ----
     setHeadingOffset(deg) {
         this.headingOffsetDeg = deg;
-        if (this.mesh) { this.orientMesh(this.mesh); setRenderOne(true); }
+        if (this.mesh) { this._orientBoth(); setRenderOne(true); }
     }
 
     setElevationOffset(deg) {
         this.elevationOffsetDeg = deg;
-        if (this.mesh) { this.orientMesh(this.mesh); setRenderOne(true); }
+        if (this.mesh) { this._orientBoth(); setRenderOne(true); }
     }
 
     setOpacity(o) {
-        this.opacity = o;
-        if (this.mesh) {
-            this.mesh.material.opacity = o;
-            this.mesh.material.transparent = o < 1;
-            this.mesh.material.needsUpdate = true;
-            setRenderOne(true);
-        }
+        if (this.mesh) { this._applyMaterials(o); setRenderOne(true); }
+        else this.opacity = o;
     }
 
     setRadius(r) {
         this.radius = r;
-        if (this.mesh) {
-            this.mesh.geometry.dispose();
-            this.mesh.geometry = new SphereGeometry(r, 64, 48);
-            setRenderOne(true);
+        for (const mesh of [this.mesh, this.skyMesh]) {
+            if (mesh) {
+                mesh.geometry.dispose();
+                mesh.geometry = new SphereGeometry(r, 64, 48);
+            }
         }
+        if (this.mesh) setRenderOne(true);
     }
 
     // The LLA the pano was actually captured at (snapped by Google), or null if not loaded.
@@ -236,23 +288,28 @@ export class CNodeStreetViewPano extends CNode3DGroup {
         return {lat: this.panoLat, lon: this.panoLon, alt: this.alt};
     }
 
-    // Snap the sphere's exact centre to a world ECEF point so it coincides with the camera
-    // after "Center Camera On Street View" (zero parallax). Heading orientation is preserved.
+    // Snap both spheres' exact centre to a world ECEF point so they coincide with the camera
+    // after "Center Camera On Street View" (zero parallax). preRender re-centres each frame, so
+    // this is just the immediate snap. Heading orientation is preserved.
     setCenterECEF(ecef) {
         if (!this.mesh) return;
-        this.orientMesh(this.mesh);     // orientation from the pano lat/lon (alt-insensitive)
-        this.mesh.position.copy(ecef);  // then snap the centre exactly onto the camera point
+        this._orientBoth();             // orientation from the pano lat/lon (alt-insensitive)
+        this.mesh.position.copy(ecef);  // then snap the centres exactly onto the camera point
+        this.skyMesh?.position.copy(ecef);
         setRenderOne(true);
     }
 
     disposeSphere() {
-        if (this.mesh) {
-            this.group.remove(this.mesh);
-            this.mesh.geometry?.dispose();
-            this.mesh.material?.map?.dispose();
-            this.mesh.material?.dispose();
-            this.mesh = null;
+        for (const mesh of [this.mesh, this.skyMesh]) {
+            if (!mesh) continue;
+            this.group.remove(mesh);
+            mesh.geometry?.dispose();
+            mesh.material?.dispose();   // NOT material.map — the texture is shared, disposed below
         }
+        this._tex?.dispose();
+        this._tex = null;
+        this.mesh = null;
+        this.skyMesh = null;
     }
 
     dispose() {
