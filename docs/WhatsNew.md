@@ -9,6 +9,24 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.92.2 (2026-06-29)
+
+### Improvements
+- **New Help menu quick links**: the Help menu can now open FlightRadar24 replay and Earth Nullschool (wind) for the current view's time and location, alongside the existing ADS-B, Google Maps, and In-The-Sky links (now labelled "… Here").
+- Street View panoramas now appear only in the look (observer) view, not in the main map view or other views.
+- Each new custom graph you add now opens in its own distinct spot instead of stacking almost exactly on top of the previous one.
+- The **Street View Pano** menu (Terrain) is hidden in the serverless and desktop builds, where the panorama feature can't run.
+
+### Bug Fixes
+- Fixed menu clicks (such as **Add Custom Graph**) being silently ignored when a graph window sat underneath the menu — and an open graph sometimes making the whole interface unclickable. Menus now reliably take clicks.
+- Fixed an unwanted grey box drawn around the compass overlay and the attached video panels (histogram, levels, curve, info); the thin grey edge border now appears only on full standalone views.
+- Fixed occasional blank or corrupted Street View panoramas, and panorama load failures, that could happen when several were generated at once.
+
+### Security
+- Street View panorama generation is now rate-limited for all users (including admin and members), protecting the billed mapping service from abuse.
+
+---
+
 ## Version 2.92.1 (2026-06-29)
 
 ### Bug Fixes
