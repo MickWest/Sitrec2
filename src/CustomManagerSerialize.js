@@ -44,6 +44,7 @@ import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
 import {CustomGraphManager} from "./CCustomGraphManager";
+import {restoreStreetViewPanoFromMod} from "./StreetViewPanoUI";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
@@ -1319,6 +1320,15 @@ export const serializeMethods = {
         // toggle, so without this branch the mod would be silently dropped.
         if (mods.windField && !NodeMan.exists("windField")) {
             this._windNode = NodeFactory.create("DisplayWindField", {id: "windField"});
+        }
+
+        // Street View pano is created lazily (not part of the sitch graph), so it isn't
+        // recreated by the standard mod loop. Restore it explicitly — syncs the menu params
+        // and re-fetches the image — then drop the mod so the loop doesn't warn about a
+        // "missing" node (the restore is a no-op in serverless builds where the menu is absent).
+        if (mods.streetViewPano) {
+            restoreStreetViewPanoFromMod(mods.streetViewPano);
+            delete mods.streetViewPano;
         }
 
         const deprecatedIds = {

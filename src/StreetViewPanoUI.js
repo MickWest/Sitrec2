@@ -9,7 +9,6 @@
 import {guiMenus, NodeMan, setRenderOne} from "./Globals";
 import {CNodeStreetViewPano} from "./nodes/CNodeStreetViewPano";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
-import {elevationAtLL} from "./threeExt";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 
 let svFolder = null;
@@ -25,16 +24,17 @@ const params = {
     zoom: 3,
     radius: 5000,
     headingOffset: 0,
+    elevationOffset: 0,
     opacity: 1.0,
     visible: true,
     status: "Not loaded",
 };
 
-// NOTE (prototype limitation): the pano node is created lazily on Fetch with a fixed id and
-// is NOT part of the sitch graph, so it is not persisted in saved sitches — reloading a sitch
-// does not restore the panorama (the user re-fetches). To make it persistent, give the node
-// modSerialize/modDeserialize (lat/lon/alt/zoom/heading/radius/opacity) and recreate it with
-// autoFetch on deserialize.
+// Persistence: the pano node is created lazily on Fetch with a fixed id and is NOT part of the
+// sitch graph, but it serializes its location + tuning via simpleSerials (see CNodeStreetViewPano),
+// so a saved sitch stores a `streetViewPano` mod. On load, deserializeMods() routes that mod to
+// restoreStreetViewPanoFromMod() below, which syncs the menu params and re-fetches the image (the
+// stitched panorama itself is not stored — it is re-resolved/re-fetched from its lat/lon).
 function getNode(create = false) {
     if (NodeMan.exists(PANO_ID)) return NodeMan.get(PANO_ID);
     if (!create) return null;
@@ -64,6 +64,7 @@ function fetchPano() {
     node.zoom = params.zoom;
     node.radius = params.radius;
     node.headingOffsetDeg = params.headingOffset;
+    node.elevationOffsetDeg = params.elevationOffset;
     node.opacity = params.opacity;
     node.onStatus = (n) => { params.status = n.status; statusController?.updateDisplay(); };
     node.show(params.visible);
@@ -83,24 +84,25 @@ function centerCameraOnPano() {
     }
     const fixed = NodeMan.get("fixedCameraPosition", true);
     if (fixed && typeof fixed.setLLA === "function") {
-        // center.alt is HAE (height above the ellipsoid). fixedCameraPosition stores its
-        // altitude in a mode-dependent datum: in AGL mode _LLA[2] is height ABOVE TERRAIN
-        // (the recalc cascade adds the ground back), otherwise it is MSL (the cascade adds
-        // the geoid offset to get HAE). Passing the raw HAE altitude straight through
-        // double-counts the ground in AGL mode — the camera ends up ~groundLevel too high
-        // (e.g. ~1.3 km up over the Mexican highlands). Convert to the node's datum so the
-        // camera lands at the pano's actual height either way.
-        let alt = center.alt;
+        // Pin the observer to a STABLE absolute altitude. The look camera is usually in AGL
+        // mode, where its world height rides the terrain: _LLA[2] is height ABOVE GROUND and
+        // the recalc cascade adds the ground back EVERY time the terrain changes. Google's 3D
+        // tiles refine their ground for a few seconds after centring, so an AGL camera keeps
+        // drifting vertically — and the panorama (a fixed backdrop snapped once) silently goes
+        // out of alignment ("it was right, then went back"). Force NON-AGL so _LLA[2] is an
+        // absolute MSL altitude the terrain can't move: the camera lands at the pano's captured
+        // height and stays put, and the sphere snap below can't go stale.
         if (fixed.agl) {
-            const groundHAE = elevationAtLL(center.lat, center.lon, true); // terrain ground, HAE
-            if (isFinite(groundHAE)) alt = center.alt - groundHAE;         // height above ground
-        } else {
-            alt = center.alt - meanSeaLevelOffset(center.lat, center.lon); // HAE -> MSL
+            fixed.agl = false;
+            fixed.aglController?.updateDisplay?.();
         }
+        // center.alt is HAE; non-AGL _LLA[2] is MSL, so remove the geoid offset.
+        const alt = center.alt - meanSeaLevelOffset(center.lat, center.lon); // HAE -> MSL
         // fixedCameraPosition is the look camera's "from" position; setLLA cascades so the
         // controller-driven camera actually moves (a direct camera.position write is clobbered).
         fixed.setLLA(center.lat, center.lon, alt);
-        // Snap the sphere exactly onto the camera's resulting point => zero parallax.
+        // Snap the sphere exactly onto the camera's resulting point => zero parallax. Safe now
+        // that the camera is non-AGL: no deferred elevationChanged event will move it afterward.
         if (fixed.ecef) node.setCenterECEF(fixed.ecef.clone());
     } else {
         // No fixed-position node (free camera) — teleport directly.
@@ -108,6 +110,25 @@ function centerCameraOnPano() {
         if (cam && cam.camera && node.mesh) cam.camera.position.copy(node.mesh.position);
     }
     setRenderOne(true);
+}
+
+// Restore a saved panorama from its serialized mod (called from deserializeMods on sitch load).
+// The node's simpleSerials hold the location + tuning; we copy them into the menu params and
+// re-fetch, which recreates the node (wiring its status callback) and reloads the stitched image.
+// Guarded so it is a no-op in serverless/desktop builds, where the menu (and PHP stitcher) is absent.
+export function restoreStreetViewPanoFromMod(m) {
+    if (!svFolder || !m) return;
+    if (m.lat !== undefined) params.lat = m.lat;
+    if (m.lon !== undefined) params.lon = m.lon;
+    if (m.alt !== undefined) params.alt = m.alt;
+    if (m.zoom !== undefined) params.zoom = m.zoom;
+    if (m.radius !== undefined) params.radius = m.radius;
+    if (m.headingOffsetDeg !== undefined) params.headingOffset = m.headingOffsetDeg;
+    if (m.elevationOffsetDeg !== undefined) params.elevationOffset = m.elevationOffsetDeg;
+    if (m.opacity !== undefined) params.opacity = m.opacity;
+    if (m.visible !== undefined) params.visible = m.visible;
+    svFolder.controllersRecursive().forEach(c => c.updateDisplay());
+    fetchPano();
 }
 
 export function setupStreetViewPanoMenu() {
@@ -155,6 +176,10 @@ export function setupStreetViewPanoMenu() {
     svFolder.add(params, "headingOffset", -180, 180, 0.5).name("Heading Offset°")
         .tooltip("Calibration rotation added to the pano's metadata heading, in case the imagery is rotated")
         .onChange(v => { getNode()?.setHeadingOffset(v); });
+
+    svFolder.add(params, "elevationOffset", -20, 20, 0.1).name("Elevation Offset°")
+        .tooltip("Fine-tune the panorama's vertical angle (positive raises it). The metadata tilt (capture-point slope) is corrected automatically; use this to trim any residual offset from the 3D scene.")
+        .onChange(v => { getNode()?.setElevationOffset(v); });
 
     svFolder.add(params, "radius", 100, 50000, 100).name("Sphere Radius (m)")
         .tooltip("Radius of the background sphere")

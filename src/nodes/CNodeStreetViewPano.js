@@ -39,6 +39,7 @@ export class CNodeStreetViewPano extends CNode3DGroup {
         this.zoom = v.zoom ?? 3;                       // stitcher zoom (0..5, clamped per pano)
         this.radius = v.radius ?? 5000;               // sphere radius, metres
         this.headingOffsetDeg = v.headingOffsetDeg ?? 0; // calibration on top of metadata heading
+        this.elevationOffsetDeg = v.elevationOffsetDeg ?? 0; // calibration on top of the metadata tilt
         this.opacity = v.opacity ?? 1.0;
         this.mirror = v.mirror ?? true;               // flip texture horizontally for inside view
 
@@ -47,6 +48,14 @@ export class CNodeStreetViewPano extends CNode3DGroup {
         this.panoLat = null;
         this.panoLon = null;
         this.heading = 0;
+        // Google reports the capture pose in the metadata: `tilt` is the angle (from the
+        // panorama's south pole) at which the true horizon sits — 90° means the horizon is
+        // already on the image's centre row, anything else means the car was pitched (e.g. on
+        // a sloped street), so the horizon is (tilt-90)° off centre and the dome must be
+        // pitched to compensate. `roll` is already baked out of the published tiles (it is the
+        // rotation Google applied to LEVEL the horizon), so we keep it only for reference.
+        this.tilt = 90;
+        this.roll = 0;
         this.copyright = "";
         this.date = null;
 
@@ -56,6 +65,12 @@ export class CNodeStreetViewPano extends CNode3DGroup {
 
         this._disposed = false;
         this.fetchGen = 0;                            // guards against superseded / post-dispose fetches
+
+        // Persist the location + tuning so a saved sitch can recreate the pano on load (the
+        // stitched image itself is not stored — it is re-fetched). The texture/metadata are
+        // restored by re-fetching in the load hook (see StreetViewPanoUI.restoreStreetViewPanoFromMod).
+        this.addSimpleSerials(["lat", "lon", "alt", "zoom", "radius",
+            "headingOffsetDeg", "elevationOffsetDeg", "opacity"]);
 
         if (v.autoFetch) this.fetchPano();
     }
@@ -83,6 +98,8 @@ export class CNodeStreetViewPano extends CNode3DGroup {
                 if (meta.status !== "OK") { this.setStatus("Error: " + (meta.error || "metadata")); return; }
                 this.panoId = meta.panoId;
                 this.heading = meta.heading ?? 0;
+                this.tilt = (meta.tilt != null) ? meta.tilt : 90;
+                this.roll = meta.roll ?? 0;
                 this.copyright = meta.copyright ?? "";
                 this.date = meta.date;
                 this.panoLat = (meta.lat != null) ? meta.lat : lat;   // snapped capture location
@@ -141,7 +158,10 @@ export class CNodeStreetViewPano extends CNode3DGroup {
     }
 
     // Centre the sphere at the pano's ECEF point and rotate so the texture centre column
-    // faces the metadata heading (compass bearing, clockwise from north), plus calibration.
+    // faces the metadata heading (compass bearing, clockwise from north) and the imagery's
+    // horizon sits on the local horizontal — applying the metadata tilt so a pano captured on
+    // a sloped street is no longer vertically offset from the 3D scene. Both have a tunable
+    // calibration offset on top (headingOffsetDeg / elevationOffsetDeg).
     orientMesh(mesh) {
         const lat = (this.panoLat != null) ? this.panoLat : this.lat;
         const lon = (this.panoLon != null) ? this.panoLon : this.lon;
@@ -156,10 +176,24 @@ export class CNodeStreetViewPano extends CNode3DGroup {
         const forward = north.clone().multiplyScalar(Math.cos(h))
             .add(east.clone().multiplyScalar(Math.sin(h))).normalize();
 
-        // Local +X (equirectangular centre column) -> forward; +Y -> up.
-        const xAxis = forward;
-        const yAxis = up.clone();
-        const zAxis = new Vector3().crossVectors(xAxis, yAxis).normalize();
+        // Heading-only basis: local +X (equirectangular centre column) -> forward; +Y -> up.
+        let xAxis = forward;
+        let yAxis = up.clone();
+        let zAxis = new Vector3().crossVectors(xAxis, yAxis).normalize(); // "right" (east-ish)
+
+        // Pitch the dome about its right axis so the imagery horizon lands on the true horizon.
+        // In this basis a POSITIVE angle `a` rotates the texture DOWN on screen (verified against
+        // the 3D scene). Google's `tilt` puts the horizon (tilt-90)° ABOVE the texture centre row,
+        // so the texture sits that much too high and we pitch it DOWN by +(tilt-90). The manual
+        // elevationOffsetDeg trims on top, with positive RAISING the dome (subtracted from a).
+        // Rotating in the right-axis plane:
+        //   forward' = forward*cos a + up*sin a,   up' = up*cos a - forward*sin a
+        const a = MathUtils.degToRad((this.tilt - 90) - this.elevationOffsetDeg);
+        const ca = Math.cos(a), sa = Math.sin(a);
+        xAxis = forward.clone().multiplyScalar(ca).add(up.clone().multiplyScalar(sa)).normalize();
+        yAxis = up.clone().multiplyScalar(ca).add(forward.clone().multiplyScalar(-sa)).normalize();
+        zAxis = new Vector3().crossVectors(xAxis, yAxis).normalize();
+
         const m = new Matrix4().makeBasis(xAxis, yAxis, zAxis);
 
         mesh.quaternion.setFromRotationMatrix(m);
@@ -169,6 +203,11 @@ export class CNodeStreetViewPano extends CNode3DGroup {
     // ---- live UI setters ----
     setHeadingOffset(deg) {
         this.headingOffsetDeg = deg;
+        if (this.mesh) { this.orientMesh(this.mesh); setRenderOne(true); }
+    }
+
+    setElevationOffset(deg) {
+        this.elevationOffsetDeg = deg;
         if (this.mesh) { this.orientMesh(this.mesh); setRenderOne(true); }
     }
 
