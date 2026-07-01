@@ -73,7 +73,7 @@ import {findColumn, stripDuplicateTimes} from "./ParseUtils";
 import {isConsole, isLocal, isServerless, SITREC_APP, SITREC_DOMAIN, SITREC_SERVER} from "./configUtils";
 import {TSParser} from "./TSParser";
 import {NITFParser} from "./NITFParser";
-import {showError, showErrorOnce} from "./showError";
+import {showError, showErrorOnce, showConfirm} from "./showError";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {projectedBoundsToWGS84} from "./proj4Loader";
@@ -514,9 +514,10 @@ export class CFileManager extends CManager {
 
             if (this.isDesktopLocalFsAvailable()) {
                 const normalized = this.normalizeWorkingFolderRelativePath(assetPath) || assetPath;
-                const wantsSelection = confirm(
+                const wantsSelection = await showConfirm(
                     `This imported sitch references local file "${normalized}", but no Local Sitch Folder is selected.\n\n` +
-                    "Select that folder now?"
+                    "Select that folder now?",
+                    {title: "Local Sitch Folder", yesLabel: "Select Folder", noLabel: "Cancel"}
                 );
                 if (!wantsSelection) {
                     this.showLocalFolderRequiredForImportedAsset(normalized);
@@ -538,9 +539,10 @@ export class CFileManager extends CManager {
             }
 
             const normalized = this.normalizeWorkingFolderRelativePath(assetPath) || assetPath;
-            const wantsSelection = confirm(
+            const wantsSelection = await showConfirm(
                 `This imported sitch references local file "${normalized}", but no Local Sitch Folder is selected.\n\n` +
-                "Select that folder now?"
+                "Select that folder now?",
+                {title: "Local Sitch Folder", yesLabel: "Select Folder", noLabel: "Cancel"}
             );
             if (!wantsSelection) {
                 this.showLocalFolderRequiredForImportedAsset(normalized);
@@ -864,10 +866,10 @@ export class CFileManager extends CManager {
         }
         const total = sitchNames.length;
         if (total === 0) {
-            alert("No sitches to refresh (all are labeled Deleted).");
+            showError("No sitches to refresh (all are labeled Deleted).");
             return;
         }
-        if (!confirm(`Refresh thumbnails for ${total} sitch(es)?\n\nThis will load each one, render it, and upload a new screenshot.\n\nContinue?`)) {
+        if (!await showConfirm(`Refresh thumbnails for ${total} sitch(es)?\n\nThis will load each one, render it, and upload a new screenshot.\n\nContinue?`, {title: "Refresh Thumbnails"})) {
             return;
         }
 
@@ -1056,9 +1058,9 @@ export class CFileManager extends CManager {
      * Updates the GUI dropdowns to remove the deleted entry.
      * @param {string} value - The name of the sitch to delete
      */
-    deleteSitch(value) {
+    async deleteSitch(value) {
         // get confirmation from the user
-        if (!confirm("Are you sure you want to delete " + value + " from the server?")) {
+        if (!await showConfirm("Are you sure you want to delete " + value + " from the server?", {title: "Delete Sitch", yesLabel: "Delete", noLabel: "Cancel"})) {
             return;
         }
 
@@ -1729,7 +1731,7 @@ export class CFileManager extends CManager {
         inputElement.type = 'file';
         
         // Allow multiple file types including videos, audio and images for better mobile support
-        inputElement.accept = 'video/*,audio/*,image/*,.kml,.kmz,.csv,.json,.geojson,.sitch,.txt,.xml,.srt,.ts,.m2ts,.mts,.zip,.mp3,.m4a,.aac,.wav,.ogg,.flac,.webm,.aif,.aiff,.caf';
+        inputElement.accept = 'video/*,audio/*,image/*,.heic,.heif,.jp2,.j2k,.kml,.kmz,.csv,.json,.geojson,.sitch,.txt,.xml,.srt,.ts,.m2ts,.mts,.zip,.mp3,.m4a,.aac,.wav,.ogg,.flac,.webm,.aif,.aiff,.caf';
         
         // Allow multiple files
         inputElement.multiple = true;

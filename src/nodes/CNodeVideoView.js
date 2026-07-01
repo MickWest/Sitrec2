@@ -30,6 +30,7 @@
  */
 
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
+import {showChoice} from "../showError";
 import {par} from "../par";
 import {quickToggle} from "../KeyBoardHandler";
 import {CustomManager, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
@@ -47,7 +48,7 @@ import {EventManager} from "../CEventManager";
 import {getFlowAlignRotation} from "../FlowAlignment";
 import {VideoLoadingManager} from "../CVideoLoadingManager";
 import {updateSitFrames} from "../UpdateSitFrames";
-import {applyImportedImageMetadata, extractJPEGImportMetadata} from "../EXIFUtils";
+import {applyImportedImageMetadata, extractJPEGImportMetadata, stripImageRotationMetadata} from "../EXIFUtils";
 import {EXIFInfoPanel} from "../EXIFInfoPanel";
 import {isResolvableSitrecReference, resolveURLForFetch} from "../SitrecObjectResolver";
 import {t} from "../i18n";
@@ -89,8 +90,12 @@ function isDecodedImage(img) {
 // loadVideoFromEntry restore path already uses, so callers that only have bytes
 // (or a stale/undecoded FileManager entry) can still get a guaranteed-ready image.
 function decodeImageFromBytes(bytes, fileName) {
+    const ext = (fileName.split('.').pop() || '').toLowerCase();
+    // HEIC/HEIF can't be decoded by new Image() outside Safari — route through libheif.
+    if (ext === 'heic' || ext === 'heif') {
+        return import("../HEICUtils").then(({decodeHEICToImage}) => decodeHEICToImage(bytes));
+    }
     return new Promise((resolve, reject) => {
-        const ext = (fileName.split('.').pop() || '').toLowerCase();
         const mimeType = ext === 'png' ? 'image/png' :
             (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' :
             ext === 'gif' ? 'image/gif' :
@@ -521,17 +526,22 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         // Check if it's an image file — load as single-frame pseudo-video
         const fileExt = getFileExtension(fileName);
-        if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(fileExt)) {
+        if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic', 'heif'].includes(fileExt)) {
             console.log(`[VideoNew] Detected image file for video[${videoIndex}]`);
             const { FileManager } = require("../Globals");
             FileManager.loadAsset(fileName).then(async (result) => {
                 const fileEntry = FileManager.list[fileName];
-                const importMetadata = fileEntry?.original
+                let importMetadata = fileEntry?.original
                     ? await extractJPEGImportMetadata(fileEntry.original, fileName).catch(err => {
                         console.warn(`[EXIF] Failed to parse metadata for ${fileName}:`, err);
                         return null;
                     })
                     : null;
+                // HEIC pixels are decoded upright by libheif (irot applied), so drop the
+                // EXIF rotation to avoid double-rotating on this restore-from-save path.
+                if (fileExt === 'heic' || fileExt === 'heif') {
+                    importMetadata = stripImageRotationMetadata(importMetadata);
+                }
                 // result.parsed is normally the decoded image (the FileManager entry's
                 // .data), but under load contention loadAsset can resolve from a list
                 // entry whose .data isn't populated yet, handing us an undefined image —
@@ -1585,14 +1595,36 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             .name(t("videoView.setCameraToExifGps.label"));
     }
 
+    // Ask the user what to do when media is dropped/imported while a video or
+    // image is already loaded. Returns "add", "replace", or "cancel" (cancel is
+    // also returned on Escape / backdrop dismissal). Uses the shared custom
+    // showChoice dialog rather than a native confirm() (which blocks the main
+    // thread and stalls automation).
     async promptAddOrReplace() {
-        return new Promise((resolve) => {
-            const result = confirm(
-                "A video/image is already loaded.\n\n" +
-                "Click OK to ADD this as an additional video/image.\n" +
-                "Click Cancel to REPLACE the current video/image."
-            );
-            resolve(result ? "add" : "replace");
+        return showChoice("A video or image is already loaded. What would you like to do with the new one?", {
+            title: "Media Already Loaded",
+            cancelValue: "cancel",
+            options: [
+                {
+                    label: "Replace",
+                    description: "Remove the current video/image and use the new one instead.",
+                    value: "replace",
+                    color: "#b8860b",
+                },
+                {
+                    label: "Add",
+                    description: "Keep both — switch between them in the Video view's selector.",
+                    value: "add",
+                    primary: true,
+                    color: "#388e3c",
+                },
+                {
+                    label: "Cancel",
+                    description: "Don't import the new video/image.",
+                    value: "cancel",
+                    cancel: true,
+                },
+            ],
         });
     }
 

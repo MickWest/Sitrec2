@@ -7,6 +7,7 @@
  * - Load overlay textures from local files, URLs, and Sitrec object references.
  */
 import {CNode3DGroup} from "./CNode3DGroup";
+import {showConfirm} from "../showError";
 import {
     BufferGeometry,
     CanvasTexture,
@@ -1388,8 +1389,8 @@ export class CNodeGroundOverlay extends CNode3DGroup {
     /**
      * Delete this overlay with confirmation and undo support
      */
-    deleteOverlay() {
-        if (confirm(`Delete overlay "${this.name}"?`)) {
+    async deleteOverlay() {
+        if (await showConfirm(`Delete overlay "${this.name}"?`, {title: "Delete Overlay"})) {
             if (UndoManager) {
                 const overlayState = this.serialize();
                 const overlayID = this.overlayID;

@@ -138,7 +138,7 @@ import {addScriptedVideoMenu} from "./CScriptedVideo";
 import {addLongExposureMenu} from "./LongExposure";
 import {QuadTreeTile} from "./QuadTreeTile";
 import {initI18n, t} from "./i18n";
-import {showError} from "./showError";
+import {showError, showConfirm} from "./showError";
 import {destroyGlobalProfiler, globalProfiler, initGlobalProfiler} from "./VisualProfiler";
 import {fileSystemFetch} from "./fileSystemFetch";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
@@ -248,7 +248,7 @@ if (typeof window !== 'undefined') {
 
     fetch('build-version.txt', { cache: 'no-store' })
         .then(r => r.ok ? r.text() : null)
-        .then(serverVersion => {
+        .then(async serverVersion => {
             if (!serverVersion) return;
             const server = serverVersion.trim();
             const running = process.env.BUILD_VERSION_STRING;
@@ -257,11 +257,11 @@ if (typeof window !== 'undefined') {
             if (!isNewerVersion(server, running)) return;
             // When MCP bridge is connected, skip the dialog (just log the warning)
             if (window._mcpDebug) return;
-            if (confirm("A newer version of Sitrec is available.\n\n"
+            if (await showConfirm("A newer version of Sitrec is available.\n\n"
                 + "Running: " + running + "\n"
                 + "Available: " + server + "\n\n"
                 + "This may indicate a server caching issue — please report it to the admin.\n\n"
-                + "Reload to update?")) {
+                + "Reload to update?", {title: "Update Available", yesLabel: "Reload", noLabel: "Not Now"})) {
                 window.location.reload();
             }
         })

@@ -6,6 +6,7 @@
  * Right-click context menu with label checkboxes.
  */
 import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
+import {showConfirm} from "./showError";
 import {getEffectiveUserID, Globals, NodeMan, setNewSitchObject, SitchMan, withTestUser} from "./Globals";
 import {DragDropHandler} from "./DragDropHandler";
 import {extractWarGovPRCode} from "./WarGovUFOUtils";
@@ -1995,9 +1996,9 @@ export class CSitchBrowser {
         this.rebuildContent();
     }
 
-    _deleteLabel(labelName) {
+    async _deleteLabel(labelName) {
         if (this._isPermanentLabel(labelName)) return;
-        if (!confirm(`Delete label "${labelName}"? This will remove it from all sitches.`)) return;
+        if (!await showConfirm(`Delete label "${labelName}"? This will remove it from all sitches.`, {title: "Delete Label"})) return;
 
         this.userLabels = this.userLabels.filter(l => l.name !== labelName);
         const changed = [];

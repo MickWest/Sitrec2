@@ -544,8 +544,29 @@ function applyImportedImageViewLayout(filename = "", options = {}) {
     return applied;
 }
 
+/**
+ * Zero out the orientation/rotation fields in imported image metadata.
+ *
+ * Used for HEIC/HEIF: libheif applies the file's irot/imir orientation
+ * transform while decoding, so the decoded pixels are already upright. The
+ * EXIF Orientation tag describes that same rotation, so leaving it in the
+ * metadata would make the downstream image pipeline (CVideoImageData / ground
+ * overlay) rotate a second time. JPEG does NOT need this because new Image()
+ * ignores EXIF orientation, so its rotation is applied exactly once downstream.
+ */
+export function stripImageRotationMetadata(metadata) {
+    if (metadata?.image) {
+        metadata.image.rotationDegrees = 0;
+        metadata.image.mirroredX = false;
+        metadata.image.mirroredY = false;
+    }
+    return metadata;
+}
+
 export async function extractJPEGImportMetadata(arrayBuffer, filename = "") {
-    if (!/\.jpe?g$/i.test(filename)) {
+    // JPEG and HEIC/HEIF both carry EXIF/XMP that exifr can parse (GPS location,
+    // heading, focal length → FOV, orientation). Other formats are skipped.
+    if (!/\.(jpe?g|heic|heif)$/i.test(filename)) {
         return null;
     }
     // Geotagged-image import computes MSL/HAE altitudes via the EGM96 geoid in the

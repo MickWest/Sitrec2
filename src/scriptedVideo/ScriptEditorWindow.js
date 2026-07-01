@@ -15,6 +15,7 @@
 // timeline widget reads/writes it too.
 
 import {blockViewEvents, clampBelowMenuBar} from "../DragResizeUtils";
+import {showConfirm} from "../showError";
 import {CNodeView} from "../nodes/CNodeView";
 import {CustomManager, guiMenus, markSitchDirty, NodeMan, TrackManager} from "../Globals";
 import {VIEW_MAP} from "./ScriptCommands";
@@ -242,9 +243,9 @@ export class CScriptEditorWindow extends CNodeView {
                 close.textContent = "×";
                 close.title = "Close this script";
                 close.style.cssText = "opacity:0.6; padding:0 1px;";
-                close.addEventListener("click", (e) => {
+                close.addEventListener("click", async (e) => {
                     e.stopPropagation();
-                    if (confirm(`Close script "${t.name}"?`)) sv.removeTab(i);
+                    if (await showConfirm(`Close script "${t.name}"?`, {title: "Close Script"})) sv.removeTab(i);
                 });
                 tab.appendChild(close);
             }

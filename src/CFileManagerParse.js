@@ -560,15 +560,7 @@ export const parseMethods = {
             const buffer = fileManagerEntry.original;
             if (buffer) {
                 const ext = getFileExtension(filename).toLowerCase();
-                const mimeType = ext === 'png' ? 'image/png' :
-                                ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
-                                ext === 'gif' ? 'image/gif' :
-                                ext === 'webp' ? 'image/webp' : 'image/png';
-                const blob = new Blob([buffer], { type: mimeType });
-                const blobURL = URL.createObjectURL(blob);
-
-                const img = new Image();
-                img.onload = () => {
+                const finishRestore = (img) => {
                     if (NodeMan.exists("video")) {
                         const videoNode = NodeMan.get("video");
                         videoNode.makeImageVideo(filename, img, false, filename);
@@ -576,7 +568,22 @@ export const parseMethods = {
                         console.log(`Restored video image "${filename}" (${img.width}x${img.height})`);
                     }
                 };
-                img.src = blobURL;
+                if (ext === 'heic' || ext === 'heif') {
+                    // Browser can't decode HEIC natively — decode via libheif (upright).
+                    import("./HEICUtils").then(({decodeHEICToImage}) => decodeHEICToImage(buffer))
+                        .then(finishRestore)
+                        .catch(err => console.error(`Failed to restore HEIC video image "${filename}":`, err));
+                } else {
+                    const mimeType = ext === 'png' ? 'image/png' :
+                                    ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
+                                    ext === 'gif' ? 'image/gif' :
+                                    ext === 'webp' ? 'image/webp' : 'image/png';
+                    const blob = new Blob([buffer], { type: mimeType });
+                    const blobURL = URL.createObjectURL(blob);
+                    const img = new Image();
+                    img.onload = () => finishRestore(img);
+                    img.src = blobURL;
+                }
             }
             return false;
         }
@@ -585,13 +592,23 @@ export const parseMethods = {
             const buffer = fileManagerEntry.original;
             if (buffer && !fileManagerEntry.blobURL) {
                 const ext = getFileExtension(filename).toLowerCase();
-                const mimeType = ext === 'png' ? 'image/png' :
-                                ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
-                                ext === 'gif' ? 'image/gif' :
-                                ext === 'webp' ? 'image/webp' : 'image/png';
-                const blob = new Blob([buffer], { type: mimeType });
-                fileManagerEntry.blobURL = URL.createObjectURL(blob);
-                console.log(`Created blobURL for ground overlay image "${filename}"`);
+                if (ext === 'heic' || ext === 'heif') {
+                    // Browser can't decode HEIC natively — decode via libheif to a PNG blob URL.
+                    import("./HEICUtils").then(({decodeHEICToBlobURL}) => decodeHEICToBlobURL(buffer))
+                        .then(blobURL => {
+                            fileManagerEntry.blobURL = blobURL;
+                            console.log(`Created HEIC blobURL for ground overlay image "${filename}"`);
+                        })
+                        .catch(err => console.error(`Failed to restore HEIC ground overlay "${filename}":`, err));
+                } else {
+                    const mimeType = ext === 'png' ? 'image/png' :
+                                    ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
+                                    ext === 'gif' ? 'image/gif' :
+                                    ext === 'webp' ? 'image/webp' : 'image/png';
+                    const blob = new Blob([buffer], { type: mimeType });
+                    fileManagerEntry.blobURL = URL.createObjectURL(blob);
+                    console.log(`Created blobURL for ground overlay image "${filename}"`);
+                }
             }
             return false;
         }
@@ -1375,8 +1392,15 @@ export const parseMethods = {
                     dataType = "image";
                     break;
                 case "heic":
+                case "heif":
+                    // Browsers other than Safari can't decode image/heic natively, so
+                    // decode via libheif (heic-to) to a PNG-backed Image. libheif applies
+                    // the irot/imir orientation transform, so the result is upright.
                     dataType = "image";
-                    prom = createImageFromArrayBuffer(buffer, 'image/heic');
+                    prom = (async () => {
+                        const {decodeHEICToImage} = await import("./HEICUtils");
+                        return decodeHEICToImage(buffer);
+                    })();
                     break;
                 case "jp2":
                 case "j2k":

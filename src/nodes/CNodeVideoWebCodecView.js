@@ -145,6 +145,10 @@ export class CNodeVideoWebCodecView extends CNodeVideoView {
                 this.disposeAllVideos();
             } else {
                 const action = await this.promptAddOrReplace();
+                if (action === "cancel") {
+                    console.log("Video import cancelled by user: " + file.name);
+                    return;
+                }
                 if (action === "replace") {
                     this.disposeAllVideos();
                 } else {

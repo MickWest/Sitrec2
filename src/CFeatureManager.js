@@ -1,4 +1,5 @@
 import {CManager} from "./CManager";
+import {showConfirm} from "./showError";
 import {CNodeFeatureMarker} from "./nodes/CNodeLabels3D";
 import {Globals, NodeMan} from "./Globals";
 import {Vector3} from "three";
@@ -282,10 +283,10 @@ class CFeatureManager extends CManager {
         
         // Add Delete button
         const deleteObj = {
-            deleteFeature: () => {
+            deleteFeature: async () => {
                 // Confirm before deleting
                 const featureName = featureNode.text || 'this feature';
-                if (confirm(`Delete "${featureName}"?`)) {
+                if (await showConfirm(`Delete "${featureName}"?`, {title: "Delete Feature"})) {
                     // Remove the feature
                     this.removeFeature(featureNode.id);
                     // Close the menu

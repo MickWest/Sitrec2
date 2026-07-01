@@ -1,6 +1,7 @@
 // Creating timed data and then tracks from pre-parsed track files
 // should be agnostic to the source of the data (KML/ADSB, CSV, KLVS, etc)
 import {CNodeScale} from "./nodes/CNodeScale";
+import {showConfirm} from "./showError";
 import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {CNodeConstant} from "./nodes/CNode";
 import * as LAYER from "./LayerMasks";
@@ -656,8 +657,8 @@ class CTrackManager extends CManager {
 
 
                     const dummy = {
-                        removeTrack : () => {
-                            if (confirm(`Remove track "${shortName}"?`)) {
+                        removeTrack : async () => {
+                            if (await showConfirm(`Remove track "${shortName}"?`, {title: "Remove Track"})) {
                                 TrackManager.disposeRemove(trackID);
                             }
                         },
@@ -780,14 +781,21 @@ class CTrackManager extends CManager {
                         } else {
                             const maxG = trackDataNode.getMaxGForce();
                             if (maxG > trackDataNode.filterMaxG) {
-                                // In regression mode or MCP mode, auto-enable the filter to avoid
-                                // blocking headless Playwright or MCP with a confirm() dialog.
-                                const enable = Globals.regression || window._mcpDebug || confirm(
-                                    `Bad points in track data "${shortName}". Max g-force: ${maxG.toFixed(1)}g. Enable Bad Data Filter?`
-                                );
-                                if (enable) {
+                                const enableFilter = () => {
                                     trackDataNode.filterEnabled = true;
                                     trackDataNode.recalculateCascade();
+                                };
+                                // In regression mode or MCP mode, auto-enable the filter to avoid
+                                // blocking headless Playwright or MCP with a dialog.
+                                if (Globals.regression || window._mcpDebug) {
+                                    enableFilter();
+                                } else {
+                                    // Non-blocking custom dialog: enabling the filter later is safe
+                                    // (recalculateCascade re-derives from the same source data).
+                                    showConfirm(
+                                        `Bad points in track data "${shortName}". Max g-force: ${maxG.toFixed(1)}g. Enable Bad Data Filter?`,
+                                        {title: "Bad Data Filter"}
+                                    ).then(enable => { if (enable) enableFilter(); });
                                 }
                             }
                         }
@@ -1865,8 +1873,8 @@ class CTrackManager extends CManager {
 
         // Add delete button to the folder
         const dummy = {
-            deleteTrack: () => {
-                if (confirm(`Delete synthetic track "${shortName}"?`)) {
+            deleteTrack: async () => {
+                if (await showConfirm(`Delete synthetic track "${shortName}"?`, {title: "Delete Track"})) {
                     this.disposeSyntheticTrack(trackID);
                 }
             }

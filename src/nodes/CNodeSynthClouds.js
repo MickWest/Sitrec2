@@ -1,4 +1,5 @@
 import {CNode3DGroup} from "./CNode3DGroup";
+import {showConfirm} from "../showError";
 import {
     Color,
     DoubleSide,
@@ -1094,8 +1095,8 @@ export class CNodeSynthClouds extends CNode3DGroup {
     /**
      * Delete this cloud layer with confirmation and undo support
      */
-    deleteClouds() {
-        if (confirm(`Delete cloud layer "${this.name}"?`)) {
+    async deleteClouds() {
+        if (await showConfirm(`Delete cloud layer "${this.name}"?`, {title: "Delete Cloud Layer"})) {
             if (UndoManager) {
                 const cloudsState = this.serialize();
                 const cloudsID = this.cloudsID;

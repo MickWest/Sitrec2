@@ -65,7 +65,7 @@ import {FeatureManager} from "./CFeatureManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
-import {showError} from "./showError";
+import {showError, showConfirm} from "./showError";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
@@ -1594,12 +1594,12 @@ export class CCustomManager {
         const missing = sitchList.filter(entry => !entry[2] && !deletedNames.has(String(entry[0])));
         missing.sort((a, b) => new Date(b[1]) - new Date(a[1]));
         if (missing.length === 0) {
-            alert("All sitches already have screenshots!");
+            showError("All sitches already have screenshots!");
             return;
         }
 
         const total = missing.length;
-        if (!confirm(`Found ${total} sitch(es) without screenshots.\n\nThis will load each one, wait for it to render, then upload a screenshot.\n\nContinue?`)) {
+        if (!await showConfirm(`Found ${total} sitch(es) without screenshots.\n\nThis will load each one, wait for it to render, then upload a screenshot.\n\nContinue?`, {title: "Add Screenshots"})) {
             return;
         }
 

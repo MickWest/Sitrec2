@@ -44,7 +44,7 @@ import {FeatureManager} from "./CFeatureManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
-import {showError} from "./showError";
+import {showError, showConfirm} from "./showError";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
@@ -838,7 +838,7 @@ export const mirrorMethods = {
     /**
      * Demo function to show how to mirror different GUI menus
      */
-    showMirrorMenuDemo() {
+    async showMirrorMenuDemo() {
         // Create a modal dialog showing available menus and how to mirror them
         const availableMenus = Object.keys(guiMenus);
 
@@ -857,11 +857,11 @@ export const mirrorMethods = {
         message += "but in a draggable standalone window.\n\n";
         message += "Would you like to create a demo mirror of the 'view' menu?";
 
-        if (confirm(message)) {
+        if (await showConfirm(message, {title: "Mirror GUI Menu", yesLabel: "Create Demo Mirror", noLabel: "Cancel"})) {
             // Create a demo mirror of the view menu
             const demoMenu = this.mirrorGUIFolder("view", "Demo View Mirror", 500, 300);
             if (demoMenu) {
-                alert("Demo mirror created! You can drag it around and use all the controls.\nCheck the console for more details.");
+                showError("Demo mirror created! You can drag it around and use all the controls.\nCheck the console for more details.");
             }
         }
     },

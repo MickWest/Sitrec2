@@ -13,18 +13,22 @@ import {ViewMan} from "./CViewManager";
 import {quickFetch} from "./quickFetch";
 import {isResolvableSitrecReference, resolveURLForFetch} from "./SitrecObjectResolver";
 import {convertTiffBufferToBlobURL} from "./TIFFUtils";
-import {extractJPEGImportMetadata} from "./EXIFUtils";
+import {extractJPEGImportMetadata, stripImageRotationMetadata} from "./EXIFUtils";
 import {sniffFileType} from "./sniffFileType";
 import {isDvidsVideoPageURL, resolveDvidsVideoURL} from "./DVIDSUtils";
 import {isWarGovUFOPageURL, resolveWarGovUFOVideoURL} from "./WarGovUFOUtils";
 import {isMetabunkThreadURL, resolveMetabunkThreadVideoURL} from "./MetabunkThreadUtils";
-import {showError, showConfirm} from "./showError";
+import {showError, showConfirm, showChoice} from "./showError";
 
 // Image file extensions
-const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'jp2', 'j2k', 'jpx', 'jpc', 'j2c'];
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'jp2', 'j2k', 'jpx', 'jpc', 'j2c', 'heic', 'heif'];
+
+// Extensions that need software decoding (browser can't decode natively outside Safari).
+const HEIC_EXTENSIONS = ['heic', 'heif'];
 
 // Sniffer outputs that mean "this is an image" (matches IMAGE_EXTENSIONS shape).
 const SNIFFED_IMAGE_TYPES = new Set(['png', 'jpg', 'gif', 'webp', 'tif', 'jp2', 'heic']);
+
 
 // The DragDropHandler is more like the local client file handler, with rehosting, and parsing
 class CDragDropHandler {
@@ -49,112 +53,19 @@ class CDragDropHandler {
      * @param {string} filename - The name of the image file
      * @returns {Promise<string>} Resolves with 'video' or 'overlay', or rejects if cancelled
      */
-    showImageChoiceDialog(filename) {
-        return new Promise((resolve, reject) => {
-            // Create modal overlay
-            const overlay = document.createElement('div');
-            overlay.style.cssText = `
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: rgba(0, 0, 0, 0.5);
-                z-index: 10000;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            `;
-
-            // Create modal dialog
-            const modal = document.createElement('div');
-            modal.style.cssText = `
-                background: #2a2a2a;
-                border-radius: 8px;
-                padding: 20px;
-                min-width: 300px;
-                max-width: 400px;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-                font-family: Arial, sans-serif;
-                color: white;
-            `;
-
-            // Create title
-            const title = document.createElement('h3');
-            title.textContent = 'Import Image';
-            title.style.cssText = `
-                margin: 0 0 10px 0;
-                font-size: 18px;
-                color: #fff;
-            `;
-
-            // Create message
-            const message = document.createElement('p');
-            message.textContent = `How would you like to use "${filename}"?`;
-            message.style.cssText = `
-                margin: 0 0 20px 0;
-                font-size: 14px;
-                color: #ccc;
-            `;
-
-            // Button styles
-            const buttonStyle = `
-                padding: 10px 20px;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 14px;
-                margin: 5px;
-                width: calc(100% - 10px);
-            `;
-
-            // Create video image button
-            const videoButton = document.createElement('button');
-            videoButton.textContent = 'Video Image (static video source)';
-            videoButton.style.cssText = buttonStyle + `
-                background: #1976d2;
-                color: white;
-            `;
-            videoButton.onclick = () => {
-                document.body.removeChild(overlay);
-                resolve('video');
-            };
-
-            // Create overlay button
-            const overlayButton = document.createElement('button');
-            overlayButton.textContent = 'Ground Overlay (map overlay)';
-            overlayButton.style.cssText = buttonStyle + `
-                background: #388e3c;
-                color: white;
-            `;
-            overlayButton.onclick = () => {
-                document.body.removeChild(overlay);
-                resolve('overlay');
-            };
-
-            // Create cancel button
-            const cancelButton = document.createElement('button');
-            cancelButton.textContent = 'Cancel';
-            cancelButton.style.cssText = buttonStyle + `
-                background: #757575;
-                color: white;
-            `;
-            cancelButton.onclick = () => {
-                document.body.removeChild(overlay);
-                reject(new Error('User cancelled'));
-            };
-
-            // Assemble the modal
-            modal.appendChild(title);
-            modal.appendChild(message);
-            modal.appendChild(videoButton);
-            modal.appendChild(overlayButton);
-            modal.appendChild(cancelButton);
-            overlay.appendChild(modal);
-
-            // Add to document
-            document.body.appendChild(overlay);
+    async showImageChoiceDialog(filename) {
+        const choice = await showChoice(`How would you like to use "${filename}"?`, {
+            title: 'Import Image',
+            cancelValue: null,
+            options: [
+                {label: 'Video Image', description: 'Use as a static, single-frame video source.', value: 'video', primary: true, color: '#1976d2'},
+                {label: 'Ground Overlay', description: 'Place as an image overlay on the ground / map.', value: 'overlay', color: '#388e3c'},
+                {label: 'Cancel', description: "Don't import the image.", value: null, cancel: true},
+            ],
         });
+        // Preserve the original reject-on-cancel contract expected by callers.
+        if (choice === null) throw new Error('User cancelled');
+        return choice;
     }
 
     /**
@@ -163,69 +74,24 @@ class CDragDropHandler {
      * @param {string} filename - The name of the dropped video file
      * @returns {Promise<string>} Resolves 'secondView' | 'add' | 'replace', rejects if cancelled
      */
-    showSecondVideoChoiceDialog(filename) {
-        return new Promise((resolve, reject) => {
-            const overlay = document.createElement('div');
-            overlay.style.cssText = `
-                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                background: rgba(0, 0, 0, 0.5); z-index: 10000;
-                display: flex; align-items: center; justify-content: center;
-            `;
+    async showSecondVideoChoiceDialog(filename) {
+        const options = [];
+        // Only offer the side-by-side option when a secondary view exists.
+        if (NodeMan.exists("video2")) {
+            options.push({label: 'Second Video View', description: 'Show the new video side by side in the second view.', value: 'secondView', color: '#1976d2'});
+        }
+        options.push({label: 'Add to Video View', description: 'Keep both videos; switch between them with the selector.', value: 'add', primary: true, color: '#388e3c'});
+        options.push({label: 'Replace Video', description: "Replace the Video view's current video with the new one.", value: 'replace', color: '#b8860b'});
+        options.push({label: 'Cancel', description: "Don't import the video.", value: null, cancel: true});
 
-            const modal = document.createElement('div');
-            modal.style.cssText = `
-                background: #2a2a2a; border-radius: 8px; padding: 20px;
-                min-width: 320px; max-width: 420px;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-                font-family: Arial, sans-serif; color: white;
-            `;
-
-            const title = document.createElement('h3');
-            title.textContent = 'Second Video';
-            title.style.cssText = `margin: 0 0 10px 0; font-size: 18px; color: #fff;`;
-
-            const message = document.createElement('p');
-            message.textContent = `A video is already loaded. How would you like to use "${filename}"?`;
-            message.style.cssText = `margin: 0 0 20px 0; font-size: 14px; color: #ccc;`;
-
-            const buttonStyle = `
-                padding: 10px 20px; border: none; border-radius: 4px;
-                cursor: pointer; font-size: 14px; margin: 5px; width: calc(100% - 10px);
-            `;
-
-            const makeButton = (label, color, value) => {
-                const btn = document.createElement('button');
-                btn.textContent = label;
-                btn.style.cssText = buttonStyle + `background: ${color}; color: white;`;
-                btn.onclick = () => {
-                    document.body.removeChild(overlay);
-                    resolve(value);
-                };
-                return btn;
-            };
-
-            modal.appendChild(title);
-            modal.appendChild(message);
-
-            // Only offer the side-by-side option when a secondary view exists.
-            if (NodeMan.exists("video2")) {
-                modal.appendChild(makeButton('Second Video View (side by side)', '#1976d2', 'secondView'));
-            }
-            modal.appendChild(makeButton('Add to Video View (keep both, selectable)', '#388e3c', 'add'));
-            modal.appendChild(makeButton('Replace Video View video', '#b8860b', 'replace'));
-
-            const cancelButton = document.createElement('button');
-            cancelButton.textContent = 'Cancel';
-            cancelButton.style.cssText = buttonStyle + `background: #757575; color: white;`;
-            cancelButton.onclick = () => {
-                document.body.removeChild(overlay);
-                reject(new Error('User cancelled'));
-            };
-            modal.appendChild(cancelButton);
-
-            overlay.appendChild(modal);
-            document.body.appendChild(overlay);
+        const choice = await showChoice(`A video is already loaded. How would you like to use "${filename}"?`, {
+            title: 'Second Video',
+            cancelValue: null,
+            options,
         });
+        // Preserve the original reject-on-cancel contract expected by callers.
+        if (choice === null) throw new Error('User cancelled');
+        return choice;
     }
 
     /**
@@ -693,6 +559,10 @@ class CDragDropHandler {
                 videoNode.disposeAllVideos();
             } else {
                 const action = await videoNode.promptAddOrReplace();
+                if (action === "cancel") {
+                    console.log("Image import cancelled by user: " + file.name);
+                    return;
+                }
                 if (action === "replace") {
                     videoNode.disposeAllVideos();
                 }
@@ -718,6 +588,20 @@ class CDragDropHandler {
 
         const ext = file.name.split('.').pop().toLowerCase();
         let imageURL;
+
+        if (HEIC_EXTENSIONS.includes(ext)) {
+            // Browser can't decode HEIC natively (outside Safari) — decode via libheif.
+            // libheif already applies the irot/imir orientation transform, so the pixels
+            // are upright; strip the EXIF rotation so CVideoImageData doesn't rotate again.
+            const {decodeHEICToImage} = await import("./HEICUtils");
+            const img = await decodeHEICToImage(arrayBuffer);
+            stripImageRotationMetadata(importMetadata);
+            videoNode.makeImageVideo(file.name, img, false, file.name, importMetadata, true);
+            videoNode.imageFileID = file.name;
+            console.log(`Loaded HEIC image "${file.name}" as video source (${img.width}x${img.height})`);
+            markSitchDirty();
+            return;
+        }
 
         const j2kExtensions = ['jp2', 'j2k', 'jpx', 'jpc', 'j2c'];
         if (j2kExtensions.includes(ext)) {
@@ -771,6 +655,10 @@ class CDragDropHandler {
         const j2kExts = ['jp2', 'j2k', 'jpx', 'jpc', 'j2c'];
         if (ext === 'tif' || ext === 'tiff') {
             imageURL = await convertTiffBufferToBlobURL(arrayBuffer);
+        } else if (HEIC_EXTENSIONS.includes(ext)) {
+            // Browser can't decode HEIC natively (outside Safari) — decode via libheif to PNG.
+            const {decodeHEICToBlobURL} = await import("./HEICUtils");
+            imageURL = await decodeHEICToBlobURL(arrayBuffer);
         } else if (j2kExts.includes(ext)) {
             const {decodeJPEG2000ToBlobURL} = await import("./JPEG2000Utils");
             imageURL = await decodeJPEG2000ToBlobURL(arrayBuffer);
@@ -909,7 +797,7 @@ class CDragDropHandler {
         try {
             const urlObject = new URL(url);
             const pathExt = (urlObject.pathname.split('.').pop() || "").toLowerCase();
-            const looksLikeDirectAssetURL = /^(mp4|mov|webm|avi|m4a|mp3|h264|dad|ts|m2ts|mts|kml|kmz|csv|json|srt|txt|tle|glb|ply|png|jpe?g|gif|webp|tiff?)$/i.test(pathExt);
+            const looksLikeDirectAssetURL = /^(mp4|mov|webm|avi|m4a|mp3|h264|dad|ts|m2ts|mts|kml|kmz|csv|json|srt|txt|tle|glb|ply|png|jpe?g|gif|webp|tiff?|heic|heif|jp2|j2k|jpx|jpc|j2c)$/i.test(pathExt);
 
             if (isDvidsVideoPageURL(url)) {
                 updateProgress({status: "Resolving DVIDS video...", percent: 15, filename: url});

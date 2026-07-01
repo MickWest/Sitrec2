@@ -44,7 +44,7 @@ import {FeatureManager} from "./CFeatureManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
-import {showError} from "./showError";
+import {showError, showConfirm} from "./showError";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
@@ -405,14 +405,14 @@ export const subSitchMethods = {
         }
     },
 
-    deleteCurrentSubSitch() {
+    async deleteCurrentSubSitch() {
         if (this.subSitches.length <= 1) {
-            alert("Cannot delete the last Sub Sitch.");
+            showError("Cannot delete the last Sub Sitch.");
             return;
         }
 
         const currentSub = this.subSitches[this.currentSubIndex];
-        if (!confirm(`Delete "${currentSub.name}"?`)) return;
+        if (!await showConfirm(`Delete "${currentSub.name}"?`, {title: "Delete Sub Sitch"})) return;
 
         this.subSitches.splice(this.currentSubIndex, 1);
 

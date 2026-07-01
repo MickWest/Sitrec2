@@ -8,6 +8,7 @@
  */
 
 import {areArrayBuffersEqual, disableAllInput, enableAllInput, getDateTimeFilename, getFileExtension, isHttpOrHttps, updateDocumentTitle} from "./utils";
+import {showConfirm} from "./showError";
 import {CustomManager, Globals, NodeMan, Sit, withTestUser} from "./Globals";
 import {SITREC_SERVER, SITREC_UPLOAD} from "./configUtils";
 import {par} from "./par";
@@ -104,20 +105,22 @@ export const saveMethods = {
 
             const fileName = `${sitchName}.json`;
             const folderName = directoryHandle.name || "selected folder";
-            return confirm(
+            return await showConfirm(
                 `"${fileName}" already exists in "${folderName}".\n\n` +
                 "This save will overwrite the existing file.\n\n" +
-                "Continue?"
+                "Continue?",
+                {title: "Overwrite File", yesLabel: "Overwrite", noLabel: "Cancel"}
             );
         }
 
         const names = await this.getServerSaveNamesForOverwriteCheck();
         if (!names.includes(sitchName)) return true;
 
-        return confirm(
+        return await showConfirm(
             `A server sitch named "${sitchName}" already exists.\n\n` +
             "Saving with this name will create a new version and replace what opens as the latest version.\n\n" +
-            "Continue?"
+            "Continue?",
+            {title: "Overwrite Server Sitch", yesLabel: "Continue", noLabel: "Cancel"}
         );
     },
 

@@ -3,6 +3,7 @@
 // to arbitrary 3D geometry editing (like SketchUp/Blender)
 
 import {CNode3DGroup} from "./CNode3DGroup";
+import {showConfirm} from "../showError";
 import {
     BufferGeometry,
     CircleGeometry,
@@ -1633,8 +1634,8 @@ export class CNodeSynthBuilding extends CNode3DGroup {
     /**
      * Delete this building with confirmation and undo support
      */
-    deleteBuilding() {
-        if (confirm(`Delete building "${this.name}"?`)) {
+    async deleteBuilding() {
+        if (await showConfirm(`Delete building "${this.name}"?`, {title: "Delete Building"})) {
             if (UndoManager) {
                 const buildingState = this.serialize();
                 const buildingID = this.buildingID;
