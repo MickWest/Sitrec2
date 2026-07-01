@@ -22,6 +22,7 @@
     "test-builds-quick": "node test-all-builds.js --quick",
     "check-three-imports": "node scripts/check-three-imports.js",
     "local-compute-install": "tools/SitrecBridge/local-compute/install.sh",
+    "local-compute-install-win": "powershell -ExecutionPolicy Bypass -File tools/SitrecBridge/local-compute/install.ps1",
     "lint": "npx biome lint src/ --only=correctness/noUndeclaredVariables",
     "lint-fix": "npx biome lint src/ --only=correctness/noUndeclaredVariables --write",
     "lint-staged": "node scripts/lint-staged.js",

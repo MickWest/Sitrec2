@@ -12,21 +12,72 @@ over the source video and import the result back into the existing
 - Python `numpy`
 - `ffmpeg` / `ffprobe`
 
+## Before you start
+
+Local Compute is installed through a running SitrecBridge. If you have not yet
+downloaded the Bridge, loaded the Chrome extension, or configured your MCP
+client, follow the main SitrecBridge `README.md` in the downloaded Bridge
+folder first.
+
+The short version is:
+
+1. Download **MCP Bridge** from Sitrec's **Help -> Documentation** menu.
+2. Unzip `SitrecBridge.zip`.
+3. Load `SitrecBridge/extension/` in Chrome.
+4. Configure Claude Desktop or Claude Code to start SitrecBridge.
+5. Confirm the SitrecBridge extension popup shows green **MCP Servers** and
+   **Sitrec Tabs** indicators.
+
 ## Install or update
 
-Run:
+Once SitrecBridge is connected:
+
+1. Open Sitrec in Chrome.
+2. Click the SitrecBridge extension icon.
+3. Click **Install/Update Local Compute**.
+4. Wait for the popup to report that Local Compute dependencies are ready.
+
+That button asks the currently running Bridge to install or update the Python,
+OpenCV, NumPy, and ffmpeg/ffprobe dependencies used by Local Compute.
+
+If the Local Compute worker code itself has changed, update the Bridge package
+first:
+
+1. Download a fresh **MCP Bridge** zip from Sitrec's **Help -> Documentation**
+   menu.
+2. Unzip it, replacing the old Bridge folder or creating a new one.
+3. Restart your MCP client so it starts the new Bridge.
+4. Reload the Chrome extension from the new `SitrecBridge/extension/` folder.
+5. Click **Install/Update Local Compute** again.
+
+From a cloned Sitrec source tree on macOS or Linux, run:
+
+```bash
+npm run local-compute-install
+```
+
+or:
 
 ```bash
 tools/SitrecBridge/local-compute/install.sh
 ```
 
-Or use the SitrecBridge browser extension popup's
-`Install/Update Local Compute` button. That asks the selected running
-SitrecBridge process to run the same installer and streams the latest installer
-line into the popup.
+From a cloned Sitrec source tree on Windows, run:
+
+```powershell
+npm run local-compute-install-win
+```
+
+or:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/SitrecBridge/local-compute/install.ps1
+```
 
 Set `SITREC_LOCAL_COMPUTE_PYTHON=/path/to/python` before starting
-SitrecBridge if you want a specific Python environment.
+SitrecBridge if you want a specific Python environment. On Windows, the
+PowerShell installer uses `py -3` first when no explicit Python is set, then
+falls back to `python` or `python3`.
 
 Current platform status:
 
@@ -34,7 +85,7 @@ Current platform status:
 |----------|--------|
 | macOS | Supported by the bundled Bash installer. If `ffmpeg` is missing, install it with Homebrew (`brew install ffmpeg`) or another package manager. |
 | Linux | Supported when `python3`, `pip`, and `ffmpeg`/`ffprobe` are available. Install `ffmpeg` through your distribution package manager. |
-| Windows | The worker is portable Python/OpenCV, but the bundled one-click installer currently runs `bash`. Install Python/OpenCV/NumPy/ffmpeg manually, or use Git Bash/WSL until a PowerShell installer is added. |
+| Windows | Supported by the bundled PowerShell installer. Install Python 3 and ffmpeg first if they are not already available. The installer suggests `winget install --id Python.Python.3.12` and `winget install --id Gyan.FFmpeg` when dependencies are missing. |
 
 Useful environment variables:
 

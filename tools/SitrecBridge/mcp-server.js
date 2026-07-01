@@ -425,8 +425,8 @@ function runLocalComputeInstall(ws, msg) {
         return;
     }
 
-    const scriptPath = join(__dirname, "local-compute", "install.sh");
-    const proc = spawn("bash", [scriptPath], {
+    const installer = getLocalComputeInstaller();
+    const proc = spawn(installer.command, installer.args, {
         cwd: SITREC_CWD,
         stdio: ["ignore", "pipe", "pipe"],
         env: {...process.env, PYTHONUNBUFFERED: "1"},
@@ -479,7 +479,7 @@ function runLocalComputeInstall(ws, msg) {
     });
 
     proc.on("error", (err) => {
-        fail(`Failed to start Local Compute installer: ${err.message}`);
+        fail(`Failed to start Local Compute installer (${installer.command}): ${err.message}`);
     });
 
     proc.on("close", (code, signal) => {
@@ -513,6 +513,26 @@ function runLocalComputeInstall(ws, msg) {
             });
         }
     });
+}
+
+function getLocalComputeInstaller() {
+    if (process.platform === "win32") {
+        return {
+            command: "powershell.exe",
+            args: [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                join(__dirname, "local-compute", "install.ps1"),
+            ],
+        };
+    }
+
+    return {
+        command: "bash",
+        args: [join(__dirname, "local-compute", "install.sh")],
+    };
 }
 
 function setupExtensionConnection(ws, force = false) {

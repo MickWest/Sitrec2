@@ -120,7 +120,7 @@ const en = {
                 thirdPartyNotices: "Third-Party Notices",
                 thirdPartyNoticesTooltip: "Open-source license attributions for bundled third-party software",
                 downloadBridge: "Download MCP Bridge",
-                downloadBridgeTooltip: "Download the SitrecBridge MCP server + Chrome extension (zero dependencies, just needs Node.js)",
+                downloadBridgeTooltip: "Download the SitrecBridge MCP server, Chrome extension, and Local Compute worker",
             },
             externalLinks: {
                 title: "External Links",

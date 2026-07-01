@@ -24,104 +24,179 @@ page-bridge.js  (page main world)
 Sitrec globals  (NodeMan, Sit, par, Globals, etc.)
 ```
 
-## Quick Start (Production)
+## Quick Start For Metabunk.org Users
 
-**Prerequisites:** [Node.js](https://nodejs.org/) 18 or later.
+This path is for someone using Sitrec at `https://www.metabunk.org/sitrec`.
+You do **not** need to clone the Sitrec source code or run `npm install`.
 
-### 1. Download and unzip
+**You need:**
 
-Download [`SitrecBridge.zip`](https://www.metabunk.org/sitrec/tools/SitrecBridge/dist/SitrecBridge.zip) and unzip it anywhere.
+- Chrome or another Chromium browser that can load unpacked extensions
+- [Node.js](https://nodejs.org/) 18 or later
+- An MCP client such as Claude Desktop or Claude Code
+
+### 1. Download the Bridge
+
+1. Open Sitrec at `https://www.metabunk.org/sitrec`.
+2. Open **Help → Documentation → Download MCP Bridge**.
+3. Save `SitrecBridge.zip`.
+4. Unzip it somewhere you can find again, for example:
+   - macOS: `~/Downloads/SitrecBridge/`
+   - Windows: `C:\Users\<you>\Downloads\SitrecBridge\`
+   - Linux: `~/Downloads/SitrecBridge/`
+
+After unzipping, the folder should contain files such as:
+
+- `README.md`
+- `mcp-server.mjs`
+- `run.sh`
+- `run.bat`
+- `extension/`
+- `local-compute/`
 
 ### 2. Load the Chrome extension
 
-1. Open Chrome and go to `chrome://extensions/`
-2. Enable "Developer mode" (top right)
-3. Click "Load unpacked"
-4. Select the `SitrecBridge/extension/` folder
-5. The SitrecBridge extension should appear with a blue icon
+1. Open Chrome.
+2. Go to `chrome://extensions/`.
+3. Turn on **Developer mode** in the top right.
+4. Click **Load unpacked**.
+5. Select the unzipped `SitrecBridge/extension/` folder.
+6. Pin the SitrecBridge extension if you want quick access to the popup.
 
-### 3. Configure your MCP client
+Do not select the zip file. Chrome needs the unzipped `extension/` folder.
 
-**Claude Code** — add to `.mcp.json` in your project root:
+### 3. Tell your MCP client how to start SitrecBridge
+
+You normally do **not** double-click `mcp-server.mjs`. Your MCP client starts
+SitrecBridge for you using the command in its config.
+
+#### Claude Desktop
+
+1. Open Claude Desktop.
+2. Open **Settings → Developer → Edit Config**.
+3. Add a `sitrec-bridge` entry using the launcher script from your unzipped
+   Bridge folder.
+
+macOS / Linux example:
+
+```json
+{
+  "mcpServers": {
+    "sitrec-bridge": {
+      "command": "/Users/<you>/Downloads/SitrecBridge/run.sh"
+    }
+  }
+}
+```
+
+Windows example:
+
+```json
+{
+  "mcpServers": {
+    "sitrec-bridge": {
+      "command": "C:\\Users\\<you>\\Downloads\\SitrecBridge\\run.bat"
+    }
+  }
+}
+```
+
+Use your real folder path. On Windows JSON paths need doubled backslashes
+(`\\`), as shown above.
+
+4. Save the config file.
+5. Quit and restart Claude Desktop.
+
+Claude Desktop starts SitrecBridge in the background after restart. If the
+path is wrong, Claude will not be able to start the Bridge.
+
+> **Why use `run.sh` / `run.bat`?** Claude Desktop may not inherit your normal
+> terminal PATH. The launcher scripts help find Node.js reliably.
+
+#### Claude Code
+
+Add this to `.mcp.json` in the project folder where you use Claude Code:
 
 ```json
 {
   "mcpServers": {
     "sitrec-bridge": {
       "command": "node",
-      "args": ["/path/to/SitrecBridge/mcp-server.mjs"]
+      "args": ["/Users/<you>/Downloads/SitrecBridge/mcp-server.mjs"]
     }
   }
 }
 ```
 
-**Claude Desktop** — edit `claude_desktop_config.json`
-(Settings gear → Developer → Edit Config):
+Use the real path to your unzipped `mcp-server.mjs`. On Windows, use doubled
+backslashes in the JSON path.
 
-*macOS / Linux:*
-```json
-{
-  "mcpServers": {
-    "sitrec-bridge": {
-      "command": "/path/to/SitrecBridge/run.sh"
-    }
-  }
-}
-```
+### 4. Check that the Bridge is connected
 
-*Windows:*
-```json
-{
-  "mcpServers": {
-    "sitrec-bridge": {
-      "command": "/path/to/SitrecBridge/run.bat"
-    }
-  }
-}
-```
+1. Open Sitrec in Chrome, for example `https://www.metabunk.org/sitrec`.
+2. Click the SitrecBridge extension icon.
+3. The popup should show:
+   - a green **MCP Servers** indicator
+   - a green **Sitrec Tabs** indicator
+   - the current Sitrec tab routed to a local port such as `:9780`
 
-Replace `/path/to/SitrecBridge/` with the actual path where you unzipped the files.
-Then restart Claude Desktop.
+If either indicator is not green:
 
-> **Why `run.sh` instead of `node` directly?** Claude Desktop launches MCP
-> servers without sourcing your shell profile, so if you installed Node via
-> nvm, fnm, or Volta, the bare `node` command won't be found. The launcher
-> script locates Node automatically.
+- Make sure Claude Desktop or Claude Code is running.
+- Click **Reconnect** in the extension popup.
+- Check that the extension was loaded from the same Bridge folder you configured.
+- Check that the path in your MCP client config points to the unzipped Bridge.
 
-### 4. Use it
+### 5. Install or update Local Compute
 
-1. Open Sitrec in Chrome (e.g. `https://www.metabunk.org/sitrec`)
-2. Check the extension popup — both indicators should be green
-3. In Claude Code, the `sitrec_*` tools are now available
+Local Compute is optional. It lets Motion Analysis run a native Python/OpenCV
+worker through SitrecBridge, then import the result back into Sitrec's normal
+overlay, graph, panorama, stabilization, CSV export, and track-creation paths.
 
-### 5. Optional: Install Local Compute
+1. Make sure the Bridge is connected as described above.
+2. Open the SitrecBridge extension popup.
+3. Click **Install/Update Local Compute**.
+4. Wait for the popup to report that Local Compute dependencies are ready.
 
-Local Compute lets Sitrec send heavier browser workflows to the local
-SitrecBridge process. Motion Analysis uses it to run native Python/OpenCV over
-the source video, then imports the result back into Sitrec's normal overlay,
-graph, panorama, stabilization, CSV export, and track-creation paths.
-
-To install or update the local dependencies:
-
-1. Start SitrecBridge from your MCP client.
-2. Open a Sitrec tab in Chrome.
-3. Click the SitrecBridge extension icon.
-4. Click **Install/Update Local Compute**.
-
-The popup streams installer progress and reports completion. After that, Motion
+The button installs or updates the local Python/OpenCV/NumPy dependencies used
+by the Bridge folder you are currently running. After installation, Motion
 Analysis automatically tries Local Compute first and falls back to browser
 analysis if Local Compute is unavailable.
 
-Current platform status:
+Important update distinction:
+
+- To update the **Bridge code or Local Compute worker code**, download a fresh
+  MCP Bridge zip from **Help → Documentation → Download MCP Bridge**, unzip it,
+  restart your MCP client, and reload the Chrome extension from the new
+  `extension/` folder.
+- To update the **local Python/OpenCV/NumPy dependencies**, click
+  **Install/Update Local Compute** in the extension popup.
+
+### 6. Updating later
+
+When Sitrec offers a newer Bridge version:
+
+1. Download a fresh `SitrecBridge.zip` from **Help → Documentation →
+   Download MCP Bridge**.
+2. Unzip it, replacing the old Bridge folder or creating a new one.
+3. If the folder path changed, update your Claude Desktop or Claude Code MCP
+   config.
+4. Reload the Chrome extension from the new `SitrecBridge/extension/` folder.
+5. Restart your MCP client.
+6. Open the extension popup and click **Install/Update Local Compute** if you
+   use Motion Analysis acceleration.
+
+Current Local Compute platform status:
 
 | Platform | Status |
 |----------|--------|
 | macOS | Supported by the bundled installer (`python3`, `pip`, `ffmpeg`/`ffprobe`) |
 | Linux | Supported when `python3`, `pip`, and `ffmpeg`/`ffprobe` are available |
-| Windows | The worker is portable Python/OpenCV, but the bundled one-click installer is currently Bash-based. Install Python/OpenCV/NumPy/ffmpeg manually or use Git Bash/WSL until a PowerShell installer is added. |
+| Windows | Supported by the bundled PowerShell installer. Install Python 3 and ffmpeg first if they are not already available. The installer suggests `winget install --id Python.Python.3.12` and `winget install --id Gyan.FFmpeg` when dependencies are missing. |
 
 Set `SITREC_LOCAL_COMPUTE_PYTHON=/path/to/python` before starting SitrecBridge
-to use a specific Python environment.
+to use a specific Python environment. On Windows, the installer uses `py -3`
+first when no explicit Python is set, then falls back to `python` or `python3`.
 
 ## Available Tools
 
@@ -194,7 +269,7 @@ The Chrome extension scans ports 9780–9799 for MCP servers and opens a connect
 - Click **Install/Update Local Compute** in the SitrecBridge extension popup
 - Make sure `python3`, `pip`, `ffmpeg`, and `ffprobe` are available in the environment that starts SitrecBridge
 - If you use a virtual environment or non-default Python, set `SITREC_LOCAL_COMPUTE_PYTHON` before starting SitrecBridge
-- On Windows, install the dependencies manually or run the installer through Git Bash/WSL; the built-in one-click installer currently runs `bash`
+- On Windows, install Python 3 and ffmpeg, then restart the app that starts SitrecBridge so updated `PATH` entries are visible
 
 ## Development Setup
 
