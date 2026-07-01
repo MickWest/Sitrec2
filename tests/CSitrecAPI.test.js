@@ -495,3 +495,45 @@ describe('CSitrecAPI transient state classification', () => {
         )).toBe(true);
     });
 });
+
+describe('CSitrecAPI B1 llmCallable gating', () => {
+    // The JS-executing scripted-video functions must be withheld from the LLM and refused
+    // when a call is sourced from the chatbot, so indirect prompt injection can't reach ACE.
+    const DENIED = ['setScriptedVideoScript', 'previewScriptedVideo'];
+
+    test('getDocumentation() still exposes the scripted-video functions (trusted UI/MCP)', () => {
+        const doc = sitrecAPI.getDocumentation();
+        for (const fn of DENIED) {
+            expect(doc).toHaveProperty(fn);
+        }
+    });
+
+    test('getLLMDocumentation() omits the JS-executing functions', () => {
+        const doc = sitrecAPI.getLLMDocumentation();
+        for (const fn of DENIED) {
+            expect(doc).not.toHaveProperty(fn);
+        }
+        // A safe, non-executing entry is still advertised to the LLM.
+        expect(doc).toHaveProperty('stopScriptedVideo');
+    });
+
+    test('handleAPICall refuses a chat-sourced denied call without executing it', async () => {
+        const result = await sitrecAPI.handleAPICall(
+            {fn: 'setScriptedVideoScript', args: {script: 'window.__pwned = 1'}},
+            'chat'
+        );
+        expect(result.success).toBe(false);
+        expect(result.error).toMatch(/not callable from chat/i);
+        // The function body never ran, so it could not have executed the payload.
+        expect(window.__pwned).toBeUndefined();
+    });
+
+    test('handleAPICall allows the same call from a trusted (default) source', async () => {
+        // No scriptedVideo system is mocked, so the fn runs and returns its own guard error
+        // ("Scripting system not available") — proving the gate let it through to the body.
+        const result = await sitrecAPI.handleAPICall(
+            {fn: 'setScriptedVideoScript', args: {script: 'from(object, 3)'}}
+        );
+        expect(result.error ?? result.result?.error ?? '').not.toMatch(/not callable from chat/i);
+    });
+});

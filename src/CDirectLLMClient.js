@@ -88,6 +88,14 @@ const MENU_FUNCTION_NAMES = new Set([
     'setMenuValue', 'getMenuValue', 'executeMenuButton', 'listMenus', 'listMenuControls',
 ]);
 
+// SECURITY (B1): JS-executing API entries that must never be offered to the LLM. Callers
+// should already pass sitrecAPI.getLLMDocumentation() (which omits these), but re-deny here
+// so this builder is safe regardless of the doc it's handed. Keep in sync with the
+// CSitrecAPI entries tagged llmCallable:false and chatbot.php's $llmDenied.
+const LLM_DENIED_FUNCTION_NAMES = new Set([
+    'setScriptedVideoScript', 'previewScriptedVideo',
+]);
+
 function inferParamType(desc) {
     const d = desc.toLowerCase();
     if (d.includes('float') || d.includes('number')) return 'number';
@@ -103,6 +111,7 @@ export function buildTools(sitrecDoc, menuSummary) {
     // 1. Convert each non-menu API entry into an OpenAI function tool.
     for (const [fn, desc] of Object.entries(sitrecDoc || {})) {
         if (MENU_FUNCTION_NAMES.has(fn)) continue;
+        if (LLM_DENIED_FUNCTION_NAMES.has(fn)) continue;
 
         const tool = {
             type: 'function',

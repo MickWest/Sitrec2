@@ -34,7 +34,7 @@ import {CustomManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRender
 import {ViewMan} from "./CViewManager";
 import {clamp, smooth} from "./scriptedVideo/ScriptMath";
 import {VIEW_MAP, layoutForViewEvent, isSettingEvent} from "./scriptedVideo/ScriptCommands";
-import {runScriptJS} from "./scriptedVideo/ScriptJSRunner";
+import {runScriptViaWorker} from "./scriptedVideo/ScriptRunnerClient";
 import {sitrecAPI} from "./CSitrecAPI";
 import {prepareEvents, computeCamera, applyPoseToCam, poseFromCamNode} from "./scriptedVideo/ScriptCameraEngine";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
@@ -216,7 +216,10 @@ class CScriptedVideoManager {
         const seq = (this._parseSeq = (this._parseSeq || 0) + 1);
         // VideoOverlay is a dynamic pseudo-preset (look view sized to the witness
         // video's aspect, video stacked on top) resolved in _resolveLayout
-        const r = await runScriptJS(this.getScriptText(),
+        // runs the script in a sandboxed Worker (falls back in-process where no
+        // Worker is available); resolves as a macrotask, so callers must not read
+        // this.events/totalDuration until parse()'s promise settles.
+        const r = await runScriptViaWorker(this.getScriptText(),
             {viewPresets: {...((CustomManager && CustomManager.viewPresets) || {}), VideoOverlay: {}, photo: {}}});
         if (seq !== this._parseSeq) return this.parseErrors;
         // A half-typed JS line is a syntax error on every keystroke: keep showing
@@ -1038,8 +1041,9 @@ class CScriptedVideoManager {
         // initial parse so the timeline shows immediately (no prepare() here:
         // the scene/Sit may not exist yet at menu-build time — prepare() runs
         // on Parse/Preview/Render, once a sitch is loaded)
-        this.parse();
-        setTimeout(() => this.timeline.draw(), 0);
+        // Draw AFTER the parse resolves. parse() is now a Worker round-trip
+        // (a macrotask), so a setTimeout(0) would race it and draw an empty timeline.
+        this.parse().then(() => this.timeline.draw());
     }
 
     // -----------------------------------------------------------------------

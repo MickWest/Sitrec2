@@ -24,8 +24,11 @@
 // text; a literal inside a loop maps to all the events it produced.
 //
 // Guards: an API-call cap and a wall-clock cap abort runaway loops that call
-// the API. A while(true){} that never calls the API can still hang the page —
-// running this pass in a Worker is planned hardening, not yet done.
+// the API. A while(true){} that never calls the API can't be stopped from
+// inside — so this pass runs in a sandboxed Worker (ScriptRunnerWorker.js, via
+// ScriptRunnerClient.js), where the main thread enforces a hard timeout by
+// terminating the worker. runScriptJS itself stays pure and is also used
+// directly in-process as the no-Worker/crash fallback and by unit tests.
 
 import {COMMANDS, COMMAND_ALIASES, buildEvent} from "./ScriptCommands";
 import {desugarScript} from "./ScriptSugar";

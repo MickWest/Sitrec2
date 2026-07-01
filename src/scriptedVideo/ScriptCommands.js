@@ -463,6 +463,14 @@ export const COMMANDS = {
             if (!["boolean", "number", "string"].includes(typeof value)) {
                 return error(`set "${path}" — value must be true/false, a number, or an option string`);
             }
+            // menu is the only event field not already coerced to a primitive by
+            // buildEvent/finish. A script (incl. a prompt-injected one) could pass a
+            // function/object here — which would be non-structured-cloneable and throw
+            // DataCloneError when the parsed model is posted back from the runner Worker.
+            // Force it to string|null so the returned event is always cloneable.
+            if (menu !== null && typeof menu !== "string") {
+                return error(`"set" menu must be a string (or omitted for a plain control)`);
+            }
             return {menu, path, value, dur: 0};
         },
     },

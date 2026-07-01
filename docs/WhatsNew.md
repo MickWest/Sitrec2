@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.93.1 (2026-07-01)
+
+### Security
+- The AI assistant can no longer run the Scripted Video functions that execute a script, so a maliciously crafted prompt fed to the chatbot can no longer run arbitrary code in your session.
+- Scripted Video scripts now run in a locked-down sandbox with no access to the network, your stored data, or the page, and a watchdog stops any script that gets stuck in a loop. Scripted Video works exactly as before.
+
+---
+
 ## Version 2.93.0 (2026-06-30)
 
 ### New Features

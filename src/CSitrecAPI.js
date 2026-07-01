@@ -649,6 +649,12 @@ class CSitrecAPI {
             },
 
             setScriptedVideoScript: {
+                // SECURITY: the "script" is not a sandboxed DSL — its body is compiled with
+                // AsyncFunction and run in the page main world (see scriptedVideo/ScriptJSRunner.js).
+                // llmCallable:false withholds it from the chatbot tool surface and blocks it in
+                // handleAPICall when the caller is the LLM, closing the indirect-prompt-injection
+                // ACE path (B1). Trusted UI/MCP callers are unaffected.
+                llmCallable: false,
                 doc: "Set the active Scripting tab's cinematic camera script and parse it (use previewScriptedVideo to play it). DSL: one command per line; plain/await lines are sequential, '&' lines run concurrently, '#' comments, quote multi-word captions. Camera: from(target,secs,bearing,dist,elev) place absolutely, zoom(target,secs,dist), orbit(target,secs,deg,rise), track, rise(target,secs,m), fov(deg,secs), flyto(look,secs), wait/linger(secs). Layout/caption: view(name|'photo'|{layout}), text(\"cap\",secs), fade(view,secs,to). Settings/objects: set/show/hide a menu control OR a scene-object id. Targets: object, witness, a node id, or 'lat,lon,alt'.",
                 params: { script: "The full script text (string)" },
                 fn: (v) => {
@@ -664,6 +670,9 @@ class CSitrecAPI {
             },
 
             previewScriptedVideo: {
+                // SECURITY: executes the active script body (AsyncFunction, page main world).
+                // Gated alongside setScriptedVideoScript — see the note there. (B1)
+                llmCallable: false,
                 doc: "Start previewing the active Scripting script (the cinematic camera move), optionally from a given time in seconds. Use stopScriptedVideo to end.",
                 params: { at: "Start time in seconds (float, optional, defaults to 0)" },
                 fn: (v) => {
@@ -2893,7 +2902,20 @@ class CSitrecAPI {
     }
 
     getDocumentation() {
+        return this._documentationFor(() => true);
+    }
+
+    // LLM-facing documentation: the same as getDocumentation() but with entries flagged
+    // `llmCallable:false` removed, so JS-executing functions are never advertised to the
+    // chatbot's tool builder (client buildTools + server chatbot.php). This is the
+    // "advertise" half of the B1 ACE mitigation; the "enforce" half is in handleAPICall.
+    getLLMDocumentation() {
+        return this._documentationFor((value) => value.llmCallable !== false);
+    }
+
+    _documentationFor(predicate) {
         return Object.entries(this.api).reduce((acc, [key, value]) => {
+            if (!predicate(value)) return acc;
             let paramsString = Object.entries(value.params || {})
                 .map(([param, desc]) => `${param} (${desc})`)
                 .join(", ");
@@ -2933,11 +2955,19 @@ class CSitrecAPI {
         return coerced;
     }
 
-    async handleAPICall(call) {
+    // source: "ui" (default, trusted — UI buttons, MCP bridge, programmatic call())
+    //         or "chat" (untrusted — issued by the LLM/chatbot, subject to prompt injection).
+    // Chat calls are refused for any entry tagged llmCallable:false, so a guessed name can't
+    // reach a JS-executing function even though it was never advertised (B1 defense-in-depth).
+    async handleAPICall(call, source = "ui") {
         console.log("Handling API call:", call);
         const apiFn = this.api[call.fn];
         if (!apiFn) {
             return { success: false, error: `Unknown API function: ${call.fn}` };
+        }
+        if (source === "chat" && apiFn.llmCallable === false) {
+            console.warn(`Refusing chat-sourced call to non-LLM-callable function: ${call.fn}`);
+            return { success: false, fn: call.fn, error: `Function ${call.fn} is not callable from chat` };
         }
         try {
             const args = this._coerceArgs(call.args, apiFn.params);

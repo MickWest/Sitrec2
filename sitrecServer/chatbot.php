@@ -407,14 +407,24 @@ if (!$selectedProvider && !empty($aiModels)) {
 function buildToolsFromDoc($sitrecDoc, $menuSummary) {
     $tools = [];
     $addedNames = [];
-    
+
     // Menu function names that we'll add manually with better schemas
     $menuFunctions = ['setMenuValue', 'getMenuValue', 'executeMenuButton', 'listMenus', 'listMenuControls'];
-    
+
+    // SECURITY (B1): never advertise JS-executing functions to the LLM. The client already
+    // sends the filtered getLLMDocumentation(), but re-deny here so a tampered/legacy client
+    // sending the full doc still can't expose these. Keep in sync with the CSitrecAPI entries
+    // tagged llmCallable:false.
+    $llmDenied = ['setScriptedVideoScript', 'previewScriptedVideo'];
+
     // Parse sitrecDoc entries to extract function schemas
     foreach ($sitrecDoc as $fn => $desc) {
         // Skip menu functions - we'll add them with better schemas below
         if (in_array($fn, $menuFunctions)) {
+            continue;
+        }
+        // Skip functions that must never be callable from chat (JS execution).
+        if (in_array($fn, $llmDenied, true)) {
             continue;
         }
         $tool = [

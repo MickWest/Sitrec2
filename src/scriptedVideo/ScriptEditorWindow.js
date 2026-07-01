@@ -645,8 +645,13 @@ export class CScriptEditorWindow extends CNodeView {
         super.setVisible(visible);
         if (visible) {
             clampBelowMenuBar(this.div);     // never open off the top of the screen
-            this.sv?.parse?.();
-            setTimeout(() => { this.sv?.timeline?.draw?.(); this._renderBackdrop(); }, 0);
+            // Draw the timeline + error squiggles AFTER the parse resolves. parse()
+            // now runs the script in a Worker (a macrotask); a setTimeout(0) would
+            // race the reply and paint a stale/empty timeline on every open.
+            Promise.resolve(this.sv?.parse?.()).then(() => {
+                this.sv?.timeline?.draw?.();
+                this._renderBackdrop();
+            });
         }
     }
 

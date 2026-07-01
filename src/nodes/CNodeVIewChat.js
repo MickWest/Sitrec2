@@ -353,7 +353,7 @@ class CNodeViewChat extends CNodeViewText {
             const body = JSON.stringify({
                 history,
                 prompt: text,
-                sitrecDoc: sitrecAPI.getDocumentation(),
+                sitrecDoc: sitrecAPI.getLLMDocumentation(),
                 menuSummary: sitrecAPI.getMenuSummary(),
                 availableModels: Object.keys(ModelFiles),
                 availableDocs: availableDocs,
@@ -424,7 +424,9 @@ class CNodeViewChat extends CNodeViewText {
         const toolResults = [];
         let changesSerializedState = false;
         for (const call of calls) {
-            const result = sitrecAPI.handleAPICall(call);
+            // "chat" source: these calls came from the LLM, so llmCallable:false entries
+            // (e.g. the JS-executing scripted-video functions) are refused (B1).
+            const result = sitrecAPI.handleAPICall(call, "chat");
             toolResults.push({ fn: call.fn, args: call.args, result: result.result ?? result });
             if (sitrecAPI.callChangesSerializedState(call, result)) {
                 changesSerializedState = true;
