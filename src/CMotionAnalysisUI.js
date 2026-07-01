@@ -784,6 +784,10 @@ async function buildLocalMotionAnalysisRequest(videoData, aFrame, bFrame) {
         targetWidth: targetDimensions.width,
         targetHeight: targetDimensions.height,
         params: {...motionAnalyzer.params},
+        browserCvCapabilities: {
+            phaseCorrelate: typeof getCV()?.phaseCorrelate === "function",
+            findTransformECC: typeof getCV()?.findTransformECC === "function",
+        },
         maskData,
     };
 }
@@ -2558,6 +2562,147 @@ export function getMotionAnalysisOverlays() {
 
 export function getMotionAnalyzerForTesting() {
     return motionAnalyzer;
+}
+
+function roundForTesting(value, digits = 4) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    const scale = 10 ** digits;
+    return Math.round(n * scale) / scale;
+}
+
+function summarizeMotionAnalysisForTesting() {
+    if (!motionAnalyzer) return null;
+
+    const aFrame = Sit.aFrame || 0;
+    const bFrame = Sit.bFrame ?? (Sit.frames - 1);
+    const frames = [];
+    const duplicateFrames = [];
+
+    let completeCount = 0;
+    let goodCount = 0;
+    let syntheticCount = 0;
+    let adjacentFallbackCount = 0;
+    let dxSum = 0;
+    let dySum = 0;
+    let motionCount = 0;
+
+    for (let f = aFrame; f <= bFrame; f++) {
+        const cache = motionAnalyzer.resultCache.get(f);
+        const flow = cache?.flowData || {};
+        const consensus = flow.consensus || null;
+        const last = flow.lastSegmentConsensus || null;
+        const duplicateInfo = motionAnalyzer.duplicateFrameCache.get(f) || flow.duplicateInfo || null;
+        const duplicateFrame = !!(duplicateInfo?.isDuplicate || flow.duplicateFrame);
+        if (duplicateFrame) duplicateFrames.push(f);
+        if (cache && !cache.incomplete) completeCount++;
+        if (flow.isGoodFrame) goodCount++;
+        if (flow.syntheticFrame) syntheticCount++;
+        if (flow.adjacentFallbackFrame) adjacentFallbackCount++;
+        if (consensus) {
+            dxSum += Number(consensus.dx) || 0;
+            dySum += Number(consensus.dy) || 0;
+            motionCount++;
+        }
+
+        frames.push({
+            frame: f,
+            incomplete: !cache || !!cache.incomplete,
+            isGoodFrame: !!flow.isGoodFrame,
+            duplicateFrame,
+            syntheticFrame: !!flow.syntheticFrame,
+            adjacentFallbackFrame: !!flow.adjacentFallbackFrame,
+            vectorCount: Array.isArray(flow.vectors) ? flow.vectors.length : 0,
+            dx: roundForTesting(consensus?.dx),
+            dy: roundForTesting(consensus?.dy),
+            rotation: roundForTesting(consensus?.rotation || 0, 6),
+            confidence: roundForTesting(consensus?.confidence),
+            inlierCount: Math.round(Number(consensus?.inlierCount) || 0),
+            lastDx: roundForTesting(last?.dx),
+            lastDy: roundForTesting(last?.dy),
+        });
+    }
+
+    return {
+        startFrame: aFrame,
+        endFrame: bFrame,
+        totalFrames: Math.max(0, bFrame - aFrame + 1),
+        completeCount,
+        goodCount,
+        syntheticCount,
+        adjacentFallbackCount,
+        duplicateCount: duplicateFrames.length,
+        duplicateFrames,
+        averageDx: motionCount ? roundForTesting(dxSum / motionCount) : null,
+        averageDy: motionCount ? roundForTesting(dySum / motionCount) : null,
+        frames,
+    };
+}
+
+export async function runMotionAnalysisForTesting(options = {}) {
+    const prepared = await ensureOpenCVAndAnalyzer(null, mt("status.loadingOpenCv"), mt("menu.analyzeMotion.label"));
+    if (!prepared || !motionAnalyzer) {
+        throw new Error("Motion Analysis test setup failed: no video analyzer");
+    }
+
+    const {videoData} = prepared;
+    const startFrame = Number.isFinite(options.startFrame) ? Math.max(0, Math.floor(options.startFrame)) : 0;
+    const requestedEnd = Number.isFinite(options.endFrame) ? Math.floor(options.endFrame) : (Sit.frames - 1);
+    const endFrame = Math.min(Sit.frames - 1, Math.max(startFrame, requestedEnd));
+    Sit.aFrame = startFrame;
+    Sit.bFrame = endFrame;
+
+    useLocalCompute = !!options.useLocalCompute;
+    window.__sitrecLocalComputeLastStats = null;
+
+    Object.assign(motionAnalyzer.params, options.params || {});
+    motionAnalyzer.maskEnabled = options.maskEnabled !== false;
+    motionAnalyzer.ensureMaskOverlay();
+
+    if (options.maskRect) {
+        const width = videoData.videoWidth || videoData.width || motionAnalyzer.videoView.videoWidth || 0;
+        const height = videoData.videoHeight || videoData.height || motionAnalyzer.videoView.videoHeight || 0;
+        if (width > 0 && height > 0) {
+            const rect = options.maskRect;
+            const overlay = motionAnalyzer.maskOverlayNode;
+            overlay.initMask(Math.round(width), Math.round(height));
+            overlay.maskCtx.clearRect(0, 0, overlay.maskCanvas.width, overlay.maskCanvas.height);
+            overlay.maskCtx.fillStyle = "rgba(255, 0, 0, 1)";
+            overlay.maskCtx.fillRect(
+                Math.round(rect.x || 0),
+                Math.round(rect.y || 0),
+                Math.round(rect.width || 0),
+                Math.round(rect.height || 0)
+            );
+            overlay.saveMask();
+        }
+    } else if (motionAnalyzer.maskOverlayNode?.maskCanvas) {
+        motionAnalyzer.maskOverlayNode.maskCtx.clearRect(
+            0,
+            0,
+            motionAnalyzer.maskOverlayNode.maskCanvas.width,
+            motionAnalyzer.maskOverlayNode.maskCanvas.height
+        );
+        motionAnalyzer.maskOverlayNode.saveMask();
+    }
+
+    resetMotionAnalysisDerivedState(true);
+    resetVideoThrashDetector(videoData);
+
+    const progress = [];
+    const start = performance.now();
+    const ready = await analyzeAllFrames((p) => progress.push(p));
+    const elapsedMs = performance.now() - start;
+
+    return {
+        ready,
+        elapsedMs: roundForTesting(elapsedMs, 2),
+        useLocalCompute,
+        params: {...motionAnalyzer.params},
+        progressCount: progress.length,
+        localComputeStats: window.__sitrecLocalComputeLastStats || null,
+        summary: summarizeMotionAnalysisForTesting(),
+    };
 }
 
 export function serializeMotionAnalysis() {

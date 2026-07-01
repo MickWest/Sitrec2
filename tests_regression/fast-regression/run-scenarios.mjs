@@ -77,16 +77,25 @@ async function discoverScenarios() {
 }
 
 // Resolve a scenario's load target into the {builtin|url, frame, ...} shape buildLoadUrl wants.
-async function resolveLoadTarget(sc) {
+async function resolveLoadTarget(sc, setup = null) {
+    if (setup?.target) {
+        return {
+            ...setup.target,
+            frame: setup.target.frame ?? sc.frame,
+            query: {...(setup.target.query || {}), ...(setup.query || {})},
+            extraParams: [...(setup.target.extraParams || []), ...(setup.extraParams || [])],
+        };
+    }
+
     if (sc.builtin === false || sc.url) {
         // Saved/Regression sitch: resolve its latest version URL by name.
-        if (sc.url) return {url: sc.url, name: sc.sitch, frame: sc.frame, localTerrain: sc.localTerrain};
+        if (sc.url) return {url: sc.url, name: sc.sitch, frame: sc.frame, localTerrain: sc.localTerrain, query: sc.query};
         const list = await enumerateSitches();
         const match = list.find(s => s.name === sc.sitch);
         if (!match) throw new Error(`saved sitch '${sc.sitch}' not found via enumerateSitches()`);
-        return {url: match.url, name: match.name, frame: sc.frame, localTerrain: sc.localTerrain};
+        return {url: match.url, name: match.name, frame: sc.frame, localTerrain: sc.localTerrain, query: sc.query};
     }
-    return {builtin: true, sitch: sc.sitch, name: sc.sitch, frame: sc.frame, localTerrain: sc.localTerrain};
+    return {builtin: true, sitch: sc.sitch, name: sc.sitch, frame: sc.frame, localTerrain: sc.localTerrain, query: sc.query};
 }
 
 // Narrow, STARTUP-SAFE, cache-safe network blocks. The primary write-protection is the
@@ -128,6 +137,7 @@ async function processScenario(context, sc) {
     }
 
     const page = await context.newPage();
+    const cleanupFns = [];
     let assertSeen = null;
     const consoleErrors = [];
     page.on('console', (msg) => {
@@ -142,9 +152,14 @@ async function processScenario(context, sc) {
     page.on('pageerror', (e) => consoleErrors.push('PAGEERROR: ' + e.message));
 
     try {
+        let setup = null;
+        if (typeof sc.beforeLoad === 'function') {
+            setup = await sc.beforeLoad({config: CONFIG, outputDir, cwd: process.cwd()});
+            if (typeof setup?.cleanup === 'function') cleanupFns.push(setup.cleanup);
+        }
         await installNetworkGuards(page, sc);
-        const target = await resolveLoadTarget(sc);
-        const wantFrame = sc.frame ?? CONFIG.frame;
+        const target = await resolveLoadTarget(sc, setup);
+        const wantFrame = target.frame ?? sc.frame ?? CONFIG.frame;
         const url = buildLoadUrl(target);
         await page.goto(url, {waitUntil: 'load', timeout: 30000});
         const settle = await waitForSettle(page, {maxWaitMs: CONFIG.perSitchTimeoutMs, wantFrame});
@@ -231,6 +246,9 @@ async function processScenario(context, sc) {
         return result;
     } finally {
         await page.close().catch(() => {});
+        for (const cleanup of cleanupFns.reverse()) {
+            await cleanup().catch(() => {});
+        }
     }
 }
 

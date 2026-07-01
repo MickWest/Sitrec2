@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "scenarioId": "local-compute-motion-analysis",
+  "sitch": "video",
+  "frame": 0,
+  "captures": {
+    "videoReady": {
+      "frames": 111,
+      "height": 478,
+      "helperReady": true,
+      "width": 850
+    },
+    "motionAnalysis": {
+      "aggregate": {
+        "computeFaster": true
+      },
+      "techniqueCount": 5,
+      "techniques": [
+        {
+          "agreementWithinTolerance": true,
+          "completeCount": 100,
+          "duplicateCount": 0,
+          "technique": "Linear Tracklet",
+          "totalFrames": 100,
+          "workerFrameCount": 100
+        },
+        {
+          "agreementWithinTolerance": true,
+          "completeCount": 100,
+          "duplicateCount": 0,
+          "technique": "Sparse + Consensus",
+          "totalFrames": 100,
+          "workerFrameCount": 100
+        },
+        {
+          "agreementWithinTolerance": true,
+          "completeCount": 100,
+          "duplicateCount": 0,
+          "technique": "Phase Correlation",
+          "totalFrames": 100,
+          "workerFrameCount": 100
+        },
+        {
+          "agreementWithinTolerance": true,
+          "completeCount": 100,
+          "duplicateCount": 0,
+          "technique": "ECC Euclidean",
+          "totalFrames": 100,
+          "workerFrameCount": 100
+        },
+        {
+          "agreementWithinTolerance": true,
+          "completeCount": 100,
+          "duplicateCount": 0,
+          "technique": "Affine RANSAC",
+          "totalFrames": 100,
+          "workerFrameCount": 100
+        }
+      ]
+    }
+  }
+}

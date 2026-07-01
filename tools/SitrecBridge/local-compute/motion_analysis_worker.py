@@ -651,29 +651,22 @@ class MotionAnalyzerLocal:
 
     def compute_phase_correlation(self, prev_gray, gray, img_width, img_height, skip_frames):
         shift, response = cv2.phaseCorrelate(np.float32(prev_gray), np.float32(gray))
-        dx = float(shift[0]) / max(1, skip_frames)
-        dy = float(shift[1]) / max(1, skip_frames)
+        dx = -float(shift[0]) / max(1, skip_frames)
+        dy = -float(shift[1]) / max(1, skip_frames)
+        if response < 0.2:
+            return self.compute_sparse_consensus(prev_gray, gray, img_width, img_height, skip_frames)
         conf = clamp(float(response), 0.5, 1.0)
         mag = magnitude(dx, dy)
         vectors = self.generate_synthetic_vectors(dx, dy, 0, img_width, img_height) if finite(self.p("minMotion", 0.2), 0.2) <= mag <= finite(self.p("maxMotion", 100), 100) else []
         return {"flowVectors": vectors, "consensus": {"dx": dx, "dy": dy, "confidence": conf, "rotation": 0, "inlierCount": len(vectors)}}
 
     def compute_ecc(self, prev_gray, gray, img_width, img_height, skip_frames):
-        warp = np.eye(2, 3, dtype=np.float32)
-        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, int(self.p("eccIterations", 50)), finite(self.p("eccEpsilon", 0.001), 0.001))
-        try:
-            cc, warp = cv2.findTransformECC(prev_gray, gray, warp, cv2.MOTION_EUCLIDEAN, criteria, None, 5)
-        except Exception:
-            return self.compute_affine_ransac(prev_gray, gray, img_width, img_height, skip_frames)
-        scale = 1.0 / max(1, skip_frames)
-        cos_theta = float(warp[0, 0])
-        sin_theta = float(warp[1, 0])
-        dx = float(warp[0, 2]) * scale
-        dy = float(warp[1, 2]) * scale
-        rotation = math.atan2(sin_theta, cos_theta) * scale
-        show = magnitude(dx, dy) >= finite(self.p("minMotion", 0.2), 0.2) or abs(rotation) >= 0.0003
-        vectors = self.generate_synthetic_vectors(dx, dy, rotation, img_width, img_height) if show else []
-        return {"flowVectors": vectors, "consensus": {"dx": dx, "dy": dy, "confidence": clamp(float(cc), 0, 1), "rotation": rotation, "inlierCount": len(vectors)}}
+        # Mirror the current browser-side MotionAnalyzer contract. The OpenCV.js
+        # build used by Sitrec's browser path exposes an ECC option in the UI, but
+        # effectively falls back to Affine RANSAC for this path on real footage.
+        # Local Compute must return cache-compatible results, so keep the same
+        # fallback unless/until the browser implementation is upgraded too.
+        return self.compute_affine_ransac(prev_gray, gray, img_width, img_height, skip_frames)
 
     def compute_affine_ransac(self, prev_gray, gray, img_width, img_height, skip_frames):
         prev_points, next_points, qualities, _ = self.track_features(prev_gray, gray, skip_frames)

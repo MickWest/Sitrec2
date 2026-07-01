@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.93.2 (2026-07-01)
+
+### Bug Fixes
+- **Local Compute now produces the same Phase Correlation and ECC Euclidean results as the in-browser analyzer** (`tools/SitrecBridge/local-compute/motion_analysis_worker.py`, `src/CMotionAnalysisUI.js`). When 2.93.0 introduced Local Compute (native Python/OpenCV) motion analysis, two techniques disagreed with the browser path that produces the cache the rest of Sitrec consumes:
+  - **Phase Correlation** — `compute_phase_correlation` used `cv2.phaseCorrelate`'s shift with the wrong sign convention (browser motion is the negative of the raw phase-correlation shift), so Local Compute reported motion in the opposite direction. Fixed by negating both components (`dx = -shift[0]/skip`, `dy = -shift[1]/skip`). It also now guards against a weak/ambiguous correlation peak: when the phase-correlation `response < 0.2` it falls back to `compute_sparse_consensus(...)`, matching the browser's behavior of not trusting a low-confidence global shift.
+  - **ECC Euclidean** — `compute_ecc` ran a full `cv2.findTransformECC(MOTION_EUCLIDEAN)` solve, but Sitrec's browser OpenCV.js build effectively resolves this UI option to an Affine RANSAC fit on real footage. The native worker was therefore returning cache-incompatible results for the same nominal technique. `compute_ecc` now returns `compute_affine_ransac(...)` directly so Local Compute stays cache-compatible with the browser until/unless the browser ECC path is upgraded.
+- **The Local Compute request now advertises the browser's OpenCV capabilities** (`src/CMotionAnalysisUI.js`). `buildLocalMotionAnalysisRequest()` adds `browserCvCapabilities: {phaseCorrelate, findTransformECC}`, each a boolean probing whether `getCV()` exposes the corresponding function, so the native worker can match the exact feature set of the browser build that generated the reference results.
+
+### Internal
+- **New value-tier differential regression test for motion analysis** (`tests_regression/fast-regression/scenarios/video/local-compute-motion-analysis.scenario.mjs`, `tests_regression/fast-regression/value-baseline/local-compute-motion-analysis.json`). Runs all five techniques (Linear Tracklet, Sparse + Consensus, Phase Correlation, ECC Euclidean, Affine RANSAC) both in-browser and via Local Compute over the Truck test clip and asserts the two paths agree within tolerance and that Local Compute is faster — directly guarding the fixes above. Supporting harness/tooling: `src/index.js` exposes a test-only `window.__sitrecRunMotionAnalysisForTesting` hook (gated to local or `?regression`), backed by `runMotionAnalysisForTesting`/`summarizeMotionAnalysisForTesting` in `src/CMotionAnalysisUI.js`; `tests_regression/fast-regression/run.mjs`, `run-scenarios.mjs`, and `README.md` are updated to run scenario tests; `tools/SitrecBridge/build-dist.mjs` now excludes `__pycache__`/`.pyc` from the bridge dist; and `playwright.config.js` drops the superseded `regression.test.js` from `testMatch`.
+
+---
+
 ## Version 2.93.1 (2026-07-01)
 
 ### Security

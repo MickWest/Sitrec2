@@ -276,6 +276,13 @@ export function buildLoadUrl(sitch) {
         'ignoreunload=1',
     ];
     if (CONFIG.localTerrain || sitch.localTerrain) params.push('regressionLocalTerrain=1');
+    const query = sitch.query || sitch.queryParams || {};
+    for (const [key, value] of Object.entries(query)) {
+        if (value === undefined || value === null || value === false) continue;
+        const values = Array.isArray(value) ? value : [value];
+        for (const v of values) params.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(v))}`);
+    }
+    if (Array.isArray(sitch.extraParams)) params.push(...sitch.extraParams);
     return CONFIG.base + '?' + params.join('&');
 }
 

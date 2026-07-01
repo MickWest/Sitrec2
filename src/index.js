@@ -128,6 +128,7 @@ import {
     addMotionAnalysisMenu,
     getMotionAnalyzerForTesting,
     resetMotionAnalysis,
+    runMotionAnalysisForTesting,
     toggleMotionAnalysis
 } from "./CMotionAnalysisUI";
 import {addObjectTrackingMenu, resetObjectTracking} from "./CObjectTracking";
@@ -1570,6 +1571,9 @@ async function initializeOnce() {
         window.newSitch = newSitch;
         window.toggleMotionAnalysis = toggleMotionAnalysis;
         window.getMotionAnalyzerForTesting = getMotionAnalyzerForTesting;
+        if (isLocal || urlParams.has("regression")) {
+            window.__sitrecRunMotionAnalysisForTesting = runMotionAnalysisForTesting;
+        }
         // The CSitrecAPI singleton is otherwise only window-exposed as a side effect of the
         // chat view loading (CNodeVIewChat -> CClientNLU -> CSitrecAPI), which does NOT happen
         // under ?regression=1. Expose it directly here so the MCP bridge and the fast-regression

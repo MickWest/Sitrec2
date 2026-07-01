@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.93.2 (2026-07-01)
+
+### Bug Fixes
+- Fixed Local Compute motion analysis giving different results from in-browser analysis with the **Phase Correlation** and **ECC Euclidean** techniques (Motion Analysis → Use Local Compute). Phase Correlation was reporting motion in the wrong direction, and both techniques now match the in-browser results exactly.
+
+---
+
 ## Version 2.93.1 (2026-07-01)
 
 ### Security

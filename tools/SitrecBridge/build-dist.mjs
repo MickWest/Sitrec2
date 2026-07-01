@@ -20,6 +20,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DIST = join(__dirname, "dist", "SitrecBridge");
 
+function isPythonCachePath(path) {
+    return /(^|[/\\])__pycache__([/\\]|$)|\.pyc$/i.test(path);
+}
+
 // 1. Clean previous build
 if (existsSync(DIST)) rmSync(DIST, {recursive: true});
 mkdirSync(DIST, {recursive: true});
@@ -50,7 +54,10 @@ if (result.errors.length > 0) {
 // 3. Copy runtime files the server reads via readFileSync(__dirname, ...)
 cpSync(join(__dirname, "sitrec-mcp-guide.md"), join(DIST, "sitrec-mcp-guide.md"));
 cpSync(join(__dirname, "README.md"), join(DIST, "README.md"));
-cpSync(join(__dirname, "local-compute"), join(DIST, "local-compute"), {recursive: true});
+cpSync(join(__dirname, "local-compute"), join(DIST, "local-compute"), {
+    recursive: true,
+    filter: (src) => !isPythonCachePath(src),
+});
 
 // 3b. Copy launcher scripts (needed for Claude Desktop which doesn't inherit shell PATH)
 cpSync(join(__dirname, "run.sh"), join(DIST, "run.sh"));

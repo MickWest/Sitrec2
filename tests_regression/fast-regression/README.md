@@ -24,11 +24,17 @@ npm run test-fast            # compare every Regression sitch vs its baseline
 npm run test-fast-update     # (re)generate ALL baselines (do this in-suite, see note)
 npm run test-fast-list       # just list the Regression sitches + latest versions
 
+npm run test-scenarios       # compare fast value/behavior scenarios
+npm run test-scenarios-update # (re)generate value JSON baselines
+npm run test-scenarios-list  # list value/behavior scenarios
+
 # direct, with flags:
 node tests_regression/fast-regression/run.mjs --filter=wind     # only matching sitches
 node tests_regression/fast-regression/run.mjs --concurrency=2   # N pages in parallel (bonus)
 node tests_regression/fast-regression/run.mjs --headed          # show the Chrome window (default is headless)
 node tests_regression/fast-regression/run.mjs --update --filter=Mick   # re-baseline one
+
+node tests_regression/fast-regression/run-scenarios.mjs --scenario=local-compute-motion-analysis
 ```
 
 > **Network/sandbox:** the harness talks to `local.metabunk.org` and S3, so run it
@@ -100,11 +106,20 @@ npm run test-fast-update     # regenerates ALL baselines in-suite
 > context/order as a real compare run. Commit the new `baseline/*.png` after
 > eyeballing them.
 
+For value or behavior coverage, add a scenario module under
+`scenarios/<area>/<id>.scenario.mjs` and a committed JSON baseline under
+`value-baseline/`. Scenarios run in the same fast, headless, persistent Chrome
+context as the pixel runner, and are discovered by `npm run test-scenarios`.
+Use a scenario when the assertion is not "does this screenshot match?", such as
+API behavior, export completion, serialization shape, or Local Compute parity.
+
 ## Layout
 
 ```
-run.mjs            the runner
-baseline/*.png     committed baselines (one per sitch, slug-named)
-output/            report.json + *_Bad/_Diff.png on failure   (gitignored)
-.chrome-profile/   persistent Chrome profile = warm cache     (gitignored)
+run.mjs              pixel runner
+run-scenarios.mjs    value/behavior scenario runner
+baseline/*.png       local pixel baselines (one per sitch, slug-named)
+value-baseline/*.json committed value baselines
+output/              report.json + failure artifacts   (gitignored)
+.chrome-profile/     persistent Chrome profile = warm cache     (gitignored)
 ```
