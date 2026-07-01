@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.93.0 (2026-06-30)
+
+### New Features
+- **Local Compute for Motion Analysis** (Motion Analysis → Use Local Compute): when the optional SitrecBridge helper is installed and running, full-range motion analysis is handed off to a fast native Python/OpenCV worker on your own computer instead of being run in the browser, and the finished result is loaded straight back into Sitrec (overlay, graph, panorama, stabilization, and track export all work as before). A **Local Compute** status line shows the connection and progress, the option is on by default, and Sitrec silently falls back to in-browser analysis if the helper isn't available. Get the helper from Help → Documentation → **Download MCP Bridge**, then install its dependencies from the SitrecBridge extension's **Install/Update Local Compute** button.
+
+---
+
 ## Version 2.92.3 (2026-06-30)
 
 ### New Features
