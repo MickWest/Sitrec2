@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.93.3 (2026-07-01)
+
+### Internal
+- **Retire the superseded Playwright visual-regression suite from the test registry to unbreak CI** (`test-registry.js`). Release 2.93.2 dropped `regression.test.js` from `playwright.config.js`'s `testMatch`, but the seven registry entries that still named `file: 'regression.test.js'` (`default`, the commented-out `wmts`, `agua`, `potomac`, `bledsoe`, `nightsky-permalink`, `demo-truck`) then pointed at a file no longer in the Playwright test set. That desync tripped the registry↔config sync assertion in `tests/driftChecks.test.js`, failing CI. Those entries are removed — the old Playwright screenshot suite is superseded by the fast-regression harness (`tests_regression/fast-regression/`) — so the drift check and CI pass again. The remaining self-comparing save→load round-trip entry (which references a different test file) is untouched. No user-facing behavior change; `test-registry.js` is not part of the app bundle.
+
+---
+
 ## Version 2.93.2 (2026-07-01)
 
 ### Bug Fixes
