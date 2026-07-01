@@ -15,7 +15,7 @@ const KEEPALIVE_ALARM_PERIOD_MIN = 0.5; // 30 seconds, minimum Chrome allows
 const FALLBACK_PRUNE_DELAY_MS = 750;
 
 // Connection state, keyed by port number.
-//   { ws, pairedOrigin, serverPid, sourceVersion, port, cwd, startedAt, lastSeenAt }
+//   { ws, pairedOrigin, serverPid, sourceVersion, port, cwd, startedAt, lastSeenAt, localComputeCapabilities }
 const connections = new Map();
 
 // Tabs we know are running Sitrec, keyed by Chrome tab ID.
@@ -140,6 +140,7 @@ async function connectToPort(port) {
         cwd: null,
         startedAt: null,
         lastSeenAt: Date.now(),
+        localComputeCapabilities: null,
         port,
     };
     connections.set(port, conn);
@@ -167,6 +168,7 @@ async function connectToPort(port) {
                 conn.pairedOrigin = msg.pairedOrigin || null;
                 conn.cwd = msg.cwd || null;
                 conn.startedAt = msg.startedAt || null;
+                conn.localComputeCapabilities = msg.localComputeCapabilities || null;
                 conn.lastSeenAt = Date.now();
                 console.log(`[SitrecBridge:${port}] Connected — pairedOrigin=${conn.pairedOrigin || "(fallback)"} pid=${conn.serverPid}`);
                 if (!conn.pairedOrigin) scheduleFallbackPrune();
@@ -179,6 +181,7 @@ async function connectToPort(port) {
                 if (msg.pairedOrigin !== undefined) conn.pairedOrigin = msg.pairedOrigin;
                 conn.cwd = msg.cwd || conn.cwd;
                 conn.startedAt = msg.startedAt || conn.startedAt;
+                conn.localComputeCapabilities = msg.localComputeCapabilities || conn.localComputeCapabilities;
                 conn.lastSeenAt = Date.now();
                 if (!conn.pairedOrigin) scheduleFallbackPrune();
                 updatePopupState();
@@ -569,6 +572,110 @@ function noTabError(port, target) {
     return "No Sitrec tab found. Please open Sitrec in a browser tab.";
 }
 
+// -- Local Compute popup actions -------------------------------------------
+
+function liveLocalComputeConnections() {
+    return [...connections.values()].filter((conn) =>
+        conn.ws &&
+        conn.ws.readyState === WebSocket.OPEN &&
+        conn.localComputeCapabilities?.localComputeInstall
+    );
+}
+
+function chooseLocalComputeConnection(origin) {
+    const candidates = liveLocalComputeConnections();
+    if (candidates.length === 0) return null;
+
+    if (origin) {
+        const paired = candidates.find((conn) => conn.pairedOrigin === origin);
+        if (paired) return paired;
+
+        const fallback = candidates.find((conn) => !conn.pairedOrigin);
+        if (fallback) return fallback;
+    }
+
+    return candidates.sort((a, b) => fallbackRank(b) - fallbackRank(a) || b.port - a.port)[0];
+}
+
+function sendLocalComputePopupProgress(port, progress) {
+    chrome.runtime.sendMessage({
+        type: "localComputeInstallProgress",
+        port,
+        progress,
+    }).catch(() => {});
+}
+
+function runLocalComputeRequestOnPort(port, action, params = {}) {
+    return new Promise((resolve, reject) => {
+        const id = `extension-${action}-${Date.now()}`;
+        const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+        let settled = false;
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            try { ws.close(); } catch {}
+            reject(new Error(`Local Compute ${action} timed out`));
+        }, 10 * 60 * 1000);
+
+        const finish = (fn, value) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            try { ws.close(); } catch {}
+            fn(value);
+        };
+
+        ws.onopen = () => {
+            ws.send(JSON.stringify({
+                type: "local-compute-client",
+                origin: chrome.runtime.getURL(""),
+                userAgent: self.navigator?.userAgent || "SitrecBridge extension",
+            }));
+        };
+
+        ws.onerror = () => {
+            finish(reject, new Error(`Could not connect to Local Compute on port ${port}`));
+        };
+
+        ws.onmessage = (event) => {
+            let msg;
+            try {
+                msg = JSON.parse(event.data);
+            } catch {
+                return;
+            }
+
+            if (msg.type === "local-compute-hello") {
+                ws.send(JSON.stringify({
+                    type: "local-compute-request",
+                    id,
+                    action,
+                    params,
+                }));
+                return;
+            }
+
+            if (msg.type === "local-compute-progress") {
+                sendLocalComputePopupProgress(port, msg.progress || {});
+                return;
+            }
+
+            if (msg.type === "local-compute-response") {
+                if (msg.id !== id) return;
+                if (msg.ok) {
+                    finish(resolve, msg.result);
+                } else {
+                    finish(reject, new Error(msg.error || "Local Compute request failed"));
+                }
+            }
+
+            if (msg.type === "local-compute-error") {
+                finish(reject, new Error(msg.error || "Local Compute rejected connection"));
+            }
+        };
+    });
+}
+
 // -- Tab change tracking ----------------------------------------------------
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -655,6 +762,7 @@ function buildPopupState() {
             cwd: conn.cwd,
             startedAt: conn.startedAt,
             lastSeenAt: conn.lastSeenAt,
+            localComputeCapabilities: conn.localComputeCapabilities || null,
             connected: !!(conn.ws && conn.ws.readyState === WebSocket.OPEN),
         });
     }
@@ -668,6 +776,7 @@ function buildPopupState() {
         installedVersion,
         currentCommand,
         commandHistory,
+        localComputeAvailable: liveLocalComputeConnections().length > 0,
     };
 }
 
@@ -722,6 +831,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             await refreshKnownTabs();
             updatePopupState();
             sendResponse({ ok: true, closed, kept: keepId ?? null });
+        })();
+        return true;
+    }
+
+    if (msg.type === "installLocalCompute") {
+        (async () => {
+            const conn = chooseLocalComputeConnection(msg.origin || null);
+            if (!conn) {
+                sendResponse({
+                    ok: false,
+                    error: "No connected SitrecBridge server supports Local Compute install/update. Update or restart SitrecBridge first.",
+                });
+                return;
+            }
+
+            trackCommandStart("local_compute_install", {}, conn.cwd, null, conn.port);
+            try {
+                const result = await runLocalComputeRequestOnPort(conn.port, "local_compute_install", {});
+                trackCommandEnd(true);
+                sendResponse({ok: true, port: conn.port, result});
+            } catch (e) {
+                trackCommandEnd(false);
+                sendResponse({ok: false, port: conn.port, error: e.message});
+            }
         })();
         return true;
     }
