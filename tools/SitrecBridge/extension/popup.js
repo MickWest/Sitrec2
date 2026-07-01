@@ -13,6 +13,8 @@ const versionEl = document.getElementById("version");
 const updateBanner = document.getElementById("update-banner");
 const currentCmdEl = document.getElementById("current-cmd");
 const historyListEl = document.getElementById("history-list");
+const installLocalComputeBtn = document.getElementById("install-local-compute-btn");
+const localComputeStatusEl = document.getElementById("local-compute-status");
 
 let elapsedTimer = null;
 
@@ -164,6 +166,16 @@ function update(state) {
     renderCurrentCommand(state.currentCommand);
     renderHistory(state.commandHistory);
 
+    const localComputePorts = (state.connections || [])
+        .filter(c => c.connected && c.localComputeCapabilities?.localComputeInstall)
+        .map(c => `:${c.port}`);
+    installLocalComputeBtn.disabled = localComputePorts.length === 0;
+    if (localComputePorts.length > 0 && !localComputeStatusEl.dataset.busy) {
+        localComputeStatusEl.textContent = `Local Compute available on ${localComputePorts.join(", ")}`;
+    } else if (localComputePorts.length === 0 && !localComputeStatusEl.dataset.busy) {
+        localComputeStatusEl.textContent = "Local Compute install requires an updated Bridge server.";
+    }
+
     info.textContent = `Scanning ports 9780-9799`;
 }
 
@@ -173,6 +185,12 @@ chrome.runtime.sendMessage({ type: "getState" }, (response) => {
 
 chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === "stateUpdate") update(msg);
+    if (msg.type === "localComputeInstallProgress") {
+        if (msg.progress?.message) {
+            localComputeStatusEl.dataset.busy = "1";
+            localComputeStatusEl.textContent = msg.progress.message;
+        }
+    }
 });
 
 document.getElementById("reconnect-btn").addEventListener("click", () => {
@@ -198,6 +216,33 @@ document.getElementById("close-tabs-btn").addEventListener("click", async () => 
             }
             // The onRemoved listener triggers a stateUpdate that re-renders the
             // tab list, so no manual refresh is needed here.
+        }
+    );
+});
+
+installLocalComputeBtn.addEventListener("click", async () => {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    let origin = null;
+    try { origin = activeTab?.url ? new URL(activeTab.url).origin : null; } catch {}
+
+    installLocalComputeBtn.disabled = true;
+    localComputeStatusEl.dataset.busy = "1";
+    localComputeStatusEl.textContent = "Installing...";
+
+    chrome.runtime.sendMessage(
+        { type: "installLocalCompute", origin },
+        (resp) => {
+            delete localComputeStatusEl.dataset.busy;
+            installLocalComputeBtn.disabled = false;
+            if (chrome.runtime.lastError) {
+                localComputeStatusEl.textContent = `Install failed: ${chrome.runtime.lastError.message}`;
+                return;
+            }
+            if (resp?.ok) {
+                localComputeStatusEl.textContent = `Local Compute ready on :${resp.port}`;
+            } else {
+                localComputeStatusEl.textContent = `Install failed: ${resp?.error || "unknown error"}`;
+            }
         }
     );
 });

@@ -30,6 +30,8 @@ import {getCV, loadOpenCV} from "./openCVLoader";
 import {fitSimilarity} from "./CameraMotionFromVideo";
 import {isAlignWithFlowEnabled, setAlignWithFlow, setMotionAnalyzerRef} from "./FlowAlignment";
 import {setStartAnalysis, setUpdateGuiValues, setUpdateOptimizeStatus, updateGuiValues} from "./CMotionAnalysisShared";
+import {getLocalComputeBridge} from "./LocalComputeBridge";
+import {resolveURLForFetch} from "./SitrecObjectResolver";
 import {CNodeVelocityFromMotion} from "./nodes/CNodeVelocityFromMotion";
 import {CNodeTrackFromVelocity} from "./nodes/CNodeTrackFromVelocity";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
@@ -563,6 +565,8 @@ let motionFolder = null;
 let motionTrackCounter = 0;
 let createTrackMenuItem = null;
 let exportMotionMenuItem = null;
+let useLocalCompute = true;
+let localComputeStatus = {value: "Not checked"};
 
 // Lock so concurrent callers (e.g. both pano export menu items clicked in
 // quick succession) coalesce onto a single analysis pass and just report
@@ -716,6 +720,168 @@ function setMotionAnalysisProgressLabel(menuItem, progress, fallbackCurrent = nu
     }
 }
 
+function normalizeLocalComputeUrl(source) {
+    if (!source || typeof source !== "string") return null;
+    if (/^(blob:|data:)/i.test(source)) return null;
+    if (/^(https?:|file:)/i.test(source)) return source;
+    if (source.startsWith("/")) return new URL(source, window.location.origin).href;
+    return new URL(source, window.location.href).href;
+}
+
+function getLocalComputeVideoSourceRef(videoData) {
+    const videoView = motionAnalyzer?.videoView;
+    const currentEntry = videoView?.videos?.[videoView.currentVideoIndex];
+    return currentEntry?.staticURL
+        || videoView?.staticURL
+        || currentEntry?.fileName
+        || videoView?.fileName
+        || videoData?.filename
+        || null;
+}
+
+function getLocalComputeTargetDimensions(videoData) {
+    const width = videoData?.videoWidth || videoData?.width || motionAnalyzer?.videoView?.videoWidth || 0;
+    const height = videoData?.videoHeight || videoData?.height || motionAnalyzer?.videoView?.videoHeight || 0;
+    return {
+        width: Number.isFinite(width) && width > 0 ? Math.round(width) : null,
+        height: Number.isFinite(height) && height > 0 ? Math.round(height) : null,
+    };
+}
+
+async function buildLocalMotionAnalysisRequest(videoData, aFrame, bFrame) {
+    const sourceRef = getLocalComputeVideoSourceRef(videoData);
+    if (!sourceRef) {
+        throw new Error("video source is not URL-backed");
+    }
+
+    let sourceUrl = await resolveURLForFetch(sourceRef);
+    sourceUrl = normalizeLocalComputeUrl(sourceUrl);
+    if (!sourceUrl) {
+        throw new Error("video source is only available inside the browser");
+    }
+    const targetDimensions = getLocalComputeTargetDimensions(videoData);
+
+    let maskData = null;
+    if (motionAnalyzer.maskEnabled && motionAnalyzer.maskOverlayNode?.maskCanvas) {
+        try {
+            motionAnalyzer.maskOverlayNode.updateMaskImageData();
+            motionAnalyzer.maskOverlayNode.saveMask();
+            maskData = motionAnalyzer.maskOverlayNode.maskData;
+        } catch (e) {
+            console.warn("Local Compute: could not serialize motion mask, running without mask", e);
+        }
+    }
+
+    return {
+        sourceUrl,
+        sourceRef,
+        startFrame: aFrame,
+        endFrame: bFrame,
+        frames: Sit.frames,
+        fps: Sit.fps,
+        videoSpeed: videoData.videoSpeed ?? 1,
+        effectiveRotation: videoData.effectiveRotation ?? 0,
+        targetWidth: targetDimensions.width,
+        targetHeight: targetDimensions.height,
+        params: {...motionAnalyzer.params},
+        maskData,
+    };
+}
+
+function applyLocalMotionAnalysisResult(result) {
+    if (!motionAnalyzer || !result?.ok) return false;
+
+    resetMotionAnalysisDerivedState(true);
+
+    for (const item of result.duplicates || []) {
+        if (Number.isFinite(item.frame)) {
+            motionAnalyzer.duplicateFrameCache.set(item.frame, item.info);
+        }
+    }
+
+    for (const item of result.frames || []) {
+        if (Number.isFinite(item.frame) && item.cache) {
+            motionAnalyzer.resultCache.set(item.frame, item.cache);
+        }
+    }
+
+    const frame = Math.floor(par.frame);
+    const current = motionAnalyzer.resultCache.get(frame)
+        || motionAnalyzer.resultCache.get(Sit.aFrame || 0)
+        || null;
+
+    if (current) {
+        motionAnalyzer.lastFlowData = current.flowData;
+        motionAnalyzer.smoothedDirection = {...(current.smoothedDirection || motionAnalyzer.smoothedDirection)};
+        motionAnalyzer.angleHistory = Array.isArray(current.angleHistory) ? [...current.angleHistory] : [];
+        const width = motionAnalyzer.videoView?.widthPx || 0;
+        const height = motionAnalyzer.videoView?.heightPx || 0;
+        if (width && height && motionAnalyzer.overlay) {
+            if (motionAnalyzer.overlay.width !== width) motionAnalyzer.overlay.width = width;
+            if (motionAnalyzer.overlay.height !== height) motionAnalyzer.overlay.height = height;
+            motionAnalyzer.drawOverlay(width, height, current.imgWidth || 0, current.imgHeight || 0);
+            motionAnalyzer.drawGraph();
+        }
+    }
+
+    motionAnalyzer.updateSliderStatus();
+    setRenderOne(true);
+    return true;
+}
+
+async function analyzeAllFramesViaLocalCompute(videoData, progressCallback) {
+    if (!useLocalCompute || !motionAnalyzer) return false;
+
+    const aFrame = Sit.aFrame || 0;
+    const bFrame = Sit.bFrame ?? (Sit.frames - 1);
+
+    try {
+        localComputeStatus.value = "Connecting...";
+        const bridge = getLocalComputeBridge();
+        const hello = await bridge.connect();
+        localComputeStatus.value = `Bridge :${hello.boundPort || bridge.port}`;
+
+        const request = await buildLocalMotionAnalysisRequest(videoData, aFrame, bFrame);
+        const result = await bridge.request("motion_analysis", request, (progress) => {
+            if (progress?.phase === "download") {
+                progressCallback?.({
+                    phase: "analysis",
+                    step: 1,
+                    steps: 4,
+                    current: progress.current ?? 0,
+                    total: progress.total ?? 1,
+                    pct: progress.pct ?? 0,
+                });
+                return;
+            }
+            const phaseStep = progress?.phase === "duplicates" ? 2 : progress?.phase === "fallback" ? 4 : 3;
+            progressCallback?.({
+                phase: progress?.phase || "analysis",
+                step: phaseStep,
+                steps: 4,
+                current: progress?.current ?? 0,
+                total: progress?.total ?? 1,
+                pct: progress?.pct ?? 0,
+            });
+        });
+
+        if (!applyLocalMotionAnalysisResult(result)) {
+            throw new Error("Local Compute returned no importable motion data");
+        }
+
+        window.__sitrecLocalComputeLastStats = result.stats || null;
+        localComputeStatus.value = `Done (${result.stats?.frameCount ?? 0} frames)`;
+        console.log("Local Compute Motion Analysis complete:", result.stats);
+        return isMotionAnalysisReady();
+    } catch (e) {
+        localComputeStatus.value = `Fallback: ${e.message}`;
+        console.warn("Local Compute Motion Analysis unavailable, falling back to browser analysis:", e);
+        resetMotionAnalysisDerivedState(true);
+        resetVideoThrashDetector(videoData);
+        return false;
+    }
+}
+
 async function analyzeAllFrames(progressCallback) {
     if (!motionAnalyzer) return false;
 
@@ -747,6 +913,10 @@ async function analyzeAllFrames(progressCallback) {
     analysisInProgress = new Promise(r => (resolveDone = r));
 
     try {
+        if (await analyzeAllFramesViaLocalCompute(videoData, progressCallback)) {
+            return true;
+        }
+
         const skip = Math.max(1, Math.round(motionAnalyzer.params.frameSkip));
         if (motionAnalyzer.params.skipDuplicateFrames && !motionAnalyzer.hasDuplicateFrameMapForRange(aFrame, bFrame)) {
             const duplicateScanStart = Math.max(1, aFrame - Math.max(skip * 10, 30));
@@ -1776,6 +1946,23 @@ export function addMotionAnalysisMenu() {
     analyzeMenuItem = motionFolder.add(menuActions, 'analyzeMotion')
         .name(mt("menu.analyzeMotion.label"))
         .tooltip(mt("menu.analyzeMotion.tooltip"))
+        .perm();
+
+    const localComputeParams = {
+        get useLocalCompute() { return useLocalCompute; },
+        set useLocalCompute(v) {
+            useLocalCompute = !!v;
+            localComputeStatus.value = useLocalCompute ? "Enabled" : "Disabled";
+        },
+    };
+    motionFolder.add(localComputeParams, 'useLocalCompute')
+        .name("Use Local Compute")
+        .tooltip("Use the local SitrecBridge Python/OpenCV worker for full-range Motion Analysis when available")
+        .perm();
+    motionFolder.add(localComputeStatus, 'value')
+        .name("Local Compute")
+        .listen()
+        .disable()
         .perm();
 
     createTrackMenuItem = motionFolder.add(menuActions, 'createTrack')

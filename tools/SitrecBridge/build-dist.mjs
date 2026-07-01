@@ -3,7 +3,8 @@
  * Build a zero-dependency distributable zip of SitrecBridge.
  *
  * Bundles mcp-server.js + all npm dependencies into a single mcp-server.mjs,
- * copies the Chrome extension and runtime files, then creates SitrecBridge.zip.
+ * copies the Chrome extension, Local Compute worker, and runtime files, then
+ * creates SitrecBridge.zip.
  *
  * Usage:  node build-dist.mjs
  * Output: dist/SitrecBridge.zip
@@ -49,6 +50,7 @@ if (result.errors.length > 0) {
 // 3. Copy runtime files the server reads via readFileSync(__dirname, ...)
 cpSync(join(__dirname, "sitrec-mcp-guide.md"), join(DIST, "sitrec-mcp-guide.md"));
 cpSync(join(__dirname, "README.md"), join(DIST, "README.md"));
+cpSync(join(__dirname, "local-compute"), join(DIST, "local-compute"), {recursive: true});
 
 // 3b. Copy launcher scripts (needed for Claude Desktop which doesn't inherit shell PATH)
 cpSync(join(__dirname, "run.sh"), join(DIST, "run.sh"));

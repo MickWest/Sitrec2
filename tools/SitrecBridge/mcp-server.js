@@ -32,8 +32,10 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import {WebSocket, WebSocketServer} from "ws";
 import {readFileSync} from "fs";
+import {spawn} from "child_process";
 import {fileURLToPath} from "url";
 import {dirname, join} from "path";
+import {createServer} from "http";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -78,6 +80,8 @@ function log(...args) {
 // alive. We detect stdin close and shut down cleanly.
 
 let wsServer = null;  // WebSocket server reference, set in startServer
+let httpServer = null; // HTTP server backing the WebSocket server
+const localComputeJobs = new Map(); // id -> {proc, ws, stderr, finalSent}
 
 function shutdownGracefully(reason) {
     log(`Shutting down: ${reason}`);
@@ -85,6 +89,10 @@ function shutdownGracefully(reason) {
     if (wsServer) {
         wsServer.close();
         wsServer = null;
+    }
+    if (httpServer) {
+        httpServer.close();
+        httpServer = null;
     }
     if (extensionSocket) {
         extensionSocket.close();
@@ -101,6 +109,11 @@ function shutdownGracefully(reason) {
         req.reject(new Error(`Server shutting down: ${reason}`));
     }
     pendingRequests.clear();
+
+    for (const [, job] of localComputeJobs) {
+        try { job.proc.kill("SIGTERM"); } catch {}
+    }
+    localComputeJobs.clear();
 
     setTimeout(() => process.exit(0), 200);
 }
@@ -138,20 +151,52 @@ let keepaliveTimer = null;
 let boundPort = null;               // The port we successfully bound to
 
 function startServer(port) {
-    const wss = new WebSocketServer({ host: WS_HOST, port });
+    const server = createServer((req, res) => {
+        if (req.method === "OPTIONS") {
+            res.writeHead(204, {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "Cache-Control": "no-store",
+            });
+            res.end();
+            return;
+        }
+
+        if (req.method === "GET" && (req.url === "/" || req.url === "/local-compute-probe")) {
+            res.writeHead(204, {
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "no-store",
+            });
+            res.end();
+            return;
+        }
+
+        res.writeHead(404, {
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store",
+        });
+        res.end();
+    });
+    const wss = new WebSocketServer({ server });
     wsServer = wss;
+    httpServer = server;
     boundPort = port;
 
-    wss.on("listening", () => {
+    server.on("listening", () => {
         log(`Listening on ws://${WS_HOST}:${port}` +
             (PAIRED_ORIGIN ? ` (paired to ${PAIRED_ORIGIN})` : ` (host fallback)`));
+    });
+
+    server.on("error", (err) => {
+        log("HTTP/WebSocket server error:", err.message);
     });
 
     wss.on("error", (err) => {
         log("WebSocket server error:", err.message);
     });
 
-    wss.on("connection", (ws) => {
+    wss.on("connection", (ws, req) => {
         // Wait briefly for a force-extension marker; otherwise treat as a
         // normal extension connection.
         let identified = false;
@@ -163,6 +208,12 @@ function startServer(port) {
                     identified = true;
                     ws.removeListener("message", earlyHandler);
                     setupExtensionConnection(ws, true);
+                    return;
+                }
+                if (msg.type === "local-compute-client") {
+                    identified = true;
+                    ws.removeListener("message", earlyHandler);
+                    setupLocalComputeConnection(ws, msg, req);
                     return;
                 }
             } catch {}
@@ -183,6 +234,284 @@ function startServer(port) {
                 setupExtensionConnection(ws, false);
             }
         }, 500);
+    });
+
+    server.listen(port, WS_HOST);
+}
+
+function sendLocalCompute(ws, payload) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(payload));
+    }
+}
+
+function isAllowedLocalComputeOrigin(origin) {
+    if (!origin) return true;
+    try {
+        const {protocol, hostname} = new URL(origin);
+        return protocol === "chrome-extension:" ||
+            hostname === "local.metabunk.org" ||
+            hostname === "localhost" ||
+            hostname === "127.0.0.1" ||
+            hostname === "::1";
+    } catch {
+        return false;
+    }
+}
+
+function localComputeCapabilities() {
+    return {
+        motionAnalysis: true,
+        motionAnalysisWorker: "python-opencv",
+        localComputeInstall: true,
+        cancel: true,
+    };
+}
+
+function setupLocalComputeConnection(ws, hello, req) {
+    const origin = req?.headers?.origin || hello?.origin || null;
+    if (!isAllowedLocalComputeOrigin(origin)) {
+        log(`Rejected Local Compute client from origin ${origin}`);
+        sendLocalCompute(ws, {type: "local-compute-error", error: `Origin not allowed: ${origin}`});
+        ws.close();
+        return;
+    }
+
+    log(`Local Compute client connected${origin ? ` from ${origin}` : ""}`);
+    sendLocalCompute(ws, {
+        type: "local-compute-hello",
+        protocolVersion: 1,
+        serverPid: process.pid,
+        cwd: SITREC_CWD,
+        boundPort,
+        capabilities: localComputeCapabilities(),
+    });
+
+    ws.on("message", (raw) => {
+        let msg;
+        try {
+            msg = JSON.parse(raw.toString());
+        } catch (e) {
+            sendLocalCompute(ws, {type: "local-compute-error", error: `Bad JSON: ${e.message}`});
+            return;
+        }
+
+        if (msg.type === "local-compute-ping") {
+            sendLocalCompute(ws, {type: "local-compute-pong", time: Date.now()});
+            return;
+        }
+
+        if (msg.type === "local-compute-cancel") {
+            const job = localComputeJobs.get(msg.id);
+            if (job) {
+                job.finalSent = true;
+                try { job.proc.kill("SIGTERM"); } catch {}
+                localComputeJobs.delete(msg.id);
+                sendLocalCompute(ws, {type: "local-compute-response", id: msg.id, ok: false, error: "Cancelled"});
+            }
+            return;
+        }
+
+        if (msg.type !== "local-compute-request") {
+            sendLocalCompute(ws, {type: "local-compute-error", error: `Unknown Local Compute message type: ${msg.type}`});
+            return;
+        }
+
+        runLocalComputeRequest(ws, msg).catch((e) => {
+            sendLocalCompute(ws, {type: "local-compute-response", id: msg.id, ok: false, error: e.message});
+        });
+    });
+
+    ws.on("close", () => {
+        for (const [id, job] of [...localComputeJobs]) {
+            if (job.ws === ws) {
+                try { job.proc.kill("SIGTERM"); } catch {}
+                localComputeJobs.delete(id);
+            }
+        }
+    });
+}
+
+async function runLocalComputeRequest(ws, msg) {
+    const {id, action, params} = msg;
+    if (!id) {
+        sendLocalCompute(ws, {type: "local-compute-response", ok: false, error: "Missing request id"});
+        return;
+    }
+    if (action === "local_compute_install") {
+        runLocalComputeInstall(ws, msg);
+        return;
+    }
+    if (action !== "motion_analysis") {
+        sendLocalCompute(ws, {type: "local-compute-response", id, ok: false, error: `Unsupported Local Compute action: ${action}`});
+        return;
+    }
+    if (localComputeJobs.has(id)) {
+        sendLocalCompute(ws, {type: "local-compute-response", id, ok: false, error: `Duplicate request id: ${id}`});
+        return;
+    }
+
+    const python = process.env.SITREC_LOCAL_COMPUTE_PYTHON || "python3";
+    const workerPath = join(__dirname, "local-compute", "motion_analysis_worker.py");
+    const proc = spawn(python, [workerPath], {
+        cwd: SITREC_CWD,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {...process.env, PYTHONUNBUFFERED: "1"},
+    });
+
+    const job = {proc, ws, stderr: "", finalSent: false};
+    localComputeJobs.set(id, job);
+
+    const fail = (error) => {
+        if (job.finalSent) return;
+        job.finalSent = true;
+        localComputeJobs.delete(id);
+        sendLocalCompute(ws, {type: "local-compute-response", id, ok: false, error});
+    };
+
+    let buffer = "";
+    proc.stdout.on("data", (chunk) => {
+        buffer += chunk.toString();
+        let nl;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+            const line = buffer.slice(0, nl).trim();
+            buffer = buffer.slice(nl + 1);
+            if (!line) continue;
+            let payload;
+            try {
+                payload = JSON.parse(line);
+            } catch (e) {
+                log(`Local Compute worker emitted non-JSON: ${line.slice(0, 200)}`);
+                continue;
+            }
+            if (payload.type === "progress") {
+                sendLocalCompute(ws, {type: "local-compute-progress", id, progress: payload.progress || {}});
+            } else if (payload.type === "result") {
+                job.finalSent = true;
+                localComputeJobs.delete(id);
+                sendLocalCompute(ws, {type: "local-compute-response", id, ok: true, result: payload.result});
+            } else if (payload.type === "error") {
+                fail(payload.error || "Local Compute worker error");
+                if (payload.trace) log(payload.trace);
+            }
+        }
+    });
+
+    proc.stderr.on("data", (chunk) => {
+        job.stderr += chunk.toString();
+        if (job.stderr.length > 8000) job.stderr = job.stderr.slice(-8000);
+    });
+
+    proc.on("error", (err) => {
+        fail(`Failed to start Local Compute worker with ${python}: ${err.message}`);
+    });
+
+    proc.on("close", (code, signal) => {
+        if (job.finalSent) {
+            localComputeJobs.delete(id);
+            return;
+        }
+        const tail = job.stderr ? `\n${job.stderr}` : "";
+        fail(`Local Compute worker exited with ${signal || code}${tail}`);
+    });
+
+    proc.stdin.end(JSON.stringify(params || {}));
+}
+
+function runLocalComputeInstall(ws, msg) {
+    const {id} = msg;
+    if (localComputeJobs.has(id)) {
+        sendLocalCompute(ws, {type: "local-compute-response", id, ok: false, error: `Duplicate request id: ${id}`});
+        return;
+    }
+
+    const scriptPath = join(__dirname, "local-compute", "install.sh");
+    const proc = spawn("bash", [scriptPath], {
+        cwd: SITREC_CWD,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {...process.env, PYTHONUNBUFFERED: "1"},
+    });
+
+    const job = {proc, ws, stderr: "", stdout: "", finalSent: false};
+    localComputeJobs.set(id, job);
+
+    const sendLine = (line, stream) => {
+        const text = line.trim();
+        if (!text) return;
+        sendLocalCompute(ws, {
+            type: "local-compute-progress",
+            id,
+            progress: {phase: "install", message: text, stream},
+        });
+    };
+
+    const fail = (error) => {
+        if (job.finalSent) return;
+        job.finalSent = true;
+        localComputeJobs.delete(id);
+        sendLocalCompute(ws, {type: "local-compute-response", id, ok: false, error});
+    };
+
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
+    proc.stdout.on("data", (chunk) => {
+        job.stdout += chunk.toString();
+        if (job.stdout.length > 12000) job.stdout = job.stdout.slice(-12000);
+        stdoutBuffer += chunk.toString();
+        let nl;
+        while ((nl = stdoutBuffer.indexOf("\n")) >= 0) {
+            const line = stdoutBuffer.slice(0, nl);
+            stdoutBuffer = stdoutBuffer.slice(nl + 1);
+            sendLine(line, "stdout");
+        }
+    });
+
+    proc.stderr.on("data", (chunk) => {
+        job.stderr += chunk.toString();
+        if (job.stderr.length > 12000) job.stderr = job.stderr.slice(-12000);
+        stderrBuffer += chunk.toString();
+        let nl;
+        while ((nl = stderrBuffer.indexOf("\n")) >= 0) {
+            const line = stderrBuffer.slice(0, nl);
+            stderrBuffer = stderrBuffer.slice(nl + 1);
+            sendLine(line, "stderr");
+        }
+    });
+
+    proc.on("error", (err) => {
+        fail(`Failed to start Local Compute installer: ${err.message}`);
+    });
+
+    proc.on("close", (code, signal) => {
+        if (job.finalSent) {
+            localComputeJobs.delete(id);
+            return;
+        }
+        if (stdoutBuffer.trim()) sendLine(stdoutBuffer, "stdout");
+        if (stderrBuffer.trim()) sendLine(stderrBuffer, "stderr");
+        job.finalSent = true;
+        localComputeJobs.delete(id);
+
+        if (code === 0) {
+            sendLocalCompute(ws, {
+                type: "local-compute-response",
+                id,
+                ok: true,
+                result: {
+                    installed: true,
+                    stdout: job.stdout,
+                    stderr: job.stderr,
+                },
+            });
+        } else {
+            const tail = job.stderr || job.stdout || "";
+            sendLocalCompute(ws, {
+                type: "local-compute-response",
+                id,
+                ok: false,
+                error: `Local Compute installer exited with ${signal || code}${tail ? `\n${tail}` : ""}`,
+            });
+        }
     });
 }
 
@@ -238,6 +567,7 @@ function finishExtensionSetup(ws) {
             boundPort,
             cwd: SITREC_CWD,
             startedAt: STARTED_AT,
+            localComputeCapabilities: localComputeCapabilities(),
         }));
     } catch (e) {
         log("Could not read source manifest for version check:", e.message);
@@ -290,6 +620,7 @@ function handleExtensionMessage(raw) {
                     boundPort,
                     cwd: SITREC_CWD,
                     startedAt: STARTED_AT,
+                    localComputeCapabilities: localComputeCapabilities(),
                 }));
             }
             return;
