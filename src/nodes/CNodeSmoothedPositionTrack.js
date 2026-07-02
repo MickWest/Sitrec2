@@ -218,6 +218,11 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                 // Sample per frame using time-based parameter mapping
                 const n = sparsePositions.length;
                 this.array = [];
+                // f is visited in increasing order, so the bracketing segment
+                // index only ever moves forward — persist it across frames
+                // (O(frames + points)) instead of rescanning from 0 each frame
+                // (O(frames * points), which dominated start-time scrubbing).
+                let idx = 0;
                 for (let f = 0; f < this.frames; f++) {
                     let t;
                     if (f <= sparseFrames[0]) {
@@ -226,7 +231,6 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                         t = 1;
                     } else {
                         // Find the bracketing sparse points for this frame
-                        let idx = 0;
                         while (idx < n - 2 && sparseFrames[idx + 1] < f) {
                             idx++;
                         }
@@ -255,15 +259,7 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
             this.frames = this.array.length;
         } else if (this.method === "spline") {
             // Build a spline from SavGol-smoothed samples, then resample per-frame.
-            const x = []
-            const y = []
-            const z = []
-            for (let i = 0; i < this.sourceArray.length; i++) {
-                const pos = this.in.source.p(i)
-                x.push(pos.x)
-                y.push(pos.y)
-                z.push(pos.z)
-            }
+            const [x, y, z] = this._extractSourceXYZ();
 
             var window = this.in.window ? this.in.window.v0 : 0
             var iterations = 1
@@ -315,6 +311,9 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                 this.array = []
                 const n = controlPoints.length
 
+                // Monotonic bracket search — same optimization as the
+                // dataTrack spline path above.
+                let idx = 0;
                 for (let f = 0; f < this.frames; f++) {
                     let t;
                     if (f <= controlFrames[0]) {
@@ -322,7 +321,6 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                     } else if (f >= controlFrames[n - 1]) {
                         t = 1;
                     } else {
-                        let idx = 0;
                         while (idx < n - 2 && controlFrames[idx + 1] < f) {
                             idx++;
                         }
@@ -338,18 +336,7 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
             this.frames = this.array.length;
         } else if (this.method === "moving" || this.method === "movingPolyEdge" || this.method === "sliding" || this.method === "savgol") {
 
-            // create x,y,z arrays using getValueFrame, so we can smooth abstract data
-            // (like catmullrom tracks, which don't create the sourceArray)
-
-            const x = []
-            const y = []
-            const z = []
-            for (let i = 0; i < this.sourceArray.length; i++) {
-                const pos = this.in.source.p(i)
-                x.push(pos.x)
-                y.push(pos.y)
-                z.push(pos.z)
-            }
+            const [x, y, z] = this._extractSourceXYZ();
 
             var window = this.in.window ? this.in.window.v0 : 0
             var iterations = 1
@@ -436,6 +423,29 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
         //     }
         // }
 
+    }
+
+    // Extract per-frame x/y/z arrays for the smoothing functions, reading
+    // positions straight out of this.sourceArray. By the time this is called,
+    // recalculate() has guaranteed sourceArray exists — either the source's own
+    // baked array, or one just built via source.p(i) — so going through
+    // this.in.source.p(i) again (full getValue dispatch + a wrapper allocation
+    // + a Vector3 clone per frame) is redundant work in a hot path that runs
+    // for every smoother on every start-time scrub tick. Entries are usually
+    // {position: Vector3} but may be a raw Vector3 (CNodeArray of positions).
+    _extractSourceXYZ() {
+        const len = this.sourceArray.length;
+        const x = new Array(len);
+        const y = new Array(len);
+        const z = new Array(len);
+        for (let i = 0; i < len; i++) {
+            const entry = this.sourceArray[i];
+            const pos = entry.position !== undefined ? entry.position : entry;
+            x[i] = pos.x;
+            y[i] = pos.y;
+            z[i] = pos.z;
+        }
+        return [x, y, z];
     }
 
     getValueFrame(frame) {

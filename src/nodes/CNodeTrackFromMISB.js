@@ -470,6 +470,10 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         // any future change.
         const videoFirstPTSus = (usePESPTS && videoData.framePTSus) ? videoData.framePTSus[0] : 0;
 
+        // per-slot FOV conversion cache (see the validFOV block below)
+        let fovSlot = -1;
+        let fovValue = undefined;
+
         for (var f=0;f<Sit.frames;f++) {
             // For PES-PTS mode, msNow is the video frame's PTS in ms,
             // relative to the first frame — same origin as pesTimeArray.
@@ -505,7 +509,11 @@ export class CNodeTrackFromMISB extends CNodeTrack {
               if (slot < points-1) {
                   // for the in-range slots, check the time is increasing
                   // which means the data is good and we can interpolate
-                  assert(lookupTimes[slot + 1] > lookupTimes[slot], "Time data is not increasing slot =" + slot + " time=" + lookupTimes[slot] + " next time=" + lookupTimes[slot+1]);
+                  // (assert messages built only on failure — eager string
+                  // concatenation in this per-frame loop was a measurable
+                  // cost in dev builds when scrubbing the start time)
+                  if (!(lookupTimes[slot + 1] > lookupTimes[slot]))
+                      assert(0, "Time data is not increasing slot =" + slot + " time=" + lookupTimes[slot] + " next time=" + lookupTimes[slot+1]);
               } else {
                   // use the last two slots and interpolate (extrapolate) the position
                   slot = points - 2
@@ -523,11 +531,13 @@ export class CNodeTrackFromMISB extends CNodeTrack {
             // however we might want to do something different for out or range
             // as the first and last pairs of data points might not be good
 
-            assert(this.validArray[slot], "slot " + slot + " is not valid, id=" + this.id)
-            assert(this.validArray[slot+1], "slot+1 " + (slot+1) + " is not valid, id=" + this.id)
+            if (!this.validArray[slot])
+                assert(0, "slot " + slot + " is not valid, id=" + this.id)
+            if (!this.validArray[slot+1])
+                assert(0, "slot+1 " + (slot+1) + " is not valid, id=" + this.id)
 
-
-            assert(lookupTimes[slot+1] > lookupTimes[slot], "Time data is not increasing slot =" + slot + " time=" + lookupTimes[slot] + " next time=" + lookupTimes[slot+1]);
+            if (!(lookupTimes[slot+1] > lookupTimes[slot]))
+                assert(0, "Time data is not increasing slot =" + slot + " time=" + lookupTimes[slot] + " next time=" + lookupTimes[slot+1]);
 
            // assert(slot < points, "not enough data, or a bug in your code - Time wrong? id=" + this.id)
             const fraction = (msNow - lookupTimes[slot]) / (lookupTimes[slot + 1] - lookupTimes[slot])
@@ -587,7 +597,8 @@ export class CNodeTrackFromMISB extends CNodeTrack {
             // end product, a per-frame array of positions
             // that is a track.
 
-            assert(!Number.isNaN(pos.x),"CNodeTrackFromMISB:recalculate(): pos.x NaN " + "lat = " + lat + " lon = " + lon + " alt = " + alt)
+            if (Number.isNaN(pos.x))
+                assert(0,"CNodeTrackFromMISB:recalculate(): pos.x NaN " + "lat = " + lat + " lon = " + lon + " alt = " + alt)
 
             // minumum data that is needed (no clone need as it's done in the expanded LLAToECEF)
             const product = {position: pos, lla:[lat,lon,alt]}
@@ -605,22 +616,29 @@ export class CNodeTrackFromMISB extends CNodeTrack {
 
             // only copy the vFov if it's actually there
             // need this check for drag-and-drop
+            // (converted per slot, not per frame — the slot advances every
+            // few frames, so caching the Number() conversion is exact)
             if (validFOV) {
-                const misbFOV = misb.misb[slot][MISB.SensorVerticalFieldofView]
-                if (misbFOV !== undefined) {
-                    const misbFOVNumber = Number(misbFOV)
-                    // use only valid FOV values
-                    if (!isNaN(misbFOVNumber) && misbFOVNumber > 0 && misbFOVNumber < 180) {
-                        product["vFOV"] = misbFOVNumber;
-//                        console.log("CNodeTrackFromMISB:recalculate(): product[\"vFOV\"] = ", product["vFOV"])
-                    } else {
-                        assert(0, "CNodeTrackFromMISB:recalculate(): invalid FOV value: " + misbFOV)
+                if (slot !== fovSlot) {
+                    fovSlot = slot;
+                    fovValue = undefined;
+                    const misbFOV = misb.misb[slot][MISB.SensorVerticalFieldofView]
+                    if (misbFOV !== undefined) {
+                        const misbFOVNumber = Number(misbFOV)
+                        // use only valid FOV values
+                        if (!isNaN(misbFOVNumber) && misbFOVNumber > 0 && misbFOVNumber < 180) {
+                            fovValue = misbFOVNumber;
+                        } else {
+                            assert(0, "CNodeTrackFromMISB:recalculate(): invalid FOV value: " + misbFOV)
+                        }
                     }
+                }
+                if (fovValue !== undefined) {
+                    product["vFOV"] = fovValue;
                 }
             }
 
-            // store the interpolated LLA for exporting
-            product["lla"] = [lat,lon,alt];
+            // (interpolated LLA for exporting is already in the product literal above)
 
             // we store a reference to the misb row for later use
             // so we can extract other data from it as needed

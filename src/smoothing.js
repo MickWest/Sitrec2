@@ -290,22 +290,27 @@ export function SlidingAverageX(data, window, iterations = 1) {
             data = data.map(x => parseFloat(x))
         }
 
+        // Prefix sums: prefix[k] = data[0] + ... + data[k-1].
+        // Every sample in a frame's window shares the same fractional offset
+        // (frac of the window start `a`), so the sum of `window` interpolated
+        // samples decomposes into two integer range sums:
+        //   sum = (1-frac) * S(x0 .. x0+window-1) + frac * S(x0+1 .. x0+window)
+        // This is O(n) instead of the O(n * window) inner loop it replaces,
+        // with identical results up to float summation order.
+        const prefix = new Float64Array(n + 1);
+        for (let k = 0; k < n; k++) {
+            prefix[k + 1] = prefix[k] + data[k];
+        }
+
         // data is index 0..len
         // the window start out starting at the current value,
         // and slides backwards until it ends up starting at at len-window
         for (var f = 0; f < n; f++) {
             let a = f - (f / (n - 1) * window);
-            let sum = 0;
-            for (let w = 0; w < window; w++) {
-                let i = a + w;
-                // is will be non-integer, so we need to interpolate the two nearest integers
-                let x = Math.floor(i)
-                let y = x + 1
-                let xv = data[x]
-                let yv = data[y]
-                let interp = xv + (i - x) * (yv - xv)
-                sum += interp;
-            }
+            const x0 = Math.floor(a);
+            const frac = a - x0;
+            const sum = (1 - frac) * (prefix[x0 + window] - prefix[x0])
+                      + frac * (prefix[x0 + window + 1] - prefix[x0 + 1]);
             output.push(sum / window)
         }
         data = output;
