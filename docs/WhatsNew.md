@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.94.0 (2026-07-01)
+
+### New Features
+- **HEIC/HEIF photo support**: drag in iPhone HEIC/HEIF photos in any browser (previously they only worked in Safari), as a video image source or a ground overlay. Geotagged HEIC photos now bring in their location, heading, altitude, and field of view just like JPEGs, and load the right way up.
+
+### Improvements
+- Sitrec's pop-up prompts (including the "add or replace video" prompt when you drop in a second video) are now custom dialogs with clearer options and explanations, and no longer briefly freeze the page.
+
+### Bug Fixes
+- Fixed imported geotagged photos placing the camera too high above the ground on load (it previously only dropped to the correct height after you zoomed in). Affects both HEIC and JPEG photos.
+
 ## Version 2.93.2 (2026-07-01)
 
 ### Bug Fixes
