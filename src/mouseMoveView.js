@@ -225,6 +225,12 @@ export function onDocumentMouseUp(event) {
 export function onDocumentDoubleClick(event) {
     const x = event.clientX, y = event.clientY;
 
+    // Defer to menus (same as mousedown/move/wheel): a menu tab overlapping a view's
+    // header strip must get the dblclick (e.g. its setDoubleClickAction), not trigger
+    // the view's fullscreen toggle. This handler is capture-phase, so without this
+    // bail-out it would run — and swallow the event — before the menu's own listener.
+    if (isTopMenuElementAt(x, y)) return;
+
     let done = false;
     ViewMan.iterate((key, view) => {
         if (done || !view._effectivelyVisible) return;
