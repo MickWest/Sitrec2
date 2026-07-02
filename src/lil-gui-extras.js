@@ -929,6 +929,8 @@ export class CGuiMenuBar {
 
         // add an info GUI in the top right
         this.infoGUI = new GUI().title("Sitrec").close()
+        // keep it above #menuBarBlackBar (8999) / #menuBar (9000), else the black bar paints over it
+        this.infoGUI.domElement.style.zIndex = "9001";
         // move it down if there is a banner
         if (getEnvBool("BANNER_ACTIVE", process.env.BANNER_ACTIVE)) {
             this.infoGUI.domElement.style.top = getEnv("BANNER_HEIGHT", process.env.BANNER_HEIGHT) + "px";
