@@ -148,6 +148,11 @@ export class CNodeControllerObjectTilt extends CNodeController {
         if (object !== undefined) {
             if (f >= 0) {
 
+                // p() is a pure read returning a fresh clone; the same two
+                // values were being fetched up to six times per frame here.
+                // currentPos/rawNext are only read below (never mutated), so
+                // the later uses take these or explicit clones where the
+                // original mutated its own fresh copy.
                 var rawNext = this.in.track.p(f + 1)
                 const currentPos = this.in.track.p(f)
 
@@ -168,8 +173,7 @@ export class CNodeControllerObjectTilt extends CNodeController {
                 // if we have a wind vector then subtract that to get the nose heading
                 // pass the track position to get wind in the correct local frame
                 if (this.in.wind !== undefined) {
-                    const trackPos = this.in.track.p(f)
-                    const windVector = this.in.wind.getValueFrame(f, trackPos)
+                    const windVector = this.in.wind.getValueFrame(f, currentPos)
                     next = rawNext.clone();
                     next.sub(windVector)
                 }
@@ -187,16 +191,21 @@ export class CNodeControllerObjectTilt extends CNodeController {
                 object.position.copy(oldPos);
 
                 // Save base orientation AFTER lookAt, BEFORE switch block modifies it
-                this._savedQuaternion = object.quaternion.clone();
+                // (reuse the saved quaternion object rather than allocating per frame)
+                if (this._savedQuaternion) {
+                    this._savedQuaternion.copy(object.quaternion);
+                } else {
+                    this._savedQuaternion = object.quaternion.clone();
+                }
 
                 // calculate the heading on the SMOOTHED track
-                var from = this.in.track.p(f)
-                var to = this.in.track.p(f + 1)
+                var from = currentPos
+                var to = rawNext.clone()
                 var fwdAir = to.sub(from);
 
                 // but we need to use the actual track for the position
                 // i.e. pos and next
-                var pos = this.in.track.p(f); //
+                var pos = currentPos;
                 var next = pos.clone().add(fwdAir)
 
 

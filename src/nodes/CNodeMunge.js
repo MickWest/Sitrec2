@@ -60,7 +60,7 @@ export class CNodeMunge extends CNode {
         // falls back to the live munge() for any visible-frame read, and a cascade
         // re-bakes automatically once the graph is shown (countVisibleOutputs > 0).
         // Behavior-identical for hidden graphs; only changes WHEN the work happens.
-        if (this.checkDisplayOutputs && this.countVisibleOutputs(0, true) === 0) {
+        if (this.checkDisplayOutputs && !this.anyVisibleDisplayOutputs()) {
             this.cachedValues = undefined;
             return;
         }

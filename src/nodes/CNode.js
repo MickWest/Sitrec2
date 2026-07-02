@@ -608,12 +608,16 @@ class CNode {
     // if outside of the range, then extrapolate using the two first or last values
     getValue(frameFloat) {
 
-        assert(this.isNumber || this.getValueFrame(0).position !== undefined, "getValueFrame(0) has no position, id=" + this.id)
-
-      // TODO: better check like this
-        if (!this.isNumber && this.getValueFrame(0).position === undefined) {
+        // single probe of frame 0 (this used to be probed twice: once inside
+        // the assert argument and once in the branch test below — on the
+        // hottest read path in the app that doubled every track read in dev).
+        // Nodes that declare returnsPosition (CNodeLOS) skip the probe
+        // entirely — for camera-derived LOS the probe was a full extra
+        // camera-controller update at frame 0 on every single v(f) call.
+        if (!this.isNumber && !this.returnsPosition && this.getValueFrame(0).position === undefined) {
+            assert(0, "getValueFrame(0) has no position, id=" + this.id)
             var frameInt = Math.floor(frameFloat);
-            assert (frameInt >= 0 && frameInt < this.frames, "out of range index on non-number/non-position")
+            if (!(frameInt >= 0 && frameInt < this.frames)) assert(0, "out of range index on non-number/non-position")
             return this.getValueFrame(frameInt)
         }
 
@@ -743,7 +747,9 @@ class CNode {
     // will work with either a track that returns a Vector3 or one that returns {position:Vector3, ...}
     p(frameFloat) {
         var pos = this.getValue(frameFloat)
-        assert(pos !== undefined, "Node "+this.id+" has undefined value at frameFloat "+frameFloat)
+        // assert messages built lazily — the eager string concats on this
+        // path ran hundreds of thousands of times per recalc tick in dev
+        if (pos === undefined) assert(0, "Node "+this.id+" has undefined value at frameFloat "+frameFloat)
 
         // if (pos === null) {
         //     console.log("Node "+this.id+" has null value at frame "+frameFloat)
@@ -753,7 +759,7 @@ class CNode {
         if (pos.position !== undefined)
             pos = pos.position;
         // assert pos.clone is a function
-        assert(pos.clone !== undefined, "Node "+this.id+" has no position at frame "+frameFloat)
+        if (pos.clone === undefined) assert(0, "Node "+this.id+" has no position at frame "+frameFloat)
 
         return pos.clone()
     }
@@ -872,10 +878,17 @@ class CNode {
 
 
 // clear the depth of this node and all its children
-function clearDepth(node) {
+// The visited set is required for correctness of the runtime, not the result:
+// without it, diamond dependencies re-walk the same subtree once per path
+// (multiplicative blowup through shared switches/tracks). Do NOT prune on
+// node.depth === -1 instead — a hidden node keeps -1 from the marking pass
+// while its children may hold stale marks from an earlier cascade.
+function clearDepth(node, visited = new Set()) {
+    if (visited.has(node)) return;
+    visited.add(node);
     node.depth = -1;
     node.outputs.forEach(child => {
-        clearDepth(child)
+        clearDepth(child, visited)
     })
 }
 
@@ -895,7 +908,14 @@ function markMaximumVisibleDepth(node, depth, parent = null) {
         && !node.shouldRecalculateOnInputChange(parent)) {
         return;
     }
-    node.depth = Math.max(depth, node.depth);
+    // Provable no-op prune: clearDepth reset everything to -1 first, so
+    // node.depth >= depth means an earlier visit in THIS pass already set an
+    // equal-or-deeper mark and descended into the children with depth+1 or
+    // more (the veto above depends only on (node, parent), so it resolved the
+    // same way for that visit). Re-descending can't raise any child's depth.
+    // Without this, diamond fan-ins re-walk the subtree once per path.
+    if (node.depth >= depth) return;
+    node.depth = depth;
     node.outputs.forEach(child => {
         markMaximumVisibleDepth(child, depth + 1, node)
     })
@@ -978,7 +998,12 @@ function recalculateNodesBreadthFirstRecurse(list, f, noControllers, depth, debu
             // its position via WASD (setFromECEF -> recalculateCascade) skipped the node's own
             // recalculate, so the stale (load-time) ecef survived and got fed through the smoothed
             // camera track, flinging the look camera ~225 km into the ocean.
-            if (depth === 0 || !node.checkDisplayOutputs || node.countVisibleOutputs(0, true) > 0) {
+            // anyVisibleDisplayOutputs computes the same boolean as
+            // countVisibleOutputs(0, true) > 0 but early-exits on the first
+            // display node found — countVisibleOutputs walks the ENTIRE
+            // downstream subgraph (no visited set, so diamonds re-walk per
+            // path), which made this gate itself cost more than many recalcs.
+            if (depth === 0 || !node.checkDisplayOutputs || node.anyVisibleDisplayOutputs()) {
                 node.recalculate();
                 node._needsRecalculate = false;
             }

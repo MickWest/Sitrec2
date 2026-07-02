@@ -785,10 +785,13 @@ export class CDisplayLine {
 
 // get the point on the ground below a point in ECEF
 // if the terrain model is loaded, use that, otherwise use the sphere
-export function getPointBelow(A, raycast = false) {
+// `out` (optional) receives {altitudeHAE} of A when the terrain path runs —
+// a byproduct of the conversion getPointBelow already does, letting callers
+// skip an identical ECEFToLLA conversion of their own.
+export function getPointBelow(A, raycast = false, out = undefined) {
     if (NodeMan.exists("TerrainModel")) {
         let terrainNode = NodeMan.get("TerrainModel")
-        return terrainNode.getPointBelow(A, 0, raycast)
+        return terrainNode.getPointBelow(A, 0, raycast, out)
     } else {
         return pointOnSphereBelow(A);
     }
@@ -824,8 +827,14 @@ export function aboveGroundLevelAt(A) {
 // given a point in ECEF, ensure it is at least "height" meters above the ground
 // accounting for terrain.
 export function clampAboveGround(point, height) {
-    const ground = getPointBelow(point);
-    const aboveGround = calculateAltitude(point) - calculateAltitude(ground);
+    // getPointBelow already converts `point` to LLA internally; reuse that
+    // altitude instead of a second identical conversion (this runs per frame
+    // in the camera track-position sweep). Falls back to computing it when
+    // there's no terrain model (out left unset).
+    const out = {};
+    const ground = getPointBelow(point, false, out);
+    const pointAlt = out.altitudeHAE !== undefined ? out.altitudeHAE : calculateAltitude(point);
+    const aboveGround = pointAlt - calculateAltitude(ground);
     if (aboveGround <= height) {
         return pointAbove(ground, height);
     }

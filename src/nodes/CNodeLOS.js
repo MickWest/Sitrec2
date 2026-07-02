@@ -20,6 +20,13 @@ import {roundIfClose} from "../utils";
 export class CNodeLOS extends CNodeTrack {
     constructor(v) {
         super(v);
+        // LOS nodes always return {position, heading, ...} from getValueFrame
+        // (see the contract above). Declaring the shape lets CNode.getValue
+        // skip its frame-0 probe — which for CNodeLOSFromCamera runs a FULL
+        // camera-controller update per v(f) call just to sniff whether the
+        // value has a position, doubling the cost of every LOS sweep
+        // (the constant-speed traverse alone makes ~6000 such calls per tick).
+        this.returnsPosition = true;
     }
 
     update(f) {

@@ -16,6 +16,19 @@ export class CNodeLOSTraverseConstantSpeed extends CNodeTrack {
         this.airSpeed = v.airSpeed ?? false;
         this.frames = this.in.LOS.frames;
         this._needsRecalculate = true;
+        // Scratch objects reused across recalculate() calls. The binary search
+        // below runs ~20 iterations x ~6000 frames per recalculate, so per-
+        // iteration `new Sphere`/`clone()` allocations dominated its runtime
+        // (~1M short-lived objects per rebake). All values are fully written
+        // before use each frame; aliasing of `position` onto these scratches
+        // mirrors the original per-frame locals exactly (see recalculate).
+        this._ray = new Ray();
+        this._sphere = new Sphere();
+        this._closest = V3();
+        this._target0 = V3();
+        this._target1 = V3();
+        this._dir0 = V3();
+        this._dir1 = V3();
     }
 
     recalculate() {
@@ -77,34 +90,47 @@ export class CNodeLOSTraverseConstantSpeed extends CNodeTrack {
 
             } else {
                 lastPosition = position.clone()
+                // `position` may still reference one of the shared scratch
+                // vectors (overwritten below); until the search reassigns it,
+                // any read of the previous frame's position must see the value
+                // we just captured — so point it at that capture. Within a
+                // frame the aliasing of `position` onto target0/target1/
+                // closestPosition then behaves exactly like the original
+                // per-frame locals (including the quirk where a target picked
+                // in one iteration is overwritten by the next intersect call
+                // before the preferredDirection code reads it back).
+                position = lastPosition
 
-                let losPosition = los.position.clone();
-                let losHeading = los.heading.clone().normalize()
+                const ray = this._ray;
+                ray.origin.copy(los.position);
+                ray.direction.copy(los.heading).normalize()
                 // we have a line from losPosition, heading vector losHeading
                 // and a sphere at position, radius perFrameMotion
                 // so find the intersections between the line and the sphere
-                let ray = new Ray(losPosition, losHeading)
 
                 // if we don't find it, then we use the closest position.
-                var closestPosition = V3()
+                var closestPosition = this._closest
                 ray.closestPointToPoint(lastPosition, closestPosition)
 
                 // these are the radii to test.
                 var A = perFrameMotion/8
                 var B = perFrameMotion*8 + 1 // +1 in case perFrameMotion is 0, which is other problems
 
-                let target0 = V3() // first intersection
-                let target1 = V3() // second intersection
+                const target0 = this._target0 // first intersection
+                const target1 = this._target1 // second intersection
+
+                // old single intersect check
+//                let sphere = new Sphere(position.clone().add(wind), perFrameMotion)
+
+                // binary search: only the radius changes per iteration
+                const sphere = this._sphere;
+                sphere.center.copy(lastPosition);
 
                 while (Math.abs(A-B) > 0.00001) {
 
                     var mid = (A+B) / 2;
 
-                    // old single intersect check
-//                let sphere = new Sphere(position.clone().add(wind), perFrameMotion)
-
-                    // binary search
-                    let sphere = new Sphere(lastPosition.clone(), mid)
+                    sphere.radius = mid;
 
 
                     if (intersectSphere2(ray, sphere, target0, target1)) {
@@ -113,8 +139,8 @@ export class CNodeLOSTraverseConstantSpeed extends CNodeTrack {
 
                         if (this.in.preferredDirection !== undefined) {
                             const preferredHeading = this.in.preferredDirection.v(f)
-                            const dir0 = target0.clone().sub(position)
-                            const dir1 = target1.clone().sub(position)
+                            const dir0 = this._dir0.copy(target0).sub(position)
+                            const dir1 = this._dir1.copy(target1).sub(position)
                             const heading0 = degrees(atan2(dir0.x, -dir0.z))
                             const heading1 = degrees(atan2(dir1.x, -dir1.z))
 
@@ -154,11 +180,20 @@ export class CNodeLOSTraverseConstantSpeed extends CNodeTrack {
                         result.bad = true;
                     }
 
+                    // same FP ops as position.clone().sub(lastPosition)[.sub(wind)].length(),
+                    // without the two Vector3 allocations per iteration
                     var midSpeed
-                    if (this.airSpeed)
-                        midSpeed = position.clone().sub(lastPosition).sub(wind).length()
-                    else
-                        midSpeed = position.clone().sub(lastPosition).length()
+                    if (this.airSpeed) {
+                        const mx = position.x - lastPosition.x - wind.x
+                        const my = position.y - lastPosition.y - wind.y
+                        const mz = position.z - lastPosition.z - wind.z
+                        midSpeed = Math.sqrt(mx * mx + my * my + mz * mz)
+                    } else {
+                        const mx = position.x - lastPosition.x
+                        const my = position.y - lastPosition.y
+                        const mz = position.z - lastPosition.z
+                        midSpeed = Math.sqrt(mx * mx + my * my + mz * mz)
+                    }
                     if (midSpeed < perFrameMotion) {
                         // calculated ground speed for mid point is too small, so use the larger half
                         A = mid;

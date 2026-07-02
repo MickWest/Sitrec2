@@ -53,6 +53,13 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         this.filteredSlots = new Set();
         this.altitudeFixedSlots = new Map(); // slot -> corrected altitude
 
+        // recalculate() (g-force filter + makeArrayForTrackDisplay) iterates
+        // the raw misb rows and never reads Sit.frames/fps/aFrame/bFrame, so
+        // a sitch-frame-count change can't alter its output — let
+        // updateSitFramesChanged skip the rebake (this is per-aircraft-track
+        // work that made the Sitch Frames slider laggy on multi-track sitches)
+        this.framesInvariant = true;
+
         this.selectSourceColumns(v.columns || ["SensorLatitude", "SensorLongitude", "SensorTrueAltitude", "AltitudeAGL"]);
 
         this.recalculate()

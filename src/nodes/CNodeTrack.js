@@ -53,7 +53,9 @@ export class CNodeTrack extends CNodeEmptyArray {
 
     getValueFrame(f) {
         this.ensureRecalculated();
-        assert(this.array.length > 0,
+        // lazy assert message — this is the hottest read path in a recalc
+        // cascade; the eager concat ran on every call in dev builds
+        if (this.array.length === 0) assert(0,
             this.constructor.name + " " + this.id + ": array empty after ensureRecalculated");
         return super.getValueFrame(f);
     }

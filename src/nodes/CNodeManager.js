@@ -321,7 +321,10 @@ export class CNodeManager extends CManager{
         // another patch might be to add a recalculateAllLinked function
         // but then we only want the silent links?
         Globals.suppressLinkedRecalculate = true;
-        this.recalculateAllRootFirst()
+        // skipFramesInvariant: nodes that have audited-frames-independent
+        // recalculates (raw MISB data tracks and their sparse displays) opt
+        // out of this full-graph rebake via node.framesInvariant
+        this.recalculateAllRootFirst(false, true)
         Globals.suppressLinkedRecalculate = false;
 
     }
@@ -352,7 +355,10 @@ export class CNodeManager extends CManager{
     }
 
 
-    recalculateAllRootFirst(withTerrain = false) {
+    // skipFramesInvariant is set ONLY by updateSitFramesChanged: nodes flagged
+    // node.framesInvariant have recalculates whose output provably does not
+    // depend on Sit.frames/fps, so a frame-count change need not rebake them.
+    recalculateAllRootFirst(withTerrain = false, skipFramesInvariant = false) {
         if (this.suspendRecalculateCount > 0) {
             return;
         }
@@ -384,7 +390,10 @@ export class CNodeManager extends CManager{
                     // we do not want to recalculate terrain nodes
 
                     if (withTerrain || (node.id !== "TerrainModel" && node.id !== "terrainUI")) {
-                        if (!node.checkDisplayOutputs || node.countVisibleOutputs(0, true) > 0) {
+                        if (skipFramesInvariant && node.framesInvariant) continue;
+                        // same boolean as countVisibleOutputs(0, true) > 0 but
+                        // early-exits instead of walking the whole subgraph
+                        if (!node.checkDisplayOutputs || node.anyVisibleDisplayOutputs()) {
                             const t0 = timing ? performance.now() : 0;
                             node.recalculate();
                             node._needsRecalculate = false;

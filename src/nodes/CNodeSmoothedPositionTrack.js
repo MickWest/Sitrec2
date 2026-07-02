@@ -4,6 +4,7 @@
 import {GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {RollingAveragePolyEdge, SavitzkyGolay, SlidingAverage} from "../smoothing";
 import {CatmullRomCurve3} from "three";
+import {CCachedCurveSampler} from "../CachedCurveSampler";
 import {V3} from "../threeUtils";
 import {assert} from "../assert";
 import {CNodeTrack} from "./CNodeTrack";
@@ -201,14 +202,44 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                 ? dataTrack.getTrackStartTimeOffsetSeconds() : 0;
             const totalOffsetFrames = (manualOffset + startTimeOffset) * Sit.fps;
 
-            // Collect valid sparse data point positions and their frame numbers
+            // Collect valid sparse data point positions and their frame numbers.
+            //
+            // Fast path: the dataTrack's own recalculate (which the cascade
+            // guarantees ran before us — it's an input) already baked
+            // LLAToECEF(getLat, getLon, getAltHAE) for every valid slot into
+            // dataTrack.array — the byte-identical expression getPosition(i)
+            // would recompute, per point, per smoother, per tick (each with a
+            // geoid interpolation and a geodetic conversion), plus a second
+            // full isValid() pass re-deriving getAltMSL. A baked entry has
+            // .position exactly when isValid(i) held at bake time.
+            // NOT valid when the track is terrain dependent (AGL altitudes or
+            // an active AGL lock): a terrain tile streaming in between the
+            // bake and a smoother-only recalc would make a fresh getPosition
+            // differ from the baked value — so those fall back to recomputing.
+            const canUseBaked = !dataTrack.isTerrainDependent()
+                && Array.isArray(dataTrack.array)
+                && dataTrack.array.length === numPoints;
+
             const sparsePositions = [];
             const sparseFrames = [];
-            for (let i = 0; i < numPoints; i++) {
-                if (!dataTrack.isValid(i)) continue;
-                sparsePositions.push(dataTrack.getPosition(i));
-                const timeMS = dataTrack.getTime(i);
-                sparseFrames.push((timeMS - startMS) / msPerFrame - totalOffsetFrames);
+            if (canUseBaked) {
+                const baked = dataTrack.array;
+                for (let i = 0; i < numPoints; i++) {
+                    const pos = baked[i].position;
+                    if (pos === undefined) continue;
+                    // clone: the original pushed a fresh Vector3 per point, and
+                    // the baked vectors belong to the dataTrack
+                    sparsePositions.push(pos.clone());
+                    const timeMS = dataTrack.getTime(i);
+                    sparseFrames.push((timeMS - startMS) / msPerFrame - totalOffsetFrames);
+                }
+            } else {
+                for (let i = 0; i < numPoints; i++) {
+                    if (!dataTrack.isValid(i)) continue;
+                    sparsePositions.push(dataTrack.getPosition(i));
+                    const timeMS = dataTrack.getTime(i);
+                    sparseFrames.push((timeMS - startMS) / msPerFrame - totalOffsetFrames);
+                }
             }
 
             if (sparsePositions.length >= 2) {
@@ -223,6 +254,9 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                 // (O(frames + points)) instead of rescanning from 0 each frame
                 // (O(frames * points), which dominated start-time scrubbing).
                 let idx = 0;
+                // bit-identical getPoint that reuses the segment's cubic
+                // coefficients while consecutive frames stay in one segment
+                const sampler = new CCachedCurveSampler(this.spline);
                 for (let f = 0; f < this.frames; f++) {
                     let t;
                     if (f <= sparseFrames[0]) {
@@ -239,7 +273,7 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                         t = (idx + alpha) / (n - 1);
                     }
                     const pos = V3();
-                    this.spline.getPoint(t, pos);
+                    sampler.getPoint(t, pos);
                     this.array.push({position: pos});
                 }
             } else {
@@ -314,6 +348,7 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                 // Monotonic bracket search — same optimization as the
                 // dataTrack spline path above.
                 let idx = 0;
+                const sampler = new CCachedCurveSampler(this.spline);
                 for (let f = 0; f < this.frames; f++) {
                     let t;
                     if (f <= controlFrames[0]) {
@@ -329,7 +364,7 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
                         t = (idx + alpha) / (n - 1);
                     }
                     const pos = V3()
-                    this.spline.getPoint(t, pos)
+                    sampler.getPoint(t, pos)
                     this.array.push({position: pos})
                 }
             }
@@ -403,10 +438,11 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
 
             // pre-compute the array of positions
             this.array = []
+            const catmullSampler = new CCachedCurveSampler(this.spline);
             for (var i = 0; i < this.frames; i++) {
                 var pos = V3()
                 var t = i / this.frames
-                this.spline.getPoint(t, pos)
+                catmullSampler.getPoint(t, pos)
                 this.array.push({position: pos})
             }
 
@@ -468,7 +504,8 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
         }
         let pos;
         if (this.method === "none" || this.method === "moving" || this.method === "movingPolyEdge" || this.method === "sliding" || this.method === "savgol" || this.method === "spline") {
-            assert(this.array[frame] !== undefined, "CNodeSmoothedPositionTrack: array[frame] is undefined, frame=" + frame + " id=" + this.id)
+            // lazy assert message — hot read path, ~tens of thousands of calls per tick
+            if (this.array[frame] === undefined) assert(0, "CNodeSmoothedPositionTrack: array[frame] is undefined, frame=" + frame + " id=" + this.id)
             pos = this.array[frame].position
         } else {
             pos = V3()

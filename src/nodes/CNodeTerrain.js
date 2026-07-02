@@ -2,7 +2,7 @@ import {CNode} from "./CNode";
 import {pointAbove} from "../threeExt";
 import {cos, radians} from "../utils";
 import {Globals, markShadowCastersDirty, NodeMan, setRenderOne, Sit} from "../Globals";
-import {ECEFToLLAVD_radii, RLLAToECEF_radii, RLLAToECEFV_Sphere} from "../LLA-ECEF-ENU";
+import {ECEFToLLA_radii, ECEFToLLAVD_radii, RLLAToECEF_radii, RLLAToECEFV_Sphere} from "../LLA-ECEF-ENU";
 import {setAltitudeHAE} from "../SphericalMath";
 import {BufferGeometry, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, Raycaster} from "three";
 import {GlobalScene} from "../LocalFrame";
@@ -875,7 +875,7 @@ export class CNodeTerrain extends CNode {
         return intersects.length > 0 ? intersects[0] : null
     }
 
-    getPointBelow(A, agl = 0, raycast = false) {
+    getPointBelow(A, agl = 0, raycast = false, out = undefined) {
         // given a point in ECEF, return the point on the terrain (or agl meters above it, if not zero)
         // We use the terrain map to get the elevation
         // we use LL (Lat and Lon) to get the data from the terrain maps
@@ -904,17 +904,25 @@ export class CNodeTerrain extends CNode {
 
 
         const LLA = ECEFToLLAVD_radii(A)
-        let elevation = meanSeaLevelOffset(LLA.x, LLA.y);
+        // Clamp to geoid sea level to avoid z-fighting with ocean tiles.
+        // meanSeaLevelOffset is pure, so compute it once for both the
+        // no-elevation-map default and the clamp (it was computed twice —
+        // this runs per frame in the camera ground-clamp sweep).
+        const seaLevel = meanSeaLevelOffset(LLA.x, LLA.y);
+        let elevation = seaLevel;
         if (this.elevationMap)
             elevation = this.elevationMap.getElevationInterpolated(LLA.x, LLA.y)
 
-        // Clamp to geoid sea level to avoid z-fighting with ocean tiles
-        const seaLevel = meanSeaLevelOffset(LLA.x, LLA.y);
         if (elevation < seaLevel) {
             elevation = seaLevel;
         }
 
-        return setAltitudeHAE(A, elevation + agl);
+        // inline of setAltitudeHAE(A, elevation + agl), keeping the lla
+        // conversion visible so callers (clampAboveGround) can reuse A's
+        // altitude without a second identical ECEFToLLA_radii conversion
+        const lla = ECEFToLLA_radii(A.x, A.y, A.z);
+        if (out !== undefined) out.altitudeHAE = lla[2];
+        return RLLAToECEF_radii(lla[0], lla[1], elevation + agl);
     }
 
     getPointBelowWithTileInfo(A, agl = 0) {

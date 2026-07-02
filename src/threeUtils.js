@@ -136,12 +136,13 @@ export function intersectSphere2(ray, sphere, target0, target1) {
                 t1 = t2;
             }
 
-            target0.copy(ray.origin)
-            target0.add(ray.direction.clone().multiplyScalar(t1))
+            // same FP ops as target0.copy(origin).add(direction.clone().multiplyScalar(t1)),
+            // written out to avoid a Vector3 allocation per call (this runs
+            // ~20x per frame in the constant-speed traverse binary search)
+            target0.set(px + vx * t1, py + vy * t1, pz + vz * t1)
 
             if (target1 !== undefined && t2 !== t1) {
-                target1.copy(ray.origin)
-                target1.add(ray.direction.clone().multiplyScalar(t2))
+                target1.set(px + vx * t2, py + vy * t2, pz + vz * t2)
             }
         }
         return true;

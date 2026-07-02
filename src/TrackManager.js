@@ -884,6 +884,12 @@ class CTrackManager extends CManager {
             trackDisplayStep: 1, // display every point in the track, as this is original data
 
         })
+        // sparse raw-data display: track input is the frames-invariant data
+        // node, ignoreAB skips the Sit.aFrame/bFrame coloring, so a sitch
+        // frame-count change can't alter its geometry — updateSitFramesChanged
+        // may skip it (the AB-colored TrackDisplay_ node below must NOT be
+        // skipped: changedFrames clamps Sit.bFrame)
+        trackOb.trackDisplayDataNode.framesInvariant = true;
 
         // Display the shorter segment of the track that matches the Sitch duration
         // (slightly brighter than the full-data track but same thinness)
