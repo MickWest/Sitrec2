@@ -481,6 +481,13 @@ export class CNodeMeasureAltitude extends CNodeMeasureAB {
         const B = new CNodeMunge({
             id: v.id + "_Below",
             inputs: {source: v.A},
+            // The munge below raycasts the loaded Google-photorealistic 3D tiles
+            // (~2.5ms per call). The label only ever reads the CURRENT frame, so
+            // eagerly baking all Sit.frames in recalculate() took ~15s per cascade —
+            // and dragging a spline-editor control point cascades on every
+            // pointermove, freezing the browser. lazyCache computes per frame on
+            // demand instead.
+            lazyCache: true,
             munge: (f) => {
                 let B;
                 const posNode = NodeMan.get(v.A); // cant use this.in.A as super hasnt been called yet

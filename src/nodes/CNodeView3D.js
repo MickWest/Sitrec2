@@ -1030,6 +1030,13 @@ export class CNodeView3D extends CNodeViewCanvas {
         this._lodSavedFov = this.camera.fov;
         this._lodSavedAspect = this.camera.aspect;
 
+        // Camera Tweaks xOffset/yOffset rotate the camera at render time
+        // (applyCameraOffset in renderTargetAndEffects), so terrain tile
+        // subdivision must evaluate the same rotated frustum or it selects
+        // tiles for a view direction the render never shows (gaps on screen).
+        this._lodSavedQuaternion = this.applyCameraOffset();
+        if (this._lodSavedQuaternion) this.camera.updateMatrixWorld();
+
         // Always use the FULL videoZoom for LOD, not the pixel-match-capped value.
         // The tile system must see the final effective FOV (after all zoom) so it
         // loads tiles at the correct resolution regardless of whether rendering
@@ -1107,6 +1114,11 @@ export class CNodeView3D extends CNodeViewCanvas {
             this._lodSavedZoom = undefined;
             this._lodSavedFov = undefined;
             this._lodSavedAspect = undefined;
+            if (this._lodSavedQuaternion) {
+                this.removeCameraOffset(this._lodSavedQuaternion);
+                this.camera.updateMatrixWorld();
+                this._lodSavedQuaternion = undefined;
+            }
         }
     }
 

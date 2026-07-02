@@ -292,11 +292,15 @@ export function SlidingAverageX(data, window, iterations = 1) {
 
         // Prefix sums: prefix[k] = data[0] + ... + data[k-1].
         // Every sample in a frame's window shares the same fractional offset
-        // (frac of the window start `a`), so the sum of `window` interpolated
+        // (frac of the window start `a`), so the sum of the window's interpolated
         // samples decomposes into two integer range sums:
-        //   sum = (1-frac) * S(x0 .. x0+window-1) + frac * S(x0+1 .. x0+window)
+        //   sum = (1-frac) * S(x0 .. x0+W-1) + frac * S(x0+1 .. x0+W)
         // This is O(n) instead of the O(n * window) inner loop it replaces,
         // with identical results up to float summation order.
+        // W = ceil(window) matches the original inner loop `for (w=0; w<window; w++)`,
+        // which ran ceil(window) samples for a fractional window (the sum is still
+        // divided by the fractional `window`, as before). Integer windows: W === window.
+        const W = Math.ceil(window);
         const prefix = new Float64Array(n + 1);
         for (let k = 0; k < n; k++) {
             prefix[k + 1] = prefix[k] + data[k];
@@ -309,8 +313,8 @@ export function SlidingAverageX(data, window, iterations = 1) {
             let a = f - (f / (n - 1) * window);
             const x0 = Math.floor(a);
             const frac = a - x0;
-            const sum = (1 - frac) * (prefix[x0 + window] - prefix[x0])
-                      + frac * (prefix[x0 + window + 1] - prefix[x0 + 1]);
+            const sum = (1 - frac) * (prefix[x0 + W] - prefix[x0])
+                      + frac * (prefix[x0 + W + 1] - prefix[x0 + 1]);
             output.push(sum / window)
         }
         data = output;

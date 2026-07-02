@@ -16,6 +16,15 @@ export class CNodeMunge extends CNode {
         // so it still bakes. Opt out with checkDisplayOutputs:false.
         this.checkDisplayOutputs = v.checkDisplayOutputs ?? true;
 
+        // lazyCache: never eagerly bake all frames in recalculate(); instead fill the
+        // per-frame cache on demand in getValueFrame(). For munges whose function is
+        // EXPENSIVE (e.g. CNodeMeasureAltitude's ground point, a raycast against the
+        // loaded Google-photorealistic 3D tiles, ~2.5ms per call) and whose consumers
+        // only read the current frame (a visible label), the eager bake is pathological:
+        // 6287 frames x 2.5ms ≈ 15s per recalculate — and dragging a spline-editor
+        // handle cascades a recalculate on EVERY pointermove, freezing the browser.
+        this.lazyCache = v.lazyCache ?? false;
+
         // remember the input we derived frame count from, so recalculate()
         // can re-read it after Sit.frames cascades through the source node
         if (v.frames === undefined) {
@@ -39,6 +48,13 @@ export class CNodeMunge extends CNode {
         if (this.framesSource !== undefined) {
             this.frames = this.framesSource.frames;
         }
+        // Lazy mode: drop any cached values (inputs changed) and let getValueFrame()
+        // recompute frames as they are actually read. See the constructor comment.
+        if (this.lazyCache) {
+            this.cachedValues = this.frames > 0 ? new Array(this.frames) : undefined;
+            this.dataVersion++;
+            return;
+        }
         // Skip baking the per-frame cache when this munge has no visible display
         // output (e.g. its speed graph panel is closed — the default). getValueFrame()
         // falls back to the live munge() for any visible-frame read, and a cascade
@@ -59,6 +75,14 @@ export class CNodeMunge extends CNode {
 
     getValueFrame(f) {
         if (this.cachedValues) {
+            if (this.lazyCache) {
+                let value = this.cachedValues[f];
+                if (value === undefined) {
+                    value = this.munge.call(this, f);
+                    this.cachedValues[f] = value;
+                }
+                return value;
+            }
             return this.cachedValues[f];
         }
         return this.munge.call(this, f)

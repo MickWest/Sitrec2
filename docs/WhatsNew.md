@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.94.2 (2026-07-02)
+
+### Improvements
+- Adjusting the start time is now about 5x faster on scenes with many imported tracks — this covers the Time menu sliders, syncing time to a track, playback-speed changes, and the ; / ' nudge keys.
+
+### Bug Fixes
+- Fixed the version panel in the top-right corner being hidden behind the black menu bar.
+- Fixed terrain and 3D buildings not loading in the visible part of the view when using the **xOffset** / **yOffset** sliders (Camera → Camera Tweaks).
+- Fixed the browser freezing when dragging a control point of an editable track (**Edit Track**, in the track's folder under Contents) with photorealistic 3D terrain loaded; dragging control points is also about twice as responsive in general.
+
 ## Version 2.94.1 (2026-07-01)
 
 ### Bug Fixes

@@ -44,6 +44,14 @@ export class CNodeSplineEditor extends CNodeTrack {
         const handleSplineEditorChange = () => {
             this.elevationCache = null;
             this.recalculateCascade();
+            // The objectChange listener that invoked us (PointEditor) has just set
+            // splineEditor.dirty via updatePointEditorGraphics(). The cascade above
+            // already recalculated everything, so clear the flag — otherwise
+            // update() fires a SECOND identical full cascade on the next render
+            // frame, doubling the cost of every drag pointermove. Other dirty
+            // setters (e.g. addPoint) don't call onChange, so their deferred
+            // cascade via update() still runs.
+            this.splineEditor.dirty = false;
         };
 
         if (v.initialPointsLLA === undefined) {

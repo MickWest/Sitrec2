@@ -265,6 +265,27 @@ class PerViewTiles {
         // have run yet this frame depending on node update order.
         view.camera.updateMatrixWorld();
 
+        // Camera Tweaks xOffset/yOffset rotate the camera at render time only
+        // (CNodeView3D.applyCameraOffset in renderTargetAndEffects). Tile LOD
+        // selection runs outside that window, so without applying the same
+        // rotation here it culls against the UN-offset frustum — with offsets
+        // comparable to the FOV, the tiles actually on screen never load
+        // (gaps). Apply for the fingerprint + renderer update, restore after.
+        const savedOffsetQuat = (typeof view.applyCameraOffset === "function")
+            ? view.applyCameraOffset() : null;
+        if (savedOffsetQuat) view.camera.updateMatrixWorld();
+        try {
+            this._updateWithCurrentCamera(view);
+        } finally {
+            if (savedOffsetQuat) {
+                view.removeCameraOffset(savedOffsetQuat);
+                view.camera.updateMatrixWorld();
+            }
+        }
+    }
+
+    _updateWithCurrentCamera(view) {
+
         // TilesRenderer.update() re-traverses the whole tileset every call to
         // recompute screen-space error / LOD, allocating tens of KB each time
         // (~119KB/frame across both views on a Google-photorealistic scene).
