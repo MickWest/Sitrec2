@@ -284,6 +284,7 @@ const handlers = {
         if (!ViewMan) return { error: "ViewMan not available" };
 
         try {
+            if (typeof ViewMan.updateZOrder === "function") ViewMan.updateZOrder();
             ViewMan.computeEffectiveVisibility();
             const nonOverlays = [];
             const overlays = [];
@@ -293,6 +294,9 @@ const handlers = {
                     else nonOverlays.push(v);
                 }
             });
+            // Match on-screen stacking: zIndex from updateZOrder (larger views
+            // lower), not insertion order. Overlays stack with their parent div.
+            nonOverlays.sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
 
             // Build capture bounds from visible base views
             let minX = 0, minY = 0;
@@ -315,22 +319,22 @@ const handlers = {
             ctx.fillStyle = "#000000";
             ctx.fillRect(0, 0, srcW, srcH);
 
-            // Re-render and composite each view
+            // Re-render and composite each view bottom-up, its overlays right after it
             for (const v of nonOverlays) {
                 v.renderCanvas(frame);
                 if (v.canvas) {
                     ctx.drawImage(v.canvas, v.leftPx - minX, (v.topPx - ViewMan.topPx) - minY, v.widthPx, v.heightPx);
                 }
-            }
-            for (const v of overlays) {
-                const alpha = v.transparency !== undefined ? v.transparency : 1;
-                if (alpha <= 0 || !v.canvas) continue;
-                if (v.canvas.style.display === "none" || v.canvas.style.visibility === "hidden") continue;
-                v.renderCanvas(frame);
-                const parent = v.overlayView;
-                ctx.globalAlpha = alpha;
-                ctx.drawImage(v.canvas, parent.leftPx - minX, (parent.topPx - ViewMan.topPx) - minY, parent.widthPx, parent.heightPx);
-                ctx.globalAlpha = 1;
+                for (const ov of overlays) {
+                    if (ov.overlayView !== v) continue;
+                    const alpha = ov.transparency !== undefined ? ov.transparency : 1;
+                    if (alpha <= 0 || !ov.canvas) continue;
+                    if (ov.canvas.style.display === "none" || ov.canvas.style.visibility === "hidden") continue;
+                    ov.renderCanvas(frame);
+                    ctx.globalAlpha = alpha;
+                    ctx.drawImage(ov.canvas, v.leftPx - minX, (v.topPx - ViewMan.topPx) - minY, v.widthPx, v.heightPx);
+                    ctx.globalAlpha = 1;
+                }
             }
 
             return exportCanvas(fullCanvas);

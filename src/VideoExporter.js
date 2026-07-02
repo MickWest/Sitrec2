@@ -890,6 +890,7 @@ export class VideoExportManager {
                 const overlays = [];
 
                 visible3DViewIds.length = 0;
+                ViewMan.updateZOrder();
                 ViewMan.computeEffectiveVisibility();
 
                 ViewMan.iterate((id, view) => {
@@ -912,37 +913,20 @@ export class VideoExportManager {
                     }
                 });
 
-                for (const view of nonOverlays) {
-                    if (view.camera && view instanceof CNodeView3D) {
-                        view.camera.updateMatrix();
-                        view.camera.updateMatrixWorld();
-                        for (const node of NodeMan.getPreRenderNodes()) {
-                            node.preRender(view);
-                        }
-                    }
-                    view.renderCanvas(frame);
-                    for (const node of NodeMan.getPostRenderNodes()) {
-                        node.postRender(view);
-                    }
-                    if (view.renderer) {
-                        view.renderer.getContext().finish();
-                    }
-                    // drawImage throws InvalidStateError on a 0-sized source canvas,
-                    // which can happen for a view that has not been laid out yet.
-                    if (view.canvas && view.canvas.width > 0 && view.canvas.height > 0) {
-                        const x = view.leftPx * scale;
-                        const y = (view.topPx - ViewMan.topPx) * scale;
-                        compositeCtx.drawImage(view.canvas, x, y, view.widthPx * scale, view.heightPx * scale);
-                    }
-                }
+                // Composite in the on-screen stacking order: updateZOrder assigns
+                // zIndex per view (alwaysOnTop / scriptZ / larger-area-lower), so
+                // draw bottom-up by zIndex rather than ViewMan insertion order —
+                // otherwise a fullscreen view registered after its insets paints
+                // over them in the export while sitting below them on screen.
+                nonOverlays.sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
 
-                for (const view of overlays) {
+                const drawOverlay = (view) => {
                     const alpha = view.transparency !== undefined ? view.transparency : 1;
-                    if (alpha <= 0) continue;
+                    if (alpha <= 0) return;
                     if (view.canvas && (view.canvas.style.display === "none" || view.canvas.style.visibility === "hidden")) {
                         // Hidden overlay canvases can retain stale pixels if they were previously shown.
                         // Skip drawing them to match on-screen presentation.
-                        continue;
+                        return;
                     }
 
                     if (view.canvas) {
@@ -968,6 +952,38 @@ export class VideoExportManager {
                         compositeCtx.globalAlpha = alpha;
                         compositeCtx.drawImage(view.canvas, x, y, parentView.widthPx * scale, parentView.heightPx * scale);
                         compositeCtx.globalAlpha = 1;
+                    }
+                };
+
+                for (const view of nonOverlays) {
+                    if (view.camera && view instanceof CNodeView3D) {
+                        view.camera.updateMatrix();
+                        view.camera.updateMatrixWorld();
+                        for (const node of NodeMan.getPreRenderNodes()) {
+                            node.preRender(view);
+                        }
+                    }
+                    view.renderCanvas(frame);
+                    for (const node of NodeMan.getPostRenderNodes()) {
+                        node.postRender(view);
+                    }
+                    if (view.renderer) {
+                        view.renderer.getContext().finish();
+                    }
+                    // drawImage throws InvalidStateError on a 0-sized source canvas,
+                    // which can happen for a view that has not been laid out yet.
+                    if (view.canvas && view.canvas.width > 0 && view.canvas.height > 0) {
+                        const x = view.leftPx * scale;
+                        const y = (view.topPx - ViewMan.topPx) * scale;
+                        compositeCtx.drawImage(view.canvas, x, y, view.widthPx * scale, view.heightPx * scale);
+                    }
+                    // An overlay canvas lives inside its parent's div, so on screen it
+                    // stacks with the parent — draw each parent's overlays before the
+                    // next (higher) view, not after all views.
+                    for (const overlay of overlays) {
+                        if (overlay.overlayView === view) {
+                            drawOverlay(overlay);
+                        }
                     }
                 }
 

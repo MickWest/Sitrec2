@@ -766,6 +766,7 @@ export class CFileManager extends CManager {
 
     captureViewportScreenshot(targetWidth = 1280) {
         const scale = 1; // don't use retina for thumbnails
+        ViewMan.updateZOrder();
         ViewMan.computeEffectiveVisibility();
 
         const nonOverlays = [];
@@ -810,6 +811,12 @@ export class CFileManager extends CManager {
         fullCtx.fillStyle = "#000000";
         fullCtx.fillRect(0, 0, srcWidth, srcHeight);
 
+        // Composite in the on-screen stacking order (zIndex from updateZOrder:
+        // larger views lower), not ViewMan insertion order, so a fullscreen view
+        // doesn't paint over its insets. Overlays stack with their parent's div,
+        // so draw each parent's overlays before the next (higher) view.
+        nonOverlays.sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+
         // Re-render each view so WebGL buffers are fresh (preserveDrawingBuffer is not set)
         const frame = Math.floor(par.frame);
         for (const view of nonOverlays) {
@@ -821,22 +828,22 @@ export class CFileManager extends CManager {
                 const y = (view.topPx - ViewMan.topPx) * scale - minY;
                 fullCtx.drawImage(view.canvas, x, y, view.widthPx * scale, view.heightPx * scale);
             }
-        }
-        for (const view of overlays) {
-            const alpha = view.transparency !== undefined ? view.transparency : 1;
-            if (alpha <= 0 || !view.canvas) continue;
-            // Hidden overlay canvases can retain stale pixels (e.g. old LOADING text).
-            // Skip canvases hidden by style to match on-screen output.
-            if (view.canvas.style.display === "none" || view.canvas.style.visibility === "hidden") continue;
-            view.renderCanvas(frame);
-            // Skip 0-sized canvases (drawImage throws InvalidStateError on them).
-            if (view.canvas.width === 0 || view.canvas.height === 0) continue;
-            const parentView = view.overlayView;
-            const x = parentView.leftPx * scale - minX;
-            const y = (parentView.topPx - ViewMan.topPx) * scale - minY;
-            fullCtx.globalAlpha = alpha;
-            fullCtx.drawImage(view.canvas, x, y, parentView.widthPx * scale, parentView.heightPx * scale);
-            fullCtx.globalAlpha = 1;
+            for (const overlay of overlays) {
+                if (overlay.overlayView !== view) continue;
+                const alpha = overlay.transparency !== undefined ? overlay.transparency : 1;
+                if (alpha <= 0 || !overlay.canvas) continue;
+                // Hidden overlay canvases can retain stale pixels (e.g. old LOADING text).
+                // Skip canvases hidden by style to match on-screen output.
+                if (overlay.canvas.style.display === "none" || overlay.canvas.style.visibility === "hidden") continue;
+                overlay.renderCanvas(frame);
+                // Skip 0-sized canvases (drawImage throws InvalidStateError on them).
+                if (overlay.canvas.width === 0 || overlay.canvas.height === 0) continue;
+                const x = view.leftPx * scale - minX;
+                const y = (view.topPx - ViewMan.topPx) * scale - minY;
+                fullCtx.globalAlpha = alpha;
+                fullCtx.drawImage(overlay.canvas, x, y, view.widthPx * scale, view.heightPx * scale);
+                fullCtx.globalAlpha = 1;
+            }
         }
 
         // Scale down to target size

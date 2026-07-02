@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.94.3 (2026-07-02)
+
+### Improvements
+- Faster recalculation when scrubbing the start time, changing the sitch frame count, or editing a track's altitude settings — around 20% faster overall, with results guaranteed identical to before.
+
+### Bug Fixes
+- Fixed exported viewport videos (Video → Render Viewport Video) and saved-sitch thumbnails showing only the largest view: when a fullscreen view has smaller inset views on top of it, exports and thumbnails now match the on-screen layout instead of the fullscreen view covering the insets.
+- Fixed double-clicking a menu tab that overlaps a view's title bar making that view go fullscreen instead of opening the menu's own double-click action.
+
 ## Version 2.94.2 (2026-07-02)
 
 ### Improvements
