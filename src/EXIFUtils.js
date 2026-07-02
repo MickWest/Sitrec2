@@ -313,7 +313,23 @@ function applyImportedImageCameraPositionInternal(metadata, filename = "", optio
     const cameraAlt = NodeMan.get("cameraAlt", false);
     const importedCameraPosition = LLAToECEF(placement.latitude, placement.longitude, altitudeHAE);
 
+    // A geotagged photo's GPS altitude is ABSOLUTE (MSL) and authoritative — it must not
+    // be reinterpreted as height-above-ground nor clamped to the terrain. By default the
+    // camera is positioned by CNodeControllerTrackPosition with forceAboveSurface on, which
+    // clamps the camera ABOVE the loaded 3D-tile surface. A ground-level photo whose true
+    // altitude sits below the coarse/building-topped tile surface then gets pushed up by
+    // ~one terrain-height (e.g. showing 277 ft instead of 214 ft) until a zoom reloads finer
+    // tiles and re-clamps lower. Disabling the surface clamp keeps the camera at the photo's
+    // real altitude. (agl=false likewise forces the position node to treat the stored
+    // altitude as absolute rather than above-ground.)
+    cameraNode.forceAboveSurface = false;
+
     if (cameraPositionNode) {
+        if (cameraPositionNode.agl !== undefined) {
+            cameraPositionNode.agl = false;
+            // Keep the "Above Ground Level" GUI checkbox in sync with the change.
+            cameraPositionNode.aglController?.updateDisplay?.();
+        }
         cameraPositionNode.setLLA(placement.latitude, placement.longitude, altitudeMSL);
         applied.cameraPositionNode = cameraPositionNode.id ?? "fixedCameraPosition";
     } else if (cameraLat && cameraLon && cameraAlt) {
