@@ -784,9 +784,11 @@ When the user asks you to DO something (set, change, move, show, hide, point, go
 
 CRITICAL RULE - MUST FOLLOW: When the user makes a NEW request for an action (like "load sats"), you MUST call the appropriate function. Do NOT just respond with text like "Loading..." - you must actually invoke the function tool. If the user repeats a previous request as a NEW user message, call the function again — the conversation history alone does not mean the action persists.
 
+MULTI-PART REQUESTS (CRITICAL): A single user message often asks for MORE THAN ONE action, e.g. "12:21pm today, New York" = (1) set the date/time AND (2) move the camera. You MUST perform ALL parts. Emit ALL the needed function calls together in one turn when you can. Never report the task as done while any part is still unperformed — check the user's request against the calls you have actually made before writing your final confirmation.
+
 HOW TO READ "[Tool Results]" MESSAGES (CRITICAL — read carefully):
 - A user-role message that begins with "[Tool Results]" is NOT a new user request. It is a system-generated report of what happened when you previously called a tool. Treat it as informational only.
-- When you see "[Tool Results]\nTool X returned: {\"success\":true,...}", that means the action you requested already succeeded. DO NOT call X again. Your job in the very next turn is to respond with brief confirmation TEXT (one sentence, no tool calls) — for example "Pointed at the Phoenix asterism." or "Done."
+- When you see "[Tool Results]\nTool X returned: {\"success\":true,...}", that means THAT call succeeded. DO NOT call X again with the same args. But a tool result does NOT mean you should stop: if other parts of the user's request are still unperformed (a query tool like getCurrentDateTime returning is NOT the task being done), CONTINUE by calling the remaining functions now. Only when every part of the request has a successful tool result do you respond with brief confirmation TEXT (one sentence, no tool calls) — for example "Pointed at the Phoenix asterism." or "Done."
 - When you see "[Tool Results]\nTool X returned: {\"success\":false,\"error\":\"...\"}", the action failed. You may either (a) try a corrected call (different args) ONCE, or (b) respond with a brief text apology explaining the failure. Do not retry with the SAME args — that will just fail the same way.
 - NEVER emit the same fn + args combination as the most recent tool call you see in the history. That is always wrong: either it already succeeded (so respond with text) or it already failed (so try different args or give up with text).
 
@@ -834,10 +836,12 @@ function callOpenAI($apiKey, $systemPrompt, $history, $tools, $model = 'gpt-5-mi
     }
     // GPT-5 reasoning models default to "medium" effort (~10-15s per call), which makes
     // the multi-step tool loop slow enough to hit PHP/proxy timeouts, and burns reasoning
-    // tokens. The chatbot's work (doc Q&A, simple menu commands) doesn't need deep
-    // reasoning, so request minimal effort — much faster and cheaper.
+    // tokens. But "minimal" effort skips the reasoning pass that drives tool calling —
+    // gpt-5-mini at minimal effort narrates actions ("moving camera now...") WITHOUT
+    // emitting the tool calls, silently doing nothing. "low" is the floor when tools
+    // are involved: still fast (~2-4s), but the model actually calls the functions.
     if (preg_match('/^gpt-5/i', $model)) {
-        $requestBody["reasoning_effort"] = "minimal";
+        $requestBody["reasoning_effort"] = "low";
     }
 
     $ch = curl_init("https://api.openai.com/v1/chat/completions");

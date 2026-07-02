@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.94.1 (2026-07-01)
+
+### Bug Fixes
+- Fixed the AI chat assistant saying it had done something (like moving the camera or setting the time) without actually doing it when using the GPT-5 Mini or GPT-5 Nano models. Multi-part requests (e.g. a time and a place in one message) now have every part carried out before the assistant reports success.
+
 ## Version 2.94.0 (2026-07-01)
 
 ### New Features

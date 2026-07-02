@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.94.1 (2026-07-01)
+
+### Bug Fixes
+- Fixed the in-app AI assistant claiming to have performed actions (e.g. "Done — moved the camera to New York") without actually executing them when using the GPT-5 Mini or GPT-5 Nano models. Two root causes, both in `sitrecServer/chatbot.php`. First, `callOpenAI()` requested `reasoning_effort: "minimal"` for all models matching `/^gpt-5/i`; at minimal effort GPT-5 models skip the reasoning pass that drives reliable function calling and instead narrate the action in text with zero tool calls, so the client had nothing to execute. The effort is now `"low"` — still fast (~2–4 s per call) but the model actually emits the function calls. Second, the system prompt's `[Tool Results]` success rule told the model its job after a successful tool result was to "respond with brief confirmation TEXT (one sentence, no tool calls)"; smaller models over-applied this and stopped calling tools after ANY tool result — including intermediate query tools like `getCurrentDateTime` — dropping the remaining parts of multi-part requests such as "set the time AND go to New York". The prompt now has a "MULTI-PART REQUESTS (CRITICAL)" section requiring every part of a request to be performed (emitting all needed calls in one turn where possible, and never reporting done while a part is unperformed), and the success rule is reworded: THAT call succeeded, don't repeat it with the same args, but CONTINUE calling the remaining functions — a query tool returning is not the task being done. Verified live: with GPT-5 Mini, "12:21pm edt today, New York, NY" now runs `getCurrentDateTime` → `setDateTime` + `gotoLLA` (both executed); GPT-5 Nano emits both action calls in a single turn, and its attempted duplicate re-issue on continuation is caught by the existing server-side duplicate-call guard. Claude models were never affected.
+
 ## Version 2.94.0 (2026-07-01)
 
 ### New Features
