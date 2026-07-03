@@ -25,12 +25,14 @@ import {Sit} from "./Globals";
  * @returns {dataset, originLat, originLon} — dataset per TraverseAnalysis.js,
  *          origin in radians for unpackTrackToECEF
  */
-export function buildAnalysisDataset(losNode, windNode = null, anchorDist = 37040) {
-    const n = losNode.frames;
+export function buildAnalysisDataset(losNode, windNode = null, anchorDist = 37040, options = {}) {
+    const frame0 = Math.max(0, Math.min(losNode.frames - 1, Math.round(options.frame0 ?? 0)));
+    const frame1 = Math.max(frame0, Math.min(losNode.frames - 1, Math.round(options.frame1 ?? (losNode.frames - 1))));
+    const n = frame1 - frame0 + 1;
     const fps = Sit.fps;
 
     let meanX = 0, meanY = 0, meanZ = 0;
-    for (let f = 0; f < n; f++) {
+    for (let f = frame0; f <= frame1; f++) {
         const los = losNode.v(f);
         meanX += los.position.x;
         meanY += los.position.y;
@@ -48,7 +50,8 @@ export function buildAnalysisDataset(losNode, windNode = null, anchorDist = 3704
     const anchor = new Vector3();
 
     for (let f = 0; f < n; f++) {
-        const los = losNode.v(f);
+        const sourceFrame = frame0 + f;
+        const los = losNode.v(sourceFrame);
         const posENU = ECEF2ENU_radii(los.position, originLat, originLon);
         S[f * 3] = posENU.x; S[f * 3 + 1] = posENU.y; S[f * 3 + 2] = posENU.z;
 
@@ -64,14 +67,14 @@ export function buildAnalysisDataset(losNode, windNode = null, anchorDist = 3704
                 los.position.z + heading.z / hLen * anchorDist,
             );
             windNode.setPosition(anchor);
-            const w = windNode.v(f);   // per-frame displacement, ECEF meters
+            const w = windNode.v(sourceFrame);   // per-frame displacement, ECEF meters
             const wENU = ECEF2ENU_radii(w, originLat, originLon, true);
             W[f * 3] = wENU.x; W[f * 3 + 1] = wENU.y; W[f * 3 + 2] = wENU.z;
         }
     }
 
     return {
-        dataset: {n, fps, S, D, W},
+        dataset: {n, fps, S, D, W, frame0, frame1},
         originLat,
         originLon,
     };

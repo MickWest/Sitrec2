@@ -558,7 +558,8 @@ export function bsplineBasis(n, K) {
  * ambiguity: without it the least-maneuvering solution family is nearly
  * degenerate in range rate. vTarget=null uses a tiny |v|^2 ridge instead.
  *
- * options: {K=25, vTarget (m/s|null), vSigma (m/s), wSpd=1, wClimb=0, iters=6}
+ * options: {K=25, vTarget (m/s|null), vSigma (m/s), wSpd=1, wClimb=0,
+ *           iters=6, anchorFrame=0}
  * Returns {track, lam}.
  */
 export function traversePlausible(dataset, startDist, options = {}) {
@@ -569,6 +570,7 @@ export function traversePlausible(dataset, startDist, options = {}) {
     const wSpd = options.wSpd ?? 1;
     const wClimb = options.wClimb ?? 0;
     const iters = options.iters ?? 6;
+    const anchorFrame = Math.max(0, Math.min(n - 1, Math.round(options.anchorFrame ?? 0)));
 
     const B = bsplineBasis(n, K);
     const accelScale = fps * fps / G_ACCEL;
@@ -611,10 +613,10 @@ export function traversePlausible(dataset, startDist, options = {}) {
         // acceleration rows, in g
         for (let r = 1; r <= n - 2; r++) stencil([r - 1, r, r + 1], [1, -2, 1], accelScale);
 
-        // soft anchor lambda(0) = startDist (weight 10 => centimeter-to-meter slop;
-        // a hard/huge weight wrecks the conditioning of the dense solve)
+        // soft anchor lambda(anchorFrame) = startDist (weight 10 => centimeter-to-meter
+        // slop; a hard/huge weight wrecks the conditioning of the dense solve)
         {
-            const [seg, w] = B[0];
+            const [seg, w] = B[anchorFrame];
             addRow([seg, seg + 1, seg + 2, seg + 3], w, -startDist, 10);
         }
 
@@ -674,6 +676,165 @@ export function traversePlausible(dataset, startDist, options = {}) {
     return {track, lam};
 }
 
+// Smoothing-spline fit: a low-order uniform cubic B-spline fit to a track
+// (independent least squares per axis) with a second-difference curvature
+// penalty on the control points. Used to shed sensor jitter from a min-speed
+// path: fewer control points and a curvature penalty => smoother => lower
+// spurious g-load. The curvature penalty also tames the classic B-spline
+// boundary overshoot (the endpoint control points are otherwise data-starved
+// and can spike the g-load in the first/last fraction of a second).
+function smoothTrackBspline(pts, n, K, curvature = 0) {
+    K = Math.max(4, Math.min(K, n));
+    const B = bsplineBasis(n, K);
+    const out = new Float64Array(n * 3);
+    for (let a = 0; a < 3; a++) {
+        const A = [];
+        for (let k = 0; k < K; k++) A.push(new Float64Array(K));
+        const rhs = new Float64Array(K);
+        for (let f = 0; f < n; f++) {
+            const [seg, w] = B[f];
+            const p = pts[f * 3 + a];
+            for (let i = 0; i < 4; i++) {
+                rhs[seg + i] += w[i] * p;
+                for (let j = 0; j < 4; j++) A[seg + i][seg + j] += w[i] * w[j];
+            }
+        }
+        // curvature penalty: mu * sum (c[k-1] - 2 c[k] + c[k+1])^2 (target 0)
+        if (curvature > 0) {
+            for (let k = 1; k < K - 1; k++) {
+                const cols = [k - 1, k, k + 1], cs = [1, -2, 1];
+                for (let i = 0; i < 3; i++) {
+                    for (let j = 0; j < 3; j++) A[cols[i]][cols[j]] += curvature * cs[i] * cs[j];
+                }
+            }
+        }
+        for (let k = 0; k < K; k++) A[k][k] += 1e-9 * (A[k][k] || 1);
+        const c = solveDense(A, rhs);
+        for (let f = 0; f < n; f++) {
+            const [seg, w] = B[f];
+            out[f * 3 + a] = c[seg] * w[0] + c[seg + 1] * w[1] + c[seg + 2] * w[2] + c[seg + 3] * w[3];
+        }
+    }
+    return out;
+}
+
+/**
+ * The SLOWEST LOS-riding trajectory — the minimum-(air-)speed object consistent
+ * with the sightlines. Range along each ray is a smooth B-spline lambda(f)
+ * chosen to minimize the summed squared per-frame AIR displacement
+ *     sum | X(f+1) - X(f) - W(f) |^2 ,   X(f) = S(f) + lambda(f) D(f)
+ * (W = per-frame wind drift, so with wind on this is minimum AIR speed: a
+ * balloon or lantern moving with the air reads ~0). A soft floor keeps
+ * lambda >= minDist so the object can't fall behind the camera, and a light
+ * curvature ridge conditions the near-parallel-ray null modes.
+ *
+ * Riding the rays EXACTLY, though, inherits the jet-track and FLIR pointing
+ * jitter as spurious speed/g spikes (tens of kt, several g) even where lambda is
+ * smooth — so the final path is smoothed with a low-order B-spline that keeps
+ * the slow range profile but sits a few hundredths of a degree off the noisy
+ * rays, exactly as a real drifting object (or an analyst's hand-drawn spline)
+ * does. That drops the g-load to a fraction of a g at ~0.03 deg LOS residual.
+ *
+ * Where traversePlausible minimizes MANEUVERING (and lands fast and smooth),
+ * this minimizes SPEED. For a sensor orbiting a slow, close object the apparent
+ * motion is mostly the sensor's own parallax, so the slowest consistent object
+ * is a near-static drifter — the Aguadilla / GoFast lantern answer.
+ *
+ * options: {K=30, minDist=120, floorIters=5, accelReg=0.15, smoothK}
+ * Returns {track, lam} (lam = the smoothed track's slant range along each ray).
+ */
+export function traverseMinSpeed(dataset, options = {}) {
+    const {n, fps, S, D, W} = dataset;
+    const K = Math.max(4, Math.min(options.K ?? 30, n));
+    const minDist = options.minDist ?? 120;
+    const floorIters = Math.max(1, options.floorIters ?? 5);
+    const accelReg = options.accelReg ?? 0.15;   // tiny curvature ridge, position units
+
+    const B = bsplineBasis(n, K);
+    const lam = new Float64Array(n).fill(1000);
+    const floorW = new Float64Array(n);   // per-frame soft-floor weight (0 until violated)
+    let c = null;
+
+    for (let iter = 0; iter < floorIters; iter++) {
+        const A = [];
+        for (let k = 0; k < K; k++) A.push(new Float64Array(K));
+        const rhs = new Float64Array(K);
+        const addRow = (cols, weights, constTerm, w2 = 1) => {
+            for (let i = 0; i < cols.length; i++) {
+                rhs[cols[i]] -= w2 * weights[i] * constTerm;
+                for (let j = 0; j < cols.length; j++) A[cols[i]][cols[j]] += w2 * weights[i] * weights[j];
+            }
+        };
+        // add a least-squares row: sum_i cs[i] * X(frames[i])[comp], per component
+        const stencilRow = (frames, cs, sBase, w2) => {
+            for (let comp = 0; comp < 3; comp++) {
+                let constTerm = 0;
+                const colW = new Map();
+                for (let i = 0; i < frames.length; i++) {
+                    const fr = frames[i];
+                    constTerm += cs[i] * S[fr * 3 + comp];
+                    const bf = B[fr], dc = D[fr * 3 + comp];
+                    for (let q = 0; q < 4; q++) {
+                        const k = bf[0] + q;
+                        colW.set(k, (colW.get(k) || 0) + cs[i] * bf[1][q] * dc);
+                    }
+                }
+                constTerm += sBase[comp];   // extra constant (e.g. -wind) per component
+                addRow([...colW.keys()], [...colW.values()], constTerm, w2);
+            }
+        };
+
+        // minimum-air-speed rows: X(f+1) - X(f) - W(f)
+        for (let f = 0; f < n - 1; f++) {
+            stencilRow([f, f + 1], [-1, 1], [-W[f * 3], -W[f * 3 + 1], -W[f * 3 + 2]], 1);
+        }
+        // light trajectory-curvature ridge (conditions null modes; too small to bias speed)
+        if (accelReg > 0) {
+            const w2 = accelReg * accelReg;
+            for (let r = 1; r <= n - 2; r++) stencilRow([r - 1, r, r + 1], [1, -2, 1], [0, 0, 0], w2);
+        }
+        // soft range floor: pull lambda(f) toward minDist only where it dipped below
+        for (let f = 0; f < n; f++) {
+            if (floorW[f] > 0) {
+                const bf = B[f];
+                addRow([bf[0], bf[0] + 1, bf[0] + 2, bf[0] + 3], bf[1], -minDist, floorW[f]);
+            }
+        }
+
+        for (let k = 0; k < K; k++) A[k][k] += 1e-9 * (A[k][k] || 1);
+        c = solveDense(A, rhs);
+        for (let f = 0; f < n; f++) {
+            const bf = B[f];
+            lam[f] = c[bf[0]] * bf[1][0] + c[bf[0] + 1] * bf[1][1] + c[bf[0] + 2] * bf[1][2] + c[bf[0] + 3] * bf[1][3];
+        }
+        let viol = false;
+        for (let f = 0; f < n; f++) if (lam[f] < minDist) { floorW[f] = (floorW[f] || 1) * 8; viol = true; }
+        if (!viol) break;
+    }
+
+    // exact-ray min-speed track (smooth range, but rides the jittery rays)
+    const raw = new Float64Array(n * 3);
+    for (let f = 0; f < n; f++) {
+        raw[f * 3] = S[f * 3] + D[f * 3] * lam[f];
+        raw[f * 3 + 1] = S[f * 3 + 1] + D[f * 3 + 1] * lam[f];
+        raw[f * 3 + 2] = S[f * 3 + 2] + D[f * 3 + 2] * lam[f];
+    }
+    // Smooth off the sensor jitter with ~6 s control-point spacing plus a light
+    // curvature penalty (scaled by data-per-knot so the smoothness is consistent
+    // across clip lengths). Kept loose enough to still track the sightlines to a
+    // few hundredths of a degree, but smooth enough that the peak g-load sits
+    // near a real drifting object's (a few tenths of a g, mostly residual sensor
+    // jitter) rather than the tens-of-kt / several-g an exactly-on-ray path shows.
+    const smoothK = Math.max(6, Math.min(34, options.smoothK ?? (Math.round(n / (6 * fps)) + 4)));
+    const curvature = options.smoothCurvature ?? (0.02 * n / smoothK);
+    const track = smoothTrackBspline(raw, n, smoothK, curvature);
+    // report the smoothed track's actual slant range along each sightline
+    for (let f = 0; f < n; f++) {
+        lam[f] = Math.hypot(track[f * 3] - S[f * 3], track[f * 3 + 1] - S[f * 3 + 1], track[f * 3 + 2] - S[f * 3 + 2]);
+    }
+    return {track, lam};
+}
+
 /**
  * Sweep traversePlausible over a list of start ranges: the "how much
  * maneuvering does each distance require" profile.
@@ -682,15 +843,22 @@ export function traversePlausible(dataset, startDist, options = {}) {
  */
 export async function rangeProfile(dataset, options = {}) {
     const ranges = options.ranges ?? defaultRangeList(dataset);
+    const vTarget = options.vTarget ?? null;
+    const vSigma = options.vSigma ?? 50 * KNOTS_TO_MS;
+    const scoreSpeedWeight = options.scoreSpeedWeight ?? 0;
     const out = [];
     for (let i = 0; i < ranges.length; i++) {
         const {track, lam} = traversePlausible(dataset, ranges[i], options);
         const m = trackMetrics(dataset, track);
+        let score = straightFlightScore(m);
+        if (vTarget !== null && scoreSpeedWeight > 0) {
+            score += scoreSpeedWeight * ((m.airSpeed.mean - vTarget) / vSigma) ** 2;
+        }
         const row = {
             startDist: ranges[i],
             endDist: lam[dataset.n - 1],
             minDist: Math.min(...lam),
-            score: straightFlightScore(m),
+            score,
             metrics: summarizeMetrics(m),
         };
         if (options.keepTracks) row.track = track;

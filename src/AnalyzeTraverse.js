@@ -36,9 +36,11 @@ import {
     meanAngularError,
     METERS_PER_NM,
     rangeProfile,
+    straightFlightScore,
     sweepConstAirSpeed,
     trackMetrics,
     traverseConstSpeed,
+    traverseMinSpeed,
     traversePlausible,
 } from "./TraverseAnalysis";
 import {fitPhysicsModel} from "./LOSFitting";
@@ -49,6 +51,7 @@ import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import * as Astronomy from "astronomy-engine";
 import {applyRefractionECI, refractionOptsFromUniforms} from "./atmosphere/refraction";
 import {loadLEOSatrecsForDate, findBestSatellite, satelliteTrackENU, satelliteECEF, satelliteSunlit} from "./SatelliteSearch";
+import {Chart3D, Chart3DGroup} from "./Chart3D";
 
 const MS_TO_FPM = 60 / 0.3048;      // m/s -> feet per minute
 
@@ -97,6 +100,7 @@ const FAR_ASTRO = 200 * METERS_PER_NM;
 // ephemeris-backed astronomical tests default OFF (each costs a planet/star
 // sweep per analysis); the cheap geometric fixed-point test defaults ON.
 export const analyzeTweaks = {
+    windMode: "Sitch wind",
     aoFixedPoint: true,
     aoKnownNow: false,
     aoKnownOther: false,
@@ -214,6 +218,10 @@ function dateAtFrame(f) {
     return new Date(GlobalDateTimeNode.dateStart.valueOf() + f * 1000 * (Sit.simSpeed ?? 1) / Sit.fps);
 }
 
+function dateAtDatasetFrame(dataset, f) {
+    return dateAtFrame((dataset.frame0 ?? 0) + f);
+}
+
 // Angle (degrees) between two ECEF vectors (auto-normalized).
 function angleBetweenDeg(ax, ay, az, bx, by, bz) {
     const al = Math.hypot(ax, ay, az) || 1, bl = Math.hypot(bx, by, bz) || 1;
@@ -224,10 +232,10 @@ function angleBetweenDeg(ax, ay, az, bx, by, bz) {
 
 // Mean angular error (degrees) between a fixed ECEF direction and the per-frame
 // LOS heading — how well an object in that direction fits the sightlines.
-function losMeanAngleDeg(losNode, dir) {
-    const n = losNode.frames;
+function losMeanAngleDeg(losNode, dir, frame0 = 0, frame1 = losNode.frames - 1) {
+    const n = frame1 - frame0 + 1;
     let sum = 0;
-    for (let f = 0; f < n; f++) {
+    for (let f = frame0; f <= frame1; f++) {
         const h = losNode.v(f).heading;
         sum += angleBetweenDeg(dir.x, dir.y, dir.z, h.x, h.y, h.z);
     }
@@ -235,10 +243,10 @@ function losMeanAngleDeg(losNode, dir) {
 }
 
 // Unit mean LOS heading in ECEF (normalized sum of the per-frame headings).
-function meanLOSDir(losNode) {
-    const n = losNode.frames;
+function meanLOSDir(losNode, frame0 = 0, frame1 = losNode.frames - 1) {
+    const n = frame1 - frame0 + 1;
     let sx = 0, sy = 0, sz = 0;
-    for (let f = 0; f < n; f++) {
+    for (let f = frame0; f <= frame1; f++) {
         const h = losNode.v(f).heading;
         const hl = Math.hypot(h.x, h.y, h.z) || 1;
         sx += h.x / hl; sy += h.y / hl; sz += h.z / hl;
@@ -279,6 +287,52 @@ function losAngularRateSeries(dataset) {
     return rate;
 }
 
+function sliceAnalysisDataset(dataset, f0, f1) {
+    const lo = Math.max(0, Math.min(dataset.n - 1, f0));
+    const hi = Math.max(lo, Math.min(dataset.n - 1, f1));
+    const n = hi - lo + 1;
+    const copy = (src) => {
+        const out = new Float64Array(n * 3);
+        for (let f = 0; f < n; f++) {
+            const a = (lo + f) * 3, b = f * 3;
+            out[b] = src[a];
+            out[b + 1] = src[a + 1];
+            out[b + 2] = src[a + 2];
+        }
+        return out;
+    };
+    return {
+        n,
+        fps: dataset.fps,
+        S: copy(dataset.S),
+        D: copy(dataset.D),
+        W: copy(dataset.W),
+    };
+}
+
+function syncRangeProfile(dataset, ranges, options = {}) {
+    const out = [];
+    const vTarget = options.vTarget ?? null;
+    const vSigma = options.vSigma ?? 50 * KNOTS_TO_MS;
+    const scoreSpeedWeight = options.scoreSpeedWeight ?? 0;
+    for (const startDist of ranges) {
+        const {track, lam} = traversePlausible(dataset, startDist, options);
+        const m = trackMetrics(dataset, track);
+        let score = straightFlightScore(m);
+        if (vTarget !== null && scoreSpeedWeight > 0) {
+            score += scoreSpeedWeight * ((m.airSpeed.mean - vTarget) / vSigma) ** 2;
+        }
+        out.push({
+            startDist,
+            endDist: lam[dataset.n - 1],
+            minDist: Math.min(...lam),
+            score,
+            metrics: m,
+        });
+    }
+    return out;
+}
+
 // The "saddle traversal": the family of slow/near-static objects consistent with
 // the region of least LOS motion. Locates that low-motion window, then reads the
 // FAMILY off the slow-object cost curve — the contiguous range band whose
@@ -309,9 +363,18 @@ function computeSaddle(dataset, slowProfile, slowOpts) {
     while (f0 > 0 && sm[f0 - 1] <= cut) f0--;
     while (f1 < n - 1 && sm[f1 + 1] <= cut) f1++;
 
-    // 2) Family band: the contiguous ranges around the slow-object cost minimum
-    //    whose cost stays within the low-cost valley (about-as-plausible band).
-    const rows = slowProfile.filter((p) => isFinite(p.score));
+    // 2) Family band: score the same range grid over ONLY the low-motion window.
+    //    The full-clip slow profile can reject the visually obvious saddle
+    //    because later high-rate frames force any close, slow object into a hard
+    //    maneuver. For the saddle interpretation, the family lives where the
+    //    bearing barely moves.
+    const ranges = slowProfile.map((p) => p.startDist).filter((v) => isFinite(v) && v > 0);
+    const windowDataset = sliceAnalysisDataset(dataset, f0, f1);
+    const windowOpts = {
+        ...slowOpts,
+        K: Math.min(slowOpts.K ?? 25, Math.max(7, Math.floor(windowDataset.n / 2))),
+    };
+    const rows = syncRangeProfile(windowDataset, ranges, windowOpts).filter((p) => isFinite(p.score));
     if (rows.length < 3) return null;
     let bi = 0;
     for (let i = 1; i < rows.length; i++) if (rows[i].score < rows[bi].score) bi = i;
@@ -322,20 +385,34 @@ function computeSaddle(dataset, slowProfile, slowOpts) {
     let lo = bi, hi = bi;
     while (lo > 0 && rows[lo - 1].score <= sThresh) lo--;
     while (hi < rows.length - 1 && rows[hi + 1].score <= sThresh) hi++;
-    const repRange = rows[bi].startDist;
-
-    // 3) Representative traversal: the slowest-fitting least-maneuvering path at
-    //    the family's cost minimum.
-    const {track} = traversePlausible(dataset, repRange, slowOpts);
+    // 3) Representative traversal: the SLOWEST object consistent with the whole
+    //    clip (minimum air speed on the rays). The saddle exists precisely
+    //    because a sensor orbiting a slow object shows mostly parallax, so the
+    //    minimum-speed member is the natural representative — a barely-drifting
+    //    lantern/balloon — not the fast least-maneuvering path a fixed range
+    //    would force outside the low-motion window. (Anchoring one range and
+    //    minimizing maneuvering gave tens of kt here; minimizing speed gives
+    //    the ~10 kt drift that actually matches these cases.)
+    const {track, lam} = traverseMinSpeed(dataset, {minDist: 120});
+    const windowTrack = new Float64Array(windowDataset.n * 3);
+    for (let f = 0; f < windowDataset.n; f++) {
+        const s = (f0 + f) * 3, d = f * 3;
+        windowTrack[d] = track[s]; windowTrack[d + 1] = track[s + 1]; windowTrack[d + 2] = track[s + 2];
+    }
+    const windowMetrics = trackMetrics(windowDataset, windowTrack);
     const errDeg = meanAngularError(dataset, track) * 180 / Math.PI;
+    // headline range = the min-speed track's median slant range (lam = range on ray)
+    const lamSorted = Array.from(lam).sort((a, b) => a - b);
+    const medRange = lamSorted[Math.floor(lamSorted.length / 2)];
 
     return {
         track, errDeg,
         window: {f0, f1, fStar, t0: f0 / fps, t1: f1 / fps, minRateDegS: minRate, medRateDegS: medRate},
         family: {
-            loM: rows[lo].startDist, hiM: rows[hi].startDist, repM: repRange,
+            loM: rows[lo].startDist, hiM: rows[hi].startDist, repM: medRange,
             count: hi - lo + 1, total: rows.length,
         },
+        windowMetrics,
     };
 }
 
@@ -354,6 +431,8 @@ function computeSaddle(dataset, slowProfile, slowOpts) {
 function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, satellite,
     slowProfile, slowOpts, losNode, originLat, originLon}) {
     const S = dataset.S;
+    const globalFrame = (f) => (dataset.frame0 ?? 0) + f;
+    const dateForDatasetFrame = (f) => dateAtDatasetFrame(dataset, f);
     const list = [];
 
     // 1. Constant air speed (sweep best) — walks the rays at fixed air speed.
@@ -417,7 +496,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
             list.push({
                 key: "saddle",
                 name: "Saddle Traversal",
-                subtitle: "Slow/near-static object at the low-motion region",
+                subtitle: "Slowest object consistent with the sightlines",
                 color: "#e0a35e",
                 track: saddle.track,
                 metricsFull: m,
@@ -427,9 +506,13 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
                     saddleT0: w.t0, saddleT1: w.t1, saddleFStar: w.fStar,
                     minRateDegS: w.minRateDegS, medRateDegS: w.medRateDegS,
                     familyLoM: fam.loM, familyHiM: fam.hiM, familyCount: fam.count, familyTotal: fam.total,
+                    windowAirMean: saddle.windowMetrics.airSpeed.mean,
+                    windowAirMax: saddle.windowMetrics.airSpeed.max,
+                    windowGMax: saddle.windowMetrics.gLoad.max,
                 },
-                notes: `Slow object at the low-motion window (${w.t0.toFixed(1)}–${w.t1.toFixed(1)} s); `
-                    + `a whole range band (${nm1(fam.loM)}–${nm1(fam.hiM)} NM) fits about equally.`,
+                notes: `The slowest object that stays on the sightlines (${kt1(m.airSpeed.mean)} kt mean). `
+                    + `Over the ${w.t0.toFixed(1)}–${w.t1.toFixed(1)} s low-motion window the bearing barely moves, `
+                    + `so a whole range band (${nm1(fam.loM)}–${nm1(fam.hiM)} NM) fits about equally.`,
             });
         }
     }
@@ -541,10 +624,10 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
     //     the best match out of the whole LEO catalogue for the sitch's date.
     if (satellite && satellite.best) {
         const b = satellite.best;
-        const track = satelliteTrackENU(b.satrec, dataset.n, dateAtFrame, originLat, originLon);
+        const track = satelliteTrackENU(b.satrec, dataset.n, dateForDatasetFrame, originLat, originLon);
         const midF = Math.floor(dataset.n / 2);
-        const satEcefMid = satelliteECEF(b.satrec, dateAtFrame(midF));
-        const sunlit = satEcefMid ? satelliteSunlit(satEcefMid, dateAtFrame(midF)) : null;
+        const satEcefMid = satelliteECEF(b.satrec, dateForDatasetFrame(midF));
+        const sunlit = satEcefMid ? satelliteSunlit(satEcefMid, dateForDatasetFrame(midF)) : null;
         const altKm = satEcefMid ? Math.round((satEcefMid.length() - 6371000) / 1000) : null;
         list.push({
             key: "satellite",
@@ -568,8 +651,8 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
     if (analyzeTweaks.aoKnownNow && losNode) {
         try {
             const midF = Math.floor(dataset.n / 2);
-            const date = dateAtFrame(midF);
-            const sensorECEF = losNode.v(midF).position;   // topocentric + refraction anchor
+            const date = dateForDatasetFrame(midF);
+            const sensorECEF = losNode.v(globalFrame(midF)).position;   // topocentric + refraction anchor
             const fovDeg = sensorFOVDeg();
             const boost = fovMagBoost(fovDeg);
             // Combined cost = angular miss + a penalty for faintness (so a dim
@@ -578,7 +661,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
             const consider = (name, dirRaw, mag) => {
                 if (!dirRaw) return;
                 const dir = refractDir(dirRaw, sensorECEF);
-                const errDeg = losMeanAngleDeg(losNode, dir);
+                const errDeg = losMeanAngleDeg(losNode, dir, dataset.frame0 ?? 0, dataset.frame1 ?? (losNode.frames - 1));
                 const effMag = mag - boost;
                 const cost = errDeg + Math.max(0, effMag) * 0.4;
                 if (!best || cost < best.cost) best = {name, dir, errDeg, mag, effMag, cost};
@@ -632,11 +715,11 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
     //    aligns with the mean sightline. Gated OFF by default (time search).
     if (analyzeTweaks.aoKnownOther && losNode) {
         try {
-            const m = meanLOSDir(losNode);
-            const sensorECEF = losNode.v(Math.floor(dataset.n / 2)).position;
+            const m = meanLOSDir(losNode, dataset.frame0 ?? 0, dataset.frame1 ?? (losNode.frames - 1));
+            const sensorECEF = losNode.v(globalFrame(Math.floor(dataset.n / 2))).position;
             const fovDeg = sensorFOVDeg();
             const boost = fovMagBoost(fovDeg);
-            const baseMs = dateAtFrame(Math.floor(dataset.n / 2)).valueOf();
+            const baseMs = dateForDatasetFrame(Math.floor(dataset.n / 2)).valueOf();
             const DAY = 86400000, HOUR = 3600000;
             const BODIES = ["Mercury", "Venus", "Mars", "Jupiter", "Saturn"];
             const angleAt = (body, ms) => {
@@ -842,6 +925,11 @@ export function addAnalyzeTweaks(traverseMenu) {
     const cbKnownNow = folder.add(analyzeTweaks, "aoKnownNow").name("AO: Known object (this time)");
     const cbKnownOther = folder.add(analyzeTweaks, "aoKnownOther").name("AO: Known object (find time)");
     const cbSat = folder.add(analyzeTweaks, "satellite").name("Satellite: LEO pass for date");
+    const windMode = folder.add(analyzeTweaks, "windMode", ["Sitch wind", "Zero wind"]).name("Wind for analysis");
+    if (windMode.tooltip) {
+        windMode.tooltip("Choose whether Analyze Traversals subtracts the sitch target wind, or ignores wind " +
+            "and treats object motion as ground-relative. This does not change the sitch wind controls.");
+    }
     if (cbFixed.tooltip) {
         cbFixed.tooltip("Include the stationary-object interpretation: either a fixed point in space (sightlines " +
             "converge) or a fixed point in the sky at infinity like the Moon (parallel sightlines), whichever fits.");
@@ -921,12 +1009,14 @@ export async function runTraverseAnalysis() {
             "Need a 'JetLOS' node or a Const Air Spd traverse with an LOS input.");
         return null;
     }
-    if (!losNode.frames || losNode.frames < 10) {
-        showError("Traverse analysis: not enough LOS frames to analyze.");
+    const analysisFrames = analysisFrameRange(losNode);
+    if (!losNode.frames || analysisFrames.count < 10) {
+        showError("Traverse analysis: not enough LOS frames to analyze in the A-B/In-Out range.");
         return null;
     }
 
     const windNode = NodeMan.get("targetWind", false) || null;
+    const analysisWindNode = analyzeTweaks.windMode === "Zero wind" ? null : windNode;
     const startDistNode = NodeMan.get("startDistance", false) || null;
     const speedNode = NodeMan.get("speedScaled", false) || null;
 
@@ -981,19 +1071,31 @@ export async function runTraverseAnalysis() {
 
     // Cache hit → show the previous gallery instantly, skipping the whole fit
     // battery. The fingerprint covers the LOS data and every analysis input.
+    const refr = refractionOptsFromUniforms();
     const fp = analysisFingerprint(losNode, [
-        windNode ? windNode.from : 0, windNode ? windNode.knots : 0,
+        analysisFrames.frame0, analysisFrames.frame1,
+        analyzeTweaks.windMode,
+        analysisWindNode ? analysisWindNode.from : 0, analysisWindNode ? analysisWindNode.knots : 0,
         speedTarget, anchorDist, userMin, userMax,
         analyzeTweaks.aoFixedPoint, analyzeTweaks.aoKnownNow, analyzeTweaks.aoKnownOther,
         Sit.name || "", Sit.frames || 0, Sit.fps || 0,
         // Astronomical fits depend on the sensor FOV (brightness boost) and the
-        // View-menu refraction toggle — changing either must re-run the analysis.
-        sensorFOVDeg(), refractionOptsFromUniforms().enabled ? 1 : 0,
+        // View-menu refraction settings — the refracted directions bend with
+        // pressure and temperature, not just the on/off toggle, so all three
+        // must re-run the analysis (gated by enabled so toggling them while
+        // refraction is off doesn't needlessly bust the cache).
+        sensorFOVDeg(),
+        refr.enabled ? 1 : 0,
+        refr.enabled ? refr.pressureHPa : 0,
+        refr.enabled ? refr.tempC : 0,
         // Satellite search depends on the flag and the sitch's date (which
         // catalogue is loaded); the date also gates the astro ephemeris.
         analyzeTweaks.satellite ? 1 : 0,
         (GlobalDateTimeNode && GlobalDateTimeNode.dateStart)
             ? GlobalDateTimeNode.dateStart.valueOf() : 0,
+        // simSpeed scales the per-frame dates (dateAtFrame), so it changes the
+        // satellite and astro-time fits even when dateStart is unchanged.
+        Sit.simSpeed ?? 1,
     ]);
     if (_analysisCache && _analysisCache.fp === fp) {
         window.lastTraverseAnalysis = _analysisCache.results;
@@ -1020,7 +1122,7 @@ export async function runTraverseAnalysis() {
     try {
         overlay.setStatus("Building LOS dataset...");
         await yieldToDOM();
-        const {dataset, originLat, originLon} = buildAnalysisDataset(losNode, windNode, anchorDist);
+        const {dataset, originLat, originLon} = buildAnalysisDataset(losNode, analysisWindNode, anchorDist, analysisFrames);
 
         const sweep = await sweepConstAirSpeed(dataset, {
             ranges,
@@ -1033,7 +1135,7 @@ export async function runTraverseAnalysis() {
             vSigma: 60 * KNOTS_TO_MS,
             progress: phase(0.18, 0.12, "Range profile: fast object..."),
         });
-        const slowOpts = {vTarget: 5 * KNOTS_TO_MS, vSigma: 20 * KNOTS_TO_MS};
+        const slowOpts = {vTarget: 5 * KNOTS_TO_MS, vSigma: 20 * KNOTS_TO_MS, scoreSpeedWeight: 0.2};
         const slowProfile = await rangeProfile(dataset, {
             ...slowOpts,
             ranges,
@@ -1080,10 +1182,12 @@ export async function runTraverseAnalysis() {
         if (analyzeTweaks.satellite) {
             await phase(0.96, 0.02, "Loading LEO satellites for the date...")(0);
             try {
-                const date0 = dateAtFrame(Math.floor(dataset.n / 2));
+                const date0 = dateAtDatasetFrame(dataset, Math.floor(dataset.n / 2));
                 const sats = await loadLEOSatrecsForDate(date0);
                 await yieldToDOM();
-                const best = findBestSatellite(sats, losNode, dateAtFrame, 12);
+                const best = findBestSatellite(sats,
+                    losFrameView(losNode, analysisFrames.frame0, analysisFrames.frame1),
+                    (f) => dateAtFrame(analysisFrames.frame0 + f), 12);
                 satellite = {loaded: sats.length, best};
             } catch (e) {
                 console.warn("Satellite search skipped:", e);
@@ -1110,9 +1214,9 @@ export async function runTraverseAnalysis() {
         const slowBestRow = slowProfile.reduce((a, b) => (b.score < a.score ? b : a));
         const slowTrack = traversePlausible(dataset, slowBestRow.startDist, slowOpts).track;
 
-        const windText = (windNode && isFinite(windNode.knots))
-            ? `${Number(windNode.knots).toFixed(0)} kt from ${Number(windNode.from).toFixed(0)}°`
-            : "none";
+        const windText = (analysisWindNode && isFinite(analysisWindNode.knots))
+            ? `${Number(analysisWindNode.knots).toFixed(0)} kt from ${Number(analysisWindNode.from).toFixed(0)}°`
+            : "zero / ignored";
 
         // "Cost of proximity" window over the DISPLAY grid: 6-8 NM for
         // far-field sitches (the classic Gimbal question), else an adaptive
@@ -1182,6 +1286,29 @@ function adaptiveRangeList(centerMeters, count = 44) {
         ranges.push(nm * METERS_PER_NM);
     }
     return ranges;
+}
+
+function analysisFrameRange(losNode) {
+    const maxFrame = Math.max(0, (losNode.frames ?? 1) - 1);
+    const hasA = Number.isFinite(Sit.aFrame);
+    const hasB = Number.isFinite(Sit.bFrame);
+    let frame0 = hasA ? Math.round(Sit.aFrame) : 0;
+    let frame1 = hasB ? Math.round(Sit.bFrame) : maxFrame;
+    frame0 = Math.max(0, Math.min(maxFrame, frame0));
+    frame1 = Math.max(0, Math.min(maxFrame, frame1));
+    if (frame1 < frame0) {
+        const t = frame0;
+        frame0 = frame1;
+        frame1 = t;
+    }
+    return {frame0, frame1, count: frame1 - frame0 + 1};
+}
+
+function losFrameView(losNode, frame0, frame1) {
+    return {
+        frames: frame1 - frame0 + 1,
+        v: (f) => losNode.v(frame0 + f),
+    };
 }
 
 // `count` uniform start ranges (meters) spanning the explicit [lo, hi] band the
@@ -1361,6 +1488,133 @@ function hypothesisStats(h) {
     ];
 }
 
+function graphPoint(arr, f) {
+    return [toNM(arr[f * 3]), toNM(arr[f * 3 + 1]), toNM(arr[f * 3 + 2])];
+}
+
+function growGraphBounds(b, p) {
+    if (!isFinite(p[0]) || !isFinite(p[1]) || !isFinite(p[2])) return;
+    if (p[0] < b.minX) b.minX = p[0];
+    if (p[0] > b.maxX) b.maxX = p[0];
+    if (p[1] < b.minY) b.minY = p[1];
+    if (p[1] > b.maxY) b.maxY = p[1];
+    if (p[2] < b.minZ) b.minZ = p[2];
+    if (p[2] > b.maxZ) b.maxZ = p[2];
+}
+
+function padGraphBounds(b) {
+    const padAxis = (lo, hi, frac, fallback) => {
+        const span = hi - lo;
+        const pad = (span > 0 ? span : fallback) * frac;
+        const mid = (lo + hi) / 2;
+        if (span > 0) return [lo - pad, hi + pad];
+        return [mid - fallback / 2, mid + fallback / 2];
+    };
+    if (!isFinite(b.minX)) return {minX: -1, maxX: 1, minY: -1, maxY: 1, minZ: 0, maxZ: 1};
+    const [minX, maxX] = padAxis(b.minX, b.maxX, 0.08, 1);
+    const [minY, maxY] = padAxis(b.minY, b.maxY, 0.08, 1);
+    const minZ = 0;
+    const zMax = Math.max(0, b.maxZ);
+    const maxZ = zMax + Math.max(zMax, 1) * 0.14;
+    return {minX, maxX, minY, maxY, minZ, maxZ};
+}
+
+function sampledFrames(n, target) {
+    const step = Math.max(1, Math.floor((n - 1) / Math.max(1, target - 1)));
+    const out = [];
+    for (let f = 0; f < n; f += step) out.push(f);
+    if (out[out.length - 1] !== n - 1) out.push(n - 1);
+    return out;
+}
+
+function sampledPolyline(arr, n, target = 520) {
+    return sampledFrames(n, target).map((f) => graphPoint(arr, f));
+}
+
+function rayEndPoint(dataset, f, lenM) {
+    const {S, D} = dataset;
+    return [
+        toNM(S[f * 3] + D[f * 3] * lenM),
+        toNM(S[f * 3 + 1] + D[f * 3 + 1] * lenM),
+        toNM(S[f * 3 + 2] + D[f * 3 + 2] * lenM),
+    ];
+}
+
+function meanLOSDirection(dataset) {
+    const {n, D} = dataset;
+    let x = 0, y = 0, z = 0;
+    for (let f = 0; f < n; f++) {
+        x += D[f * 3];
+        y += D[f * 3 + 1];
+        z += D[f * 3 + 2];
+    }
+    const l = Math.hypot(x, y, z) || 1;
+    return [x / l, y / l, z / l];
+}
+
+function hypothesisVolumeScene(dataset, hyp, opts = {}) {
+    const {n, S, D} = dataset;
+    const b = {minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity};
+    const series = [];
+    const sensorPts = sampledPolyline(S, n, opts.compact ? 260 : 520);
+    for (const p of sensorPts) growGraphBounds(b, p);
+
+    if (hyp.atInfinity) {
+        const dir = meanLOSDirection(dataset);
+        let sensorSpanM = 0;
+        for (const f of sampledFrames(n, 30)) {
+            sensorSpanM = Math.max(sensorSpanM,
+                Math.hypot(S[f * 3] - S[0], S[f * 3 + 1] - S[1], S[f * 3 + 2] - S[2]));
+        }
+        const lenM = Math.max(sensorSpanM * 1.15, 3 * METERS_PER_NM);
+        const segs = [];
+        for (const f of sampledFrames(n, opts.compact ? 6 : 9)) {
+            const a = graphPoint(S, f);
+            const c = [
+                toNM(S[f * 3] + dir[0] * lenM),
+                toNM(S[f * 3 + 1] + dir[1] * lenM),
+                toNM(S[f * 3 + 2] + dir[2] * lenM),
+            ];
+            growGraphBounds(b, a);
+            growGraphBounds(b, c);
+            segs.push([...a, ...c]);
+        }
+        series.push({type: "rays", segs, color: hyp.color || VIZ.ink2, alpha: 0.72, width: opts.compact ? 1.4 : 1.8});
+    } else {
+        const trackPts = sampledPolyline(hyp.track, n, opts.compact ? 360 : 720);
+        for (const p of trackPts) growGraphBounds(b, p);
+
+        let maxRange = 0;
+        for (const f of sampledFrames(n, 60)) {
+            maxRange = Math.max(maxRange, Math.hypot(
+                hyp.track[f * 3] - S[f * 3],
+                hyp.track[f * 3 + 1] - S[f * 3 + 1],
+                hyp.track[f * 3 + 2] - S[f * 3 + 2]));
+        }
+        const rayLenM = Math.max(maxRange * 1.06, METERS_PER_NM);
+        const segs = [];
+        for (const f of sampledFrames(n, opts.compact ? 7 : 11)) {
+            const a = graphPoint(S, f);
+            const c = rayEndPoint(dataset, f, rayLenM);
+            growGraphBounds(b, c);
+            segs.push([...a, ...c]);
+        }
+        series.push({type: "rays", segs, color: VIZ.ray, alpha: 0.52, width: 1});
+        series.push({type: "line", pts: trackPts, color: hyp.color, width: opts.compact ? 2.2 : 2.8,
+            startDot: true, endRing: true});
+    }
+
+    series.push({type: "line", pts: sensorPts, color: VIZ.sensor, width: opts.compact ? 1.8 : 2.4,
+        startDot: true, endRing: false});
+
+    return {
+        bounds: padGraphBounds(b),
+        series,
+        labels: {x: "East (NM)", y: "North (NM)", z: "Alt (NM)"},
+        fmt: {x: (v) => fmtNum(v), y: (v) => fmtNum(v), z: (v) => fmtNum(v)},
+    };
+}
+
 // Plain-English verdict headline for a tier.
 function verdictHeadline(r, isTop) {
     if (isTop) return "Most plausible interpretation";
@@ -1499,15 +1753,18 @@ function detailProse(h, r, ss) {
         }
         case "saddle": {
             const famLo = nm1(p.familyLoM), famHi = nm1(p.familyHiM);
+            const winSpeed = isFinite(p.windowAirMean) ? kt1(p.windowAirMean) : kt1(m.airSpeed.mean);
+            const winG = isFinite(p.windowGMax) ? p.windowGMax : m.gLoad.max;
             return {
                 lead: `A slow or near-static object sitting where the sightlines move least — over `
                     + `${p.saddleT0.toFixed(1)}–${p.saddleT1.toFixed(1)} s the bearing barely changes, so most of `
                     + `the video's apparent motion is the sensor's own parallax. Here it sits ~${nm1(p.range)} NM out `
-                    + `at ${kt1(m.airSpeed.mean)} kt.`,
+                    + `at ${winSpeed} kt during that saddle window.`,
                 derived: `The LOS angular rate is tracked across the clip; it dips to ${p.minRateDegS.toFixed(2)}°/s `
-                    + `in the saddle window versus a ${p.medRateDegS.toFixed(2)}°/s median. A minimally-maneuvering `
-                    + `slow object (soft ~5 kt target) is then fit riding the rays — it stays on them by construction `
-                    + `(${(m.gLoad.max).toFixed(2)} g max), so the LOS fit is automatic.`,
+                    + `in the saddle window versus a ${p.medRateDegS.toFixed(2)}°/s median. The path shown is then the `
+                    + `<b>minimum-speed</b> object that rides the rays: range along each sightline is solved to minimize `
+                    + `total motion, so it stays on them by construction (${winG.toFixed(2)} g max in the saddle window) `
+                    + `and no speed larger than necessary is invented.`,
                 constraint: `Because the bearing hardly moves at the saddle, the sightlines don't pin the range: `
                     + `this is a <b>family</b>, not a single answer — any range from ${famLo} to ${famHi} NM fits `
                     + `about as well. That degeneracy IS the saddle; an independent range cue is what would collapse it.`,
@@ -1538,33 +1795,15 @@ function detailProse(h, r, ss) {
     }
 }
 
-// Full Details-pane HTML for one selected hypothesis: big plan view, headline
-// stats, a plain-English verdict, then progressively deeper explanation
-// (how the numbers were derived, what constrains it, where it sits in the
-// solution space) — written for a UAP analyst deciding what the object is.
-function buildDetailHTML(h, r, isTop, ctx) {
-    const {dataset, ss} = ctx;
-    const chart = planViewChart(dataset,
-        [{track: h.track, color: h.color, label: h.name}],
-        {width: 680, height: 440, title: null, compact: true, legend: true,
-         atInfinity: !!h.atInfinity, margin: {left: 52, right: 14, top: 14, bottom: 34}});
-    const stats = hypothesisStats(h);
-    const statsHTML = stats.map(([k, v]) =>
-        `<div class="tg-d-st"><div class="tg-d-stk">${escapeHtml(k)}</div>` +
-        `<div class="tg-d-stv">${escapeHtml(v)}</div></div>`).join("");
-
-    const prose = detailProse(h, r, ss);
+function solutionSpaceHTML(h, ss) {
     const onRay = (h.errDeg || 0) < 1e-3;
-
-    // Solution-space paragraph: convergence strength + uniqueness.
-    let spaceHTML = "";
     const conv = ss.conv, geo = ss.geo;
     const cTxt = conv && isFinite(conv.contrast) ? conv.contrast.toFixed(2) : "—";
     const bandTxt = conv ? `${conv.loNM.toFixed(0)}–${conv.hiNM.toFixed(0)} NM` : "the searched band";
     if (h.key === "saddle") {
         const p = h.params || {};
         const famLo = nm1(p.familyLoM), famHi = nm1(p.familyHiM);
-        spaceHTML = `This IS the family — not a point. Over the low-motion window the slow-object cost curve stays `
+        return `This IS the family — not a point. Over the low-motion window the slow-object cost curve stays `
             + `in its low-cost valley across <b>${famLo}–${famHi} NM</b> (${p.familyCount} of ${p.familyTotal} `
             + `sampled ranges), so every range in that band is about equally plausible for a slow object; the track `
             + `shown is just its least-maneuvering member. It's the geometric price of a sensor orbiting something `
@@ -1573,7 +1812,7 @@ function buildDetailHTML(h, r, isTop, ctx) {
     } else if (onRay && ss.narrow) {
         // Narrow angular baseline: range is NOT observable from geometry alone.
         // Whatever minimum exists is created by the soft speed/altitude prior.
-        spaceHTML = `Geometrically the sightlines sweep only <b>${geo.azSweep.toFixed(1)}°</b> of azimuth over a ` +
+        return `Geometrically the sightlines sweep only <b>${geo.azSweep.toFixed(1)}°</b> of azimuth over a ` +
             `<b>${geo.baselineNM.toFixed(1)} NM</b> sensor baseline, so range is <b>weakly observed from the angles ` +
             `alone</b> — many ranges ride the rays about equally well. ` +
             (conv && isFinite(conv.contrast) && conv.contrast >= 1.4
@@ -1585,36 +1824,56 @@ function buildDetailHTML(h, r, isTop, ctx) {
                   `sightline; the speed/altitude target is what pins this particular range. Treat it as an ` +
                   `assumption to test, not a measurement.`);
     } else if (onRay && conv && isFinite(conv.contrast) && conv.contrast >= 1.4) {
-        spaceHTML = `With a <b>${geo.azSweep.toFixed(1)}°</b> angular baseline the range is genuinely observable, and ` +
+        return `With a <b>${geo.azSweep.toFixed(1)}°</b> angular baseline the range is genuinely observable, and ` +
             `the smoothness-vs-range curve has a clear minimum near <b>${conv.bestRangeNM.toFixed(1)} NM</b> ` +
             `(contrast ${cTxt}× across ${bandTxt}) — a comparatively <b>strong, near-unique</b> solution rather ` +
             `than an arbitrary pick along the rays.`;
     } else if (onRay) {
-        spaceHTML = `Even over a <b>${geo.azSweep.toFixed(1)}°</b> baseline the maneuvering-vs-range curve stays ` +
+        return `Even over a <b>${geo.azSweep.toFixed(1)}°</b> baseline the maneuvering-vs-range curve stays ` +
             `flat (contrast ${cTxt}×), so a wide family of ranges fits about equally — this is <b>one of many</b> ` +
             `on-ray solutions, selected here by the speed/altitude target.`;
     } else if (h.key === "aircraft" || h.key === "lantern") {
         const other = h.key === "aircraft" ? "lantern/balloon" : "aircraft";
-        spaceHTML = `Unlike the on-ray traverses, this is a physical model with a real fit residual ` +
+        return `Unlike the on-ray traverses, this is a physical model with a real fit residual ` +
             `(<b>${(h.errDeg || 0).toFixed(3)}°</b>) — a like-for-like number you can compare against the ${other} ` +
             `model to see which object <i>type</i> the raw angles favour. Lower residual = the geometry supports that ` +
             `type more strongly.`;
     } else if (h.params && h.params.object) {
-        spaceHTML = `This is an <b>identification</b>, not a range fit: either the named body lines up with the ` +
+        return `This is an <b>identification</b>, not a range fit: either the named body lines up with the ` +
             `sightlines and is bright enough, or it doesn't. It's checked against every other bright body for the ` +
             `best match, and against the ~6.0 magnitude visibility limit (FOV-adjusted).`;
     } else if (h.params && h.params.satellite) {
-        spaceHTML = `This is a catalogue <b>identification</b>: the single closest of <b>${h.params.loaded}</b> ` +
+        return `This is a catalogue <b>identification</b>: the single closest of <b>${h.params.loaded}</b> ` +
             `real LEO satellites propagated for the date. It's unique in that sense — there isn't a "family" of ` +
             `satellites, just the best match and how far off it is (${(h.errDeg || 0).toFixed(2)}°). A clean, ` +
             `sunlit sub-degree match is a positive ID; a large residual means no known satellite fits.`;
-    } else {
-        spaceHTML = `A stationary-object test: the residual (<b>${(h.errDeg || 0).toFixed(2)}°</b>) is how nearly the ` +
-            `sightlines are consistent with something that never moves.`;
     }
+    return `A stationary-object test: the residual (<b>${(h.errDeg || 0).toFixed(2)}°</b>) is how nearly the ` +
+        `sightlines are consistent with something that never moves.`;
+}
+
+// Full Details-pane HTML for one selected hypothesis: big plan view, headline
+// stats, a plain-English verdict, then progressively deeper explanation
+// (how the numbers were derived, what constrains it, where it sits in the
+// solution space) — written for a UAP analyst deciding what the object is.
+function buildDetailHTML(h, r, isTop, ctx) {
+    const {ss} = ctx;
+    const stats = hypothesisStats(h);
+    const statsHTML = stats.map(([k, v]) =>
+        `<div class="tg-d-st"><div class="tg-d-stk">${escapeHtml(k)}</div>` +
+        `<div class="tg-d-stv">${escapeHtml(v)}</div></div>`).join("");
+
+    const prose = detailProse(h, r, ss);
+    const spaceHTML = solutionSpaceHTML(h, ss);
 
     return `
-        <img class="tg-d-chart" src="${chart}" alt="Overhead plan view of the ${escapeHtml(h.name)} interpretation">
+        <div class="tg-chart-shell tg-d-chart-shell">
+            <canvas class="tg-d-chart tg-chart-3d" data-chart-role="detail" role="img"
+                title="Drag to rotate"
+                aria-label="3D volume view of the ${escapeHtml(h.name)} interpretation"></canvas>
+            <button class="tg-chart-fullscreen" type="button" title="Fullscreen graph"
+                aria-label="Fullscreen graph">⛶</button>
+        </div>
         <div class="tg-d-head">
             <span class="tg-d-name">${escapeHtml(h.name)}</span>
             <span class="tg-badge" style="background:${r.color}">${escapeHtml(verdictHeadline(r, isTop))}</span>
@@ -1651,6 +1910,66 @@ function showResultGallery(results) {
         "align-items:flex-start;justify-content:center;padding:24px 16px;box-sizing:border-box;" +
         "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;";
 
+    const chartGroup = new Chart3DGroup();
+    const pendingTileCharts = [];
+    const tileCharts = [];
+    const liveCharts = new Set();
+    const chartByCanvas = new Map();
+    let detailChart = null;
+    let resizeObserver = null;
+    let selected = -1;
+    let fullscreenView = null;
+
+    const currentChart = () => detailChart || (selected >= 0 ? tileCharts[selected] : null);
+
+    function registerChart(chart) {
+        liveCharts.add(chart);
+        chartByCanvas.set(chart.canvas, chart);
+        if (resizeObserver) resizeObserver.observe(chart.canvas);
+        return chart;
+    }
+
+    function disposeChart(chart) {
+        if (!chart) return;
+        if (resizeObserver) resizeObserver.unobserve(chart.canvas);
+        chartByCanvas.delete(chart.canvas);
+        liveCharts.delete(chart);
+        chart.dispose();
+    }
+
+    function disposeDetailChart() {
+        if (!detailChart) return;
+        disposeChart(detailChart);
+        detailChart = null;
+    }
+
+    function closeChartFullscreen() {
+        if (!fullscreenView) return;
+        const {layer, chart, sourceChart} = fullscreenView;
+        fullscreenView = null;
+        if (!chartGroup.syncOrientation && sourceChart && liveCharts.has(sourceChart)) {
+            sourceChart.localMatrix = chart.localMatrix.slice();
+            sourceChart.draw();
+        }
+        disposeChart(chart);
+        if (layer.parentNode) layer.parentNode.removeChild(layer);
+    }
+
+    function disposeAllCharts() {
+        closeChartFullscreen();
+        if (resizeObserver) resizeObserver.disconnect();
+        resizeObserver = null;
+        for (const chart of Array.from(liveCharts)) chart.dispose();
+        liveCharts.clear();
+        chartByCanvas.clear();
+        detailChart = null;
+        tileCharts.length = 0;
+    }
+
+    function onResize() {
+        for (const chart of liveCharts) chart.resize();
+    }
+
     // removal wiring (defined before the DOM so every handler can close cleanly)
     let removed = false;
     // Capture-phase keydown: the gallery is modal, so swallow ALL keys before
@@ -1665,12 +1984,18 @@ function showResultGallery(results) {
     const onKey = (e) => {
         if (!overlay.isConnected) { document.removeEventListener("keydown", onKey, true); return; }
         e.stopImmediatePropagation();
-        if (e.key === "Escape") { e.preventDefault(); remove(); }
+        if (e.key === "Escape") {
+            e.preventDefault();
+            if (fullscreenView) closeChartFullscreen();
+            else remove();
+        }
     };
     const remove = () => {
         if (removed) return;
         removed = true;
         document.removeEventListener("keydown", onKey, true);
+        window.removeEventListener("resize", onResize);
+        disposeAllCharts();
         if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
     };
     document.addEventListener("keydown", onKey, true);
@@ -1696,6 +2021,14 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-x:hover { color:#fff; background:rgba(255,255,255,0.08); }
         .traverse-gallery-overlay .tg-explain { color:#8a9099; font-size:13px; margin:6px 0 14px 0; max-width:100ch;
             flex:0 0 auto; }
+        .traverse-gallery-overlay .tg-toolbar { flex:0 0 auto; display:flex; gap:10px; align-items:center;
+            margin:0 0 14px 0; flex-wrap:wrap; }
+        .traverse-gallery-overlay .tg-toggle { padding:7px 12px; border-radius:8px;
+            border:1px solid rgba(255,255,255,0.16); background:rgba(255,255,255,0.05);
+            color:#cfd5dd; font-size:13px; font-weight:700; cursor:pointer; }
+        .traverse-gallery-overlay .tg-toggle:hover { border-color:rgba(120,170,240,0.55); color:#fff; }
+        .traverse-gallery-overlay .tg-toggle.on { background:rgba(57,135,229,0.24);
+            border-color:#3987e5; color:#eef6ff; }
         .traverse-gallery-overlay .tg-body { flex:1 1 auto; min-height:0; display:flex; gap:18px; }
         .traverse-gallery-overlay .tg-tiles { flex:2 1 0; min-width:0; overflow-y:auto; padding-right:4px; }
         .traverse-gallery-overlay .tg-details { flex:1 1 0; min-width:360px; overflow-y:auto;
@@ -1709,8 +2042,17 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-tile:hover { border-color:rgba(120,170,240,0.5); }
         .traverse-gallery-overlay .tg-tile.selected { border-color:#3987e5;
             box-shadow:0 0 0 2px rgba(57,135,229,0.45); }
-        .traverse-gallery-overlay .tg-thumb { width:100%; height:auto; display:block; border-radius:7px;
-            border:1px solid rgba(255,255,255,0.06); }
+        .traverse-gallery-overlay .tg-chart-shell { position:relative; width:100%; min-width:0; }
+        .traverse-gallery-overlay .tg-thumb-shell { height:240px; }
+        .traverse-gallery-overlay .tg-d-chart-shell { height:420px; }
+        .traverse-gallery-overlay .tg-thumb { width:100%; height:100%; display:block; border-radius:7px;
+            border:1px solid rgba(255,255,255,0.06); background:#0c0e11; }
+        .traverse-gallery-overlay .tg-chart-fullscreen { position:absolute; top:8px; right:8px; z-index:3;
+            width:30px; height:30px; display:grid; place-items:center; padding:0; border-radius:7px;
+            border:1px solid rgba(255,255,255,0.28); background:rgba(7,10,14,0.72);
+            color:#e8eaed; font-size:17px; line-height:1; cursor:pointer; }
+        .traverse-gallery-overlay .tg-chart-fullscreen:hover { background:rgba(57,135,229,0.88);
+            border-color:#7fb0ee; color:#fff; }
         .traverse-gallery-overlay .tg-tile-h { display:flex; align-items:center; justify-content:space-between;
             gap:8px; margin-top:10px; }
         .traverse-gallery-overlay .tg-name { font-weight:700; color:#e8eaed; font-size:15px; }
@@ -1732,7 +2074,7 @@ function showResultGallery(results) {
             color:#fff; background:#3987e5; border:none; border-radius:8px; cursor:pointer; }
         .traverse-gallery-overlay .tg-use:hover { background:#4f97ec; }
         .traverse-gallery-overlay .tg-d-content { padding:15px 16px 20px 16px; }
-        .traverse-gallery-overlay .tg-d-chart { width:100%; height:auto; display:block; border-radius:8px;
+        .traverse-gallery-overlay .tg-d-chart { width:100%; height:100%; display:block; border-radius:8px;
             border:1px solid rgba(255,255,255,0.07); background:#0c0e11; }
         .traverse-gallery-overlay .tg-d-head { display:flex; align-items:center; justify-content:space-between;
             gap:10px; margin-top:13px; }
@@ -1756,8 +2098,51 @@ function showResultGallery(results) {
             border-radius:8px; border:1px solid rgba(255,255,255,0.16); }
         .traverse-gallery-overlay .tg-btn-primary { background:#3987e5; color:#fff; border-color:#3987e5; }
         .traverse-gallery-overlay .tg-btn-ghost { background:rgba(255,255,255,0.06); color:#e8eaed; }
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer { position:fixed; inset:0; z-index:10002;
+            background:#05070a; padding:0; box-sizing:border-box; display:flex; }
+        .traverse-gallery-overlay .tg-chart-fullscreen-shell { position:relative; flex:1 1 auto; min-width:0; min-height:0; }
+        .traverse-gallery-overlay .tg-chart-fullscreen-canvas { width:100vw; height:100vh; display:block;
+            background:#0c0e11; }
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-fullscreen {
+            top:14px; right:14px; width:40px; height:40px; font-size:23px; background:rgba(7,10,14,0.82);
+        }
     `;
     overlay.appendChild(style);
+
+    function openChartFullscreen(sourceChart) {
+        if (!sourceChart) return;
+        closeChartFullscreen();
+        const layer = document.createElement("div");
+        layer.className = "tg-chart-fullscreen-layer";
+        layer.innerHTML =
+            `<div class="tg-chart-fullscreen-shell">` +
+                `<canvas class="tg-chart-fullscreen-canvas tg-chart-3d" data-chart-role="fullscreen" role="img" ` +
+                `title="Drag to rotate" aria-label="Fullscreen 3D volume graph"></canvas>` +
+                `<button class="tg-chart-fullscreen" type="button" title="Exit fullscreen graph" ` +
+                `aria-label="Exit fullscreen graph">⛶</button>` +
+            `</div>`;
+        overlay.appendChild(layer);
+        const canvas = layer.querySelector("canvas");
+        const chart = registerChart(new Chart3D(canvas, sourceChart.scene, chartGroup,
+            {pad: sourceChart.pad ?? 0.1, scaleBoost: sourceChart.scaleBoost}));
+        chart.localMatrix = sourceChart.localMatrix.slice();
+        fullscreenView = {layer, chart, sourceChart};
+        requestAnimationFrame(() => chart.resize());
+    }
+
+    overlay.addEventListener("click", (e) => {
+        const btn = e.target.closest(".tg-chart-fullscreen");
+        if (!btn || !overlay.contains(btn)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (fullscreenView && btn.closest(".tg-chart-fullscreen-layer")) {
+            closeChartFullscreen();
+            return;
+        }
+        const shell = btn.closest(".tg-chart-shell");
+        const canvas = shell ? shell.querySelector("canvas.tg-chart-3d") : null;
+        openChartFullscreen(canvas ? chartByCanvas.get(canvas) : null);
+    }, true);
 
     const panel = document.createElement("div");
     panel.className = "tg-panel";
@@ -1785,6 +2170,38 @@ function showResultGallery(results) {
         "lines of sight, ranked by physical plausibility. Click a tile to see how its numbers were derived, " +
         "what constrains it, and where it sits in the solution space — then “Use This” to apply it.";
     panel.appendChild(explain);
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "tg-toolbar";
+    const syncOrientationBtn = document.createElement("button");
+    syncOrientationBtn.className = "tg-toggle on";
+    syncOrientationBtn.type = "button";
+    syncOrientationBtn.textContent = "Sync Orientation";
+    syncOrientationBtn.title = "When on, dragging one 3D graph rotates every graph to match.";
+    syncOrientationBtn.setAttribute("aria-pressed", "true");
+    const syncScaleBtn = document.createElement("button");
+    syncScaleBtn.className = "tg-toggle";
+    syncScaleBtn.type = "button";
+    syncScaleBtn.textContent = "Sync Scale";
+    syncScaleBtn.title = "When on, compare every graph using the selected graph's size scale.";
+    syncScaleBtn.setAttribute("aria-pressed", "false");
+    const setToggleState = (button, on) => {
+        button.classList.toggle("on", on);
+        button.setAttribute("aria-pressed", on ? "true" : "false");
+    };
+    syncOrientationBtn.addEventListener("click", () => {
+        const on = !chartGroup.syncOrientation;
+        chartGroup.setSyncOrientation(on, currentChart());
+        setToggleState(syncOrientationBtn, on);
+    });
+    syncScaleBtn.addEventListener("click", () => {
+        const on = !chartGroup.syncScale;
+        chartGroup.setSyncScale(on, currentChart());
+        setToggleState(syncScaleBtn, on);
+    });
+    toolbar.appendChild(syncOrientationBtn);
+    toolbar.appendChild(syncScaleBtn);
+    panel.appendChild(toolbar);
 
     // two-pane body: tiles (2/3) + details (1/3)
     const body = document.createElement("div");
@@ -1825,13 +2242,19 @@ function showResultGallery(results) {
     if (tiles.length > 0) { detailsCol.appendChild(dActions); detailsCol.appendChild(dContent); }
 
     const tileEls = [];
-    let selected = -1;
     const selectTile = (i) => {
         if (i < 0 || i >= tiles.length) return;
         selected = i;
         tileEls.forEach((el, k) => el.classList.toggle("selected", k === i));
         const {h, r} = tiles[i];
+        disposeDetailChart();
         dContent.innerHTML = buildDetailHTML(h, r, i === 0, ctx);
+        const detailCanvas = dContent.querySelector("canvas[data-chart-role='detail']");
+        if (detailCanvas) {
+            detailChart = registerChart(new Chart3D(detailCanvas, hypothesisVolumeScene(dataset, h),
+                chartGroup, {pad: 0.13}));
+            if (chartGroup.syncScale) chartGroup.setSyncScale(true, detailChart);
+        }
         detailsCol.scrollTop = 0;
         useBtn.textContent = `Use “${h.name}”`;
         useBtn.onclick = () => {
@@ -1849,8 +2272,12 @@ function showResultGallery(results) {
         const tile = document.createElement("div");
         tile.className = "tg-tile";
         tile.innerHTML =
-            `<img class="tg-thumb" src="${hypothesisThumbnail(dataset, h)}" ` +
-            `alt="Overhead view of the ${escapeHtml(h.name)} trajectory">` +
+            `<div class="tg-chart-shell tg-thumb-shell">` +
+                `<canvas class="tg-thumb tg-chart-3d" data-chart-role="tile" role="img" title="Drag to rotate" ` +
+                `aria-label="3D volume view of the ${escapeHtml(h.name)} trajectory"></canvas>` +
+                `<button class="tg-chart-fullscreen" type="button" title="Fullscreen graph" ` +
+                `aria-label="Fullscreen graph">⛶</button>` +
+            `</div>` +
             `<div class="tg-tile-h">` +
                 `<span class="tg-name">${escapeHtml(h.name)}</span>` +
                 `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>` +
@@ -1860,10 +2287,8 @@ function showResultGallery(results) {
         tile.addEventListener("click", () => selectTile(i));
         tileEls.push(tile);
         grid.appendChild(tile);
+        pendingTileCharts.push({canvas: tile.querySelector("canvas[data-chart-role='tile']"), h, i});
     });
-
-    // Start populated with the Best (top-ranked) result.
-    if (tiles.length > 0) selectTile(0);
 
     // footer
     const footer = document.createElement("div");
@@ -1881,6 +2306,25 @@ function showResultGallery(results) {
     panel.appendChild(footer);
 
     document.body.appendChild(overlay);
+
+    if (typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const chart = chartByCanvas.get(entry.target);
+                if (chart) chart.resize();
+            }
+        });
+    }
+    window.addEventListener("resize", onResize);
+
+    for (const {canvas, h, i} of pendingTileCharts) {
+        if (!canvas) continue;
+        tileCharts[i] = registerChart(new Chart3D(canvas, hypothesisVolumeScene(dataset, h, {compact: true}),
+            chartGroup, {pad: 0.14}));
+    }
+
+    // Start populated with the Best (top-ranked) result.
+    if (tiles.length > 0) selectTile(0);
 }
 
 /**
@@ -2573,6 +3017,41 @@ function minRegion(profile, factor = 1.5) {
     return {best: profile[bi], loM: profile[lo].startDist, hiM: profile[hi].startDist};
 }
 
+function buildReportHypothesisDetails(dataset, rankedHyps, ss) {
+    return rankedHyps.map(({h, r}, i) => {
+        const chart = planViewChart(dataset,
+            [{track: h.track, color: h.color, label: h.name}],
+            {width: 940, height: 620, title: null, compact: false, legend: true,
+                atInfinity: !!h.atInfinity, margin: {left: 64, right: 20, top: 22, bottom: 48}});
+        const statsHTML = hypothesisStats(h).map(([k, v]) =>
+            `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
+            `<div class="stv">${escapeHtml(v)}</div></div>`).join("");
+        const prose = detailProse(h, r, ss);
+        const spaceHTML = solutionSpaceHTML(h, ss);
+        return `
+        <article class="solution-detail">
+            <figure>
+                <img src="${chart}" alt="Overhead plan view of the ${escapeHtml(h.name)} interpretation">
+            </figure>
+            <div class="solution-head">
+                <div>
+                    <h3>${escapeHtml(h.name)}</h3>
+                    <div class="solution-sub">${escapeHtml(h.subtitle || "")}</div>
+                </div>
+                <span class="pill" style="background:${r.color}">${escapeHtml(verdictHeadline(r, i === 0))}</span>
+            </div>
+            <div class="solution-metrics">${statsHTML}</div>
+            <p class="solution-lead">${escapeHtml(prose.lead)}</p>
+            <h4>How these numbers were derived</h4>
+            <p>${prose.derived}</p>
+            <h4>What constrains it — and its plausibility</h4>
+            <p>${prose.constraint}</p>
+            <h4>Where it sits in the solution space</h4>
+            <p>${spaceHTML}</p>
+        </article>`;
+    }).join("");
+}
+
 function buildReportHTML(ctx) {
     const {
         sitName, dataset, windText, speedTarget,
@@ -2581,6 +3060,8 @@ function buildReportHTML(ctx) {
         closeLoM, closeHiM, hypotheses,
     } = ctx;
     const {n, fps, D} = dataset;
+    const globalFrame0 = dataset.frame0 ?? 0;
+    const globalFrame1 = dataset.frame1 ?? (globalFrame0 + n - 1);
     const durationS = (n - 1) / fps;
     const b = sweep.best;
     const ap = aircraft.params;
@@ -2670,7 +3151,7 @@ function buildReportHTML(ctx) {
         sightline data.</p>` : "";
 
     const summaryHTML = `
-        <p>Over <strong>${n}</strong> frames (${durationS.toFixed(1)} s) the sensor's line of sight swept
+        <p>Over <strong>${n}</strong> frames (${globalFrame0}–${globalFrame1}, ${durationS.toFixed(1)} s) the sensor's line of sight swept
         from azimuth ${azOf(0).toFixed(1)}° / elevation ${elOf(0).toFixed(1)}° to azimuth
         ${azOf(n - 1).toFixed(1)}° / elevation ${elOf(n - 1).toFixed(1)}° (wind: ${escapeHtml(windText)}).
         Lines of sight alone never uniquely determine a trajectory, so each analyzer below asks a different
@@ -2698,7 +3179,8 @@ function buildReportHTML(ctx) {
         ${closeRangeHTML}`;
 
     // ---- candidate-interpretation gallery, comparison, verdict ----
-    const galleryHyps = (hypotheses || []).filter((h) => h.track && h.metricsFull);
+    const rankedHyps = rankHypotheses(hypotheses);
+    const galleryHyps = rankedHyps.map(({h}) => h);
     const cardsHTML = galleryHyps.map((h) => {
         const m = h.metricsFull;
         const r = plausibilityRating(h);
@@ -2728,7 +3210,6 @@ function buildReportHTML(ctx) {
         </div>`;
     }).join("");
 
-    const rankedHyps = rankHypotheses(hypotheses);
     const compRows = rankedHyps.map(({h, r}) => {
         const m = h.metricsFull;
         const losErr = h.errDeg > 0 ? h.errDeg.toFixed(3) : "0.000";
@@ -2746,6 +3227,8 @@ function buildReportHTML(ctx) {
     }).join("");
 
     const verdictHTML = buildVerdict(hypotheses);
+    const reportSS = analyzeSolutionSpace({dataset, fastProfile});
+    const solutionDetailsHTML = buildReportHypothesisDetails(dataset, rankedHyps, reportSS);
 
     // ---- tables ----
     const sweepRows = top.map((r, i) => `
@@ -2839,6 +3322,18 @@ footer { margin-top: 44px; color: #8a9099; font-size: 13px;
 .st { display: flex; flex-direction: column; }
 .stk { font-size: 10.5px; color: #8a9099; text-transform: uppercase; letter-spacing: 0.04em; }
 .stv { font-size: 13px; color: #e8eaed; font-variant-numeric: tabular-nums; margin-top: 1px; }
+.solution-detail { margin: 22px 0 34px 0; padding-bottom: 28px;
+    border-bottom: 1px solid rgba(255,255,255,0.08); }
+.solution-detail figure { margin: 14px 0 16px 0; }
+.solution-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.solution-head h3 { margin: 0; color: #e8eaed; font-size: 17px; line-height: 1.25; }
+.solution-sub { color: #8a9099; font-size: 13px; margin-top: 3px; }
+.solution-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 8px 14px; margin: 12px 0; padding: 11px; background: #15181d; border-radius: 8px; }
+.solution-lead { color: #e0e4ea; font-size: 15px; }
+.solution-detail h4 { color: #7fb0ee; font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; margin: 18px 0 5px 0; }
+.solution-detail p { max-width: 78ch; }
 .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px;
     font-weight: 700; color: #0d0f12; white-space: nowrap; }
 td .pill { color: #0d0f12; }
@@ -2850,6 +3345,7 @@ td .pill { color: #0d0f12; }
     <h1>Traverse Analysis — ${escapeHtml(sitName)}</h1>
     <div class="sub">Generated ${escapeHtml(new Date().toLocaleString())}</div>
     <div class="meta">
+        <div><div class="k">Frame range</div><div class="v">${globalFrame0}–${globalFrame1}</div></div>
         <div><div class="k">Frames</div><div class="v">${n} @ ${fps} fps</div></div>
         <div><div class="k">Duration</div><div class="v">${durationS.toFixed(1)} s</div></div>
         <div><div class="k">LOS azimuth</div><div class="v">${azOf(0).toFixed(1)}° → ${azOf(n - 1).toFixed(1)}°</div></div>
@@ -2870,6 +3366,13 @@ td .pill { color: #0d0f12; }
     overhead (plan) view of that path intersecting the same lines of sight. The plausibility pill rates
     each interpretation on peak maneuvering g, mean air speed, and how well it fits the sightlines.</p>
     <div class="cards">${cardsHTML}</div>
+</section>
+
+<section>
+    <h2>Candidate details</h2>
+    <p class="sub">Expanded notes for each candidate above, matching the interactive Details pane.
+    Each section uses the 2D overhead plan view for a static, printable record.</p>
+    ${solutionDetailsHTML}
 </section>
 
 <section>
