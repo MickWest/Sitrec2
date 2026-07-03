@@ -262,3 +262,75 @@ The trial with the lowest mean angular error wins.
 | Maneuvering targets | Some methods handle (constant altitude, perspective) | CA, KF, MC all handle maneuvering |
 
 In practice, start with **Global Fit: Constant Velocity** to get a baseline. If residuals are large, try **Constant Acceleration**. For noisy data, use the **Kalman Smoother**. Use **Monte Carlo** when you suspect outlier frames. Then compare against sequential traversals with specific physical assumptions to test hypotheses about the target's behavior.
+
+---
+
+## Physically Plausible Analysis (Analyze button & new fits)
+
+LOS-only data never uniquely determines a trajectory: near-perfect fits exist
+at many ranges, provided the object is allowed to maneuver. The tools in this
+section make that ambiguity explicit, and resolve it with *soft physical
+targets* (a preferred speed, roughly straight and level flight, low
+maneuvering g) rather than exact constraints. The interesting output is the
+family of plausible solutions — and how much maneuvering every *other*
+interpretation would require.
+
+### Global Fit: Plausible
+
+**Model**: the range along each LOS ray is a smooth cubic B-spline λ(f)
+(25 control points). The trajectory is always exactly on the rays.
+
+**Method**: solves a small least-squares system minimizing
+
+- maneuvering acceleration (in g), plus
+- a soft air-speed target: `((airspeed − Target Speed)/σ)²` with σ ≈ 60 kt,
+  linearized around the current estimate and re-solved a few times (IRLS),
+
+anchored (softly) to the "Tgt Start Dist" slider at frame 0. It reads the same
+**Tgt Start Dist** and **Target Speed** sliders as Const Air Spd — but where
+Const Air Spd integrates forward *exactly* at that speed (compounding LOS
+noise into the track), Plausible treats the speed as a loose target and finds
+the least-maneuvering smooth path consistent with the rays.
+
+**When to use**: as the "best fit" interpretation of a hypothesis like
+"a ~350 kt aircraft at ~30 NM" — it shows what the *smoothest* version of that
+hypothesis looks like, and its g-load/turn metrics quantify how plausible the
+hypothesis is at that distance.
+
+### Global Fit: Physics — Fixed Wing Aircraft model
+
+The Physics fit now has a second dynamics model besides the Chinese Lantern:
+a **fixed-wing aircraft** with constant TAS, a linearly-varying turn rate,
+constant climb rate, and wind advection. Parameters (initial range, heading,
+TAS, turn rate, turn acceleration, climb, wind E/N) are found with
+**differential evolution** (a genetic-style global search) followed by
+Nelder-Mead polish. The cost combines LOS angular error with the same soft
+plausibility targets, so repeated runs converge to the same interpretable
+answer instead of wandering across the ambiguous solution family.
+
+Select the model with the **Physics Model** dropdown in the Traverse menu.
+Solved parameters (range, heading, TAS, turn rate, climb, fit error) appear
+in the Physics Fit Results folder.
+
+### The Analyze button
+
+**Traverse ▸ Analyze Traversals...** runs the full battery against the current
+LOS data and generates a standalone HTML report (with charts) plus an option
+to apply the best solution to the sliders:
+
+1. **Constant-air-speed sweep** — a grid over (start distance × air speed),
+   each combo scored for smoothness (g-load, turn-rate variability, climb).
+   Surfaces the valley of straight-flight solutions (for Gimbal: ~30–32 NM,
+   speed loosely 400–550 kt).
+2. **Range profile** — for each assumed start range, the least-maneuvering
+   spline solution with a fast-object (cruise speed) and a slow-object
+   (drifting) speed target. Quantifies what an object at any given distance
+   would *have* to do — e.g. at 6–8 NM the Gimbal object must nearly stop and
+   whip through a rapid heading reversal, or sustain a continuous banked turn.
+3. **Aircraft fit** — the differential-evolution fixed-wing fit, reported as
+   interpretable parameters (range, heading, TAS, turn, climb).
+
+The report contains an executive summary, a sweep heatmap, range-profile
+curves, per-solution time series (speed / g / turn rate), a plan view of the
+candidate tracks, and top-solution tables. Criteria are deliberately loose
+targets; scores compare hypotheses, they are not hard physical limits.

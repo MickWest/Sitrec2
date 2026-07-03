@@ -49,6 +49,8 @@ import {CNodeLOSFitKalman} from "./nodes/CNodeLOSFitKalman";
 import {CNodeLOSFitMonteCarlo} from "./nodes/CNodeLOSFitMonteCarlo";
 import {CNodeLOSFitMonteCarlo2} from "./nodes/CNodeLOSFitMonteCarlo2";
 import {CNodeLOSFitPhysics} from "./nodes/CNodeLOSFitPhysics";
+import {CNodeLOSFitPlausible} from "./nodes/CNodeLOSFitPlausible";
+import {CNodeSwitch} from "./nodes/CNodeSwitch";
 import {makeMatLine, updateMatLineResolution} from "./MatLines";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
 import {
@@ -599,6 +601,10 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
 
     }
 
+    // The optional Min/Max analysis-distance range limits for "Analyze
+    // Traversals" now live in the "Traversal Analysis Tweaks" subfolder,
+    // created by addAnalyzeTweaks() in MakeTraverseNodesMenu.js.
+
 //    console.log("+++ LOSTraverse")
 //     new CNodeLOSTraverse({
 //         id: "LOSTraverse1"+idExtra,
@@ -874,9 +880,12 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             tooltip: "Maximum Nelder-Mead optimizer iterations.",
         }, guiMenus.traverse)
 
+        // Default the wind guess from the sitch's target-altitude wind when
+        // it has one (Sit.targetWindKnots/From) — that IS the wind at the
+        // object, and the fixed-wing fit softly pins its wind to this guess.
         new CNodeGUIValue({
             id: "physicsWindSpeed",
-            value: 18, start: 0, end: 60, step: 0.5,
+            value: Sit.targetWindKnots ?? 18, start: 0, end: 150, step: 0.5,
             desc: "Physics Wind Speed (kt)",
             color: "#C0FFC0",
             tooltip: "Initial guess for wind speed. Optimizer refines this.",
@@ -884,7 +893,7 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
 
         new CNodeGUIValue({
             id: "physicsWindFrom",
-            value: 70, start: 0, end: 360, step: 1,
+            value: Sit.targetWindFrom ?? 70, start: 0, end: 360, step: 1,
             desc: "Physics Wind From (°)",
             color: "#C0FFC0",
             tooltip: "Initial guess for wind direction (meteorological, degrees). Optimizer refines this.",
@@ -899,14 +908,44 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
         }, guiMenus.traverse)
     }
 
+    // Physics-model choice for the physics fit (string constants behind a switch)
+    if (!NodeMan.exists("physicsModelChoice")) {
+        new CNodeSwitch({
+            id: "physicsModelChoice",
+            inputs: {
+                "Chinese Lantern": new CNodeConstant({id: "physicsModelLantern", value: "Chinese Lantern"}),
+                "Fixed Wing Aircraft": new CNodeConstant({id: "physicsModelFixedWing", value: "Fixed Wing Aircraft"}),
+            },
+            desc: "Physics Model",
+            default: "Chinese Lantern",
+            tooltip: "Dynamics model used by the 'Global Fit: Physics' traverse method.",
+        }, guiMenus.traverse)
+    }
+
     new CNodeLOSFitPhysics({
         id: "LOSFitPhysics"+idExtra,
         LOS: los,
+        physicsModel: "physicsModelChoice",
         maxIter: "physicsMaxIter",
         windSpeed: "physicsWindSpeed",
         windFrom: "physicsWindFrom",
         initialRange: "physicsInitialRange",
     })
+
+    // Best-fit smooth traverse with soft speed target — reads the same
+    // "Tgt Start Dist" and "Target Speed" sliders as the Const Air Spd
+    // traverse, but solves for the least-maneuvering LOS-riding path with
+    // the speed as a loose target rather than an exact constraint.
+    if (!NodeMan.exists("LOSFitPlausible"+idExtra)) {
+        const plausibleDef = {
+            id: "LOSFitPlausible"+idExtra,
+            LOS: los,
+            startDist: "startDistance",
+            speed: "speedScaled",
+        };
+        if (NodeMan.exists("targetWind")) plausibleDef.wind = "targetWind";
+        new CNodeLOSFitPlausible(plausibleDef);
+    }
 
     if (!NodeMan.exists("startAltitude")) {
         new CNodeGUIValue({

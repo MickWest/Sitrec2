@@ -4,6 +4,7 @@
 // (For example in Agua we add the ufoSplineEditor node)
 import {CNodeSwitch} from "./nodes/CNodeSwitch";
 import {guiMenus, Sit} from "./Globals";
+import {addAnalyzeButton, addAnalyzeTweaks} from "./AnalyzeTraverse";
 
 export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExtra = "", exportable = true) {
 
@@ -20,6 +21,7 @@ export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExt
     traverseInputs2["Global Fit: Monte Carlo 1"] = "LOSFitMonteCarlo" + idExtra;
     traverseInputs2["Global Fit: Monte Carlo 2"] = "LOSFitMonteCarlo2" + idExtra;
     traverseInputs2["Global Fit: Physics"] = "LOSFitPhysics" + idExtra;
+    traverseInputs2["Global Fit: Plausible"] = "LOSFitPlausible" + idExtra;
 
     let nodeMenu = new CNodeSwitch({
         id: id,
@@ -29,6 +31,11 @@ export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExt
         exportable: exportable,
 
     }, guiMenus.traverse)
+
+    // One-button multi-method analysis of the LOS (report + best solutions)
+    addAnalyzeButton(guiMenus.traverse);
+    // Tweaks subfolder: Min/Max analysis distance + hypothesis checkboxes
+    addAnalyzeTweaks(guiMenus.traverse);
 
     // bit of a patch
     nodeMenu.frames = Sit.frames;

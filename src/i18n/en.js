@@ -1656,13 +1656,26 @@ const en = {
             label: "Model",
         },
         avgError: {
-            label: "Avg Error (rad)",
+            label: "Avg Error",
         },
         windSpeed: {
             label: "Wind Speed (kt)",
         },
         windFrom: {
             label: "Wind From (\u00B0)",
+        },
+    },
+
+    losFitPlausible: {
+        folder: "Plausible Fit Result",
+        range: {
+            label: "Found Range",
+        },
+        speed: {
+            label: "Speed Target",
+        },
+        score: {
+            label: "Plausibility (lower=better)",
         },
     },
 

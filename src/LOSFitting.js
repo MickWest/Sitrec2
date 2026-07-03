@@ -50,6 +50,18 @@ function _solveLinearSystem(A, b) {
     return x;
 }
 
+// Macrotask yield immune to background-tab timer throttling (see AnalyzeTraverse
+// makeYield). Used to keep the async DE fit responsive without setTimeout.
+const _macroYield = (() => {
+    if (typeof MessageChannel === "undefined") {
+        return () => new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const channel = new MessageChannel();
+    let pending = null;
+    channel.port1.onmessage = () => { const r = pending; pending = null; if (r) r(); };
+    return () => new Promise((resolve) => { pending = resolve; channel.port2.postMessage(0); });
+})();
+
 function _pointToRayDistance(P, O, D) {
     const dx = P[0] - O[0], dy = P[1] - O[1], dz = P[2] - O[2];
     const proj = dx * D[0] + dy * D[1] + dz * D[2];
@@ -160,7 +172,11 @@ export function fitConstantVelocity(dataset, excluded) {
     const P0 = [solution[0], solution[1], solution[2]];
     const V = [solution[3], solution[4], solution[5]];
 
-    const positions = new Float32Array(count * 3);
+    // Float64: these are ENU positions (tens of km). float32 quantizes them to
+    // ~1 cm, and the g-force graph (a second difference x fps^2) turns that into
+    // a residual ~0.7 g sawtooth. Float64 keeps a constant-velocity fit's track
+    // a true straight line, so its acceleration graph reads flat ~0.
+    const positions = new Float64Array(count * 3);
     const residuals = new Float32Array(count).fill(NaN);
 
     for (let i = 0; i < count; i++) {
@@ -246,7 +262,11 @@ export function fitConstantAcceleration(dataset, excluded) {
     const V = [solution[3] / T_span, solution[4] / T_span, solution[5] / T_span];
     const A = [solution[6] / (T_span * T_span), solution[7] / (T_span * T_span), solution[8] / (T_span * T_span)];
 
-    const positions = new Float32Array(count * 3);
+    // Float64: these are ENU positions (tens of km). float32 quantizes them to
+    // ~1 cm, and the g-force graph (a second difference x fps^2) turns that into
+    // a residual ~0.7 g sawtooth. Float64 keeps a constant-velocity fit's track
+    // a true straight line, so its acceleration graph reads flat ~0.
+    const positions = new Float64Array(count * 3);
     const residuals = new Float32Array(count).fill(NaN);
 
     for (let i = 0; i < count; i++) {
@@ -438,7 +458,11 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
 
     if (!bestCoeffsX) return null;
 
-    const positions = new Float32Array(count * 3);
+    // Float64: these are ENU positions (tens of km). float32 quantizes them to
+    // ~1 cm, and the g-force graph (a second difference x fps^2) turns that into
+    // a residual ~0.7 g sawtooth. Float64 keeps a constant-velocity fit's track
+    // a true straight line, so its acceleration graph reads flat ~0.
+    const positions = new Float64Array(count * 3);
     const residuals = new Float32Array(count).fill(NaN);
 
     for (let i = 0; i < count; i++) {
@@ -643,7 +667,11 @@ export function fitMonteCarlo2(dataset, excluded, options = {}) {
 
     if (!bestCoeffsX) return null;
 
-    const positions = new Float32Array(count * 3);
+    // Float64: these are ENU positions (tens of km). float32 quantizes them to
+    // ~1 cm, and the g-force graph (a second difference x fps^2) turns that into
+    // a residual ~0.7 g sawtooth. Float64 keeps a constant-velocity fit's track
+    // a true straight line, so its acceleration graph reads flat ~0.
+    const positions = new Float64Array(count * 3);
     const residuals = new Float32Array(count).fill(NaN);
 
     for (let i = 0; i < count; i++) {
@@ -938,7 +966,11 @@ export function fitKalmanFilter(dataset, excluded, options = {}) {
         stateAtFrame.set(active[ai], smoothX[ai]);
     }
 
-    const positions = new Float32Array(count * 3);
+    // Float64: these are ENU positions (tens of km). float32 quantizes them to
+    // ~1 cm, and the g-force graph (a second difference x fps^2) turns that into
+    // a residual ~0.7 g sawtooth. Float64 keeps a constant-velocity fit's track
+    // a true straight line, so its acceleration graph reads flat ~0.
+    const positions = new Float64Array(count * 3);
     const residuals = new Float32Array(count).fill(NaN);
     let activePtr = 0;
 
@@ -981,10 +1013,32 @@ export function fitKalmanFilter(dataset, excluded, options = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Physics Model Trajectory Fit (Nelder-Mead + RK4 integration)
+// Physics Model Trajectory Fit (RK4 integration; Nelder-Mead or DE+polish)
 // ---------------------------------------------------------------------------
 
-export function fitPhysicsModel(dataset, excluded, model, options = {}) {
+// Fit a PhysicsModel's parameters to the LOS dataset. Async (the DE optimizer
+// is async and yields to the UI between generations); always returns a Promise.
+//
+// Cost = (meanAngularErrorDegrees / errSigma) + model.extraCost(params, dataset, T)
+// where errSigma = options.errSigma ?? 0.02 degrees. The extraCost hook lets a
+// model add soft plausibility priors — pure LOS angular error is hugely
+// ambiguous for maneuvering-target models.
+//
+// options:
+//   maxIter        Nelder-Mead iteration cap (default 5000)
+//   errSigma       angular-error weight, degrees per unit cost (default 0.02)
+//   sampleStride   use every Nth active frame (plus the last) in the cost
+//                  (default 1); final trajectory/residuals stay full-resolution
+//   optimizer      "nm" (default: single-start Nelder-Mead from model defaults)
+//                  or "de" (global differential evolution over the parameter
+//                  bounds, then Nelder-Mead polish from the DE best)
+//   dePop, deGens  DE population/generations (defaults 48/120)
+//   paramOverrides {name: value} initial-guess overrides (also seeds DE)
+//
+// Returns {positions, residuals, params: {model, cost, errDeg, solved}, activeCount}
+// where cost is the composite cost above and errDeg is the full-resolution
+// mean angular error of the final solution in degrees.
+export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     const {sensorPos, losDir, times, count} = dataset;
 
     const active = [];
@@ -1014,7 +1068,19 @@ export function fitPhysicsModel(dataset, excluded, model, options = {}) {
 
     // Collect sample times relative to first active frame
     const t0 = times[active[0]];
-    const sampleTimes = active.map(i => times[i] - t0);
+    const T = times[active[active.length - 1]] - t0; // total duration, seconds
+
+    // Strided subset of active frames for the optimizer cost (always keep the
+    // last frame so the whole engagement is constrained). stride 1 = all frames.
+    const stride = Math.max(1, Math.floor(options.sampleStride ?? 1));
+    const costFrames = [];
+    for (let k = 0; k < active.length; k += stride) costFrames.push(active[k]);
+    if (costFrames[costFrames.length - 1] !== active[active.length - 1]) {
+        costFrames.push(active[active.length - 1]);
+    }
+    const costTimes = costFrames.map(i => times[i] - t0);
+
+    const errSigma = options.errSigma ?? 0.02; // degrees of mean error per unit cost
 
     function _angularError(fx, fy, fz, sx, sy, sz, dx, dy, dz) {
         let rx = fx - sx, ry = fy - sy, rz = fz - sz;
@@ -1025,21 +1091,21 @@ export function fitPhysicsModel(dataset, excluded, model, options = {}) {
         return Math.acos(dot);
     }
 
-    // Cost function: integrate trajectory, measure angular error against LOS
-    function costFn(params) {
+    // Mean angular error (radians) over the given frames, or null on divergence
+    function _meanErrRad(params, frames, frameTimes) {
         const initialState = model.getInitialState(params, dataset);
         let states;
         try {
-            states = _integrateRK4_inline(model, initialState, params, sampleTimes);
+            states = _integrateRK4_inline(model, initialState, params, frameTimes);
         } catch (e) {
-            return 1e10; // diverged
+            return null; // diverged
         }
 
         let totalErr = 0;
-        for (let k = 0; k < active.length; k++) {
-            const fi = active[k];
+        for (let k = 0; k < frames.length; k++) {
+            const fi = frames[k];
             const s = states[k];
-            if (!s) return 1e10;
+            if (!s) return null;
             const b = fi * 3;
             totalErr += _angularError(
                 s[0], s[1], s[2],
@@ -1047,7 +1113,14 @@ export function fitPhysicsModel(dataset, excluded, model, options = {}) {
                 losDir[b], losDir[b + 1], losDir[b + 2]
             );
         }
-        return totalErr / active.length;
+        return totalErr / frames.length;
+    }
+
+    // Composite cost: scaled mean angular error (degrees) + model plausibility
+    function costFn(params) {
+        const errRad = _meanErrRad(params, costFrames, costTimes);
+        if (errRad === null) return 1e10;
+        return (errRad * 180 / Math.PI) / errSigma + model.extraCost(params, dataset, T);
     }
 
     // Inline RK4 to avoid import overhead — same logic as PhysicsModel.js
@@ -1057,7 +1130,7 @@ export function fitPhysicsModel(dataset, excluded, model, options = {}) {
         const n = state.length;
         let t = sTimes[0];
         let si = 0;
-        const maxDt = 0.02;
+        const maxDt = mdl.maxDt ?? 0.02;
 
         if (Math.abs(t - sTimes[si]) < 1e-10) {
             results.push(state.slice());
@@ -1092,10 +1165,30 @@ export function fitPhysicsModel(dataset, excluded, model, options = {}) {
         return results;
     }
 
-    // Run Nelder-Mead
+    // Run the optimizer: single-start Nelder-Mead (default, original behavior)
+    // or global differential evolution followed by a Nelder-Mead polish.
     const {nelderMead} = require("./NelderMead");
     const maxIter = options.maxIter ?? 5000;
-    const result = nelderMead(costFn, x0, {lo, hi, initialScale: scales, maxIter});
+    let result;
+    if (options.optimizer === "de") {
+        const {differentialEvolution} = require("./DifferentialEvolution");
+        const de = await differentialEvolution(costFn, lo, hi, {
+            pop: options.dePop ?? 48,
+            gens: options.deGens ?? 120,
+            seeds: [x0],
+            // Yield to the UI periodically so a long fit doesn't freeze the page.
+            // MessageChannel (not setTimeout) so a backgrounded tab — which clamps
+            // setTimeout to ~1/minute — doesn't drag the fit out to many minutes.
+            onGeneration: async (g) => {
+                if ((g & 7) === 7) await _macroYield();
+                return true;
+            },
+        });
+        result = nelderMead(costFn, de.params, {lo, hi, initialScale: scales, maxIter});
+        if (de.cost < result.cost) result = de; // polish should never regress, but be safe
+    } else {
+        result = nelderMead(costFn, x0, {lo, hi, initialScale: scales, maxIter});
+    }
 
     // Generate full trajectory at all frames using best params
     const bestParams = result.params;
@@ -1110,8 +1203,18 @@ export function fitPhysicsModel(dataset, excluded, model, options = {}) {
         return null;
     }
 
-    const positions = new Float32Array(count * 3);
+    // Float64: these are ENU positions (tens of km). float32 quantizes them to
+    // ~1 cm, and the g-force graph (a second difference x fps^2) turns that into
+    // a residual ~0.7 g sawtooth. Float64 keeps a constant-velocity fit's track
+    // a true straight line, so its acceleration graph reads flat ~0.
+    const positions = new Float64Array(count * 3);
     const residuals = new Float32Array(count).fill(NaN);
+
+    // Full-resolution mean angular error of the final solution (degrees),
+    // reported separately from the composite cost so the GUI can show fit
+    // quality regardless of the plausibility terms and errSigma scaling.
+    let errSum = 0;
+    let errCount = 0;
 
     for (let i = 0; i < count; i++) {
         const s = allStates[i];
@@ -1123,8 +1226,11 @@ export function fitPhysicsModel(dataset, excluded, model, options = {}) {
             residuals[i] = _angularError(s[0], s[1], s[2],
                 sensorPos[b], sensorPos[b + 1], sensorPos[b + 2],
                 losDir[b], losDir[b + 1], losDir[b + 2]);
+            errSum += residuals[i];
+            errCount++;
         }
     }
+    const errDeg = errCount > 0 ? (errSum / errCount) * 180 / Math.PI : NaN;
 
     // Package solved parameter values with names for display
     const solvedParams = {};
@@ -1135,7 +1241,7 @@ export function fitPhysicsModel(dataset, excluded, model, options = {}) {
     return {
         positions,
         residuals,
-        params: {model: model.getName(), cost: result.cost, solved: solvedParams},
+        params: {model: model.getName(), cost: result.cost, errDeg, solved: solvedParams},
         activeCount: active.length
     };
 }
@@ -1145,7 +1251,7 @@ export function fitPhysicsModel(dataset, excluded, model, options = {}) {
 // ---------------------------------------------------------------------------
 
 import {ECEF2ENU_radii, ECEFToLLA_radii, ENU2ECEF_radii} from "./LLA-ECEF-ENU";
-import {GlobalDateTimeNode} from "./Globals";
+import {Sit} from "./Globals";
 import {Vector3} from "three";
 
 /**
@@ -1186,7 +1292,14 @@ export function buildLOSDataset(losNode) {
         losDir[f * 3 + 1] = dirENU.y;
         losDir[f * 3 + 2] = dirENU.z;
 
-        times[f] = GlobalDateTimeNode.frameToMS(f) / 1000;
+        // Uniform frame spacing. GlobalDateTimeNode.frameToMS quantizes to
+        // integer milliseconds, so its per-frame deltas jitter (e.g. 33,34,33
+        // ms at 30fps). A fit places its output at P0+V*t, so that time jitter
+        // becomes ~0.15m of per-frame position wobble at high fit speeds, which
+        // the g-force graph (a second difference assuming a uniform 1/fps step,
+        // amplified by fps^2) blows up into tens of spurious g. Frames are
+        // uniformly spaced in real time for a constant-fps sitch, so use f/fps.
+        times[f] = f / Sit.fps;
     }
 
     return {

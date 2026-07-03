@@ -3,6 +3,11 @@
 // The fitting system integrates the ODE forward and scores against LOS data.
 
 export class PhysicsModel {
+    // Maximum RK4 substep in seconds. Stiff models (e.g. quadratic drag)
+    // need small steps; smooth kinematic models can override with a larger
+    // value for speed.
+    maxDt = 0.02;
+
     // Return array of parameter definitions:
     // [{name, min, max, default, scale}, ...]
     // 'scale' is the initial simplex perturbation for Nelder-Mead
@@ -26,6 +31,16 @@ export class PhysicsModel {
     derivatives(state, params, t) {
         return [state[3], state[4], state[5], 0, 0, 0];
     }
+
+    // Additional cost added to the mean-angular-error cost during fitting.
+    // Lets a model express soft plausibility priors (pure LOS angular error
+    // is hugely ambiguous — near-perfect fits exist over a wide family of
+    // turning trajectories). T is the total duration in seconds.
+    // Must be scale-compatible with the fit cost: the angular-error term is
+    // meanErrorDegrees / errSigma (see fitPhysicsModel in LOSFitting.js).
+    extraCost(params, dataset, T) {
+        return 0;
+    }
 }
 
 // 4th-order Runge-Kutta integrator
@@ -38,8 +53,8 @@ export function integrateRK4(model, initialState, params, sampleTimes) {
     let t = sampleTimes[0];
     let sampleIdx = 0;
 
-    // Adaptive substep: use at most 0.02s steps for stability
-    const maxDt = 0.02;
+    // Adaptive substep: model-defined cap for stability (default 0.02s)
+    const maxDt = model.maxDt ?? 0.02;
 
     // Record initial state
     if (sampleIdx < sampleTimes.length && Math.abs(t - sampleTimes[sampleIdx]) < 1e-10) {
