@@ -1480,7 +1480,7 @@ export class CFileManager extends CManager {
 
         // Some common folder names
         if (folderName === "LOSTraverseSelectTrack")
-            folderName = "Traversal of the Lines of Sight";
+            folderName = "Traverse of the Lines of Sight";
 
         if (folderName === "JetLOSCameraCenter")
             folderName = "Lines of Sight"

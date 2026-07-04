@@ -30,6 +30,17 @@ export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExt
         desc: "LOS Traverse Method " + idExtra,
         default: defaultTraverse,
         exportable: exportable,
+        // Display-only renames (CNodeSwitch v.labels). Saved sitches serialize the
+        // selected option by its KEY, so the legacy per-sitch spellings must stay
+        // as keys forever — these unify what the user sees. Keys absent from a
+        // given sitch's menu are simply ignored.
+        labels: {
+            "Constant Speed": "Constant Ground Speed",
+            "Const Ground Spd": "Constant Ground Speed",
+            "Constant Ground Speed - ": "Constant Ground Speed",
+            "Const Air Spd": "Constant Air Speed",
+            "Global Fit: Const Acceleration": "Global Fit: Constant Acceleration",
+        },
 
     }, guiMenus.traverse)
 

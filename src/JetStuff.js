@@ -602,8 +602,8 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
 
     }
 
-    // The optional Min/Max analysis-distance range limits for "Analyze
-    // Traversals" now live in the "Traversal Analysis Tweaks" subfolder,
+    // The optional Min/Max analysis-distance range limits for the traverse
+    // analysis now live in the "Traverse Analysis Tweaks" subfolder,
     // created by addAnalyzeTweaks() in MakeTraverseNodesMenu.js.
 
 //    console.log("+++ LOSTraverse")
@@ -950,7 +950,7 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
 
     // Minimum-speed fit — the slowest object consistent with the sightlines
     // (drifting lantern / near-static object). Same traverseMinSpeed core the
-    // "Analyze Traversals" gallery uses, so its "Minimum Speed" contender
+    // traverse-analysis gallery uses, so its "Minimum Speed" contender
     // applies to exactly this method.
     if (!NodeMan.exists("LOSFitMinSpeed"+idExtra)) {
         const minSpeedDef = {

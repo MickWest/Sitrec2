@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.95.1 (2026-07-04)
+
+### Improvements
+- Traverse methods now show consistent names in every sitch: the Traverse menu displays **Constant Ground Speed**, **Constant Air Speed**, and **Global Fit: Constant Acceleration** instead of the mixed abbreviations that varied from sitch to sitch. Saved sitches load unchanged.
+- Clearer traverse-analysis naming: the button is now **Analyze Traverse Methods...** (Traverse menu), its options folder is **Traverse Analysis Tweaks**, and two analysis candidates are renamed — **Least Maneuvering** and **Minimum Speed** (was "Saddle Traversal") — with matching renames for the progress overlay, the **Plausible Fit Results** folder, and the traverse track's export folder.
+- After **Use This** in the analysis gallery, the confirmation message now names the traverse method actually selected when it differs from the candidate's name.
+
+### Bug Fixes
+- Fixed applying the analysis gallery's stationary candidates (**Ground Object**, **Stationary Point in Space**) making the object slowly drift with the wind in most sitches instead of holding still.
+
 ## Version 2.95.0 (2026-07-03)
 
 ### New Features

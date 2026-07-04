@@ -296,7 +296,7 @@ export function fitConstantAcceleration(dataset, excluded) {
 
 // Deterministic PRNG (mulberry32) so the Monte-Carlo fits are reproducible: the
 // same LOS + options always yield the same trajectory. That lets them be cached
-// and used as stable "Analyze Traversals" contenders (and makes the on-screen
+// and used as stable traverse-analysis contenders (and makes the on-screen
 // Global Fit: Monte Carlo traverses repeatable). Pass options.seed to vary the
 // draw deliberately.
 function mulberry32(seed) {

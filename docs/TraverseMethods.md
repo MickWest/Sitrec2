@@ -11,7 +11,7 @@ Sitrec offers two families of traverse:
 
 ## Quick Reference
 
-### Sequential Traversals
+### Sequential Traverses
 
 | Method | Key Parameters | What It Does |
 |--------|---------------|--------------|
@@ -35,11 +35,13 @@ In the menu these appear with a "Global Fit:" prefix (e.g. "Global Fit: Constant
 | Method | Min Frames | Key Parameters | What It Does |
 |--------|-----------|---------------|--------------|
 | **Constant Velocity** | 2 | (none) | Fits a straight-line trajectory P(t) = P0 + V*t that minimizes perpendicular distance to all LOS rays. |
-| **Const Acceleration** | 3 | (none) | Fits a parabolic trajectory P(t) = P0 + V*t + 0.5*A*t^2. Captures turns, climbs, decelerations. |
+| **Constant Acceleration** | 3 | (none) | Fits a parabolic trajectory P(t) = P0 + V*t + 0.5*A*t^2. Captures turns, climbs, decelerations. |
 | **Kalman Smoother** | 2 | Process Noise, Measurement Noise | Runs a Kalman filter forward then backward (RTS smoother). Every point benefits from all measurements past and future. Tunable noise balance. |
 | **Monte Carlo 1** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Randomly samples points along perturbed LOS rays (using a CV fit for focused per-frame range estimates), fits polynomials, and keeps the best trial. Robust to outliers. |
 | **Monte Carlo 2** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Least-squares variant: perturbs all frames each trial and fits an overdetermined polynomial, giving more stable results at higher polynomial orders. |
-| **Physics** | 2 | Physics Model, Max Iterations, Wind, Initial Range | Nelder-Mead optimisation with RK4 integration of a physical dynamics model (currently a "Chinese Lantern" buoyancy/drag model) to fit a physically-plausible trajectory. |
+| **Physics** | 2 | Physics Model, Max Iterations, Wind, Initial Range | RK4 integration of a physical dynamics model — Chinese Lantern (buoyancy/drag) or Fixed Wing Aircraft, chosen with the Physics Model selector — fit with differential evolution plus Nelder-Mead polish. |
+| **Plausible** | 2 | Target Speed, Min/Max Dist limits | Finds the least-maneuvering path that stays exactly on the rays, treating Target Speed as a soft target. Finds its own range. See "Physically Plausible Analysis" below. |
+| **Minimum Speed** | 2 | (none) | Finds the slowest object consistent with the sightlines — the drifting-lantern / near-static reading. See "Physically Plausible Analysis" below. |
 
 ---
 
@@ -55,7 +57,7 @@ A traverse method takes this sequence of rays and produces a sequence of 3D posi
 
 ---
 
-### Sequential Traversals
+### Sequential Traverses
 
 #### Constant Distance
 
@@ -286,16 +288,36 @@ interpretation would require.
 - a soft air-speed target: `((airspeed − Target Speed)/σ)²` with σ ≈ 60 kt,
   linearized around the current estimate and re-solved a few times (IRLS),
 
-anchored (softly) to the "Tgt Start Dist" slider at frame 0. It reads the same
-**Tgt Start Dist** and **Target Speed** sliders as Const Air Spd — but where
-Const Air Spd integrates forward *exactly* at that speed (compounding LOS
-noise into the track), Plausible treats the speed as a loose target and finds
-the least-maneuvering smooth path consistent with the rays.
+It finds its own start range: a coarse sweep over range picks the distance
+whose smoothest solution needs the least maneuvering, refined around the
+winner (the result appears as **Found Range** in the Plausible Fit Results
+folder; the **Min Dist** / **Max Dist** limits in Traverse Analysis Tweaks
+bound the search). It reads the same **Target Speed** slider as Constant Air
+Speed — but where Constant Air Speed integrates forward *exactly* at that
+speed (compounding LOS noise into the track), Plausible treats the speed as a
+loose target and finds the least-maneuvering smooth path consistent with the
+rays.
 
 **When to use**: as the "best fit" interpretation of a hypothesis like
 "a ~350 kt aircraft at ~30 NM" — it shows what the *smoothest* version of that
 hypothesis looks like, and its g-load/turn metrics quantify how plausible the
 hypothesis is at that distance.
+
+### Global Fit: Minimum Speed
+
+**Model**: the same on-the-rays B-spline range profile as Plausible, but the
+objective is inverted: instead of the least-maneuvering path near a target
+speed, it finds the **slowest** object consistent with the sightlines, then
+applies a curvature-penalized smoothing pass that sheds sensor pointing
+jitter (which would otherwise read as enormous g-loads on a slow object).
+
+**When to use**: this is the drifting-lantern / near-static reading. When the
+sensor orbits or passes a slow, close object, most of the apparent motion is
+the sensor's own parallax — the slowest consistent object is then a
+near-static drifter (the classic Aguadilla answer, ~12 kt). It takes no
+parameters; the range follows from where the sightlines let an object move
+least. The Analyze gallery's **Minimum Speed** candidate uses this same fit,
+so applying it reproduces exactly the previewed path.
 
 ### Global Fit: Physics — Fixed Wing Aircraft model
 
@@ -314,7 +336,7 @@ in the Physics Fit Results folder.
 
 ### The Analyze button
 
-**Traverse ▸ Analyze Traversals...** runs the full battery against the current
+**Traverse ▸ Analyze Traverse Methods...** runs the full battery against the current
 LOS data and generates a standalone HTML report (with charts) plus an option
 to apply the best solution to the sliders:
 

@@ -45,7 +45,7 @@ export class CNodeLOSFitPlausible extends CNodeTrack {
 
         const vTarget = this.in.speed ? this.in.speed.v0 : 300 * KNOTS_TO_MS;
         // Respect the "Analysis Min/Max Dist" limits (if the user pinned a rough
-        // range) so this matches what "Analyze Traversals" previewed.
+        // range) so this matches what the traverse analysis previewed.
         const opts = {vTarget, vSigma: 60 * KNOTS_TO_MS};
         const minNode = NodeMan.get("analysisMinDist", false);
         const maxNode = NodeMan.get("analysisMaxDist", false);
@@ -66,7 +66,7 @@ export class CNodeLOSFitPlausible extends CNodeTrack {
         if (!guiMenus.traverse) return;
         if (this.guiFolder) { this.guiFolder.destroy(); this.guiFolder = null; }
         this.guiFolder = guiMenus.traverse.addFolder(
-            t("losFitPlausible.folder", {defaultValue: "Plausible Fit Result"})).close();
+            t("losFitPlausible.folder", {defaultValue: "Plausible Fit Results"})).close();
         this.guiDisplay = {};
         // string rows (avoid lil-gui NumberController step requirement)
         this.guiDisplay._range = (result.startDist / METERS_PER_NM).toFixed(1) + " NM";

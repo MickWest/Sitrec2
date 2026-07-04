@@ -1650,6 +1650,10 @@ const en = {
         },
     },
 
+    traverseAnalysis: {
+        analyzeButton: "Analyze Traverse Methods...",
+    },
+
     losFitPhysics: {
         folder: "Physics Fit Results",
         model: {
@@ -1667,7 +1671,7 @@ const en = {
     },
 
     losFitPlausible: {
-        folder: "Plausible Fit Result",
+        folder: "Plausible Fit Results",
         range: {
             label: "Found Range",
         },

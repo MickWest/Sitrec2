@@ -6,9 +6,9 @@
 // This is the drifting-lantern / near-static-object reading: for a sensor
 // orbiting a slow, close object the apparent motion is mostly the sensor's own
 // parallax, so the slowest consistent object is a near-static drifter (the
-// Aguadilla / GoFast lantern answer). The "Analyze Traversals" gallery's
-// "Minimum Speed" (Saddle) contender selects THIS node, so the applied path is
-// the same one it previewed. See src/TraverseAnalysis.js (traverseMinSpeed).
+// Aguadilla / GoFast lantern answer). The traverse-analysis gallery's
+// "Minimum Speed" contender (key "saddle") selects THIS node, so the applied
+// path is the same one it previewed. See src/TraverseAnalysis.js (traverseMinSpeed).
 
 import { METERS_PER_NM, traverseMinSpeed } from "../TraverseAnalysis";
 import {

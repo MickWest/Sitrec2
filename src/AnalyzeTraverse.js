@@ -1,7 +1,7 @@
 /**
  * AnalyzeTraverse.js — one-button traverse analysis with a generated HTML report.
  *
- * Adds an "Analyze Traversals..." button to the Traverse menu which runs the
+ * Adds an "Analyze Traverse Methods..." button to the Traverse menu which runs the
  * full suite of LOS-traversal analyzers from TraverseAnalysis.js against the
  * current sitch's lines of sight:
  *
@@ -96,7 +96,7 @@ function refractDir(dirECEF, sensorECEF) {
 const FAR_ASTRO = 200 * METERS_PER_NM;
 
 // User toggles for the extra physical-interpretation hypotheses, surfaced in the
-// "Traversal Analysis Tweaks" menu folder (see addAnalyzeTweaks). The two
+// "Traverse Analysis Tweaks" menu folder (see addAnalyzeTweaks). The two
 // ephemeris-backed astronomical tests default OFF (each costs a planet/star
 // sweep per analysis); the cheap geometric fixed-point test defaults ON.
 export const analyzeTweaks = {
@@ -473,7 +473,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
         const track = plausible.track;
         list.push({
             key: "plausible",
-            name: "Least-Maneuvering",
+            name: "Least Maneuvering",
             subtitle: "Smoothest path at any range (soft speed target)",
             color: VIZ.fastObj,
             track,
@@ -495,7 +495,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
             const w = saddle.window, fam = saddle.family;
             list.push({
                 key: "saddle",
-                name: "Saddle Traversal",
+                name: "Minimum Speed",
                 subtitle: "Slowest object consistent with the sightlines",
                 color: "#e0a35e",
                 track: saddle.track,
@@ -788,7 +788,9 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
     const sel = NodeMan.get("LOSTraverseSelect", false);
     const extraMethods = [
         {key: "gfCV", label: "Global Fit: Constant Velocity", subtitle: "Least-squares constant-velocity fit", color: "#8bd17c"},
-        {key: "gfCA", label: "Global Fit: Const Acceleration", subtitle: "Least-squares constant-acceleration fit", color: "#67b89a"},
+        // label = the switch-inputs KEY (never renamed, saved sitches store it);
+        // display = what the user sees, matching the menu's display label.
+        {key: "gfCA", label: "Global Fit: Const Acceleration", display: "Global Fit: Constant Acceleration", subtitle: "Least-squares constant-acceleration fit", color: "#67b89a"},
         {key: "gfKalman", label: "Global Fit: Kalman Smoother", subtitle: "Kalman-smoothed LOS fit", color: "#57a8c6"},
         {key: "gfMC1", label: "Global Fit: Monte Carlo 1", subtitle: "Monte-Carlo sampled fit (fixed seed)", color: "#b79be0"},
         {key: "gfMC2", label: "Global Fit: Monte Carlo 2", subtitle: "Monte-Carlo sampled fit v2 (fixed seed)", color: "#9b7fd0"},
@@ -838,11 +840,12 @@ function methodNodeHypothesis(meth, node, dataset, originLat, originLon) {
         ranges[f] = Math.hypot(track[f * 3] - S[f * 3], track[f * 3 + 1] - S[f * 3 + 1], track[f * 3 + 2] - S[f * 3 + 2]);
     }
     const sorted = Array.from(ranges).sort((a, b) => a - b);
+    const shown = meth.display ?? meth.label;
     return {
-        key: meth.key, name: meth.label, subtitle: meth.subtitle, color: meth.color,
+        key: meth.key, name: shown, subtitle: meth.subtitle, color: meth.color,
         track, metricsFull: m, errDeg,
         params: {range: sorted[Math.floor(n / 2)], methodLabel: meth.label},
-        notes: `The ${meth.label} traverse fit, read straight from the sitch — selecting it applies exactly this path.`,
+        notes: `The ${shown} traverse fit, read straight from the sitch — selecting it applies exactly this path.`,
     };
 }
 
@@ -915,7 +918,7 @@ function buildVerdict(hypotheses) {
 const analyzeButtons = new WeakMap();
 
 /**
- * Idempotently add the "Analyze Traversals..." button to a lil-gui folder
+ * Idempotently add the "Analyze Traverse Methods..." button to a lil-gui folder
  * (normally guiMenus.traverse). Safe to call again after the menu has been
  * destroyed and rebuilt for a new sitch.
  * @returns the lil-gui controller (or null if no folder)
@@ -934,7 +937,7 @@ export function addAnalyzeButton(folder) {
         },
     };
     const controller = folder.add(proxy, "analyze")
-        .name(t("traverseAnalysis.analyzeButton", {defaultValue: "Analyze Traversals..."}));
+        .name(t("traverseAnalysis.analyzeButton", {defaultValue: "Analyze Traverse Methods..."}));
     if (controller.tooltip) {
         controller.tooltip("Search for physically plausible object trajectories consistent " +
             "with the lines of sight, and generate an HTML report");
@@ -949,7 +952,7 @@ export function addAnalyzeButton(folder) {
 const tweaksFolders = new WeakMap();
 
 /**
- * Idempotently add the "Traversal Analysis Tweaks" subfolder to the traverse
+ * Idempotently add the "Traverse Analysis Tweaks" subfolder to the traverse
  * menu. Holds the Min/Max analysis-distance GUI values plus the three
  * astronomical/fixed-object hypothesis checkboxes (bound to analyzeTweaks).
  * Safe to call again after the menu has been rebuilt for a new sitch.
@@ -962,10 +965,10 @@ export function addAnalyzeTweaks(traverseMenu) {
     const prev = tweaksFolders.get(traverseMenu);
     if (prev) { try { prev.destroy(); } catch (e) { /* already gone */ } }
 
-    const folder = traverseMenu.addFolder("Traversal Analysis Tweaks").close();
+    const folder = traverseMenu.addFolder("Traverse Analysis Tweaks").close();
     tweaksFolders.set(traverseMenu, folder);
 
-    // Min/Max distance envelope for Analyze Traversals lives here now. The
+    // Min/Max distance envelope for the traverse analysis lives here now. The
     // traverse menu is rebuilt per sitch, so dispose any existing node of that
     // id first so the new controller lands on the new folder.
     if (NodeMan.exists("analysisMinDist")) NodeMan.unlinkDisposeRemove("analysisMinDist");
@@ -977,7 +980,7 @@ export function addAnalyzeTweaks(traverseMenu) {
         desc: "Min Dist",
         color: "#C0E0FF",
         unitType: "big",
-        tooltip: "Lower bound on start range used by Analyze Traversals (0 = no limit).",
+        tooltip: "Lower bound on start range used by the traverse analysis (0 = no limit).",
     }, folder);
 
     new CNodeGUIValue({
@@ -986,7 +989,7 @@ export function addAnalyzeTweaks(traverseMenu) {
         desc: "Max Dist",
         color: "#C0E0FF",
         unitType: "big",
-        tooltip: "Upper bound on start range used by Analyze Traversals.",
+        tooltip: "Upper bound on start range used by the traverse analysis.",
     }, folder);
 
     const cbFixed = folder.add(analyzeTweaks, "aoFixedPoint").name("AO: Stationary / sky-fixed object");
@@ -995,7 +998,7 @@ export function addAnalyzeTweaks(traverseMenu) {
     const cbSat = folder.add(analyzeTweaks, "satellite").name("Satellite: LEO pass for date");
     const windMode = folder.add(analyzeTweaks, "windMode", ["Sitch wind", "Zero wind"]).name("Wind for analysis");
     if (windMode.tooltip) {
-        windMode.tooltip("Choose whether Analyze Traversals subtracts the sitch target wind, or ignores wind " +
+        windMode.tooltip("Choose whether the traverse analysis subtracts the sitch target wind, or ignores wind " +
             "and treats object motion as ground-relative. This does not change the sitch wind controls.");
     }
     if (cbFixed.tooltip) {
@@ -1024,7 +1027,7 @@ export function addAnalyzeTweaks(traverseMenu) {
 // Result cache: the analysis (sweep + several DE fits) takes ~15 s, but nothing
 // changes between clicks unless the LOS data or an analysis input moves. We
 // fingerprint the inputs and reuse the last result when the fingerprint
-// matches, so re-running "Analyze Traversals" is instant when nothing changed.
+// matches, so re-running the traverse analysis is instant when nothing changed.
 let _analysisCache = null;   // {fp, results}
 
 // Bit-level float hash so ANY change to an input flips the fingerprint (a false
@@ -1178,7 +1181,7 @@ export async function runTraverseAnalysis() {
         return _analysisCache.results;
     }
 
-    const overlay = createProgressOverlay("Analyzing LOS Traversals");
+    const overlay = createProgressOverlay("Analyzing Traverse Methods");
     // Yield via MessageChannel, not setTimeout: a backgrounded tab clamps
     // setTimeout to ~1/minute (Chrome intensive throttling), which would drag a
     // multi-second analysis out to many minutes; MessageChannel macrotasks are
@@ -2343,8 +2346,15 @@ function showResultGallery(results) {
             useBtn.textContent = `Use “${h.name}”`;
             useBtn.disabled = false;
             useBtn.onclick = () => {
-                try { applyHypothesis(h); } finally { remove(); }
-                showGalleryToast(`Applied: ${h.name}`);
+                let applied = null;
+                try { applied = applyHypothesis(h); } finally { remove(); }
+                // Name the traverse method actually selected when it isn't
+                // simply the candidate's own name (e.g. Least Maneuvering →
+                // Global Fit: Plausible, or an air-speed candidate landing on
+                // Constant Ground Speed in a sitch with no air-speed method).
+                showGalleryToast(applied && applied !== h.name
+                    ? `Applied: ${h.name} (method: ${applied})`
+                    : `Applied: ${h.name}`);
             };
         }
     };
@@ -2430,13 +2440,23 @@ function applyHypothesis(hyp) {
         if (nd && nd.setValueWithUnits) nd.setValueWithUnits(ms / KNOTS_TO_MS, "nautical", "speed");
     };
     const sel = NodeMan.get("LOSTraverseSelect", false);
+    // Select the first available option (matching on the switch's KEYS — the
+    // per-sitch spellings) and return its DISPLAY label, or null if none matched.
     const selectFirst = (opts) => {
-        if (!sel || !sel.inputs) return false;
+        if (!sel || !sel.inputs) return null;
         for (const o of opts) {
-            if (sel.inputs[o] !== undefined) { sel.selectOption(o); return true; }
+            if (sel.inputs[o] !== undefined) {
+                sel.selectOption(o);
+                return sel.guiLabels?.[o] ?? o;
+            }
         }
-        return false;
+        return null;
     };
+    // Every historical per-sitch spelling of the two speed traverses. The switch
+    // stores these as keys (saved sitches serialize them), so matching must try
+    // them all; the display is unified via the labels map in MakeTraverseNodesMenu.
+    const GROUND_SPEED_KEYS = ["Constant Ground Speed", "Constant Ground Speed - ", "Constant Speed", "Const Ground Spd"];
+    const AIR_SPEED_KEYS = ["Constant Air Speed", "Const Air Spd"];
     const setModel = (names) => {
         const pm = NodeMan.get("physicsModelChoice", false);
         if (pm && pm.inputs) {
@@ -2445,52 +2465,57 @@ function applyHypothesis(hyp) {
             }
         }
     };
+    let applied = null;
     // Contenders read straight off a live method node carry the exact switch
     // label — selecting it re-applies that method's own fit.
     if (hyp.params && hyp.params.methodLabel) {
-        selectFirst([hyp.params.methodLabel]);
+        applied = selectFirst([hyp.params.methodLabel]);
         setRenderOne(true);
-        return;
+        return applied;
     }
     switch (hyp.key) {
         case "constAir":
             setBig("startDistance", hyp.params.range);
             setSpeed("speedScaled", hyp.params.airSpeed);
-            selectFirst(["Const Air Spd", "Constant Air Speed", "Constant Speed", "Const Ground Spd"]);
+            // A true air-speed traverse reproduces the fitted track; only if the
+            // sitch has none, fall back to ground speed (identical in zero wind).
+            applied = selectFirst(AIR_SPEED_KEYS) ?? selectFirst(GROUND_SPEED_KEYS);
             break;
         case "constAlt":
             // "Constant Altitude" derives its held altitude from startDistance,
             // reproducing the fitted track. (Not "Starting Altitude", which reads
             // a separate startAltitude slider we don't set here.)
             setBig("startDistance", hyp.params.range);
-            selectFirst(["Constant Altitude"]);
+            applied = selectFirst(["Constant Altitude"]);
             break;
         case "plausible":
-            selectFirst(["Global Fit: Plausible"]);
+            applied = selectFirst(["Global Fit: Plausible"]);
             break;
         case "saddle":
-            selectFirst(["Global Fit: Minimum Speed"]);
+            applied = selectFirst(["Global Fit: Minimum Speed"]);
             break;
         case "ground":
         case "fixedPoint":
-            // A stationary object: hold it still (constant speed 0) at the fitted
-            // point's range. A point "at infinity" (the Moon-like reading) has no
-            // finite traverse, so leave the current method untouched.
+            // A stationary object: hold it still (GROUND speed 0) at the fitted
+            // point's range — air speed 0 would drift with the wind. A point "at
+            // infinity" (the Moon-like reading) has no finite traverse, so leave
+            // the current method untouched.
             if (hyp.atInfinity) break;
             setBig("startDistance", hyp.params.distance);
             setSpeed("speedScaled", 0);
-            selectFirst(["Constant Speed", "Const Air Spd", "Constant Air Speed"]);
+            applied = selectFirst(GROUND_SPEED_KEYS) ?? selectFirst(AIR_SPEED_KEYS);
             break;
         case "aircraft":
             setModel(["Fixed Wing Aircraft"]);
-            selectFirst(["Global Fit: Physics"]);
+            applied = selectFirst(["Global Fit: Physics"]);
             break;
         case "lantern":
             setModel(["Chinese Lantern"]);
-            selectFirst(["Global Fit: Physics"]);
+            applied = selectFirst(["Global Fit: Physics"]);
             break;
     }
     setRenderOne(true);
+    return applied;
 }
 
 // ---------------------------------------------------------------------------
