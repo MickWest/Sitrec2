@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.95.0 (2026-07-03)
+
+### New Features
+- **Analyze Traversals** (Traverse → **Analyze Traversals...**): one button evaluates every physical interpretation of the lines of sight — constant air speed, constant altitude, least maneuvering, minimum speed (a drifting lantern or balloon), fixed-wing aircraft, ground object, stationary object, star or planet, satellite pass, and every method already in the traverse menu — and presents them in a full-screen gallery ranked by physical plausibility. Each candidate shows its key numbers and a draggable, rotatable 3D graph of the path; a Details pane explains how each number was derived and what constrains it, **Use This** applies that interpretation straight to the scene, and **Open Full Report** opens a complete printable report. The analysis respects the A-B in/out range, re-running is instant when nothing has changed, and a **Traversal Analysis Tweaks** folder (Traverse menu) sets distance limits, wind handling, and which star/satellite checks to include.
+- **Three new traverse methods** (Traverse menu): **Global Fit: Plausible** finds the least-maneuvering path that stays near your target speed and reports the range it found; **Global Fit: Minimum Speed** finds the slowest object consistent with the sightlines (the drifting-lantern reading); and **Global Fit: Physics** gains a **Fixed Wing Aircraft** model alongside the Chinese Lantern, chosen with the new **Physics Model** selector.
+
+### Improvements
+- **Global Fit: Physics** no longer freezes the page while it solves — it computes in the background and the view updates when the solution lands. Its results panel now reports fit accuracy in degrees and shows the aircraft solution in aviation units (range, heading, speed in knots, turn and climb rates), and the wind guess starts from the sitch's target wind.
+- The **Global Fit: Monte Carlo** traverse methods now produce the same trajectory every time for the same inputs, instead of changing on every recalculation.
+
+### Bug Fixes
+- Fixed the g-force graph showing a large spurious sawtooth when a Global Fit traverse method is selected — a straight-line fit now correctly reads as essentially zero g.
+
 ## Version 2.94.3 (2026-07-02)
 
 ### Improvements
