@@ -39,7 +39,7 @@ In the menu these appear with a "Global Fit:" prefix (e.g. "Global Fit: Constant
 | **Kalman Smoother** | 2 | Process Noise, Measurement Noise | Runs a Kalman filter forward then backward (RTS smoother). Every point benefits from all measurements past and future. Tunable noise balance. |
 | **Monte Carlo 1** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Randomly samples points along perturbed LOS rays (using a CV fit for focused per-frame range estimates), fits polynomials, and keeps the best trial. Robust to outliers. |
 | **Monte Carlo 2** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Least-squares variant: perturbs all frames each trial and fits an overdetermined polynomial, giving more stable results at higher polynomial orders. |
-| **Physics** | 2 | Physics Model, Max Iterations, Wind, Initial Range | RK4 integration of a physical dynamics model — Chinese Lantern (buoyancy/drag) or Fixed Wing Aircraft, chosen with the Physics Model selector — fit with differential evolution plus Nelder-Mead polish. |
+| **Physics** | 2 | Physics Model, Max Iterations, Wind, Initial Range | RK4 integration of a physical dynamics model — Chinese Lantern (wind-drift kinematics with a rise/decay/sink life cycle) or Fixed Wing Aircraft, chosen with the Physics Model selector — fit with differential evolution plus Nelder-Mead polish. |
 | **Plausible** | 2 | Target Speed, Min/Max Dist limits | Finds the least-maneuvering path that stays exactly on the rays, treating Target Speed as a soft target. Finds its own range. See "Physically Plausible Analysis" below. |
 | **Minimum Speed** | 2 | (none) | Finds the slowest object consistent with the sightlines — the drifting-lantern / near-static reading. See "Physically Plausible Analysis" below. |
 
@@ -319,20 +319,39 @@ parameters; the range follows from where the sightlines let an object move
 least. The Analyze gallery's **Minimum Speed** candidate uses this same fit,
 so applying it reproduces exactly the previewed path.
 
-### Global Fit: Physics — Fixed Wing Aircraft model
+### Global Fit: Physics — the two dynamics models
 
-The Physics fit now has a second dynamics model besides the Chinese Lantern:
-a **fixed-wing aircraft** with constant TAS, a linearly-varying turn rate,
+The Physics fit integrates a real dynamics model forward with RK4 and fits
+its parameters to the sightlines with **differential evolution** (a
+genetic-style global search) followed by Nelder-Mead polish. Two models are
+available via the **Physics Model** dropdown in the Traverse menu:
+
+**Chinese Lantern** — pure wind-drift kinematics. A sky lantern is a
+near-perfect wind tracer (grams of mass, large drag area), so its horizontal
+velocity *is* the wind at its current altitude: a solved wind vector with a
+linear altitude shear (clamped so it can never reverse or blow up — the wind
+aloft is allowed to be stronger, e.g. "wind from the east, increasing with
+altitude"). Vertical motion follows the lantern life cycle — rise while the
+flame burns, exponential buoyancy decay after flame-out, terminal sink — and
+the solved flame-out time can fall before the clip (a lantern already in its
+cooling descent, the Aguadilla case), inside it, or after it (still climbing
+throughout). Hard parameter bounds (≤ ~25 kt wind, ≤ 4 m/s vertical rates)
+mean the model simply cannot represent non-lantern motion, so its residual
+LOS error honestly measures how lantern-like the sightlines are. On
+Aguadilla this fit lands within ~35 m of the accepted hand-fitted lantern
+path (wind ~18 kt from ~65°, drifting WSW while slowly descending).
+
+**Fixed Wing Aircraft** — constant TAS, a linearly-varying turn rate,
 constant climb rate, and wind advection. Parameters (initial range, heading,
-TAS, turn rate, turn acceleration, climb, wind E/N) are found with
-**differential evolution** (a genetic-style global search) followed by
-Nelder-Mead polish. The cost combines LOS angular error with the same soft
-plausibility targets, so repeated runs converge to the same interpretable
-answer instead of wandering across the ambiguous solution family.
+TAS, turn rate, turn acceleration, climb, wind E/N) share the same DE +
+polish recipe; the cost combines LOS angular error with soft plausibility
+targets, so repeated runs converge to the same interpretable answer instead
+of wandering across the ambiguous solution family.
 
-Select the model with the **Physics Model** dropdown in the Traverse menu.
-Solved parameters (range, heading, TAS, turn rate, climb, fit error) appear
-in the Physics Fit Results folder.
+Solved parameters (wind, rates, fit error) appear in the Physics Fit Results
+folder. The two models' head-to-head residuals are the analysis gallery's
+main object-type discriminator: whichever fits the angles better is the more
+consistent reading of the data.
 
 ### The Analyze button
 

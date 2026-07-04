@@ -1,9 +1,9 @@
 // Physics-model trajectory fit to LOS rays.
 // Integrates a physical dynamics model with RK4 and optimizes its parameters
-// against the LOS data — single-start Nelder-Mead for the Chinese Lantern
-// model, global differential evolution + polish for the Fixed Wing model
-// (whose cost landscape is multi-modal). The fit runs asynchronously; while
-// it is computing, the node serves its last computed track (if any).
+// against the LOS data — global differential evolution + Nelder-Mead polish
+// for both models (their cost landscapes are multi-modal; a single-start
+// simplex reliably falls into the wrong basin). The fit runs asynchronously;
+// while it is computing, the node serves its last computed track (if any).
 
 import {CNodeTrack} from "./CNodeTrack";
 import {fitPhysicsModel, buildLOSDataset, unpackFitPositions} from "../LOSFitting";
@@ -72,14 +72,14 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
         const options = {};
         if (this.in.maxIter) options.maxIter = this.in.maxIter.v0;
 
-        if (model instanceof FixedWingModel) {
-            // Multi-modal cost landscape: global DE search then polish.
-            // Strided cost sampling keeps the many DE evaluations fast.
-            options.optimizer = "de";
-            options.sampleStride = 5;
-            options.dePop = 48;
-            options.deGens = 120;
-        }
+        // Multi-modal cost landscapes (both models): global DE search then
+        // polish. Strided cost sampling keeps the many DE evaluations fast.
+        // Same settings as the traverse-analysis gallery's fits, so applying
+        // a gallery physics tile reproduces (statistically) the same track.
+        options.optimizer = "de";
+        options.sampleStride = 5;
+        options.dePop = 48;
+        options.deGens = 120;
 
         const overrides = {};
         if (this.in.windSpeed && this.in.windFrom) {

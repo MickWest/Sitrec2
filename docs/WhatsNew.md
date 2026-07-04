@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.96.0 (2026-07-04)
+
+### New Features
+- **Frame-by-frame graphs in the traverse analysis** (Traverse → **Analyze Traverse Methods...**): every candidate's Details pane and the full report now show three charts across the clip — maneuvering g-force, speed (with a separate ground-speed line when wind makes it differ), and sightline fit error.
+- The traverse analysis now measures how much error the sightlines themselves carry — their noise floor — and calibrates the aircraft and lantern fits against it: on noisy data their fit-error figure shows the multiple of that floor, and the explanations say when a residual is just data noise rather than the wrong kind of object. Clean scenes are unaffected.
+
+### Improvements
+- **Realistic Chinese Lantern fits** (Traverse → **Global Fit: Physics**, Chinese Lantern model): the lantern is now modeled as what it really is — a wind tracer that drifts with a solved wind (capped at speeds anyone would launch in), rises while the flame burns, and sinks after flame-out — so it finds genuinely lantern-like solutions instead of impossibly fast ones, and solves several times faster. Its gallery explanations now report the solved wind and which part of the lantern's life the clip shows.
+- **Global Fit: Physics** now uses the same thorough global search for the Chinese Lantern as for the Fixed Wing Aircraft, so applying a lantern result from the analysis gallery reproduces the previewed track.
+- Traverse methods whose current settings produce an impossible track (like a Straight Line left at its defaults) now appear at the bottom of the analysis gallery badged **Non-physical** instead of being silently left out.
+- Re-running the traverse analysis is faster: methods like **Global Fit: Monte Carlo** are only recomputed when the sightlines or their own settings actually changed.
+
 ## Version 2.95.1 (2026-07-04)
 
 ### Improvements

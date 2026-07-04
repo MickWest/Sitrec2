@@ -43,8 +43,9 @@ import {
     traverseMinSpeed,
     traversePlausible,
 } from "./TraverseAnalysis";
-import {fitPhysicsModel} from "./LOSFitting";
+import {fitConstantAcceleration, fitPhysicsModel} from "./LOSFitting";
 import {ChineseLanternModel} from "./ChineseLanternModel";
+import {isLocal} from "./configUtils";
 import {getCelestialDirection, getCelestialDirectionFromRaDec, getGeocentricBodyDirectionECEF} from "./CelestialMath";
 import {ECEF2ENU_radii} from "./LLA-ECEF-ENU";
 import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
@@ -438,6 +439,27 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
     const dateForDatasetFrame = (f) => dateAtDatasetFrame(dataset, f);
     const list = [];
 
+    // Empirical residual floor of this dataset (degrees): the mean angular
+    // error left by a free constant-acceleration path — the most rigid
+    // generic fit, closed-form and deterministic, with no object-type
+    // assumptions. A quadratic in time cannot follow camera-solve wander or
+    // pointing noise, so its residual is a practical measure of how much
+    // error the SIGHTLINES themselves carry: off-ray fits with residuals
+    // near this floor are limited by data noise, not by model failure.
+    // (On Aguadilla this floor reads 0.20° — matching the 0.20° scored by the
+    // hand-fitted accepted lantern path; on clean synthetic data both are ~0.)
+    let errFloor = NaN;
+    try {
+        const fTimes = new Float64Array(dataset.n);
+        for (let f = 0; f < dataset.n; f++) fTimes[f] = f / dataset.fps;
+        const caFree = fitConstantAcceleration(
+            {sensorPos: dataset.S, losDir: dataset.D, times: fTimes, count: dataset.n, maxRange: null},
+            new Set());
+        if (caFree && caFree.positions) {
+            errFloor = meanAngularError(dataset, caFree.positions) * 180 / Math.PI;
+        }
+    } catch (e) { /* annotation degrades gracefully; floor stays NaN */ }
+
     // 1. Constant air speed (sweep best) — walks the rays at fixed air speed.
     {
         const track = traverseConstSpeed(dataset, sweep.best.startDist, sweep.best.speed,
@@ -537,6 +559,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
                 tas: aircraft.params.tas,
                 turn: aircraft.params.turnRate,
                 climb: aircraft.params.climb,
+                errFloor,
             },
             notes: "Constant-TAS fixed-wing model fit to the sightlines by differential evolution.",
         });
@@ -557,11 +580,18 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
             errDeg: lantern.params.errDeg,
             params: {
                 range: range0,
-                buoyancy: solved.buoyancyAccel,
                 windE: solved.windE,
                 windN: solved.windN,
+                shearPerM: solved.shearPerM,
+                vRise: solved.vRise,
+                vSink: solved.vSink,
+                tBurn: solved.tBurn,
+                tauCool: solved.tauCool,
+                clipT: (dataset.n - 1) / dataset.fps,
+                errFloor,
             },
-            notes: "Buoyant-lantern physics (decaying buoyancy, drag, wind drift) fit to the sightlines.",
+            notes: "Wind-drift lantern kinematics (rise, buoyancy decay, terminal sink; " +
+                "altitude-sheared wind) fit to the sightlines.",
         });
     } else {
         list.push({
@@ -925,6 +955,15 @@ function buildVerdict(hypotheses) {
         out += `Comparing the two physics-based models head to head, the fixed-wing model fits the ` +
             `sightlines to <strong>${ae.toFixed(3)}°</strong> versus the lantern's ` +
             `<strong>${le.toFixed(3)}°</strong>, so the geometry alone is better explained by ${better}. `;
+        // Calibrate those residuals against the dataset's empirical noise
+        // floor so noisy sightlines are not misread as model failure.
+        const floor = (lanternHyp.params && lanternHyp.params.errFloor)
+            ?? (aircraftHyp.params && aircraftHyp.params.errFloor);
+        if (isFinite(floor) && floor >= 0.02) {
+            out += `(For calibration, a free constant-acceleration path — the most rigid generic fit — ` +
+                `leaves <strong>${floor.toFixed(2)}°</strong> on these sightlines: residuals near that ` +
+                `floor reflect noise in the data, not a failure of the model.) `;
+        }
     } else if (aircraftHyp && isFinite(aircraftHyp.errDeg)) {
         out += `The fixed-wing model fits the sightlines to ` +
             `<strong>${aircraftHyp.errDeg.toFixed(3)}°</strong> (the lantern fit did not converge, ` +
@@ -953,6 +992,21 @@ const analyzeButtons = new WeakMap();
  */
 export function addAnalyzeButton(folder) {
     if (!folder) return null;
+    // Local-only debug hook so MCP / console can reach the module-scoped
+    // analysis internals (mirrors window._objectTracker in CObjectTracking.js).
+    // Checked here, not at module scope: isLocal is a mutable binding that is
+    // still false when the bundle initializes (checkLocal() runs later).
+    if (isLocal && !window._traverseDebug) {
+        window._traverseDebug = {
+            buildAnalysisDataset,
+            resolveLOSNode,
+            fitPhysicsModel,
+            ChineseLanternModel,
+            traverseMinSpeed,
+            trackMetrics,
+            meanAngularError,
+        };
+    }
     const existing = analyzeButtons.get(folder);
     if (existing && folder.controllers && folder.controllers.includes(existing)) {
         return existing;   // already present in this incarnation of the folder
@@ -1583,7 +1637,12 @@ function analyzeSolutionSpace(results) {
 // The six headline stats for one hypothesis (shared by tile and Details pane).
 function hypothesisStats(h) {
     const m = h.metricsFull;
-    const losErr = h.errDeg > 0 ? `${h.errDeg.toFixed(2)}°` : "0.00° (on LOS)";
+    // Physics-model tiles carry the dataset's empirical noise floor; surface
+    // the residual as a multiple of it so noisy sightlines read correctly.
+    const floor = h.params && h.params.errFloor;
+    const floorTxt = (isFinite(floor) && floor >= 0.02 && h.errDeg > 0)
+        ? ` (${(h.errDeg / floor).toFixed(1)}× floor)` : "";
+    const losErr = h.errDeg > 0 ? `${h.errDeg.toFixed(2)}°${floorTxt}` : "0.00° (on LOS)";
     const errLabel = (h.params && (h.params.object || h.params.satellite)) ? "LOS offset" : "LOS error";
     return [
         ["Range", `${nm1(m.range.min)}–${nm1(m.range.max)} NM`],
@@ -1731,6 +1790,22 @@ function verdictHeadline(r, isTop) {
     return "Physically implausible";
 }
 
+// Calibration sentence for the off-ray physics fits: relate a residual to the
+// dataset's empirical noise floor (the residual of a free constant-
+// acceleration path, computed in buildHypotheses). Only rendered when the
+// floor is big enough to matter — on clean data the absolute numbers already
+// speak for themselves.
+function floorContext(err, floor) {
+    if (!isFinite(floor) || floor < 0.02 || !isFinite(err)) return "";
+    const ratio = err / floor;
+    const rel = ratio < 1.35
+        ? `essentially AT that floor — the residual is dominated by data noise, not model failure`
+        : `${ratio.toFixed(1)}× that floor`;
+    return ` For calibration: the most rigid generic fit (a free constant-acceleration path, no ` +
+        `object-type assumptions) leaves ${floor.toFixed(2)}° on these sightlines — their practical ` +
+        `noise floor — and this fit's ${err.toFixed(2)}° is ${rel}.`;
+}
+
 // Method-specific prose: how the numbers were derived, and what constrains the
 // result / makes it (im)plausible. Returns {lead, derived, constraint}.
 function detailProse(h, r, ss) {
@@ -1786,29 +1861,54 @@ function detailProse(h, r, ss) {
                     `sightlines by differential evolution over several independent runs, then polished. Unlike the ` +
                     `on-ray traverses, its residual — ${err.toFixed(3)}° — is a real measure of how well an ` +
                     `actual aircraft explains the angles.`,
-                constraint: err < 0.05
-                    ? `The tiny ${err.toFixed(3)}° residual means a plane fits the geometry almost exactly, at ` +
-                      `an ordinary ${kt1(p.tas)} kt and ${g.toFixed(2)} g — the hallmark of a mundane target.`
+                constraint: (err < Math.max(0.05, (p.errFloor ?? 0) * 1.35)
+                    ? `The ${err.toFixed(3)}° residual means a plane fits the geometry about as well as these ` +
+                      `sightlines allow, at an ordinary ${kt1(p.tas)} kt and ${g.toFixed(2)} g — the hallmark ` +
+                      `of a mundane target.`
                     : `The ${err.toFixed(3)}° residual is the cost of forcing a rigid straight-flight model onto ` +
-                      `these angles.`,
+                      `these angles.`) + floorContext(err, p.errFloor),
             };
         case "lantern": {
-            const capNM = 20000 / METERS_PER_NM;
-            const pinned = p.range && Math.abs(p.range - 20000) < 200;
+            const capNM = 30000 / METERS_PER_NM;
+            const pinned = p.range && Math.abs(p.range - 30000) < 300;
+            // solved wind (at the initial altitude) in friendly units
+            const windKt = p.windE !== undefined ? toKt(Math.hypot(p.windE, p.windN)) : NaN;
+            const windFrom = p.windE !== undefined
+                ? ((Math.atan2(-p.windE, -p.windN) * 180 / Math.PI + 360) % 360) : NaN;
+            const windTxt = isFinite(windKt)
+                ? `${windKt.toFixed(0)} kt from ${windFrom.toFixed(0)}°` : "?";
+            const shearTxt = p.shearPerM !== undefined
+                ? `${(p.shearPerM * 100 >= 0 ? "+" : "")}${(p.shearPerM * 100).toFixed(2)}%/m` : "?";
+            // which life-cycle stages does the clip cover?
+            const T = p.clipT ?? 0;
+            const phaseTxt = p.tBurn === undefined ? "" :
+                p.tBurn <= 0
+                    ? ` The solved flame-out is ${(-p.tBurn).toFixed(0)} s before the clip — a lantern ` +
+                      `already in its slow cooling descent (terminal sink ${(p.vSink ?? 0).toFixed(1)} m/s).`
+                    : p.tBurn >= T
+                        ? ` The flame burns for the whole clip — a lantern still rising at ` +
+                          `${(p.vRise ?? 0).toFixed(1)} m/s.`
+                        : ` The flame dies ${p.tBurn.toFixed(0)} s in: rise at ${(p.vRise ?? 0).toFixed(1)} m/s, ` +
+                          `then a cooling transition toward a ${(p.vSink ?? 0).toFixed(1)} m/s sink.`;
             return {
-                lead: `A buoyant Chinese lantern / balloon drifting with the wind. The fit lands at ` +
-                    `${kt1(m.airSpeed.mean)} kt — far too fast for a lantern — with a ${err.toFixed(2)}° residual.`,
-                derived: `A buoyant-object ODE (buoyancy decaying as the air cools, quadratic drag, wind drift) ` +
-                    `is integrated forward and fit to the sightlines by differential evolution. Solved wind ≈ ` +
-                    `${p.windE !== undefined ? Math.hypot(p.windE, p.windN).toFixed(0) : "?"} m/s; buoyancy ≈ ` +
-                    `${p.buoyancy !== undefined ? p.buoyancy.toFixed(2) : "?"} m/s².`,
-                constraint: pinned
-                    ? `The model's start range is pinned against its ${capNM.toFixed(1)} NM ceiling: the sightlines ` +
-                      `want a much more distant object, but a wind-limited balloon can only ride them from close in, ` +
-                      `and only by translating at ${kt1(m.airSpeed.mean)} kt — physically impossible for a lantern. ` +
-                      `The high speed is the model telling you this is not a balloon.`
-                    : `A wind-drifting balloon can only stay on sightlines that sweep this fast if it moves at ` +
-                      `${kt1(m.airSpeed.mean)} kt, which no lantern does.`,
+                lead: `A buoyant Chinese lantern / balloon drifting with the wind — ` +
+                    `${kt1(m.airSpeed.mean)} kt mean at ${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft, ` +
+                    `reproducing the sightlines to ${err.toFixed(2)}°.`,
+                derived: `Wind-drift kinematics: the lantern's horizontal velocity IS the wind at its ` +
+                    `altitude (solved ${windTxt}, shear ${shearTxt}), and its vertical motion follows the ` +
+                    `lantern life cycle (rise while lit, buoyancy decay after flame-out, terminal sink), ` +
+                    `fit to the sightlines by differential evolution.${phaseTxt}`,
+                constraint: (pinned
+                    ? `The solved start range is pinned against the model's ${capNM.toFixed(1)} NM ceiling: the ` +
+                      `sightlines want a much more distant object than a wind-drifting lantern can be. The ` +
+                      `${err.toFixed(2)}° residual is the model telling you this is probably not a balloon.`
+                    : err < Math.max(0.35, (p.errFloor ?? 0) * 1.4)
+                        ? `Within the model's hard lantern-physics bounds (≤25 kt wind, ≤4 m/s vertical) the ` +
+                          `angles are reproduced to ${err.toFixed(2)}° — a drifting lantern or balloon is a ` +
+                          `genuinely consistent reading of these sightlines.`
+                        : `Even the best wind-bounded drift path leaves a ${err.toFixed(2)}° residual: the ` +
+                          `sightlines demand motion a lantern cannot do. Compare the fixed-wing fit's residual ` +
+                          `to see which object type the geometry prefers.`) + floorContext(err, p.errFloor),
             };
         }
         case "ground":
@@ -1973,6 +2073,16 @@ function buildDetailHTML(h, r, isTop, ctx) {
     const prose = detailProse(h, r, ss);
     const spaceHTML = solutionSpaceHTML(h, ss);
 
+    // per-frame diagnostics: g-force, speed, LOS error over the clip
+    const sc = hypothesisSeriesCharts(ctx.dataset, h);
+    const seriesHTML = sc ? `
+        <h4 class="tg-d-h">Frame-by-frame behaviour</h4>
+        <div class="tg-d-series">
+            <img src="${sc.gURL}" alt="Maneuvering g-force over the clip">
+            <img src="${sc.spdURL}" alt="Speed over the clip">
+            <img src="${sc.errURL}" alt="LOS fit error over the clip">
+        </div>` : "";
+
     return `
         <div class="tg-chart-shell tg-d-chart-shell">
             <canvas class="tg-d-chart tg-chart-3d" data-chart-role="detail" role="img"
@@ -1988,6 +2098,7 @@ function buildDetailHTML(h, r, isTop, ctx) {
         <div class="tg-d-sub">${escapeHtml(h.subtitle || "")}</div>
         <div class="tg-d-metrics">${statsHTML}</div>
         <p class="tg-d-lead">${escapeHtml(prose.lead)}</p>
+        ${seriesHTML}
         <h4 class="tg-d-h">How these numbers were derived</h4>
         <p class="tg-d-p">${prose.derived}</p>
         <h4 class="tg-d-h">What constrains it — and its plausibility</h4>
@@ -2200,6 +2311,8 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-d-h { color:#7fb0ee; font-size:11.5px; font-weight:700; text-transform:uppercase;
             letter-spacing:0.05em; margin:18px 0 5px 0; }
         .traverse-gallery-overlay .tg-d-p { color:#c2c8d0; font-size:13px; line-height:1.62; margin:0; }
+        .traverse-gallery-overlay .tg-d-series img { display:block; width:100%; height:auto;
+            border-radius:6px; border:1px solid #262b33; margin:0 0 8px 0; }
         .traverse-gallery-overlay .tg-d-p b { color:#eef1f5; }
         .traverse-gallery-overlay .tg-footer { flex:0 0 auto; display:flex; justify-content:flex-end; gap:12px;
             margin-top:12px; flex-wrap:wrap; }
@@ -2818,6 +2931,78 @@ function lineChart(o) {
     return chart.dataURL();
 }
 
+// Per-frame LOS angular error (degrees) of a track against the sightlines.
+function losErrorSeriesDeg(dataset, track) {
+    const {n, S, D} = dataset;
+    const out = new Float64Array(n);
+    for (let f = 0; f < n; f++) {
+        const b = f * 3;
+        const rx = track[b] - S[b], ry = track[b + 1] - S[b + 1], rz = track[b + 2] - S[b + 2];
+        const rl = Math.hypot(rx, ry, rz);
+        if (rl < 1e-9) { out[f] = 180; continue; }
+        const dot = Math.min(1, Math.max(-1, (rx * D[b] + ry * D[b + 1] + rz * D[b + 2]) / rl));
+        out[f] = Math.acos(dot) * 180 / Math.PI;
+    }
+    return out;
+}
+
+// The three per-frame diagnostic charts for one hypothesis — maneuvering
+// g-force, speed, and LOS fit error over the clip — rendered to PNG data
+// URLs (the report's offline idiom; the gallery Details pane reuses them).
+// Returns null when the hypothesis has no track/series (e.g. a failed fit).
+function hypothesisSeriesCharts(dataset, h, o = {}) {
+    const m = h.metricsFull;
+    if (!h.track || !m || !m.series) return null;
+    const {n, fps} = dataset;
+    // trim the velocity smoothing window's edge artifacts, downsample to a
+    // plottable point count
+    const trim = Math.min(9, n >> 3);
+    const step = Math.max(1, Math.ceil((n - 2 * trim) / 700));
+    const xs = [];
+    for (let f = trim; f < n - trim; f += step) xs.push(f / fps);
+    const pick = (arr, scale = 1) => {
+        const ys = [];
+        for (let f = trim; f < n - trim; f += step) ys.push(arr[f] * scale);
+        return ys;
+    };
+    const base = {
+        width: o.width ?? 560, height: o.height ?? 230,
+        xLabel: "Time (s)", zeroBased: true,
+        margin: {left: 56, right: 14, top: 34, bottom: 40},
+    };
+    const color = h.color || VIZ.constAir;
+
+    const gURL = lineChart({...base, title: "Maneuvering g-force", yLabel: "g",
+        series: [{xs, ys: pick(m.series.gLoad), color, label: "g-force"}]});
+
+    // speed: air speed always; ground speed too when the wind makes them differ
+    const airKt = pick(m.series.airSpeed, 1 / KNOTS_TO_MS);
+    const gndKt = pick(m.series.groundSpeed, 1 / KNOTS_TO_MS);
+    let windMatters = false;
+    for (let i = 0; i < airKt.length; i++) {
+        if (Math.abs(airKt[i] - gndKt[i]) > 1) { windMatters = true; break; }
+    }
+    const spdURL = lineChart({...base, title: "Speed", yLabel: "kt",
+        series: windMatters
+            ? [{xs, ys: airKt, color, label: "air speed"},
+               {xs, ys: gndKt, color: VIZ.muted, label: "ground speed", width: 1.5}]
+            : [{xs, ys: airKt, color, label: "air speed"}]});
+
+    // LOS error, with the dataset's empirical noise floor as a reference line
+    // on the physics fits that carry one
+    const errSeries = [{xs, ys: pick(losErrorSeriesDeg(dataset, h.track)),
+        color, label: "LOS error"}];
+    const floor = h.params && h.params.errFloor;
+    if (isFinite(floor) && floor >= 0.02) {
+        errSeries.push({xs: [xs[0], xs[xs.length - 1]], ys: [floor, floor],
+            color: VIZ.muted, label: "noise floor", width: 1.5, alpha: 0.9});
+    }
+    const errURL = lineChart({...base, title: "LOS fit error", yLabel: "degrees",
+        series: errSeries});
+
+    return {gURL, spdURL, errURL};
+}
+
 function heatColor(tRaw) {
     const t = Math.min(1, Math.max(0, tRaw));
     const seg = t * (HEAT_STOPS.length - 1);
@@ -3188,6 +3373,14 @@ function buildReportHypothesisDetails(dataset, rankedHyps, ss) {
             `<div class="stv">${escapeHtml(v)}</div></div>`).join("");
         const prose = detailProse(h, r, ss);
         const spaceHTML = solutionSpaceHTML(h, ss);
+        // per-frame diagnostics: g-force, speed, LOS error over the clip
+        const sc = hypothesisSeriesCharts(dataset, h);
+        const seriesHTML = sc ? `
+            <div class="solution-series">
+                <img src="${sc.gURL}" alt="Maneuvering g-force over the clip">
+                <img src="${sc.spdURL}" alt="Speed over the clip">
+                <img src="${sc.errURL}" alt="LOS fit error over the clip">
+            </div>` : "";
         return `
         <article class="solution-detail">
             <figure>
@@ -3201,6 +3394,7 @@ function buildReportHypothesisDetails(dataset, rankedHyps, ss) {
                 <span class="pill" style="background:${r.color}">${escapeHtml(verdictHeadline(r, i === 0))}</span>
             </div>
             <div class="solution-metrics">${statsHTML}</div>
+            ${seriesHTML}
             <p class="solution-lead">${escapeHtml(prose.lead)}</p>
             <h4>How these numbers were derived</h4>
             <p>${prose.derived}</p>
@@ -3342,19 +3536,11 @@ function buildReportHTML(ctx) {
     const rankedHyps = rankHypotheses(hypotheses);
     const galleryHyps = rankedHyps.map(({h}) => h);
     const cardsHTML = galleryHyps.map((h) => {
-        const m = h.metricsFull;
         const r = plausibilityRating(h);
         const thumb = hypothesisThumbnail(dataset, h);
-        const losErr = h.errDeg > 0 ? `${h.errDeg.toFixed(3)}°` : "0.00° (on LOS)";
-        const errLabel = (h.params && h.params.object) ? "LOS offset" : "LOS error";
-        const stats = [
-            ["Range", `${nm1(m.range.min)}–${nm1(m.range.max)} NM`],
-            ["Air speed", `${kt1(m.airSpeed.mean)} kt`],
-            ["Altitude", `${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft`],
-            ["Climb", `${fpm0(m.verticalSpeed.mean)} fpm`],
-            ["Max g", `${m.gLoad.max.toFixed(2)} g`],
-            [errLabel, losErr],
-        ];
+        // same six rows as the in-app tiles (incl. the noise-floor multiple
+        // on the physics fits' LOS error)
+        const stats = hypothesisStats(h);
         const statsHTML = stats.map(([k, v]) =>
             `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
             `<div class="stv">${escapeHtml(v)}</div></div>`).join("");
@@ -3490,6 +3676,9 @@ footer { margin-top: 44px; color: #8a9099; font-size: 13px;
 .solution-sub { color: #8a9099; font-size: 13px; margin-top: 3px; }
 .solution-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     gap: 8px 14px; margin: 12px 0; padding: 11px; background: #15181d; border-radius: 8px; }
+.solution-series { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.solution-series img { flex: 1 1 30%; min-width: 260px; max-width: 100%; height: auto;
+    border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); }
 .solution-lead { color: #e0e4ea; font-size: 15px; }
 .solution-detail h4 { color: #7fb0ee; font-size: 11.5px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.05em; margin: 18px 0 5px 0; }
@@ -3650,11 +3839,17 @@ td .pill { color: #0d0f12; }
     <p><strong>Object-type physics models (aircraft vs lantern).</strong> Two of the interpretations are
     genuine forward-integrated physics models fit to the sightlines rather than paths pinned to the rays:
     the fixed-wing aircraft (constant TAS, slowly varying turn rate, constant climb) and the Chinese
-    lantern / balloon (buoyancy decaying as its hot air cools, quadratic drag, and wind-driven drift).
+    lantern / balloon (a wind tracer: horizontal velocity equals the altitude-sheared wind, bounded to
+    lantern-plausible speeds, with a rise / buoyancy-decay / terminal-sink vertical life cycle).
     Because neither is forced onto the lines of sight, each leaves a residual mean LOS error — and a
     <em>lower</em> error means the data are more consistent with an object of <em>that type</em>. Their
     head-to-head LOS error is the single most useful discriminator of object type this analysis
-    produces, though it remains a soft, geometry-only indicator.</p>
+    produces, though it remains a soft, geometry-only indicator. To calibrate those residuals, a free
+    constant-acceleration path (the most rigid generic fit, no object-type assumptions) is also fit:
+    its residual is the sightlines' practical <em>noise floor</em>, since a quadratic in time cannot
+    follow camera-solve wander or pointing jitter. A physics fit near that floor is limited by data
+    noise, not by the model — on hand-reconstructed sightlines even the true object cannot score
+    below it.</p>
     <p><strong>Scoring.</strong> All criteria are deliberately <em>soft targets</em> (a preferred speed,
     roughly level flight, low g), not hard constraints: LOS-only data admits infinitely many exact
     solutions, so the analysis characterizes the plausible family rather than claiming a unique answer.
