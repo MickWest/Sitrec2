@@ -611,6 +611,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
             color: "#9aa0a8",
             track: fixedPt.track,
             atInfinity,
+            identity: atInfinity,   // a point at infinity has no finite traverse to apply
             metricsFull: trackMetrics(dataset, fixedPt.track),
             errDeg: Math.min(fixedPt.errDeg, fixedDir.errDeg),
             params: {distance: fixedPt.distance, dirErrDeg: fixedDir.errDeg},
@@ -635,6 +636,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
             subtitle: `Best LEO pass of ${satellite.loaded} checked`,
             color: "#6fd3c9",
             track,
+            identity: true,   // an identification, not a selectable traverse method
             metricsFull: trackMetrics(dataset, track),
             errDeg: b.errDeg,
             params: {satellite: b.name, satnum: b.satnum, offsetDeg: b.errDeg, sunlit,
@@ -696,6 +698,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
                     color: "#c9d4e5",
                     track,
                     atInfinity: true,
+                    identity: true,
                     metricsFull: trackMetrics(dataset, track),
                     errDeg: best.errDeg,
                     params: {object: best.name, offsetDeg: best.errDeg, mag: best.mag,
@@ -761,6 +764,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
                     color: "#b7a2e0",
                     track,
                     atInfinity: true,
+                    identity: true,
                     metricsFull: trackMetrics(dataset, track),
                     errDeg: best.a,
                     params: {object: best.body, timeUTC: bestDate.toISOString(), offsetDeg: best.a,
@@ -775,7 +779,71 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
         }
     }
 
+    // Every OTHER selectable traverse method, read straight off its live node so
+    // it competes on the same footing and "Use" re-selects exactly it. (Constant
+    // Speed/Altitude, Plausible, Physics and Minimum Speed above already map to
+    // their methods; these are the global statistical fits and the straight
+    // line. Monte Carlo uses a fixed seed, so it is a stable, reproducible
+    // contender.)
+    const sel = NodeMan.get("LOSTraverseSelect", false);
+    const extraMethods = [
+        {key: "gfCV", label: "Global Fit: Constant Velocity", subtitle: "Least-squares constant-velocity fit", color: "#8bd17c"},
+        {key: "gfCA", label: "Global Fit: Const Acceleration", subtitle: "Least-squares constant-acceleration fit", color: "#67b89a"},
+        {key: "gfKalman", label: "Global Fit: Kalman Smoother", subtitle: "Kalman-smoothed LOS fit", color: "#57a8c6"},
+        {key: "gfMC1", label: "Global Fit: Monte Carlo 1", subtitle: "Monte-Carlo sampled fit (fixed seed)", color: "#b79be0"},
+        {key: "gfMC2", label: "Global Fit: Monte Carlo 2", subtitle: "Monte-Carlo sampled fit v2 (fixed seed)", color: "#9b7fd0"},
+        {key: "straightLine", label: "Straight Line", subtitle: "Straight constant-velocity line", color: "#cf8fae"},
+    ];
+    if (sel && sel.inputs) {
+        for (const meth of extraMethods) {
+            let node = sel.inputs[meth.label];
+            if (typeof node === "string") node = NodeMan.get(node, false);
+            if (!node || typeof node.p !== "function") continue;
+            const h = methodNodeHypothesis(meth, node, dataset, originLat, originLon);
+            if (h) list.push(h);
+        }
+    }
+
     return list;
+}
+
+// Read an existing traverse-method node's own output track over the analysis
+// frame range and package it as a hypothesis, in the analysis ENU frame, so a
+// selectable method competes like any fitted contender. Returns null if the
+// node has no usable track (e.g. a manual method left at a degenerate default).
+function methodNodeHypothesis(meth, node, dataset, originLat, originLon) {
+    const {n, S} = dataset;
+    const f0 = dataset.frame0 ?? 0;
+    // Force a fresh fit: the gallery only rebuilds on a cache MISS (an input
+    // changed), but a live method node can still hold a stale array if its GUI
+    // params changed without cascading a dirty flag — recompute so the contender
+    // always reflects the current parameters (and matches what "Use" applies).
+    if ("_dirty" in node) node._dirty = true;
+    const track = new Float64Array(n * 3);
+    for (let f = 0; f < n; f++) {
+        let pos;
+        try { pos = node.p(f0 + f); } catch (e) { return null; }
+        if (!pos || !isFinite(pos.x) || !isFinite(pos.y) || !isFinite(pos.z)) return null;
+        const enu = ECEF2ENU_radii(pos, originLat, originLon);
+        track[f * 3] = enu.x; track[f * 3 + 1] = enu.y; track[f * 3 + 2] = enu.z;
+    }
+    const m = trackMetrics(dataset, track);
+    // Skip a degenerate/unset method (e.g. a manual Straight Line left at its
+    // default endpoints) whose "track" is non-physical, so it never pollutes the
+    // gallery. Real traverses here are well under these bounds.
+    if (!isFinite(m.airSpeed.mean) || m.airSpeed.mean / KNOTS_TO_MS > 20000 || !(m.gLoad.max < 2000)) return null;
+    const errDeg = meanAngularError(dataset, track) * 180 / Math.PI;
+    const ranges = new Float64Array(n);
+    for (let f = 0; f < n; f++) {
+        ranges[f] = Math.hypot(track[f * 3] - S[f * 3], track[f * 3 + 1] - S[f * 3 + 1], track[f * 3 + 2] - S[f * 3 + 2]);
+    }
+    const sorted = Array.from(ranges).sort((a, b) => a - b);
+    return {
+        key: meth.key, name: meth.label, subtitle: meth.subtitle, color: meth.color,
+        track, metricsFull: m, errDeg,
+        params: {range: sorted[Math.floor(n / 2)], methodLabel: meth.label},
+        notes: `The ${meth.label} traverse fit, read straight from the sitch — selecting it applies exactly this path.`,
+    };
 }
 
 // Hypotheses that produced a track, ranked most-plausible first (plausibility
@@ -1072,6 +1140,7 @@ export async function runTraverseAnalysis() {
     // Cache hit → show the previous gallery instantly, skipping the whole fit
     // battery. The fingerprint covers the LOS data and every analysis input.
     const refr = refractionOptsFromUniforms();
+    const guiVal = (id) => { const nd = NodeMan.get(id, false); return nd ? (nd.v0 ?? nd.value ?? 0) : 0; };
     const fp = analysisFingerprint(losNode, [
         analysisFrames.frame0, analysisFrames.frame1,
         analyzeTweaks.windMode,
@@ -1096,6 +1165,12 @@ export async function runTraverseAnalysis() {
         // simSpeed scales the per-frame dates (dateAtFrame), so it changes the
         // satellite and astro-time fits even when dateStart is unchanged.
         Sit.simSpeed ?? 1,
+        // The gallery reads the live global-fit method nodes as contenders, so
+        // their GUI parameters change the results and must invalidate the cache.
+        // (CV/CA are parameter-free; the seeded Monte Carlo is otherwise
+        // deterministic, so its trial count / uncertainty / order fully pin it.)
+        guiVal("kalmanProcessNoise"), guiVal("kalmanMeasurementNoise"),
+        guiVal("mcNumTrials"), guiVal("mcLOSUncertainty"), guiVal("mcOrder"),
     ]);
     if (_analysisCache && _analysisCache.fp === fp) {
         window.lastTraverseAnalysis = _analysisCache.results;
@@ -2073,6 +2148,8 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-use { flex:1 1 auto; padding:10px 12px; font-size:14px; font-weight:700;
             color:#fff; background:#3987e5; border:none; border-radius:8px; cursor:pointer; }
         .traverse-gallery-overlay .tg-use:hover { background:#4f97ec; }
+        .traverse-gallery-overlay .tg-use:disabled { background:#2a2f37; color:#8a9099;
+            cursor:default; font-weight:600; }
         .traverse-gallery-overlay .tg-d-content { padding:15px 16px 20px 16px; }
         .traverse-gallery-overlay .tg-d-chart { width:100%; height:100%; display:block; border-radius:8px;
             border:1px solid rgba(255,255,255,0.07); background:#0c0e11; }
@@ -2256,11 +2333,20 @@ function showResultGallery(results) {
             if (chartGroup.syncScale) chartGroup.setSyncScale(true, detailChart);
         }
         detailsCol.scrollTop = 0;
-        useBtn.textContent = `Use “${h.name}”`;
-        useBtn.onclick = () => {
-            try { applyHypothesis(h); } finally { remove(); }
-            showGalleryToast(`Applied: ${h.name}`);
-        };
+        if (h.identity) {
+            // An identification (astronomical body, satellite, point at infinity),
+            // not a selectable traverse method — nothing to apply.
+            useBtn.textContent = "Identification — not a traverse";
+            useBtn.disabled = true;
+            useBtn.onclick = null;
+        } else {
+            useBtn.textContent = `Use “${h.name}”`;
+            useBtn.disabled = false;
+            useBtn.onclick = () => {
+                try { applyHypothesis(h); } finally { remove(); }
+                showGalleryToast(`Applied: ${h.name}`);
+            };
+        }
     };
 
     tiles.forEach(({h, r}, i) => {
@@ -2359,6 +2445,13 @@ function applyHypothesis(hyp) {
             }
         }
     };
+    // Contenders read straight off a live method node carry the exact switch
+    // label — selecting it re-applies that method's own fit.
+    if (hyp.params && hyp.params.methodLabel) {
+        selectFirst([hyp.params.methodLabel]);
+        setRenderOne(true);
+        return;
+    }
     switch (hyp.key) {
         case "constAir":
             setBig("startDistance", hyp.params.range);
@@ -2374,6 +2467,19 @@ function applyHypothesis(hyp) {
             break;
         case "plausible":
             selectFirst(["Global Fit: Plausible"]);
+            break;
+        case "saddle":
+            selectFirst(["Global Fit: Minimum Speed"]);
+            break;
+        case "ground":
+        case "fixedPoint":
+            // A stationary object: hold it still (constant speed 0) at the fitted
+            // point's range. A point "at infinity" (the Moon-like reading) has no
+            // finite traverse, so leave the current method untouched.
+            if (hyp.atInfinity) break;
+            setBig("startDistance", hyp.params.distance);
+            setSpeed("speedScaled", 0);
+            selectFirst(["Constant Speed", "Const Air Spd", "Constant Air Speed"]);
             break;
         case "aircraft":
             setModel(["Fixed Wing Aircraft"]);

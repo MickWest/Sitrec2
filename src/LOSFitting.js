@@ -294,6 +294,22 @@ export function fitConstantAcceleration(dataset, excluded) {
 // Monte Carlo 1 — RANSAC-style: pick minimal random samples, fit exactly
 // ---------------------------------------------------------------------------
 
+// Deterministic PRNG (mulberry32) so the Monte-Carlo fits are reproducible: the
+// same LOS + options always yield the same trajectory. That lets them be cached
+// and used as stable "Analyze Traversals" contenders (and makes the on-screen
+// Global Fit: Monte Carlo traverses repeatable). Pass options.seed to vary the
+// draw deliberately.
+function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+        a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+const MC_DEFAULT_SEED = 0x5eed1234;
+
 export function fitMonteCarlo(dataset, excluded, options = {}) {
     const {sensorPos, losDir, times, count} = dataset;
 
@@ -301,6 +317,7 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
     const losUncertDeg = options.losUncertaintyDeg ?? 2;
     const losUncertRad = losUncertDeg * (Math.PI / 180);
     const numTrials = Math.max(1, Math.round(options.numTrials ?? 500));
+    const rng = mulberry32((options.seed ?? MC_DEFAULT_SEED) >>> 0);
 
     // Per-frame range estimates from a prior fit (e.g. CV). When provided,
     // random range sampling is centered on these values (0.5x to 1.5x) instead
@@ -393,7 +410,7 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
         const pool = active.slice();
         const chosen = [];
         for (let k = 0; k < needed; k++) {
-            const idx = k + Math.floor(Math.random() * (pool.length - k));
+            const idx = k + Math.floor(rng() * (pool.length - k));
             [pool[k], pool[idx]] = [pool[idx], pool[k]];
             chosen.push(pool[k]);
         }
@@ -406,9 +423,9 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
 
             let pdx, pdy, pdz;
             if (losUncertRad > 1e-10) {
-                const theta = Math.random() * losUncertRad;
+                const theta = rng() * losUncertRad;
                 const [ex, ey, ez] = _perpUnit(dx, dy, dz);
-                const phi = Math.random() * 2 * Math.PI;
+                const phi = rng() * 2 * Math.PI;
                 const [rx2, ry2, rz2] = _rotate(ex, ey, ez, dx, dy, dz, phi);
                 [pdx, pdy, pdz] = _rotate(dx, dy, dz, rx2, ry2, rz2, theta);
             } else {
@@ -419,14 +436,14 @@ export function fitMonteCarlo(dataset, excluded, options = {}) {
             if (rangeEstimates) {
                 // Sample within 0.9x to 1.1x of the estimated range
                 const est = rangeEstimates[fi];
-                lambda = est * (0.9 + Math.random() * 0.2);
+                lambda = est * (0.9 + rng() * 0.2);
             } else {
                 let effectiveMax = maxDistance;
                 if (dataset.maxRange) {
                     const mr = dataset.maxRange[fi];
                     if (mr > 0) effectiveMax = Math.min(effectiveMax, mr);
                 }
-                lambda = Math.random() * effectiveMax;
+                lambda = rng() * effectiveMax;
             }
 
             sampleTs.push(times[fi] - t0);
@@ -494,6 +511,7 @@ export function fitMonteCarlo2(dataset, excluded, options = {}) {
     const losUncertDeg = options.losUncertaintyDeg ?? 2;
     const losUncertRad = losUncertDeg * (Math.PI / 180);
     const numTrials = Math.max(1, Math.round(options.numTrials ?? 500));
+    const rng = mulberry32((options.seed ?? MC_DEFAULT_SEED) >>> 0);
 
     const rangeEstimates = options.rangeEstimates ?? null;
 
@@ -617,8 +635,8 @@ export function fitMonteCarlo2(dataset, excluded, options = {}) {
 
             let pdx, pdy, pdz;
             if (perpVecs) {
-                const theta = Math.random() * losUncertRad;
-                const phi = Math.random() * 2 * Math.PI;
+                const theta = rng() * losUncertRad;
+                const phi = rng() * 2 * Math.PI;
                 const [rx2, ry2, rz2] = _rotate(perpVecs[b], perpVecs[b + 1], perpVecs[b + 2], dx, dy, dz, phi);
                 [pdx, pdy, pdz] = _rotate(dx, dy, dz, rx2, ry2, rz2, theta);
             } else {
@@ -628,14 +646,14 @@ export function fitMonteCarlo2(dataset, excluded, options = {}) {
             let lambda;
             if (rangeEstimates) {
                 const est = rangeEstimates[fi];
-                lambda = est * (0.9 + Math.random() * 0.2);
+                lambda = est * (0.9 + rng() * 0.2);
             } else {
                 let effectiveMax = maxDistance;
                 if (dataset.maxRange) {
                     const mr = dataset.maxRange[fi];
                     if (mr > 0) effectiveMax = Math.min(effectiveMax, mr);
                 }
-                lambda = Math.random() * effectiveMax;
+                lambda = rng() * effectiveMax;
             }
 
             sampleTs.push(normTimes[fi]);

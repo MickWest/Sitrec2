@@ -50,6 +50,7 @@ import {CNodeLOSFitMonteCarlo} from "./nodes/CNodeLOSFitMonteCarlo";
 import {CNodeLOSFitMonteCarlo2} from "./nodes/CNodeLOSFitMonteCarlo2";
 import {CNodeLOSFitPhysics} from "./nodes/CNodeLOSFitPhysics";
 import {CNodeLOSFitPlausible} from "./nodes/CNodeLOSFitPlausible";
+import {CNodeLOSFitMinSpeed} from "./nodes/CNodeLOSFitMinSpeed";
 import {CNodeSwitch} from "./nodes/CNodeSwitch";
 import {makeMatLine, updateMatLineResolution} from "./MatLines";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
@@ -945,6 +946,20 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
         };
         if (NodeMan.exists("targetWind")) plausibleDef.wind = "targetWind";
         new CNodeLOSFitPlausible(plausibleDef);
+    }
+
+    // Minimum-speed fit — the slowest object consistent with the sightlines
+    // (drifting lantern / near-static object). Same traverseMinSpeed core the
+    // "Analyze Traversals" gallery uses, so its "Minimum Speed" contender
+    // applies to exactly this method.
+    if (!NodeMan.exists("LOSFitMinSpeed"+idExtra)) {
+        const minSpeedDef = {
+            id: "LOSFitMinSpeed"+idExtra,
+            LOS: los,
+            startDist: "startDistance",
+        };
+        if (NodeMan.exists("targetWind")) minSpeedDef.wind = "targetWind";
+        new CNodeLOSFitMinSpeed(minSpeedDef);
     }
 
     if (!NodeMan.exists("startAltitude")) {

@@ -22,6 +22,7 @@ export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExt
     traverseInputs2["Global Fit: Monte Carlo 2"] = "LOSFitMonteCarlo2" + idExtra;
     traverseInputs2["Global Fit: Physics"] = "LOSFitPhysics" + idExtra;
     traverseInputs2["Global Fit: Plausible"] = "LOSFitPlausible" + idExtra;
+    traverseInputs2["Global Fit: Minimum Speed"] = "LOSFitMinSpeed" + idExtra;
 
     let nodeMenu = new CNodeSwitch({
         id: id,
