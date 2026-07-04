@@ -178,6 +178,9 @@ const statSpike = (s) => Math.max(Math.abs(s.min), Math.abs(s.max));
 // Returns {label, rank (0=Implausible .. 3=High), color} for pills/tables.
 // ---------------------------------------------------------------------------
 function plausibilityRating(h) {
+    // A method whose track is non-physical (absurd speed/g) is shown for
+    // completeness but ranks below everything else (rank -1, sorts dead last).
+    if (h.nonPhysical) return {label: "Non-physical", rank: -1, color: "#8a5a2b"};
     const p = h.params || {};
     const err = h.errDeg || 0;   // NaN/undefined -> 0
     // Astronomical / ephemeris objects: the discriminators are angular offset
@@ -797,11 +800,14 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
         {key: "straightLine", label: "Straight Line", subtitle: "Straight constant-velocity line", color: "#cf8fae"},
     ];
     if (sel && sel.inputs) {
+        // LOS-only signature: a method node's cached fit is stale if the LOS
+        // changed, even when its own GUI params did not.
+        const losSig = String(analysisFingerprint(losNode, []));
         for (const meth of extraMethods) {
             let node = sel.inputs[meth.label];
             if (typeof node === "string") node = NodeMan.get(node, false);
             if (!node || typeof node.p !== "function") continue;
-            const h = methodNodeHypothesis(meth, node, dataset, originLat, originLon);
+            const h = methodNodeHypothesis(meth, node, dataset, originLat, originLon, losSig);
             if (h) list.push(h);
         }
     }
@@ -809,18 +815,37 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
     return list;
 }
 
+// A live fit node's cached array can be stale (its params or the LOS changed),
+// but the recalculate cascade does NOT dirty an *unselected* fit node, so we
+// can't trust its own _dirty flag. Remember the input signature (LOS hash + the
+// node's GUI params) each analysis last force-freshed it at, and recompute only
+// when that changes — so an unchanged Monte Carlo fit isn't re-run every time.
+const _methodNodeSig = new Map();
+function methodNodeParamSig(node) {
+    let sig = "";
+    const inp = node.in || {};
+    for (const k of Object.keys(inp).sort()) {
+        const v = inp[k] ? inp[k].v0 : undefined;
+        if (typeof v === "number" && isFinite(v)) sig += k + "=" + v + ";";
+    }
+    return sig;
+}
+
 // Read an existing traverse-method node's own output track over the analysis
 // frame range and package it as a hypothesis, in the analysis ENU frame, so a
 // selectable method competes like any fitted contender. Returns null if the
 // node has no usable track (e.g. a manual method left at a degenerate default).
-function methodNodeHypothesis(meth, node, dataset, originLat, originLon) {
+function methodNodeHypothesis(meth, node, dataset, originLat, originLon, losSig) {
     const {n, S} = dataset;
     const f0 = dataset.frame0 ?? 0;
-    // Force a fresh fit: the gallery only rebuilds on a cache MISS (an input
-    // changed), but a live method node can still hold a stale array if its GUI
-    // params changed without cascading a dirty flag — recompute so the contender
-    // always reflects the current parameters (and matches what "Use" applies).
-    if ("_dirty" in node) node._dirty = true;
+    // Recompute this node ONLY when its own inputs changed since the last
+    // analysis (the LOS, or its GUI params); otherwise reuse its cached array.
+    const sigKey = node.id || meth.label;
+    const sig = losSig + "|" + methodNodeParamSig(node);
+    if ("_dirty" in node && _methodNodeSig.get(sigKey) !== sig) {
+        node._dirty = true;
+        _methodNodeSig.set(sigKey, sig);
+    }
     const track = new Float64Array(n * 3);
     for (let f = 0; f < n; f++) {
         let pos;
@@ -830,10 +855,11 @@ function methodNodeHypothesis(meth, node, dataset, originLat, originLon) {
         track[f * 3] = enu.x; track[f * 3 + 1] = enu.y; track[f * 3 + 2] = enu.z;
     }
     const m = trackMetrics(dataset, track);
-    // Skip a degenerate/unset method (e.g. a manual Straight Line left at its
-    // default endpoints) whose "track" is non-physical, so it never pollutes the
-    // gallery. Real traverses here are well under these bounds.
-    if (!isFinite(m.airSpeed.mean) || m.airSpeed.mean / KNOTS_TO_MS > 20000 || !(m.gLoad.max < 2000)) return null;
+    // A method whose finite track is non-physical (e.g. a manual Straight Line
+    // left at its default endpoints -> absurd speed/g) is still shown as a
+    // contender for completeness, but flagged so it ranks dead last. Real
+    // traverses here are well under these bounds.
+    const nonPhysical = !isFinite(m.airSpeed.mean) || m.airSpeed.mean / KNOTS_TO_MS > 20000 || !(m.gLoad.max < 2000);
     const errDeg = meanAngularError(dataset, track) * 180 / Math.PI;
     const ranges = new Float64Array(n);
     for (let f = 0; f < n; f++) {
@@ -843,9 +869,11 @@ function methodNodeHypothesis(meth, node, dataset, originLat, originLon) {
     const shown = meth.display ?? meth.label;
     return {
         key: meth.key, name: shown, subtitle: meth.subtitle, color: meth.color,
-        track, metricsFull: m, errDeg,
+        track, metricsFull: m, errDeg, nonPhysical,
         params: {range: sorted[Math.floor(n / 2)], methodLabel: meth.label},
-        notes: `The ${shown} traverse fit, read straight from the sitch — selecting it applies exactly this path.`,
+        notes: nonPhysical
+            ? `The ${shown} method's current track is non-physical (its endpoints/parameters don't fit the sightlines) — shown for completeness; selecting it applies exactly this path.`
+            : `The ${shown} traverse fit, read straight from the sitch — selecting it applies exactly this path.`,
     };
 }
 
@@ -1485,6 +1513,7 @@ function tierBadge(rank, isTop) {
     if (isTop) return {label: "Best", color: "#e5b53a"};
     if (rank >= 3) return {label: "High", color: "#3fae72"};
     if (rank >= 1) return {label: "Medium", color: "#c9a13a"};
+    if (rank < 0) return {label: "Non-physical", color: "#8a5a2b"};
     return {label: "Implausible", color: "#e0564e"};
 }
 
