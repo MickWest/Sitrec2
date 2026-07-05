@@ -570,6 +570,35 @@ npm test               # Ensure nothing is broken
 - **Use `par.renderOne = true`** after making changes via eval to force a render frame, so screenshots capture the updated state.
 - **Iterate fast.** The full cycle (eval diagnosis → code fix → build → reload → verify) can be done in under a minute without any manual browser interaction.
 
+### Local-only debug hooks (reaching module scope)
+
+`sitrec_eval` runs in the page's main world, so it can read `window.*` but NOT a module's
+private bindings (top-level `const`/`function`/imports never land on `window`). For the
+subsystems where that matters, Sitrec exposes curated `window._*` hooks:
+
+| Hook | Exposes | Availability |
+|------|---------|--------------|
+| `window._traverseDebug` | Traverse-analysis internals: `buildAnalysisDataset(losNode, windNode, anchorDist)`, `resolveLOSNode()`, `fitPhysicsModel(dataset, excluded, model, options)` (async), `ChineseLanternModel` (class), `traverseMinSpeed(dataset)`, `trackMetrics(dataset, track)`, `meanAngularError(dataset, track)` | Local builds only (`isLocal`); set once a sitch with a traverse menu has loaded |
+| `window._objectTracker` | The live `ObjectTracker` instance (video Auto Tracking internals) | Local builds only; set the first time tracking is enabled (Video ▸ Tracking) |
+| `window._treeFlattenDebug` | Aggregate diagnostics for Edit Geometry (Trees) tile flattening: counters (`tiles`, `verts`, `snapped`, ...) plus `reset()` | Always (production too); a plain counters object |
+
+Example — extract the current sitch's LOS analysis dataset (ENU arrays) for offline work:
+```js
+(() => {
+    const d = window._traverseDebug;
+    const los = d.resolveLOSNode();
+    const {dataset, originLat, originLon} = d.buildAnalysisDataset(los, NodeMan.get("targetWind", false), 20*1852);
+    return {n: dataset.n, fps: dataset.fps, originLat, originLon};
+})()
+```
+`fitPhysicsModel` is async — kick it off, stash the result on `window`, and poll with a
+second eval (the same pattern as file imports above).
+
+**Adding a new hook:** follow the same pattern (see `addAnalyzeButton` in
+`src/AnalyzeTraverse.js`), but check `isLocal` at CALL time, not module scope — `isLocal`
+is a mutable binding that is still `false` when the bundle initializes (`checkLocal()`
+runs later in startup). A module-scope `if (isLocal)` silently never fires.
+
 ### Assert relay
 When the MCP bridge is active, Sitrec's `assert()` skips the `debugger` statement and instead captures the assert message and stack trace. These are relayed back in the MCP tool response as `⚠️ ASSERT(S) FIRED DURING THIS CALL:` with full stack traces. Execution continues so the call still returns a result (or error).
 
