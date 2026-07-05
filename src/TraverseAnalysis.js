@@ -251,24 +251,44 @@ export function traverseConstAltitude(dataset, altZ) {
 /**
  * Find the constant altitude whose LOS-riding track requires the least
  * horizontal maneuvering. Sweeps the altitude band spanned by the plausible
- * range window (at the mid frame), then parabolic-refines.
- * options: {rangeMin (m), rangeMax (m), samples}
- * Returns {altZ, startDist (m), track, score, badFrames, metrics}.
+ * range window (at the mid frame), then bisection-refines.
+ *
+ * Scoring rides a lightly SMOOTHED copy of the exact-ray track (the
+ * traverseMinSpeed recipe): the exact-ray track inherits LOS pointing jitter
+ * as range- and fps^2-amplified fake g-load, which used to poison the score
+ * at the CORRECT altitude and hand the win to a smoother wrong-altitude
+ * corkscrew. A residual-LOS term ((errDeg/sigmaLOSDeg)^2) keeps the smoothed
+ * copy honest — a smooth-but-off-ray path can't win either.
+ *
+ * options: {rangeMin (m), rangeMax (m), samples, sigmaLOSDeg}
+ * Returns {altZ, startDist (m), track (smoothed), trackExact (on-ray twin),
+ *          errDeg, score, badFrames, failed, metrics}. `failed` is the
+ *          degenerate-geometry guard: near-horizontal sightlines never cross
+ *          a constant-altitude plane, so the hypothesis is meaningless.
+ *          startDist is measured on the EXACT-ray track so applyHypothesis's
+ *          startDistance -> live-node altitude round-trip stays exact.
  */
 export function fitConstAltitude(dataset, options = {}) {
-    const {n, S, D} = dataset;
+    const {n, fps, S, D} = dataset;
     const rangeMin = options.rangeMin ?? 0.5 * METERS_PER_NM;
     const rangeMax = options.rangeMax ?? 60 * METERS_PER_NM;
     const samples = options.samples ?? 24;
+    const sigmaLOSDeg = options.sigmaLOSDeg ?? 0.05;
     const mid = Math.floor(n / 2);
     // altitude reached at the mid-frame for the range-band endpoints
     const altAt = (R) => S[mid * 3 + 2] + D[mid * 3 + 2] * R;
     let zA = altAt(rangeMin), zB = altAt(rangeMax);
     if (zA > zB) { const t = zA; zA = zB; zB = t; }
 
+    const smoothK = Math.max(6, Math.min(34, Math.round(n / (6 * fps)) + 4));
+    const curvature = 0.02 * n / smoothK;
     const evalZ = (z) => {
         const {track, badFrames} = traverseConstAltitude(dataset, z);
-        return {z, track, badFrames, score: straightFlightScore(trackMetrics(dataset, track), badFrames)};
+        const smooth = smoothTrackBspline(track, n, smoothK, curvature);
+        const errDeg = meanAngularError(dataset, smooth) * 180 / Math.PI;
+        const score = straightFlightScore(trackMetrics(dataset, smooth), badFrames)
+            + (errDeg / sigmaLOSDeg) ** 2;
+        return {z, track, smooth, badFrames, errDeg, score};
     };
     let best = null;
     for (let i = 0; i < samples; i++) {
@@ -276,25 +296,23 @@ export function fitConstAltitude(dataset, options = {}) {
         const r = evalZ(z);
         if (!best || r.score < best.score) best = r;
     }
-    // parabolic refine around the best altitude
+    // bisection descent around the best grid sample (a parabolic refine
+    // stalls thousands of meters short on sharp score valleys)
     const step = (zB - zA) / (samples - 1);
-    for (let pass = 0; pass < 2; pass++) {
-        const a = evalZ(best.z - step / (pass + 1)), c = evalZ(best.z + step / (pass + 1));
-        const fa = a.score, fb = best.score, fc = c.score;
-        const denom = (fa - 2 * fb + fc);
-        if (Math.abs(denom) > 1e-12) {
-            const zv = best.z - 0.5 * (step / (pass + 1)) * (fc - fa) / denom;
-            const v = evalZ(zv);
-            if (v.score < best.score) best = v;
-        }
+    for (let pass = 1; pass <= 8; pass++) {
+        const h = step / 2 ** pass;
+        if (h <= 0) break;
+        const a = evalZ(best.z - h), c = evalZ(best.z + h);
         if (a.score < best.score) best = a;
         if (c.score < best.score) best = c;
     }
-    // report the start range along the first ray
+    // start range along the FIRST RAY of the exact-ray track (see JSDoc)
     const startDist = Math.hypot(best.track[0] - S[0], best.track[1] - S[1], best.track[2] - S[2]);
+    const failed = best.badFrames > 0.2 * n;
     return {
-        altZ: best.z, startDist, track: best.track, score: best.score,
-        badFrames: best.badFrames, metrics: summarizeMetrics(trackMetrics(dataset, best.track)),
+        altZ: best.z, startDist, track: best.smooth, trackExact: best.track,
+        errDeg: best.errDeg, score: best.score, badFrames: best.badFrames, failed,
+        metrics: summarizeMetrics(trackMetrics(dataset, best.smooth)),
     };
 }
 
@@ -453,9 +471,43 @@ export function straightFlightScore(metrics, badFrames = 0) {
 }
 
 /**
+ * Stride-downsample a dataset to ~targetN frames for cheaper per-combo solves.
+ * W (per-FRAME wind displacement) is SUMMED over each stride window so the
+ * total wind drift is preserved; fps scales by the stride.
+ */
+export function downsampleDataset(ds, targetN = 2500) {
+    const {n, fps, S, D, W} = ds;
+    const stride = Math.max(1, Math.round(n / targetN));
+    if (stride === 1) return {ds: {...ds}, stride};
+    const n2 = Math.floor((n - 1) / stride) + 1;
+    const S2 = new Float64Array(n2 * 3), D2 = new Float64Array(n2 * 3), W2 = new Float64Array(n2 * 3);
+    for (let f2 = 0; f2 < n2; f2++) {
+        const f = f2 * stride, b = f * 3, b2 = f2 * 3;
+        S2[b2] = S[b]; S2[b2 + 1] = S[b + 1]; S2[b2 + 2] = S[b + 2];
+        D2[b2] = D[b]; D2[b2 + 1] = D[b + 1]; D2[b2 + 2] = D[b + 2];
+        if (f2 < n2 - 1) {
+            let wx = 0, wy = 0, wz = 0;
+            for (let g = f; g < Math.min(n, f + stride); g++) { wx += W[g * 3]; wy += W[g * 3 + 1]; wz += W[g * 3 + 2]; }
+            W2[b2] = wx; W2[b2 + 1] = wy; W2[b2 + 2] = wz;
+        }
+    }
+    return {ds: {n: n2, fps: fps / stride, S: S2, D: D2, W: W2}, stride};
+}
+
+/**
  * Grid search over (start distance, air speed) for the constant-air-speed
  * traverse. Returns every combo scored, sorted best-first, plus the grid
  * dimensions for heatmap rendering.
+ *
+ * Each combo is solved as a spline QP (traversePlausible with a TIGHT speed
+ * sigma) on a downsampled dataset, then lightly smoothed before scoring. The
+ * old per-frame ray-walk was a shooting method: on scenes where the sensor
+ * maneuvers it exploded into corkscrews at the correct combo (jitter + branch
+ * flapping), so the truth could LOSE the sweep. The QP finds the smoothest
+ * path that holds the requested speed; a speed-fidelity term marks down
+ * combos whose "constant speed" the QP could not actually hold (this replaces
+ * badFrames as the infeasibility signal — badFrames is kept as 0 in the
+ * result shape for compatibility).
  *
  * The smoothness score valley is typically sharp in range but very flat in
  * speed, so with smoothness alone the "best" lands arbitrarily at a grid
@@ -463,30 +515,38 @@ export function straightFlightScore(metrics, badFrames = 0) {
  * 0.2*((v-target)/250kt)^2 that picks the middle of the plausible band
  * without changing which ranges score well.
  *
- * options: {ranges: number[] (m), speeds: number[] (m/s), airSpeed,
- *           speedTarget (m/s|null), progress}
+ * options: {ranges: number[] (m), speeds: number[] (m/s),
+ *           speedTarget (m/s|null), targetN, spdFidSigma (m/s), progress}
  * progress(frac) is awaited if provided (once per range row).
  */
 export async function sweepConstAirSpeed(dataset, options = {}) {
     const ranges = options.ranges ?? defaultRangeList(dataset);
     const speeds = options.speeds ?? defaultSpeedList();
-    const airSpeed = options.airSpeed ?? true;
     const speedTarget = options.speedTarget ?? null;
+    const vSigma = options.vSigma ?? 3 * KNOTS_TO_MS;
+    const spdFidSigma = options.spdFidSigma ?? 10 * KNOTS_TO_MS;
     const speedSigma = 250 * KNOTS_TO_MS;
+    const {ds} = downsampleDataset(dataset, options.targetN ?? 2500);
+    const smoothK = Math.max(6, Math.min(34, Math.round(ds.n / (6 * ds.fps)) + 4));
+    const curvature = 0.02 * ds.n / smoothK;
     const results = [];
     for (let ri = 0; ri < ranges.length; ri++) {
         for (const speedMs of speeds) {
-            const {track, badFrames} = traverseConstSpeed(dataset, ranges[ri], speedMs, {airSpeed});
-            const m = trackMetrics(dataset, track);
-            let score = straightFlightScore(m, badFrames);
+            const {track} = traversePlausible(ds, ranges[ri], {vTarget: speedMs, vSigma, iters: 3, K: 25});
+            const sm = smoothTrackBspline(track, ds.n, smoothK, curvature);
+            const m = trackMetrics(ds, sm);
+            let score = straightFlightScore(m, 0);
             if (speedTarget !== null) {
                 score += 0.2 * ((speedMs - speedTarget) / speedSigma) ** 2;
             }
+            const spdErr = Math.hypot(m.airSpeed.mean - speedMs, m.airSpeed.std);
+            score += (spdErr / spdFidSigma) ** 2;
             results.push({
                 startDist: ranges[ri],
                 speed: speedMs,
                 score,
-                badFrames,
+                badFrames: 0,
+                spdErr,
                 metrics: summarizeMetrics(m),
             });
         }
@@ -494,6 +554,33 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
     }
     const sorted = results.slice().sort((a, b) => a.score - b.score);
     return {ranges, speeds, results, best: sorted[0], sorted};
+}
+
+/**
+ * Full-resolution display/apply track for a sweep combo: solve the QP on the
+ * downsample, linearly upsample its range profile (lambda) onto the full-res
+ * rays, then smooth. (Re-solving the QP at full n/fps re-amplifies the
+ * per-frame jitter terms and skews the held speed — measured 45.8±9.7 kt vs
+ * 43.5±0.4 kt on a 43.4 kt truth — so upsampling lambda is the right way.)
+ */
+export function constAirSpeedTrack(dataset, startDist, speedMs, options = {}) {
+    const {ds: d2, stride} = downsampleDataset(dataset, options.targetN ?? 2500);
+    const vSigma = options.vSigma ?? 3 * KNOTS_TO_MS;
+    const {lam} = traversePlausible(d2, startDist, {vTarget: speedMs, vSigma, iters: 3, K: 25});
+    const {n, fps, S, D} = dataset;
+    const raw = new Float64Array(n * 3);
+    for (let f = 0; f < n; f++) {
+        const u = Math.min(f / stride, d2.n - 1);
+        const i = Math.min(Math.floor(u), d2.n - 2);
+        const t = u - i;
+        const L = lam[i] * (1 - t) + lam[i + 1] * t;
+        raw[f * 3] = S[f * 3] + D[f * 3] * L;
+        raw[f * 3 + 1] = S[f * 3 + 1] + D[f * 3 + 1] * L;
+        raw[f * 3 + 2] = S[f * 3 + 2] + D[f * 3 + 2] * L;
+    }
+    const smoothK = Math.max(6, Math.min(34, Math.round(n / (6 * fps)) + 4));
+    const track = smoothTrackBspline(raw, n, smoothK, 0.02 * n / smoothK);
+    return {track, badFrames: 0};
 }
 
 function defaultRangeList(dataset) {
@@ -504,8 +591,14 @@ function defaultRangeList(dataset) {
 }
 
 function defaultSpeedList() {
+    // Log-spaced 15..650 kt: proportional resolution everywhere, so slow
+    // objects (a 43 kt drifter) are representable, not just the jet band —
+    // the old linear 100..650 kt grid could not express slow truths at all.
     const out = [];
-    for (let kt = 100; kt <= 650; kt += 10) out.push(kt * KNOTS_TO_MS);
+    const lo = 15, hi = 650, count = 32;
+    for (let i = 0; i < count; i++) {
+        out.push(lo * Math.pow(hi / lo, i / (count - 1)) * KNOTS_TO_MS);
+    }
     return out;
 }
 
@@ -556,10 +649,29 @@ export function bsplineBasis(n, K) {
  *
  * The speed term is the "loose target" that resolves the fundamental LOS
  * ambiguity: without it the least-maneuvering solution family is nearly
- * degenerate in range rate. vTarget=null uses a tiny |v|^2 ridge instead.
+ * degenerate in range rate — for NARROW-BASELINE sightlines. When the sensor
+ * itself maneuvers (an orbit), geometry alone pins the range and the speed
+ * target should be dropped (see fitPlausibleBestRange). vTarget=null uses a
+ * tiny |v|^2 ridge instead.
+ *
+ * Three option-gated behaviors, all DEFAULT OFF (existing callers byte-identical):
+ *   accelStride h — the acceleration rows use a strided second difference
+ *     [r-h, r, r+h]/h^2. The per-frame stencil is dominated by frame-scale LOS
+ *     jitter (amplified by range and fps^2): on noisy rays the exact truth
+ *     path can cost MORE than a close-in whirling one, so the QP dives toward
+ *     the sensor. Striding measures acceleration over ~h frames and restores
+ *     the real signal.
+ *   rangeFloor (+minDist=120) — soft range floor, same pattern as
+ *     traverseMinSpeed; without it the QP can drive lambda NEGATIVE (object
+ *     behind the sensor) at close anchor ranges.
+ *   smoothOutput (+smoothSpacingSec=2, smoothK, smoothCurvature) — post-smooth
+ *     the returned track (control point every ~spacing seconds) so the track
+ *     and anything scored from it shed exact-ray jitter; loop-scale motion
+ *     (tens of seconds) stays visible.
  *
  * options: {K=25, vTarget (m/s|null), vSigma (m/s), wSpd=1, wClimb=0,
- *           iters=6, anchorFrame=0}
+ *           iters=6, anchorFrame=0, accelStride=1, rangeFloor=false,
+ *           minDist=120, smoothOutput=false, smoothSpacingSec=2}
  * Returns {track, lam}.
  */
 export function traversePlausible(dataset, startDist, options = {}) {
@@ -571,13 +683,18 @@ export function traversePlausible(dataset, startDist, options = {}) {
     const wClimb = options.wClimb ?? 0;
     const iters = options.iters ?? 6;
     const anchorFrame = Math.max(0, Math.min(n - 1, Math.round(options.anchorFrame ?? 0)));
+    const hA = Math.max(1, Math.min(Math.round(options.accelStride ?? 1), Math.floor((n - 1) / 2)));
+    const minDist = options.minDist ?? 120;
+    const useFloor = options.rangeFloor ?? false;
+    const floorW = new Float64Array(n);
 
     const B = bsplineBasis(n, K);
-    const accelScale = fps * fps / G_ACCEL;
+    const accelScale = fps * fps / G_ACCEL / (hA * hA);
     const lam = new Float64Array(n).fill(startDist);
     let c = null;
 
-    for (let iter = 0; iter < iters; iter++) {
+    const maxIters = useFloor ? iters + 5 : iters;
+    for (let iter = 0; iter < maxIters; iter++) {
         const A = [];
         for (let k = 0; k < K; k++) A.push(new Float64Array(K));
         const rhs = new Float64Array(K);
@@ -610,8 +727,8 @@ export function traversePlausible(dataset, startDist, options = {}) {
             }
         };
 
-        // acceleration rows, in g
-        for (let r = 1; r <= n - 2; r++) stencil([r - 1, r, r + 1], [1, -2, 1], accelScale);
+        // acceleration rows, in g (strided second difference when accelStride > 1)
+        for (let r = hA; r <= n - 1 - hA; r++) stencil([r - hA, r, r + hA], [1, -2, 1], accelScale);
 
         // soft anchor lambda(anchorFrame) = startDist (weight 10 => centimeter-to-meter
         // slop; a hard/huge weight wrecks the conditioning of the dense solve)
@@ -658,20 +775,46 @@ export function traversePlausible(dataset, startDist, options = {}) {
             for (let f = 0; f < n - 1; f++) stencil([f, f + 1], [-1, 1], wc, [0, 0, 1]);
         }
 
+        // soft floor rows where lambda dipped below minDist on a prior iterate
+        if (useFloor) {
+            for (let f = 0; f < n; f++) {
+                if (floorW[f] > 0) {
+                    const [seg, w] = B[f];
+                    addRow([seg, seg + 1, seg + 2, seg + 3], w, -minDist, floorW[f]);
+                }
+            }
+        }
+
         for (let k = 0; k < K; k++) A[k][k] += 1e-10 * (A[k][k] || 1);
         c = solveDense(A, rhs);
         for (let f = 0; f < n; f++) {
             const [seg, w] = B[f];
             lam[f] = c[seg] * w[0] + c[seg + 1] * w[1] + c[seg + 2] * w[2] + c[seg + 3] * w[3];
         }
-        if (vTarget === null) break;
+        let viol = false;
+        if (useFloor) {
+            for (let f = 0; f < n; f++) if (lam[f] < minDist) { floorW[f] = (floorW[f] || 1) * 8; viol = true; }
+        }
+        if (vTarget === null && !viol) break;
+        if (vTarget !== null && iter >= iters - 1 && !viol) break;
     }
 
-    const track = new Float64Array(n * 3);
+    let track = new Float64Array(n * 3);
     for (let f = 0; f < n; f++) {
         track[f * 3] = S[f * 3] + D[f * 3] * lam[f];
         track[f * 3 + 1] = S[f * 3 + 1] + D[f * 3 + 1] * lam[f];
         track[f * 3 + 2] = S[f * 3 + 2] + D[f * 3 + 2] * lam[f];
+    }
+    // Optional post-smoothing: LIGHT (control point every smoothSpacingSec
+    // seconds) — sheds frame-scale LOS jitter, keeps real loops visible.
+    if (options.smoothOutput) {
+        const spacing = options.smoothSpacingSec ?? 2;
+        const smoothK = Math.max(6, Math.min(400, options.smoothK ?? (Math.round(n / (fps * spacing)) + 4)));
+        const curvature = options.smoothCurvature ?? (0.02 * n / smoothK);
+        track = smoothTrackBspline(track, n, smoothK, curvature);
+        for (let f = 0; f < n; f++) {
+            lam[f] = Math.hypot(track[f * 3] - S[f * 3], track[f * 3 + 1] - S[f * 3 + 1], track[f * 3 + 2] - S[f * 3 + 2]);
+        }
     }
     return {track, lam};
 }
@@ -749,13 +892,55 @@ export function traverseMinSpeed(dataset, options = {}) {
     const minDist = options.minDist ?? 120;
     const floorIters = Math.max(1, options.floorIters ?? 5);
     const accelReg = options.accelReg ?? 0.15;   // tiny curvature ridge, position units
+    // End-level pull: after the floor converges, a few IRLS iterations add
+    // speed-level rows over the first/last levelEndsFrac of frames, pulling
+    // the air speed there toward the interior median of the FIRST converged
+    // iterate (vRef, frozen — recomputing it each iteration ratchets the
+    // target). The B-spline endpoints are data-starved, so the raw solution
+    // over/undershoots speed at the clip ends (a constant-speed truth read
+    // 35-45 kt); the level rows fix the boundary without touching the
+    // interior objective.
+    const levelW = options.levelW ?? 0.2;
+    const levelIters = Math.max(0, options.levelIters ?? 3);
+    const levelEndsFrac = options.levelEndsFrac ?? 0.15;
 
     const B = bsplineBasis(n, K);
     const lam = new Float64Array(n).fill(1000);
     const floorW = new Float64Array(n);   // per-frame soft-floor weight (0 until violated)
     let c = null;
 
-    for (let iter = 0; iter < floorIters; iter++) {
+    // current iterate positions + unit air velocities (IRLS linearization)
+    const pos = new Float64Array(n * 3);
+    const updatePos = () => {
+        for (let f = 0; f < n; f++) {
+            pos[f * 3] = S[f * 3] + D[f * 3] * lam[f];
+            pos[f * 3 + 1] = S[f * 3 + 1] + D[f * 3 + 1] * lam[f];
+            pos[f * 3 + 2] = S[f * 3 + 2] + D[f * 3 + 2] * lam[f];
+        }
+    };
+    const u = new Float64Array((n - 1) * 3);
+    let vRef = 0, vRefFrozen = false;
+    const updateU = () => {
+        const spds = [];
+        for (let f = 0; f < n - 1; f++) {
+            const b = f * 3, d = (f + 1) * 3;
+            const vx = pos[d] - pos[b] - W[b], vy = pos[d + 1] - pos[b + 1] - W[b + 1], vz = pos[d + 2] - pos[b + 2] - W[b + 2];
+            const vl = Math.hypot(vx, vy, vz) || 1;
+            u[b] = vx / vl; u[b + 1] = vy / vl; u[b + 2] = vz / vl;
+            spds.push(vl * fps);
+        }
+        if (vRefFrozen) return;
+        const trim = Math.min(Math.floor(spds.length / 4), Math.round(10 * fps));
+        const inner = spds.slice(trim, spds.length - trim).sort((a, b2) => a - b2);
+        vRef = inner[Math.floor(inner.length / 2)];
+        vRefFrozen = true;
+    };
+
+    const useLevel = levelW > 0 && levelIters > 0;
+    const totalIters = floorIters + (useLevel ? levelIters : 0);
+    let irlsOn = false;
+
+    for (let iter = 0; iter < totalIters; iter++) {
         const A = [];
         for (let k = 0; k < K; k++) A.push(new Float64Array(K));
         const rhs = new Float64Array(K);
@@ -801,6 +986,32 @@ export function traverseMinSpeed(dataset, options = {}) {
             }
         }
 
+        // end-level rows: (u_f . v_air(f)) = vRef over the boundary windows,
+        // linearized about the previous iterate's unit air velocity u_f
+        if (irlsOn) {
+            const w = levelW * fps;
+            const endF = Math.round(levelEndsFrac * n);
+            for (let f = 0; f < n - 1; f++) {
+                if (f >= endF && f < n - 1 - endF) continue;
+                const b = f * 3;
+                const uf0 = u[b], uf1 = u[b + 1], uf2 = u[b + 2];
+                let constTerm = -(uf0 * W[b] + uf1 * W[b + 1] + uf2 * W[b + 2]) - vRef / fps;
+                const colW = new Map();
+                const frames = [f, f + 1], cs = [-1, 1];
+                for (let i = 0; i < 2; i++) {
+                    const fr = frames[i];
+                    constTerm += cs[i] * (uf0 * S[fr * 3] + uf1 * S[fr * 3 + 1] + uf2 * S[fr * 3 + 2]);
+                    const bf = B[fr];
+                    const dDotU = D[fr * 3] * uf0 + D[fr * 3 + 1] * uf1 + D[fr * 3 + 2] * uf2;
+                    for (let q = 0; q < 4; q++) {
+                        const k = bf[0] + q;
+                        colW.set(k, (colW.get(k) || 0) + cs[i] * bf[1][q] * dDotU);
+                    }
+                }
+                addRow([...colW.keys()], [...colW.values()].map(v => v * w), constTerm * w);
+            }
+        }
+
         for (let k = 0; k < K; k++) A[k][k] += 1e-9 * (A[k][k] || 1);
         c = solveDense(A, rhs);
         for (let f = 0; f < n; f++) {
@@ -809,16 +1020,18 @@ export function traverseMinSpeed(dataset, options = {}) {
         }
         let viol = false;
         for (let f = 0; f < n; f++) if (lam[f] < minDist) { floorW[f] = (floorW[f] || 1) * 8; viol = true; }
-        if (!viol) break;
+        updatePos();
+        if (!viol && !irlsOn && useLevel) {
+            irlsOn = true;      // floor pass converged; switch on the level rows
+            updateU();
+            continue;
+        }
+        if (irlsOn) updateU();
+        if (!viol && !irlsOn) break;
     }
 
     // exact-ray min-speed track (smooth range, but rides the jittery rays)
-    const raw = new Float64Array(n * 3);
-    for (let f = 0; f < n; f++) {
-        raw[f * 3] = S[f * 3] + D[f * 3] * lam[f];
-        raw[f * 3 + 1] = S[f * 3 + 1] + D[f * 3 + 1] * lam[f];
-        raw[f * 3 + 2] = S[f * 3 + 2] + D[f * 3 + 2] * lam[f];
-    }
+    const raw = Float64Array.from(pos);
     // Smooth off the sensor jitter with ~6 s control-point spacing plus a light
     // curvature penalty (scaled by data-per-knot so the smoothness is consistent
     // across clip lengths). Kept loose enough to still track the sightlines to a
@@ -870,22 +1083,30 @@ export async function rangeProfile(dataset, options = {}) {
 
 /**
  * Autonomous plausible fit: find the START RANGE whose smoothest LOS-riding
- * trajectory (at the given soft speed target) is the least implausible, then
- * return the full-quality solution there.
+ * trajectory is the least implausible, then return the full-quality solution
+ * there.
  *
- * Unlike a single traversePlausible (which sits at whatever range you hand it),
- * this SEARCHES: a coarse log-spaced sweep over [rangeMin, rangeMax] locates
- * the valley, then a parabolic refine in log-range pins the minimum. The
- * search solves use cheaper settings (fewer control points / IRLS iters); the
- * returned track is a final full-quality solve at the winning range.
+ * Two-stage search:
+ *   Stage 1 scores a PURE-smoothness (vTarget:null) coarse log sweep — when
+ *   the sensor itself maneuvers (an orbit, a hard turn), geometry alone pins
+ *   the range and this valley is DECISIVE (measured: median-best score margin
+ *   ~2.4-2.8 on orbit/Aguadilla-like scenes vs 0.000 on a straight-flying
+ *   sensor). The speed prior would only poison it (a 320 kt target drags the
+ *   QP off a 43 kt truth into 2+ g loops).
+ *   Stage 2, only when the pure valley is flat (narrow-baseline scenes like
+ *   Gimbal, where range is unobservable from geometry): fall back to the
+ *   speed-target-driven sweep — there it is the SPEED TARGET that makes the
+ *   plausibility-vs-range curve have a real minimum.
  *
- * For a narrow-baseline sightline (e.g. Gimbal's ~3° sweep) range is
- * unobservable from geometry alone — it is the SPEED TARGET that makes the
- * plausibility-vs-range curve have a real minimum, so vTarget matters.
+ * All solves run with the noise-robust traversePlausible options (strided
+ * acceleration stencil, soft range floor, light output smoothing) — without
+ * them frame-scale LOS jitter dominates the objective and the QP dives toward
+ * the sensor (and can even push lambda negative: a track BEHIND the camera).
  *
  * options: {vTarget (m/s), vSigma, rangeMin (m), rangeMax (m), coarse (count),
- *           searchK, searchIters, finalK, finalIters}
- * Returns {track, lam, startDist (m), score, profile: [{startDist, score}]}.
+ *           searchK, searchIters, finalK, finalIters, decisiveMargin=0.5}
+ * Returns {track, lam, startDist (m), score, profile: [{startDist, score}],
+ *          usedSpeedTarget, decisiveness}.
  */
 export function fitPlausibleBestRange(dataset, options = {}) {
     const vTarget = options.vTarget ?? 300 * KNOTS_TO_MS;
@@ -893,30 +1114,53 @@ export function fitPlausibleBestRange(dataset, options = {}) {
     const rangeMin = options.rangeMin ?? 0.5 * METERS_PER_NM;
     const rangeMax = options.rangeMax ?? 55 * METERS_PER_NM;
     const coarse = options.coarse ?? 18;
-    const searchOpts = {vTarget, vSigma, K: options.searchK ?? 15, iters: options.searchIters ?? 3};
-    const finalOpts = {vTarget, vSigma, K: options.finalK ?? 25, iters: options.finalIters ?? 6};
+    const decisiveMargin = options.decisiveMargin ?? 0.5;
+    const common = {
+        accelStride: Math.max(1, Math.round(dataset.fps / 2)),
+        smoothOutput: true,
+        smoothSpacingSec: 4,
+        rangeFloor: true,
+    };
+    const mk = (vt, K, iters) => ({...common, vTarget: vt, vSigma, K, iters});
+    const searchK = options.searchK ?? 15, searchIters = options.searchIters ?? 3;
+    const finalK = options.finalK ?? 25, finalIters = options.finalIters ?? 6;
 
-    const scoreAt = (R) => {
-        const {track} = traversePlausible(dataset, R, searchOpts);
+    const scoreAt = (R, o) => {
+        const {track} = traversePlausible(dataset, R, o);
         return {R, score: straightFlightScore(trackMetrics(dataset, track)), track};
     };
 
-    // coarse log-spaced sweep
-    const logLo = Math.log(rangeMin), logHi = Math.log(rangeMax);
-    const profile = [];
-    let best = null;
-    for (let i = 0; i < coarse; i++) {
-        const R = Math.exp(logLo + (logHi - logLo) * i / (coarse - 1));
-        const s = scoreAt(R);
-        profile.push({startDist: R, score: s.score});
-        if (!best || s.score < best.score) best = s;
-    }
+    const coarseSweep = (o) => {
+        const logLo = Math.log(rangeMin), logHi = Math.log(rangeMax);
+        const profile = [];
+        let best = null;
+        for (let i = 0; i < coarse; i++) {
+            const R = Math.exp(logLo + (logHi - logLo) * i / (coarse - 1));
+            const s = scoreAt(R, o);
+            profile.push({startDist: R, score: s.score});
+            if (!best || s.score < best.score) best = s;
+        }
+        return {profile, best};
+    };
+
+    // Stage 1: pure smoothness — let the geometry speak
+    const pureSweep = coarseSweep(mk(null, searchK, searchIters));
+    const scoresSorted = pureSweep.profile.map(p => p.score).sort((a, b) => a - b);
+    const med = scoresSorted[Math.floor(scoresSorted.length / 2)];
+    const decisiveness = med - pureSweep.best.score;
+    const usedSpeedTarget = !(decisiveness > decisiveMargin);
+
+    const vt = usedSpeedTarget ? vTarget : null;
+    const searchOpts = mk(vt, searchK, searchIters);
+    const finalOpts = mk(vt, finalK, finalIters);
+
+    let {profile, best} = usedSpeedTarget ? coarseSweep(searchOpts) : pureSweep;
 
     // parabolic refine in log-range around the coarse minimum (2 passes)
     let loR = Math.max(rangeMin, best.R / 1.5);
     let hiR = Math.min(rangeMax, best.R * 1.5);
     for (let pass = 0; pass < 2; pass++) {
-        const a = scoreAt(loR), b = best, c = scoreAt(hiR);
+        const a = scoreAt(loR, searchOpts), b = best, c = scoreAt(hiR, searchOpts);
         const xa = Math.log(a.R), xb = Math.log(b.R), xc = Math.log(c.R);
         const fa = a.score, fb = b.score, fc = c.score;
         const denom = (xa - xb) * (fa - fc) - (xa - xc) * (fa - fb);
@@ -926,7 +1170,7 @@ export function fitPlausibleBestRange(dataset, options = {}) {
             ((xa - xb) * (fb - fc) - (xa - xc) * (fb - fa));
         if (!isFinite(xv)) break;
         const Rv = Math.min(rangeMax, Math.max(rangeMin, Math.exp(xv)));
-        const v = scoreAt(Rv);
+        const v = scoreAt(Rv, searchOpts);
         if (v.score < best.score) best = v;
         loR = Math.max(rangeMin, best.R / 1.2);
         hiR = Math.min(rangeMax, best.R * 1.2);
@@ -939,7 +1183,9 @@ export function fitPlausibleBestRange(dataset, options = {}) {
         lam: finalSolve.lam,
         startDist: best.R,
         score: straightFlightScore(trackMetrics(dataset, finalSolve.track)),
-        profile: profile.sort((a, b) => a.startDist - b.startDist),
+        profile: profile.slice().sort((a, b) => a.startDist - b.startDist),
+        usedSpeedTarget,
+        decisiveness,
     };
 }
 
@@ -1132,7 +1378,12 @@ export async function fitAircraft(dataset, options = {}) {
         );
     };
 
-    const lo = [rangeMin, 0, 50 * KNOTS_TO_MS, -4, -0.3, -40];
+    // TAS floor 25 kt: FAR Part 103 caps ultralight power-off stall at 24 kt
+    // CAS, so 25 kt is the slowest sustained flight of any legal fixed-wing.
+    // (A 50 kt floor silently pinned slow scenes — e.g. a 43 kt target — at
+    // the bound and forced multi-degree LOS errors.) TAS solved exactly AT
+    // this floor is itself an implausibility signal.
+    const lo = [rangeMin, 0, 25 * KNOTS_TO_MS, -4, -0.3, -40];
     const hi = [rangeMax, 360, 700 * KNOTS_TO_MS, 4, 0.3, 40];
     const runs = [];
     for (let r = 0; r < nRuns; r++) {

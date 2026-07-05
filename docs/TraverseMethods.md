@@ -40,7 +40,7 @@ In the menu these appear with a "Global Fit:" prefix (e.g. "Global Fit: Constant
 | **Monte Carlo 1** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Randomly samples points along perturbed LOS rays (using a CV fit for focused per-frame range estimates), fits polynomials, and keeps the best trial. Robust to outliers. |
 | **Monte Carlo 2** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Least-squares variant: perturbs all frames each trial and fits an overdetermined polynomial, giving more stable results at higher polynomial orders. |
 | **Physics** | 2 | Physics Model, Max Iterations, Wind, Initial Range | RK4 integration of a physical dynamics model — Chinese Lantern (wind-drift kinematics with a rise/decay/sink life cycle) or Fixed Wing Aircraft, chosen with the Physics Model selector — fit with differential evolution plus Nelder-Mead polish. |
-| **Plausible** | 2 | Target Speed, Min/Max Dist limits | Finds the least-maneuvering path that stays exactly on the rays, treating Target Speed as a soft target. Finds its own range. See "Physically Plausible Analysis" below. |
+| **Plausible** | 2 | Target Speed, Min/Max Dist limits | Finds the least-maneuvering path that follows the rays. Finds its own range — purely from geometry when the sensor's own motion pins it, falling back to Target Speed as a soft tiebreaker on narrow-baseline scenes. See "Physically Plausible Analysis" below. |
 | **Minimum Speed** | 2 | (none) | Finds the slowest object consistent with the sightlines — the drifting-lantern / near-static reading. See "Physically Plausible Analysis" below. |
 
 ---
@@ -280,23 +280,25 @@ interpretation would require.
 ### Global Fit: Plausible
 
 **Model**: the range along each LOS ray is a smooth cubic B-spline λ(f)
-(25 control points). The trajectory is always exactly on the rays.
+(25 control points). The trajectory follows the rays, with a soft range floor
+(so it can never end up behind the camera) and a light output smoothing that
+sheds frame-scale pointing jitter; the acceleration objective is measured
+over ~half-second strides so that jitter cannot dominate it.
 
-**Method**: solves a small least-squares system minimizing
-
-- maneuvering acceleration (in g), plus
-- a soft air-speed target: `((airspeed − Target Speed)/σ)²` with σ ≈ 60 kt,
-  linearized around the current estimate and re-solved a few times (IRLS),
-
-It finds its own start range: a coarse sweep over range picks the distance
-whose smoothest solution needs the least maneuvering, refined around the
-winner (the result appears as **Found Range** in the Plausible Fit Results
-folder; the **Min Dist** / **Max Dist** limits in Traverse Analysis Tweaks
-bound the search). It reads the same **Target Speed** slider as Constant Air
-Speed — but where Constant Air Speed integrates forward *exactly* at that
-speed (compounding LOS noise into the track), Plausible treats the speed as a
-loose target and finds the least-maneuvering smooth path consistent with the
-rays.
+**Method**: two-stage. Stage 1 solves a pure-smoothness (no speed target)
+coarse sweep over range: when the sensor itself maneuvers (an orbit, a hard
+turn), geometry alone pins the range — the smoothness-vs-range valley is
+decisive and the speed target is *not used* (the Plausible Fit Results folder
+shows "not needed (geometry)"). Only when that valley is flat — the classic
+narrow-baseline case like Gimbal, where range is unobservable from geometry —
+does Stage 2 fall back to the soft air-speed target
+`((airspeed − Target Speed)/σ)²` with σ ≈ 60 kt (IRLS), which is then what
+gives the plausibility-vs-range curve a real minimum. The winner is refined
+and re-solved at full quality (the result appears as **Found Range**; the
+**Min Dist** / **Max Dist** limits in Traverse Analysis Tweaks bound the
+search). Where Constant Air Speed holds a speed *exactly*, Plausible treats
+speed (when used at all) as a loose target and finds the least-maneuvering
+smooth path consistent with the rays.
 
 **When to use**: as the "best fit" interpretation of a hypothesis like
 "a ~350 kt aircraft at ~30 NM" — it shows what the *smoothest* version of that
@@ -316,8 +318,11 @@ sensor orbits or passes a slow, close object, most of the apparent motion is
 the sensor's own parallax — the slowest consistent object is then a
 near-static drifter (the classic Aguadilla answer, ~12 kt). It takes no
 parameters; the range follows from where the sightlines let an object move
-least. The Analyze gallery's **Minimum Speed** candidate uses this same fit,
-so applying it reproduces exactly the previewed path.
+least. A final few IRLS passes level the air speed over the first/last 15%
+of the clip (the spline endpoints are data-starved, so without this the
+speed graph of an exactly-constant-speed object read as a ±5 kt end wobble).
+The Analyze gallery's **Minimum Speed** candidate uses this same fit, so
+applying it reproduces exactly the previewed path.
 
 ### Global Fit: Physics — the two dynamics models
 
@@ -335,18 +340,24 @@ altitude"). Vertical motion follows the lantern life cycle — rise while the
 flame burns, exponential buoyancy decay after flame-out, terminal sink — and
 the solved flame-out time can fall before the clip (a lantern already in its
 cooling descent, the Aguadilla case), inside it, or after it (still climbing
-throughout). Hard parameter bounds (≤ ~25 kt wind, ≤ 4 m/s vertical rates)
-mean the model simply cannot represent non-lantern motion, so its residual
-LOS error honestly measures how lantern-like the sightlines are. On
-Aguadilla this fit lands within ~35 m of the accepted hand-fitted lantern
-path (wind ~18 kt from ~65°, drifting WSW while slowly descending).
+throughout). Hard parameter bounds (≤ ~39 kt wind per component — 55 kt
+vector, winds aloft are routinely faster than launch-level winds — and
+≤ 4 m/s vertical rates) mean the model simply cannot represent non-lantern
+motion, so its residual LOS error honestly measures how lantern-like the
+sightlines are; a solved wind pinned at the bound is itself flagged in the
+analysis prose. On Aguadilla this fit lands within ~35 m of the accepted
+hand-fitted lantern path (wind ~18 kt from ~65°, drifting WSW while slowly
+descending).
 
 **Fixed Wing Aircraft** — constant TAS, a linearly-varying turn rate,
 constant climb rate, and wind advection. Parameters (initial range, heading,
 TAS, turn rate, turn acceleration, climb, wind E/N) share the same DE +
 polish recipe; the cost combines LOS angular error with soft plausibility
 targets, so repeated runs converge to the same interpretable answer instead
-of wandering across the ambiguous solution family.
+of wandering across the ambiguous solution family. The TAS floor is 25 kt
+(FAR Part 103 caps ultralight stall at 24 kt, so this is the slowest
+sustained flight of any legal fixed-wing); a solved TAS sitting exactly at
+that floor means the sightlines want something slower than any plane flies.
 
 Solved parameters (wind, rates, fit error) appear in the Physics Fit Results
 folder. The two models' head-to-head residuals are the analysis gallery's
@@ -359,10 +370,15 @@ consistent reading of the data.
 LOS data and generates a standalone HTML report (with charts) plus an option
 to apply the best solution to the sliders:
 
-1. **Constant-air-speed sweep** — a grid over (start distance × air speed),
-   each combo scored for smoothness (g-load, turn-rate variability, climb).
-   Surfaces the valley of straight-flight solutions (for Gimbal: ~30–32 NM,
-   speed loosely 400–550 kt).
+1. **Constant-air-speed sweep** — a grid over (start distance × air speed,
+   15–650 kt log-spaced so slow drifters are representable alongside jets).
+   Each combo is solved as the smoothest ray-following path that holds that
+   air speed (a spline solve — the old frame-by-frame ray walk was a shooting
+   method that exploded into corkscrews whenever the sensor maneuvered), then
+   scored for smoothness (g-load, turn-rate variability, climb) plus how well
+   the requested speed could actually be held. Surfaces the valley of
+   straight-flight solutions (for Gimbal: ~30–32 NM, speed loosely
+   400–550 kt).
 2. **Range profile** — for each assumed start range, the least-maneuvering
    spline solution with a fast-object (cruise speed) and a slow-object
    (drifting) speed target. Quantifies what an object at any given distance
@@ -375,3 +391,25 @@ The report contains an executive summary, a sweep heatmap, range-profile
 curves, per-solution time series (speed / g / turn rate), a plan view of the
 candidate tracks, and top-solution tables. Criteria are deliberately loose
 targets; scores compare hypotheses, they are not hard physical limits.
+
+Notes on the gallery tiles:
+
+- The ray-following tiles (Constant Air Speed, Constant Altitude, Least
+  Maneuvering) show lightly smoothed paths with a small honest LOS residual
+  (typically hundredths of a degree) instead of riding the rays exactly —
+  exact ray-riding inherits sensor pointing jitter as fake g-load, which used
+  to poison the scoring at the *correct* answer. Applying a tile with **Use
+  This** still drives the exact-LOS live traverse.
+- **Constant Altitude** searches the altitude band and scores each candidate
+  on the smoothed path plus its LOS residual; if the sightlines are
+  near-horizontal (they never cross a constant-altitude plane) the tile
+  reports "fit failed" instead of a meaningless track.
+- **Minimum Speed**'s family note has two modes: with a genuine low-motion
+  window (the classic saddle) it reports the range band that fits equally
+  well over that window; on a continuously rotating LOS (the sensor's own
+  motion triangulates the range) it reports how sharply the full-clip cost
+  valley pins the range instead.
+- The **noise floor** annotation (the "(N.N× floor)" suffix) comes from a
+  free constant-acceleration fit with a minimum-range guard — without the
+  guard, that fit collapses onto the sensor's own path whenever the sensor
+  flies straight, and the floor would be meaningless on Gimbal-like scenes.

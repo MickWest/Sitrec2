@@ -56,12 +56,16 @@ export class ChineseLanternModel extends PhysicsModel {
 
     getParameterDefs() {
         // name, min, max, default, scale (initial simplex perturbation)
-        // Wind components bounded at 13 m/s (~25 kt): nobody launches a
-        // lantern in more, and a lantern cannot outrun its wind.
+        // Wind components bounded at 20 m/s (~39 kt each, 55 kt vector max).
+        // A lantern is a wind tracer: launch implies calm-ish SURFACE wind,
+        // but 40-45 kt at altitude is ordinary — a ±13 m/s bound encoded the
+        // surface intuition and forced the fit to fake faster drift with the
+        // shear multiplier (pinning both bounds and inflating the residual).
+        // The extraCost speed prior below still prefers light winds.
         return [
             {name: "initialRange", min: 200,    max: 30000, default: 3000,  scale: 500},
-            {name: "windE",        min: -13,    max: 13,    default: 0,     scale: 2},
-            {name: "windN",        min: -13,    max: 13,    default: 0,     scale: 2},
+            {name: "windE",        min: -20,    max: 20,    default: 0,     scale: 2},
+            {name: "windN",        min: -20,    max: 20,    default: 0,     scale: 2},
             {name: "shearPerM",    min: -0.004, max: 0.008, default: 0.001, scale: 0.001},
             {name: "vRise",        min: 0,      max: 4,     default: 1.5,   scale: 0.5},
             {name: "vSink",        min: 0,      max: 4,     default: 1.0,   scale: 0.5},
@@ -116,7 +120,7 @@ export class ChineseLanternModel extends PhysicsModel {
     // The hard parameter bounds carry the real physics; these only nudge.
     extraCost(params, dataset, T) {
         // prefer light winds: a lantern launch implies calm-ish conditions
-        // (~19 kt costs 0.5; the 25 kt bound costs ~0.85)
+        // (~19 kt costs 0.5; 43 kt costs ~2.5 — real but increasingly unusual)
         const spd = Math.hypot(params[1], params[2]);
         let cost = 0.5 * (spd / 10) ** 2;
         // negative shear (wind slower higher up) is possible but less common

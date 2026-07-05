@@ -222,8 +222,8 @@ describe("ChineseLanternModel", () => {
     test("parameter bounds forbid non-lantern motion", () => {
         const defs = new ChineseLanternModel().getParameterDefs();
         const byName = Object.fromEntries(defs.map(d => [d.name, d]));
-        // wind bounded to ~25 kt; vertical rates to 4 m/s
-        expect(Math.hypot(byName.windE.max, byName.windN.max) / KNOTS_TO_MS).toBeLessThan(36);
+        // wind bounded to ~39 kt per component (55 kt vector); vertical rates to 4 m/s
+        expect(Math.hypot(byName.windE.max, byName.windN.max) / KNOTS_TO_MS).toBeLessThan(60);
         expect(byName.vRise.max).toBeLessThanOrEqual(4);
         expect(byName.vSink.max).toBeLessThanOrEqual(4);
         // rise rate cannot be negative (that's what vSink is for)

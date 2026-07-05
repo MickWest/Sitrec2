@@ -27,6 +27,7 @@ import {showError} from "./showError";
 import {t} from "./i18n";
 import {buildAnalysisDataset} from "./TraverseAnalysisData";
 import {
+    constAirSpeedTrack,
     fitAircraft,
     fitConstAltitude,
     fitFixedDirection,
@@ -39,7 +40,6 @@ import {
     straightFlightScore,
     sweepConstAirSpeed,
     trackMetrics,
-    traverseConstSpeed,
     traverseMinSpeed,
     traversePlausible,
 } from "./TraverseAnalysis";
@@ -206,9 +206,20 @@ function plausibilityRating(h) {
     }
     const g = (h.metricsFull ? h.metricsFull.gLoad.max : 0) || 0;
     const spdKt = (h.metricsFull ? h.metricsFull.airSpeed.mean : 0) / KNOTS_TO_MS;
-    if (g > 9 || spdKt > 900 || err > 0.5) return {label: "Implausible", rank: 0, color: "#e0564e"};
-    if (g > 4 || spdKt > 650 || err > 0.15) return {label: "Low", rank: 1, color: "#d9862f"};
-    if (g > 1.5 || err > 0.05) return {label: "Moderate", rank: 2, color: "#c9b23a"};
+    // Ray-following methods carry a small smoothing residual that tracks the
+    // dataset noise floor, not model failure — don't let pure noise demote
+    // them; their honest discriminators are the implied g/speed. (Physics-fit
+    // badges stay UN-normalized by the floor: a genuinely maneuvering target
+    // inflates the floor and would grade itself on a curve.) A LARGE residual
+    // still demotes — that would mean the smoothed path stopped following.
+    const rayFollow = h.key === "constAir" || h.key === "constAlt"
+        || h.key === "plausible" || h.key === "saddle";
+    const errEff = rayFollow
+        ? Math.max(0, err - Math.max(0.05, 1.5 * (p.errFloor || 0)))
+        : err;
+    if (g > 9 || spdKt > 900 || errEff > 0.5) return {label: "Implausible", rank: 0, color: "#e0564e"};
+    if (g > 4 || spdKt > 650 || errEff > 0.15) return {label: "Low", rank: 1, color: "#d9862f"};
+    if (g > 1.5 || errEff > 0.05) return {label: "Moderate", rank: 2, color: "#c9b23a"};
     return {label: "High", rank: 3, color: "#3fae72"};
 }
 
@@ -367,18 +378,32 @@ function computeSaddle(dataset, slowProfile, slowOpts) {
     while (f0 > 0 && sm[f0 - 1] <= cut) f0--;
     while (f1 < n - 1 && sm[f1 + 1] <= cut) f1++;
 
+    // Genuine-window gate: a saddle window only means something if the LOS
+    // rate genuinely DIPS (min well below the median) for a sustained stretch.
+    // On a continuously rotating LOS (a sensor orbiting a crossing object) the
+    // "minimum" is just the boxcar-smoothing tail at the clip edge — a
+    // sub-second window over which EVERY range trivially fits, yielding a
+    // bogus "all ranges fit equally" family.
+    const genuineWindow = (minRate < 0.35 * medRate) && ((f1 - f0 + 1) / fps >= 2);
+
     // 2) Family band: score the same range grid over ONLY the low-motion window.
     //    The full-clip slow profile can reject the visually obvious saddle
     //    because later high-rate frames force any close, slow object into a hard
     //    maneuver. For the saddle interpretation, the family lives where the
-    //    bearing barely moves.
-    const ranges = slowProfile.map((p) => p.startDist).filter((v) => isFinite(v) && v > 0);
-    const windowDataset = sliceAnalysisDataset(dataset, f0, f1);
-    const windowOpts = {
-        ...slowOpts,
-        K: Math.min(slowOpts.K ?? 25, Math.max(7, Math.floor(windowDataset.n / 2))),
-    };
-    const rows = syncRangeProfile(windowDataset, ranges, windowOpts).filter((p) => isFinite(p.score));
+    //    bearing barely moves. Without a genuine window, the family comes from
+    //    the FULL-CLIP slow profile (already computed by the caller — free).
+    let rows;
+    if (genuineWindow) {
+        const ranges = slowProfile.map((p) => p.startDist).filter((v) => isFinite(v) && v > 0);
+        const windowDataset = sliceAnalysisDataset(dataset, f0, f1);
+        const windowOpts = {
+            ...slowOpts,
+            K: Math.min(slowOpts.K ?? 25, Math.max(7, Math.floor(windowDataset.n / 2))),
+        };
+        rows = syncRangeProfile(windowDataset, ranges, windowOpts).filter((p) => isFinite(p.score));
+    } else {
+        rows = slowProfile.filter((p) => isFinite(p.score) && isFinite(p.startDist) && p.startDist > 0);
+    }
     if (rows.length < 3) return null;
     let bi = 0;
     for (let i = 1; i < rows.length; i++) if (rows[i].score < rows[bi].score) bi = i;
@@ -398,12 +423,16 @@ function computeSaddle(dataset, slowProfile, slowOpts) {
     //    minimizing maneuvering gave tens of kt here; minimizing speed gives
     //    the ~10 kt drift that actually matches these cases.)
     const {track, lam} = traverseMinSpeed(dataset, {minDist: 120});
-    const windowTrack = new Float64Array(windowDataset.n * 3);
-    for (let f = 0; f < windowDataset.n; f++) {
-        const s = (f0 + f) * 3, d = f * 3;
-        windowTrack[d] = track[s]; windowTrack[d + 1] = track[s + 1]; windowTrack[d + 2] = track[s + 2];
+    let windowMetrics = null;
+    if (genuineWindow) {
+        const windowDataset = sliceAnalysisDataset(dataset, f0, f1);
+        const windowTrack = new Float64Array(windowDataset.n * 3);
+        for (let f = 0; f < windowDataset.n; f++) {
+            const s = (f0 + f) * 3, d = f * 3;
+            windowTrack[d] = track[s]; windowTrack[d + 1] = track[s + 1]; windowTrack[d + 2] = track[s + 2];
+        }
+        windowMetrics = trackMetrics(windowDataset, windowTrack);
     }
-    const windowMetrics = trackMetrics(windowDataset, windowTrack);
     const errDeg = meanAngularError(dataset, track) * 180 / Math.PI;
     // headline range = the min-speed track's median slant range (lam = range on ray)
     const lamSorted = Array.from(lam).sort((a, b) => a - b);
@@ -411,7 +440,9 @@ function computeSaddle(dataset, slowProfile, slowOpts) {
 
     return {
         track, errDeg,
-        window: {f0, f1, fStar, t0: f0 / fps, t1: f1 / fps, minRateDegS: minRate, medRateDegS: medRate},
+        window: genuineWindow
+            ? {f0, f1, fStar, t0: f0 / fps, t1: f1 / fps, minRateDegS: minRate, medRateDegS: medRate}
+            : null,
         family: {
             loM: rows[lo].startDist, hiM: rows[hi].startDist, repM: medRange,
             count: hi - lo + 1, total: rows.length,
@@ -452,18 +483,23 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
     try {
         const fTimes = new Float64Array(dataset.n);
         for (let f = 0; f < dataset.n; f++) fTimes[f] = f / dataset.fps;
+        // minRange keeps the free fit off its degenerate optimum: on a
+        // straight-and-level sensor the unconstrained CA fit collapses onto
+        // the sensor's own path (zero perpendicular residual, ~90 deg angular
+        // error) and the floor annotation would silently lie.
         const caFree = fitConstantAcceleration(
-            {sensorPos: dataset.S, losDir: dataset.D, times: fTimes, count: dataset.n, maxRange: null},
+            {sensorPos: dataset.S, losDir: dataset.D, times: fTimes, count: dataset.n,
+                maxRange: null, minRange: 500},
             new Set());
         if (caFree && caFree.positions) {
             errFloor = meanAngularError(dataset, caFree.positions) * 180 / Math.PI;
         }
     } catch (e) { /* annotation degrades gracefully; floor stays NaN */ }
 
-    // 1. Constant air speed (sweep best) — walks the rays at fixed air speed.
+    // 1. Constant air speed (sweep best) — smoothest ray-following path that
+    //    holds the winning air speed (QP solve; honest small residual).
     {
-        const track = traverseConstSpeed(dataset, sweep.best.startDist, sweep.best.speed,
-            {airSpeed: true}).track;
+        const track = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed).track;
         list.push({
             key: "constAir",
             name: "Constant Air Speed",
@@ -471,14 +507,18 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
             color: VIZ.constAir,
             track,
             metricsFull: trackMetrics(dataset, track),
-            errDeg: 0,
-            params: {range: sweep.best.startDist, airSpeed: sweep.best.speed},
-            notes: "Walks the LOS rays holding air speed fixed; on the sightlines by construction.",
+            errDeg: meanAngularError(dataset, track) * 180 / Math.PI,
+            params: {range: sweep.best.startDist, airSpeed: sweep.best.speed, errFloor},
+            notes: "The smoothest path following the LOS rays while holding air speed fixed " +
+                "(the applied traverse walks the rays exactly).",
         });
     }
 
     // 2. Constant altitude — level flight crossing each ray at a fixed height.
-    {
+    //    The displayed track is the lightly SMOOTHED ray-rider (honest small
+    //    errDeg); near-horizontal sightlines never cross a constant-altitude
+    //    plane, in which case the fit reports failure and gets a null tile.
+    if (ca && !ca.failed) {
         const track = ca.track;
         list.push({
             key: "constAlt",
@@ -487,25 +527,51 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
             color: "#d05fb0",
             track,
             metricsFull: trackMetrics(dataset, track),
-            errDeg: 0,
-            params: {range: ca.startDist, altZ: ca.altZ},
-            notes: "Object held at a fixed altitude; on the sightlines by construction.",
+            errDeg: ca.errDeg ?? 0,
+            params: {range: ca.startDist, altZ: ca.altZ, errFloor},
+            notes: "Object held at a fixed altitude, following the sightlines to a small residual " +
+                "(the applied traverse rides them exactly).",
+        });
+    } else {
+        list.push({
+            key: "constAlt",
+            name: "Constant Altitude",
+            subtitle: "Level flight at a fixed height",
+            color: "#d05fb0",
+            track: null,
+            metricsFull: null,
+            errDeg: NaN,
+            params: {},
+            notes: "Fit failed — the sightlines are near-horizontal and never cross a constant-altitude plane.",
         });
     }
 
     // 3. Least-maneuvering plausible path — smoothest ray-riding trajectory.
+    //    Two-stage: geometry-decisive scenes pick the range purely by
+    //    smoothness; narrow-baseline scenes fall back to the soft speed target.
     {
         const track = plausible.track;
         list.push({
             key: "plausible",
             name: "Least Maneuvering",
-            subtitle: "Smoothest path at any range (soft speed target)",
+            subtitle: plausible.usedSpeedTarget
+                ? "Smoothest path at any range (soft speed target)"
+                : "Smoothest path at any range (geometry-picked)",
             color: VIZ.fastObj,
             track,
             metricsFull: trackMetrics(dataset, track),
-            errDeg: 0,
-            params: {range: plausible.startDist},
-            notes: "The smoothest trajectory that stays on every line of sight.",
+            errDeg: meanAngularError(dataset, track) * 180 / Math.PI,
+            params: {
+                range: plausible.startDist,
+                usedSpeedTarget: plausible.usedSpeedTarget,
+                decisiveness: plausible.decisiveness,
+                errFloor,
+            },
+            notes: plausible.usedSpeedTarget
+                ? "The smoothest trajectory that follows every line of sight; the geometry left the range " +
+                  "ambiguous, so the soft speed target picked the representative member."
+                : "The smoothest trajectory that follows every line of sight; the smoothness-vs-range " +
+                  "profile picks the range on its own, so no speed assumption was needed.",
         });
     }
 
@@ -518,6 +584,22 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
         if (saddle) {
             const m = trackMetrics(dataset, saddle.track);
             const w = saddle.window, fam = saddle.family;
+            // Window params/notes only when a GENUINE low-motion window exists
+            // (w is null on a continuously rotating LOS — then the family band
+            // comes from the full-clip slow profile and the range is pinned
+            // rather than ambiguous).
+            const windowParams = w ? {
+                saddleT0: w.t0, saddleT1: w.t1, saddleFStar: w.fStar,
+                minRateDegS: w.minRateDegS, medRateDegS: w.medRateDegS,
+                windowAirMean: saddle.windowMetrics.airSpeed.mean,
+                windowAirMax: saddle.windowMetrics.airSpeed.max,
+                windowGMax: saddle.windowMetrics.gLoad.max,
+            } : {};
+            const familyNote = w
+                ? `Over the ${w.t0.toFixed(1)}–${w.t1.toFixed(1)} s low-motion window the bearing barely moves, `
+                    + `so a whole range band (${nm1(fam.loM)}–${nm1(fam.hiM)} NM) fits about equally.`
+                : `The slow-object cost valley pins the range to ${nm1(fam.loM)}–${nm1(fam.hiM)} NM `
+                    + `(${fam.count} of ${fam.total} grid ranges); no low-motion window exists in this clip.`;
             list.push({
                 key: "saddle",
                 name: "Minimum Speed",
@@ -528,16 +610,12 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
                 errDeg: saddle.errDeg,
                 params: {
                     range: fam.repM,
-                    saddleT0: w.t0, saddleT1: w.t1, saddleFStar: w.fStar,
-                    minRateDegS: w.minRateDegS, medRateDegS: w.medRateDegS,
+                    ...windowParams,
                     familyLoM: fam.loM, familyHiM: fam.hiM, familyCount: fam.count, familyTotal: fam.total,
-                    windowAirMean: saddle.windowMetrics.airSpeed.mean,
-                    windowAirMax: saddle.windowMetrics.airSpeed.max,
-                    windowGMax: saddle.windowMetrics.gLoad.max,
+                    errFloor,
                 },
                 notes: `The slowest object that stays on the sightlines (${kt1(m.airSpeed.mean)} kt mean). `
-                    + `Over the ${w.t0.toFixed(1)}–${w.t1.toFixed(1)} s low-motion window the bearing barely moves, `
-                    + `so a whole range band (${nm1(fam.loM)}–${nm1(fam.hiM)} NM) fits about equally.`,
+                    + familyNote,
             });
         }
     }
@@ -1366,8 +1444,7 @@ export async function runTraverseAnalysis() {
         await yieldToDOM();
 
         // detailed per-frame series for the sweep's best solution
-        const bestTrav = traverseConstSpeed(dataset, sweep.best.startDist, sweep.best.speed,
-            {airSpeed: true});
+        const bestTrav = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed);
         const bestMetrics = trackMetrics(dataset, bestTrav.track);
 
         // slow-object plausible track at ITS best range, for the plan view
@@ -1818,40 +1895,62 @@ function detailProse(h, r, ss) {
     switch (h.key) {
         case "constAir":
             return {
-                lead: `An object holding a constant air speed of about ${kt1(p.airSpeed)} kt, ` +
-                    `starting near ${nm1(p.range)} NM. It rides the measured sightlines exactly.`,
-                derived: `A grid search over start range × air speed walks each ray forward one frame ` +
-                    `at a time holding air speed fixed (wind subtracted), scoring every combination by how ` +
-                    `little the heading and speed have to jitter. The smoothest cell was ${nm1(p.range)} NM ` +
-                    `@ ${kt1(p.airSpeed)} kt.`,
+                lead: `An object holding a constant air speed of about ${kt1(p.airSpeed)} kt ` +
+                    `(achieved ${kt1(m.airSpeed.mean)} kt), starting near ${nm1(p.range)} NM.`,
+                derived: `A grid search over start range × air speed (15–650 kt, log-spaced) solves each ` +
+                    `combination as the smoothest ray-following path that holds that air speed (wind ` +
+                    `subtracted), scoring smoothness plus how well the speed could actually be held. ` +
+                    `The best cell was ${nm1(p.range)} NM @ ${kt1(p.airSpeed)} kt.`,
                 constraint: onRay
                     ? `It sits on the sightlines by construction (0° error), so the LOS fit is automatic — ` +
                       `plausibility rests on the implied motion: ${kt1(m.airSpeed.mean)} kt, up to ${g.toFixed(2)} g.`
-                    : `Misses the rays by ${err.toFixed(2)}°.`,
+                    : `Follows the rays to ${err.toFixed(3)}° (applying this method with "Use This" walks ` +
+                      `the rays exactly).`,
             };
         case "constAlt":
             return {
                 lead: `An object holding a constant altitude of about ${ft0(m.altitude.mean ?? m.altitude.min)} ft, ` +
                     `implying ${kt1(m.airSpeed.mean)} kt across ${rMin}–${rMax} NM.`,
                 derived: `The altitude that best rides the rays at constant height is found by a 1-D search: ` +
-                    `for each candidate altitude the object is placed where each ray crosses that height, and the ` +
-                    `resulting speed/heading smoothness is scored. Best altitude ≈ ${ft0(p.altZ)} ft.`,
+                    `for each candidate altitude the object is placed where each ray crosses that height, the ` +
+                    `path is lightly smoothed (so sensor pointing jitter can't poison the correct altitude), and ` +
+                    `the speed/heading smoothness plus the residual LOS miss are scored. Best altitude ≈ ` +
+                    `${ft0(p.altZ)} ft.`,
                 constraint: onRay
                     ? `On the sightlines by construction; the tell is the implied ${kt1(m.airSpeed.mean)} kt and ` +
                       `${g.toFixed(2)} g.`
-                    : `Misses the rays by ${err.toFixed(2)}°.`,
+                    : `The smoothed path misses the rays by ${err.toFixed(3)}° (applying this method with ` +
+                      `"Use This" rides the rays exactly, adding back the frame-scale jitter).`,
             };
         case "plausible":
             return {
-                lead: `The least-maneuvering object consistent with the rays at a soft speed target — ` +
-                    `${kt1(m.airSpeed.mean)} kt near ${rMin}–${rMax} NM, peaking at ${g.toFixed(2)} g.`,
-                derived: `A smooth B-spline trajectory is fit to ride the sightlines while penalising ` +
-                    `acceleration and departures from the target speed (IRLS). The start range is chosen ` +
-                    `autonomously as the one whose smoothest LOS-riding path needs the least maneuvering.`,
-                constraint: `On the rays by construction; plausibility is set by how gentle that best path is ` +
-                    `(${g.toFixed(2)} g max, speed std ${kt1(m.airSpeed.std)} kt).`,
+                lead: p.usedSpeedTarget
+                    ? `The least-maneuvering object consistent with the rays at a soft speed target — ` +
+                      `${kt1(m.airSpeed.mean)} kt near ${rMin}–${rMax} NM, peaking at ${g.toFixed(2)} g.`
+                    : `The least-maneuvering object consistent with the rays — ${kt1(m.airSpeed.mean)} kt near ` +
+                      `${rMin}–${rMax} NM, peaking at ${g.toFixed(2)} g. The smoothness-vs-range profile picked ` +
+                      `the range on its own; no speed assumption was needed.`,
+                derived: p.usedSpeedTarget
+                    ? `A smooth B-spline trajectory is fit to ride the sightlines while penalising ` +
+                      `acceleration and departures from the target speed (IRLS). The sightline geometry alone ` +
+                      `left the range ambiguous (a flat smoothness-vs-range valley), so the target speed picks ` +
+                      `the representative member — the classic narrow-baseline case.`
+                    : `A smooth B-spline trajectory is fit to ride the sightlines while penalising acceleration. ` +
+                      `The start range is chosen purely by geometry: the smoothness-vs-range valley is decisive ` +
+                      `(margin ${isFinite(p.decisiveness) ? p.decisiveness.toFixed(2) : "?"}), so the speed target ` +
+                      `was not used.`,
+                constraint: `Follows the rays (residual ${err.toFixed(3)}° after light smoothing); plausibility ` +
+                    `is set by how gentle that best path is (${g.toFixed(2)} g max, speed std ` +
+                    `${kt1(m.airSpeed.std)} kt).`,
             };
-        case "aircraft":
+        case "aircraft": {
+            // TAS solved exactly AT the model's 25 kt floor: the fit wanted an
+            // even slower object than any fixed-wing can fly.
+            const tasPinned = isFinite(p.tas) && Math.abs(p.tas - 25 * KNOTS_TO_MS) < 0.01 * 25 * KNOTS_TO_MS;
+            const tasPinnedTxt = tasPinned
+                ? ` Note: the solved TAS is pinned at the model's 25 kt floor — the sightlines would prefer ` +
+                  `something slower than any fixed-wing can fly.`
+                : "";
             return {
                 lead: `A fixed-wing aircraft on a near-straight course: ${kt1(p.tas)} kt true air speed at ` +
                     `about ${nm1(p.range)} NM and ${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft, ` +
@@ -1866,11 +1965,22 @@ function detailProse(h, r, ss) {
                       `sightlines allow, at an ordinary ${kt1(p.tas)} kt and ${g.toFixed(2)} g — the hallmark ` +
                       `of a mundane target.`
                     : `The ${err.toFixed(3)}° residual is the cost of forcing a rigid straight-flight model onto ` +
-                      `these angles.`) + floorContext(err, p.errFloor),
+                      `these angles.`) + tasPinnedTxt + floorContext(err, p.errFloor),
             };
+        }
         case "lantern": {
             const capNM = 30000 / METERS_PER_NM;
             const pinned = p.range && Math.abs(p.range - 30000) < 300;
+            // solved wind component sitting AT the model's ±20 m/s bound means
+            // the fit wanted MORE wind than a lantern is allowed — the shown
+            // residual understates the mismatch.
+            const WIND_BOUND = 20;
+            const windPinned = (Math.abs(Math.abs(p.windE ?? 0) - WIND_BOUND) < 0.02 * WIND_BOUND)
+                || (Math.abs(Math.abs(p.windN ?? 0) - WIND_BOUND) < 0.02 * WIND_BOUND);
+            const windPinnedTxt = windPinned
+                ? ` Note: the solved wind is pinned at the model's limit — the sightlines would prefer even ` +
+                  `faster drift than the lantern bounds allow.`
+                : "";
             // solved wind (at the initial altitude) in friendly units
             const windKt = p.windE !== undefined ? toKt(Math.hypot(p.windE, p.windN)) : NaN;
             const windFrom = p.windE !== undefined
@@ -1903,12 +2013,13 @@ function detailProse(h, r, ss) {
                       `sightlines want a much more distant object than a wind-drifting lantern can be. The ` +
                       `${err.toFixed(2)}° residual is the model telling you this is probably not a balloon.`
                     : err < Math.max(0.35, (p.errFloor ?? 0) * 1.4)
-                        ? `Within the model's hard lantern-physics bounds (≤25 kt wind, ≤4 m/s vertical) the ` +
+                        ? `Within the model's hard lantern-physics bounds (≤55 kt wind, ≤4 m/s vertical) the ` +
                           `angles are reproduced to ${err.toFixed(2)}° — a drifting lantern or balloon is a ` +
                           `genuinely consistent reading of these sightlines.`
                         : `Even the best wind-bounded drift path leaves a ${err.toFixed(2)}° residual: the ` +
                           `sightlines demand motion a lantern cannot do. Compare the fixed-wing fit's residual ` +
-                          `to see which object type the geometry prefers.`) + floorContext(err, p.errFloor),
+                          `to see which object type the geometry prefers.`) + windPinnedTxt
+                    + floorContext(err, p.errFloor),
             };
         }
         case "ground":
@@ -1960,6 +2071,22 @@ function detailProse(h, r, ss) {
         }
         case "saddle": {
             const famLo = nm1(p.familyLoM), famHi = nm1(p.familyHiM);
+            // No genuine low-motion window (continuously rotating LOS): the
+            // family comes from the full-clip slow-object cost valley and the
+            // range is PINNED rather than ambiguous.
+            if (p.saddleT0 === undefined) {
+                return {
+                    lead: `The slowest object consistent with the sightlines — ~${nm1(p.range)} NM out at `
+                        + `${kt1(m.airSpeed.mean)} kt. The bearing rotates throughout the clip (no low-motion `
+                        + `window), so the sensor's own motion actively triangulates the range.`,
+                    derived: `The path shown is the <b>minimum-speed</b> object that rides the rays: range along `
+                        + `each sightline is solved to minimize total motion, so it stays on them by construction `
+                        + `(${m.gLoad.max.toFixed(2)} g max) and no speed larger than necessary is invented.`,
+                    constraint: `The slow-object cost valley pins the range: only ${p.familyCount} of `
+                        + `${p.familyTotal} grid ranges (${famLo}–${famHi} NM) fit comparably. Unlike the classic `
+                        + `saddle case, this geometry leaves little range ambiguity.`,
+                };
+            }
             const winSpeed = isFinite(p.windowAirMean) ? kt1(p.windowAirMean) : kt1(m.airSpeed.mean);
             const winG = isFinite(p.windowGMax) ? p.windowGMax : m.gLoad.max;
             return {
@@ -2003,19 +2130,40 @@ function detailProse(h, r, ss) {
 }
 
 function solutionSpaceHTML(h, ss) {
-    const onRay = (h.errDeg || 0) < 1e-3;
+    // Ray-following methods carry a small honest smoothing residual now, so
+    // classify them by key, not by errDeg === 0.
+    const onRay = (h.errDeg || 0) < 1e-3
+        || h.key === "constAir" || h.key === "constAlt" || h.key === "plausible";
     const conv = ss.conv, geo = ss.geo;
     const cTxt = conv && isFinite(conv.contrast) ? conv.contrast.toFixed(2) : "—";
     const bandTxt = conv ? `${conv.loNM.toFixed(0)}–${conv.hiNM.toFixed(0)} NM` : "the searched band";
     if (h.key === "saddle") {
         const p = h.params || {};
         const famLo = nm1(p.familyLoM), famHi = nm1(p.familyHiM);
+        if (p.saddleT0 === undefined) {
+            return `Unusually for a slow-object reading, this one is <b>pinned</b>: the bearing rotates all `
+                + `clip long (no low-motion window), so the sensor's own motion triangulates the range — the `
+                + `slow-object cost valley narrows to <b>${famLo}–${famHi} NM</b> (${p.familyCount} of `
+                + `${p.familyTotal} sampled ranges). The track shown is the minimum-speed member of that band.`;
+        }
         return `This IS the family — not a point. Over the low-motion window the slow-object cost curve stays `
             + `in its low-cost valley across <b>${famLo}–${famHi} NM</b> (${p.familyCount} of ${p.familyTotal} `
             + `sampled ranges), so every range in that band is about equally plausible for a slow object; the track `
             + `shown is just its least-maneuvering member. It's the geometric price of a sensor orbiting something `
             + `that barely moves — the sightlines can say "slow object, somewhere in here", not "here". Pin the range `
             + `with the Min/Max Dist inputs or an outside cue to collapse it.`;
+    } else if (onRay && ss.narrow && h.key === "plausible"
+        && h.params && h.params.usedSpeedTarget === false) {
+        // Narrow baseline BUT the pure smoothness-vs-range profile was still
+        // decisive (close ranges demand catastrophic maneuvering): a band-level
+        // preference, not a triangulated fix — say so without invoking the
+        // speed target, which was not used.
+        return `Geometrically the sightlines sweep only <b>${geo.azSweep.toFixed(1)}°</b> of azimuth over a ` +
+            `<b>${geo.baselineNM.toFixed(1)} NM</b> sensor baseline, so range is <b>weakly observed from the ` +
+            `angles alone</b>. The pure smoothness-vs-range profile still ruled out the rest — nearer ranges ` +
+            `demand far more maneuvering — and preferred <b>${nm1(h.params.range)} NM</b> within the surviving ` +
+            `band, with no speed assumption. Treat it as the least-maneuvering pocket of a broad family, not a ` +
+            `triangulated fix.`;
     } else if (onRay && ss.narrow) {
         // Narrow angular baseline: range is NOT observable from geometry alone.
         // Whatever minimum exists is created by the soft speed/altitude prior.
@@ -3019,19 +3167,28 @@ function heatColor(tRaw) {
  * with the best point marked and a color scale bar.
  */
 function sweepHeatmap(sweep) {
-    const xs = sweep.ranges.map(toNM);          // NM
-    const ys = sweep.speeds.map(toKt);          // kt
-    const nx = xs.length, ny = ys.length;
+    const xs = sweep.ranges.map(toNM);                       // NM
+    const yl = sweep.speeds.map((v) => Math.log10(toKt(v))); // log10(kt)
+    const nx = xs.length, ny = yl.length;
+    // per-cell edges from midpoints between neighboring grid values (the
+    // speed grid is log-spaced, so plot the y axis in log10 space where the
+    // cells are uniform again; midpoint edges also tolerate any custom grid)
     const dx = nx > 1 ? xs[1] - xs[0] : 1;
-    const dy = ny > 1 ? ys[1] - ys[0] : 1;
+    const xEdge = (i, side) => (side < 0)
+        ? (i > 0 ? (xs[i - 1] + xs[i]) / 2 : xs[0] - dx / 2)
+        : (i < nx - 1 ? (xs[i] + xs[i + 1]) / 2 : xs[nx - 1] + dx / 2);
+    const dyl = ny > 1 ? yl[1] - yl[0] : 0.1;
+    const yEdge = (i, side) => (side < 0)
+        ? (i > 0 ? (yl[i - 1] + yl[i]) / 2 : yl[0] - dyl / 2)
+        : (i < ny - 1 ? (yl[i] + yl[i + 1]) / 2 : yl[ny - 1] + dyl / 2);
 
     const chart = new CReportChart({
         width: 940, height: 560,
         margin: {left: 64, right: 118, top: 40, bottom: 48},
         title: "Constant-air-speed sweep: plausibility score over (start range, air speed)",
-        xLabel: "start range (NM)", yLabel: "air speed (kt)",
+        xLabel: "start range (NM)", yLabel: "air speed (kt, log scale)",
     });
-    chart.setRange(xs[0] - dx / 2, xs[nx - 1] + dx / 2, ys[0] - dy / 2, ys[ny - 1] + dy / 2);
+    chart.setRange(xEdge(0, -1), xEdge(nx - 1, +1), yEdge(0, -1), yEdge(ny - 1, +1));
 
     let logMin = Infinity, logMax = -Infinity;
     const logScore = (s) => Math.log10(Math.max(s, 1e-3));
@@ -3048,17 +3205,18 @@ function sweepHeatmap(sweep) {
         for (let si = 0; si < ny; si++) {
             const r = sweep.results[ri * ny + si];
             ctx.fillStyle = heatColor(tOf(r.score));
-            const X = chart.px(xs[ri] - dx / 2);
-            const Y = chart.py(ys[si] + dy / 2);
-            ctx.fillRect(X, Y, chart.px(xs[ri] + dx / 2) - X + 0.5, chart.py(ys[si] - dy / 2) - Y + 0.5);
+            const X = chart.px(xEdge(ri, -1));
+            const Y = chart.py(yEdge(si, +1));
+            ctx.fillRect(X, Y, chart.px(xEdge(ri, +1)) - X + 0.5, chart.py(yEdge(si, -1)) - Y + 0.5);
         }
     }
     chart.axes({
         xTicks: niceTicks(chart.x0, chart.x1, 9),
-        yTicks: niceTicks(chart.y0, chart.y1, 7),
+        yTicks: logTicks(chart.y0, chart.y1),
+        yFmt: fmtLogTick,
         grid: false,
     });
-    chart.marker(toNM(sweep.best.startDist), toKt(sweep.best.speed), VIZ.constAir,
+    chart.marker(toNM(sweep.best.startDist), Math.log10(toKt(sweep.best.speed)), VIZ.constAir,
         `best: ${nm1(sweep.best.startDist)} NM @ ${kt1(sweep.best.speed)} kt`);
 
     // color scale bar (log): dark bottom = low score = plausible
@@ -3584,7 +3742,7 @@ function buildReportHTML(ctx) {
             <td>${r.metrics.gLoad.rms.toFixed(3)}</td><td>${r.metrics.gLoad.max.toFixed(3)}</td>
             <td>${r.metrics.turnRate.std.toFixed(2)}</td>
             <td>${fpm0(r.metrics.verticalSpeed.mean)}</td>
-            <td>${r.badFrames}</td>
+            <td>${r.spdErr !== undefined ? kt1(r.spdErr) : "—"}</td>
         </tr>`).join("");
 
     const runRows = aircraft.runs.map((r, i) => `
@@ -3600,8 +3758,8 @@ function buildReportHTML(ctx) {
     try { version = process.env.BUILD_VERSION_STRING || ""; } catch (e) { version = ""; }
 
     const scoreNote = "score = 4·g<sub>RMS</sub> + g<sub>max</sub> + 0.05·turn σ " +
-        "+ 0.02·max(0, |VS<sub>mean</sub>|−5) + 0.1·bad frames " +
-        "+ 0.2·((v−v<sub>target</sub>)/250 kt)² — lower is more plausible";
+        "+ 0.02·max(0, |VS<sub>mean</sub>|−5) + 0.2·((v−v<sub>target</sub>)/250 kt)² " +
+        "+ (speed-hold error/10 kt)² — lower is more plausible";
 
     const fileName = "Traverse-Analysis-" +
         String(sitName).replace(/[^A-Za-z0-9._-]+/g, "_") + ".html";
@@ -3798,7 +3956,7 @@ td .pill { color: #0d0f12; }
         <thead><tr>
             <th>#</th><th>Range (NM)</th><th>Speed (kt)</th><th>Score</th>
             <th>g RMS</th><th>g max</th><th>Turn σ (°/s)</th>
-            <th>VS mean (fpm)</th><th>Bad frames</th>
+            <th>VS mean (fpm)</th><th>Speed-hold err (kt)</th>
         </tr></thead>
         <tbody>${sweepRows}</tbody>
     </table>

@@ -1,12 +1,15 @@
 // Global "plausible object" fit to LOS rays — AUTONOMOUS range finder.
 //
-// Searches for the START RANGE whose smoothest LOS-riding trajectory (at a
-// soft airspeed target from the "Target Speed" slider) requires the least
-// maneuvering, then returns the full-quality least-maneuvering path there.
-// Unlike the Const Air Spd traverse (which sits at the "Tgt Start Dist" you
-// set), this finds its own range — for a narrow-baseline sightline like Gimbal
-// the airspeed target is what makes the plausibility-vs-range curve have a
-// real minimum. See src/TraverseAnalysis.js (fitPlausibleBestRange).
+// Searches for the START RANGE whose smoothest LOS-riding trajectory requires
+// the least maneuvering, then returns the full-quality least-maneuvering path
+// there. Unlike the Const Air Spd traverse (which sits at the "Tgt Start
+// Dist" you set), this finds its own range. Two-stage: when the sensor's own
+// motion makes the smoothness-vs-range valley decisive (an orbiting or
+// turning sensor), geometry alone picks the range; only for narrow-baseline
+// sightlines like Gimbal (where range is unobservable from geometry) does the
+// soft airspeed target from the "Target Speed" slider break the tie and give
+// the plausibility-vs-range curve a real minimum. See src/TraverseAnalysis.js
+// (fitPlausibleBestRange).
 
 import {CNodeTrack} from "./CNodeTrack";
 import {fitPlausibleBestRange, KNOTS_TO_MS, METERS_PER_NM} from "../TraverseAnalysis";
@@ -70,7 +73,9 @@ export class CNodeLOSFitPlausible extends CNodeTrack {
         this.guiDisplay = {};
         // string rows (avoid lil-gui NumberController step requirement)
         this.guiDisplay._range = (result.startDist / METERS_PER_NM).toFixed(1) + " NM";
-        this.guiDisplay._speed = (vTargetMs / KNOTS_TO_MS).toFixed(0) + " kt";
+        this.guiDisplay._speed = result.usedSpeedTarget === false
+            ? "not needed (geometry)"
+            : (vTargetMs / KNOTS_TO_MS).toFixed(0) + " kt";
         this.guiDisplay._score = result.score.toFixed(3);
         this.guiFolder.add(this.guiDisplay, "_range")
             .name(t("losFitPlausible.range.label", {defaultValue: "Found Range"})).disable();

@@ -75,6 +75,15 @@ function _pointToRayDistance(P, O, D) {
 
 function _solveSoftConstrained(AtA, Atb, nUnknowns, active, dataset, rowFn, t0) {
     const {sensorPos, losDir, times, maxRange} = dataset;
+    // Optional dataset.minRange (meters): treat lambda < minRange as a
+    // violation with target = minRange. These fits minimize PERPENDICULAR
+    // distance to the rays, and the sensor's own path is a zero-residual
+    // solution whenever the sensor flies a CV/CA-representable trajectory —
+    // a free fit on a straight-and-level sensor collapses onto the sensor
+    // itself (~90 deg angular "fit"). Callers that need a genuinely free fit
+    // but not that degenerate optimum (e.g. the noise-floor estimate in
+    // AnalyzeTraverse) set minRange; existing callers are unaffected.
+    const minRange = dataset.minRange ?? null;
     const PENALTY = 1e4;
 
     const sol = _solveLinearSystem(AtA.map(r => r.slice()), Atb.slice());
@@ -91,7 +100,9 @@ function _solveSoftConstrained(AtA, Atb, nUnknowns, active, dataset, rowFn, t0) 
         for (let k = 0; k < nUnknowns; k++) lambda += lambdaRow[k] * sol[k];
 
         let target = null;
-        if (lambda < 0) {
+        if (minRange !== null && lambda < minRange) {
+            target = minRange;
+        } else if (lambda < 0) {
             target = 0;
         } else if (maxRange) {
             const mr = maxRange[idx];
