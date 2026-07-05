@@ -997,7 +997,8 @@ class NumberController extends Controller {
 
             if ( isNaN( value ) ) return;
 
-            this._snapClampSetValue( value + delta );
+            // MICK: wrapping sliders wrap on arrow keys / wheel too, not just drag
+            this._snapWrapSetValue( value + delta );
 
             // Force the input to updateDisplay when it's focused
             this.$input.value = this.getValue();
@@ -1507,6 +1508,28 @@ class NumberController extends Controller {
         const snapped = this._snap( value );
         const clamped = this._clamp( snapped );
         this.setValue(clamped)
+    }
+
+    // MICK: step-based counterpart of the drag wrapping in setValueFromX.
+    // On a wrapping slider, a step past min/max wraps around to the other end
+    // and carries +/-1 into the wrapReceiver (e.g. 59->0 minutes bumps hours).
+    // The wrap period is max-min+step so the two endpoints are one step apart,
+    // matching the integer date/time sliders (0-59, 1-31, etc.)
+    _snapWrapSetValue( value ) {
+        if ( this._canWrap && this._hasMin && this._hasMax ) {
+            const range = this._max - this._min + this._step;
+            let carry = 0;
+            if ( range > 0 ) {
+                while ( value > this._max ) { value -= range; carry++; }
+                while ( value < this._min ) { value += range; carry--; }
+            }
+            this._snapClampSetValue( value );
+            if ( carry !== 0 && this._wrapReceiver ) {
+                this._wrapReceiver.setValue( this._wrapReceiver.getValue() + carry );
+            }
+        } else {
+            this._snapClampSetValue( value );
+        }
     }
 
     get _hasScrollBar() {
