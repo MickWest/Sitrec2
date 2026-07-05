@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.96.1 (2026-07-04)
+
+### Improvements
+- **Wrap-around sliders now wrap on arrow keys and the focused-input mouse wheel, not just drag** (`src/js/lil-gui.esm.js`). Controllers marked `.wrap()` — the Time menu's **Month/Day/Hour/Minute/Second/Millisecond** fields, which chain carries into each other (`CNodeDateTime.js`), plus receiver-less wraps like the PTZ **Pan (Az)** slider (`CNodeControllerPTZUI.js`) and the wind **From** sliders (`CNodeWind.js`) — previously wrapped and carried into their `_wrapReceiver` only in the drag path (`setValueFromX`); the `increment` helper serving ArrowUp/ArrowDown on a focused number input, and the mouse wheel while that input is focused (`_inputFocused`), called `_snapClampSetValue` and so stopped dead at min/max. A new `_snapWrapSetValue()` is the step-based counterpart of the drag wrap: on a wrapping controller with both bounds it reduces the value into range with period `max − min + step` — so the two endpoints sit one step apart, matching the integer date/time ranges (0–59, 1–31, …) — and carries ±1 per wrap into the `_wrapReceiver` (Minute 59→0 bumps Hour +1); `increment` now routes through it. Non-wrapping controllers fall through to the old `_snapClampSetValue` (so **Year** still clamps), and the wheel-over-slider handler is unchanged. Verified live: arrow-up on Minute at 59 rolls to 0 and carries Hour +1, arrow-down reverses it, Year clamps as before.
+
 ## Version 2.96.0 (2026-07-04)
 
 ### New Features

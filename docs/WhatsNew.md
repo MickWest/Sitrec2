@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.96.1 (2026-07-04)
+
+### Improvements
+- Wrap-around sliders — like the date and time fields in the Time menu — now also wrap when stepped with the arrow keys or the mouse wheel while editing the number, not just when dragged: stepping Minute past 59 rolls it to 0 and bumps Hour up by one, and stepping down does the reverse. Fields that don't wrap, like Year, still stop at their ends.
+
 ## Version 2.96.0 (2026-07-04)
 
 ### New Features
