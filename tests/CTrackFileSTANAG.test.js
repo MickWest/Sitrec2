@@ -80,19 +80,19 @@ describe('CTrackFileSTANAG', () => {
             expect(misb.length).toBe(11);
         });
 
-        test('first entry has correct latitude from test file (platform/posHigh)', () => {
+        test('first entry has correct latitude from test file (authoritative dynamics/pos)', () => {
             const misb = trackFile.toMISB();
-            expect(misb[0][MISB.SensorLatitude]).toBeCloseTo(40.421348598599124, 6);
+            expect(misb[0][MISB.SensorLatitude]).toBeCloseTo(40.448281922640632, 6);
         });
 
-        test('first entry has correct longitude from test file (platform/posHigh)', () => {
+        test('first entry has correct longitude from test file (authoritative dynamics/pos)', () => {
             const misb = trackFile.toMISB();
-            expect(misb[0][MISB.SensorLongitude]).toBeCloseTo(-104.86668420008492, 6);
+            expect(misb[0][MISB.SensorLongitude]).toBeCloseTo(-104.877919707133, 6);
         });
 
-        test('first entry has correct altitude from test file (platform/posHigh)', () => {
+        test('first entry has correct altitude from test file (authoritative dynamics/pos)', () => {
             const misb = trackFile.toMISB();
-            expect(misb[0][MISB.SensorTrueAltitude]).toBeCloseTo(3305.4438118077815, 2);
+            expect(misb[0][MISB.SensorTrueAltitude]).toBeCloseTo(1744.3974248617887, 2);
         });
 
         test('first entry has timestamp', () => {
@@ -122,26 +122,26 @@ describe('CTrackFileSTANAG', () => {
             warnSpy.mockRestore();
         });
 
-        describe('normal track (index 1)', () => {
-            test('returns 11 track points for normal track', () => {
+        describe('LOS High track (index 1)', () => {
+            test('returns 11 track points for LOS High track', () => {
                 const misb = trackFile.toMISB(1);
                 expect(Array.isArray(misb)).toBe(true);
                 expect(misb.length).toBe(11);
             });
 
-            test('first normal entry has correct latitude (target position)', () => {
+            test('first LOS High entry has correct latitude (posHigh)', () => {
                 const misb = trackFile.toMISB(1);
-                expect(misb[0][MISB.SensorLatitude]).toBeCloseTo(40.448281922640632, 6);
+                expect(misb[0][MISB.SensorLatitude]).toBeCloseTo(40.421348598599124, 6);
             });
 
-            test('first normal entry has correct longitude', () => {
+            test('first LOS High entry has correct longitude', () => {
                 const misb = trackFile.toMISB(1);
-                expect(misb[0][MISB.SensorLongitude]).toBeCloseTo(-104.877919707133, 6);
+                expect(misb[0][MISB.SensorLongitude]).toBeCloseTo(-104.86668420008492, 6);
             });
 
-            test('first normal entry has correct altitude', () => {
+            test('first LOS High entry has correct altitude (higher than target)', () => {
                 const misb = trackFile.toMISB(1);
-                expect(misb[0][MISB.SensorTrueAltitude]).toBeCloseTo(1744.3974248617887, 2);
+                expect(misb[0][MISB.SensorTrueAltitude]).toBeCloseTo(3305.4438118077815, 2);
             });
         });
 
@@ -170,24 +170,24 @@ describe('CTrackFileSTANAG', () => {
     });
 
     describe('getShortName', () => {
-        test('returns filename with (Platform) suffix for track 0', () => {
-            expect(trackFile.getShortName(0, 'elevated_track.xml')).toBe('elevated_track (Platform)');
+        test('returns plain filename for track 0 (authoritative dynamics/pos)', () => {
+            expect(trackFile.getShortName(0, 'elevated_track.xml')).toBe('elevated_track');
         });
 
-        test('returns filename without suffix for track 1 (normal track)', () => {
-            expect(trackFile.getShortName(1, 'elevated_track.xml')).toBe('elevated_track');
+        test('returns filename with (LOS High) suffix for track 1 (posHigh)', () => {
+            expect(trackFile.getShortName(1, 'elevated_track.xml')).toBe('elevated_track (LOS High)');
         });
 
         test('returns filename with (Ground) suffix for track 2', () => {
             expect(trackFile.getShortName(2, 'elevated_track.xml')).toBe('elevated_track (Ground)');
         });
 
-        test('returns default name with (Platform) suffix when no filename provided', () => {
-            expect(trackFile.getShortName()).toBe('STANAG Track (Platform)');
+        test('returns plain default name for track 0 when no filename provided', () => {
+            expect(trackFile.getShortName()).toBe('STANAG Track');
         });
 
-        test('returns default name without suffix for track 1 when no filename', () => {
-            expect(trackFile.getShortName(1)).toBe('STANAG Track');
+        test('returns default name with (LOS High) suffix for track 1 when no filename', () => {
+            expect(trackFile.getShortName(1)).toBe('STANAG Track (LOS High)');
         });
 
         test('returns default name with (Ground) suffix for track 2 when no filename', () => {
@@ -239,6 +239,64 @@ describe('CTrackFileSTANAG', () => {
     describe('extractObjects', () => {
         test('does not throw', () => {
             expect(() => trackFile.extractObjects()).not.toThrow();
+        });
+    });
+
+    // A ground-locked target: the tracker's estimate (dynamics/pos) is IDENTICAL to the
+    // low / ground end of the line of sight (posLow). Emitting posHigh, dynamics/pos AND
+    // posLow would produce a duplicate track, so the parser collapses to two distinct
+    // tracks: the plainly-named authoritative dynamics/pos (primary), and (LOS High) = posHigh.
+    describe('de-duplication when dynamics/pos == posLow', () => {
+        const groundLockedXml = parseXml(`<?xml version="1.0"?>
+            <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">
+                <message>
+                    <baseTime>2016-06-29T15:57:36.006Z</baseTime>
+                    <relTimeIncrement>0.000001</relTimeIncrement>
+                    <track>
+                        <segment>
+                            <tp posLow="40.100 -104.100 1400.0" posHigh="40.200 -104.200 3300.0">
+                                <relTime>0</relTime>
+                                <dynamics cs="WGS_84">
+                                    <pos>40.100 -104.100 1400.0</pos>
+                                </dynamics>
+                            </tp>
+                            <tp posLow="40.110 -104.110 1401.0" posHigh="40.210 -104.210 3301.0">
+                                <relTime>1000000</relTime>
+                                <dynamics cs="WGS_84">
+                                    <pos>40.110 -104.110 1401.0</pos>
+                                </dynamics>
+                            </tp>
+                        </segment>
+                    </track>
+                </message>
+            </nitsRoot>`);
+        const groundLocked = new CTrackFileSTANAG(groundLockedXml);
+
+        test('collapses three positions to two distinct tracks', () => {
+            expect(groundLocked.getTrackCount()).toBe(2);
+        });
+
+        test('track 0 is the authoritative dynamics/pos, plainly named (primary)', () => {
+            expect(groundLocked.getShortName(0, 'gl.xml')).toBe('gl');
+            const misb = groundLocked.toMISB(0);
+            expect(misb[0][MISB.SensorLatitude]).toBeCloseTo(40.100, 6);
+        });
+
+        test('track 1 is the LOS High endpoint (posHigh)', () => {
+            expect(groundLocked.getShortName(1, 'gl.xml')).toBe('gl (LOS High)');
+            const misb = groundLocked.toMISB(1);
+            expect(misb[0][MISB.SensorLatitude]).toBeCloseTo(40.200, 6);
+        });
+
+        test('the redundant posLow (Ground) track is dropped', () => {
+            const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+            expect(groundLocked.toMISB(2)).toBe(false);
+            warnSpy.mockRestore();
+        });
+
+        test('hasMoreTracks reflects the two-track count', () => {
+            expect(groundLocked.hasMoreTracks(0)).toBe(true);
+            expect(groundLocked.hasMoreTracks(1)).toBe(false);
         });
     });
 });
