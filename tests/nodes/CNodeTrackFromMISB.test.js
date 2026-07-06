@@ -42,6 +42,7 @@ class TestMISBDataNode extends CNode {
     isAGLLockActive() { return false; }
     hasRecordPTS() { return this._hasRecordPTS; }
     adjustAlt(alt) { return alt; }
+    needsGeoidToHAE() { return true; } // MSL source: pipeline adds geoid N (0 in tests, grid not loaded)
 }
 
 function makeMISBRow(timeMs, lat, lon, alt = 1000) {

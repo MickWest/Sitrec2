@@ -515,6 +515,15 @@ export function parseCustom1CSV(csv) {
         MISBArray.parsingBaseTime = GlobalDateTimeNode.dateStart.valueOf();
     }
 
+    // The TPHAE header is explicitly Height Above Ellipsoid (same producer family as
+    // STANAG 4676 WGS-84 tracks). Flag the datum so the pipeline skips the MSL->HAE
+    // geoid add (see CNodeMISBDataTrack.needsGeoidToHAE). Only applies when TPHAE
+    // actually supplied the values — altFeet/altKm columns take precedence and are MSL.
+    if (altCol !== -1 && altFeet === -1 && altKmCol === -1
+        && csv[0][altCol].trim().toUpperCase() === "TPHAE") {
+        MISBArray.altitudeIsHAE = true;
+    }
+
     return MISBArray;
 
 }

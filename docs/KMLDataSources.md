@@ -342,12 +342,13 @@ if (altReference === "MSL") alt += meanSeaLevelOffset(lat, lon);
 
 This is the single most important thing to get right.
 
-- **KML `absolute` altitude is metres, HAE** (height above the WGS84 ellipsoid), per OGC KML 2.3.
-  Correct for FlightAware and most Sitrec/Metabunk exports.
-- **MISB `SensorTrueAltitude` is conventionally MSL** (orthometric, relative to the geoid).
-- `toMISB()` copies the KML number **verbatim** — it does **not** yet convert. HAE↔MSL
-  reconciliation happens at display time in `CNodeTrack` (adds `meanSeaLevelOffset(lat, lon)` when
-  the track's reference is MSL).
+- **KML `absolute` altitude is metres, MSL** — measured from the EGM96 geoid, per OGC KML 2.2/2.3
+  (Google Earth reads `absolute` as height above sea level). It is **not** HAE.
+- **MISB `SensorTrueAltitude` is conventionally MSL** (orthometric, relative to the geoid) —
+  the same datum, which is why `toMISB()` can copy the KML number **verbatim**.
+- MSL→HAE conversion (adds `meanSeaLevelOffset(lat, lon)`) happens once, on the way to ECEF at
+  render time. Exports mirror this: `CNodeTrack.exportTrackKML` and `exportMISBCompliantCSV`
+  convert HAE-referenced frames back to MSL before writing.
 
 > **Known limitation (datum):** the track path does **not** yet read `<altitudeMode>` per segment,
 > and the true vertical datum is sometimes encoded only in the filename

@@ -198,9 +198,11 @@ export class CNodeTrack extends CNodeEmptyArray {
                 alt = 0;
             }
 
-            // KML absolute altitude is ellipsoid height (HAE).
-            if (altReference === "MSL") {
-                alt += meanSeaLevelOffset(lat, lon);
+            // KML "absolute" altitude is measured from the EGM96 geoid (MSL) per
+            // OGC KML 2.2/2.3 — Google Earth reads it as height above sea level.
+            // Convert HAE frames to MSL (H = h - N), mirroring exportMISBCompliantCSV.
+            if (altReference === "HAE") {
+                alt -= meanSeaLevelOffset(lat, lon);
             }
             coordLines.push(`<gx:coord>${lon} ${lat} ${alt}</gx:coord>`);
         }
@@ -382,7 +384,8 @@ export class CNodeTrackFromLLAArray extends CNodeTrack {
         this.altitudeMode = v.altitudeMode ?? "absolute";
         this.showCap = v.showCap ?? false;
         // altitudeReference: "HAE" (default) or "MSL"
-        // KML "absolute" is HAE per spec; custom data may provide MSL
+        // Note KML "absolute" altitudes are MSL (EGM96) per OGC KML 2.2/2.3 — the KML
+        // feature import passes altitudeReference:"MSL" explicitly (CTrackFileKML).
         this.altitudeReference = v.altitudeReference ?? "HAE";
 
 

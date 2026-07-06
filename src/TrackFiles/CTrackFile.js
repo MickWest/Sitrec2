@@ -94,4 +94,12 @@ export class CTrackFile {
     isSupplementaryTrack(trackIndex) {
         return trackIndex > 0;
     }
+
+    // Altitude datum of this track's values. Most sources are orthometric (MSL), which
+    // Sitrec's MISB pipeline converts to ellipsoidal height (HAE) by adding the geoid
+    // undulation N. Return true only when the altitudes are ALREADY HAE (height above the
+    // WGS84 ellipsoid), so the pipeline skips that geoid add. Overridden by CTrackFileSTANAG.
+    isAltitudeHAE(trackIndex = 0) {
+        return false;
+    }
 }

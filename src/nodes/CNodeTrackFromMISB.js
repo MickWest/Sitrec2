@@ -562,12 +562,16 @@ export class CNodeTrackFromMISB extends CNodeTrack {
                 const lla = ECEFToLLAVD_radii(pos);
                 alt = lla.z;
             } else {
-                // Non-AGL path (or terrain not yet available). MSL altitude from
-                // the column data, converted to HAE via geoid offset. Inlined
-                // ECEF math to keep this hot loop tight for KML/aircraft tracks.
-                // SensorTrueAltitude is MSL (orthometric); convert to HAE (h = H + N).
-                const altMSL = misb.adjustAlt(interpolate(this.rawAltArray[slot], this.rawAltArray[slot +1], fraction), lat, lon);
-                alt = altMSL + meanSeaLevelOffset(lat, lon);
+                // Non-AGL path (or terrain not yet available). Plain MSL column data
+                // gets the geoid offset N added to become HAE (h = H + N). When the
+                // value is already ellipsoidal -- HAE sources (STANAG cs="WGS_84",
+                // MISB tag 75/78, TPHAE), useAGL data (getRawAlt adds terrain HAE via
+                // elevationAtLL), or an active altitude lock (HAE by schema) --
+                // needsGeoidToHAE() is false and the add is skipped; adding it anyway
+                // would shift the track ~N metres (~16-30 m in CONUS).
+                // Inlined ECEF math to keep this hot loop tight for KML/aircraft tracks.
+                const altBase = misb.adjustAlt(interpolate(this.rawAltArray[slot], this.rawAltArray[slot +1], fraction), lat, lon);
+                alt = misb.needsGeoidToHAE() ? altBase + meanSeaLevelOffset(lat, lon) : altBase;
 
                 const rLat = lat * Math.PI / 180
                 const rLon = lon * Math.PI / 180

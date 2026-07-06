@@ -355,6 +355,9 @@ class CTrackManager extends CManager {
             misb: misb,
             exportable: true,
             trackFile: trackFile, // pass trackFile for relative-time metadata (trackStartTime feature)
+            // HAE sources (e.g. STANAG cs="WGS_84") report ellipsoidal altitude; flag it so
+            // the pipeline skips the MSL->HAE geoid add. Default false keeps MSL sources as-is.
+            altitudeIsHAE: (trackFile instanceof CTrackFile) && trackFile.isAltitudeHAE(trackIndex),
         });
 
         return true;

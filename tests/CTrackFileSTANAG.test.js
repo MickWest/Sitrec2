@@ -242,6 +242,55 @@ describe('CTrackFileSTANAG', () => {
         });
     });
 
+    // STANAG heights are WGS-84 ellipsoidal (HAE). isAltitudeHAE() reports this so the
+    // MISB pipeline does not re-add the geoid offset (which would sink the track ~N metres).
+    describe('isAltitudeHAE (WGS-84 datum)', () => {
+        test('returns true for the test file (cs="WGS_84")', () => {
+            expect(trackFile.isAltitudeHAE()).toBe(true);
+        });
+
+        test('returns true when no cs attribute is present (4676 default is ellipsoidal)', () => {
+            const noCs = parseXml(`<?xml version="1.0"?>
+                <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">
+                    <message><baseTime>2016-06-29T15:57:36.006Z</baseTime><track><segment>
+                        <tp><relTime>0</relTime><dynamics><pos>40.0 -104.0 1000.0</pos></dynamics></tp>
+                    </segment></track></message>
+                </nitsRoot>`);
+            expect(new CTrackFileSTANAG(noCs).isAltitudeHAE()).toBe(true);
+        });
+
+        test('returns false for an orthometric cs (e.g. EGM96 = MSL)', () => {
+            const egm = parseXml(`<?xml version="1.0"?>
+                <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">
+                    <message><baseTime>2016-06-29T15:57:36.006Z</baseTime><track><segment>
+                        <tp><relTime>0</relTime><dynamics cs="EGM96"><pos>40.0 -104.0 1000.0</pos></dynamics></tp>
+                    </segment></track></message>
+                </nitsRoot>`);
+            expect(new CTrackFileSTANAG(egm).isAltitudeHAE()).toBe(false);
+        });
+
+        const withCs = (cs) => parseXml(`<?xml version="1.0"?>
+            <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">
+                <message><baseTime>2016-06-29T15:57:36.006Z</baseTime><track><segment>
+                    <tp><relTime>0</relTime><dynamics cs="${cs}"><pos>40.0 -104.0 1000.0</pos></dynamics></tp>
+                </segment></track></message>
+            </nitsRoot>`);
+
+        test('tolerates producer variants of the WGS-84 label', () => {
+            expect(new CTrackFileSTANAG(withCs("WGS84")).isAltitudeHAE()).toBe(true);
+            expect(new CTrackFileSTANAG(withCs("WGS-84")).isAltitudeHAE()).toBe(true);
+            expect(new CTrackFileSTANAG(withCs("wgs 84")).isAltitudeHAE()).toBe(true);
+        });
+
+        test('orthometric indicator wins over an ellipsoidal one in hybrid labels', () => {
+            expect(new CTrackFileSTANAG(withCs("WGS84_EGM96")).isAltitudeHAE()).toBe(false);
+        });
+
+        test('unknown cs falls back to the 4676 ellipsoidal default', () => {
+            expect(new CTrackFileSTANAG(withCs("SOME_FUTURE_CRS")).isAltitudeHAE()).toBe(true);
+        });
+    });
+
     // A ground-locked target: the tracker's estimate (dynamics/pos) is IDENTICAL to the
     // low / ground end of the line of sight (posLow). Emitting posHigh, dynamics/pos AND
     // posLow would produce a duplicate track, so the parser collapses to two distinct

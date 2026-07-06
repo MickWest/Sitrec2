@@ -226,6 +226,17 @@ export class CTrackFileMISB extends CTrackFile {
         return super.isSupplementaryTrack(trackIndex);
     }
 
+    // A parser can mark the misb array's SensorTrueAltitude values as already-HAE
+    // (e.g. Custom1's TPHAE column — Height Above Ellipsoid). The flag describes the
+    // Sensor* altitude column, so it applies to every TrackID sub-track, but NOT to a
+    // derived Center track (index 1), whose altitude comes from FrameCenterElevation
+    // (MSL by MISB convention).
+    isAltitudeHAE(trackIndex = 0) {
+        if (!this.data || !this.data.altitudeIsHAE) return false;
+        if (this._getUniqueTrackIDs()) return true;
+        return trackIndex === 0;
+    }
+
     extractObjects() {
     }
 }

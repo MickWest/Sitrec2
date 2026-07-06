@@ -60,6 +60,13 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         // work that made the Sitch Frames slider laggy on multi-track sitches)
         this.framesInvariant = true;
 
+        // Altitude datum of the raw column values. Normally MSL (orthometric), which the
+        // pipeline converts to HAE by adding the geoid offset N. Set true by HAE sources
+        // (e.g. STANAG cs="WGS_84") so that geoid add is skipped (see needsGeoidToHAE()).
+        // Serialized so the datum survives save/reload of a custom sitch.
+        this.altitudeIsHAE = v.altitudeIsHAE ?? false;
+        this.addSimpleSerial("altitudeIsHAE");
+
         this.selectSourceColumns(v.columns || ["SensorLatitude", "SensorLongitude", "SensorTrueAltitude", "AltitudeAGL"]);
 
         this.recalculate()
@@ -1791,9 +1798,31 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             csv = csv + name + (i<MISBFields-1?",":"\n");
         }
 
+        // Datum-safe round trip: SensorTrueAltitude / FrameCenterElevation are MSL by
+        // MISB convention, so an altitudeIsHAE track (e.g. STANAG cs="WGS_84") must not
+        // dump its HAE values into them — a re-import would treat them as MSL and add
+        // the geoid offset again (~16 m low in CONUS). Emit them in the matching
+        // ellipsoid-height column (tag 75/78) instead; the datum-aware import
+        // (selectSourceColumns) picks that column up and re-flags the track as HAE.
+        let mslColOut = -1, haeColOut = -1;
+        if (this.altitudeIsHAE && !this.useAGL) {
+            if (this.altCol === MISB.SensorTrueAltitude) {
+                mslColOut = MISB.SensorTrueAltitude;
+                haeColOut = MISB.SensorEllipsoidHeight;
+            } else if (this.altCol === MISB.FrameCenterElevation) {
+                mslColOut = MISB.FrameCenterElevation;
+                haeColOut = MISB.FrameCenterHeightAboveEllipsoid;
+            }
+        }
+
         for (let f=0;f<this.misb.length;f++) {
             for (let i=0;i<MISBFields;i++) {
                 let value = this.misb[f][i];
+                if (i === mslColOut) {
+                    value = null;                                  // don't mislabel HAE as MSL
+                } else if (i === haeColOut && (value === null || value === undefined)) {
+                    value = this.misb[f][mslColOut];               // HAE value in the HAE column
+                }
                 // if not null and an object, then replace with "COMPLEX"
                 // (null is considered an object - a quirk of JS)
                 if (value !== null && typeof value === "object") {
@@ -1872,9 +1901,24 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         this.useAGL = false;
         // check to see if we have data in altCol
         if (this.misb[0][this.altCol] === null) {
-            this.useAGL = true;
-            this.altCol = MISB[columns[3]]; // this is the altitude column
-            assert(this.misb[0][this.altCol] !== undefined, "CNodeMISBDataTrack: AGL altitude column not found in MISB data");
+            // The MSL column is empty. Before falling back to AGL, try the matching
+            // ellipsoid-height column (MISB ST0601 tag 75 / tag 78) — GPS-native
+            // producers may emit HAE only. Using it means the values are already
+            // ellipsoidal, so flag altitudeIsHAE to skip the MSL->HAE geoid add.
+            const HAE_EQUIVALENT = {
+                SensorTrueAltitude: "SensorEllipsoidHeight",
+                FrameCenterElevation: "FrameCenterHeightAboveEllipsoid",
+            };
+            const haeName = HAE_EQUIVALENT[columns[2]];
+            const haeCol = haeName !== undefined ? MISB[haeName] : undefined;
+            if (haeCol !== undefined && this.misb[0][haeCol] !== null && this.misb[0][haeCol] !== undefined) {
+                this.altCol = haeCol;
+                this.altitudeIsHAE = true;
+            } else {
+                this.useAGL = true;
+                this.altCol = MISB[columns[3]]; // this is the altitude column
+                assert(this.misb[0][this.altCol] !== undefined, "CNodeMISBDataTrack: AGL altitude column not found in MISB data");
+            }
         }
     }
 
@@ -1965,14 +2009,35 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
     }
 
 
+    // Whether the value produced by getRawAlt() + adjustAlt() still needs the geoid
+    // offset N added to become HAE. True only for plain MSL/orthometric column data.
+    // False whenever that value is ALREADY ellipsoidal (adding N again would raise the
+    // track ~16-30 m above its true position in CONUS):
+    //   - altitudeIsHAE: the raw column is HAE (STANAG cs="WGS_84", MISB tag 75/78,
+    //     Custom1 TPHAE)
+    //   - useAGL: getRawAlt() adds elevationAtLL(), which returns terrain height above
+    //     the ellipsoid (the geoid is baked into tile elevations at decode)
+    //   - altitude lock: the AGL lock goes through elevationAtLL() (HAE), and non-AGL
+    //     lock values are HAE per the AltitudeLock.js schema -- matching how
+    //     CNodeSplineEdit and CNodeOSDDataSeriesTrack apply them (adjustHeightHAE)
+    needsGeoidToHAE() {
+        return !this.altitudeIsHAE && !this.useAGL && !isAltitudeLockActive(this);
+    }
+
     // Returns MSL altitude (orthometric). Use for exports (KML, CSV, GeoJSON).
     getAltMSL(i) {
         // If this slot had its altitude corrected by the filter, use that
         if (this.altitudeFixedSlots && this.altitudeFixedSlots.has(i)) {
             return this.altitudeFixedSlots.get(i);
         }
-        let a = this.getRawAlt(i);
-        return this.adjustAlt(a, this.getLat(i), this.getLon(i));
+        const lat = this.getLat(i);
+        const lon = this.getLon(i);
+        let a = this.adjustAlt(this.getRawAlt(i), lat, lon);
+        if (!this.needsGeoidToHAE()) {
+            // Raw altitude is already HAE (ellipsoidal); convert to true MSL (H = h - N).
+            a -= meanSeaLevelOffset(lat, lon);
+        }
+        return a;
     }
 
     // Returns HAE altitude (h = H + N). Use for ECEF conversions.

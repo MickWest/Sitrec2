@@ -6,6 +6,7 @@
 
 import {CNode3DLight} from "./CNode3DLight";
 import {CNode3DGroup} from "./CNode3DGroup";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 import * as LAYER from "../LayerMasks";
 import {fastComputeVertexNormals} from "../FastComputeVertexNormals";
 import {
@@ -369,8 +370,10 @@ export class CNode3DObject extends CNode3DGroup {
             // Convert ECEF position to LLA (Latitude, Longitude, Altitude)
             const lla = ECEFToLLAVD_radii(ecefPosition);
             const latitude = lla.x;   // degrees
-            const longitude = lla.y;  // degrees  
-            const altitude = lla.z;   // meters above sea level
+            const longitude = lla.y;  // degrees
+            // lla.z is HAE (height above the WGS84 ellipsoid). KML "absolute" altitude
+            // is MSL (EGM96 geoid), so convert (H = h - N) before writing the KML.
+            const altitude = lla.z - meanSeaLevelOffset(latitude, longitude);
             
             // Get object properties
             const objectName = this.props.name || this.id;

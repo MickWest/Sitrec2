@@ -451,11 +451,17 @@ export class CTrackFileKML extends CTrackFile {
     makeKMLDisplayTrack(coordinates, style, name, altitudeMode, showCap) {
         if (coordinates.length > 1) {
             let id = NodeMan.getUniqueID(name)
-            // KML "absolute" altitude is HAE per spec (OGC KML 2.3, §9.1.3.8)
-            // altitudeReference defaults to "HAE" which is correct for KML
+            // KML "absolute" altitude is MSL (EGM96 geoid) per OGC KML 2.2/2.3, matching
+            // how the gx:Track import path treats it. Pass "MSL" so the +N geoid
+            // conversion is applied on the way to ECEF. Ground-relative/clamped modes
+            // use the altitude as a terrain offset, where no datum conversion applies.
+            // (CNodeTrackFromLLAArray defaults a missing altitudeMode to "absolute",
+            // so mirror that default when choosing the reference.)
+            const effectiveAltitudeMode = altitudeMode ?? "absolute";
             const trackOb = new CNodeTrackFromLLAArray({
                 id: id,
-                altitudeMode: altitudeMode,
+                altitudeMode: effectiveAltitudeMode,
+                altitudeReference: effectiveAltitudeMode === "absolute" ? "MSL" : "HAE",
                 showCap: showCap,
             })
             trackOb.setArray(coordinates);

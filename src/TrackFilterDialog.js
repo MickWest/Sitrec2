@@ -3,6 +3,7 @@
 
 import {MISB} from "./MISBFields";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
+import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {m2f} from "./utils";
 import {Frustum, Matrix4, Vector3} from "three";
 import {Globals, NodeMan, TrackManager, FileManager, Sit, setRenderOne} from "./Globals";
@@ -20,6 +21,11 @@ export function extractTrackPreviewInfo(trackFile, trackIndex, filename) {
     if (!misb || misb.length === 0) return null;
 
     const shortName = trackFile.getShortName(trackIndex, filename);
+
+    // Altitude datum: LLAToECEF expects HAE, the displayed range should be MSL.
+    // Raw column values are MSL for most sources but HAE for e.g. STANAG cs="WGS_84"
+    // (trackFile.isAltitudeHAE), so convert in whichever direction is missing.
+    const altIsHAE = typeof trackFile.isAltitudeHAE === "function" && trackFile.isAltitudeHAE(trackIndex);
 
     // Determine sitch time window (ms)
     const sitchEstablished = Globals.sitchEstablished && Sit.startTime !== "2000-01-01T00:00:00Z";
@@ -45,16 +51,21 @@ export function extractTrackPreviewInfo(trackFile, trackIndex, filename) {
         if (t !== null && t !== undefined && (t < windowStartMs || t > windowEndMs)) continue;
 
         const alt = misb[i][MISB.SensorTrueAltitude];
-        if (alt !== null && alt !== undefined && isFinite(alt)) {
-            if (alt < altMinM) altMinM = alt;
-            if (alt > altMaxM) altMaxM = alt;
-        }
 
         const lat = misb[i][MISB.SensorLatitude];
         const lon = misb[i][MISB.SensorLongitude];
-        if (lat !== null && lat !== undefined && lon !== null && lon !== undefined && isFinite(lat) && isFinite(lon)) {
+        const haveLL = lat !== null && lat !== undefined && lon !== null && lon !== undefined && isFinite(lat) && isFinite(lon);
+        const geoidN = haveLL ? meanSeaLevelOffset(lat, lon) : 0;
+
+        if (alt !== null && alt !== undefined && isFinite(alt)) {
+            const altMSL = altIsHAE ? alt - geoidN : alt;   // display range is MSL
+            if (altMSL < altMinM) altMinM = altMSL;
+            if (altMSL > altMaxM) altMaxM = altMSL;
+        }
+
+        if (haveLL) {
             const a = alt ?? 0;
-            const ecef = LLAToECEF(lat, lon, a);
+            const ecef = LLAToECEF(lat, lon, altIsHAE ? a : a + geoidN);   // LLAToECEF expects HAE
             // Always track first and last valid in-window points
             if (!firstECEF) firstECEF = ecef;
             lastECEF = ecef;

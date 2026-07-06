@@ -220,6 +220,31 @@ export class CTrackFileSTANAG extends CTrackFile {
         return this._distinctTracks().length;
     }
 
+    // STANAG 4676 positions are WGS-84 geodetic, so their heights are height-above-
+    // ellipsoid (HAE), not MSL. The <dynamics cs="..."> attribute names the coordinate
+    // system; "WGS_84" (the observed value, and the 4676 default) is ellipsoidal. Returning
+    // true tells the MISB pipeline NOT to re-add the geoid offset (which would sink the
+    // track by the geoid undulation N -- ~19 m in Colorado). posLow/posHigh carry no cs but
+    // are WGS-84 ellipsoidal too, so the datum applies to every track in the file
+    // (trackIndex is accepted for the CTrackFile API but the datum is file-wide).
+    // Matching is by substring heuristic to tolerate producer variants: orthometric
+    // indicators (EGM/MSL/orthometric/NAVD) win over ellipsoidal ones (WGS/ellipsoid/HAE)
+    // so a hybrid label like "WGS84_EGM96" reads as orthometric; unknown or absent
+    // defaults to ellipsoidal per the 4676 geodetic convention.
+    isAltitudeHAE(trackIndex = 0) {
+        for (const tp of this._getTpArray()) {
+            const cs = tp.dynamics?.cs;
+            if (cs) {
+                const s = cs.trim().toLowerCase();
+                if (/egm|msl|orthometric|navd/.test(s)) return false;
+                if (/wgs|ellipsoid|hae/.test(s)) return true;
+                return true; // unrecognised cs: assume the 4676 default (ellipsoidal)
+            }
+        }
+        // No cs attribute present: STANAG 4676 heights are ellipsoidal by default.
+        return true;
+    }
+
     extractObjects() {
     }
 }

@@ -234,6 +234,10 @@ export function stripDuplicateTimes(data) {
         uniqueData.isRelativeTime = data.isRelativeTime;
         uniqueData.parsingBaseTime = data.parsingBaseTime;
     }
+    // Preserve altitude-datum metadata (e.g. Custom1 TPHAE column = height above ellipsoid)
+    if (data.altitudeIsHAE) {
+        uniqueData.altitudeIsHAE = data.altitudeIsHAE;
+    }
 
     // Return the array of unique data points
     return uniqueData;
