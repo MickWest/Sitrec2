@@ -216,21 +216,34 @@ class CMetaTrack {
 
 
 
-// Default track-colour palette. Yellow is intentionally skipped (it's the
-// traverse colour). Shared by the initial assignment in addTracks and the
-// deterministic reassignment in reassignTrackColors().
+// Default track-colour palette. Shared by the initial assignment in addTracks
+// and the deterministic reassignment in reassignTrackColors().
+//
+// Every entry is a LIGHT tint (each channel floored well above black) so it
+// reads clearly against the dark 3D background. Pure yellow (1,1,0) and pure
+// white (1,1,1) are intentionally omitted — they're the traverse and
+// sonde-track colours respectively.
+//
+// Ordering matters: tracks are coloured by rank, so palette[0], palette[1]…
+// go to the first, second… track. The list is arranged so CONSECUTIVE entries
+// are far apart in hue, keeping a typical few-track scene maximally distinct.
 const TRACK_PALETTE = [
-    new Color(1, 0, 0),
-    new Color(0, 1, 0),
-    new Color(0, 0, 1),
-    new Color(1, 0, 1),
-    new Color(0, 1, 1),
-    new Color(0.5, 0, 0),
-    new Color(0, 0.5, 0),
-    new Color(0, 0, 0.5),
-    new Color(0.5, 0.5, 0),
-    new Color(0, 0.5, 0.5),
-    new Color(0.5, 0, 0.5),
+    new Color(1.0, 0.5,  0.5),   // salmon / red
+    new Color(0.5, 1.0,  0.5),   // green
+    new Color(0.6, 0.6,  1.0),   // periwinkle / blue
+    new Color(1.0, 0.5,  1.0),   // magenta / pink
+    new Color(0.5, 1.0,  1.0),   // cyan
+    new Color(1.0, 1.0,  0.5),   // light yellow
+    new Color(0.7, 0.5,  1.0),   // violet
+    new Color(1.0, 0.7,  0.4),   // orange
+    new Color(0.4, 1.0,  0.7),   // spring green / mint
+    new Color(1.0, 0.5,  0.75),  // rose
+    new Color(0.45, 0.75, 1.0),  // azure / sky blue
+    new Color(0.75, 1.0,  0.45), // lime / chartreuse
+    new Color(0.85, 0.5,  1.0),  // purple
+    new Color(1.0, 0.85, 0.5),   // amber / gold
+    new Color(0.4, 1.0,  0.85),  // teal
+    new Color(0.55, 0.65, 1.0),  // cornflower
 ];
 
 class CTrackManager extends CManager {
@@ -735,7 +748,11 @@ class CTrackManager extends CManager {
                             // order-independent colour ranked by shortName. We mark the
                             // track paletteColored so only auto-coloured tracks (not sonde
                             // or user/serialised colours) get reassigned.
-                            trackColor = trackColors[trackNumber % trackColors.length];
+                            // trackNumber is size() AFTER this track was added
+                            // (TrackManager.add above), so it's 1-based here. Subtract
+                            // 1 so the first track gets palette index 0 — matching the
+                            // 0-based rank used by reassignTrackColors().
+                            trackColor = trackColors[(trackNumber - 1) % trackColors.length];
                             trackOb.paletteColored = true;
                         }
                     }
