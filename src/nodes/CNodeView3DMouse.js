@@ -55,7 +55,20 @@ export const mouseMethods = {
     // tracks the same way the old per-mousemove path did. Used by onMouseMove
     // (only when something needs continuous updates) and onMouseDown (so every
     // click sees a fresh cursor position).
+    // Wrapper: apply the display-only lookAt (Render Camera Use Traverse Track)
+    // for the duration of the pick so screen->ray casting matches what the view
+    // actually rendered, then restore. Nested calls no-op via the re-entrancy
+    // guard in applyDisplayLookAt.
     _refreshCursorFromMouse(mouseRay, options = {}) {
+        const _dl = this.applyDisplayLookAt?.(par.frame);
+        try {
+            return this._refreshCursorFromMouseInner(mouseRay, options);
+        } finally {
+            this.removeDisplayLookAt?.(_dl);
+        }
+    },
+
+    _refreshCursorFromMouseInner(mouseRay, options = {}) {
         this.raycaster.setFromCamera(mouseRay, this.camera);
 
         const hit = raycastLocalGround(this.raycaster);
@@ -135,7 +148,17 @@ export const mouseMethods = {
 //        console.log("Mouse Down = "+this.mouseDown+ " Drag mode = "+this.dragMode)
     },
 
+    // Wrapper: pick with the displayed camera orientation (see _refreshCursorFromMouse).
     onMouseDown(event, mouseX, mouseY) {
+        const _dl = this.applyDisplayLookAt?.(par.frame);
+        try {
+            return this.onMouseDownInner(event, mouseX, mouseY);
+        } finally {
+            this.removeDisplayLookAt?.(_dl);
+        }
+    },
+
+    onMouseDownInner(event, mouseX, mouseY) {
         if (!this.mouseEnabled) return;
 
         // Convert screen coordinates to NDC for raycasting
@@ -806,7 +829,19 @@ export const mouseMethods = {
         }
     },
 
+    // Wrapper: pick with the displayed camera orientation (see _refreshCursorFromMouse),
+    // so right-clicking hits what is on screen — including the traverse object
+    // when the render camera is tracking it.
     onContextMenu(event, mouseX, mouseY) {
+        const _dl = this.applyDisplayLookAt?.(par.frame);
+        try {
+            return this.onContextMenuInner(event, mouseX, mouseY);
+        } finally {
+            this.removeDisplayLookAt?.(_dl);
+        }
+    },
+
+    onContextMenuInner(event, mouseX, mouseY) {
         // Prevent the default browser context menu
         event.preventDefault();
         event.stopPropagation();

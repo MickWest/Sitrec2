@@ -71,7 +71,7 @@ import {getCelestialDirection} from "./CelestialMath";
 import * as LAYER from "./LayerMasks";
 import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
 import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
-import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
+import {CNodeGUIFlag, CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry} from "./trackSourceUtils";
 import {encodeShareParam, resolveURLForFetch, toShareableCustomValue} from "./SitrecObjectResolver";
@@ -103,7 +103,7 @@ import {
     gimbalStepTrackLOSNodes,
     gimbalStepTraverse,
 } from "./GimbalCustomSetup";
-import {Color} from "three";
+import {Color, Vector3} from "three";
 
 export const setupMethods = {
     async setup() {
@@ -390,6 +390,56 @@ export const setupMethods = {
                 ptzController.refresh();
                 setRenderOne(true);
             });
+        }
+
+        // "Render Camera Use Traverse Track": display-only tracking of the
+        // traverse solution (the yellow cube) in the look view. The LOS — and
+        // hence every traverse method's solution — still comes from the selected
+        // Camera Heading, exactly as if this were off: the aim is applied and
+        // restored inside CNodeView3D's render/LOD/pick windows only
+        // (applyDisplayLookAt), never persists on lookCamera, and creates no
+        // graph edges (the provider below is a plain function reading via the
+        // NodeMan side-channel, so no cascade can flow through it).
+        if (Sit.isCustom && NodeMan.exists("lookView") && NodeMan.exists("lookCamera")
+            && (NodeMan.exists("LOSTraverseSelectTrack") || NodeMan.exists("LOSTraverseSelect"))) {
+
+            // Create-if-absent (lookCameraBankRoll precedent above): pre-feature
+            // saves get the node on load with default false (= stock behavior);
+            // post-feature saves round-trip the flag via CNodeGUIFlag
+            // modSerialize/modDeserialize automatically.
+            if (!NodeMan.exists("renderCameraTrackTraverse")) {
+                new CNodeGUIFlag({
+                    id: "renderCameraTrackTraverse",
+                    value: false,
+                    desc: "Render Camera Use Traverse Track",
+                    gui: "cameraHeading",
+                    tooltip: "Aim the look view at the traverse solution (the yellow cube) for DISPLAY ONLY. " +
+                        "The LOS — and every traverse method's solution — still comes from the selected " +
+                        "Camera Heading, exactly as if this were off.",
+                });
+            }
+
+            const _aim = new Vector3();
+            NodeMan.get("lookView").displayLookAtProvider = (frame) => {
+                // No Globals.deserializing guard here: the apply/restore render
+                // window is safe mid-load (display-only, restored in finally),
+                // and the flag only reads true once mods have applied it anyway.
+                const flag = NodeMan.get("renderCameraTrackTraverse", false);
+                if (!flag?.v0) return null;
+                // Primary target: the cube's rendered world position — already
+                // final after the node-update sweep (moveTargetAlongPath), and
+                // includes the clampAboveGround offset, so the view centers on
+                // exactly what is drawn. Zero node evaluation on this path.
+                const cube = NodeMan.get("traverseObject", false);
+                if (cube && cube._object) {
+                    return cube._object.getWorldPosition(_aim);
+                }
+                // Fallback if the cube node is absent: read the track directly.
+                const track = NodeMan.get("traverseSmoothedTrack", false)
+                    ?? NodeMan.get("LOSTraverseSelectTrack", false)
+                    ?? NodeMan.get("LOSTraverseSelect", false);
+                return track ? _aim.copy(track.p(frame)) : null;
+            };
         }
 
         // if (Sit.canMod) {

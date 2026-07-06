@@ -1022,6 +1022,35 @@ export class CNodeView3D extends CNodeViewCanvas {
         }
     }
 
+    // Display-only orientation override: aim this view's camera at the point
+    // supplied by displayLookAtProvider (a plain function property, NOT a node —
+    // no graph edges, so nothing can cascade from it). Scoped strictly between
+    // apply and remove around render/LOD/pick windows; the LOS never sees it
+    // because CNodeLOSFromCamera replays controllers on its private dummy camera
+    // and every other reader runs outside these synchronous windows.
+    applyDisplayLookAt(frame = par.frame) {
+        if (!this.displayLookAtProvider || this._displayLookAtActive) return null;
+        const target = this.displayLookAtProvider(frame);
+        if (!target || !Number.isFinite(target.x)) return null;
+        if (target.distanceToSquared(this.camera.position) < 1e-6) return null;
+        const saved = {q: this.camera.quaternion.clone(), up: this.camera.up.clone()};
+        this._displayLookAtActive = true;
+        this.camera.up.copy(getLocalUpVector(this.camera.position));
+        this.camera.lookAt(target);
+        this.camera.updateMatrix();
+        this.camera.updateMatrixWorld();
+        return saved;
+    }
+
+    removeDisplayLookAt(saved) {
+        if (!saved) return;
+        this.camera.quaternion.copy(saved.q);
+        this.camera.up.copy(saved.up);
+        this.camera.updateMatrix();
+        this.camera.updateMatrixWorld();
+        this._displayLookAtActive = false;
+    }
+
     // Prepare the camera with the effective zoom + pan shift for tile LOD evaluation.
     // Called by the terrain system before subdivideTilesViewSpecific() so tiles
     // are loaded at the resolution matching the actual rendered view.
@@ -1029,6 +1058,13 @@ export class CNodeView3D extends CNodeViewCanvas {
         this._lodSavedZoom = this.camera.zoom;
         this._lodSavedFov = this.camera.fov;
         this._lodSavedAspect = this.camera.aspect;
+
+        // Same reasoning as the camera-tweaks offset below: if the display-only
+        // lookAt (traverse tracking) reorients the rendered view, tile LOD must
+        // evaluate that frustum, not the LOS frustum, or the tracked view shows
+        // tile gaps. Applied first so the tweaks offset composes on top of it,
+        // matching the render-time order.
+        this._lodSavedDisplayLookAt = this.applyDisplayLookAt(par.frame);
 
         // Camera Tweaks xOffset/yOffset rotate the camera at render time
         // (applyCameraOffset in renderTargetAndEffects), so terrain tile
@@ -1118,6 +1154,10 @@ export class CNodeView3D extends CNodeViewCanvas {
                 this.removeCameraOffset(this._lodSavedQuaternion);
                 this.camera.updateMatrixWorld();
                 this._lodSavedQuaternion = undefined;
+            }
+            if (this._lodSavedDisplayLookAt) {
+                this.removeDisplayLookAt(this._lodSavedDisplayLookAt);
+                this._lodSavedDisplayLookAt = undefined;
             }
         }
     }
@@ -3649,6 +3689,13 @@ export class CNodeView3D extends CNodeViewCanvas {
         }
         if (globalProfiler) globalProfiler.pop();
 
+        // Display-only camera aim (e.g. "Render Camera Use Traverse Track"):
+        // applied for the duration of the render only, restored bit-exactly in
+        // the finally below so no code outside this window (node updates,
+        // cascades, serialization, PTZ sync) can observe the display orientation.
+        const _dlSaved = this.applyDisplayLookAt(frame);
+        try {
+
         // Profile: Pre-render Camera Update
         if (globalProfiler) globalProfiler.push('#d62728', 'preRenderCameraUpdate');
         this.preRenderCameraUpdate()
@@ -3706,6 +3753,10 @@ export class CNodeView3D extends CNodeViewCanvas {
         CustomManager.postRenderUpdate(this)
         this.postRenderFunction();
         if (globalProfiler) globalProfiler.pop();
+
+        } finally {
+            this.removeDisplayLookAt(_dlSaved);
+        }
     }
 
 

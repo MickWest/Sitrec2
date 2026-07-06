@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.98.0 (2026-07-06)
+
+### New Features
+- **Render Camera Use Traverse Track** (Camera → Heading, in custom sitches with a traverse): a new checkbox that keeps the look view aimed at the current traverse solution — the yellow box riding the traverse path — for display only. The lines of sight, and therefore every traverse method's solution, still come from the selected Camera Heading exactly as if the checkbox were off; fitted or smoothed traverse paths deviate from the sightlines, and this lets you watch the solution centered in the view without the camera change feeding back into the solution. Clicking in the look view picks what is actually on screen, and terrain loads for the direction being watched.
+
 ## Version 2.97.0 (2026-07-05)
 
 ### Improvements

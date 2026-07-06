@@ -1987,6 +1987,7 @@ const en = {
     nodeLabels: {
         // Keys must match the node ID (property key in sitch data),
         // NOT the desc text. When no explicit id is set, desc becomes the id.
+        renderCameraTrackTraverse: "Render Camera Use Traverse Track",
         focus: "Defocus",
         canvasResolution: "Resolution",
         "Noise Amount": "Noise Amount",

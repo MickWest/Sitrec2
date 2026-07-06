@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.98.0 (2026-07-06)
+
+### New Features
+- **"Render Camera Use Traverse Track" — display-only traverse tracking in the look view** (working tree) (`src/CustomManagerSetup.js`, `src/nodes/CNodeView3D.js`, `src/nodes/CNodeView3DMouse.js`, `src/i18n/en.js`). A new `CNodeGUIFlag` id `renderCameraTrackTraverse` (label **Render Camera Use Traverse Track**, i18n `nodeLabels.renderCameraTrackTraverse`, default off) in the `cameraHeading` folder (Camera → Heading), created for custom sitches that have a traverse (`Sit.isCustom` + `lookView`/`lookCamera` + `LOSTraverseSelectTrack` or `LOSTraverseSelect`). Created if absent (the `lookCameraBankRoll` precedent), so pre-feature saves get it on load with stock behavior; post-feature saves round-trip it via `CNodeGUIFlag` modSerialize/modDeserialize. When on, the look view's rendered camera aims at the traverse solution — but the LOS, and hence every traverse method's solution, still comes from the selected Camera Heading, verified bit-identical with the flag on vs. off. How the isolation works:
+  - `CNodeView3D.applyDisplayLookAt(frame)` / `removeDisplayLookAt(saved)`: save clones of the camera quaternion + up, set up from `getLocalUpVector(camera.position)`, `lookAt(target)`, update matrices; the remove restores the saved clones bit-exactly. Guards: a re-entrancy flag (`_displayLookAtActive`), non-finite targets, and a target within 1 mm of the camera (`distanceToSquared < 1e-6`).
+  - Applied in try/finally around the `renderCanvas(frame)` body, so no code outside the render window (node updates, cascades, serialization, PTZ sync) can observe the display orientation. Mirrored into `prepareCameraForLOD`/`restoreCameraAfterLOD` (`_lodSavedDisplayLookAt`, applied before the Camera Tweaks xOffset/yOffset so composition matches render-time order) so terrain tile subdivision evaluates the displayed frustum — no tile gaps in the tracked direction.
+  - The three pick entry points in `CNodeView3DMouse` — `_refreshCursorFromMouse`, `onMouseDown`, `onContextMenu` — are wrapped with the same apply/restore (wrapper + renamed `…Inner` pattern; nested calls no-op via the re-entrancy guard), so screen→ray picking, including right-clicking the traverse object, matches the displayed image.
+  - `lookView.displayLookAtProvider` is a plain function property, not a node — no graph edges, so nothing can cascade from it. Primary target: `traverseObject._object.getWorldPosition()` — the yellow cube's rendered world position, already final after the node-update sweep (`moveTargetAlongPath`) and including the clampAboveGround offset, with zero node evaluation on this path. Fallback when the cube node is absent: `traverseSmoothedTrack ?? LOSTraverseSelectTrack ?? LOSTraverseSelect` read via `.p(frame)`.
+  - The LOS never sees the display orientation because `CNodeLOSFromCamera` replays controllers on its private dummy camera, and every other camera reader runs outside these synchronous apply/restore windows.
+
 ## Version 2.97.0 (2026-07-05)
 
 ### Improvements
