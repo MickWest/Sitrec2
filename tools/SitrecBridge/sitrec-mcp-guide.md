@@ -578,7 +578,7 @@ subsystems where that matters, Sitrec exposes curated `window._*` hooks:
 
 | Hook | Exposes | Availability |
 |------|---------|--------------|
-| `window._traverseDebug` | Traverse-analysis internals: `buildAnalysisDataset(losNode, windNode, anchorDist)`, `resolveLOSNode()`, `fitPhysicsModel(dataset, excluded, model, options)` (async), `ChineseLanternModel` (class), `traverseMinSpeed(dataset)`, `trackMetrics(dataset, track)`, `meanAngularError(dataset, track)` | Local builds only (`isLocal`); set once a sitch with a traverse menu has loaded |
+| `window._traverseDebug` | Traverse-analysis internals: `buildAnalysisDataset(losNode, windNode, anchorDist)`, `resolveLOSNode()`, `fitPhysicsModel(dataset, excluded, model, options)` (async), `SkyLanternModel` (class), `traverseMinSpeed(dataset)`, `trackMetrics(dataset, track)`, `meanAngularError(dataset, track)` | Local builds only (`isLocal`); set once a sitch with a traverse menu has loaded |
 | `window._objectTracker` | The live `ObjectTracker` instance (video Auto Tracking internals) | Local builds only; set the first time tracking is enabled (Video ▸ Tracking) |
 | `window._treeFlattenDebug` | Aggregate diagnostics for Edit Geometry (Trees) tile flattening: counters (`tiles`, `verts`, `snapped`, ...) plus `reset()` | Always (production too); a plain counters object |
 

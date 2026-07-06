@@ -1,5 +1,5 @@
 /**
- * Tests for the wind-drift Chinese Lantern model (src/ChineseLanternModel.js).
+ * Tests for the wind-drift Sky Lantern model (src/SkyLanternModel.js).
  *
  * The model is pure kinematics: horizontal velocity == altitude-sheared wind,
  * vertical velocity == lantern life cycle (rise while lit, buoyancy decay
@@ -12,7 +12,7 @@
  * compact copy of fitPhysicsModel's core.
  */
 
-import {ChineseLanternModel} from "../src/ChineseLanternModel";
+import {SkyLanternModel} from "../src/SkyLanternModel";
 import {integrateRK4} from "../src/PhysicsModel";
 import {differentialEvolution} from "../src/DifferentialEvolution";
 import {nelderMead} from "../src/NelderMead";
@@ -80,7 +80,7 @@ function angErr(fx, fy, fz, sx, sy, sz, dx, dy, dz) {
 
 // Compact copy of fitPhysicsModel's core (DE + polish over strided frames).
 async function fitLantern(dataset, {stride = 5, pop = 48, gens = 120} = {}) {
-    const model = new ChineseLanternModel();
+    const model = new SkyLanternModel();
     const defs = model.getParameterDefs();
     const lo = defs.map(p => p.min), hi = defs.map(p => p.max);
     const x0 = defs.map(p => p.default), scales = defs.map(p => p.scale);
@@ -125,7 +125,7 @@ async function fitLantern(dataset, {stride = 5, pop = 48, gens = 120} = {}) {
     return {track, solved, errDeg: (errSum / count) * 180 / Math.PI};
 }
 
-describe("ChineseLanternModel", () => {
+describe("SkyLanternModel", () => {
 
     let randSpy;
     beforeEach(() => {
@@ -135,7 +135,7 @@ describe("ChineseLanternModel", () => {
     afterEach(() => randSpy.mockRestore());
 
     test("initial state sits on the first LOS ray with z0 riding along", () => {
-        const model = new ChineseLanternModel();
+        const model = new SkyLanternModel();
         const dataset = {
             sensorPos: Float64Array.from([100, 200, 500]),
             losDir: Float64Array.from([0.6, 0.64, -0.48]),
@@ -148,7 +148,7 @@ describe("ChineseLanternModel", () => {
     });
 
     test("vertical profile: rise while lit, decay to terminal sink after flame-out", () => {
-        const model = new ChineseLanternModel();
+        const model = new SkyLanternModel();
         // params: range, windE, windN, shear, vRise, vSink, tBurn, tauCool
         const p = [1000, 0, 0, 0, 2.0, 1.5, 30, 20];
         expect(model._vz(0, p)).toBeCloseTo(2.0, 9);
@@ -168,7 +168,7 @@ describe("ChineseLanternModel", () => {
     });
 
     test("wind shear multiplier is clamped so wind never reverses or blows up", () => {
-        const model = new ChineseLanternModel();
+        const model = new SkyLanternModel();
         const p = [1000, 10, 0, 0.008, 0, 0, 60, 60];
         // way below the reference altitude: clamped at the floor, same sign
         const dLow = model.derivatives([0, 0, -10000, 500], p, 0);
@@ -204,7 +204,7 @@ describe("ChineseLanternModel", () => {
         // lands trades off against range within the degenerate family, so
         // only the shape is asserted, not the exact end rate.)
         expect(fit.solved.vRise).toBeGreaterThan(0.5);
-        const vzEnd = new ChineseLanternModel()._vz(T, Object.values(fit.solved));
+        const vzEnd = new SkyLanternModel()._vz(T, Object.values(fit.solved));
         expect(vzEnd).toBeLessThan(fit.solved.vRise);
         expect(vzEnd).toBeLessThan(1.0);
 
@@ -220,7 +220,7 @@ describe("ChineseLanternModel", () => {
     }, 120000);
 
     test("parameter bounds forbid non-lantern motion", () => {
-        const defs = new ChineseLanternModel().getParameterDefs();
+        const defs = new SkyLanternModel().getParameterDefs();
         const byName = Object.fromEntries(defs.map(d => [d.name, d]));
         // wind bounded to ~39 kt per component (55 kt vector); vertical rates to 4 m/s
         expect(Math.hypot(byName.windE.max, byName.windN.max) / KNOTS_TO_MS).toBeLessThan(60);

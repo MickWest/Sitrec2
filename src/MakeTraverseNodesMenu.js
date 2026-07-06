@@ -40,6 +40,8 @@ export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExt
             "Constant Ground Speed - ": "Constant Ground Speed",
             "Const Air Spd": "Constant Air Speed",
             "Global Fit: Const Acceleration": "Global Fit: Constant Acceleration",
+            // "Plausible" claimed a result; the algorithm minimizes acceleration.
+            "Global Fit: Plausible": "Global Fit: Minimum Acceleration",
         },
 
     }, guiMenus.traverse)

@@ -39,8 +39,8 @@ In the menu these appear with a "Global Fit:" prefix (e.g. "Global Fit: Constant
 | **Kalman Smoother** | 2 | Process Noise, Measurement Noise | Runs a Kalman filter forward then backward (RTS smoother). Every point benefits from all measurements past and future. Tunable noise balance. |
 | **Monte Carlo 1** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Randomly samples points along perturbed LOS rays (using a CV fit for focused per-frame range estimates), fits polynomials, and keeps the best trial. Robust to outliers. |
 | **Monte Carlo 2** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Least-squares variant: perturbs all frames each trial and fits an overdetermined polynomial, giving more stable results at higher polynomial orders. |
-| **Physics** | 2 | Physics Model, Max Iterations, Wind, Initial Range | RK4 integration of a physical dynamics model — Chinese Lantern (wind-drift kinematics with a rise/decay/sink life cycle) or Fixed Wing Aircraft, chosen with the Physics Model selector — fit with differential evolution plus Nelder-Mead polish. |
-| **Plausible** | 2 | Target Speed, Min/Max Dist limits | Finds the least-maneuvering path that follows the rays. Finds its own range — purely from geometry when the sensor's own motion pins it, falling back to Target Speed as a soft tiebreaker on narrow-baseline scenes. See "Physically Plausible Analysis" below. |
+| **Physics** | 2 | Physics Model, Max Iterations, Wind, Initial Range | RK4 integration of a physical dynamics model — Sky Lantern (wind-drift kinematics with a rise/decay/sink life cycle) or Fixed Wing Aircraft, chosen with the Physics Model selector — fit with differential evolution plus Nelder-Mead polish. |
+| **Minimum Acceleration** | 2 | Target Speed, Min/Max Dist limits | Finds the acceleration-minimizing path that follows the rays. Finds its own range — purely from geometry when the sensor's own motion pins it, falling back to Target Speed as a soft tiebreaker on narrow-baseline scenes. (Formerly "Plausible"; saved sitches still serialize the menu key "Global Fit: Plausible".) See "Physically Plausible Analysis" below. |
 | **Minimum Speed** | 2 | (none) | Finds the slowest object consistent with the sightlines — the drifting-lantern / near-static reading. See "Physically Plausible Analysis" below. |
 
 ---
@@ -277,7 +277,11 @@ maneuvering g) rather than exact constraints. The interesting output is the
 family of plausible solutions — and how much maneuvering every *other*
 interpretation would require.
 
-### Global Fit: Plausible
+### Global Fit: Minimum Acceleration
+
+(Formerly "Global Fit: Plausible" — the display name now describes the
+algorithm's objective rather than a claimed result; saved sitches still
+serialize the original menu key.)
 
 **Model**: the range along each LOS ray is a smooth cubic B-spline λ(f)
 (25 control points). The trajectory follows the rays, with a soft range floor
@@ -288,17 +292,17 @@ over ~half-second strides so that jitter cannot dominate it.
 **Method**: two-stage. Stage 1 solves a pure-smoothness (no speed target)
 coarse sweep over range: when the sensor itself maneuvers (an orbit, a hard
 turn), geometry alone pins the range — the smoothness-vs-range valley is
-decisive and the speed target is *not used* (the Plausible Fit Results folder
-shows "not needed (geometry)"). Only when that valley is flat — the classic
+decisive and the speed target is *not used* (the Minimum Acceleration Fit
+Results folder shows "not needed (geometry)"). Only when that valley is flat — the classic
 narrow-baseline case like Gimbal, where range is unobservable from geometry —
 does Stage 2 fall back to the soft air-speed target
 `((airspeed − Target Speed)/σ)²` with σ ≈ 60 kt (IRLS), which is then what
 gives the plausibility-vs-range curve a real minimum. The winner is refined
 and re-solved at full quality (the result appears as **Found Range**; the
 **Min Dist** / **Max Dist** limits in Traverse Analysis Tweaks bound the
-search). Where Constant Air Speed holds a speed *exactly*, Plausible treats
-speed (when used at all) as a loose target and finds the least-maneuvering
-smooth path consistent with the rays.
+search). Where Constant Air Speed holds a speed *exactly*, Minimum
+Acceleration treats speed (when used at all) as a loose target and finds the
+smoothest path consistent with the rays.
 
 **When to use**: as the "best fit" interpretation of a hypothesis like
 "a ~350 kt aircraft at ~30 NM" — it shows what the *smoothest* version of that
@@ -307,7 +311,8 @@ hypothesis is at that distance.
 
 ### Global Fit: Minimum Speed
 
-**Model**: the same on-the-rays B-spline range profile as Plausible, but the
+**Model**: the same on-the-rays B-spline range profile as Minimum
+Acceleration, but the
 objective is inverted: instead of the least-maneuvering path near a target
 speed, it finds the **slowest** object consistent with the sightlines, then
 applies a curvature-penalized smoothing pass that sheds sensor pointing
@@ -331,7 +336,7 @@ its parameters to the sightlines with **differential evolution** (a
 genetic-style global search) followed by Nelder-Mead polish. Two models are
 available via the **Physics Model** dropdown in the Traverse menu:
 
-**Chinese Lantern** — pure wind-drift kinematics. A sky lantern is a
+**Sky Lantern** — pure wind-drift kinematics. A sky lantern is a
 near-perfect wind tracer (grams of mass, large drag area), so its horizontal
 velocity *is* the wind at its current altitude: a solved wind vector with a
 linear altitude shear (clamped so it can never reverse or blow up — the wind
@@ -394,12 +399,16 @@ targets; scores compare hypotheses, they are not hard physical limits.
 
 Notes on the gallery tiles:
 
-- The ray-following tiles (Constant Air Speed, Constant Altitude, Least
-  Maneuvering) show lightly smoothed paths with a small honest LOS residual
+- The ray-following tiles (Constant Air Speed, Constant Altitude, Minimum
+  Acceleration) show lightly smoothed paths with a small honest LOS residual
   (typically hundredths of a degree) instead of riding the rays exactly —
   exact ray-riding inherits sensor pointing jitter as fake g-load, which used
   to poison the scoring at the *correct* answer. Applying a tile with **Use
   This** still drives the exact-LOS live traverse.
+- The **Best** badge goes to the top-ranked tile: within a plausibility tier,
+  candidates are ordered by kinematic cleanliness plus noise-floor-aware LOS
+  error — NOT by raw LOS error, which among ray-following methods rewards the
+  least-smoothed (wiggliest) track.
 - **Constant Altitude** searches the altitude band and scores each candidate
   on the smoothed path plus its LOS residual; if the sightlines are
   near-horizontal (they never cross a constant-altitude plane) the tile

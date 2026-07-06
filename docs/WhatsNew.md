@@ -9,6 +9,24 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.97.0 (2026-07-05)
+
+### Improvements
+- **The traverse analysis now gets the right answer when the camera itself maneuvers** (Traverse → **Analyze Traverse Methods...**): on scenes where the camera circles or turns, most candidates used to prefer fast, violently maneuvering paths over a slow straight truth, because tiny pointing wobbles in the sightlines masqueraded as g-force. Candidates that follow the sightlines now show a lightly smoothed path with a small honest fit error — **Use This** still applies the exact sightline-following method — and every method now recovers a slow, straight test target correctly.
+- **Constant Air Speed** can now find slow objects: the analysis speed sweep extends down to 15 kt (previously 100 kt) and each range/speed combination is solved with a far more stable method, so a slow drifter no longer loses to a fast corkscrew; the sweep heatmap's speed axis is now log-scaled.
+- The **Fixed Wing Aircraft** model can fly as slow as 25 kt — the legal ultralight stall limit — instead of 50, and the **Sky Lantern** model allows realistic winds aloft (up to about 39 kt per wind component, previously about 25). When a solution sits exactly at one of those limits, the explanation now says so: it means the sightlines want something outside what that object can do.
+- **Minimum Acceleration** (formerly "Least Maneuvering") now finds its distance purely from the geometry whenever the camera's own motion pins it, using the Target Speed slider only as a tiebreaker on scenes where geometry can't — the results folder then shows "not needed (geometry)". Renamed throughout because the name should describe what the method minimizes, not claim a result: the Traverse menu shows **Global Fit: Minimum Acceleration** and the results folder is **Minimum Acceleration Fit Results**. Saved sitches load unchanged.
+- **Chinese Lantern is now called Sky Lantern** everywhere: the **Physics Model** selector (Traverse menu), the analysis gallery's **Sky Lantern / Balloon** candidate, and the documentation.
+
+### Bug Fixes
+- Fixed the analysis gallery on custom sitches silently leaving out all the live-method candidates (**Global Fit: Constant Velocity / Constant Acceleration / Kalman / Monte Carlo**, **Straight Line**), and **Use This** setting the sliders without actually switching the selected traverse method.
+- Fixed the **Best** badge sometimes going to the wiggliest candidate — ties are now broken by how cleanly the path flies rather than by raw sightline error, which favored the least-smoothed track.
+- Fixed the Minimum Acceleration fit occasionally producing a track that passed behind the camera.
+- Fixed the Minimum Speed candidate showing a spurious speed wobble at the very start and end of the clip.
+- Fixed the slow-object candidate claiming every distance fits equally well, based on a meaningless split-second "low-motion window", on clips where the bearing turns continuously — those clips now correctly report the narrow distance band the geometry actually pins down.
+- Fixed the sightline noise-floor calibration reading absurdly high (around 90°) on scenes where the camera flies straight — it could mistake the camera's own path for the object.
+- **Constant Altitude** now says the fit failed when the sightlines are near-horizontal (they never cross a level plane, so no constant-altitude answer exists) instead of showing a meaningless one, and its altitude search no longer stops short of the best altitude.
+
 ## Version 2.96.1 (2026-07-04)
 
 ### Improvements

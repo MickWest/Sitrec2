@@ -914,11 +914,11 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
         new CNodeSwitch({
             id: "physicsModelChoice",
             inputs: {
-                "Chinese Lantern": new CNodeConstant({id: "physicsModelLantern", value: "Chinese Lantern"}),
+                "Sky Lantern": new CNodeConstant({id: "physicsModelLantern", value: "Sky Lantern"}),
                 "Fixed Wing Aircraft": new CNodeConstant({id: "physicsModelFixedWing", value: "Fixed Wing Aircraft"}),
             },
             desc: "Physics Model",
-            default: "Chinese Lantern",
+            default: "Sky Lantern",
             tooltip: "Dynamics model used by the 'Global Fit: Physics' traverse method.",
         }, guiMenus.traverse)
     }

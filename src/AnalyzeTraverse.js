@@ -44,7 +44,7 @@ import {
     traversePlausible,
 } from "./TraverseAnalysis";
 import {fitConstantAcceleration, fitPhysicsModel} from "./LOSFitting";
-import {ChineseLanternModel} from "./ChineseLanternModel";
+import {SkyLanternModel} from "./SkyLanternModel";
 import {isLocal} from "./configUtils";
 import {getCelestialDirection, getCelestialDirectionFromRaDec, getGeocentricBodyDirectionECEF} from "./CelestialMath";
 import {ECEF2ENU_radii} from "./LLA-ECEF-ENU";
@@ -206,21 +206,27 @@ function plausibilityRating(h) {
     }
     const g = (h.metricsFull ? h.metricsFull.gLoad.max : 0) || 0;
     const spdKt = (h.metricsFull ? h.metricsFull.airSpeed.mean : 0) / KNOTS_TO_MS;
-    // Ray-following methods carry a small smoothing residual that tracks the
-    // dataset noise floor, not model failure — don't let pure noise demote
-    // them; their honest discriminators are the implied g/speed. (Physics-fit
-    // badges stay UN-normalized by the floor: a genuinely maneuvering target
-    // inflates the floor and would grade itself on a curve.) A LARGE residual
-    // still demotes — that would mean the smoothed path stopped following.
-    const rayFollow = h.key === "constAir" || h.key === "constAlt"
-        || h.key === "plausible" || h.key === "saddle";
-    const errEff = rayFollow
-        ? Math.max(0, err - Math.max(0.05, 1.5 * (p.errFloor || 0)))
-        : err;
+    const errEff = effectiveErrDeg(h);
     if (g > 9 || spdKt > 900 || errEff > 0.5) return {label: "Implausible", rank: 0, color: "#e0564e"};
     if (g > 4 || spdKt > 650 || errEff > 0.15) return {label: "Low", rank: 1, color: "#d9862f"};
     if (g > 1.5 || errEff > 0.05) return {label: "Moderate", rank: 2, color: "#c9b23a"};
     return {label: "High", rank: 3, color: "#3fae72"};
+}
+
+// Effective LOS error for rating/ranking. Ray-following methods carry a small
+// smoothing residual that tracks the dataset noise floor, not model failure —
+// don't let pure noise demote or de-rank them; their honest discriminators are
+// the implied g/speed. (Physics-fit numbers stay UN-normalized by the floor: a
+// genuinely maneuvering target inflates the floor and would grade itself on a
+// curve.) A LARGE residual still counts — that would mean the smoothed path
+// stopped following the rays.
+function effectiveErrDeg(h) {
+    const err = h.errDeg || 0;
+    const rayFollow = h.key === "constAir" || h.key === "constAlt"
+        || h.key === "plausible" || h.key === "saddle";
+    if (!rayFollow) return err;
+    const floor = (h.params && h.params.errFloor) || 0;
+    return Math.max(0, err - Math.max(0.05, 1.5 * floor));
 }
 
 // ---------------------------------------------------------------------------
@@ -553,10 +559,10 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
         const track = plausible.track;
         list.push({
             key: "plausible",
-            name: "Least Maneuvering",
+            name: "Minimum Acceleration",
             subtitle: plausible.usedSpeedTarget
-                ? "Smoothest path at any range (soft speed target)"
-                : "Smoothest path at any range (geometry-picked)",
+                ? "Acceleration-minimizing path at any range (soft speed target)"
+                : "Acceleration-minimizing path at any range (geometry-picked)",
             color: VIZ.fastObj,
             track,
             metricsFull: trackMetrics(dataset, track),
@@ -643,14 +649,14 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
         });
     }
 
-    // 5. Chinese lantern / balloon physics model — may fail; degrade gracefully.
+    // 5. sky lantern / balloon physics model — may fail; degrade gracefully.
     if (lantern && lantern.positions) {
         const track = lantern.positions;
         const range0 = Math.hypot(track[0] - S[0], track[1] - S[1], track[2] - S[2]);
         const solved = lantern.params.solved || {};
         list.push({
             key: "lantern",
-            name: "Chinese Lantern / Balloon",
+            name: "Sky Lantern / Balloon",
             subtitle: "Most like a drifting balloon",
             color: VIZ.slowObj,
             track,
@@ -674,7 +680,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
     } else {
         list.push({
             key: "lantern",
-            name: "Chinese Lantern / Balloon",
+            name: "Sky Lantern / Balloon",
             subtitle: "Most like a drifting balloon",
             color: VIZ.slowObj,
             track: null,
@@ -892,11 +898,11 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
 
     // Every OTHER selectable traverse method, read straight off its live node so
     // it competes on the same footing and "Use" re-selects exactly it. (Constant
-    // Speed/Altitude, Plausible, Physics and Minimum Speed above already map to
-    // their methods; these are the global statistical fits and the straight
-    // line. Monte Carlo uses a fixed seed, so it is a stable, reproducible
-    // contender.)
-    const sel = NodeMan.get("LOSTraverseSelect", false);
+    // Speed/Altitude, Minimum Acceleration, Physics and Minimum Speed above
+    // already map to their methods; these are the global statistical fits and
+    // the straight line. Monte Carlo uses a fixed seed, so it is a stable,
+    // reproducible contender.)
+    const sel = resolveTraverseSelect();
     const extraMethods = [
         {key: "gfCV", label: "Global Fit: Constant Velocity", subtitle: "Least-squares constant-velocity fit", color: "#8bd17c"},
         // label = the switch-inputs KEY (never renamed, saved sitches store it);
@@ -988,11 +994,24 @@ function methodNodeHypothesis(meth, node, dataset, originLat, originLon, losSig)
 // Hypotheses that produced a track, ranked most-plausible first (plausibility
 // rank descending, then residual LOS error ascending). Returns [{h, r}] with
 // r = plausibilityRating(h). Used by both the summary dialog and the report.
+// Within a plausibility rank, order by a composite of kinematic cleanliness
+// and floor-aware effective LOS error. Raw errDeg is the WRONG tie-break for
+// same-rank candidates: among ray-following methods LOS error is
+// anti-correlated with quality (the less a track is smoothed, the tighter it
+// hugs the jittery rays — lowest errDeg — and the higher its fake g), so raw
+// errDeg would crown the wiggliest ray-follower "Best" over dead-straight
+// zero-g reconstructions of the same scene.
+function rankTieScore(h) {
+    return straightFlightScore(h.metricsFull) + effectiveErrDeg(h) / 0.05;
+}
+
 function rankHypotheses(hypotheses) {
     return (hypotheses || [])
         .filter((h) => h.track && h.metricsFull)
         .map((h) => ({h, r: plausibilityRating(h)}))
-        .sort((a, b) => b.r.rank - a.r.rank || (a.h.errDeg || 0) - (b.h.errDeg || 0));
+        .sort((a, b) => b.r.rank - a.r.rank
+            || rankTieScore(a.h) - rankTieScore(b.h)
+            || (a.h.errDeg || 0) - (b.h.errDeg || 0));
 }
 
 // Data-driven verdict paragraph (HTML): which interpretations rate High vs
@@ -1029,7 +1048,7 @@ function buildVerdict(hypotheses) {
     const lanternHyp = withTrack.find((h) => h.key === "lantern");
     if (aircraftHyp && lanternHyp && isFinite(aircraftHyp.errDeg) && isFinite(lanternHyp.errDeg)) {
         const ae = aircraftHyp.errDeg, le = lanternHyp.errDeg;
-        const better = ae <= le ? "a fixed-wing aircraft" : "a drifting Chinese lantern / balloon";
+        const better = ae <= le ? "a fixed-wing aircraft" : "a drifting sky lantern / balloon";
         out += `Comparing the two physics-based models head to head, the fixed-wing model fits the ` +
             `sightlines to <strong>${ae.toFixed(3)}°</strong> versus the lantern's ` +
             `<strong>${le.toFixed(3)}°</strong>, so the geometry alone is better explained by ${better}. `;
@@ -1079,7 +1098,7 @@ export function addAnalyzeButton(folder) {
             buildAnalysisDataset,
             resolveLOSNode,
             fitPhysicsModel,
-            ChineseLanternModel,
+            SkyLanternModel,
             traverseMinSpeed,
             trackMetrics,
             meanAngularError,
@@ -1398,7 +1417,7 @@ export async function runTraverseAnalysis() {
             rangeMax: plausRangeMax,
         });
 
-        await phase(0.82, 0.14, "Fitting Chinese lantern / balloon model...")(0);
+        await phase(0.82, 0.14, "Fitting sky lantern / balloon model...")(0);
         let lantern = null;
         try {
             const lanTimes = new Float64Array(dataset.n);
@@ -1407,7 +1426,7 @@ export async function runTraverseAnalysis() {
                 sensorPos: dataset.S, losDir: dataset.D, times: lanTimes,
                 count: dataset.n, maxRange: null,
             };
-            lantern = await fitPhysicsModel(lanternDS, new Set(), new ChineseLanternModel(),
+            lantern = await fitPhysicsModel(lanternDS, new Set(), new SkyLanternModel(),
                 {optimizer: "de", sampleStride: 5, dePop: 48, deGens: 120});
         } catch (e) {
             lantern = null;
@@ -1925,9 +1944,9 @@ function detailProse(h, r, ss) {
         case "plausible":
             return {
                 lead: p.usedSpeedTarget
-                    ? `The least-maneuvering object consistent with the rays at a soft speed target — ` +
+                    ? `The acceleration-minimizing path consistent with the rays at a soft speed target — ` +
                       `${kt1(m.airSpeed.mean)} kt near ${rMin}–${rMax} NM, peaking at ${g.toFixed(2)} g.`
-                    : `The least-maneuvering object consistent with the rays — ${kt1(m.airSpeed.mean)} kt near ` +
+                    : `The acceleration-minimizing path consistent with the rays — ${kt1(m.airSpeed.mean)} kt near ` +
                       `${rMin}–${rMax} NM, peaking at ${g.toFixed(2)} g. The smoothness-vs-range profile picked ` +
                       `the range on its own; no speed assumption was needed.`,
                 derived: p.usedSpeedTarget
@@ -2001,7 +2020,7 @@ function detailProse(h, r, ss) {
                         : ` The flame dies ${p.tBurn.toFixed(0)} s in: rise at ${(p.vRise ?? 0).toFixed(1)} m/s, ` +
                           `then a cooling transition toward a ${(p.vSink ?? 0).toFixed(1)} m/s sink.`;
             return {
-                lead: `A buoyant Chinese lantern / balloon drifting with the wind — ` +
+                lead: `A buoyant sky lantern / balloon drifting with the wind — ` +
                     `${kt1(m.airSpeed.mean)} kt mean at ${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft, ` +
                     `reproducing the sightlines to ${err.toFixed(2)}°.`,
                 derived: `Wind-drift kinematics: the lantern's horizontal velocity IS the wind at its ` +
@@ -2263,12 +2282,9 @@ function buildDetailHTML(h, r, isTop, ctx) {
 function showResultGallery(results) {
     const {dataset, hypotheses, html} = results;
 
-    // tiles: interpretations that produced a track, ranked most-plausible first
-    // (plausibility rank descending, then residual LOS error ascending).
-    const tiles = (hypotheses || [])
-        .filter((h) => h.track && h.metricsFull)
-        .map((h) => ({h, r: plausibilityRating(h)}))
-        .sort((a, b) => b.r.rank - a.r.rank || (a.h.errDeg || 0) - (b.h.errDeg || 0));
+    // tiles: interpretations that produced a track, ranked most-plausible
+    // first (same ordering as the HTML report — see rankHypotheses).
+    const tiles = rankHypotheses(hypotheses);
 
     const overlay = document.createElement("div");
     overlay.className = "traverse-gallery-overlay";
@@ -2639,9 +2655,10 @@ function showResultGallery(results) {
                 let applied = null;
                 try { applied = applyHypothesis(h); } finally { remove(); }
                 // Name the traverse method actually selected when it isn't
-                // simply the candidate's own name (e.g. Least Maneuvering →
-                // Global Fit: Plausible, or an air-speed candidate landing on
-                // Constant Ground Speed in a sitch with no air-speed method).
+                // simply the candidate's own name (e.g. Minimum Acceleration →
+                // Global Fit: Minimum Acceleration, or an air-speed candidate
+                // landing on Constant Ground Speed in a sitch with no
+                // air-speed method).
                 showGalleryToast(applied && applied !== h.name
                     ? `Applied: ${h.name} (method: ${applied})`
                     : `Applied: ${h.name}`);
@@ -2720,6 +2737,17 @@ function showResultGallery(results) {
  * The physics fits (aircraft / lantern) kick off an async solve that updates the
  * view a few seconds later — the app propagates that on its own.
  */
+// The traverse-method switch id varies by sitch flavor: legacy jet sitches use
+// "LOSTraverseSelect", the data-driven/custom setup passes its own id
+// (custom = "LOSTraverseSelectTrack"). Without this, custom sitches silently
+// got NO live-method contender tiles and "Use This" set the sliders but never
+// switched the method.
+function resolveTraverseSelect() {
+    return NodeMan.get("LOSTraverseSelect", false)
+        ?? NodeMan.get("LOSTraverseSelectTrack", false)
+        ?? null;
+}
+
 function applyHypothesis(hyp) {
     const setBig = (id, m) => {
         const nd = NodeMan.get(id, false);
@@ -2729,7 +2757,7 @@ function applyHypothesis(hyp) {
         const nd = NodeMan.get(id, false);
         if (nd && nd.setValueWithUnits) nd.setValueWithUnits(ms / KNOTS_TO_MS, "nautical", "speed");
     };
-    const sel = NodeMan.get("LOSTraverseSelect", false);
+    const sel = resolveTraverseSelect();
     // Select the first available option (matching on the switch's KEYS — the
     // per-sitch spellings) and return its DISPLAY label, or null if none matched.
     const selectFirst = (opts) => {
@@ -2800,7 +2828,7 @@ function applyHypothesis(hyp) {
             applied = selectFirst(["Global Fit: Physics"]);
             break;
         case "lantern":
-            setModel(["Chinese Lantern"]);
+            setModel(["Sky Lantern"]);
             applied = selectFirst(["Global Fit: Physics"]);
             break;
     }
@@ -3996,7 +4024,7 @@ td .pill { color: #0d0f12; }
     turning, climbing, and straying from the preferred speed.</p>
     <p><strong>Object-type physics models (aircraft vs lantern).</strong> Two of the interpretations are
     genuine forward-integrated physics models fit to the sightlines rather than paths pinned to the rays:
-    the fixed-wing aircraft (constant TAS, slowly varying turn rate, constant climb) and the Chinese
+    the fixed-wing aircraft (constant TAS, slowly varying turn rate, constant climb) and the sky
     lantern / balloon (a wind tracer: horizontal velocity equals the altitude-sheared wind, bounded to
     lantern-plausible speeds, with a rise / buoyancy-decay / terminal-sink vertical life cycle).
     Because neither is forced onto the lines of sight, each leaves a residual mean LOS error — and a

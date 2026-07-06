@@ -69,7 +69,7 @@ export class CNodeLOSFitPlausible extends CNodeTrack {
         if (!guiMenus.traverse) return;
         if (this.guiFolder) { this.guiFolder.destroy(); this.guiFolder = null; }
         this.guiFolder = guiMenus.traverse.addFolder(
-            t("losFitPlausible.folder", {defaultValue: "Plausible Fit Results"})).close();
+            t("losFitPlausible.folder", {defaultValue: "Minimum Acceleration Fit Results"})).close();
         this.guiDisplay = {};
         // string rows (avoid lil-gui NumberController step requirement)
         this.guiDisplay._range = (result.startDist / METERS_PER_NM).toFixed(1) + " NM";

@@ -1,4 +1,4 @@
-// Chinese Lantern physics model for LOS trajectory fitting.
+// Sky Lantern physics model for LOS trajectory fitting.
 //
 // A sky lantern is a near-perfect wind tracer: it weighs ~100 g with ~0.5 m²
 // of drag area, so it matches the local wind within seconds. The model is
@@ -45,13 +45,13 @@ import {PhysicsModel} from "./PhysicsModel";
 const MULT_MIN = 0.25;  // wind shear multiplier floor (never reverses)
 const MULT_MAX = 3.0;   // ...and ceiling (never a hurricane aloft)
 
-export class ChineseLanternModel extends PhysicsModel {
+export class SkyLanternModel extends PhysicsModel {
     // Smooth kinematics: big RK4 substeps are fine (the base 0.02 s default
     // exists for stiff drag models).
     maxDt = 0.25;
 
     getName() {
-        return "Chinese Lantern";
+        return "Sky Lantern";
     }
 
     getParameterDefs() {

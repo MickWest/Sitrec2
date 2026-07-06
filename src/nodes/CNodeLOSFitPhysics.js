@@ -7,14 +7,14 @@
 
 import {CNodeTrack} from "./CNodeTrack";
 import {fitPhysicsModel, buildLOSDataset, unpackFitPositions} from "../LOSFitting";
-import {ChineseLanternModel} from "../ChineseLanternModel";
+import {SkyLanternModel} from "../SkyLanternModel";
 import {FixedWingModel} from "../FixedWingModel";
 import {guiMenus, setRenderOne} from "../Globals";
 import {t} from "../i18n";
 
 // Registry of available physics models
 const physicsModels = {
-    "Chinese Lantern": new ChineseLanternModel(),
+    "Sky Lantern": new SkyLanternModel(),
     "Fixed Wing Aircraft": new FixedWingModel(),
 };
 
@@ -65,7 +65,7 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
         // Capture everything from the inputs synchronously, before any await
         const {dataset, originLat, originLon} = buildLOSDataset(this.in.LOS);
 
-        const modelName = this.in.physicsModel ? this.in.physicsModel.v0 : "Chinese Lantern";
+        const modelName = this.in.physicsModel ? this.in.physicsModel.v0 : "Sky Lantern";
         const model = physicsModels[modelName];
         if (!model) return;
 

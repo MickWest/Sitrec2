@@ -1671,7 +1671,7 @@ const en = {
     },
 
     losFitPlausible: {
-        folder: "Plausible Fit Results",
+        folder: "Minimum Acceleration Fit Results",
         range: {
             label: "Found Range",
         },
