@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.98.1 (2026-07-07)
+
+### Improvements
+- **STANAG track files load with the right camera and target**: when you drag in a STANAG track file, the sensor-platform track is now assigned as the Camera track and the ground-aim track as the Target track (previously they were assigned the wrong way round). The two reference tracks are labelled *(Platform)* and *(Ground)*.
+- **Clearer automatic track colours**: automatically coloured tracks now use 16 light, evenly spread tints that stand out better against the dark 3D view. Pure yellow and white stay reserved for traverse and sonde tracks, and your own saved track colours are untouched.
+- **Roomier object menus**: the menu folder for each 3D object now shows more of the object's name and reveals the full name as a tooltip when you hover over its title bar.
+
+### Bug Fixes
+- Fixed imported tracks and objects appearing at the wrong altitude — STANAG tracks were buried roughly 16-19 m underground, and tracks using height-above-ground or an altitude lock were off by roughly 16-30 m. They now sit at the correct height.
+- Fixed export altitudes: KML files now open at the correct height in Google Earth, and MISB CSV exports of GPS/ellipsoidal-height tracks survive a round-trip without sinking on re-import.
+- Fixed STANAG files with a ground-locked target loading a duplicate third track — such files now load two tracks instead of three.
+- Fixed the first automatically coloured track getting the wrong colour.
+
 ## Version 2.98.0 (2026-07-06)
 
 ### New Features
