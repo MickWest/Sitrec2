@@ -122,24 +122,24 @@ describe('CTrackFileSTANAG', () => {
             warnSpy.mockRestore();
         });
 
-        describe('LOS High track (index 1)', () => {
-            test('returns 11 track points for LOS High track', () => {
+        describe('Platform track (index 1)', () => {
+            test('returns 11 track points for Platform track', () => {
                 const misb = trackFile.toMISB(1);
                 expect(Array.isArray(misb)).toBe(true);
                 expect(misb.length).toBe(11);
             });
 
-            test('first LOS High entry has correct latitude (posHigh)', () => {
+            test('first Platform entry has correct latitude (posHigh)', () => {
                 const misb = trackFile.toMISB(1);
                 expect(misb[0][MISB.SensorLatitude]).toBeCloseTo(40.421348598599124, 6);
             });
 
-            test('first LOS High entry has correct longitude', () => {
+            test('first Platform entry has correct longitude', () => {
                 const misb = trackFile.toMISB(1);
                 expect(misb[0][MISB.SensorLongitude]).toBeCloseTo(-104.86668420008492, 6);
             });
 
-            test('first LOS High entry has correct altitude (higher than target)', () => {
+            test('first Platform entry has correct altitude (higher than target)', () => {
                 const misb = trackFile.toMISB(1);
                 expect(misb[0][MISB.SensorTrueAltitude]).toBeCloseTo(3305.4438118077815, 2);
             });
@@ -174,8 +174,8 @@ describe('CTrackFileSTANAG', () => {
             expect(trackFile.getShortName(0, 'elevated_track.xml')).toBe('elevated_track');
         });
 
-        test('returns filename with (LOS High) suffix for track 1 (posHigh)', () => {
-            expect(trackFile.getShortName(1, 'elevated_track.xml')).toBe('elevated_track (LOS High)');
+        test('returns filename with (Platform) suffix for track 1 (posHigh)', () => {
+            expect(trackFile.getShortName(1, 'elevated_track.xml')).toBe('elevated_track (Platform)');
         });
 
         test('returns filename with (Ground) suffix for track 2', () => {
@@ -186,8 +186,8 @@ describe('CTrackFileSTANAG', () => {
             expect(trackFile.getShortName()).toBe('STANAG Track');
         });
 
-        test('returns default name with (LOS High) suffix for track 1 when no filename', () => {
-            expect(trackFile.getShortName(1)).toBe('STANAG Track (LOS High)');
+        test('returns default name with (Platform) suffix for track 1 when no filename', () => {
+            expect(trackFile.getShortName(1)).toBe('STANAG Track (Platform)');
         });
 
         test('returns default name with (Ground) suffix for track 2 when no filename', () => {
@@ -294,7 +294,7 @@ describe('CTrackFileSTANAG', () => {
     // A ground-locked target: the tracker's estimate (dynamics/pos) is IDENTICAL to the
     // low / ground end of the line of sight (posLow). Emitting posHigh, dynamics/pos AND
     // posLow would produce a duplicate track, so the parser collapses to two distinct
-    // tracks: the plainly-named authoritative dynamics/pos (primary), and (LOS High) = posHigh.
+    // tracks: the plainly-named authoritative dynamics/pos (primary), and (Platform) = posHigh.
     describe('de-duplication when dynamics/pos == posLow', () => {
         const groundLockedXml = parseXml(`<?xml version="1.0"?>
             <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">
@@ -331,8 +331,8 @@ describe('CTrackFileSTANAG', () => {
             expect(misb[0][MISB.SensorLatitude]).toBeCloseTo(40.100, 6);
         });
 
-        test('track 1 is the LOS High endpoint (posHigh)', () => {
-            expect(groundLocked.getShortName(1, 'gl.xml')).toBe('gl (LOS High)');
+        test('track 1 is the Platform endpoint (posHigh)', () => {
+            expect(groundLocked.getShortName(1, 'gl.xml')).toBe('gl (Platform)');
             const misb = groundLocked.toMISB(1);
             expect(misb[0][MISB.SensorLatitude]).toBeCloseTo(40.200, 6);
         });
@@ -346,6 +346,47 @@ describe('CTrackFileSTANAG', () => {
         test('hasMoreTracks reflects the two-track count', () => {
             expect(groundLocked.hasMoreTracks(0)).toBe(true);
             expect(groundLocked.hasMoreTracks(1)).toBe(false);
+        });
+    });
+
+    // Camera/target auto-selection roles: posHigh (Platform) approximates the sensor
+    // position -> camera; posLow (Ground) is what the sensor is aimed at -> target.
+    // The authoritative dynamics/pos track is roleless UNLESS it absorbed the target
+    // role from a coincident posLow during de-duplication (ground-locked case).
+    describe('trackRoleHint', () => {
+        test('elevated file: dynamics/pos has no role, Platform is camera, Ground is target', () => {
+            expect(trackFile.trackRoleHint(0)).toBe(null);      // dynamics/pos (primary)
+            expect(trackFile.trackRoleHint(1)).toBe('camera');  // posHigh (Platform)
+            expect(trackFile.trackRoleHint(2)).toBe('target');  // posLow (Ground)
+        });
+
+        test('ground-locked file: dynamics/pos inherits the target role from posLow', () => {
+            const groundLockedXml = parseXml(`<?xml version="1.0"?>
+                <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">
+                    <message>
+                        <baseTime>2016-06-29T15:57:36.006Z</baseTime>
+                        <relTimeIncrement>0.000001</relTimeIncrement>
+                        <track><segment>
+                            <tp posLow="40.100 -104.100 1400.0" posHigh="40.200 -104.200 3300.0">
+                                <relTime>0</relTime>
+                                <dynamics cs="WGS_84"><pos>40.100 -104.100 1400.0</pos></dynamics>
+                            </tp>
+                        </segment></track>
+                    </message>
+                </nitsRoot>`);
+            const gl = new CTrackFileSTANAG(groundLockedXml);
+            expect(gl.trackRoleHint(0)).toBe('target');   // dynamics/pos == posLow
+            expect(gl.trackRoleHint(1)).toBe('camera');   // posHigh (Platform)
+        });
+
+        test('file without posLow/posHigh has no roles', () => {
+            const minimalXml = parseXml(`<?xml version="1.0"?>
+                <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">
+                    <message><baseTime>2016-06-29T15:57:36.006Z</baseTime><track><segment>
+                        <tp><relTime>0</relTime><dynamics cs="WGS_84"><pos>40.0 -104.0 1000.0</pos></dynamics></tp>
+                    </segment></track></message>
+                </nitsRoot>`);
+            expect(new CTrackFileSTANAG(minimalXml).trackRoleHint(0)).toBe(null);
         });
     });
 });

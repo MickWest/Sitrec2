@@ -42,7 +42,23 @@ Military-standard metadata (STANAG 0601) from surveillance platforms. Contains s
 
 ### STANAG 4676
 
-NATO track exchange format. A single file can contain up to three sub-tracks: platform position (posHigh), dynamics/center, and ground position (posLow).
+NATO track exchange format (XML). The track point's `dynamics/pos` is the standard's
+authoritative target position and imports as the **primary track** (plain name). Files
+produced by GXP InMotion also carry two proprietary positions per point — the endpoints
+of the sensor's line of sight through the tracked pixel — which import as supplementary
+reference tracks: **(Platform)** (`posHigh`, the sensor end of the ray — its altitude
+varies per frame like an aircraft track) and **(Ground)** (`posLow`, the ray's ground
+intersection). On a direct load these auto-select as the **camera** (Platform) and
+**target** (Ground) tracks. When the tracker ground-locks the target, `dynamics/pos`
+coincides with `posLow` and the duplicate is dropped automatically, so such files yield
+two tracks instead of three (the surviving primary track inherits the target role).
+
+STANAG heights are WGS-84 ellipsoidal (HAE), declared by the `<dynamics cs="...">`
+attribute. Sitrec reads it and skips the MSL→HAE geoid conversion that other (MSL)
+sources get — without this the track would sit ~N metres underground (N is the local
+EGM96 geoid undulation, e.g. ≈ −19 m in Colorado). Note the **(Ground)** point is the
+*producer's* line-of-sight/DEM intersection: it can sit a few metres above or below
+Sitrec's terrain wherever the two elevation models disagree, which is normal.
 
 ### ASTERIX radar (PCAP)
 
@@ -286,7 +302,7 @@ Track altitudes come in several reference systems. Understanding these is import
 
 | Type | Reference | Common Sources |
 |------|-----------|---------------|
-| **HAE** (Height Above Ellipsoid) | WGS84 ellipsoid | Raw GPS, ADS-B `alt_geom` |
+| **HAE** (Height Above Ellipsoid) | WGS84 ellipsoid | Raw GPS, ADS-B `alt_geom`, STANAG 4676, MISB tags 75/78, Custom1 `TPHAE` |
 | **MSL** (Mean Sea Level) | Geoid (EGM96) | KML `absolute`, MISB Tag 15, most map software |
 | **Pressure Altitude** | Standard atmosphere (1013.25 hPa) | ADS-B `alt_baro`, flight instruments |
 | **AGL** (Above Ground Level) | Local terrain | DJI `rel_alt`, some military data |
@@ -295,7 +311,11 @@ Track altitudes come in several reference systems. Understanding these is import
 
 - Internally, Sitrec works in **HAE** (ellipsoid height) for 3D rendering
 - Terrain tiles are loaded as **MSL** and converted to HAE using the **EGM96** geoid model
-- KML `absolute` altitudes are treated as approximately HAE for practical compatibility
+- KML `absolute` altitudes are **MSL** (measured from the EGM96 geoid, per OGC KML 2.2/2.3)
+  and are converted to HAE on the way to the 3D scene, on both import and export
+- Sources whose altitudes are **already HAE** are flagged so the MSL→HAE conversion is
+  skipped: STANAG 4676 (`cs="WGS_84"`), MISB ellipsoid-height tags 75/78 (used
+  automatically when the MSL tag 15/25 is absent), and the Custom1 CSV `TPHAE` column
 - If a track has only AGL altitude, Sitrec adds the local terrain elevation
 - The **Alt offset** slider lets you manually correct systematic altitude errors
 
@@ -344,6 +364,22 @@ Sitrec can export tracks in several formats via the export buttons in the **Expo
 | **MISB CSV** | Full 12-column MISB-standard format including heading, pitch, roll, FOV, gimbal angles |
 
 Exported files are downloaded directly to your browser's download folder.
+
+### Export Altitude Datums
+
+Exports write each format's conventional datum, converting via the EGM96 geoid as needed:
+
+- **KML** exports use `altitudeMode` `absolute`, whose altitudes are **MSL** (EGM96)
+  per the KML spec — so exported tracks land at the correct height in Google Earth.
+- **MISB CSV** exports keep the MISB column conventions: `SensorTrueAltitude` (tag 15)
+  and `FrameCenterElevation` (tag 25) are **MSL**. A track whose source altitudes are
+  HAE (e.g. STANAG 4676) writes them unconverted into the **ellipsoid-height columns**
+  (`SensorEllipsoidHeight` / `FrameCenterHeightAboveEllipsoid`, tags 75/78) instead —
+  re-importing such a CSV detects the HAE column and preserves the datum, so a
+  STANAG → MISB CSV → Sitrec round trip is loss-free.
+
+There is no STANAG 4676 (XML) exporter; STANAG-derived tracks export through the
+formats above.
 
 ## MISB Track Data
 

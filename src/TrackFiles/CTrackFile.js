@@ -102,4 +102,15 @@ export class CTrackFile {
     isAltitudeHAE(trackIndex = 0) {
         return false;
     }
+
+    // Optional camera/target role hint for the track at `trackIndex`, used when the file
+    // is loaded directly into a sitch with camera/target track switches. Return "camera",
+    // "target", or null. When ANY track of a file declares a role, the role hints replace
+    // the default load-order auto-selection for the camera/target switches (see
+    // TrackManager.updateDropTargets) — roleless tracks from such a file are still added
+    // as switch options but not auto-selected. Overridden by CTrackFileSTANAG, whose LOS
+    // endpoints define the sensor (camera) and ground (target) positions.
+    trackRoleHint(trackIndex) {
+        return null;
+    }
 }

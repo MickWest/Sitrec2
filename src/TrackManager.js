@@ -1238,6 +1238,21 @@ class CTrackManager extends CManager {
 
     updateDropTargets(trackNumber, shortName, trackID, trackDataID, trackNode, hasFOV, trackOb) {
         let hasAngles = false;
+
+        // Camera/target role hints from the source file (see CTrackFile.trackRoleHint).
+        // A file that declares roles (e.g. STANAG: posHigh -> camera, posLow -> target)
+        // replaces the load-order (-1/-2 suffix) auto-selection for the camera/target
+        // switches; files without roles keep the ordinal behaviour unchanged.
+        const roleFile = trackOb ? FileManager.get(trackOb.trackFileName) : null;
+        const roleHint = roleFile?.trackRoleHint ? roleFile.trackRoleHint(trackOb.trackIndex) : null;
+        let fileHasRoleHints = false;
+        if (roleFile?.trackRoleHint && roleFile.getTrackCount) {
+            const n = roleFile.getTrackCount();
+            for (let i = 0; i < n; i++) {
+                if (roleFile.trackRoleHint(i)) { fileHasRoleHints = true; break; }
+            }
+        }
+
         if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
             const dropTargets = Sit.dropTargets["track"]
             for (let dropTargetSwitch of dropTargets) {
@@ -1279,8 +1294,21 @@ class CTrackManager extends CManager {
                         // this is more flexible, as the user can then add a controller if they want
                         switchNode.removeOption(shortName)
                         switchNode.addOption(shortName, NodeMan.get(trackID))
-                        // and select it (Quietly, as we don't want to zoom to it yet)
-                        if (trackNumber === selectNumber && !Globals.sitchEstablished) {
+
+                        // Auto-selection. For the camera/target switches, a role-declaring
+                        // file selects by role (camera track into cameraTrackSwitch, target
+                        // track into targetTrackSwitch) and its roleless tracks select into
+                        // neither; everything else uses the load-order selectNumber rule.
+                        const isRoleSwitch = switchNode.id === "cameraTrackSwitch" || switchNode.id === "targetTrackSwitch";
+                        let autoSelect;
+                        if (isRoleSwitch && fileHasRoleHints) {
+                            const wantedRole = switchNode.id === "cameraTrackSwitch" ? "camera" : "target";
+                            autoSelect = roleHint === wantedRole;
+                        } else {
+                            autoSelect = trackNumber === selectNumber;
+                        }
+                        // (Quietly, as we don't want to zoom to it yet)
+                        if (autoSelect && !Globals.sitchEstablished) {
                             switchNode.selectOptionQuietly(shortName)
 
                             // bit of a patch, this will be the second track, and we already set the

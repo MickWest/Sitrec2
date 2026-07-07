@@ -51,19 +51,19 @@ export class CTrackFileSTANAG extends CTrackFile {
 
     // A GXP-InMotion STANAG track point can carry up to three positions:
     //   dynamics/pos  - the standard's authoritative position estimate  -> plain name (PRIMARY)
-    //   posHigh       - high-altitude end of the sensor line-of-sight ray -> "(LOS High)"
-    //   posLow        - low-altitude / ground end of the LOS ray          -> "(Ground)"
+    //   posHigh       - high (sensor) end of the sensor line-of-sight ray -> "(Platform)"
+    //   posLow        - low / ground end of the LOS ray                   -> "(Ground)"
     //
     // Only dynamics/pos is actually part of STANAG 4676: the spec defines it as "the
     // centroid position of the track point, as estimated by the data producer" and its
     // single authoritative position. posLow/posHigh/posImage are BAE/GXP proprietary
     // <tp> attributes (absent from both the Edition A and Edition B standard track-point
     // models). We infer -- from the fact that posLow, dynamics/pos and posHigh are exactly
-    // collinear per track point, and posLow's altitude matches local terrain -- that
-    // posLow/posHigh are the ground and high-altitude endpoints of the sensor LOS ray
-    // through the tracked pixel (posImage), bracketing the target's unknown altitude, with
-    // dynamics/pos the producer's chosen estimate on that ray. posHigh is therefore an LOS
-    // endpoint, NOT the platform/sensor position -- hence "(LOS High)", not "(Platform)".
+    // collinear per track point -- that they lie on the sensor's line of sight through the
+    // tracked pixel (posImage): posLow is the ground intersection (its altitude matches
+    // local terrain), and posHigh is the sensor PLATFORM (its altitude varies per frame
+    // like a real aircraft track and its lat/lon trace a smooth flight path), with
+    // dynamics/pos the producer's chosen target estimate on that ray.
     //
     // dynamics/pos is listed FIRST so it becomes track 0: the primary (non-supplementary)
     // track that drives smoothing, time-sync and CPA. The posHigh/posLow LOS endpoints are
@@ -78,14 +78,19 @@ export class CTrackFileSTANAG extends CTrackFile {
     _distinctTracks() {
         if (this._distinctTracksCache) return this._distinctTracksCache;
 
+        // role: which track switch this sub-track should auto-select into when the file
+        // is loaded directly. posHigh is the high end of the sensor line of sight; its
+        // altitude varies per frame like a real aircraft track, so it is the sensor
+        // PLATFORM -> camera. posLow is the LOS ground intersection (the aim point) ->
+        // target. The authoritative dynamics/pos stays the roleless primary track.
         const candidates = this._hasPosLowHigh()
             ? [
-                {get: tp => tp.dynamics?.pos?.["#text"], suffix: ""},
-                {get: tp => tp.posHigh,                  suffix: " (LOS High)"},
-                {get: tp => tp.posLow,                   suffix: " (Ground)"},
+                {get: tp => tp.dynamics?.pos?.["#text"], suffix: "",            role: null},
+                {get: tp => tp.posHigh,                  suffix: " (Platform)", role: "camera"},
+                {get: tp => tp.posLow,                   suffix: " (Ground)",   role: "target"},
               ]
             : [
-                {get: tp => tp.dynamics?.pos?.["#text"], suffix: ""},
+                {get: tp => tp.dynamics?.pos?.["#text"], suffix: "", role: null},
               ];
 
         const tpArray = this._getTpArray();
@@ -100,8 +105,14 @@ export class CTrackFileSTANAG extends CTrackFile {
             });
             // Skip a candidate with no usable positions at all.
             if (!seq.some(p => p !== null)) continue;
-            // Skip a candidate that duplicates one we already kept.
-            if (kept.some(k => this._sameSequence(k._seq, seq))) continue;
+            // Skip a candidate that duplicates one we already kept — but transfer its
+            // role to the kept twin, so e.g. a ground-locked file (dynamics/pos ==
+            // posLow) keeps the plain dynamics track AND it inherits the "target" role.
+            const dup = kept.find(k => this._sameSequence(k._seq, seq));
+            if (dup) {
+                if (!dup.role && cand.role) dup.role = cand.role;
+                continue;
+            }
             cand._seq = seq;
             kept.push(cand);
         }
@@ -218,6 +229,14 @@ export class CTrackFileSTANAG extends CTrackFile {
 
     getTrackCount() {
         return this._distinctTracks().length;
+    }
+
+    // Camera/target auto-selection for direct loads: posHigh (Platform) is the sensor
+    // end of the line of sight -> camera track; posLow (Ground) is what the sensor is
+    // aimed at -> target track. The authoritative dynamics/pos track carries no role
+    // unless it absorbed one during de-duplication (ground-locked case).
+    trackRoleHint(trackIndex) {
+        return this._distinctTracks()[trackIndex]?.role ?? null;
     }
 
     // STANAG 4676 positions are WGS-84 geodetic, so their heights are height-above-
