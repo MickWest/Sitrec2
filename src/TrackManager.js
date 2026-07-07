@@ -1,7 +1,7 @@
 // Creating timed data and then tracks from pre-parsed track files
 // should be agnostic to the source of the data (KML/ADSB, CSV, KLVS, etc)
 import {CNodeScale} from "./nodes/CNodeScale";
-import {showConfirm} from "./showError";
+import {showConfirm, showChoice} from "./showError";
 import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {CNodeConstant} from "./nodes/CNode";
 import * as LAYER from "./LayerMasks";
@@ -537,6 +537,22 @@ class CTrackManager extends CManager {
                 selectedIndicesMap.set(trackFileName, new Set(options.selectedTracks));
             }
         } else if (showDialog) {
+            // Is a camera line-of-sight already loaded? A MISB/KLV track with sensor
+            // angles builds an angles/LOS controller (trackOb.anglesController), i.e. a
+            // camera that defines where it is looking. If so, an incoming file's
+            // platform/ground reference tracks are redundant with it.
+            let cameraLOSLoaded = false;
+            this.iterate((k, t) => { if (t.anglesController || t.anglesNode) cameraLOSLoaded = true; });
+
+            // The index of a file's target-role track (STANAG dynamics/pos), or -1.
+            const targetTrackIndex = (f) => {
+                if (typeof f.trackRoleHint !== "function") return -1;
+                for (let i = 0; i < f.getTrackCount(); i++) {
+                    if (f.trackRoleHint(i) === "target") return i;
+                }
+                return -1;
+            };
+
             for (const trackFileName of trackFiles) {
                 const file = FileManager.get(trackFileName);
                 if (file instanceof CTrackFile) {
@@ -544,6 +560,7 @@ class CTrackManager extends CManager {
                     // a STANAG file's Platform/dynamics/Ground sub-tracks are one logical unit
                     // that loads together, so its 2-3 sub-tracks must not trigger the picker.
                     const trackCount = file.getTrackCount();
+                    const tIdx = targetTrackIndex(file);
                     if (file.getImportTrackCount() >= 3) {
                         // Build preview info for all tracks
                         const previewInfos = [];
@@ -561,6 +578,31 @@ class CTrackManager extends CManager {
                             }
                             selectedIndicesMap.set(trackFileName, new Set(selected));
                         }
+                    } else if (cameraLOSLoaded && tIdx >= 0 && trackCount >= 2) {
+                        // A STANAG-style file (has a target track plus platform/ground
+                        // reference tracks) loaded while a camera LOS already exists: offer
+                        // to load just the target, since the platform/ground tracks duplicate
+                        // the existing camera's line of sight. Dismiss/Escape defaults to
+                        // "all" (load everything), so nothing surprising happens on cancel.
+                        const choice = await showChoice(
+                            "A camera track with line-of-sight data is already loaded.\n\n" +
+                            "This track file also contains platform and ground reference tracks. " +
+                            "Load only the tracked target, or all of its tracks?",
+                            {
+                                title: "Load STANAG Track",
+                                cancelValue: "all",
+                                options: [
+                                    {label: "Target track only", value: "target", primary: true,
+                                     description: "Load just the tracked target — the platform and ground tracks are redundant with the loaded camera line of sight"},
+                                    {label: "Load all tracks", value: "all",
+                                     description: "Load the target, platform, and ground tracks"},
+                                ],
+                            }
+                        );
+                        if (choice === "target") {
+                            selectedIndicesMap.set(trackFileName, new Set([tIdx]));
+                        }
+                        // "all" (or dismiss) → leave unset → load every sub-track
                     }
                 }
             }
