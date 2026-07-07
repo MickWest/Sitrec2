@@ -231,6 +231,16 @@ export class CTrackFileSTANAG extends CTrackFile {
         return this._distinctTracks().length;
     }
 
+    // For the import dialog, a STANAG file counts as its NATO track count (numTracks),
+    // NOT the 2-3 derived Platform/dynamics/Ground sub-tracks, which all belong to one
+    // track and always load together. The current parser handles a single <track>, so
+    // numTracks is effectively 1 and the multi-track picker never fires for a lone
+    // STANAG track (whereas getTrackCount()'s 3 would otherwise trigger it).
+    getImportTrackCount() {
+        const n = Number(this.data?.nitsRoot?.message?.numTracks);
+        return Number.isFinite(n) && n >= 1 ? n : 1;
+    }
+
     // Camera/target auto-selection for direct loads: posHigh (Platform) is the sensor
     // end of the line of sight -> camera track; posLow (Ground) is what the sensor is
     // aimed at -> target track. The authoritative dynamics/pos track carries no role

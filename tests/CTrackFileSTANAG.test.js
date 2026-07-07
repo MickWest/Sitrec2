@@ -214,6 +214,39 @@ describe('CTrackFileSTANAG', () => {
             expect(trackFile.getTrackCount()).toBe(3);
         });
 
+    });
+
+    // The import picker gates on getImportTrackCount() (independent NATO tracks =
+    // numTracks), not getTrackCount()'s 2-3 derived sub-tracks, so a lone STANAG track
+    // never triggers the multi-track dialog even though it yields 3 sub-tracks.
+    describe('getImportTrackCount', () => {
+        test('returns numTracks (1) even though getTrackCount() is 3', () => {
+            expect(trackFile.getTrackCount()).toBe(3);
+            expect(trackFile.getImportTrackCount()).toBe(1);
+        });
+
+        test('reads the message numTracks attribute when present', () => {
+            const multi = parseXml(`<?xml version="1.0"?>
+                <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">
+                    <message numTracks="4"><baseTime>2016-06-29T15:57:36.006Z</baseTime><track><segment>
+                        <tp><relTime>0</relTime><dynamics cs="WGS_84"><pos>40.0 -104.0 1000.0</pos></dynamics></tp>
+                    </segment></track></message>
+                </nitsRoot>`);
+            expect(new CTrackFileSTANAG(multi).getImportTrackCount()).toBe(4);
+        });
+
+        test('defaults to 1 when numTracks is absent', () => {
+            const noAttr = parseXml(`<?xml version="1.0"?>
+                <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">
+                    <message><baseTime>2016-06-29T15:57:36.006Z</baseTime><track><segment>
+                        <tp><relTime>0</relTime><dynamics cs="WGS_84"><pos>40.0 -104.0 1000.0</pos></dynamics></tp>
+                    </segment></track></message>
+                </nitsRoot>`);
+            expect(new CTrackFileSTANAG(noAttr).getImportTrackCount()).toBe(1);
+        });
+    });
+
+    describe('getTrackCount', () => {
         test('returns 1 for file without posLow/posHigh', () => {
             const minimalXml = parseXml(`<?xml version="1.0"?>
                 <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">

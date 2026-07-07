@@ -528,7 +528,7 @@ class CTrackManager extends CManager {
             )
         }
 
-        // Pre-scan: for files with 3+ tracks, show selection dialog
+        // Pre-scan: for files with 3+ independently-selectable tracks, show selection dialog
         const selectedIndicesMap = new Map(); // filename -> Set<number>
 
         // If pre-selected track indices are provided (e.g. from saved sitch), use them directly
@@ -540,8 +540,11 @@ class CTrackManager extends CManager {
             for (const trackFileName of trackFiles) {
                 const file = FileManager.get(trackFileName);
                 if (file instanceof CTrackFile) {
+                    // Gate on the import track count (independent tracks), not getTrackCount():
+                    // a STANAG file's Platform/dynamics/Ground sub-tracks are one logical unit
+                    // that loads together, so its 2-3 sub-tracks must not trigger the picker.
                     const trackCount = file.getTrackCount();
-                    if (trackCount >= 3) {
+                    if (file.getImportTrackCount() >= 3) {
                         // Build preview info for all tracks
                         const previewInfos = [];
                         for (let i = 0; i < trackCount; i++) {

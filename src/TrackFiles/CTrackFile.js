@@ -103,6 +103,15 @@ export class CTrackFile {
         return false;
     }
 
+    // Number of INDEPENDENT tracks for the multi-track import selection dialog. Defaults
+    // to getTrackCount(), i.e. every track is separately selectable (KML with many
+    // aircraft, MISB TrackIDs). Override when several of getTrackCount()'s tracks form one
+    // logical import unit that should load together without a picker (e.g. STANAG's
+    // Platform/dynamics/Ground sub-tracks, which all derive from one NATO track).
+    getImportTrackCount() {
+        return this.getTrackCount();
+    }
+
     // Optional camera/target role hint for the track at `trackIndex`, used when the file
     // is loaded directly into a sitch with camera/target track switches. Return "camera",
     // "target", or null. When ANY track of a file declares a role, the role hints replace
