@@ -14,6 +14,7 @@ lockstep with docs/WhatsNew-Details.md.
 ### Improvements
 - **Cleaner track names in the Contents menu**: each loaded track's folder now shows its plain name (for example *elevated_track (Platform)*) instead of an internal identifier. Applies to all track files.
 - **Clearer STANAG track roles**: importing a STANAG file now labels the actual tracked object as the Target track *(Target)*, keeps the sensor platform as the Camera track *(Platform)*, and shows the ground aim point as a labelled reference track *(Ground)*.
+- **Skip redundant tracks when a camera is already loaded**: importing a STANAG track file while a camera line-of-sight is already loaded now asks (in a *Load STANAG Track* dialog) whether to load *Target track only* or *Load all tracks*. Target-only loads just the tracked target and skips the platform and ground reference tracks, which duplicate the existing camera's line of sight; the target becomes available for comparison without changing where the camera is already aimed. Dismissing the dialog loads everything, as before.
 
 ### Bug Fixes
 - Fixed importing a STANAG track file wrongly popping up the track-selection dialog. A STANAG file's platform, target, and ground sub-tracks all belong to one track and now load together without a picker.
