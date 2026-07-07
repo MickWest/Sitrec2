@@ -175,13 +175,25 @@ export class CNode3DObject extends CNode3DGroup {
         this.color = v.color;
         this.layers = v.layers; // usually undefined, as the camera handles layers
 
-        this.menuName = this.props.name ?? this.id;
-        /// if more that 20 characters, truncate from the middle
-        if (this.menuName.length > 20) {
-            this.menuName = this.menuName.substring(0, 10) + "..." + this.menuName.substring(this.menuName.length - 7);
+        // Folder label: drop the internal "_ob" object-node id suffix (every object
+        // in this menu is an object, so it's redundant noise), then middle-truncate
+        // long names so BOTH the start and end stay visible — the distinguishing part
+        // of names like "elevated_track (Platform)" is at the end. The budget is
+        // generous (fills the folder-title width; the .title has no CSS ellipsis and
+        // would wrap instead). The full, untruncated name is set as the folder tooltip.
+        const fullName = (this.props.name ?? this.id).replace(/_ob$/, "");
+        const MAX_LABEL = 30;
+        if (fullName.length > MAX_LABEL) {
+            const keep = MAX_LABEL - 3; // room for the "..."
+            const head = Math.ceil(keep / 2);
+            const tail = Math.floor(keep / 2);
+            this.menuName = fullName.substring(0, head) + "..." + fullName.substring(fullName.length - tail);
+        } else {
+            this.menuName = fullName;
         }
 
         this.gui = guiMenus.objects.addFolder(this.menuName).close()
+        this.gui.tooltip(fullName);
         this.common = {}
         this.geometryParams = {};
         this.materialParams = {};

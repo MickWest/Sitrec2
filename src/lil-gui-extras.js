@@ -495,10 +495,12 @@ GUI.prototype.setLabelColor = function (color, min = 0) {
     return this; // Return the controller to allow method chaining
 }
 
-// Folder tooltip
+// Folder tooltip. Target the title bar ($title) rather than the whole folder
+// domElement so the native tooltip appears when hovering the folder's title —
+// not over every child row in the (open) folder.
 GUI.prototype.tooltip = function (tooltip) {
-    this.domElement.title = tooltip;
-    return this; // Return the controller to allow method chaining
+    (this.$title ?? this.domElement).title = tooltip;
+    return this; // Return the GUI to allow method chaining
 }
 
 // Set a button action to fire when the folder title is double-clicked
