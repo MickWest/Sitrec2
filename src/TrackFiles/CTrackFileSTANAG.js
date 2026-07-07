@@ -50,7 +50,7 @@ export class CTrackFileSTANAG extends CTrackFile {
     }
 
     // A GXP-InMotion STANAG track point can carry up to three positions:
-    //   dynamics/pos  - the standard's authoritative position estimate  -> plain name (PRIMARY)
+    //   dynamics/pos  - the standard's authoritative target estimate -> "(Target)" (PRIMARY)
     //   posHigh       - high (sensor) end of the sensor line-of-sight ray -> "(Platform)"
     //   posLow        - low / ground end of the LOS ray                   -> "(Ground)"
     //
@@ -78,16 +78,20 @@ export class CTrackFileSTANAG extends CTrackFile {
     _distinctTracks() {
         if (this._distinctTracksCache) return this._distinctTracksCache;
 
-        // role: which track switch this sub-track should auto-select into when the file
-        // is loaded directly. posHigh is the high end of the sensor line of sight; its
+        // suffix = display label; role = which track switch this sub-track auto-selects
+        // into on a direct load. dynamics/pos is the tracked object itself -> "(Target)"
+        // and the target track. posHigh is the high end of the sensor line of sight; its
         // altitude varies per frame like a real aircraft track, so it is the sensor
-        // PLATFORM -> camera. posLow is the LOS ground intersection (the aim point) ->
-        // target. The authoritative dynamics/pos stays the roleless primary track.
+        // PLATFORM -> camera. posLow is the LOS ground intersection (a reference point);
+        // it keeps the "(Ground)" label but no switch role. dynamics/pos, posLow and
+        // posHigh are collinear, so the camera (Platform) points identically whether it
+        // aims at the target or the ground point. A bare dynamics-only STANAG file (no
+        // posLow/posHigh) has nothing to distinguish, so it stays the plain primary track.
         const candidates = this._hasPosLowHigh()
             ? [
-                {get: tp => tp.dynamics?.pos?.["#text"], suffix: "",            role: null},
+                {get: tp => tp.dynamics?.pos?.["#text"], suffix: " (Target)",   role: "target"},
                 {get: tp => tp.posHigh,                  suffix: " (Platform)", role: "camera"},
-                {get: tp => tp.posLow,                   suffix: " (Ground)",   role: "target"},
+                {get: tp => tp.posLow,                   suffix: " (Ground)",   role: null},
               ]
             : [
                 {get: tp => tp.dynamics?.pos?.["#text"], suffix: "", role: null},
@@ -241,10 +245,9 @@ export class CTrackFileSTANAG extends CTrackFile {
         return Number.isFinite(n) && n >= 1 ? n : 1;
     }
 
-    // Camera/target auto-selection for direct loads: posHigh (Platform) is the sensor
-    // end of the line of sight -> camera track; posLow (Ground) is what the sensor is
-    // aimed at -> target track. The authoritative dynamics/pos track carries no role
-    // unless it absorbed one during de-duplication (ground-locked case).
+    // Camera/target auto-selection for direct loads: dynamics/pos (Target) is the tracked
+    // object -> target track; posHigh (Platform) is the sensor end of the line of sight ->
+    // camera track. posLow (Ground) is an unroled reference point.
     trackRoleHint(trackIndex) {
         return this._distinctTracks()[trackIndex]?.role ?? null;
     }

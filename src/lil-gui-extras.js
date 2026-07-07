@@ -132,8 +132,12 @@ export function addGUIMouseTracking(gui) {
 // Extend the GUI prototype to add a method for getting the folder with given title
 //
 GUI.prototype.getFolder = function (title) {
-    // Find the child GUI with the specified title
-    const folder = this.children.find(child => child instanceof GUI && child.$title.innerText === title);
+    // Find the child GUI by its stable lookup id (set via `folder._lookupId` when the
+    // displayed title differs from the id callers search by — e.g. a track folder shown
+    // as "elevated_track" but looked up by its node id "Track_elevated_track"), falling
+    // back to the visible title for folders that never set a _lookupId.
+    const folder = this.children.find(child => child instanceof GUI
+        && (child._lookupId === title || child.$title.innerText === title));
 
     // If found, return it; otherwise, return null
     return folder || null;

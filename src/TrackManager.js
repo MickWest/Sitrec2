@@ -635,7 +635,12 @@ class CTrackManager extends CManager {
                     })
                 }
 
-                const guiFolder = guiMenus.contents.addFolder(trackID);
+                // Show the clean display name (e.g. "elevated_track (Platform)") in the
+                // Contents menu, not the internal node id ("Track_elevated_track…").
+                // getFolder() still resolves the folder by its node id via _lookupId, so
+                // the CNodeDisplayTrack lookup (menu.getFolder(track.id)) keeps working.
+                const guiFolder = guiMenus.contents.addFolder(shortName);
+                guiFolder._lookupId = trackID;
                 // just use the default MISB Columns, so no columns are specified
                 //const success = this.makeTrackFromDataFile(trackFileName, trackDataID, trackID, undefined, trackIndex, guiFolder);
 
@@ -1225,8 +1230,14 @@ class CTrackManager extends CManager {
                 // which will use the PTZ control as no angles track will be loaded yet
                 // ("Manual" is the flattened "Use Angles" + "Manual PTZ".)
                 // Only do this for the very first track (trackNumber === 1), not for
-                // subsequent tracks from multi-track files like STANAG
-                if (!hasAngles && trackNumber === 1) {
+                // subsequent tracks from multi-track files like STANAG.
+                // BUT skip it when this first track was itself auto-assigned as the target
+                // (e.g. a STANAG file whose primary dynamics/pos track IS the target):
+                // updateDropTargets already set the heading to "To Target", and forcing
+                // "Manual" here would clobber it.
+                const targetSwitch = NodeMan.get("targetTrackSwitch", false);
+                const firstTrackIsTarget = targetSwitch && targetSwitch.choice === shortName;
+                if (!hasAngles && trackNumber === 1 && !firstTrackIsTarget) {
                     console.log("FIRST TRACK LOADED, setting camera heading to Manual")
                     const headingSwitch = NodeMan.get("CameraLOSController", true);
                     if (headingSwitch) {

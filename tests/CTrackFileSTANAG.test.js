@@ -170,8 +170,8 @@ describe('CTrackFileSTANAG', () => {
     });
 
     describe('getShortName', () => {
-        test('returns plain filename for track 0 (authoritative dynamics/pos)', () => {
-            expect(trackFile.getShortName(0, 'elevated_track.xml')).toBe('elevated_track');
+        test('returns (Target) suffix for track 0 (authoritative dynamics/pos)', () => {
+            expect(trackFile.getShortName(0, 'elevated_track.xml')).toBe('elevated_track (Target)');
         });
 
         test('returns filename with (Platform) suffix for track 1 (posHigh)', () => {
@@ -182,8 +182,8 @@ describe('CTrackFileSTANAG', () => {
             expect(trackFile.getShortName(2, 'elevated_track.xml')).toBe('elevated_track (Ground)');
         });
 
-        test('returns plain default name for track 0 when no filename provided', () => {
-            expect(trackFile.getShortName()).toBe('STANAG Track');
+        test('returns (Target) default name for track 0 when no filename provided', () => {
+            expect(trackFile.getShortName()).toBe('STANAG Track (Target)');
         });
 
         test('returns default name with (Platform) suffix for track 1 when no filename', () => {
@@ -327,7 +327,7 @@ describe('CTrackFileSTANAG', () => {
     // A ground-locked target: the tracker's estimate (dynamics/pos) is IDENTICAL to the
     // low / ground end of the line of sight (posLow). Emitting posHigh, dynamics/pos AND
     // posLow would produce a duplicate track, so the parser collapses to two distinct
-    // tracks: the plainly-named authoritative dynamics/pos (primary), and (Platform) = posHigh.
+    // tracks: the authoritative dynamics/pos (Target, primary), and (Platform) = posHigh.
     describe('de-duplication when dynamics/pos == posLow', () => {
         const groundLockedXml = parseXml(`<?xml version="1.0"?>
             <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">
@@ -358,8 +358,8 @@ describe('CTrackFileSTANAG', () => {
             expect(groundLocked.getTrackCount()).toBe(2);
         });
 
-        test('track 0 is the authoritative dynamics/pos, plainly named (primary)', () => {
-            expect(groundLocked.getShortName(0, 'gl.xml')).toBe('gl');
+        test('track 0 is the authoritative dynamics/pos, named (Target) (primary)', () => {
+            expect(groundLocked.getShortName(0, 'gl.xml')).toBe('gl (Target)');
             const misb = groundLocked.toMISB(0);
             expect(misb[0][MISB.SensorLatitude]).toBeCloseTo(40.100, 6);
         });
@@ -382,18 +382,17 @@ describe('CTrackFileSTANAG', () => {
         });
     });
 
-    // Camera/target auto-selection roles: posHigh (Platform) approximates the sensor
-    // position -> camera; posLow (Ground) is what the sensor is aimed at -> target.
-    // The authoritative dynamics/pos track is roleless UNLESS it absorbed the target
-    // role from a coincident posLow during de-duplication (ground-locked case).
+    // Camera/target auto-selection roles: dynamics/pos (Target) is the tracked object ->
+    // target; posHigh (Platform) approximates the sensor position -> camera; posLow
+    // (Ground) is an unroled reference point.
     describe('trackRoleHint', () => {
-        test('elevated file: dynamics/pos has no role, Platform is camera, Ground is target', () => {
-            expect(trackFile.trackRoleHint(0)).toBe(null);      // dynamics/pos (primary)
+        test('elevated file: dynamics/pos is target, Platform is camera, Ground has no role', () => {
+            expect(trackFile.trackRoleHint(0)).toBe('target');  // dynamics/pos (Target, primary)
             expect(trackFile.trackRoleHint(1)).toBe('camera');  // posHigh (Platform)
-            expect(trackFile.trackRoleHint(2)).toBe('target');  // posLow (Ground)
+            expect(trackFile.trackRoleHint(2)).toBe(null);      // posLow (Ground)
         });
 
-        test('ground-locked file: dynamics/pos inherits the target role from posLow', () => {
+        test('ground-locked file: dynamics/pos is the target (== posLow), Platform is camera', () => {
             const groundLockedXml = parseXml(`<?xml version="1.0"?>
                 <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">
                     <message>
