@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.98.2 (2026-07-07)
+
+### Improvements
+- **Cleaner track names in the Contents menu**: each loaded track's folder now shows its plain name (for example *elevated_track (Platform)*) instead of an internal identifier. Applies to all track files.
+- **Clearer STANAG track roles**: importing a STANAG file now labels the actual tracked object as the Target track *(Target)*, keeps the sensor platform as the Camera track *(Platform)*, and shows the ground aim point as a labelled reference track *(Ground)*.
+
+### Bug Fixes
+- Fixed importing a STANAG track file wrongly popping up the track-selection dialog. A STANAG file's platform, target, and ground sub-tracks all belong to one track and now load together without a picker.
+- Fixed the look camera not pointing at the target after importing a STANAG file — its heading is now set to *To Target* automatically.
+
+---
+
 ## Version 2.98.1 (2026-07-07)
 
 ### Improvements

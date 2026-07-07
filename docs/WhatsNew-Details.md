@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.98.2 (2026-07-07)
+
+### Improvements
+- **Contents-menu track folders show the clean display name, not the node id** (`7f0fac00`) (`src/TrackManager.js`, `src/lil-gui-extras.js`). Each loaded track's folder in the Contents menu is now created with `guiMenus.contents.addFolder(shortName)` (e.g. `elevated_track (Platform)`) instead of `addFolder(trackID)` (`Track_elevated_track (Platform)`). The folder stashes its node id in a new `guiFolder._lookupId = trackID`, and `GUI.prototype.getFolder(title)` now matches on `child._lookupId === title || child.$title.innerText === title`, so `CNodeDisplayTrack`'s lookup-by-node-id (`menu.getFolder(track.id)`) still resolves the same folder and no duplicate empty folders are created. This is a general menu change affecting **all** file-loaded tracks, not just STANAG.
+- **STANAG sub-track roles revised: the tracked object is the Target, the ground point is an unroled reference** (`7f0fac00`) (`src/TrackFiles/CTrackFileSTANAG.js`). In `_distinctTracks()`'s three-position (`_hasPosLowHigh`) branch, `dynamics/pos` now gets suffix ` (Target)` and role `"target"` (was suffix `""`, role `null`), `posHigh` stays ` (Platform)` / role `"camera"`, and `posLow` stays ` (Ground)` but its role becomes `null` (was `"target"`). `trackRoleHint()` follows the new map. This revises 2.98.1's `posLow → target` assignment: the target track is now the standard's authoritative tracked-object estimate rather than the LOS ground-intersection aim point. Because `dynamics/pos`, `posLow` and `posHigh` are collinear, the camera at Platform points identically whether it aims at Target or Ground, so this is a labelling/role-assignment change with no geometric effect. A bare dynamics-only STANAG file (no `posLow`/`posHigh`) is unchanged — it stays the roleless plain primary track.
+
+### Bug Fixes
+- **Fixed importing a STANAG file wrongly showing the multi-track *Select Tracks* dialog** (`604d82a3`) (`src/TrackFiles/CTrackFile.js`, `src/TrackFiles/CTrackFileSTANAG.js`, `src/TrackManager.js`). A STANAG 4676 file's Platform/dynamics/Ground sub-tracks all derive from one NATO track and always load together, but `getTrackCount()` returns 3 for an elevated target, so `TrackManager`'s `getTrackCount() >= 3` gate triggered `showMultiTrackLoadDialog` (the *Select Tracks* picker). New `CTrackFile.getImportTrackCount()` (base returns `getTrackCount()`) expresses the count of **independently-selectable** tracks; `CTrackFileSTANAG` overrides it to the NATO track count (`data.nitsRoot.message.numTracks`, default 1). The dialog gate now tests `file.getImportTrackCount() >= 3`, so a lone STANAG track loads all its sub-tracks directly with no picker. KML/MISB files are unchanged because their two counts are equal. Reading `numTracks` means the picker will fire automatically if multi-`<track>` STANAG support is ever added.
+- **Fixed the look camera not aiming at the target after a STANAG import (heading not set to *To Target*)** (`7f0fac00`) (`src/TrackManager.js`). Now that the STANAG target is the primary (`trackNumber === 1`) track, the existing "first track → Manual heading" default was clobbering the *To Target* heading that the target auto-assignment (`updateDropTargets`) had just set. The default is now skipped when the first track was itself auto-assigned as the target: `const firstTrackIsTarget = targetSwitch && targetSwitch.choice === shortName` guards the `!hasAngles && trackNumber === 1` branch (`targetTrackSwitch` / `CameraLOSController`), so the STANAG camera keeps its *To Target* heading.
+
+---
+
 ## Version 2.98.1 (2026-07-07)
 
 ### Improvements
