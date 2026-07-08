@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.98.3 (2026-07-08)
+
+### Bug Fixes
+- Fixed tracks that can report altitude as either height above sea level or height above the ellipsoid sometimes loading at the wrong height: the altitude reference is now reset and re-checked (across every data row, not just the first) each time a track picks its altitude column, so it no longer stays stuck on ellipsoidal height after switching back to a sea-level column, nor wrongly falls back when only the first row is empty.
+- Fixed the frame-center (ground aim-point) track dropping to zero altitude when the source file supplied only its height above the ellipsoid and no height above sea level; it now keeps its correct height.
+
+---
+
 ## Version 2.98.2 (2026-07-07)
 
 ### Improvements

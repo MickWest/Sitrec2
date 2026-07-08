@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.98.3 (2026-07-08)
+
+### Bug Fixes
+- **Altitude-datum (MSL vs HAE) column selection is now reset per call and decided across all rows** (`3416d5f0`) (`src/nodes/CNodeMISBData.js`). `CNodeMISBDataTrack.selectSourceColumns()` chooses which MISB column supplies altitude and sets `altitudeIsHAE` (true = the value is already height-above-ellipsoid, so the geoid-offset add in `needsGeoidToHAE()` is skipped). Two correctness bugs from the 2.98.1 datum work are fixed. (1) The source-declared datum (e.g. STANAG `cs="WGS_84"`) is now stored separately as `_baseAltitudeIsHAE`, and `altitudeIsHAE` is reset to that base at the top of every `selectSourceColumns()` call. Previously, once a call fell back to an ellipsoid-height column (ST0601 tag 75/78) and promoted `altitudeIsHAE` to `true`, the promotion stuck, so a later call that reselected a populated MSL column kept the stale HAE flag, skipped the geoid add, and placed the track off by the geoid height N. (2) The "is the MSL column empty?" test previously only inspected row 0 (`this.misb[0][this.altCol] === null`), so a null first row wrongly triggered the AGL/HAE fallback even when the rest of the column had data. A new `_columnHasData(col)` helper scans every row for any non-null/undefined value; both the MSL-empty test and the ellipsoid-height availability test now use it instead of trusting row 0.
+- **Derived frame-center track keeps Frame Center Height Above Ellipsoid (tag 78) when Frame Center Elevation (tag 25) is absent** (`3416d5f0`) (`src/TrackFiles/CTrackFileMISB.js`, `tests/CTrackFileMISB.test.js`). `CTrackFileMISB.toMISB(1)` builds the derived frame-center (ground aim-point) track from the `FrameCenter*` columns. It used to write `SensorTrueAltitude = FrameCenterElevation ?? 0`, so a source that carried only `FrameCenterHeightAboveEllipsoid` (ST0601 tag 78, HAE) and no `FrameCenterElevation` (tag 25, MSL) lost its altitude entirely and the frame-center track dropped to 0. It now prefers tag 25 into `SensorTrueAltitude`; when tag 25 is absent but tag 78 is present it writes the HAE value into `SensorEllipsoidHeight`, so the data track's datum-aware column selection flags it HAE and does not add the geoid offset to an already-ellipsoidal value; only when neither tag is present does it fall back to 0. A new unit test confirms a tag-78-only frame center yields `SensorEllipsoidHeight` preserved (480) and `SensorTrueAltitude` null rather than a bogus 0.
+
+---
+
 ## Version 2.98.2 (2026-07-07)
 
 ### Improvements
