@@ -140,7 +140,8 @@ export class CTrackFileMISB extends CTrackFile {
                 const row = this.data[i];
                 const centerLat = row[MISB.FrameCenterLatitude];
                 const centerLon = row[MISB.FrameCenterLongitude];
-                const centerElev = row[MISB.FrameCenterElevation];
+                const centerElev = row[MISB.FrameCenterElevation];               // tag 25, MSL
+                const centerHAE = row[MISB.FrameCenterHeightAboveEllipsoid];     // tag 78, HAE
                 if (centerLat === null || centerLat === undefined ||
                     centerLon === null || centerLon === undefined) {
                     continue;
@@ -149,7 +150,19 @@ export class CTrackFileMISB extends CTrackFile {
                 newRow[MISB.UnixTimeStamp] = row[MISB.UnixTimeStamp];
                 newRow[MISB.SensorLatitude] = centerLat;
                 newRow[MISB.SensorLongitude] = centerLon;
-                newRow[MISB.SensorTrueAltitude] = centerElev ?? 0;
+                // Prefer Frame Center Elevation (tag 25, MSL). If it's absent but Frame
+                // Center Height Above Ellipsoid (tag 78) is present, keep the HAE value —
+                // write it into the ellipsoid-height column so the data track's
+                // datum-aware column selection flags it HAE instead of adding the geoid
+                // offset to a value that is already ellipsoidal. Only fall back to 0 when
+                // neither is available.
+                if (centerElev !== null && centerElev !== undefined) {
+                    newRow[MISB.SensorTrueAltitude] = centerElev;
+                } else if (centerHAE !== null && centerHAE !== undefined) {
+                    newRow[MISB.SensorEllipsoidHeight] = centerHAE;
+                } else {
+                    newRow[MISB.SensorTrueAltitude] = 0;
+                }
                 centerMisb.push(newRow);
                 if (centerPES) centerPES.push(sourcePES[i]);
             }

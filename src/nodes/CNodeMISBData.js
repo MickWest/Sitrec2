@@ -64,7 +64,12 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         // pipeline converts to HAE by adding the geoid offset N. Set true by HAE sources
         // (e.g. STANAG cs="WGS_84") so that geoid add is skipped (see needsGeoidToHAE()).
         // Serialized so the datum survives save/reload of a custom sitch.
-        this.altitudeIsHAE = v.altitudeIsHAE ?? false;
+        //   _baseAltitudeIsHAE = the datum declared by the source file. selectSourceColumns
+        //   may promote altitudeIsHAE to true when it falls back to an ellipsoid-height
+        //   column, and resets back to this base each call so the promotion never sticks
+        //   after switching back to an MSL column.
+        this._baseAltitudeIsHAE = v.altitudeIsHAE ?? false;
+        this.altitudeIsHAE = this._baseAltitudeIsHAE;
         this.addSimpleSerial("altitudeIsHAE");
 
         this.selectSourceColumns(v.columns || ["SensorLatitude", "SensorLongitude", "SensorTrueAltitude", "AltitudeAGL"]);
@@ -1899,8 +1904,12 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         this.lonCol = MISB[columns[1]]
         this.altCol = MISB[columns[2]]
         this.useAGL = false;
-        // check to see if we have data in altCol
-        if (this.misb[0][this.altCol] === null) {
+        // Reset the column-driven HAE flag to the source-declared datum each call, so a
+        // previous HAE-column fallback doesn't stick after switching back to an MSL column.
+        this.altitudeIsHAE = this._baseAltitudeIsHAE ?? false;
+        // Fall back only when the MSL column is empty across ALL rows — a null first row
+        // must not by itself trigger the fallback.
+        if (!this._columnHasData(this.altCol)) {
             // The MSL column is empty. Before falling back to AGL, try the matching
             // ellipsoid-height column (MISB ST0601 tag 75 / tag 78) — GPS-native
             // producers may emit HAE only. Using it means the values are already
@@ -1911,7 +1920,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             };
             const haeName = HAE_EQUIVALENT[columns[2]];
             const haeCol = haeName !== undefined ? MISB[haeName] : undefined;
-            if (haeCol !== undefined && this.misb[0][haeCol] !== null && this.misb[0][haeCol] !== undefined) {
+            if (haeCol !== undefined && this._columnHasData(haeCol)) {
                 this.altCol = haeCol;
                 this.altitudeIsHAE = true;
             } else {
@@ -1920,6 +1929,16 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
                 assert(this.misb[0][this.altCol] !== undefined, "CNodeMISBDataTrack: AGL altitude column not found in MISB data");
             }
         }
+    }
+
+    // True if any row has a non-null/undefined value in the given MISB column index.
+    _columnHasData(col) {
+        if (col === undefined || col === null) return false;
+        for (let i = 0; i < this.misb.length; i++) {
+            const v = this.misb[i][col];
+            if (v !== null && v !== undefined) return true;
+        }
+        return false;
     }
 
 

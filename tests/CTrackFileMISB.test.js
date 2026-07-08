@@ -183,6 +183,28 @@ describe('CTrackFileMISB', () => {
             expect(result).toBe(false);
             warnSpy.mockRestore();
         });
+
+        test('toMISB(1) preserves FrameCenter tag 78 (HAE) when tag 25 is absent', () => {
+            // Frame center has ONLY FrameCenterHeightAboveEllipsoid (tag 78, HAE), no
+            // FrameCenterElevation (tag 25). The HAE value must be kept in the
+            // ellipsoid-height column (not lost as SensorTrueAltitude = 0).
+            const rows = [];
+            for (let i = 0; i < 3; i++) {
+                const row = new Array(MISBFields).fill(null);
+                row[MISB.UnixTimeStamp] = 1609459200000 + i * 1000;
+                row[MISB.SensorLatitude] = 40.0 + i * 0.001;
+                row[MISB.SensorLongitude] = -104.0 + i * 0.001;
+                row[MISB.SensorTrueAltitude] = 1000 + i * 10;
+                row[MISB.FrameCenterLatitude] = 40.1 + i * 0.001;
+                row[MISB.FrameCenterLongitude] = -104.1 + i * 0.001;
+                row[MISB.FrameCenterHeightAboveEllipsoid] = 480 + i * 5; // tag 78, no tag 25
+                rows.push(row);
+            }
+            const tf = new CTrackFileMISB(rows);
+            const centerMisb = tf.toMISB(1);
+            expect(centerMisb[0][MISB.SensorEllipsoidHeight]).toBe(480);   // HAE preserved
+            expect(centerMisb[0][MISB.SensorTrueAltitude]).toBe(null);     // not a bogus 0
+        });
     });
 
     describe('getShortName', () => {

@@ -321,14 +321,16 @@ Sitrec doesn't only *read* KML — it also **writes** it, and those exports re-i
 | `CNode3DObject` (`CNode3DObject.js:443`) | `<Document><Placemark><Model><Link href=…dae>` | No time+geometry → a scene object, not a track |
 | `CustomManagerMenus` "Sitrec Pin" (`CustomManagerMenus.js:538`) | `<Document><Placemark><Point>` (no time) | A point landmark feature, not a track |
 
-The track exporters emit **HAE** altitude and convert from MSL on the way out —
+The track exporters emit **MSL** altitude (KML `absolute` is the EGM96 geoid datum) and
+convert from HAE on the way out —
 
 ```js
-// CNodeTrack.js:199 — KML absolute altitude is ellipsoid height (HAE).
-if (altReference === "MSL") alt += meanSeaLevelOffset(lat, lon);
+// CNodeTrack.js — KML absolute altitude is MSL (EGM96) per OGC KML 2.2/2.3.
+if (altReference === "HAE") alt -= meanSeaLevelOffset(lat, lon);
 ```
 
-— mirroring the import side, so an exported track re-imports with identical geometry.
+— mirroring the import side (KML absolute imported as MSL), so an exported track
+re-imports with identical geometry and opens at the correct height in Google Earth.
 
 > **Historical note:** before the generic refactor, the single-`Folder>Placemark>gx:Track` export
 > shape hit a dev-only `assert(0, "Unknown KML format")` fallback (it still worked in production

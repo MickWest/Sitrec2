@@ -43,15 +43,18 @@ Military-standard metadata (STANAG 0601) from surveillance platforms. Contains s
 ### STANAG 4676
 
 NATO track exchange format (XML). The track point's `dynamics/pos` is the standard's
-authoritative target position and imports as the **primary track** (plain name). Files
-produced by GXP InMotion also carry two proprietary positions per point — the endpoints
-of the sensor's line of sight through the tracked pixel — which import as supplementary
-reference tracks: **(Platform)** (`posHigh`, the sensor end of the ray — its altitude
-varies per frame like an aircraft track) and **(Ground)** (`posLow`, the ray's ground
-intersection). On a direct load these auto-select as the **camera** (Platform) and
-**target** (Ground) tracks. When the tracker ground-locks the target, `dynamics/pos`
-coincides with `posLow` and the duplicate is dropped automatically, so such files yield
-two tracks instead of three (the surviving primary track inherits the target role).
+authoritative estimate of the tracked object and imports as the **primary track**,
+labelled **(Target)**. Files produced by GXP InMotion also carry two proprietary
+positions per point — the endpoints of the sensor's line of sight through the tracked
+pixel — which import as supplementary reference tracks: **(Platform)** (`posHigh`, the
+sensor end of the ray — its altitude varies per frame like an aircraft track) and
+**(Ground)** (`posLow`, the ray's ground intersection). On a direct load these
+auto-select the **camera** track (Platform) and the **target** track (Target); Ground is
+a reference track with no role. (The three positions are collinear, so the camera at
+Platform points identically whether it aims at Target or Ground.) When the tracker
+ground-locks the target, `dynamics/pos` coincides with `posLow` and the duplicate is
+dropped automatically, so such files yield two tracks instead of three (the surviving
+Target track is on the ground in that case).
 
 STANAG heights are WGS-84 ellipsoidal (HAE), declared by the `<dynamics cs="...">`
 attribute. Sitrec reads it and skips the MSL→HAE geoid conversion that other (MSL)

@@ -208,7 +208,7 @@ Google's `gx:` extension namespace adds two sea-floor variants (`clampToSeaFloor
 
 **Spec point:** KML `absolute` altitude is sea-level referenced (OGC KML: EGM96 geoid vertical datum in the standard geodetic CRS definition).
 
-**Sitrec implementation note (important):** current Sitrec KML track import/export paths treat `absolute` as HAE by default (`altitudeReference: "HAE"` in `CNodeTrackFromLLAArray` / `CNodeTrack`). This is a practical compatibility behavior, but it differs from strict OGC KML interpretation and can introduce a local geoid-offset bias when handling strictly spec-authored KML.
+**Sitrec implementation note:** Sitrec treats KML `absolute` altitude as **MSL** (EGM96 geoid), per the OGC KML vertical datum. KML feature import (`CNodeTrackFromLLAArray`, absolute mode) passes `altitudeReference: "MSL"` and the track KML exporters (`CNodeTrack.exportTrackKML`, `CNode3DObject.exportToKML`) convert HAE→MSL on the way out, so exported tracks and objects open at the correct height in Google Earth. (`CNodeTrackFromLLAArray` / `CNodeTrack` still default `altitudeReference` to `"HAE"` for non-KML callers that supply raw ellipsoidal data.)
 
 ---
 
