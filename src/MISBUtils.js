@@ -236,7 +236,7 @@ const misbTagInfo = [
     {}, // 102
     {}, // 103
 
-    { name: "SensorEllipsoidHeightExtended", units: "Pixels", isNumber: true },  // Tag 104
+    { name: "SensorEllipsoidHeightExtended", units: "Meters", isNumber: true },  // Tag 104
     {}, // 105
     {}, // 106
     {}, // 107
