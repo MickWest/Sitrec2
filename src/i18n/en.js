@@ -401,6 +401,8 @@ const en = {
         latitude: "Latitude",
         longitude: "Longitude",
         altitude: "Altitude (m)",
+        altitudeMSL: "Altitude MSL (m)",
+        altitudeHAE: "Altitude HAE (m)",
         arrowLength: "Arrow Length",
         arrowColor: "Arrow Color",
         textColor: "Text Color",

@@ -314,8 +314,13 @@ export const menuMethods = {
         // Store reference to track this menu
         this.groundContextMenu = menu;
 
-        // Format the location text
-        const locationText = `${lat.toFixed(6)}, ${lon.toFixed(6)}, ${altMSL.toFixed(1)}m MSL`;
+        // Format the location text: coordinates, then MSL altitude, then WGS84 HAE
+        // (height above ellipsoid) with the HAE−MSL difference (the EGM96 geoid offset N,
+        // negative across most of CONUS) in parentheses.
+        const locationText =
+            `${lat.toFixed(6)}, ${lon.toFixed(6)}<br>` +
+            `${altMSL.toFixed(1)}m MSL<br>` +
+            `${altHAE.toFixed(1)}m WGS84 HAE (${geoidOffset.toFixed(1)}m)`;
 
         // Create an object to hold the menu actions
         const menuData = {

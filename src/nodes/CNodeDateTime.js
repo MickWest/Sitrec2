@@ -256,6 +256,18 @@ export class CNodeDateTime extends CNode {
 
         this.guiSitchFrames = this.dateTimeFolder.add(Sit, "frames",1,2000,1).name(t("dateTime.sitchFrames.label")).listen().elastic()
             .onChange((v) => {
+                const newFrames = Math.floor(Sit.frames);
+                // Live-follow (matches changedFrames on release): if the Out frame was at
+                // the last frame, keep it at the last frame as the sitch grows, so dragging
+                // Sitch Frames up carries the Out marker with it. Update lastFrames here so
+                // successive onChange ticks keep it glued through the whole drag.
+                if (Sit.bFrame === this.lastFrames - 1) {
+                    Sit.bFrame = newFrames - 1;
+                }
+                this.lastFrames = newFrames;
+                this.guiAFrame?.max(newFrames - 1);
+                this.guiBFrame?.max(newFrames - 1);
+                updateFrameSlider();
                 this.sitchDuration = this.framesToDuration(Sit.frames);
             })
             .onFinishChange((v) => {

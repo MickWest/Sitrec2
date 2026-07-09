@@ -75,7 +75,7 @@ export function SetupMouseHandler() {
     // refresh — onMouseMove only raycasts while one of these keys is already
     // held, so a tap with no mouse motion would otherwise read whatever
     // cursor position was last cached on mouseDown.
-    //   C/X/L → position-LLA snap (camera / target / lock-all)
+    //   C/X → position-LLA snap (camera / target)
     //   V/B   → measure-arrow start / end
     //
     // Registered as a DOM listener (not via EventManager) so it survives
@@ -85,7 +85,7 @@ export function SetupMouseHandler() {
         if (e.repeat) return;
         if (e.ctrlKey || e.metaKey) return;
         const key = e.key.toLowerCase();
-        if (key !== 'c' && key !== 'x' && key !== 'l' && key !== 'v' && key !== 'b') return;
+        if (key !== 'c' && key !== 'x' && key !== 'v' && key !== 'b') return;
         const active = document.activeElement;
         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
         const view = getTopViewWithCursor();

@@ -5,6 +5,7 @@ import {Globals, NodeMan} from "./Globals";
 import {Vector3} from "three";
 import {ViewMan} from "./CViewManager";
 import {t} from "./i18n";
+import {meanSeaLevelOffset} from "./EGM96Geoid";
 
 /**
  * CFeatureManager
@@ -249,11 +250,17 @@ class CFeatureManager extends CManager {
                 standaloneMenu.title(value ? `Feature: ${value}` : `Feature: (blank)`);
             });
         
-        // Add location info (read-only)
+        // Add location info (read-only). The stored altitude is HAE (height above the
+        // WGS84 ellipsoid). Show all three forms: MSL = HAE - N, HAE, and the geoid
+        // offset N = HAE - MSL (shown in parentheses on the HAE row, negative across CONUS).
         if (featureNode.lla) {
             standaloneMenu.add({lat: featureNode.lla.lat.toFixed(6)}, 'lat').name(t("featureManager.latitude")).listen().disable();
             standaloneMenu.add({lon: featureNode.lla.lon.toFixed(6)}, 'lon').name(t("featureManager.longitude")).listen().disable();
-            standaloneMenu.add({alt: featureNode.lla.alt.toFixed(2)}, 'alt').name(t("featureManager.altitude")).listen().disable();
+            const altHAE = featureNode.lla.alt;
+            const geoidOffset = meanSeaLevelOffset(featureNode.lla.lat, featureNode.lla.lon);
+            const altMSL = altHAE - geoidOffset;
+            standaloneMenu.add({v: altMSL.toFixed(2)}, 'v').name(t("featureManager.altitudeMSL")).listen().disable();
+            standaloneMenu.add({v: `${altHAE.toFixed(2)} (${geoidOffset.toFixed(2)})`}, 'v').name(t("featureManager.altitudeHAE")).listen().disable();
         }
         
         // Add arrow length slider

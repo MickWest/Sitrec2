@@ -300,6 +300,75 @@ export function showConfirm(message, {title = "Confirm", yesLabel = "Yes", noLab
     });
 }
 
+/**
+ * Show a styled single-line input prompt. Promise-based replacement for the native
+ * blocking prompt() (which freezes the main thread and stalls automation). Resolves to
+ * the entered string on OK/Enter, or null on Cancel/Escape/backdrop-click. The input is
+ * a real <input>, so while it's focused the global keyboard shortcuts (which bail on
+ * text-input focus) are naturally suppressed.
+ * @param {string} message - Body/label text
+ * @param {object} [opts]
+ * @param {string} [opts.title="Enter Value"]
+ * @param {string} [opts.defaultValue=""]
+ * @param {string} [opts.okLabel="OK"]
+ * @param {string} [opts.cancelLabel="Cancel"]
+ * @param {string} [opts.inputType="text"] - HTML input type (e.g. "text", "number")
+ * @returns {Promise<string|null>}
+ */
+export function showPrompt(message, {title = "Enter Value", defaultValue = "", okLabel = "OK", cancelLabel = "Cancel", inputType = "text"} = {}) {
+    return new Promise((resolve) => {
+        // No user to type in validation/regression runs — resolve to null (cancelled).
+        if (Globals.validationMode) {
+            console.log("showPrompt (suppressed dialog): " + message);
+            resolve(null);
+            return;
+        }
+
+        const {overlay, modal} = buildModalShell(title, message);
+
+        const input = document.createElement('input');
+        input.type = inputType;
+        input.value = defaultValue;
+        input.style.cssText = `
+            width: 100%; box-sizing: border-box; padding: 8px 10px; margin-bottom: 14px;
+            font-family: inherit; font-size: 14px; border: 1px solid #ccc; border-radius: 4px;
+        `;
+        modal.appendChild(input);
+
+        const cleanup = (result) => {
+            if (overlay.parentNode) document.body.removeChild(overlay);
+            resolve(result);
+        };
+
+        // Handle Enter/Escape on the input itself (it's focused, so it receives them).
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); cleanup(input.value); }
+            else if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
+        });
+
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = `display: flex; gap: 8px; justify-content: flex-end;`;
+        const mkBtn = (label, color, onClick) => {
+            const b = document.createElement('button');
+            b.textContent = label;
+            b.style.cssText = `padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;
+                color: white; font-weight: bold; font-family: inherit; background: ${color};`;
+            b.onclick = onClick;
+            return b;
+        };
+        btnRow.appendChild(mkBtn(cancelLabel, '#757575', () => cleanup(null)));
+        btnRow.appendChild(mkBtn(okLabel, '#1976d2', () => cleanup(input.value)));
+        modal.appendChild(btnRow);
+
+        // Backdrop click dismisses.
+        overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) cleanup(null); });
+
+        document.body.appendChild(overlay);
+        input.focus();
+        input.select();
+    });
+}
+
 const shownErrors = new Set();
 
 /**

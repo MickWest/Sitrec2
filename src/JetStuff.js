@@ -279,6 +279,9 @@ export function UpdateHUD(text="") {
             "Num-. - Reset Camera<br>" +
             "< - Frame Back<br>" +
             "> - Frame Forward<br>" +
+            "G - Go to Frame<br>" +
+            "I - Set In Frame<br>" +
+            "O - Set Out Frame<br>" +
             "Space Play/Pause<br>" +
             "Left - Backwards<br>" +
             "Right - Forwards<br>" +
@@ -287,6 +290,7 @@ export function UpdateHUD(text="") {
             "V/B - Measure distance<br>" +
             "Right Click - Context Menu<br>" +
             "/ - Crosshair. Click to fix<br>" +
+            "K - Show/Hide Shortcuts<br>" +
 
             ""
 

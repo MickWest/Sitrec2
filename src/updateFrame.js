@@ -4,7 +4,8 @@ import {isKeyHeld, keyHeldTime, KeyMan} from "./KeyBoardHandler";
 import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
 import {UpdatePRFromEA} from "./JetStuff";
 import {Frame2Az, Frame2El} from "./JetUtils";
-import {clampSitFrameRange} from "./UpdateSitFrames";
+import {clampSitFrameRange, lastSitFrame} from "./UpdateSitFrames";
+import {showPrompt} from "./showError";
 
 
 let hookedKeys = false;
@@ -25,6 +26,31 @@ export function updateFrame(elapsed) {
                 par.frame = Math.floor(par.frame) - 1;
                 if (par.frame < 0) par.frame = 0;
 
+            });
+
+            // "G" = Go to Frame: prompt for a frame number, jump there and pause.
+            // The initKeyboard() dispatch bails on text-input focus, so this only
+            // fires outside input fields (and the prompt's own field is isolated).
+            KeyMan.key('g').onDown(() => {
+                showPrompt("Enter frame number:", {
+                    title: "Go to Frame",
+                    inputType: "number",
+                    defaultValue: String(Math.round(par.frame)),
+                }).then((result) => {
+                    if (result === null || result.trim() === "") return;
+                    let f = parseInt(result, 10);
+                    if (!Number.isFinite(f)) return;
+                    // Clamp to the sitch's frame count (can't scrub past the sitch).
+                    f = Math.max(0, Math.min(f, lastSitFrame()));
+                    // Expand the In/Out range if the target frame falls outside it.
+                    if (f < Sit.aFrame) Sit.aFrame = f;
+                    if (f > Sit.bFrame) Sit.bFrame = f;
+                    par.frame = f;
+                    par.paused = true;
+                    GlobalDateTimeNode.liveMode = false;
+                    updateFrameSlider();
+                    setRenderOne(true);
+                });
             });
 
             hookedKeys = true;

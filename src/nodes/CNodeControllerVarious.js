@@ -220,7 +220,7 @@ export class CNodeControllerManualPosition extends CNodeController {
         const fwd = camera.getWorldDirection(new Vector3())
         const right = new Vector3().crossVectors(fwd, camera.up)
 
-        const clHeld = isKeyHeld('l') || isKeyHeld('c');
+        const clHeld = isKeyHeld('c');
         if (clHeld) {
             const cursorPos = getCursorPositionFromTopView();
             if (cursorPos) {

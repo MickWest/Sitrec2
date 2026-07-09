@@ -132,7 +132,7 @@ export const mouseMethods = {
             const focusTrackActive =
                 this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
             const positionKeyHeld =
-                isKeyHeld('c') || isKeyHeld('x') || isKeyHeld('l')
+                isKeyHeld('c') || isKeyHeld('x')
                 || isKeyHeld('v') || isKeyHeld('b');
             if (!this.showLOSArrow && !focusTrackActive && !positionKeyHeld) return;
             const {x, y} = getMousePosition();
@@ -284,7 +284,7 @@ export const mouseMethods = {
             //
             // The cursor raycast is only useful for things that read it each
             // frame: the LOS debug arrow, focus-track snapping, and held
-            // position keys — C=camera, X=target, L=lock-all (drive
+            // position keys — C=camera, X=target (drive
             // CNodePositionLLA.update() via getCursorPositionFromTopView()),
             // V/B (drive globalMeasureState start/end via
             // CameraControls.updateMeasureArrow). Everything else (orbit
@@ -295,7 +295,7 @@ export const mouseMethods = {
             const focusTrackActive =
                 this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
             const positionKeyHeld =
-                isKeyHeld('c') || isKeyHeld('x') || isKeyHeld('l')
+                isKeyHeld('c') || isKeyHeld('x')
                 || isKeyHeld('v') || isKeyHeld('b');
             if (!this.showLOSArrow && !focusTrackActive && !positionKeyHeld) {
                 return;

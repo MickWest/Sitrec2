@@ -360,7 +360,7 @@ export class CNodePositionLLA extends CNodeTrack {
     update() {
         this._refineAGLToTiles();
         if (this.key) {
-            const posHeld = isKeyHeld(this.key.toLowerCase()) || isKeyHeld('l');
+            const posHeld = isKeyHeld(this.key.toLowerCase());
             if (posHeld) {
                 const cursorPos = getCursorPositionFromTopView();
                 if (cursorPos) {
