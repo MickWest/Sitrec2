@@ -1347,11 +1347,35 @@ const en = {
     simInfo: {
         folderTitle: {
             label: "Sim Info Display",
-            tooltip: "Date/time text overlays for the look view (independent of the Video Info Display)",
+            tooltip: "Date/time and traverse text overlays for the look view (independent of the Video Info Display)",
         },
         showSimInfo: {
             label: "Show Sim Info",
             tooltip: "Master toggle - enable or disable all sim info displays",
+        },
+        traverseSpeed: {
+            label: "Traverse Speed",
+            tooltip: "Show the traverse object's total 3D speed in the selected units (knots/mph/km/h)",
+        },
+        traverseGroundSpeed: {
+            label: "Traverse Ground Speed",
+            tooltip: "Show the traverse object's horizontal ground speed (vertical component removed)",
+        },
+        traverseAirSpeed: {
+            label: "Traverse Air Speed",
+            tooltip: "Show the traverse object's horizontal air speed (wind subtracted); needs a wind track",
+        },
+        traverseGForce: {
+            label: "Traverse g-force",
+            tooltip: "Show the traverse object's total g-force (acceleration ÷ 9.81)",
+        },
+        traverseAltMSL: {
+            label: "Traverse Alt (MSL)",
+            tooltip: "Show the traverse object's altitude above mean sea level (geoid)",
+        },
+        traverseAltAGL: {
+            label: "Traverse Alt (AGL)",
+            tooltip: "Show the traverse object's altitude above ground level (terrain directly below)",
         },
     },
 

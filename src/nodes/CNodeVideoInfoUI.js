@@ -28,7 +28,7 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         this.showDateUTC = v.showDateUTC ?? false;
         this.showTimeUTC = v.showTimeUTC ?? false;
         this.showDateTimeUTC = v.showDateTimeUTC ?? false;
-        this.fontSize = v.fontSize ?? 30;
+        this.fontSize = v.fontSize ?? 40;
 
         this.filenameX = v.filenameX ?? DEFAULT_X;
         this.filenameY = v.filenameY ?? DEFAULT_Y;
@@ -767,7 +767,21 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
             }
         }
 
+        // Subclass hook for additional dynamic text lines (e.g. the Sim Info
+        // panel's traverse speed / altitude / g-force readouts). We pass the
+        // local drawTextWithBg closure so subclasses reuse all the same font,
+        // positioning and background-box layout as the built-in items. Base
+        // class draws nothing extra.
+        this.drawExtraItems(drawTextWithBg, Math.floor(par.frame));
+
         this.drawOSDDataSeries(c, widthPx, heightPx, padding);
+    }
+
+    // Overridden by subclasses to draw extra text items. `drawTextWithBg(text,
+    // pctX, pctY)` draws a centered label with a translucent background box and
+    // returns its bbox (store it for drag hit-testing via getElementBounds).
+    drawExtraItems(drawTextWithBg, frame) {
+        // no-op in the base class
     }
 
     drawOSDDataSeries(c, widthPx, heightPx, padding) {

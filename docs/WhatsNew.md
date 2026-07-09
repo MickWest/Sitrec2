@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.99.0 (2026-07-08)
+
+### New Features
+- **Traverse readouts on the Sim Info overlay** (Show → Sim Info Display): six new on-screen readouts for the traverse object — total speed, ground speed, air speed, g-force, altitude above sea level, and altitude above the ground directly below. Each can be turned on independently and dragged wherever you want it; speeds follow your chosen units, and air speed appears only when a wind track is loaded.
+- **Go to Frame** (press G): type a frame number to jump straight to it and pause; the In/Out range expands to include the target if it falls outside. The on-screen keyboard shortcut list (press K) now lists this along with the Set In (I) and Set Out (O) keys.
+
+### Improvements
+- **Sitch Frames slider follows the end**: dragging the Sitch Frames slider to lengthen a sitch now carries the Out marker along to the new last frame, instead of leaving it behind.
+- **Clearer altitude readouts**: the ground right-click menu and the feature-edit dialog now show altitude both above sea level and above the ellipsoid (with the geoid offset), each clearly labelled.
+- **Larger default overlay text**: the Video Info and Sim Info displays now start at a bigger default font size (overlays whose size you already set are unchanged).
+
+---
+
 ## Version 2.98.3 (2026-07-08)
 
 ### Bug Fixes

@@ -9,6 +9,30 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.99.0 (2026-07-08)
+
+### New Features
+- **Sim Info overlay gains six Traverse readouts** (working tree) (`src/nodes/CNodeSimInfoUI.js`, `src/nodes/CNodeVideoInfoUI.js`, `src/i18n/en.js`). The Sim Info Display overlay (`CNodeSimInfoUI`, Show → Sim Info Display, drawn on the look view) adds six independently-toggleable, draggable text readouts derived per-frame from the selected traverse track — `LOSTraverseSelect`, falling back to `LOSTraverseSelectTrack` for custom sitches (`getTraverseNode()`) — the same data source the Graphs *Traverse Speed* / *Traverse Altitude* / *Object g-force* plots use:
+  - **Traverse Speed** — total 3D object speed.
+  - **Traverse Ground Speed** — horizontal ground speed (the vertical/ellipsoid-up component is projected out).
+  - **Traverse Air Speed** — horizontal air speed (the per-frame `targetWind` displacement is subtracted, then the result is projected onto the ground plane; the line is hidden entirely when there is no `targetWind` track, so air speed is never shown without wind data).
+  - **Traverse g-force** — total g (second difference of position × fps² ÷ 9.81, matching `CNodeGForce`, clamped near the clip end).
+  - **Traverse Alt (MSL)** — altitude above mean sea level = HAE − geoid offset (`meanSeaLevelOffset`).
+  - **Traverse Alt (AGL)** — object HAE − ground-surface HAE directly below, preferring the loaded 3D-tile surface (`getTilesPointBelow`, so it rides buildings/photogrammetry the elevation map ignores), falling back to the elevation map, then the geoid; using HAE for both points makes the difference datum-independent.
+  All six default **OFF**; speeds honor the Units setting via `Units.m2Speed` / `Units.speed.abbrev` (kt / mph / km/h) and altitudes use `Units.smallWithUnits` (ft / m). The three speed lines share one `traverseSpeedText(frame, mode)` helper. Implemented via a new base-class hook `CNodeVideoInfoUI.drawExtraItems(drawTextWithBg, frame)` (no-op in the base, called from the base draw path) so the subclass reuses the base overlay's font / background-box / positioning layout, its drag hit-testing (`getElementBounds` / `getElementPos` / `getShowProp`) and auto-stacking (`positionItemToAvoidOverlaps`). The six show flags and their X/Y positions are serialized (`addSimpleSerial`); labels and tooltips are added under `simInfo.*` in `src/i18n/en.js`.
+- **"G" = Go to Frame** (`3b5eb2d5`) (`src/updateFrame.js`, `src/showError.js`). Pressing **G** outside a text field opens a styled prompt for a frame number, jumps there and pauses (`par.paused = true`, `GlobalDateTimeNode.liveMode = false`), clamping to the sitch length (`lastSitFrame()`) and expanding the In/Out range (`Sit.aFrame` / `Sit.bFrame`) if the target falls outside it. Backed by a new `showPrompt(message, opts)` in `showError.js` — a Promise-based, styled replacement for the native blocking `prompt()` (which freezes the main thread and stalls automation/MCP); it resolves to the entered string or `null` (Cancel/Escape/backdrop), and resolves to `null` immediately in `Globals.validationMode` so regression runs don't hang.
+
+### Improvements
+- **Sitch Frames slider live-follows the Out marker** (`3b5eb2d5`) (`src/nodes/CNodeDateTime.js`). While dragging the Sitch Frames slider, if the Out frame was sitting at the last frame it is now carried to the new last frame on every `onChange` tick (`Sit.bFrame = newFrames - 1` when `Sit.bFrame === this.lastFrames - 1`), with the In/Out sliders' maxima and the frame slider updated live — so lengthening a sitch keeps the Out marker glued to the end instead of leaving it behind (matching the existing `changedFrames`-on-release behavior).
+- **Altitude readouts show MSL, HAE and the geoid offset** (`3b5eb2d5`) (`src/CustomManagerMenus.js`, `src/CFeatureManager.js`, `src/i18n/en.js`). The ground right-click context menu now prints coordinates, then MSL altitude, then WGS84 HAE with the HAE−MSL difference (the EGM96 geoid offset N, `meanSeaLevelOffset`, negative across most of CONUS) in parentheses. The feature-edit dialog replaces its single mislabeled "Altitude" row (which actually displayed HAE) with two read-only rows — **Altitude MSL (m)** and **Altitude HAE (m)** (the HAE value followed by N in parentheses) — so the dialog and the ground menu agree and name their datum explicitly. New i18n keys `featureManager.altitudeMSL` / `featureManager.altitudeHAE`.
+- **Default overlay font size raised 30 → 40** (working tree) (`src/nodes/CNodeVideoInfoUI.js`). The shared `fontSize` default in `CNodeVideoInfoUI` (inherited by `CNodeSimInfoUI`) is now `v.fontSize ?? 40`, enlarging the default text of both the Video Info Display and the Sim Info Display overlays. Default-only: any overlay with a previously saved `fontSize` keeps its existing size.
+- **Removed the redundant "L" key and refreshed the on-screen shortcut list** (`3b5eb2d5`) (`src/mouseMoveView.js`, `src/nodes/CNodeView3DMouse.js`, `src/nodes/CNodeControllerVarious.js`, `src/nodes/CNodePositionLLA.js`, `src/JetStuff.js`). "L" duplicated "C" (camera position-LLA cursor snap), so it is dropped from the cursor-refresh key gate and from the manual-position / position-LLA / mouse-view controllers (stale "lock-all" comments updated). The keyboard-shortcut HUD (`UpdateHUD`) now lists **G** (Go to Frame), **I** (Set In Frame), **O** (Set Out Frame) and **K** (Show/Hide Shortcuts).
+
+### Bug Fixes
+- **Corrected units on MISB tag 104 (SensorEllipsoidHeightExtended)** (`d63284e4`) (`src/MISBUtils.js`). The `misbTagInfo` entry for ST0601 tag 104 declared `units: "Pixels"`; it is now `"Meters"`. This field is not currently read anywhere in Sitrec, so there is no user-visible effect — the correction keeps the tag table right for any future use of tag 104.
+
+---
+
 ## Version 2.98.3 (2026-07-08)
 
 ### Bug Fixes
