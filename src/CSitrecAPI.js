@@ -124,6 +124,8 @@ class CSitrecAPI {
                         return { success: false, error: "Invalid date-time format: " + v.dateTime };
                     }
                     GlobalDateTimeNode.setStartDateTime(v.dateTime);
+                    // Chatbot-set date establishes the slider reset target.
+                    GlobalDateTimeNode.establishDateTimeDefaults();
                     return { success: true, dateTime: v.dateTime };
                 }
             },

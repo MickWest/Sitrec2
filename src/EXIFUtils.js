@@ -395,6 +395,8 @@ function applyImportedImageCaptureDateTime(metadata, filename = "", options = {}
     }
 
     GlobalDateTimeNode.setStartDateTime(parsedDate);
+    // Dropped image's embedded EXIF date establishes the slider reset target.
+    GlobalDateTimeNode.establishDateTimeDefaults();
 
     if (render) {
         setRenderOne(true);

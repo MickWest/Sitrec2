@@ -1702,6 +1702,8 @@ export const setupMethods = {
                     // parse the date and time
                     // set the GlobalDateTimeNode to this date
                     GlobalDateTimeNode.setStartDateTime(meta.creationDate);
+                    // dropped video's embedded date establishes the slider reset target
+                    GlobalDateTimeNode.establishDateTimeDefaults();
                     // and set sitchEstablished to true
                     setSitchEstablished(true);
                 }
@@ -1929,8 +1931,28 @@ export const setupMethods = {
 
             new CNodeGUIValue({
                 id: "orbitRadius",
-                value: 5000, start: 100, end: 100000, step: 100,
+                value: 5000, start: 1, end: 100000, step: 1,
                 desc: "Orbit Radius (m)", gui: "cameraTweaks",
+            });
+
+            // Dedicated orbit altitude (HAE, meters). Replaces using the manual
+            // camera altitude ("Cam [C] Alt" / fixedCameraPosition), which is
+            // disabled/greyed-out while the camera follows a track — leaving the
+            // orbit at a stale altitude. This slider is always live.
+            new CNodeGUIValue({
+                id: "orbitAltitude",
+                value: 1000, start: 1, end: 20000, step: 1,
+                desc: "Orbit Altitude (m)", gui: "cameraTweaks",
+            });
+
+            // Compass azimuth (degrees, clockwise from north) of the orbit's
+            // starting point at frame 0. 0 = due north (the historical default),
+            // 90 = east, 180 = south, 270 = west. Applied as a phase offset to
+            // the orbit angle in CNodeOrbitTrack.
+            new CNodeGUIValue({
+                id: "orbitStartAngle",
+                value: 0, start: 0, end: 360, step: 0.1,
+                desc: "Start Angle (°)", gui: "cameraTweaks",
             });
 
             new CNodeGUIValue({
@@ -1944,8 +1966,28 @@ export const setupMethods = {
                 target: "orbitTargetSwitch",
                 radius: "orbitRadius",
                 period: "orbitPeriod",
-                altitude: "fixedCameraPosition",
+                altitude: "orbitAltitude",
+                startAngle: "orbitStartAngle",
             });
+
+            // Backward-compat: before the Orbit Altitude control existed, the orbit
+            // took its altitude from the fixed camera. Preserve that framing for
+            // older saves — when this load is a save (has mods) with no stored
+            // orbitAltitude, seed it from the fixed camera's current HAE, the exact
+            // value the old orbit used (ECEFToLLAVD_radii(p).z). New saves carry an
+            // orbitAltitude mod (left untouched); fresh sitches keep the default.
+            // Runs before CustomManager.deserialize(), so a real saved value still
+            // wins. fixedCameraPosition's LLA is authoritative here (custom saves
+            // re-emit it in the def; its mods carry only visible/agl, default false).
+            if (Sit.mods && Sit.mods.orbitAltitude === undefined) {
+                const fixedCam = NodeMan.get("fixedCameraPosition", false);
+                const orbitAlt = NodeMan.get("orbitAltitude", false);
+                if (fixedCam && orbitAlt) {
+                    const altHAE = ECEFToLLAVD_radii(fixedCam.p(0)).z;
+                    orbitAlt.value = altHAE;
+                    orbitAlt.guiEntry?.setValueQuietly?.(altHAE);
+                }
+            }
 
             const cameraTrackSwitch = NodeMan.get("cameraTrackSwitch", false);
             if (cameraTrackSwitch) {

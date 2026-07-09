@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.100.0 (2026-07-09)
+
+### New Features
+- **Orbit Altitude** (Camera → Camera Tweaks): a dedicated slider for the orbit camera's height, independent of the manual camera altitude (which is locked while the camera follows a track). Sitches saved before this control keep their original orbit height.
+- **Start Angle** (Camera → Camera Tweaks): set the compass direction the orbit camera starts from — 0° north, 90° east, 180° south, 270° west.
+- **Main View Orthographic / Look View Orthographic** (Camera → Camera Tweaks): render either view with a parallel (orthographic) projection instead of perspective; it matches the current framing and scales as the camera moves. A companion **Main Near Plane** slider clips through buildings or terrain in front of the camera.
+
+### Improvements
+- **Orbit and pan around buildings**: orbiting and panning the view now pivot around the Google 3D building rooftop or wall directly under the cursor, instead of the terrain hidden behind it.
+
+### Bug Fixes
+- Fixed double-clicking a date or time slider (Time menu) resetting it to a blank or invalid value. Double-click now reverts to the date the sitch was last given — from loading or saving the sitch, from a dropped video or image's capture date, or from the assistant setting the date.
+
 ## Version 2.99.0 (2026-07-08)
 
 ### New Features

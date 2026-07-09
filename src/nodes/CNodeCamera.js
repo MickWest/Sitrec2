@@ -50,6 +50,22 @@ export class CNodeCamera extends CNode3D {
             this._object.layers.mask = v.layers;
         }
 
+        // Orthographic-mode + per-camera near-plane state. We keep the projection
+        // on the PerspectiveCamera object (so every .fov/.aspect/isPerspectiveCamera
+        // reader keeps working); when `orthographic` is on we override the camera's
+        // updateProjectionMatrix to build an ortho matrix instead. The ortho box is
+        // sized to match the perspective framing at the ground under the view centre
+        // (_refreshOrthoProjection), so it scales naturally as the camera moves.
+        this.orthographic = v.orthographic ?? false;
+        this.nearPlane = v.nearPlane ?? v.near ?? 1;
+        this._ownsNearPlane = false;             // set true when this camera adds its own Near Plane control
+        this._orthoRaycaster = new Raycaster();
+        this._orthoForward = new Vector3();
+        this._orthoRefDistance = undefined;      // cached camera→ground distance for ortho sizing
+        this._orthoLastPos = null;               // movement guard so we don't re-raycast when still
+        this._orthoLastDir = null;
+        this._installOrthographicOverride();
+
 //        console.log("🎥🎥🎥 " + this.id + " CREATE CAMERA " + this.id);
 
         this.resetCamera()
@@ -66,6 +82,8 @@ export class CNodeCamera extends CNode3D {
         if (this.id === "lookCamera") {
             this.addGroundTrackSwitchGUI();
         }
+
+        this.addCameraTweaksControls();
     }
 
 
@@ -87,6 +105,8 @@ export class CNodeCamera extends CNode3D {
             lookAtLLA: [atLLA.x, atLLA.y, atLLA.z],
             upLLA: [upLLA.x, upLLA.y, upLLA.z],
             fov: this.camera.fov,
+            orthographic: this.orthographic,
+            nearPlane: this.nearPlane,
         }
     }
 
@@ -96,8 +116,16 @@ export class CNodeCamera extends CNode3D {
         this.lookAtLLA = v.lookAtLLA;
         this.upLLA = v.upLLA;
         this.camera.fov = v.fov;
+        if (v.orthographic !== undefined) this.orthographic = v.orthographic;
+        if (v.nearPlane !== undefined) this.nearPlane = v.nearPlane;
+        if (this._ownsNearPlane) this.camera.near = this.nearPlane;
 
         this.resetCamera()
+
+        // Rebuild the projection so a restored orthographic flag / near plane
+        // takes effect immediately (per-frame update() also maintains it).
+        if (this.orthographic) this._refreshOrthoProjection();
+        else this.camera.updateProjectionMatrix();
     }
 
     // when a camera object is treated like a track
@@ -195,6 +223,113 @@ export class CNodeCamera extends CNode3D {
         return this._object
     }
 
+    // Camera Tweaks: "<Main|Look> View Orthographic" checkbox for both view
+    // cameras, plus a "Main Near Plane" slider on the main camera (the look
+    // camera's near plane is owned by its PTZ controller, so we don't duplicate
+    // it here). Lives in Camera ▸ Camera Tweaks.
+    addCameraTweaksControls() {
+        if (this.id !== "mainCamera" && this.id !== "lookCamera") return;
+        const menu = guiMenus.cameraTweaks ?? guiMenus.camera;
+        if (!menu) return;
+        const label = (this.id === "lookCamera") ? "Look" : "Main";
+
+        this.orthoController = menu.add(this, "orthographic")
+            .name(label + " View Orthographic")
+            .listen()
+            .tooltip("Render this view with an orthographic (parallel) projection instead of perspective. "
+                + "The ortho size auto-matches the current framing at the ground and scales as the camera moves.")
+            .onChange(() => {
+                this._orthoRefDistance = undefined; // force a fresh size
+                if (this.orthographic) this._refreshOrthoProjection();
+                else this._object.updateProjectionMatrix();
+                setRenderOne(true);
+            });
+
+        if (this.id === "mainCamera") {
+            this._ownsNearPlane = true;
+            this.nearPlaneController = menu.add(this, "nearPlane", 0.1, 2000, 0.1)
+                .name(label + " Near Plane (m)")
+                .listen()
+                .tooltip("Near clipping-plane distance for this camera. Increase to slice through 3D buildings / "
+                    + "terrain in front of the camera; especially useful in orthographic mode.")
+                .onChange(() => {
+                    this._object.near = this.nearPlane;
+                    this._object.updateProjectionMatrix();
+                    setRenderOne(true);
+                });
+        }
+    }
+
+    // Replace the camera's updateProjectionMatrix so it builds an orthographic
+    // matrix while `orthographic` is on, and the normal perspective matrix
+    // otherwise. Done as an instance override (not a camera swap) so all the
+    // .fov/.aspect/isPerspectiveCamera readers throughout the app keep working.
+    _installOrthographicOverride() {
+        const cam = this._object;
+        if (cam.__sitrecOrthoInstalled) return;
+        const perspectiveUpdate = cam.updateProjectionMatrix.bind(cam);
+        cam.updateProjectionMatrix = () => {
+            if (this.orthographic) this._updateOrthographicProjectionMatrix();
+            else perspectiveUpdate();
+        };
+        cam.__sitrecOrthoInstalled = true;
+    }
+
+    // Build the orthographic projection matrix from the current perspective
+    // parameters: an ortho box whose half-height equals what the perspective
+    // frustum spans at the reference distance (ground under the view centre),
+    // so toggling ortho is visually seamless and scales with camera distance.
+    _updateOrthographicProjectionMatrix() {
+        const cam = this._object;
+        const d = this._orthoRefDistance ?? 1000;
+        const halfH = Math.tan((cam.fov ?? 30) * Math.PI / 360) * d / (cam.zoom || 1);
+        const halfW = halfH * (cam.aspect || 1);
+        // Orthographic depth is LINEAR: three.js's log-depth shader falls back to
+        // gl_FragCoord.z for a non-perspective matrix, so the camera's perspective
+        // far plane (~1e9 m) would leave only ~hundreds of metres of depth
+        // resolution → severe z-fighting (torn roofs). Use a TIGHT range scaled to
+        // the reference distance instead — a window ~8× the camera→ground distance
+        // deep, which comfortably contains the visible scene while giving sub-mm
+        // depth precision. `near` stays the user's Near Plane so it still slices.
+        const near = cam.near;
+        const far = near + 8 * d;
+        cam.projectionMatrix.makeOrthographic(-halfW, halfW, halfH, -halfH, near, far);
+        cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+    }
+
+    // Refresh the ortho reference distance (camera → ground under the view centre)
+    // then rebuild the ortho matrix. Cheap movement guard avoids re-raycasting
+    // every call when the camera is still.
+    _refreshOrthoProjection() {
+        const cam = this._object;
+        cam.getWorldDirection(this._orthoForward);
+        const moved = !this._orthoLastPos
+            || this._orthoLastPos.distanceToSquared(cam.position) > 1e-4
+            || this._orthoLastDir.dot(this._orthoForward) < 0.99999995
+            || this._orthoRefDistance === undefined;
+        if (moved) {
+            this._orthoRaycaster.set(cam.position, this._orthoForward);
+            // Measure to the ACTUAL ground under the screen centre — the real
+            // terrain mesh AND the Google 3D-tile surface (pass the camera so
+            // raycastLocalGround includes the tiles). isTerrain===true marks a
+            // real surface hit (terrain or tile); the ellipsoid fallback
+            // (isTerrain false) is a smooth sphere that at grazing tilts sits
+            // far from the real ground, so we never size the ortho box from it —
+            // that keeps buildings near the screen centre at ~perspective scale.
+            const hit = raycastLocalGround(this._orthoRaycaster, cam);
+            if (hit && hit.isTerrain) {
+                this._orthoRefDistance = cam.position.distanceTo(hit.point);
+            } else if (this._orthoRefDistance === undefined) {
+                // No real ground yet (sky, or tiles not streamed in): provisional
+                // size until a real hit is available on a later frame.
+                this._orthoRefDistance = hit ? cam.position.distanceTo(hit.point) : 1000;
+            }
+            (this._orthoLastPos ??= new Vector3()).copy(cam.position);
+            (this._orthoLastDir ??= new Vector3()).copy(this._orthoForward);
+        }
+        cam.updateProjectionMatrix();
+    }
+
     update(f) {
         super.update(f);
 
@@ -232,6 +367,19 @@ export class CNodeCamera extends CNode3D {
 
         this.updateGroundTrackSwitchFrameRange();
         this.applyGroundTrackSwitch(f);
+
+        // Maintain the per-camera near plane (main camera owns it; the look camera's
+        // near is driven by its PTZ controller) and the orthographic projection.
+        // Runs last so the camera is at its final render pose (post controllers /
+        // altAdjust / ground-track-switch).
+        if (this._ownsNearPlane && this.camera.near !== this.nearPlane) {
+            // Something (e.g. ground-track-switch restore) drifted near; reassert it.
+            this.camera.near = this.nearPlane;
+            if (!this.orthographic) this.camera.updateProjectionMatrix();
+        }
+        if (this.orthographic) {
+            this._refreshOrthoProjection();
+        }
     }
 
     updateGroundTrackSwitchFrameRange() {

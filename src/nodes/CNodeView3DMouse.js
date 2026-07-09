@@ -71,7 +71,10 @@ export const mouseMethods = {
     _refreshCursorFromMouseInner(mouseRay, options = {}) {
         this.raycaster.setFromCamera(mouseRay, this.camera);
 
-        const hit = raycastLocalGround(this.raycaster);
+        // Pass the camera so raycastLocalGround also considers Google 3D-tile
+        // buildings (on the MAIN/LOOK layers) — the orbit/pan pivot then lands
+        // on a rooftop under the cursor instead of the terrain behind it.
+        const hit = raycastLocalGround(this.raycaster, this.camera);
         let target = hit?.point;
         let targetIsTerrain = hit?.isTerrain ?? false;
 

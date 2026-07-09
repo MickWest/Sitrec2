@@ -188,6 +188,27 @@ export class CNodeDateTime extends CNode {
         const guiSecond = this.dateTimeFolder.add(this.dateTime, "second", 0, 59, 1).listen().onChange(v => this.updateDateTime(v)).wrap(guiMinute).name(t("dateTime.second.label")).tooltip(t("dateTime.second.tooltip"))
         const guiMillisecond = this.dateTimeFolder.add(this.dateTime, "millisecond", 0, 999, 1).listen().onChange(v => this.updateDateTime(v)).wrap(guiSecond).name(t("dateTime.millisecond.label")).tooltip(t("dateTime.millisecond.tooltip"))
 
+        // Double-clicking a slider's label resets it to that controller's
+        // _defaultValue (see lil-gui-slider-settings.js). These controllers are
+        // built BEFORE the dateTime fields are populated, so the reset value was
+        // captured as `undefined` → double-click set the field to NaN. Give each
+        // a sensible canonical baseline: <current year>-01-01 00:00:00.000. This
+        // baseline is superseded by establishDateTimeDefaults() whenever the date
+        // is authoritatively established (sitch load/save, EXIF, chatbot).
+        this.guiYear = guiYear;
+        this.guiMonth = guiMonth;
+        this.guiHour = guiHour;
+        this.guiMinute = guiMinute;
+        this.guiSecond = guiSecond;
+        this.guiMillisecond = guiMillisecond;
+        guiYear._defaultValue = new Date().getUTCFullYear();
+        guiMonth._defaultValue = 1;
+        this.guiDay._defaultValue = 1;
+        guiHour._defaultValue = 0;
+        guiMinute._defaultValue = 0;
+        guiSecond._defaultValue = 0;
+        guiMillisecond._defaultValue = 0;
+
         this.adjustGUIForTimezone();
 
         this.adjustDaysInMonth();
@@ -586,6 +607,11 @@ export class CNodeDateTime extends CNode {
     }
 
     modSerialize() {
+        // Saving a sitch establishes the saved date as the slider reset target,
+        // so after a save a double-click reverts to what was saved (not a date the
+        // user may have dragged to before saving). Capturing the current displayed
+        // values here is harmless for any non-save serialization too.
+        this.establishDateTimeDefaults();
         return {
             ...super.modSerialize(),
             startDateTime: this.getStartTimeString(),
@@ -798,10 +824,32 @@ export class CNodeDateTime extends CNode {
 
     }
 
+    // Capture the current (displayed) date/time as the double-click RESET target
+    // for the seven date/time sliders. Double-clicking a slider label resets it to
+    // that controller's _defaultValue (see lil-gui-slider-settings.js); we refresh
+    // those here whenever the date is AUTHORITATIVELY established — sitch load/save,
+    // EXIF from a dropped video/image, or a chatbot set — so a double-click restores
+    // the last established date instead of a stale/canonical one. Deliberately NOT
+    // called on plain slider edits or live-mode ticks (those go through
+    // setNowDateTime), so double-click stays a meaningful "revert to established".
+    // No-op if the sliders don't exist yet (e.g. the constructor's early seed).
+    establishDateTimeDefaults() {
+        if (!this.dateTimeFolder || !this.dateTimeFolder.controllers) return;
+        const fields = ["year", "month", "day", "hour", "minute", "second", "millisecond"];
+        for (const c of this.dateTimeFolder.controllers) {
+            if (fields.includes(c.property) && Number.isFinite(this.dateTime[c.property])) {
+                c._defaultValue = this.dateTime[c.property];
+            }
+        }
+    }
+
     populateStartTimeFromUTCString(utcString, skipLiveModeReset = false) {
         // make a copy of the the original start time, so we can reset to it later with a UI button
         this.originalPopulatedStartTime = new Date(utcString);
         this.setStartDateTime(new Date(utcString), skipLiveModeReset);
+        // Loading a sitch (fresh, serialized, or URL override all reach here)
+        // establishes the loaded date as the slider reset target.
+        this.establishDateTimeDefaults();
     }
 
 

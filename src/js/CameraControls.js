@@ -557,7 +557,9 @@ class CameraMapControls {
 		// Set up raycaster from camera
 		this.view.raycaster.setFromCamera(mouseRay, this.camera);
 
-		const hit = raycastLocalGround(this.view.raycaster);
+		// Pass the camera so raycastLocalGround also considers Google 3D-tile
+		// buildings (touch pivot lands on rooftops, matching the mouse path).
+		const hit = raycastLocalGround(this.view.raycaster, this.camera);
 		if (hit) {
 			this.target = hit.point;
 			this.targetIsTerrain = hit.isTerrain;

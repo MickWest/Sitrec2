@@ -298,8 +298,17 @@ class PerViewTiles {
         // window resize also re-triggers an LOD pass.
         const cam = view.camera;
         const e = cam.matrixWorld.elements;
+        // Fold in projection-matrix terms as well as the world pose: a projection
+        // change with a static camera (orthographic toggle, near-plane change,
+        // ortho-scale change as the camera dollies) must re-traverse the tile LOD.
+        // Keying on pose + fov/zoom/aspect alone missed those (ortho toggling
+        // leaves the world matrix and fov/zoom/aspect untouched), leaving stale
+        // tiles until the camera moved. p[0]/p[5] track ortho/persp scale,
+        // p[10]/p[14] track near/far.
+        const p = cam.projectionMatrix.elements;
         const fp = e[0] + e[5] + e[10] + e[12] + e[13] + e[14]
-            + cam.fov + cam.zoom + (cam.aspect || 0);
+            + cam.fov + cam.zoom + (cam.aspect || 0)
+            + p[0] + p[5] + p[10] + p[14];
         if (fp !== this._lastCamFingerprint) {
             this._lastCamFingerprint = fp;
             this._updateGraceFrames = 60; // keep updating ~1s after camera stops
