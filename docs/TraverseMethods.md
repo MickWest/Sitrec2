@@ -39,9 +39,27 @@ In the menu these appear with a "Global Fit:" prefix (e.g. "Global Fit: Constant
 | **Kalman Smoother** | 2 | Process Noise, Measurement Noise | Runs a Kalman filter forward then backward (RTS smoother). Every point benefits from all measurements past and future. Tunable noise balance. |
 | **Monte Carlo 1** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Randomly samples points along perturbed LOS rays (using a CV fit for focused per-frame range estimates), fits polynomials, and keeps the best trial. Robust to outliers. |
 | **Monte Carlo 2** | 2 | Num Trials, LOS Uncertainty (deg), Polynomial Order | Least-squares variant: perturbs all frames each trial and fits an overdetermined polynomial, giving more stable results at higher polynomial orders. |
-| **Physics** | 2 | Physics Model, Max Iterations, Wind, Initial Range | RK4 integration of a physical dynamics model — Sky Lantern (wind-drift kinematics with a rise/decay/sink life cycle) or Fixed Wing Aircraft, chosen with the Physics Model selector — fit with differential evolution plus Nelder-Mead polish. |
+| **Physics** | 2 | Physics Model, Make/Model, Max Iterations, Wind, Initial Range | RK4 integration of a physical dynamics model — Sky Lantern (wind-drift kinematics with a rise/decay/sink life cycle), Fixed Wing Aircraft, or Quadcopter (hover-capable multirotor), chosen with the Physics Model selector — fit with differential evolution plus Nelder-Mead polish. Fixed-wing and quadcopter offer a make/model sub-selector (AUTO reports the closest match). |
 | **Minimum Acceleration** | 2 | Target Speed, Min/Max Dist limits | Finds the acceleration-minimizing path that follows the rays. Finds its own range — purely from geometry when the sensor's own motion pins it, falling back to Target Speed as a soft tiebreaker on narrow-baseline scenes. (Formerly "Plausible"; saved sitches still serialize the menu key "Global Fit: Plausible".) See "Physically Plausible Analysis" below. |
 | **Minimum Speed** | 2 | (none) | Finds the slowest object consistent with the sightlines — the drifting-lantern / near-static reading. See "Physically Plausible Analysis" below. |
+| **Stationary Point** | 2 | (none) | The single fixed world position that best fits every sightline (closed-form least squares). The object simply does not move — the live method behind the analysis gallery's "Stationary Point in Space" tile. No on-ray traverse can represent this: walking the rays at speed 0 still moves by the rays' closest-approach distance each frame, drifting and flagging over-speed (white) segments. |
+| **Ground Object** | 2 | (none) | The Stationary Point fit pinned to a curved constant-elevation shell sampled near the local terrain. Live method behind the gallery's "Ground Object" tile. |
+| **Ground Vehicle** | 2 | (none) | The moving point where each sightline meets that curved constant-elevation shell. Live method behind the gallery's "Ground Vehicle" tile; frames whose sightline never reaches it hold the last valid position. This is not a DEM-following trajectory. |
+
+**In/Out (A-B) range.** Every Global Fit method fits the sightlines inside the
+In/Out frame range (the I/O keys) when one is set, and holds its endpoint
+positions outside it — outside the analyzed window no motion is claimed. The
+traverse analysis gallery fits the same range, so a fit applied from the
+gallery reproduces the same solution. Setting In/Out re-fits the selected
+method immediately. The sequential traverses (Constant Ground/Air Speed,
+Constant Altitude, etc.) are not fits — they walk the rays from frame 0 and
+always cover the whole clip.
+
+At least ten selected frames are required by **Analyze**. A current live-node
+compatibility limitation remains for very short windows: Global Fit methods
+given fewer than eight selected frames retain the legacy full-clip fallback.
+Do not interpret that fallback as an A-B result; widen the interval before
+using a live Global Fit.
 
 ---
 
@@ -273,7 +291,7 @@ LOS-only data never uniquely determines a trajectory: near-perfect fits exist
 at many ranges, provided the object is allowed to maneuver. The tools in this
 section make that ambiguity explicit, and resolve it with *soft physical
 targets* (a preferred speed, roughly straight and level flight, low
-maneuvering g) rather than exact constraints. The interesting output is the
+kinematic acceleration) rather than exact constraints. The interesting output is the
 family of plausible solutions — and how much maneuvering every *other*
 interpretation would require.
 
@@ -306,7 +324,7 @@ smoothest path consistent with the rays.
 
 **When to use**: as the "best fit" interpretation of a hypothesis like
 "a ~350 kt aircraft at ~30 NM" — it shows what the *smoothest* version of that
-hypothesis looks like, and its g-load/turn metrics quantify how plausible the
+hypothesis looks like, and its acceleration/turn metrics quantify how demanding the
 hypothesis is at that distance.
 
 ### Global Fit: Minimum Speed
@@ -316,7 +334,7 @@ Acceleration, but the
 objective is inverted: instead of the least-maneuvering path near a target
 speed, it finds the **slowest** object consistent with the sightlines, then
 applies a curvature-penalized smoothing pass that sheds sensor pointing
-jitter (which would otherwise read as enormous g-loads on a slow object).
+jitter (which would otherwise read as enormous kinematic acceleration on a slow object).
 
 **When to use**: this is the drifting-lantern / near-static reading. When the
 sensor orbits or passes a slow, close object, most of the apparent motion is
@@ -329,11 +347,11 @@ speed graph of an exactly-constant-speed object read as a ±5 kt end wobble).
 The Analyze gallery's **Minimum Speed** candidate uses this same fit, so
 applying it reproduces exactly the previewed path.
 
-### Global Fit: Physics — the two dynamics models
+### Global Fit: Physics — the dynamics models
 
 The Physics fit integrates a real dynamics model forward with RK4 and fits
 its parameters to the sightlines with **differential evolution** (a
-genetic-style global search) followed by Nelder-Mead polish. Two models are
+genetic-style global search) followed by Nelder-Mead polish. Three models are
 available via the **Physics Model** dropdown in the Traverse menu:
 
 **Sky Lantern** — pure wind-drift kinematics. A sky lantern is a
@@ -345,42 +363,151 @@ altitude"). Vertical motion follows the lantern life cycle — rise while the
 flame burns, exponential buoyancy decay after flame-out, terminal sink — and
 the solved flame-out time can fall before the clip (a lantern already in its
 cooling descent, the Aguadilla case), inside it, or after it (still climbing
-throughout). Hard parameter bounds (≤ ~39 kt wind per component — 55 kt
-vector, winds aloft are routinely faster than launch-level winds — and
-≤ 4 m/s vertical rates) mean the model simply cannot represent non-lantern
-motion, so its residual LOS error honestly measures how lantern-like the
-sightlines are; a solved wind pinned at the bound is itself flagged in the
-analysis prose. On Aguadilla this fit lands within ~35 m of the accepted
-hand-fitted lantern path (wind ~18 kt from ~65°, drifting WSW while slowly
-descending).
+throughout). The base-wind components are bounded to ±20 m/s, the shear
+multiplier to 0.25–3, and rise/sink parameters to 4 m/s. Those are broad search
+constraints, not a certified lantern envelope. Its residual measures
+compatibility with this particular wind-tracer/life-cycle model, not the
+probability that the object is a lantern. Bound-pinned and shear-clamped
+solutions therefore need explicit scrutiny.
 
-**Fixed Wing Aircraft** — constant TAS, a linearly-varying turn rate,
+**Fixed Wing Aircraft** — constant horizontal airspeed, a linearly-varying turn rate,
 constant climb rate, and wind advection. Parameters (initial range, heading,
-TAS, turn rate, turn acceleration, climb, wind E/N) share the same DE +
-polish recipe; the cost combines LOS angular error with soft plausibility
-targets, so repeated runs converge to the same interpretable answer instead
-of wandering across the ambiguous solution family. The TAS floor is 25 kt
-(FAR Part 103 caps ultralight stall at 24 kt, so this is the slowest
-sustained flight of any legal fixed-wing); a solved TAS sitting exactly at
-that floor means the sightlines want something slower than any plane flies.
+horizontal airspeed, turn rate, turn acceleration, climb, wind E/N) share the same DE +
+polish recipe; the cost combines LOS angular error with explicit soft targets
+for speed, turn, climb, and (when supplied) wind. The generic conventional
+prior searches 25–360 m/s horizontal airspeed and ±40 m/s climb. It does not
+cover every fighter in the catalog, and a result on a bound makes this test
+incomplete rather than excluding every possible fixed-wing aircraft.
 
-Solved parameters (wind, rates, fit error) appear in the Physics Fit Results
-folder. The two models' head-to-head residuals are the analysis gallery's
-main object-type discriminator: whichever fits the angles better is the more
-consistent reading of the data.
+**Quadcopter** — a hover-capable multirotor drone. Unlike a fixed-wing, it
+needs no forward airspeed to stay aloft, so ground speed is free to fall to
+zero (hover) or rise, the heading can swing on a wide turn budget, and it can
+climb or descend far more steeply than a plane. Parameters (initial range,
+heading, speed, along-track acceleration, turn rate/acceleration, climb, wind
+E/N) fit with the same DE + polish recipe. A selected make/model bounds initial
+speed and vertical rate and penalizes full-clip overspeed. The generic fit
+permits initial ranges from 50 m to 20 km and air-relative horizontal speed up
+to 60 m/s. This is a broad kinematic compatibility test: acceleration can push
+the trajectory beyond nominal speed during the clip, so it is not a hard
+flight-envelope certification.
+
+**Make / model (Fixed-Wing and Quadcopter).** When Fixed Wing or Quadcopter is
+selected, a second dropdown chooses a specific airframe/drone whose approximate
+performance envelope tightens the fit bounds — Cessna 172, Boeing 737-800,
+MQ-9 Reaper, F/A-18E/F, F-35, F-16; DJI Mini 4 Pro, Air 3, Mavic 3, Phantom 4
+Pro, DJI FPV, Racing FPV. Both default to **AUTO**, which fits a generic
+envelope and can report the closest compatible catalog envelope from speed,
+climb, g, and altitude where available. Quadcopter climb capability is
+direction-aware: a solved descent is checked against the drone's maximum
+descent rate (usually the smaller number), not its climb rate. Catalog
+figures are approximate values used to bracket and describe the search, not
+exact specifications or IDs.
+
+Solved parameters (wind, rates, fit error, and any selected/compatible catalog
+envelope) appear in the Physics Fit Results folder. Residuals from different
+models are not directly comparable object-type probabilities: the models have
+different parameter counts, priors, bounds, and wind freedom. Use them as
+model-conditioned diagnostics and inspect bound hits and sensitivity.
+
+### Ground contact and underground rejection
+
+LOS-only geometry can produce trajectories that pass **underground**. The
+analysis samples each candidate against loaded terrain (falling back to the
+reference surface) and demotes sustained penetration below the configured
+tolerance. This is a rejection check, not a terrain-following solve.
+
+Beyond that always-on check, the **Ground contact** selector in *Traverse
+Analysis Tweaks* constrains the solution space to how the object touches the
+ground:
+
+- **Airborne (any)** — the default; no ground contact required (underground
+  is still rejected).
+- **On the ground** — adds a dedicated **Ground Vehicle** candidate: the point
+  where each sightline meets a curved, constant-elevation shell near the local
+  terrain height (distinct from the stationary *Ground Object*), then checks
+  samples against the actual terrain. It does not follow changing DEM height
+  over slopes or ridges.
+- **Starts on ground** — takeoff, or a released balloon: the trajectory begins
+  on the surface, then a portion is airborne.
+- **Ends on ground** — landing, or a descending balloon: the trajectory ends on
+  the surface.
+
+The non-airborne modes also add a soft **ground prior** to the fixed-wing,
+lantern and quadcopter fits, pulling the relevant endpoint(s) toward the
+surface so the physics fits find takeoff/landing/release/descent solutions
+rather than purely mid-air ones. This is gated: in the default Airborne mode
+the fits are byte-identical to before.
+
+### Analysis integrity
+
+The analysis is engineered to be honest about what LOS-only data can and
+cannot determine:
+
+- **Deterministic global search**: the analysis injects seeds derived from the
+  input/run into its stochastic searches and records optimizer metadata. This
+  makes supported runs repeatable for the same code and inputs; it does not
+  prove that a retained basin is the global optimum.
+- **Circular-LOS detection**: when the sightlines are *constructed* from the
+  target being tested (Camera Heading = "To Target" with LOS Source = raw
+  Camera Center), the gallery and verdict carry a prominent
+  "Constructed LOS — validation only" banner. Fits recovering the target then
+  confirm internal consistency, not an independent discovery.
+- **No global object winner**: results are separated into geometric/LOS
+  trajectory families, object-conditioned forward models, known-object
+  catalogue checks, and estimator diagnostics. Ordering is meaningful only
+  within one group. A trajectory construction cannot outrank a balloon or
+  satellite as though those were comparable object probabilities.
+- **Absolute screen and completeness are separate**: every tile retains its
+  actual `Passes broad screen` / `Moderate` / `Low` / `Implausible` state while
+  search-edge, active-model-limit, inactive-bound, internal-clamp, and
+  optimizer-incomplete badges remain independently visible. A Low result is
+  never relabelled Medium, and an incomplete result cannot receive an
+  affirmative global winner badge.
+- **Family bands**: flat solution valleys are reported as bands ("50–650 kt at
+  19–41 NM fit about equally") with a deterministic representative (nearest
+  the Target Speed prior), instead of a knife-edge argmin that flips with
+  last-bit input changes. The range bracket self-expands when the winner
+  touches a grid edge, and a result still on the edge is flagged
+  boundary-limited.
+- **Bounds are sensitivity-checked**: a parameter merely landing within 1% of
+  a numerical bound is not treated as a capability failure. The fitter probes
+  it inward and demotes only locally load-bearing constraints. Flat/inactive
+  parameters are reported as unconstrained; an inward improvement is reported
+  as optimizer-incomplete. Duplicate manifestations of the same constraint
+  (such as a speed parameter and derived overspeed) count once. This prevents a
+  pre-burn lantern's unused terminal-sink parameter from being counted against
+  it.
+- **Curved-Earth geometry**: displayed altitudes/climb are geodetic, and the
+  constant-altitude and ground candidates include Earth curvature. Dynamics
+  still use one fixed-origin ENU frame, so headings and wind axes are
+  origin-frame approximations over large/high-latitude scenes.
+- **Physical time**: dataset speeds/accelerations honor `simSpeed`, and
+  track-driven winds are sampled historically per frame (not the playhead
+  value repeated; frames in a wind-data gap use the nearest row with data).
+  Velocity/acceleration differentiation uses an approximately 0.5-second
+  physical window rather than 15 frames, so changing source frame rate does
+  not change the screen. For A-B windows too short to hold that window, the
+  differentiation window clamps to the selection length — short analyses
+  report real (noisier) metrics; a window too short for any statistics reads
+  as invalid, never as zeros.
+- **Make/model labels are envelopes, not identifications**: "Closest envelope:
+  Boeing 737-800 (not an ID)" means the solved speed/climb sits nearest that
+  catalog entry's performance envelope — nothing more.
 
 ### The Analyze button
 
 **Traverse ▸ Analyze Traverse Methods...** runs the full battery against the current
-LOS data and generates a standalone HTML report (with charts) plus an option
-to apply the best solution to the sliders:
+LOS data and opens a grouped hypothesis gallery with within-group ordering. The standalone HTML report is
+built on demand. **Use This** installs the analyzed trajectory as a frozen
+Analysis Snapshot; it does not silently rewrite the speed/range assumptions
+used by the next run.
 
 1. **Constant-air-speed sweep** — a grid over (start distance × air speed,
    15–650 kt log-spaced so slow drifters are representable alongside jets).
    Each combo is solved as the smoothest ray-following path that holds that
    air speed (a spline solve — the old frame-by-frame ray walk was a shooting
    method that exploded into corkscrews whenever the sensor maneuvered), then
-   scored for smoothness (g-load, turn-rate variability, climb) plus how well
+   scored for smoothness (kinematic acceleration, turn-rate variability, climb) plus how well
    the requested speed could actually be held. Surfaces the valley of
    straight-flight solutions (for Gimbal: ~30–32 NM, speed loosely
    400–550 kt).
@@ -390,25 +517,41 @@ to apply the best solution to the sliders:
    would *have* to do — e.g. at 6–8 NM the Gimbal object must nearly stop and
    whip through a rapid heading reversal, or sustain a continuous banked turn.
 3. **Aircraft fit** — the differential-evolution fixed-wing fit, reported as
-   interpretable parameters (range, heading, TAS, turn, climb).
+   interpretable parameters (range, origin-ENU heading, horizontal airspeed,
+   turn, climb).
 
-The report contains an executive summary, a sweep heatmap, range-profile
-curves, per-solution time series (speed / g / turn rate), a plan view of the
-candidate tracks, and top-solution tables. Criteria are deliberately loose
-targets; scores compare hypotheses, they are not hard physical limits.
+The report contains provenance, a run-audit manifest, an executive summary, sweep
+and range-profile plots, common-axis track comparisons, selected time series,
+and candidate tables/details. Criteria are deliberately loose checks; scores
+order model-conditioned hypotheses and are not posterior probabilities.
+
+Unchanged analyses are cached by their LOS, A-B range, timing, wind, model
+options, priors, and stable terrain-data configuration. Choosing **Use exact**
+or orbiting a render camera does not change those inputs and reopens the prior
+gallery immediately. Render-camera terrain LOD (active tiles/revision) is kept
+out of the scientific key; the cached result retains the terrain samples used
+when it was graded. An explicit terrain reload/source change receives a new
+data epoch and invalidates normally.
 
 Notes on the gallery tiles:
 
 - The ray-following tiles (Constant Air Speed, Constant Altitude, Minimum
-  Acceleration) show lightly smoothed paths with a small honest LOS residual
-  (typically hundredths of a degree) instead of riding the rays exactly —
-  exact ray-riding inherits sensor pointing jitter as fake g-load, which used
-  to poison the scoring at the *correct* answer. Applying a tile with **Use
-  This** still drives the exact-LOS live traverse.
-- The **Best** badge goes to the top-ranked tile: within a plausibility tier,
-  candidates are ordered by kinematic cleanliness plus noise-floor-aware LOS
-  error — NOT by raw LOS error, which among ray-following methods rewards the
-  least-smoothed (wiggliest) track.
+  Acceleration) show their analyzed, lightly smoothed paths. **Use This**
+  installs that exact sampled path as a snapshot, so preview, metrics, and
+  applied output refer to the same result.
+- Tiles are headed by their **comparison group** and numbered only within that
+  group. Within a group, complete results come before incomplete searches,
+  followed by broad screening tier, unique active model constraints, and a
+  documented secondary score. The 0.05 display-tie threshold is a formatting
+  convention, not a statistical claim.
+- The **raw LOS residual is always shown**. A flexible constant-acceleration
+  reference is displayed separately as context and never substituted for the
+  raw value or used as a noise estimate. Ray-constrained smoothing residuals
+  receive one fixed 0.05° solver-fidelity allowance; changing the generic
+  reference cannot change rank.
+- `Max kinematic acceleration (g)` is the change in smoothed air-relative
+  velocity divided by gravitational acceleration. It is not aircraft load
+  factor and does not include the ordinary 1 g supporting level flight.
 - **Constant Altitude** searches the altitude band and scores each candidate
   on the smoothed path plus its LOS residual; if the sightlines are
   near-horizontal (they never cross a constant-altitude plane) the tile
@@ -418,7 +561,6 @@ Notes on the gallery tiles:
   well over that window; on a continuously rotating LOS (the sensor's own
   motion triangulates the range) it reports how sharply the full-clip cost
   valley pins the range instead.
-- The **noise floor** annotation (the "(N.N× floor)" suffix) comes from a
-  free constant-acceleration fit with a minimum-range guard — without the
-  guard, that fit collapses onto the sensor's own path whenever the sensor
-  flies straight, and the floor would be meaningless on Gimbal-like scenes.
+- The flexible constant-acceleration residual shown for scale is a
+  **model-reference residual**, not an estimate of sensor noise. It must not be
+  used to make statistical confidence or likelihood claims.
