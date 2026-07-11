@@ -11,7 +11,25 @@ import {
     greatCircleDistanceDeg,
     compassFromDeg,
     windDirFromBearing,
+    normalizeWindTimestampMs,
 } from '../src/nodes/WindHelpers';
+
+describe('normalizeWindTimestampMs', () => {
+    const epochMs = Date.UTC(2026, 6, 9, 12, 34, 56);
+
+    test('normalizes seconds, milliseconds, and MISB microseconds identically', () => {
+        expect(normalizeWindTimestampMs(epochMs / 1000)).toBe(epochMs);
+        expect(normalizeWindTimestampMs(epochMs)).toBe(epochMs);
+        expect(normalizeWindTimestampMs(epochMs * 1000)).toBe(epochMs);
+    });
+
+    test('accepts Date and ISO inputs and rejects absent values', () => {
+        const date = new Date(epochMs);
+        expect(normalizeWindTimestampMs(date)).toBe(epochMs);
+        expect(normalizeWindTimestampMs(date.toISOString())).toBe(epochMs);
+        expect(Number.isNaN(normalizeWindTimestampMs(null))).toBe(true);
+    });
+});
 
 describe('bracketingLevels', () => {
     test('clamps below the first entry', () => {

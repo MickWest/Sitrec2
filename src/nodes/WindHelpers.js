@@ -8,6 +8,21 @@
 
 import {knotsFromMetersPerSecond, metersPerSecondFromKnots} from "../utils";
 
+// Normalize the mixed timestamp representations accepted by Sitrec's MISB
+// importers to milliseconds since Unix epoch. Native ST 0601 values are
+// microseconds; converted CSV sources may contain seconds, milliseconds,
+// Date objects, or ISO strings.
+export function normalizeWindTimestampMs(raw) {
+    if (raw instanceof Date) return raw.valueOf();
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+        if (raw > 31568461000000) return raw / 1000; // microseconds -> ms
+        if (raw < 31568461000) return raw * 1000;    // seconds -> ms
+        return raw;
+    }
+    const parsed = typeof raw === "string" ? Date.parse(raw) : NaN;
+    return Number.isFinite(parsed) ? parsed : NaN;
+}
+
 // Pressure-level ↔ altitude mapping (approximate standard atmosphere)
 // Sorted low-to-high altitude. "surface" is a special 10m-above-ground product.
 export const WIND_LEVEL_TABLE = [
