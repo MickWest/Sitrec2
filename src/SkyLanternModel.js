@@ -23,7 +23,7 @@
 // Wind varies with altitude as a linear fractional shear about the initial
 // altitude, clamped to [0.25, 3]x so it can never reverse or blow up:
 //
-//   wind(z) = (windE, windN) * clamp(1 + shearPerM (z - z0), 0.25, 3)
+//   wind(h) = (windE, windN) * clamp(1 + shearPerM (h - h0), 0.25, 3)
 //
 // Parameters solved by optimizer:
 //   0: initialRange — distance along first LOS ray (m)
@@ -35,7 +35,7 @@
 //   6: tBurn        — flame-out time relative to clip start (s)
 //   7: tauCool      — buoyancy decay time constant after flame-out (s)
 //
-// State is [x, y, z, z0] in ENU: z0 (the shear reference altitude) rides
+// State is [x, y, z, h0] in ENU: h0 (the geodetic shear-reference altitude) rides
 // along as a constant so derivatives() needs no out-of-band context. The
 // dynamics are smooth, non-stiff kinematics — a 3-state integration with a
 // large step, ~7x faster than the old drag ODE.
@@ -44,6 +44,7 @@ import {PhysicsModel} from "./PhysicsModel";
 
 const MULT_MIN = 0.25;  // wind shear multiplier floor (never reverses)
 const MULT_MAX = 3.0;   // ...and ceiling (never a hurricane aloft)
+const EARTH_R = 6371000;
 
 export class SkyLanternModel extends PhysicsModel {
     // Smooth kinematics: big RK4 substeps are fine (the base 0.02 s default
@@ -74,13 +75,16 @@ export class SkyLanternModel extends PhysicsModel {
         ];
     }
 
-    // Initial state: position along first LOS ray; z0 stashed in the state.
+    // Initial state: position along first LOS ray; geodetic h0 stashed in the state.
     getInitialState(params, dataset) {
         const range = params[0];
         const sx = dataset.sensorPos[0], sy = dataset.sensorPos[1], sz = dataset.sensorPos[2];
         const dx = dataset.losDir[0], dy = dataset.losDir[1], dz = dataset.losDir[2];
+        const x0 = sx + range * dx;
+        const y0 = sy + range * dy;
         const z0 = sz + range * dz;
-        return [sx + range * dx, sy + range * dy, z0, z0];
+        const h0 = z0 + (x0 * x0 + y0 * y0) / (2 * EARTH_R);
+        return [x0, y0, z0, h0];
     }
 
     // Lantern life-cycle vertical rate (see header).
@@ -90,30 +94,32 @@ export class SkyLanternModel extends PhysicsModel {
         return -vSink + (vRise + vSink) * Math.exp(-(t - tBurn) / tau);
     }
 
-    // ODE: derivatives of [x, y, z, z0] — horizontal velocity is the sheared
+    // ODE: derivatives of [x, y, z, h0] — horizontal velocity is the sheared
     // wind at the current altitude, vertical is the life-cycle profile.
     derivatives(state, params, t) {
-        const z = state[2], z0 = state[3];
+        const x = state[0], y = state[1], z = state[2], h0 = state[3];
+        const h = z + (x * x + y * y) / (2 * EARTH_R);
         const shear = params[3];
-        let mult = 1 + shear * (z - z0);
+        let mult = 1 + shear * (h - h0);
         if (mult < MULT_MIN) mult = MULT_MIN;
         if (mult > MULT_MAX) mult = MULT_MAX;
-        return [params[1] * mult, params[2] * mult, this._vz(t, params), 0];
+        const vx = params[1] * mult, vy = params[2] * mult;
+        return [vx, vy, this._vz(t, params) - (x * vx + y * vy) / EARTH_R, 0];
     }
 
-    // Closed-form altitude at time t (wind never affects z, so z(t) is exact;
+    // Closed-form geodetic altitude at time t (the prescribed dh/dt is exact;
     // used by extraCost to keep the whole profile above the surface without
     // integrating).
-    _zAt(t, params, z0) {
+    _hAt(t, params, h0) {
         const vRise = params[4], vSink = params[5], tBurn = params[6], tau = params[7];
         // integral of the decay-phase vz over u seconds past burnout
         const decayInt = (u) => -vSink * u + (vRise + vSink) * tau * (1 - Math.exp(-u / tau));
         if (tBurn >= 0) {
-            if (t <= tBurn) return z0 + vRise * t;
-            return z0 + vRise * tBurn + decayInt(t - tBurn);
+            if (t <= tBurn) return h0 + vRise * t;
+            return h0 + vRise * tBurn + decayInt(t - tBurn);
         }
         // clip starts mid-decay
-        return z0 + decayInt(t - tBurn) - decayInt(-tBurn);
+        return h0 + decayInt(t - tBurn) - decayInt(-tBurn);
     }
 
     // Soft plausibility priors (added to meanErrDeg/errSigma in the fit cost).
@@ -126,11 +132,13 @@ export class SkyLanternModel extends PhysicsModel {
         // negative shear (wind slower higher up) is possible but less common
         if (params[3] < 0) cost += 0.5 * (params[3] / 0.002) ** 2;
         // soft sea-level floor on the closed-form altitude profile
-        const sz = dataset.sensorPos[2];
-        const z0 = sz + params[0] * dataset.losDir[2];
+        const sx = dataset.sensorPos[0] + params[0] * dataset.losDir[0];
+        const sy = dataset.sensorPos[1] + params[0] * dataset.losDir[1];
+        const sz = dataset.sensorPos[2] + params[0] * dataset.losDir[2];
+        const h0 = sz + (sx * sx + sy * sy) / (2 * EARTH_R);
         for (let k = 0; k <= 16; k++) {
-            const z = this._zAt(T * k / 16, params, z0);
-            if (z < 0) cost += (z / 8) ** 2 / 17;
+            const h = this._hAt(T * k / 16, params, h0);
+            if (h < 0) cost += (h / 8) ** 2 / 17;
         }
         return cost;
     }

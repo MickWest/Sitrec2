@@ -16,6 +16,7 @@ import {SkyLanternModel} from "../src/SkyLanternModel";
 import {integrateRK4} from "../src/PhysicsModel";
 import {differentialEvolution} from "../src/DifferentialEvolution";
 import {nelderMead} from "../src/NelderMead";
+import {assessBoundPins} from "../src/BoundedFit";
 
 const KNOTS_TO_MS = 0.514444;
 
@@ -134,7 +135,7 @@ describe("SkyLanternModel", () => {
     });
     afterEach(() => randSpy.mockRestore());
 
-    test("initial state sits on the first LOS ray with z0 riding along", () => {
+    test("initial state sits on the first LOS ray with geodetic h0 riding along", () => {
         const model = new SkyLanternModel();
         const dataset = {
             sensorPos: Float64Array.from([100, 200, 500]),
@@ -144,7 +145,8 @@ describe("SkyLanternModel", () => {
         expect(s[0]).toBeCloseTo(100 + 600, 6);
         expect(s[1]).toBeCloseTo(200 + 640, 6);
         expect(s[2]).toBeCloseTo(500 - 480, 6);
-        expect(s[3]).toBe(s[2]);   // shear reference = initial altitude
+        const expectedH0 = s[2] + (s[0] * s[0] + s[1] * s[1]) / (2 * 6371000);
+        expect(s[3]).toBeCloseTo(expectedH0, 9); // shear reference = initial geodetic altitude
     });
 
     test("vertical profile: rise while lit, decay to terminal sink after flame-out", () => {
@@ -159,12 +161,41 @@ describe("SkyLanternModel", () => {
         let z = z0;
         const dt = 0.01;
         for (let t = 0; t < 120; t += dt) z += model._vz(t + dt / 2, p) * dt;
-        expect(model._zAt(120, p, z0)).toBeCloseTo(z, 1);
+        expect(model._hAt(120, p, z0)).toBeCloseTo(z, 1);
         // and with a pre-clip burnout (tBurn < 0)
         const p2 = [1000, 0, 0, 0, 2.0, 1.5, -50, 40];
         let z2 = z0;
         for (let t = 0; t < 120; t += dt) z2 += model._vz(t + dt / 2, p2) * dt;
-        expect(model._zAt(120, p2, z0)).toBeCloseTo(z2, 1);
+        expect(model._hAt(120, p2, z0)).toBeCloseTo(z2, 1);
+    });
+
+    test("pre-burn vSink at its maximum is diagnosed as inactive, not a capability limit", () => {
+        const model = new SkyLanternModel();
+        const defs = model.getParameterDefs();
+        const lo = defs.map((d) => d.min), hi = defs.map((d) => d.max);
+        const names = defs.map((d) => d.name);
+        const p = [6000, 4, -6, 0.002, 1.27, 4, 194, 143];
+        const clipT = 22;
+        // While clipT < tBurn, _hAt and _vz never use vSink or tauCool.
+        const cost = (q) => (model._hAt(clipT, q, 1000) - 1027.94) ** 2;
+        const pins = assessBoundPins(p, lo, hi, names, cost, {absoluteTolerance: 1e-8});
+        const sink = pins.find((pin) => pin.name === "vSink");
+        expect(sink).toBeDefined();
+        expect(sink.loadBearing).toBe(false);
+        expect(sink.deltaCost).toBeCloseTo(0, 10);
+    });
+
+    test("post-burn sink bound is load-bearing when the trajectory requires faster descent", () => {
+        const model = new SkyLanternModel();
+        const defs = model.getParameterDefs();
+        const lo = defs.map((d) => d.min), hi = defs.map((d) => d.max);
+        const names = defs.map((d) => d.name);
+        const p = [6000, 4, -6, 0.002, 0, 4, 0, 10];
+        const clipT = 120;
+        const target = model._hAt(clipT, [6000, 4, -6, 0.002, 0, 5, 0, 10], 1000);
+        const cost = (q) => ((model._hAt(clipT, q, 1000) - target) / 10) ** 2;
+        const pins = assessBoundPins(p, lo, hi, names, cost, {absoluteTolerance: 1e-8});
+        expect(pins.find((pin) => pin.name === "vSink")).toMatchObject({loadBearing: true});
     });
 
     test("wind shear multiplier is clamped so wind never reverses or blows up", () => {
