@@ -6,6 +6,7 @@ const mockOrientation = jest.fn();
 const mockUpdateViewFromPreset = jest.fn();
 const mockMeanSeaLevelOffset = jest.fn();
 const mockSetStartDateTime = jest.fn();
+const mockEstablishDateTimeDefaults = jest.fn();
 const mockSetRenderOne = jest.fn();
 const mockForceUpdateUIText = jest.fn();
 const mockIntersectSurface = jest.fn();
@@ -53,6 +54,9 @@ jest.mock('../src/EGM96Geoid', () => ({
 jest.mock('../src/Globals', () => ({
     GlobalDateTimeNode: {
         setStartDateTime: (...args) => mockSetStartDateTime(...args),
+        // EXIFUtils calls this after setStartDateTime so the dropped image's
+        // EXIF date becomes the date-slider reset target.
+        establishDateTimeDefaults: (...args) => mockEstablishDateTimeDefaults(...args),
     },
     NodeMan: {
         get: jest.fn((id) => mockNodeMap.get(id) ?? false),
@@ -253,6 +257,7 @@ describe('applyImportedImageMetadata', () => {
         expect(LLAToECEF).toHaveBeenCalledWith(34.5, -118.25, 125);
         expect(lookCameraNode.camera.position).toEqual(new Vector3(34.5, -118.25, 125));
         expect(mockSetStartDateTime).toHaveBeenCalledWith(new Date('2024-05-01T12:34:56.000Z'));
+        expect(mockEstablishDateTimeDefaults).toHaveBeenCalled();
         expect(mockGoToPoint).toHaveBeenCalledWith(new Vector3(34.5, -118.25, 125), 2300000, 100000);
         expect(mockRefresh).toHaveBeenCalled();
         expect(ptzAngles.az).toBe(123.4);
