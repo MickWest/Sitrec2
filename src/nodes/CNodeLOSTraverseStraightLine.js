@@ -6,6 +6,7 @@ import {CNodeTrack} from "./CNodeTrack";
 import {assert} from "../assert";
 import {V3} from "../threeUtils";
 import {getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
+import {Sit} from "../Globals";
 
 export class CNodeLOSTraverseStraightLine extends CNodeTrack {
     constructor(v) {
@@ -138,7 +139,7 @@ export class CNodeLOSTraverseStraightLineFixed extends CNodeTrack {
         var position, startPosition;
         var oldDistance;
         for (var f = 0; f < this.frames; f++) {
-            let perFrameMotion = this.in.speed.v(f) / this.fps
+            let perFrameMotion = this.in.speed.v(f) * (Sit.simSpeed ?? 1) / this.fps
 
             const los = this.in.LOS.v(f)
 
@@ -231,7 +232,6 @@ export class CNodeLOSTraverseWind extends CNodeTrack {
     }
 
 }
-
 
 
 

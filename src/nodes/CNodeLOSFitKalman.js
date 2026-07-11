@@ -4,6 +4,7 @@
 
 import {CNodeTrack} from "./CNodeTrack";
 import {fitKalmanFilter, buildLOSDataset, unpackFitPositions} from "../LOSFitting";
+import {abFrameRange} from "../TraverseAnalysisData";
 
 export class CNodeLOSFitKalman extends CNodeTrack {
     constructor(v) {
@@ -25,7 +26,10 @@ export class CNodeLOSFitKalman extends CNodeTrack {
         this.frames = this.in.LOS.frames;
         if (this.frames < 2) return;
 
-        const {dataset, originLat, originLon} = buildLOSDataset(this.in.LOS);
+        // Fit the In/Out (A-B) window — the same range the traverse-analysis
+        // gallery fits — and hold the endpoint positions outside it.
+        const {frame0, frame1} = abFrameRange(this.frames);
+        const {dataset, originLat, originLon} = buildLOSDataset(this.in.LOS, frame0, frame1);
 
         const options = {};
         if (this.in.processNoise) options.processNoise = Math.pow(10, this.in.processNoise.v0);
@@ -34,7 +38,7 @@ export class CNodeLOSFitKalman extends CNodeTrack {
         const result = fitKalmanFilter(dataset, new Set(), options);
         if (!result) return;
 
-        this.array = unpackFitPositions(result.positions, this.frames, originLat, originLon);
+        this.array = unpackFitPositions(result.positions, dataset.count, originLat, originLon, frame0, this.frames);
     }
 
     getValueFrame(f) {

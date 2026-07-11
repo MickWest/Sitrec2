@@ -30,7 +30,9 @@ export class CNodeTraverseAngularSpeed extends CNode {
         let traversePos0 = this.in.traverse.p(f - 1)
 
         // this position has ALSO moved by the per-frame cloud wind velocity
-        const wind = this.in.wind.v(f)
+        const wind = typeof this.in.wind.windVectorAt === "function"
+            ? this.in.wind.windVectorAt(f, traversePos0)
+            : this.in.wind.v(f)
         traversePos0.add(wind)
 
         var step = traversePos.clone().sub(traversePos0)

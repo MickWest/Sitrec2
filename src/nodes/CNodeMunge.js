@@ -1,4 +1,4 @@
-import {NodeMan} from "../Globals";
+import {NodeMan, Sit} from "../Globals";
 import {CNode} from "./CNode";
 import regression from 'regression'
 import {assert} from "../assert";
@@ -112,7 +112,7 @@ export class CNodeDerivative extends CNode {
             return {position: this.in.source.p(f+1).sub(v0.position)}
         } else {
 
-            var d = (this.in.source.v(f + 1) - v0) * this.fps;
+            var d = (this.in.source.v(f + 1) - v0) * this.fps / (Sit.simSpeed ?? 1);
 
             if (this.unsigned)
                 return Math.abs(d);
@@ -183,7 +183,8 @@ export class CNodeGForce extends CNode{
         // it's m/sec/sec so we need to divide this length by the square of the time step
         // and see above, s2-s1 = at^2
         // t = 1/fps  to multiply by the square of fps, same as dividing
-        var g = a.length() * this.fps * this.fps / 9.81
+        const physicalFps = this.fps / (Sit.simSpeed ?? 1);
+        var g = a.length() * physicalFps * physicalFps / 9.81
 
         return g
 

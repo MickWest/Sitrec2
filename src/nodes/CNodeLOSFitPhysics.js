@@ -9,13 +9,17 @@ import {CNodeTrack} from "./CNodeTrack";
 import {fitPhysicsModel, buildLOSDataset, unpackFitPositions} from "../LOSFitting";
 import {SkyLanternModel} from "../SkyLanternModel";
 import {FixedWingModel} from "../FixedWingModel";
-import {guiMenus, setRenderOne} from "../Globals";
+import {QuadcopterModel} from "../QuadcopterModel";
+import {fixedWingById, quadcopterById, classifyFixedWing, classifyQuadcopter} from "../VehicleModels";
+import {abFrameRange} from "../TraverseAnalysisData";
+import {guiMenus, setRenderOne, Sit} from "../Globals";
 import {t} from "../i18n";
 
 // Registry of available physics models
 const physicsModels = {
     "Sky Lantern": new SkyLanternModel(),
     "Fixed Wing Aircraft": new FixedWingModel(),
+    "Quadcopter": new QuadcopterModel(),
 };
 
 export function getPhysicsModelNames() {
@@ -29,7 +33,8 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
     constructor(v) {
         super(v);
         this.requireInputs(["LOS"]);
-        this.optionalInputs(["physicsModel", "maxIter", "windSpeed", "windFrom", "initialRange"]);
+        this.optionalInputs(["physicsModel", "maxIter", "windSpeed", "windFrom", "initialRange",
+            "quadModel", "fixedWingModel"]);
         this.array = [];
         this.solvedParams = null;
         this.guiFolder = null;
@@ -62,12 +67,34 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
             return;
         }
 
-        // Capture everything from the inputs synchronously, before any await
-        const {dataset, originLat, originLon} = buildLOSDataset(this.in.LOS);
+        // Capture everything from the inputs synchronously, before any await.
+        // Fit the In/Out (A-B) window — the same range the traverse-analysis
+        // gallery fits — and hold the endpoint positions outside it.
+        const {frame0, frame1} = abFrameRange(frames);
+        const {dataset, originLat, originLon} = buildLOSDataset(this.in.LOS, frame0, frame1);
 
         const modelName = this.in.physicsModel ? this.in.physicsModel.v0 : "Sky Lantern";
         const model = physicsModels[modelName];
         if (!model) return;
+
+        // Apply the airframe / drone envelope from the make/model sub-dropdown.
+        // AUTO (or no dropdown wired) leaves the model's generic envelope in
+        // place; a specific entry tightens the fit bounds to that type. Remember
+        // whether AUTO so we can classify the solved trajectory to the nearest
+        // real model afterwards, and remember the selected entry to display it.
+        this._autoModel = true;
+        this._selectedVehicle = null;
+        if (model instanceof FixedWingModel) {
+            const entry = fixedWingById(this.in.fixedWingModel ? this.in.fixedWingModel.v0 : "auto");
+            this._autoModel = !entry || !!entry.auto;
+            model.envelope = this._autoModel ? null : entry;
+            this._selectedVehicle = entry;
+        } else if (model instanceof QuadcopterModel) {
+            const entry = quadcopterById(this.in.quadModel ? this.in.quadModel.v0 : "auto");
+            this._autoModel = !entry || !!entry.auto;
+            model.envelope = this._autoModel ? null : entry;
+            this._selectedVehicle = entry;
+        }
 
         const options = {};
         if (this.in.maxIter) options.maxIter = this.in.maxIter.v0;
@@ -75,7 +102,7 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
         // Multi-modal cost landscapes (both models): global DE search then
         // polish. Strided cost sampling keeps the many DE evaluations fast.
         // Same settings as the traverse-analysis gallery's fits, so applying
-        // a gallery physics tile reproduces (statistically) the same track.
+        // a gallery physics tile starts from comparable deterministic assumptions.
         options.optimizer = "de";
         options.sampleStride = 5;
         options.dePop = 48;
@@ -89,7 +116,7 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
             overrides.windE = speedMs * Math.sin(towardRad);
             overrides.windN = speedMs * Math.cos(towardRad);
         }
-        if (model instanceof FixedWingModel) {
+        if (model instanceof FixedWingModel || model instanceof QuadcopterModel) {
             // pin the solved wind softly to the guess (or leave it free if
             // there is no wind guess wired)
             model.windPriorE = overrides.windE ?? null;
@@ -138,8 +165,28 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
                 "errDeg:", result.params.errDeg.toFixed(6),
                 "params:", result.params.solved);
 
-            this.array = unpackFitPositions(result.positions, frames, originLat, originLon);
+            this.array = unpackFitPositions(result.positions, dataset.count, originLat, originLon,
+                frame0, frames);
             this.frames = frames;
+            this._fitFrames = dataset.count;   // fitted A-B window length (for GUI durations)
+
+            // When the make/model dropdown is AUTO, name the nearest real
+            // airframe/drone the solved trajectory is most like (from its
+            // solved speed/climb), so the readout can report "Closest: F/A-18".
+            this._classified = null;
+            if (this._autoModel) {
+                const s = result.params.solved;
+                const T = dataset.count > 1 ? dataset.times[dataset.count - 1] - dataset.times[0] : 1;
+                if (model instanceof FixedWingModel) {
+                    const classified = classifyFixedWing(Math.hypot(s.tas, s.climb), s.climb);
+                    this._classified = classified.compatible ? classified.model : null;
+                } else if (model instanceof QuadcopterModel) {
+                    const peakSpeed = Math.max(Math.abs(s.speed), Math.abs(s.speed + s.accel * T));
+                    // Signed climb so descents are checked against maxDescent.
+                    const classified = classifyQuadcopter(peakSpeed, s.climb);
+                    this._classified = classified.compatible ? classified.model : null;
+                }
+            }
 
             this.updateGUI(model, result.params);
 
@@ -187,6 +234,16 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
         this.guiDisplay._cost = fitParams.cost.toFixed(4);
         this.guiFolder.add(this.guiDisplay, "_cost").name("Fit Cost").disable();
 
+        // Which make/model constrained the fit (specific dropdown choice), or —
+        // when AUTO — the nearest real airframe/drone the solution resembles.
+        if (this._selectedVehicle && !this._autoModel) {
+            this.guiDisplay._vehicle = this._selectedVehicle.name;
+            this.guiFolder.add(this.guiDisplay, "_vehicle").name("Selected envelope prior").disable();
+        } else if (this._classified) {
+            this.guiDisplay._vehicle = "≈ " + this._classified.name;
+            this.guiFolder.add(this.guiDisplay, "_vehicle").name("Closest compatible envelope").disable();
+        }
+
         // Wind speed and direction derived from E/N components
         const solved = fitParams.solved;
         if (solved.windE !== undefined && solved.windN !== undefined) {
@@ -210,10 +267,31 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
             this.guiDisplay._climb = solved.climb.toFixed(1) + " m/s ("
                 + (solved.climb * MS_TO_FPM).toFixed(0) + " ft/min)";
             this.guiFolder.add(this.guiDisplay, "_range").name("Start Range").disable();
-            this.guiFolder.add(this.guiDisplay, "_heading").name("Heading").disable();
-            this.guiFolder.add(this.guiDisplay, "_tas").name("TAS").disable();
+            this.guiFolder.add(this.guiDisplay, "_heading").name("Heading (origin ENU)").disable();
+            this.guiFolder.add(this.guiDisplay, "_tas").name("Horizontal airspeed").disable();
             this.guiFolder.add(this.guiDisplay, "_turnRate").name("Turn Rate").disable();
             this.guiFolder.add(this.guiDisplay, "_turnAccel").name("Turn Accel").disable();
+            this.guiFolder.add(this.guiDisplay, "_climb").name("Climb").disable();
+        } else if (model instanceof QuadcopterModel) {
+            // Friendly readout for the multirotor solution. A quad's speed can
+            // change over the clip (it can spin up from hover), so show both the
+            // starting speed and the peak.
+            const heading = ((solved.headingDeg % 360) + 360) % 360;
+            const nFit = this._fitFrames ?? this.frames;
+            const T = nFit > 1
+                ? (nFit - 1) * (Sit.simSpeed ?? 1) / Sit.fps : 1;
+            const peak = Math.max(Math.abs(solved.speed), Math.abs(solved.speed + solved.accel * T));
+            this.guiDisplay._range = solved.initialRange.toFixed(0) + " m";
+            this.guiDisplay._heading = heading.toFixed(1) + "°";
+            this.guiDisplay._speed = (solved.speed / KTS_TO_MS).toFixed(1) + " kt / "
+                + solved.speed.toFixed(1) + " m/s";
+            this.guiDisplay._peak = peak.toFixed(1) + " m/s (peak)";
+            this.guiDisplay._climb = solved.climb.toFixed(1) + " m/s ("
+                + (solved.climb * MS_TO_FPM).toFixed(0) + " ft/min)";
+            this.guiFolder.add(this.guiDisplay, "_range").name("Start Range").disable();
+            this.guiFolder.add(this.guiDisplay, "_heading").name("Heading (origin ENU)").disable();
+            this.guiFolder.add(this.guiDisplay, "_speed").name("Start Speed").disable();
+            this.guiFolder.add(this.guiDisplay, "_peak").name("Peak Speed").disable();
             this.guiFolder.add(this.guiDisplay, "_climb").name("Climb").disable();
         } else {
             // Generic dump of all solved parameters as strings

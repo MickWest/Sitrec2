@@ -12,7 +12,9 @@
 
 import { METERS_PER_NM, traverseMinSpeed } from "../TraverseAnalysis";
 import {
+	abFrameRange,
 	buildAnalysisDataset,
+	expandWindowedTrack,
 	unpackTrackToECEF,
 } from "../TraverseAnalysisData";
 import { CNodeTrack } from "./CNodeTrack";
@@ -45,14 +47,20 @@ export class CNodeLOSFitMinSpeed extends CNodeTrack {
 		const anchorDist = this.in.startDist
 			? this.in.startDist.v0
 			: 20 * METERS_PER_NM;
+		// Fit the In/Out (A-B) window — the same range the traverse-analysis
+		// gallery fits — and hold the endpoint positions outside it.
+		const abRange = abFrameRange(this.frames);
 		const { dataset, originLat, originLon } = buildAnalysisDataset(
 			this.in.LOS,
 			this.in.wind ?? null,
 			anchorDist,
+			abRange,
 		);
 
 		const { track } = traverseMinSpeed(dataset);
-		this.array = unpackTrackToECEF(track, this.frames, originLat, originLon);
+		this.array = expandWindowedTrack(
+			unpackTrackToECEF(track, dataset.n, originLat, originLon),
+			this.frames, dataset.frame0);
 	}
 
 	getValueFrame(f) {

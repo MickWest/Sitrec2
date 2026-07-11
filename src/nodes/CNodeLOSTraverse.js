@@ -3,6 +3,7 @@
 // range (distance from the plane - i.e. a fixed distance.
 import {metersFromMiles, unitsToMeters} from "../utils";
 import {CNodeTrack} from "./CNodeTrack";
+import {Sit} from "../Globals";
 
 export class CNodeLOSTraverse extends CNodeTrack {
     constructor(v) {
@@ -49,7 +50,8 @@ export class CNodeLOSTraverse extends CNodeTrack {
 
 
             if (this.in.VcMPH !== undefined)
-                end = start + metersFromMiles(this.in.VcMPH.v(0)) / 60 / 60 / this.fps * this.frames
+                end = start + metersFromMiles(this.in.VcMPH.v(0)) / 60 / 60
+                    * (Sit.simSpeed ?? 1) / this.fps * this.frames
 
             let dist = start
             const distStep = (end - start) / (this.frames - 1)
@@ -69,4 +71,3 @@ export class CNodeLOSTraverse extends CNodeTrack {
     }
 
 }
-

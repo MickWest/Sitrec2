@@ -18,15 +18,23 @@ export class CNodeTrackAir extends CNodeTrack {
         this.array = []
         var totalWind = V3()
         for (var f = 0; f < this.frames; f++) {
-            this.array.push({position: this.in.source.p(f).sub(totalWind)})
-            totalWind.add(this.in.wind.v(f))
+            const sourcePosition = this.in.source.p(f);
+            this.array.push({position: sourcePosition.clone().sub(totalWind)})
+            const wind = typeof this.in.wind.windVectorAt === "function"
+                ? this.in.wind.windVectorAt(f, sourcePosition)
+                : this.in.wind.v(f);
+            totalWind.add(wind)
         }
     }
 
     update(frame) {
         var totalWind = V3()
         for (var f = 0; f < frame; f++) {
-            totalWind.add(this.in.wind.v(f))
+            const sourcePosition = this.in.source.p(f);
+            const wind = typeof this.in.wind.windVectorAt === "function"
+                ? this.in.wind.windVectorAt(f, sourcePosition)
+                : this.in.wind.v(f);
+            totalWind.add(wind)
         }
 
         // PATCH, if one outputs is a CNodeDisplayTrack

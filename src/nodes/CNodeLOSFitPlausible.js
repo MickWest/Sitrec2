@@ -13,7 +13,7 @@
 
 import {CNodeTrack} from "./CNodeTrack";
 import {fitPlausibleBestRange, KNOTS_TO_MS, METERS_PER_NM} from "../TraverseAnalysis";
-import {buildAnalysisDataset, unpackTrackToECEF} from "../TraverseAnalysisData";
+import {abFrameRange, buildAnalysisDataset, expandWindowedTrack, unpackTrackToECEF} from "../TraverseAnalysisData";
 import {guiMenus, NodeMan} from "../Globals";
 import {t} from "../i18n";
 
@@ -43,8 +43,11 @@ export class CNodeLOSFitPlausible extends CNodeTrack {
 
         // wind local frame is anchored roughly mid-envelope; not range-critical
         const anchorDist = this.in.startDist ? this.in.startDist.v0 : 20 * METERS_PER_NM;
+        // Fit the In/Out (A-B) window — the same range the traverse-analysis
+        // gallery fits — and hold the endpoint positions outside it.
+        const abRange = abFrameRange(this.frames);
         const {dataset, originLat, originLon} =
-            buildAnalysisDataset(this.in.LOS, this.in.wind ?? null, anchorDist);
+            buildAnalysisDataset(this.in.LOS, this.in.wind ?? null, anchorDist, abRange);
 
         const vTarget = this.in.speed ? this.in.speed.v0 : 300 * KNOTS_TO_MS;
         // Respect the "Analysis Min/Max Dist" limits (if the user pinned a rough
@@ -61,7 +64,9 @@ export class CNodeLOSFitPlausible extends CNodeTrack {
         const result = fitPlausibleBestRange(dataset, opts);
 
         this.foundRange = result.startDist;
-        this.array = unpackTrackToECEF(result.track, this.frames, originLat, originLon);
+        this.array = expandWindowedTrack(
+            unpackTrackToECEF(result.track, dataset.n, originLat, originLon),
+            this.frames, dataset.frame0);
         this.updateGUI(result, vTarget);
     }
 

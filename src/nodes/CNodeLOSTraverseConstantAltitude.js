@@ -6,7 +6,7 @@ import {CNodeTrack} from "./CNodeTrack";
 import {intersectSphere2, V3} from "../threeUtils";
 import {assert} from "../assert";
 import {showError} from "../showError";
-import {Globals} from "../Globals";
+import {Globals, Sit} from "../Globals";
 import {ECEFToLLA_radii} from "../LLA-ECEF-ENU";
 
 // Intersect ray with ellipsoid of semi-axes (a, a, b) centered at origin.
@@ -56,51 +56,52 @@ export class CNodeLOSTraverseConstantAltitude extends CNodeTrack {
             earthRadius = (this.in.radius.v0)
         }
         var startRadius = earthRadius;
-        var position;
-        var altitudeSphere; // used in sphere mode
         var targetAltitude; // geodetic altitude for ellipsoid mode
+
+        // Sequential traverses anchor on the clip's FIRST ray (TraverseMethods.md):
+        // Sit.aFrame/bFrame are playback In/Out loop markers (shipped GoFast sets
+        // aFrame:375 purely to skip the pre-lock segment), so they must never
+        // alter traverse geometry. Analysis-parity for a fitted A-window result
+        // is provided by the "Use exact" Analysis Snapshot, not by this node.
+        const anchorFrame = 0;
+        let anchorPosition = null;
 
         if (this.in.altitude !== undefined) {
             targetAltitude = this.in.altitude.v0;
             startRadius = earthRadius + targetAltitude;
-            altitudeSphere = new Sphere(V3(0, 0, 0), startRadius)
-            position = this.in.LOS.v0.position.clone() // in case there's no initial intersection, default
+        } else if (this.in.startDist !== undefined) {
+            const los = this.in.LOS.v(anchorFrame);
+            anchorPosition = los.position.clone()
+                .add(los.heading.clone().multiplyScalar(this.in.startDist.v(0)));
+            if (isEllipsoid) {
+                const lla = ECEFToLLA_radii(anchorPosition.x, anchorPosition.y, anchorPosition.z);
+                targetAltitude = lla[2];
+            } else {
+                startRadius = anchorPosition.length();
+            }
         }
+
+        // Per-frame altitude offset from verticalSpeed, accumulated from frame 0.
+        const altOff = new Float64Array(this.frames);
+        if (this.in.verticalSpeed !== undefined) {
+            for (let f = 1; f < this.frames; f++) {
+                altOff[f] = altOff[f - 1]
+                    + this.in.verticalSpeed.v(f) * (Sit.simSpeed ?? 1) / this.fps;
+            }
+        }
+
+        const altitudeSphere = new Sphere(V3(0, 0, 0), startRadius);
+        var position = this.in.LOS.v0.position.clone(); // fallback if nothing intersects
 
         for (var f = 0; f < this.frames; f++) {
 
             const los = this.in.LOS.v(f)
 
             var result = {}
-            if (f === 0 && this.in.startDist !== undefined) {
-                position = los.position.clone();
-                let heading = los.heading.clone();
-                var startDistance = this.in.startDist.v(0)
-                heading.multiplyScalar(startDistance)
-                position.add(heading)
-                // Derive target altitude from starting position
-                if (isEllipsoid) {
-                    const ecef = position;
-                    const lla = ECEFToLLA_radii(ecef.x, ecef.y, ecef.z);
-                    targetAltitude = lla[2];
-                } else {
-                    startRadius = V3(0, 0, 0).sub(position).length()
-                    altitudeSphere = new Sphere(V3(0, 0, 0), startRadius)
-                }
+            if (f === anchorFrame && anchorPosition !== null) {
+                // exactly the analyzed anchor point (startDist along ray A)
+                position = anchorPosition.clone();
             } else {
-
-             //   if we have a vertical speed, then we increase the radius of the altitude sphere
-                if (this.in.verticalSpeed !== undefined) {
-                    let verticalSpeed = this.in.verticalSpeed.v(f)
-                    if (isEllipsoid) {
-                        targetAltitude += verticalSpeed / this.fps;
-                    } else {
-                        startRadius += verticalSpeed / this.fps;
-                        altitudeSphere.radius = startRadius
-                    }
-                }
-
-
                 let losPosition = los.position.clone();
                 let losHeading = los.heading.clone()
                 let ray = new Ray(losPosition, losHeading)
@@ -108,10 +109,11 @@ export class CNodeLOSTraverseConstantAltitude extends CNodeTrack {
 
                 if (isEllipsoid) {
                     // Ellipsoid at constant geodetic altitude h has semi-axes (a+h, a+h, b+h)
-                    const a = Globals.equatorRadius + targetAltitude;
-                    const b = Globals.polarRadius + targetAltitude;
+                    const a = Globals.equatorRadius + targetAltitude + altOff[f];
+                    const b = Globals.polarRadius + targetAltitude + altOff[f];
                     hit = intersectEllipsoidAlt(ray, a, b);
                 } else {
+                    altitudeSphere.radius = startRadius + altOff[f];
                     let target0 = V3() // first intersection
                     let target1 = V3() // second intersection
                     if (intersectSphere2(ray, altitudeSphere, target0, target1)) {
@@ -129,7 +131,7 @@ export class CNodeLOSTraverseConstantAltitude extends CNodeTrack {
                     heading.multiplyScalar(oldDistance)
                     position.add(heading)
 
-                    // override color to red for segments that are not constant speed.
+                    // override color to red for segments that can't hold altitude.
                     result.color = new Color(1, 0, 0)
                 }
 

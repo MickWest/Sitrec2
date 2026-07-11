@@ -5,6 +5,7 @@ import {DebugArrowAB} from "../threeExt";
 import {GlobalScene} from "../LocalFrame";
 import {CNodeTrack} from "./CNodeTrack";
 import {intersectSphere2, V3} from "../threeUtils";
+import {Sit} from "../Globals";
 
 export class CNodeLOSTraverseConstantSpeed extends CNodeTrack {
     constructor(v) {
@@ -60,7 +61,7 @@ export class CNodeLOSTraverseConstantSpeed extends CNodeTrack {
             if (position) this.in.wind.setPosition(position);
             var wind = this.in.wind.v(f)
             // how many feet do we want to move per frame?
-            let perFrameMotion = this.in.speed.v(f) / this.fps
+            let perFrameMotion = this.in.speed.v(f) * (Sit.simSpeed ?? 1) / this.fps
 
             // flag to indicate if the target is moving away from the camera
             // if so then we pick the intersection that's further away from the camera
@@ -217,4 +218,3 @@ export class CNodeLOSTraverseConstantSpeed extends CNodeTrack {
     }
 
 }
-
