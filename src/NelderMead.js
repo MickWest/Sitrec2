@@ -5,6 +5,7 @@ export function nelderMead(costFn, x0, options = {}) {
     const n = x0.length;
     const maxIter = options.maxIter ?? 2000;
     const tol = options.tol ?? 1e-8;
+    const xTol = options.xTol ?? 1e-6;
     const lo = options.lo ?? null;  // lower bounds array (or null)
     const hi = options.hi ?? null;  // upper bounds array (or null)
     const initialScale = options.initialScale ?? null; // per-param simplex spread (array or null)
@@ -24,12 +25,20 @@ export function nelderMead(costFn, x0, options = {}) {
         return c;
     }
 
-    // Build initial simplex: n+1 vertices
+    // Build initial simplex: n+1 vertices. If the outward step would leave the
+    // bounds, step INWARD instead — clamping used to collapse that vertex back
+    // onto x0 (zero simplex volume in that dimension), so a start point sitting
+    // AT a bound (common after a bound-pinned DE result) could never be
+    // polished along exactly the dimension that was pinned.
     const simplex = [clamp(x0.slice())];
     for (let i = 0; i < n; i++) {
         const v = x0.slice();
         const delta = initialScale ? initialScale[i] : (Math.abs(v[i]) * 0.05 || 0.00025);
-        v[i] += delta;
+        if (hi && v[i] + delta > hi[i] && v[i] - delta >= (lo ? lo[i] : -Infinity)) {
+            v[i] -= delta;
+        } else {
+            v[i] += delta;
+        }
         simplex.push(clamp(v));
     }
 
@@ -58,7 +67,10 @@ export function nelderMead(costFn, x0, options = {}) {
         return clamp(r);
     }
 
+    let iterations = 0;
+    let stopReason = "iteration_limit";
     for (let iter = 0; iter < maxIter; iter++) {
+        iterations = iter + 1;
         // Sort simplex by cost
         const indices = Array.from({length: n + 1}, (_, i) => i);
         indices.sort((a, b) => costs[a] - costs[b]);
@@ -69,9 +81,24 @@ export function nelderMead(costFn, x0, options = {}) {
             costs[i] = sortedCosts[i];
         }
 
-        // Convergence check: spread of costs
+        // Convergence requires both a flat objective AND a collapsed simplex.
+        // Cost-only stopping is unsafe on LOS fits: an unobservable parameter
+        // can span much of its range while every vertex has the same cost.
         const spread = costs[n] - costs[0];
-        if (spread < tol) break;
+        let parameterSpread = 0;
+        for (let i = 1; i <= n; i++) {
+            for (let j = 0; j < n; j++) {
+                const scale = lo && hi
+                    ? Math.max(1e-12, hi[j] - lo[j])
+                    : Math.max(1, Math.abs(simplex[0][j]));
+                parameterSpread = Math.max(parameterSpread,
+                    Math.abs(simplex[i][j] - simplex[0][j]) / scale);
+            }
+        }
+        if (spread < tol && parameterSpread < xTol) {
+            stopReason = "cost_and_parameter_tolerance";
+            break;
+        }
 
         const c = centroid(n); // centroid excluding worst
         const worst = simplex[n];
@@ -120,5 +147,15 @@ export function nelderMead(costFn, x0, options = {}) {
     for (let i = 1; i <= n; i++) {
         if (costs[i] < costs[bestIdx]) bestIdx = i;
     }
-    return {params: simplex[bestIdx], cost: costs[bestIdx]};
+    let parameterSpread = 0;
+    for (let i = 0; i <= n; i++) {
+        for (let j = 0; j < n; j++) {
+            const scale = lo && hi
+                ? Math.max(1e-12, hi[j] - lo[j])
+                : Math.max(1, Math.abs(simplex[bestIdx][j]));
+            parameterSpread = Math.max(parameterSpread,
+                Math.abs(simplex[i][j] - simplex[bestIdx][j]) / scale);
+        }
+    }
+    return {params: simplex[bestIdx], cost: costs[bestIdx], iterations, stopReason, parameterSpread};
 }
