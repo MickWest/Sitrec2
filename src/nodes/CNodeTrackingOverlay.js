@@ -471,52 +471,26 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
             return los;
         }
 
-        let  vFOV = extractFOV(fovNode.getValueFrame(f));
-
-
-        // vFov is the vertical field of view of the video in degrees
-        // we are using canvas coordinates, so need to adjust appropriately
-        vFOV = 180 / Math.PI * 2 * Math.atan(Math.tan(vFOV * Math.PI / 360) / this.overlayView.fovCoverage);
-
-        // the los is a position (of the camera) and heading (centerline of the camera)
-        // we will take the XY position of the camera and the heading
-        // and the vertical FOV, and the width and height of the video
-        // and modify the heading to pass through the XY position
+        const vFOV = extractFOV(fovNode.getValueFrame(f));
 
         // x and y are in original video coordinates, which are pixels
         const [vx, vy] = this.pointsXY[f];
 
-        // LOS must use the unadjusted camera geometry, independent of any
-        // user pan offset on the video view. Temporarily zero panOffset so
-        // videoToCanvasCoordsOriginal returns coordinates for the unshifted view.
-        const savedPanX = this.overlayView.panOffsetX;
-        const savedPanY = this.overlayView.panOffsetY;
-        this.overlayView.panOffsetX = 0;
-        this.overlayView.panOffsetY = 0;
-
-        // convert to canvas coordinates (from original video coords)
-        const [x, y] = this.overlayView.videoToCanvasCoordsOriginal(vx, vy);
-
-        // Restore pan offset
-        this.overlayView.panOffsetX = savedPanX;
-        this.overlayView.panOffsetY = savedPanY;
-
-        // make it relative to the center of the screen
-        let yoff = y - this.heightPx/2;
-        let xoff = x - this.widthPx/2;
-
-        // scale by zoom
-        const zoom = this.overlayView.in.zoom.v(f) / 100
-        yoff /= zoom;
-        xoff /= zoom;
-
-        // get focal length in pixel, given that the Y nominally spans 100.
-        const fpx = this.heightPx / (2 * Math.tan(radians(vFOV) / 2));
-
-        // get the Y angle from the centerline
-        const yangle = -Math.atan(yoff / fpx);
-        // same for X
-        const xangle = -Math.atan(xoff / fpx);
+        // Pointing angles computed ENTIRELY in original-video pixel space.
+        // The old path round-tripped through the live canvas (letterbox
+        // fovCoverage, widthPx/heightPx from div.clientWidth, zoom, and a
+        // panOffset zero/restore hack) purely to invert the display mapping.
+        // That transform cancels analytically (verified for both letterbox
+        // branches), but it made the physical LOS depend on window/layout
+        // state down to float rounding — and it mixed zoom.v0 (inside the
+        // mapping) with zoom.v(f) (in the unscale). Direct form: the video's
+        // vertical FOV spans originalVideoHeight pixels, so the focal length
+        // in original pixels is oh / (2 tan(vFOV/2)).
+        const ow = this.overlayView.originalVideoWidth;
+        const oh = this.overlayView.originalVideoHeight;
+        const fpx = oh / (2 * Math.tan(radians(vFOV) / 2));
+        const xangle = -Math.atan((vx - ow / 2) / fpx);
+        const yangle = -Math.atan((vy - oh / 2) / fpx);
 
 
         const up = los.up;
