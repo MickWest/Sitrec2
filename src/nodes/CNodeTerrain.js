@@ -106,6 +106,10 @@ export class CNodeTerrain extends CNode {
         //   this.debugLog = true;
 
         this.loaded = false;
+        // Monotonic content revision for consumers whose results depend on
+        // elevation samples. Tile keys/counts can stay unchanged while their
+        // height payload finishes loading, so cache keys need a content signal.
+        this.elevationRevision = 0;
 
         this.radius = Globals.equatorRadius;
 
@@ -569,6 +573,7 @@ export class CNodeTerrain extends CNode {
                     //NodeMan.recalculateAllRootFirst(false); // false means don't recalculate the terrain again
 
                     EventManager.dispatchEvent("terrainLoaded", this)
+                    this.elevationRevision++;
                     EventManager.dispatchEvent("elevationChanged", this)
                     
                     // Try to create debug text display if it wasn't created in constructor
@@ -676,6 +681,7 @@ export class CNodeTerrain extends CNode {
                             this.applyElevationTo(update.z, update.x, update.y);
                         });
                         this.pendingElevationUpdates = []; // Clear the pending updates
+                        this.elevationRevision++;
                         EventManager.dispatchEvent("elevationChanged", this)
                     }
 
@@ -810,6 +816,7 @@ export class CNodeTerrain extends CNode {
         requestAnimationFrame(() => {
             this._elevationChangedPending = false;
             if (!this.maps || !this.UI) return;   // disposed during a sitch transition
+            this.elevationRevision++;
             EventManager.dispatchEvent("elevationChanged", this)
             // An elevation tile just mutated the terrain mesh. Under render-on-demand
             // the loop may already be asleep (camera settled), so request a render —
@@ -953,5 +960,4 @@ export class CNodeTerrain extends CNode {
         return this.elevationMap.tileHasHigherZoom(z, x, y);
     }
 }
-
 

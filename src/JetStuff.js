@@ -51,7 +51,12 @@ import {CNodeLOSFitMonteCarlo2} from "./nodes/CNodeLOSFitMonteCarlo2";
 import {CNodeLOSFitPhysics} from "./nodes/CNodeLOSFitPhysics";
 import {CNodeLOSFitPlausible} from "./nodes/CNodeLOSFitPlausible";
 import {CNodeLOSFitMinSpeed} from "./nodes/CNodeLOSFitMinSpeed";
+import {CNodeLOSFitStationaryPoint} from "./nodes/CNodeLOSFitStationaryPoint";
+import {CNodeLOSFitGroundVehicle} from "./nodes/CNodeLOSFitGroundVehicle";
+import {CNodeLOSFitAnalysisResult} from "./nodes/CNodeLOSFitAnalysisResult";
 import {CNodeSwitch} from "./nodes/CNodeSwitch";
+import {QUADCOPTER_MODELS, FIXED_WING_MODELS} from "./VehicleModels";
+import {EventManager} from "./CEventManager";
 import {makeMatLine, updateMatLineResolution} from "./MatLines";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
 import {
@@ -915,22 +920,72 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
 
     // Physics-model choice for the physics fit (string constants behind a switch)
     if (!NodeMan.exists("physicsModelChoice")) {
+
+        // Make/model sub-dropdowns: one option per catalog entry (display name ->
+        // catalog id). Choosing a specific make/model tightens the physics fit to
+        // that airframe's real envelope; the AUTO entry (first in each catalog)
+        // fits the generic envelope and the analysis reports the closest match.
+        // Only the sub-dropdown for the currently-selected physics model is shown
+        // (see updateModelSubMenus below).
+        const quadInputs = {};
+        for (const m of QUADCOPTER_MODELS) {
+            quadInputs[m.name] = new CNodeConstant({id: "quadModel_" + m.id, value: m.id});
+        }
+        new CNodeSwitch({
+            id: "quadModelChoice",
+            inputs: quadInputs,
+            desc: "Quadcopter Model",
+            default: QUADCOPTER_MODELS[0].name,
+            tooltip: "Which multirotor to bound the Quadcopter physics fit to. AUTO fits the full multirotor envelope and reports the closest common model.",
+        }, guiMenus.traverse)
+
+        const fwInputs = {};
+        for (const m of FIXED_WING_MODELS) {
+            fwInputs[m.name] = new CNodeConstant({id: "fixedWingModel_" + m.id, value: m.id});
+        }
+        new CNodeSwitch({
+            id: "fixedWingModelChoice",
+            inputs: fwInputs,
+            desc: "Fixed-Wing Model",
+            default: FIXED_WING_MODELS[0].name,
+            tooltip: "Which fixed-wing type to bound the Fixed Wing physics fit to. AUTO fits the generic envelope and reports the closest type.",
+        }, guiMenus.traverse)
+
+        // Show only the sub-dropdown relevant to the selected physics model.
+        const updateModelSubMenus = (choice) => {
+            const quad = NodeMan.get("quadModelChoice", false);
+            const fw = NodeMan.get("fixedWingModelChoice", false);
+            if (quad) { choice === "Quadcopter" ? quad.show() : quad.hide(); }
+            if (fw) { choice === "Fixed Wing Aircraft" ? fw.show() : fw.hide(); }
+        };
+
         new CNodeSwitch({
             id: "physicsModelChoice",
             inputs: {
                 "Sky Lantern": new CNodeConstant({id: "physicsModelLantern", value: "Sky Lantern"}),
                 "Fixed Wing Aircraft": new CNodeConstant({id: "physicsModelFixedWing", value: "Fixed Wing Aircraft"}),
+                "Quadcopter": new CNodeConstant({id: "physicsModelQuad", value: "Quadcopter"}),
             },
             desc: "Physics Model",
             default: "Sky Lantern",
             tooltip: "Dynamics model used by the 'Global Fit: Physics' traverse method.",
         }, guiMenus.traverse)
+
+        // choiceChanged fires this event on user change AND on quiet deserialize
+        // (restoring a saved Quadcopter/Fixed-Wing fit), so the right sub-dropdown
+        // shows after a sitch load without needing a manual re-select. Listeners
+        // are cleared per sitch load, so this does not accumulate.
+        EventManager.addEventListener("Switch.choiceChanged.physicsModelChoice",
+            (choice) => updateModelSubMenus(choice));
+        updateModelSubMenus("Sky Lantern");   // initial visibility (default model)
     }
 
     new CNodeLOSFitPhysics({
         id: "LOSFitPhysics"+idExtra,
         LOS: los,
         physicsModel: "physicsModelChoice",
+        quadModel: "quadModelChoice",
+        fixedWingModel: "fixedWingModelChoice",
         maxIter: "physicsMaxIter",
         windSpeed: "physicsWindSpeed",
         windFrom: "physicsWindFrom",
@@ -964,6 +1019,25 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
         };
         if (NodeMan.exists("targetWind")) minSpeedDef.wind = "targetWind";
         new CNodeLOSFitMinSpeed(minSpeedDef);
+    }
+
+    // Stationary-point family — live counterparts of the analysis gallery's
+    // "Stationary Point in Space", "Ground Object" and "Ground Vehicle" tiles,
+    // built on the same fits so "Use This" reproduces the tile exactly. (No
+    // on-ray traverse can hold a fixed point: walking rays at speed 0 still
+    // moves by the rays' closest-approach distance each frame and flags the
+    // over-speed segments white — the old broken apply.)
+    if (!NodeMan.exists("LOSFitStationaryPoint"+idExtra)) {
+        new CNodeLOSFitStationaryPoint({id: "LOSFitStationaryPoint"+idExtra, LOS: los});
+        new CNodeLOSFitStationaryPoint({id: "LOSFitGroundPoint"+idExtra, LOS: los, groundPin: true});
+        new CNodeLOSFitGroundVehicle({id: "LOSFitGroundVehicle"+idExtra, LOS: los});
+    }
+
+    // Pointwise-exact snapshot installed by the Traverse Analysis gallery.
+    // This avoids re-running a different live algorithm after the user has
+    // already reviewed and selected a solved trajectory.
+    if (!NodeMan.exists("LOSFitAnalysisResult"+idExtra)) {
+        new CNodeLOSFitAnalysisResult({id: "LOSFitAnalysisResult"+idExtra, LOS: los});
     }
 
     if (!NodeMan.exists("startAltitude")) {

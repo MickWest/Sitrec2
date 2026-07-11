@@ -245,7 +245,7 @@ export function AddSpeedGraph(v) {
                         const up = getLocalUpVector(this.in.source.p(f))
                         // project move onto the ground plane
                         move.projectOnPlane(up);
-                        return (move.length() * this.in.source.fps * Units.m2Speed)
+                        return (move.length() * this.in.source.fps / (Sit.simSpeed ?? 1) * Units.m2Speed)
                     }
                 }),
                 name: "Horizontal Air Speed",
@@ -268,7 +268,7 @@ export function AddSpeedGraph(v) {
                         // project move onto the ground plane
                         move.projectOnPlane(up);
 
-                        return (move.length() * this.in.source.fps * Units.m2Speed)
+                        return (move.length() * this.in.source.fps / (Sit.simSpeed ?? 1) * Units.m2Speed)
                     }
                 }),
                 name: "Horizontal Ground Speed",
@@ -286,7 +286,7 @@ export function AddSpeedGraph(v) {
                         if (f === 0) f = 1;
                         let move = this.in.source.p(f)
                         move.sub(this.in.source.p(f - 1))
-                        return (move.length() * this.in.source.fps * Units.m2Speed)
+                        return (move.length() * this.in.source.fps / (Sit.simSpeed ?? 1) * Units.m2Speed)
                     }
                 }),
                 name: "Object Speed",
@@ -309,7 +309,7 @@ export function AddSpeedGraph(v) {
                         // project move onto the ground plane
                         move.projectOnVector(up);
 
-                        return (move.length() * this.in.source.fps * Units.m2Speed)
+                        return (move.length() * this.in.source.fps / (Sit.simSpeed ?? 1) * Units.m2Speed)
                     }
                 }),
                 name: "Vertical Speed",
@@ -376,7 +376,7 @@ export function AddSpeedGraph(v) {
                             const up = getLocalUpVector(this.in.source.p(f))
                             // project move onto the ground plane
                             move.projectOnPlane(up);
-                            return (move.length() * this.in.source.fps * Units.m2Speed)
+                            return (move.length() * this.in.source.fps / (Sit.simSpeed ?? 1) * Units.m2Speed)
                         }
                     }),
                     name: "Horizontal Speed",

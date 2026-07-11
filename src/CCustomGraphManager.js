@@ -527,7 +527,7 @@ class CCustomGraphManager {
                     const v = p1.clone().sub(p0);
                     const up = getLocalUpVector(p1);
                     v.sub(up.clone().multiplyScalar(v.dot(up)));   // ground speed
-                    return v.length() * Sit.fps * (Units ? Units.m2Speed : 1);
+                    return v.length() * Sit.fps / (Sit.simSpeed ?? 1) * (Units ? Units.m2Speed : 1);
                 },
             });
         });

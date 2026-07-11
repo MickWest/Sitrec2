@@ -191,7 +191,7 @@ export class CNodeSimInfoUI extends CNodeVideoInfoUI {
     traverseSpeedText(frame, mode) {
         const src = this.getTraverseNode();
         if (!src || !Units) return null;
-        const fps = src.fps ?? Sit.fps ?? 30;
+        const fps = (src.fps ?? Sit.fps ?? 30) / (Sit.simSpeed ?? 1);
         const frames = src.frames ?? Sit.frames;
         let f = Math.max(1, Math.min(frame, frames - 1));
         const move = src.p(f).clone().sub(src.p(f - 1));
@@ -220,7 +220,7 @@ export class CNodeSimInfoUI extends CNodeVideoInfoUI {
     getTraverseGForceText(frame) {
         const src = this.getTraverseNode();
         if (!src) return null;
-        const fps = src.fps ?? Sit.fps ?? 30;
+        const fps = (src.fps ?? Sit.fps ?? 30) / (Sit.simSpeed ?? 1);
         const frames = src.frames ?? Sit.frames;
         let f = Math.max(0, Math.min(frame, frames - 4));
         const p0 = src.p(f);

@@ -22,17 +22,21 @@
  *   runTraverseAnalysis()          — run everything; returns the results object
  */
 
-import {GlobalDateTimeNode, NodeMan, Sit, setRenderOne} from "./Globals";
+import {GlobalDateTimeNode, Globals, NodeMan, Sit, setRenderOne} from "./Globals";
 import {showError} from "./showError";
 import {t} from "./i18n";
-import {buildAnalysisDataset} from "./TraverseAnalysisData";
+import {abFrameRange, buildAnalysisDataset, unpackTrackToECEF} from "./TraverseAnalysisData";
+import {getPointBelow, calculateAltitude} from "./threeExt";
 import {
     constAirSpeedTrack,
     fitAircraft,
     fitConstAltitude,
     fitFixedDirection,
     fitFixedPoint,
+    fitGroundPoint,
+    fitGroundVehicle,
     fitPlausibleBestRange,
+    EARTH_RADIUS_M,
     KNOTS_TO_MS,
     meanAngularError,
     METERS_PER_NM,
@@ -45,6 +49,8 @@ import {
 } from "./TraverseAnalysis";
 import {fitConstantAcceleration, fitPhysicsModel} from "./LOSFitting";
 import {SkyLanternModel} from "./SkyLanternModel";
+import {QuadcopterModel} from "./QuadcopterModel";
+import {classifyFixedWing, classifyQuadcopter} from "./VehicleModels";
 import {isLocal} from "./configUtils";
 import {getCelestialDirection, getCelestialDirectionFromRaDec, getGeocentricBodyDirectionECEF} from "./CelestialMath";
 import {ECEF2ENU_radii} from "./LLA-ECEF-ENU";
@@ -53,6 +59,18 @@ import * as Astronomy from "astronomy-engine";
 import {applyRefractionECI, refractionOptsFromUniforms} from "./atmosphere/refraction";
 import {loadLEOSatrecsForDate, findBestSatellite, satelliteTrackENU, satelliteECEF, satelliteSunlit} from "./SatelliteSearch";
 import {Chart3D, Chart3DGroup} from "./Chart3D";
+import {
+    completenessBadges,
+    formatRawLosResidual,
+    groupAndRankHypotheses,
+    rankingExplanation,
+    tierBadge,
+} from "./TraverseRanking";
+import {
+    terrainAnalysisConfigScalars,
+    terrainDependencyMismatch,
+    terrainDependencyRecordsMatch,
+} from "./TraverseAnalysisCache";
 
 const MS_TO_FPM = 60 / 0.3048;      // m/s -> feet per minute
 
@@ -106,7 +124,33 @@ export const analyzeTweaks = {
     aoKnownNow: false,
     aoKnownOther: false,
     satellite: false,   // loads the LEO catalogue for the date (network, slow first time)
+    groundMode: "Airborne (any)",   // ground-contact constraint (see GROUND_MODES)
 };
+
+// Ground-contact constraint modes for the traverse analysis. In every mode,
+// any candidate whose trajectory passes underground (below the terrain) is
+// rejected — underground is never a valid solution. The non-"Airborne" modes
+// additionally require ground contact and add a dedicated Ground Vehicle
+// candidate / bias the physics fits toward the surface.
+export const GROUND_MODES = [
+    "Airborne (any)",      // no ground contact required (underground still rejected)
+    "On the ground",       // ground-based vehicle: the whole track rides the surface
+    "Starts on ground",    // takeoff / released balloon: begins on the surface
+    "Ends on ground",      // landing / descending balloon: ends on the surface
+];
+
+// A trajectory more than this many metres below the terrain surface (sampled
+// along the track) is treated as underground and rejected. Generous, because
+// the elevation map / coarse 3D tiles can themselves be tens of metres off
+// (see reference_tile_ground_robustness) — only a clear, sustained dip counts.
+const UNDERGROUND_TOL = 40;
+
+// A point within this many metres AGL counts as "on the ground" for the
+// ground-contact modes. Generous because elevation products, geoid conversion,
+// and the candidate's constant-elevation curved shell can differ by tens of
+// metres. Ground-native candidates are still checked against the actual sampled
+// terrain; the tolerance prevents map-resolution noise becoming a false reject.
+const GROUND_CONTACT_TOL = 150;
 
 // ---------------------------------------------------------------------------
 // Report palette (dark surface). Categorical slots validated for CVD
@@ -172,62 +216,6 @@ function escapeHtml(s) {
 
 // largest |value| of a min/max stat — "the spike"
 const statSpike = (s) => Math.max(Math.abs(s.min), Math.abs(s.max));
-
-// ---------------------------------------------------------------------------
-// Physical-plausibility rating for a hypothesis. Judges peak maneuvering g,
-// mean air speed, and LOS fit error against loose aviation-scale thresholds.
-// Returns {label, rank (0=Implausible .. 3=High), color} for pills/tables.
-// ---------------------------------------------------------------------------
-function plausibilityRating(h) {
-    // A method whose track is non-physical (absurd speed/g) is shown for
-    // completeness but ranks below everything else (rank -1, sorts dead last).
-    if (h.nonPhysical) return {label: "Non-physical", rank: -1, color: "#8a5a2b"};
-    const p = h.params || {};
-    const err = h.errDeg || 0;   // NaN/undefined -> 0
-    // Astronomical / ephemeris objects: the discriminators are angular offset
-    // and whether the body is bright enough to see at this FOV — NOT g-load or
-    // airspeed (a body in the sky has no meaningful "maneuvering"). A body that
-    // is too faint to register (e.g. Neptune) can't be the sighting at all.
-    if (p.object !== undefined) {
-        if (p.visible === false) return {label: "Implausible", rank: 0, color: "#e0564e"};
-        if (err > 2)    return {label: "Implausible", rank: 0, color: "#e0564e"};
-        if (err > 0.5)  return {label: "Low", rank: 1, color: "#d9862f"};
-        if (err > 0.1)  return {label: "Moderate", rank: 2, color: "#c9b23a"};
-        return {label: "High", rank: 3, color: "#3fae72"};
-    }
-    // Satellites: a real object, but judged by angular match + whether it's
-    // sunlit (a satellite in Earth's shadow can't be the bright thing on video).
-    // Orbital speed is expected, so it is NOT penalised.
-    if (p.satellite !== undefined) {
-        if (p.sunlit === false || err > 2) return {label: "Implausible", rank: 0, color: "#e0564e"};
-        if (err > 0.5)  return {label: "Low", rank: 1, color: "#d9862f"};
-        if (err > 0.15) return {label: "Moderate", rank: 2, color: "#c9b23a"};
-        return {label: "High", rank: 3, color: "#3fae72"};
-    }
-    const g = (h.metricsFull ? h.metricsFull.gLoad.max : 0) || 0;
-    const spdKt = (h.metricsFull ? h.metricsFull.airSpeed.mean : 0) / KNOTS_TO_MS;
-    const errEff = effectiveErrDeg(h);
-    if (g > 9 || spdKt > 900 || errEff > 0.5) return {label: "Implausible", rank: 0, color: "#e0564e"};
-    if (g > 4 || spdKt > 650 || errEff > 0.15) return {label: "Low", rank: 1, color: "#d9862f"};
-    if (g > 1.5 || errEff > 0.05) return {label: "Moderate", rank: 2, color: "#c9b23a"};
-    return {label: "High", rank: 3, color: "#3fae72"};
-}
-
-// Effective LOS error for rating/ranking. Ray-following methods carry a small
-// smoothing residual that tracks the dataset noise floor, not model failure —
-// don't let pure noise demote or de-rank them; their honest discriminators are
-// the implied g/speed. (Physics-fit numbers stay UN-normalized by the floor: a
-// genuinely maneuvering target inflates the floor and would grade itself on a
-// curve.) A LARGE residual still counts — that would mean the smoothed path
-// stopped following the rays.
-function effectiveErrDeg(h) {
-    const err = h.errDeg || 0;
-    const rayFollow = h.key === "constAir" || h.key === "constAlt"
-        || h.key === "plausible" || h.key === "saddle";
-    if (!rayFollow) return err;
-    const floor = (h.params && h.params.errFloor) || 0;
-    return Math.max(0, err - Math.max(0.05, 1.5 * floor));
-}
 
 // ---------------------------------------------------------------------------
 // Astronomical / fixed-object hypothesis helpers
@@ -453,6 +441,11 @@ function computeSaddle(dataset, slowProfile, slowOpts) {
             loM: rows[lo].startDist, hiM: rows[hi].startDist, repM: medRange,
             count: hi - lo + 1, total: rows.length,
         },
+        boundaryLimited: lo === 0 || hi === rows.length - 1 || !!slowProfile.boundaryLimited,
+        boundarySides: {
+            lo: lo === 0 || !!slowProfile.boundarySides?.lo,
+            hi: hi === rows.length - 1 || !!slowProfile.boundarySides?.hi,
+        },
         windowMetrics,
     };
 }
@@ -469,22 +462,195 @@ function computeSaddle(dataset, slowProfile, slowOpts) {
 // whose residual LOS error says whether the object could really be sitting
 // still (or be a known bright body).
 // ---------------------------------------------------------------------------
-function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, satellite,
+// ---------------------------------------------------------------------------
+// Ground-contact analysis: terrain-aware underground rejection + ground modes.
+// ---------------------------------------------------------------------------
+
+// Signed height-above-ground (metres, negative = underground) for an ECEF
+// point, using the loaded terrain model where present and sea level otherwise
+// (getPointBelow falls back to the sphere). Mirrors clampAboveGround's math.
+function signedAGL(ecefPoint) {
+    const out = {};
+    const ground = getPointBelow(ecefPoint, false, out);
+    const pAlt = out.altitudeHAE !== undefined ? out.altitudeHAE : calculateAltitude(ecefPoint);
+    return pAlt - calculateAltitude(ground);
+}
+
+// Sample an ENU track's height above the terrain. Returns worst (min) AGL,
+// max AGL, start/end AGL and the fraction of sampled points more than
+// UNDERGROUND_TOL below the surface. The ENU->ECEF conversion runs once for
+// the whole track; the pricier terrain lookup is sampled.
+function trackGroundStats(track, n, originLat, originLon, samples = 48) {
+    if (!track || n < 1) return null;
+    const ecef = unpackTrackToECEF(track, n, originLat, originLon);
+    const step = Math.max(1, Math.floor((n - 1) / samples) || 1);
+    let minAGL = Infinity, maxAGL = -Infinity, below = 0, tested = 0;
+    for (let f = 0; f < n; f += step) {
+        const agl = signedAGL(ecef[f].position);
+        if (agl < minAGL) minAGL = agl;
+        if (agl > maxAGL) maxAGL = agl;
+        if (agl < -UNDERGROUND_TOL) below++;
+        tested++;
+    }
+    return {
+        minAGL, maxAGL,
+        startAGL: signedAGL(ecef[0].position),
+        endAGL: signedAGL(ecef[n - 1].position),
+        fracBelow: tested ? below / tested : 0,
+    };
+}
+
+// Local terrain elevation (ENU up, ~HAE metres) near the scene — the height of
+// the flat "ground plane" the Ground Vehicle candidate rides. Sampled at the
+// frame-0 sightline's sea-level intersection (≈0 over ocean). Exported so the
+// live "Ground Vehicle" traverse method computes the same plane the gallery
+// fitted — applying the tile reproduces its track.
+export function localGroundZ(dataset, originLat, originLon) {
+    const ecef = localGroundProbeECEF(dataset, originLat, originLon);
+    const out = {};
+    const ground = getPointBelow(ecef, false, out);
+    return calculateAltitude(ground);
+}
+
+function localGroundProbeECEF(dataset, originLat, originLon) {
+    const S = dataset.S, D = dataset.D;
+    let hx = 0, hy = 0;
+    if (D[2] < -1e-4) {
+        const t = -S[2] / D[2];
+        if (t > 0) { hx = S[0] + t * D[0]; hy = S[1] + t * D[1]; }
+    }
+    return unpackTrackToECEF(new Float64Array([hx, hy, 0]), 1,
+        originLat, originLon)[0].position;
+}
+
+function terrainDependencySample(key, ecefPoint) {
+    const terrain = NodeMan.get("TerrainModel", false);
+    const queryECEF = typeof ecefPoint.clone === "function" ? ecefPoint.clone() : ecefPoint;
+    if (terrain && typeof terrain.getPointBelowWithTileInfo === "function") {
+        const info = terrain.getPointBelowWithTileInfo(ecefPoint, 0);
+        return {
+            key,
+            groundAltitudeM: calculateAltitude(info.point),
+            tileZ: Number.isFinite(info.tileZ) ? info.tileZ : -1,
+            queryECEF,
+        };
+    }
+    return {key, groundAltitudeM: calculateAltitude(getPointBelow(ecefPoint)), tileZ: -1, queryECEF};
+}
+
+function resampleTerrainDependencies(records) {
+    if (!Array.isArray(records) || records.some((record) => !record?.queryECEF)) return null;
+    return records.map((record) => terrainDependencySample(record.key, record.queryECEF));
+}
+
+// Capture only terrain values that contributed to the cached interpretation:
+// the local ground prior/shell and the same candidate-corridor samples used by
+// underground/contact grading. Render-camera LOD elsewhere is intentionally
+// absent, so orbiting mainView cannot invalidate expensive physics fits.
+function captureTerrainDependencies(dataset, hypotheses, originLat, originLon, samples = 48) {
+    const records = [terrainDependencySample("local-ground",
+        localGroundProbeECEF(dataset, originLat, originLon))];
+    for (let hi = 0; hi < (hypotheses || []).length; hi++) {
+        const h = hypotheses[hi];
+        if (!h?.track || h.atInfinity || h.identity) continue;
+        if (h.params && (h.params.object !== undefined || h.params.satellite !== undefined)) continue;
+        const n = h.track.length / 3;
+        if (!(n >= 1)) continue;
+        const ecef = unpackTrackToECEF(h.track, n, originLat, originLon);
+        const step = Math.max(1, Math.floor((n - 1) / samples) || 1);
+        const frames = new Set([0, n - 1]);
+        for (let f = 0; f < n; f += step) frames.add(f);
+        for (const f of Array.from(frames).sort((a, b) => a - b)) {
+            records.push(terrainDependencySample(
+                `${h.key || hi}:${hi}:${f}`, ecef[f].position));
+        }
+    }
+    return records;
+}
+
+// Whether a hypothesis's ground stats violate the requested ground-contact
+// mode. Returns a short reason string, or null if consistent with the mode.
+function groundContactViolation(stats, mode) {
+    if (!stats) return null;
+    switch (mode) {
+        case "On the ground":
+            return stats.maxAGL > GROUND_CONTACT_TOL ? "airborne (not a ground vehicle)" : null;
+        case "Starts on ground":
+            return stats.startAGL > GROUND_CONTACT_TOL ? "does not start on the ground" : null;
+        case "Ends on ground":
+            return stats.endAGL > GROUND_CONTACT_TOL ? "does not end on the ground" : null;
+        default:
+            return null;
+    }
+}
+
+// Physics models that solve their own wind must be evaluated in that solved
+// air mass. Using the external sitch-wind dataset here makes a perfect wind
+// tracer report the full ground-drift speed as "air speed" and can change its
+// plausibility tier. Return a lightweight dataset view with the model's own
+// per-frame wind displacement.
+function datasetForSolvedModelWind(dataset, track, solved, modelKind) {
+    if (!solved || !Number.isFinite(solved.windE) || !Number.isFinite(solved.windN)) {
+        return dataset;
+    }
+    const W = new Float64Array(dataset.n * 3);
+    const dt = 1 / dataset.fps;
+    const x0 = track[0], y0 = track[1], z0 = track[2];
+    const h0 = z0 + (x0 * x0 + y0 * y0) / (2 * EARTH_RADIUS_M);
+    for (let f = 0; f < dataset.n; f++) {
+        let mult = 1;
+        if (modelKind === "lantern") {
+            const x = track[f * 3], y = track[f * 3 + 1], z = track[f * 3 + 2];
+            const h = z + (x * x + y * y) / (2 * EARTH_RADIUS_M);
+            mult = 1 + (solved.shearPerM || 0) * (h - h0);
+            mult = Math.max(0.25, Math.min(3, mult));
+        }
+        W[f * 3] = solved.windE * mult * dt;
+        W[f * 3 + 1] = solved.windN * mult * dt;
+    }
+    return {...dataset, W};
+}
+
+function pinLabel(pin) {
+    return pin.name + (pin.side === "lo" ? " (min)" : " (max)");
+}
+
+function splitBoundPins(records, include, constraintId = (p) => p.name) {
+    const active = new Map();
+    const inactive = new Map();
+    const unstable = new Map();
+    for (const pin of records || []) {
+        if (!include(pin)) continue;
+        const target = pin.inwardBetter ? unstable : pin.loadBearing === false ? inactive : active;
+        const id = constraintId(pin);
+        if (!target.has(id)) target.set(id, pinLabel(pin));
+    }
+    return {active, inactive, unstable};
+}
+
+function physicsBoundSubtitle(base, active, inactive, unstable = []) {
+    const parts = [];
+    if (active.length) parts.push(`locally load-bearing limit${active.length === 1 ? "" : "s"}: ${active.join(", ")}`);
+    if (inactive.length) parts.push(`unconstrained at bound: ${inactive.join(", ")}`);
+    if (unstable.length) parts.push(`inward probe improved the fit: ${unstable.join(", ")}`);
+    return parts.length ? `${base} — ${parts.join("; ")}` : base;
+}
+
+function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, quad, satellite,
     slowProfile, slowOpts, losNode, originLat, originLon}) {
     const S = dataset.S;
     const globalFrame = (f) => (dataset.frame0 ?? 0) + f;
     const dateForDatasetFrame = (f) => dateAtDatasetFrame(dataset, f);
     const list = [];
+    // Surface motion is constrained relative to Earth, not the air mass. Use a
+    // zero-wind metric view so road speed, acceleration/g and headings are
+    // ground-relative; otherwise a head/tailwind changes the vehicle verdict.
+    const groundMetricDataset = {...dataset, W: new Float64Array(dataset.W.length)};
 
-    // Empirical residual floor of this dataset (degrees): the mean angular
-    // error left by a free constant-acceleration path — the most rigid
-    // generic fit, closed-form and deterministic, with no object-type
-    // assumptions. A quadratic in time cannot follow camera-solve wander or
-    // pointing noise, so its residual is a practical measure of how much
-    // error the SIGHTLINES themselves carry: off-ray fits with residuals
-    // near this floor are limited by data noise, not by model failure.
-    // (On Aguadilla this floor reads 0.20° — matching the 0.20° scored by the
-    // hand-fitted accepted lantern path; on clean synthetic data both are ~0.)
+    // Generic reference residual (degrees): the mean angular error left by a
+    // deterministic constant-acceleration path with no object-type assumption.
+    // It combines pointing error, real target maneuver, and model mismatch; it
+    // is useful scale context but is not a measured sensor-noise floor.
     let errFloor = NaN;
     try {
         const fTimes = new Float64Array(dataset.n);
@@ -506,17 +672,47 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
     //    holds the winning air speed (QP solve; honest small residual).
     {
         const track = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed).track;
+        const boundaryPins = [];
+        if (sweep.boundaryAxes?.range) {
+            const rLo = Math.min(...sweep.ranges), rHi = Math.max(...sweep.ranges);
+            if (sweep.familyBand?.rangeLo <= rLo * 1.001) boundaryPins.push("range (lower search edge)");
+            if (sweep.familyBand?.rangeHi >= rHi * 0.999) boundaryPins.push("range (upper search edge)");
+        }
+        if (sweep.boundaryAxes?.speed) {
+            const vLo = Math.min(...sweep.speeds), vHi = Math.max(...sweep.speeds);
+            if (sweep.familyBand?.speedLo <= vLo * 1.001) boundaryPins.push("speed (lower search edge)");
+            if (sweep.familyBand?.speedHi >= vHi * 0.999) boundaryPins.push("speed (upper search edge)");
+        }
         list.push({
             key: "constAir",
             name: "Constant Air Speed",
-            subtitle: "Fixed airspeed, wind-corrected",
+            subtitle: (sweep.familyBand && sweep.familyBand.count > 1)
+                ? `Family: ${kt1(sweep.familyBand.speedLo)}–${kt1(sweep.familyBand.speedHi)} kt at ` +
+                  `${nm1(sweep.familyBand.rangeLo)}–${nm1(sweep.familyBand.rangeHi)} NM fit about equally`
+                : "Fixed airspeed, wind-corrected",
             color: VIZ.constAir,
             track,
             metricsFull: trackMetrics(dataset, track),
             errDeg: meanAngularError(dataset, track) * 180 / Math.PI,
-            params: {range: sweep.best.startDist, airSpeed: sweep.best.speed, errFloor},
-            notes: "The smoothest path following the LOS rays while holding air speed fixed " +
-                "(the applied traverse walks the rays exactly).",
+            searchBounds: boundaryPins.length ? boundaryPins : undefined,
+            params: {
+                range: sweep.best.startDist, airSpeed: sweep.best.speed, errFloor,
+                familyRangeLo: sweep.familyBand?.rangeLo, familyRangeHi: sweep.familyBand?.rangeHi,
+                familySpeedLo: sweep.familyBand?.speedLo, familySpeedHi: sweep.familyBand?.speedHi,
+                familyCount: sweep.familyBand?.count,
+                boundaryLimited: sweep.boundaryLimited ? 1 : 0,
+            },
+            notes: "The smoothest path following the LOS rays while holding air speed fixed."
+                + ((sweep.familyBand && sweep.familyBand.count > 1)
+                    ? ` ${sweep.familyBand.count} grid cells fit about equally — the shown cell is the`
+                      + ` family member closest to the Target Speed prior, not a uniquely determined answer.`
+                    : "")
+                + (sweep.boundaryLimited
+                    ? ` The supported family reaches the ${[
+                        sweep.boundaryAxes?.range ? "range" : null,
+                        sweep.boundaryAxes?.speed ? "speed" : null,
+                    ].filter(Boolean).join(" and ")} search boundary — treat the affected value as a bound, not a resolved optimum.`
+                    : ""),
         });
     }
 
@@ -534,9 +730,10 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
             track,
             metricsFull: trackMetrics(dataset, track),
             errDeg: ca.errDeg ?? 0,
-            params: {range: ca.startDist, altZ: ca.altZ, errFloor},
-            notes: "Object held at a fixed altitude, following the sightlines to a small residual " +
-                "(the applied traverse rides them exactly).",
+            params: {range: ca.startDist, altZ: ca.altZ, errFloor,
+                boundaryLimited: ca.boundaryLimited ? 1 : 0},
+            notes: "Object held at a fixed geodetic altitude, following the sightlines to a small residual."
+                + (ca.boundaryLimited ? " The selected altitude reaches the search edge and is unresolved." : ""),
         });
     } else {
         list.push({
@@ -567,17 +764,25 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
             track,
             metricsFull: trackMetrics(dataset, track),
             errDeg: meanAngularError(dataset, track) * 180 / Math.PI,
+            searchBounds: plausible.boundaryLimited ? [
+                plausible.boundarySides?.lo ? "range (lower search edge)" : null,
+                plausible.boundarySides?.hi ? "range (upper search edge)" : null,
+            ].filter(Boolean) : undefined,
             params: {
                 range: plausible.startDist,
                 usedSpeedTarget: plausible.usedSpeedTarget,
                 decisiveness: plausible.decisiveness,
+                boundaryLimited: plausible.boundaryLimited ? 1 : 0,
                 errFloor,
             },
-            notes: plausible.usedSpeedTarget
+            notes: (plausible.usedSpeedTarget
                 ? "The smoothest trajectory that follows every line of sight; the geometry left the range " +
                   "ambiguous, so the soft speed target picked the representative member."
                 : "The smoothest trajectory that follows every line of sight; the smoothness-vs-range " +
-                  "profile picks the range on its own, so no speed assumption was needed.",
+                  "profile picks the range on its own, so no speed assumption was needed.")
+                + (plausible.boundaryLimited
+                    ? " The selected range is on the search edge and is therefore unresolved."
+                    : ""),
         });
     }
 
@@ -618,10 +823,16 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
                     range: fam.repM,
                     ...windowParams,
                     familyLoM: fam.loM, familyHiM: fam.hiM, familyCount: fam.count, familyTotal: fam.total,
+                    boundaryLimited: saddle.boundaryLimited ? 1 : 0,
                     errFloor,
                 },
+                searchBounds: saddle.boundaryLimited ? [
+                    saddle.boundarySides?.lo ? "range (lower search edge)" : null,
+                    saddle.boundarySides?.hi ? "range (upper search edge)" : null,
+                ].filter(Boolean) : undefined,
                 notes: `The slowest object that stays on the sightlines (${kt1(m.airSpeed.mean)} kt mean). `
-                    + familyNote,
+                    + familyNote
+                    + (saddle.boundaryLimited ? " The supported family reaches the search boundary and is incomplete." : ""),
             });
         }
     }
@@ -629,23 +840,49 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
     // 4. Fixed-wing aircraft model — parametric fit with a small residual error.
     {
         const track = aircraft.track;
+        const aircraftMetrics = trackMetrics(dataset, track);
+        // Only locally load-bearing bounds demote the model. Coordinates that
+        // happen to sit at a bound in a flat/inactive direction are reported as
+        // unresolved rather than misrepresented as capability violations.
+        const fwSplit = splitBoundPins(aircraft.pinned,
+            (p) => ["startDist", "tas", "turnRate", "turnAccel", "climb"].includes(p.name));
+        const fwPins = Array.from(fwSplit.active.values());
+        const fwInactive = Array.from(fwSplit.inactive.values());
+        const fwUnstable = Array.from(fwSplit.unstable.values());
+        // Name the nearest common fixed-wing type from the solved TAS/climb —
+        // a closest PERFORMANCE ENVELOPE, never an identification.
+        const totalAirSpeed = Math.hypot(aircraft.params.tas, aircraft.params.climb);
+        const fwClass = classifyFixedWing(totalAirSpeed, aircraft.params.climb,
+            aircraftMetrics.gLoad.max, aircraftMetrics.altitude.max);
+        const nearFW = !fwPins.length && fwClass.compatible ? fwClass.model : null;
         list.push({
             key: "aircraft",
-            name: "Fixed-Wing Aircraft",
-            subtitle: "Most like a plane",
+            name: "Fixed-Wing Aircraft (generic prior)",
+            subtitle: physicsBoundSubtitle(
+                nearFW ? "Closest containing envelope: " + nearFW.name + " (not an ID)"
+                    : "Generic fixed-wing fit; no named catalog envelope contains the solved motion",
+                fwPins, fwInactive, fwUnstable),
             color: VIZ.aircraft,
             track,
-            metricsFull: trackMetrics(dataset, track),
+            metricsFull: aircraftMetrics,
             errDeg: aircraft.errDeg,
+            boundPinned: fwPins,
+            boundInactive: fwInactive,
+            optimizerWarnings: fwUnstable,
             params: {
                 range: aircraft.params.startDist,
                 heading: aircraft.params.heading,
                 tas: aircraft.params.tas,
+                totalAirSpeed,
                 turn: aircraft.params.turnRate,
                 climb: aircraft.params.climb,
+                closest: nearFW ? nearFW.name : null,
                 errFloor,
             },
-            notes: "Constant-TAS fixed-wing model fit to the sightlines by differential evolution.",
+            notes: "Constant horizontal-air-speed fixed-wing model fit to the sightlines by differential evolution."
+                + (fwPins.length ? " Locally load-bearing parameters reach the generic prior limits (" + fwPins.join(", ")
+                    + ") — treat this model test as incomplete, not as excluding every fixed-wing aircraft."
+                    : (nearFW ? " Closest common type by performance envelope: " + nearFW.name + " (not an identification)." : "")),
         });
     }
 
@@ -654,14 +891,45 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
         const track = lantern.positions;
         const range0 = Math.hypot(track[0] - S[0], track[1] - S[1], track[2] - S[2]);
         const solved = lantern.params.solved || {};
+        const lanternMetrics = trackMetrics(
+            datasetForSolvedModelWind(dataset, track, solved, "lantern"), track);
+        // Side-aware: a pin at a natural ZERO (vRise/vSink lo bound = "not
+        // rising/sinking") is physical for a becalmed lantern — only capability
+        // MAX pins (and range/wind extremes, whose bounds are both extreme)
+        // mean "the data wants more than a balloon can do".
+        const lanSplit = splitBoundPins(lantern.params.pinned,
+            (p) => (["initialRange", "windE", "windN", "shearPerM"].includes(p.name))
+                || (["vRise", "vSink"].includes(p.name) && p.side === "hi"),
+            (p) => p.name === "shearPerM" ? "windShear" : p.name);
+        const lanClamps = [];
+        if (Number.isFinite(solved.shearPerM)) {
+            const x0 = track[0], y0 = track[1], z0 = track[2];
+            const h0 = z0 + (x0 * x0 + y0 * y0) / (2 * EARTH_RADIUS_M);
+            let hitsShearClamp = false;
+            for (let f = 0; f < dataset.n; f++) {
+                const x = track[f * 3], y = track[f * 3 + 1], z = track[f * 3 + 2];
+                const h = z + (x * x + y * y) / (2 * EARTH_RADIUS_M);
+                const raw = 1 + solved.shearPerM * (h - h0);
+                if (raw <= 0.25 * 1.001 || raw >= 3 / 1.001) { hitsShearClamp = true; break; }
+            }
+            if (hitsShearClamp) lanClamps.push("wind shear multiplier (0.25–3× clamp)");
+        }
+        const lanPins = Array.from(lanSplit.active.values());
+        const lanInactive = Array.from(lanSplit.inactive.values());
+        const lanUnstable = Array.from(lanSplit.unstable.values());
         list.push({
             key: "lantern",
             name: "Sky Lantern / Balloon",
-            subtitle: "Most like a drifting balloon",
+            subtitle: physicsBoundSubtitle("Bounded wind-drift/life-cycle model", lanPins, lanInactive, lanUnstable)
+                + (lanClamps.length ? `; internal clamp reached: ${lanClamps.join(", ")}` : ""),
             color: VIZ.slowObj,
             track,
-            metricsFull: trackMetrics(dataset, track),
+            metricsFull: lanternMetrics,
             errDeg: lantern.params.errDeg,
+            boundPinned: lanPins,
+            boundInactive: lanInactive,
+            modelClamps: lanClamps,
+            optimizerWarnings: lanUnstable,
             params: {
                 range: range0,
                 windE: solved.windE,
@@ -672,6 +940,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
                 tBurn: solved.tBurn,
                 tauCool: solved.tauCool,
                 clipT: (dataset.n - 1) / dataset.fps,
+                windPolicy: "wind fitted by this model",
                 errFloor,
             },
             notes: "Wind-drift lantern kinematics (rise, buoyancy decay, terminal sink; " +
@@ -681,7 +950,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
         list.push({
             key: "lantern",
             name: "Sky Lantern / Balloon",
-            subtitle: "Most like a drifting balloon",
+            subtitle: "Wind-drift model unavailable",
             color: VIZ.slowObj,
             track: null,
             metricsFull: null,
@@ -691,20 +960,101 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
         });
     }
 
-    // 6. Ground object — a stationary light pinned to sea level (ENU z = 0).
-    //    Always runs; cheap closed-form fit.
+    // 5b. Quadcopter (multirotor drone) physics model — a hover-capable
+    //     near-field object. Its range is capped at 20 km, so far-field
+    //     scenes give a poor (correctly implausible) fit. Degrade gracefully.
+    if (quad && quad.positions) {
+        const track = quad.positions;
+        const range0 = Math.hypot(track[0] - S[0], track[1] - S[1], track[2] - S[2]);
+        const solved = quad.params.solved || {};
+        const quadMetrics = trackMetrics(
+            datasetForSolvedModelWind(dataset, track, solved, "quadcopter"), track);
+        const T = (dataset.n - 1) / dataset.fps;
+        const peakSpeed = Math.max(Math.abs(solved.speed || 0),
+            Math.abs((solved.speed || 0) + (solved.accel || 0) * T));
+        // Side-aware: zero air-relative speed is passive drift and is not a
+        // capability violation; speed MAX, range extremes, and climb extremes are.
+        const quadSplit = splitBoundPins(quad.params.pinned,
+            (p) => (p.name === "initialRange")
+                || (p.name === "speed" && p.side === "hi")
+                || ["accel", "turnRate", "turnAccel", "climb", "windE", "windN"].includes(p.name),
+            (p) => p.name === "speed" ? "speedEnvelope" : p.name);
+        // Acceleration can drive the derived speed beyond the model envelope
+        // even when the initial-speed parameter itself is not pinned.
+        if (peakSpeed > 60 * 1.001) {
+            quadSplit.active.set("speedEnvelope", "derived speed (above max)");
+            quadSplit.inactive.delete("speedEnvelope");
+        }
+        const quadPins = Array.from(quadSplit.active.values());
+        const quadInactive = Array.from(quadSplit.inactive.values());
+        const quadUnstable = Array.from(quadSplit.unstable.values());
+        // Signed climb: a descent must be checked against maxDescent, not
+        // Math.max(ascent, descent) — see classifyQuadcopter.
+        const quadClass = classifyQuadcopter(peakSpeed, solved.climb || 0);
+        const near = !quadPins.length && quadClass.compatible ? quadClass.model : null;
+        list.push({
+            key: "quadcopter",
+            name: "Quadcopter",
+            subtitle: physicsBoundSubtitle(
+                near ? "Closest containing envelope: " + near.name + " (not an ID)"
+                    : "Generic multirotor fit; no named catalog envelope contains the solved motion",
+                quadPins, quadInactive, quadUnstable),
+            color: "#5bb1c9",
+            track,
+            metricsFull: quadMetrics,
+            errDeg: quad.params.errDeg,
+            boundPinned: quadPins,
+            boundInactive: quadInactive,
+            optimizerWarnings: quadUnstable,
+            params: {
+                range: range0,
+                speed: solved.speed,
+                peakSpeed,
+                climb: solved.climb,
+                windE: solved.windE,
+                windN: solved.windN,
+                closest: near ? near.name : null,
+                windPolicy: "wind fitted by this model",
+                errFloor,
+            },
+            notes: "Hover-capable multirotor kinematics (bounded/penalized air-relative speed, climb and turn rate) "
+                + "fit to the sightlines"
+                + (quadPins.length ? "; the solve rammed the model's own limits (" + quadPins.join(", ")
+                    + ") — this generic multirotor test is boundary-limited."
+                    : (near ? "; closest common model by envelope: " + near.name + " (not an identification)." : ".")),
+        });
+    } else {
+        list.push({
+            key: "quadcopter",
+            name: "Quadcopter",
+            subtitle: "Multirotor model unavailable",
+            color: "#5bb1c9",
+            track: null,
+            metricsFull: null,
+            errDeg: NaN,
+            params: {},
+            notes: "Fit failed — no plausible multirotor trajectory converged "
+                + "(e.g. the object is too far or too fast for a drone).",
+        });
+    }
+
+    // 6. Ground object — a stationary light pinned to the LOCAL SURFACE height
+    //    (terrain where loaded, sea level over ocean — localGroundZ), not raw
+    //    ENU z=0: over land a z=0 pin sits below the terrain and was wrongly
+    //    auto-flagged Underground. Always runs; cheap closed-form fit.
     {
-        const ground = fitFixedPoint(dataset, {z: 0});
+        const groundZ0 = localGroundZ(dataset, originLat, originLon);
+        const ground = fitGroundPoint(dataset, groundZ0);
         list.push({
             key: "ground",
             name: "Ground Object",
             subtitle: "A fixed light on the surface",
             color: "#8a6f4a",
             track: ground.track,
-            metricsFull: trackMetrics(dataset, ground.track),
+            metricsFull: trackMetrics(groundMetricDataset, ground.track),
             errDeg: ground.errDeg,
-            params: {distance: ground.distance},
-            notes: "A stationary light at sea level; high LOS error means the sightlines don't converge on a ground point.",
+            params: {distance: ground.distance, groundZ: groundZ0, motionFrame: "ground"},
+            notes: "A stationary light on the local surface; high LOS error means the sightlines don't converge on a ground point.",
         });
     }
 
@@ -916,7 +1266,8 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
     if (sel && sel.inputs) {
         // LOS-only signature: a method node's cached fit is stale if the LOS
         // changed, even when its own GUI params did not.
-        const losSig = String(analysisFingerprint(losNode, []));
+        const losSig = String(analysisFingerprint(losNode, [], dataset.frame0 ?? 0,
+            dataset.frame1 ?? ((dataset.frame0 ?? 0) + dataset.n - 1)));
         for (const meth of extraMethods) {
             let node = sel.inputs[meth.label];
             if (typeof node === "string") node = NodeMan.get(node, false);
@@ -926,6 +1277,77 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, sate
         }
     }
 
+    // Ground Vehicle — where the sightlines meet a curved constant-elevation shell at the
+    // local terrain height. A moving ground point, distinct from the stationary
+    // Ground Object. Offered when the analysis is constrained to on-ground
+    // solutions; only meaningful if most sightlines actually reach the ground.
+    if (analyzeTweaks.groundMode === "On the ground") {
+        const groundZ = localGroundZ(dataset, originLat, originLon);
+        const gv = fitGroundVehicle(dataset, groundZ);
+        if (gv.fracValid >= 0.98) {
+            const track = gv.track;
+            list.push({
+                key: "groundVehicle",
+                name: "Ground Vehicle",
+                subtitle: "A vehicle moving on the surface",
+                color: "#9c7a4a",
+                track,
+                metricsFull: trackMetrics(groundMetricDataset, track),
+                errDeg: meanAngularError(dataset, track) * 180 / Math.PI,
+                params: {groundZ, fracValid: gv.fracValid, errFloor, motionFrame: "ground"},
+                notes: "The moving point where each sightline meets the ground. A high implied speed means "
+                    + "no ordinary ground vehicle can be the object.",
+            });
+        } else {
+            list.push({
+                key: "groundVehicle",
+                name: "Ground Vehicle",
+                subtitle: "A vehicle moving on the surface",
+                color: "#9c7a4a",
+                track: null, metricsFull: null, errDeg: NaN,
+                params: {fracValid: gv.fracValid},
+                notes: `Only ${(100 * gv.fracValid).toFixed(0)}% of sightlines reach the ground surface. `
+                    + "A track made by holding the last intersection through invalid frames would be artificial, "
+                    + "so this candidate is rejected.",
+            });
+        }
+    }
+
+    // Ground-contact / underground flagging. In EVERY mode, reject candidates
+    // that pass underground (never a valid solution). In a constrained mode,
+    // additionally flag candidates that don't meet the requested ground
+    // contact. Only near-field physical tracks are tested — not points at
+    // infinity, astronomical bodies, or satellite identifications.
+    {
+        const mode = analyzeTweaks.groundMode;
+        for (const h of list) {
+            if (!h.track || h.atInfinity || h.identity) continue;
+            if (h.params && (h.params.object !== undefined || h.params.satellite !== undefined)) continue;
+            const stats = trackGroundStats(h.track, h.track.length / 3, originLat, originLon);
+            if (!stats) continue;
+            h.groundStats = stats;
+            // Even ground-native solvers use an idealized curved shell sampled
+            // from one terrain point. Validate them against the actual terrain;
+            // otherwise a shell can pass through a ridge and still be promoted.
+            if (stats.minAGL < -UNDERGROUND_TOL && stats.fracBelow >= 0.05) {
+                h.underground = {depth: -stats.minAGL, frac: stats.fracBelow};
+            }
+            const violation = groundContactViolation(stats, mode);
+            if (violation) h.groundMismatch = {mode, reason: violation};
+        }
+    }
+
+    // Metadata needed to install the exact reviewed ENU trajectory into the
+    // live scene without re-running a different solver.
+    for (const h of list) {
+        if (h.track) {
+            h.applyContext = {
+                originLat,
+                originLon,
+                frame0: dataset.frame0 ?? 0,
+            };
+        }
+    }
     return list;
 }
 
@@ -953,11 +1375,24 @@ function methodNodeHypothesis(meth, node, dataset, originLat, originLon, losSig)
     const {n, S} = dataset;
     const f0 = dataset.frame0 ?? 0;
     // Recompute this node ONLY when its own inputs changed since the last
-    // analysis (the LOS, or its GUI params); otherwise reuse its cached array.
+    // analysis (the LOS, its GUI params, or the physical-time scale that
+    // enters fit datasets via buildLOSDataset); otherwise reuse its cached
+    // array. Two refresh mechanisms: the fit nodes use the _dirty pattern,
+    // the CNodeTrack traverses (e.g. Straight Line) use the lazy
+    // _needsRecalculate bake honored by ensureRecalculated() on read — a
+    // "_dirty"-only check left Straight Line serving a stale baked track
+    // (packaged AND installable via "Use exact") after its inputs changed.
     const sigKey = node.id || meth.label;
-    const sig = losSig + "|" + methodNodeParamSig(node);
-    if ("_dirty" in node && _methodNodeSig.get(sigKey) !== sig) {
-        node._dirty = true;
+    const sig = losSig + "|" + methodNodeParamSig(node)
+        + "|t=" + (Sit.simSpeed ?? 1) + "/" + Sit.fps;
+    if (_methodNodeSig.get(sigKey) !== sig) {
+        if ("_dirty" in node) {
+            node._dirty = true;
+        } else if ("_needsRecalculate" in node) {
+            node._needsRecalculate = true;
+        } else {
+            try { node.recalculate(); } catch (e) { /* read below reports null */ }
+        }
         _methodNodeSig.set(sigKey, sig);
     }
     const track = new Float64Array(n * 3);
@@ -991,75 +1426,65 @@ function methodNodeHypothesis(meth, node, dataset, originLat, originLon, losSig)
     };
 }
 
-// Hypotheses that produced a track, ranked most-plausible first (plausibility
-// rank descending, then residual LOS error ascending). Returns [{h, r}] with
-// r = plausibilityRating(h). Used by both the summary dialog and the report.
-// Within a plausibility rank, order by a composite of kinematic cleanliness
-// and floor-aware effective LOS error. Raw errDeg is the WRONG tie-break for
-// same-rank candidates: among ray-following methods LOS error is
-// anti-correlated with quality (the less a track is smoothed, the tighter it
-// hugs the jittery rays — lowest errDeg — and the higher its fake g), so raw
-// errDeg would crown the wiggliest ray-follower "Best" over dead-straight
-// zero-g reconstructions of the same scene.
-function rankTieScore(h) {
-    return straightFlightScore(h.metricsFull) + effectiveErrDeg(h) / 0.05;
-}
-
-function rankHypotheses(hypotheses) {
-    return (hypotheses || [])
-        .filter((h) => h.track && h.metricsFull)
-        .map((h) => ({h, r: plausibilityRating(h)}))
-        .sort((a, b) => b.r.rank - a.r.rank
-            || rankTieScore(a.h) - rankTieScore(b.h)
-            || (a.h.errDeg || 0) - (b.h.errDeg || 0));
-}
-
-// Data-driven verdict paragraph (HTML): which interpretations rate High vs
-// Low/Implausible, plus a head-to-head of the two forward-integrated physics
-// models (aircraft vs lantern) by their residual LOS error — the lower error
-// is the object TYPE the sightline geometry better supports.
-function buildVerdict(hypotheses) {
+// Data-driven verdict paragraph (HTML): group-specific screening results plus
+// a diagnostic head-to-head of the two forward-integrated physics models.
+// Residuals are never converted into object-type probabilities.
+function buildVerdict(hypotheses, capturedProvenance = null) {
     const withTrack = (hypotheses || []).filter((h) => h.track && h.metricsFull);
-    const rated = withTrack.map((h) => ({h, r: plausibilityRating(h)}));
-    const names = (arr) => {
-        const ns = arr.map((x) => escapeHtml(x.h.name));
-        if (ns.length === 0) return "";
-        if (ns.length === 1) return ns[0];
-        if (ns.length === 2) return `${ns[0]} and ${ns[1]}`;
-        return `${ns.slice(0, -1).join(", ")}, and ${ns[ns.length - 1]}`;
-    };
-    const highs = rated.filter((x) => x.r.rank === 3);
-    const lows = rated.filter((x) => x.r.rank <= 1);
+    const groups = groupAndRankHypotheses(withTrack);
 
     let out = "";
-    if (highs.length) {
-        out += `The sightline data are most consistent with <strong>${names(highs)}</strong> ` +
-            `(rated High plausibility). `;
-    } else {
-        out += `No interpretation reaches "High" plausibility for this geometry — every candidate ` +
-            `demands some combination of high speed, sustained maneuvering g, or a poor LOS fit. `;
+    // Constructed-LOS gate: conclusions from target-derived sightlines are
+    // internal-consistency checks, and must never read as discovery.
+    const prov = capturedProvenance || losProvenance();
+    if (prov.circular) {
+        out += `<strong>⚠ Constructed LOS — validation only:</strong> ${escapeHtml(prov.reason)} ` +
+            `Everything below describes the scene's internal consistency, not independent inference. `;
     }
-    if (lows.length) {
-        out += `${names(lows)} ${lows.length > 1 ? "are" : "is"} rated Low or Implausible: such a ` +
-            `path would require excessive speed or maneuvering, or simply does not track the sightlines. `;
+    out += `<strong>No global object winner is computed.</strong> The panels answer different questions and are ` +
+        `ranked only within comparable groups. `;
+    for (const group of groups) {
+        const leader = group.items[0];
+        if (!leader) continue;
+        const ties = group.items.filter((item) => item.tied);
+        const groupName = escapeHtml(group.shortLabel);
+        if (leader.r.eligible) {
+            if (ties.length > 1) {
+                out += `Within ${groupName}, ${ties.map((item) => `<strong>${escapeHtml(item.h.name)}</strong>`).join(" and ")} ` +
+                    `fall within the 0.05 display-score threshold; this is not a statistical tie. `;
+            } else {
+                out += `Within ${groupName}, <strong>${escapeHtml(leader.h.name)}</strong> has the lowest ` +
+                    `within-group score among results that pass the broad screen. `;
+            }
+        } else {
+            const incomplete = leader.r.boundaryLimited ? " and its search is incomplete" : "";
+            out += `Within ${groupName}, no complete result passes the broad screen; the first displayed result is ` +
+                `<strong>${escapeHtml(leader.h.name)}</strong> (${escapeHtml(leader.r.label)}${incomplete}). `;
+        }
     }
 
     const aircraftHyp = withTrack.find((h) => h.key === "aircraft");
     const lanternHyp = withTrack.find((h) => h.key === "lantern");
     if (aircraftHyp && lanternHyp && isFinite(aircraftHyp.errDeg) && isFinite(lanternHyp.errDeg)) {
         const ae = aircraftHyp.errDeg, le = lanternHyp.errDeg;
-        const better = ae <= le ? "a fixed-wing aircraft" : "a drifting sky lantern / balloon";
+        const pinNote = (aircraftHyp.boundPinned?.length || lanternHyp.boundPinned?.length)
+            ? ` (note: ${[aircraftHyp.boundPinned?.length ? "the aircraft fit" : null,
+                          lanternHyp.boundPinned?.length ? "the lantern fit" : null]
+                    .filter(Boolean).join(" and ")} hit model limits — treat that side's residual as a lower bound)`
+            : "";
         out += `Comparing the two physics-based models head to head, the fixed-wing model fits the ` +
             `sightlines to <strong>${ae.toFixed(3)}°</strong> versus the lantern's ` +
-            `<strong>${le.toFixed(3)}°</strong>, so the geometry alone is better explained by ${better}. `;
-        // Calibrate those residuals against the dataset's empirical noise
-        // floor so noisy sightlines are not misread as model failure.
+            `<strong>${le.toFixed(3)}°</strong>${pinNote}. These residuals are <strong>not a ` +
+            `like-for-like object-type probability</strong>: the models have different parameters, bounds, ` +
+            `wind treatment, and priors, so the smaller training residual does not identify the object. `;
+        // Put those residuals beside a flexible reference fit without claiming
+        // that the reference isolates sensor noise.
         const floor = (lanternHyp.params && lanternHyp.params.errFloor)
             ?? (aircraftHyp.params && aircraftHyp.params.errFloor);
         if (isFinite(floor) && floor >= 0.02) {
-            out += `(For calibration, a free constant-acceleration path — the most rigid generic fit — ` +
-                `leaves <strong>${floor.toFixed(2)}°</strong> on these sightlines: residuals near that ` +
-                `floor reflect noise in the data, not a failure of the model.) `;
+            out += `(For scale, a free constant-acceleration reference path ` +
+                `leaves <strong>${floor.toFixed(2)}°</strong> on these sightlines. That is a model-reference ` +
+                `residual, not an estimate of sensor noise.) `;
         }
     } else if (aircraftHyp && isFinite(aircraftHyp.errDeg)) {
         out += `The fixed-wing model fits the sightlines to ` +
@@ -1067,9 +1492,8 @@ function buildVerdict(hypotheses) {
             `so no head-to-head is available). `;
     }
 
-    out += `These criteria are deliberately soft, and LOS-only data can never uniquely resolve range: ` +
-        `treat the gallery as a family of interpretations ranked by physical plausibility, not a single ` +
-        `definitive answer.`;
+    out += `These criteria are deliberately soft, and LOS-only data often do not uniquely resolve range. ` +
+        `Treat each group as a sensitivity and compatibility screen, not a cross-group probability or definitive answer.`;
     return out;
 }
 
@@ -1171,14 +1595,23 @@ export function addAnalyzeTweaks(traverseMenu) {
         tooltip: "Upper bound on start range used by the traverse analysis.",
     }, folder);
 
+    const groundMode = folder.add(analyzeTweaks, "groundMode", GROUND_MODES).name("Ground contact");
+    if (groundMode.tooltip) {
+        groundMode.tooltip("Constrain the solution space by how the object touches the ground. Underground " +
+            "trajectories are always rejected. 'On the ground' adds a Ground Vehicle candidate and demotes " +
+            "airborne solutions; 'Starts/Ends on ground' models takeoff/release or landing/descent (a portion " +
+            "on the surface) and biases the physics fits toward the ground.");
+    }
+
     const cbFixed = folder.add(analyzeTweaks, "aoFixedPoint").name("AO: Stationary / sky-fixed object");
     const cbKnownNow = folder.add(analyzeTweaks, "aoKnownNow").name("AO: Known object (this time)");
     const cbKnownOther = folder.add(analyzeTweaks, "aoKnownOther").name("AO: Known object (find time)");
     const cbSat = folder.add(analyzeTweaks, "satellite").name("Satellite: LEO pass for date");
     const windMode = folder.add(analyzeTweaks, "windMode", ["Sitch wind", "Zero wind"]).name("Wind for analysis");
     if (windMode.tooltip) {
-        windMode.tooltip("Choose whether the traverse analysis subtracts the sitch target wind, or ignores wind " +
-            "and treats object motion as ground-relative. This does not change the sitch wind controls.");
+        windMode.tooltip("Choose the shared wind used by ray-following metrics and the fixed-wing gallery fit, " +
+            "or ignore it and treat motion as ground-relative. Lantern and quadcopter models solve their own " +
+            "wind and are evaluated in that solved air mass. This does not change the sitch wind controls.");
     }
     if (cbFixed.tooltip) {
         cbFixed.tooltip("Include the stationary-object interpretation: either a fixed point in space (sightlines " +
@@ -1208,6 +1641,23 @@ export function addAnalyzeTweaks(traverseMenu) {
 // fingerprint the inputs and reuse the last result when the fingerprint
 // matches, so re-running the traverse analysis is instant when nothing changed.
 let _analysisCache = null;   // {fp, results}
+const _terrainMapEpochs = new WeakMap();
+let _nextTerrainMapEpoch = 1;
+
+// Camera-driven subdivision mutates one elevation-map object's tile set. An
+// explicit Refresh/source reload replaces the map object. Give only that data
+// generation a stable epoch so view LOD cannot invalidate analysis, while a
+// same-configuration reload still can.
+function terrainDataEpoch(terrain) {
+    const map = terrain?.elevationMap;
+    if (!map || (typeof map !== "object" && typeof map !== "function")) return 0;
+    let epoch = _terrainMapEpochs.get(map);
+    if (epoch === undefined) {
+        epoch = _nextTerrainMapEpoch++;
+        _terrainMapEpochs.set(map, epoch);
+    }
+    return epoch;
+}
 
 // Bit-level float hash so ANY change to an input flips the fingerprint (a false
 // "changed" just recomputes — safe; a false "unchanged" would serve stale
@@ -1229,11 +1679,14 @@ function _mixStr(h, s) {
 // Fingerprint = hash of every LOS frame (sensor position + heading) plus the
 // scalar inputs that steer the fits. losNode.v(f) reads the baked track (cheap
 // array access), so even 7000 frames hash in a few ms — instant on a cache hit.
-function analysisFingerprint(losNode, scalars) {
+function analysisFingerprint(losNode, scalars, frame0 = 0, frame1 = (losNode.frames ?? 1) - 1) {
     let h = 0x811c9dc5;
     const n = losNode.frames;
-    h = _mixFloat(h, n);
-    for (let f = 0; f < n; f++) {
+    frame0 = Math.max(0, Math.min(n - 1, Math.round(frame0)));
+    frame1 = Math.max(frame0, Math.min(n - 1, Math.round(frame1)));
+    h = _mixFloat(h, frame0);
+    h = _mixFloat(h, frame1);
+    for (let f = frame0; f <= frame1; f++) {
         const l = losNode.v(f);
         const p = l.position, d = l.heading;
         h = _mixFloat(h, p.x); h = _mixFloat(h, p.y); h = _mixFloat(h, p.z);
@@ -1244,6 +1697,109 @@ function analysisFingerprint(losNode, scalars) {
         else h = _mixFloat(h, typeof s === "boolean" ? (s ? 1 : 0) : s);
     }
     return h >>> 0;
+}
+
+// Assemble the full analysis fingerprint from the CURRENT state of every
+// input that steers the analysis. Single authority for the cache key: used
+// to decide a cache hit at Analyze time. Applying an exact snapshot is output
+// selection only: it must not change this key or feed an answer back into the
+// next analysis assumptions.
+function computeAnalysisFingerprint(losNode) {
+    const analysisFrames = analysisFrameRange(losNode);
+    const windNode = NodeMan.get("targetWind", false) || null;
+    const analysisWindNode = analyzeTweaks.windMode === "Zero wind" ? null : windNode;
+    const startDistNode = NodeMan.get("startDistance", false) || null;
+    const speedNode = NodeMan.get("speedScaled", false) || null;
+    // v0 of a CNodeGUIValue is in SI units (getValueFrame applies unitType)
+    const anchorDist = startDistNode ? startDistNode.v0 : 20 * METERS_PER_NM;
+    const speedTarget = speedNode ? speedNode.v0 : 380 * KNOTS_TO_MS;
+    const userMin = NodeMan.get("analysisMinDist", false)?.v0 ?? 0;
+    const userMax = NodeMan.get("analysisMaxDist", false)?.v0 ?? (1000 * METERS_PER_NM);
+    const refr = refractionOptsFromUniforms();
+    const astroEnabled = analyzeTweaks.aoKnownNow || analyzeTweaks.aoKnownOther;
+    const datedSkyCheckEnabled = astroEnabled || analyzeTweaks.satellite;
+    const guiVal = (id) => { const nd = NodeMan.get(id, false); return nd ? (nd.v0 ?? nd.value ?? 0) : 0; };
+    const terrain = NodeMan.get("TerrainModel", false);
+    const terrainState = terrainAnalysisConfigScalars(
+        terrain, Globals.equatorRadius, Globals.polarRadius, terrainDataEpoch(terrain));
+    const windSeries = [];
+    if (analysisWindNode) {
+        windSeries.push(analysisWindNode.trackSource ?? "");
+        if (typeof analysisWindNode.trackWindAt === "function" && analysisWindNode.trackSource) {
+            for (let f = analysisFrames.frame0; f <= analysisFrames.frame1; f++) {
+                const sample = analysisWindNode.trackWindAt(f);
+                windSeries.push(sample ? sample.from : analysisWindNode.from,
+                    sample ? sample.knots : analysisWindNode.knots);
+            }
+        } else {
+            windSeries.push(analysisWindNode.from, analysisWindNode.knots);
+        }
+    }
+    const provenance = losProvenance();
+    return analysisFingerprint(losNode, [
+        analysisFrames.frame0, analysisFrames.frame1,
+        analyzeTweaks.windMode,
+        ...windSeries,
+        provenance.circular ? 1 : 0, provenance.losSource, provenance.cameraHeading,
+        speedTarget, anchorDist, userMin, userMax,
+        // Ground-contact mode reshapes the candidate set (adds/removes the
+        // Ground Vehicle, changes underground/mode flags and the ground priors).
+        analyzeTweaks.groundMode,
+        ...terrainState,
+        analyzeTweaks.aoFixedPoint, analyzeTweaks.aoKnownNow, analyzeTweaks.aoKnownOther,
+        Sit.name || "", Sit.frames || 0, Sit.fps || 0,
+        // Astronomical fits depend on the sensor FOV (brightness boost) and the
+        // View-menu refraction settings — the refracted directions bend with
+        // pressure and temperature, not just the on/off toggle, so all three
+        // must re-run the analysis. When both astronomy checks are disabled,
+        // camera FOV/refraction are view-only and must not bust this cache.
+        astroEnabled ? sensorFOVDeg() : 0,
+        astroEnabled && refr.enabled ? 1 : 0,
+        astroEnabled && refr.enabled ? refr.pressureHPa : 0,
+        astroEnabled && refr.enabled ? refr.tempC : 0,
+        // The known-object sweep also checks bright STARS, but only once the
+        // async-loaded star catalog is present. Without this term an Analyze
+        // run before the catalog finished loading cached a planets-only
+        // result and served it forever.
+        astroEnabled ? (NodeMan.get("NightSkyNode", false)?.starField?.BSC_NumStars || 0) : 0,
+        // Satellite search depends on the flag and the sitch's date (which
+        // catalogue is loaded); the date also gates the astro ephemeris.
+        analyzeTweaks.satellite ? 1 : 0,
+        datedSkyCheckEnabled && GlobalDateTimeNode && GlobalDateTimeNode.dateStart
+            ? GlobalDateTimeNode.dateStart.valueOf() : 0,
+        // simSpeed scales the per-frame dates (dateAtFrame), so it changes the
+        // satellite and astro-time fits even when dateStart is unchanged.
+        Sit.simSpeed ?? 1,
+        // The gallery reads the live global-fit method nodes as contenders, so
+        // their GUI parameters change the results and must invalidate the cache.
+        // (CV/CA are parameter-free; the seeded Monte Carlo is otherwise
+        // deterministic, so its trial count / uncertainty / order fully pin it.)
+        guiVal("kalmanProcessNoise"), guiVal("kalmanMeasurementNoise"),
+        guiVal("mcNumTrials"), guiVal("mcLOSUncertainty"), guiVal("mcOrder"),
+        // The Straight Line contender reads the target-heading slider; without
+        // it a heading change would serve a stale cached gallery.
+        guiVal("targetActualHeading"),
+    ], analysisFrames.frame0, analysisFrames.frame1);
+}
+
+function terrainElevationIsLoading() {
+    const terrain = NodeMan.get("TerrainModel", false);
+    // Tile data can already be installed while the coalesced revision/event is
+    // waiting for the next animation frame. Treat that pending notification as
+    // unstable too; otherwise a report can be cached in the narrow gap between
+    // the fetch flag clearing and elevationRevision incrementing.
+    if (terrain?._elevationChangedPending) return true;
+    // currentStats is populated by view rendering and can lag behind an
+    // elevation request.  The tile flags are the authoritative source used by
+    // the render/export settlers, so check them first when available.
+    const tiles = terrain?.elevationMap?.getAllTiles?.();
+    if (Array.isArray(tiles) && tiles.some((tile) => tile?.isLoadingElevation)) return true;
+    const stats = terrain?.elevationMap?.currentStats;
+    if (!(stats instanceof Map)) return false;
+    for (const value of stats.values()) {
+        if ((value?.pendingLoads ?? 0) > 0) return true;
+    }
+    return false;
 }
 
 /**
@@ -1263,6 +1819,23 @@ export async function runTraverseAnalysis() {
     if (!losNode.frames || analysisFrames.count < 10) {
         showError("Traverse analysis: not enough LOS frames to analyze in the A-B/In-Out range.");
         return null;
+    }
+    // Readiness: an analysis triggered before the LOS is fully baked (video /
+    // tracks still loading) can contain null or non-finite frames, which used
+    // to crash deep inside the fingerprint hash. Validate up front and give a
+    // friendly retry message instead.
+    for (let f = analysisFrames.frame0; f <= analysisFrames.frame1; f++) {
+        const l = losNode.v(f);
+        const p = l && l.position;
+        const d = l && l.heading;
+        if (!p || !d
+            || !Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)
+            || !Number.isFinite(d.x) || !Number.isFinite(d.y) || !Number.isFinite(d.z)
+            || Math.hypot(d.x, d.y, d.z) < 1e-9) {
+            showError("Traverse analysis: the line-of-sight data is not ready yet (frame "
+                + f + " is incomplete). Wait for the sitch to finish loading and try again.");
+            return null;
+        }
     }
 
     const windNode = NodeMan.get("targetWind", false) || null;
@@ -1320,44 +1893,41 @@ export async function runTraverseAnalysis() {
     }
 
     // Cache hit → show the previous gallery instantly, skipping the whole fit
-    // battery. The fingerprint covers the LOS data and every analysis input.
-    const refr = refractionOptsFromUniforms();
-    const guiVal = (id) => { const nd = NodeMan.get(id, false); return nd ? (nd.v0 ?? nd.value ?? 0) : 0; };
-    const fp = analysisFingerprint(losNode, [
-        analysisFrames.frame0, analysisFrames.frame1,
-        analyzeTweaks.windMode,
-        analysisWindNode ? analysisWindNode.from : 0, analysisWindNode ? analysisWindNode.knots : 0,
-        speedTarget, anchorDist, userMin, userMax,
-        analyzeTweaks.aoFixedPoint, analyzeTweaks.aoKnownNow, analyzeTweaks.aoKnownOther,
-        Sit.name || "", Sit.frames || 0, Sit.fps || 0,
-        // Astronomical fits depend on the sensor FOV (brightness boost) and the
-        // View-menu refraction settings — the refracted directions bend with
-        // pressure and temperature, not just the on/off toggle, so all three
-        // must re-run the analysis (gated by enabled so toggling them while
-        // refraction is off doesn't needlessly bust the cache).
-        sensorFOVDeg(),
-        refr.enabled ? 1 : 0,
-        refr.enabled ? refr.pressureHPa : 0,
-        refr.enabled ? refr.tempC : 0,
-        // Satellite search depends on the flag and the sitch's date (which
-        // catalogue is loaded); the date also gates the astro ephemeris.
-        analyzeTweaks.satellite ? 1 : 0,
-        (GlobalDateTimeNode && GlobalDateTimeNode.dateStart)
-            ? GlobalDateTimeNode.dateStart.valueOf() : 0,
-        // simSpeed scales the per-frame dates (dateAtFrame), so it changes the
-        // satellite and astro-time fits even when dateStart is unchanged.
-        Sit.simSpeed ?? 1,
-        // The gallery reads the live global-fit method nodes as contenders, so
-        // their GUI parameters change the results and must invalidate the cache.
-        // (CV/CA are parameter-free; the seeded Monte Carlo is otherwise
-        // deterministic, so its trial count / uncertainty / order fully pin it.)
-        guiVal("kalmanProcessNoise"), guiVal("kalmanMeasurementNoise"),
-        guiVal("mcNumTrials"), guiVal("mcLOSUncertainty"), guiVal("mcOrder"),
-    ]);
+    // battery. The main fingerprint covers evidence/configuration; the scoped
+    // terrain check covers only elevations actually used by candidate grading.
+    const fp = computeAnalysisFingerprint(losNode);
     if (_analysisCache && _analysisCache.fp === fp) {
-        window.lastTraverseAnalysis = _analysisCache.results;
-        showResultGallery(_analysisCache.results);
-        return _analysisCache.results;
+        const cached = _analysisCache.results;
+        const currentTerrainDependencies = resampleTerrainDependencies(
+            _analysisCache.terrainDependencies);
+        const terrainDrift = terrainDependencyMismatch(
+            _analysisCache.terrainDependencies, currentTerrainDependencies);
+        if (terrainDrift) {
+            // Dynamic terrain LOD is render-camera state. Keep the exact terrain
+            // samples with which this immutable result was graded; otherwise
+            // merely orbiting mainView feeds a different quadtree resolution
+            // back into the scientific analysis. An explicit terrain reload or
+            // source/configuration change has a new data epoch in `fp` and does
+            // not take this path.
+            console.log("Traverse analysis cache: hit; ignoring view-only terrain LOD drift", terrainDrift);
+        } else {
+            console.log("Traverse analysis cache: hit (evidence and assumptions unchanged)");
+        }
+        window.lastTraverseAnalysis = cached;
+        showResultGallery(cached);
+        return cached;
+    } else if (_analysisCache) {
+        console.log("Traverse analysis cache: evidence/configuration changed", {
+            cached: _analysisCache.fp, current: fp,
+        });
+    }
+
+    // A valid cached result is safe to show while unrelated render-camera
+    // tiles load. Only a fresh computation waits for global terrain settling;
+    // its publication checks below are scoped to the ground samples it uses.
+    if (Globals.loadingTerrain || terrainElevationIsLoading()) {
+        showError("Traverse analysis: terrain/elevation data are still loading. Wait for loading to finish and try again.");
+        return null;
     }
 
     const overlay = createProgressOverlay("Analyzing Traverse Methods");
@@ -1380,14 +1950,47 @@ export async function runTraverseAnalysis() {
         overlay.setStatus("Building LOS dataset...");
         await yieldToDOM();
         const {dataset, originLat, originLon} = buildAnalysisDataset(losNode, analysisWindNode, anchorDist, analysisFrames);
+        const failures = [];
+        const terrainAtStart = NodeMan.get("TerrainModel", false);
+        const terrainConfigAtStart = terrainAnalysisConfigScalars(terrainAtStart,
+            Globals.equatorRadius, Globals.polarRadius, terrainDataEpoch(terrainAtStart));
+        const groundPriorDependencyAtStart = analyzeTweaks.groundMode !== "Airborne (any)"
+            ? [terrainDependencySample("local-ground",
+                localGroundProbeECEF(dataset, originLat, originLon))]
+            : null;
+
+        // Ground-contact solver prior (from the ground mode): bias the fixed-wing,
+        // lantern and quadcopter fits toward the surface at the relevant
+        // endpoint(s). Gated so the default "Airborne" mode leaves every fit
+        // byte-identical. groundZ is the local terrain height (≈0 over ocean).
+        let groundPrior = null;
+        if (analyzeTweaks.groundMode !== "Airborne (any)") {
+            const gz = groundPriorDependencyAtStart[0].groundAltitudeM;
+            groundPrior = {sigma: 40};
+            if (analyzeTweaks.groundMode === "Starts on ground") groundPrior.startZ = gz;
+            else if (analyzeTweaks.groundMode === "Ends on ground") groundPrior.endZ = gz;
+            else { groundPrior.startZ = gz; groundPrior.endZ = gz; }   // "On the ground"
+        }
 
         const sweep = await sweepConstAirSpeed(dataset, {
             ranges,
             speedTarget,
+            // Auto-expand the range bracket when the winner sits on a grid
+            // edge (only when the user hasn't pinned an explicit band).
+            expand: rangeIsDefault,
             progress: phase(0.00, 0.18, "Sweeping constant-air-speed grid..."),
         });
+        // Expansion is part of the search result, not a display-only detail.
+        // Every downstream profile/model must inspect the same resolved bracket.
+        const resolvedRanges = sweep.ranges;
+        fitRangeMin = Math.min(fitRangeMin, resolvedRanges[0]);
+        fitRangeMax = Math.max(fitRangeMax, resolvedRanges[resolvedRanges.length - 1]);
+        caRangeMin = Math.min(caRangeMin, resolvedRanges[0]);
+        caRangeMax = Math.max(caRangeMax, resolvedRanges[resolvedRanges.length - 1]);
+        plausRangeMin = Math.min(plausRangeMin, resolvedRanges[0]);
+        plausRangeMax = Math.max(plausRangeMax, resolvedRanges[resolvedRanges.length - 1]);
         const fastProfile = await rangeProfile(dataset, {
-            ranges,
+            ranges: resolvedRanges,
             vTarget: speedTarget,
             vSigma: 60 * KNOTS_TO_MS,
             progress: phase(0.18, 0.12, "Range profile: fast object..."),
@@ -1395,13 +1998,14 @@ export async function runTraverseAnalysis() {
         const slowOpts = {vTarget: 5 * KNOTS_TO_MS, vSigma: 20 * KNOTS_TO_MS, scoreSpeedWeight: 0.2};
         const slowProfile = await rangeProfile(dataset, {
             ...slowOpts,
-            ranges,
+            ranges: resolvedRanges,
             progress: phase(0.30, 0.12, "Range profile: slow object..."),
         });
         const aircraft = await fitAircraft(dataset, {
             tasTarget: speedTarget,
             rangeMin: fitRangeMin, rangeMax: fitRangeMax,
             runs: 3,
+            groundPrior,
             progress: phase(0.42, 0.34, "Fitting fixed-wing aircraft model..."),
         });
 
@@ -1417,19 +2021,51 @@ export async function runTraverseAnalysis() {
             rangeMax: plausRangeMax,
         });
 
-        await phase(0.82, 0.14, "Fitting sky lantern / balloon model...")(0);
+        // Shared physics-fit dataset shape (frame-0-indexed sensor/LOS arrays +
+        // uniform times) reused by the lantern and quadcopter model fits.
+        const physicsTimes = new Float64Array(dataset.n);
+        for (let f = 0; f < dataset.n; f++) physicsTimes[f] = f / dataset.fps;
+        const physicsDS = {
+            sensorPos: dataset.S, losDir: dataset.D, times: physicsTimes,
+            count: dataset.n, maxRange: null,
+        };
+        const physicsOpts = {
+            optimizer: "de", sampleStride: 5, dePop: 48, deGens: 120,
+            // let the overlay's Cancel button actually stop the DE search
+            shouldCancel: () => overlay.isCancelled(),
+        };
+        if (groundPrior) physicsOpts.groundPrior = groundPrior;
+
+        await phase(0.82, 0.07, "Fitting sky lantern / balloon model...")(0);
         let lantern = null;
         try {
-            const lanTimes = new Float64Array(dataset.n);
-            for (let f = 0; f < dataset.n; f++) lanTimes[f] = f / dataset.fps;
-            const lanternDS = {
-                sensorPos: dataset.S, losDir: dataset.D, times: lanTimes,
-                count: dataset.n, maxRange: null,
-            };
-            lantern = await fitPhysicsModel(lanternDS, new Set(), new SkyLanternModel(),
-                {optimizer: "de", sampleStride: 5, dePop: 48, deGens: 120});
+            lantern = await fitPhysicsModel(physicsDS, new Set(), new SkyLanternModel(), physicsOpts);
         } catch (e) {
+            if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
+            failures.push({method: "Sky Lantern / Balloon", error: (e && e.message) || "fit failed"});
             lantern = null;
+        }
+        if (overlay.isCancelled()) throw new Error("cancelled");
+        if (!lantern && !failures.some((f) => f.method === "Sky Lantern / Balloon")) {
+            failures.push({method: "Sky Lantern / Balloon", error: "fit returned no solution"});
+        }
+
+        // Quadcopter (multirotor drone) — hover-capable near-field object. Runs
+        // the generic multirotor envelope; the hypothesis classifies the solved
+        // trajectory to the nearest common model. May fail / be implausible for
+        // far-field scenes (its range is capped at 20 km) — degrade gracefully.
+        await phase(0.89, 0.06, "Fitting quadcopter (drone) model...")(0);
+        let quad = null;
+        try {
+            quad = await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(), physicsOpts);
+        } catch (e) {
+            if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
+            failures.push({method: "Quadcopter", error: (e && e.message) || "fit failed"});
+            quad = null;
+        }
+        if (overlay.isCancelled()) throw new Error("cancelled");
+        if (!quad && !failures.some((f) => f.method === "Quadcopter")) {
+            failures.push({method: "Quadcopter", error: "fit returned no solution"});
         }
 
         // Satellite (LEO pass) — gated OFF: loads the historical catalogue for the
@@ -1449,18 +2085,47 @@ export async function runTraverseAnalysis() {
             } catch (e) {
                 console.warn("Satellite search skipped:", e);
                 satellite = {error: (e && e.message) || "failed", loaded: 0, best: null};
+                failures.push({method: "Satellite catalogue", error: satellite.error});
+            }
+        }
+
+        // A non-airborne fit includes local ground height in its optimizer
+        // cost. Re-run only if that actual sample improved/changed—not because
+        // an unrelated camera tile arrived elsewhere in the quadtree.
+        if (groundPriorDependencyAtStart) {
+            const groundPriorDependencyNow = [terrainDependencySample("local-ground",
+                localGroundProbeECEF(dataset, originLat, originLon))];
+            if (!terrainDependencyRecordsMatch(groundPriorDependencyAtStart,
+                groundPriorDependencyNow)) {
+                throw new Error("terrain_changed");
             }
         }
 
         const hypotheses = buildHypotheses({
-            dataset, sweep, ca, plausible, aircraft, lantern, satellite,
+            dataset, sweep, ca, plausible, aircraft, lantern, quad, satellite,
             slowProfile, slowOpts,
             losNode, originLat, originLon,
         });
+        const terrainDependenciesAtBuild = captureTerrainDependencies(
+            dataset, hypotheses, originLat, originLon);
 
         overlay.setStatus("Rendering report...");
         overlay.setFraction(0.98);
         await yieldToDOM();
+        if (overlay.isCancelled()) throw new Error("cancelled");
+        const terrainAtPublish = NodeMan.get("TerrainModel", false);
+        const terrainConfigAtPublish = terrainAnalysisConfigScalars(terrainAtPublish,
+            Globals.equatorRadius, Globals.polarRadius, terrainDataEpoch(terrainAtPublish));
+        if (terrainConfigAtPublish.length !== terrainConfigAtStart.length
+            || terrainConfigAtPublish.some((value, i) => !Object.is(value, terrainConfigAtStart[i]))) {
+            throw new Error("terrain_changed");
+        }
+        const terrainDependenciesAtPublish = resampleTerrainDependencies(
+            terrainDependenciesAtBuild);
+        if (!terrainDependencyRecordsMatch(terrainDependenciesAtBuild,
+            terrainDependenciesAtPublish)) {
+            throw new Error("terrain_changed");
+        }
 
         // detailed per-frame series for the sweep's best solution
         const bestTrav = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed);
@@ -1470,15 +2135,34 @@ export async function runTraverseAnalysis() {
         const slowBestRow = slowProfile.reduce((a, b) => (b.score < a.score ? b : a));
         const slowTrack = traversePlausible(dataset, slowBestRow.startDist, slowOpts).track;
 
-        const windText = (analysisWindNode && isFinite(analysisWindNode.knots))
-            ? `${Number(analysisWindNode.knots).toFixed(0)} kt from ${Number(analysisWindNode.from).toFixed(0)}°`
-            : "zero / ignored";
+        let windText = "zero / ignored";
+        if (analysisWindNode && isFinite(analysisWindNode.knots)) {
+            if (analysisWindNode.trackSource && typeof analysisWindNode.trackWindAt === "function") {
+                const speeds = [];
+                for (let f = analysisFrames.frame0; f <= analysisFrames.frame1; f++) {
+                    const sample = analysisWindNode.trackWindAt(f);
+                    if (sample && Number.isFinite(sample.knots)) speeds.push(sample.knots);
+                }
+                speeds.sort((a, b) => a - b);
+                if (speeds.length) {
+                    const median = speeds[Math.floor(speeds.length / 2)];
+                    windText = `time-varying track wind (${analysisWindNode.trackSource}): ` +
+                        `${speeds[0].toFixed(0)}–${median.toFixed(0)}–${speeds[speeds.length - 1].toFixed(0)} kt ` +
+                        `(min/median/max; direction sampled by timestamp)`;
+                } else {
+                    windText = `track wind (${analysisWindNode.trackSource}); no valid historical samples`;
+                }
+            } else {
+                windText = `${Number(analysisWindNode.knots).toFixed(0)} kt from ` +
+                    `${Number(analysisWindNode.from).toFixed(0)}°`;
+            }
+        }
 
         // "Cost of proximity" window over the DISPLAY grid: 6-8 NM for
         // far-field sitches (the classic Gimbal question), else an adaptive
         // close-end window for close scenes.
-        const gridLo = ranges[0];
-        const gridHi = ranges[ranges.length - 1];
+        const gridLo = resolvedRanges[0];
+        const gridHi = resolvedRanges[resolvedRanges.length - 1];
         let closeLoM, closeHiM;
         if (gridHi > 12 * METERS_PER_NM && gridLo <= 6 * METERS_PER_NM) {
             closeLoM = 6 * METERS_PER_NM;
@@ -1489,24 +2173,91 @@ export async function runTraverseAnalysis() {
             closeHiM = gridLo + span * 0.30;
         }
 
-        const html = buildReportHTML({
+        // LAZY report: the full HTML report (dozens of 2x PNG chart encodes,
+        // ~10 MB of string) used to be built eagerly inside every analysis run
+        // even though it is only seen when the user clicks "Open Full Report".
+        // Build it on demand instead — several seconds off every analysis.
+        const provenance = losProvenance();
+        const manifest = Object.freeze({
+            inputFingerprint: `0x${fp.toString(16).padStart(8, "0")}`,
+            situation: Sit.name ?? "unnamed sitch",
+            frames: {start: dataset.frame0, end: dataset.frame1, count: dataset.n},
+            timing: {
+                sourceFps: Sit.fps,
+                simSpeed: Sit.simSpeed ?? 1,
+                physicalFps: dataset.fps,
+            },
+            assumptions: {
+                speedTargetKt: speedTarget / KNOTS_TO_MS,
+                windMode: analyzeTweaks.windMode,
+                windSummary: windText,
+                fittedWindModels: ["Sky Lantern / Balloon", "Quadcopter"],
+                groundMode: analyzeTweaks.groundMode,
+                constructedLOS: provenance.circular,
+                losSource: provenance.losSource,
+                cameraHeading: provenance.cameraHeading,
+            },
+            searchBounds: {
+                userSpecified: !rangeIsDefault,
+                constantAirRangeM: [resolvedRanges[0], resolvedRanges[resolvedRanges.length - 1]],
+                constantAirSpeedMS: [sweep.speeds[0], sweep.speeds[sweep.speeds.length - 1]],
+                aircraftRangeM: [fitRangeMin, fitRangeMax],
+                constantAltitudeRangeM: [caRangeMin, caRangeMax],
+                minimumAccelerationRangeM: [plausRangeMin, plausRangeMax],
+            },
+            completeness: {
+                constantAirBoundaryAxes: sweep.boundaryAxes,
+                fastProfileBoundaryLimited: !!fastProfile.boundaryLimited,
+                slowProfileBoundaryLimited: !!slowProfile.boundaryLimited,
+                minimumAccelerationBoundaryLimited: !!plausible.boundaryLimited,
+            },
+            optimizers: {
+                aircraftRuns: aircraft.runs.map((r) => ({
+                    seed: r.de?.seed,
+                    deGenerations: r.de?.generations,
+                    deEvaluations: r.de?.evaluations,
+                    deStopReason: r.de?.stopReason,
+                    polishIterations: r.polishIterations,
+                    polishStopReason: r.polishStopReason,
+                })),
+                lantern: lantern?.params?.optimizer ?? null,
+                quadcopter: quad?.params?.optimizer ?? null,
+            },
+            checks: {
+                stationary: analyzeTweaks.aoFixedPoint,
+                astronomyAtTime: analyzeTweaks.aoKnownNow,
+                astronomyTimeSearch: analyzeTweaks.aoKnownOther,
+                satellite: analyzeTweaks.satellite,
+                failures: failures.map((f) => ({...f})),
+            },
+        });
+        const buildHtml = () => buildReportHTML({
             sitName: Sit.name ?? "unnamed sitch",
             dataset, windText, speedTarget,
             sweep, fastProfile, slowProfile, aircraft,
             bestTrack: bestTrav.track, bestMetrics,
             slowBestRow, slowTrack,
             closeLoM, closeHiM,
-            hypotheses,
+            hypotheses, provenance, failures, manifest,
         });
 
+        const terrainDependencies = terrainDependenciesAtBuild;
         results = {
             dataset, sweep, fastProfile, slowProfile, aircraft,
-            best: sweep.best, bestMetrics, slowBestRow, hypotheses, html,
+            best: sweep.best, bestMetrics, slowBestRow, hypotheses,
+            buildHtml, html: null,
+            provenance, failures, manifest,
         };
         window.lastTraverseAnalysis = results;
-        _analysisCache = {fp, results};   // reuse until an input changes
+        // View-dependent global tile LOD is not an analysis input. Preserve the
+        // precise ground samples that did affect candidate grading instead.
+        _analysisCache = {fp, terrainDependencies, results};
     } catch (error) {
         if (error && error.message === "cancelled") return null;
+        if (error && error.message === "terrain_changed") {
+            showError("Traverse analysis: elevation data changed during the run. Wait for terrain to settle, then Analyze again.");
+            return null;
+        }
         throw error;
     } finally {
         overlay.remove();
@@ -1516,7 +2267,7 @@ export async function runTraverseAnalysis() {
     const a = results.aircraft.params;
     console.log(`Traverse analysis: best const-air ${nm1(b.startDist)} NM @ ${kt1(b.speed)} kt ` +
         `(score ${b.score.toFixed(2)}); aircraft fit ${nm1(a.startDist)} NM, hdg ${a.heading.toFixed(0)}, ` +
-        `TAS ${kt1(a.tas)} kt, err ${results.aircraft.errDeg.toFixed(3)} deg`);
+        `horizontal airspeed ${kt1(a.tas)} kt, err ${results.aircraft.errDeg.toFixed(3)} deg`);
 
     // The primary result is now a full-screen interactive gallery of candidate
     // interpretations (each with a "Use This" apply button); the full HTML
@@ -1544,20 +2295,14 @@ function adaptiveRangeList(centerMeters, count = 44) {
     return ranges;
 }
 
+// The analysis fits the In/Out (A-B) window. abFrameRange is the shared
+// authority — the live LOS fit methods use the same window, so an applied
+// gallery tile reproduces the same fit.
 function analysisFrameRange(losNode) {
-    const maxFrame = Math.max(0, (losNode.frames ?? 1) - 1);
-    const hasA = Number.isFinite(Sit.aFrame);
-    const hasB = Number.isFinite(Sit.bFrame);
-    let frame0 = hasA ? Math.round(Sit.aFrame) : 0;
-    let frame1 = hasB ? Math.round(Sit.bFrame) : maxFrame;
-    frame0 = Math.max(0, Math.min(maxFrame, frame0));
-    frame1 = Math.max(0, Math.min(maxFrame, frame1));
-    if (frame1 < frame0) {
-        const t = frame0;
-        frame0 = frame1;
-        frame1 = t;
-    }
-    return {frame0, frame1, count: frame1 - frame0 + 1};
+    // Preserve the user's exact A/B selection here so the explicit <10-frame
+    // readiness error can fire. The shared helper's default protects standalone
+    // live fit nodes from degenerate windows by falling back to the full clip.
+    return abFrameRange(losNode.frames, 1);
 }
 
 function losFrameView(losNode, frame0, frame1) {
@@ -1583,6 +2328,46 @@ function resolveLOSNode() {
     const constAir = NodeMan.get("LOSTraverseConstantAirSpeed", false);
     if (constAir && constAir.in && constAir.in.LOS) return constAir.in.LOS;
     return null;
+}
+
+// LOS provenance: detect CIRCULAR (target-derived) sightlines. In the custom
+// sitch family the look camera can be aimed straight at the current target
+// track ("Camera Heading" = To Target) while the analysis LOS is the raw
+// camera centerline ("LOS Source" = Camera Center) — the sightlines are then
+// CONSTRUCTED from the very target the analysis is asked to find, and any fit
+// recovering it (e.g. a perfect Stationary Point) is an internal-consistency
+// check, not an independent discovery. Video-tracking LOS sources (manual /
+// auto object track) re-derive the direction from the video pixels, so they
+// are treated as measurements even when the camera base pose is To Target.
+function losProvenance() {
+    const jetLOS = NodeMan.get("JetLOS", false);
+    const camCtrl = NodeMan.get("CameraLOSController", false);
+    const losChoice = jetLOS && jetLOS.choice;
+    const ctrlChoice = camCtrl && camCtrl.choice;
+    const selectedLOS = jetLOS && jetLOS.choice && jetLOS.inputs
+        ? jetLOS.inputs[jetLOS.choice] : jetLOS;
+    const dependsOn = (node, targetID, seen = new Set()) => {
+        if (!node || seen.has(node)) return false;
+        if (node.id === targetID) return true;
+        seen.add(node);
+        const deps = node.in || node.inputs || {};
+        return Object.values(deps).some((dep) => dependsOn(dep, targetID, seen));
+    };
+    // Manual/auto pixel tracking supplies an offset from the camera centreline;
+    // it does not independently determine the camera's absolute attitude. If
+    // that base centreline is aimed "To Target", every derived LOS remains
+    // target-dependent even when the tracked pixel is off-centre.
+    if (ctrlChoice === "To Target" && dependsOn(selectedLOS, "JetLOSCameraCenter")) {
+        return {
+            circular: true,
+            losSource: losChoice,
+            cameraHeading: ctrlChoice,
+            reason: `Camera Heading is "To Target" and the selected ${losChoice || "camera-derived"} ` +
+                "LOS still depends on that target-aimed camera attitude. Pixel tracking adds only a relative " +
+                "offset, so these sightlines are not independent of the target being tested.",
+        };
+    }
+    return {circular: false, losSource: losChoice ?? "unknown", cameraHeading: ctrlChoice ?? "n/a"};
 }
 
 function openReport(html) {
@@ -1656,17 +2441,6 @@ function createProgressOverlay(titleText) {
 // report is reachable from the footer.
 // ---------------------------------------------------------------------------
 
-// Tier badge for a gallery tile. The single most-plausible tile (top of the
-// sort) is always "Best"; the rest are labeled by their plausibility rank so
-// the visual order reads Best, High, Medium, Implausible.
-function tierBadge(rank, isTop) {
-    if (isTop) return {label: "Best", color: "#e5b53a"};
-    if (rank >= 3) return {label: "High", color: "#3fae72"};
-    if (rank >= 1) return {label: "Medium", color: "#c9a13a"};
-    if (rank < 0) return {label: "Non-physical", color: "#8a5a2b"};
-    return {label: "Implausible", color: "#e0564e"};
-}
-
 // Brief, non-blocking, self-removing confirmation toast (no native dialogs).
 // Fully inline-styled so it survives the overlay (and its scoped <style>) being
 // removed first.
@@ -1733,19 +2507,20 @@ function analyzeSolutionSpace(results) {
 // The six headline stats for one hypothesis (shared by tile and Details pane).
 function hypothesisStats(h) {
     const m = h.metricsFull;
-    // Physics-model tiles carry the dataset's empirical noise floor; surface
-    // the residual as a multiple of it so noisy sightlines read correctly.
-    const floor = h.params && h.params.errFloor;
-    const floorTxt = (isFinite(floor) && floor >= 0.02 && h.errDeg > 0)
-        ? ` (${(h.errDeg / floor).toFixed(1)}× floor)` : "";
-    const losErr = h.errDeg > 0 ? `${h.errDeg.toFixed(2)}°${floorTxt}` : "0.00° (on LOS)";
+    // Always show the raw residual. The old "≤ reference fit" replacement hid
+    // the very number used to grade forward models (GoFast Balloon: 0.297°),
+    // making its Low tier inexplicable. The generic reference remains context,
+    // never a substitute or a noise estimate.
+    const losErr = formatRawLosResidual(h);
     const errLabel = (h.params && (h.params.object || h.params.satellite)) ? "LOS offset" : "LOS error";
     return [
-        ["Range", `${nm1(m.range.min)}–${nm1(m.range.max)} NM`],
-        ["Air speed", `${kt1(m.airSpeed.mean)} kt`],
-        ["Altitude", `${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft`],
+        // slant range over the clip, not an uncertainty interval — label it so
+        ["Slant range (min–max)", `${nm1(m.range.min)}–${nm1(m.range.max)} NM`],
+        [h.params?.motionFrame === "ground" ? "Ground speed (mean / max)" : "Air speed (mean / max)",
+            `${kt1(m.airSpeed.mean)} / ${kt1(m.airSpeed.max)} kt`],
+        ["Altitude (geodetic)", `${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft`],
         ["Climb", `${fpm0(m.verticalSpeed.mean)} fpm`],
-        ["Max g", `${m.gLoad.max.toFixed(2)} g`],
+        ["Max kinematic accel", `${m.gLoad.max.toFixed(2)} g`],
         [errLabel, losErr],
     ];
 }
@@ -1877,29 +2652,17 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
     };
 }
 
-// Plain-English verdict headline for a tier.
-function verdictHeadline(r, isTop) {
-    if (isTop) return "Most plausible interpretation";
-    if (r.rank >= 3) return "Physically plausible";
-    if (r.rank >= 2) return "Marginally plausible";
-    if (r.rank >= 1) return "Weak — needs unusual behaviour";
-    return "Physically implausible";
-}
-
-// Calibration sentence for the off-ray physics fits: relate a residual to the
-// dataset's empirical noise floor (the residual of a free constant-
-// acceleration path, computed in buildHypotheses). Only rendered when the
-// floor is big enough to matter — on clean data the absolute numbers already
-// speak for themselves.
+// Reference sentence for off-ray physics fits. A flexible constant-acceleration
+// residual mixes measurement error with model mismatch; it is not sensor noise.
 function floorContext(err, floor) {
     if (!isFinite(floor) || floor < 0.02 || !isFinite(err)) return "";
     const ratio = err / floor;
     const rel = ratio < 1.35
-        ? `essentially AT that floor — the residual is dominated by data noise, not model failure`
-        : `${ratio.toFixed(1)}× that floor`;
-    return ` For calibration: the most rigid generic fit (a free constant-acceleration path, no ` +
-        `object-type assumptions) leaves ${floor.toFixed(2)}° on these sightlines — their practical ` +
-        `noise floor — and this fit's ${err.toFixed(2)}° is ${rel}.`;
+        ? `similar to that reference residual`
+        : `${ratio.toFixed(1)}× that reference residual`;
+    return ` For context: a flexible constant-acceleration fit leaves ${floor.toFixed(2)}° on these ` +
+        `sightlines, and this fit's ${err.toFixed(2)}° is ${rel}. The reference combines pointing error ` +
+        `and trajectory-model mismatch; it is not a sensor-noise estimate.`;
 }
 
 // Method-specific prose: how the numbers were derived, and what constrains the
@@ -1909,8 +2672,25 @@ function detailProse(h, r, ss) {
     const p = h.params || {};
     const g = m.gLoad.max, spdKt = toKt(m.airSpeed.mean);
     const rMin = nm1(m.range.min), rMax = nm1(m.range.max);
-    const err = h.errDeg || 0;
+    const err = Number.isFinite(h.errDeg) ? h.errDeg : Infinity;
     const onRay = err < 1e-3;
+    const screenContext = (subject) => {
+        const label = escapeHtml(r?.label ?? "Not scored");
+        const reasons = Array.isArray(r?.reasons) && r.reasons.length
+            ? `: ${escapeHtml(r.reasons.join("; "))}` : "";
+        const outcome = r?.eligible
+            ? `${subject} passes the current broad screen`
+            : `${subject} is rated <b>${label}</b> by the current broad screen`;
+        return `${outcome}${reasons}. This is a heuristic kinematic/model-fit screen, not an ` +
+            `object-identification probability.`;
+    };
+    const inactiveBoundContext = () => {
+        const inactive = Array.isArray(h.boundInactive) ? h.boundInactive : [];
+        if (!inactive.length) return "";
+        return ` ${inactive.length === 1 ? "A parameter is" : "Parameters are"} at a model bound but ` +
+            `locally inactive over this clip (${escapeHtml(inactive.join(", "))}); ` +
+            `${inactive.length === 1 ? "it is" : "they are"} reported as unresolved, not as a physical failure.`;
+    };
     switch (h.key) {
         case "constAir":
             return {
@@ -1919,12 +2699,12 @@ function detailProse(h, r, ss) {
                 derived: `A grid search over start range × air speed (15–650 kt, log-spaced) solves each ` +
                     `combination as the smoothest ray-following path that holds that air speed (wind ` +
                     `subtracted), scoring smoothness plus how well the speed could actually be held. ` +
-                    `The best cell was ${nm1(p.range)} NM @ ${kt1(p.airSpeed)} kt.`,
+                    `The selected family representative is ${nm1(p.range)} NM @ ${kt1(p.airSpeed)} kt; ` +
+                    `it is prior-selected when several cells score about equally.`,
                 constraint: onRay
                     ? `It sits on the sightlines by construction (0° error), so the LOS fit is automatic — ` +
                       `plausibility rests on the implied motion: ${kt1(m.airSpeed.mean)} kt, up to ${g.toFixed(2)} g.`
-                    : `Follows the rays to ${err.toFixed(3)}° (applying this method with "Use This" walks ` +
-                      `the rays exactly).`,
+                    : `The displayed and applied snapshot follows the rays to ${err.toFixed(3)}° after smoothing.`,
             };
         case "constAlt":
             return {
@@ -1938,8 +2718,7 @@ function detailProse(h, r, ss) {
                 constraint: onRay
                     ? `On the sightlines by construction; the tell is the implied ${kt1(m.airSpeed.mean)} kt and ` +
                       `${g.toFixed(2)} g.`
-                    : `The smoothed path misses the rays by ${err.toFixed(3)}° (applying this method with ` +
-                      `"Use This" rides the rays exactly, adding back the frame-scale jitter).`,
+                    : `The displayed and applied snapshot misses the rays by ${err.toFixed(3)}° after smoothing.`,
             };
         case "plausible":
             return {
@@ -1963,43 +2742,21 @@ function detailProse(h, r, ss) {
                     `${kt1(m.airSpeed.std)} kt).`,
             };
         case "aircraft": {
-            // TAS solved exactly AT the model's 25 kt floor: the fit wanted an
-            // even slower object than any fixed-wing can fly.
-            const tasPinned = isFinite(p.tas) && Math.abs(p.tas - 25 * KNOTS_TO_MS) < 0.01 * 25 * KNOTS_TO_MS;
-            const tasPinnedTxt = tasPinned
-                ? ` Note: the solved TAS is pinned at the model's 25 kt floor — the sightlines would prefer ` +
-                  `something slower than any fixed-wing can fly.`
-                : "";
             return {
-                lead: `A fixed-wing aircraft on a near-straight course: ${kt1(p.tas)} kt true air speed at ` +
+                lead: `A fixed-wing aircraft on a near-straight course: ${kt1(p.tas)} kt horizontal airspeed at ` +
                     `about ${nm1(p.range)} NM and ${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft, ` +
                     `turning ${(p.turn ?? 0).toFixed(2)}°/s and climbing ${fpm0((p.climb ?? 0))} fpm. ` +
                     `It reproduces the sightlines to ${err.toFixed(3)}°.`,
-                derived: `A constant-TAS flight model (range, heading, TAS, turn rate, climb) is fit to the ` +
-                    `sightlines by differential evolution over several independent runs, then polished. Unlike the ` +
-                    `on-ray traverses, its residual — ${err.toFixed(3)}° — is a real measure of how well an ` +
-                    `actual aircraft explains the angles.`,
-                constraint: (err < Math.max(0.05, (p.errFloor ?? 0) * 1.35)
-                    ? `The ${err.toFixed(3)}° residual means a plane fits the geometry about as well as these ` +
-                      `sightlines allow, at an ordinary ${kt1(p.tas)} kt and ${g.toFixed(2)} g — the hallmark ` +
-                      `of a mundane target.`
-                    : `The ${err.toFixed(3)}° residual is the cost of forcing a rigid straight-flight model onto ` +
-                      `these angles.`) + tasPinnedTxt + floorContext(err, p.errFloor),
+                derived: `A constant-horizontal-airspeed flight model (range, heading, speed, turn rate, climb) is fit to the ` +
+                    `sightlines by deterministically seeded differential-evolution restarts, then polished. ` +
+                    `Its ${err.toFixed(3)}° residual is the in-sample angular mismatch for this model and its ` +
+                    `priors; it is not an aircraft-identification probability.`,
+                constraint: screenContext("This fixed-wing parameterization") +
+                    ` Its solved motion is ${kt1(p.tas)} kt horizontal airspeed and ${g.toFixed(2)} g maximum ` +
+                    `kinematic acceleration.` + inactiveBoundContext() + floorContext(err, p.errFloor),
             };
         }
         case "lantern": {
-            const capNM = 30000 / METERS_PER_NM;
-            const pinned = p.range && Math.abs(p.range - 30000) < 300;
-            // solved wind component sitting AT the model's ±20 m/s bound means
-            // the fit wanted MORE wind than a lantern is allowed — the shown
-            // residual understates the mismatch.
-            const WIND_BOUND = 20;
-            const windPinned = (Math.abs(Math.abs(p.windE ?? 0) - WIND_BOUND) < 0.02 * WIND_BOUND)
-                || (Math.abs(Math.abs(p.windN ?? 0) - WIND_BOUND) < 0.02 * WIND_BOUND);
-            const windPinnedTxt = windPinned
-                ? ` Note: the solved wind is pinned at the model's limit — the sightlines would prefer even ` +
-                  `faster drift than the lantern bounds allow.`
-                : "";
             // solved wind (at the initial altitude) in friendly units
             const windKt = p.windE !== undefined ? toKt(Math.hypot(p.windE, p.windN)) : NaN;
             const windFrom = p.windE !== undefined
@@ -2027,31 +2784,56 @@ function detailProse(h, r, ss) {
                     `altitude (solved ${windTxt}, shear ${shearTxt}), and its vertical motion follows the ` +
                     `lantern life cycle (rise while lit, buoyancy decay after flame-out, terminal sink), ` +
                     `fit to the sightlines by differential evolution.${phaseTxt}`,
-                constraint: (pinned
-                    ? `The solved start range is pinned against the model's ${capNM.toFixed(1)} NM ceiling: the ` +
-                      `sightlines want a much more distant object than a wind-drifting lantern can be. The ` +
-                      `${err.toFixed(2)}° residual is the model telling you this is probably not a balloon.`
-                    : err < Math.max(0.35, (p.errFloor ?? 0) * 1.4)
-                        ? `Within the model's hard lantern-physics bounds (≤55 kt wind, ≤4 m/s vertical) the ` +
-                          `angles are reproduced to ${err.toFixed(2)}° — a drifting lantern or balloon is a ` +
-                          `genuinely consistent reading of these sightlines.`
-                        : `Even the best wind-bounded drift path leaves a ${err.toFixed(2)}° residual: the ` +
-                          `sightlines demand motion a lantern cannot do. Compare the fixed-wing fit's residual ` +
-                          `to see which object type the geometry prefers.`) + windPinnedTxt
-                    + floorContext(err, p.errFloor),
+                constraint: screenContext("This bounded drift parameterization") +
+                    ` The fitted priors limit initial wind components to ±20 m/s, clamp altitude shear to ` +
+                    `0.25–3×, and limit vertical rates to 4 m/s; this test does not exclude balloon models ` +
+                    `outside those assumptions.` + inactiveBoundContext() + floorContext(err, p.errFloor),
+            };
+        }
+        case "quadcopter": {
+            const peakKt = isFinite(p.peakSpeed) ? kt1(p.peakSpeed) : "?";
+            const closeTxt = p.closest ? ` Its speed and climb are closest to a ${p.closest}.` : "";
+            return {
+                lead: `A quadcopter (multirotor drone) hovering and manoeuvring near the sensor — ` +
+                    `about ${nm1(p.range)} NM out, peaking near ${peakKt} kt, ` +
+                    `reproducing the sightlines to ${err.toFixed(2)}°.${closeTxt}`,
+                derived: `Hover-capable multirotor kinematics (air-relative horizontal speed, wide turn-rate ` +
+                    `budget, bounded climb/descent, and solved wind drift) are fit by differential evolution. ` +
+                    `The ${err.toFixed(2)}° residual is an in-sample mismatch for this generic model, not a ` +
+                    `drone-identification probability.`,
+                constraint: screenContext("This bounded generic multirotor parameterization") +
+                    ` Its fitted prior has a 20 km (${nm1(20000)} NM) range cap plus the displayed speed and ` +
+                    `climb limits; this test does not exclude multirotor configurations outside those assumptions.` +
+                    inactiveBoundContext() + floorContext(err, p.errFloor),
+            };
+        }
+        case "groundVehicle": {
+            const gvKt = kt1(m.airSpeed.mean);
+            return {
+                lead: `A vehicle moving on the surface: where each sightline meets the ground, the point tracks ` +
+                    `at about ${gvKt} kt mean across ${rMin}–${rMax} NM, matching the angles to ${err.toFixed(2)}°.`,
+                derived: `Each frame's sightline is intersected with a curved constant-elevation shell sampled ` +
+                    `from the local terrain. Actual terrain is then sampled along the track to reject material ` +
+                    `underground excursions; it is not a full slope-following terrain solve.`,
+                constraint: (m.airSpeed.mean / KNOTS_TO_MS < 120)
+                    ? `The implied ground speed (${gvKt} kt) is within reach of a real vehicle, so a surface ` +
+                      `object is a consistent reading of these sightlines.`
+                    : `The implied ground speed (${gvKt} kt) is far too fast for any ground vehicle — the apparent ` +
+                      `motion needs altitude, so the object is not travelling along the surface.`,
             };
         }
         case "ground":
             return {
-                lead: `A stationary light on the ground (sea level). The sightlines ${err < 0.2 ? "nearly" : "do not"} ` +
+                lead: `A stationary light on the ground. The sightlines ${err < 0.2 ? "nearly" : "do not"} ` +
                     `converge on one ground point — residual ${err.toFixed(2)}°.`,
-                derived: `The single sea-level point minimising the summed angular miss to every ray is found in ` +
-                    `closed form (least squares on the ray directions constrained to z = 0).`,
+                derived: `The single surface point minimising the summed angular miss to every ray is found by ` +
+                    `least squares pinned iteratively to a curved constant-elevation shell at the local ` +
+                    `terrain height (sea level only where no terrain is loaded).`,
                 constraint: err < 0.2
                     ? `A fixed ground point explains the angles to ${err.toFixed(2)}° — viable if the object were ` +
                       `a distant light and the platform's own motion produced the apparent movement.`
                     : `The ${err.toFixed(2)}° residual means no single ground point fits: the bearing changes too ` +
-                      `much for a fixed light at sea level.`,
+                      `much for a fixed surface light.`,
             };
         case "fixedPoint":
             return {
@@ -2137,8 +2919,9 @@ function detailProse(h, r, ss) {
                     ? `It is in Earth's shadow during the clip, so it could not be the bright object on video — `
                       + `ruled out regardless of how well it lines up.`
                     : err < 0.5
-                        ? `A ${err.toFixed(2)}° match from a real, ${sun} satellite is a strong identification — `
-                          + `the orbital speed (~${kt1(m.airSpeed.mean)} kt) is exactly what a satellite should show.`
+                        ? `A ${err.toFixed(2)}° match from a catalogued, ${sun} satellite is a specific candidate `
+                          + `worth checking against timestamp, catalogue, pointing, and visibility uncertainty; `
+                          + `this angular match alone is not an identification.`
                         : `The closest catalogued satellite is still ${err.toFixed(2)}° off, so no LEO object cleanly `
                           + `explains these sightlines.`,
             };
@@ -2178,8 +2961,8 @@ function solutionSpaceHTML(h, ss) {
         // preference, not a triangulated fix — say so without invoking the
         // speed target, which was not used.
         return `Geometrically the sightlines sweep only <b>${geo.azSweep.toFixed(1)}°</b> of azimuth over a ` +
-            `<b>${geo.baselineNM.toFixed(1)} NM</b> sensor baseline, so range is <b>weakly observed from the ` +
-            `angles alone</b>. The pure smoothness-vs-range profile still ruled out the rest — nearer ranges ` +
+            `<b>${geo.baselineNM.toFixed(1)} NM</b> sensor baseline, which provides limited direct range leverage. ` +
+            `The prior-free smoothness profile still ruled out the rest under this motion model — nearer ranges ` +
             `demand far more maneuvering — and preferred <b>${nm1(h.params.range)} NM</b> within the surviving ` +
             `band, with no speed assumption. Treat it as the least-maneuvering pocket of a broad family, not a ` +
             `triangulated fix.`;
@@ -2187,8 +2970,8 @@ function solutionSpaceHTML(h, ss) {
         // Narrow angular baseline: range is NOT observable from geometry alone.
         // Whatever minimum exists is created by the soft speed/altitude prior.
         return `Geometrically the sightlines sweep only <b>${geo.azSweep.toFixed(1)}°</b> of azimuth over a ` +
-            `<b>${geo.baselineNM.toFixed(1)} NM</b> sensor baseline, so range is <b>weakly observed from the angles ` +
-            `alone</b> — many ranges ride the rays about equally well. ` +
+            `<b>${geo.baselineNM.toFixed(1)} NM</b> sensor baseline, which provides limited direct range leverage; ` +
+            `many ranges ride the rays about equally well. ` +
             (conv && isFinite(conv.contrast) && conv.contrast >= 1.4
                 ? `The soft speed target breaks that tie: the maneuvering-vs-range curve dips near ` +
                   `<b>${conv.bestRangeNM.toFixed(1)} NM</b> (contrast ${cTxt}× across ${bandTxt}). Read that as the ` +
@@ -2198,29 +2981,30 @@ function solutionSpaceHTML(h, ss) {
                   `sightline; the speed/altitude target is what pins this particular range. Treat it as an ` +
                   `assumption to test, not a measurement.`);
     } else if (onRay && conv && isFinite(conv.contrast) && conv.contrast >= 1.4) {
-        return `With a <b>${geo.azSweep.toFixed(1)}°</b> angular baseline the range is genuinely observable, and ` +
-            `the smoothness-vs-range curve has a clear minimum near <b>${conv.bestRangeNM.toFixed(1)} NM</b> ` +
-            `(contrast ${cTxt}× across ${bandTxt}) — a comparatively <b>strong, near-unique</b> solution rather ` +
-            `than an arbitrary pick along the rays.`;
+        return `The smoothness-vs-range score has a clear minimum near ` +
+            `<b>${conv.bestRangeNM.toFixed(1)} NM</b> (contrast ${cTxt}× across ${bandTxt}) under the current ` +
+            `motion and speed assumptions. This is a model-conditioned preference, not a triangulated range ` +
+            `or an uncertainty interval; changing the assumptions is the required sensitivity test.`;
     } else if (onRay) {
         return `Even over a <b>${geo.azSweep.toFixed(1)}°</b> baseline the maneuvering-vs-range curve stays ` +
             `flat (contrast ${cTxt}×), so a wide family of ranges fits about equally — this is <b>one of many</b> ` +
             `on-ray solutions, selected here by the speed/altitude target.`;
-    } else if (h.key === "aircraft" || h.key === "lantern") {
-        const other = h.key === "aircraft" ? "lantern/balloon" : "aircraft";
-        return `Unlike the on-ray traverses, this is a physical model with a real fit residual ` +
-            `(<b>${(h.errDeg || 0).toFixed(3)}°</b>) — a like-for-like number you can compare against the ${other} ` +
-            `model to see which object <i>type</i> the raw angles favour. Lower residual = the geometry supports that ` +
-            `type more strongly.`;
+    } else if (h.key === "aircraft" || h.key === "lantern" || h.key === "quadcopter") {
+        const other = h.key === "aircraft" ? "lantern/balloon and drone"
+            : h.key === "lantern" ? "aircraft and drone" : "aircraft and lantern/balloon";
+        return `Unlike the on-ray traverses, this forward model leaves a real training residual ` +
+            `(<b>${(h.errDeg || 0).toFixed(3)}°</b>). The ${other} models use different parameter counts, wind ` +
+            `freedom, bounds, and priors, so their raw residuals are diagnostic values—not like-for-like object-type ` +
+            `probabilities.`;
     } else if (h.params && h.params.object) {
-        return `This is an <b>identification</b>, not a range fit: either the named body lines up with the ` +
-            `sightlines and is bright enough, or it doesn't. It's checked against every other bright body for the ` +
+        return `This is a <b>catalogue alignment check</b>, not a range fit or standalone identification: the ` +
+            `named body must line up with the sightlines and be bright enough. It's checked against other bright bodies for the ` +
             `best match, and against the ~6.0 magnitude visibility limit (FOV-adjusted).`;
     } else if (h.params && h.params.satellite) {
-        return `This is a catalogue <b>identification</b>: the single closest of <b>${h.params.loaded}</b> ` +
-            `real LEO satellites propagated for the date. It's unique in that sense — there isn't a "family" of ` +
-            `satellites, just the best match and how far off it is (${(h.errDeg || 0).toFixed(2)}°). A clean, ` +
-            `sunlit sub-degree match is a positive ID; a large residual means no known satellite fits.`;
+        return `This is a catalogue <b>candidate match</b>: the closest of <b>${h.params.loaded}</b> ` +
+            `LEO satellites propagated for the date. There isn't a continuous trajectory family here, only the best ` +
+            `catalogue match and how far off it is (${(h.errDeg || 0).toFixed(2)}°). A clean, ` +
+            `sunlit sub-degree match merits follow-up against timing/catalogue uncertainty; a large residual means no known satellite fits.`;
     }
     return `A stationary-object test: the residual (<b>${(h.errDeg || 0).toFixed(2)}°</b>) is how nearly the ` +
         `sightlines are consistent with something that never moves.`;
@@ -2230,7 +3014,7 @@ function solutionSpaceHTML(h, ss) {
 // stats, a plain-English verdict, then progressively deeper explanation
 // (how the numbers were derived, what constrains it, where it sits in the
 // solution space) — written for a UAP analyst deciding what the object is.
-function buildDetailHTML(h, r, isTop, ctx) {
+function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = false) {
     const {ss} = ctx;
     const stats = hypothesisStats(h);
     const statsHTML = stats.map(([k, v]) =>
@@ -2239,13 +3023,17 @@ function buildDetailHTML(h, r, isTop, ctx) {
 
     const prose = detailProse(h, r, ss);
     const spaceHTML = solutionSpaceHTML(h, ss);
+    const badges = [tierBadge(r), ...completenessBadges(r)];
+    const badgesHTML = badges.map((badge) =>
+        `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
+    const tieText = tied ? " · within the 0.05 display-score tie threshold" : "";
 
     // per-frame diagnostics: g-force, speed, LOS error over the clip
     const sc = hypothesisSeriesCharts(ctx.dataset, h);
     const seriesHTML = sc ? `
         <h4 class="tg-d-h">Frame-by-frame behaviour</h4>
         <div class="tg-d-series">
-            <img src="${sc.gURL}" alt="Maneuvering g-force over the clip">
+            <img src="${sc.gURL}" alt="Kinematic acceleration over the clip, expressed in g">
             <img src="${sc.spdURL}" alt="Speed over the clip">
             <img src="${sc.errURL}" alt="LOS fit error over the clip">
         </div>` : "";
@@ -2260,10 +3048,12 @@ function buildDetailHTML(h, r, isTop, ctx) {
         </div>
         <div class="tg-d-head">
             <span class="tg-d-name">${escapeHtml(h.name)}</span>
-            <span class="tg-badge" style="background:${r.color}">${escapeHtml(verdictHeadline(r, isTop))}</span>
+            <span class="tg-badges">${badgesHTML}</span>
         </div>
         <div class="tg-d-sub">${escapeHtml(h.subtitle || "")}</div>
+        <div class="tg-d-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}</div>
         <div class="tg-d-metrics">${statsHTML}</div>
+        <div class="tg-d-rank"><strong>Why it is screened and ordered here:</strong> ${escapeHtml(rankingExplanation(h, r))}</div>
         <p class="tg-d-lead">${escapeHtml(prose.lead)}</p>
         ${seriesHTML}
         <h4 class="tg-d-h">How these numbers were derived</h4>
@@ -2280,11 +3070,13 @@ function buildDetailHTML(h, r, isTop, ctx) {
  * dark backdrop. Does not leak listeners.
  */
 function showResultGallery(results) {
-    const {dataset, hypotheses, html} = results;
+    const {dataset, hypotheses} = results;
 
-    // tiles: interpretations that produced a track, ranked most-plausible
-    // first (same ordering as the HTML report — see rankHypotheses).
-    const tiles = rankHypotheses(hypotheses);
+    // Rank only within comparable categories. A trajectory construction,
+    // forward physical model, catalogue identity and estimator do not share a
+    // calibrated cross-model likelihood and therefore cannot have one winner.
+    const rankedGroups = groupAndRankHypotheses(hypotheses);
+    const tiles = rankedGroups.flatMap((group) => group.items);
 
     const overlay = document.createElement("div");
     overlay.className = "traverse-gallery-overlay";
@@ -2292,7 +3084,7 @@ function showResultGallery(results) {
         "align-items:flex-start;justify-content:center;padding:24px 16px;box-sizing:border-box;" +
         "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;";
 
-    const chartGroup = new Chart3DGroup();
+    const chartGroup = new Chart3DGroup({syncScale: true});
     const pendingTileCharts = [];
     const tileCharts = [];
     const liveCharts = new Set();
@@ -2418,6 +3210,12 @@ function showResultGallery(results) {
             display:flex; flex-direction:column; }
         .traverse-gallery-overlay .tg-grid { display:grid;
             grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
+        .traverse-gallery-overlay .tg-group-head { grid-column:1/-1; padding:12px 2px 2px;
+            border-top:1px solid rgba(255,255,255,0.11); margin-top:5px; }
+        .traverse-gallery-overlay .tg-group-head:first-child { border-top:none; margin-top:0; padding-top:0; }
+        .traverse-gallery-overlay .tg-group-title { color:#dce3eb; font-size:15px; font-weight:750; }
+        .traverse-gallery-overlay .tg-group-desc { color:#8a9099; font-size:12px; line-height:1.45;
+            margin-top:3px; max-width:100ch; }
         .traverse-gallery-overlay .tg-tile { background:#14161a; border:1px solid rgba(255,255,255,0.09);
             border-radius:12px; padding:12px; display:flex; flex-direction:column; cursor:pointer;
             transition:border-color .12s, box-shadow .12s; }
@@ -2440,7 +3238,11 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-name { font-weight:700; color:#e8eaed; font-size:15px; }
         .traverse-gallery-overlay .tg-badge { display:inline-block; padding:2px 10px; border-radius:999px;
             font-size:11px; font-weight:700; color:#0d0f12; white-space:nowrap; }
+        .traverse-gallery-overlay .tg-badges { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
         .traverse-gallery-overlay .tg-sub { color:#8a9099; font-size:12px; margin:3px 0 9px 0; }
+        .traverse-gallery-overlay .tg-order { color:#7fb0ee; font-size:11px; margin:-4px 0 8px; }
+        .traverse-gallery-overlay .tg-rank-basis { color:#b8c0ca; font-size:11.5px; line-height:1.45;
+            margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.07); }
         .traverse-gallery-overlay .tg-stats { display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; }
         .traverse-gallery-overlay .tg-st { display:flex; flex-direction:column; }
         .traverse-gallery-overlay .tg-stk { font-size:10px; color:#8a9099; text-transform:uppercase;
@@ -2464,6 +3266,10 @@ function showResultGallery(results) {
             gap:10px; margin-top:13px; }
         .traverse-gallery-overlay .tg-d-name { font-weight:700; color:#f2f4f7; font-size:17px; }
         .traverse-gallery-overlay .tg-d-sub { color:#8a9099; font-size:12.5px; margin-top:3px; }
+        .traverse-gallery-overlay .tg-d-order { color:#7fb0ee; font-size:12px; margin-top:4px; }
+        .traverse-gallery-overlay .tg-d-rank { color:#d8dde4; font-size:13px; line-height:1.55;
+            margin:12px 0 4px; padding:10px 11px; background:#171b20; border-left:3px solid #7fb0ee;
+            border-radius:5px; }
         .traverse-gallery-overlay .tg-d-metrics { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px 12px;
             margin:13px 0 4px 0; padding:11px; background:#15181d; border-radius:8px; }
         .traverse-gallery-overlay .tg-d-st { display:flex; flex-direction:column; }
@@ -2552,10 +3358,34 @@ function showResultGallery(results) {
     // one-line explainer
     const explain = document.createElement("div");
     explain.className = "tg-explain";
-    explain.textContent = "Each tile is a distinct physical interpretation consistent with the same " +
-        "lines of sight, ranked by physical plausibility. Click a tile to see how its numbers were derived, " +
-        "what constrains it, and where it sits in the solution space — then “Use This” to apply it.";
+    explain.textContent = "Results are grouped by the question they answer. There is no global 'most likely object' " +
+        "ranking: trajectory families, forward models, catalogue checks, and estimator diagnostics use different " +
+        "assumptions and scores. Order is only meaningful within a group. Open a tile for the exact rank basis.";
     panel.appendChild(explain);
+
+    // Circular-LOS provenance banner: when the sightlines are CONSTRUCTED from
+    // the target being tested (camera aimed To Target + raw camera-center LOS),
+    // the whole gallery is an internal-consistency check, not discovery — say
+    // so where it cannot be missed.
+    if (results.provenance && results.provenance.circular) {
+        const warn = document.createElement("div");
+        warn.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
+            "background:#4a3a12; color:#ffd479; border:1px solid #8a6d2a; font-size:13px;";
+        warn.textContent = "⚠ Constructed LOS — validation only. " + results.provenance.reason +
+            " Fits that recover the target confirm the scene's internal consistency; they are NOT " +
+            "independent evidence of what the object is. Use independently measured camera attitude " +
+            "and video tracking before treating the result as inference.";
+        panel.appendChild(warn);
+    }
+    if (results.failures && results.failures.length) {
+        const warn = document.createElement("div");
+        warn.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
+            "background:#3b2420; color:#ffb4a8; border:1px solid #704039; font-size:13px;";
+        warn.textContent = `${results.failures.length} analysis check(s) failed or were unavailable: ` +
+            results.failures.map((f) => `${f.method} (${f.error})`).join("; ") +
+            ". They were not silently counted as evidence.";
+        panel.appendChild(warn);
+    }
 
     const toolbar = document.createElement("div");
     toolbar.className = "tg-toolbar";
@@ -2566,11 +3396,11 @@ function showResultGallery(results) {
     syncOrientationBtn.title = "When on, dragging one 3D graph rotates every graph to match.";
     syncOrientationBtn.setAttribute("aria-pressed", "true");
     const syncScaleBtn = document.createElement("button");
-    syncScaleBtn.className = "tg-toggle";
+    syncScaleBtn.className = "tg-toggle on";
     syncScaleBtn.type = "button";
     syncScaleBtn.textContent = "Sync Scale";
     syncScaleBtn.title = "When on, compare every graph using the selected graph's size scale.";
-    syncScaleBtn.setAttribute("aria-pressed", "false");
+    syncScaleBtn.setAttribute("aria-pressed", "true");
     const setToggleState = (button, on) => {
         button.classList.toggle("on", on);
         button.setAttribute("aria-pressed", on ? "true" : "false");
@@ -2621,7 +3451,9 @@ function showResultGallery(results) {
     dActions.className = "tg-d-actions";
     const useBtn = document.createElement("button");
     useBtn.className = "tg-use";
-    useBtn.textContent = "Use This";
+    useBtn.textContent = "Use exact result";
+    useBtn.title = "Install the exact trajectory shown here as an analysis-result snapshot. " +
+        "Change assumptions, then run Analyze again to produce a new snapshot.";
     dActions.appendChild(useBtn);
     const dContent = document.createElement("div");
     dContent.className = "tg-d-content";
@@ -2632,9 +3464,9 @@ function showResultGallery(results) {
         if (i < 0 || i >= tiles.length) return;
         selected = i;
         tileEls.forEach((el, k) => el.classList.toggle("selected", k === i));
-        const {h, r} = tiles[i];
+        const {h, r, category, groupIndex, groupSize, tied} = tiles[i];
         disposeDetailChart();
-        dContent.innerHTML = buildDetailHTML(h, r, i === 0, ctx);
+        dContent.innerHTML = buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied);
         const detailCanvas = dContent.querySelector("canvas[data-chart-role='detail']");
         if (detailCanvas) {
             detailChart = registerChart(new Chart3D(detailCanvas, hypothesisVolumeScene(dataset, h),
@@ -2649,7 +3481,7 @@ function showResultGallery(results) {
             useBtn.disabled = true;
             useBtn.onclick = null;
         } else {
-            useBtn.textContent = `Use “${h.name}”`;
+            useBtn.textContent = `Use exact “${h.name}”`;
             useBtn.disabled = false;
             useBtn.onclick = () => {
                 let applied = null;
@@ -2658,19 +3490,31 @@ function showResultGallery(results) {
                 // simply the candidate's own name (e.g. Minimum Acceleration →
                 // Global Fit: Minimum Acceleration, or an air-speed candidate
                 // landing on Constant Ground Speed in a sitch with no
-                // air-speed method).
-                showGalleryToast(applied && applied !== h.name
-                    ? `Applied: ${h.name} (method: ${applied})`
-                    : `Applied: ${h.name}`);
+                // air-speed method). A null return means no live method
+                // matched — say so instead of claiming success.
+                showGalleryToast(applied
+                    ? (applied !== h.name ? `Applied: ${h.name} (method: ${applied})`
+                                          : `Applied: ${h.name}`)
+                    : `No matching traverse method to apply for: ${h.name}`);
             };
         }
     };
 
-    tiles.forEach(({h, r}, i) => {
-        const badge = tierBadge(r.rank, i === 0);
+    tiles.forEach(({h, r, category, groupIndex, groupSize, tied}, i) => {
+        if (groupIndex === 0) {
+            const heading = document.createElement("div");
+            heading.className = "tg-group-head";
+            heading.innerHTML = `<div class="tg-group-title">${escapeHtml(category.label)}</div>` +
+                `<div class="tg-group-desc">${escapeHtml(category.description)}</div>`;
+            grid.appendChild(heading);
+        }
+        const badges = [tierBadge(r), ...completenessBadges(r)];
+        const badgesHTML = badges.map((badge) =>
+            `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
         const statsHTML = hypothesisStats(h).map(([k, v]) =>
             `<div class="tg-st"><div class="tg-stk">${escapeHtml(k)}</div>` +
             `<div class="tg-stv">${escapeHtml(v)}</div></div>`).join("");
+        const tieText = tied ? " · display-score tie" : "";
 
         const tile = document.createElement("div");
         tile.className = "tg-tile";
@@ -2683,10 +3527,12 @@ function showResultGallery(results) {
             `</div>` +
             `<div class="tg-tile-h">` +
                 `<span class="tg-name">${escapeHtml(h.name)}</span>` +
-                `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>` +
+                `<span class="tg-badges">${badgesHTML}</span>` +
             `</div>` +
             `<div class="tg-sub">${escapeHtml(h.subtitle)}</div>` +
-            `<div class="tg-stats">${statsHTML}</div>`;
+            `<div class="tg-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}</div>` +
+            `<div class="tg-stats">${statsHTML}</div>` +
+            `<div class="tg-rank-basis"><strong>Rank basis:</strong> ${escapeHtml(rankingExplanation(h, r))}</div>`;
         tile.addEventListener("click", () => selectTile(i));
         tileEls.push(tile);
         grid.appendChild(tile);
@@ -2699,7 +3545,25 @@ function showResultGallery(results) {
     const reportBtn = document.createElement("button");
     reportBtn.className = "tg-btn tg-btn-primary";
     reportBtn.textContent = "Open Full Report";
-    reportBtn.addEventListener("click", () => openReport(html));
+    reportBtn.addEventListener("click", () => {
+        // built lazily on first open (and cached) — see runTraverseAnalysis
+        if (!results.html && typeof results.buildHtml === "function") {
+            reportBtn.textContent = "Building report…";
+            reportBtn.disabled = true;
+            // yield a frame so the label paints before the heavy chart encodes
+            requestAnimationFrame(() => setTimeout(() => {
+                try {
+                    results.html = results.buildHtml();
+                    openReport(results.html);
+                } finally {
+                    reportBtn.textContent = "Open Full Report";
+                    reportBtn.disabled = false;
+                }
+            }, 0));
+            return;
+        }
+        openReport(results.html);
+    });
     const closeBtn = document.createElement("button");
     closeBtn.className = "tg-btn tg-btn-ghost";
     closeBtn.textContent = "Close";
@@ -2726,7 +3590,8 @@ function showResultGallery(results) {
             chartGroup, {pad: 0.14}));
     }
 
-    // Start populated with the Best (top-ranked) result.
+    // Start with the first trajectory-family result. This is only the leader of
+    // that comparison group, not a global object winner.
     if (tiles.length > 0) selectTile(0);
 }
 
@@ -2758,6 +3623,10 @@ function applyHypothesis(hyp) {
         if (nd && nd.setValueWithUnits) nd.setValueWithUnits(ms / KNOTS_TO_MS, "nautical", "speed");
     };
     const sel = resolveTraverseSelect();
+    let snapshotNode = sel && sel.inputs ? sel.inputs["Analysis Result Snapshot"] : null;
+    if (typeof snapshotNode === "string") snapshotNode = NodeMan.get(snapshotNode, false);
+    const canApplySnapshot = !!(snapshotNode && typeof snapshotNode.setAnalysisTrack === "function"
+        && hyp.track && hyp.applyContext);
     // Select the first available option (matching on the switch's KEYS — the
     // per-sitch spellings) and return its DISPLAY label, or null if none matched.
     const selectFirst = (opts) => {
@@ -2783,11 +3652,35 @@ function applyHypothesis(hyp) {
             }
         }
     };
+    // The gallery's physics fits always run the generic AUTO envelope, so make
+    // the live fit match: reset the make/model sub-dropdown to AUTO (its first
+    // option). A previously selected specific airframe would otherwise bound
+    // the applied fit differently from the tile the user chose.
+    const setAutoSubModel = (switchId) => {
+        const n = NodeMan.get(switchId, false);
+        if (n && n.inputs) n.selectOption(Object.keys(n.inputs)[0]);
+    };
     let applied = null;
     // Contenders read straight off a live method node carry the exact switch
     // label — selecting it re-applies that method's own fit.
-    if (hyp.params && hyp.params.methodLabel) {
+    if (hyp.params && hyp.params.methodLabel && !canApplySnapshot) {
         applied = selectFirst([hyp.params.methodLabel]);
+        setRenderOne(true);
+        return applied;
+    }
+    // Snapshot application is intentionally assumption-neutral: installing a
+    // reviewed trajectory must not also overwrite start-distance/speed priors
+    // and bias the next analysis toward the just-selected answer. Explicit GUI
+    // tweaks remain available to the user after the snapshot is displayed.
+    if (canApplySnapshot && snapshotNode.setAnalysisTrack(hyp.track,
+        hyp.applyContext.originLat, hyp.applyContext.originLon,
+        hyp.applyContext.frame0, hyp.name)) {
+        const wasSelected = sel.choice === "Analysis Result Snapshot";
+        applied = selectFirst(["Analysis Result Snapshot"]);
+        // CNodeSwitch.selectOption() is a no-op when this option is already
+        // selected. Cascade explicitly so applying result B after result A
+        // refreshes every display/graph that cached A.
+        if (wasSelected) snapshotNode.recalculateCascade();
         setRenderOne(true);
         return applied;
     }
@@ -2797,39 +3690,63 @@ function applyHypothesis(hyp) {
             setSpeed("speedScaled", hyp.params.airSpeed);
             // A true air-speed traverse reproduces the fitted track; only if the
             // sitch has none, fall back to ground speed (identical in zero wind).
-            applied = selectFirst(AIR_SPEED_KEYS) ?? selectFirst(GROUND_SPEED_KEYS);
+            if (!canApplySnapshot) {
+                applied = selectFirst(AIR_SPEED_KEYS) ?? selectFirst(GROUND_SPEED_KEYS);
+            }
             break;
         case "constAlt":
             // "Constant Altitude" derives its held altitude from startDistance,
             // reproducing the fitted track. (Not "Starting Altitude", which reads
             // a separate startAltitude slider we don't set here.)
             setBig("startDistance", hyp.params.range);
-            applied = selectFirst(["Constant Altitude"]);
+            if (!canApplySnapshot) applied = selectFirst(["Constant Altitude"]);
             break;
         case "plausible":
-            applied = selectFirst(["Global Fit: Plausible"]);
+            if (!canApplySnapshot) applied = selectFirst(["Global Fit: Plausible"]);
             break;
         case "saddle":
-            applied = selectFirst(["Global Fit: Minimum Speed"]);
+            if (!canApplySnapshot) applied = selectFirst(["Global Fit: Minimum Speed"]);
             break;
         case "ground":
         case "fixedPoint":
-            // A stationary object: hold it still (GROUND speed 0) at the fitted
-            // point's range — air speed 0 would drift with the wind. A point "at
-            // infinity" (the Moon-like reading) has no finite traverse, so leave
-            // the current method untouched.
+            // A stationary object: the dedicated stationary-point method holds
+            // the SAME least-squares fixed point the tile shows (sea-level
+            // pinned for the Ground Object). No on-ray traverse can represent
+            // it — walking rays at ground speed 0 still moves by the rays'
+            // closest-approach distance each frame, drifting off the point and
+            // flagging over-speed (white) segments. A point "at infinity" (the
+            // Moon-like reading) has no finite traverse: leave the method be.
             if (hyp.atInfinity) break;
             setBig("startDistance", hyp.params.distance);
-            setSpeed("speedScaled", 0);
-            applied = selectFirst(GROUND_SPEED_KEYS) ?? selectFirst(AIR_SPEED_KEYS);
+            if (!canApplySnapshot) {
+                applied = selectFirst(hyp.key === "ground"
+                    ? ["Global Fit: Ground Object"] : ["Global Fit: Stationary Point"]);
+            }
+            if (!applied && !canApplySnapshot) {
+                // Legacy sitch without the stationary methods: best effort is
+                // the old ground-speed-0 hold (drifts; kept only as fallback).
+                setSpeed("speedScaled", 0);
+                applied = selectFirst(GROUND_SPEED_KEYS) ?? selectFirst(AIR_SPEED_KEYS);
+            }
+            break;
+        case "groundVehicle":
+            // The moving sightline-meets-ground point; the live method computes
+            // the same plane/track the gallery fitted.
+            if (!canApplySnapshot) applied = selectFirst(["Ground Vehicle"]);
             break;
         case "aircraft":
             setModel(["Fixed Wing Aircraft"]);
-            applied = selectFirst(["Global Fit: Physics"]);
+            setAutoSubModel("fixedWingModelChoice");
+            if (!canApplySnapshot) applied = selectFirst(["Global Fit: Physics"]);
             break;
         case "lantern":
             setModel(["Sky Lantern"]);
-            applied = selectFirst(["Global Fit: Physics"]);
+            if (!canApplySnapshot) applied = selectFirst(["Global Fit: Physics"]);
+            break;
+        case "quadcopter":
+            setModel(["Quadcopter"]);
+            setAutoSubModel("quadModelChoice");
+            if (!canApplySnapshot) applied = selectFirst(["Global Fit: Physics"]);
             break;
     }
     setRenderOne(true);
@@ -3148,7 +4065,7 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
     };
     const color = h.color || VIZ.constAir;
 
-    const gURL = lineChart({...base, title: "Maneuvering g-force", yLabel: "g",
+    const gURL = lineChart({...base, title: "Kinematic acceleration", yLabel: "acceleration (g)",
         series: [{xs, ys: pick(m.series.gLoad), color, label: "g-force"}]});
 
     // speed: air speed always; ground speed too when the wind makes them differ
@@ -3164,14 +4081,14 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
                {xs, ys: gndKt, color: VIZ.muted, label: "ground speed", width: 1.5}]
             : [{xs, ys: airKt, color, label: "air speed"}]});
 
-    // LOS error, with the dataset's empirical noise floor as a reference line
+    // LOS error, with the flexible generic-fit residual as a reference line
     // on the physics fits that carry one
     const errSeries = [{xs, ys: pick(losErrorSeriesDeg(dataset, h.track)),
         color, label: "LOS error"}];
     const floor = h.params && h.params.errFloor;
     if (isFinite(floor) && floor >= 0.02) {
         errSeries.push({xs: [xs[0], xs[xs.length - 1]], ys: [floor, floor],
-            color: VIZ.muted, label: "noise floor", width: 1.5, alpha: 0.9});
+            color: VIZ.muted, label: "generic-fit reference", width: 1.5, alpha: 0.9});
     }
     const errURL = lineChart({...base, title: "LOS fit error", yLabel: "degrees",
         series: errSeries});
@@ -3245,7 +4162,7 @@ function sweepHeatmap(sweep) {
         grid: false,
     });
     chart.marker(toNM(sweep.best.startDist), Math.log10(toKt(sweep.best.speed)), VIZ.constAir,
-        `best: ${nm1(sweep.best.startDist)} NM @ ${kt1(sweep.best.speed)} kt`);
+        `selected family representative: ${nm1(sweep.best.startDist)} NM @ ${kt1(sweep.best.speed)} kt`);
 
     // color scale bar (log): dark bottom = low score = plausible
     const bx = chart.w - chart.m.right + 34;
@@ -3549,38 +4466,27 @@ function minRegion(profile, factor = 1.5) {
 }
 
 function buildReportHypothesisDetails(dataset, rankedHyps, ss) {
-    return rankedHyps.map(({h, r}, i) => {
-        const chart = planViewChart(dataset,
-            [{track: h.track, color: h.color, label: h.name}],
-            {width: 940, height: 620, title: null, compact: false, legend: true,
-                atInfinity: !!h.atInfinity, margin: {left: 64, right: 20, top: 22, bottom: 48}});
+    return rankedHyps.map(({h, r, tied, category, groupIndex, groupSize}) => {
         const statsHTML = hypothesisStats(h).map(([k, v]) =>
             `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
             `<div class="stv">${escapeHtml(v)}</div></div>`).join("");
         const prose = detailProse(h, r, ss);
         const spaceHTML = solutionSpaceHTML(h, ss);
-        // per-frame diagnostics: g-force, speed, LOS error over the clip
-        const sc = hypothesisSeriesCharts(dataset, h);
-        const seriesHTML = sc ? `
-            <div class="solution-series">
-                <img src="${sc.gURL}" alt="Maneuvering g-force over the clip">
-                <img src="${sc.spdURL}" alt="Speed over the clip">
-                <img src="${sc.errURL}" alt="LOS fit error over the clip">
-            </div>` : "";
+        const badgesHTML = [tierBadge(r), ...completenessBadges(r)].map((badge) =>
+            `<span class="pill" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
+        const tieText = tied ? " · within the 0.05 display-score tie threshold" : "";
         return `
         <article class="solution-detail">
-            <figure>
-                <img src="${chart}" alt="Overhead plan view of the ${escapeHtml(h.name)} interpretation">
-            </figure>
             <div class="solution-head">
                 <div>
                     <h3>${escapeHtml(h.name)}</h3>
                     <div class="solution-sub">${escapeHtml(h.subtitle || "")}</div>
                 </div>
-                <span class="pill" style="background:${r.color}">${escapeHtml(verdictHeadline(r, i === 0))}</span>
+                <span class="solution-pills">${badgesHTML}</span>
             </div>
+            <div class="solution-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}</div>
             <div class="solution-metrics">${statsHTML}</div>
-            ${seriesHTML}
+            <p class="rank-basis"><strong>Why it is screened and ordered here:</strong> ${escapeHtml(rankingExplanation(h, r))}</p>
             <p class="solution-lead">${escapeHtml(prose.lead)}</p>
             <h4>How these numbers were derived</h4>
             <p>${prose.derived}</p>
@@ -3597,13 +4503,14 @@ function buildReportHTML(ctx) {
         sitName, dataset, windText, speedTarget,
         sweep, fastProfile, slowProfile, aircraft,
         bestTrack, bestMetrics, slowBestRow, slowTrack,
-        closeLoM, closeHiM, hypotheses,
+        closeLoM, closeHiM, hypotheses, provenance, failures = [], manifest = {},
     } = ctx;
     const {n, fps, D} = dataset;
     const globalFrame0 = dataset.frame0 ?? 0;
     const globalFrame1 = dataset.frame1 ?? (globalFrame0 + n - 1);
     const durationS = (n - 1) / fps;
     const b = sweep.best;
+    const bRaw = sweep.bestRaw ?? b;
     const ap = aircraft.params;
 
     // LOS az/el at first/last frame (ENU: az from North, clockwise)
@@ -3650,7 +4557,7 @@ function buildReportHTML(ctx) {
         ],
     });
     const chartC1 = tsChart("Air speed", "air speed (kt)", bs.airSpeed, as.airSpeed, toKt);
-    const chartC2 = tsChart("Maneuvering g-load", "g-load (g)", bs.gLoad, as.gLoad);
+    const chartC2 = tsChart("Kinematic acceleration", "acceleration (g)", bs.gLoad, as.gLoad);
     const chartC3 = tsChart("Turn rate", "turn rate (°/s)", bs.turnRate, as.turnRate);
 
     const chartD = planViewChart(dataset, [
@@ -3681,7 +4588,7 @@ function buildReportHTML(ctx) {
         Forcing the object to a start range of ${closeLabel}, even the most benign trajectory under the
         fast-object target needs an air speed peaking at
         <strong>${kt1(closeFast.metrics.airSpeed.max)} kt</strong>, with turn-rate spikes of
-        <strong>${statSpike(closeFast.metrics.turnRate).toFixed(2)} °/s</strong> and maneuvering up to
+        <strong>${statSpike(closeFast.metrics.turnRate).toFixed(2)} °/s</strong> and kinematic acceleration up to
         <strong>${closeFast.metrics.gLoad.max.toFixed(2)} g</strong> (score ${closeFast.score.toFixed(2)}).
         Under the slow-object hypothesis (soft target ~5 kt) the smoothest ${closeLabel} solution still requires
         a peak air speed of <strong>${kt1(closeSlow.metrics.airSpeed.max)} kt</strong>, turn-rate spikes of
@@ -3690,19 +4597,43 @@ function buildReportHTML(ctx) {
         This quantifies what an object at that range would have to do to stay consistent with the
         sightline data.</p>` : "";
 
+    const sweepEdges = [];
+    if (sweep.boundaryAxes?.range) {
+        const loR = Math.min(...sweep.ranges), hiR = Math.max(...sweep.ranges);
+        if (sweep.familyBand.rangeLo <= loR * 1.001) sweepEdges.push("lower range");
+        if (sweep.familyBand.rangeHi >= hiR * 0.999) sweepEdges.push("upper range");
+    }
+    if (sweep.boundaryAxes?.speed) {
+        const loV = Math.min(...sweep.speeds), hiV = Math.max(...sweep.speeds);
+        if (sweep.familyBand.speedLo <= loV * 1.001) sweepEdges.push("lower speed");
+        if (sweep.familyBand.speedHi >= hiV * 0.999) sweepEdges.push("upper speed");
+    }
+    const sweepResultHTML = sweep.boundaryLimited ? `
+        <p><strong>Constant-air-speed search incomplete at the ${escapeHtml(sweepEdges.join(" and ") || "tested")} boundary.</strong>
+        A family spanning <strong>${nm1(sweep.familyBand.rangeLo)}–${nm1(sweep.familyBand.rangeHi)} NM</strong> and
+        <strong>${kt1(sweep.familyBand.speedLo)}–${kt1(sweep.familyBand.speedHi)} kt</strong> scores similarly.
+        The displayed <strong>${nm1(b.startDist)} NM / ${kt1(b.speed)} kt</strong> member is a deterministic,
+        prior-selected representative; an edge value is a tested floor or ceiling, not an estimated optimum.
+        Its full-resolution track reaches ${bestMetrics.gLoad.rms.toFixed(2)} g RMS and
+        ${bestMetrics.gLoad.max.toFixed(2)} g maximum kinematic acceleration.</p>` : `
+        <p>The constant-air-speed grid search selects a family representative at a start range of
+        <strong>${nm1(b.startDist)} NM</strong> and <strong>${kt1(b.speed)} kt</strong> air speed
+        (grid score ${b.score.toFixed(2)}). Its full-resolution displayed track reaches
+        ${bestMetrics.gLoad.rms.toFixed(2)} g RMS and
+        <strong>${bestMetrics.gLoad.max.toFixed(2)} g</strong> maximum kinematic acceleration. The raw score minimum is
+        <strong>${nm1(bRaw.startDist)} NM / ${kt1(bRaw.speed)} kt</strong>
+        (score ${bRaw.score.toFixed(2)}). The ten lowest-score grid cells fall
+        between ${nm1(topRangeLo)}–${nm1(topRangeHi)} NM and ${kt1(topSpeedLo)}–${kt1(topSpeedHi)} kt.</p>`;
+
     const summaryHTML = `
         <p>Over <strong>${n}</strong> frames (${globalFrame0}–${globalFrame1}, ${durationS.toFixed(1)} s) the sensor's line of sight swept
         from azimuth ${azOf(0).toFixed(1)}° / elevation ${elOf(0).toFixed(1)}° to azimuth
         ${azOf(n - 1).toFixed(1)}° / elevation ${elOf(n - 1).toFixed(1)}° (wind: ${escapeHtml(windText)}).
-        Lines of sight alone never uniquely determine a trajectory, so each analyzer below asks a different
+        Lines of sight alone often do not uniquely determine a trajectory, so each analyzer below asks a different
         question of the same data; the interesting output is the <em>family</em> of plausible solutions and the
         maneuvering cost of everything else.</p>
 
-        <p>The constant-air-speed grid search finds its best solution at a start range of
-        <strong>${nm1(b.startDist)} NM</strong> and <strong>${kt1(b.speed)} kt</strong> air speed
-        (score ${b.score.toFixed(2)}). That solution maneuvers at ${b.metrics.gLoad.rms.toFixed(2)} g RMS,
-        peaking at <strong>${b.metrics.gLoad.max.toFixed(2)} g</strong>. The ten best grid solutions all fall
-        between ${nm1(topRangeLo)}–${nm1(topRangeHi)} NM and ${kt1(topSpeedLo)}–${kt1(topSpeedHi)} kt.</p>
+        ${sweepResultHTML}
 
         <p>Sweeping the globally smoothest LOS-riding trajectory across assumed start ranges: the fast-object
         profile (soft target ${kt1(speedTarget)} kt) reaches its minimum at
@@ -3711,54 +4642,62 @@ function buildReportHTML(ctx) {
         (soft target 5 kt) reaches its minimum at <strong>${nm1(slowRegion.best.startDist)} NM</strong>
         (region ${nm1(slowRegion.loM)}–${nm1(slowRegion.hiM)} NM).</p>
 
-        <p>The parametric fixed-wing fit (constant TAS, slowly varying turn rate, constant climb, advected by
-        the wind) converges to a start range of <strong>${nm1(ap.startDist)} NM</strong>, heading
-        <strong>${ap.heading.toFixed(1)}° true</strong>, TAS <strong>${kt1(ap.tas)} kt</strong>,
+        <p>The parametric fixed-wing fit (constant horizontal airspeed, slowly varying turn rate, constant climb, advected by
+        the wind) returned its lowest-cost deterministic solution at a start range of <strong>${nm1(ap.startDist)} NM</strong>, heading
+        <strong>${ap.heading.toFixed(1)}° in the sensor-origin ENU frame</strong>, horizontal airspeed <strong>${kt1(ap.tas)} kt</strong>,
         turn rate ${ap.turnRate.toFixed(3)} °/s, climb ${fpm0(ap.climb)} fpm, with a mean LOS error of
         <strong>${aircraft.errDeg.toFixed(3)}°</strong>.</p>
         ${closeRangeHTML}`;
 
     // ---- candidate-interpretation gallery, comparison, verdict ----
-    const rankedHyps = rankHypotheses(hypotheses);
-    const galleryHyps = rankedHyps.map(({h}) => h);
-    const cardsHTML = galleryHyps.map((h) => {
-        const r = plausibilityRating(h);
-        const thumb = hypothesisThumbnail(dataset, h);
-        // same six rows as the in-app tiles (incl. the noise-floor multiple
-        // on the physics fits' LOS error)
-        const stats = hypothesisStats(h);
-        const statsHTML = stats.map(([k, v]) =>
-            `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
-            `<div class="stv">${escapeHtml(v)}</div></div>`).join("");
-        return `
-        <div class="card">
-            <div class="card-h">
-                <span class="card-name">${escapeHtml(h.name)}</span>
-                <span class="pill" style="background:${r.color}">${escapeHtml(r.label)}</span>
-            </div>
-            <div class="card-sub">${escapeHtml(h.subtitle)}</div>
-            <img class="card-thumb" src="${thumb}" alt="Overhead view of the ${escapeHtml(h.name)} trajectory">
-            <div class="card-stats">${statsHTML}</div>
-        </div>`;
+    const rankedGroups = groupAndRankHypotheses(hypotheses);
+    const rankedHyps = rankedGroups.flatMap((group) => group.items);
+    const cardsHTML = rankedGroups.map((group) => {
+        const cards = group.items.map(({h, r, tied, groupIndex, groupSize}) => {
+            const thumb = hypothesisThumbnail(dataset, h);
+            const statsHTML = hypothesisStats(h).map(([k, v]) =>
+                `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
+                `<div class="stv">${escapeHtml(v)}</div></div>`).join("");
+            const badgesHTML = [tierBadge(r), ...completenessBadges(r)].map((badge) =>
+                `<span class="pill" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
+            const tieText = tied ? " · display-score tie" : "";
+            return `
+            <div class="card">
+                <div class="card-h">
+                    <span class="card-name">${escapeHtml(h.name)}</span>
+                    <span class="card-pills">${badgesHTML}</span>
+                </div>
+                <div class="card-sub">${escapeHtml(h.subtitle)}</div>
+                <div class="card-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(group.shortLabel)}${escapeHtml(tieText)}</div>
+                <img class="card-thumb" src="${thumb}" alt="Overhead view of the ${escapeHtml(h.name)} trajectory">
+                <div class="card-stats">${statsHTML}</div>
+                <p class="rank-basis"><strong>Rank basis:</strong> ${escapeHtml(rankingExplanation(h, r))}</p>
+            </div>`;
+        }).join("");
+        return `<div class="candidate-group"><h3>${escapeHtml(group.label)}</h3>` +
+            `<p class="sub">${escapeHtml(group.description)}</p><div class="cards">${cards}</div></div>`;
     }).join("");
 
-    const compRows = rankedHyps.map(({h, r}) => {
+    const compRows = rankedHyps.map(({h, r, category, groupIndex}) => {
         const m = h.metricsFull;
-        const losErr = h.errDeg > 0 ? h.errDeg.toFixed(3) : "0.000";
+        const losErr = formatRawLosResidual(h);
         return `
-        <tr${r.label === "High" ? ' class="best"' : ""}>
+        <tr${r.rank >= 3 ? ' class="best"' : ""}>
+            <td>${escapeHtml(category.shortLabel)}</td>
+            <td>${groupIndex + 1}</td>
             <td>${escapeHtml(h.name)}</td>
             <td>${nm1(m.range.min)}–${nm1(m.range.max)}</td>
             <td>${kt1(m.airSpeed.mean)}</td>
             <td>${(m.altitude.mean / 0.3048 / 1000).toFixed(1)}</td>
             <td>${fpm0(m.verticalSpeed.mean)}</td>
             <td>${m.gLoad.max.toFixed(2)}</td>
-            <td>${losErr}</td>
+            <td>${escapeHtml(losErr)}</td>
             <td><span class="pill" style="background:${r.color}">${escapeHtml(r.label)}</span></td>
+            <td>${escapeHtml(rankingExplanation(h, r))}</td>
         </tr>`;
     }).join("");
 
-    const verdictHTML = buildVerdict(hypotheses);
+    const verdictHTML = buildVerdict(hypotheses, provenance);
     const reportSS = analyzeSolutionSpace({dataset, fastProfile});
     const solutionDetailsHTML = buildReportHypothesisDetails(dataset, rankedHyps, reportSS);
 
@@ -3779,7 +4718,11 @@ function buildReportHTML(ctx) {
             <td>${r.heading.toFixed(1)}</td><td>${kt1(r.tas)}</td>
             <td>${r.turnRate.toFixed(3)}</td><td>${r.turnAccel.toFixed(4)}</td>
             <td>${fpm0(r.climb)}</td>
+            <td>${r.de?.seed !== undefined ? `0x${r.de.seed.toString(16).padStart(8, "0")}` : "—"}</td>
+            <td>${r.de?.evaluations ?? "—"}</td>
+            <td>${escapeHtml(`${r.de?.stopReason ?? "unknown"} / ${r.polishStopReason ?? "unknown"}`)}</td>
         </tr>`).join("");
+    const manifestJSON = escapeHtml(JSON.stringify(manifest, null, 2));
 
     // ---- footer / version ----
     let version = "";
@@ -3787,7 +4730,7 @@ function buildReportHTML(ctx) {
 
     const scoreNote = "score = 4·g<sub>RMS</sub> + g<sub>max</sub> + 0.05·turn σ " +
         "+ 0.02·max(0, |VS<sub>mean</sub>|−5) + 0.2·((v−v<sub>target</sub>)/250 kt)² " +
-        "+ (speed-hold error/10 kt)² — lower is more plausible";
+        "+ (speed-hold error/10 kt)² — lower is a better match to this heuristic";
 
     const fileName = "Traverse-Analysis-" +
         String(sitName).replace(/[^A-Za-z0-9._-]+/g, "_") + ".html";
@@ -3843,11 +4786,15 @@ footer { margin-top: 44px; color: #8a9099; font-size: 13px;
     display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 14px; margin: 18px 0; }
+.candidate-group { margin: 26px 0 34px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); }
+.candidate-group h3 { color:#dce3eb; font-size:16px; margin:0 0 3px; }
 .card { background: #14161a; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
     padding: 12px; display: flex; flex-direction: column; }
 .card-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .card-name { font-weight: 700; color: #e8eaed; font-size: 15px; }
+.card-pills, .solution-pills { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
 .card-sub { color: #8a9099; font-size: 12px; margin: 3px 0 9px 0; }
+.card-order, .solution-order { color:#7fb0ee; font-size:12px; margin:0 0 9px; }
 .card-thumb { width: 100%; height: auto; display: block; border-radius: 6px;
     border: 1px solid rgba(255,255,255,0.06); }
 .card-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; margin-top: 11px; }
@@ -3866,12 +4813,22 @@ footer { margin-top: 44px; color: #8a9099; font-size: 13px;
 .solution-series img { flex: 1 1 30%; min-width: 260px; max-width: 100%; height: auto;
     border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); }
 .solution-lead { color: #e0e4ea; font-size: 15px; }
+.rank-basis { color:#c7ced7; font-size:13px; line-height:1.5; padding:9px 11px;
+    background:#171b20; border-left:3px solid #7fb0ee; border-radius:5px; }
 .solution-detail h4 { color: #7fb0ee; font-size: 11.5px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.05em; margin: 18px 0 5px 0; }
 .solution-detail p { max-width: 78ch; }
 .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px;
     font-weight: 700; color: #0d0f12; white-space: nowrap; }
 td .pill { color: #0d0f12; }
+td:last-child, th:last-child { white-space:normal; min-width:320px; text-align:left; }
+.warning { margin: 16px 0; padding: 12px 14px; border-radius: 8px;
+    background: #4a3a12; color: #ffd479; border: 1px solid #8a6d2a; }
+details.manifest { background:#14161a; border:1px solid rgba(255,255,255,0.08);
+    border-radius:8px; padding:10px 12px; }
+details.manifest summary { cursor:pointer; color:#e8eaed; font-weight:600; }
+details.manifest pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.45 ui-monospace, monospace;
+    color:#b9bfc7; }
 </style>
 </head>
 <body>
@@ -3887,26 +4844,43 @@ td .pill { color: #0d0f12; }
         <div><div class="k">LOS elevation</div><div class="v">${elOf(0).toFixed(1)}° → ${elOf(n - 1).toFixed(1)}°</div></div>
         <div><div class="k">Wind used</div><div class="v">${escapeHtml(windText)}</div></div>
         <div><div class="k">Speed target</div><div class="v">${kt1(speedTarget)} kt</div></div>
+        <div><div class="k">Analysis coverage</div><div class="v">${hypotheses.filter((h) => h.track).length} results · ${failures.length} failed/unavailable</div></div>
     </div>
 </header>
 
+${provenance?.circular ? `<div class="warning"><strong>Constructed LOS — validation only.</strong> ` +
+    `${escapeHtml(provenance.reason)} Fits below test internal consistency, not independent object inference.</div>` : ""}
+
 <section class="summary">
     <h2>Executive summary</h2>
+    <p><strong>Overall interpretation.</strong> ${verdictHTML}</p>
     ${summaryHTML}
+    ${failures.length ? `<p><strong>Unavailable checks:</strong> ${failures.map((f) =>
+        `${escapeHtml(f.method)} (${escapeHtml(f.error)})`).join("; ")}.</p>` : ""}
+</section>
+
+<section>
+    <h2>Run audit manifest</h2>
+    <p class="sub">Frozen headline inputs, effective timing, search bounds, completeness flags, optimizer seeds,
+    termination metadata, and check coverage for this run. This is an audit summary, not a self-contained input archive;
+    source files, full wind/terrain fields, and the exact application revision must also be retained for reproduction.</p>
+    <details class="manifest"><summary>Show machine-readable manifest</summary><pre>${manifestJSON}</pre></details>
 </section>
 
 <section>
     <h2>Candidate interpretations</h2>
-    <p class="sub">Each panel is a distinct physical model of what the object could be, shown as an
-    overhead (plan) view of that path intersecting the same lines of sight. The plausibility pill rates
-    each interpretation on peak maneuvering g, mean air speed, and how well it fits the sightlines.</p>
-    <div class="cards">${cardsHTML}</div>
+    <p class="sub">Panels include trajectory constraints, fitting algorithms, and forward physical models;
+    they are not independent object identifications and there is no global winner. Each path is shown against the same
+    sightlines and ordered only within its comparison group. Screening pills summarize maneuvering, peak speed,
+    completeness, active model limits, and raw LOS residual under the stated assumptions.</p>
+    ${cardsHTML}
 </section>
 
 <section>
     <h2>Candidate details</h2>
-    <p class="sub">Expanded notes for each candidate above, matching the interactive Details pane.
-    Each section uses the 2D overhead plan view for a static, printable record.</p>
+    <p class="sub">Expanded derivation, constraints, and solution-space notes for each candidate above.
+    Repeated per-candidate charts are omitted here; the shared comparison plots and full-resolution series below
+    provide the same evidence on common axes without duplicating dozens of large images.</p>
     ${solutionDetailsHTML}
 </section>
 
@@ -3915,19 +4889,15 @@ td .pill { color: #0d0f12; }
     <div class="tablebox">
     <table>
         <thead><tr>
-            <th>Interpretation</th><th>Range (NM)</th><th>Air spd (kt)</th><th>Alt (kft)</th>
-            <th>Climb (fpm)</th><th>Max g</th><th>LOS err (°)</th><th>Plausibility</th>
+            <th>Group</th><th>#</th><th>Interpretation</th><th>Range (NM)</th><th>Air spd (kt)</th><th>Alt (kft)</th>
+            <th>Climb (fpm)</th><th>Max kinematic accel (g)</th><th>Raw LOS residual</th><th>Screen</th><th>Rank basis</th>
         </tr></thead>
         <tbody>${compRows}</tbody>
     </table>
     </div>
-    <p class="sub">Sorted by plausibility, then by LOS fit error. Rows rated High are highlighted.
-    Alt is the mean track altitude; Range and LOS-error conventions match the cards above.</p>
-</section>
-
-<section class="summary">
-    <h2>Verdict</h2>
-    <p>${verdictHTML}</p>
+    <p class="sub">Grouped first, then ordered by completeness, broad screening tier, and within-group score.
+    No order across groups is implied. Rows passing the broad screen are highlighted. Alt and air speed are means;
+    the rank basis reports the quantities that actually control order.</p>
 </section>
 
 <section>
@@ -3956,14 +4926,14 @@ td .pill { color: #0d0f12; }
 </section>
 
 <section>
-    <h2>Best-solution time series</h2>
+    <h2>Selected constant-air representative: time series</h2>
     <div class="row">
         <figure><img src="${chartC1}" alt="Air speed time series"></figure>
         <figure><img src="${chartC2}" alt="G-load time series"></figure>
         <figure><img src="${chartC3}" alt="Turn rate time series"></figure>
     </div>
     <figure style="background:none;border:none;padding:0">
-        <figcaption>Per-frame physical demands of the best constant-air-speed solution and the
+        <figcaption>Per-frame physical demands of the selected constant-air-speed family representative and the
         aircraft fit. Values near the clip ends use shortened smoothing windows.</figcaption>
     </figure>
 </section>
@@ -3978,7 +4948,7 @@ td .pill { color: #0d0f12; }
 </section>
 
 <section>
-    <h2>Top 10 constant-air-speed solutions</h2>
+    <h2>10 lowest-score constant-air grid cells</h2>
     <div class="tablebox">
     <table>
         <thead><tr>
@@ -3996,46 +4966,40 @@ td .pill { color: #0d0f12; }
     <div class="tablebox">
     <table>
         <thead><tr>
-            <th>Run</th><th>Cost</th><th>Range (NM)</th><th>Heading (°)</th>
-            <th>TAS (kt)</th><th>Turn (°/s)</th><th>Turn accel (°/s²)</th>
-            <th>Climb (fpm)</th>
+            <th>Run</th><th>Cost</th><th>Range (NM)</th><th>Heading (origin ENU °)</th>
+            <th>Horizontal airspeed (kt)</th><th>Turn (°/s)</th><th>Turn accel (°/s²)</th>
+            <th>Climb (fpm)</th><th>Seed</th><th>DE evals</th><th>Stop (DE / polish)</th>
         </tr></thead>
         <tbody>${runRows}</tbody>
     </table>
     </div>
-    <p class="sub">Independent differential-evolution runs, each polished with a pattern search;
-    agreement between runs indicates a well-converged fit.</p>
+    <p class="sub">Deterministically seeded differential-evolution restarts, each polished with a pattern search.
+    Agreement is a useful stability diagnostic, but is not proof of global convergence.</p>
 </section>
 
 <section class="methods">
     <h2>Method notes</h2>
-    <p><strong>Constant-air-speed sweep.</strong> Integrates the same constant-air-speed traverse the app
-    uses (walk the LOS rays holding air speed fixed, wind subtracted) over a grid of start ranges and
-    speeds, scoring each track by flight smoothness. It answers: if the object flew at a constant air
-    speed, which range/speed combinations require the least maneuvering?</p>
+    <p><strong>Constant-air-speed sweep.</strong> Solves a smoothed spline-QP trajectory over a grid of start
+    ranges and air speeds, scoring each track by flight smoothness and speed fidelity. Applying a card installs
+    that exact solved track as an analysis-result snapshot; it does not substitute the legacy sequential ray walker.</p>
     <p><strong>Plausible traverse &amp; range profile.</strong> For a given start range, solves for the
     smoothest trajectory that stays exactly on every line of sight, as a B-spline in range-along-ray,
     minimizing squared acceleration with a soft airspeed target (iteratively reweighted least squares).
     Swept over range, this shows how much maneuvering each assumed distance <em>requires</em> — a lower
     bound no real object at that range can beat.</p>
-    <p><strong>Aircraft fit.</strong> Fits a simple fixed-wing model — constant TAS through the air
+    <p><strong>Aircraft fit.</strong> Fits a simple fixed-wing model — constant horizontal airspeed through the air
     mass, linearly varying turn rate, constant climb, positions advected by the wind — by differential
     evolution plus pattern-search polish. The cost blends LOS angular error with loose penalties for
     turning, climbing, and straying from the preferred speed.</p>
-    <p><strong>Object-type physics models (aircraft vs lantern).</strong> Two of the interpretations are
-    genuine forward-integrated physics models fit to the sightlines rather than paths pinned to the rays:
-    the fixed-wing aircraft (constant TAS, slowly varying turn rate, constant climb) and the sky
-    lantern / balloon (a wind tracer: horizontal velocity equals the altitude-sheared wind, bounded to
-    lantern-plausible speeds, with a rise / buoyancy-decay / terminal-sink vertical life cycle).
-    Because neither is forced onto the lines of sight, each leaves a residual mean LOS error — and a
-    <em>lower</em> error means the data are more consistent with an object of <em>that type</em>. Their
-    head-to-head LOS error is the single most useful discriminator of object type this analysis
-    produces, though it remains a soft, geometry-only indicator. To calibrate those residuals, a free
-    constant-acceleration path (the most rigid generic fit, no object-type assumptions) is also fit:
-    its residual is the sightlines' practical <em>noise floor</em>, since a quadratic in time cannot
-    follow camera-solve wander or pointing jitter. A physics fit near that floor is limited by data
-    noise, not by the model — on hand-reconstructed sightlines even the true object cannot score
-    below it.</p>
+    <p><strong>Forward physical models.</strong> Several interpretations are forward-integrated models fit
+    to the sightlines rather than paths pinned to the rays:
+    the fixed-wing aircraft (constant horizontal airspeed, slowly varying turn rate, constant climb) and the sky
+    lantern / balloon (a wind tracer: horizontal velocity equals the bounded altitude-sheared wind,
+    with a rise / buoyancy-decay / terminal-sink vertical life cycle).
+    Because none is forced onto the lines of sight, each leaves a training residual. Those residuals are
+    not object-type probabilities and are not directly comparable without accounting for parameter count,
+    priors, bounds, wind freedom, and measurement covariance. A flexible constant-acceleration residual is
+    shown only as a generic reference; it combines pointing error and model mismatch and is not a sensor-noise estimate.</p>
     <p><strong>Scoring.</strong> All criteria are deliberately <em>soft targets</em> (a preferred speed,
     roughly level flight, low g), not hard constraints: LOS-only data admits infinitely many exact
     solutions, so the analysis characterizes the plausible family rather than claiming a unique answer.
