@@ -9,6 +9,27 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.101.0 (2026-07-11)
+
+### New Features
+- **Grouped traverse-analysis gallery** (Traverse → Analyze Traverse Methods...): candidate explanations are now compared only within like-for-like groups — trajectory families, physics models, known-object checks, and estimator diagnostics — with no single "winner" declared across unlike hypotheses. Every tile always shows its raw sightline error, badges flag searches that hit a model limit or stopped early, analyses driven by a reconstructed camera line of sight are clearly labelled "validation only", and a printable report is included. Re-running is much faster: results are cached until an input actually changes.
+- **Use exact result** (in the analysis gallery): installs the analyzed track itself as a new *Analysis Snapshot (created by Analyze)* option in the LOS Traverse Method menu, so the trajectory you reviewed is exactly what plays in the 3D view — and it survives saving and reloading the sitch.
+- **Global Fits follow the In/Out range**: all "Global Fit" traverse methods now fit just the frames between the In and Out markers (the I and O keys, or dragging the markers) and hold position outside them, matching what the analysis gallery fits.
+- **Quadcopter physics model** (Traverse → Physics Model): a hover-capable multirotor model joins Sky Lantern and Fixed Wing Aircraft. New *Quadcopter Model* and *Fixed-Wing Model* dropdowns let you bound the fit to a real make and model (from a DJI Mini 4 Pro to a Racing FPV, or a Cessna 172 to an F-16) — or leave them on Auto and the fit names the closest compatible model, correctly distinguishing climbs from descents.
+- **Stationary and ground-based traverse methods** (Traverse → LOS Traverse Method): three new options — *Global Fit: Stationary Point* (the fixed point in space that best fits every sightline), *Global Fit: Ground Object* (the same, pinned to the ground), and *Ground Vehicle* (a point moving along the terrain surface) — matching the corresponding analysis-gallery tiles.
+- **Ground contact** (Traverse → Traverse Analysis Tweaks): tell the analysis whether the object is airborne, starts on the ground, ends on the ground, or stays on the ground; the physics fits and rankings honor the choice, and underground trajectories are always rejected.
+
+### Improvements
+- Traverse fits and the wind-fitting tools now give the same answer every time on the same data (previously results could differ from run to run), and the analysis Cancel button now stops a running physics fit immediately.
+- The Sim Speed slider (Time menu) now behaves as true physical time everywhere: simulated jet tracks, wind drift, traverses, and the speed and g-force graphs and readouts all stay physically consistent at non-default speeds.
+- Updated the war.gov UAP catalog to Release 4: dropped links for the newer cases PR100–PR116 (plus PR024 and PR030) now load instead of being reported as unsupported.
+
+### Bug Fixes
+- Fixed **Local from Constant Camera** (Wind menu) reporting a mirrored wind direction — every wind bearing fitted from a camera track was flipped east-west (for example, a true wind from 296.6° was reported as from 63.4°).
+- Fixed traverse analyses and wind-drifted tracks using a single wind value — whatever the playhead happened to be reading — across the whole clip when the wind comes from a loaded track. The wind the track actually recorded at each moment is now used, smoothly blended between samples.
+- Fixed sightlines derived from video tracking varying slightly with the browser window size, layout, and video zoom or pan; tracking-based analyses now give identical results regardless of window geometry.
+- Fixed a fine-tuning step in the traverse analysis's range search that never actually refined between search steps, slightly coarsening the reported best-fit distances.
+
 ## Version 2.100.0 (2026-07-09)
 
 ### New Features
