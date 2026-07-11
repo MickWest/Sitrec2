@@ -17,6 +17,8 @@
  *   }
  */
 
+import {assessBoundPins} from "./BoundedFit";
+
 // ---------------------------------------------------------------------------
 // Linear algebra helpers
 // ---------------------------------------------------------------------------
@@ -1145,11 +1147,35 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         return totalErr / frames.length;
     }
 
+    // Optional soft ground-contact prior (from the analysis ground modes). Pulls
+    // the trajectory's START and/or END altitude (ENU up, metres) toward a ground
+    // reference, modelling takeoff/release (start) and landing/descent (end).
+    // Gated on options.groundPrior — undefined leaves the cost untouched, so the
+    // default fit is unchanged.
+    const groundPrior = options.groundPrior || null;
+
     // Composite cost: scaled mean angular error (degrees) + model plausibility
+    const EARTH_R = 6371000;   // tangent-plane curvature for the ground prior
     function costFn(params) {
         const errRad = _meanErrRad(params, costFrames, costTimes);
         if (errRad === null) return 1e10;
-        return (errRad * 180 / Math.PI) / errSigma + model.extraCost(params, dataset, T);
+        let cost = (errRad * 180 / Math.PI) / errSigma + model.extraCost(params, dataset, T);
+        if (groundPrior) {
+            const sig = groundPrior.sigma ?? 40;
+            const init = model.getInitialState(params, dataset);
+            const hae = (s) => s[2] + (s[0] * s[0] + s[1] * s[1]) / (2 * EARTH_R);
+            if (groundPrior.startZ !== undefined && groundPrior.startZ !== null) {
+                cost += ((hae(init) - groundPrior.startZ) / sig) ** 2;
+            }
+            if (groundPrior.endZ !== undefined && groundPrior.endZ !== null) {
+                try {
+                    const st = _integrateRK4_inline(model, init, params, [0, T]);
+                    const e = st[st.length - 1];
+                    cost += ((hae(e) - groundPrior.endZ) / sig) ** 2;
+                } catch (err) { /* diverged; the 1e10 error branch handles it */ }
+            }
+        }
+        return cost;
     }
 
     // Inline RK4 to avoid import overhead — same logic as PhysicsModel.js
@@ -1200,21 +1226,36 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     const maxIter = options.maxIter ?? 5000;
     let result;
     if (options.optimizer === "de") {
-        const {differentialEvolution} = require("./DifferentialEvolution");
+        const {differentialEvolution, mulberry32} = require("./DifferentialEvolution");
         const de = await differentialEvolution(costFn, lo, hi, {
             pop: options.dePop ?? 48,
             gens: options.deGens ?? 120,
             seeds: [x0],
+            // Deterministic by default: identical dataset + options => identical
+            // fit (was unseeded Math.random — user-visible parameters flipped
+            // between runs on near-degenerate scenes). options.seed overrides.
+            rng: mulberry32(options.seed ?? 0xF17DE5),
             // Yield to the UI periodically so a long fit doesn't freeze the page.
             // MessageChannel (not setTimeout) so a backgrounded tab — which clamps
             // setTimeout to ~1/minute — doesn't drag the fit out to many minutes.
+            // options.shouldCancel lets the analysis overlay's Cancel button
+            // actually stop the physics fits (returning false ends the search).
             onGeneration: async (g) => {
                 if ((g & 7) === 7) await _macroYield();
+                if (options.shouldCancel && options.shouldCancel()) return false;
                 return true;
             },
         });
+        if (de.cancelled || (options.shouldCancel && options.shouldCancel())) {
+            throw new Error("cancelled");
+        }
         result = nelderMead(costFn, de.params, {lo, hi, initialScale: scales, maxIter});
         if (de.cost < result.cost) result = de; // polish should never regress, but be safe
+        result.de = {
+            generations: de.generations,
+            evaluations: de.evaluations,
+            stopReason: de.stopReason,
+        };
     } else {
         result = nelderMead(costFn, x0, {lo, hi, initialScale: scales, maxIter});
     }
@@ -1267,10 +1308,26 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         solvedParams[paramDefs[i].name] = bestParams[i];
     }
 
+    // A coordinate sitting near a bound is not automatically a physical
+    // capability violation: it may be inactive over this clip (GoFast's
+    // pre-burn lantern vSink), flat, or numerical drift.  Probe each detected
+    // bound inward and retain whether it is locally load-bearing.  Consumers
+    // demote only load-bearing constraints and report the others as unresolved.
+    const pinned = assessBoundPins(bestParams, lo, hi,
+        paramDefs.map((d) => d.name), costFn, {baseCost: result.cost});
+
     return {
         positions,
         residuals,
-        params: {model: model.getName(), cost: result.cost, errDeg, solved: solvedParams},
+        params: {
+            model: model.getName(), cost: result.cost, errDeg, solved: solvedParams, pinned,
+            optimizer: {
+                stopReason: result.stopReason ?? "best_de_candidate",
+                iterations: result.iterations ?? 0,
+                parameterSpread: result.parameterSpread ?? null,
+                de: result.de ?? null,
+            },
+        },
         activeCount: active.length
     };
 }
@@ -1287,39 +1344,50 @@ import {Vector3} from "three";
  * Pack a sitrec LOS node into a flat-array dataset in ENU coordinates.
  * Returns { dataset, originLat, originLon } where lat/lon are in radians.
  */
-export function buildLOSDataset(losNode) {
-    const frames = losNode.frames;
+// Pack the LOS into flat ENU arrays for the fitters. frame0/frame1 window the
+// dataset to the In/Out (A-B) range (defaults = the full clip) — the same
+// window the traverse-analysis gallery fits, so a live fit method reproduces
+// an applied gallery tile. Times are window-local (fit models are
+// time-origin invariant).
+export function buildLOSDataset(losNode, frame0 = 0, frame1 = (losNode.frames ?? 1) - 1) {
+    frame0 = Math.max(0, Math.min(losNode.frames - 1, Math.round(frame0)));
+    frame1 = Math.max(frame0, Math.min(losNode.frames - 1, Math.round(frame1)));
+    const n = frame1 - frame0 + 1;
 
     let meanX = 0, meanY = 0, meanZ = 0;
-    for (let f = 0; f < frames; f++) {
+    for (let f = frame0; f <= frame1; f++) {
         const los = losNode.v(f);
         meanX += los.position.x;
         meanY += los.position.y;
         meanZ += los.position.z;
     }
-    meanX /= frames;
-    meanY /= frames;
-    meanZ /= frames;
+    meanX /= n;
+    meanY /= n;
+    meanZ /= n;
 
     const originLLA = ECEFToLLA_radii(meanX, meanY, meanZ);
     const originLat = originLLA[0];
     const originLon = originLLA[1];
 
-    const sensorPos = new Float32Array(frames * 3);
-    const losDir = new Float32Array(frames * 3);
-    const times = new Float64Array(frames);
+    // Float64 throughout: sensor ENU coordinates span tens of km, and the
+    // stationary/CV solves difference near-equal large values — Float32's
+    // ~0.5-4 m quantization at those magnitudes is the largest error source
+    // in an otherwise double-precision pipeline (buildAnalysisDataset is f64).
+    const sensorPos = new Float64Array(n * 3);
+    const losDir = new Float64Array(n * 3);
+    const times = new Float64Array(n);
 
-    for (let f = 0; f < frames; f++) {
-        const los = losNode.v(f);
+    for (let i = 0; i < n; i++) {
+        const los = losNode.v(frame0 + i);
         const posENU = ECEF2ENU_radii(los.position, originLat, originLon);
-        sensorPos[f * 3] = posENU.x;
-        sensorPos[f * 3 + 1] = posENU.y;
-        sensorPos[f * 3 + 2] = posENU.z;
+        sensorPos[i * 3] = posENU.x;
+        sensorPos[i * 3 + 1] = posENU.y;
+        sensorPos[i * 3 + 2] = posENU.z;
 
         const dirENU = ECEF2ENU_radii(los.heading, originLat, originLon, true);
-        losDir[f * 3] = dirENU.x;
-        losDir[f * 3 + 1] = dirENU.y;
-        losDir[f * 3 + 2] = dirENU.z;
+        losDir[i * 3] = dirENU.x;
+        losDir[i * 3 + 1] = dirENU.y;
+        losDir[i * 3 + 2] = dirENU.z;
 
         // Uniform frame spacing. GlobalDateTimeNode.frameToMS quantizes to
         // integer milliseconds, so its per-frame deltas jitter (e.g. 33,34,33
@@ -1327,12 +1395,14 @@ export function buildLOSDataset(losNode) {
         // becomes ~0.15m of per-frame position wobble at high fit speeds, which
         // the g-force graph (a second difference assuming a uniform 1/fps step,
         // amplified by fps^2) blows up into tens of spurious g. Frames are
-        // uniformly spaced in real time for a constant-fps sitch, so use f/fps.
-        times[f] = f / Sit.fps;
+        // uniformly spaced in real time for a constant-fps sitch. One video
+        // frame spans simSpeed/fps REAL seconds (simSpeed was ignored before,
+        // inflating fitted speeds by simSpeed on time-compressed sitches).
+        times[i] = i * (Sit.simSpeed ?? 1) / Sit.fps;
     }
 
     return {
-        dataset: {sensorPos, losDir, times, count: frames, maxRange: null},
+        dataset: {sensorPos, losDir, times, count: n, maxRange: null, frame0, frame1},
         originLat,
         originLon,
     };
@@ -1341,15 +1411,29 @@ export function buildLOSDataset(losNode) {
 /**
  * Unpack a Float32Array of ENU positions into an array of {position: Vector3} in ECEF.
  */
-export function unpackFitPositions(positions, count, originLat, originLon) {
-    const result = [];
-    for (let f = 0; f < count; f++) {
+// Unpack fitted ENU positions (nWin entries — the fitted A-B window) into a
+// {position} array covering totalFrames: frames before the window hold its
+// first position, frames after hold its last (outside the analyzed In/Out
+// range we claim no knowledge of motion). Defaults = full-clip fit,
+// identical to the historical behaviour.
+export function unpackFitPositions(positions, nWin, originLat, originLon,
+                                   frame0 = 0, totalFrames = nWin) {
+    const win = [];
+    for (let f = 0; f < nWin; f++) {
         const enuPos = new Vector3(
             positions[f * 3],
             positions[f * 3 + 1],
             positions[f * 3 + 2],
         );
-        result.push({position: ENU2ECEF_radii(enuPos, originLat, originLon)});
+        win.push({position: ENU2ECEF_radii(enuPos, originLat, originLon)});
+    }
+    if (frame0 === 0 && totalFrames <= nWin) return win;
+    const result = new Array(totalFrames);
+    const first = win[0].position, last = win[win.length - 1].position;
+    for (let f = 0; f < totalFrames; f++) {
+        if (f < frame0) result[f] = {position: first.clone()};
+        else if (f >= frame0 + nWin) result[f] = {position: last.clone()};
+        else result[f] = win[f - frame0];
     }
     return result;
 }
