@@ -6,6 +6,7 @@ import {UpdatePRFromEA} from "./JetStuff";
 import {Frame2Az, Frame2El} from "./JetUtils";
 import {clampSitFrameRange, lastSitFrame} from "./UpdateSitFrames";
 import {showPrompt} from "./showError";
+import {EventManager} from "./CEventManager";
 
 
 let hookedKeys = false;
@@ -43,12 +44,20 @@ export function updateFrame(elapsed) {
                     // Clamp to the sitch's frame count (can't scrub past the sitch).
                     f = Math.max(0, Math.min(f, lastSitFrame()));
                     // Expand the In/Out range if the target frame falls outside it.
+                    const abChanged = f < Sit.aFrame || f > Sit.bFrame;
                     if (f < Sit.aFrame) Sit.aFrame = f;
                     if (f > Sit.bFrame) Sit.bFrame = f;
                     par.frame = f;
                     par.paused = true;
                     GlobalDateTimeNode.liveMode = false;
                     updateFrameSlider();
+                    // The A-B-windowed live fit nodes refresh on this event —
+                    // mutating Sit.aFrame/bFrame without it leaves them
+                    // rendering the previous window (same contract as the
+                    // frame slider's marker drag and the I/O keys).
+                    if (abChanged) {
+                        EventManager.dispatchEvent("abFrameChanged");
+                    }
                     setRenderOne(true);
                 });
             });

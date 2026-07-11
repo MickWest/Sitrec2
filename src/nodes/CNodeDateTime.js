@@ -258,6 +258,15 @@ export class CNodeDateTime extends CNode {
                 // the new start time relative to that with the new simSpeed
                 this.setNowDateTime(this.dateNow); // this will update the dateStart member
                 this.recalculateCascade();
+                // simSpeed is a hidden GLOBAL input: baked nodes (sequential
+                // traverses, the jet track, per-frame wind displacement, fit
+                // datasets) read Sit.simSpeed directly with no graph edge to
+                // this node, so the cascade above misses them. Rebake the
+                // graph and refresh the windowed live fits explicitly, or the
+                // scene renders a mix of old- and new-timescale tracks.
+                NodeMan.recalculateAllRootFirst();
+                EventManager.dispatchEvent("abFrameChanged");
+                setRenderOne(true);
             }
         )
             .tooltip(t("dateTime.simSpeed.tooltip"))

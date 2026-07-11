@@ -95,6 +95,13 @@ export class CNodeJetTrack extends CNodeTrack {
 
         jetFwd.applyAxisAngle(jetUp, radians(-jetHeading))
 
+        // Physical seconds per rendered frame. The wind node's per-frame
+        // vector is scaled by simSpeed (physical-time convention); the jet's
+        // own airspeed step and turn integration must use the SAME dt or the
+        // wind triangle breaks and the Sim Speed slider bends the ground
+        // track (it must only change the clock at simSpeed's default of 1).
+        const dt = (Sit.simSpeed ?? 1) / Sit.fps;
+
         for (let f = 0; f < this.frames; f++) {
             // Clamp to terrain for AGL mode (terrain-following)
             if (terrainNode) {
@@ -113,7 +120,7 @@ export class CNodeJetTrack extends CNodeTrack {
             // move the jet along the fwd vector
             const jetSpeedKnots = this.in.speed.getValueFrame(f)  // 239-242 knots
             const jetSpeed = metersPerSecondFromKnots(jetSpeedKnots)  // 351 from CAS of 241 (239-242)
-            jetPos.add(jetFwd.clone().multiplyScalar(jetSpeed / Sit.fps)) // one frame
+            jetPos.add(jetFwd.clone().multiplyScalar(jetSpeed * dt)) // one frame
 
             // add in the wind vector, uses the local North and Up vectors for reference
             this.in.wind.setPosition(jetPos)
@@ -127,13 +134,14 @@ export class CNodeJetTrack extends CNodeTrack {
             }
 
             if (headingNode.forceHeadingPerFrame) {
-                // if we are using a custom heading file, then calculate the angle change
-                turnRate = (headingNode.getValueFrame(f) - jetHeading) * Sit.fps;
+                // if we are using a custom heading file, then calculate the angle
+                // change (a rate that applies EXACTLY the per-frame delta under dt)
+                turnRate = (headingNode.getValueFrame(f) - jetHeading) / dt;
             }
 
             // rotate around local up (opposite of gravity)
             const upAxis = getLocalUpVector(jetPos)
-            jetFwd.applyAxisAngle(upAxis, -radians(turnRate / Sit.fps))
+            jetFwd.applyAxisAngle(upAxis, -radians(turnRate * dt))
 
             // x = cross(y,z)
             // y = cross(z,x)
@@ -151,7 +159,7 @@ export class CNodeJetTrack extends CNodeTrack {
                 jetHeading = headingNode.getValueFrame(f)
             } else {
                 // otherwise adjust the heading based on the turn rate
-                jetHeading += turnRate / Sit.fps
+                jetHeading += turnRate * dt
             }
 
         }
@@ -173,7 +181,9 @@ export class CNodeJetTrack extends CNodeTrack {
         const cycleSec = legSec + turnSec;
         if (cycleSec <= 0) return fullRate;
 
-        const t = f / Sit.fps;
+        // Physical time: legSec/transSec are physical durations, so honor
+        // simSpeed the same way the main integration loop does.
+        const t = f * (Sit.simSpeed ?? 1) / Sit.fps;
         const cycleT = t % cycleSec;
 
         if (cycleT < legSec) return 0;

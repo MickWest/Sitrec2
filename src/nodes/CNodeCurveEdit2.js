@@ -1,4 +1,5 @@
 import {CNodeTrack} from "./CNodeTrack";
+import {EventManager} from "../CEventManager";
 import {NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
 import {par} from "../par";
 import {CNodeTabbedCanvasView} from "./CNodeTabbedCanvasView";
@@ -657,10 +658,15 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
     }
 
     onMouseUp(e) {
+        // Capture before the flags are cleared below: dragging the A/B In/Out
+        // markers mutates Sit.aFrame/bFrame, and the A-B-windowed live fit
+        // nodes only refresh on this event (same contract as the frame
+        // slider's marker drag and the I/O keys).
+        const wasAOrB = this.isDraggingAFrame || this.isDraggingBFrame;
         if (this.isDragging) {
             e.preventDefault();
             e.stopPropagation();
-            
+
             if (!this.isDraggingFrame && !this.isDraggingAFrame && !this.isDraggingBFrame && this.stateBeforeDrag && UndoManager) {
                 const stateAfter = this.captureState();
                 
@@ -700,6 +706,10 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         this.lockAxis = null;
         this.snapToY = null;
         this.snapToX = null;
+
+        if (wasAOrB) {
+            EventManager.dispatchEvent("abFrameChanged");
+        }
 
         const rect = this.canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
