@@ -14,22 +14,22 @@
 //            ground-speed range.
 //   2. Refine: small genetic algorithm in (fromDeg, knots) space.
 
-import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
+import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
 import {Sit} from "./Globals";
-import {V3} from "./threeUtils";
 import {degrees, knotsFromMetersPerSecond, radians} from "./utils";
+import {mulberry32} from "./DifferentialEvolution";
 
 // Build per-frame ground-velocity samples projected onto a single local-ENU
 // frame fixed at the track centroid. For short tracks (a few km, a few
 // minutes) the local frame doesn't rotate appreciably, so a single reference
 // frame is accurate enough and keeps the inner loops cheap.
 function sampleGroundVelocities(track, startFrame, endFrame, frameStep) {
-    const fps = Sit.fps || 30;
+    const fps = (track.fps ?? Sit.fps ?? 30) / (Sit.simSpeed ?? 1);
 
     let centerPos = track.p(Math.floor((startFrame + endFrame) / 2));
     const up = getLocalUpVector(centerPos);
     const north = getLocalNorthVector(centerPos);
-    const east = V3().crossVectors(up, north).normalize();
+    const east = getLocalEastVector(centerPos);
 
     const samples = [];
     for (let f = startFrame; f < endFrame; f += frameStep) {
@@ -83,16 +83,16 @@ function circularBlend(a, b, t) {
     return r;
 }
 
-function tournament(pop) {
-    const a = pop[(Math.random() * pop.length) | 0];
-    const b = pop[(Math.random() * pop.length) | 0];
+function tournament(pop, rng) {
+    const a = pop[(rng() * pop.length) | 0];
+    const b = pop[(rng() * pop.length) | 0];
     return a.cost <= b.cost ? a : b;
 }
 
 // Refine (fromDeg, speedMs) by GA. Seeds half the population around the
 // physical seed and half uniformly in the plausible range. Linearly cooling
 // mutation lets early generations explore widely and late ones polish.
-function refineGA(samples, seedFromDeg, seedSpeedMs, maxGroundMs) {
+function refineGA(samples, seedFromDeg, seedSpeedMs, maxGroundMs, rng) {
     const popSize = 40;
     const generations = 60;
     const elites = 4;
@@ -103,11 +103,11 @@ function refineGA(samples, seedFromDeg, seedSpeedMs, maxGroundMs) {
         let fromDeg;
         let speedMs;
         if (i < popSize / 2) {
-            fromDeg = seedFromDeg + (Math.random() - 0.5) * 60;
-            speedMs = seedSpeedMs + (Math.random() - 0.5) * Math.max(2, seedSpeedMs);
+            fromDeg = seedFromDeg + (rng() - 0.5) * 60;
+            speedMs = seedSpeedMs + (rng() - 0.5) * Math.max(2, seedSpeedMs);
         } else {
-            fromDeg = Math.random() * 360;
-            speedMs = Math.random() * speedCap;
+            fromDeg = rng() * 360;
+            speedMs = rng() * speedCap;
         }
         fromDeg = ((fromDeg % 360) + 360) % 360;
         speedMs = Math.max(0, speedMs);
@@ -120,13 +120,13 @@ function refineGA(samples, seedFromDeg, seedSpeedMs, maxGroundMs) {
         const mutScale = Math.max(0.05, 1 - g / generations);
 
         while (next.length < popSize) {
-            const a = tournament(pop);
-            const b = tournament(pop);
-            const t = Math.random();
+            const a = tournament(pop, rng);
+            const b = tournament(pop, rng);
+            const t = rng();
             let fromDeg = circularBlend(a.fromDeg, b.fromDeg, t);
             let speedMs = a.speedMs * (1 - t) + b.speedMs * t;
-            fromDeg += (Math.random() - 0.5) * 40 * mutScale;
-            speedMs += (Math.random() - 0.5) * 4 * mutScale;
+            fromDeg += (rng() - 0.5) * 40 * mutScale;
+            speedMs += (rng() - 0.5) * 4 * mutScale;
             fromDeg = ((fromDeg % 360) + 360) % 360;
             speedMs = Math.max(0, Math.min(speedCap, speedMs));
             next.push({fromDeg, speedMs, cost: airspeedStdDev(samples, fromDeg, speedMs)});
@@ -164,7 +164,10 @@ export function estimateWindFromConstantAirspeed(track, options = {}) {
     const seedFromDeg = (travelDeg + 180) % 360;
     const seedSpeedMs = Math.max(0, (maxSpeed - minSpeed) / 2);
 
-    const best = refineGA(samples, seedFromDeg, seedSpeedMs, maxSpeed);
+    // Fixed/input-overridable seed: this assumption feeds downstream traverse
+    // results, so identical tracks must not acquire different winds per click.
+    const rng = mulberry32(options.seed ?? 0x57494E44); // "WIND"
+    const best = refineGA(samples, seedFromDeg, seedSpeedMs, maxSpeed, rng);
 
     return {
         from: best.fromDeg,
@@ -174,6 +177,7 @@ export function estimateWindFromConstantAirspeed(track, options = {}) {
         finalCost: best.cost,
         finalCostKnots: knotsFromMetersPerSecond(best.cost),
         sampleCount: samples.length,
+        seed: options.seed ?? 0x57494E44,
         groundSpeedRangeKnots: knotsFromMetersPerSecond(maxSpeed - minSpeed),
     };
 }

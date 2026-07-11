@@ -16,7 +16,7 @@
  *                         trajectory with a soft speed target (spline QP + IRLS).
  *   rangeProfile        — traversePlausible swept over range: how much
  *                         maneuvering does each assumed distance REQUIRE?
- *   fitAircraft         — parametric fixed-wing fit (constant TAS, slowly
+ *   fitAircraft         — parametric fixed-wing fit (constant horizontal airspeed, slowly
  *                         varying turn rate, constant climb, wind advection)
  *                         via differential evolution + pattern-search polish.
  *   trackMetrics        — per-track physical metrics (speeds, g-load, turn
@@ -36,11 +36,15 @@
  * All returned tracks are Float64Array(n*3) of ENU positions.
  */
 
-import {differentialEvolution, patternSearchPolish} from "./DifferentialEvolution";
+import {differentialEvolution, mulberry32, patternSearchPolish} from "./DifferentialEvolution";
+import {assessBoundPins} from "./BoundedFit";
 
 export const KNOTS_TO_MS = 0.514444;
 export const METERS_PER_NM = 1852;
 const G_ACCEL = 9.81;
+// Mean Earth radius for the tangent-plane curvature corrections (the exact
+// local radius differs <0.4%, negligible relative to the correction itself).
+export const EARTH_RADIUS_M = 6371000;
 
 // ---------------------------------------------------------------------------
 // Metrics
@@ -55,7 +59,12 @@ const G_ACCEL = 9.81;
  */
 export function trackMetrics(dataset, track, options = {}) {
     const {n, fps, W, S} = dataset;
-    const smoothFrames = options.smoothFrames ?? 15;
+    // Differentiate over a physical-time window, not a fixed frame count.  A
+    // fixed 15-frame window made the same continuous trajectory produce
+    // different g/turn metrics (and therefore a different rank) at 15, 30 and
+    // 60 fps.  Preserve the historical ~0.5 s window at 30 fps.
+    const smoothFrames = options.smoothFrames
+        ?? Math.max(3, Math.round((options.smoothSeconds ?? 0.5) * fps));
 
     const air = new Float64Array(n * 3);
     let cwx = 0, cwy = 0, cwz = 0;
@@ -66,7 +75,13 @@ export function trackMetrics(dataset, track, options = {}) {
         cwx += W[f * 3]; cwy += W[f * 3 + 1]; cwz += W[f * 3 + 2];
     }
 
-    const h = Math.max(1, Math.floor(smoothFrames / 2));
+    // Clamp the half-window so short (but supported, >=10-frame) A-B windows
+    // keep a non-empty trimmed stats range below: with h > (n-5)/2 the
+    // [h+2, n-h-2) range collapses and every stat silently read as zero, so a
+    // violent trajectory "passed the broad screen" at 0 kt / 0.00 g. Short
+    // windows now differentiate over the longest window that still leaves
+    // interior samples.
+    const h = Math.max(1, Math.min(Math.floor(smoothFrames / 2), Math.floor((n - 5) / 2)));
     const vel = (arr, f) => {
         const f0 = Math.max(0, f - h), f1 = Math.min(n - 1, f + h);
         const dt = (f1 - f0) / fps;
@@ -85,8 +100,14 @@ export function trackMetrics(dataset, track, options = {}) {
         groundSpeed[f] = Math.hypot(vg[0], vg[1], vg[2]);
         airSpeed[f] = Math.hypot(va[0], va[1], va[2]);
         heading[f] = Math.atan2(va[0], va[1]) * 180 / Math.PI;
-        verticalSpeed[f] = vg[2];
-        altitude[f] = track[f * 3 + 2];
+        const x = track[f * 3], y = track[f * 3 + 1];
+        // Geodetic altitude, not raw ENU z: the tangent plane sits ABOVE the
+        // curved Earth away from the origin, so a far point's true altitude is
+        // z + rho^2/(2R) (paraboloid approximation of the ellipsoid — exact to
+        // centimetres at these ranges). Raw z understated altitude by ~90 ft at
+        // 19 km and ~780 ft at 55 km. Vertical speed is the matching derivative.
+        altitude[f] = track[f * 3 + 2] + (x * x + y * y) / (2 * EARTH_RADIUS_M);
+        verticalSpeed[f] = vg[2] + (x * vg[0] + y * vg[1]) / EARTH_RADIUS_M;
         range[f] = Math.hypot(
             track[f * 3] - S[f * 3],
             track[f * 3 + 1] - S[f * 3 + 1],
@@ -120,7 +141,10 @@ export function trackMetrics(dataset, track, options = {}) {
             if (v > mx) mx = v;
             sum += v; sum2 += v * v; c++;
         }
-        if (c === 0) return {min: 0, max: 0, mean: 0, rms: 0, std: 0};
+        // An empty range must read as INVALID (non-finite), never as zeros:
+        // zeros are optimistic ("0.00 g passes the broad screen") and the
+        // ranking's invalid-metrics guard only trips on non-finite values.
+        if (c === 0) return {min: NaN, max: NaN, mean: NaN, rms: NaN, std: NaN};
         const mean = sum / c;
         return {
             min: mn, max: mx, mean,
@@ -227,23 +251,45 @@ export function traverseConstSpeed(dataset, startDist, speedMs, options = {}) {
  * that don't reach the plane at a positive range.
  */
 export function traverseConstAltitude(dataset, altZ) {
+    // Intersect each ray with the CURVED constant-geodetic-altitude surface
+    // z(x,y) = altZ - (x^2+y^2)/(2R) (paraboloid approximation of the
+    // constant-HAE shell — exact to centimetres at these ranges). The old flat
+    // z = altZ plane sits ~28 m above the true shell at 19 km and ~237 m at
+    // 55 km, which both skewed the fitted altitude and made this track diverge
+    // from the applied live method (CNodeLOSTraverseConstantAltitude rides the
+    // true ellipsoid shell). Quadratic in ray parameter t:
+    //   t^2 (Dx^2+Dy^2) + 2t (Sx Dx + Sy Dy + R Dz) + (Sx^2+Sy^2 + 2R (Sz - altZ)) = 0
     const {n, S, D} = dataset;
+    const R = EARTH_RADIUS_M;
     const track = new Float64Array(n * 3);
     let badFrames = 0;
     let lastT = null;
     for (let f = 0; f < n; f++) {
         const b = f * 3;
-        const dz = D[b + 2];
-        let t;
-        if (Math.abs(dz) < 1e-6) { t = lastT ?? 0; badFrames++; }
-        else {
-            t = (altZ - S[b + 2]) / dz;
-            if (t <= 0) { t = lastT ?? 0; badFrames++; }
+        const sx = S[b], sy = S[b + 1], sz = S[b + 2];
+        const dx = D[b], dy = D[b + 1], dz = D[b + 2];
+        const a = dx * dx + dy * dy;
+        const bq = 2 * (sx * dx + sy * dy + R * dz);
+        const cq = sx * sx + sy * sy + 2 * R * (sz - altZ);
+        let t = null;
+        if (a < 1e-12) {
+            // vertical ray: linear equation
+            if (Math.abs(bq) > 1e-9) t = -cq / bq;
+        } else {
+            const disc = bq * bq - 4 * a * cq;
+            if (disc >= 0) {
+                const sq = Math.sqrt(disc);
+                const t1 = (-bq - sq) / (2 * a);
+                const t2 = (-bq + sq) / (2 * a);
+                // nearest intersection IN FRONT of the sensor
+                t = t1 > 0 ? t1 : (t2 > 0 ? t2 : null);
+            }
         }
+        if (t === null || t <= 0) { t = lastT ?? 0; badFrames++; }
         lastT = t;
-        track[b] = S[b] + D[b] * t;
-        track[b + 1] = S[b + 1] + D[b + 1] * t;
-        track[b + 2] = S[b + 2] + D[b + 2] * t;
+        track[b] = sx + dx * t;
+        track[b + 1] = sy + dy * t;
+        track[b + 2] = sz + dz * t;
     }
     return {track, badFrames};
 }
@@ -276,7 +322,13 @@ export function fitConstAltitude(dataset, options = {}) {
     const sigmaLOSDeg = options.sigmaLOSDeg ?? 0.05;
     const mid = Math.floor(n / 2);
     // altitude reached at the mid-frame for the range-band endpoints
-    const altAt = (R) => S[mid * 3 + 2] + D[mid * 3 + 2] * R;
+    // geodetic altitude reached at range R along the mid ray (matches the
+    // curved-shell semantics of traverseConstAltitude)
+    const altAt = (R) => {
+        const x = S[mid * 3] + D[mid * 3] * R;
+        const y = S[mid * 3 + 1] + D[mid * 3 + 1] * R;
+        return S[mid * 3 + 2] + D[mid * 3 + 2] * R + (x * x + y * y) / (2 * EARTH_RADIUS_M);
+    };
     let zA = altAt(rangeMin), zB = altAt(rangeMax);
     if (zA > zB) { const t = zA; zA = zB; zB = t; }
 
@@ -302,16 +354,21 @@ export function fitConstAltitude(dataset, options = {}) {
     for (let pass = 1; pass <= 8; pass++) {
         const h = step / 2 ** pass;
         if (h <= 0) break;
-        const a = evalZ(best.z - h), c = evalZ(best.z + h);
+        const a = evalZ(Math.max(zA, best.z - h));
+        const c = evalZ(Math.min(zB, best.z + h));
         if (a.score < best.score) best = a;
         if (c.score < best.score) best = c;
     }
     // start range along the FIRST RAY of the exact-ray track (see JSDoc)
     const startDist = Math.hypot(best.track[0] - S[0], best.track[1] - S[1], best.track[2] - S[2]);
     const failed = best.badFrames > 0.2 * n;
+    const edgeTol = Math.max(1e-6, step / 128);
+    const boundarySide = best.z <= zA + edgeTol ? "lo" : best.z >= zB - edgeTol ? "hi" : null;
     return {
         altZ: best.z, startDist, track: best.smooth, trackExact: best.track,
         errDeg: best.errDeg, score: best.score, badFrames: best.badFrames, failed,
+        boundaryLimited: boundarySide !== null,
+        boundarySide,
         metrics: summarizeMetrics(trackMetrics(dataset, best.smooth)),
     };
 }
@@ -426,6 +483,80 @@ export function fitFixedPoint(dataset, options = {}) {
     };
 }
 
+/**
+ * Ground Vehicle: where each sightline meets a curved constant-elevation shell at height
+ * groundZ (ENU up, metres). A moving surface point — distinct from the
+ * stationary fitFixedPoint({z}). Sightlines at/above the horizon have no
+ * intersection: the last valid horizontal position is held so metrics stay
+ * finite, and fracValid reports how much of the clip actually reached the
+ * ground. Shared verbatim by the analysis gallery and the live
+ * "Ground Vehicle" traverse method so applying the tile reproduces it.
+ */
+export function fitGroundVehicle(dataset, groundZ) {
+    // Intersect each ray with the CURVED ground surface z(x,y) = groundZ -
+    // (x^2+y^2)/(2R) (the real surface falls away from the ENU tangent plane
+    // by d^2/2R — 65 m at 29 km; at grazing ray depressions of ~1-2 deg a flat
+    // plane shifted the intersection range by KILOMETRES, corrupting the
+    // implied ground speed this candidate is judged by). Same quadratic as
+    // traverseConstAltitude.
+    const S = dataset.S, D = dataset.D, n = dataset.n;
+    const R = EARTH_RADIUS_M;
+    const track = new Float64Array(n * 3);
+    let valid = 0, lastX = S[0], lastY = S[1],
+        lastZ = groundZ - (S[0] * S[0] + S[1] * S[1]) / (2 * R);
+    for (let f = 0; f < n; f++) {
+        const sx = S[f * 3], sy = S[f * 3 + 1], sz = S[f * 3 + 2];
+        const dx = D[f * 3], dy = D[f * 3 + 1], dz = D[f * 3 + 2];
+        const a = dx * dx + dy * dy;
+        const bq = 2 * (sx * dx + sy * dy + R * dz);
+        const cq = sx * sx + sy * sy + 2 * R * (sz - groundZ);
+        let t = null;
+        if (a < 1e-12) {
+            if (Math.abs(bq) > 1e-9) t = -cq / bq;
+        } else {
+            const disc = bq * bq - 4 * a * cq;
+            if (disc >= 0) {
+                const sq = Math.sqrt(disc);
+                const t1 = (-bq - sq) / (2 * a);
+                const t2 = (-bq + sq) / (2 * a);
+                t = t1 > 0 ? t1 : (t2 > 0 ? t2 : null);
+            }
+        }
+        if (t !== null && t > 0) {
+            lastX = sx + dx * t;
+            lastY = sy + dy * t;
+            lastZ = sz + dz * t;
+            valid++;
+        }
+        track[f * 3] = lastX; track[f * 3 + 1] = lastY; track[f * 3 + 2] = lastZ;
+    }
+    return {track, fracValid: n ? valid / n : 0};
+}
+
+/**
+ * Ground Object: the stationary point pinned to the CURVED local surface.
+ * Two-pass: pin to the tangent-plane height, then re-pin to the curved
+ * surface height at the solved horizontal position (the surface falls d^2/2R
+ * below the plane — a genuine surface light 29 km out sits ~65 m below the
+ * flat pin, a systematic ~0.13 deg residual that used to demote the true
+ * answer). Shared by the analysis gallery and the live "Global Fit: Ground
+ * Object" method so applying the tile reproduces it exactly.
+ */
+export function fitGroundPoint(dataset, groundZ) {
+    // fixed-point iteration: pin z to the surface height at the previous
+    // solution's horizontal position (the z error couples back into x,y with
+    // gain ~range/sensor-height, so a single refinement can under-converge
+    // by metres at long range — iterate to millimetres instead)
+    let fit = fitFixedPoint(dataset, {z: groundZ});
+    for (let pass = 0; pass < 6; pass++) {
+        const px = fit.point[0], py = fit.point[1];
+        const zCurved = groundZ - (px * px + py * py) / (2 * EARTH_RADIUS_M);
+        if (Math.abs(zCurved - fit.point[2]) < 0.005) break;
+        fit = fitFixedPoint(dataset, {z: zCurved});
+    }
+    return fit;
+}
+
 // 3x3 solve (row-major), returns null if singular
 function solve3(A, b) {
     const m = [A[0], A[1], A[2], A[3], A[4], A[5], A[6], A[7], A[8]];
@@ -520,8 +651,8 @@ export function downsampleDataset(ds, targetN = 2500) {
  * progress(frac) is awaited if provided (once per range row).
  */
 export async function sweepConstAirSpeed(dataset, options = {}) {
-    const ranges = options.ranges ?? defaultRangeList(dataset);
-    const speeds = options.speeds ?? defaultSpeedList();
+    let ranges = (options.ranges ?? defaultRangeList(dataset)).slice();
+    const speeds = (options.speeds ?? defaultSpeedList()).slice().sort((a, b) => a - b);
     const speedTarget = options.speedTarget ?? null;
     const vSigma = options.vSigma ?? 3 * KNOTS_TO_MS;
     const spdFidSigma = options.spdFidSigma ?? 10 * KNOTS_TO_MS;
@@ -530,30 +661,132 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
     const smoothK = Math.max(6, Math.min(34, Math.round(ds.n / (6 * ds.fps)) + 4));
     const curvature = 0.02 * ds.n / smoothK;
     const results = [];
-    for (let ri = 0; ri < ranges.length; ri++) {
-        for (const speedMs of speeds) {
-            const {track} = traversePlausible(ds, ranges[ri], {vTarget: speedMs, vSigma, iters: 3, K: 25});
-            const sm = smoothTrackBspline(track, ds.n, smoothK, curvature);
-            const m = trackMetrics(ds, sm);
-            let score = straightFlightScore(m, 0);
-            if (speedTarget !== null) {
-                score += 0.2 * ((speedMs - speedTarget) / speedSigma) ** 2;
+
+    const sweepRanges = async (rangeList, progressBase, progressSpan) => {
+        for (let ri = 0; ri < rangeList.length; ri++) {
+            for (const speedMs of speeds) {
+                // minDist keeps the QP's range-on-ray positive: without a floor
+                // it can drive lambda negative (a behind-the-sensor "path") in
+                // some geometries, and the post-smoothing metrics would hide it.
+                const {track} = traversePlausible(ds, rangeList[ri],
+                    {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120});
+                const sm = smoothTrackBspline(track, ds.n, smoothK, curvature);
+                const m = trackMetrics(ds, sm);
+                let score = straightFlightScore(m, 0);
+                if (speedTarget !== null) {
+                    score += 0.2 * ((speedMs - speedTarget) / speedSigma) ** 2;
+                }
+                const spdErr = Math.hypot(m.airSpeed.mean - speedMs, m.airSpeed.std);
+                score += (spdErr / spdFidSigma) ** 2;
+                results.push({
+                    startDist: rangeList[ri],
+                    speed: speedMs,
+                    score,
+                    badFrames: 0,
+                    spdErr,
+                    metrics: summarizeMetrics(m),
+                });
             }
-            const spdErr = Math.hypot(m.airSpeed.mean - speedMs, m.airSpeed.std);
-            score += (spdErr / spdFidSigma) ** 2;
-            results.push({
-                startDist: ranges[ri],
-                speed: speedMs,
-                score,
-                badFrames: 0,
-                spdErr,
-                metrics: summarizeMetrics(m),
-            });
+            if (options.progress) {
+                await options.progress(progressBase + progressSpan * (ri + 1) / rangeList.length);
+            }
         }
-        if (options.progress) await options.progress((ri + 1) / ranges.length);
+    };
+
+    await sweepRanges(ranges, 0, options.expand ? 0.8 : 1);
+
+    // Bracket expansion: an argmin sitting ON the grid edge means the search
+    // never bracketed the optimum (PR48's default grid was 0.3-8 NM, centred
+    // on a 1 NM slider, and reported the 8.0 NM EDGE cell as the winner while
+    // every other fit clustered at 9-10 NM). Extend geometrically past the
+    // touched edge, up to twice, and flag the result if it STILL touches.
+    let boundaryLimited = false;
+    if (options.expand) {
+        for (let ex = 0; ex < 2; ex++) {
+            const sortedNow = results.slice().sort((a, b) => a.score - b.score);
+            const bestNow = sortedNow[0];
+            const medNow = sortedNow[Math.floor(sortedNow.length / 2)].score;
+            const marginNow = Math.max(0.05, 0.15 * (medNow - bestNow.score));
+            const familyNow = sortedNow.filter((r) => r.score <= bestNow.score + marginNow);
+            const lo = Math.min(...ranges), hi = Math.max(...ranges);
+            // Expand when any currently supported family member reaches an
+            // edge, not only the knife-edge raw argmin.
+            const atLow = familyNow.some((r) => r.startDist <= lo * 1.001);
+            const atHigh = familyNow.some((r) => r.startDist >= hi * 0.999);
+            if (!atLow && !atHigh) break;
+            const extra = [];
+            const seen = new Set(ranges.map((r) => r.toFixed(6)));
+            for (let i = 1; i <= 8; i++) {
+                if (atHigh) {
+                    const candidate = hi * Math.pow(2.5, i / 8);
+                    const key = candidate.toFixed(6);
+                    if (!seen.has(key)) { seen.add(key); extra.push(candidate); }
+                }
+                if (atLow && lo > 200 * 1.001) {
+                    const candidate = Math.max(200, lo / Math.pow(2.5, i / 8));
+                    const key = candidate.toFixed(6);
+                    if (!seen.has(key)) { seen.add(key); extra.push(candidate); }
+                }
+            }
+            // The low-range search has reached its physical/numerical floor.
+            // Do not append eight duplicate 200 m rows; the final edge check
+            // below will report the solution as boundary-limited.
+            if (extra.length === 0) break;
+            ranges = ranges.concat(extra).sort((a, b) => a - b);
+            await sweepRanges(extra, 0.8 + ex * 0.1, 0.1);
+        }
     }
+
     const sorted = results.slice().sort((a, b) => a.score - b.score);
-    return {ranges, speeds, results, best: sorted[0], sorted};
+    const bestRaw = sorted[0];
+
+    // Heuristic family band: cells close to the winner under the displayed score. The valley is
+    // often flat (near-degenerate scenes tie a 3x speed span), so a strict
+    // argmin is a knife-edge — last-bit input changes teleported the headline
+    // 24 kt -> 82 kt. Report the BAND, and pick a deterministic representative
+    // from it: the member closest to the speed target (the user's stated
+    // prior), tie-broken by lower range.
+    const med = sorted[Math.floor(sorted.length / 2)].score;
+    const margin = Math.max(0.05, 0.15 * (med - bestRaw.score));
+    const family = sorted.filter((r) => r.score <= bestRaw.score + margin);
+    let best = bestRaw;
+    if (family.length > 1 && speedTarget !== null) {
+        best = family.slice().sort((a, b) =>
+            Math.abs(a.speed - speedTarget) - Math.abs(b.speed - speedTarget)
+            || a.startDist - b.startDist)[0];
+    }
+    const lo = Math.min(...ranges), hi = Math.max(...ranges);
+    const speedLo = speeds[0], speedHi = speeds[speeds.length - 1];
+    const touchesRangeEdge = (row) => row.startDist <= lo * 1.001
+        || row.startDist >= hi * 0.999;
+    // Completeness applies to the reported representative AND its supported
+    // family, not just the raw argmin. It also applies when the user supplied
+    // explicit bounds: an edge result is a bound, never a converged optimum.
+    const touchesSpeedEdge = (row) => row.speed <= speedLo * 1.001
+        || row.speed >= speedHi * 0.999;
+    const rangeBoundaryLimited = touchesRangeEdge(best) || family.some(touchesRangeEdge);
+    const speedBoundaryLimited = touchesSpeedEdge(best) || family.some(touchesSpeedEdge);
+    boundaryLimited = rangeBoundaryLimited || speedBoundaryLimited;
+    const familyBand = {
+        rangeLo: Math.min(...family.map((r) => r.startDist)),
+        rangeHi: Math.max(...family.map((r) => r.startDist)),
+        speedLo: Math.min(...family.map((r) => r.speed)),
+        speedHi: Math.max(...family.map((r) => r.speed)),
+        count: family.length,
+        total: results.length,
+    };
+
+    // Consumers render `results` as a range-major heatmap indexed against the
+    // sorted ranges/speeds arrays. Expansion appends rows out of order (low-end
+    // expansion is descending), so restore canonical grid order before return.
+    results.sort((a, b) => a.startDist - b.startDist || a.speed - b.speed);
+    return {
+        ranges, speeds, results, best, bestRaw, sorted, familyBand, boundaryLimited,
+        boundaryAxes: {
+            range: rangeBoundaryLimited,
+            speed: speedBoundaryLimited,
+        },
+    };
 }
 
 /**
@@ -566,7 +799,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
 export function constAirSpeedTrack(dataset, startDist, speedMs, options = {}) {
     const {ds: d2, stride} = downsampleDataset(dataset, options.targetN ?? 2500);
     const vSigma = options.vSigma ?? 3 * KNOTS_TO_MS;
-    const {lam} = traversePlausible(d2, startDist, {vTarget: speedMs, vSigma, iters: 3, K: 25});
+    const {lam} = traversePlausible(d2, startDist, {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120});
     const {n, fps, S, D} = dataset;
     const raw = new Float64Array(n * 3);
     for (let f = 0; f < n; f++) {
@@ -1055,7 +1288,7 @@ export function traverseMinSpeed(dataset, options = {}) {
  * Returns [{startDist, metrics, score, track?}] (tracks omitted unless keepTracks).
  */
 export async function rangeProfile(dataset, options = {}) {
-    const ranges = options.ranges ?? defaultRangeList(dataset);
+    const ranges = (options.ranges ?? defaultRangeList(dataset)).slice().sort((a, b) => a - b);
     const vTarget = options.vTarget ?? null;
     const vSigma = options.vSigma ?? 50 * KNOTS_TO_MS;
     const scoreSpeedWeight = options.scoreSpeedWeight ?? 0;
@@ -1077,6 +1310,21 @@ export async function rangeProfile(dataset, options = {}) {
         if (options.keepTracks) row.track = track;
         out.push(row);
         if (options.progress) await options.progress((i + 1) / ranges.length);
+    }
+    if (out.length) {
+        let bestIndex = 0;
+        for (let i = 1; i < out.length; i++) if (out[i].score < out[bestIndex].score) bestIndex = i;
+        const sortedScores = out.map((row) => row.score).sort((a, b) => a - b);
+        const median = sortedScores[Math.floor(sortedScores.length / 2)];
+        const threshold = out[bestIndex].score + 0.5 * (median - out[bestIndex].score);
+        let familyLo = bestIndex, familyHi = bestIndex;
+        while (familyLo > 0 && out[familyLo - 1].score <= threshold) familyLo--;
+        while (familyHi < out.length - 1 && out[familyHi + 1].score <= threshold) familyHi++;
+        out.bestIndex = bestIndex;
+        out.familyLoIndex = familyLo;
+        out.familyHiIndex = familyHi;
+        out.boundaryLimited = familyLo === 0 || familyHi === out.length - 1;
+        out.boundarySides = {lo: familyLo === 0, hi: familyHi === out.length - 1};
     }
     return out;
 }
@@ -1108,6 +1356,23 @@ export async function rangeProfile(dataset, options = {}) {
  * Returns {track, lam, startDist (m), score, profile: [{startDist, score}],
  *          usedSpeedTarget, decisiveness}.
  */
+// Vertex of the parabola through (xa,fa), (xb,fb), (xc,fc) — the standard
+// successive-parabolic-interpolation step, centered on the current best xb:
+//   xv = xb - 0.5 * [(xb-xa)^2 (fb-fc) - (xb-xc)^2 (fb-fa)]
+//              / [(xb-xa)   (fb-fc) - (xb-xc)   (fb-fa)]
+// Returns null when the points are (near-)collinear or the result is not
+// finite. Exported for unit tests: an earlier version mixed (xa-xc) terms
+// into the xb-centered formula, which proposed out-of-bracket vertices even
+// for a perfectly symmetric bracket, silently disabling the range refine.
+export function parabolicVertex(xa, fa, xb, fb, xc, fc) {
+    const d1 = (xb - xa) * (fb - fc);
+    const d2 = (xb - xc) * (fb - fa);
+    const denom = d1 - d2;
+    if (!isFinite(denom) || Math.abs(denom) < 1e-12) return null;
+    const xv = xb - 0.5 * ((xb - xa) * d1 - (xb - xc) * d2) / denom;
+    return isFinite(xv) ? xv : null;
+}
+
 export function fitPlausibleBestRange(dataset, options = {}) {
     const vTarget = options.vTarget ?? 300 * KNOTS_TO_MS;
     const vSigma = options.vSigma ?? 60 * KNOTS_TO_MS;
@@ -1148,7 +1413,20 @@ export function fitPlausibleBestRange(dataset, options = {}) {
     const scoresSorted = pureSweep.profile.map(p => p.score).sort((a, b) => a - b);
     const med = scoresSorted[Math.floor(scoresSorted.length / 2)];
     const decisiveness = med - pureSweep.best.score;
-    const usedSpeedTarget = !(decisiveness > decisiveMargin);
+    // best-vs-median alone always reads "decisive" on far-field scenes: the
+    // close half of the log grid scores terribly and inflates the median even
+    // when the far valley is FLAT (Gimbal — the canonical range-unobservable
+    // scene — read 12.9 and returned an arbitrary 843 kt valley member). Add a
+    // LOCAL flatness gate: geometry only picks the range when few coarse cells
+    // are heuristically close to the winner (same family recipe as the
+    // Minimum Speed saddle), plus a speed sanity check against the prior.
+    const famThresh = pureSweep.best.score + 0.5 * Math.max(1e-9, decisiveness);
+    const famCount = pureSweep.profile.filter(p => p.score <= famThresh).length;
+    let usedSpeedTarget = !(decisiveness > decisiveMargin && famCount <= 3);
+    if (!usedSpeedTarget && vTarget) {
+        const mPure = trackMetrics(dataset, pureSweep.best.track);
+        if (mPure.airSpeed.mean > 2 * vTarget) usedSpeedTarget = true;
+    }
 
     const vt = usedSpeedTarget ? vTarget : null;
     const searchOpts = mk(vt, searchK, searchIters);
@@ -1161,14 +1439,11 @@ export function fitPlausibleBestRange(dataset, options = {}) {
     let hiR = Math.min(rangeMax, best.R * 1.5);
     for (let pass = 0; pass < 2; pass++) {
         const a = scoreAt(loR, searchOpts), b = best, c = scoreAt(hiR, searchOpts);
-        const xa = Math.log(a.R), xb = Math.log(b.R), xc = Math.log(c.R);
-        const fa = a.score, fb = b.score, fc = c.score;
-        const denom = (xa - xb) * (fa - fc) - (xa - xc) * (fa - fb);
-        let xv;
-        if (Math.abs(denom) < 1e-12) break;
-        xv = xb - 0.5 * ((xa - xb) * (xa - xb) * (fb - fc) - (xa - xc) * (xa - xc) * (fb - fa)) /
-            ((xa - xb) * (fb - fc) - (xa - xc) * (fb - fa));
-        if (!isFinite(xv)) break;
+        const xv = parabolicVertex(
+            Math.log(a.R), a.score,
+            Math.log(b.R), b.score,
+            Math.log(c.R), c.score);
+        if (xv === null) break;
         const Rv = Math.min(rangeMax, Math.max(rangeMin, Math.exp(xv)));
         const v = scoreAt(Rv, searchOpts);
         if (v.score < best.score) best = v;
@@ -1178,14 +1453,34 @@ export function fitPlausibleBestRange(dataset, options = {}) {
 
     // full-quality solve at the winning range
     const finalSolve = traversePlausible(dataset, best.R, finalOpts);
+    const orderedProfile = profile.slice().sort((a, b) => a.startDist - b.startDist);
+    let profileBest = 0;
+    for (let i = 1; i < orderedProfile.length; i++) {
+        if (orderedProfile[i].score < orderedProfile[profileBest].score) profileBest = i;
+    }
+    const profileScores = orderedProfile.map((row) => row.score).sort((a, b) => a - b);
+    const profileMedian = profileScores[Math.floor(profileScores.length / 2)];
+    const supportThreshold = orderedProfile[profileBest].score
+        + 0.5 * (profileMedian - orderedProfile[profileBest].score);
+    let supportLo = profileBest, supportHi = profileBest;
+    while (supportLo > 0 && orderedProfile[supportLo - 1].score <= supportThreshold) supportLo--;
+    while (supportHi < orderedProfile.length - 1
+        && orderedProfile[supportHi + 1].score <= supportThreshold) supportHi++;
+    const boundarySides = {
+        lo: supportLo === 0 || best.R <= rangeMin * 1.001,
+        hi: supportHi === orderedProfile.length - 1 || best.R >= rangeMax * 0.999,
+    };
     return {
         track: finalSolve.track,
         lam: finalSolve.lam,
         startDist: best.R,
         score: straightFlightScore(trackMetrics(dataset, finalSolve.track)),
-        profile: profile.slice().sort((a, b) => a.startDist - b.startDist),
+        profile: orderedProfile,
         usedSpeedTarget,
         decisiveness,
+        flatFamilyCount: famCount,
+        boundaryLimited: boundarySides.lo || boundarySides.hi,
+        boundarySides,
     };
 }
 
@@ -1222,9 +1517,9 @@ function solveDense(A, b) {
 
 /**
  * Integrate the simple flight model.
- * params: [R0 (m along first ray), heading0 (deg true), TAS (m/s),
+ * params: [R0 (m along first ray), heading0 (deg in origin ENU), horizontal airspeed (m/s),
  *          turnRate0 (deg/s), turnAccel (deg/s^2), climb (m/s)]
- * Constant TAS through the air mass, heading integrates the (linearly varying)
+ * Constant horizontal airspeed through the air mass, heading integrates the (linearly varying)
  * turn rate, constant climb, position advected by the per-frame wind.
  * Returns Float64Array(n*3).
  */
@@ -1239,9 +1534,14 @@ export function simulateAircraft(dataset, params) {
     for (let f = 1; f < n; f++) {
         const t = f * dt;
         psi += (w0 + wd * t) * Math.PI / 180 * dt;
-        px += V * Math.sin(psi) * dt + W[(f - 1) * 3];
-        py += V * Math.cos(psi) * dt + W[(f - 1) * 3 + 1];
-        pz += climb * dt + W[(f - 1) * 3 + 2];
+        const airVX = V * Math.sin(psi), airVY = V * Math.cos(psi);
+        // W is a full local-horizontal ECEF displacement rotated into this
+        // fixed ENU frame, so Wz already carries wind's curvature component.
+        // Correct only the model's air-relative horizontal velocity here.
+        pz += (climb - (px * airVX + py * airVY) / EARTH_RADIUS_M) * dt
+            + W[(f - 1) * 3 + 2];
+        px += airVX * dt + W[(f - 1) * 3];
+        py += airVY * dt + W[(f - 1) * 3 + 1];
         track[f * 3] = px; track[f * 3 + 1] = py; track[f * 3 + 2] = pz;
     }
     return track;
@@ -1261,9 +1561,11 @@ function aircraftAngErrDeg(dataset, params, stride) {
     for (let f = 1; f < n; f++) {
         const t = f * dt;
         psi += (w0 + wd * t) * Math.PI / 180 * dt;
-        px += V * Math.sin(psi) * dt + W[(f - 1) * 3];
-        py += V * Math.cos(psi) * dt + W[(f - 1) * 3 + 1];
-        pz += climb * dt + W[(f - 1) * 3 + 2];
+        const airVX = V * Math.sin(psi), airVY = V * Math.cos(psi);
+        pz += (climb - (px * airVX + py * airVY) / EARTH_RADIUS_M) * dt
+            + W[(f - 1) * 3 + 2];
+        px += airVX * dt + W[(f - 1) * 3];
+        py += airVY * dt + W[(f - 1) * 3 + 1];
         if (f % stride !== 0 && f !== n - 1) continue;
         const b = f * 3;
         let rx = px - S[b], ry = py - S[b + 1], rz = pz - S[b + 2];
@@ -1308,9 +1610,11 @@ function aircraftCostErrDeg(dataset, params, costFrames, cumW) {
         const dPsi = (w0 * (tb - ta) + 0.5 * wd * (tb * tb - ta * ta)) * Math.PI / 180;
         const psiMid = psi + 0.5 * dPsi;
         const dtB = tb - ta;
-        px += V * Math.sin(psiMid) * dtB + (cumW[f * 3] - cumW[prevF * 3]);
-        py += V * Math.cos(psiMid) * dtB + (cumW[f * 3 + 1] - cumW[prevF * 3 + 1]);
-        pz += climb * dtB + (cumW[f * 3 + 2] - cumW[prevF * 3 + 2]);
+        const airVX = V * Math.sin(psiMid), airVY = V * Math.cos(psiMid);
+        pz += (climb - (px * airVX + py * airVY) / EARTH_RADIUS_M) * dtB
+            + (cumW[f * 3 + 2] - cumW[prevF * 3 + 2]);
+        px += airVX * dtB + (cumW[f * 3] - cumW[prevF * 3]);
+        py += airVY * dtB + (cumW[f * 3 + 1] - cumW[prevF * 3 + 1]);
         psi += dPsi;
         prevF = f;
         const b = f * 3;
@@ -1356,7 +1660,7 @@ export async function fitAircraft(dataset, options = {}) {
     const nRuns = options.runs ?? 3;
     const pop = options.pop ?? 60;
     const gens = options.gens ?? 150;
-    const T = dataset.n / dataset.fps;
+    const T = Math.max(0, dataset.n - 1) / dataset.fps;
 
     // Strided cost integration (block midpoint) keeps the many DE/polish
     // evaluations O(n/costStride) instead of O(n) — dominant cost at long clips.
@@ -1366,29 +1670,58 @@ export async function fitAircraft(dataset, options = {}) {
     for (let f = 0; f < dataset.n; f += costStride) costFrames.push(f);
     if (costFrames[costFrames.length - 1] !== dataset.n - 1) costFrames.push(dataset.n - 1);
 
+    // Optional soft ground-contact prior (from the analysis ground modes):
+    // pull the START altitude (frame-0 ray at range p[0]) and/or the END
+    // altitude (start + climb·T) toward a ground reference. Gated — undefined
+    // leaves the cost unchanged. NOTE p = [R0, headingDeg, V, w0, wd, climb]:
+    // there is no altitude parameter — altitude is implied by the range along
+    // the first sightline, so the prior must derive it from p[0], not p[1]
+    // (p[1] is the HEADING; penalizing it toward a ground height was a bug).
+    const groundPrior = options.groundPrior || null;
+    const gpS0 = [dataset.S[0], dataset.S[1], dataset.S[2]];   // frame-0 ray
+    const gpD0 = [dataset.D[0], dataset.D[1], dataset.D[2]];
+
     const cost = (p) => {
         const e = aircraftCostErrDeg(dataset, p, costFrames, cumW);
         if (e > 1e8) return e;
         const wEnd = p[3] + p[4] * T;
-        return (
+        let c = (
             e / errSigma +
             (p[3] / turnSigma) ** 2 + (wEnd / turnSigma) ** 2 +
             (p[5] / climbSigma) ** 2 +
             ((p[2] - tasTarget) / tasSigma) ** 2
         );
+        if (groundPrior) {
+            const sig = groundPrior.sigma ?? 40;
+            // Compare geodetic altitude h≈z+(x²+y²)/2R. Model `climb`
+            // is geodetic dh/dt, so endpoint height is h0+climb*T.
+            const x0 = gpS0[0] + p[0] * gpD0[0];
+            const y0 = gpS0[1] + p[0] * gpD0[1];
+            const z0 = gpS0[2] + p[0] * gpD0[2];
+            const h0 = z0 + (x0 * x0 + y0 * y0) / (2 * EARTH_RADIUS_M);
+            if (groundPrior.startZ !== undefined && groundPrior.startZ !== null) {
+                c += ((h0 - groundPrior.startZ) / sig) ** 2;
+            }
+            if (groundPrior.endZ !== undefined && groundPrior.endZ !== null) {
+                c += ((h0 + p[5] * T - groundPrior.endZ) / sig) ** 2;
+            }
+        }
+        return c;
     };
 
-    // TAS floor 25 kt: FAR Part 103 caps ultralight power-off stall at 24 kt
-    // CAS, so 25 kt is the slowest sustained flight of any legal fixed-wing.
-    // (A 50 kt floor silently pinned slow scenes — e.g. a 43 kt target — at
-    // the bound and forced multi-degree LOS errors.) TAS solved exactly AT
-    // this floor is itself an implausibility signal.
+    // Generic horizontal-speed floor. It is intentionally low enough to keep
+    // slow scenes in the search, but it is a model/search bound—not a universal
+    // stall-speed claim. A result at the floor is boundary-limited.
     const lo = [rangeMin, 0, 25 * KNOTS_TO_MS, -4, -0.3, -40];
     const hi = [rangeMax, 360, 700 * KNOTS_TO_MS, 4, 0.3, 40];
     const runs = [];
     for (let r = 0; r < nRuns; r++) {
         const de = await differentialEvolution(cost, lo, hi, {
             pop, gens,
+            // Deterministic per-run seed: identical inputs give identical
+            // fits (run-to-run variance was user-visible); distinct seeds per
+            // run preserve the independent-restart diversity.
+            rng: mulberry32(0x51F17A + r * 0x9E3779),
             // Report/yield only every 8th generation — hundreds of per-generation
             // setTimeout yields stall badly if the tab is backgrounded (Chrome
             // clamps hidden-tab timers), and add round-trip overhead even in the
@@ -1403,6 +1736,12 @@ export async function fitAircraft(dataset, options = {}) {
         // polish on the same strided cost (still 2nd-order accurate)
         const pol = patternSearchPolish(
             cost, de.params, [200, 0.5, 2, 0.02, 0.002, 0.5], {lo, hi});
+        pol.de = {
+            seed: (0x51F17A + r * 0x9E3779) >>> 0,
+            generations: de.generations,
+            evaluations: de.evaluations,
+            stopReason: de.stopReason,
+        };
         runs.push(pol);
     }
     runs.sort((a, b) => a.cost - b.cost);
@@ -1410,7 +1749,15 @@ export async function fitAircraft(dataset, options = {}) {
     const track = simulateAircraft(dataset, best.params);
     const metrics = trackMetrics(dataset, track);
     const [R0, h0, V, w0, wd, climb] = best.params;
+    // Diagnose coordinates near a search bound.  Heading is excluded because
+    // its 0/360 bounds are circular and arbitrary.  A bound only counts as a
+    // capability warning when an inward probe materially worsens the objective;
+    // flat/inactive coordinates are retained as unresolved metadata.
+    const pinNames = ["startDist", "heading", "tas", "turnRate", "turnAccel", "climb"];
+    const pinned = assessBoundPins(best.params, lo, hi, pinNames, cost,
+        {baseCost: best.cost, excludeIndices: [1]});
     return {
+        pinned,
         params: {
             startDist: R0,
             heading: ((h0 % 360) + 360) % 360,
@@ -1428,6 +1775,8 @@ export async function fitAircraft(dataset, options = {}) {
             cost: r.cost,
             startDist: r.params[0], heading: ((r.params[1] % 360) + 360) % 360,
             tas: r.params[2], turnRate: r.params[3], turnAccel: r.params[4], climb: r.params[5],
+            polishIterations: r.iterations, polishStopReason: r.stopReason,
+            de: r.de,
         })),
     };
 }
