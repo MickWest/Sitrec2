@@ -96,6 +96,15 @@ let panoRotateFrames = true;
 // (rotation + translation, scale = 1) so every frame stays the same size. Turn ON
 // to restore the old full-similarity behaviour (e.g. a genuinely zooming camera).
 let panoAllowFrameScale = false;
+// Motion-pano projection model. "similarity" = the 2D translate/rotate/scale
+// stamping above. "perspective" = fit a full per-frame HOMOGRAPHY to the flow
+// vectors and stamp with warpPerspective. A pan/tilt/zoom camera's true
+// inter-frame mapping IS a homography (K·R·K⁻¹): a similarity matches it at the
+// image centre but deviates quadratically toward the edges (~0.4px/frame for a
+// typical broadcast pan). That error is SYSTEMATIC, so chained over hundreds of
+// frames it accumulates into a large visible mismatch between the live frame and
+// the panorama behind it; the homography model removes it.
+let panoProjection = "similarity"; // "similarity" | "perspective"
 // Feature-pano options (separate from the motion-pano ones above).
 let panoFeatureFrameStep = 1;
 let panoFeatureCrop = 0;
@@ -173,6 +182,129 @@ function frameSimilarity(motionAnalyzer, frame, W, H) {
     return [cos, -sin, bx, sin, cos, by, 0, 0, 1];
 }
 
+// Project (x,y) through a full 3x3 homography (with perspective divide — ppt()
+// above is affine-only and would ignore the g,h terms).
+function phpt(M, x, y) {
+    const w = M[6] * x + M[7] * y + M[8];
+    return [(M[0] * x + M[1] * y + M[2]) / w, (M[3] * x + M[4] * y + M[5]) / w];
+}
+
+// Per-frame background HOMOGRAPHY (prev->cur) fitted with RANSAC to the motion
+// analyzer's cached flow vectors. Uses ALL tracked vectors, not just the
+// similarity-fit inliers: the similarity inlier mask was thresholded against the
+// similarity model, so it systematically drops the far-from-centre points that
+// carry the perspective signal. RANSAC rejects the moving foreground instead.
+// Returns a normalized 3x3 (prev-frame pixels -> cur-frame pixels), or null.
+function frameHomography(cv, frame) {
+    const vectors = motionAnalyzer?.resultCache.get(frame)?.flowData?.vectors;
+    if (!cv || !vectors || vectors.length < 12) return null;
+    const prevPts = [], curPts = [];
+    for (const v of vectors) {
+        prevPts.push(v.px, v.py);
+        curPts.push(v.px + v.dx, v.py + v.dy);
+    }
+    const n = prevPts.length / 2;
+    const srcM = cv.matFromArray(n, 1, cv.CV_32FC2, prevPts);
+    const dstM = cv.matFromArray(n, 1, cv.CV_32FC2, curPts);
+    const inlierMask = new cv.Mat();
+    let Hm = null, result = null;
+    try {
+        Hm = cv.findHomography(srcM, dstM, cv.RANSAC, 2.5, inlierMask);
+        if (Hm && Hm.rows === 3 && Hm.cols === 3) {
+            let inliers = 0;
+            for (let k = 0; k < inlierMask.rows; k++) if (inlierMask.data[k]) inliers++;
+            const H = [];
+            for (let k = 0; k < 9; k++) H.push(Hm.data64F[k]);
+            // Same sanity gates as the feature pano: finite, near-unit scale, tiny
+            // perspective terms, and a solid inlier count/ratio.
+            let ok = inliers >= 12 && inliers / n >= 0.25;
+            for (let k = 0; k < 9 && ok; k++) if (!isFinite(H[k])) ok = false;
+            if (ok) {
+                const sx = Math.hypot(H[0], H[3]), sy = Math.hypot(H[1], H[4]);
+                if (sx < 0.5 || sx > 2.0 || sy < 0.5 || sy > 2.0) ok = false;
+                if (Math.abs(H[6]) > 0.01 || Math.abs(H[7]) > 0.01) ok = false;
+            }
+            if (ok && Math.abs(H[8]) > 1e-12) {
+                for (let k = 0; k < 9; k++) H[k] /= H[8];
+                result = H;
+            }
+        }
+    } catch (_) { /* fall through to null */ }
+    if (Hm) { try { Hm.delete(); } catch (_) { /* already freed */ } }
+    srcM.delete();
+    dstM.delete();
+    inlierMask.delete();
+    return result;
+}
+
+// Cumulative per-frame HOMOGRAPHY transforms G[i] mapping each stamped frame's
+// pixels into the ANCHOR (middle) frame. Anchoring in the middle instead of the
+// first frame halves the worst-case accumulated drift and spreads the projective
+// stretch symmetrically. Falls back per-frame to the similarity (then to the
+// translation-only motion) when a homography can't be fitted. Returns null when
+// the chain blows up (non-finite or extreme projective stretch), so the caller
+// can fall back to the similarity layout.
+function calculateFrameTransformsPerspective(cv, motionData, startFrame, endFrame, frameStep, W, H) {
+    const totalFrames = Math.ceil((endFrame - startFrame + 1) / frameStep);
+    const anchorIdx = Math.floor(totalFrames / 2);
+    const stepH = (f) => {
+        const md = motionData[f];
+        return frameHomography(cv, f)
+            || frameSimilarity(motionAnalyzer, f, W, H)
+            || ptranslate(md ? md.dx : 0, md ? md.dy : 0);
+    };
+    // Per-index step transforms: S[i] maps frame(index i-1) pixels -> frame(index i)
+    // pixels, composing the per-video-frame fits across the step (frameStep > 1).
+    const S = new Array(totalFrames).fill(null);
+    for (let i = 1; i < totalFrames; i++) {
+        const frame = startFrame + i * frameStep;
+        let Sstep = PANO_IDENTITY3.slice();
+        const lo = frameStep === 1 ? frame : frame - frameStep + 1;
+        for (let f = lo; f <= frame; f++) Sstep = pmul3(stepH(f), Sstep);
+        S[i] = Sstep;
+    }
+    const norm9 = (M) => {
+        if (!M || Math.abs(M[8]) < 1e-12) return null;
+        for (let k = 0; k < 9; k++) M[k] /= M[8];
+        return M;
+    };
+    const G = new Array(totalFrames);
+    G[anchorIdx] = PANO_IDENTITY3.slice();
+    for (let i = anchorIdx + 1; i < totalFrames; i++) {
+        G[i] = norm9(pmul3(G[i - 1], pinv3(S[i]) || PANO_IDENTITY3.slice())) || G[i - 1];
+    }
+    for (let i = anchorIdx - 1; i >= 0; i--) {
+        G[i] = norm9(pmul3(G[i + 1], S[i + 1])) || G[i + 1];
+    }
+
+    // Projected-corner bbox + blow-up detection (same idea as the feature pano's
+    // PLANAR_BLOWUP_AREA guard: a long chain of homographies can diverge).
+    const corners = [[0, 0], [W, 0], [W, H], [0, H]];
+    const srcArea = W * H;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let maxStretch = 0;
+    for (let i = 0; i < totalFrames; i++) {
+        const c = corners.map(([x, y]) => phpt(G[i], x, y));
+        for (const p of c) {
+            if (!isFinite(p[0]) || !isFinite(p[1])) return null;
+            if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+            if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+        }
+        const a = Math.abs(
+            c[0][0]*c[1][1] - c[1][0]*c[0][1] +
+            c[1][0]*c[2][1] - c[2][0]*c[1][1] +
+            c[2][0]*c[3][1] - c[3][0]*c[2][1] +
+            c[3][0]*c[0][1] - c[0][0]*c[3][1]) / 2;
+        if (a / srcArea > maxStretch) maxStretch = a / srcArea;
+    }
+    if (maxStretch > 50 || !(maxX > minX) || !(maxY > minY)) return null;
+    const frameData = [];
+    for (let i = 0; i < totalFrames; i++) {
+        frameData.push({frame: startFrame + i * frameStep, G: G[i]});
+    }
+    return {frameData, totalFrames, minX, minY, maxX, maxY, maxStretch};
+}
+
 // Cumulative per-frame transforms G[i] mapping each stamped frame's pixels into
 // the reference (first) frame, by chaining the inverse of each per-frame
 // background similarity (falling back to the translation-only motion when a
@@ -220,7 +352,27 @@ function computePanoLayout(videoData, motionData, startFrame, endFrame, frameSte
     const frameWidth = firstImage.width || firstImage.videoWidth || 1920;
     const frameHeight = firstImage.height || firstImage.videoHeight || 1080;
 
-    if (panoRotateFrames) {
+    if (panoProjection === "perspective") {
+        const tf = calculateFrameTransformsPerspective(getCV(), motionData, startFrame, endFrame, frameStep, frameWidth, frameHeight);
+        if (tf) {
+            const w0 = Math.max(1, Math.ceil(tf.maxX - tf.minX));
+            const h0 = Math.max(1, Math.ceil(tf.maxY - tf.minY));
+            const scale = panoFitScale(w0, h0);
+            const panoWidthPx = Math.max(1, Math.floor(w0 * scale));
+            const panoHeightPx = Math.max(1, Math.floor(h0 * scale));
+            const SO = [scale, 0, -scale * tf.minX, 0, scale, -scale * tf.minY, 0, 0, 1];
+            const frameData = tf.frameData.map(fd => ({frame: fd.frame, x: 0, y: 0, affine: pmul3(SO, fd.G)}));
+            console.log(`Motion Panorama (perspective): ${panoWidthPx}x${panoHeightPx}px, scale=${scale.toFixed(3)}, maxStretch=${tf.maxStretch.toFixed(2)}x`);
+            return {
+                rotateMode: true, perspectiveMode: true, frameData, totalFrames: tf.totalFrames,
+                frameWidth, frameHeight, croppedWidth: frameWidth, croppedHeight: frameHeight,
+                panoWidthPx, panoHeightPx, scale, scaledFrameWidth: frameWidth, scaledFrameHeight: frameHeight,
+            };
+        }
+        console.warn("Motion Panorama: perspective (homography) chain was degenerate; falling back to similarity stamping");
+    }
+
+    if (panoRotateFrames || panoProjection === "perspective") {
         const tf = calculateFrameTransforms(motionAnalyzer, motionData, startFrame, endFrame, frameStep, frameWidth, frameHeight);
         const w0 = Math.max(1, Math.ceil(tf.maxX - tf.minX));
         const h0 = Math.max(1, Math.ceil(tf.maxY - tf.minY));
@@ -390,7 +542,86 @@ function processRemoveOuterBlack(imageData) {
     }
 }
 
-function drawFrameToPano(panoCtx, image, x, y, crop, croppedWidth, croppedHeight, scaledFrameWidth, scaledFrameHeight, useMask, tempCanvas, tempCtx, maskImageData, frameWidth, frameHeight, rotation = 0, affine = null) {
+// Edge-feather alpha for perspective pano STAMPING. warpPerspective samples
+// BORDER_CONSTANT transparent-black past the frame edge, so every stamped frame
+// leaves a ~1px darkened semi-transparent border; hundreds of overlapping stamps
+// accumulate those into visible stripes/smears. Fading the outer ring to
+// transparent (like the feature pano's feather) lets neighbouring frames blend
+// over the edges instead. Only used when BUILDING the panorama — the live
+// overlay frame in the video stays hard-edged.
+function makeFeatherAlpha(w, h) {
+    const featherPx = Math.max(16, Math.round(0.03 * Math.min(w, h)));
+    const a = new Uint8ClampedArray(w * h);
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const edge = Math.min(x, w - 1 - x, y, h - 1 - y);
+            a[y * w + x] = Math.round(Math.max(0, Math.min(1, (edge + 1) / featherPx)) * 255);
+        }
+    }
+    return a;
+}
+
+// Scratch canvases reused by warpPerspectiveOntoCanvas across frames (a source
+// canvas to read pixels from, and a tile canvas to composite the warp result).
+function makeWarpScratch(w, h) {
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = w;
+    srcCanvas.height = h;
+    const srcCtx = srcCanvas.getContext('2d', {willReadFrequently: true});
+    const tileCanvas = document.createElement('canvas');
+    const tileCtx = tileCanvas.getContext('2d');
+    return {srcCanvas, srcCtx, tileCanvas, tileCtx};
+}
+
+// Draw `image` onto `ctx` through the FULL 3x3 transform T (which may carry
+// perspective g,h terms that canvas setTransform cannot express) using OpenCV
+// warpPerspective on a bounds-clamped tile, composited with source-over so the
+// source's transparent (masked) pixels stay transparent. Same tile approach as
+// FeaturePanoramaExporter.warpFrameOnto, but for a canvas-drawable source.
+function warpPerspectiveOntoCanvas(cv, image, T, ctx, srcW, srcH, scratch, featherAlpha = null) {
+    let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+    for (const [cx, cy] of [[0, 0], [srcW, 0], [srcW, srcH], [0, srcH]]) {
+        const [px, py] = phpt(T, cx, cy);
+        if (!isFinite(px) || !isFinite(py)) return false;
+        if (px < bx0) bx0 = px; if (px > bx1) bx1 = px;
+        if (py < by0) by0 = py; if (py > by1) by1 = py;
+    }
+    const rx = Math.max(0, Math.floor(bx0));
+    const ry = Math.max(0, Math.floor(by0));
+    const rw = Math.min(ctx.canvas.width, Math.ceil(bx1)) - rx;
+    const rh = Math.min(ctx.canvas.height, Math.ceil(by1)) - ry;
+    if (rw <= 0 || rh <= 0) return false;
+    scratch.srcCtx.clearRect(0, 0, srcW, srcH);
+    scratch.srcCtx.drawImage(image, 0, 0, srcW, srcH);
+    const id = scratch.srcCtx.getImageData(0, 0, srcW, srcH);
+    if (featherAlpha) {
+        const data = id.data;
+        for (let p = 0; p < srcW * srcH; p++) {
+            const a = data[p * 4 + 3];
+            if (a) data[p * 4 + 3] = (a * featherAlpha[p] + 127) >> 8;
+        }
+    }
+    let src = null, dst = null, Hm = null;
+    try {
+        src = cv.matFromImageData(id);
+        dst = new cv.Mat();
+        Hm = cv.matFromArray(3, 3, cv.CV_64F, pmul3(ptranslate(-rx, -ry), T));
+        cv.warpPerspective(src, dst, Hm, new cv.Size(rw, rh),
+            cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(0, 0, 0, 0));
+        const tileImg = new ImageData(new Uint8ClampedArray(dst.data), rw, rh);
+        scratch.tileCanvas.width = rw;
+        scratch.tileCanvas.height = rh;
+        scratch.tileCtx.putImageData(tileImg, 0, 0);
+        ctx.drawImage(scratch.tileCanvas, rx, ry);
+    } finally {
+        if (src) src.delete();
+        if (dst) dst.delete();
+        if (Hm) Hm.delete();
+    }
+    return true;
+}
+
+function drawFrameToPano(panoCtx, image, x, y, crop, croppedWidth, croppedHeight, scaledFrameWidth, scaledFrameHeight, useMask, tempCanvas, tempCtx, maskImageData, frameWidth, frameHeight, rotation = 0, affine = null, warp = null) {
     let sourceImage = image;
     
     if (exportWithEffects) {
@@ -418,7 +649,11 @@ function drawFrameToPano(panoCtx, image, x, y, crop, croppedWidth, croppedHeight
     }
     
     const drawWithRotation = (src, sx, sy, sw, sh, dx, dy, dw, dh) => {
-        if (affine) {
+        if (warp && affine) {
+            // Perspective mode: the affine slot carries a full homography whose
+            // g,h terms canvas setTransform can't express — warp via OpenCV.
+            warpPerspectiveOntoCanvas(warp.cv, src, affine, panoCtx, frameWidth, frameHeight, warp.scratch, warp.featherAlpha);
+        } else if (affine) {
             // Full per-frame similarity (rotation + translation, off-center safe):
             // the affine maps native source pixels straight to panorama pixels.
             panoCtx.save();
@@ -1237,8 +1472,9 @@ async function exportMotionPanorama() {
     const motionData = motionAnalyzer.getMotionDataForAllFrames({gapFill: false, fallbackToSmoothed: false, useTrackletLastSegment: true});
 
     const panoRotation = isAlignWithFlowEnabled() ? -calculateOverallMotionAngle(motionData, startFrame, endFrame) : 0;
-    const {frameData, totalFrames, frameWidth, frameHeight, croppedWidth, croppedHeight, panoWidthPx, panoHeightPx, scale, scaledFrameWidth, scaledFrameHeight} =
+    const {frameData, totalFrames, frameWidth, frameHeight, croppedWidth, croppedHeight, panoWidthPx, panoHeightPx, scale, scaledFrameWidth, scaledFrameHeight, perspectiveMode} =
         computePanoLayout(videoData, motionData, startFrame, endFrame, panoFrameStep, crop, panoRotation);
+    const panoWarp = perspectiveMode ? {cv: getCV(), scratch: makeWarpScratch(frameWidth, frameHeight), featherAlpha: makeFeatherAlpha(frameWidth, frameHeight)} : null;
 
     const panoCanvas = document.createElement('canvas');
     panoCanvas.width = panoWidthPx;
@@ -1330,7 +1566,7 @@ async function exportMotionPanorama() {
             continue;
         }
 
-        drawFrameToPano(panoCtx, image, fd.x, fd.y, crop, croppedWidth, croppedHeight, scaledFrameWidth, scaledFrameHeight, useMask, tempCanvas, tempCtx, maskImageData, frameWidth, frameHeight, panoRotation, fd.affine);
+        drawFrameToPano(panoCtx, image, fd.x, fd.y, crop, croppedWidth, croppedHeight, scaledFrameWidth, scaledFrameHeight, useMask, tempCanvas, tempCtx, maskImageData, frameWidth, frameHeight, panoRotation, fd.affine, panoWarp);
 
         if (i % previewEveryNFrames === 0) {
             const pct = Math.round(100 * i / totalFrames);
@@ -1613,8 +1849,9 @@ async function exportPanoVideo() {
     const motionData = motionAnalyzer.getMotionDataForAllFrames({gapFill: false, fallbackToSmoothed: false, useTrackletLastSegment: true});
 
     const panoRotation = isAlignWithFlowEnabled() ? -calculateOverallMotionAngle(motionData, startFrame, endFrame) : 0;
-    const {frameData, totalFrames, frameWidth, frameHeight, croppedWidth, croppedHeight, panoWidthPx, panoHeightPx, scale: panoScale, scaledFrameWidth, scaledFrameHeight} =
+    const {frameData, totalFrames, frameWidth, frameHeight, croppedWidth, croppedHeight, panoWidthPx, panoHeightPx, scale: panoScale, scaledFrameWidth, scaledFrameHeight, perspectiveMode} =
         computePanoLayout(videoData, motionData, startFrame, endFrame, 1, crop, panoRotation);
+    const panoWarp = perspectiveMode ? {cv: getCV(), scratch: makeWarpScratch(frameWidth, frameHeight), featherAlpha: makeFeatherAlpha(frameWidth, frameHeight)} : null;
 
     const panoCanvas = document.createElement('canvas');
     panoCanvas.width = panoWidthPx;
@@ -1661,7 +1898,7 @@ async function exportPanoVideo() {
         const image = videoData.getImageNoPurge(fd.frame);
         if (!image || !image.width) continue;
 
-        drawFrameToPano(panoCtx, image, fd.x, fd.y, crop, croppedWidth, croppedHeight, scaledFrameWidth, scaledFrameHeight, useMask, tempCanvas, tempCtx, maskImageData, frameWidth, frameHeight, panoRotation, fd.affine);
+        drawFrameToPano(panoCtx, image, fd.x, fd.y, crop, croppedWidth, croppedHeight, scaledFrameWidth, scaledFrameHeight, useMask, tempCanvas, tempCtx, maskImageData, frameWidth, frameHeight, panoRotation, fd.affine, panoWarp);
 
         if (i % 20 === 0) {
             const pct = Math.round(100 * i / totalFrames);
@@ -1796,7 +2033,13 @@ async function exportPanoVideo() {
                 overlayImage = blackCanvas;
             }
 
-            if (fd.affine) {
+            if (fd.affine && panoWarp) {
+                // Perspective mode: map native source -> panorama -> 4K composite,
+                // warped through the full homography (setTransform is affine-only).
+                const C = [videoFrameScaleX, 0, offsetX, 0, videoFrameScaleY, offsetY, 0, 0, 1];
+                const A = pmul3(C, fd.affine);
+                warpPerspectiveOntoCanvas(panoWarp.cv, overlayImage, A, compositeCtx, frameWidth, frameHeight, panoWarp.scratch);
+            } else if (fd.affine) {
                 // Rotate-frames mode: map native source -> panorama -> 4K composite.
                 const C = [videoFrameScaleX, 0, offsetX, 0, videoFrameScaleY, offsetY, 0, 0, 1];
                 const A = pmul3(C, fd.affine);
@@ -2052,9 +2295,16 @@ export function addMotionAnalysisMenu() {
         get exportWithEffects() { return exportWithEffects; }, set exportWithEffects(v) { exportWithEffects = v; },
         get removeOuterBlack() { return removeOuterBlack; }, set removeOuterBlack(v) { removeOuterBlack = v; },
         get rotateFrames() { return panoRotateFrames; }, set rotateFrames(v) { panoRotateFrames = v; },
-        get allowFrameScale() { return panoAllowFrameScale; }, set allowFrameScale(v) { panoAllowFrameScale = v; }
+        get allowFrameScale() { return panoAllowFrameScale; }, set allowFrameScale(v) { panoAllowFrameScale = v; },
+        get projection() { return panoProjection; }, set projection(v) { panoProjection = v; }
     };
     const motionOptions = panoFolder.addFolder(mt("menu.panorama.motionOptions.title")).close().perm();
+    const projectionOptions = {};
+    projectionOptions[mt("menu.panorama.projection.similarity")] = "similarity";
+    projectionOptions[mt("menu.panorama.projection.perspective")] = "perspective";
+    motionOptions.add(motionPanoParams, 'projection', projectionOptions)
+        .name(mt("menu.panorama.projection.label"))
+        .tooltip(mt("menu.panorama.projection.tooltip")).perm();
     motionOptions.add(motionPanoParams, 'rotateFrames')
         .name(mt("menu.panorama.rotateFrames.label"))
         .tooltip(mt("menu.panorama.rotateFrames.tooltip")).perm();
@@ -2836,4 +3086,37 @@ export async function deserializeMotionAnalysis(data) {
             completePendingWork(_restoreToken);
         }
     }
+}
+
+// ---- MCP / testing hook ----------------------------------------------------
+// Programmatic access to the motion-pano pipeline for the SitrecBridge MCP test
+// harness (drive analysis + exports and inspect the flow data without clicking
+// through the GUI). Window-scoped debug surface, not user-facing.
+if (typeof window !== "undefined") {
+    window.__motionPano = {
+        getAnalyzer: () => motionAnalyzer,
+        ensureAnalyzer: () => ensureOpenCVAndAnalyzer(null, "", ""),
+        analyzeAllFrames,
+        isReady: isMotionAnalysisReady,
+        exportPanoVideo,
+        exportMotionPanorama,
+        getCV,
+        fitSimilarity,
+        frameHomography,
+        getOptions: () => ({
+            projection: panoProjection,
+            rotateFrames: panoRotateFrames,
+            allowFrameScale: panoAllowFrameScale,
+            frameStep: panoFrameStep,
+            crop: panoCrop,
+            useMaskInPano,
+        }),
+        setOptions: (o = {}) => {
+            if (o.projection !== undefined) panoProjection = o.projection;
+            if (o.rotateFrames !== undefined) panoRotateFrames = o.rotateFrames;
+            if (o.allowFrameScale !== undefined) panoAllowFrameScale = o.allowFrameScale;
+            if (o.frameStep !== undefined) panoFrameStep = o.frameStep;
+            if (o.crop !== undefined) panoCrop = o.crop;
+        },
+    };
 }

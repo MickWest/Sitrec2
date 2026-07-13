@@ -583,6 +583,12 @@ const en = {
                 motionOptions: {
                     title: "Motion Pano Options",
                 },
+                projection: {
+                    label: "Projection",
+                    tooltip: "Similarity (2D): stamp frames with translate/rotate/scale only (fast, but a pan/tilt/zoom camera's perspective error accumulates across the panorama). Perspective (Homography): fit a full per-frame homography to the motion vectors and warp frames to match — registers pan/tilt/zoom footage correctly edge to edge",
+                    similarity: "Similarity (2D)",
+                    perspective: "Perspective (Homography)",
+                },
                 rotateFrames: {
                     label: "Rotate Frames (SfM)",
                     tooltip: "Stamp each frame with its full recovered rotation+translation (handles camera roll/rotation, like the feature pano) instead of translation only",
