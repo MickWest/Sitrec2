@@ -148,7 +148,13 @@ export class CNodePositionLLA extends CNodeTrack {
 
                 this.lookupString = "";
 
-                if (customLocationFunction !== undefined) {
+                // Optional location tools (Lookup / Geolocate / Go To). On by
+                // default — the Camera/Target location menus want them — but
+                // simple embedded positions (e.g. the football broadcast
+                // camera) pass locationTools:false for a compact folder.
+                const locationTools = v.locationTools ?? true;
+
+                if (locationTools && customLocationFunction !== undefined) {
                     this.lookupController = gui.add(this, "lookupString").name(t("positionLLA.lookup.label")).tooltip(t("positionLLA.lookup.tooltip")).onFinishChange(async () => {
                         if (this.lookupString.length > 0) {
                             try {
@@ -201,12 +207,14 @@ export class CNodePositionLLA extends CNodeTrack {
                     });
                 }
 
-               // geolocate from browse
-                this.geolocateController = gui.add(this, "geolocate").name(t("positionLLA.geolocate.label")).tooltip(t("positionLLA.geolocate.tooltip"))
+                if (locationTools) {
+                    // geolocate from browser
+                    this.geolocateController = gui.add(this, "geolocate").name(t("positionLLA.geolocate.label")).tooltip(t("positionLLA.geolocate.tooltip"))
 
-               // Add a "Go To" button to the GUI (stays enabled regardless of source —
-               // it's a viewport-navigation action, not a manual-value editor)
-                this.goToController = gui.add(this, "goTo").name(t("positionLLA.goTo.label")).tooltip(t("positionLLA.goTo.tooltip"))
+                    // Add a "Go To" button to the GUI (stays enabled regardless of source —
+                    // it's a viewport-navigation action, not a manual-value editor)
+                    this.goToController = gui.add(this, "goTo").name(t("positionLLA.goTo.label")).tooltip(t("positionLLA.goTo.tooltip"))
+                }
 
 
 
