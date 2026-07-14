@@ -27,6 +27,7 @@ import {
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {setupHorizonExtractorMenu} from "./CHorizonExtractor";
 import {setupCameraMotionMenu} from "./CameraMotionFromVideo";
+import {setupFootball} from "./Football";
 import {setupStreetViewPanoMenu} from "./StreetViewPanoUI";
 import {CustomGraphManager} from "./CCustomGraphManager";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
@@ -1917,6 +1918,9 @@ export const setupMethods = {
         CustomGraphManager.setup();
 
         this.setupSimpleFlightSim();
+
+        // Football launcher + cable cam (Physics -> Football)
+        setupFootball();
 
         // Orbit camera - orbits around a selected target track at a given radius and period
         if (!NodeMan.exists("orbitCameraPosition") && NodeMan.exists("fixedCameraPosition")) {

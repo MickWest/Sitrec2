@@ -1788,6 +1788,7 @@ async function initializeOnce() {
     addGUIFolder("wind", "Wind", "physics");
     addGUIFolder("gimbalAnalysis", "Gimbal Analysis", "physics");
     addGUIFolder("simpleFlightSim", "Simple Flight Sim", "physics");
+    addGUIFolder("football", "Football", "physics");
 
     // addGUIMenu("missile", "Missile").tooltip("Homing missile parameters\nControls for the missile simulation including mass, thrust, air resistance, and burn time");
 
