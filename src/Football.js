@@ -49,6 +49,8 @@ const BALL_RADIUS = 0.110;        // m  (circumference 68-70 cm)
 const BALL_AREA = Math.PI * BALL_RADIUS * BALL_RADIUS;
 const AIR_RHO = 1.225;            // kg/m^3 at sea level
 const WIRE_RADIUS = 0.008;        // m, Spidercam rope is ~8-10 mm
+const WIRE_ATTACH_ABOVE = 0.5;    // m, wires join the rig this far above the
+                                  // camera/dolly point (the gimbal hangs below)
 const GRAVITY = 9.81;             // m/s^2
 const GROUND_RESTITUTION = 0.6;   // bounce energy retention (vertical)
 const GROUND_FRICTION = 0.75;     // horizontal velocity retained per bounce
@@ -78,9 +80,9 @@ const GOAL_KICK_SCENARIO = {
         lat: 25.957915,           // Hard Rock Stadium, Miami Gardens
         lon: -80.238930,          // (center aligned to the canopy opening)
         fieldAltitude: 3,         // ~sea level
-        // Long-axis compass bearing measured against the high-zoom satellite
-        // tiles (canopy opening + field strip run WNW-ESE, ~111°/291°).
-        pitchHeadingDeg: 111,
+        // Long-axis compass bearing re-fitted against the 3D building tiles
+        // (was 111° from the low-zoom satellite strip).
+        pitchHeadingDeg: 121.4,
     },
     pitch: {length: 105, width: 68},
     // Nyland's goal kick from the (assumed west) Norway goal area, aimed
@@ -89,44 +91,49 @@ const GOAL_KICK_SCENARIO = {
     kick: {
         along: -47.0,             // goal-area edge, 5.5 m off the goal line
         across: 2.0,
-        headingRelDeg: 20,        // relative to +along (toward bench side)
-        elevationDeg: 42,         // high apex, level with the upper deck
+        headingRelDeg: 9.6,       // relative to +along (toward bench side);
+                                  // keeps the tuned 131° compass heading with
+                                  // the re-fitted 121.4° pitch axis
+        elevationDeg: 38,         // high apex, level with the upper deck
         speed: 35,                // m/s, hard elite goal kick (~69 m unimpeded)
         spinRPM: 300,             // backspin
         spinTiltDeg: 0,
         dragCd: 0.22,
-        launchTime: 0.87,         // seconds into the sitch; matches the kick
-                                  // moment in the imported spidercam clip
+        launchTime: 0.583,        // seconds into the sitch; ball contact in the
+                                  // real-time spidercam clip (frame 35 @ 60 fps)
     },
-    // Spidercam motion matching the broadcast frames: at the kick it hangs
-    // elevated BEHIND the Norway goal (looking over the keeper), then chases
-    // the kick downfield along the pitch axis, descending and drifting to
-    // the bench side, ending low near halfway (the motion-blurred frame —
-    // that replay is slow motion, so only the PATH is constrained by it,
-    // not the transit time; speeds here stay near Spidercam limits).
-    // As the ball overtakes the racing dolly it clips the wire that runs
-    // forward-up to the bench-side England-end anchor — tens of meters from
-    // the camera itself, which is why the camera "neither shakes nor moves".
-    // Keyframe times are seconds RELATIVE TO THE KICK (dt), converted to
-    // sitch frames at load so the replication survives fps/frame-count
-    // changes (e.g. after importing the 59.94 fps clip). The dolly holds
-    // its first position until the kick.
+    // Spidercam motion matched frame-by-frame against the REAL-TIME clip
+    // ("Real Time Spider Footage - correct speed.mov", 262 f @ 60 fps): the
+    // rig is already moving at clip start just above the Norway goal, races
+    // downfield at ~14-15 m/s (near the rig's spec limit), RISING slightly
+    // (~19 m to ~21 m) while drifting to the bench side, reaching halfway
+    // ~3.5 s after the kick — about 2.5x faster than the old keys, which
+    // were fitted to a SLOW-MOTION replay and only constrained the path
+    // shape. Keyframe times are seconds RELATIVE TO THE KICK (dt),
+    // converted to sitch frames at load so the replication survives
+    // fps/frame-count changes.
     cableCam: [
-        {dt: 0,    along: -60, across: -0.7, height: 16.75},
-        {dt: 4,    along: -25, across: 5.3,  height: 14.75},
-        {dt: 9.67, along: 10,  across: 17.3, height: 10.75},
-        {dt: 13,   along: 12,  across: 18.3, height: 10.75},
+        {dt: -0.583, along: -51, across: -4, height: 19},
+        {dt: 0.417,  along: -32, across: -1, height: 19.5},
+        {dt: 1.417,  along: -15, across: 3,  height: 20},
+        {dt: 2.417,  along: 0,   across: 9,  height: 20.5},
+        {dt: 3.583,  along: 14,  across: 20, height: 21},
+        {dt: 3.767,  along: 16,  across: 22, height: 21},
     ],
     // Where the spidercam operator points the camera (pitch frame, same
-    // kick-relative keyframe scheme): down the pitch over the keeper at the
-    // kick, then panning to track the dropping ball toward the benches.
+    // kick-relative keyframe scheme): over the keeper toward bench-side
+    // midfield at the kick, swinging down-pitch as the rig accelerates,
+    // then panning right onto the bench-side drop zone.
     cableCamAim: [
-        {dt: 0,   along: -15, across: 0,  height: 0},
-        {dt: 2,   along: -5,  across: 5,  height: 4},
-        {dt: 3.5, along: 4,   across: 20, height: 6},
-        {dt: 6,   along: 8,   across: 28, height: 0},
+        {dt: -0.583, along: -3, across: 18, height: 4},
+        {dt: 0.417,  along: 15, across: 8,  height: 0},
+        {dt: 1.417,  along: 30, across: 7,  height: 2},
+        {dt: 2.417,  along: 40, across: 16, height: 2},
+        {dt: 3.583,  along: 32, across: 34, height: 0},
+        {dt: 3.767,  along: 32, across: 34, height: 0},
     ],
-    cableCamFOV: 60,              // vertical FOV of the spidercam lens (wide)
+    cableCamFOV: 81.5,            // vertical FOV of the spidercam lens (very
+                                  // wide; fitted against the footage)
     matchDateTime: "2026-07-11T21:47:00Z",  // ~45+2' after 21:00 UTC kickoff
     // Canopy-opening corners: ~140m x 92m rectangle, roof deck ~48 m
     anchors: {along: 70, across: 45, height: 48},
@@ -458,6 +465,9 @@ export class CNodeFootballTrack extends CNodeTrack {
             if (anchors) {
                 const dolly = this.dollyAt(f);
                 if (dolly) {
+                    // wires join the rig above the camera point (fresh clone
+                    // from dollyAt, so shifting in place is safe)
+                    dolly.addScaledVector(pitchUp, WIRE_ATTACH_ABOVE);
                     for (let w = 0; w < 4; w++) {
                         const buf = this._wireBuf[w];
                         for (let i = 0; i < WIRE_POINTS; i++) {
@@ -720,12 +730,14 @@ export class CNodeDisplayCableCamWires extends CNode3DGroup {
             this._markerVersion = -1;
         }
 
+        // wires join the rig above the camera point
+        const attach = dolly.clone().addScaledVector(pf.up, WIRE_ATTACH_ABOVE);
         const p = new Vector3();
         for (const anchor of anchors) {
             const flat = [];
             for (let i = 0; i < DISPLAY_WIRE_POINTS; i++) {
                 const t = i / (DISPLAY_WIRE_POINTS - 1);
-                p.copy(anchor).lerp(dolly, t)
+                p.copy(anchor).lerp(attach, t)
                     .addScaledVector(pf.up, -sag * 4 * t * (1 - t))
                     .sub(this._origin);
                 flat.push(p.x, p.y, p.z);
@@ -997,6 +1009,23 @@ export function setupFootball() {
     const showCableCam = guiFlag("footballShowCableCam", false, "Show Cable Cam",
         "Show the cable-cam dolly, its path, and the four support wires", folder);
 
+    // Optionally render the wires in the look view too. Off by default: the
+    // look camera often rides the dolly, and wires sweeping right past the
+    // lens read as judder (why the wires are MAIN-only — see
+    // CNodeDisplayCableCamWires). The broadcast view sees them either way.
+    const wiresInLook = guiFlag("footballWiresLookView", false, "Wires in Look View",
+        "Also render the cable-cam wires (and contact markers) in the look view. "
+        + "Off by default because wires sweeping past the lens of a dolly-riding camera read as judder", folder);
+    const applyWiresLookLayers = () => {
+        const wires = NodeMan.get("footballWires", false);
+        if (!wires) return;
+        wires.group.layers.mask = wiresInLook.v(0)
+            ? (LAYER.MASK_MAIN | LAYER.MASK_LOOK) : LAYER.MASK_MAIN;
+        propagateLayerMaskObject(wires.group);
+        setRenderOne(true);
+    };
+    wiresInLook.onChange = applyWiresLookLayers;
+
     const showPitch = guiFlag("footballShowPitch", false, "Show Pitch Overlay",
         "Drape a regulation 105x68 m pitch (grass + white lines) on the ground at the pitch location", folder);
     // Fires on user toggles AND on modDeserialize (guiEntry.setValue), so a
@@ -1014,12 +1043,16 @@ export function setupFootball() {
         if (NodeMan.exists("footballPitchOverlay")) requestPitchOverlayRebuild();
     };
     pitchHeading.onChange = refreshOverlayIfPresent;
-    if (!setupFootball._overlayEventWired) {
-        setupFootball._overlayEventWired = true;
-        EventManager.addEventListener("PositionLLA.onChange", (data) => {
-            if (data?.id === "footballPitchCenter") refreshOverlayIfPresent();
-        });
+    // EventManager.removeAll() runs on sitch dispose, so re-register every
+    // setup — a one-shot guard would leave a dead listener after an
+    // in-session sitch switch.
+    if (setupFootball._overlayEventHandler) {
+        EventManager.removeEventListener("PositionLLA.onChange", setupFootball._overlayEventHandler);
     }
+    setupFootball._overlayEventHandler = (data) => {
+        if (data?.id === "footballPitchCenter") refreshOverlayIfPresent();
+    };
+    EventManager.addEventListener("PositionLLA.onChange", setupFootball._overlayEventHandler);
 
     if (!NodeMan.exists("footballCableCamTrack")) {
         new CNodeCableCamTrack({
@@ -1217,6 +1250,7 @@ export function setupFootball() {
         });
         wires.visibleCheck = cableCamVisible;
     }
+    applyWiresLookLayers();   // sync layer mask to the current flag state
 
     // ── broadcast ("center field") camera + view ────────────────
     footballSubFolder("footballCamLoc", "Broadcast Camera Position");
@@ -1229,6 +1263,7 @@ export function setupFootball() {
             LLA: bc ? worldToPositionLLA(bc) : [0, 0, 100],
             desc: "Broadcast Camera",
             gui: "footballCamLoc",
+            locationTools: false,   // no Lookup / Geolocate / Go To
         });
     }
     // Only consumed by footballView's preRenderFunction (side-channel, zero
@@ -1236,6 +1271,47 @@ export function setupFootball() {
     // skips it and the broadcast camera stays at the pre-restore position
     // after reloading a save (see footballPitchCenter above).
     NodeMan.get("footballBroadcastCamPos").checkDisplayOutputs = false;
+
+    // Position source selector: Manual (the LLA fields below) by default, or
+    // any imported/synthetic track. CNodeTrackSwitch self-registers in
+    // Sit.dropTargets["track"], so TrackManager populates it through the same
+    // registration mechanism as the Camera/Target position switches — nothing
+    // here is hard-wired to the track import code.
+    if (!NodeMan.exists("footballBroadcastCamSwitch")) {
+        const sw = new CNodeTrackSwitch({
+            id: "footballBroadcastCamSwitch",
+            inputs: {"Manual Position": "footballBroadcastCamPos"},
+            default: "Manual Position",
+            desc: "Position",
+            gui: "footballCamLoc",
+        });
+        sw.controller?.moveToFirst?.();
+    }
+
+    // Grey out the manual Lat/Lon/Alt/AGL when a track drives the position
+    // (mirrors the Camera menu's syncCameraControlGreyout). choiceChanged
+    // fires on user changes AND modDeserialize, so a reloaded save lands in
+    // the right state. EventManager.removeAll() runs on sitch dispose, so
+    // re-register every setup (a one-shot guard would leave a dead listener
+    // after an in-session sitch switch).
+    const syncBroadcastCamGreyout = () => {
+        const sw = NodeMan.get("footballBroadcastCamSwitch", false);
+        const bc = NodeMan.get("footballBroadcastCamPos", false);
+        if (!sw || !bc) return;
+        const manual = sw.choice === "Manual Position";
+        const set = (c, on) => { if (c && c.enable && c.disable) { on ? c.enable() : c.disable(); } };
+        set(bc.guiLat?.guiEntry, manual);
+        set(bc.guiLon?.guiEntry, manual);
+        set(bc.guiAlt?.guiEntry, manual);
+        set(bc.aglController, manual);
+    };
+    if (setupFootball._broadcastGreyoutHandler) {
+        EventManager.removeEventListener("Switch.choiceChanged.footballBroadcastCamSwitch",
+            setupFootball._broadcastGreyoutHandler);
+    }
+    setupFootball._broadcastGreyoutHandler = syncBroadcastCamGreyout;
+    EventManager.addEventListener("Switch.choiceChanged.footballBroadcastCamSwitch", syncBroadcastCamGreyout);
+    syncBroadcastCamGreyout();
     const viewFOV = guiValue("footballViewFOV", 25, 1, 90, 0.1,
         "Broadcast FOV (°)", "Vertical field of view of the broadcast camera view", folder);
     const showView = guiFlag("footballShowView", false, "Show Broadcast View",
@@ -1268,15 +1344,24 @@ export function setupFootball() {
             visible: false,
             preRenderFunction: function () {
                 const camNode = NodeMan.get("footballBroadcastCamera", false);
-                const posNode = NodeMan.get("footballBroadcastCamPos", false);
+                // position source: the selector switch (Manual Position or a
+                // track), falling back to the manual node on older graphs
+                const posNode = NodeMan.get("footballBroadcastCamSwitch", false)
+                    ?? NodeMan.get("footballBroadcastCamPos", false);
                 const ballNode = NodeMan.get("footballTrack", false);
                 if (!camNode || !posNode) return;
                 const cam = camNode.camera;
-                const p = posNode.p(0);
+                const p = posNode.p(par.frame);
                 cam.position.copy(p);
                 cam.up.copy(getLocalUpVector(p));
-                const lookAt = ballNode ? ballNode.p(par.frame)
-                    : NodeMan.get("footballPitchCenter", false)?.p(0);
+                // Aim midway between the ball and the pitch center — steadier
+                // camera-1 style framing that keeps the pitch in shot instead
+                // of chasing the ball itself.
+                const ballPos = ballNode ? ballNode.p(par.frame) : null;
+                const pitchPos = NodeMan.get("footballPitchCenter", false)?.p(0);
+                const lookAt = (ballPos && pitchPos)
+                    ? ballPos.clone().add(pitchPos).multiplyScalar(0.5)
+                    : (ballPos ?? pitchPos);
                 if (lookAt) cam.lookAt(lookAt);
                 cam.fov = NodeMan.get("footballViewFOV", false)?.v(0) ?? 25;
                 cam.updateProjectionMatrix();

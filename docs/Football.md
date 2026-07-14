@@ -39,7 +39,10 @@ benches, the pitch overlay, and the look camera riding the cable cam.
    Drag Cd* (~0.2–0.25). Enable **Show Football** for the ball + trajectory.
 5. **Cable cam** — set *Anchor Dist Long/Wide* and *Anchor Height* (the four
    wire anchors sit at (±long, ±wide, height) in the pitch frame), *Wire
-   Sag*, and enable **Show Cable Cam** (dolly, path, wires). The dolly path
+   Sag*, and enable **Show Cable Cam** (dolly, path, wires). The wires draw
+   in the main and broadcast views; *Wires in Look View* also renders them
+   in the look view (off by default — wires sweeping past the lens of a
+   dolly-riding camera read as judder). The dolly path
    and operator aim point are keyframed tracks (`{f, along, across, height}`
    in the pitch frame); currently edited via the scenario or console:
    `NodeMan.get("footballCableCamTrack").setMotion([...])` and
@@ -76,9 +79,11 @@ benches, the pitch overlay, and the look camera riding the cable cam.
    different look if desired) centered on the pitch frame. It follows Pitch
    Center / Heading edits automatically.
 9. **Broadcast view** — **Show Broadcast View** opens a fixed camera-1 style
-   view that follows the ball; position it via *Broadcast Camera Position*
-   and *Broadcast FOV*. (Renders capped at 720p to keep three-view setups
-   fast.)
+   view aimed midway between the ball and the pitch center; position it via
+   *Broadcast Camera Position* (a *Position* selector rides any imported
+   track, or Manual Position with the Lat/Lon/Alt fields — greyed while a
+   track drives it) and *Broadcast FOV*. (Renders capped at 720p to keep
+   three-view setups fast.)
 10. **Video comparison** — drop a broadcast clip on the sitch; the sitch
     refits to the video timeline. Kick-relative scenario timing survives
     fps/frame-count changes; the ball physics uses `simSpeed/fps` per frame,
