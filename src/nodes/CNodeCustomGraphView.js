@@ -44,6 +44,9 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
         // Centred message shown when there is nothing to plot (set by the
         // manager: "select a series" vs "selected series have no data yet").
         this.emptyMessage = null;
+        // {min, max} to pin the frame-X axis to (rolling-window mode), or
+        // null to autoscale the axis to the plotted data. Set by the manager.
+        this.fixedXRange = null;
     }
 
     // Single source of truth for the right margin. 60px base, +40 per right axis.
@@ -223,6 +226,14 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
             const xMid = (allMinX + allMaxX) / 2, yMid = (y1.min + y1.max) / 2;
             this.minX = xMid - xRange / 2; this.maxX = xMid + xRange / 2;
             this.minY = yMid - yRange / 2; this.maxY = yMid + yRange / 2;
+        } else if (this.fixedXRange
+            && Number.isFinite(this.fixedXRange.min) && Number.isFinite(this.fixedXRange.max)) {
+            // Rolling-window mode: the controller pins the axis to a constant
+            // span (the trace fills toward the right edge, then scrolls).
+            // Autoscaling to the sampled data here would visibly stretch the
+            // axis while the window fills.
+            this.minX = this.fixedXRange.min; this.maxX = this.fixedXRange.max;
+            this.minY = y1.min; this.maxY = y1.max;
         } else {
             const xPad = (allMaxX - allMinX) * 0.02;
             this.minX = allMinX - xPad; this.maxX = allMaxX + xPad;

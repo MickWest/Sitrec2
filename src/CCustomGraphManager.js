@@ -15,6 +15,7 @@
 // disposeEverything() calls disposeAll() on each reload.
 
 import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit, TrackManager, Units} from "./Globals";
+import {par} from "./par";
 import {t} from "./i18n";
 import {EventManager} from "./CEventManager";
 import {GraphDataManager} from "./CGraphDataManager";
@@ -36,6 +37,9 @@ class CCustomGraph {
         this.view = view;
         this.folder = null;
         this.title = "";
+        // Rolling window: 0 = plot the whole clip; N > 0 = plot only the last
+        // N seconds up to the current frame (scrolls off to the left in play).
+        this.lastSeconds = 0;
         // Persistence tokens (registry keys). Kept verbatim even when the source
         // is transiently absent, so the selection reconnects when it reappears.
         this._storedX = "frames";
@@ -102,7 +106,10 @@ class CCustomGraph {
     // common path is cheap; re-plots only when the sampled data actually changes.
     refreshIfStale() {
         const now = Date.now();
-        if (now - this._lastRefresh < 200) return;
+        // Rolling-window graphs re-sample faster so the scroll looks continuous
+        // during playback (the window is small, so the re-sample is cheap).
+        const throttle = this.lastSeconds > 0 ? 50 : 200;
+        if (now - this._lastRefresh < throttle) return;
         this._lastRefresh = now;
         CustomGraphManager.refreshSources();
         this.maybeRebuild();
@@ -116,17 +123,44 @@ class CCustomGraph {
         if (!this.view) return;
         // "Frame A→B" restricts the plotted range to the in/out points.
         const ab = (this._storedX === "framesAB");
-        const fMin = ab ? Math.max(0, Sit.aFrame ?? 0) : 0;
-        const fMax = ab ? Math.min(Sit.frames - 1, Sit.bFrame ?? (Sit.frames - 1)) : (Sit.frames - 1);
+        const baseMin = ab ? Math.max(0, Sit.aFrame ?? 0) : 0;
+        const baseMax = ab ? Math.min(Sit.frames - 1, Sit.bFrame ?? (Sit.frames - 1)) : (Sit.frames - 1);
+        let fMin = baseMin;
+        let fMax = baseMax;
+        // Rolling window: clamp the sampled range to the last N seconds ending
+        // at the current frame. The signature below includes fMin/fMax, so the
+        // plot re-draws (scrolls) as par.frame advances. The AXIS is pinned to
+        // a constant N-second span — [start, +N s] while the cursor fills
+        // toward the right edge, then [now−N, now] sliding — because
+        // autoscaling it to the sampled data would visibly stretch the axis
+        // for the first N seconds of the clip.
+        let xWindow = null;
+        if (this.lastSeconds > 0) {
+            const nWin = Math.max(1, Math.round(this.lastSeconds * Sit.fps));
+            const cur = Math.max(baseMin, Math.min(baseMax, par.frame));
+            fMax = Math.min(fMax, cur);
+            fMin = Math.max(fMin, cur - nWin + 1);
+            xWindow = { min: Math.max(baseMin, cur - nWin + 1), max: Math.max(cur, baseMin + nWin - 1) };
+        }
         const series = [];
         const build = (key, yAxis) => {
             if (!key || key === "None") return;
             const desc = GraphDataManager.get(key);
             const data = [];
-            for (let fr = fMin; fr <= fMax; fr++) {
-                const xv = GraphDataManager.valueAt(this._storedX, fr);
+            // Windowed mode: scan the WHOLE timeline for the y bounds (so the
+            // y scale stays fixed as features scroll in and out of view) while
+            // collecting only the in-window points to plot.
+            let fullMin = Infinity, fullMax = -Infinity;
+            const scanLo = xWindow ? baseMin : fMin;
+            const scanHi = xWindow ? baseMax : fMax;
+            for (let fr = scanLo; fr <= scanHi; fr++) {
                 const yv = GraphDataManager.valueAt(key, fr);
-                if (!Number.isFinite(xv) || !Number.isFinite(yv)) continue;
+                if (!Number.isFinite(yv)) continue;
+                if (yv < fullMin) fullMin = yv;
+                if (yv > fullMax) fullMax = yv;
+                if (fr < fMin || fr > fMax) continue;
+                const xv = GraphDataManager.valueAt(this._storedX, fr);
+                if (!Number.isFinite(xv)) continue;
                 data.push({ x: xv, y: yv, frame: fr });
             }
             if (data.length === 0) return;
@@ -134,6 +168,13 @@ class CCustomGraph {
             if (desc && Number.isFinite(desc.min) && Number.isFinite(desc.max)) {
                 s.fixedMin = desc.min;
                 s.fixedMax = desc.max;
+            } else if (xWindow && Number.isFinite(fullMin)) {
+                // fixed y scale over the entire timeline, padded like the
+                // autoscaler so peaks don't touch the frame edge
+                if (fullMin === fullMax) { fullMin -= 1; fullMax += 1; }
+                const p = (fullMax - fullMin) * 0.05;
+                s.fixedMin = fullMin - p;
+                s.fixedMax = fullMax + p;
             }
             series.push(s);
         };
@@ -160,7 +201,10 @@ class CCustomGraph {
 
         const frameX = (this._storedX === "frames" || this._storedX === "framesAB" || !this._storedX);
         this.view.isFrameX = frameX;
-        this.view.xLabel = frameX ? (ab ? "Frame (A→B)" : "Frame") : (GraphDataManager.get(this._storedX)?.label ?? "");
+        this.view.fixedXRange = frameX ? xWindow : null;
+        this.view.xLabel = frameX
+            ? (ab ? "Frame (A→B)" : (this.lastSeconds > 0 ? `Frame (last ${this.lastSeconds}s)` : "Frame"))
+            : (GraphDataManager.get(this._storedX)?.label ?? "");
         this.view.setSeries(series);
     }
 
@@ -175,6 +219,7 @@ class CCustomGraph {
             y1Series: this._storedY1,
             y2Series: this._storedY2,
             y3Series: this._storedY3,
+            lastSeconds: this.lastSeconds,
         };
     }
 }
@@ -227,6 +272,7 @@ class CCustomGraphManager {
         this._osdNameSig = undefined;
         this._trackIdSig = undefined;
         this._losSig = undefined;
+        this._footballAvail = undefined;
         this._sunDirArr = null;
         this._sunKey = undefined;
         if (this._tracksChangedListener) {
@@ -282,6 +328,7 @@ class CCustomGraphManager {
         graph._storedY1 = config.y1Series ?? "None";
         graph._storedY2 = config.y2Series ?? "None";
         graph._storedY3 = config.y3Series ?? "None";
+        graph.lastSeconds = config.lastSeconds ?? 0;
         view.title = graph.title;
 
         const folder = guiMenus.showhidegraphs.addFolder(graph.folderTitle());
@@ -302,14 +349,22 @@ class CCustomGraphManager {
         folder.add(view, 'dark').name(t("graphControls.dark")).onChange(() => setRenderOne());
         folder.add({ legend: () => { view.showLegend = !view.showLegend; setRenderOne(); } }, 'legend')
             .name(t("graphControls.toggleLegend"));
+        folder.add(graph, 'lastSeconds', 0, 30, 0.5).name("Show Last (secs)")
+            .tooltip("0 = plot the whole clip. Otherwise plot only the last N seconds up to the "
+                + "current frame, so the trace scrolls off to the left during playback")
+            .onChange(() => { graph.updateGraph(true); setRenderOne(); });
 
+        // Refresh the registry BEFORE building the dropdowns: conditional
+        // sources (e.g. the football ball g-force) may not have been polled
+        // since they became available, and building first then refreshing
+        // would swallow the version bump into _cachedVersion below — leaving
+        // the new graph's dropdowns permanently missing the source.
+        this.refreshSources(true);
         graph.rebuildDropdowns();
         view.rebuildCallback = () => graph.refreshIfStale();
 
         this.list[id] = graph;
 
-        // Initial population + plot.
-        this.refreshSources(true);
         graph._cachedVersion = GraphDataManager.version;
         graph.updateGraph(true);
 
@@ -422,6 +477,26 @@ class CCustomGraphManager {
         this.reregisterTracks();
         this.reregisterOSD();
         this.reregisterLOS();
+        this.reregisterFootball();
+    }
+
+    // Ball g-force (football feature). Registered only while the ball is
+    // enabled ("Show Football"), so the source doesn't clutter the dropdowns
+    // in the (many) custom sitches where the feature is unused. A graph's
+    // stored series token survives the source being absent, so toggling the
+    // ball off and back on reconnects an existing g-force graph.
+    reregisterFootball() {
+        const avail = !!(NodeMan.get("footballTrack", false)?.gForce
+            && NodeMan.get("footballShowBall", false)?.v(0));
+        if (avail === this._footballAvail) return;
+        this._footballAvail = avail;
+        GraphDataManager.unregisterGroup("football.");
+        if (avail) {
+            GraphDataManager.register("football.gforce", {
+                label: "Ball G-Force", group: "Football", units: "g",
+                getValue: f => NodeMan.get("footballTrack", false)?.gForce?.[f] ?? NaN,
+            });
+        }
     }
 
     // Sun-vs-LOS angles. For each CNodeDisplayLOS (its .in.LOS gives the look
