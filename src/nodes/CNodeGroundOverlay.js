@@ -1138,18 +1138,40 @@ export class CNodeGroundOverlay extends CNode3DGroup {
 
         const existing = this.overlayTileMeshes.get(tileKey);
 
+        // Tile visibility flips are frequent when the tile set is churning
+        // (loads, LRU eviction, per-view activation), and rebuilding the
+        // draped mesh dominates profiles. So: retain the built mesh across
+        // flips and just toggle its layer mask; the geometry only goes stale
+        // when the underlying tile changes, which onTileChanged handles with
+        // a real dispose. Only re-arm the render loop when something here
+        // actually changed.
+        let changed = false;
         if (isDesired) {
             if (existing) {
-                if (existing.mesh) existing.mesh.layers.mask = newMask;
-                if (existing.skirtMesh) existing.skirtMesh.layers.mask = newMask;
+                if (existing.mesh && existing.mesh.layers.mask !== newMask) {
+                    existing.mesh.layers.mask = newMask;
+                    changed = true;
+                }
+                if (existing.skirtMesh && existing.skirtMesh.layers.mask !== newMask) {
+                    existing.skirtMesh.layers.mask = newMask;
+                    changed = true;
+                }
             } else {
                 this.createOverlayTileFromTerrainTile(tile, mapProjection, newMask);
+                changed = true;
             }
         } else if (existing) {
-            this.disposeTileMesh(tileKey);
+            if (existing.mesh && existing.mesh.layers.mask !== 0) {
+                existing.mesh.layers.mask = 0;
+                changed = true;
+            }
+            if (existing.skirtMesh && existing.skirtMesh.layers.mask !== 0) {
+                existing.skirtMesh.layers.mask = 0;
+                changed = true;
+            }
         }
 
-        setRenderOne(true);
+        if (changed) setRenderOne(true);
     }
     
     onTileChanged(tile) {
