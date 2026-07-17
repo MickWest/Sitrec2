@@ -363,23 +363,39 @@ export function parseUWYOList(html) {
         });
     }
 
-    // Parse station metadata from bottom of page
+    // Parse station metadata. Two page generations:
+    //   legacy cgi-bin (REMOVED by UWYO July 2026): footer block
+    //     "Station latitude: 40.78 / Station longitude: -111.97 / ..."
+    //   WSGI: header block
+    //     <H1>Observations for Station 72293 at 12 UTC 15 Jul 2026</H1>
+    //     <H3>SAN DIEGO/MIRAMAR,  NAS, CA., USA</H3>
+    //     <I>Latitude: 32.845 Longitude: -117.124</I>
+    // Try legacy first, fall back to the WSGI shapes. Without these, the WSGI
+    // page parsed to station (0,0) and observation time "now" — which put the
+    // sonde track on the equator and misdated its profile.
     let stationLat = 0, stationLon = 0, stationElev = 0, stationId = '', stationName = '';
     const fullText = html; // search in original HTML for metadata
-    const latMatch = fullText.match(/Station latitude:\s*([-\d.]+)/i);
-    const lonMatch = fullText.match(/Station longitude:\s*([-\d.]+)/i);
+    const latMatch = fullText.match(/Station latitude:\s*([-\d.]+)/i)
+        || fullText.match(/\bLatitude:\s*([-\d.]+)/i);
+    const lonMatch = fullText.match(/Station longitude:\s*([-\d.]+)/i)
+        || fullText.match(/\bLongitude:\s*([-\d.]+)/i);
     const elevMatch = fullText.match(/Station elevation:\s*([-\d.]+)/i);
-    const numMatch = fullText.match(/Station number:\s*(\d+)/i);
+    const numMatch = fullText.match(/Station number:\s*(\d+)/i)
+        || fullText.match(/Observations for Station\s+(\d+)/i);
+    const nameMatch = fullText.match(/<H3>\s*([^<]+?)\s*<\/H3>/i);
 
     if (latMatch) stationLat = parseFloat(latMatch[1]);
     if (lonMatch) stationLon = parseFloat(lonMatch[1]);
     if (elevMatch) stationElev = parseFloat(elevMatch[1]);
     if (numMatch) stationId = numMatch[1];
+    if (nameMatch) stationName = nameMatch[1].replace(/\s+/g, ' ').trim();
 
     // Try to extract observation time from the HTML
-    // Pattern: "Observations from the ... at 12Z 01 Jan 2024"
+    //   legacy: "Observations from the ... at 12Z 01 Jan 2024"
+    //   WSGI:   "Observations for Station 72293 at 12 UTC 15 Jul 2026"
     let datetime = new Date();
-    const timeMatch = fullText.match(/(\d{2})Z\s+(\d{1,2})\s+(\w{3})\s+(\d{4})/);
+    const timeMatch = fullText.match(/(\d{2})Z\s+(\d{1,2})\s+(\w{3})\s+(\d{4})/)
+        || fullText.match(/at\s+(\d{1,2})\s*UTC\s+(\d{1,2})\s+(\w{3})\s+(\d{4})/i);
     if (timeMatch) {
         const hourStr = timeMatch[1];
         const dayStr = timeMatch[2];

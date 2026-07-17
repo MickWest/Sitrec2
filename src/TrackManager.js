@@ -699,8 +699,15 @@ class CTrackManager extends CManager {
                     // to ensure we have the correct start time, and hence we can get good track positions for use
                     // with determining the initial terrain
                     // Only sync for the primary track (index 0), not for supplementary tracks like center tracks
-                    // (and not when the caller suppresses it, e.g. legacy sitch setup with an explicit startTime)
-                    if (syncTime && !Globals.sitchEstablished && trackIndex === 0) {
+                    // (and not when the caller suppresses it, e.g. legacy sitch setup with an explicit startTime).
+                    // Sonde (radiosonde) tracks are reference WIND data — fetching a
+                    // sounding must never re-time the sitch to the balloon launch
+                    // (same exemption as auto-select/centering further down).
+                    const loadedFileForSync = FileManager.get(trackFileName);
+                    const isSondeForSync = !!(loadedFileForSync
+                        && loadedFileForSync.isSondeTrack
+                        && loadedFileForSync.isSondeTrack());
+                    if (syncTime && !Globals.sitchEstablished && trackIndex === 0 && !isSondeForSync) {
                         GlobalDateTimeNode.syncStartTimeTrack();
                     }
 
@@ -850,8 +857,11 @@ class CTrackManager extends CManager {
                         this.centerOnTrack(shortName, trackNumber, trackOb, hasAngles, trackIndex);
                     }
 
-                    // if there's more than one track loaded, flag to set setSitchEstablished(true) after the track is processed
-                    if (trackNumber > 0) {
+                    // if there's more than one track loaded, flag to set setSitchEstablished(true) after the track is processed.
+                    // Sonde tracks don't establish the sitch — they're reference wind
+                    // data, and marking the sitch established here would stop the NEXT
+                    // real (aircraft/target) track import from setting time/location.
+                    if (trackNumber > 0 && !isSondeTrack) {
                         settingSitchEstablished = true;
                     }
 

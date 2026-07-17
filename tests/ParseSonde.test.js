@@ -348,6 +348,42 @@ describe('parseUWYOList', () => {
         expect(result.levels[1].windSpeed).toBeCloseTo(16 * 0.514444, 1);
     });
 
+    // UWYO removed the legacy cgi-bin endpoint (July 2026); the WSGI page has
+    // a different header block: H1 "Observations for Station NNN at HH UTC",
+    // H3 station name, and an <I>Latitude: .. Longitude: ..</I> line — no
+    // "Station latitude:" footer. Mis-parsing these put the station at (0,0)
+    // with the observation time defaulting to "now".
+    test('parses the WSGI page header (station, coords, name, time)', () => {
+        const wsgi = `<!DOCTYPE html>
+<HTML><BODY>
+<H1>Observations for Station 72293 at 12 UTC 15 Jul 2026</H1>
+<H3>SAN DIEGO/MIRAMAR,  NAS, CA., USA</H3>
+<BR/><I>Latitude: 32.845 Longitude: -117.124</I>
+<PRE>
+-----------------------------------------------------------------------------
+   PRES   HGHT   TEMP   DWPT   RELH   MIXR   DRCT   SPED   THTA   THTE   THTV
+    hPa      m      C      C      %   g/kg    deg    m/s      K      K      K
+-----------------------------------------------------------------------------
+ 1013.0    140   22.4   14.4     60   10.3    290    2.1  294.4  324.3  296.2
+  850.0   1580   15.2    8.2     63    8.6    250    5.7  301.9  327.7  303.5
+  500.0   5880  -10.1  -22.1     37    1.4    162    6.8  318.4  323.4  318.7
+</PRE>
+</BODY></HTML>`;
+        const result = parseUWYOList(wsgi);
+        expect(result).not.toBeNull();
+        expect(result.station.id).toBe('72293');
+        expect(result.station.lat).toBeCloseTo(32.845, 3);
+        expect(result.station.lon).toBeCloseTo(-117.124, 3);
+        expect(result.station.name).toBe('SAN DIEGO/MIRAMAR, NAS, CA., USA');
+        expect(result.datetime.getUTCFullYear()).toBe(2026);
+        expect(result.datetime.getUTCMonth()).toBe(6);
+        expect(result.datetime.getUTCDate()).toBe(15);
+        expect(result.datetime.getUTCHours()).toBe(12);
+        expect(result.levels.length).toBe(3);
+        expect(result.levels[2].windDir).toBe(162);
+        expect(result.levels[2].windSpeed).toBeCloseTo(6.8, 1);
+    });
+
     test('parses plain text (no HTML)', () => {
         const result = parseUWYOList(sampleUWYOListPlain);
         expect(result).not.toBeNull();

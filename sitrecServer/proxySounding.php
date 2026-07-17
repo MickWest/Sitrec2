@@ -83,32 +83,19 @@ if (!in_array($format, $allowedFormats, true)) {
 }
 
 // ── Build UWYO URL ──────────────────────────────────────────────────────
-$dateParts = explode('-', $date);
-$year  = $dateParts[0];
-$month = $dateParts[1];
-$day   = $dateParts[2];
 $hourPad = str_pad($hour, 2, '0', STR_PAD_LEFT);
 
-if ($format === 'csv') {
-    // WSGI endpoint: returns actual per-second GPS CSV for recent soundings (2018+).
-    // The old cgi-bin endpoint ignores TEXT:CSV and returns LIST format instead.
-    // The '+' in the datetime is URL-space (UWYO expects "YYYY-MM-DD HH:MM:SS").
-    $url = "https://weather.uwyo.edu/wsgi/sounding?"
-         . "datetime=" . $date . "+" . $hourPad . "%3A00%3A00"
-         . "&id=" . $station
-         . "&type=TEXT%3ACSV";
-} else {
-    // Legacy cgi-bin endpoint for TEXT:LIST (fixed-width table)
-    $fromTo = $day . $hourPad;
-    $url = "https://weather.uwyo.edu/cgi-bin/sounding?"
-         . "region=naconf"
-         . "&TYPE=TEXT%3ALIST"
-         . "&YEAR=" . $year
-         . "&MONTH=" . $month
-         . "&FROM=" . $fromTo
-         . "&TO=" . $fromTo
-         . "&STNM=" . $station;
-}
+// WSGI endpoint for both formats. The legacy cgi-bin/sounding endpoint was
+// REMOVED by UWYO (returns 404 as of July 2026), so TEXT:LIST goes through
+// WSGI too — same fixed-width table, wrapped in the newer page HTML, with
+// wind speed in a SPED (m/s) column instead of SKNT (knots); the client
+// parser (ParseSonde.js parseUWYOList) handles both.
+// The '+' in the datetime is URL-space (UWYO expects "YYYY-MM-DD HH:MM:SS").
+$wsgiType = ($format === 'csv') ? "TEXT%3ACSV" : "TEXT%3ALIST";
+$url = "https://weather.uwyo.edu/wsgi/sounding?"
+     . "datetime=" . $date . "+" . $hourPad . "%3A00%3A00"
+     . "&id=" . $station
+     . "&type=" . $wsgiType;
 
 // ── Check cache ─────────────────────────────────────────────────────────
 $cacheLifetime = 60 * 60 * 24; // 24 hours
