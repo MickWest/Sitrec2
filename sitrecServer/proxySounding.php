@@ -41,12 +41,10 @@ $rateData = file_exists($rateLimitFile) ? json_decode(file_get_contents($rateLim
 if (!$rateData || $now > ($rateData['reset'] ?? 0)) {
     $rateData = ['count' => 0, 'reset' => $now + 60];
 }
-if ($rateData['count'] >= 20) {
-    http_response_code(429);
-    exit("Rate limit exceeded. UWYO is rate-sensitive — please wait a minute.");
-}
-$rateData['count']++;
-file_put_contents($rateLimitFile, json_encode($rateData), LOCK_EX);
+// NOTE: the rate-limit check + increment happen just before the actual UWYO
+// fetch below, NOT here — so cache hits (positive OR negative) never consume a
+// token. Walking many nearby stations that are already cached (or cached as
+// missing) must not burn the 20/min UWYO budget and trigger spurious waits.
 
 // ── Parameter validation ─────────────────────────────────────────────────
 $source  = $_GET['source']  ?? '';
@@ -109,7 +107,35 @@ if (file_exists($cacheFile) && (time() - filemtime($cacheFile)) < $cacheLifetime
     exit();
 }
 
+// ── Negative cache: known-missing soundings ─────────────────────────────
+// A station with no data for this date/hour returns 404 below; cache that so
+// the next relocate/refresh doesn't re-hit UWYO (and burn the rate limit) for
+// the same missing sounding. A miss for a sounding well in the past is
+// permanent; a very recent one might still be processing at UWYO, so cache
+// that miss only briefly and recheck.
+$missFile = $CACHE_PATH . md5($url) . ".miss";
+$soundingTs = strtotime($date . ' ' . $hourPad . ':00:00 UTC');
+$missLifetime = ($soundingTs !== false && ($now - $soundingTs) > 12 * 3600)
+    ? 30 * 24 * 3600   // clearly in the past — the miss is permanent
+    : 3600;            // recent — may still be processing; recheck in an hour
+if (file_exists($missFile) && ($now - filemtime($missFile)) < $missLifetime) {
+    http_response_code(404);
+    header("Content-Type: text/plain");
+    header("X-Sounding-Cache: miss-hit");
+    readfile($missFile);
+    exit();
+}
+
 // ── Fetch from UWYO ─────────────────────────────────────────────────────
+// Consume a rate-limit token — only real UWYO fetches reach here (cache hits
+// above already returned).
+if ($rateData['count'] >= 20) {
+    http_response_code(429);
+    exit("Rate limit exceeded. UWYO is rate-sensitive — please wait a minute.");
+}
+$rateData['count']++;
+file_put_contents($rateLimitFile, json_encode($rateData), LOCK_EX);
+
 $result = curlGetRequest($url);
 $data = $result['data'];
 $httpStatus = $result['http_status'];
@@ -120,6 +146,22 @@ if ($data === false || strlen($data) === 0) {
 }
 
 if ($httpStatus >= 400) {
+    // A 4xx from UWYO (it returns 404 for a station/date/hour with no sounding)
+    // is a definitive "missing" answer — negative-cache it so the next
+    // relocate/refresh doesn't re-hit UWYO (a cold miss can take ~16s and burns
+    // a rate-limit token). A 5xx is a transient UWYO server error: return 502
+    // and do NOT cache it.
+    if ($httpStatus < 500) {
+        $missMsg = "No sounding data available for station " . htmlspecialchars($station)
+           . " on " . htmlspecialchars($date) . " " . htmlspecialchars($hourPad) . "Z "
+           . "(UWYO HTTP " . intval($httpStatus) . "). The station may not exist or no "
+           . "data was recorded for this time.";
+        @file_put_contents($missFile, $missMsg, LOCK_EX);
+        http_response_code(404);
+        header("Content-Type: text/plain");
+        header("X-Sounding-Cache: miss-store");
+        exit($missMsg);
+    }
     http_response_code(502);
     exit("UWYO returned HTTP " . $httpStatus);
 }
@@ -130,15 +172,20 @@ if ($httpStatus >= 400) {
 if (strpos($data, "Can't get") !== false
     || strpos($data, "Please try again") !== false
     || strpos($data, "Unable to retrieve") !== false) {
+    $missMsg = "No sounding data available for station " . htmlspecialchars($station)
+       . " on " . htmlspecialchars($date) . " " . htmlspecialchars($hourPad) . "Z. "
+       . "The station may not exist or no data was recorded for this time.";
+    // Negative-cache the miss so we don't re-hit UWYO for it (see check above).
+    @file_put_contents($missFile, $missMsg, LOCK_EX);
     http_response_code(404);
     header("Content-Type: text/plain");
-    exit("No sounding data available for station " . htmlspecialchars($station)
-       . " on " . htmlspecialchars($date) . " " . htmlspecialchars($hourPad) . "Z. "
-       . "The station may not exist or no data was recorded for this time.");
+    header("X-Sounding-Cache: miss-store");
+    exit($missMsg);
 }
 
 // ── Cache and return ────────────────────────────────────────────────────
 file_put_contents($cacheFile, $data, LOCK_EX);
+@unlink($missFile);   // a prior miss is now stale — this sounding exists
 
 header("Content-Type: text/html; charset=utf-8");
 header("X-Sounding-Cache: miss");
