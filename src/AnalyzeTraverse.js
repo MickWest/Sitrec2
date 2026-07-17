@@ -5086,7 +5086,7 @@ function buildTruthSummaryHTML(rankedHyps, truth) {
     return `
     <h3>Closeness to the truth track "${escapeHtml(truth.label)}"</h3>
     <div class="tablebox">
-    <table>
+    <table class="truthtab">
         <thead><tr>
             <th>#</th><th>Interpretation</th><th>Group</th>
             <th>Mean 3D sep</th><th>Max sep</th><th>Horiz offset</th>
@@ -5306,9 +5306,16 @@ function buildReportHTML(ctx) {
             `<p class="sub">${escapeHtml(group.description)}</p><div class="cards">${cards}</div></div>`;
     }).join("");
 
+    // Compact residual for the comparison table — the full string (with the
+    // generic-reference multiplier) is on every candidate card; repeating it
+    // here made the column, and the table, wider than the page.
+    const losErrShort = (h) => {
+        const err = h?.errDeg;
+        if (!Number.isFinite(err)) return "—";
+        return err < 0.1 ? `${err.toFixed(3)}°` : `${err.toFixed(2)}°`;
+    };
     const compRows = rankedHyps.map(({h, r, category, groupIndex}) => {
         const m = h.metricsFull;
-        const losErr = formatRawLosResidual(h);
         const tc = h.truthComparison;
         const truthCell = truth
             ? `<td>${tc?.comparable ? escapeHtml(fmtSepMeters(tc.sep3D.mean)) : "n/a"}</td>`
@@ -5320,13 +5327,12 @@ function buildReportHTML(ctx) {
             <td>${escapeHtml(h.name)}</td>
             <td>${nm1(m.range.min)}–${nm1(m.range.max)}</td>
             <td>${kt1(m.airSpeed.mean)}</td>
-            <td>${(m.altitude.mean / 0.3048 / 1000).toFixed(1)}</td>
+            <td>${(Math.abs(m.altitude.mean) < 15.24 ? 0 : m.altitude.mean / 304.8).toFixed(1)}</td>
             <td>${fpm0(m.verticalSpeed.mean)}</td>
             <td>${m.gLoad.max.toFixed(2)}</td>
-            <td>${escapeHtml(losErr)}</td>
+            <td>${escapeHtml(losErrShort(h))}</td>
             ${truthCell}
             <td><span class="pill" style="background:${r.color}">${escapeHtml(r.label)}</span></td>
-            <td>${escapeHtml(rankingExplanation(h, r))}</td>
         </tr>`;
     }).join("");
 
@@ -5409,7 +5415,10 @@ table { border-collapse: collapse; width: 100%; font-size: 13.5px;
     font-variant-numeric: tabular-nums; }
 th, td { padding: 6px 10px; text-align: right;
     border-bottom: 1px solid rgba(255,255,255,0.08); white-space: nowrap; }
-th { color: #8a9099; font-weight: 600; }
+/* Headers may wrap onto two lines ("Horizontal / airspeed (kt)") so a long
+   unit-bearing header never forces its column wider than the values need —
+   that, not the data, is what made tables overflow into scrollbars. */
+th { color: #8a9099; font-weight: 600; white-space: normal; vertical-align: bottom; }
 td:first-child, th:first-child { text-align: left; }
 tr.best td { color: #e8eaed; font-weight: 600; }
 .summary p, .methods p { max-width: 78ch; }
@@ -5455,7 +5464,9 @@ footer { margin-top: 44px; color: #8a9099; font-size: 13px;
 .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px;
     font-weight: 700; color: #0d0f12; white-space: nowrap; }
 td .pill { color: #0d0f12; }
-td:last-child, th:last-child { white-space:normal; min-width:320px; text-align:left; }
+table.comp td:nth-child(3), table.comp th:nth-child(3),
+table.truthtab td:nth-child(2), table.truthtab th:nth-child(2),
+table.truthtab td:nth-child(3), table.truthtab th:nth-child(3) { text-align: left; }
 .warning { margin: 16px 0; padding: 12px 14px; border-radius: 8px;
     background: #4a3a12; color: #ffd479; border: 1px solid #8a6d2a; }
 details.manifest { background:#14161a; border:1px solid rgba(255,255,255,0.08);
@@ -5537,19 +5548,21 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
 <section>
     <h2>Comparison</h2>
     <div class="tablebox">
-    <table>
+    <table class="comp">
         <thead><tr>
             <th>Group</th><th>#</th><th>Interpretation</th><th>Range (NM)</th><th>Air spd (kt)</th><th>Alt (kft)</th>
-            <th>Climb (fpm)</th><th>Max kinematic accel (g)</th><th>Raw LOS residual</th>${truth ? "<th>Truth Δ</th>" : ""}<th>Screen</th><th>Rank basis</th>
+            <th>Climb (fpm)</th><th>Max accel (g)</th><th>Raw LOS residual</th>${truth ? "<th>Truth Δ</th>" : ""}<th>Screen</th>
         </tr></thead>
         <tbody>${compRows}</tbody>
     </table>
     </div>
     ${truth ? `<p class="sub">Grouped first, then ordered by mean 3D separation from the truth track
     ("Truth Δ" — the quantity that controls order); the screening tier is context only. Rows passing the
-    broad screen are highlighted. Alt and air speed are means.</p>` : `<p class="sub">Grouped first, then ordered by completeness, broad screening tier, and within-group score.
+    broad screen are highlighted. Alt and air speed are means; max accel is kinematic. The candidate cards
+    above give each LOS residual against the generic reference.</p>` : `<p class="sub">Grouped first, then ordered by completeness, broad screening tier, and within-group score.
     No order across groups is implied. Rows passing the broad screen are highlighted. Alt and air speed are means;
-    the rank basis reports the quantities that actually control order.</p>`}
+    max accel is kinematic. Each candidate card above states the rank basis that actually controls its order,
+    and gives its LOS residual against the generic reference.</p>`}
 </section>
 
 <section>
@@ -5618,7 +5631,7 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
     <div class="tablebox">
     <table>
         <thead><tr>
-            <th>Run</th><th>Cost</th><th>Range (NM)</th><th>Heading (origin ENU °)</th>
+            <th>Run</th><th>Cost</th><th>Range (NM)</th><th>Heading (ENU °)</th>
             <th>Horizontal airspeed (kt)</th><th>Turn (°/s)</th><th>Turn accel (°/s²)</th>
             <th>Climb (fpm)</th><th>Seed</th><th>DE evals</th><th>Stop (DE / polish)</th>
         </tr></thead>
