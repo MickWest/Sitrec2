@@ -647,7 +647,72 @@ function physicsBoundSubtitle(base, active, inactive, unstable = []) {
     return parts.length ? `${base} — ${parts.join("; ")}` : base;
 }
 
-function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, quad, satellite,
+// Build a Sky Lantern / Balloon hypothesis from a fitPhysicsModel result.
+// Used for BOTH the free-wind fit and the measured-wind fit (same model, the
+// wind either inferred or softly pinned), so the two reconstructions appear as
+// distinct hypotheses that share grouping/apply/prose (both keyed "lantern").
+function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy}) {
+    if (!fit || !fit.positions) {
+        return {
+            key, name, subtitle: "Wind-drift model unavailable", color: VIZ.slowObj,
+            track: null, metricsFull: null, errDeg: NaN, params: {},
+            notes: "Fit failed — no plausible buoyant-object trajectory converged.",
+        };
+    }
+    const S = dataset.S;
+    const track = fit.positions;
+    const range0 = Math.hypot(track[0] - S[0], track[1] - S[1], track[2] - S[2]);
+    const solved = fit.params.solved || {};
+    const lanternMetrics = trackMetrics(
+        datasetForSolvedModelWind(dataset, track, solved, "lantern"), track);
+    // Side-aware bound pins: a pin at a natural ZERO (vRise/vSink lo bound =
+    // "not rising/sinking") is physical for a becalmed balloon; only capability
+    // MAX pins and range/wind extremes mean "the data wants more than a balloon".
+    const lanSplit = splitBoundPins(fit.params.pinned,
+        (p) => (["initialRange", "windE", "windN", "shearPerM"].includes(p.name))
+            || (["vRise", "vSink"].includes(p.name) && p.side === "hi"),
+        (p) => p.name === "shearPerM" ? "windShear" : p.name);
+    const lanClamps = [];
+    if (Number.isFinite(solved.shearPerM)) {
+        const x0 = track[0], y0 = track[1], z0 = track[2];
+        const h0 = z0 + (x0 * x0 + y0 * y0) / (2 * EARTH_RADIUS_M);
+        let hitsShearClamp = false;
+        for (let f = 0; f < dataset.n; f++) {
+            const x = track[f * 3], y = track[f * 3 + 1], z = track[f * 3 + 2];
+            const h = z + (x * x + y * y) / (2 * EARTH_RADIUS_M);
+            const raw = 1 + solved.shearPerM * (h - h0);
+            if (raw <= 0.25 * 1.001 || raw >= 3 / 1.001) { hitsShearClamp = true; break; }
+        }
+        if (hitsShearClamp) lanClamps.push("wind shear multiplier (0.25–3× clamp)");
+    }
+    const lanPins = Array.from(lanSplit.active.values());
+    const lanInactive = Array.from(lanSplit.inactive.values());
+    const lanUnstable = Array.from(lanSplit.unstable.values());
+    return {
+        key, name,
+        subtitle: physicsBoundSubtitle("Bounded wind-drift/life-cycle model", lanPins, lanInactive, lanUnstable)
+            + (lanClamps.length ? `; internal clamp reached: ${lanClamps.join(", ")}` : ""),
+        color: VIZ.slowObj,
+        track,
+        metricsFull: lanternMetrics,
+        errDeg: fit.params.errDeg,
+        boundPinned: lanPins,
+        boundInactive: lanInactive,
+        modelClamps: lanClamps,
+        optimizerWarnings: lanUnstable,
+        params: {
+            range: range0,
+            windE: solved.windE, windN: solved.windN, shearPerM: solved.shearPerM,
+            vRise: solved.vRise, vSink: solved.vSink, tBurn: solved.tBurn, tauCool: solved.tauCool,
+            clipT: (dataset.n - 1) / dataset.fps,
+            windPolicy,
+            errFloor,
+        },
+        notes,
+    };
+}
+
+function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured, quad, satellite,
     slowProfile, slowOpts, losNode, originLat, originLon, provenance = null, failures = null}) {
     const S = dataset.S;
     const globalFrame = (f) => (dataset.frame0 ?? 0) + f;
@@ -940,78 +1005,28 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, quad
         });
     }
 
-    // 5. sky lantern / balloon physics model — may fail; degrade gracefully.
-    if (lantern && lantern.positions) {
-        const track = lantern.positions;
-        const range0 = Math.hypot(track[0] - S[0], track[1] - S[1], track[2] - S[2]);
-        const solved = lantern.params.solved || {};
-        const lanternMetrics = trackMetrics(
-            datasetForSolvedModelWind(dataset, track, solved, "lantern"), track);
-        // Side-aware: a pin at a natural ZERO (vRise/vSink lo bound = "not
-        // rising/sinking") is physical for a becalmed lantern — only capability
-        // MAX pins (and range/wind extremes, whose bounds are both extreme)
-        // mean "the data wants more than a balloon can do".
-        const lanSplit = splitBoundPins(lantern.params.pinned,
-            (p) => (["initialRange", "windE", "windN", "shearPerM"].includes(p.name))
-                || (["vRise", "vSink"].includes(p.name) && p.side === "hi"),
-            (p) => p.name === "shearPerM" ? "windShear" : p.name);
-        const lanClamps = [];
-        if (Number.isFinite(solved.shearPerM)) {
-            const x0 = track[0], y0 = track[1], z0 = track[2];
-            const h0 = z0 + (x0 * x0 + y0 * y0) / (2 * EARTH_RADIUS_M);
-            let hitsShearClamp = false;
-            for (let f = 0; f < dataset.n; f++) {
-                const x = track[f * 3], y = track[f * 3 + 1], z = track[f * 3 + 2];
-                const h = z + (x * x + y * y) / (2 * EARTH_RADIUS_M);
-                const raw = 1 + solved.shearPerM * (h - h0);
-                if (raw <= 0.25 * 1.001 || raw >= 3 / 1.001) { hitsShearClamp = true; break; }
-            }
-            if (hitsShearClamp) lanClamps.push("wind shear multiplier (0.25–3× clamp)");
-        }
-        const lanPins = Array.from(lanSplit.active.values());
-        const lanInactive = Array.from(lanSplit.inactive.values());
-        const lanUnstable = Array.from(lanSplit.unstable.values());
-        list.push({
+    // 5. balloon (Sky Lantern / Balloon) — TWO reconstructions from the same
+    //    wind-tracer model: (a) FREE wind, inferred with no measured input;
+    //    (b) MEASURED wind, drift softly pinned to the loaded sounding/GFS
+    //    profile (only when one is loaded). Both keyed "lantern" so they share
+    //    the forward-model group, apply path, and prose.
+    list.push(lanternHypothesis(lantern, dataset, errFloor, {
+        key: "lantern",
+        name: lanternMeasured ? "Sky Lantern / Balloon (free wind)" : "Sky Lantern / Balloon",
+        windPolicy: "wind fitted freely by this model (no measured-wind input)",
+        notes: "FREE reconstruction: wind-drift lantern kinematics (rise, buoyancy decay, terminal "
+            + "sink; altitude-sheared wind) fit to the sightlines with the wind INFERRED, not assumed. "
+            + "The inferred wind is what a plausible balloon here would require.",
+    }));
+    if (lanternMeasured) {
+        list.push(lanternHypothesis(lanternMeasured, dataset, errFloor, {
             key: "lantern",
-            name: "Sky Lantern / Balloon",
-            subtitle: physicsBoundSubtitle("Bounded wind-drift/life-cycle model", lanPins, lanInactive, lanUnstable)
-                + (lanClamps.length ? `; internal clamp reached: ${lanClamps.join(", ")}` : ""),
-            color: VIZ.slowObj,
-            track,
-            metricsFull: lanternMetrics,
-            errDeg: lantern.params.errDeg,
-            boundPinned: lanPins,
-            boundInactive: lanInactive,
-            modelClamps: lanClamps,
-            optimizerWarnings: lanUnstable,
-            params: {
-                range: range0,
-                windE: solved.windE,
-                windN: solved.windN,
-                shearPerM: solved.shearPerM,
-                vRise: solved.vRise,
-                vSink: solved.vSink,
-                tBurn: solved.tBurn,
-                tauCool: solved.tauCool,
-                clipT: (dataset.n - 1) / dataset.fps,
-                windPolicy: "wind fitted by this model",
-                errFloor,
-            },
-            notes: "Wind-drift lantern kinematics (rise, buoyancy decay, terminal sink; " +
-                "altitude-sheared wind) fit to the sightlines.",
-        });
-    } else {
-        list.push({
-            key: "lantern",
-            name: "Sky Lantern / Balloon",
-            subtitle: "Wind-drift model unavailable",
-            color: VIZ.slowObj,
-            track: null,
-            metricsFull: null,
-            errDeg: NaN,
-            params: {},
-            notes: "Fit failed — no plausible buoyant-object trajectory converged.",
-        });
+            name: "Sky Lantern / Balloon (measured wind)",
+            windPolicy: "drift wind pinned loosely to the loaded sounding/GFS profile",
+            notes: "MEASURED-wind reconstruction: the same model with its drift wind softly anchored "
+                + "to the loaded winds aloft (kept loose — a sonde can be 200+ mi and 12 h away). "
+                + "Compare its residual and inferred profile against the free fit.",
+        }));
     }
 
     // 5b. Quadcopter (multirotor drone) physics model — a hover-capable
@@ -2345,6 +2360,37 @@ export async function runTraverseAnalysis() {
             rangeMax: plausRangeMax,
         });
 
+        // Wind-profile prior for the wind-tracer fits (Sky Lantern / Balloon and
+        // Quadcopter): sample the loaded sounding/GFS wind at the analysis origin
+        // and the plausible object altitude, and pin their solved wind loosely to
+        // it. A wind tracer's drift SHOULD match the measured winds aloft, not
+        // slide slow to trade range against an invented calm (the coupled
+        // range/wind unobservable pair). Skipped when no wind field is loaded —
+        // the models then keep their own light-wind prior.
+        // Gate to a MEASURED, altitude-resolved wind source (soundings / GFS /
+        // open-meteo / custom). A "manual" source is a hand-set constant wind —
+        // an assumption, not a measurement — so pinning a wind tracer to it
+        // (often 0,0) would just re-impose a possibly-wrong calm; leave those to
+        // the model's own light-wind prior.
+        let windPrior = null;
+        const windFieldNode = NodeMan.get("windField", false);
+        if (windFieldNode && windFieldNode.source && windFieldNode.source !== "manual"
+            && typeof windFieldNode.sampleWindAtAltitude === "function"
+            && plausible && plausible.track) {
+            let sumAlt = 0;
+            for (let f = 0; f < dataset.n; f++) {
+                const x = plausible.track[f * 3], y = plausible.track[f * 3 + 1], z = plausible.track[f * 3 + 2];
+                sumAlt += z + (x * x + y * y) / (2 * EARTH_RADIUS_M);  // geodetic; ENU origin at MSL
+            }
+            const meanAltM = sumAlt / dataset.n;
+            // originLat/originLon are RADIANS here; sampleWindAtAltitude wants DEGREES.
+            const s = windFieldNode.sampleWindAtAltitude(
+                originLat * 180 / Math.PI, originLon * 180 / Math.PI, meanAltM);
+            if (s && Number.isFinite(s.u) && Number.isFinite(s.v)) {
+                windPrior = {E: s.u, N: s.v, altM: meanAltM};
+            }
+        }
+
         // Shared physics-fit dataset shape (frame-0-indexed sensor/LOS arrays +
         // uniform times) reused by the lantern and quadcopter model fits.
         const physicsTimes = new Float64Array(dataset.n);
@@ -2360,18 +2406,40 @@ export async function runTraverseAnalysis() {
         };
         if (groundPrior) physicsOpts.groundPrior = groundPrior;
 
-        await phase(0.82, 0.07, "Fitting sky lantern / balloon model...")(0);
+        await phase(0.82, 0.05, "Fitting balloon model (free wind)...")(0);
         let lantern = null;
         try {
+            // FREE reconstruction: fit wind + lift together with NO measured-wind
+            // input — "does a plausible balloon fit these sightlines?" — and yield
+            // the inferred wind + lift profile.
             lantern = await fitPhysicsModel(physicsDS, new Set(), new SkyLanternModel(), physicsOpts);
         } catch (e) {
             if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
-            failures.push({method: "Sky Lantern / Balloon", error: (e && e.message) || "fit failed"});
+            failures.push({method: "Sky Lantern / Balloon (free wind)", error: (e && e.message) || "fit failed"});
             lantern = null;
         }
         if (overlay.isCancelled()) throw new Error("cancelled");
-        if (!lantern && !failures.some((f) => f.method === "Sky Lantern / Balloon")) {
-            failures.push({method: "Sky Lantern / Balloon", error: "fit returned no solution"});
+        if (!lantern && !failures.some((f) => f.method === "Sky Lantern / Balloon (free wind)")) {
+            failures.push({method: "Sky Lantern / Balloon (free wind)", error: "fit returned no solution"});
+        }
+
+        // MEASURED-wind reconstruction: a second balloon fit whose drift wind is
+        // softly pinned to the loaded sounding/GFS profile (kept loose — measured
+        // wind is only loosely representative). Only when a measured wind field is
+        // present; kept SEPARATE from the free fit so both modes coexist and the
+        // free-inferred-vs-measured wind comparison is available.
+        let lanternMeasured = null;
+        if (windPrior) {
+            await phase(0.87, 0.02, "Fitting balloon model (measured wind)...")(0);
+            try {
+                const m = new SkyLanternModel();
+                m.windPriorE = windPrior.E; m.windPriorN = windPrior.N;
+                lanternMeasured = await fitPhysicsModel(physicsDS, new Set(), m, physicsOpts);
+            } catch (e) {
+                if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
+                lanternMeasured = null;  // non-fatal — the free fit is the primary
+            }
+            if (overlay.isCancelled()) throw new Error("cancelled");
         }
 
         // Quadcopter (multirotor drone) — hover-capable near-field object. Runs
@@ -2426,7 +2494,7 @@ export async function runTraverseAnalysis() {
         }
 
         const hypotheses = buildHypotheses({
-            dataset, sweep, ca, plausible, aircraft, lantern, quad, satellite,
+            dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured, quad, satellite,
             slowProfile, slowOpts,
             losNode, originLat, originLon,
             provenance, failures,
@@ -3468,6 +3536,55 @@ const ZOOM_BUTTON_HTML =
 // stats, a plain-English verdict, then progressively deeper explanation
 // (how the numbers were derived, what constrains it, where it sits in the
 // solution space) — written for a UAP analyst deciding what the object is.
+// The balloon plausibility bridge: a balloon fit's INFERRED wind profile (the
+// wind its solved drift requires at each altitude) next to the loaded MEASURED
+// wind at the same altitudes. A plausible balloon should need winds close to
+// what was actually measured nearby; big disagreement weakens the balloon
+// reading — though measured winds are themselves only loosely representative
+// (a sonde can be 200+ mi and up to 12 h away).
+function windProfileComparisonHTML(h) {
+    const p = h.params || {};
+    if (!Number.isFinite(p.windE) || !Number.isFinite(p.windN) || !h.track) return "";
+    const t = h.track;
+    const h0 = t[2] + (t[0] * t[0] + t[1] * t[1]) / (2 * EARTH_RADIUS_M);
+    const shear = Number.isFinite(p.shearPerM) ? p.shearPerM : 0;
+    const inferredAt = (altM) => {
+        let m = 1 + shear * (altM - h0);
+        if (m < 0.25) m = 0.25; else if (m > 3) m = 3;
+        return {u: p.windE * m, v: p.windN * m};
+    };
+    const wf = NodeMan.get("windField", false);
+    const canMeasure = wf && wf.source && wf.source !== "manual"
+        && typeof wf.sampleWindAtAltitude === "function";
+    const fmt = (s) => {
+        if (!s || !Number.isFinite(s.u) || !Number.isFinite(s.v)) return "—";
+        const kt = Math.hypot(s.u, s.v) * 1.94384;
+        const dir = ((Math.atan2(s.u, s.v) * 180 / Math.PI + 180) % 360 + 360) % 360;
+        return `${kt.toFixed(0)} kt @ ${dir.toFixed(0)}°`;
+    };
+    const alt = h.metricsFull && h.metricsFull.altitude;
+    const loM = alt && Number.isFinite(alt.min) ? alt.min : h0;
+    const hiM = alt && Number.isFinite(alt.max) ? alt.max : h0 + 3000;
+    const rows = [];
+    for (let i = 0; i <= 6; i++) {
+        const altM = loM + (hiM - loM) * i / 6;
+        const meas = canMeasure ? wf.sampleWindAtAltitude(Sit.lat, Sit.lon, altM) : null;
+        rows.push(`<tr><td>${(altM / 304.8).toFixed(1)}</td><td>${fmt(inferredAt(altM))}</td>`
+            + `<td>${fmt(meas)}</td></tr>`);
+    }
+    return `<h4 class="tg-d-h">Inferred wind profile${canMeasure ? " vs measured" : ""}</h4>`
+        + `<table class="tg-wind"><thead><tr><th>Alt (kft)</th><th>Inferred (fit)</th>`
+        + `<th>Measured</th></tr></thead><tbody>${rows.join("")}</tbody></table>`
+        + `<p class="tg-d-p" style="font-size:12px;margin-top:6px">`
+        + (canMeasure
+            ? "A plausible balloon should need winds close to those measured nearby; large "
+            + "disagreement weakens the balloon interpretation. Measured winds are themselves only "
+            + "loosely representative (a sonde can be 200+ mi and 12 h away)."
+            : "The wind this free fit inferred. Load a sounding/GFS wind field to compare it against "
+            + "measured winds aloft.")
+        + "</p>";
+}
+
 function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = false) {
     const {ss} = ctx;
     const stats = hypothesisStats(h);
@@ -3511,6 +3628,7 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
         <div class="tg-d-rank"><strong>Why it is screened and ordered here:</strong> ${escapeHtml(rankingExplanation(h, r))}</div>
         <p class="tg-d-lead">${escapeHtml(prose.lead)}</p>
         ${seriesHTML}
+        ${h.key === "lantern" ? windProfileComparisonHTML(h) : ""}
         <h4 class="tg-d-h">How these numbers were derived</h4>
         <p class="tg-d-p">${prose.derived}</p>
         <h4 class="tg-d-h">What constrains it — and its plausibility</h4>
@@ -3765,6 +3883,13 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-d-series img { display:block; width:100%; height:auto;
             border-radius:6px; border:1px solid #262b33; margin:0 0 8px 0; }
         .traverse-gallery-overlay .tg-d-p b { color:#eef1f5; }
+        .traverse-gallery-overlay .tg-wind { width:100%; border-collapse:collapse; font-size:12.5px;
+            font-variant-numeric:tabular-nums; margin:4px 0; }
+        .traverse-gallery-overlay .tg-wind th, .traverse-gallery-overlay .tg-wind td {
+            padding:3px 8px; text-align:right; border-bottom:1px solid rgba(255,255,255,0.08); }
+        .traverse-gallery-overlay .tg-wind th { color:#8a9099; font-weight:600; }
+        .traverse-gallery-overlay .tg-wind td:first-child, .traverse-gallery-overlay .tg-wind th:first-child { text-align:left; }
+        .traverse-gallery-overlay .tg-wind td { color:#dfe3e8; }
         .traverse-gallery-overlay .tg-footer { flex:0 0 auto; display:flex; justify-content:flex-end; gap:12px;
             margin-top:12px; flex-wrap:wrap; }
         .traverse-gallery-overlay .tg-btn { padding:9px 18px; font-size:14px; font-weight:600; cursor:pointer;

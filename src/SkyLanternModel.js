@@ -51,6 +51,18 @@ export class SkyLanternModel extends PhysicsModel {
     // exists for stiff drag models).
     maxDt = 0.25;
 
+    // Optional soft wind prior (E/N m/s + sigma), sampled once from the loaded
+    // sounding/GFS field at the fit's altitude and set on the instance before
+    // fitting. When present, the fitted drift wind is pinned loosely to that
+    // MEASURED wind (the "measured-corrected" policy) instead of the calm-air
+    // preference — a wind tracer's drift should match the known winds aloft,
+    // not slide slow to trade against range in the coupled range/wind pair.
+    // Null (no usable wind field) falls back to the light-wind prior below.
+    // Mirrors FixedWingModel.windPrior*.
+    windPriorE = null;
+    windPriorN = null;
+    windPriorSigma = 7.7;   // ~15 kt
+
     getName() {
         return "Sky Lantern";
     }
@@ -125,10 +137,21 @@ export class SkyLanternModel extends PhysicsModel {
     // Soft plausibility priors (added to meanErrDeg/errSigma in the fit cost).
     // The hard parameter bounds carry the real physics; these only nudge.
     extraCost(params, dataset, T) {
-        // prefer light winds: a lantern launch implies calm-ish conditions
-        // (~19 kt costs 0.5; 43 kt costs ~2.5 — real but increasingly unusual)
-        const spd = Math.hypot(params[1], params[2]);
-        let cost = 0.5 * (spd / 10) ** 2;
+        let cost;
+        if (this.windPriorE !== null && this.windPriorN !== null) {
+            // measured-corrected: pin the fitted drift wind loosely to the
+            // sampled winds-aloft, so the fit can't drag drift slow to trade
+            // range against an invented calm.
+            const dE = params[1] - this.windPriorE;
+            const dN = params[2] - this.windPriorN;
+            cost = (dE * dE + dN * dN) / (this.windPriorSigma ** 2);
+        } else {
+            // no usable wind field — fall back to preferring light winds: a
+            // lantern launch implies calm-ish conditions (~19 kt costs 0.5;
+            // 43 kt costs ~2.5 — real but increasingly unusual)
+            const spd = Math.hypot(params[1], params[2]);
+            cost = 0.5 * (spd / 10) ** 2;
+        }
         // negative shear (wind slower higher up) is possible but less common
         if (params[3] < 0) cost += 0.5 * (params[3] / 0.002) ** 2;
         // soft sea-level floor on the closed-form altitude profile
