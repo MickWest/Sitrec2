@@ -2,7 +2,7 @@
 // should be agnostic to the source of the data (KML/ADSB, CSV, KLVS, etc)
 import {CNodeScale} from "./nodes/CNodeScale";
 import {showConfirm, showChoice} from "./showError";
-import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
+import {CNodeGUIValue, CNodeGUIFlag} from "./nodes/CNodeGUIValue";
 import {CNodeConstant} from "./nodes/CNode";
 import * as LAYER from "./LayerMasks";
 import {Color, Vector3} from "three";
@@ -46,6 +46,7 @@ import {detectRocketLikeTrack} from "./trackHeuristics";
 import {hasOtherTrackSourceReference} from "./trackSourceUtils";
 import {extractTrackPreviewInfo, showMultiTrackLoadDialog, getCameraFilterState} from "./TrackFilterDialog";
 import {t} from "./i18n";
+import {CNodeBalloonTrack} from "./nodes/CNodeBalloonTrack";
 
 function disposeDirectTrackDependentControllers(trackNode) {
     if (!trackNode?.outputs?.length) {
@@ -150,6 +151,7 @@ class CMetaTrack {
         unlinkManagedNode(this.trackID + "_polyOrderValue");
         unlinkManagedNode(this.trackID + "_edgeOrderValue");
         unlinkManagedNode(this.trackID + "_fitWindowValue");
+        unlinkManagedNode(this.trackID + "_sourceAltMeters");
 
         unlinkManagedNode(this.trackDataNode);
         unlinkManagedNode(this.trackNode);
@@ -769,6 +771,31 @@ class CTrackManager extends CManager {
 
                     // For relative-time tracks, add GUI field to override start time
                     trackDataNode.setupTrackStartTimeGUI(trackOb.guiFolder);
+
+                    // Ambiguous-altitude sources (e.g. the client-specific truth_alt
+                    // CSV column, which has no units label) default to feet. This
+                    // switch reinterprets the source values as meters, re-deriving
+                    // the track from the retained raw rows via toMISB().
+                    const loadedTrackFile = FileManager.get(trackFileName);
+                    if (loadedTrackFile instanceof CTrackFile
+                        && loadedTrackFile.hasAmbiguousAltitudeUnits(trackIndex)) {
+                        const altUnitsFlag = new CNodeGUIFlag({
+                            id: trackID + "_sourceAltMeters",
+                            value: loadedTrackFile.getSourceAltitudeMeters(trackIndex),
+                            desc: "Source Altitude is Meters",
+                            tip: "The source file doesn't label the altitude units for this track. " +
+                                "Off = feet (default). On = meters. " +
+                                "Toggling rebuilds the track from the original source values.",
+                            onChange: () => {
+                                loadedTrackFile.setSourceAltitudeMeters(trackIndex, altUnitsFlag.value);
+                                const newMisb = loadedTrackFile.toMISB(trackIndex);
+                                if (newMisb) {
+                                    trackDataNode.misb = newMisb;
+                                    trackDataNode.recalculateCascade();
+                                }
+                            },
+                        }, trackOb.guiFolder);
+                    }
 
                     // how many tracks are there now?
                     const trackNumber = TrackManager.size();
@@ -1486,6 +1513,13 @@ class CTrackManager extends CManager {
 
             const lookCamera = NodeMan.get("lookCamera");
             lookCamera.addControllerNode(anglesController)
+            // The per-track angles controller writes an ABSOLUTE camera pose
+            // (quaternion.copy), and track imports always happen after
+            // CustomManagerSetup attached the Tracking Wobble controller — so
+            // without this, the wobble would land BEFORE the angles in the
+            // apply order and be silently wiped every frame whenever a
+            // "<name> angles" heading source is selected.
+            lookCamera.moveControllerToEnd("trackingWobbleController");
 
             const dropTargets = Sit.dropTargets["angles"]
             const autoTrackFile = FileManager.get(trackOb.trackFileName);
@@ -1646,6 +1680,8 @@ class CTrackManager extends CManager {
 
         if (trackOb?.isSynthetic) {
             this.disposeSyntheticTrack(trackID);
+        } else if (trackOb?.isBalloon) {
+            this.disposeBalloonTrack(trackID);
         } else {
             super.disposeRemove(trackID);
         }
@@ -2127,6 +2163,301 @@ class CTrackManager extends CManager {
         if (!Globals.disposing) {
             NodeMan.recalculateAllRootFirst();
             setRenderOne(true);
+        }
+    }
+
+    /**
+     * Add a simulated balloon target track ("Add Balloon" in the ground
+     * context menu). Unlike synthetic (keyframe) tracks, the balloon's
+     * per-frame positions are computed by CNodeBalloonTrack from launch
+     * parameters + the loaded wind — so it is NOT flagged isSynthetic
+     * (the synthetic serialize/dispose paths assume a spline editor).
+     * Persistence is generator-style instead: serializeBalloons() saves the
+     * parameters, deserializeBalloons() recreates the same node ids before
+     * the mods pass (the appFlight pattern in CustomManagerSerialize).
+     *
+     * @param {Object} options
+     * @param {number} options.startLat - launch latitude (degrees)
+     * @param {number} options.startLon - launch longitude (degrees)
+     * @param {number} options.startAltitude - launch altitude (m MSL, default 0 = ground at click)
+     * @param {number} options.launchDelay - seconds before launch (default 0)
+     * @param {number} options.buoyancy - ascent rate m/s (default 5)
+     * @param {number} options.windVariability - gust % (default 20)
+     * @param {number} options.seed - PRNG seed (default 1)
+     * @param {string} options.trackID/objectID/displayTrackID - preserved ids on deserialize
+     * @param {number} options.color - track color hex (default orange)
+     * @param {boolean} options.showInLook - also render in the look view
+     * @returns {Object|null} The created CMetaTrack entry
+     */
+    addBalloonTrack(options) {
+        const trackID = options.trackID || `balloonTrack_${Date.now()}`;
+        const objectID = options.objectID || `balloonObject_${Date.now()}`;
+        const displayTrackID = options.displayTrackID || `balloonTrackDisplay_${Date.now()}`;
+        const colorHex = options.color ?? 0xffa040;   // orange, balloon-ish
+        const lineWidth = options.lineWidth || 1;
+
+        // unique short name: Balloon, Balloon_1, ...
+        let shortName = options.shortName || "Balloon";
+        let counter = 1;
+        while (this.usedShortNames.has(shortName)) {
+            shortName = (options.shortName || "Balloon") + "_" + counter;
+            counter++;
+        }
+        this.usedShortNames.add(shortName);
+
+        // GUI folder in Contents. Titled with the trackID first —
+        // CNodeDisplayTrack locates it by the track node's id — then renamed
+        // to the short name below.
+        const guiFolder = guiMenus.contents.addFolder(trackID);
+
+        // Launch parameters (persisted via the mods pass; ids are stable)
+        new CNodeGUIValue({
+            id: trackID + "_startAltitude",
+            value: options.startAltitude ?? 0,
+            start: 0, end: 10000, step: 1,
+            desc: "Start Altitude (m MSL)",
+            elastic: true, elasticMin: 1000, elasticMax: 40000,
+            tip: "Launch altitude in meters MSL (defaults to the ground at the click point)",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_launchDelay",
+            value: options.launchDelay ?? 0,
+            start: 0, end: 120, step: 0.1,
+            desc: "Launch Delay (s)",
+            tip: "Seconds after the sitch start before the balloon lifts off",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_buoyancy",
+            value: options.buoyancy ?? 5,
+            start: -10, end: 20, step: 0.1,
+            desc: "Buoyancy (m/s)",
+            tip: "Steady ascent rate once launched (negative = descending)",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_windVariability",
+            value: options.windVariability ?? 20,
+            start: 0, end: 100, step: 1,
+            desc: "Wind Variability (%)",
+            tip: "Random gustiness as a percentage of the local wind speed",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_seed",
+            value: options.seed ?? 1,
+            start: 1, end: 9999, step: 1,
+            desc: "Random Seed",
+            tip: "Change for a different (but repeatable) flight path",
+        }, guiFolder);
+
+        const balloonNode = new CNodeBalloonTrack({
+            id: trackID,
+            startLat: options.startLat,
+            startLon: options.startLon,
+            startAltitude: trackID + "_startAltitude",
+            launchDelay: trackID + "_launchDelay",
+            buoyancy: trackID + "_buoyancy",
+            windVariability: trackID + "_windVariability",
+            seed: trackID + "_seed",
+        });
+        balloonNode.menuText = shortName;
+        balloonNode.shortName = shortName;
+
+        const trackColor = new Color(
+            ((colorHex >> 16) & 0xff) / 255,
+            ((colorHex >> 8) & 0xff) / 255,
+            (colorHex & 0xff) / 255
+        );
+
+        const displayTrack = new CNodeDisplayTrack({
+            id: displayTrackID,
+            track: trackID,
+            color: new CNodeConstant({
+                id: "colorBalloon_" + trackID,
+                value: trackColor,
+                pruneIfUnused: true
+            }),
+            width: lineWidth,
+            extendToGround: true,
+        });
+
+        // now the display track has found the folder, show the short name
+        guiFolder.$title.innerText = shortName;
+
+        // the balloon itself: a 0.5 m radius sphere riding the track
+        const objectNode = new CNode3DObject({
+            id: objectID,
+            geometry: "sphere",
+            radius: 0.5,
+            color: 0xf0f0f0,
+            material: "phong",
+        });
+        objectNode.addController("TrackPosition", {
+            sourceTrack: trackID
+        });
+
+        const trackOb = this.add(trackID, new CMetaTrack(null, balloonNode, balloonNode));
+        trackOb.trackID = trackID;
+        trackOb.menuText = shortName;
+        trackOb.isBalloon = true;
+        trackOb.displayTrack = displayTrack;
+        trackOb.displayTrackID = displayTrackID;
+        trackOb.guiFolder = guiFolder;
+        trackOb.trackColor = trackColor;
+        trackOb.objectID = objectID;
+
+        // Show-in-look-view toggle (same semantics as synthetic tracks)
+        trackOb.showInLook = !!options.showInLook;
+        if (trackOb.showInLook) {
+            displayTrack.setLayerBit(LAYER.LOOK, true);
+        }
+        guiFolder.add(trackOb, "showInLook").name(t("misc.showInLookView.label")).listen().onChange((value) => {
+            displayTrack.setLayerBit(LAYER.LOOK, value);
+            setRenderOne(true);
+        });
+
+        const dummy = {
+            deleteTrack: async () => {
+                if (await showConfirm(`Delete balloon "${shortName}"?`, {title: "Delete Balloon"})) {
+                    this.disposeRemove(trackID);
+                }
+            }
+        };
+        guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack"));
+
+        // Register in the track drop-target switches (Camera/Target Track...)
+        // so the camera can track the balloon — which also makes it the truth
+        // source for the MISB CSV export.
+        if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
+            const dropTargets = Sit.dropTargets["track"];
+            for (let dropTargetSwitch of dropTargets) {
+                const match = dropTargetSwitch.match(/-(\d+)$/);
+                if (match !== null) {
+                    dropTargetSwitch = dropTargetSwitch.substring(0, dropTargetSwitch.length - match[0].length);
+                }
+                if (NodeMan.exists(dropTargetSwitch)) {
+                    const switchNode = NodeMan.get(dropTargetSwitch);
+                    switchNode.removeOption(shortName);
+                    switchNode.addOption(shortName, balloonNode);
+                }
+            }
+        }
+
+        console.log(`Created balloon track: ${trackID} (${shortName}) at ${options.startLat}, ${options.startLon}`);
+
+        NodeMan.recalculateAllRootFirst();
+        setRenderOne(true);
+        this.notifyTracksChanged();
+
+        return trackOb;
+    }
+
+    disposeBalloonTrack(trackID) {
+        const trackOb = this.get(trackID);
+        if (!trackOb || !trackOb.isBalloon) {
+            console.warn(`Balloon track ${trackID} not found`);
+            return;
+        }
+
+        this.usedShortNames.delete(trackOb.menuText);
+
+        // the sphere's TrackPosition controller (and anything else riding the track)
+        disposeDirectTrackDependentControllers(NodeMan.get(trackID, false));
+
+        // remove from the track drop-target switches
+        const shortName = trackOb.menuText;
+        if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
+            const dropTargets = Sit.dropTargets["track"];
+            for (let dropTargetSwitch of dropTargets) {
+                const match = dropTargetSwitch.match(/-(\d+)$/);
+                if (match !== null) {
+                    dropTargetSwitch = dropTargetSwitch.substring(0, dropTargetSwitch.length - match[0].length);
+                }
+                if (NodeMan.exists(dropTargetSwitch)) {
+                    NodeMan.get(dropTargetSwitch).removeOption(shortName);
+                }
+            }
+        }
+
+        if (trackOb.guiFolder) {
+            trackOb.guiFolder.destroy();
+        }
+
+        if (trackOb.displayTrackID) {
+            NodeMan.unlinkDisposeRemove(trackOb.displayTrackID);
+        }
+        NodeMan.unlinkDisposeRemove("colorBalloon_" + trackID);
+
+        // the balloon sphere (unlike synthetic tracks, the object is intrinsic
+        // to the balloon, so deleting the balloon deletes it too)
+        if (trackOb.objectID) {
+            NodeMan.unlinkDisposeRemove(trackOb.objectID);
+        }
+
+        NodeMan.unlinkDisposeRemove(trackID + "_startAltitude");
+        NodeMan.unlinkDisposeRemove(trackID + "_launchDelay");
+        NodeMan.unlinkDisposeRemove(trackID + "_buoyancy");
+        NodeMan.unlinkDisposeRemove(trackID + "_windVariability");
+        NodeMan.unlinkDisposeRemove(trackID + "_seed");
+        NodeMan.unlinkDisposeRemove(trackID);
+
+        this.remove(trackID);
+
+        console.log(`Deleted balloon track: ${trackID}`);
+
+        if (!Globals.disposing) {
+            NodeMan.recalculateAllRootFirst();
+            setRenderOne(true);
+        }
+    }
+
+    /**
+     * Serialize all balloon tracks: compact generator parameters, recreated
+     * deterministically on load (deserializeBalloons) BEFORE the mods pass,
+     * which then restores the GUI values by node id.
+     */
+    serializeBalloons() {
+        const balloons = [];
+        this.iterate((id, trackOb) => {
+            if (!trackOb.isBalloon) return;
+            const node = trackOb.trackNode;
+            const paramValue = (suffix, fallback) => {
+                const n = NodeMan.get(trackOb.trackID + suffix, false);
+                return n ? n.value : fallback;
+            };
+            balloons.push({
+                trackID: trackOb.trackID,
+                displayTrackID: trackOb.displayTrackID,
+                objectID: trackOb.objectID,
+                shortName: trackOb.menuText,
+                startLat: node.startLat,
+                startLon: node.startLon,
+                startAltitude: paramValue("_startAltitude", 0),
+                launchDelay: paramValue("_launchDelay", 0),
+                buoyancy: paramValue("_buoyancy", 5),
+                windVariability: paramValue("_windVariability", 20),
+                seed: paramValue("_seed", 1),
+                showInLook: !!trackOb.showInLook,
+                // width lives on the display node's "width" INPUT (edited by
+                // the Line Width slider) — there is no .width property
+                lineWidth: trackOb.displayTrack?.in?.width?.value ?? 1,
+                color: trackOb.trackColor ?
+                    (Math.round(trackOb.trackColor.r * 255) << 16) |
+                    (Math.round(trackOb.trackColor.g * 255) << 8) |
+                    Math.round(trackOb.trackColor.b * 255) : 0xffa040,
+            });
+        });
+        return balloons;
+    }
+
+    deserializeBalloons(balloonsData) {
+        if (!balloonsData || balloonsData.length === 0) {
+            return;
+        }
+        for (const b of balloonsData) {
+            try {
+                this.addBalloonTrack(b);
+            } catch (e) {
+                console.error(`Failed to recreate balloon track ${b.trackID}:`, e);
+            }
         }
     }
 

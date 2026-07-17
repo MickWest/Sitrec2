@@ -1975,6 +1975,17 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         return this.getTime(0)
     }
 
+    getTrackEndTime() {
+        // last row with a usable timestamp (defensive: some sources have
+        // trailing rows with null timestamps)
+        for (let i = this.misb.length - 1; i > 0; i--) {
+            if (this.misb[i][MISB.UnixTimeStamp] != null) {
+                return this.getTime(i);
+            }
+        }
+        return this.getTime(0);
+    }
+
     getLat(i) {
         return Number(this.misb[i][this.latCol]);
     }

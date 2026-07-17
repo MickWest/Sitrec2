@@ -182,6 +182,106 @@ export function meanAngularError(dataset, track) {
     return sum / n;
 }
 
+/**
+ * Compare a candidate track against a ground-truth reference track, both as
+ * flat Float64Array(n*3) ENU positions on the SAME dataset frame grid.
+ *
+ * truth = {track: Float64Array(n*3), valid?: Uint8Array(n)} — `valid` marks
+ * frames where the truth source actually has data (e.g. the truth track's
+ * time span may not cover the whole analysis window); omitted = all valid.
+ *
+ * Speeds/headings are differentiated over the same ~0.5 s physical window as
+ * trackMetrics so the comparison reflects real motion, not frame noise.
+ * Headings are compared only where BOTH tracks move horizontally (>0.5 m/s);
+ * a hovering truth object has no meaningful heading.
+ *
+ * Returns {comparable:false, ...} with fewer than 5 usable frames, else a
+ * record whose `score` (mean 3D separation, meters — lower is better) is the
+ * truth-mode rank driver, plus per-aspect aggregates for the prose.
+ */
+export function compareTrackToTruth(dataset, track, truth, options = {}) {
+    const {n, fps, S} = dataset;
+    const T = truth.track;
+    const valid = truth.valid || null;
+    const ok = (f) => !valid || valid[f] === 1;
+
+    const smoothFrames = Math.max(3, Math.round((options.smoothSeconds ?? 0.5) * fps));
+    const h = Math.max(1, Math.min(Math.floor(smoothFrames / 2), Math.floor((n - 1) / 2)));
+    const vel = (arr, f0, f1) => {
+        const dt = (f1 - f0) / fps;
+        return [
+            (arr[f1 * 3] - arr[f0 * 3]) / dt,
+            (arr[f1 * 3 + 1] - arr[f0 * 3 + 1]) / dt,
+            (arr[f1 * 3 + 2] - arr[f0 * 3 + 2]) / dt,
+        ];
+    };
+
+    let count = 0, sumSep = 0, maxSep = 0, sumHoriz = 0;
+    let sumAltAbs = 0, sumAltSigned = 0, sumRange = 0;
+    let velCount = 0, sumSpeedAbs = 0, sumTruthSpeed = 0;
+    let hdgCount = 0, sumHdgAbs = 0;
+
+    for (let f = 0; f < n; f++) {
+        if (!ok(f)) continue;
+        const b = f * 3;
+        const dx = track[b] - T[b];
+        const dy = track[b + 1] - T[b + 1];
+        const dz = track[b + 2] - T[b + 2];
+        const sep = Math.hypot(dx, dy, dz);
+        if (!isFinite(sep)) continue;
+        count++;
+        sumSep += sep;
+        if (sep > maxSep) maxSep = sep;
+        sumHoriz += Math.hypot(dx, dy);
+        sumAltAbs += Math.abs(dz);
+        sumAltSigned += dz;
+        sumRange += Math.hypot(T[b] - S[b], T[b + 1] - S[b + 1], T[b + 2] - S[b + 2]);
+
+        // velocity window: truth validity is a contiguous time range, so valid
+        // endpoints imply a valid interior
+        const f0 = Math.max(0, f - h), f1 = Math.min(n - 1, f + h);
+        if (f1 > f0 && ok(f0) && ok(f1)) {
+            const vT = vel(T, f0, f1), vH = vel(track, f0, f1);
+            const sT = Math.hypot(vT[0], vT[1], vT[2]);
+            const sH = Math.hypot(vH[0], vH[1], vH[2]);
+            if (isFinite(sT) && isFinite(sH)) {
+                velCount++;
+                sumSpeedAbs += Math.abs(sH - sT);
+                sumTruthSpeed += sT;
+                if (Math.hypot(vT[0], vT[1]) > 0.5 && Math.hypot(vH[0], vH[1]) > 0.5) {
+                    const hdgT = Math.atan2(vT[0], vT[1]) * 180 / Math.PI;
+                    const hdgH = Math.atan2(vH[0], vH[1]) * 180 / Math.PI;
+                    const d = ((hdgH - hdgT + 540) % 360) - 180;
+                    hdgCount++;
+                    sumHdgAbs += Math.abs(d);
+                }
+            }
+        }
+    }
+
+    if (count < 5) {
+        return {
+            comparable: false,
+            framesUsed: count,
+            note: "truth track does not usefully overlap the analysis window",
+        };
+    }
+    return {
+        comparable: true,
+        framesUsed: count,
+        frames: n,
+        score: sumSep / count,                       // mean 3D separation, m
+        sep3D: {mean: sumSep / count, max: maxSep},
+        horizontal: {mean: sumHoriz / count},
+        altitude: {meanAbs: sumAltAbs / count, meanSigned: sumAltSigned / count},
+        speed: velCount
+            ? {meanAbsDiff: sumSpeedAbs / velCount, truthMean: sumTruthSpeed / velCount}
+            : null,
+        heading: hdgCount ? {meanAbsDiff: sumHdgAbs / hdgCount, frames: hdgCount} : null,
+        meanTruthRange: sumRange / count,
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Constant-speed traverse (mirrors CNodeLOSTraverseConstantSpeed)
 // ---------------------------------------------------------------------------

@@ -472,6 +472,10 @@ const en = {
             label: "Sync Time to",
             tooltip: "Sync the video start time to the original start time, the current time, or the start time of a track track (if loaded)",
         },
+        syncDurationTo: {
+            label: "Sync Duration to",
+            tooltip: "Set the sitch duration (number of frames) to match the duration of a loaded track",
+        },
     },
     jet: {
         frames: {
@@ -906,6 +910,7 @@ const en = {
             dropPin: "Drop Pin / Add Feature",
             createTrackWithObject: "Create Track with Object",
             createTrackNoObject: "Create Track (No Object)",
+            addBalloon: "Add Balloon",
             addBuilding: "Add Building",
             addClouds: "Add Clouds",
             addGroundOverlay: "Add Ground Overlay",
@@ -1767,6 +1772,38 @@ const en = {
         },
     },
 
+    trackingWobble: {
+        folder: "Tracking Wobble",
+        enabled: {
+            label: "Tracking Wobble",
+            tooltip: "Simulate manual tracking: the camera drifts off the target and is imperfectly re-centered",
+        },
+        amplitude: {
+            label: "Amplitude (deg)",
+            tooltip: "How far off-center (degrees) the drift gets before the operator reacts",
+        },
+        driftSpeed: {
+            label: "Drift Speed (deg/s)",
+            tooltip: "Random drift rate away from the target",
+        },
+        reactionTime: {
+            label: "Reaction Time (s)",
+            tooltip: "Operator delay between noticing the drift and starting the correction",
+        },
+        correctionSpeed: {
+            label: "Recenter Speed (deg/s)",
+            tooltip: "How fast the operator slews back toward the target",
+        },
+        accuracy: {
+            label: "Recenter Accuracy",
+            tooltip: "1 = corrections stop dead-center; lower values leave residual error",
+        },
+        seed: {
+            label: "Random Seed",
+            tooltip: "Change for a different (but still repeatable) wobble pattern",
+        },
+    },
+
     spriteGroup: {
         visible: {
             label: "Visible",
@@ -1877,6 +1914,10 @@ const en = {
         linesOfSight: {
             label: "Lines of Sight",
             tooltip: "Show lines of sight from camera to target (toggle: O)",
+        },
+        hideSomeLOS: {
+            label: "Hide Some LOS",
+            tooltip: "Thin out the displayed lines of sight: 0 shows all, n shows only every 2ⁿ-th line (3 = every 8th)",
         },
         currentLOS: {
             label: "Current LOS",

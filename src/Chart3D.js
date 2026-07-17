@@ -431,6 +431,7 @@ export class Chart3D {
             } else if (s.type === "line") {
                 ctx.strokeStyle = s.color; ctx.lineWidth = s.width ?? 2;
                 ctx.lineJoin = "round";
+                if (s.dash) ctx.setLineDash(s.dash);
                 ctx.beginPath();
                 let first = true;
                 for (const p of s.pts) {
@@ -438,6 +439,7 @@ export class Chart3D {
                     if (first) { ctx.moveTo(q.x, q.y); first = false; } else ctx.lineTo(q.x, q.y);
                 }
                 ctx.stroke();
+                if (s.dash) ctx.setLineDash([]);
                 if (s.pts.length) {
                     if (s.startDot) {
                         const q = proj(s.pts[0]);

@@ -254,6 +254,13 @@ const misbTagInfo = [
     { name: "SensorRollRate", units: "Degrees", isNumber: true },  // Tag 119
     { name: "On_boardMIStoragePercentFull", units: "Number", isNumber: true },  // Tag 120
     { name: "SensorRelativeAltitude", units: "Meters", isNumber: true },  // Tag 121
+
+    // Local extensions (not MISB 0601 tags): client-specific ground-truth columns
+    { name: "Truth Latitude", units: "Degrees", isNumber: true },  // Tag 122
+    { name: "Truth Longitude", units: "Degrees", isNumber: true },  // Tag 123
+    { name: "Truth Altitude", units: "Meters", isNumber: true },  // Tag 124
+    { name: "Truth Heading", units: "Degrees", isNumber: true },  // Tag 125
+    { name: "Truth Speed", units: "Unknown", isNumber: true },  // Tag 126
 ];
 
 
@@ -367,6 +374,20 @@ export function computeFpsAnalysis({ videoFrameCount, videoPesSpanS, klvUtsSpanS
     return { valid: true, pcrFps, realFps, ratePesOverReal, fpsGap, sitFpsDelta };
 }
 
+// Client-specific CSV header aliases → MISB field names, for columns whose
+// spelling can't match a MISB key via the generic strip-spaces/lowercase
+// comparison (underscores are kept by that normalization). Keys must be
+// normalized (spaces removed, lowercased).
+const MISB_CSV_HEADER_ALIASES = {
+    "truth_lat": "TruthLatitude",
+    "truth_long": "TruthLongitude",
+    "truth_lon": "TruthLongitude",
+    "truth_lng": "TruthLongitude",
+    "truth_alt": "TruthAltitude",           // meters
+    "truth_heading": "TruthHeading",
+    "truth_speed": "TruthSpeed",
+};
+
 export function parseMISB1CSV(csv) {
     const rows = csv.length;
     console.log("MISB CSV rows = "+rows);
@@ -386,7 +407,12 @@ export function parseMISB1CSV(csv) {
 
         // find the MISB field that matches the header
         // this will basically be the same thing, just ignoring case and spaces
-        const field = Object.keys(MISB).find(key => key.toLowerCase() === header);
+        let field = Object.keys(MISB).find(key => key.toLowerCase() === header);
+
+        // fall back to client-specific header aliases (e.g. truth_lat → TruthLatitude)
+        if (field === undefined) {
+            field = MISB_CSV_HEADER_ALIASES[header];
+        }
 
 
         if (field !== undefined) {

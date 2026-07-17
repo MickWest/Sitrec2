@@ -8,7 +8,7 @@
  * record, then ranks only within a comparison category.
  */
 
-import {KNOTS_TO_MS, straightFlightScore} from "./TraverseAnalysis";
+import {KNOTS_TO_MS, METERS_PER_NM, straightFlightScore} from "./TraverseAnalysis";
 
 export const RAY_SOLVER_ALLOWANCE_DEG = 0.05;
 export const DISPLAY_TIE_THRESHOLD = 0.05;
@@ -240,22 +240,45 @@ export function plausibilityRating(h) {
     };
 }
 
+// Truth-mode primary sort key: mean 3D separation from the selected truth
+// track (meters, lower is better). null = no truth track selected for this
+// hypothesis; Infinity = truth selected but not comparable (direction-only
+// hypothesis, or no time overlap) — those fall to the end of the group and
+// keep the normal screening order among themselves.
+function truthSortScore(x) {
+    const tc = x?.h?.truthComparison;
+    if (tc === undefined || tc === null) return null;
+    return tc.comparable && Number.isFinite(tc.score) ? tc.score : Infinity;
+}
+
 export function rankHypotheses(hypotheses) {
     const ranked = (hypotheses || [])
         .filter((h) => h.track && h.metricsFull)
         .map((h) => ({h, r: plausibilityRating(h)}))
-        .sort((a, b) => Number(b.r.eligible) - Number(a.r.eligible)
-            || Number(a.r.incomplete) - Number(b.r.incomplete)
-            || b.r.rank - a.r.rank
-            || (a.r.activePins?.length || 0) - (b.r.activePins?.length || 0)
-            || a.r.secondaryScore - b.r.secondaryScore
-            || (Number.isFinite(a.h.errDeg) ? a.h.errDeg : Infinity)
-                - (Number.isFinite(b.h.errDeg) ? b.h.errDeg : Infinity));
+        .sort((a, b) => {
+            // With a truth track selected, closeness to it IS the score —
+            // it overrides the screening tiers; they remain the tiebreak.
+            const ta = truthSortScore(a), tb = truthSortScore(b);
+            if (ta !== null || tb !== null) {
+                const va = ta ?? Infinity, vb = tb ?? Infinity;
+                if (va !== vb) return va - vb;
+            }
+            return Number(b.r.eligible) - Number(a.r.eligible)
+                || Number(a.r.incomplete) - Number(b.r.incomplete)
+                || b.r.rank - a.r.rank
+                || (a.r.activePins?.length || 0) - (b.r.activePins?.length || 0)
+                || a.r.secondaryScore - b.r.secondaryScore
+                || (Number.isFinite(a.h.errDeg) ? a.h.errDeg : Infinity)
+                    - (Number.isFinite(b.h.errDeg) ? b.h.errDeg : Infinity);
+        });
 
     // A display tie is intentionally narrow: same comparison category, both
     // complete, both passing the broad screen, and within the documented score
     // threshold. It is not a statistical statement that "the data can't decide."
-    if (ranked.length > 1 && ranked[0].r.eligible && ranked[0].r.rank >= 3) {
+    // Truth mode has its own explicit metric (meters of separation), so the
+    // secondary-score tie flag does not apply there.
+    if (ranked.length > 1 && ranked[0].r.eligible && ranked[0].r.rank >= 3
+        && truthSortScore(ranked[0]) === null) {
         const top = ranked[0];
         for (const x of ranked) {
             x.tied = x.r.eligible && x.r.rank === top.r.rank
@@ -297,6 +320,77 @@ export function formatRawLosResidual(h) {
     return raw;
 }
 
+// --- Truth-track comparison prose ------------------------------------------
+
+function fmtMeters(m) {
+    if (!Number.isFinite(m)) return "n/a";
+    if (m >= METERS_PER_NM) {
+        const nm = m / METERS_PER_NM;
+        return `${nm >= 10 ? nm.toFixed(0) : nm.toFixed(1)} NM`;
+    }
+    return `${Math.round(m)} m`;
+}
+
+// Classify one comparison aspect as concur / partial / diverge.
+// relLimits/absFloors: concur below, diverge above; between = partial.
+function aspectVerdict(rel, abs, relConcur, relDiverge, absConcur, absDiverge) {
+    if (rel < relConcur || abs < absConcur) return "concur";
+    if (rel > relDiverge && abs > absDiverge) return "diverge";
+    return "partial";
+}
+
+/**
+ * One-or-two-sentence summary of how a hypothesis compares to the selected
+ * truth track: the mean 3D separation that drives its rank, then the aspects
+ * where it concurs with / diverges from the truth (location, altitude,
+ * speed, heading). Returns null when no truth comparison is attached.
+ */
+export function truthComparisonSummary(tc) {
+    if (tc === undefined || tc === null) return null;
+    if (!tc.comparable) {
+        return `Truth track: not comparable — ${tc.note || "insufficient overlap"}.`;
+    }
+
+    const range = Math.max(1, tc.meanTruthRange);
+    const concur = [], partial = [], diverge = [];
+    const put = (verdict, text) => {
+        (verdict === "concur" ? concur : verdict === "diverge" ? diverge : partial).push(text);
+    };
+
+    const horiz = tc.horizontal.mean;
+    put(aspectVerdict(horiz / range, horiz, 0.03, 0.12, 30, 100),
+        `location (mean horizontal offset ${fmtMeters(horiz)})`);
+
+    const altAbs = tc.altitude.meanAbs;
+    const altSigned = tc.altitude.meanSigned;
+    const altSide = Math.abs(altSigned) > 0.5 * altAbs
+        ? (altSigned > 0 ? ", mostly above truth" : ", mostly below truth") : "";
+    put(aspectVerdict(altAbs / range, altAbs, 0.02, 0.08, 30, 100),
+        `altitude (mean Δ ${fmtMeters(altAbs)}${altSide})`);
+
+    if (tc.speed) {
+        const dv = tc.speed.meanAbsDiff;
+        const rel = dv / Math.max(tc.speed.truthMean, 2);
+        put(aspectVerdict(rel, dv, 0.15, 0.4, 1, 5),
+            `speed (mean Δ ${(dv / KNOTS_TO_MS).toFixed(0)} kt, truth ~${(tc.speed.truthMean / KNOTS_TO_MS).toFixed(0)} kt)`);
+    }
+    if (tc.heading) {
+        const dh = tc.heading.meanAbsDiff;
+        put(dh < 10 ? "concur" : dh > 35 ? "diverge" : "partial",
+            `heading (mean Δ ${dh.toFixed(0)}°)`);
+    } else {
+        partial.push("heading (not comparable — hover or stationary motion)");
+    }
+
+    let text = `Truth track: mean 3D separation ${fmtMeters(tc.sep3D.mean)} ` +
+        `(max ${fmtMeters(tc.sep3D.max)}) at ~${fmtMeters(range)} mean truth range, ` +
+        `over ${tc.framesUsed} frames — methods are ordered by this separation.`;
+    if (concur.length) text += ` Concurs on ${concur.join("; ")}.`;
+    if (partial.length) text += ` Roughly tracks ${partial.join("; ")}.`;
+    if (diverge.length) text += ` Diverges on ${diverge.join("; ")}.`;
+    return text;
+}
+
 export function rankingExplanation(h, rating = plausibilityRating(h)) {
     const score = Number.isFinite(rating.secondaryScore)
         ? ` Within-group score ${rating.secondaryScore.toFixed(2)} (lower is better within this category).`
@@ -304,7 +398,11 @@ export function rankingExplanation(h, rating = plausibilityRating(h)) {
     const inactive = rating.inactivePins?.length
         ? ` Parameters at bounds but not locally load-bearing: ${rating.inactivePins.join(", ")}.`
         : "";
-    return `${rating.label}: ${rating.reasons.join("; ")}.${inactive}${score}`;
+    // With a truth track selected, the truth comparison leads: it is the
+    // actual rank driver; the broad screen remains as context.
+    const truth = truthComparisonSummary(h?.truthComparison);
+    const truthText = truth ? `${truth} Broad screen: ` : "";
+    return `${truthText}${rating.label}: ${rating.reasons.join("; ")}.${inactive}${score}`;
 }
 
 export function tierBadge(rating) {

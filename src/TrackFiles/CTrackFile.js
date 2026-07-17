@@ -58,6 +58,9 @@
 export class CTrackFile {
     constructor(data) {
         this.data = data;
+        // Per-track altitude-units interpretation for ambiguous sources
+        // (see hasAmbiguousAltitudeUnits). Keyed by trackIndex.
+        this._sourceAltitudeMeters = {};
     }
 
     static canHandle(filename, data) {
@@ -93,6 +96,26 @@ export class CTrackFile {
     // should override.
     isSupplementaryTrack(trackIndex) {
         return trackIndex > 0;
+    }
+
+    // True when the altitude column feeding the track at `trackIndex` carries no units
+    // label in the source file (e.g. a client-specific CSV column like truth_alt), so
+    // feet-vs-meters is a guess. Such tracks get a per-track "Source Altitude is Meters"
+    // GUI switch (default off = feet) that re-derives the track via toMISB() from the
+    // retained source values. Subclasses override per track; toMISB() implementations
+    // for those tracks must consult getSourceAltitudeMeters(trackIndex).
+    hasAmbiguousAltitudeUnits(trackIndex) {
+        return false;
+    }
+
+    // Current units interpretation for an ambiguous-altitude track:
+    // false = feet (the default), true = meters.
+    getSourceAltitudeMeters(trackIndex) {
+        return this._sourceAltitudeMeters[trackIndex] === true;
+    }
+
+    setSourceAltitudeMeters(trackIndex, isMeters) {
+        this._sourceAltitudeMeters[trackIndex] = isMeters === true;
     }
 
     // Altitude datum of this track's values. Most sources are orthometric (MSL), which

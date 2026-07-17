@@ -389,6 +389,39 @@ export const menuMethods = {
                 this.groundContextMenu = null;
                 menu.destroy();
             },
+            addBalloon: () => {
+                this.groundContextMenu = null;
+                menu.destroy();
+
+                // Simulated balloon target launched from the clicked ground
+                // point (start altitude = ground MSL there; ascends on launch
+                // and drifts with the loaded wind profile). Adds itself to the
+                // Camera/Target Track switches, so it can be tracked/filmed.
+                const trackOb = TrackManager.addBalloonTrack({
+                    startLat: lat,
+                    startLon: lon,
+                    startAltitude: Math.max(0, altMSL),
+                    showInLook: sourceViewID === "lookView",
+                });
+
+                if (trackOb && UndoManager) {
+                    // capture the full generator record so redo recreates the
+                    // same node ids (mirrors the building/clouds undo pattern)
+                    const record = TrackManager.serializeBalloons()
+                        .find(b => b.trackID === trackOb.trackID);
+                    let curTrackID = trackOb.trackID;
+                    UndoManager.add({
+                        undo: () => {
+                            TrackManager.disposeRemove(curTrackID);
+                        },
+                        redo: () => {
+                            const ob = TrackManager.addBalloonTrack(record);
+                            curTrackID = ob?.trackID ?? curTrackID;
+                        },
+                        description: `Add balloon "${trackOb.menuText}"`
+                    });
+                }
+            },
             createTrackWithObject: () => {
                 // Create a 3D object at the clicked point
                 const objectID = `syntheticObject_${Date.now()}`;
@@ -656,6 +689,9 @@ export const menuMethods = {
         // Add synthetic track options
         menu.add(menuData, "createTrackWithObject").name(t("custom.contextMenu.createTrackWithObject"));
         menu.add(menuData, "createSyntheticTrack").name(t("custom.contextMenu.createTrackNoObject"));
+
+        // Add simulated balloon target
+        menu.add(menuData, "addBalloon").name(t("custom.contextMenu.addBalloon", {defaultValue: "Add Balloon"}));
 
         // Add building creation option
         menu.add(menuData, "addBuilding").name(t("custom.contextMenu.addBuilding"));

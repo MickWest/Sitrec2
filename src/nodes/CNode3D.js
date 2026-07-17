@@ -179,6 +179,19 @@ export class CNode3D extends CNode {
         return this;
     }
 
+    // Move an already-attached controller to the END of the apply order
+    // (applyControllers iterates inputs in insertion order — see above). Used
+    // for additive post-pose controllers like Tracking Wobble, which must
+    // stay last when an absolute pose controller (e.g. a per-track angles
+    // CNodeControllerMatrix) is attached later at import time.
+    moveControllerToEnd(id) {
+        const node = this.inputs[id];
+        if (node) {
+            delete this.inputs[id];
+            this.inputs[id] = node;
+        }
+    }
+
 
     getUpVector(position) {
 

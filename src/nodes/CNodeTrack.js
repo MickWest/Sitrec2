@@ -10,6 +10,10 @@ import {saveAs} from "file-saver";
 import {degrees} from "../utils";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {clampTerrainElevationHAE, terrainCacheMatchesLocation} from "./trackElevationUtils";
+import {Raycaster} from "three";
+import * as LAYER from "../LayerMasks";
+import {raycastLocalGround} from "../raycastGround";
+import {ecefDisplacementToENU, headingSpeedFromENU, METERS_PER_FOOT} from "../TrackExportMath";
 
 export class CNodeTrack extends CNodeEmptyArray {
     constructor(v) {
@@ -224,7 +228,54 @@ export class CNodeTrack extends CNodeEmptyArray {
         }
     }
 
+    // The track of the simulated target the camera is aimed at — the ground
+    // truth for the truth_* CSV columns. Prefer the custom sitch's raw Target
+    // Track switch (the 3D object itself follows the raw selection, not the
+    // smoothed variant); fall back to the camera's TrackToTrack controller
+    // target for sitch families that use different node ids.
+    resolveTruthTargetTrack() {
+        let node = NodeMan.get("targetTrackSwitch", false);
+        if (!node) {
+            const ctrl = NodeMan.get("CameraLOSController", false);
+            const t2t = ctrl && ctrl.inputs && ctrl.inputs["To Target"];
+            node = (t2t && t2t.in && t2t.in.targetTrack) || null;
+        }
+        if (!node) return null;
+        try {
+            const p0 = node.p(0);
+            if (p0 && Number.isFinite(p0.x) && Number.isFinite(p0.y) && Number.isFinite(p0.z)) {
+                return node;
+            }
+        } catch (e) {
+            // selection has no positional value — no truth track
+        }
+        return null;
+    }
+
+    // Ground intersection of one LOS (frame center): nearest terrain-mesh hit,
+    // else the local-radius sea-level sphere for descending rays (the shared
+    // raycastLocalGround preference order). Returns an ECEF Vector3 or null
+    // when the ray never meets the ground (e.g. camera looking up).
+    frameCenterGroundPoint(frameData, raycaster) {
+        raycaster.set(frameData.position, frameData.heading);
+        raycaster.near = 0;
+        raycaster.far = Infinity;
+        const hit = raycastLocalGround(raycaster);
+        return hit ? hit.point : null;
+    }
+
     exportMISBCompliantCSV(inspect=false) {
+        // A track whose frames carry a heading VECTOR is a sensor LOS export
+        // (e.g. the "Lines of Sight" JetLOSCameraCenter node). Only those get
+        // the boresight-derived FrameCenter ground track and the simulated
+        // target's truth_* columns; plain position tracks keep the original
+        // column set unchanged. The isVector3 check matters: CNodeJetTrack
+        // frames carry a NUMERIC heading (degrees), which must not be
+        // mistaken for a boresight direction.
+        const frame0 = this.frames > 0 ? this.v(0) : null;
+        const isLOSExport = !!(frame0 && frame0.position && frame0.heading?.isVector3);
+        const truthTrack = isLOSExport ? this.resolveTruthTargetTrack() : null;
+
         const headers = [
             "UnixTimeStamp",
             "SensorLatitude",
@@ -239,9 +290,35 @@ export class CNodeTrack extends CNodeEmptyArray {
             "SensorRelativeElevationAngle",
             "SensorRelativeRollAngle",
         ];
+        if (isLOSExport) {
+            // MISB tag 23/24/25 — where the camera boresight meets the ground.
+            headers.push("FrameCenterLatitude", "FrameCenterLongitude", "FrameCenterElevation");
+        }
+        if (truthTrack) {
+            // Client-convention truth columns (parseMISB1CSV re-imports these
+            // as a "Truth" track): alt in feet MSL, heading deg true, speed kt.
+            headers.push("truth_lat", "truth_long", "truth_alt", "truth_heading", "truth_speed");
+        }
         let csv = headers.join(",") + "\n";
 
         const lookCamera = NodeMan.get("lookCamera", false);
+
+        // Raycaster for the frame-center ground track, reused across frames.
+        // Per-frame terrain-mesh raycasts are acceptable here: export is a
+        // one-off operation, and with Tracking Wobble the boresight motion is
+        // high-frequency, so the step-and-interpolate shortcut used by
+        // CNodeLOSTraverseTerrain would smear the center track.
+        const raycaster = isLOSExport ? new Raycaster() : null;
+        if (raycaster) {
+            // terrain tile meshes live on the MAIN/LOOK layers, not layer 0 —
+            // a default raycaster mask would skip them all (same widening as
+            // CNodeTerrain.getPointBelow and CNodeLOSTraverseTerrain)
+            raycaster.layers.mask |= LAYER.MASK_MAIN | LAYER.MASK_LOOK;
+        }
+
+        // ~0.5 s central-difference window for truth heading/speed, matching
+        // the smoothing horizon used by the traverse-analysis truth metrics.
+        const truthWindow = Math.max(1, Math.round(Sit.fps / 4));
 
         for (let f = 0; f < this.frames; f++) {
             const frameData = this.v(f);
@@ -284,7 +361,9 @@ export class CNodeTrack extends CNodeEmptyArray {
             let sensorEl = misbRow ? (misbRow[MISB.SensorRelativeElevationAngle] ?? "") : "";
             let sensorRoll = misbRow ? (misbRow[MISB.SensorRelativeRollAngle] ?? "") : "";
 
-            if (frameData.heading && frameData.position) {
+            // heading must be a boresight VECTOR here (CNodeJetTrack frames
+            // carry a numeric heading in degrees — not usable as a forward)
+            if (frameData.heading?.isVector3 && frameData.position) {
                 const [az, el] = getAzElFromPositionAndForward(frameData.position, frameData.heading);
                  sensorAz = az;
                 sensorEl = el;
@@ -307,7 +386,7 @@ export class CNodeTrack extends CNodeEmptyArray {
                 platformRoll = 0;
             }
 
-            csv += [
+            const row = [
                 timeMS,
                 lla[0],
                 lla[1],
@@ -320,7 +399,62 @@ export class CNodeTrack extends CNodeEmptyArray {
                 sensorAz,
                 sensorEl,
                 sensorRoll,
-            ].join(",") + "\n";
+            ];
+
+            if (isLOSExport) {
+                // Frame center: where this frame's boresight meets the ground.
+                // With Tracking Wobble enabled this wobbles with the camera —
+                // that is the point: the center ground track reflects what the
+                // sensor actually recorded, while truth_* stays clean.
+                let centerCells = ["", "", ""];
+                if (frameData.position && frameData.heading?.isVector3) {
+                    const hit = this.frameCenterGroundPoint(frameData, raycaster);
+                    if (hit) {
+                        const hitLLA = ECEFToLLAVD_radii(hit);
+                        // FrameCenterElevation (tag 25) is MSL: H = h - N
+                        const elevMSL = hitLLA.z - meanSeaLevelOffset(hitLLA.x, hitLLA.y);
+                        centerCells = [hitLLA.x, hitLLA.y, elevMSL];
+                    }
+                }
+                row.push(...centerCells);
+            }
+
+            if (truthTrack) {
+                let truthCells = ["", "", "", "", ""];
+                try {
+                    const tp = truthTrack.p(f);
+                    if (tp && Number.isFinite(tp.x)) {
+                        const tLLA = ECEFToLLAVD_radii(tp);
+                        const tAltMSL = tLLA.z - meanSeaLevelOffset(tLLA.x, tLLA.y);
+                        // heading/speed from a central difference around f,
+                        // clamped at the clip ends
+                        const f0 = Math.max(0, f - truthWindow);
+                        const f1 = Math.min(this.frames - 1, f + truthWindow);
+                        let headingCell = "";
+                        let speedCell = "";
+                        if (f1 > f0) {
+                            const pA = truthTrack.p(f0);
+                            const pB = truthTrack.p(f1);
+                            const dtSec = (GlobalDateTimeNode.frameToMS(f1)
+                                - GlobalDateTimeNode.frameToMS(f0)) / 1000;
+                            if (pA && pB && Number.isFinite(pA.x) && Number.isFinite(pB.x)) {
+                                const enu = ecefDisplacementToENU(pA, pB, tLLA.x, tLLA.y);
+                                const hs = headingSpeedFromENU(enu.east, enu.north, dtSec);
+                                if (hs) {
+                                    headingCell = hs.headingDeg ?? "";
+                                    speedCell = hs.speedKnots;
+                                }
+                            }
+                        }
+                        truthCells = [tLLA.x, tLLA.y, tAltMSL / METERS_PER_FOOT, headingCell, speedCell];
+                    }
+                } catch (e) {
+                    // frame without a truth position — leave the cells empty
+                }
+                row.push(...truthCells);
+            }
+
+            csv += row.join(",") + "\n";
         }
 
         if (inspect) {

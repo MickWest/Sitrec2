@@ -62,9 +62,23 @@ export class CNodeDisplayLOS extends CNode3DGroup {
         this.container.add(this.currentLOSGroup)
         this.simpleSerials.push("showCurrentLOS")
 
+        // Thin out the displayed LOS: 0 = show all (no-op), n = show only
+        // every 2^n-th of the normally displayed lines (n=3 → every 8th).
+        this.hideSomeLOS = v.hideSomeLOS ?? 0;
+        this.simpleSerials.push("hideSomeLOS")
+
         this.recalculate()
 
         this.showHider(t("showHiders.linesOfSight.label"), "o", t("showHiders.linesOfSight.tooltip"));
+        guiShowHide.add(this, "hideSomeLOS", 0, 10, 1)
+            .name(t("showHiders.hideSomeLOS.label", {defaultValue: "Hide Some LOS"}))
+            .tooltip(t("showHiders.hideSomeLOS.tooltip", {defaultValue:
+                "Thin out the displayed lines of sight: 0 shows all, n shows only every 2ⁿ-th line (3 = every 8th)"}))
+            .listen()
+            .onChange(() => {
+                this.recalculate();
+                setRenderOne(true);
+            });
         guiShowHide.add(this, "showCurrentLOS")
             .name(t("showHiders.currentLOS.label", {defaultValue: "Current LOS"}))
             .tooltip(t("showHiders.currentLOS.tooltip", {defaultValue: "Show only the current frame's line of sight"}))
@@ -195,6 +209,12 @@ export class CNodeDisplayLOS extends CNode3DGroup {
         const numLines = frames/spacing;
         if (numLines > this.maxLines) {
             spacing = Math.floor(frames/this.maxLines);
+        }
+
+        // "Hide Some LOS": keep only every 2^n-th of the lines that would
+        // normally display (0 = no-op). Highlighted lines are kept regardless.
+        if (this.hideSomeLOS > 0) {
+            spacing *= Math.pow(2, Math.round(this.hideSomeLOS));
         }
 
         for (var f = 0; f < frames; f++) {

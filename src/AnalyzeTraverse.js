@@ -22,12 +22,15 @@
  *   runTraverseAnalysis()          — run everything; returns the results object
  */
 
-import {GlobalDateTimeNode, Globals, NodeMan, Sit, setRenderOne} from "./Globals";
+import {GlobalDateTimeNode, Globals, NodeMan, Sit, TrackManager, setRenderOne} from "./Globals";
+import {EventManager} from "./CEventManager";
+import {addOptionToGUIMenu, removeOptionFromGUIMenu} from "./lil-gui-extras";
 import {showError} from "./showError";
 import {t} from "./i18n";
 import {abFrameRange, buildAnalysisDataset, unpackTrackToECEF} from "./TraverseAnalysisData";
 import {getPointBelow, calculateAltitude} from "./threeExt";
 import {
+    compareTrackToTruth,
     constAirSpeedTrack,
     fitAircraft,
     fitConstAltitude,
@@ -125,7 +128,11 @@ export const analyzeTweaks = {
     aoKnownOther: false,
     satellite: false,   // loads the LEO catalogue for the date (network, slow first time)
     groundMode: "Airborne (any)",   // ground-contact constraint (see GROUND_MODES)
+    truthTrack: "-",    // track NODE id of the ground-truth reference track ("-" = none)
 };
+
+// "no truth track selected" sentinel for the Truth Track dropdown
+const TRUTH_NONE = "-";
 
 // Ground-contact constraint modes for the traverse analysis. In every mode,
 // any candidate whose trajectory passes underground (below the terrain) is
@@ -170,6 +177,7 @@ const VIZ = {
     fastObj: "#9085e9",    // fast-object plausible profile
     sensor: "#c3c2b7",     // sensor (jet) path
     ray: "#4a5058",        // LOS rays
+    truth: "#e0569f",      // ground-truth reference track (dashed in 3D graphs)
 };
 
 // single-hue blue ramp for the heatmap: dark (recedes into surface) = low
@@ -1429,7 +1437,17 @@ function methodNodeHypothesis(meth, node, dataset, originLat, originLon, losSig)
 // Data-driven verdict paragraph (HTML): group-specific screening results plus
 // a diagnostic head-to-head of the two forward-integrated physics models.
 // Residuals are never converted into object-type probabilities.
-function buildVerdict(hypotheses, capturedProvenance = null) {
+// meters → "412 m" / "2.4 NM" for truth-separation displays
+function fmtSepMeters(v) {
+    if (!isFinite(v)) return "n/a";
+    if (v >= METERS_PER_NM) {
+        const nm = v / METERS_PER_NM;
+        return `${nm >= 10 ? nm.toFixed(0) : nm.toFixed(1)} NM`;
+    }
+    return `${Math.round(v)} m`;
+}
+
+function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
     const withTrack = (hypotheses || []).filter((h) => h.track && h.metricsFull);
     const groups = groupAndRankHypotheses(withTrack);
 
@@ -1441,6 +1459,47 @@ function buildVerdict(hypotheses, capturedProvenance = null) {
         out += `<strong>⚠ Constructed LOS — validation only:</strong> ${escapeHtml(prov.reason)} ` +
             `Everything below describes the scene's internal consistency, not independent inference. `;
     }
+
+    // Truth mode: the summary is about closeness to the reference track.
+    // All methods are measured against the same external reference with the
+    // same metric, so unlike the screening tiers this comparison IS
+    // meaningful across groups.
+    if (truth) {
+        out += `<strong>Scored against the truth track "${escapeHtml(truth.label)}".</strong> ` +
+            `Every method is measured by its mean 3D separation from the reference trajectory ` +
+            `over the analysis window — smaller means it reproduces the truth more closely — and ` +
+            `ordered by that separation. `;
+        const comparable = groups.flatMap((g) => g.items)
+            .filter((item) => item.h.truthComparison?.comparable)
+            .sort((a, b) => a.h.truthComparison.score - b.h.truthComparison.score);
+        if (comparable.length) {
+            const best = comparable[0];
+            out += `Overall, <strong>${escapeHtml(best.h.name)}</strong> comes closest to the truth, ` +
+                `at a mean 3D separation of <strong>${escapeHtml(fmtSepMeters(best.h.truthComparison.score))}</strong>. `;
+        }
+        for (const group of groups) {
+            const leader = group.items[0];
+            if (!leader) continue;
+            const groupName = escapeHtml(group.shortLabel);
+            const tc = leader.h.truthComparison;
+            if (tc?.comparable) {
+                const second = group.items[1];
+                const stc = second?.h?.truthComparison;
+                const secondText = stc?.comparable
+                    ? ` (next: <strong>${escapeHtml(second.h.name)}</strong> at ${escapeHtml(fmtSepMeters(stc.score))})`
+                    : "";
+                out += `Within ${groupName}, <strong>${escapeHtml(leader.h.name)}</strong> is closest at ` +
+                    `<strong>${escapeHtml(fmtSepMeters(tc.score))}</strong>${secondText}. `;
+            } else {
+                out += `Within ${groupName}, no candidate could be compared against the truth track. `;
+            }
+        }
+        out += `The per-method breakdowns below report where each candidate agrees with or diverges from ` +
+            `the truth (location, altitude, speed, heading). Screening tiers (maneuvering, speed, LOS ` +
+            `residual) are shown only as context; they do not control the order.`;
+        return out;
+    }
+
     out += `<strong>No global object winner is computed.</strong> The panels answer different questions and are ` +
         `ranked only within comparable groups. `;
     for (const group of groups) {
@@ -1554,6 +1613,125 @@ export function addAnalyzeButton(folder) {
 // destroy the previous incarnation before recreating it.
 const tweaksFolders = new WeakMap();
 
+// --- "Truth Track" reference dropdown -------------------------------------
+// Populated with the loaded data tracks; the selected track (if any) becomes
+// the ground-truth reference the gallery scores every method against.
+let _truthTrackCtrl = null;            // current lil-gui controller (rebuilt per sitch)
+let _truthListenerAdded = false;       // tracksChanged hook registered once per session
+const _autoSelectedTruthIDs = new Set();  // Truth_ tracks we already auto-selected once
+
+// Current {label → trackID} options for the dropdown, from the loaded tracks.
+function truthTrackOptions() {
+    const options = {};
+    if (!TrackManager) return options;
+    TrackManager.iterate((key, trackOb) => {
+        if (trackOb?.trackID && trackOb?.trackNode) {
+            options[trackOb.menuText ?? trackOb.trackID] = trackOb.trackID;
+        }
+    });
+    return options;
+}
+
+// Rebuild the dropdown's option list in place from the currently loaded
+// tracks. Runs on tweaks-folder construction and on every tracksChanged
+// event (imports AND removals — deserialization re-adds tracks through the
+// same path). Auto-selects a newly appearing "Truth_" track exactly once,
+// so the user can still deselect it without the refresh fighting them.
+function refreshTruthTrackOptions() {
+    const ctrl = _truthTrackCtrl;
+    if (!ctrl || !ctrl._names) return;
+
+    const options = truthTrackOptions();
+
+    // sync the option list in place (keep the leading "-" none entry)
+    for (const name of [...ctrl._names]) {
+        if (name !== TRUTH_NONE && options[name] === undefined) {
+            removeOptionFromGUIMenu(ctrl, name);
+        }
+    }
+    for (const [label, id] of Object.entries(options)) {
+        if (!ctrl._names.includes(label)) {
+            addOptionToGUIMenu(ctrl, label, id);
+        }
+    }
+
+    // drop a selection whose track no longer exists
+    if (analyzeTweaks.truthTrack !== TRUTH_NONE
+        && !Object.values(options).includes(analyzeTweaks.truthTrack)) {
+        analyzeTweaks.truthTrack = TRUTH_NONE;
+    }
+
+    // auto-select a newly loaded Truth_ track (once per track id)
+    if (analyzeTweaks.truthTrack === TRUTH_NONE) {
+        for (const [label, id] of Object.entries(options)) {
+            if (/^truth_/i.test(label) && !_autoSelectedTruthIDs.has(id)) {
+                _autoSelectedTruthIDs.add(id);
+                analyzeTweaks.truthTrack = id;
+                break;
+            }
+        }
+    }
+    ctrl.updateDisplay();
+}
+
+// Resolve the selected truth track to its live nodes, or null if none/gone.
+function resolveTruthTrack() {
+    const id = analyzeTweaks.truthTrack;
+    if (!id || id === TRUTH_NONE || !NodeMan.exists(id)) return null;
+    let found = null;
+    TrackManager.iterate((key, trackOb) => {
+        if (!found && trackOb?.trackID === id) found = trackOb;
+    });
+    if (!found || !found.trackNode) return null;
+    return {
+        trackID: id,
+        label: found.menuText ?? id,
+        trackNode: found.trackNode,
+        dataNode: found.trackDataNode ?? null,
+    };
+}
+
+// Sample the selected truth track onto the analysis dataset's frame grid, in
+// the dataset's local ENU frame, with a per-frame validity mask limited to
+// the track's own time span (the track node clamps/holds outside its data,
+// which must not be scored as if it were real positions).
+// Returns {track, valid, label, trackID} or null if none selected / unusable.
+function buildTruthReference(dataset, originLat, originLon) {
+    const truthSel = resolveTruthTrack();
+    if (!truthSel) return null;
+    const {n, frame0} = dataset;
+    const track = new Float64Array(n * 3);
+    const valid = new Uint8Array(n);
+
+    // valid time window from the track's DATA node (ms since epoch)
+    let t0 = -Infinity, t1 = Infinity;
+    const dataNode = truthSel.dataNode;
+    if (dataNode && typeof dataNode.getTrackStartTime === "function") {
+        t0 = dataNode.getTrackStartTime();
+        if (typeof dataNode.getTrackEndTime === "function") t1 = dataNode.getTrackEndTime();
+    }
+
+    let anyValid = false;
+    for (let f = 0; f < n; f++) {
+        const pos = truthSel.trackNode.p(frame0 + f);
+        if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) {
+            valid[f] = 0;
+            continue;
+        }
+        const enu = ECEF2ENU_radii(pos, originLat, originLon);
+        track[f * 3] = enu.x;
+        track[f * 3 + 1] = enu.y;
+        track[f * 3 + 2] = enu.z;
+        const tMs = dateAtDatasetFrame(dataset, f).valueOf();
+        valid[f] = (tMs >= t0 && tMs <= t1) ? 1 : 0;
+        if (valid[f]) anyValid = true;
+    }
+    if (!anyValid) {
+        console.warn("Traverse analysis: truth track has no time overlap with the analysis window");
+    }
+    return {track, valid, label: truthSel.label, trackID: truthSel.trackID};
+}
+
 /**
  * Idempotently add the "Traverse Analysis Tweaks" subfolder to the traverse
  * menu. Holds the Min/Max analysis-distance GUI values plus the three
@@ -1601,6 +1779,25 @@ export function addAnalyzeTweaks(traverseMenu) {
             "trajectories are always rejected. 'On the ground' adds a Ground Vehicle candidate and demotes " +
             "airborne solutions; 'Starts/Ends on ground' models takeoff/release or landing/descent (a portion " +
             "on the surface) and biases the physics fits toward the ground.");
+    }
+
+    // Ground-truth reference track. When set, the gallery scores and orders
+    // every method by its closeness to this track, and draws the track
+    // (dashed) in each 3D graph. A loaded "Truth_" track auto-selects.
+    _truthTrackCtrl = folder.add(analyzeTweaks, "truthTrack", {[TRUTH_NONE]: TRUTH_NONE}).name("Truth Track");
+    if (_truthTrackCtrl.tooltip) {
+        _truthTrackCtrl.tooltip("Reference track the analysis results are compared against. When selected, " +
+            "methods are scored and ordered by mean 3D separation from this track, each rank basis reports " +
+            "where they agree/diverge (location, altitude, speed, heading), and the track is drawn dashed " +
+            "in the 3D graphs. A loaded \"Truth_\" track (e.g. from truth_lat/truth_long CSV columns) is " +
+            "selected automatically.");
+    }
+    refreshTruthTrackOptions();
+    if (!_truthListenerAdded) {
+        _truthListenerAdded = true;
+        // registered once per session; reads the current controller via the
+        // module var, so tweaks-folder rebuilds don't accumulate listeners
+        EventManager.addEventListener("tracksChanged", () => refreshTruthTrackOptions());
     }
 
     const cbFixed = folder.add(analyzeTweaks, "aoFixedPoint").name("AO: Stationary / sky-fixed object");
@@ -1736,10 +1933,23 @@ function computeAnalysisFingerprint(losNode) {
         }
     }
     const provenance = losProvenance();
+    // Truth-track reference: both WHICH track is selected and its actual
+    // positions steer the scoring/ordering (e.g. the altitude-units toggle
+    // re-derives a Truth track in place), so sample them into the key.
+    const truthSeries = [];
+    const truthSel = resolveTruthTrack();
+    if (truthSel) {
+        truthSeries.push(truthSel.trackID);
+        for (let f = analysisFrames.frame0; f <= analysisFrames.frame1; f++) {
+            const p = truthSel.trackNode.p(f);
+            if (p) truthSeries.push(p.x, p.y, p.z);
+        }
+    }
     return analysisFingerprint(losNode, [
         analysisFrames.frame0, analysisFrames.frame1,
         analyzeTweaks.windMode,
         ...windSeries,
+        ...truthSeries,
         provenance.circular ? 1 : 0, provenance.losSource, provenance.cameraHeading,
         speedTarget, anchorDist, userMin, userMax,
         // Ground-contact mode reshapes the candidate set (adds/removes the
@@ -2106,6 +2316,23 @@ export async function runTraverseAnalysis() {
             slowProfile, slowOpts,
             losNode, originLat, originLon,
         });
+
+        // Ground-truth reference: when a truth track is selected in the Tweaks,
+        // score every candidate by its closeness to it. The comparison record
+        // rides on each hypothesis; TraverseRanking orders by it and folds it
+        // into the rank-basis text. Direction-only (at infinity) hypotheses
+        // have arbitrary helper-track ranges, so 3D separation is meaningless
+        // for them — mark them not-comparable instead.
+        const truth = buildTruthReference(dataset, originLat, originLon);
+        if (truth) {
+            for (const h of hypotheses) {
+                if (!h.track) continue;
+                h.truthComparison = h.atInfinity
+                    ? {comparable: false, note: "direction-only hypothesis (at infinity); 3D separation is not meaningful"}
+                    : compareTrackToTruth(dataset, h.track, truth);
+            }
+        }
+
         const terrainDependenciesAtBuild = captureTerrainDependencies(
             dataset, hypotheses, originLat, originLon);
 
@@ -2193,6 +2420,7 @@ export async function runTraverseAnalysis() {
                 windSummary: windText,
                 fittedWindModels: ["Sky Lantern / Balloon", "Quadcopter"],
                 groundMode: analyzeTweaks.groundMode,
+                truthTrack: truth ? truth.label : null,
                 constructedLOS: provenance.circular,
                 losSource: provenance.losSource,
                 cameraHeading: provenance.cameraHeading,
@@ -2239,12 +2467,14 @@ export async function runTraverseAnalysis() {
             slowBestRow, slowTrack,
             closeLoM, closeHiM,
             hypotheses, provenance, failures, manifest,
+            truth,
         });
 
         const terrainDependencies = terrainDependenciesAtBuild;
         results = {
             dataset, sweep, fastProfile, slowProfile, aircraft,
             best: sweep.best, bestMetrics, slowBestRow, hypotheses,
+            truth,
             buildHtml, html: null,
             provenance, failures, manifest,
         };
@@ -2513,7 +2743,7 @@ function hypothesisStats(h) {
     // never a substitute or a noise estimate.
     const losErr = formatRawLosResidual(h);
     const errLabel = (h.params && (h.params.object || h.params.satellite)) ? "LOS offset" : "LOS error";
-    return [
+    const stats = [
         // slant range over the clip, not an uncertainty interval — label it so
         ["Slant range (min–max)", `${nm1(m.range.min)}–${nm1(m.range.max)} NM`],
         [h.params?.motionFrame === "ground" ? "Ground speed (mean / max)" : "Air speed (mean / max)",
@@ -2523,6 +2753,14 @@ function hypothesisStats(h) {
         ["Max kinematic accel", `${m.gLoad.max.toFixed(2)} g`],
         [errLabel, losErr],
     ];
+    // Truth-mode headline: the separation that actually orders this group
+    const tc = h.truthComparison;
+    if (tc) {
+        const fmtSep = (v) => (v >= METERS_PER_NM ? `${nm1(v)} NM` : `${Math.round(v)} m`);
+        stats.push(["Truth Δ (mean 3D)",
+            tc.comparable ? fmtSep(tc.sep3D.mean) : "n/a"]);
+    }
+    return stats;
 }
 
 function graphPoint(arr, f) {
@@ -2643,6 +2881,22 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
 
     series.push({type: "line", pts: sensorPts, color: VIZ.sensor, width: opts.compact ? 1.8 : 2.4,
         startDot: true, endRing: false});
+
+    // Ground-truth reference track (dashed, fixed truth color). Only frames
+    // inside the truth track's own time span are drawn; validity is a
+    // contiguous window, so the filtered polyline stays one segment.
+    if (opts.truth) {
+        const tv = opts.truth.valid;
+        const truthPts = sampledFrames(n, opts.compact ? 360 : 720)
+            .filter((f) => !tv || tv[f] === 1)
+            .map((f) => graphPoint(opts.truth.track, f));
+        if (truthPts.length > 1) {
+            for (const p of truthPts) growGraphBounds(b, p);
+            series.push({type: "line", pts: truthPts, color: VIZ.truth,
+                width: opts.compact ? 1.8 : 2.2, dash: [6, 4],
+                startDot: true, endRing: true});
+        }
+    }
 
     return {
         bounds: padGraphBounds(b),
@@ -3363,6 +3617,17 @@ function showResultGallery(results) {
         "assumptions and scores. Order is only meaningful within a group. Open a tile for the exact rank basis.";
     panel.appendChild(explain);
 
+    // Truth-mode banner: ordering is by separation from the reference track
+    if (results.truth) {
+        const truthNote = document.createElement("div");
+        truthNote.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
+            "background:#3a1e2e; color:#f4a6cd; border:1px solid #7a3b5c; font-size:13px;";
+        truthNote.textContent = `Truth track "${results.truth.label}" selected — methods in each group are ` +
+            "ordered by mean 3D separation from it, and each rank basis reports where they agree or diverge " +
+            "(location, altitude, speed, heading). The truth track is the dashed pink line in the 3D graphs.";
+        panel.appendChild(truthNote);
+    }
+
     // Circular-LOS provenance banner: when the sightlines are CONSTRUCTED from
     // the target being tested (camera aimed To Target + raw camera-center LOS),
     // the whole gallery is an internal-consistency check, not discovery — say
@@ -3469,7 +3734,8 @@ function showResultGallery(results) {
         dContent.innerHTML = buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied);
         const detailCanvas = dContent.querySelector("canvas[data-chart-role='detail']");
         if (detailCanvas) {
-            detailChart = registerChart(new Chart3D(detailCanvas, hypothesisVolumeScene(dataset, h),
+            detailChart = registerChart(new Chart3D(detailCanvas,
+                hypothesisVolumeScene(dataset, h, {truth: results.truth}),
                 chartGroup, {pad: 0.13}));
             if (chartGroup.syncScale) chartGroup.setSyncScale(true, detailChart);
         }
@@ -3586,7 +3852,8 @@ function showResultGallery(results) {
 
     for (const {canvas, h, i} of pendingTileCharts) {
         if (!canvas) continue;
-        tileCharts[i] = registerChart(new Chart3D(canvas, hypothesisVolumeScene(dataset, h, {compact: true}),
+        tileCharts[i] = registerChart(new Chart3D(canvas,
+            hypothesisVolumeScene(dataset, h, {compact: true, truth: results.truth}),
             chartGroup, {pad: 0.14}));
     }
 
@@ -4498,12 +4765,66 @@ function buildReportHypothesisDetails(dataset, rankedHyps, ss) {
     }).join("");
 }
 
+// Truth-mode executive summary: every method ranked by mean 3D separation
+// from the truth track, with the per-aspect deltas that the rank bases cite.
+// Cross-group ordering is deliberate here — all methods are measured against
+// the same external reference with the same metric.
+function buildTruthSummaryHTML(rankedHyps, truth) {
+    const comparable = rankedHyps
+        .filter((item) => item.h.truthComparison?.comparable)
+        .sort((a, b) => a.h.truthComparison.score - b.h.truthComparison.score);
+    const notComparable = rankedHyps.filter((item) => item.h.truthComparison
+        && !item.h.truthComparison.comparable);
+
+    const rows = comparable.map(({h, category}, i) => {
+        const tc = h.truthComparison;
+        const altSide = Math.abs(tc.altitude.meanSigned) > 0.5 * tc.altitude.meanAbs
+            ? (tc.altitude.meanSigned > 0 ? " ↑" : " ↓") : "";
+        return `
+        <tr${i === 0 ? ' class="best"' : ""}>
+            <td>${i + 1}</td>
+            <td>${escapeHtml(h.name)}</td>
+            <td>${escapeHtml(category.shortLabel)}</td>
+            <td>${escapeHtml(fmtSepMeters(tc.sep3D.mean))}</td>
+            <td>${escapeHtml(fmtSepMeters(tc.sep3D.max))}</td>
+            <td>${escapeHtml(fmtSepMeters(tc.horizontal.mean))}</td>
+            <td>${escapeHtml(fmtSepMeters(tc.altitude.meanAbs))}${altSide}</td>
+            <td>${tc.speed ? (tc.speed.meanAbsDiff / KNOTS_TO_MS).toFixed(0) : "—"}</td>
+            <td>${tc.heading ? tc.heading.meanAbsDiff.toFixed(0) : "—"}</td>
+        </tr>`;
+    }).join("");
+
+    const notCompHTML = notComparable.length
+        ? `<p class="sub">Not comparable against the truth track: ${notComparable.map(({h}) =>
+            `${escapeHtml(h.name)} (${escapeHtml(h.truthComparison.note || "insufficient overlap")})`).join("; ")}.</p>`
+        : "";
+
+    return `
+    <h3>Closeness to the truth track "${escapeHtml(truth.label)}"</h3>
+    <div class="tablebox">
+    <table>
+        <thead><tr>
+            <th>#</th><th>Interpretation</th><th>Group</th>
+            <th>Mean 3D sep</th><th>Max sep</th><th>Horiz offset</th>
+            <th>Alt Δ</th><th>Speed Δ (kt)</th><th>Heading Δ (°)</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+    </table>
+    </div>
+    <p class="sub">All methods measured against the same reference over the analysis window, ordered by mean 3D
+    separation (this cross-group ordering is valid because the metric is external to every method's own
+    assumptions). Alt Δ arrows mark a consistent bias above (↑) or below (↓) the truth. Speed and heading
+    deltas use ~0.5 s smoothed motion; heading is only compared while both tracks are moving.</p>
+    ${notCompHTML}`;
+}
+
 function buildReportHTML(ctx) {
     const {
         sitName, dataset, windText, speedTarget,
         sweep, fastProfile, slowProfile, aircraft,
         bestTrack, bestMetrics, slowBestRow, slowTrack,
         closeLoM, closeHiM, hypotheses, provenance, failures = [], manifest = {},
+        truth = null,
     } = ctx;
     const {n, fps, D} = dataset;
     const globalFrame0 = dataset.frame0 ?? 0;
@@ -4567,6 +4888,8 @@ function buildReportHTML(ctx) {
             label: `aircraft fit: ${nm1(ap.startDist)} NM, hdg ${ap.heading.toFixed(0)}°`},
         {track: slowTrack, color: VIZ.slowObj,
             label: `plausible slow object: ${nm1(slowBestRow.startDist)} NM`},
+        ...(truth ? [{track: truth.track, color: VIZ.truth,
+            label: `truth: ${truth.label}`}] : []),
     ]);
 
     // ---- executive summary ----
@@ -4625,11 +4948,17 @@ function buildReportHTML(ctx) {
         (score ${bRaw.score.toFixed(2)}). The ten lowest-score grid cells fall
         between ${nm1(topRangeLo)}–${nm1(topRangeHi)} NM and ${kt1(topSpeedLo)}–${kt1(topSpeedHi)} kt.</p>`;
 
-    const summaryHTML = `
+    const geometryHTML = `
         <p>Over <strong>${n}</strong> frames (${globalFrame0}–${globalFrame1}, ${durationS.toFixed(1)} s) the sensor's line of sight swept
         from azimuth ${azOf(0).toFixed(1)}° / elevation ${elOf(0).toFixed(1)}° to azimuth
-        ${azOf(n - 1).toFixed(1)}° / elevation ${elOf(n - 1).toFixed(1)}° (wind: ${escapeHtml(windText)}).
-        Lines of sight alone often do not uniquely determine a trajectory, so each analyzer below asks a different
+        ${azOf(n - 1).toFixed(1)}° / elevation ${elOf(n - 1).toFixed(1)}° (wind: ${escapeHtml(windText)}).</p>`;
+
+    // Metric-centric summary paragraphs (sweep / range profiles / aircraft fit /
+    // cost of proximity). In truth mode these move out of the executive summary
+    // — the summary is then about closeness to the truth track — while the
+    // underlying detail sections (heatmap, profiles, time series) remain below.
+    const metricsSummaryHTML = `
+        <p>Lines of sight alone often do not uniquely determine a trajectory, so each analyzer below asks a different
         question of the same data; the interesting output is the <em>family</em> of plausible solutions and the
         maneuvering cost of everything else.</p>
 
@@ -4681,6 +5010,10 @@ function buildReportHTML(ctx) {
     const compRows = rankedHyps.map(({h, r, category, groupIndex}) => {
         const m = h.metricsFull;
         const losErr = formatRawLosResidual(h);
+        const tc = h.truthComparison;
+        const truthCell = truth
+            ? `<td>${tc?.comparable ? escapeHtml(fmtSepMeters(tc.sep3D.mean)) : "n/a"}</td>`
+            : "";
         return `
         <tr${r.rank >= 3 ? ' class="best"' : ""}>
             <td>${escapeHtml(category.shortLabel)}</td>
@@ -4692,12 +5025,14 @@ function buildReportHTML(ctx) {
             <td>${fpm0(m.verticalSpeed.mean)}</td>
             <td>${m.gLoad.max.toFixed(2)}</td>
             <td>${escapeHtml(losErr)}</td>
+            ${truthCell}
             <td><span class="pill" style="background:${r.color}">${escapeHtml(r.label)}</span></td>
             <td>${escapeHtml(rankingExplanation(h, r))}</td>
         </tr>`;
     }).join("");
 
-    const verdictHTML = buildVerdict(hypotheses, provenance);
+    const verdictHTML = buildVerdict(hypotheses, provenance, truth);
+    const truthSummaryHTML = truth ? buildTruthSummaryHTML(rankedHyps, truth) : "";
     const reportSS = analyzeSolutionSpace({dataset, fastProfile});
     const solutionDetailsHTML = buildReportHypothesisDetails(dataset, rankedHyps, reportSS);
 
@@ -4844,6 +5179,7 @@ details.manifest pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1
         <div><div class="k">LOS elevation</div><div class="v">${elOf(0).toFixed(1)}° → ${elOf(n - 1).toFixed(1)}°</div></div>
         <div><div class="k">Wind used</div><div class="v">${escapeHtml(windText)}</div></div>
         <div><div class="k">Speed target</div><div class="v">${kt1(speedTarget)} kt</div></div>
+        ${truth ? `<div><div class="k">Truth track</div><div class="v">${escapeHtml(truth.label)}</div></div>` : ""}
         <div><div class="k">Analysis coverage</div><div class="v">${hypotheses.filter((h) => h.track).length} results · ${failures.length} failed/unavailable</div></div>
     </div>
 </header>
@@ -4851,10 +5187,16 @@ details.manifest pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1
 ${provenance?.circular ? `<div class="warning"><strong>Constructed LOS — validation only.</strong> ` +
     `${escapeHtml(provenance.reason)} Fits below test internal consistency, not independent object inference.</div>` : ""}
 
+${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-color:#7a3b5c">` +
+    `<strong>Truth track "${escapeHtml(truth.label)}" selected.</strong> Every method is scored and ` +
+    `ordered by its mean 3D separation from this reference track; the usual screening metrics are ` +
+    `shown as context only.</div>` : ""}
+
 <section class="summary">
     <h2>Executive summary</h2>
     <p><strong>Overall interpretation.</strong> ${verdictHTML}</p>
-    ${summaryHTML}
+    ${geometryHTML}
+    ${truth ? truthSummaryHTML : metricsSummaryHTML}
     ${failures.length ? `<p><strong>Unavailable checks:</strong> ${failures.map((f) =>
         `${escapeHtml(f.method)} (${escapeHtml(f.error)})`).join("; ")}.</p>` : ""}
 </section>
@@ -4890,14 +5232,16 @@ ${provenance?.circular ? `<div class="warning"><strong>Constructed LOS — valid
     <table>
         <thead><tr>
             <th>Group</th><th>#</th><th>Interpretation</th><th>Range (NM)</th><th>Air spd (kt)</th><th>Alt (kft)</th>
-            <th>Climb (fpm)</th><th>Max kinematic accel (g)</th><th>Raw LOS residual</th><th>Screen</th><th>Rank basis</th>
+            <th>Climb (fpm)</th><th>Max kinematic accel (g)</th><th>Raw LOS residual</th>${truth ? "<th>Truth Δ</th>" : ""}<th>Screen</th><th>Rank basis</th>
         </tr></thead>
         <tbody>${compRows}</tbody>
     </table>
     </div>
-    <p class="sub">Grouped first, then ordered by completeness, broad screening tier, and within-group score.
+    ${truth ? `<p class="sub">Grouped first, then ordered by mean 3D separation from the truth track
+    ("Truth Δ" — the quantity that controls order); the screening tier is context only. Rows passing the
+    broad screen are highlighted. Alt and air speed are means.</p>` : `<p class="sub">Grouped first, then ordered by completeness, broad screening tier, and within-group score.
     No order across groups is implied. Rows passing the broad screen are highlighted. Alt and air speed are means;
-    the rank basis reports the quantities that actually control order.</p>
+    the rank basis reports the quantities that actually control order.</p>`}
 </section>
 
 <section>

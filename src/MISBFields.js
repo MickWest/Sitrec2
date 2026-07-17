@@ -112,6 +112,16 @@ export const MISB = {
     SensorRollRate: 119,
     On_boardMIStoragePercentFull: 120,
     SensorRelativeAltitude: 121,
+
+    // Local extensions (not MISB 0601 tags): client-specific ground-truth
+    // position/motion columns (truth_lat, truth_long, truth_alt, truth_heading,
+    // truth_speed) found in some MISB-style CSV exports. Used by CTrackFileMISB
+    // to build a derived "Truth" track, like the FrameCenter track.
+    TruthLatitude: 122,
+    TruthLongitude: 123,
+    TruthAltitude: 124,     // meters
+    TruthHeading: 125,      // parsed but currently unused
+    TruthSpeed: 126,        // parsed but currently unused
 }
 
-export const MISBFields = 121;
+export const MISBFields = 127;

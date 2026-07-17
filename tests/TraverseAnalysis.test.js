@@ -8,6 +8,7 @@
  */
 
 import {
+    compareTrackToTruth,
     trackMetrics,
     meanAngularError,
     traverseConstSpeed,
@@ -404,4 +405,93 @@ describe("TraverseAnalysis core", () => {
         let dh = ((fit.params.heading - heading) % 360 + 540) % 360 - 180;
         expect(Math.abs(dh)).toBeLessThan(15);
     }, 60000);
+});
+
+describe("compareTrackToTruth", () => {
+    const N = 300, FPS = 30;
+
+    // straight-line track builder: pos(f) = start + vel * f/fps (ENU meters)
+    function line(start, vel, n = N, fps = FPS) {
+        const arr = new Float64Array(n * 3);
+        for (let f = 0; f < n; f++) {
+            arr[f * 3] = start[0] + vel[0] * f / fps;
+            arr[f * 3 + 1] = start[1] + vel[1] * f / fps;
+            arr[f * 3 + 2] = start[2] + vel[2] * f / fps;
+        }
+        return arr;
+    }
+
+    function makeCompareDataset(n = N, fps = FPS) {
+        // stationary sensor at the origin — compareTrackToTruth only uses {n, fps, S}
+        return {n, fps, S: new Float64Array(n * 3)};
+    }
+
+    test("identical tracks score 0 with concurring aspects", () => {
+        const ds = makeCompareDataset();
+        const truthArr = line([5000, 8000, 1000], [50, 20, 1]);
+        const tc = compareTrackToTruth(ds, truthArr, {track: truthArr});
+        expect(tc.comparable).toBe(true);
+        expect(tc.score).toBeCloseTo(0, 9);
+        expect(tc.sep3D.max).toBeCloseTo(0, 9);
+        expect(tc.horizontal.mean).toBeCloseTo(0, 9);
+        expect(tc.altitude.meanAbs).toBeCloseTo(0, 9);
+        expect(tc.speed.meanAbsDiff).toBeCloseTo(0, 9);
+        expect(tc.heading.meanAbsDiff).toBeCloseTo(0, 9);
+        expect(tc.framesUsed).toBe(N);
+    });
+
+    test("constant altitude offset isolates to the altitude aspect", () => {
+        const ds = makeCompareDataset();
+        const truthArr = line([5000, 8000, 1000], [50, 20, 0]);
+        const hypArr = line([5000, 8000, 1250], [50, 20, 0]);   // 250 m high
+        const tc = compareTrackToTruth(ds, hypArr, {track: truthArr});
+        expect(tc.score).toBeCloseTo(250, 6);
+        expect(tc.horizontal.mean).toBeCloseTo(0, 6);
+        expect(tc.altitude.meanAbs).toBeCloseTo(250, 6);
+        expect(tc.altitude.meanSigned).toBeCloseTo(250, 6);   // above truth
+        expect(tc.speed.meanAbsDiff).toBeCloseTo(0, 6);
+        expect(tc.heading.meanAbsDiff).toBeCloseTo(0, 6);
+    });
+
+    test("different velocity shows in speed and heading, not just position", () => {
+        const ds = makeCompareDataset();
+        const truthArr = line([5000, 8000, 1000], [50, 0, 0]);   // due east 50 m/s
+        const hypArr = line([5000, 8000, 1000], [0, 50, 0]);     // due north 50 m/s
+        const tc = compareTrackToTruth(ds, hypArr, {track: truthArr});
+        expect(tc.speed.meanAbsDiff).toBeCloseTo(0, 6);          // same speed...
+        expect(tc.heading.meanAbsDiff).toBeCloseTo(90, 4);       // ...90° apart
+        expect(tc.score).toBeGreaterThan(0);
+    });
+
+    test("validity mask restricts scoring to the truth's time window", () => {
+        const ds = makeCompareDataset();
+        const truthArr = line([5000, 8000, 1000], [50, 20, 0]);
+        const hypArr = line([5000, 8000, 1100], [50, 20, 0]);    // 100 m high
+        const valid = new Uint8Array(N);
+        for (let f = 50; f < 200; f++) valid[f] = 1;
+        const tc = compareTrackToTruth(ds, hypArr, {track: truthArr, valid});
+        expect(tc.comparable).toBe(true);
+        expect(tc.framesUsed).toBe(150);
+        expect(tc.score).toBeCloseTo(100, 6);
+    });
+
+    test("fewer than 5 usable frames is not comparable", () => {
+        const ds = makeCompareDataset();
+        const truthArr = line([5000, 8000, 1000], [50, 20, 0]);
+        const valid = new Uint8Array(N);   // all zero
+        valid[0] = valid[1] = valid[2] = 1;
+        const tc = compareTrackToTruth(ds, truthArr, {track: truthArr, valid});
+        expect(tc.comparable).toBe(false);
+        expect(tc.framesUsed).toBe(3);
+    });
+
+    test("hovering truth yields no heading comparison", () => {
+        const ds = makeCompareDataset();
+        const truthArr = line([5000, 8000, 1000], [0, 0, 0]);    // stationary
+        const hypArr = line([5010, 8000, 1000], [30, 0, 0]);
+        const tc = compareTrackToTruth(ds, hypArr, {track: truthArr});
+        expect(tc.comparable).toBe(true);
+        expect(tc.heading).toBe(null);
+        expect(tc.speed.meanAbsDiff).toBeCloseTo(30, 4);
+    });
 });

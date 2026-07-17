@@ -34,7 +34,7 @@ function parseMISBCSVForTest(csvData) {
     return MISBArray;
 }
 
-function createTestMISBArray(withCenter = false, withAngles = false) {
+function createTestMISBArray(withCenter = false, withAngles = false, withTruth = false) {
     const rows = [];
     for (let i = 0; i < 10; i++) {
         const row = new Array(MISBFields).fill(null);
@@ -46,6 +46,13 @@ function createTestMISBArray(withCenter = false, withAngles = false) {
             row[MISB.FrameCenterLatitude] = 40.1 + i * 0.001;
             row[MISB.FrameCenterLongitude] = -104.1 + i * 0.001;
             row[MISB.FrameCenterElevation] = 500 + i * 5;
+        }
+        if (withTruth) {
+            row[MISB.TruthLatitude] = 40.2 + i * 0.001;
+            row[MISB.TruthLongitude] = -104.2 + i * 0.001;
+            row[MISB.TruthAltitude] = 600 + i * 5;
+            row[MISB.TruthHeading] = 45;
+            row[MISB.TruthSpeed] = 100;
         }
         if (withAngles) {
             row[MISB.PlatformHeadingAngle] = 90 + i;
@@ -204,6 +211,121 @@ describe('CTrackFileMISB', () => {
             const centerMisb = tf.toMISB(1);
             expect(centerMisb[0][MISB.SensorEllipsoidHeight]).toBe(480);   // HAE preserved
             expect(centerMisb[0][MISB.SensorTrueAltitude]).toBe(null);     // not a bogus 0
+        });
+    });
+
+    describe('truth track', () => {
+        let misbWithTruth;
+        let trackFileWithTruth;
+        let misbWithCenterAndTruth;
+        let trackFileWithCenterAndTruth;
+
+        beforeAll(() => {
+            misbWithTruth = createTestMISBArray(false, false, true);
+            trackFileWithTruth = new CTrackFileMISB(misbWithTruth);
+            misbWithCenterAndTruth = createTestMISBArray(true, false, true);
+            trackFileWithCenterAndTruth = new CTrackFileMISB(misbWithCenterAndTruth);
+        });
+
+        test('trackFile without truth has no truth track', () => {
+            expect(trackFile._hasTruth()).toBe(false);
+            expect(trackFileWithCenter._hasTruth()).toBe(false);
+        });
+
+        test('truth-only file has 2 tracks, truth at index 1', () => {
+            expect(trackFileWithTruth._hasTruth()).toBe(true);
+            expect(trackFileWithTruth.getTrackCount()).toBe(2);
+            const truthMisb = trackFileWithTruth.toMISB(1);
+            expect(truthMisb.length).toBe(10);
+            expect(truthMisb[0][MISB.SensorLatitude]).toBeCloseTo(40.2, 3);
+            expect(truthMisb[0][MISB.SensorLongitude]).toBeCloseTo(-104.2, 3);
+            // truth_alt defaults to feet: 600 ft → 182.88 m
+            expect(truthMisb[0][MISB.SensorTrueAltitude]).toBeCloseTo(600 * 0.3048, 6);
+            expect(truthMisb[0][MISB.UnixTimeStamp]).toBe(1609459200000);
+        });
+
+        test('center + truth file has 3 tracks: sensor, center, truth', () => {
+            expect(trackFileWithCenterAndTruth.getTrackCount()).toBe(3);
+            const centerMisb = trackFileWithCenterAndTruth.toMISB(1);
+            expect(centerMisb[0][MISB.SensorLatitude]).toBeCloseTo(40.1, 3);
+            const truthMisb = trackFileWithCenterAndTruth.toMISB(2);
+            expect(truthMisb[0][MISB.SensorLatitude]).toBeCloseTo(40.2, 3);
+            expect(truthMisb[0][MISB.SensorTrueAltitude]).toBeCloseTo(600 * 0.3048, 6);
+        });
+
+        test('truth track has ambiguous altitude units; other tracks do not', () => {
+            expect(trackFileWithCenterAndTruth.hasAmbiguousAltitudeUnits(0)).toBe(false);
+            expect(trackFileWithCenterAndTruth.hasAmbiguousAltitudeUnits(1)).toBe(false); // center
+            expect(trackFileWithCenterAndTruth.hasAmbiguousAltitudeUnits(2)).toBe(true);  // truth
+            expect(trackFileWithTruth.hasAmbiguousAltitudeUnits(1)).toBe(true);           // truth, no center
+            expect(trackFileWithCenter.hasAmbiguousAltitudeUnits(1)).toBe(false);
+        });
+
+        test('setSourceAltitudeMeters(true) re-derives truth altitude as meters', () => {
+            const misb = createTestMISBArray(false, false, true);
+            const tf = new CTrackFileMISB(misb);
+            // default = feet
+            expect(tf.getSourceAltitudeMeters(1)).toBe(false);
+            expect(tf.toMISB(1)[0][MISB.SensorTrueAltitude]).toBeCloseTo(600 * 0.3048, 6);
+            // meters ON: raw value passes through
+            tf.setSourceAltitudeMeters(1, true);
+            expect(tf.toMISB(1)[0][MISB.SensorTrueAltitude]).toBe(600);
+            // back to feet
+            tf.setSourceAltitudeMeters(1, false);
+            expect(tf.toMISB(1)[0][MISB.SensorTrueAltitude]).toBeCloseTo(600 * 0.3048, 6);
+        });
+
+        test('getShortName prefixes derived tracks by type', () => {
+            expect(trackFileWithCenterAndTruth.getShortName(0)).toBe('N12345');
+            expect(trackFileWithCenterAndTruth.getShortName(1)).toBe('Center_N12345');
+            expect(trackFileWithCenterAndTruth.getShortName(2)).toBe('Truth_N12345');
+            expect(trackFileWithTruth.getShortName(1)).toBe('Truth_N12345');
+        });
+
+        test('hasMoreTracks iterates through all three tracks', () => {
+            expect(trackFileWithCenterAndTruth.hasMoreTracks(0)).toBe(true);
+            expect(trackFileWithCenterAndTruth.hasMoreTracks(1)).toBe(true);
+            expect(trackFileWithCenterAndTruth.hasMoreTracks(2)).toBe(false);
+        });
+
+        test('getImportTrackCount stays 1 so no multi-track picker appears', () => {
+            expect(trackFileWithCenterAndTruth.getImportTrackCount()).toBe(1);
+            expect(trackFileWithCenter.getImportTrackCount()).toBe(1);
+        });
+
+        test('derived tracks are supplementary', () => {
+            expect(trackFileWithCenterAndTruth.isSupplementaryTrack(0)).toBe(false);
+            expect(trackFileWithCenterAndTruth.isSupplementaryTrack(1)).toBe(true);
+            expect(trackFileWithCenterAndTruth.isSupplementaryTrack(2)).toBe(true);
+        });
+
+        test('rows without truth lat/lon are skipped', () => {
+            const sparse = createTestMISBArray(false, false, true);
+            sparse[0][MISB.TruthLatitude] = null;
+            sparse[3][MISB.TruthLongitude] = null;
+            const tf = new CTrackFileMISB(sparse);
+            expect(tf._hasTruth()).toBe(true);
+            const truthMisb = tf.toMISB(1);
+            expect(truthMisb.length).toBe(8);
+        });
+
+        test('missing truth_alt falls back to 0', () => {
+            const noAlt = createTestMISBArray(false, false, true);
+            for (const row of noAlt) row[MISB.TruthAltitude] = null;
+            const tf = new CTrackFileMISB(noAlt);
+            const truthMisb = tf.toMISB(1);
+            expect(truthMisb[0][MISB.SensorTrueAltitude]).toBe(0);
+        });
+
+        test('truth detection scans past leading rows without truth data', () => {
+            const lateTruth = createTestMISBArray(false, false, true);
+            for (let i = 0; i < 5; i++) {
+                lateTruth[i][MISB.TruthLatitude] = null;
+                lateTruth[i][MISB.TruthLongitude] = null;
+            }
+            const tf = new CTrackFileMISB(lateTruth);
+            expect(tf._hasTruth()).toBe(true);
+            expect(tf.toMISB(1).length).toBe(5);
         });
     });
 

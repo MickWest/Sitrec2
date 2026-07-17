@@ -433,6 +433,11 @@ export class CNodeCamera extends CNode3D {
         const savedFar = camera.far;
 
         this._groundTrackSwitchComputing = true;
+        // Pose PROBE: this controller pass only measures where the clean
+        // boresight meets the ground. Noise controllers (Tracking Wobble)
+        // check this flag and skip, so the locked ground point — cached by
+        // switchFrame alone — is independent of wobble params/seed.
+        this._poseProbe = true;
         try {
             this.applyControllers(switchFrame);
             if (this.in.altAdjust !== undefined) {
@@ -467,6 +472,7 @@ export class CNodeCamera extends CNode3D {
             camera.updateMatrixWorld(true);
             this.syncUIPosition();
             this._groundTrackSwitchComputing = false;
+            this._poseProbe = false;
         }
     }
 

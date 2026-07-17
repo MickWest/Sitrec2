@@ -190,3 +190,104 @@ describe("Traverse ranking", () => {
         expect(r.secondaryScore).toBe(Infinity);
     });
 });
+
+describe("Truth-track mode", () => {
+    // minimal comparable truthComparison record (as compareTrackToTruth returns)
+    function comparison(scoreM, overrides = {}) {
+        return {
+            comparable: true,
+            framesUsed: 300,
+            frames: 300,
+            score: scoreM,
+            sep3D: {mean: scoreM, max: scoreM * 2},
+            horizontal: {mean: scoreM * 0.8},
+            altitude: {meanAbs: scoreM * 0.5, meanSigned: scoreM * 0.5},
+            speed: {meanAbsDiff: 5, truthMean: 100},
+            heading: {meanAbsDiff: 4, frames: 280},
+            meanTruthRange: 10000,
+            ...overrides,
+        };
+    }
+
+    test("closeness to the truth track overrides the screening tiers", () => {
+        // hClean passes the broad screen but sits far from truth; hUgly fails
+        // the screen (high g) but matches truth closely — truth mode must put
+        // hUgly first.
+        const hClean = hypothesis("constAir", {errDeg: 0.01});
+        hClean.truthComparison = comparison(5000);
+        const hUgly = hypothesis("plausible", {
+            errDeg: 0.01,
+            metrics: metrics({gMax: 6}),   // Low tier on the broad screen
+        });
+        hUgly.truthComparison = comparison(120);
+        const ranked = rankHypotheses([hClean, hUgly]);
+        expect(ranked[0].h).toBe(hUgly);
+        expect(ranked[1].h).toBe(hClean);
+        expect(ranked.every((item) => !item.tied)).toBe(true);
+    });
+
+    test("not-comparable hypotheses fall to the end in truth mode", () => {
+        const near = hypothesis("constAir", {errDeg: 0.01});
+        near.truthComparison = comparison(300);
+        const noOverlap = hypothesis("constAlt", {errDeg: 0.005});
+        noOverlap.truthComparison = {comparable: false, note: "no overlap"};
+        const ranked = rankHypotheses([noOverlap, near]);
+        expect(ranked[0].h).toBe(near);
+        expect(ranked[1].h).toBe(noOverlap);
+    });
+
+    test("without truth comparisons the ordering is unchanged (screen-driven)", () => {
+        const good = hypothesis("constAir", {errDeg: 0.01});
+        const bad = hypothesis("plausible", {errDeg: 0.01, metrics: metrics({gMax: 6})});
+        const ranked = rankHypotheses([bad, good]);
+        expect(ranked[0].h).toBe(good);
+    });
+
+    test("rank basis leads with the truth comparison and notes divergences", () => {
+        const h = hypothesis("constAir", {errDeg: 0.01});
+        // location tight, altitude way off (mostly above), speed close, heading close
+        h.truthComparison = comparison(900, {
+            sep3D: {mean: 900, max: 1500},
+            horizontal: {mean: 40},
+            altitude: {meanAbs: 880, meanSigned: 860},
+            speed: {meanAbsDiff: 2, truthMean: 100},
+            heading: {meanAbsDiff: 3, frames: 280},
+        });
+        const text = rankingExplanation(h);
+        expect(text).toMatch(/^Truth track: mean 3D separation 900 m/);
+        expect(text).toContain("ordered by this separation");
+        expect(text).toContain("Concurs on location");
+        expect(text).toContain("heading (mean Δ 3°)");
+        expect(text).toContain("Diverges on altitude");
+        expect(text).toContain("mostly above truth");
+        expect(text).toContain("Broad screen:");
+    });
+
+    test("rank basis reports a not-comparable truth cleanly", () => {
+        const h = hypothesis("fixedPoint", {errDeg: 0.01});
+        h.truthComparison = {comparable: false, note: "direction-only hypothesis (at infinity); 3D separation is not meaningful"};
+        const text = rankingExplanation(h);
+        expect(text).toContain("Truth track: not comparable");
+        expect(text).toContain("direction-only");
+    });
+
+    test("hover truth (no heading) is reported as not comparable for heading", () => {
+        const h = hypothesis("quadcopter", {errDeg: 0.01});
+        h.truthComparison = comparison(50, {heading: null});
+        const text = rankingExplanation(h);
+        expect(text).toContain("heading (not comparable — hover or stationary motion)");
+    });
+
+    test("NM formatting engages for large separations", () => {
+        const h = hypothesis("constAir", {errDeg: 0.01});
+        h.truthComparison = comparison(9260, {   // 5 NM
+            sep3D: {mean: 9260, max: 18520},
+            horizontal: {mean: 9000},
+            altitude: {meanAbs: 200, meanSigned: -180},
+            meanTruthRange: 20000,
+        });
+        const text = rankingExplanation(h);
+        expect(text).toContain("mean 3D separation 5.0 NM");
+        expect(text).toContain("max 10 NM");
+    });
+});

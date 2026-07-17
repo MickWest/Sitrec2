@@ -691,6 +691,27 @@ export class CNodeDateTime extends CNode {
             }
         )
             .tooltip(t("dateTime.syncTimeTo.tooltip"));
+
+        // "Sync Duration to" — tracks only (no Start/Now Time entries).
+        // Selecting a track sets Sit.frames so the sitch duration matches
+        // that track's data duration. Track options are populated by
+        // addSyncToTrack (both new imports and deserialization route
+        // through there) and pruned by removeSyncToTrack.
+        this.syncDurationMethod = "-";
+        this.syncDurationSwitch = this.dateTimeFolder.add(this, "syncDurationMethod", ["-"]).name(t("dateTime.syncDurationTo.label"))
+            .onChange( v => {
+                if (v !== "-") {
+                    this.syncDurationToTrack(v);
+                    setRenderOne(true);
+                }
+
+                // reset it back to the default
+                // so we can select the same thing again
+                this.syncDurationMethod = "-";
+                this.syncDurationSwitch.updateDisplay();
+            }
+        )
+            .tooltip(t("dateTime.syncDurationTo.tooltip"));
     }
 
     addSyncToTrack(timedTrack) {
@@ -699,6 +720,10 @@ export class CNodeDateTime extends CNode {
 
             removeOptionFromGUIMenu(this.syncSwitch, timedTrack);
             addOptionToGUIMenu(     this.syncSwitch, timedTrack, timedTrack)
+
+            // same track list in the "Sync Duration to" menu
+            removeOptionFromGUIMenu(this.syncDurationSwitch, timedTrack);
+            addOptionToGUIMenu(     this.syncDurationSwitch, timedTrack, timedTrack)
 
         }
         this.syncTrack = timedTrack;
@@ -713,6 +738,7 @@ export class CNodeDateTime extends CNode {
         }
 
         removeOptionFromGUIMenu(this.syncSwitch, timedTrack);
+        removeOptionFromGUIMenu(this.syncDurationSwitch, timedTrack);
 
         if (this.syncTrack === timedTrack) {
             this.syncTrack = null;
@@ -722,11 +748,48 @@ export class CNodeDateTime extends CNode {
             this.syncMethod = "-";
             this.syncSwitch.updateDisplay();
         }
+
+        if (this.syncDurationMethod === timedTrack) {
+            this.syncDurationMethod = "-";
+            this.syncDurationSwitch.updateDisplay();
+        }
     }
 
     // meu callback funtion for the sync button (deprecated)
     syncStartTimeTrack(recalculating = true) {
         this.syncToTrack(this.syncTrack, recalculating)
+    }
+
+    // Set Sit.frames so the sitch duration matches the data duration of the
+    // track given by trackID. Each sitch frame spans Sit.simSpeed/Sit.fps
+    // real seconds (see CNodeTrackFromMISB.recalculate), so divide by simSpeed.
+    syncDurationToTrack(trackID) {
+        const timedTrackNode = NodeMan.get(trackID, false);
+        if (!timedTrackNode || typeof timedTrackNode.getTrackEndTime !== "function") {
+            console.warn("syncDurationToTrack: no data track with duration info: " + trackID);
+            return;
+        }
+        const durationMs = timedTrackNode.getTrackEndTime() - timedTrackNode.getTrackStartTime();
+        if (!(durationMs > 0)) {
+            console.warn("syncDurationToTrack: track has no usable duration: " + trackID);
+            return;
+        }
+        const frames = Math.max(2, Math.round(durationMs / 1000 * Sit.fps / Sit.simSpeed));
+        if (frames === Sit.frames) {
+            return;
+        }
+        Sit.frames = frames;
+        // Mirror the "Sitch Duration" edit path: grow the elastic Sitch Frames
+        // slider if the new count exceeds its current max, then run the
+        // standard frames-changed rebuild.
+        if (Sit.frames > this.guiSitchFrames._max) {
+            this.guiSitchFrames._elasticMax = Math.max(this.guiSitchFrames._elasticMax, Sit.frames);
+            while (Sit.frames > this.guiSitchFrames._max && this.guiSitchFrames._max < this.guiSitchFrames._elasticMax) {
+                this.guiSitchFrames._max = Math.min(this.guiSitchFrames._max * 2, this.guiSitchFrames._elasticMax);
+            }
+            this.guiSitchFrames.updateElasticStep();
+        }
+        this.changedFrames();
     }
 
     // sync the start time to the start time of a track given by trackID

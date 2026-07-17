@@ -557,6 +557,10 @@ export const serializeMethods = {
         // before mods are applied to their nodes
         out.syntheticTracks = TrackManager.serialize()
 
+        // Balloon tracks: compact generator params (the appFlight pattern) —
+        // deserializeBalloons recreates identical node ids before the mods pass
+        out.balloonTracks = TrackManager.serializeBalloons()
+
         // Synthetic fromApp flight: persist ONLY the compact generator params
         // (origin/dest lat-lon, cruise altitude, flight start/duration). The generated
         // MISB file is flagged skipSerialization, so it's never rehosted — on reload
@@ -1054,6 +1058,12 @@ export const serializeMethods = {
             // This recreates the track nodes so that mods can be applied to them
             if (sitchData.syntheticTracks) {
                 TrackManager.deserialize(sitchData.syntheticTracks)
+            }
+
+            // Recreate balloon tracks BEFORE applying mods — same contract:
+            // deterministic node ids, then the mods pass restores their state
+            if (sitchData.balloonTracks) {
+                TrackManager.deserializeBalloons(sitchData.balloonTracks)
             }
 
             // Regenerate the fromApp synthetic flight track from its saved params.

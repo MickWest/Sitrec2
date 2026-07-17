@@ -63,6 +63,7 @@ import {deserializeAutoTracking, serializeAutoTracking} from "./CObjectTracking"
 import {getCursorPositionFromTopView} from "./mouseMoveView";
 import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightSidebar} from "./PageStructure";
 import {CNodeControllerCelestial, CNodeControllerHorizonFlareRegion} from "./nodes/CNodeControllerVarious";
+import {CNodeControllerTrackingWobble} from "./nodes/CNodeControllerTrackingWobble";
 import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
 import {CNodeAnnotateOverlay} from "./nodes/CNodeAnnotateOverlay";
 import {CNodeLensGhost} from "./nodes/CNodeLensGhost";
@@ -181,6 +182,21 @@ export const setupMethods = {
             const azElController = NodeMan.get("customAzElController", false);
             if (azElController && cameraLOSController.inputs["Custom Az/El"] === undefined) {
                 azElController.enableController(false);
+            }
+
+            // "Tracking Wobble": simulated manual-tracking drift/recenter noise,
+            // layered on the final pointing. Attached DIRECTLY to lookCamera
+            // (deliberately after the pose controllers, so insertion order puts
+            // its apply last) and NOT added to the switch — it composes with
+            // whatever heading source is selected. It self-gates on its own
+            // wobbleEnabled flag (default off), so unlike customAzElController
+            // it is safe ungated. Params live in Camera menu → Tracking Wobble
+            // and serialize with the node (id is stable for the mods pass).
+            if (lookCamera && !NodeMan.exists("trackingWobbleController")) {
+                const trackingWobbleController = new CNodeControllerTrackingWobble({
+                    id: "trackingWobbleController",
+                });
+                lookCamera.addControllerNode(trackingWobbleController);
             }
         }
 
