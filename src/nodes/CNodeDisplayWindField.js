@@ -8,6 +8,7 @@ import {DebugArrowAB, removeDebugArrow} from "../threeExt";
 import {getLocalEastVector, getLocalNorthVector} from "../SphericalMath";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {FileManager, GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit, Units} from "../Globals";
+import {LoadingManager} from "../CLoadingManager";
 import {mouseInView, mouseToView} from "../ViewUtils";
 import {ViewMan} from "../CViewManager";
 import pako from "pako";
@@ -1314,33 +1315,83 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // substitutes date/hour/level into CUSTOM_WIND_URL. Both proxies
         // return the same earth.nullschool-format JSON, so the rest of the
         // bracket/blend pipeline doesn't care which one served the data.
+        // Dedupe concurrent fetches of the SAME level — the balloon layer
+        // pre-load fires on every re-bake (e.g. during a frame-slider drag),
+        // and without this each tick would re-hit the network for a level whose
+        // fetch is already in flight.
+        this._inFlightLevels = this._inFlightLevels || {};
+        if (this._inFlightLevels[cacheKey]) return this._inFlightLevels[cacheKey];
+
         const proxy = this.source === "custom"
             ? "customWindProxy.php"
             : "windProxy.php";
         const url = `sitrecServer/${proxy}?date=${dateStr}&hour=${hour}&level=${level}`;
+        const label = `${this.source === "custom" ? "Custom" : "GFS"} wind `
+            + (level === "surface" ? "surface" : `${level} hPa`);
         // The GFS proxy shells out to fetch_wind.py which pulls a GRIB2 slice
-        // from NOMADS/AWS — can take 10–20s on a cold cache. 60s covers the
-        // worst case without letting a stalled proxy hang the UI indefinitely.
-        const ctrl = new AbortController();
-        const to = setTimeout(() => ctrl.abort(), 60000);
-        let resp;
-        try {
-            resp = await fetch(url, {signal: ctrl.signal});
-        } catch (e) {
-            if (e.name === "AbortError") {
-                throw new Error(`Timeout fetching ${level} (60s)`);
+        // from NOMADS/AWS — can take 10–20s on a cold cache. A corner status
+        // indicator (LoadingManager, "Wind" category) shows while it loads. 60s
+        // timeout covers the worst case without hanging the UI indefinitely.
+        const p = (async () => {
+            const taskId = `wind-${cacheKey}`;
+            LoadingManager.registerLoading(taskId, label, "Wind");
+            const ctrl = new AbortController();
+            const to = setTimeout(() => ctrl.abort(), 60000);
+            try {
+                let resp;
+                try {
+                    resp = await fetch(url, {signal: ctrl.signal});
+                } catch (e) {
+                    if (e.name === "AbortError") throw new Error(`Timeout fetching ${level} (60s)`);
+                    throw e;
+                }
+                if (!resp.ok) throw new Error(`HTTP ${resp.status} for level ${level}`);
+                const json = await resp.json();
+                if (json.error) throw new Error(json.error);
+                if (!json.u || !json.v) throw new Error(`Missing u/v for level ${level}`);
+                this._levelCache[cacheKey] = json;
+                return json;
+            } finally {
+                clearTimeout(to);
+                LoadingManager.completeLoading(taskId);
             }
-            throw e;
+        })();
+        this._inFlightLevels[cacheKey] = p;
+        try {
+            return await p;
         } finally {
-            clearTimeout(to);
+            delete this._inFlightLevels[cacheKey];
         }
-        if (!resp.ok) throw new Error(`HTTP ${resp.status} for level ${level}`);
-        const json = await resp.json();
-        if (json.error) throw new Error(json.error);
-        if (!json.u || !json.v) throw new Error(`Missing u/v for level ${level}`);
+    }
 
-        this._levelCache[cacheKey] = json;
-        return json;
+    // Pre-fetch every grid (GFS/custom) pressure level from the surface up to
+    // one level above `altFt`, so a wind-driven balloon that will climb to that
+    // altitude has REAL wind at all its levels instead of the constant fallback.
+    // Each uncached level shows its own loading indicator (see _fetchLevel).
+    // Async, idempotent (cached levels are skipped fast), no-op for non-grid
+    // sources (a sounding covers all altitudes in one fetch). Bumps the wind
+    // data version when new levels arrive so baked balloons re-bake with the
+    // fuller field.
+    async ensureLevelsUpToAltitude(altFt) {
+        if (!this._isGridSource() || !Number.isFinite(altFt) || altFt <= 0) return;
+        const dateNow = GlobalDateTimeNode?.dateNow ?? new Date();
+        const dateStr = dateNow.toISOString().slice(0, 10).replace(/-/g, "");
+        const hour = Math.floor(dateNow.getUTCHours() / 6) * 6;
+        const need = [];
+        for (let i = 0; i < WIND_LEVEL_TABLE.length; i++) {
+            need.push(WIND_LEVEL_TABLE[i].level);
+            if (WIND_LEVEL_TABLE[i].ft >= altFt) break;   // include the bracketing level above altFt
+        }
+        const before = Object.keys(this._levelCache).length;
+        const MAX_CONCURRENT = 3;   // don't hammer the proxy / NOMADS
+        for (let i = 0; i < need.length; i += MAX_CONCURRENT) {
+            await Promise.all(need.slice(i, i + MAX_CONCURRENT).map(
+                (lvl) => this._fetchLevel(lvl, dateStr, hour).catch(() => null)));
+        }
+        if (Object.keys(this._levelCache).length !== before) {
+            this._windDataVersion = (this._windDataVersion ?? 0) + 1;
+            setRenderOne(true);
+        }
     }
 
     // ── Populate the display field from the active source ────────────

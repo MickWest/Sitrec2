@@ -134,5 +134,23 @@ export class CNodeBalloonTrack extends CNodeTrack {
             frames: this.frames,
             dt: (Sit.simSpeed ?? 1) / Sit.fps,
         }, (lat, lon, altMSL, f) => this.windUVAt(lat, lon, altMSL, f));
+        this._ensureWindLayers();
+    }
+
+    // Pre-load the wind layers this balloon will climb through (GFS source
+    // only). Estimate the peak altitude kinematically from the ascent rate and
+    // the timeline — so raising Sitch Frames pulls in the higher layers — and
+    // ask the wind field to fetch them. Fire-and-forget: when the higher levels
+    // arrive the wind data version bumps and update() rebakes against the
+    // fuller field. No-op for constant/sounding winds.
+    _ensureWindLayers() {
+        const wf = NodeMan.get("windField", false);
+        if (!wf || typeof wf.ensureLevelsUpToAltitude !== "function") return;
+        const dt = (Sit.simSpeed ?? 1) / Sit.fps;
+        const climbSec = Math.max(0, this.frames * dt - this.in.launchDelay.v0);
+        const maxAltM = this.in.startAltitude.v0
+            + Math.max(0, this.in.buoyancy.v0) * climbSec;
+        // 10% margin so the top bracketing level is comfortably covered.
+        wf.ensureLevelsUpToAltitude(maxAltM * 1.1 / 0.3048);
     }
 }
