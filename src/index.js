@@ -470,7 +470,17 @@ checkLocal();
 await checkUserAgent();
 
 if (INCLUDE_IWER_EMULATOR) {
-    if (!Globals.canVR && isLocal) {
+    // Opt-in via ?iwer=1 — IWER's installRuntime() hooks the whole page
+    // (spoofs a Meta Quest 3 user agent, installs an emulated WebXR runtime),
+    // and as of Chrome 150 those hooks break MSAA rendering: every
+    // alpha-blended pass into a multisampled render target is silently lost,
+    // which turned the main-view sky black (sky quad and stars gone, opaque
+    // terrain unaffected). Production builds exclude IWER entirely, so the
+    // breakage was dev-only. Installing on demand keeps local WebXR testing
+    // available without hooking every dev session.
+    const wantIWER = !isConsole
+        && new URLSearchParams(window.location.search).get("iwer") === "1";
+    if (!Globals.canVR && isLocal && wantIWER) {
         // Initialize IWER (Immersive Web Emulation Runtime) for WebXR emulation
         // This must be done before any rendering or WebXR logic
         if (typeof navigator !== 'undefined') {
@@ -489,6 +499,8 @@ if (INCLUDE_IWER_EMULATOR) {
                 console.warn("Failed to load IWER:", err);
             });
         }
+    } else if (!Globals.canVR && isLocal) {
+        console.log("IWER VR emulator not installed (add ?iwer=1 to the URL to enable WebXR emulation)");
     }
 }
 
