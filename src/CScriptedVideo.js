@@ -68,6 +68,12 @@ class CScriptedVideoManager {
         this.cameraSmoothing = 0.35;
         this.groundClearance = 3;
 
+        // Preview terrain behavior: false (default) = dynamic subdivision stays
+        // live during preview, so tiles load wherever the scripted camera goes;
+        // true = freeze the tile set at preview start (the old behavior — no
+        // LOD flicker, but holes anywhere not already loaded).
+        this.freezeTerrainPreview = false;
+
         // render quality knobs (read by ScriptRenderer.js)
         this.waitForLoading = true;   // true (default) = settle each frame: subdivision
                                       // converges for that frame's camera + tiles finish
@@ -791,11 +797,16 @@ class CScriptedVideoManager {
         this._savedPaused = par.paused;
         par.paused = true;
         this._restore = this._enterScriptedMode();
-        // Freeze terrain LOD during preview too, so the background doesn't flicker
-        // as the camera moves (it keeps whatever detail is already loaded).
+        // Terrain LOD during preview: subdivision stays LIVE by default so
+        // tiles stream in wherever the scripted camera goes — an
+        // unconditionally frozen set leaves holes ("missing tiles") anywhere
+        // the camera hadn't already looked before the preview started (e.g. a
+        // freshly relocated scenario site). The old freeze — flicker-free
+        // over already-loaded ground, at the cost of those holes — is still
+        // available via the "Freeze Terrain (Preview)" quality knob.
         const tu = NodeMan.get("terrainUI", false);
         this._previewSavedSubdiv = tu ? tu.disableDynamicSubdivision : undefined;
-        if (tu) tu.disableDynamicSubdivision = true;
+        if (tu && this.freezeTerrainPreview) tu.disableDynamicSubdivision = true;
         this._ensureOverlayCanvas();
         this.timeline.showBottomStrip();   // scripted timeline replaces the normal frame slider
         this._lastLayoutKey = null;      // first tick always applies the layout
@@ -1033,6 +1044,10 @@ class CScriptedVideoManager {
             .tooltip("ON (default) = settle each frame so terrain is stable & correct (no pop or edge-tile toggling), slower. OFF = fast/rough render, terrain may pop.");
         q.add(this, "terrainDetail", 0.25, 1, 0.05).name("Terrain Detail").perm()
             .tooltip("Terrain LOD detail. Lower loads far fewer tiles → much faster render, slightly coarser terrain. 1 = full detail.");
+        q.add(this, "freezeTerrainPreview").name("Freeze Terrain (Preview)").perm()
+            .tooltip("OFF (default) = terrain tiles keep loading during the live preview as the camera moves. "
+                + "ON = freeze the tile set at preview start — no LOD flicker, but any area the camera "
+                + "hadn't already looked at will have missing tiles.");
         q.add(this, "motionBlurSamples", 1, 16, 1).name("Motion Blur").perm()
             .tooltip("Optional cinematic motion blur: sub-frames averaged per output frame. 1 = off.");
         q.add(this, "superSample", 1, 3, 1).name("Super-sample").perm()
