@@ -25,6 +25,12 @@ export function normalizeWindTimestampMs(raw) {
 
 // Pressure-level ↔ altitude mapping (approximate standard atmosphere)
 // Sorted low-to-high altitude. "surface" is a special 10m-above-ground product.
+// Levels through 200 hPa are fetched routinely; the stratospheric levels
+// (150 hPa and up) are fetched LAZILY — only when an altitude above 38,600 ft
+// is actually sampled/displayed — since high-altitude wind is rarely needed
+// (a balloon can climb to ~100k ft). ft values match fetch_wind.py's
+// LEVEL_ALT_FT (standard-atmosphere geopotential heights); the GFS proxy +
+// fetch_wind.py already serve every level up to 10 hPa.
 export const WIND_LEVEL_TABLE = [
     {level: "surface", ft: 33},
     {level: "1000",    ft: 360},
@@ -35,6 +41,13 @@ export const WIND_LEVEL_TABLE = [
     {level: "300",     ft: 30000},
     {level: "250",     ft: 33800},
     {level: "200",     ft: 38600},
+    {level: "150",     ft: 44600},
+    {level: "100",     ft: 53200},
+    {level: "70",      ft: 60700},
+    {level: "50",      ft: 67500},
+    {level: "30",      ft: 78100},
+    {level: "20",      ft: 86900},
+    {level: "10",      ft: 101000},
 ];
 
 // Return the two bracketing levels and interpolation factor for an altitude (ft).

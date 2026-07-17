@@ -59,6 +59,26 @@ export class CNodeAtmosphericProfile extends CNode {
 
         // Sort ascending by altitude
         this.levels.sort(function(a, b) { return a.alt - b.alt; });
+        this.computeTopWindAlt();
+    }
+
+    // Highest altitude (m) with a VALID wind sample. Radiosondes measure wind
+    // to very different tops — one station may reach ~50k ft, another ~100k ft
+    // (and GPS wind-finding often drops out below the balloon's burst altitude
+    // while pressure/temp keep reporting). The wind-field blend uses this to
+    // drop a station OUT above its top (so it doesn't pollute a high-altitude
+    // estimate with a lower-altitude wind); only when EVERY nearby station has
+    // been dropped does it hold the highest station's top wind. Null when the
+    // profile has no wind at any level.
+    computeTopWindAlt() {
+        this.topWindAlt = null;
+        for (const lvl of this.levels) {
+            if (lvl.windDir != null && lvl.windSpeed != null
+                && (this.topWindAlt == null || lvl.alt > this.topWindAlt)) {
+                this.topWindAlt = lvl.alt;
+            }
+        }
+        return this.topWindAlt;
     }
 
     // Interpolate the balloon's 3D position (ECEF Vector3) at an altitude.

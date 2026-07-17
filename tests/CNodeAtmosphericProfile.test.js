@@ -57,6 +57,26 @@ describe('CNodeAtmosphericProfile.getAtAltitude', () => {
         expect(empty.getAtAltitude(5000)).toBeNull();
     });
 
+    test('computeTopWindAlt returns highest level with valid wind (sonde drops wind before top)', () => {
+        // pressure/temp continue above the last GPS-wind level (18000 m)
+        var p = makeProfile([
+            { alt: 0,     temp: 15,  pressure: 1013, rh: 80, windDir: 180, windSpeed: 5 },
+            { alt: 12000, temp: -55, pressure: 190,  rh: 20, windDir: 270, windSpeed: 40 },
+            { alt: 18000, temp: -60, pressure: 75,   rh: 5,  windDir: 250, windSpeed: 25 },
+            { alt: 26000, temp: -50, pressure: 22,   rh: 2,  windDir: null, windSpeed: null },
+            { alt: 31000, temp: -45, pressure: 10,   rh: 1,  windDir: null, windSpeed: null },
+        ]);
+        expect(p.computeTopWindAlt()).toBe(18000);
+    });
+
+    test('computeTopWindAlt is null when no level has wind', () => {
+        var p = makeProfile([
+            { alt: 0,    temp: 15, pressure: 1013, rh: 80, windDir: null, windSpeed: null },
+            { alt: 5000, temp: -18, pressure: 540, rh: 50, windDir: null, windSpeed: null },
+        ]);
+        expect(p.computeTopWindAlt()).toBeNull();
+    });
+
     test('interpolates wind direction across 360/0 boundary', () => {
         var p = makeProfile([
             { alt: 0,    temp: 0, pressure: 1000, rh: 0, windDir: 350, windSpeed: 10 },

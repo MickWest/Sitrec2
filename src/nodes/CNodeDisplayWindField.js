@@ -302,9 +302,22 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             || this.source === "manual-soundings") {
             const profiles = this._gatherSondeProfiles(
                 this.source === "manual-soundings" ? null : this.source);
+            // A station only contributes at altitudes where it actually MEASURED
+            // wind. Above its top valid-wind level it drops OUT of the blend
+            // rather than holding a lower-altitude wind that would pollute a
+            // high-altitude estimate — so as altitude rises the IDW gracefully
+            // degrades from all nearby stations down to whichever few still
+            // reach that high (3→2→1). Radiosondes commonly measure wind to very
+            // different tops (one to ~50k ft, another to ~100k ft).
             const samples = [];
+            let highestTop = null; // station whose valid wind reaches highest
             for (const p of profiles) {
                 if (p.stationLat == null || p.stationLon == null) continue;
+                if (p.topWindAlt != null
+                    && (highestTop == null || p.topWindAlt > highestTop.topWindAlt)) {
+                    highestTop = p;
+                }
+                if (p.topWindAlt != null && altM > p.topWindAlt) continue; // no measured wind here
                 const data = p.getAtAltitude(altM);
                 if (!data || data.windDir == null || data.windSpeed == null) continue;
                 const dLat = p.stationLat - lat;
@@ -313,7 +326,15 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                 const distDeg2 = dLat * dLat + (dLon * cosLat) ** 2;
                 samples.push({distDeg2, data});
             }
-            if (samples.length === 0) return null;
+            if (samples.length === 0) {
+                // Above EVERY station's top — no measured wind anywhere. Repeat
+                // the highest-reaching station's top wind (best available guess)
+                // rather than reverting to no wind.
+                if (!highestTop) return null;
+                const d = highestTop.getAtAltitude(highestTop.topWindAlt);
+                if (!d || d.windDir == null || d.windSpeed == null) return null;
+                return fromDirSpeedToUV(d.windDir, d.windSpeed);
+            }
             samples.sort((a, b) => a.distDeg2 - b.distDeg2);
             const K = Math.min(3, samples.length);
             let sumU = 0, sumV = 0, totalW = 0;
