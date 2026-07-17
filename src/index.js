@@ -325,9 +325,53 @@ function scheduleAnimationLoop(delay = 0) {
 // globalThis.__sitrecForceRender(true|false); window.__sitrecForceRenderLoop mirrors the state.
 let forceRenderLoop = false;
 
+// --- MCP background-tab keep-awake -----------------------------------------
+// Chrome never fires rAF in hidden tabs and clamps their main-thread timers
+// (nested setTimeout → ≥1 s), so a backgrounded tab driven via SitrecBridge
+// stalls: terrain never subdivides, loads never settle, and MCP tests hang
+// until the tab is focused. Dedicated-worker timers are EXEMPT from that
+// visibility throttling, so when the MCP bridge is attached (_mcpDebug, set
+// by page-bridge.js in every bridge tab) a tiny worker heartbeat fires any
+// pending scheduled frame at ~30 fps, and the hidden gate below is treated
+// as visible. The render-on-demand sleep still applies: an IDLE background
+// tab sleeps exactly like an idle foreground tab — only pending work runs.
+function mcpKeepAwake() {
+    return !!window._mcpDebug;
+}
+
+let keepAwakeWorker = null;
+function startKeepAwakeTicker() {
+    if (keepAwakeWorker) return;
+    try {
+        const src = "setInterval(() => postMessage(0), 33);";
+        keepAwakeWorker = new Worker(URL.createObjectURL(new Blob([src], {type: "text/javascript"})));
+        keepAwakeWorker.onmessage = () => {
+            if (!document.hidden || !(forceRenderLoop || mcpKeepAwake())) return;
+            // A frame is scheduled but its setTimeout may be visibility-clamped
+            // to seconds away — fire it now so the loop paces at ~30 fps. When
+            // the loop has SLEPT (nothing scheduled) this is a no-op; the next
+            // wakeAnimationLoop() re-arms it.
+            if (animationFrameId !== undefined && animationFrameId !== null) {
+                clearScheduledAnimation();
+                animate(performance.now());
+            }
+        };
+    } catch (e) {
+        console.warn("MCP keep-awake worker unavailable:", e);
+        keepAwakeWorker = null;
+    }
+}
+function stopKeepAwakeTicker() {
+    if (!keepAwakeWorker) return;
+    keepAwakeWorker.terminate();
+    keepAwakeWorker = null;
+}
+
 function shouldSleepAnimationLoop() {
     return shouldSleepRenderLoopState({
-        hidden: document.hidden,
+        // With the MCP bridge attached a hidden tab is treated as visible, so
+        // background-tab test runs behave like foreground ones.
+        hidden: document.hidden && !mcpKeepAwake(),
         paused: par.paused,
         renderOne: par.renderOne,
         nodeList: NodeMan?.list,
@@ -336,9 +380,10 @@ function shouldSleepAnimationLoop() {
 }
 
 function wakeAnimationLoop() {
-    // forceRenderLoop bypasses the hidden gate so the loop can be
-    // (re)started for debugging in a backgrounded MCP tab.
-    if (document.hidden && !forceRenderLoop) return;
+    // forceRenderLoop / the MCP bridge bypass the hidden gate so the loop can
+    // be (re)started while backgrounded; the keep-awake worker then paces it.
+    if (document.hidden && !forceRenderLoop && !mcpKeepAwake()) return;
+    if (document.hidden) startKeepAwakeTicker();
     scheduleAnimationLoop(0);
 }
 
@@ -346,16 +391,18 @@ globalThis.__sitrecWakeRenderLoop = wakeAnimationLoop;
 
 // Debug/MCP: force the render loop to run continuously (see forceRenderLoop above),
 // overriding the hidden-tab and paused sleeps so the scene keeps updating
-// and rendering while a backgrounded tab is inspected via the bridge. Note: a hidden
-// tab still throttles the setTimeout scheduler (~1 fps in Chrome), but that is enough
-// to drive terrain subdivision/tile loading over a few seconds. Returns the new state;
-// call __sitrecForceRender(false) to restore normal render-on-demand behaviour.
+// and rendering while a backgrounded tab is inspected via the bridge. While hidden,
+// the keep-awake worker paces the loop at ~30 fps (worker timers are exempt from
+// Chrome's hidden-tab throttling). Returns the new state; call
+// __sitrecForceRender(false) to restore normal render-on-demand behaviour.
 globalThis.__sitrecForceRender = (on = true) => {
     forceRenderLoop = !!on;
     window.__sitrecForceRenderLoop = forceRenderLoop;
     if (forceRenderLoop) {
         setRenderOne(true);
         wakeAnimationLoop();
+    } else if (!mcpKeepAwake()) {
+        stopKeepAwakeTicker();
     }
     return forceRenderLoop;
 };
@@ -363,14 +410,26 @@ window.__sitrecForceRenderLoop = forceRenderLoop;
 
 document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
+        if (forceRenderLoop || mcpKeepAwake()) {
+            // Backgrounded but under MCP/debug control — keep running as if
+            // visible, paced by the throttling-exempt worker heartbeat.
+            startKeepAwakeTicker();
+            return;
+        }
         clearScheduledAnimation();
         return;
     }
 
     // Tab became visible again — re-arm a render and revive the (possibly slept) loop.
+    stopKeepAwakeTicker();
     setRenderOne(true);
     wakeAnimationLoop();
 });
+
+// The bridge attaches at document_start, so in an MCP tab _mcpDebug is
+// already set here. If that tab was OPENED in the background (no
+// visibilitychange ever fires), engage the keep-awake ticker now.
+if (window._mcpDebug && document.hidden) startKeepAwakeTicker();
 
 // Adaptive frame rate control
 const frameRateController = {
