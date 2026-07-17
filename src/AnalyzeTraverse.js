@@ -3666,6 +3666,10 @@ function showResultGallery(results) {
     let resizeObserver = null;
     let selected = -1;
     let fullscreenView = null;
+    // Shared "zoom to tracks" state: the magnifier toggles ALL graphs together
+    // (each to its own zoomBounds), like Sync Orientation / Sync Scale. New
+    // charts (detail/tile/fullscreen) adopt it on creation.
+    let groupZoomed = false;
 
     const currentChart = () => detailChart || (selected >= 0 ? tileCharts[selected] : null);
 
@@ -3929,7 +3933,7 @@ function showResultGallery(results) {
         const chart = registerChart(new Chart3D(canvas, sourceChart.scene, chartGroup,
             {pad: sourceChart.pad ?? 0.1, scaleBoost: sourceChart.scaleBoost}));
         chart.localMatrix = sourceChart.localMatrix.slice();
-        if (sourceChart.zoomed) chart.setZoom(true);
+        if (groupZoomed && chart.scene.zoomBounds) chart.setZoom(true);
         syncZoomButton(chart);
         fullscreenView = {layer, chart, sourceChart};
         requestAnimationFrame(() => chart.resize());
@@ -3961,8 +3965,13 @@ function showResultGallery(results) {
         const canvas = shell ? shell.querySelector("canvas.tg-chart-3d") : null;
         const chart = canvas ? chartByCanvas.get(canvas) : null;
         if (!chart || !chart.scene.zoomBounds) return;
-        chart.setZoom(!chart.zoomed);
-        syncZoomButton(chart);
+        // Toggle EVERY graph together (each to its own zoomBounds), so the
+        // magnifier is a single "show tracks / show full volume" for the set.
+        groupZoomed = !chart.zoomed;
+        for (const c of liveCharts) {
+            if (c.scene.zoomBounds) c.setZoom(groupZoomed);
+            syncZoomButton(c);
+        }
     }, true);
 
     const panel = document.createElement("div");
@@ -4136,6 +4145,7 @@ function showResultGallery(results) {
                 hypothesisVolumeScene(dataset, h, {truth: results.truth}),
                 chartGroup, {pad: 0.13}));
             if (chartGroup.syncScale) chartGroup.setSyncScale(true, detailChart);
+            if (groupZoomed && detailChart.scene.zoomBounds) detailChart.setZoom(true);
             syncZoomButton(detailChart);
         }
         detailsCol.scrollTop = 0;
@@ -4263,6 +4273,7 @@ function showResultGallery(results) {
         tileCharts[i] = registerChart(new Chart3D(canvas,
             hypothesisVolumeScene(dataset, h, {compact: true, truth: results.truth}),
             chartGroup, {pad: 0.14}));
+        if (groupZoomed && tileCharts[i].scene.zoomBounds) tileCharts[i].setZoom(true);
         syncZoomButton(tileCharts[i]);
     }
 
