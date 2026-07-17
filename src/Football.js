@@ -4,16 +4,20 @@
 // drawn and checked for collision with the ball, and a fixed "broadcast"
 // camera view that follows the ball.
 //
-// Everything lives under Physics -> Football in the menu. The cable cam is
-// normally hidden; the "Show Cable Cam" checkbox reveals the dolly, its path,
-// and the four wires. "Load England-Norway Goal Kick" configures the whole
-// scene to replicate the 2026 goal-kick / spidercam controversy (see
-// GOAL_KICK_SCENARIO below).
+// Everything lives under Physics -> Scenarios -> Football in the menu. The
+// cable cam is normally hidden; the "Show Cable Cam" checkbox reveals the
+// dolly, its path, and the four wires. "Load England-Norway Goal Kick"
+// configures the whole scene to replicate the 2026 goal-kick / spidercam
+// controversy (see GOAL_KICK_SCENARIO below).
 //
-// Created per-sitch from CCustomManager.setup() via setupFootball(); all node
-// creation is idempotent (NodeMan.exists guards) so re-running on sitch load
-// is safe, and all GUI values/switches serialize through the standard mods
-// mechanism by node id.
+// setupFootball() (run lazily by the ScenarioManager when the Scenarios menu
+// is opened) adds ONLY the folder buttons; the simulation itself — nodes, 3D
+// objects, GUI values, camera-switch options — is created by
+// activateFootball() when the user clicks Enable or the Load button (or when
+// a loading save was using Football — see CScenarioManager.activateForMods).
+// An un-activated Football is a 100% no-op. All node creation is idempotent
+// (NodeMan.exists guards) and serializes through the standard mods mechanism
+// by node id.
 
 import {guiMenus, Globals, NodeMan, Sit, setRenderOne, GlobalDateTimeNode} from "./Globals";
 import {EventManager} from "./CEventManager";
@@ -907,7 +911,7 @@ function footballSubFolder(key, title) {
     return f;
 }
 
-export function setupFootball() {
+export function activateFootball() {
     const folder = guiMenus.football;
     if (!folder) return;
 
@@ -1385,6 +1389,45 @@ export function setupFootball() {
     if (!folder.controllers.find(c => c._name === scenarioLabel)) {
         folder.add(actions, "loadScenario").name(scenarioLabel);
     }
+    syncEnableButton();
+}
+
+const ENABLE_LABEL = "Enable Football Simulation";
+
+function syncEnableButton() {
+    const folder = guiMenus.football;
+    const btn = folder?.controllers.find(c => c._name === ENABLE_LABEL);
+    if (btn && NodeMan.exists("footballTrack")) btn.disable();
+}
+
+// Thin per-sitch setup: just the folder buttons. The simulation's nodes
+// (tracks, 3D objects, GUI values, camera-switch options) are only created
+// by activateFootball() — an untouched Football folder adds nothing to the
+// Objects/Contents/Camera menus and costs nothing per frame. Called lazily
+// by the ScenarioManager when the Scenarios menu is first opened.
+export function setupFootball() {
+    const folder = guiMenus.football;
+    if (!folder) return;
+    // Needs the custom-sitch track infrastructure
+    if (!NodeMan.get("targetTrackSwitchSmooth", false)) return;
+
+    const actions = {
+        enable: () => activateFootball(),
+        loadScenario: () => loadGoalKickScenario(),
+    };
+    const addButton = (prop, label, tip) => {
+        if (!folder.controllers.find(c => c._name === label)) {
+            const b = folder.add(actions, prop).name(label);
+            if (tip) b.tooltip(tip);
+        }
+    };
+    addButton("enable", ENABLE_LABEL,
+        "Create the football launcher, cable cam, and broadcast camera. "
+        + "Their controls appear in this folder (and the Camera menu) once enabled.");
+    addButton("loadScenario", "Load " + GOAL_KICK_SCENARIO.name,
+        "Enable the simulation and configure the whole scene to replicate the "
+        + "2026 England-Norway goal-kick / spidercam wire incident.");
+    syncEnableButton();
     folder.close();
 }
 
@@ -1393,6 +1436,8 @@ export function setupFootball() {
 // frame, kick parameters, spidercam motion, and the broadcast view.
 export function loadGoalKickScenario() {
     const S = GOAL_KICK_SCENARIO;
+
+    activateFootball();   // loading implies enabling
 
     // pitch frame first — everything else derives from it
     const pitchCenter = NodeMan.get("footballPitchCenter", false);

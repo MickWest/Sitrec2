@@ -1798,9 +1798,17 @@ async function initializeOnce() {
     // rebuilt by CCustomManager.setup() on every sitch load; the folder shells
     // live here so we don't end up with duplicate husks after destroy(false).
     addGUIFolder("wind", "Wind", "physics");
-    addGUIFolder("gimbalAnalysis", "Gimbal Analysis", "physics");
     addGUIFolder("simpleFlightSim", "Simple Flight Sim", "physics");
-    addGUIFolder("football", "Football", "physics");
+
+    // Scenarios: self-contained simulation packages (see CScenarioManager).
+    // Permanent shells only — contents are populated lazily when the
+    // Scenarios menu is first opened, and a scenario's nodes exist only
+    // after it is explicitly activated (an untouched scenario is a no-op).
+    addGUIFolder("scenarios", "Scenarios", "physics");
+    addGUIFolder("gimbalAnalysis", "Gimbal Analysis", "scenarios");
+    addGUIFolder("football", "Football", "scenarios");
+    addGUIFolder("nimitz", "Nimitz", "scenarios");
+    addGUIFolder("floodSim", "Flood Sim", "scenarios");
 
     // addGUIMenu("missile", "Missile").tooltip("Homing missile parameters\nControls for the missile simulation including mass, thrust, air resistance, and burn time");
 

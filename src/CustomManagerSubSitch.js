@@ -67,7 +67,6 @@ import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry} from "./trackSourceUtils";
 import {encodeShareParam, resolveURLForFetch, toShareableCustomValue} from "./SitrecObjectResolver";
 import {getEnvBool} from "./envUtils";
-import {CNodeFloodSim} from "./nodes/CNodeFloodSim";
 import {CNodeOrbitTrack} from "./nodes/CNodeOrbitTrack";
 import {CNodeTrackSwitch} from "./nodes/CNodeTrackSwitch";
 import {getNearbyWeatherBalloons, importSoundingDialog} from "./SondeFetch";

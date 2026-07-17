@@ -64,6 +64,7 @@ import {deserializeMotionAnalysis, serializeMotionAnalysis} from "./CMotionAnaly
 import {deserializeAutoTracking, serializeAutoTracking} from "./CObjectTracking";
 import {deserializeHorizonExtractor, serializeHorizonExtractor} from "./CHorizonExtractor";
 import {deserializeScriptedVideo, serializeScriptedVideo} from "./CScriptedVideo";
+import {ScenarioManager} from "./CScenarioManager";
 import {deserializeLongExposure, serializeLongExposure} from "./LongExposure";
 import {getCursorPositionFromTopView} from "./mouseMoveView";
 import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightSidebar} from "./PageStructure";
@@ -77,7 +78,6 @@ import {collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry} from ".
 import {buildAppFlightTrack, applyFlightLightweightGating} from "./fromApp.js";
 import {encodeShareParam, resolveURLForFetch, toShareableCustomValue} from "./SitrecObjectResolver";
 import {getEnvBool} from "./envUtils";
-import {CNodeFloodSim} from "./nodes/CNodeFloodSim";
 import {CNodeOrbitTrack} from "./nodes/CNodeOrbitTrack";
 import {CNodeTrackSwitch} from "./nodes/CNodeTrackSwitch";
 import {getNearbyWeatherBalloons, importSoundingDialog} from "./SondeFetch";
@@ -1372,6 +1372,16 @@ export const serializeMethods = {
 
         // Migration for older custom sitches saved before stable shortName metadata
         // existed for track files.
+        // Scenario nodes (Football / Nimitz / Flood Sim ...) only exist after
+        // their scenario is activated, and mods for missing node ids are
+        // dropped below — so first activate any scenario this save was
+        // actually using (see CScenarioManager.activateForMods). Must run
+        // BEFORE remapLegacyTrackMods: that migration rewrites switch choices
+        // it doesn't recognize, and a scenario-provided choice (e.g.
+        // cameraTrackSwitch = "Fravor's Jet") only becomes recognizable once
+        // the scenario has been activated.
+        await ScenarioManager.activateForMods(mods);
+
         this.remapLegacyTrackMods(mods);
 
         // some things are required to be deserialized before others, so we force them to the top.

@@ -38,6 +38,11 @@ export class CNodeFloodSim extends CNode3DGroup {
 
         this.input("track", true);
 
+        // Scenario-provided GUI folder (Physics → Scenarios → Flood Sim).
+        // When set, setupGUI fills it instead of making a standalone folder,
+        // and dispose() must empty rather than destroy it (permanent shell).
+        this._guiFolderProvided = v.guiFolder;
+
         // GUI-controlled parameters
         this.floodEnabled = false;
         this.floodRate = v.floodRate ?? 50;
@@ -222,8 +227,9 @@ export class CNodeFloodSim extends CNode3DGroup {
     // ── GUI ──────────────────────────────────────────────────────────────
 
     setupGUI() {
-        if (!guiPhysics) return;
-        this.guiFolder = guiPhysics.addFolder("Flood Sim").close();
+        this.guiFolder = this._guiFolderProvided
+            ?? (guiPhysics ? guiPhysics.addFolder("Flood Sim").close() : null);
+        if (!this.guiFolder) return;
         this.guiFolder.add(this, "floodEnabled").name(t("floodSim.flood.label")).tooltip(t("floodSim.flood.tooltip")).listen()
             .onChange(() => setRenderOne());
         this.guiFolder.add(this, "floodRate", 1, 500, 1).name(t("floodSim.floodRate.label")).tooltip(t("floodSim.floodRate.tooltip"));
@@ -1719,7 +1725,13 @@ export class CNodeFloodSim extends CNode3DGroup {
             this.waterMesh.geometry.dispose();
             this.waterMesh.material.dispose();
         }
-        if (this.guiFolder) this.guiFolder.destroy();
+        if (this.guiFolder) {
+            // A scenario-provided folder is a permanent menu shell — empty it
+            // (destroy(false) keeps permanent GUIs, drops their children) so
+            // re-activation can rebuild into it. A legacy standalone folder is
+            // fully destroyed as before.
+            this.guiFolder.destroy(!this._guiFolderProvided);
+        }
         super.dispose();
     }
 }

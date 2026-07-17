@@ -1,4 +1,4 @@
-# Football (Physics → Football)
+# Football (Physics → Scenarios → Football)
 
 Launch a football (soccer ball) from a point on any track, with real ballistic
 physics — quadratic drag, Magnus lift from spin, ground bounces — plus a
@@ -16,7 +16,7 @@ cable-cam keyframes, and the pitch overlay.
 
 ## One-click replication
 
-**Physics → Football → "Load England-Norway Goal Kick (WC 2026)"** sets up
+**Physics → Scenarios → Football → "Load England-Norway Goal Kick (WC 2026)"** sets up
 the whole incident: Hard Rock Stadium terrain, pitch frame aligned to the
 satellite imagery (heading 96°), match date/time (for correct sun), the kick
 (35 m/s, 42°, 300 rpm backspin from the Norway goal area), the spidercam
@@ -27,7 +27,7 @@ benches, the pitch overlay, and the look camera riding the cable cam.
 ## Manual setup
 
 1. Start a **Custom** sitch (New Sitch → Custom).
-2. **Pitch frame** — Physics → Football → *Pitch Location*: set Pitch Center
+2. **Pitch frame** — Physics → Scenarios → Football → *Pitch Location*: set Pitch Center
    lat/lon (altitude is MSL) and *Pitch Heading (°)* = compass bearing of the
    long axis. All cable-cam and scenario geometry is defined in this frame.
 3. **Launch point** — move the Target (hold X and drag, or Target menu
