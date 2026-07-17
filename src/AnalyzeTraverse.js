@@ -2937,20 +2937,35 @@ function growGraphBounds(b, p) {
     if (p[2] > b.maxZ) b.maxZ = p[2];
 }
 
+function padAxisRange(lo, hi, frac, fallback) {
+    const span = hi - lo;
+    const pad = (span > 0 ? span : fallback) * frac;
+    const mid = (lo + hi) / 2;
+    if (span > 0) return [lo - pad, hi + pad];
+    return [mid - fallback / 2, mid + fallback / 2];
+}
+
 function padGraphBounds(b) {
-    const padAxis = (lo, hi, frac, fallback) => {
-        const span = hi - lo;
-        const pad = (span > 0 ? span : fallback) * frac;
-        const mid = (lo + hi) / 2;
-        if (span > 0) return [lo - pad, hi + pad];
-        return [mid - fallback / 2, mid + fallback / 2];
-    };
     if (!isFinite(b.minX)) return {minX: -1, maxX: 1, minY: -1, maxY: 1, minZ: 0, maxZ: 1};
-    const [minX, maxX] = padAxis(b.minX, b.maxX, 0.08, 1);
-    const [minY, maxY] = padAxis(b.minY, b.maxY, 0.08, 1);
+    const [minX, maxX] = padAxisRange(b.minX, b.maxX, 0.08, 1);
+    const [minY, maxY] = padAxisRange(b.minY, b.maxY, 0.08, 1);
     const minZ = 0;
     const zMax = Math.max(0, b.maxZ);
     const maxZ = zMax + Math.max(zMax, 1) * 0.14;
+    return {minX, maxX, minY, maxY, minZ, maxZ};
+}
+
+// Tight bounds for the per-chart "zoom to tracks" view (units NM). Unlike
+// padGraphBounds the floor is NOT forced to z = 0: the graph z is a RELATIVE
+// altitude (tracks routinely straddle 0), and because zoom mode clips series
+// to its bounds, forcing the floor up would delete the below-reference
+// segments rather than merely restyle the box. Returns null when nothing was
+// accumulated.
+function padZoomBounds(b) {
+    if (!isFinite(b.minX)) return null;
+    const [minX, maxX] = padAxisRange(b.minX, b.maxX, 0.08, 1);
+    const [minY, maxY] = padAxisRange(b.minY, b.maxY, 0.08, 1);
+    const [minZ, maxZ] = padAxisRange(b.minZ, b.maxZ, 0.08, 0.25);
     return {minX, maxX, minY, maxY, minZ, maxZ};
 }
 
@@ -2990,6 +3005,10 @@ function meanLOSDirection(dataset) {
 function hypothesisVolumeScene(dataset, hyp, opts = {}) {
     const {n, S, D} = dataset;
     const b = {minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity};
+    // Second accumulator for the magnifier ("zoom to tracks") view: grown ONLY
+    // over the traverse track and the truth track, never the sensor path or
+    // ray endpoints, so a distant platform stops dictating the scale.
+    const zb = {minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity};
     const series = [];
     const sensorPts = sampledPolyline(S, n, opts.compact ? 260 : 520);
     for (const p of sensorPts) growGraphBounds(b, p);
@@ -3017,7 +3036,7 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
         series.push({type: "rays", segs, color: hyp.color || VIZ.ink2, alpha: 0.72, width: opts.compact ? 1.4 : 1.8});
     } else {
         const trackPts = sampledPolyline(hyp.track, n, opts.compact ? 360 : 720);
-        for (const p of trackPts) growGraphBounds(b, p);
+        for (const p of trackPts) { growGraphBounds(b, p); growGraphBounds(zb, p); }
 
         let maxRange = 0;
         for (const f of sampledFrames(n, 60)) {
@@ -3051,7 +3070,7 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
             .filter((f) => !tv || tv[f] === 1)
             .map((f) => graphPoint(opts.truth.track, f));
         if (truthPts.length > 1) {
-            for (const p of truthPts) growGraphBounds(b, p);
+            for (const p of truthPts) { growGraphBounds(b, p); growGraphBounds(zb, p); }
             series.push({type: "line", pts: truthPts, color: VIZ.truth,
                 width: opts.compact ? 1.8 : 2.2, dash: [6, 4],
                 startDot: true, endRing: true});
@@ -3060,6 +3079,7 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
 
     return {
         bounds: padGraphBounds(b),
+        zoomBounds: padZoomBounds(zb),
         series,
         labels: {x: "East (NM)", y: "North (NM)", z: "Alt (NM)"},
         fmt: {x: (v) => fmtNum(v), y: (v) => fmtNum(v), z: (v) => fmtNum(v)},
@@ -3431,6 +3451,19 @@ function solutionSpaceHTML(h, ss) {
         `sightlines are consistent with something that never moves.`;
 }
 
+// Magnifier button placed on every interactive 3D chart shell: toggles the
+// chart's "zoom to tracks" view (extents of the traverse + truth tracks only,
+// sightlines clipped into the volume). Hidden when the scene has no zoomable
+// tracks (a direction-only hypothesis with no truth track).
+const ZOOM_TITLE_OFF = "Zoom to the truth and traverse tracks";
+const ZOOM_TITLE_ON = "Show the full volume (sensor path and full sightlines)";
+const ZOOM_BUTTON_HTML =
+    `<button class="tg-chart-zoom" type="button" title="${ZOOM_TITLE_OFF}" ` +
+    `aria-label="${ZOOM_TITLE_OFF}" aria-pressed="false">` +
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" ` +
+    `stroke-linecap="round" aria-hidden="true">` +
+    `<circle cx="10.5" cy="10.5" r="6.6"/><path d="M15.4 15.4 21 21"/></svg></button>`;
+
 // Full Details-pane HTML for one selected hypothesis: big plan view, headline
 // stats, a plain-English verdict, then progressively deeper explanation
 // (how the numbers were derived, what constrains it, where it sits in the
@@ -3466,6 +3499,7 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
                 aria-label="3D volume view of the ${escapeHtml(h.name)} interpretation"></canvas>
             <button class="tg-chart-fullscreen" type="button" title="Fullscreen graph"
                 aria-label="Fullscreen graph">⛶</button>
+            ${ZOOM_BUTTON_HTML}
         </div>
         <div class="tg-d-head">
             <span class="tg-d-name">${escapeHtml(h.name)}</span>
@@ -3532,6 +3566,19 @@ function showResultGallery(results) {
         chart.dispose();
     }
 
+    // Reflect a chart's zoom state onto the magnifier button in its shell,
+    // hiding the button entirely when the scene has nothing to zoom to.
+    function syncZoomButton(chart) {
+        const shell = chart.canvas.closest(".tg-chart-shell, .tg-chart-fullscreen-shell");
+        const btn = shell ? shell.querySelector(".tg-chart-zoom") : null;
+        if (!btn) return;
+        if (!chart.scene.zoomBounds) { btn.style.display = "none"; return; }
+        btn.classList.toggle("on", chart.zoomed);
+        btn.title = chart.zoomed ? ZOOM_TITLE_ON : ZOOM_TITLE_OFF;
+        btn.setAttribute("aria-label", btn.title);
+        btn.setAttribute("aria-pressed", chart.zoomed ? "true" : "false");
+    }
+
     function disposeDetailChart() {
         if (!detailChart) return;
         disposeChart(detailChart);
@@ -3542,9 +3589,16 @@ function showResultGallery(results) {
         if (!fullscreenView) return;
         const {layer, chart, sourceChart} = fullscreenView;
         fullscreenView = null;
-        if (!chartGroup.syncOrientation && sourceChart && liveCharts.has(sourceChart)) {
-            sourceChart.localMatrix = chart.localMatrix.slice();
-            sourceChart.draw();
+        if (sourceChart && liveCharts.has(sourceChart)) {
+            if (!chartGroup.syncOrientation) {
+                sourceChart.localMatrix = chart.localMatrix.slice();
+                sourceChart.draw();
+            }
+            // zoom is per-chart display state — carry it back like orientation
+            if (sourceChart.zoomed !== chart.zoomed) {
+                sourceChart.setZoom(chart.zoomed);
+                syncZoomButton(sourceChart);
+            }
         }
         disposeChart(chart);
         if (layer.parentNode) layer.parentNode.removeChild(layer);
@@ -3648,11 +3702,17 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-d-chart-shell { height:420px; }
         .traverse-gallery-overlay .tg-thumb { width:100%; height:100%; display:block; border-radius:7px;
             border:1px solid rgba(255,255,255,0.06); background:#0c0e11; }
-        .traverse-gallery-overlay .tg-chart-fullscreen { position:absolute; top:8px; right:8px; z-index:3;
+        .traverse-gallery-overlay .tg-chart-fullscreen,
+        .traverse-gallery-overlay .tg-chart-zoom { position:absolute; top:8px; right:8px; z-index:3;
             width:30px; height:30px; display:grid; place-items:center; padding:0; border-radius:7px;
             border:1px solid rgba(255,255,255,0.28); background:rgba(7,10,14,0.72);
             color:#e8eaed; font-size:17px; line-height:1; cursor:pointer; }
-        .traverse-gallery-overlay .tg-chart-fullscreen:hover { background:rgba(57,135,229,0.88);
+        .traverse-gallery-overlay .tg-chart-fullscreen:hover,
+        .traverse-gallery-overlay .tg-chart-zoom:hover { background:rgba(57,135,229,0.88);
+            border-color:#7fb0ee; color:#fff; }
+        .traverse-gallery-overlay .tg-chart-zoom { top:44px; }
+        .traverse-gallery-overlay .tg-chart-zoom svg { width:15px; height:15px; }
+        .traverse-gallery-overlay .tg-chart-zoom.on { background:rgba(57,135,229,0.55);
             border-color:#7fb0ee; color:#fff; }
         .traverse-gallery-overlay .tg-tile-h { display:flex; align-items:center; justify-content:space-between;
             gap:8px; margin-top:10px; }
@@ -3719,6 +3779,10 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-fullscreen {
             top:14px; right:14px; width:40px; height:40px; font-size:23px; background:rgba(7,10,14,0.82);
         }
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-zoom {
+            top:62px; right:14px; width:40px; height:40px; background:rgba(7,10,14,0.82);
+        }
+        .traverse-gallery-overlay .tg-chart-fullscreen-layer .tg-chart-zoom svg { width:20px; height:20px; }
     `;
     overlay.appendChild(style);
 
@@ -3733,12 +3797,15 @@ function showResultGallery(results) {
                 `title="Drag to rotate" aria-label="Fullscreen 3D volume graph"></canvas>` +
                 `<button class="tg-chart-fullscreen" type="button" title="Exit fullscreen graph" ` +
                 `aria-label="Exit fullscreen graph">⛶</button>` +
+                ZOOM_BUTTON_HTML +
             `</div>`;
         overlay.appendChild(layer);
         const canvas = layer.querySelector("canvas");
         const chart = registerChart(new Chart3D(canvas, sourceChart.scene, chartGroup,
             {pad: sourceChart.pad ?? 0.1, scaleBoost: sourceChart.scaleBoost}));
         chart.localMatrix = sourceChart.localMatrix.slice();
+        if (sourceChart.zoomed) chart.setZoom(true);
+        syncZoomButton(chart);
         fullscreenView = {layer, chart, sourceChart};
         requestAnimationFrame(() => chart.resize());
     }
@@ -3755,6 +3822,22 @@ function showResultGallery(results) {
         const shell = btn.closest(".tg-chart-shell");
         const canvas = shell ? shell.querySelector("canvas.tg-chart-3d") : null;
         openChartFullscreen(canvas ? chartByCanvas.get(canvas) : null);
+    }, true);
+
+    // Magnifier: toggle the chart's "zoom to tracks" view. Capture-phase (like
+    // the fullscreen delegate) so the click never falls through to the tile's
+    // select handler.
+    overlay.addEventListener("click", (e) => {
+        const btn = e.target.closest(".tg-chart-zoom");
+        if (!btn || !overlay.contains(btn)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const shell = btn.closest(".tg-chart-shell, .tg-chart-fullscreen-shell");
+        const canvas = shell ? shell.querySelector("canvas.tg-chart-3d") : null;
+        const chart = canvas ? chartByCanvas.get(canvas) : null;
+        if (!chart || !chart.scene.zoomBounds) return;
+        chart.setZoom(!chart.zoomed);
+        syncZoomButton(chart);
     }, true);
 
     const panel = document.createElement("div");
@@ -3928,6 +4011,7 @@ function showResultGallery(results) {
                 hypothesisVolumeScene(dataset, h, {truth: results.truth}),
                 chartGroup, {pad: 0.13}));
             if (chartGroup.syncScale) chartGroup.setSyncScale(true, detailChart);
+            syncZoomButton(detailChart);
         }
         detailsCol.scrollTop = 0;
         if (h.identity) {
@@ -3988,6 +4072,7 @@ function showResultGallery(results) {
                 `aria-label="3D volume view of the ${escapeHtml(h.name)} trajectory"></canvas>` +
                 `<button class="tg-chart-fullscreen" type="button" title="Fullscreen graph" ` +
                 `aria-label="Fullscreen graph">⛶</button>` +
+                ZOOM_BUTTON_HTML +
             `</div>` +
             `<div class="tg-tile-h">` +
                 `<span class="tg-name">${escapeHtml(h.name)}</span>` +
@@ -4053,6 +4138,7 @@ function showResultGallery(results) {
         tileCharts[i] = registerChart(new Chart3D(canvas,
             hypothesisVolumeScene(dataset, h, {compact: true, truth: results.truth}),
             chartGroup, {pad: 0.14}));
+        syncZoomButton(tileCharts[i]);
     }
 
     // Start with the first trajectory-family result. This is only the leader of

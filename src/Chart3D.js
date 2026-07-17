@@ -13,6 +13,7 @@
 // the labels):
 //   {
 //     bounds: {minX,maxX, minY,maxY, minZ,maxZ},   // X=East, Y=North, Z=Alt
+//     zoomBounds: {…} | null,   // optional tighter box for setZoom(true)
 //     series: [
 //       {type:'line',  pts:[[x,y,z],...], color, width, startDot, endRing},
 //       {type:'rays',  segs:[[x0,y0,z0, x1,y1,z1],...], color, alpha, width},
@@ -21,6 +22,11 @@
 //     labels: {x, y, z},
 //     fmt: {x:(v)=>str, y, z},   // optional tick formatters
 //   }
+//
+// setZoom(true) switches a chart to scene.zoomBounds and CLIPS every series to
+// that box, so geometry anchored outside it (e.g. sightline rays from a distant
+// sensor) still appears where it crosses the volume instead of spilling across
+// the page. Zoom is per-chart and overrides a group-synced scale while on.
 
 const DEG = Math.PI / 180;
 
@@ -159,6 +165,43 @@ export class Chart3DGroup {
     }
 }
 
+// Liang–Barsky clip of segment p0→p1 against an axis-aligned bounds box.
+// Returns null when the segment misses the box entirely, otherwise
+// {a, c, entryClipped, exitClipped} where a/c are the (possibly shortened)
+// endpoints and the flags say whether that end was cut by a box face — used to
+// decide whether a polyline subpath continues or restarts.
+export function clipSegmentToBounds(p0, p1, b) {
+    let t0 = 0, t1 = 1;
+    const d = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+    const lo = [b.minX, b.minY, b.minZ];
+    const hi = [b.maxX, b.maxY, b.maxZ];
+    for (let i = 0; i < 3; i++) {
+        if (d[i] === 0) {
+            if (p0[i] < lo[i] || p0[i] > hi[i]) return null;
+            continue;
+        }
+        let tA = (lo[i] - p0[i]) / d[i];
+        let tB = (hi[i] - p0[i]) / d[i];
+        if (tA > tB) { const t = tA; tA = tB; tB = t; }
+        if (tA > t0) t0 = tA;
+        if (tB < t1) t1 = tB;
+        if (t0 > t1) return null;
+    }
+    const at = (t) => [p0[0] + d[0] * t, p0[1] + d[1] * t, p0[2] + d[2] * t];
+    return {
+        a: t0 > 0 ? at(t0) : p0,
+        c: t1 < 1 ? at(t1) : p1,
+        entryClipped: t0 > 0,
+        exitClipped: t1 < 1,
+    };
+}
+
+export function boundsContainPoint(b, p) {
+    return p[0] >= b.minX && p[0] <= b.maxX
+        && p[1] >= b.minY && p[1] <= b.maxY
+        && p[2] >= b.minZ && p[2] <= b.maxZ;
+}
+
 function niceStep(span, target) {
     const raw = span / Math.max(1, target);
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
@@ -185,6 +228,7 @@ export class Chart3D {
         this.localMatrix = group.matrix.slice();
         this.pad = opts.pad ?? 0.14;          // fraction of the canvas kept as margin
         this.scaleBoost = opts.scaleBoost ?? 1.625;
+        this.zoomed = false;                  // when true, draw scene.zoomBounds (clipped)
         group.add(this);
         this._bindPointer();
         this.resize();
@@ -272,7 +316,16 @@ export class Chart3D {
         return {sx: r[0], sy: r[1], depth: r[2]};
     }
 
+    // "Zoom to tracks": frame scene.zoomBounds (the traverse + truth extents,
+    // ignoring the sensor path) and clip everything to it. No-op when the scene
+    // provides no zoomBounds.
+    setZoom(on) {
+        this.zoomed = !!(on && this.scene.zoomBounds);
+        this.draw();
+    }
+
     activeBounds() {
+        if (this.zoomed && this.scene.zoomBounds) return this.scene.zoomBounds;
         return (this.group.syncScale && this.group.sharedBounds) ? this.group.sharedBounds : this.bounds;
     }
 
@@ -312,7 +365,7 @@ export class Chart3D {
         };
 
         this._drawFrame(ctx, b, projN, orientation, hx, hy, hz);
-        this._drawSeries(ctx, proj);
+        this._drawSeries(ctx, proj, this.zoomed ? b : null);
     }
 
     // The box: three back-plane grids, the 12 wireframe edges, axis ticks+labels.
@@ -345,19 +398,24 @@ export class Chart3D {
         const ticksY = niceTicks(b.minY, b.maxY, 5).filter((v) => v >= b.minY && v <= b.maxY);
         const ticksZ = niceTicks(b.minZ, b.maxZ, 5).filter((v) => v >= b.minZ && v <= b.maxZ);
 
-        // Solid ground plane at min-Z (altitude 0 in the traversal graphs).
-        const ground = [
-            projN(-hx, -hy, -hz),
-            projN(hx, -hy, -hz),
-            projN(hx, hy, -hz),
-            projN(-hx, hy, -hz),
-        ];
-        ctx.fillStyle = "#062015";
-        ctx.beginPath();
-        ctx.moveTo(ground[0].x, ground[0].y);
-        for (let i = 1; i < ground.length; i++) ctx.lineTo(ground[i].x, ground[i].y);
-        ctx.closePath();
-        ctx.fill();
+        // Solid ground plane at min-Z. Drawn only when the box floor actually
+        // sits at z = 0 (the full-volume graphs, whose bounds force it there).
+        // A zoomed box floats around the tracks — its floor is an arbitrary
+        // altitude, so filling it would falsely read as terrain.
+        if (Math.abs(b.minZ) <= 1e-9) {
+            const ground = [
+                projN(-hx, -hy, -hz),
+                projN(hx, -hy, -hz),
+                projN(hx, hy, -hz),
+                projN(-hx, hy, -hz),
+            ];
+            ctx.fillStyle = "#062015";
+            ctx.beginPath();
+            ctx.moveTo(ground[0].x, ground[0].y);
+            for (let i = 1; i < ground.length; i++) ctx.lineTo(ground[i].x, ground[i].y);
+            ctx.closePath();
+            ctx.fill();
+        }
 
         // --- back-plane grids ---
         // X = backX plane (spans Y,Z)
@@ -418,13 +476,23 @@ export class Chart3D {
         if (L.z) { const m = projN(backX, backY, 0); ctx.textAlign = "end"; ctx.textBaseline = "middle"; ctx.fillText(L.z, m.x - 22, m.y); }
     }
 
-    _drawSeries(ctx, proj) {
+    // clipB (optional bounds box): clip every series to it — rays and polylines
+    // are shortened to their intersection with the box, points outside are
+    // dropped, and start/end markers only draw when that endpoint is inside.
+    _drawSeries(ctx, proj, clipB = null) {
+        const inClip = (p) => !clipB || boundsContainPoint(clipB, p);
         for (const s of this.scene.series) {
             if (s.type === "rays") {
                 ctx.strokeStyle = s.color; ctx.globalAlpha = s.alpha ?? 0.5; ctx.lineWidth = s.width ?? 1;
                 ctx.beginPath();
                 for (const g of s.segs) {
-                    const a = proj([g[0], g[1], g[2]]), c = proj([g[3], g[4], g[5]]);
+                    let a3 = [g[0], g[1], g[2]], c3 = [g[3], g[4], g[5]];
+                    if (clipB) {
+                        const seg = clipSegmentToBounds(a3, c3, clipB);
+                        if (!seg) continue;
+                        a3 = seg.a; c3 = seg.c;
+                    }
+                    const a = proj(a3), c = proj(c3);
                     ctx.moveTo(a.x, a.y); ctx.lineTo(c.x, c.y);
                 }
                 ctx.stroke(); ctx.globalAlpha = 1;
@@ -433,19 +501,34 @@ export class Chart3D {
                 ctx.lineJoin = "round";
                 if (s.dash) ctx.setLineDash(s.dash);
                 ctx.beginPath();
-                let first = true;
-                for (const p of s.pts) {
-                    const q = proj(p);
-                    if (first) { ctx.moveTo(q.x, q.y); first = false; } else ctx.lineTo(q.x, q.y);
+                if (clipB) {
+                    // A clipped polyline can leave and re-enter the box; open a
+                    // new subpath whenever the previous segment was cut short
+                    // or this one enters through a face.
+                    let open = false;
+                    for (let i = 1; i < s.pts.length; i++) {
+                        const seg = clipSegmentToBounds(s.pts[i - 1], s.pts[i], clipB);
+                        if (!seg) { open = false; continue; }
+                        const a = proj(seg.a), c = proj(seg.c);
+                        if (!open || seg.entryClipped) ctx.moveTo(a.x, a.y);
+                        ctx.lineTo(c.x, c.y);
+                        open = !seg.exitClipped;
+                    }
+                } else {
+                    let first = true;
+                    for (const p of s.pts) {
+                        const q = proj(p);
+                        if (first) { ctx.moveTo(q.x, q.y); first = false; } else ctx.lineTo(q.x, q.y);
+                    }
                 }
                 ctx.stroke();
                 if (s.dash) ctx.setLineDash([]);
                 if (s.pts.length) {
-                    if (s.startDot) {
+                    if (s.startDot && inClip(s.pts[0])) {
                         const q = proj(s.pts[0]);
                         ctx.fillStyle = s.color; ctx.beginPath(); ctx.arc(q.x, q.y, 3.5, 0, Math.PI * 2); ctx.fill();
                     }
-                    if (s.endRing) {
+                    if (s.endRing && inClip(s.pts[s.pts.length - 1])) {
                         const q = proj(s.pts[s.pts.length - 1]);
                         ctx.strokeStyle = s.color; ctx.lineWidth = 1.6;
                         ctx.beginPath(); ctx.arc(q.x, q.y, 3.5, 0, Math.PI * 2); ctx.stroke();
@@ -454,6 +537,7 @@ export class Chart3D {
             } else if (s.type === "points") {
                 ctx.fillStyle = s.color;
                 for (const p of s.pts) {
+                    if (!inClip(p)) continue;
                     const q = proj(p);
                     ctx.beginPath(); ctx.arc(q.x, q.y, s.size ?? 2, 0, Math.PI * 2); ctx.fill();
                 }
