@@ -1880,3 +1880,135 @@ export async function fitAircraft(dataset, options = {}) {
         })),
     };
 }
+
+// ---------------------------------------------------------------------------
+// Sensor-motion observability and cross-regime scoring
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregate sensor (LOS origin) motion over the dataset window.
+ * Bearings-only range recovery needs parallax: with a (near-)static sensor,
+ * every range along the ray fan admits a trajectory and no free-range method
+ * can determine distance from the evidence.
+ *
+ * Returns {pathLen, span, n}: pathLen is the summed frame-to-frame sensor
+ * travel; span is the bounding-box diagonal of the sensor positions — the
+ * honest parallax baseline (GPS jitter inflates pathLen but not span).
+ */
+export function sensorMotionStats(dataset) {
+    const {n, S} = dataset;
+    let pathLen = 0;
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (let f = 0; f < n; f++) {
+        const b = f * 3;
+        const x = S[b], y = S[b + 1], z = S[b + 2];
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+        if (f > 0) {
+            pathLen += Math.hypot(x - S[b - 3], y - S[b - 2], z - S[b - 1]);
+        }
+    }
+    const span = n > 0 ? Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) : 0;
+    return {pathLen, span, n};
+}
+
+/**
+ * True when the sensor baseline is too small for the evidence to constrain
+ * range at the working distance. anchorDist is the analysis start-distance
+ * prior (meters): at 20 NM a 30 m baseline still resolves nothing, while a
+ * drone filmed from 200 m away can triangulate off a few meters of motion.
+ */
+export function isRangeUnobservable(stats, anchorDist) {
+    if (!stats || !Number.isFinite(stats.span)) return false;
+    const threshold = Math.max(2, 1e-3 * (Number.isFinite(anchorDist) ? anchorDist : 0));
+    return stats.span < threshold;
+}
+
+/**
+ * Regime-neutral score for a candidate ray-constrained track: the same
+ * smoothness metric the gallery ranking uses (straightFlightScore) plus the
+ * LOS residual beyond the ray-solver allowance, in 0.05-degree units.
+ * The fast sweep and the slow range profile score with different priors and
+ * different smoothing/downsampling, so their internal scores must never be
+ * compared directly — this is the common yardstick.
+ */
+export function neutralTrackScore(dataset, track, rayAllowanceDeg = 0.05) {
+    const metrics = trackMetrics(dataset, track);
+    const errDeg = meanAngularError(dataset, track) * 180 / Math.PI;
+    const scoredErr = Math.max(0, errDeg - rayAllowanceDeg);
+    const score = straightFlightScore(metrics) + scoredErr / 0.05;
+    return {score: Number.isFinite(score) ? score : Infinity, metrics, errDeg};
+}
+
+/**
+ * Decide whether the slow-drift candidate should replace the fast-sweep
+ * representative for the Constant Air Speed hypothesis. The margin demands a
+ * DECISIVE win: on narrow-baseline scenes (Gimbal/GoFast) a slow near-field
+ * drifter rides the rays about as smoothly as the fast solution, and a raw
+ * comparison would wrongly flip the headline to a ~10 kt near-field track.
+ */
+export function slowRegimeWins(fastScore, slowScore, margin = 0.8) {
+    if (!Number.isFinite(slowScore)) return false;
+    if (!Number.isFinite(fastScore)) return true;
+    return slowScore < fastScore * margin;
+}
+
+// ~100 kt: above this a candidate is not a "slow drift" answer, whatever the
+// slow profile's argmin says — flat-family scenes can park the argmin on a
+// fast row despite the 5-kt prior.
+export const SLOW_REGIME_MAX_SPEED_MS = 52;
+// Required sharpness of the slow range valley before its argmin means anything.
+export const SLOW_REGIME_MIN_CONTRAST = 2.5;
+
+/**
+ * Sharpness of the slow range-profile valley: upper-quartile score over the
+ * minimum. A decisive scene (real parallax pinning a slow object's range)
+ * scores its wrong ranges much worse than its valley (contrast >> 1); a
+ * degenerate narrow-baseline scene rides the rays smoothly at EVERY range
+ * (contrast ~1), and its argmin row is an arbitrary member of a flat family —
+ * promoting it would replace the honest ambiguity answer with a confident
+ * wrong one.
+ */
+export function slowValleyContrast(profile) {
+    if (!profile || profile.length < 4) return 1;
+    const scores = profile.map((r) => r.score).filter(Number.isFinite).sort((a, b) => a - b);
+    if (!scores.length) return 1;
+    const min = Math.max(scores[0], 1e-9);
+    const p75 = scores[Math.min(scores.length - 1, Math.floor(scores.length * 0.75))];
+    return p75 / min;
+}
+
+/**
+ * Decide which regime the "Constant Air Speed" hypothesis represents: the fast
+ * sweep's prior-anchored family representative, or an honest constant-speed
+ * track at the slow range-profile valley. The swap requires ALL of:
+ *  - a genuinely slow candidate (<= maxSlowSpeed),
+ *  - a DECISIVE slow valley (slowValleyContrast >= minContrast — flat-valley
+ *    narrow-baseline scenes keep the fast representative and its family-
+ *    ambiguity language),
+ *  - a decisive neutral-score win (slowRegimeWins margin).
+ * Returns {useSlow, fast: {track, scored}, slow: null|{row, speed, track, scored, contrast}}.
+ */
+export function pickConstAirRegime(dataset, sweep, slowProfile, opts = {}) {
+    const margin = opts.margin ?? 0.8;
+    const maxSlowSpeed = opts.maxSlowSpeed ?? SLOW_REGIME_MAX_SPEED_MS;
+    const minContrast = opts.minContrast ?? SLOW_REGIME_MIN_CONTRAST;
+    const fastTrack = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed).track;
+    const fast = {track: fastTrack, scored: neutralTrackScore(dataset, fastTrack)};
+    let slow = null, useSlow = false;
+    if (slowProfile && slowProfile.length) {
+        const row = slowProfile.reduce((a, b) => (b.score < a.score ? b : a));
+        const speed = row?.metrics?.airSpeed?.mean;
+        const contrast = slowValleyContrast(slowProfile);
+        if (Number.isFinite(speed) && Number.isFinite(row.startDist)
+            && speed > 0.1 && speed <= maxSlowSpeed && contrast >= minContrast) {
+            const slowTrack = constAirSpeedTrack(dataset, row.startDist, speed).track;
+            const scored = neutralTrackScore(dataset, slowTrack);
+            slow = {row, speed, track: slowTrack, scored, contrast};
+            useSlow = slowRegimeWins(fast.scored.score, scored.score, margin);
+        }
+    }
+    return {useSlow, fast, slow};
+}

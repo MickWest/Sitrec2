@@ -87,3 +87,40 @@ export function shouldSerializeLoadedFileEntry(fileID, fileEntry, activeTrackSou
 
     return activeTrackSourceFileIDs.has(fileID);
 }
+
+/**
+ * Import-wiring decision: when a new track auto-selects as the target, should
+ * the Camera Heading (CameraLOSController) keep the camera track's recorded
+ * sensor angles instead of being forced to "To Target"?
+ *
+ * Keep the angles ONLY when both hold:
+ * - the current heading choice IS the camera track's own recorded-angles
+ *   controller ("Angles_<cameraShortName>"), i.e. a real measured attitude; and
+ * - the arriving target is that same track's derived "Center_" frame-center
+ *   track (same source file, supplementary). Aiming the camera at the smoothed
+ *   Center track would RE-derive the sightlines from the target being studied
+ *   (circular) and silently discard the measurement.
+ *
+ * Everything else — STANAG role-hinted targets, ordinary second-track drops —
+ * must still force "To Target" exactly as before.
+ *
+ * The exact-name match handles the common case; the sameSourceFile +
+ * isSupplementary relationship survives shortName uniquification (a collision
+ * can rename the camera track to "name_1" while its Center stays "Center_name").
+ *
+ * @param {Object} p
+ * @param {string|null} p.headingChoice     current CameraLOSController choice (raw option key)
+ * @param {string|null} p.cameraShortName   cameraTrackSwitch.choice (shortName, or "fixedCamera" etc.)
+ * @param {string|null} p.arrivingShortName shortName of the track being auto-selected as target
+ * @param {boolean} p.sameSourceFile        arriving track comes from the camera track's source file
+ * @param {boolean} p.isSupplementary       source file marks the arriving track as a derived/supplementary track
+ * @returns {boolean} true = keep the angles heading (skip the To Target clobber)
+ */
+export function shouldPreserveAnglesHeading({headingChoice, cameraShortName, arrivingShortName,
+    sameSourceFile, isSupplementary}) {
+    if (!cameraShortName || !headingChoice) return false;
+    if (headingChoice !== "Angles_" + cameraShortName) return false;
+    if (!arrivingShortName || !arrivingShortName.startsWith("Center_")) return false;
+    return arrivingShortName === "Center_" + cameraShortName
+        || (sameSourceFile === true && isSupplementary === true);
+}

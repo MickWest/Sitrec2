@@ -43,7 +43,10 @@ import {
     KNOTS_TO_MS,
     meanAngularError,
     METERS_PER_NM,
+    isRangeUnobservable,
+    pickConstAirRegime,
     rangeProfile,
+    sensorMotionStats,
     straightFlightScore,
     sweepConstAirSpeed,
     trackMetrics,
@@ -645,7 +648,7 @@ function physicsBoundSubtitle(base, active, inactive, unstable = []) {
 }
 
 function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, quad, satellite,
-    slowProfile, slowOpts, losNode, originLat, originLon}) {
+    slowProfile, slowOpts, losNode, originLat, originLon, provenance = null, failures = null}) {
     const S = dataset.S;
     const globalFrame = (f) => (dataset.frame0 ?? 0) + f;
     const dateForDatasetFrame = (f) => dateAtDatasetFrame(dataset, f);
@@ -676,52 +679,95 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, quad
         }
     } catch (e) { /* annotation degrades gracefully; floor stays NaN */ }
 
-    // 1. Constant air speed (sweep best) — smoothest ray-following path that
-    //    holds the winning air speed (QP solve; honest small residual).
+    // 1. Constant air speed — smoothest ray-following path that holds a fixed
+    //    air speed (QP solve; honest small residual). The sweep's family
+    //    representative is prior-anchored on the Target Speed GUI value (a
+    //    fast-jet default), so a genuinely SLOW object (balloon, drifting
+    //    debris) can live in the slow range-profile valley the sweep never
+    //    represents. Build an honest constant-air-speed candidate at the slow
+    //    valley's best range too, re-score both on the same neutral metric
+    //    (their internal scores use different priors/smoothing and must never
+    //    be compared raw), and keep the fast pick unless the slow candidate
+    //    wins DECISIVELY (see slowRegimeWins).
     {
-        const track = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed).track;
+        const regimePick = pickConstAirRegime(dataset, sweep, slowProfile);
+        const fastTrack = regimePick.fast.track;
+        const fastScored = regimePick.fast.scored;
+        const slowPick = regimePick.useSlow
+            ? {...regimePick.slow, fastScore: fastScored.score}
+            : null;
+
         const boundaryPins = [];
-        if (sweep.boundaryAxes?.range) {
-            const rLo = Math.min(...sweep.ranges), rHi = Math.max(...sweep.ranges);
-            if (sweep.familyBand?.rangeLo <= rLo * 1.001) boundaryPins.push("range (lower search edge)");
-            if (sweep.familyBand?.rangeHi >= rHi * 0.999) boundaryPins.push("range (upper search edge)");
+        if (slowPick) {
+            if (slowProfile.boundaryLimited) boundaryPins.push("range (slow-profile search edge)");
+        } else {
+            if (sweep.boundaryAxes?.range) {
+                const rLo = Math.min(...sweep.ranges), rHi = Math.max(...sweep.ranges);
+                if (sweep.familyBand?.rangeLo <= rLo * 1.001) boundaryPins.push("range (lower search edge)");
+                if (sweep.familyBand?.rangeHi >= rHi * 0.999) boundaryPins.push("range (upper search edge)");
+            }
+            if (sweep.boundaryAxes?.speed) {
+                const vLo = Math.min(...sweep.speeds), vHi = Math.max(...sweep.speeds);
+                if (sweep.familyBand?.speedLo <= vLo * 1.001) boundaryPins.push("speed (lower search edge)");
+                if (sweep.familyBand?.speedHi >= vHi * 0.999) boundaryPins.push("speed (upper search edge)");
+            }
         }
-        if (sweep.boundaryAxes?.speed) {
-            const vLo = Math.min(...sweep.speeds), vHi = Math.max(...sweep.speeds);
-            if (sweep.familyBand?.speedLo <= vLo * 1.001) boundaryPins.push("speed (lower search edge)");
-            if (sweep.familyBand?.speedHi >= vHi * 0.999) boundaryPins.push("speed (upper search edge)");
+
+        if (slowPick) {
+            list.push({
+                key: "constAir",
+                name: "Constant Air Speed",
+                subtitle: `Slow-drift valley: ~${kt1(slowPick.speed)} kt near ${nm1(slowPick.row.startDist)} NM`,
+                color: VIZ.constAir,
+                track: slowPick.track,
+                metricsFull: slowPick.scored.metrics,
+                errDeg: slowPick.scored.errDeg,
+                searchBounds: boundaryPins.length ? boundaryPins : undefined,
+                params: {
+                    range: slowPick.row.startDist, airSpeed: slowPick.speed, errFloor,
+                    regime: "slow",
+                    slowScore: slowPick.scored.score, fastScore: slowPick.fastScore,
+                    boundaryLimited: slowProfile.boundaryLimited ? 1 : 0,
+                },
+                notes: "The smoothest path following the LOS rays while holding air speed fixed. "
+                    + `The slow-object range valley (${nm1(slowPick.row.startDist)} NM at ~${kt1(slowPick.speed)} kt) `
+                    + `outscored the fast sweep's prior-anchored representative on the shared smoothness metric `
+                    + `(${slowPick.scored.score.toFixed(2)} vs ${slowPick.fastScore.toFixed(2)}, lower is better) — `
+                    + `the evidence prefers a slow drifting object over anything near the Target Speed prior.`,
+            });
+        } else {
+            list.push({
+                key: "constAir",
+                name: "Constant Air Speed",
+                subtitle: (sweep.familyBand && sweep.familyBand.count > 1)
+                    ? `Family: ${kt1(sweep.familyBand.speedLo)}–${kt1(sweep.familyBand.speedHi)} kt at ` +
+                      `${nm1(sweep.familyBand.rangeLo)}–${nm1(sweep.familyBand.rangeHi)} NM fit about equally`
+                    : "Fixed airspeed, wind-corrected",
+                color: VIZ.constAir,
+                track: fastTrack,
+                metricsFull: fastScored.metrics,
+                errDeg: fastScored.errDeg,
+                searchBounds: boundaryPins.length ? boundaryPins : undefined,
+                params: {
+                    range: sweep.best.startDist, airSpeed: sweep.best.speed, errFloor,
+                    familyRangeLo: sweep.familyBand?.rangeLo, familyRangeHi: sweep.familyBand?.rangeHi,
+                    familySpeedLo: sweep.familyBand?.speedLo, familySpeedHi: sweep.familyBand?.speedHi,
+                    familyCount: sweep.familyBand?.count,
+                    boundaryLimited: sweep.boundaryLimited ? 1 : 0,
+                },
+                notes: "The smoothest path following the LOS rays while holding air speed fixed."
+                    + ((sweep.familyBand && sweep.familyBand.count > 1)
+                        ? ` ${sweep.familyBand.count} grid cells fit about equally — the shown cell is the`
+                          + ` family member closest to the Target Speed prior, not a uniquely determined answer.`
+                        : "")
+                    + (sweep.boundaryLimited
+                        ? ` The supported family reaches the ${[
+                            sweep.boundaryAxes?.range ? "range" : null,
+                            sweep.boundaryAxes?.speed ? "speed" : null,
+                        ].filter(Boolean).join(" and ")} search boundary — treat the affected value as a bound, not a resolved optimum.`
+                        : ""),
+            });
         }
-        list.push({
-            key: "constAir",
-            name: "Constant Air Speed",
-            subtitle: (sweep.familyBand && sweep.familyBand.count > 1)
-                ? `Family: ${kt1(sweep.familyBand.speedLo)}–${kt1(sweep.familyBand.speedHi)} kt at ` +
-                  `${nm1(sweep.familyBand.rangeLo)}–${nm1(sweep.familyBand.rangeHi)} NM fit about equally`
-                : "Fixed airspeed, wind-corrected",
-            color: VIZ.constAir,
-            track,
-            metricsFull: trackMetrics(dataset, track),
-            errDeg: meanAngularError(dataset, track) * 180 / Math.PI,
-            searchBounds: boundaryPins.length ? boundaryPins : undefined,
-            params: {
-                range: sweep.best.startDist, airSpeed: sweep.best.speed, errFloor,
-                familyRangeLo: sweep.familyBand?.rangeLo, familyRangeHi: sweep.familyBand?.rangeHi,
-                familySpeedLo: sweep.familyBand?.speedLo, familySpeedHi: sweep.familyBand?.speedHi,
-                familyCount: sweep.familyBand?.count,
-                boundaryLimited: sweep.boundaryLimited ? 1 : 0,
-            },
-            notes: "The smoothest path following the LOS rays while holding air speed fixed."
-                + ((sweep.familyBand && sweep.familyBand.count > 1)
-                    ? ` ${sweep.familyBand.count} grid cells fit about equally — the shown cell is the`
-                      + ` family member closest to the Target Speed prior, not a uniquely determined answer.`
-                    : "")
-                + (sweep.boundaryLimited
-                    ? ` The supported family reaches the ${[
-                        sweep.boundaryAxes?.range ? "range" : null,
-                        sweep.boundaryAxes?.speed ? "speed" : null,
-                    ].filter(Boolean).join(" and ")} search boundary — treat the affected value as a bound, not a resolved optimum.`
-                    : ""),
-        });
     }
 
     // 2. Constant altitude — level flight crossing each ray at a fixed height.
@@ -1271,7 +1317,18 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, quad
         {key: "gfMC2", label: "Global Fit: Monte Carlo 2", subtitle: "Monte-Carlo sampled fit v2 (fixed seed)", color: "#9b7fd0"},
         {key: "straightLine", label: "Straight Line", subtitle: "Straight constant-velocity line", color: "#cf8fae"},
     ];
-    if (sel && sel.inputs) {
+    if (provenance?.measuredSubstituted) {
+        // The live method nodes fit the JetLOS switch's CURRENT (constructed)
+        // sightlines; grading those fits against the substituted measured
+        // dataset would mix evidence — the tiles would look wrong for the
+        // wrong reason and their "apply" would re-fit different rays. Skip
+        // them and say so, rather than counting them silently.
+        failures?.push({
+            method: "Live-method contenders (Global Fit family, Straight Line)",
+            error: "they fit the currently selected constructed LOS; this analysis used the "
+                + "measured sensor LOS instead",
+        });
+    } else if (sel && sel.inputs) {
         // LOS-only signature: a method node's cached fit is stale if the LOS
         // changed, even when its own GUI params did not.
         const losSig = String(analysisFingerprint(losNode, [], dataset.frame0 ?? 0,
@@ -1458,6 +1515,15 @@ function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
     if (prov.circular) {
         out += `<strong>⚠ Constructed LOS — validation only:</strong> ${escapeHtml(prov.reason)} ` +
             `Everything below describes the scene's internal consistency, not independent inference. `;
+    }
+    if (prov.measuredSubstituted) {
+        out += `<strong>Measured sensor LOS used:</strong> ${escapeHtml(prov.substitutionNote ?? "")} `;
+    }
+    if (prov.rangeUnobservable) {
+        out += `<strong>⛔ Range not determined by the evidence:</strong> the sensor's motion over the ` +
+            `analysis window (baseline ${Math.round(prov.sensorSpan ?? 0)} m) is negligible at the assumed ` +
+            `working distance, so the sightlines contain no usable parallax — every distance along them ` +
+            `fits equally well, and each method's range reflects its own priors, not measurement. `;
     }
 
     // Truth mode: the summary is about closeness to the reference track.
@@ -1901,7 +1967,7 @@ function analysisFingerprint(losNode, scalars, frame0 = 0, frame1 = (losNode.fra
 // to decide a cache hit at Analyze time. Applying an exact snapshot is output
 // selection only: it must not change this key or feed an answer back into the
 // next analysis assumptions.
-function computeAnalysisFingerprint(losNode) {
+function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
     const analysisFrames = analysisFrameRange(losNode);
     const windNode = NodeMan.get("targetWind", false) || null;
     const analysisWindNode = analyzeTweaks.windMode === "Zero wind" ? null : windNode;
@@ -1932,7 +1998,7 @@ function computeAnalysisFingerprint(losNode) {
             windSeries.push(analysisWindNode.from, analysisWindNode.knots);
         }
     }
-    const provenance = losProvenance();
+    const provenance = capturedProvenance || losProvenance();
     // Truth-track reference: both WHICH track is selected and its actual
     // positions steer the scoring/ordering (e.g. the altitude-units toggle
     // re-derives a Truth track in place), so sample them into the key.
@@ -1951,6 +2017,10 @@ function computeAnalysisFingerprint(losNode) {
         ...windSeries,
         ...truthSeries,
         provenance.circular ? 1 : 0, provenance.losSource, provenance.cameraHeading,
+        // Measured-LOS substitution changes which sightlines the whole run
+        // consumes; the frame hash usually differs too, but a perfectly
+        // aligned constructed/measured pair must still get a distinct key.
+        provenance.measuredSubstituted ? 1 : 0, provenance.measuredLOSId ?? "",
         speedTarget, anchorDist, userMin, userMax,
         // Ground-contact mode reshapes the candidate set (adds/removes the
         // Ground Vehicle, changes underground/mode flags and the ground priors).
@@ -2019,11 +2089,44 @@ function terrainElevationIsLoading() {
  * or null if there was no LOS data or the user cancelled.
  */
 export async function runTraverseAnalysis() {
-    const losNode = resolveLOSNode();
+    let losNode = resolveLOSNode();
     if (!losNode) {
         showError("Traverse analysis: no LOS node found.\n" +
             "Need a 'JetLOS' node or a Const Air Spd traverse with an LOS input.");
         return null;
+    }
+    // LOS provenance, with measured-sensor substitution. When the selected LOS
+    // is CONSTRUCTED from the target being tested (camera aimed "To Target"),
+    // any fit that recovers the target is only an internal-consistency check.
+    // If the camera track carries independently recorded sensor angles (MISB
+    // az/el — its Track_<name>_LOS node), those ARE the measurement: analyze
+    // them instead of the constructed centerline, and say so prominently.
+    let provenance = losProvenance();
+    // Substitute ONLY when the selected source is the plain camera-center
+    // boresight. Tracking-derived sources ("Camera + Point Track") are also
+    // flagged circular, but they carry a real measured pixel offset that the
+    // recorded boresight angles do NOT contain — swapping would silently
+    // discard that measurement while claiming measurement-grade sightlines.
+    if (provenance.circular && provenance.selectedIsCameraCenter) {
+        const measured = resolveMeasuredLOSNode(losNode);
+        if (measured) {
+            const constructedSource = provenance.losSource;
+            provenance = {
+                ...provenance,
+                circular: false,
+                reason: undefined,
+                measuredSubstituted: true,
+                measuredLOSId: measured.id,
+                constructedSource,
+                losSource: `Measured sensor angles (${measured.id})`,
+                substitutionNote: `The selected "${constructedSource}" sightlines are re-derived from the ` +
+                    `target-aimed camera attitude (circular), but the camera track carries independently ` +
+                    `recorded sensor angles — the analysis used those measured sightlines (${measured.id}) instead.`,
+            };
+            losNode = measured;
+            console.log("Traverse analysis: substituted measured sensor LOS " + measured.id
+                + " for circular '" + constructedSource + "' sightlines");
+        }
     }
     const analysisFrames = analysisFrameRange(losNode);
     if (!losNode.frames || analysisFrames.count < 10) {
@@ -2105,7 +2208,7 @@ export async function runTraverseAnalysis() {
     // Cache hit → show the previous gallery instantly, skipping the whole fit
     // battery. The main fingerprint covers evidence/configuration; the scoped
     // terrain check covers only elevations actually used by candidate grading.
-    const fp = computeAnalysisFingerprint(losNode);
+    const fp = computeAnalysisFingerprint(losNode, provenance);
     if (_analysisCache && _analysisCache.fp === fp) {
         const cached = _analysisCache.results;
         const currentTerrainDependencies = resampleTerrainDependencies(
@@ -2161,6 +2264,17 @@ export async function runTraverseAnalysis() {
         await yieldToDOM();
         const {dataset, originLat, originLon} = buildAnalysisDataset(losNode, analysisWindNode, anchorDist, analysisFrames);
         const failures = [];
+        // Sensor-baseline observability: with a (near-)static LOS origin no
+        // free-range method can determine distance — every range along the ray
+        // fan admits a trajectory, and smoothness scoring then collapses the
+        // solution toward the sensor. Detect it here and warn everywhere.
+        const sensorStats = sensorMotionStats(dataset);
+        provenance = {
+            ...provenance,
+            sensorPathLen: sensorStats.pathLen,
+            sensorSpan: sensorStats.span,
+            rangeUnobservable: isRangeUnobservable(sensorStats, anchorDist),
+        };
         const terrainAtStart = NodeMan.get("TerrainModel", false);
         const terrainConfigAtStart = terrainAnalysisConfigScalars(terrainAtStart,
             Globals.equatorRadius, Globals.polarRadius, terrainDataEpoch(terrainAtStart));
@@ -2315,6 +2429,7 @@ export async function runTraverseAnalysis() {
             dataset, sweep, ca, plausible, aircraft, lantern, quad, satellite,
             slowProfile, slowOpts,
             losNode, originLat, originLon,
+            provenance, failures,
         });
 
         // Ground-truth reference: when a truth track is selected in the Tweaks,
@@ -2354,9 +2469,22 @@ export async function runTraverseAnalysis() {
             throw new Error("terrain_changed");
         }
 
-        // detailed per-frame series for the sweep's best solution
+        // detailed per-frame series. The sweep's best is always computed (the
+        // report's sweep paragraph quotes it), but the SELECTED constant-air
+        // representative — what the charts and plan view draw — follows the
+        // regime pick: the slow-drift valley when it demoted the sweep best.
         const bestTrav = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed);
-        const bestMetrics = trackMetrics(dataset, bestTrav.track);
+        const sweepBestMetrics = trackMetrics(dataset, bestTrav.track);
+        const constAirHyp = hypotheses.find((h) => h.key === "constAir" && h.track && h.metricsFull);
+        const constAirIsSlow = constAirHyp?.params?.regime === "slow";
+        const bestTrack = constAirIsSlow ? constAirHyp.track : bestTrav.track;
+        const bestMetrics = constAirIsSlow ? constAirHyp.metricsFull : sweepBestMetrics;
+        const constAirPick = constAirIsSlow ? {
+            range: constAirHyp.params.range,
+            airSpeed: constAirHyp.params.airSpeed,
+            slowScore: constAirHyp.params.slowScore,
+            fastScore: constAirHyp.params.fastScore,
+        } : null;
 
         // slow-object plausible track at ITS best range, for the plan view
         const slowBestRow = slowProfile.reduce((a, b) => (b.score < a.score ? b : a));
@@ -2404,7 +2532,8 @@ export async function runTraverseAnalysis() {
         // ~10 MB of string) used to be built eagerly inside every analysis run
         // even though it is only seen when the user clicks "Open Full Report".
         // Build it on demand instead — several seconds off every analysis.
-        const provenance = losProvenance();
+        // provenance was resolved (and possibly measured-substituted) up front,
+        // then annotated with the sensor-baseline stats after the dataset build.
         const manifest = Object.freeze({
             inputFingerprint: `0x${fp.toString(16).padStart(8, "0")}`,
             situation: Sit.name ?? "unnamed sitch",
@@ -2424,6 +2553,11 @@ export async function runTraverseAnalysis() {
                 constructedLOS: provenance.circular,
                 losSource: provenance.losSource,
                 cameraHeading: provenance.cameraHeading,
+                measuredLOSSubstituted: provenance.measuredSubstituted
+                    ? provenance.measuredLOSId : null,
+                rangeUnobservable: !!provenance.rangeUnobservable,
+                sensorBaselineM: Number.isFinite(provenance.sensorSpan)
+                    ? Math.round(provenance.sensorSpan) : null,
             },
             searchBounds: {
                 userSpecified: !rangeIsDefault,
@@ -2463,7 +2597,7 @@ export async function runTraverseAnalysis() {
             sitName: Sit.name ?? "unnamed sitch",
             dataset, windText, speedTarget,
             sweep, fastProfile, slowProfile, aircraft,
-            bestTrack: bestTrav.track, bestMetrics,
+            bestTrack, bestMetrics, sweepBestMetrics, constAirPick,
             slowBestRow, slowTrack,
             closeLoM, closeHiM,
             hypotheses, provenance, failures, manifest,
@@ -2560,6 +2694,23 @@ function resolveLOSNode() {
     return null;
 }
 
+// The camera track's MEASURED sensor LOS, if it has one: a MISB import with
+// sensor az/el gets a CNodeLOSTrackMISB node ("Track_<shortName>_LOS") whose
+// per-frame origin is the platform position and whose direction is the
+// recorded (independently measured) sensor attitude. Only offered when the
+// camera actually follows that track — a camera parked elsewhere makes the
+// track's sightlines someone else's evidence.
+function resolveMeasuredLOSNode(selectedLOSNode) {
+    const camShort = NodeMan.get("cameraTrackSwitch", false)?.choice;
+    if (!camShort) return null;
+    const node = NodeMan.get("Track_" + camShort + "_LOS", false);
+    if (!node || typeof node.v !== "function" || !node.frames) return null;
+    // Defensive: the measured LOS must cover the same frame grid as the
+    // selected LOS or the A-B window / readiness checks would silently shift.
+    if (selectedLOSNode?.frames && node.frames !== selectedLOSNode.frames) return null;
+    return node;
+}
+
 // LOS provenance: detect CIRCULAR (target-derived) sightlines. In the custom
 // sitch family the look camera can be aimed straight at the current target
 // track ("Camera Heading" = To Target) while the analysis LOS is the raw
@@ -2574,8 +2725,15 @@ function losProvenance() {
     const camCtrl = NodeMan.get("CameraLOSController", false);
     const losChoice = jetLOS && jetLOS.choice;
     const ctrlChoice = camCtrl && camCtrl.choice;
-    const selectedLOS = jetLOS && jetLOS.choice && jetLOS.inputs
+    let selectedLOS = jetLOS && jetLOS.choice && jetLOS.inputs
         ? jetLOS.inputs[jetLOS.choice] : jetLOS;
+    if (typeof selectedLOS === "string") selectedLOS = NodeMan.get(selectedLOS, false);
+    // The PLAIN camera-center boresight, as opposed to a tracking-derived LOS
+    // ("Camera + Point Track" etc.) that adds a real measured per-pixel offset
+    // to the centreline. Only the plain boresight may be swapped for the
+    // recorded sensor angles — substituting under a tracking source would
+    // discard the pixel offset while claiming measurement.
+    const selectedIsCameraCenter = selectedLOS?.id === "JetLOSCameraCenter";
     const dependsOn = (node, targetID, seen = new Set()) => {
         if (!node || seen.has(node)) return false;
         if (node.id === targetID) return true;
@@ -2590,6 +2748,7 @@ function losProvenance() {
     if (ctrlChoice === "To Target" && dependsOn(selectedLOS, "JetLOSCameraCenter")) {
         return {
             circular: true,
+            selectedIsCameraCenter,
             losSource: losChoice,
             cameraHeading: ctrlChoice,
             reason: `Camera Heading is "To Target" and the selected ${losChoice || "camera-derived"} ` +
@@ -2597,7 +2756,8 @@ function losProvenance() {
                 "offset, so these sightlines are not independent of the target being tested.",
         };
     }
-    return {circular: false, losSource: losChoice ?? "unknown", cameraHeading: ctrlChoice ?? "n/a"};
+    return {circular: false, selectedIsCameraCenter,
+        losSource: losChoice ?? "unknown", cameraHeading: ctrlChoice ?? "n/a"};
 }
 
 function openReport(html) {
@@ -2950,11 +3110,18 @@ function detailProse(h, r, ss) {
             return {
                 lead: `An object holding a constant air speed of about ${kt1(p.airSpeed)} kt ` +
                     `(achieved ${kt1(m.airSpeed.mean)} kt), starting near ${nm1(p.range)} NM.`,
-                derived: `A grid search over start range × air speed (15–650 kt, log-spaced) solves each ` +
-                    `combination as the smoothest ray-following path that holds that air speed (wind ` +
-                    `subtracted), scoring smoothness plus how well the speed could actually be held. ` +
-                    `The selected family representative is ${nm1(p.range)} NM @ ${kt1(p.airSpeed)} kt; ` +
-                    `it is prior-selected when several cells score about equally.`,
+                derived: p.regime === "slow"
+                    ? `The fast grid search (anchored on the Target Speed prior) and the slow-object ` +
+                      `range profile were both solved, then re-scored on the same neutral smoothness ` +
+                      `metric. The slow-drift valley won decisively (${(p.slowScore ?? 0).toFixed(2)} vs ` +
+                      `${(p.fastScore ?? 0).toFixed(2)}, lower is better): the smoothest constant-air-speed ` +
+                      `explanation is ~${kt1(p.airSpeed)} kt near ${nm1(p.range)} NM, not anything near the ` +
+                      `Target Speed prior.`
+                    : `A grid search over start range × air speed (15–650 kt, log-spaced) solves each ` +
+                      `combination as the smoothest ray-following path that holds that air speed (wind ` +
+                      `subtracted), scoring smoothness plus how well the speed could actually be held. ` +
+                      `The selected family representative is ${nm1(p.range)} NM @ ${kt1(p.airSpeed)} kt; ` +
+                      `it is prior-selected when several cells score about equally.`,
                 constraint: onRay
                     ? `It sits on the sightlines by construction (0° error), so the LOS fit is automatic — ` +
                       `plausibility rests on the implied motion: ${kt1(m.airSpeed.mean)} kt, up to ${g.toFixed(2)} g.`
@@ -3642,6 +3809,29 @@ function showResultGallery(results) {
             "and video tracking before treating the result as inference.";
         panel.appendChild(warn);
     }
+    // Measured-LOS substitution: the analysis silently upgrading its evidence
+    // is only acceptable if it is not silent.
+    if (results.provenance && results.provenance.measuredSubstituted) {
+        const note = document.createElement("div");
+        note.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
+            "background:#16321f; color:#9fd8ae; border:1px solid #2f6a42; font-size:13px;";
+        note.textContent = "✓ Measured sensor LOS used. " + results.provenance.substitutionNote;
+        panel.appendChild(note);
+    }
+    // Static sensor: range is NOT determined by the evidence — free-range
+    // methods below are placeholders, not findings. This must be impossible
+    // to miss; it invalidates most of the gallery.
+    if (results.provenance && results.provenance.rangeUnobservable) {
+        const warn = document.createElement("div");
+        warn.style.cssText = "margin:8px 0 4px; padding:10px 12px; border-radius:6px;" +
+            "background:#4a1512; color:#ffab9e; border:2px solid #a03a2e; font-size:13.5px; font-weight:600;";
+        warn.textContent = "⛔ Range is NOT determined by this evidence. The sensor's motion over the " +
+            "analysis window (baseline " + Math.round(results.provenance.sensorSpan ?? 0) + " m) is " +
+            "negligible at the assumed working distance, so the sightlines contain no usable parallax: " +
+            "every distance along them fits equally well, and each method's range reflects its own " +
+            "priors, not measurement. Use a moving sensor, or treat all ranges below as arbitrary.";
+        panel.appendChild(warn);
+    }
     if (results.failures && results.failures.length) {
         const warn = document.createElement("div");
         warn.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
@@ -3758,9 +3948,17 @@ function showResultGallery(results) {
                 // landing on Constant Ground Speed in a sitch with no
                 // air-speed method). A null return means no live method
                 // matched — say so instead of claiming success.
+                // Under measured-LOS substitution the applied track was fitted
+                // to the recorded sensor angles, while the scene still draws
+                // the constructed (target-aimed) sightline fan — the track will
+                // visibly sit beside those rays. Say so at the moment the
+                // divergence becomes visible, not only in the analysis banner.
+                const subNote = window.lastTraverseAnalysis?.provenance?.measuredSubstituted
+                    ? " (fitted to the measured sensor LOS; the displayed sightlines are the constructed camera aim and will not lie on the track)"
+                    : "";
                 showGalleryToast(applied
-                    ? (applied !== h.name ? `Applied: ${h.name} (method: ${applied})`
-                                          : `Applied: ${h.name}`)
+                    ? (applied !== h.name ? `Applied: ${h.name} (method: ${applied})${subNote}`
+                                          : `Applied: ${h.name}${subNote}`)
                     : `No matching traverse method to apply for: ${h.name}`);
             };
         }
@@ -4823,6 +5021,7 @@ function buildReportHTML(ctx) {
         sitName, dataset, windText, speedTarget,
         sweep, fastProfile, slowProfile, aircraft,
         bestTrack, bestMetrics, slowBestRow, slowTrack,
+        sweepBestMetrics = ctx.bestMetrics, constAirPick = null,
         closeLoM, closeHiM, hypotheses, provenance, failures = [], manifest = {},
         truth = null,
     } = ctx;
@@ -4873,7 +5072,8 @@ function buildReportHTML(ctx) {
     const tsChart = (title, yLabel, yA, yB, transform = (v) => v) => lineChart({
         width: 620, height: 340, title, xLabel: "time (s)", yLabel,
         series: [
-            {xs: tSec, ys: Array.from(yA, transform), color: VIZ.constAir, label: "const air spd (sweep best)"},
+            {xs: tSec, ys: Array.from(yA, transform), color: VIZ.constAir,
+                label: constAirPick ? "const air spd (slow valley)" : "const air spd (sweep best)"},
             {xs: tSec, ys: Array.from(yB, transform), color: VIZ.aircraft, label: "aircraft fit"},
         ],
     });
@@ -4883,7 +5083,9 @@ function buildReportHTML(ctx) {
 
     const chartD = planViewChart(dataset, [
         {track: bestTrack, color: VIZ.constAir,
-            label: `const air spd: ${nm1(b.startDist)} NM @ ${kt1(b.speed)} kt`},
+            label: constAirPick
+                ? `const air spd (slow valley): ${nm1(constAirPick.range)} NM @ ${kt1(constAirPick.airSpeed)} kt`
+                : `const air spd: ${nm1(b.startDist)} NM @ ${kt1(b.speed)} kt`},
         {track: aircraft.track, color: VIZ.aircraft,
             label: `aircraft fit: ${nm1(ap.startDist)} NM, hdg ${ap.heading.toFixed(0)}°`},
         {track: slowTrack, color: VIZ.slowObj,
@@ -4931,22 +5133,33 @@ function buildReportHTML(ctx) {
         if (sweep.familyBand.speedLo <= loV * 1.001) sweepEdges.push("lower speed");
         if (sweep.familyBand.speedHi >= hiV * 0.999) sweepEdges.push("upper speed");
     }
-    const sweepResultHTML = sweep.boundaryLimited ? `
+    // The regime pick can demote the fast sweep representative: say so right
+    // where the sweep numbers appear, or the summary (fast NM/kt) and the
+    // candidate card (slow NM/kt) would silently disagree under one name.
+    const constAirDemotionHTML = constAirPick ? `
+        <p><strong>Demoted:</strong> this fast-sweep representative was outscored by the slow-drift range
+        valley. The reported <em>Constant Air Speed</em> candidate is
+        <strong>${nm1(constAirPick.range)} NM / ${kt1(constAirPick.airSpeed)} kt</strong>
+        (neutral score ${Number(constAirPick.slowScore ?? NaN).toFixed(2)} vs
+        ${Number(constAirPick.fastScore ?? NaN).toFixed(2)}, lower is better); the time-series and
+        plan-view charts show that selected slow representative.</p>` : "";
+    const sweepResultHTML = (sweep.boundaryLimited ? `
         <p><strong>Constant-air-speed search incomplete at the ${escapeHtml(sweepEdges.join(" and ") || "tested")} boundary.</strong>
         A family spanning <strong>${nm1(sweep.familyBand.rangeLo)}–${nm1(sweep.familyBand.rangeHi)} NM</strong> and
         <strong>${kt1(sweep.familyBand.speedLo)}–${kt1(sweep.familyBand.speedHi)} kt</strong> scores similarly.
         The displayed <strong>${nm1(b.startDist)} NM / ${kt1(b.speed)} kt</strong> member is a deterministic,
         prior-selected representative; an edge value is a tested floor or ceiling, not an estimated optimum.
-        Its full-resolution track reaches ${bestMetrics.gLoad.rms.toFixed(2)} g RMS and
-        ${bestMetrics.gLoad.max.toFixed(2)} g maximum kinematic acceleration.</p>` : `
+        Its full-resolution track reaches ${sweepBestMetrics.gLoad.rms.toFixed(2)} g RMS and
+        ${sweepBestMetrics.gLoad.max.toFixed(2)} g maximum kinematic acceleration.</p>` : `
         <p>The constant-air-speed grid search selects a family representative at a start range of
         <strong>${nm1(b.startDist)} NM</strong> and <strong>${kt1(b.speed)} kt</strong> air speed
         (grid score ${b.score.toFixed(2)}). Its full-resolution displayed track reaches
-        ${bestMetrics.gLoad.rms.toFixed(2)} g RMS and
-        <strong>${bestMetrics.gLoad.max.toFixed(2)} g</strong> maximum kinematic acceleration. The raw score minimum is
+        ${sweepBestMetrics.gLoad.rms.toFixed(2)} g RMS and
+        <strong>${sweepBestMetrics.gLoad.max.toFixed(2)} g</strong> maximum kinematic acceleration. The raw score minimum is
         <strong>${nm1(bRaw.startDist)} NM / ${kt1(bRaw.speed)} kt</strong>
         (score ${bRaw.score.toFixed(2)}). The ten lowest-score grid cells fall
-        between ${nm1(topRangeLo)}–${nm1(topRangeHi)} NM and ${kt1(topSpeedLo)}–${kt1(topSpeedHi)} kt.</p>`;
+        between ${nm1(topRangeLo)}–${nm1(topRangeHi)} NM and ${kt1(topSpeedLo)}–${kt1(topSpeedHi)} kt.</p>`)
+        + constAirDemotionHTML;
 
     const geometryHTML = `
         <p>Over <strong>${n}</strong> frames (${globalFrame0}–${globalFrame1}, ${durationS.toFixed(1)} s) the sensor's line of sight swept
@@ -5186,6 +5399,15 @@ details.manifest pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1
 
 ${provenance?.circular ? `<div class="warning"><strong>Constructed LOS — validation only.</strong> ` +
     `${escapeHtml(provenance.reason)} Fits below test internal consistency, not independent object inference.</div>` : ""}
+
+${provenance?.measuredSubstituted ? `<div class="warning" style="background:#16321f;color:#9fd8ae;border-color:#2f6a42">` +
+    `<strong>Measured sensor LOS used.</strong> ${escapeHtml(provenance.substitutionNote ?? "")}</div>` : ""}
+
+${provenance?.rangeUnobservable ? `<div class="warning" style="background:#4a1512;color:#ffab9e;border-color:#a03a2e">` +
+    `<strong>⛔ Range is NOT determined by this evidence.</strong> The sensor's motion over the analysis ` +
+    `window (baseline ${Math.round(provenance.sensorSpan ?? 0)} m) is negligible at the assumed working ` +
+    `distance: the sightlines contain no usable parallax, every distance along them fits equally well, ` +
+    `and each method's range reflects its own priors, not measurement.</div>` : ""}
 
 ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-color:#7a3b5c">` +
     `<strong>Truth track "${escapeHtml(truth.label)}" selected.</strong> Every method is scored and ` +

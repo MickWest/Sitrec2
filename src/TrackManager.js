@@ -43,7 +43,7 @@ import {CNodeSondeColor} from "./nodes/CNodeSondeColor";
 import {CNodeDisplaySondeWind} from "./nodes/CNodeDisplaySondeWind";
 import {CNodeAtmosphericProfile} from "./nodes/CNodeAtmosphericProfile";
 import {detectRocketLikeTrack} from "./trackHeuristics";
-import {hasOtherTrackSourceReference} from "./trackSourceUtils";
+import {hasOtherTrackSourceReference, shouldPreserveAnglesHeading} from "./trackSourceUtils";
 import {extractTrackPreviewInfo, showMultiTrackLoadDialog, getCameraFilterState} from "./TrackFilterDialog";
 import {t} from "./i18n";
 import {CNodeBalloonTrack} from "./nodes/CNodeBalloonTrack";
@@ -1407,11 +1407,32 @@ class CTrackManager extends CManager {
                             // bit of a patch, this will be the second track, and we already set the
                             // camera to follow the first track and "Use Angles"
                             // but now we've added a target track, so we need to change the camera heading
-                            // to "To Target" so the first track points at the second track
+                            // to "To Target" so the first track points at the second track.
+                            // EXCEPTION: when the camera heading is the camera track's own recorded
+                            // sensor angles and the arriving target is that track's derived Center_
+                            // frame-center track (a MISB LOS export re-import), keep the measured
+                            // angles — aiming at the smoothed Center track would reconstruct the
+                            // sightlines FROM the target (circular) and discard the measurement,
+                            // which silently ruins the traverse analysis.
                             if (switchNode.id === "targetTrackSwitch") {
                                 const headingSwitch = NodeMan.get("CameraLOSController", true);
                                 if (headingSwitch) {
-                                    headingSwitch.selectOption("To Target");
+                                    const camShort = NodeMan.get("cameraTrackSwitch", false)?.choice;
+                                    const camTrackOb = camShort ? this.get("Track_" + camShort, false) : null;
+                                    const keepAngles = shouldPreserveAnglesHeading({
+                                        headingChoice: headingSwitch.choice,
+                                        cameraShortName: camShort,
+                                        arrivingShortName: shortName,
+                                        sameSourceFile: !!(camTrackOb && trackOb
+                                            && camTrackOb.trackFileName === trackOb.trackFileName),
+                                        isSupplementary: !!(roleFile?.isSupplementaryTrack?.(trackOb?.trackIndex)),
+                                    });
+                                    if (keepAngles) {
+                                        console.log("Target track " + shortName + " is the camera track's derived "
+                                            + "Center track — keeping measured Camera Heading " + headingSwitch.choice);
+                                    } else {
+                                        headingSwitch.selectOption("To Target");
+                                    }
                                 }
                             }
                         }

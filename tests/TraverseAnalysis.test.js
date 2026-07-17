@@ -27,6 +27,15 @@ import {
     KNOTS_TO_MS,
     METERS_PER_NM,
     rangeProfile,
+    constAirSpeedTrack,
+    sensorMotionStats,
+    isRangeUnobservable,
+    neutralTrackScore,
+    slowRegimeWins,
+    slowValleyContrast,
+    pickConstAirRegime,
+    SLOW_REGIME_MAX_SPEED_MS,
+    SLOW_REGIME_MIN_CONTRAST,
 } from "../src/TraverseAnalysis";
 import {patternSearchPolish} from "../src/DifferentialEvolution";
 
@@ -493,5 +502,155 @@ describe("compareTrackToTruth", () => {
         expect(tc.comparable).toBe(true);
         expect(tc.heading).toBe(null);
         expect(tc.speed.meanAbsDiff).toBeCloseTo(30, 4);
+    });
+});
+
+describe("sensor motion observability (sensorMotionStats / isRangeUnobservable)", () => {
+    test("static sensor: zero span, range unobservable at any working distance", () => {
+        const n = 200, fps = 30;
+        const S = new Float64Array(n * 3);       // all zeros — tripod sensor
+        const D = new Float64Array(n * 3);
+        for (let f = 0; f < n; f++) {
+            const az = 0.2 * (f / n);            // slow LOS sweep, origin fixed
+            D[f * 3] = Math.sin(az); D[f * 3 + 1] = Math.cos(az); D[f * 3 + 2] = 0;
+        }
+        const stats = sensorMotionStats({n, fps, S, D, W: new Float64Array(n * 3)});
+        expect(stats.pathLen).toBe(0);
+        expect(stats.span).toBe(0);
+        expect(isRangeUnobservable(stats, 20 * METERS_PER_NM)).toBe(true);
+        expect(isRangeUnobservable(stats, 500)).toBe(true);
+    });
+
+    test("orbiting sensor: kilometers of baseline, range observable", () => {
+        const {dataset} = makeDataset({n: 300});
+        const stats = sensorMotionStats(dataset);
+        expect(stats.span).toBeGreaterThan(500);
+        expect(stats.pathLen).toBeGreaterThanOrEqual(stats.span * 0.9);
+        expect(isRangeUnobservable(stats, 20 * METERS_PER_NM)).toBe(false);
+    });
+
+    test("GPS jitter inflates pathLen but not span — span drives the verdict", () => {
+        const n = 300, fps = 30;
+        const S = new Float64Array(n * 3);
+        // deterministic +-1.5 m zig-zag: huge accumulated path, tiny bounding box
+        for (let f = 0; f < n; f++) S[f * 3] = (f % 2) ? 1.5 : -1.5;
+        const D = new Float64Array(n * 3);
+        for (let f = 0; f < n; f++) { D[f * 3 + 1] = 1; }
+        const stats = sensorMotionStats({n, fps, S, D, W: new Float64Array(n * 3)});
+        expect(stats.pathLen).toBeGreaterThan(500);
+        expect(stats.span).toBeLessThan(4);
+        expect(isRangeUnobservable(stats, 20 * METERS_PER_NM)).toBe(true);
+    });
+
+    test("small absolute baselines still observe range at close working distances", () => {
+        const n = 100, fps = 30;
+        const S = new Float64Array(n * 3);
+        for (let f = 0; f < n; f++) S[f * 3] = 10 * (f / (n - 1));   // 10 m of travel
+        const stats = sensorMotionStats({n, fps, S, D: new Float64Array(n * 3), W: new Float64Array(n * 3)});
+        expect(isRangeUnobservable(stats, 200)).toBe(false);        // drone at 200 m
+        expect(isRangeUnobservable(stats, 100 * METERS_PER_NM)).toBe(true); // jet at 100 NM
+    });
+
+    test("the cutoff constants are pinned: 1e-3 of the working distance, 2 m floor", () => {
+        // Bracket the ratio at a 20 NM anchor (threshold 37.04 m): a mutation of
+        // the 1e-3 constant in either direction flips one of these.
+        const anchor20NM = 20 * METERS_PER_NM;
+        expect(isRangeUnobservable({span: 30}, anchor20NM)).toBe(true);
+        expect(isRangeUnobservable({span: 45}, anchor20NM)).toBe(false);
+        // Bracket the 2 m floor (anchor small enough that the ratio term is <2).
+        expect(isRangeUnobservable({span: 1.5}, 1000)).toBe(true);
+        expect(isRangeUnobservable({span: 3}, 1000)).toBe(false);
+    });
+});
+
+describe("constant-air-speed regime pick (pickConstAirRegime)", () => {
+    // The REAL pipeline the analysis runs: fast sweep + slow range profile with
+    // the production slow options, then the exact production pick function —
+    // not hand-picked candidates, which can pass regardless of the mechanism.
+    async function runPick(dataset, ranges, speedTarget = 380 * KNOTS_TO_MS) {
+        const sweep = await sweepConstAirSpeed(dataset, {ranges, speedTarget});
+        const slowProfile = await rangeProfile(dataset, {
+            ranges: sweep.ranges,
+            vTarget: 5 * KNOTS_TO_MS, vSigma: 20 * KNOTS_TO_MS, scoreSpeedWeight: 0.2,
+        });
+        return pickConstAirRegime(dataset, sweep, slowProfile);
+    }
+
+    test("balloon-like scene: decisive slow valley demotes the fast representative", async () => {
+        // Slow drifter at ~8.7 km from an ORBITING sensor (the generated-balloon
+        // scenario in miniature): real parallax pins the range, so the slow
+        // profile has a sharp valley near truth and the pick must flip.
+        const slow = makeDataset({n: 240, windMs: [0, 0, 0],
+            targetStart: [5000, 7000, 1200], targetVel: [3, 2, 1]});
+        const R0 = slow.R0;
+        const ranges = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4].map((k) => k * R0);
+        const pick = await runPick(slow.dataset, ranges);
+        expect(pick.useSlow).toBe(true);
+        expect(pick.slow.speed).toBeLessThanOrEqual(SLOW_REGIME_MAX_SPEED_MS);
+        expect(pick.slow.contrast).toBeGreaterThanOrEqual(SLOW_REGIME_MIN_CONTRAST);
+        // the promoted range is the truth range, not a near-field artifact
+        expect(pick.slow.row.startDist).toBeGreaterThan(R0 * 0.5);
+        expect(pick.slow.row.startDist).toBeLessThan(R0 * 1.6);
+    }, 120000);
+
+    test("degenerate narrow-baseline CV scene: flat slow valley blocks the flip", async () => {
+        // Straight-and-level sensor watching a CV jet — bearings-only CV-on-CV:
+        // a slow rider exists at EVERY range, so the slow profile is flat and its
+        // argmin is an arbitrary member of a tied family. The honest headline is
+        // the fast sweep's family-ambiguity answer; the flip must NOT fire even
+        // though the slow row's neutral score beats the fast representative's.
+        const n = 240, fps = 30;
+        const S = new Float64Array(n * 3), D = new Float64Array(n * 3);
+        const W = new Float64Array(n * 3);
+        for (let f = 0; f < n; f++) {
+            const t = f / fps;
+            S[f * 3] = 110 * t; S[f * 3 + 1] = 0; S[f * 3 + 2] = 8000;
+            const tx = 30000 + 100 * t, ty = 35000 + 110 * t, tz = 6000 + 5 * t;
+            const dx = tx - S[f * 3], dy = ty - S[f * 3 + 1], dz = tz - S[f * 3 + 2];
+            const dl = Math.hypot(dx, dy, dz);
+            D[f * 3] = dx / dl; D[f * 3 + 1] = dy / dl; D[f * 3 + 2] = dz / dl;
+        }
+        const dataset = {n, fps, S, D, W};
+        const R0 = Math.hypot(30000, 35000, 6000 - 8000);
+        const ranges = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3].map((k) => k * R0);
+        const pick = await runPick(dataset, ranges);
+        expect(pick.useSlow).toBe(false);
+    }, 120000);
+
+    test("a fast argmin row can never masquerade as a slow-drift answer", () => {
+        // Flat-family scenes can park the slow profile's argmin on a FAST row
+        // despite the 5-kt prior; the speed bound must reject it outright,
+        // whatever the scores say.
+        const dataset = makeDataset({n: 180}).dataset;
+        const fastRow = {startDist: 20000, score: 0.01,
+            metrics: {airSpeed: {mean: 190}}};                  // ~370 kt
+        const flatValley = Array.from({length: 10}, (_, i) => ({
+            startDist: 5000 + i * 5000, score: 0.01 + 0.001 * i,
+            metrics: {airSpeed: {mean: 190}},
+        }));
+        flatValley[3] = fastRow;
+        const sweep = {best: {startDist: 15000, speed: 190}};
+        const pick = pickConstAirRegime(dataset, sweep, flatValley);
+        expect(pick.useSlow).toBe(false);
+        expect(pick.slow).toBe(null);   // rejected before scoring, not outscored
+    }, 60000);
+
+    test("slowRegimeWins demands a decisive margin and finite scores", () => {
+        expect(slowRegimeWins(10, 9.5)).toBe(false);   // within margin — keep fast
+        expect(slowRegimeWins(10, 7.9)).toBe(true);    // decisive win
+        expect(slowRegimeWins(10, NaN)).toBe(false);
+        expect(slowRegimeWins(NaN, 5)).toBe(true);     // fast invalid, slow valid
+        expect(slowRegimeWins(NaN, NaN)).toBe(false);
+    });
+
+    test("slowValleyContrast separates sharp valleys from flat families", () => {
+        const row = (score) => ({score});
+        // sharp valley: wrong ranges score an order of magnitude worse
+        expect(slowValleyContrast([100, 40, 8, 45, 90].map(row))).toBeGreaterThanOrEqual(2.5);
+        // flat family: every range rides about equally well
+        expect(slowValleyContrast([10, 9.5, 9, 9.2, 10, 9.8].map(row))).toBeLessThan(1.5);
+        // degenerate inputs read as flat (contrast 1), never as decisive
+        expect(slowValleyContrast(null)).toBe(1);
+        expect(slowValleyContrast([row(5), row(6)])).toBe(1);
     });
 });
