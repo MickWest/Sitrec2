@@ -38,6 +38,8 @@ lockstep with docs/WhatsNew-Details.md.
 - Fixed traverse analysis producing wildly wrong distances (the "bad balloon fits") when it was fed sightlines reconstructed from a smoothed track; it now uses the camera's recorded sightlines and clearly flags when range simply cannot be determined from the evidence.
 - Fixed UWYO soundings failing to load after the data provider retired its old address.
 - Fixed the Wind Source dropdown showing the checkmark on the wrong option (and making that option unselectable) after the list rebuilt.
+- Fixed severe flickering "terracing" in orthographic views (Camera → Camera Tweaks → Main/Look View Orthographic), where terrain rendered as flat-topped steps and models, clouds, sprites, and overlays could break up the same way.
+- Fixed orthographic views on shallow, near-horizontal angles breaking into vertical streaks with a gap along the bottom of the screen, caused by the view box dropping below the ground.
 
 ## Version 2.101.0 (2026-07-11)
 
