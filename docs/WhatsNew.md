@@ -9,6 +9,36 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.102.0 (2026-07-17)
+
+### New Features
+- **Nimitz tic-tac encounter** (Physics → Scenarios → Nimitz): an interactive 4D reconstruction of the 14 Nov 2004 encounter as verbally described by Fravor and Dietrich, with two F/A-18Fs, the tic-tac, ships, and selectable "object maneuvers" vs "stationary object (parallax)" hypotheses. Includes *Load Nimitz Encounter*, a compressed variant, pilot camera views, a live bank/g readout, and ready-made presentation scripts.
+- **Football goal-kick simulator** (Physics → Scenarios → Football): launch a ball with realistic flight physics, a Spidercam cable camera with four sagging wires and wire-strike collision, a broadcast camera, and a marked pitch. *Load England-Norway Goal Kick (WC 2026)* recreates the Hard Rock Stadium wire-gate incident.
+- **New Physics → Scenarios menu**: Football, Nimitz, Gimbal Analysis, and Flood Sim now live under one menu and load only when you open one, so ordinary sitches start leaner and faster.
+- **Add Balloon** (ground right-click menu): drop a rising, wind-driven balloon target with adjustable launch delay, buoyancy, and gustiness; it follows the actual wind at each altitude.
+- **Tracking Wobble** (Camera menu): simulate imperfect manual tracking — the camera drifts off the target and is imperfectly re-centered — with repeatable, adjustable drift, reaction time, and re-centering. The wobble shows in the look view and in exported lines of sight.
+- **Synthetic truth tracks** (Traverse analysis): export a scene's true target position and motion into the lines-of-sight CSV, re-import it as a *Truth* track, and pick it as the **Truth Track** so the analysis ranks and charts every candidate against the known answer.
+- **Perspective (Homography) panorama projection** (Video → Motion Analysis → Panorama → Motion Pano Options): a new projection mode that registers panning/tilting/zooming footage correctly edge-to-edge, removing the gradual misalignment the default 2D mode builds up on such shots.
+- **Rolling graph window** (custom Graphs → *Show Last (secs)*): plot just the last few seconds up to the playhead, scrolling during playback, with the vertical scale held steady from the whole clip.
+- **Inferred-vs-measured wind for balloon traverses** (Traverse analysis): the balloon explanation now shows the wind profile the fit needs at each altitude, next to the measured wind, so you can judge whether a plausible balloon would need believable winds; when a real sounding or forecast wind field is loaded it also offers a second, measured-wind reconstruction.
+- **Zoom-to-tracks magnifier** on the traverse-analysis 3D graphs: one click reframes every graph tightly around the candidate and truth tracks (instead of the whole sensor-to-target volume), and clicking again restores the full view.
+- **Sync Duration to** (Time menu): set a sitch's length to match the duration of a loaded track.
+- **Hide Some LOS** (Show menu): thin out the on-screen lines of sight — show every other one, every fourth, and so on.
+
+### Improvements
+- **Wind now reaches balloon altitudes**: wind-driven balloons get real forecast and sounding wind all the way up to burst altitude (~100,000 ft) instead of falling back to a constant wind in the stratosphere.
+- **Wind layers show loading progress** and a dropped balloon now pre-loads the wind layers it will climb through, so it no longer briefly reverts to a constant wind while the higher layers download.
+- **Faster UWYO sounding loading**: stations with no launch for the requested time are remembered instead of being re-fetched every time, and cached results no longer count against the rate limit — removing long spurious waits.
+- **Cleaner traverse comparison report**: the comparison and fit tables now fit the page on single-line rows with no horizontal scrollbar.
+- **Live terrain detail in the scripted-video preview**: the preview now streams in terrain as the camera moves instead of freezing at whatever was already loaded; a new *Freeze Terrain (Preview)* option (Render Quality) restores the old behavior.
+- **Faster Add Balloon**: adding a balloon to a long timeline is roughly 17× faster (about 16 seconds down to under a second).
+- **Smoother playback** in sky and custom sitches, from removing redundant per-frame recalculation.
+
+### Bug Fixes
+- Fixed traverse analysis producing wildly wrong distances (the "bad balloon fits") when it was fed sightlines reconstructed from a smoothed track; it now uses the camera's recorded sightlines and clearly flags when range simply cannot be determined from the evidence.
+- Fixed UWYO soundings failing to load after the data provider retired its old address.
+- Fixed the Wind Source dropdown showing the checkmark on the wrong option (and making that option unselectable) after the list rebuilt.
+
 ## Version 2.101.0 (2026-07-11)
 
 ### New Features
