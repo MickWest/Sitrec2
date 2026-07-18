@@ -1745,6 +1745,23 @@ export class CCustomManager {
     }
 
 
+    // Cached list of CNode3DObjects, rebuilt only when the node set changes.
+    // pre/postRenderUpdate run once PER VISIBLE 3D VIEW PER FRAME and previously
+    // re-scanned the whole ~300+ node graph (Object.values + instanceof) each
+    // call; gate that on NodeMan.listVersion (bumped on add/remove) so the scan
+    // happens only when nodes actually come or go. Insertion order is preserved,
+    // so iteration order is unchanged.
+    _getCNode3DObjects() {
+        if (this._c3dObjectsVersion !== NodeMan.listVersion) {
+            this._c3dObjects = [];
+            for (const entry of Object.values(NodeMan.list)) {
+                if (entry.data instanceof CNode3DObject) this._c3dObjects.push(entry.data);
+            }
+            this._c3dObjectsVersion = NodeMan.listVersion;
+        }
+        return this._c3dObjects;
+    }
+
     preRenderUpdate(view) {
         if (!Sit.isCustom) return;
 
@@ -1795,10 +1812,8 @@ export class CCustomManager {
         // iterate over the NodeMan objects
         // if the object has a displayTargetSphere, then check if it's following the same track
         // as the camera track, and if so, turn it off
-        for (const entry of Object.values(NodeMan.list)) {
-            const node = entry.data;
-            // is it derived from CNode3D?
-            if (node instanceof CNode3DObject) {
+        for (const node of this._getCNode3DObjects()) {
+            {
                 const ob = node._object;
                 if (disableIfNearCameraTrack(node, ob, view.camera)) {
                     view._renderHiddenNodeIDs.add(node.id);
@@ -1828,11 +1843,8 @@ export class CCustomManager {
 
     postRenderUpdate(view) {
         if (!Sit.isCustom) return;
-        for (const entry of Object.values(NodeMan.list)) {
-            const node = entry.data;
-            if (node instanceof CNode3DObject) {
-                restoreIfDisabled(node._object, view.camera)
-            }
+        for (const node of this._getCNode3DObjects()) {
+            restoreIfDisabled(node._object, view.camera)
         }
     }
 

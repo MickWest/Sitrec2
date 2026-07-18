@@ -132,12 +132,34 @@ export function celestialToECEF(ra, dec, dist, gst) {
     return V3(x_ecef, y_ecef, z_ecef);
 }
 
+// Shared memo for getCelestialDirection. Within ONE rendered frame this is
+// called many times per 3D view — CNodeSunlight.update plus the sky
+// colour/opacity/brightness/haze passes and several overlays all ask for the Sun
+// (and Moon) direction — and each miss runs Astronomy.Equator, the heaviest
+// pure-JS solve in the app. For a fixed (body, instant, observer) the answer is
+// constant, so cache it keyed on the body, the exact epoch ms, and the observer
+// position quantised to ~1 km (only the Moon/nearby planets are position
+// sensitive; the Sun is effectively unaffected). date.getTime() gives automatic
+// per-frame invalidation as GlobalDateTimeNode advances. Bounded + cleared when
+// it grows, so stale (past-frame) entries can't accumulate. Mirrors the proven
+// CNodeLensGhost._sunCache. Values are cloned in/out since callers mutate them.
+const _celestialDirCache = new Map();
+
 // get a vector in ECEF coordinates to a celestial body from an ECEF position (like a camera or object)
 // - body = (e.g "Sun", "Venus", "Moon", etc)
 // - date = date of observation (Date object)
 export function getCelestialDirection(body, date, pos) {
     // Astronomy.Equator requires capitalized body names (e.g. "Moon", not "moon")
     const normalizedBody = body.charAt(0).toUpperCase() + body.slice(1).toLowerCase();
+
+    const positioned = (pos !== undefined && pos.lengthSq() > 1e12);
+    const t = (date && typeof date.getTime === "function") ? date.getTime() : date;
+    const qx = positioned ? Math.round(pos.x / 1000) : 0;
+    const qy = positioned ? Math.round(pos.y / 1000) : 0;
+    const qz = positioned ? Math.round(pos.z / 1000) : 0;
+    const cacheKey = `${normalizedBody}|${t}|${qx}|${qy}|${qz}`;
+    const cached = _celestialDirCache.get(cacheKey);
+    if (cached !== undefined) return cached ? cached.clone() : null;
 
     let LLA;
     // if a position is provided, use that to calculate the LLA of the observer
@@ -153,14 +175,20 @@ export function getCelestialDirection(body, date, pos) {
     }
 
     let observer = new Astronomy.Observer(LLA.x, LLA.y, LLA.z);
+    let result = null;
     try {
         const celestialInfo = Astronomy.Equator(normalizedBody, date, observer, false, true);
         const ra = (celestialInfo.ra) / 24 * 2 * Math.PI;   // Right Ascension NOTE, in hours, so 0..24 -> 0..2π
         const dec = radians(celestialInfo.dec); // Declination
-        return getCelestialDirectionFromRaDec(ra, dec, date);
+        result = getCelestialDirectionFromRaDec(ra, dec, date);
     } catch {
-        return null; // Unknown body name
+        result = null; // Unknown body name
     }
+    // Bound the cache: within a frame it holds at most (bodies × views) entries;
+    // clearing when it grows drops last frame's now-unreachable keys.
+    if (_celestialDirCache.size > 128) _celestialDirCache.clear();
+    _celestialDirCache.set(cacheKey, result);
+    return result ? result.clone() : null;
 }
 
 export function getCelestialDirectionFromRaDec(ra, dec, date) {
