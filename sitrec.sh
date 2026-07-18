@@ -353,8 +353,11 @@ for t in tags:
         echo "          images to a PRIVATE registry you trust."
         echo ""
 
-        # Build the derived Dockerfile in an isolated temp context.
-        BUILD_DIR="$(mktemp -d)"
+        # Build the derived Dockerfile in an isolated temp context. Use an
+        # explicit TMPDIR-honoring template: bare `mktemp -d` ignores $TMPDIR on
+        # macOS/BSD (always the Darwin per-user temp), which some sandboxed
+        # environments deny. Falls back to /tmp when TMPDIR is unset (Linux/CI).
+        BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sitrec-build.XXXXXX")"
         trap 'rm -rf "$BUILD_DIR"' EXIT
         DF="$BUILD_DIR/Dockerfile"
 
