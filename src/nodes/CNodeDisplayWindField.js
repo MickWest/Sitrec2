@@ -244,7 +244,22 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     }
 
     // ── bilinear wind lookup ─────────────────────────────────────────
+    //
+    // Returns null when there is no grid to sample, matching
+    // sampleWindAtAltitude's contract so callers only need one check. The grid
+    // arrays start out null (constructor) and stay null until wind data is
+    // actually loaded, so a sitch that never fetched any — e.g. a legacy sitch
+    // with a hand-set wind and no wind field — reaches here with windU/windV
+    // still null. Non-finite lat/lon are rejected for the same reason: they
+    // produce NaN indices, and a NaN index into a null array is exactly the
+    // "cannot read properties of null (reading 'NaN')" crash this prevents.
     sampleWind(lat, lon) {
+        if (!this.windU || !this.windV) return null;
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+        if (!Number.isFinite(this.gridLon0) || !Number.isFinite(this.gridDLon)
+            || !Number.isFinite(this.gridLat0) || !Number.isFinite(this.gridDLat)
+            || !(this.gridNx > 1) || !(this.gridNy > 1)) return null;
+
         lon = ((lon % 360) + 360) % 360;
         lat = Math.max(-90, Math.min(90, lat));
 
@@ -410,6 +425,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
 
         for (let s = 0; s <= steps; s++) {
             const w = this.sampleWind(cLat, cLon);
+            if (!w) return lineIndex;   // no grid to trace through
             const speed = Math.sqrt(w.u * w.u + w.v * w.v);
             if (speed < minSpd && s === 0) return lineIndex;
 

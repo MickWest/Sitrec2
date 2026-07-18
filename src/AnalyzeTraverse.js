@@ -53,7 +53,7 @@ import {
     traverseMinSpeed,
     traversePlausible,
 } from "./TraverseAnalysis";
-import {fitConstantAcceleration, fitPhysicsModel} from "./LOSFitting";
+import {fitAlternatingLSQ, fitConstantAcceleration, fitConstantVelocity, fitMonteCarlo, fitMonteCarlo2, fitPhysicsModel} from "./LOSFitting";
 import {SkyLanternModel} from "./SkyLanternModel";
 import {QuadcopterModel} from "./QuadcopterModel";
 import {classifyFixedWing, classifyQuadcopter} from "./VehicleModels";
@@ -119,6 +119,103 @@ function refractDir(dirECEF, sensorECEF) {
 // Distance (m) at which "object at infinity" astronomical hypotheses are
 // planted along their mean direction so the gallery has a real track to draw.
 const FAR_ASTRO = 200 * METERS_PER_NM;
+
+// Monte Carlo polynomial-order sweep. Matches the upper bound of the sitch's
+// "MC Polynomial Order" slider (mcOrder, 1..5 — see JetStuff.js), so the sweep
+// covers exactly the orders a user could have selected by hand. Each order
+// costs a full MC run per variant, so this is the main cost knob of the sweep.
+const MC_SWEEP_MAX_ORDER = 5;
+const ORDER_NAMES = {
+    1: "linear (constant velocity)",
+    2: "quadratic (constant acceleration)",
+    3: "cubic",
+    4: "quartic",
+    5: "quintic",
+};
+
+// The three curve-fitting strategies swept over polynomial order. They all fit
+// the same sightlines with the same degree of curve; they differ only in HOW
+// they search for it, so putting them side by side at matching orders shows how
+// much of a result is the data and how much is the method.
+const SWEEP_VARIANTS = [
+    {key: "gfMC1", name: "Global Fit: Monte Carlo 1", fit: fitMonteCarlo,
+        color: "#b79be0", flavour: "best-of-N sampled polynomial"},
+    {key: "gfMC2", name: "Global Fit: Monte Carlo 2", fit: fitMonteCarlo2,
+        color: "#9b7fd0", flavour: "least-squares over perturbed frames"},
+    // Deterministic alternative. Ignores numTrials/losUncertainty (it doesn't
+    // sample at all), and unlike the two above it lets range move freely rather
+    // than staying within 0.9-1.1x of the constant-velocity seed — so a far or
+    // fast solution stays reachable if the sightlines support one.
+    {key: "gfPolyALS", name: "Global Fit: Polynomial LSQ", fit: fitAlternatingLSQ,
+        color: "#7fc4d0", flavour: "deterministic alternating least squares"},
+];
+
+// Set up the shared inputs for the order sweep. Cheap and synchronous; the
+// actual fits are driven by sweepPolynomialOrders so they can report progress.
+function prepareSweep(dataset) {
+    const times = new Float64Array(dataset.n);
+    for (let f = 0; f < dataset.n; f++) times[f] = f / dataset.fps;
+    const ds = {
+        sensorPos: dataset.S, losDir: dataset.D, times,
+        count: dataset.n, maxRange: null,
+    };
+    const opts = {};
+    const trialsNode = NodeMan.get("mcNumTrials", false);
+    const uncertNode = NodeMan.get("mcLOSUncertainty", false);
+    if (trialsNode) opts.numTrials = trialsNode.v0;
+    if (uncertNode) opts.losUncertaintyDeg = uncertNode.v0;
+    // Per-frame range estimates from a constant-velocity fit focus the random
+    // range sampling, exactly as CNodeLOSFitMonteCarlo does — without them the
+    // sampler draws blindly out to 10x the scene extent and the higher orders
+    // degenerate into noise. (Only the Monte Carlo fits use these; the
+    // alternating fit derives and then freely moves its own ranges.)
+    const cv = fitConstantVelocity(ds, new Set());
+    if (cv) {
+        const rangeEstimates = new Float32Array(dataset.n);
+        for (let i = 0; i < dataset.n; i++) {
+            const b = i * 3;
+            rangeEstimates[i] = Math.max(1,
+                (cv.positions[b] - dataset.S[b]) * dataset.D[b]
+                + (cv.positions[b + 1] - dataset.S[b + 1]) * dataset.D[b + 1]
+                + (cv.positions[b + 2] - dataset.S[b + 2]) * dataset.D[b + 2]);
+        }
+        opts.rangeEstimates = rangeEstimates;
+    }
+    return {ds, opts};
+}
+
+// Run every (strategy, order) fit, reporting progress between each one.
+//
+// This is async purely so the progress bar can move: each individual fit is a
+// synchronous number-crunch that locks the main thread (Monte Carlo 2 alone is
+// ~5 s per order on a 20,000-frame clip, because its cost is trials x frames),
+// and without a yield in between the whole sweep would appear as one long
+// freeze with a stalled bar and a dead Cancel button.
+//
+// `report(done, total, label)` is awaited between fits — that await is what
+// actually lets the browser repaint.
+async function sweepPolynomialOrders(dataset, report) {
+    const {ds, opts} = prepareSweep(dataset);
+    const results = [];
+    const total = SWEEP_VARIANTS.length * MC_SWEEP_MAX_ORDER;
+    let done = 0;
+    for (const variant of SWEEP_VARIANTS) {
+        for (let order = 1; order <= MC_SWEEP_MAX_ORDER; order++) {
+            await report(done, total, `${variant.name} (order ${order})`);
+            let res = null;
+            try {
+                // A short clip can't support the higher orders (needs order + 1
+                // points); the fit returns null rather than guessing.
+                res = variant.fit(ds, new Set(), {...opts, order});
+            } catch (e) {
+                res = null;
+            }
+            done++;
+            if (res && res.positions) results.push({variant, order, result: res});
+        }
+    }
+    return {results, numTrials: opts.numTrials, losUncertaintyDeg: opts.losUncertaintyDeg};
+}
 
 // User toggles for the extra physical-interpretation hypotheses, surfaced in the
 // "Traverse Analysis Tweaks" menu folder (see addAnalyzeTweaks). The two
@@ -713,7 +810,8 @@ function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy
 }
 
 function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured, quad, satellite,
-    slowProfile, slowOpts, losNode, originLat, originLon, provenance = null, failures = null}) {
+    slowProfile, slowOpts, losNode, originLat, originLon, provenance = null, failures = null,
+    windPrior = null, mcSweep = null}) {
     const S = dataset.S;
     const globalFrame = (f) => (dataset.frame0 ?? 0) + f;
     const dateForDatasetFrame = (f) => dateAtDatasetFrame(dataset, f);
@@ -1006,26 +1104,39 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
     }
 
     // 5. balloon (Sky Lantern / Balloon) — TWO reconstructions from the same
-    //    wind-tracer model: (a) FREE wind, inferred with no measured input;
-    //    (b) MEASURED wind, drift softly pinned to the loaded sounding/GFS
-    //    profile (only when one is loaded). Both keyed "lantern" so they share
-    //    the forward-model group, apply path, and prose.
+    //    wind-tracer model, the two ways of treating wind:
+    //      (a) FINDING the wind: fitted freely, no wind input at all;
+    //      (b) USING the existing wind: drift softly pinned to the sitch's wind.
+    //    Both keyed "lantern" so they share the forward-model group, apply path,
+    //    and prose. The pinned variant is named for its PROVENANCE — a measured
+    //    sounding/GFS profile and a hand-set constant are both usable, but they
+    //    are not equally good evidence, so the label says which one it was.
+    const windMeasured = windPrior ? windPrior.measured : false;
+    const pinnedWindLabel = windMeasured ? "measured wind" : "sitch wind";
     list.push(lanternHypothesis(lantern, dataset, errFloor, {
         key: "lantern",
         name: lanternMeasured ? "Sky Lantern / Balloon (free wind)" : "Sky Lantern / Balloon",
-        windPolicy: "wind fitted freely by this model (no measured-wind input)",
+        windPolicy: "free-diagnostic: wind fitted by this model, no wind input",
         notes: "FREE reconstruction: wind-drift lantern kinematics (rise, buoyancy decay, terminal "
             + "sink; altitude-sheared wind) fit to the sightlines with the wind INFERRED, not assumed. "
             + "The inferred wind is what a plausible balloon here would require.",
     }));
     if (lanternMeasured) {
+        const windDesc = windPrior && windPrior.statusText ? ` (${windPrior.statusText})` : "";
         list.push(lanternHypothesis(lanternMeasured, dataset, errFloor, {
             key: "lantern",
-            name: "Sky Lantern / Balloon (measured wind)",
-            windPolicy: "drift wind pinned loosely to the loaded sounding/GFS profile",
-            notes: "MEASURED-wind reconstruction: the same model with its drift wind softly anchored "
-                + "to the loaded winds aloft (kept loose — a sonde can be 200+ mi and 12 h away). "
-                + "Compare its residual and inferred profile against the free fit.",
+            name: `Sky Lantern / Balloon (${pinnedWindLabel})`,
+            windPolicy: windMeasured
+                ? `measured-corrected: drift wind pinned loosely to the loaded ${windPrior.source} profile`
+                : "assumed-wind: drift wind pinned loosely to the hand-set sitch wind (an assumption, not a measurement)",
+            notes: windMeasured
+                ? "MEASURED-wind reconstruction: the same model with its drift wind softly anchored "
+                    + `to the loaded winds aloft${windDesc} (kept loose — a sonde can be 200+ mi and 12 h away). `
+                    + "Compare its residual and inferred profile against the free fit."
+                : "SITCH-wind reconstruction: the same model with its drift wind softly anchored to the "
+                    + `sitch's hand-set wind${windDesc}. That wind is an ASSUMPTION, not a measurement, so `
+                    + "treat this as \"what a balloon would look like IF the wind is as set\" — the free fit, "
+                    + "which infers the wind the sightlines actually require, is the stronger evidence.",
         }));
     }
 
@@ -1328,8 +1439,8 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
         // display = what the user sees, matching the menu's display label.
         {key: "gfCA", label: "Global Fit: Const Acceleration", display: "Global Fit: Constant Acceleration", subtitle: "Least-squares constant-acceleration fit", color: "#67b89a"},
         {key: "gfKalman", label: "Global Fit: Kalman Smoother", subtitle: "Kalman-smoothed LOS fit", color: "#57a8c6"},
-        {key: "gfMC1", label: "Global Fit: Monte Carlo 1", subtitle: "Monte-Carlo sampled fit (fixed seed)", color: "#b79be0"},
-        {key: "gfMC2", label: "Global Fit: Monte Carlo 2", subtitle: "Monte-Carlo sampled fit v2 (fixed seed)", color: "#9b7fd0"},
+        // Monte Carlo 1/2 are NOT read off their live nodes here — they are
+        // swept over polynomial order below (see the MC sweep block).
         {key: "straightLine", label: "Straight Line", subtitle: "Straight constant-velocity line", color: "#cf8fae"},
     ];
     if (provenance?.measuredSubstituted) {
@@ -1354,6 +1465,94 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
             if (!node || typeof node.p !== "function") continue;
             const h = methodNodeHypothesis(meth, node, dataset, originLat, originLon, losSig);
             if (h) list.push(h);
+        }
+    }
+
+    // ---- Curve-fit polynomial-order sweep tiles ---------------------------
+    // Each fitting strategy is swept over polynomial order and every order gets
+    // its own tile. The sitch's single shared "MC Polynomial Order" control
+    // (mcOrder) is almost always left at its default 1 — where the curve is a
+    // straight line in time, i.e. constant velocity — so without the sweep the
+    // Monte Carlo tiles were near-duplicates of the constant-velocity fit and
+    // the effect of order was invisible.
+    //
+    // Swept here rather than read off the live CNodeLOSFitMonteCarlo nodes (as
+    // the other Global Fit methods are), because driving them would mean
+    // mutating that shared GUI value once per order and firing its change
+    // handlers. Every strategy is still reproducible — the Monte Carlo pair via
+    // a fixed random seed, the alternating fit because it uses no randomness —
+    // and "Use exact" installs the reviewed trajectory via applyContext below.
+    //
+    // READ THESE AS A METHOD DIAGNOSTIC, NOT A RANKING. A higher-order curve can
+    // always hug the sightlines more closely simply because it bends more, so a
+    // low residual high in the sweep is arithmetic rather than evidence about
+    // the object. Measured on a real sitch, one strategy beat another on
+    // residual at every order while being FURTHER from the truth track at every
+    // order. What the sweep genuinely shows is how much curvature the
+    // sightlines admit, and where extra order stops buying anything.
+    //
+    // The fits themselves run in runTraverseAnalysis (far too slow to do
+    // synchronously here — see sweepPolynomialOrders); this only turns the
+    // finished results into tiles.
+    {
+        const mcTrials = mcSweep?.numTrials;
+        for (const {variant, order, result: res} of (mcSweep?.results ?? [])) {
+            {
+                const track = Float64Array.from(res.positions);
+                const m = trackMetrics(dataset, track);
+                const errDeg = meanAngularError(dataset, track) * 180 / Math.PI;
+                const nonPhysical = !isFinite(m.airSpeed.mean)
+                    || m.airSpeed.mean / KNOTS_TO_MS > 20000 || !(m.gLoad.max < 2000);
+                const ranges = new Float64Array(dataset.n);
+                for (let f = 0; f < dataset.n; f++) {
+                    ranges[f] = Math.hypot(track[f * 3] - S[f * 3],
+                        track[f * 3 + 1] - S[f * 3 + 1], track[f * 3 + 2] - S[f * 3 + 2]);
+                }
+                const sortedR = Array.from(ranges).sort((a, b) => a - b);
+                list.push({
+                    key: variant.key,
+                    name: `${variant.name} (order ${order})`,
+                    subtitle: `${ORDER_NAMES[order] ?? ("order " + order)} — ${variant.flavour}`
+                        + (variant.key === "gfPolyALS" ? "" : ", fixed seed"),
+                    color: variant.color,
+                    track, metricsFull: m, errDeg, nonPhysical,
+                    params: {
+                        range: sortedR[Math.floor(dataset.n / 2)],
+                        mcOrder: order,
+                        // The alternating fit doesn't sample, so the trial count
+                        // and LOS-uncertainty settings don't apply to it.
+                        ...(variant.key === "gfPolyALS" ? {} : {
+                            mcTrials,
+                            mcLOSUncertaintyDeg: mcSweep?.losUncertaintyDeg,
+                        }),
+                    },
+                    notes: (variant.key === "gfPolyALS"
+                        ? `A curve of degree ${order} (${ORDER_NAMES[order] ?? "higher order"}) fitted to `
+                            + "the sightlines by repeated best-fit: guess how far away the object was on each "
+                            + "sightline, draw the best curve through those points, slide each point along its "
+                            + "own sightline to sit nearest that curve, and repeat. No random guessing, so it "
+                            + "gives the same answer every time. Its distances are free to move well away from "
+                            + "the constant-velocity starting guess, unlike the Monte Carlo fits."
+                        : `Monte-Carlo curve fit of degree ${order} `
+                            + `(${ORDER_NAMES[order] ?? "higher order"}) to the sightlines, `
+                            + `${mcTrials ?? 500} random trials at a fixed seed. Its distances are only `
+                            + "ever sampled within 0.9x to 1.1x of the constant-velocity fit, so it cannot "
+                            + "propose a much nearer or further object than that fit already found.")
+                        + " "
+                        + (order === 1
+                            ? "Degree 1 is a straight line in time — a constant-speed, constant-direction path — "
+                                + "so this tile should closely match the constant-velocity fit."
+                            : "A higher degree can always hug the sightlines more closely, simply because it has "
+                                + "more freedom to bend, so a lower error here is NOT by itself proof of a better "
+                                + "answer — in testing, higher degrees sometimes matched the sightlines better "
+                                + "while drifting further from the real path. Compare against the lower degrees: "
+                                + "a large improvement suggests the sightlines genuinely require a curved path, a "
+                                + "small one suggests the extra freedom is just absorbing noise. Note also that a "
+                                + `degree-${order} curve can only change direction about ${Math.max(1, Math.floor(order / 2))} `
+                                + "time(s) across the whole clip.")
+                        + " Shown as a fitting-method diagnostic, not an independent object hypothesis.",
+                });
+            }
         }
     }
 
@@ -2013,6 +2212,18 @@ function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
             windSeries.push(analysisWindNode.from, analysisWindNode.knots);
         }
     }
+    // The wind FIELD (altitude-resolved profile, separate node from the
+    // targetWind above) steers the wind-pinned balloon hypothesis, so a change
+    // of source or of the underlying data must invalidate a cached analysis.
+    // _windDataVersion is bumped by the field whenever its data is refetched.
+    // Gated on windMode for the same reason the prior is: under "Zero wind" the
+    // field doesn't reach the analysis at all, so it must not affect the key.
+    if (analyzeTweaks.windMode !== "Zero wind") {
+        const wf = NodeMan.get("windField", false);
+        if (wf) {
+            windSeries.push("field", wf.source ?? "", wf.statusText ?? "", wf._windDataVersion ?? 0);
+        }
+    }
     const provenance = capturedProvenance || losProvenance();
     // Truth-track reference: both WHICH track is selected and its actual
     // positions steer the scoring/ordering (e.g. the altitude-units toggle
@@ -2360,21 +2571,29 @@ export async function runTraverseAnalysis() {
             rangeMax: plausRangeMax,
         });
 
-        // Wind-profile prior for the wind-tracer fits (Sky Lantern / Balloon and
-        // Quadcopter): sample the loaded sounding/GFS wind at the analysis origin
-        // and the plausible object altitude, and pin their solved wind loosely to
-        // it. A wind tracer's drift SHOULD match the measured winds aloft, not
-        // slide slow to trade range against an invented calm (the coupled
-        // range/wind unobservable pair). Skipped when no wind field is loaded —
-        // the models then keep their own light-wind prior.
-        // Gate to a MEASURED, altitude-resolved wind source (soundings / GFS /
-        // open-meteo / custom). A "manual" source is a hand-set constant wind —
-        // an assumption, not a measurement — so pinning a wind tracer to it
-        // (often 0,0) would just re-impose a possibly-wrong calm; leave those to
-        // the model's own light-wind prior.
+        // Wind input for the wind-tracer fits (Sky Lantern / Balloon and
+        // Quadcopter): sample the sitch's wind at the analysis origin and the
+        // plausible object altitude, and pin their solved wind loosely to it.
+        // A wind tracer's drift SHOULD match the winds aloft, not slide slow to
+        // trade range against an invented calm (the coupled range/wind
+        // unobservable pair).
+        //
+        // This is what makes "using existing wind" a hypothesis distinct from
+        // "finding wind" — the two are fitted separately and both reported.
+        // It is deliberately NOT restricted to measured sources: a hand-set
+        // ("manual") constant is an assumption rather than a measurement, but
+        // excluding it made the split invisible on every manual-wind sitch,
+        // which is most of them. Instead the provenance is carried on the prior
+        // and LABELLED in the hypothesis name/notes, so the analyst can see
+        // whether the pinned wind was measured or asserted.
+        //
+        // Honours the analysis-wide "Wind for analysis" toggle: "Zero wind"
+        // means the analyst asked for no wind input at all, so no wind-pinned
+        // variant is built (the free fit still runs and infers its own wind).
         let windPrior = null;
         const windFieldNode = NodeMan.get("windField", false);
-        if (windFieldNode && windFieldNode.source && windFieldNode.source !== "manual"
+        if (analyzeTweaks.windMode !== "Zero wind"
+            && windFieldNode && windFieldNode.source
             && typeof windFieldNode.sampleWindAtAltitude === "function"
             && plausible && plausible.track) {
             let sumAlt = 0;
@@ -2383,11 +2602,34 @@ export async function runTraverseAnalysis() {
                 sumAlt += z + (x * x + y * y) / (2 * EARTH_RADIUS_M);  // geodetic; ENU origin at MSL
             }
             const meanAltM = sumAlt / dataset.n;
-            // originLat/originLon are RADIANS here; sampleWindAtAltitude wants DEGREES.
-            const s = windFieldNode.sampleWindAtAltitude(
-                originLat * 180 / Math.PI, originLon * 180 / Math.PI, meanAltM);
+            // originLat/originLon are RADIANS here; sampleWindAtAltitude wants
+            // DEGREES. The wind field resolves every source, including a manual
+            // constant, to an East/North vector at this altitude.
+            //
+            // Wrapped: the wind field is shared, user-configurable state that
+            // varies a lot between sitches (a legacy sitch may carry a wind node
+            // whose grid was never built at all). A wind problem must degrade to
+            // "no wind-pinned hypothesis", never abort the whole analysis — the
+            // free-wind fit doesn't need wind input and still runs.
+            let s = null;
+            try {
+                s = windFieldNode.sampleWindAtAltitude(
+                    originLat * 180 / Math.PI, originLon * 180 / Math.PI, meanAltM);
+            } catch (e) {
+                console.warn("Wind sample for the balloon prior failed; "
+                    + "continuing with the free-wind fit only:", e);
+                s = null;
+            }
             if (s && Number.isFinite(s.u) && Number.isFinite(s.v)) {
-                windPrior = {E: s.u, N: s.v, altM: meanAltM};
+                windPrior = {
+                    E: s.u, N: s.v, altM: meanAltM,
+                    source: windFieldNode.source,
+                    // "manual" is a hand-set constant; every other source
+                    // (gfs / custom / uwyo / igra2 / manual-soundings /
+                    // openmeteo) is measured or modelled data.
+                    measured: windFieldNode.source !== "manual",
+                    statusText: windFieldNode.statusText ?? null,
+                };
             }
         }
 
@@ -2423,14 +2665,17 @@ export async function runTraverseAnalysis() {
             failures.push({method: "Sky Lantern / Balloon (free wind)", error: "fit returned no solution"});
         }
 
-        // MEASURED-wind reconstruction: a second balloon fit whose drift wind is
-        // softly pinned to the loaded sounding/GFS profile (kept loose — measured
-        // wind is only loosely representative). Only when a measured wind field is
-        // present; kept SEPARATE from the free fit so both modes coexist and the
-        // free-inferred-vs-measured wind comparison is available.
+        // "USING EXISTING WIND" reconstruction: a second balloon fit whose drift
+        // wind is softly pinned to the sitch's wind (kept loose — even a real
+        // sounding is only loosely representative). Runs whenever the sitch has
+        // a wind and the analyst hasn't selected "Zero wind"; the prior carries
+        // its provenance so the hypothesis can say whether that wind was
+        // measured or hand-set. Kept SEPARATE from the free fit so both modes
+        // coexist and the inferred-vs-existing wind comparison is available.
         let lanternMeasured = null;
         if (windPrior) {
-            await phase(0.87, 0.02, "Fitting balloon model (measured wind)...")(0);
+            await phase(0.87, 0.02,
+                `Fitting balloon model (${windPrior.measured ? "measured" : "sitch"} wind)...`)(0);
             try {
                 const m = new SkyLanternModel();
                 m.windPriorE = windPrior.E; m.windPriorN = windPrior.N;
@@ -2446,7 +2691,7 @@ export async function runTraverseAnalysis() {
         // the generic multirotor envelope; the hypothesis classifies the solved
         // trajectory to the nearest common model. May fail / be implausible for
         // far-field scenes (its range is capped at 20 km) — degrade gracefully.
-        await phase(0.89, 0.06, "Fitting quadcopter (drone) model...")(0);
+        await phase(0.89, 0.04, "Fitting quadcopter (drone) model...")(0);
         let quad = null;
         try {
             quad = await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(), physicsOpts);
@@ -2460,12 +2705,26 @@ export async function runTraverseAnalysis() {
             failures.push({method: "Quadcopter", error: "fit returned no solution"});
         }
 
+        // Polynomial-order sweep across the three curve-fitting strategies. This
+        // is the longest single block in the analysis (Monte Carlo 2 is ~5 s per
+        // order on a 20,000-frame clip), so it gets a real slice of the progress
+        // bar and reports which fit is running — the progress callback awaits a
+        // DOM yield, which is what keeps the bar moving and Cancel responsive.
+        let mcSweep = null;
+        if (!provenance?.measuredSubstituted) {
+            mcSweep = await sweepPolynomialOrders(dataset, async (done, total, label) => {
+                await phase(0.93, 0.05,
+                    `Sweeping curve fits (${done + 1}/${total}): ${label}...`)(done / total);
+            });
+            if (overlay.isCancelled()) throw new Error("cancelled");
+        }
+
         // Satellite (LEO pass) — gated OFF: loads the historical catalogue for the
         // sitch's date through the server (network, slow first time) and finds the
         // pass best matching the sightlines. Degrades to a note on any failure.
         let satellite = null;
         if (analyzeTweaks.satellite) {
-            await phase(0.96, 0.02, "Loading LEO satellites for the date...")(0);
+            await phase(0.98, 0.01, "Loading LEO satellites for the date...")(0);
             try {
                 const date0 = dateAtDatasetFrame(dataset, Math.floor(dataset.n / 2));
                 const sats = await loadLEOSatrecsForDate(date0);
@@ -2497,7 +2756,7 @@ export async function runTraverseAnalysis() {
             dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured, quad, satellite,
             slowProfile, slowOpts,
             losNode, originLat, originLon,
-            provenance, failures,
+            provenance, failures, windPrior, mcSweep,
         });
 
         // Ground-truth reference: when a truth track is selected in the Tweaks,
@@ -3813,10 +4072,34 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-group-title { color:#dce3eb; font-size:15px; font-weight:750; }
         .traverse-gallery-overlay .tg-group-desc { color:#8a9099; font-size:12px; line-height:1.45;
             margin-top:3px; max-width:100ch; }
-        .traverse-gallery-overlay .tg-tile { background:#14161a; border:1px solid rgba(255,255,255,0.09);
+        .traverse-gallery-overlay .tg-tile { position:relative; background:#14161a;
+            border:1px solid rgba(255,255,255,0.09);
             border-radius:12px; padding:12px; display:flex; flex-direction:column; cursor:pointer;
             transition:border-color .12s, box-shadow .12s; }
         .traverse-gallery-overlay .tg-tile:hover { border-color:rgba(120,170,240,0.5); }
+        /* Dismiss ("X") — top-LEFT, mirroring the fullscreen/zoom buttons on the
+           right so the two corners read as separate concerns. */
+        .traverse-gallery-overlay .tg-tile-dismiss { position:absolute; top:20px; left:20px; z-index:4;
+            width:30px; height:30px; display:grid; place-items:center; padding:0; border-radius:7px;
+            border:1px solid rgba(255,255,255,0.28); background:rgba(7,10,14,0.72);
+            color:#e8eaed; font-size:16px; line-height:1; cursor:pointer; }
+        .traverse-gallery-overlay .tg-tile-dismiss:hover { background:rgba(224,86,78,0.9);
+            border-color:#ef8b84; color:#fff; }
+        /* In the set-aside area the button restores rather than removes, so it
+           must not hover destructive-red. */
+        .traverse-gallery-overlay .tg-tile-dismiss.restore { font-size:17px; }
+        .traverse-gallery-overlay .tg-tile-dismiss.restore:hover { background:rgba(57,135,229,0.88);
+            border-color:#7fb0ee; color:#fff; }
+        /* A set-aside tile stays fully readable — it is excluded from
+           consideration, not hidden, so a reader can still see what was put
+           aside and why. */
+        .traverse-gallery-overlay .tg-tile.dismissed { opacity:0.55;
+            border-style:dashed; border-color:rgba(255,255,255,0.16); }
+        .traverse-gallery-overlay .tg-tile.dismissed:hover { opacity:0.8; }
+        .traverse-gallery-overlay .tg-sep { grid-column:1 / -1; margin:18px 0 2px;
+            border-top:1px dashed rgba(255,255,255,0.22); padding-top:10px; }
+        .traverse-gallery-overlay .tg-sep-title { color:#c9cfd7; font-weight:700; font-size:13px; }
+        .traverse-gallery-overlay .tg-sep-desc { color:#8a9099; font-size:11.5px; margin-top:2px; }
         .traverse-gallery-overlay .tg-tile.selected { border-color:#3987e5;
             box-shadow:0 0 0 2px rgba(57,135,229,0.45); }
         .traverse-gallery-overlay .tg-chart-shell { position:relative; width:100%; min-width:0; }
@@ -4087,8 +4370,17 @@ function showResultGallery(results) {
         chartGroup.setSyncScale(on, currentChart());
         setToggleState(syncScaleBtn, on);
     });
+    // Restore every set-aside tile. Disabled (and count-less) while nothing has
+    // been set aside, so the control also reports how many are currently out.
+    const restoreBtn = document.createElement("button");
+    restoreBtn.className = "tg-toggle";
+    restoreBtn.type = "button";
+    restoreBtn.textContent = "Restore Closed";
+    restoreBtn.title = "Bring every set-aside candidate back into consideration.";
+    restoreBtn.disabled = true;
     toolbar.appendChild(syncOrientationBtn);
     toolbar.appendChild(syncScaleBtn);
+    toolbar.appendChild(restoreBtn);
     panel.appendChild(toolbar);
 
     // two-pane body: tiles (2/3) + details (1/3)
@@ -4183,13 +4475,193 @@ function showResultGallery(results) {
         }
     };
 
+    // Layout model for the tile grid. Tiles can be SET ASIDE (the X button),
+    // which moves them below a separator at the end rather than deleting them —
+    // the reader can still see what was excluded, and "Restore Closed" brings
+    // them all back. Group headings are re-emitted on each relayout and skipped
+    // when every tile in that group has been set aside, so no empty headings.
+    const dismissed = new Set();
+    const headingByCategory = new Map();
+
+    const relayout = () => {
+        while (grid.firstChild) grid.removeChild(grid.firstChild);
+        let lastCategoryKey = null;
+        tiles.forEach(({category}, i) => {
+            if (dismissed.has(i)) return;
+            if (category.key !== lastCategoryKey) {
+                grid.appendChild(headingByCategory.get(category.key));
+                lastCategoryKey = category.key;
+            }
+            grid.appendChild(tileEls[i]);
+        });
+        if (dismissed.size > 0) {
+            const sep = document.createElement("div");
+            sep.className = "tg-sep";
+            sep.innerHTML = `<div class="tg-sep-title">Set aside (${dismissed.size})</div>`
+                + `<div class="tg-sep-desc">Excluded from consideration. They are still shown, and `
+                + `still ranked as they were, so nothing is silently dropped — use "Restore Closed" `
+                + `to bring them back.</div>`;
+            grid.appendChild(sep);
+            tiles.forEach((_, i) => { if (dismissed.has(i)) grid.appendChild(tileEls[i]); });
+        }
+        restoreBtn.disabled = dismissed.size === 0;
+        restoreBtn.textContent = dismissed.size === 0
+            ? "Restore Closed" : `Restore Closed (${dismissed.size})`;
+    };
+
+    // ---- Dismissal animation ----------------------------------------------
+    // Two beats, deliberately sequential rather than simultaneous: the tile
+    // first drops away on its own while the grid holds still (so you can see
+    // WHICH one left and the hole it came from), and only then do the survivors
+    // close the gap. Doing both at once reads as an unexplained shuffle.
+    const FLY_MS = 300;      // beat 1: the tile drops out of the list
+    const REFLOW_MS = 300;   // beat 2: everything else slides into place
+
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const reducedMotion = () => typeof window.matchMedia === "function"
+        && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // FLIP: measure where things are, change the layout, then start each moved
+    // element back at its old position and let it transition to the new one.
+    // Animating real layout changes this way keeps the grid authoritative — no
+    // parallel "animation layout" to drift out of sync.
+    const reflowAnimated = async (mutate, skipEl = null) => {
+        if (reducedMotion()) { mutate(); return; }
+        const first = new Map();
+        for (const el of tileEls) first.set(el, el.getBoundingClientRect());
+        mutate();
+        const moved = [];
+        for (const el of tileEls) {
+            if (el === skipEl) continue;             // it already flew away
+            const a = first.get(el), b = el.getBoundingClientRect();
+            if (!a || !b.width) continue;            // not laid out
+            const dx = a.left - b.left, dy = a.top - b.top;
+            if (!dx && !dy) continue;
+            el.style.transition = "none";
+            el.style.transform = `translate(${dx}px, ${dy}px)`;
+            moved.push(el);
+        }
+        if (moved.length === 0) return;
+        void grid.offsetHeight;                      // flush the inverted state
+        for (const el of moved) {
+            el.style.transition = `transform ${REFLOW_MS}ms ease`;
+            el.style.transform = "";
+        }
+        await wait(REFLOW_MS);
+        for (const el of moved) { el.style.transition = ""; el.style.transform = ""; }
+    };
+
+    // Clicks are queued rather than dropped, so impatient double-clicks still
+    // land instead of being silently swallowed mid-animation.
+    let animQueue = Promise.resolve();
+    const queueAnimation = (fn) => { animQueue = animQueue.then(fn).catch(() => {}); };
+
+    // The per-tile button is a toggle, so it states what it will DO next: an X
+    // while the tile is in play, an up-arrow once it has been set aside.
+    // Direction is meaningful here — the tile leaves downwards and comes back
+    // upwards — so the arrow doubles as a hint about the motion.
+    const syncDismissButton = (i) => {
+        const btn = tileEls[i].querySelector(".tg-tile-dismiss");
+        const aside = dismissed.has(i);
+        const name = tiles[i].h.name;
+        btn.textContent = aside ? "↑" : "✕";
+        btn.title = aside
+            ? "Restore — bring back into consideration"
+            : "Set aside — exclude from consideration";
+        btn.setAttribute("aria-label", `${aside ? "Restore" : "Set aside"} ${name}`);
+        btn.classList.toggle("restore", aside);
+    };
+
+    // Where selection goes when the SELECTED tile is set aside. Follows what
+    // the eye does: first the tile that slides up into the vacated slot, then
+    // the one to its left, then whatever is nearest on screen. Group headings
+    // span the full grid width, so only tiles in the SAME group actually shift
+    // into that slot — hence the same-group scan before the geometric fallback.
+    // Returns -1 when nothing is left in play, in which case the caller leaves
+    // the set-aside tile selected rather than selecting nothing.
+    const pickSuccessor = (i, vacatedRect) => {
+        const group = tiles[i].category.key;
+        const inPlay = (k) => k !== i && !dismissed.has(k);
+        for (let k = i + 1; k < tiles.length && tiles[k].category.key === group; k++) {
+            if (inPlay(k)) return k;          // slides into the vacated slot
+        }
+        for (let k = i - 1; k >= 0 && tiles[k].category.key === group; k--) {
+            if (inPlay(k)) return k;          // the one to its left
+        }
+        let best = -1, bestDist = Infinity;
+        const cx = vacatedRect.left + vacatedRect.width / 2;
+        const cy = vacatedRect.top + vacatedRect.height / 2;
+        for (let k = 0; k < tiles.length; k++) {
+            if (!inPlay(k)) continue;
+            const r = tileEls[k].getBoundingClientRect();
+            if (!r.width) continue;           // not laid out
+            const dx = (r.left + r.width / 2) - cx, dy = (r.top + r.height / 2) - cy;
+            const d = dx * dx + dy * dy;
+            if (d < bestDist) { bestDist = d; best = k; }
+        }
+        return best;
+    };
+
+    const setAside = async (i) => {
+        const tile = tileEls[i];
+        const dismissing = !dismissed.has(i);
+        const wasSelected = selected === i;
+        // Measured before the fly transform is applied, so it is the slot the
+        // tile actually vacated rather than wherever it flew to.
+        const vacatedRect = tile.getBoundingClientRect();
+        if (!reducedMotion()) {
+            // Beat 1. The grid is untouched, so the tile's slot stays open and
+            // nothing else budges yet. Leaves downwards, returns upwards, so
+            // the two directions read as opposites rather than a generic move.
+            const rect = tile.getBoundingClientRect();
+            const dy = dismissing
+                ? window.innerHeight - rect.top + 40    // out through the bottom
+                : -(rect.bottom + 40);                  // back out through the top
+            tile.style.transition = `transform ${FLY_MS}ms cubic-bezier(0.35, 0, 0.9, 0.55), `
+                + `opacity ${FLY_MS}ms linear`;
+            tile.style.transform = `translateY(${dy}px)`;
+            tile.style.opacity = "0";
+            await wait(FLY_MS);
+        }
+        // Drop the fly transform before re-measuring, or the FLIP below would
+        // read the off-screen position as this tile's "old" position.
+        tile.style.transition = "none";
+        tile.style.transform = "";
+        tile.style.opacity = "";
+        if (dismissing) dismissed.add(i); else dismissed.delete(i);
+        tile.classList.toggle("dismissed", dismissing);
+        syncDismissButton(i);
+        if (dismissing && wasSelected) {
+            const successor = pickSuccessor(i, vacatedRect);
+            if (successor >= 0) selectTile(successor);
+        }
+        // Beat 2. The tile that just flew is excluded in BOTH directions — it
+        // should be waiting at its destination, not slide there from the slot
+        // it visibly just left.
+        await reflowAnimated(relayout, tile);
+        tile.style.transition = "";
+    };
+
+    restoreBtn.addEventListener("click", () => {
+        if (dismissed.size === 0) return;
+        queueAnimation(() => reflowAnimated(() => {
+            const restoring = Array.from(dismissed);
+            restoring.forEach((i) => tileEls[i].classList.remove("dismissed"));
+            dismissed.clear();
+            // Bulk restore has no fly beat — everything simply slides home
+            // together — but the buttons still have to flip back to X.
+            restoring.forEach(syncDismissButton);
+            relayout();
+        }));
+    });
+
     tiles.forEach(({h, r, category, groupIndex, groupSize, tied}, i) => {
-        if (groupIndex === 0) {
+        if (!headingByCategory.has(category.key)) {
             const heading = document.createElement("div");
             heading.className = "tg-group-head";
             heading.innerHTML = `<div class="tg-group-title">${escapeHtml(category.label)}</div>` +
                 `<div class="tg-group-desc">${escapeHtml(category.description)}</div>`;
-            grid.appendChild(heading);
+            headingByCategory.set(category.key, heading);
         }
         const badges = [tierBadge(r), ...completenessBadges(r)];
         const badgesHTML = badges.map((badge) =>
@@ -4202,6 +4674,8 @@ function showResultGallery(results) {
         const tile = document.createElement("div");
         tile.className = "tg-tile";
         tile.innerHTML =
+            `<button class="tg-tile-dismiss" type="button" title="Set aside — exclude from consideration" ` +
+            `aria-label="Set aside ${escapeHtml(h.name)}">✕</button>` +
             `<div class="tg-chart-shell tg-thumb-shell">` +
                 `<canvas class="tg-thumb tg-chart-3d" data-chart-role="tile" role="img" title="Drag to rotate" ` +
                 `aria-label="3D volume view of the ${escapeHtml(h.name)} trajectory"></canvas>` +
@@ -4218,10 +4692,17 @@ function showResultGallery(results) {
             `<div class="tg-stats">${statsHTML}</div>` +
             `<div class="tg-rank-basis"><strong>Rank basis:</strong> ${escapeHtml(rankingExplanation(h, r))}</div>`;
         tile.addEventListener("click", () => selectTile(i));
+        // stopPropagation so setting a tile aside doesn't also select it
+        tile.querySelector(".tg-tile-dismiss").addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            queueAnimation(() => setAside(i));
+        });
         tileEls.push(tile);
-        grid.appendChild(tile);
         pendingTileCharts.push({canvas: tile.querySelector("canvas[data-chart-role='tile']"), h, i});
     });
+    // Guarded: with no tiles the grid holds the "no candidates" message, and
+    // relayout() would clear it.
+    if (tiles.length > 0) relayout();
 
     // footer
     const footer = document.createElement("div");

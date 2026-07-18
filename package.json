@@ -73,7 +73,8 @@
     "version": "node -e \"console.log(require('child_process').execSync('git describe --tags --abbrev=0', {encoding: 'utf8'}).trim())\"",
     "build-video-viewer": "npm run build-desktop",
     "app-video-viewer": "npm run app-desktop",
-    "dist-video-viewer": "npm run dist-desktop"
+    "dist-video-viewer": "npm run dist-desktop",
+    "bench-losfit": "npx jest benchmarks/losFitting.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit"
   },
   "jest": {
     "testPathIgnorePatterns": [
@@ -81,7 +82,8 @@
       "<rootDir>/.claude/",
       "<rootDir>/tests_regression/",
       "<rootDir>/test_other/",
-      "<rootDir>/dist-standalone/"
+      "<rootDir>/dist-standalone/",
+      "<rootDir>/benchmarks/"
     ],
     "roots": [
       "<rootDir>"
