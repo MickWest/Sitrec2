@@ -186,12 +186,17 @@ export function createSphereDayNight(radius, radius1, segments) {
             // Convert sRGB-space output to linear to match standard materials.
             gl_FragColor = sRGBTransferEOTF(gl_FragColor);
 
-            // Logarithmic depth calculation
+            // Logarithmic depth calculation. In an ORTHOGRAPHIC projection clip-space
+            // w is a constant 1.0, collapsing this log formula to one depth for every
+            // fragment → z-fighting. Fall back to linear rasteriser depth (matches
+            // three.js's non-perspective logdepthbuf path).
             float w = vPosition.w;
-            float z = (log2(max(nearPlane, 1.0 + w)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
-        
-            // Write the depth value
-            gl_FragDepthEXT = z * 0.5 + 0.5;
+            if (w == 1.0) {
+                gl_FragDepthEXT = gl_FragCoord.z;
+            } else {
+                float z = (log2(max(nearPlane, 1.0 + w)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
+                gl_FragDepthEXT = z * 0.5 + 0.5;
+            }
      
             // Map the intensity to a grayscale color
             // vec3 color = vec3(intensity); // This creates a vec3 with all components set to the intensity value

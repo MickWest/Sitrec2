@@ -274,8 +274,14 @@ export class CPointLightCloud extends CNode3D {
                 gl_FragColor = vec4(vColor * alpha, alpha);
                 
                 ${this.useLogDepth ? `
-                float z = (log2(max(nearPlane, 1.0 + vDepth)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
-                gl_FragDepthEXT = z * 0.5 + 0.5;
+                // Orthographic projection makes vDepth a constant 1.0, collapsing the
+                // log formula to one value per fragment → z-fighting; use linear depth.
+                if (vDepth == 1.0) {
+                    gl_FragDepthEXT = gl_FragCoord.z;
+                } else {
+                    float z = (log2(max(nearPlane, 1.0 + vDepth)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
+                    gl_FragDepthEXT = z * 0.5 + 0.5;
+                }
                 ` : ''}
             }
         `;
@@ -419,8 +425,14 @@ export class CPointLightCloud extends CNode3D {
                 gl_FragColor = vec4(vColor * alpha, alpha);
                 
                 ${this.useLogDepth ? `
-                float z = (log2(max(nearPlane, 1.0 + vDepth)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
-                gl_FragDepthEXT = z * 0.5 + 0.5;
+                // Orthographic projection makes vDepth a constant 1.0, collapsing the
+                // log formula to one value per fragment → z-fighting; use linear depth.
+                if (vDepth == 1.0) {
+                    gl_FragDepthEXT = gl_FragCoord.z;
+                } else {
+                    float z = (log2(max(nearPlane, 1.0 + vDepth)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
+                    gl_FragDepthEXT = z * 0.5 + 0.5;
+                }
                 ` : ''}
             }
         `;

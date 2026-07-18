@@ -62,6 +62,8 @@ export class CNodeCamera extends CNode3D {
         this._orthoRaycaster = new Raycaster();
         this._orthoForward = new Vector3();
         this._orthoRefDistance = undefined;      // cached camera→ground distance for ortho sizing
+        this._orthoCamAGL = undefined;           // cached camera height above the ground below (box clamp)
+        this._orthoUpDotRadial = 1;              // cos(angle) of camera up axis vs local vertical (box clamp)
         this._orthoLastPos = null;               // movement guard so we don't re-raycast when still
         this._orthoLastDir = null;
         this._installOrthographicOverride();
@@ -282,7 +284,21 @@ export class CNodeCamera extends CNode3D {
     _updateOrthographicProjectionMatrix() {
         const cam = this._object;
         const d = this._orthoRefDistance ?? 1000;
-        const halfH = Math.tan((cam.fov ?? 30) * Math.PI / 360) * d / (cam.zoom || 1);
+        let halfH = Math.tan((cam.fov ?? 30) * Math.PI / 360) * d / (cam.zoom || 1);
+        // Clamp the box so its lower edge can't sink below the ground beneath the
+        // camera. halfH is sized to match the perspective framing at the screen-
+        // centre ground distance `d`; on a shallow/grazing view d far exceeds the
+        // camera's height, so that half-height would drop the box's bottom edge
+        // kilometres underground — and the bottom of the screen then samples terrain
+        // backfaces/skirts at grazing incidence as vertical streaks. The box spans
+        // ±halfH along the camera's up axis, so its lower edge sits halfH·(up·localUp)
+        // below the camera; cap halfH at camAGL/(up·localUp) to hold it at/above the
+        // surface. up·localUp → 0 for a top-down view, so the clamp never bites there.
+        const agl = this._orthoCamAGL;
+        const upDotRadial = this._orthoUpDotRadial;
+        if (agl !== undefined && upDotRadial > 1e-3) {
+            halfH = Math.min(halfH, agl / upDotRadial);
+        }
         const halfW = halfH * (cam.aspect || 1);
         // Orthographic depth is LINEAR: three.js's log-depth shader falls back to
         // gl_FragCoord.z for a non-perspective matrix, so the camera's perspective
@@ -308,6 +324,11 @@ export class CNodeCamera extends CNode3D {
             || this._orthoLastDir.dot(this._orthoForward) < 0.99999995
             || this._orthoRefDistance === undefined;
         if (moved) {
+            // Terrain lives on the camera's render layers (not necessarily layer 0),
+            // and a fresh Raycaster only tests layer 0 — so widen the mask to the
+            // camera's before any ground query, otherwise the terrain mesh is missed
+            // and every distance silently falls back to the ellipsoid horizon.
+            this._orthoRaycaster.layers.mask = cam.layers.mask;
             this._orthoRaycaster.set(cam.position, this._orthoForward);
             // Measure to the ACTUAL ground under the screen centre — the real
             // terrain mesh AND the Google 3D-tile surface (pass the camera so
@@ -324,6 +345,18 @@ export class CNodeCamera extends CNode3D {
                 // size until a real hit is available on a later frame.
                 this._orthoRefDistance = hit ? cam.position.distanceTo(hit.point) : 1000;
             }
+
+            // Camera height above the ground directly below it, plus how vertical the
+            // camera's up axis is — both feed the box-underground clamp in
+            // _updateOrthographicProjectionMatrix. raycastLocalGround falls back to
+            // the ellipsoid (≈ sea level) when there's no terrain below, which is the
+            // right AGL proxy over ocean.
+            const localUp = cam.position.clone().normalize();
+            this._orthoRaycaster.set(cam.position, localUp.clone().multiplyScalar(-1));
+            const below = raycastLocalGround(this._orthoRaycaster, cam);
+            this._orthoCamAGL = below ? cam.position.distanceTo(below.point) : undefined;
+            this._orthoUpDotRadial = new Vector3().setFromMatrixColumn(cam.matrixWorld, 1).dot(localUp);
+
             (this._orthoLastPos ??= new Vector3()).copy(cam.position);
             (this._orthoLastDir ??= new Vector3()).copy(this._orthoForward);
         }

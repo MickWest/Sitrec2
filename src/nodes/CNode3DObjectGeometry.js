@@ -589,10 +589,16 @@ export const gradientFragmentShader = `
         vec4 gradientColor = texture2D(gradientMap, vec2(t, 0.5));
         gl_FragColor = vec4(mix(gradientColor.rgb, baseColor, baseMix), 1.0);
 
-        // Logarithmic depth (matching other shaders in the codebase)
+        // Logarithmic depth (matching other shaders in the codebase). Orthographic
+        // projection makes clip-space w a constant 1.0, collapsing the log formula
+        // to one depth per fragment → z-fighting; use linear rasteriser depth there.
         float w = vPosition.w;
-        float z = (log2(max(nearPlane, 1.0 + w)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
-        gl_FragDepthEXT = z * 0.5 + 0.5;
+        if (w == 1.0) {
+            gl_FragDepthEXT = gl_FragCoord.z;
+        } else {
+            float z = (log2(max(nearPlane, 1.0 + w)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
+            gl_FragDepthEXT = z * 0.5 + 0.5;
+        }
     }
 `;
 

@@ -141,8 +141,15 @@ export class CNodeGroundOverlay extends CNode3DGroup {
                     vec4 texColor = texture2D(map, vUv);
                     gl_FragColor = vec4(texColor.rgb, texColor.a * opacity);
                     
-                    float z = (log2(max(nearPlane, 1.0 + vDepth)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
-                    gl_FragDepthEXT = z * 0.5 + 0.5 + depthBias;
+                    // Orthographic projection makes vDepth a constant 1.0, collapsing
+                    // the log formula to one value per fragment → z-fighting; use the
+                    // linear rasteriser depth there (biased identically).
+                    if (vDepth == 1.0) {
+                        gl_FragDepthEXT = gl_FragCoord.z + depthBias;
+                    } else {
+                        float z = (log2(max(nearPlane, 1.0 + vDepth)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
+                        gl_FragDepthEXT = z * 0.5 + 0.5 + depthBias;
+                    }
                 }
             `,
             side: DoubleSide,
