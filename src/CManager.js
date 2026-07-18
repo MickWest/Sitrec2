@@ -6,6 +6,13 @@ import {CNodeController} from "./nodes/CNodeController";
 class CManager {
     constructor() {
         this.list = {}
+        // Monotonic counter bumped on every add/remove. Consumers that derive an
+        // expensive result from the CURRENT set of managed objects (e.g.
+        // CNodeDisplayWindField._gatherSondeProfiles scanning for atmospheric
+        // profiles) can memoize against this and skip a full re-scan while the
+        // set is unchanged — critical for tight loops like the balloon bake,
+        // which samples wind once per frame across 100k+ frames.
+        this.listVersion = 0
     }
 
     size() {
@@ -18,6 +25,7 @@ class CManager {
             data: data,
             original: original,
         };
+        this.listVersion++;
         return data; // for chaining
     }
 
@@ -32,6 +40,7 @@ class CManager {
         }
         if (this.exists(id)) {
             delete this.list[id];
+            this.listVersion++;
         }
     }
 

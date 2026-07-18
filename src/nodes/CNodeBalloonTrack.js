@@ -122,7 +122,30 @@ export class CNodeBalloonTrack extends CNodeTrack {
 
     recalculate() {
         this.frames = Sit.frames;
-        this._windFingerprint = this._currentWindFingerprint();
+        const fingerprint = this._currentWindFingerprint();
+        this._windFingerprint = fingerprint;
+
+        const dt = (Sit.simSpeed ?? 1) / Sit.fps;
+
+        // Memoize the bake. integrateBalloonPositions is a pure function of these
+        // inputs plus the wind field (captured by the fingerprint), so if none of
+        // them changed the output is byte-identical — skip the O(frames)
+        // integration entirely. One "Add Balloon" otherwise re-bakes the same
+        // 100k+ frame track ~5× (constructor, recalculateAllRootFirst, and the
+        // update() wind-settle rebakes), each an unconditional full integration.
+        const bakeKey = [
+            fingerprint, this.frames, dt,
+            this.startLat, this.startLon,
+            this.in.startAltitude.v0, this.in.launchDelay.v0,
+            this.in.buoyancy.v0, this.in.windVariability.v0,
+            Math.round(this.in.seed.v0),
+        ].join("|");
+        if (this._lastBakeKey === bakeKey
+            && Array.isArray(this.array) && this.array.length === this.frames) {
+            return;
+        }
+        this._lastBakeKey = bakeKey;
+
         this.array = integrateBalloonPositions({
             startLat: this.startLat,
             startLon: this.startLon,
@@ -132,7 +155,7 @@ export class CNodeBalloonTrack extends CNodeTrack {
             variabilityPct: this.in.windVariability.v0,
             seed: Math.round(this.in.seed.v0),
             frames: this.frames,
-            dt: (Sit.simSpeed ?? 1) / Sit.fps,
+            dt,
         }, (lat, lon, altMSL, f) => this.windUVAt(lat, lon, altMSL, f));
         this._ensureWindLayers();
     }

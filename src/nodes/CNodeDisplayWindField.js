@@ -1744,12 +1744,27 @@ export class CNodeDisplayWindField extends CNode3DGroup {
 
     // `sourceFilter`: "uwyo" | "igra2" | null (no filter — any source).
     _gatherSondeProfiles(sourceFilter = null) {
+        // Memoize the profile-node LIST keyed by NodeMan's mutation version.
+        // sampleWindAtAltitude() calls this once per query, and the balloon bake
+        // queries wind once per frame over 100k+ frames — re-scanning the whole
+        // node graph (NodeMan.iterate + a per-node constructor-name compare) each
+        // time was the dominant bake cost (~5 s per 195k-frame bake). The set of
+        // CNodeAtmosphericProfile nodes only changes when nodes are added/removed
+        // (listVersion bumps), so between those events the cached list is exact.
+        // Only the node REFERENCES are cached — callers still read getAtAltitude()
+        // / topWindAlt live, so profile data that updates in place stays fresh.
+        const version = NodeMan.listVersion ?? 0;
+        const cache = this._sondeProfileCache;
+        if (cache && cache.version === version && cache.sourceFilter === sourceFilter) {
+            return cache.profiles;
+        }
         const profiles = [];
         NodeMan.iterate((id, node) => {
             if (!node || node.constructor?.name !== "CNodeAtmosphericProfile") return;
             if (sourceFilter && node.source !== sourceFilter) return;
             profiles.push(node);
         });
+        this._sondeProfileCache = {version, sourceFilter, profiles};
         return profiles;
     }
 
