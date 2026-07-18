@@ -1519,6 +1519,10 @@ const en = {
             label: "Line Color",
             tooltip: "Color of the track line",
         },
+        colorMode: {
+            label: "Color Mode",
+            tooltip: "Color a sonde track by a gradient over its measured temperature, altitude or pressure — or Flat to use the Line Color",
+        },
         polyColor: {
             label: "Poly Color",
             tooltip: "Color of the vertical ground extension polygons",

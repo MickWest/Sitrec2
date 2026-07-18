@@ -255,6 +255,22 @@ class CTrackManager extends CManager {
         this.usedShortNames = new Set(); // Track all used short names for uniqueness
     }
 
+    // Next auto colour for a track that is created directly by the user rather
+    // than imported — balloons and synthetic (spline) tracks. These aren't part
+    // of the shortName-ranked reassignment below (their colour lives in a
+    // per-track colour node, and they're created one at a time by an explicit
+    // click, so there's no async-ordering problem to solve), but they should
+    // still step through TRACK_PALETTE rather than all sharing one default
+    // colour — the old defaults were a fixed orange for balloons and pure
+    // yellow for synthetic tracks.
+    nextPaletteColor() {
+        let n = 0;
+        this.iterate((id, t) => {
+            if (t.paletteColored || t.isBalloon || t.isSynthetic) n++;
+        });
+        return TRACK_PALETTE[n % TRACK_PALETTE.length].clone();
+    }
+
     // Deterministic, order-INDEPENDENT track-colour assignment.
     //
     // Imported tracks are created in async load-completion order (each file calls
@@ -1761,7 +1777,7 @@ class CTrackManager extends CManager {
         const name = options.name || `Track ${trackNumber + 1}`;
         const curveType = options.curveType || "chordal";
         const editMode = options.editMode !== undefined ? options.editMode : true;
-        const colorHex = options.color || 0xffff00;
+        const colorHex = options.color;
         const lineWidth = options.lineWidth || 1;
         const startFrame = options.startFrame !== undefined ? options.startFrame : 0;
         const showInLook = !!options.showInLook;
@@ -1903,12 +1919,17 @@ class CTrackManager extends CManager {
             exportable: false,
         });
         
-        // Convert hex color to RGB array for display track
-        const trackColor = new Color(
-            ((colorHex >> 16) & 0xff) / 255,
-            ((colorHex >> 8) & 0xff) / 255,
-            (colorHex & 0xff) / 255
-        );
+        // Convert hex color to RGB array for display track. A serialised track
+        // always carries its colour, so only a brand-new one falls through to
+        // the auto palette — this used to default to pure yellow, which is the
+        // traverse track's colour and is deliberately excluded from the palette.
+        const trackColor = colorHex !== undefined
+            ? new Color(
+                ((colorHex >> 16) & 0xff) / 255,
+                ((colorHex >> 8) & 0xff) / 255,
+                (colorHex & 0xff) / 255
+            )
+            : this.nextPaletteColor();
         
         // Create display track for visualization
         // Don't use skipGUI - let it create its controls in the folder we just created
@@ -1923,6 +1944,12 @@ class CTrackManager extends CManager {
             }),
             width: lineWidth,
             extendToGround: true, // Synthetic tracks extend to ground by default
+            // A synthetic track is user-drawn, not video-derived analysis data,
+            // so it must not be greyed outside Sit.aFrame/bFrame — same as
+            // imported and balloon tracks. Without this a sitch whose bFrame
+            // sits at 0 renders the whole track in the out-of-range colour,
+            // making the Line Color picker look broken.
+            ignoreAB: true,
             // skipGUI: false (default) - let it add controls to the folder
         });
         
@@ -2224,7 +2251,6 @@ class CTrackManager extends CManager {
         const trackID = options.trackID || `balloonTrack_${Date.now()}`;
         const objectID = options.objectID || `balloonObject_${Date.now()}`;
         const displayTrackID = options.displayTrackID || `balloonTrackDisplay_${Date.now()}`;
-        const colorHex = options.color ?? 0xffa040;   // orange, balloon-ish
         const lineWidth = options.lineWidth || 1;
 
         // unique short name: Balloon, Balloon_1, ...
@@ -2292,11 +2318,17 @@ class CTrackManager extends CManager {
         balloonNode.menuText = shortName;
         balloonNode.shortName = shortName;
 
-        const trackColor = new Color(
-            ((colorHex >> 16) & 0xff) / 255,
-            ((colorHex >> 8) & 0xff) / 255,
-            (colorHex & 0xff) / 255
-        );
+        // A serialised / undo-redo balloon always carries its colour, so only a
+        // freshly added one falls through to the auto palette. Previously this
+        // defaulted to a fixed orange, so every balloon in a sitch came out the
+        // same colour (and reinforced the overall orange bias).
+        const trackColor = options.color !== undefined
+            ? new Color(
+                ((options.color >> 16) & 0xff) / 255,
+                ((options.color >> 8) & 0xff) / 255,
+                (options.color & 0xff) / 255
+            )
+            : this.nextPaletteColor();
 
         const displayTrack = new CNodeDisplayTrack({
             id: displayTrackID,
@@ -2308,6 +2340,12 @@ class CTrackManager extends CManager {
             }),
             width: lineWidth,
             extendToGround: true,
+            // A balloon is a synthetic full-length track, not video-derived
+            // analysis data, so it must not be greyed outside Sit.aFrame/bFrame
+            // — same as imported tracks (see makeMotionTrack). Without this a
+            // sitch with bFrame at 0 renders the whole balloon in the
+            // out-of-range colour, making the Line Color picker look broken.
+            ignoreAB: true,
         });
 
         // now the display track has found the folder, show the short name

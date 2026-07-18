@@ -136,7 +136,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
             // set the color of the folder (and its content) to the track color
             // but we have a minimum value to ensure it's visible
-            this.guiFolder.setLabelColor(this.in.color.v0, this.minGUIColor);
+            this.guiFolder.setLabelColor(this.guiLabelColor(), this.minGUIColor);
 
             this.savedLineColor = null;
 
@@ -201,16 +201,58 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             // color picker for the line color, with optional linked data track
             this.guiLineColor = this.guiFolder.addColor(this, "lineColor").name(t("displayTrack.lineColor.label")).tooltip(t("displayTrack.lineColor.tooltip")).onChange(() => {
 
-                this.guiFolder.setLabelColor(this.in.color.v0, this.minGUIColor);
-
+                // Picking a colour on a gradient (sonde) track takes it off the
+                // gradient — otherwise the node ignores the value we set here.
+                this.setFlatColorOnGradientNode(this.in.color, this.lineColor)
                 this.in.color.value = this.lineColor
                 this.recalculate()
                 if (this.in.dataTrackDisplay !== undefined) {
                     this.in.dataTrackDisplay.lineColor = this.lineColor
+                    this.setFlatColorOnGradientNode(this.in.dataTrackDisplay.in.color, this.lineColor)
                     this.in.dataTrackDisplay.in.color.value = this.lineColor
                     this.in.dataTrackDisplay.recalculate()
                 }
+                if (this.guiColorMode !== undefined) {
+                    this.colorMode = "none"
+                    this.guiColorMode.updateDisplay()
+                }
+                // AFTER the value is written, so the label matches the new colour
+                // rather than lagging one edit behind.
+                this.guiFolder.setLabelColor(this.guiLabelColor(), this.minGUIColor);
+                setRenderOne(true)
             })
+
+            // Gradient colour modes, only for tracks whose colour node supports
+            // them (CNodeSondeColor on radiosonde tracks). "Flat" hands control
+            // back to the Line Color picker above.
+            if (this.in.color.colorMode !== undefined) {
+                this.colorMode = this.in.color.colorMode;
+                this.guiColorMode = this.guiFolder.add(this, "colorMode", {
+                    "Flat (Line Color)": "none",
+                    "Temperature": "temperature",
+                    "Altitude": "altitude",
+                    "Pressure": "pressure",
+                })
+                    .name(t("displayTrack.colorMode.label", {defaultValue: "Color Mode"}))
+                    .tooltip(t("displayTrack.colorMode.tooltip", {
+                        defaultValue: "Colour the track by a gradient over the sonde's measured data, or Flat to use the Line Color."
+                    }))
+                    .onChange(() => {
+                        const apply = (node, color) => {
+                            if (!node || node.colorMode === undefined) return;
+                            node.colorMode = this.colorMode;
+                            if (this.colorMode === "none") node.fallbackColor = new Color(color);
+                        };
+                        apply(this.in.color, this.lineColor);
+                        this.recalculate();
+                        if (this.in.dataTrackDisplay !== undefined) {
+                            apply(this.in.dataTrackDisplay.in.color, this.in.dataTrackDisplay.lineColor);
+                            this.in.dataTrackDisplay.recalculate();
+                        }
+                        this.guiFolder.setLabelColor(this.guiLabelColor(), this.minGUIColor);
+                        setRenderOne(true);
+                    })
+            }
 
             // Line width in pixels. Drives `this.in.width.value` (a
             // CNodeConstant's actual stored field — `v0` is a getter-only
@@ -462,6 +504,10 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             visible: this.visible,
             timeOffset: this.in.track.timeOffset,
         };
+        // Only present on gradient (sonde) colour nodes — see setFlatColorOnGradientNode.
+        if (this.in.color.colorMode !== undefined) {
+            result.colorMode = this.in.color.colorMode;
+        }
         if (this.in.dataTrack !== undefined) {
             result.altitudeLockAGL = this.in.dataTrack.altitudeLockAGL;
         }
@@ -486,13 +532,26 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                 this.polyColor = new Color(v.polyColor);
             }
 
+            // Restore the gradient/flat mode of a sonde colour node. Saves made
+            // before this field existed have no colorMode, so those keep the
+            // node's constructed default (the gradient) — only an explicitly
+            // flattened track comes back flat.
+            if (this.in.color.colorMode !== undefined && v.colorMode !== undefined) {
+                this.in.color.colorMode = v.colorMode;
+                if (v.colorMode === "none") {
+                    this.in.color.fallbackColor = new Color(this.lineColor);
+                }
+                this.colorMode = v.colorMode;
+                if (this.guiColorMode !== undefined) this.guiColorMode.updateDisplay();
+            }
+
             this.in.color.value = this.lineColor;
             if (this.in.dropColor !== undefined) {
                 this.in.dropColor.value = this.polyColor;
             }
 
             if (this.guiFolder !== undefined) {
-                this.guiFolder.setLabelColor(this.in.color.v0, this.minGUIColor);
+                this.guiFolder.setLabelColor(this.guiLabelColor(), this.minGUIColor);
             }
 
             if (this.guiLineColor !== undefined) {
@@ -531,6 +590,37 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         }
     }
 
+
+    // A gradient colour node (CNodeSondeColor) computes a colour per frame from
+    // the track's own atmospheric data and IGNORES the CNodeConstant `value`
+    // that the colour pickers write — so on a sonde track the Line Color picker
+    // used to change the menu label and nothing else. Switching such a node to
+    // colorMode "none" makes it return a flat `fallbackColor`, which is exactly
+    // what the picker can set. Picking a colour therefore takes the track off
+    // the gradient; the "Color Mode" dropdown puts it back.
+    // Returns true if the node was a gradient node (and was flattened).
+    setFlatColorOnGradientNode(colorNode, color) {
+        if (!colorNode || colorNode.colorMode === undefined) return false;
+        colorNode.colorMode = "none";
+        colorNode.fallbackColor = new Color(color);
+        return true;
+    }
+
+    // Colour used for the folder's label in the Contents menu.
+    //
+    // For a flat colour node this is just the colour. For a gradient node,
+    // frame 0 is the WORST sample to use: a sonde launches from warm ground, so
+    // every sonde folder came out the same orange while the track in the world
+    // was mostly the cold blue/cyan of altitude. Sampling the middle of the
+    // track gives a label that actually resembles what's on screen.
+    guiLabelColor() {
+        const colorNode = this.in.color;
+        if (colorNode.colorMode !== undefined && colorNode.colorMode !== "none") {
+            const frames = this.in.track?.frames ?? 0;
+            if (frames > 1) return colorNode.v(Math.floor(frames / 2));
+        }
+        return colorNode.v0;
+    }
 
     recalculate() {
         this.group.remove(this.trackLine)
@@ -622,13 +712,20 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                         if (this.in.badColor !== undefined)
                             color = this.in.badColor.v(f)
                         else
-                            color = {r: 1, g: 0, b: 0};
+                            // Must be a real Color, not a plain {r,g,b} object.
+                            // Three's Color.set() only understands a Color, a
+                            // number, or a string — a plain object matches no
+                            // branch and silently leaves the Color at its
+                            // default WHITE, so these fallbacks used to render
+                            // white instead of red/grey. See the `new Color(color)`
+                            // normalisation just below.
+                            color = new Color(1, 0, 0);
                 }
                 if (!this.ignoreAB && (f < Sit.aFrame || f > Sit.bFrame)) {
                     if (this.in.secondColor !== undefined)
                         color = this.in.secondColor.v(f)
                     else
-                        color = {r: 0.25, g: 0.25, b: 0.25}
+                        color = new Color(0.25, 0.25, 0.25)
                 }
                 color = new Color(color)
 
