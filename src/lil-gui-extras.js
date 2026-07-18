@@ -58,7 +58,9 @@ export function addOptionToGUIMenu(controller, optionName, optionValue = optionN
     // Append the new option to the select element
     controller.$select.appendChild($option);
 
-    // Update the display
+    // Update the display (clear lil-gui's updateDisplay value-guard so the
+    // rebuilt <select>'s selectedIndex re-syncs even when the value is unchanged)
+    controller._lastDisplayedValue = undefined;
     controller.updateDisplay();
 
     // Notify menu bar to update visibility
@@ -79,7 +81,9 @@ export function removeOptionFromGUIMenu(controller, optionName) {
         controller._values.splice(index, 1);
         controller._names.splice(index, 1);
 
-        // Update the display
+        // Update the display (clear the value-guard so the <select>'s
+        // selectedIndex re-syncs after the option list shifted)
+        controller._lastDisplayedValue = undefined;
         controller.updateDisplay();
 
         // Notify menu bar to update visibility
@@ -265,7 +269,14 @@ Controller.prototype.setValueQuietly = function (value) {
     // Set the value without triggering the onChange event
     this.object[this.property] = value;
 
-    // Update the display
+    // Force a real display re-sync. lil-gui's updateDisplay short-circuits when
+    // the value is unchanged (value === _lastDisplayedValue) — but after an
+    // options rebuild (.options() recreates the <select>) the native select's
+    // selectedIndex can default to 0 while the value is unchanged, leaving the
+    // dropdown's checkmark stuck on the wrong (first) option even though the
+    // bound value and the visible label are correct. Clearing the guard makes
+    // updateDisplay actually re-point the select.
+    this._lastDisplayedValue = undefined;
     this.updateDisplay();
 
     return this; // Return the controller to allow method chaining
