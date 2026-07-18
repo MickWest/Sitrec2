@@ -211,10 +211,18 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 gl_FragColor = sRGBTransferEOTF(finalColor);
                 #include <fog_fragment>
                 
-                // Logarithmic depth calculation (same as globe shader)
+                // Logarithmic depth. In an ORTHOGRAPHIC projection clip-space w is
+                // a constant 1.0, which collapses this log formula to a single
+                // depth for every fragment → catastrophic z-fighting (terraced
+                // terrain). Fall back to the rasteriser's linear depth, matching
+                // three.js's logdepthbuf_fragment path for non-perspective matrices.
                 float w = vPosition.w;
-                float z = (log2(max(nearPlane, 1.0 + w)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
-                gl_FragDepthEXT = z * 0.5 + 0.5;
+                if (w == 1.0) {
+                    gl_FragDepthEXT = gl_FragCoord.z;
+                } else {
+                    float z = (log2(max(nearPlane, 1.0 + w)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
+                    gl_FragDepthEXT = z * 0.5 + 0.5;
+                }
             }
         `,
         // Enable depth writing + derivatives (fwidth, used by tile-edge overlay).

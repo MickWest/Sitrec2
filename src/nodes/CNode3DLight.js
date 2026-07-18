@@ -74,9 +74,15 @@ export class CNode3DLight extends CNode3D {
 
             // Logarithmic depth calculation
             // requires the near and far planes to be set in the material (shared uniforms)
-            // and vDepth to be passed from the vertex shader from gl_Position.w
-            float z = (log2(max(nearPlane, 1.0 + vDepth)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
-            gl_FragDepthEXT = z * 0.5 + 0.5;
+            // and vDepth to be passed from the vertex shader from gl_Position.w.
+            // Orthographic projection makes vDepth a constant 1.0, collapsing the log
+            // formula to one value per fragment → z-fighting; use linear depth there.
+            if (vDepth == 1.0) {
+                gl_FragDepthEXT = gl_FragCoord.z;
+            } else {
+                float z = (log2(max(nearPlane, 1.0 + vDepth)) / log2(1.0 + farPlane)) * 2.0 - 1.0;
+                gl_FragDepthEXT = z * 0.5 + 0.5;
+            }
 
             // uIntensity should not be used here because it's already applied in the shader
             // but we can still used for color
