@@ -1768,6 +1768,23 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         return profiles;
     }
 
+    // A cheap signature of the current sonde-profile SET for the active source:
+    // profile count + summed valid-wind tops. Consumers that memoize on wind
+    // state (e.g. CNodeBalloonTrack's bake) include this so they re-run when
+    // soundings arrive — soundings load ASYNCHRONOUSLY as tracks after a sitch
+    // reload, and their arrival does NOT bump source/_windDataVersion/
+    // _lastDateCycle, so those coarse fields alone can't detect it. Empty for
+    // non-sounding sources (GFS async arrival is covered by _windDataVersion).
+    sondeProfileSignature() {
+        if (this.source !== "uwyo" && this.source !== "igra2"
+            && this.source !== "manual-soundings") return "";
+        const profiles = this._gatherSondeProfiles(
+            this.source === "manual-soundings" ? null : this.source);
+        let topSum = 0;
+        for (const p of profiles) topSum += (p.topWindAlt ?? 0);
+        return `${profiles.length}:${Math.round(topSum)}`;
+    }
+
     // ── Build a coarse global grid from scattered (lat,lon,u,v) samples
     // via inverse-distance weighting over the K=3 nearest samples (haversine
     // distance). Using only the 3 closest samples per cell keeps the result

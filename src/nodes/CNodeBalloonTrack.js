@@ -101,8 +101,17 @@ export class CNodeBalloonTrack extends CNodeTrack {
         // (GFS levels re-fetch after a sitch reload) — without them, a
         // reloaded balloon would stay baked against the constant-wind
         // fallback forever once the deferred fetch completes.
+        //
+        // sondeProfileSignature() does the same for SOUNDING sources: UWYO/IGRA2
+        // soundings load asynchronously as tracks after a reload, and their
+        // arrival changes NONE of the fields above — so without this a saved
+        // balloon that baked before the soundings arrived would stay pinned to
+        // the constant-wind fallback (its memoized bake never re-runs because the
+        // fingerprint, hence the bake key, is unchanged).
+        const profSig = (wf && typeof wf.sondeProfileSignature === "function")
+            ? wf.sondeProfileSignature() : "";
         return `${wf?.source ?? ""}|${wf?.windAltFt ?? ""}`
-            + `|${wf?._windDataVersion ?? ""}|${wf?._lastDateCycle ?? ""}|${twPart}`;
+            + `|${wf?._windDataVersion ?? ""}|${wf?._lastDateCycle ?? ""}|${twPart}|${profSig}`;
     }
 
     update(f) {
