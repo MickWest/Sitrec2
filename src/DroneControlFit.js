@@ -146,7 +146,14 @@ function knotValue(knots, K, t, T) {
  * a function of time alone, so RK4 is exact quadrature.
  */
 export class DroneControlModel extends PhysicsModel {
-    maxDt = 1 / 30;
+    // The controls are piecewise-linear knots spaced tens of seconds apart, so
+    // the derivative varies slowly and RK4 needs no fine step. 1/30 s (copied
+    // from the frame rate) made a long clip integrate ~20,000 substeps per cost
+    // evaluation — with the duration-scaled knot count (K up to 12 => 37 params)
+    // the DE fit took minutes. 0.25 s (matching SkyLanternModel) resolves each
+    // ~60 s knot segment with hundreds of substeps at ~7x the speed, with no
+    // measurable accuracy loss on so smooth an ODE.
+    maxDt = 0.25;
 
     constructor(K = 4) {
         super();

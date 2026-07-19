@@ -1317,12 +1317,20 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         return Math.acos(dot);
     }
 
+    // Optional COARSER integration step used only during the search (the final
+    // full-resolution trajectory below always uses the model's own maxDt). When
+    // the fit is seeded near the answer it needs local refinement, not accuracy
+    // to the metre at every substep, so a bigger step buys a large speed-up at no
+    // cost to the reported result. Left undefined the search integrates exactly
+    // as before.
+    const fitMaxDt = options.fitMaxDt;
+
     // Mean angular error (radians) over the given frames, or null on divergence
     function _meanErrRad(params, frames, frameTimes) {
         const initialState = model.getInitialState(params, dataset);
         let states;
         try {
-            states = _integrateRK4_inline(model, initialState, params, frameTimes);
+            states = _integrateRK4_inline(model, initialState, params, frameTimes, fitMaxDt);
         } catch (e) {
             return null; // diverged
         }
@@ -1364,7 +1372,7 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
             }
             if (groundPrior.endZ !== undefined && groundPrior.endZ !== null) {
                 try {
-                    const st = _integrateRK4_inline(model, init, params, [0, T]);
+                    const st = _integrateRK4_inline(model, init, params, [0, T], fitMaxDt);
                     const e = st[st.length - 1];
                     cost += ((hae(e) - groundPrior.endZ) / sig) ** 2;
                 } catch (err) { /* diverged; the 1e10 error branch handles it */ }
@@ -1373,14 +1381,16 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         return cost;
     }
 
-    // Inline RK4 to avoid import overhead — same logic as PhysicsModel.js
-    function _integrateRK4_inline(mdl, initState, prms, sTimes) {
+    // Inline RK4 to avoid import overhead — same logic as PhysicsModel.js.
+    // maxDtOverride coarsens the step for the SEARCH only (see fitMaxDt); the
+    // final trajectory passes none, so it integrates at the model's own maxDt.
+    function _integrateRK4_inline(mdl, initState, prms, sTimes, maxDtOverride) {
         const results = [];
         const state = initState.slice();
         const n = state.length;
         let t = sTimes[0];
         let si = 0;
-        const maxDt = mdl.maxDt ?? 0.02;
+        const maxDt = maxDtOverride ?? mdl.maxDt ?? 0.02;
 
         if (Math.abs(t - sTimes[si]) < 1e-10) {
             results.push(state.slice());
