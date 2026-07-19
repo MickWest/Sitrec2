@@ -41,6 +41,26 @@ export class PhysicsModel {
     extraCost(params, dataset, T) {
         return 0;
     }
+
+    // The same soft priors, itemised for DISPLAY only: {label: costUnits}.
+    //
+    // Why this exists separately rather than extraCost() being built from it:
+    // extraCost is inside the optimizer's inner loop, and summing an itemised
+    // object would reorder the floating-point additions, which can nudge the
+    // search onto a different path. Reporting must not perturb the fit, so the
+    // two are deliberately parallel implementations and a test asserts they
+    // agree (tests/PhysicsPriorDisclosure.test.js).
+    //
+    // Needed because the fit's reported errDeg is recomputed as PURE angular
+    // error (see fitPhysicsModel), deliberately excluding these terms — so a
+    // prior can move the solution while being invisible in the number the UI
+    // prints. Itemising them lets the UI say how much of the fit budget the
+    // priors consumed, instead of the tile claiming a value was "inferred, not
+    // assumed" when a prior helped choose it.
+    extraCostTerms(params, dataset, T) {
+        const total = this.extraCost(params, dataset, T);
+        return total ? {"model priors": total} : {};
+    }
 }
 
 // 4th-order Runge-Kutta integrator

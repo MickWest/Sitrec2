@@ -1,0 +1,36 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`traversePlausible is bit-stable across refactors default sweep cell 1`] = `
+{
+  "lam": "397e6b79",
+  "track": "79fab9de",
+}
+`;
+
+exports[`traversePlausible is bit-stable across refactors slow speed prior 1`] = `
+{
+  "lam": "80fbb8e9",
+  "track": "f47ae2e7",
+}
+`;
+
+exports[`traversePlausible is bit-stable across refactors smoothed output 1`] = `
+{
+  "lam": "df72bf14",
+  "track": "e8301757",
+}
+`;
+
+exports[`traversePlausible is bit-stable across refactors strided acceleration 1`] = `
+{
+  "lam": "ecc5c1d0",
+  "track": "a45ab2ac",
+}
+`;
+
+exports[`traversePlausible is bit-stable across refactors with range floor 1`] = `
+{
+  "lam": "397e6b79",
+  "track": "79fab9de",
+}
+`;

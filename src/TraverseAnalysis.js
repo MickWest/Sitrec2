@@ -42,6 +42,15 @@ import {assessBoundPins} from "./BoundedFit";
 export const KNOTS_TO_MS = 0.514444;
 export const METERS_PER_NM = 1852;
 const G_ACCEL = 9.81;
+
+// Minimum horizontal air speed (m/s) for a heading — and therefore a turn rate
+// — to mean anything. See the note in trackMetrics: below this, atan2 returns
+// numerical noise and its frame-to-frame difference becomes a large fictitious
+// turn rate that feeds straightFlightScore, i.e. the search objective.
+// Deliberately much lower than compareTrackToTruth's 0.5 m/s display guard,
+// because a threshold that high erases real wander on genuinely slow objects
+// and makes them read as implausibly straight.
+const HEADING_MIN_HORIZ_SPEED = 0.05;
 // Mean Earth radius for the tangent-plane curvature corrections (the exact
 // local radius differs <0.4%, negligible relative to the correction itself).
 export const EARTH_RADIUS_M = 6371000;
@@ -99,7 +108,24 @@ export function trackMetrics(dataset, track, options = {}) {
         const vg = vel(track, f), va = vel(air, f);
         groundSpeed[f] = Math.hypot(vg[0], vg[1], vg[2]);
         airSpeed[f] = Math.hypot(va[0], va[1], va[2]);
-        heading[f] = Math.atan2(va[0], va[1]) * 180 / Math.PI;
+        // Heading is undefined when there is no horizontal motion to have a
+        // heading in: atan2 of two near-zero components returns whatever the
+        // numerical noise happens to point at, and since turnRate below is the
+        // frame-to-frame difference of this, that noise becomes enormous
+        // spurious turn rates on a nearly-stationary candidate. straightFlightScore
+        // consumes turnRate.std, so this reaches the SEARCH OBJECTIVE, not just
+        // the display. compareTrackToTruth already guards the same computation.
+        //
+        // The threshold is deliberately far below that sibling's 0.5 m/s: at
+        // 0.5 a genuinely wandering slow object (measured: 0.4 m/s air-relative,
+        // turnRate.std 9.16) has every frame discarded and reads as perfectly
+        // straight — which flatters slow candidates, the exact bias this review
+        // is guarding against. 0.05 m/s sits below any real wander and above
+        // the numerical floor. NaN (not 0) so stat() skips these frames.
+        const horizAir = Math.hypot(va[0], va[1]);
+        heading[f] = horizAir > HEADING_MIN_HORIZ_SPEED
+            ? Math.atan2(va[0], va[1]) * 180 / Math.PI
+            : NaN;
         const x = track[f * 3], y = track[f * 3 + 1];
         // Geodetic altitude, not raw ENU z: the tangent plane sits ABOVE the
         // curved Earth away from the origin, so a far point's true altitude is
@@ -125,6 +151,8 @@ export function trackMetrics(dataset, track, options = {}) {
 
     const turnRate = new Float64Array(n);
     for (let f = 1; f < n; f++) {
+        // Both endpoints must have a defined heading, or the difference is
+        // meaningless. NaN propagates naturally and stat() skips it.
         let dh = heading[f] - heading[f - 1];
         while (dh > 180) dh -= 360;
         while (dh < -180) dh += 360;
@@ -154,12 +182,24 @@ export function trackMetrics(dataset, track, options = {}) {
     };
     // trim the smoothing windows at the ends
     const lo = Math.min(h + 2, n >> 1), hi = Math.max(n - h - 2, n >> 1);
+    // How much of the window had a defined heading. A true hover legitimately
+    // has none, and must not be scored as "invalid metrics" for it: an object
+    // that never moves horizontally has a turn rate of zero, not an unknown
+    // one. Anything partial keeps the NaN-skipping statistics.
+    let headingValid = 0, headingTotal = 0;
+    for (let f = lo; f < hi; f++) { headingTotal++; if (isFinite(heading[f])) headingValid++; }
+    const turnRateStat = stat(turnRate, lo, hi);
+    if (headingTotal > 0 && headingValid === 0) {
+        turnRateStat.min = 0; turnRateStat.max = 0; turnRateStat.mean = 0;
+        turnRateStat.rms = 0; turnRateStat.std = 0;
+    }
     return {
         groundSpeed: stat(groundSpeed, lo, hi),
         airSpeed: stat(airSpeed, lo, hi),
         verticalSpeed: stat(verticalSpeed, lo, hi),
         gLoad: stat(gLoad, lo, hi),
-        turnRate: stat(turnRate, lo, hi),
+        turnRate: turnRateStat,
+        headingValidFrac: headingTotal > 0 ? headingValid / headingTotal : 0,
         altitude: stat(altitude, lo, hi),
         range: stat(range, lo, hi),
         series: {groundSpeed, airSpeed, heading, verticalSpeed, gLoad, turnRate, altitude, range},
@@ -766,10 +806,18 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
         for (let ri = 0; ri < rangeList.length; ri++) {
             for (const speedMs of speeds) {
                 // minDist keeps the QP's range-on-ray positive: without a floor
-                // it can drive lambda negative (a behind-the-sensor "path") in
-                // some geometries, and the post-smoothing metrics would hide it.
+                // it can drive lambda toward or through zero (a collapsed or
+                // behind-the-sensor "path") in some geometries, and the
+                // post-smoothing metrics would hide it.
+                //
+                // rangeFloor is REQUIRED for minDist to do anything —
+                // traversePlausible gates the floor rows on it and defaults it
+                // to false, so passing minDist alone was a no-op here and the
+                // whole score surface below was read off an unfloored solve.
+                // This is a declared near-field prior: solutions closer than
+                // 120 m are pushed out, not forbidden (the penalty is soft).
                 const {track} = traversePlausible(ds, rangeList[ri],
-                    {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120});
+                    {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true});
                 const sm = smoothTrackBspline(track, ds.n, smoothK, curvature);
                 const m = trackMetrics(ds, sm);
                 let score = straightFlightScore(m, 0);
@@ -899,7 +947,9 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
 export function constAirSpeedTrack(dataset, startDist, speedMs, options = {}) {
     const {ds: d2, stride} = downsampleDataset(dataset, options.targetN ?? 2500);
     const vSigma = options.vSigma ?? 3 * KNOTS_TO_MS;
-    const {lam} = traversePlausible(d2, startDist, {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120});
+    // rangeFloor is what actually activates minDist (see sweepConstAirSpeed).
+    const {lam} = traversePlausible(d2, startDist,
+        {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true});
     const {n, fps, S, D} = dataset;
     const raw = new Float64Array(n * 3);
     for (let f = 0; f < n; f++) {
@@ -953,8 +1003,24 @@ export function summarizeMetrics(m) {
 // Plausible traverse: spline QP with soft speed target (IRLS)
 // ---------------------------------------------------------------------------
 
+// Small cache for bsplineBasis. The basis depends ONLY on (n, K), and the
+// sweep rebuilds the identical one for every grid cell — 44 ranges x N speeds x
+// IRLS iterations, all with the same frame count and control-point count. Every
+// read site destructures it read-only (`const [seg, w] = B[fr]`, then `w[q]`);
+// verified nothing writes to the returned structure, which is what makes
+// sharing it safe. If you ever need to mutate a basis, clone it first.
+//
+// Capped, and keyed on both parameters, because a run legitimately uses a few
+// different (n, K) pairs: full-resolution and downsampled datasets, and the
+// smoothing pass with its own K.
+const _bsplineCache = new Map();
+const BSPLINE_CACHE_MAX = 8;
+
 /** Uniform cubic B-spline basis over n frames with K control points. */
 export function bsplineBasis(n, K) {
+    const key = n + ":" + K;
+    const hit = _bsplineCache.get(key);
+    if (hit) return hit;
     const B = [];
     const nSeg = K - 3;
     for (let f = 0; f < n; f++) {
@@ -968,6 +1034,11 @@ export function bsplineBasis(n, K) {
             t ** 3 / 6,
         ]]);
     }
+    if (_bsplineCache.size >= BSPLINE_CACHE_MAX) {
+        // Cheap FIFO eviction — the working set is 2-3 entries in practice.
+        _bsplineCache.delete(_bsplineCache.keys().next().value);
+    }
+    _bsplineCache.set(key, B);
     return B;
 }
 
@@ -1026,6 +1097,13 @@ export function traversePlausible(dataset, startDist, options = {}) {
     const lam = new Float64Array(n).fill(startDist);
     let c = null;
 
+    // Scratch for the row assembly in `stencil` below — allocated once per
+    // solve instead of once per row. scratchSeen is a membership flag reset
+    // only for the entries actually touched, so clearing is O(touched).
+    const scratchVal = new Float64Array(K);
+    const scratchSeen = new Uint8Array(K);
+    const scratchIdx = new Int32Array(K);
+
     const maxIters = useFloor ? iters + 5 : iters;
     for (let iter = 0; iter < maxIters; iter++) {
         const A = [];
@@ -1040,11 +1118,29 @@ export function traversePlausible(dataset, startDist, options = {}) {
             }
         };
         // one least-squares row per (frame stencil, xyz component)
+        //
+        // This is the hottest code in the analysis: once per (range, speed)
+        // grid cell, per IRLS iteration, per frame, per component. It used to
+        // build a `new Map()` and two spread arrays here, which on a full sweep
+        // is tens of millions of Map allocations. The scratch buffers below do
+        // the same accumulation without allocating.
+        //
+        // ORDER IS LOAD-BEARING, not just the arithmetic. The Map version
+        // iterated keys in FIRST-INSERTION order, and the outer/inner loops in
+        // addRow accumulate into A in that order — so `touched` must record the
+        // same first-touch order or the floating-point sums differ in their last
+        // bits. Those bits feed the reweighting, so "close enough" is not
+        // enough here. tests/TraversePlausibleIdentity.test.js pins this.
+        //
+        // Column indices are NOT contiguous in general: with accelStride the
+        // stencil frames are far apart, so their b-spline segments can be
+        // disjoint. Hence a full-width scratch plus an explicit touched list,
+        // rather than a sliding window.
         const stencil = (frames, cs, scale, compW) => {
             for (let comp = 0; comp < 3; comp++) {
                 if (compW && compW[comp] === 0) continue;
                 let constTerm = 0;
-                const colW = new Map();
+                let nTouched = 0;
                 for (let i = 0; i < frames.length; i++) {
                     const fr = frames[i];
                     constTerm += cs[i] * S[fr * 3 + comp];
@@ -1052,11 +1148,28 @@ export function traversePlausible(dataset, startDist, options = {}) {
                     const dcomp = D[fr * 3 + comp];
                     for (let q = 0; q < 4; q++) {
                         const k = seg + q;
-                        colW.set(k, (colW.get(k) || 0) + cs[i] * w[q] * dcomp);
+                        if (!scratchSeen[k]) {
+                            scratchSeen[k] = 1;
+                            scratchIdx[nTouched++] = k;
+                            scratchVal[k] = 0;
+                        }
+                        scratchVal[k] += cs[i] * w[q] * dcomp;
                     }
                 }
                 const sc = scale * (compW ? compW[comp] : 1);
-                addRow([...colW.keys()], [...colW.values()].map(v => v * sc), constTerm * sc);
+                const cTerm = constTerm * sc;
+                // Inlined addRow over the scratch, in first-touch order.
+                for (let a = 0; a < nTouched; a++) {
+                    const ca = scratchIdx[a];
+                    const wa = scratchVal[ca] * sc;
+                    rhs[ca] -= wa * cTerm;
+                    const Aa = A[ca];
+                    for (let b = 0; b < nTouched; b++) {
+                        const cb = scratchIdx[b];
+                        Aa[cb] += wa * (scratchVal[cb] * sc);
+                    }
+                }
+                for (let a = 0; a < nTouched; a++) scratchSeen[scratchIdx[a]] = 0;
             }
         };
 

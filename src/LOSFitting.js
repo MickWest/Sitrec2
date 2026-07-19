@@ -1503,6 +1503,24 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         solvedParams[paramDefs[i].name] = bestParams[i];
     }
 
+    // Itemise the soft priors at the solution, in DEGREES of fit budget.
+    // Display only — computed after the search, so it cannot affect it.
+    let priorTermsDeg = null;
+    try {
+        const terms = model.extraCostTerms ? model.extraCostTerms(bestParams, dataset, T) : null;
+        if (terms) {
+            const out = {};
+            let total = 0;
+            for (const k of Object.keys(terms)) {
+                const deg = terms[k] * errSigma;
+                if (Number.isFinite(deg) && deg > 0) { out[k] = deg; total += deg; }
+            }
+            if (total > 0) priorTermsDeg = {total, terms: out};
+        }
+    } catch (e) {
+        priorTermsDeg = null;   // reporting must never break a completed fit
+    }
+
     // A coordinate sitting near a bound is not automatically a physical
     // capability violation: it may be inactive over this clip (GoFast's
     // pre-burn lantern vSink), flat, or numerical drift.  Probe each detected
@@ -1516,6 +1534,15 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         residuals,
         params: {
             model: model.getName(), cost: result.cost, errDeg, solved: solvedParams, pinned,
+            // What the model's soft priors cost AT THE SOLUTION, expressed in
+            // the same units as errDeg so it can be compared against it
+            // directly. The cost function is errDeg/errSigma + extraCost, so
+            // multiplying by errSigma converts prior cost into "degrees of
+            // residual the priors were willing to pay". Without this the priors
+            // are unobservable: errDeg above is recomputed as pure angular
+            // error and deliberately excludes them, so a prior can select the
+            // solution while leaving no trace in the reported number.
+            priors: priorTermsDeg,
             optimizer: {
                 stopReason: result.stopReason ?? "best_de_candidate",
                 iterations: result.iterations ?? 0,

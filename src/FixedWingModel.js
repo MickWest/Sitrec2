@@ -133,4 +133,30 @@ export class FixedWingModel extends PhysicsModel {
         }
         return cost;
     }
+
+    // Display-only itemisation of extraCost above — see PhysicsModel.
+    //
+    // Worth surfacing for the opposite reason to the balloon's: these are
+    // priors pushing AGAINST maneuvering (turn, climb, off-cruise speed), so
+    // they are the anomaly-side counterpart of the calm-wind preference. An
+    // aircraft fit that only works by spending budget here is one the data did
+    // not really want, and that should be as visible as the balloon's.
+    extraCostTerms(params, dataset, T) {
+        const tas = params[2];
+        const turnStart = params[3];
+        const turnEnd = params[3] + params[4] * T;
+        const climb = params[5];
+        const terms = {
+            "turn at start": (turnStart / this.turnSigma) ** 2,
+            "turn at end": (turnEnd / this.turnSigma) ** 2,
+            "climb/descent": (climb / this.climbSigma) ** 2,
+            "off cruise speed": ((tas - this._tasTarget()) / this._tasSigma()) ** 2,
+        };
+        if (this.windPriorE !== null && this.windPriorN !== null) {
+            terms["wind toward measured"] =
+                ((params[6] - this.windPriorE) / this.windPriorSigma) ** 2
+                + ((params[7] - this.windPriorN) / this.windPriorSigma) ** 2;
+        }
+        return terms;
+    }
 }

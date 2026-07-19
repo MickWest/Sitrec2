@@ -136,4 +136,29 @@ export class QuadcopterModel extends PhysicsModel {
         }
         return cost;
     }
+
+    // Display-only itemisation of extraCost above — see PhysicsModel.
+    extraCostTerms(params, dataset, T) {
+        const terms = {};
+        const maxSpeed = this._maxSpeed();
+        const v0 = params[2], accel = params[3];
+        let over = 0;
+        for (let k = 0; k <= 8; k++) {
+            const v = Math.abs(v0 + accel * T * k / 8);
+            if (v > maxSpeed) over += ((v - maxSpeed) / 2) ** 2 / 9;
+        }
+        if (over) terms["above rotor top speed"] = over;
+        terms["turn smoothness"] = 0.1 * (params[5] / 5) ** 2;
+        if (this.windPriorE !== null && this.windPriorN !== null) {
+            terms["wind toward measured"] =
+                ((params[7] - this.windPriorE) / this.windPriorSigma) ** 2
+                + ((params[8] - this.windPriorN) / this.windPriorSigma) ** 2;
+        } else {
+            // Note: unlike the lantern, nothing currently wires a wind prior
+            // into this model, so this branch is always the active one.
+            const wspd = Math.hypot(params[7], params[8]);
+            terms["calm-wind preference"] = 0.3 * (wspd / 6) ** 2;
+        }
+        return terms;
+    }
 }

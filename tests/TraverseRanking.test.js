@@ -160,6 +160,32 @@ describe("Traverse ranking", () => {
         expect(completenessBadges(plausibilityRating(incomplete))[0].label).toBe("Search incomplete");
     });
 
+    test("completeness does NOT rescue a candidate that failed the broad screen", () => {
+        // The companion to the test above, and the boundary between them.
+        // Completeness outranking plausibility is intended for FINE distinctions
+        // (an incomplete Moderate really should sit behind a complete Low), but
+        // it must not let a candidate the screen rejected outright lead over one
+        // that passed. Slow, weakly-constrained families are the ones that reach
+        // search edges, so an absolute completeness-first rule buries the mundane
+        // answer precisely where it is most likely to be correct.
+        const implausibleButComplete = hypothesis("constAlt", {
+            name: "implausible", errDeg: 0.02,
+            metrics: metrics({gMax: 12, speedMaxKt: 1400}),
+        });
+        const plausibleButIncomplete = hypothesis("constAir", {
+            name: "mild", errDeg: 0.02, params: {boundaryLimited: 1},
+            metrics: metrics({gMax: 0.4}),
+        });
+        expect(plausibilityRating(implausibleButComplete).rank).toBe(0);
+        expect(plausibilityRating(plausibleButIncomplete).rank).toBeGreaterThanOrEqual(1);
+
+        const ranked = rankHypotheses([implausibleButComplete, plausibleButIncomplete]);
+        expect(ranked[0].h.name).toBe("mild");
+        // It leads, but it must still say why it is provisional.
+        expect(completenessBadges(plausibilityRating(plausibleButIncomplete))[0].label)
+            .toBe("Search incomplete");
+    });
+
     test("Low and Moderate keep distinct badges; nonpassing sets receive no positive tie", () => {
         const low = plausibilityRating(hypothesis("lantern", {errDeg: 0.3}));
         const moderate = plausibilityRating(hypothesis("lantern", {errDeg: 0.1}));

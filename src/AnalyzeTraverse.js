@@ -158,6 +158,18 @@ function prepareSweep(dataset) {
     const ds = {
         sensorPos: dataset.S, losDir: dataset.D, times,
         count: dataset.n, maxRange: null,
+        // The closed-form fits minimise PERPENDICULAR DISTANCE IN METRES, and
+        // that objective falls monotonically as a trajectory scales toward the
+        // sensor — the sensor's own path is an exact zero-residual solution
+        // whenever the sensor flies a CV-representable trajectory (see the
+        // contract at LOSFitting.js:80-88). Without this floor the seed below
+        // can collapse onto the camera, and because the Monte Carlo fits sample
+        // range only within 0.9-1.1x of that seed, a collapsed seed silently
+        // pins ALL of their tiles to a near-zero range. 500 m matches the
+        // existing noise-floor caller and sits below every model's own floor,
+        // so it excludes the degenerate optimum without foreclosing any
+        // physically plausible near-field solution.
+        minRange: 500,
     };
     const opts = {};
     const trialsNode = NodeMan.get("mcNumTrials", false);
@@ -169,6 +181,7 @@ function prepareSweep(dataset) {
     // sampler draws blindly out to 10x the scene extent and the higher orders
     // degenerate into noise. (Only the Monte Carlo fits use these; the
     // alternating fit derives and then freely moves its own ranges.)
+    let seedMedian = null;
     const cv = fitConstantVelocity(ds, new Set());
     if (cv) {
         const rangeEstimates = new Float32Array(dataset.n);
@@ -180,8 +193,14 @@ function prepareSweep(dataset) {
                 + (cv.positions[b + 2] - dataset.S[b + 2]) * dataset.D[b + 2]);
         }
         opts.rangeEstimates = rangeEstimates;
+        // Median seed range, so the Monte Carlo tiles can name the range their
+        // sampling window is actually centred on instead of referring vaguely
+        // to "the constant-velocity fit". A visibly tiny median is the symptom
+        // of the collapse the minRange floor above guards against.
+        const sorted = Array.from(rangeEstimates).sort((a, b) => a - b);
+        seedMedian = sorted[Math.floor(sorted.length / 2)];
     }
-    return {ds, opts};
+    return {ds, opts, seedMedian};
 }
 
 // Run every (strategy, order) fit, reporting progress between each one.
@@ -195,7 +214,7 @@ function prepareSweep(dataset) {
 // `report(done, total, label)` is awaited between fits — that await is what
 // actually lets the browser repaint.
 async function sweepPolynomialOrders(dataset, report) {
-    const {ds, opts} = prepareSweep(dataset);
+    const {ds, opts, seedMedian} = prepareSweep(dataset);
     const results = [];
     const total = SWEEP_VARIANTS.length * MC_SWEEP_MAX_ORDER;
     let done = 0;
@@ -214,7 +233,7 @@ async function sweepPolynomialOrders(dataset, report) {
             if (res && res.positions) results.push({variant, order, result: res});
         }
     }
-    return {results, numTrials: opts.numTrials, losUncertaintyDeg: opts.losUncertaintyDeg};
+    return {results, numTrials: opts.numTrials, losUncertaintyDeg: opts.losUncertaintyDeg, seedMedian};
 }
 
 // User toggles for the extra physical-interpretation hypotheses, surfaced in the
@@ -803,6 +822,9 @@ function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy
             vRise: solved.vRise, vSink: solved.vSink, tBurn: solved.tBurn, tauCool: solved.tauCool,
             clipT: (dataset.n - 1) / dataset.fps,
             windPolicy,
+            // Soft-prior cost at the solution, so a tile that says its wind was
+            // INFERRED can be checked against what the calm-wind prior paid.
+            priors: fit.params.priors,
             errFloor,
         },
         notes,
@@ -1094,6 +1116,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
                 turn: aircraft.params.turnRate,
                 climb: aircraft.params.climb,
                 closest: nearFW ? nearFW.name : null,
+                priors: aircraft.params.priors,
                 errFloor,
             },
             notes: "Constant horizontal-air-speed fixed-wing model fit to the sightlines by differential evolution."
@@ -1195,6 +1218,9 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
                 windN: solved.windN,
                 closest: near ? near.name : null,
                 windPolicy: "wind fitted by this model",
+                // Nothing wires a wind prior into this model, so its calm-wind
+                // fallback is ALWAYS the active branch — worth showing.
+                priors: quad.params.priors,
                 errFloor,
             },
             notes: "Hover-capable multirotor kinematics (bounded/penalized air-relative speed, climb and turn rate) "
@@ -1536,8 +1562,12 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
                         : `Monte-Carlo curve fit of degree ${order} `
                             + `(${ORDER_NAMES[order] ?? "higher order"}) to the sightlines, `
                             + `${mcTrials ?? 500} random trials at a fixed seed. Its distances are only `
-                            + "ever sampled within 0.9x to 1.1x of the constant-velocity fit, so it cannot "
-                            + "propose a much nearer or further object than that fit already found.")
+                            + "ever sampled within 0.9x to 1.1x of the constant-velocity fit"
+                            + (Number.isFinite(mcSweep?.seedMedian)
+                                ? ` (median ${(mcSweep.seedMedian / METERS_PER_NM).toFixed(2)} NM)`
+                                : "")
+                            + ", so it cannot propose a much nearer or further object than that fit "
+                            + "already found.")
                         + " "
                         + (order === 1
                             ? "Degree 1 is a straight line in time — a constant-speed, constant-direction path — "
@@ -3240,6 +3270,23 @@ function hypothesisStats(h) {
         ["Max kinematic accel", `${m.gLoad.max.toFixed(2)} g`],
         [errLabel, losErr],
     ];
+    // What the model's soft priors cost at the solution, in the same units as
+    // the residual above. Shown only when it is worth noticing (0.005°, an
+    // order of magnitude below the tier boundaries) so a fit the priors barely
+    // touched stays uncluttered. This exists because the LOS error above is
+    // pure angular error by construction and excludes these terms, so without
+    // it a tile can say a value was inferred from the sightlines when a prior
+    // helped choose it — including the aircraft model's priors against
+    // maneuvering, not just the balloon's toward calm air.
+    const priors = h.params?.priors;
+    if (priors && priors.total > 0.005) {
+        const parts = Object.entries(priors.terms)
+            .filter(([, v]) => v > 0.0005)
+            .sort((a, b) => b[1] - a[1])
+            .map(([k, v]) => `${k} ${v.toFixed(3)}°`);
+        stats.push(["Model priors cost",
+            `${priors.total.toFixed(3)}°${parts.length ? ` (${parts.join(", ")})` : ""}`]);
+    }
     // Truth-mode headline: the separation that actually orders this group
     const tc = h.truthComparison;
     if (tc) {

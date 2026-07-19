@@ -263,7 +263,25 @@ export function rankHypotheses(hypotheses) {
                 const va = ta ?? Infinity, vb = tb ?? Infinity;
                 if (va !== vb) return va - vb;
             }
-            return Number(b.r.eligible) - Number(a.r.eligible)
+            // Failing the broad screen outright is decided BEFORE completeness;
+            // everything finer is decided after it.
+            //
+            // Completeness leading is deliberate and mostly right: a search that
+            // ran off its own edge has not demonstrated its optimum, so its
+            // residual should not be led with. But taken absolutely it inverts
+            // in one damaging case — a candidate the screen rated *Implausible*
+            // (900 kt, 12 g) that merely finished cleanly would outrank a
+            // kinematically mild candidate whose only flaw is honestly
+            // reporting that its family touched a search edge. That penalises
+            // honesty hardest exactly where the mundane answer lives, because
+            // broad, weakly-constrained slow families are the ones that reach
+            // search edges. Gating on "passed the screen at all" fixes that case
+            // without disturbing the finer ordering the design intends (an
+            // incomplete Moderate still sorts behind a complete Low). The effect
+            // is symmetric: the far/fast Minimum Acceleration tile gains equally.
+            const passedScreen = (x) => (x.r.rank >= 1 ? 1 : 0);
+            return passedScreen(b) - passedScreen(a)
+                || Number(b.r.eligible) - Number(a.r.eligible)
                 || Number(a.r.incomplete) - Number(b.r.incomplete)
                 || b.r.rank - a.r.rank
                 || (a.r.activePins?.length || 0) - (b.r.activePins?.length || 0)

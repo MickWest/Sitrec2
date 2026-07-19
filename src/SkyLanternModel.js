@@ -165,4 +165,29 @@ export class SkyLanternModel extends PhysicsModel {
         }
         return cost;
     }
+
+    // Display-only itemisation of extraCost above — see PhysicsModel.
+    extraCostTerms(params, dataset, T) {
+        const terms = {};
+        if (this.windPriorE !== null && this.windPriorN !== null) {
+            const dE = params[1] - this.windPriorE;
+            const dN = params[2] - this.windPriorN;
+            terms["wind toward measured"] = (dE * dE + dN * dN) / (this.windPriorSigma ** 2);
+        } else {
+            const spd = Math.hypot(params[1], params[2]);
+            terms["calm-wind preference"] = 0.5 * (spd / 10) ** 2;
+        }
+        if (params[3] < 0) terms["negative shear"] = 0.5 * (params[3] / 0.002) ** 2;
+        const sx = dataset.sensorPos[0] + params[0] * dataset.losDir[0];
+        const sy = dataset.sensorPos[1] + params[0] * dataset.losDir[1];
+        const sz = dataset.sensorPos[2] + params[0] * dataset.losDir[2];
+        const h0 = sz + (sx * sx + sy * sy) / (2 * EARTH_R);
+        let below = 0;
+        for (let k = 0; k <= 16; k++) {
+            const h = this._hAt(T * k / 16, params, h0);
+            if (h < 0) below += (h / 8) ** 2 / 17;
+        }
+        if (below) terms["below-surface profile"] = below;
+        return terms;
+    }
 }
