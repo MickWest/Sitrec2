@@ -48,7 +48,11 @@ export const RANKING_CATEGORIES = [
     },
 ];
 
-const FORWARD_KEYS = new Set(["aircraft", "lantern", "quadcopter"]);
+// Object-conditioned forward models. "droneControl" is the control-input drone
+// fit — same object class as "quadcopter" but asking whether a FLOWN path fits,
+// not whether any path inside the envelope does, so the two belong in the same
+// comparison group and are meant to be read against each other.
+const FORWARD_KEYS = new Set(["aircraft", "lantern", "quadcopter", "droneControl"]);
 const RAY_KEYS = new Set(["constAir", "constAlt", "plausible", "saddle", "groundVehicle"]);
 
 export function hypothesisCategory(h) {

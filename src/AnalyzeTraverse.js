@@ -54,6 +54,7 @@ import {
     traversePlausible,
 } from "./TraverseAnalysis";
 import {fitAlternatingLSQ, fitConstantAcceleration, fitConstantVelocity, fitMonteCarlo, fitMonteCarlo2, fitPhysicsModel} from "./LOSFitting";
+import {DroneControlModel} from "./DroneControlFit";
 import {SkyLanternModel} from "./SkyLanternModel";
 import {QuadcopterModel} from "./QuadcopterModel";
 import {classifyFixedWing, classifyQuadcopter} from "./VehicleModels";
@@ -124,6 +125,13 @@ const FAR_ASTRO = 200 * METERS_PER_NM;
 // "MC Polynomial Order" slider (mcOrder, 1..5 — see JetStuff.js), so the sweep
 // covers exactly the orders a user could have selected by hand. Each order
 // costs a full MC run per variant, so this is the main cost knob of the sweep.
+// Knots for the drone control-input fit: the number of held inputs a flight
+// over one clip is assumed to be describable by. Raising it approaches the free
+// model (and its overfitting); lowering it approaches a single rigid manoeuvre.
+// 4 under-recovers a sharp mid-clip course change (~39 deg of a 90 deg truth,
+// measured) — adaptive knot placement is the known next step.
+const DRONE_CONTROL_KNOTS = 4;
+
 const MC_SWEEP_MAX_ORDER = 5;
 const ORDER_NAMES = {
     1: "linear (constant velocity)",
@@ -833,7 +841,7 @@ function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy
 
 function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured, quad, satellite,
     slowProfile, slowOpts, losNode, originLat, originLon, provenance = null, failures = null,
-    windPrior = null, mcSweep = null}) {
+    windPrior = null, mcSweep = null, droneCtl = null}) {
     const S = dataset.S;
     const globalFrame = (f) => (dataset.frame0 ?? 0) + f;
     const dateForDatasetFrame = (f) => dateAtDatasetFrame(dataset, f);
@@ -1241,6 +1249,68 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
             params: {},
             notes: "Fit failed — no plausible multirotor trajectory converged "
                 + "(e.g. the object is too far or too fast for a drone).",
+        });
+    }
+
+    // 5c. Drone as CONTROL INPUTS — the plausible-flight counterpart to the
+    //     free multirotor above. Same object class, different question: not
+    //     "is there ANY path inside the drone envelope that fits?" (almost
+    //     always yes, which is why the free fit produced a 61-revolution
+    //     corkscrew on Aguadilla) but "is there a path a drone is actually
+    //     FLOWN along that fits?" — a few held inputs with occasional changes.
+    //     Plausibility is priced in the control effort, so nothing is
+    //     foreclosed: an aggressive manoeuvre is affordable if the sightlines
+    //     genuinely demand it, and only motion that buys nothing is priced out.
+    if (droneCtl && droneCtl.positions) {
+        const track = droneCtl.positions;
+        const m = droneCtl.model;
+        const pv = droneCtl.solvedVector || [];
+        const dm = trackMetrics(dataset, track);
+        const range0 = Math.hypot(track[0] - S[0], track[1] - S[1], track[2] - S[2]);
+        const headingTravel = m ? m.headingTravelDeg(pv) : NaN;
+        // The comparison that makes this hypothesis mean something: how much
+        // better the UNCONSTRAINED multirotor did. A small gap says an ordinary
+        // flight explains the sightlines as well as any contortion; a large one
+        // says they demand motion outside ordinary drone flight, which is a
+        // finding rather than something to hide behind a contorted "fit".
+        const freeErr = (quad && quad.params && Number.isFinite(quad.params.errDeg))
+            ? quad.params.errDeg : null;
+        const ownErr = droneCtl.params.errDeg;
+        const gap = freeErr !== null ? ownErr - freeErr : null;
+        list.push({
+            key: "droneControl",
+            name: "Drone (flown inputs)",
+            subtitle: m ? m.describe(pv) : "Control-input fit",
+            color: "#7fc4d0",
+            track,
+            metricsFull: dm,
+            errDeg: ownErr,
+            params: {
+                range: range0,
+                headingTravelDeg: headingTravel,
+                knots: DRONE_CONTROL_KNOTS,
+                freeModelErrDeg: freeErr,
+                plausibleVsPossibleGapDeg: gap,
+                priors: droneCtl.params.priors,
+                errFloor,
+            },
+            notes: (m ? `Fitted as the control inputs a drone would be flown with — ${m.describe(pv)}. ` : "")
+                + "Seeded from the least-manoeuvring geometric track, inverted into the speed, "
+                + "heading and climb history needed to fly it, then refined against the sightlines. "
+                + "Holding an input costs nothing; changing one costs, so an ordinary flight is free "
+                + "and only motion that buys no residual is priced out. Nothing is forbidden — an "
+                + "aggressive manoeuvre remains reachable if the sightlines require it.\n\n"
+                + (Number.isFinite(headingTravel)
+                    ? `Total heading change over the clip: ${headingTravel.toFixed(0)}°`
+                        + (headingTravel > 720 ? ` (${(headingTravel / 360).toFixed(1)} revolutions — unusual for a deliberate flight).` : ".")
+                    : "")
+                + (gap !== null
+                    ? ` The unconstrained multirotor reaches ${freeErr.toFixed(3)}°, so an ordinary flight `
+                        + (gap <= 0
+                            ? "matches or beats it — the sightlines need no unusual motion."
+                            : `costs ${gap.toFixed(3)}° more. Compare that against the scene's own `
+                                + `${Number.isFinite(errFloor) ? errFloor.toFixed(2) : "?"}° reference before reading it as significant.`)
+                    : ""),
         });
     }
 
@@ -2742,6 +2812,41 @@ export async function runTraverseAnalysis() {
             failures.push({method: "Quadcopter", error: "fit returned no solution"});
         }
 
+        // Drone as CONTROL INPUTS — the plausible-flight counterpart to the
+        // free quadcopter above. Seeded from the plausible least-manoeuvring
+        // track (geometry only, no drone assumptions and no truth), inverted
+        // into the speed/heading/climb history a drone would need to fly it,
+        // compressed onto a few knots, then refined against the sightlines
+        // while paying for control EFFORT rather than for path shape.
+        //
+        // Run alongside, never instead of, the free fit: the difference between
+        // the two residuals is the informative quantity (an ordinary flight
+        // explaining the rays as well as a contorted one, versus not), and
+        // keeping the free fit means nothing is foreclosed.
+        let droneCtl = null;
+        if (plausible && plausible.track) {
+            await phase(0.93, 0.01, "Fitting drone control inputs...")(0);
+            try {
+                const m = new DroneControlModel(DRONE_CONTROL_KNOTS);
+                m.seedFromTrack(plausible.track, physicsDS);
+                const seeded = m.seedParams();
+                const defs = m.getParameterDefs();
+                const paramOverrides = {};
+                defs.forEach((d, i) => { paramOverrides[d.name] = seeded[i]; });
+                droneCtl = await fitPhysicsModel(physicsDS, new Set(), m,
+                    {...physicsOpts, paramOverrides});
+                if (droneCtl) {
+                    droneCtl.model = m;
+                    droneCtl.solvedVector = defs.map((d) => droneCtl.params.solved[d.name]);
+                }
+            } catch (e) {
+                if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
+                failures.push({method: "Drone (control inputs)", error: (e && e.message) || "fit failed"});
+                droneCtl = null;
+            }
+            if (overlay.isCancelled()) throw new Error("cancelled");
+        }
+
         // Polynomial-order sweep across the three curve-fitting strategies. This
         // is the longest single block in the analysis (Monte Carlo 2 is ~5 s per
         // order on a 20,000-frame clip), so it gets a real slice of the progress
@@ -2793,7 +2898,7 @@ export async function runTraverseAnalysis() {
             dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured, quad, satellite,
             slowProfile, slowOpts,
             losNode, originLat, originLon,
-            provenance, failures, windPrior, mcSweep,
+            provenance, failures, windPrior, mcSweep, droneCtl,
         });
 
         // Ground-truth reference: when a truth track is selected in the Tweaks,
