@@ -159,6 +159,67 @@ describe("QuadcopterModel", () => {
         expect(auto.max).toBe(60);
     });
 
+    // The turning-effort prior. Before it existed, turnRate carried NO prior and
+    // the fit spent it on a spin the LOS residual cannot see (a circle of radius
+    // v/psi' is sub-metre at high rate, ~1e-5 deg at kilometres of range). On the
+    // orbit sitch that produced turnRate -23.9 deg/s, turnAccel -2.51 deg/s^2 —
+    // 1,596 revolutions, ending at 4.7 revolutions per second — while reporting a
+    // respectable 0.57 deg fit.
+    //
+    // These numbers are a CALIBRATION, not an implementation detail. 1 cost unit
+    // = 0.02 deg of fit error (errSigma), so the schedule decides what a turn has
+    // to buy to be worth making. It must kill the spiral WITHOUT foreclosing a
+    // genuinely agile drone — a plausible path, not merely a possible one.
+    describe("turning-effort prior", () => {
+        // params: range, heading, speed, accel, turnRate, turnAccel, climb, windE, windN
+        const turnCost = (turnRate, turnAccel, T) => {
+            const model = new QuadcopterModel();
+            return model.extraCostTerms(
+                [1000, 0, 5, 0, turnRate, turnAccel, 0, 0, 0], null, T)["sustained turning"];
+        };
+
+        test("holding a heading is free", () => {
+            expect(turnCost(0, 0, 600)).toBe(0);
+        });
+
+        test("prices sustained turning on a schedule that leaves agility reachable", () => {
+            // A brisk filming orbit is the 1-unit reference: it need only buy
+            // 0.02 deg to be worth it.
+            expect(turnCost(20, 0, 600)).toBeCloseTo(1, 9);
+            // Aggressive but real manoeuvring stays affordable...
+            expect(turnCost(40, 0, 600)).toBeCloseTo(4, 9);
+            // ...right up to the parameter bound, which is NOT what limits
+            // turning — the effort term is.
+            expect(turnCost(60, 0, 600)).toBeCloseTo(9, 9);
+        });
+
+        test("kills the measured 1,596-revolution spiral", () => {
+            // The real solved parameters off the orbit sitch (T = 666.6 s).
+            const cost = turnCost(-23.86, -2.514, 666.6);
+            // Against a data term of errDeg/0.02 ~ 28 units for a 0.57 deg fit,
+            // this must be overwhelming, not merely present.
+            expect(cost).toBeGreaterThan(2000);
+        });
+
+        test("is duration-invariant: the same flight costs the same at any clip length", () => {
+            // A steady 25 deg/s orbit, whatever the clip length. A term that
+            // summed rather than averaged would scale with T and silently
+            // re-tune itself on every sitch.
+            expect(turnCost(25, 0, 60)).toBeCloseTo(turnCost(25, 0, 600), 9);
+            expect(turnCost(25, 0, 60)).toBeCloseTo(turnCost(25, 0, 6000), 9);
+        });
+
+        test("a turn hidden in turnAccel costs the same as the equivalent steady turn", () => {
+            // Ramping 0 -> 40 deg/s has mean square (0 + 1600 + 0)/3, i.e. the
+            // same as holding 40/sqrt(3). turnAccel must not be an escape hatch
+            // from the turnRate prior — that is exactly how the spiral got out.
+            const T = 600;
+            const ramped = turnCost(0, 40 / T, T);
+            expect(ramped).toBeCloseTo((1600 / 3) / (20 * 20), 9);
+            expect(ramped).toBeGreaterThan(turnCost(20, 0, T));
+        });
+    });
+
     test("recovers a slow climbing drone's motion regime from the sightlines", async () => {
         const {dataset} = makeQuadScenario({speed: 8, climb: 1, turnRate: 2});
         const fit = await fitQuad(dataset);

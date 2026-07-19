@@ -1892,6 +1892,8 @@ export function addAnalyzeButton(folder) {
             resolveLOSNode,
             fitPhysicsModel,
             SkyLanternModel,
+            QuadcopterModel,
+            datasetForSolvedModelWind,
             traverseMinSpeed,
             trackMetrics,
             meanAngularError,
@@ -1927,7 +1929,7 @@ const tweaksFolders = new WeakMap();
 // Populated with the loaded data tracks; the selected track (if any) becomes
 // the ground-truth reference the gallery scores every method against.
 let _truthTrackCtrl = null;            // current lil-gui controller (rebuilt per sitch)
-let _truthListenerAdded = false;       // tracksChanged hook registered once per session
+let _truthTrackListener = null;        // our live tracksChanged hook, so we can unregister it
 const _autoSelectedTruthIDs = new Set();  // Truth_ tracks we already auto-selected once
 
 // Current {label → trackID} options for the dropdown, from the loaded tracks.
@@ -2103,12 +2105,17 @@ export function addAnalyzeTweaks(traverseMenu) {
             "selected automatically.");
     }
     refreshTruthTrackOptions();
-    if (!_truthListenerAdded) {
-        _truthListenerAdded = true;
-        // registered once per session; reads the current controller via the
-        // module var, so tweaks-folder rebuilds don't accumulate listeners
-        EventManager.addEventListener("tracksChanged", () => refreshTruthTrackOptions());
-    }
+    // Re-register the tracksChanged hook on EVERY rebuild. EventManager.removeAll()
+    // runs on sitch dispose (index.js), so a "once per session" guard would leave
+    // the dropdown permanently unpopulated from the second sitch onwards: the
+    // build-time refresh above runs before the sitch's tracks have loaded, and the
+    // later tracksChanged that would fill it in has no listener. Drop our previous
+    // registration first so repeat calls within one sitch don't accumulate.
+    // The listener must not return a truthy value — dispatchEvent deletes any
+    // callback that does.
+    if (_truthTrackListener) EventManager.removeEventListener("tracksChanged", _truthTrackListener);
+    _truthTrackListener = () => { refreshTruthTrackOptions(); };
+    EventManager.addEventListener("tracksChanged", _truthTrackListener);
 
     const cbFixed = folder.add(analyzeTweaks, "aoFixedPoint").name("AO: Stationary / sky-fixed object");
     const cbKnownNow = folder.add(analyzeTweaks, "aoKnownNow").name("AO: Known object (this time)");
@@ -5266,11 +5273,32 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
     // plottable point count
     const trim = Math.min(9, n >> 3);
     const step = Math.max(1, Math.ceil((n - 2 * trim) / 700));
+    // Downsample as a per-bucket MIN/MAX envelope, not by point-sampling every
+    // `step`-th frame. On a long clip step reaches ~29 frames (~1 s), so plain
+    // point sampling aliases: a quadcopter fit spinning at up to 4.7 rev/s drew
+    // a slow "beat" pattern that looked like a real low-frequency oscillation
+    // rather than the fast one it was. Two samples per bucket (min then max)
+    // makes sub-sample variation read honestly as a filled band, and collapses
+    // to the original line wherever the data is smooth (min == max).
     const xs = [];
-    for (let f = trim; f < n - trim; f += step) xs.push(f / fps);
+    for (let f = trim; f < n - trim; f += step) {
+        xs.push(f / fps);
+        xs.push(Math.min(f + step / 2, n - trim - 1) / fps);
+    }
     const pick = (arr, scale = 1) => {
         const ys = [];
-        for (let f = trim; f < n - trim; f += step) ys.push(arr[f] * scale);
+        for (let f = trim; f < n - trim; f += step) {
+            let lo = Infinity, hi = -Infinity;
+            for (let k = f; k < Math.min(f + step, n - trim); k++) {
+                const v = arr[k];
+                if (!isFinite(v)) continue;
+                if (v < lo) lo = v;
+                if (v > hi) hi = v;
+            }
+            if (lo === Infinity) { ys.push(NaN); ys.push(NaN); continue; }
+            ys.push(lo * scale);
+            ys.push(hi * scale);
+        }
         return ys;
     };
     const base = {

@@ -37,6 +37,11 @@ import {PhysicsModel} from "./PhysicsModel";
 const DEG = Math.PI / 180;
 const EARTH_R = 6371000;
 
+// Reference sustained turn rate for the turning-effort prior (deg/s): roughly
+// a brisk filming orbit, i.e. the fastest turning a quad holds for minutes on
+// end without it being remarkable. See _turnEffortCost.
+const TURN_EFFORT_REF = 20;
+
 export class QuadcopterModel extends PhysicsModel {
     // Smooth kinematics: 1/30 s substeps are plenty (the 0.02 s base default is
     // for stiff drag models).
@@ -111,6 +116,43 @@ export class QuadcopterModel extends PhysicsModel {
         ];
     }
 
+    // Root-mean-square turn rate over the whole clip, as a soft cost.
+    //
+    // WHY THIS EXISTS. The heading rate is psi' = turnRate + turnAccel*t, and
+    // before this term nothing priced it: turnRate had no prior at all, and the
+    // turnAccel prior below is ~0.02 cost units against a data term of tens.
+    // The bounds are no substitute — turnAccel's +/-10 deg/s^2 permits +/-2.2
+    // MILLION degrees of heading over an 11-minute clip. Worse, the LOS residual
+    // cannot see the abuse: a craft circling at radius v/psi' is sub-metre once
+    // psi' is large, which at kilometres of range is ~10^-5 degrees. So the fit
+    // would solve "drift with the wind" and spend the free, unpriced heading
+    // parameters on a spin. Measured on the orbit sitch it returned turnRate
+    // -23.9 deg/s with turnAccel -2.51 deg/s^2: 1,596 revolutions, ending at
+    // 4.7 revolutions per SECOND, and reported a plausible-looking 0.57 deg fit.
+    //
+    // WHY RMS, NOT THE BOUNDS. A bound tight enough to stop that would also
+    // forbid a genuinely agile drone. We want the PLAUSIBLE path, not merely a
+    // possible one, so turning is priced rather than forbidden: an aggressive
+    // manoeuvre stays reachable if the sightlines actually pay for it.
+    // Calibration against the data term (1 unit = 0.02 deg of fit):
+    //   20 deg/s sustained (brisk filming orbit) -> 1 unit, barely noticed
+    //   40 deg/s                                 -> 4 units, affordable
+    //   60 deg/s (the parameter bound)           -> 9 units, needs real support
+    //   the 988 deg/s spiral above              -> 2,441 units, dead
+    //
+    // For a rate that is linear in t, the mean square over [0,T] has a closed
+    // form in the two endpoint rates: (a^2 + b^2 + a*b)/3 where a = psi'(0) and
+    // b = psi'(T). That makes this duration-invariant — the same physical
+    // flight costs the same whatever the clip length — which is the property
+    // the sibling DroneControlFit effort integral is also built around.
+    _turnEffortCost(params, T) {
+        const rateStart = params[4];
+        const rateEnd = params[4] + params[5] * T;
+        const meanSquare = (rateStart * rateStart + rateEnd * rateEnd
+            + rateStart * rateEnd) / 3;
+        return meanSquare / (TURN_EFFORT_REF * TURN_EFFORT_REF);
+    }
+
     // Soft plausibility priors, added to meanErrDeg/errSigma in the fit cost.
     // The hard bounds carry the envelope at the endpoints; this keeps the speed
     // inside the envelope for the WHOLE clip (accel can push it past mid-flight),
@@ -124,6 +166,7 @@ export class QuadcopterModel extends PhysicsModel {
             const v = Math.abs(v0 + accel * T * k / 8);
             if (v > maxSpeed) cost += ((v - maxSpeed) / 2) ** 2 / 9;
         }
+        cost += this._turnEffortCost(params, T);
         // gentle smoothness prior on turn acceleration
         cost += 0.1 * (params[5] / 5) ** 2;
         // wind: pin to guess if provided, else prefer light wind
@@ -148,6 +191,7 @@ export class QuadcopterModel extends PhysicsModel {
             if (v > maxSpeed) over += ((v - maxSpeed) / 2) ** 2 / 9;
         }
         if (over) terms["above rotor top speed"] = over;
+        terms["sustained turning"] = this._turnEffortCost(params, T);
         terms["turn smoothness"] = 0.1 * (params[5] / 5) ** 2;
         if (this.windPriorE !== null && this.windPriorN !== null) {
             terms["wind toward measured"] =
