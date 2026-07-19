@@ -1,4 +1,5 @@
 import {
+    balloonConsistency,
     completenessBadges,
     effectiveErrDeg,
     formatRawLosResidual,
@@ -6,6 +7,7 @@ import {
     hypothesisCategory,
     plausibilityRating,
     rankingExplanation,
+    rankAllHypotheses,
     rankHypotheses,
     rankTieScore,
     tierBadge,
@@ -134,17 +136,73 @@ describe("Traverse ranking", () => {
         expect(rankTieScore(h)).toBeCloseTo(0.04, 12);
     });
 
-    test("results are grouped before ordering; no trajectory can globally outrank a forward model", () => {
+    test("hypotheses land in the five display categories", () => {
         const groups = groupAndRankHypotheses([
             hypothesis("constAlt", {name: "Constant Altitude", errDeg: 0.01}),
             hypothesis("lantern", {name: "Balloon", errDeg: 0.01}),
             hypothesis("gfCA", {name: "Global CA", errDeg: 0.01}),
+            hypothesis("fixedPoint", {name: "Stationary Point", errDeg: 0.01}),
             hypothesis("satellite", {name: "Satellite", errDeg: 0.01,
                 params: {satellite: "X", sunlit: true}, identity: true}),
         ]);
-        expect(groups.map((g) => g.key)).toEqual(["trajectory", "forward", "catalogue", "diagnostic"]);
-        expect(groups.map((g) => g.items[0].groupIndex)).toEqual([0, 0, 0, 0]);
-        expect(hypothesisCategory(groups[1].items[0].h).key).toBe("forward");
+        // Array order is display priority: physical explanations lead.
+        expect(groups.map((g) => g.key))
+            .toEqual(["forward", "los", "geometric", "approximation", "catalogue"]);
+        expect(groups.map((g) => g.label)).toEqual([
+            "Physically based", "LOS Constrained", "Geometric",
+            "Geometric Approximations", "Known Object",
+        ]);
+        expect(groups.map((g) => g.items[0].groupIndex)).toEqual([0, 0, 0, 0, 0]);
+        // Every category needs a colour — it is the tile's only category cue
+        // now that the section headings are gone.
+        expect(groups.every((g) => /^#[0-9a-f]{6}$/i.test(g.color))).toBe(true);
+    });
+
+    test("the gallery order is flat and best-first, not grouped", () => {
+        // A strong physical model, a weaker LOS-constrained one. Grouped
+        // ordering could only ever interleave by section; the flat order must
+        // put the better candidate first wherever it comes from.
+        const items = rankAllHypotheses([
+            hypothesis("constAlt", {name: "Constant Altitude", errDeg: 0.01}),
+            hypothesis("lantern", {name: "Balloon", errDeg: 0.01}),
+            hypothesis("gfCA", {name: "Global CA", errDeg: 0.4,
+                metrics: metrics({gMax: 5})}),
+        ]);
+        expect(items.map((x) => x.h.name)).toEqual(["Balloon", "Constant Altitude", "Global CA"]);
+        // Each tile still reports its standing WITHIN its own category, which is
+        // the only place a score comparison is sound.
+        expect(items.map((x) => `${x.groupIndex + 1}/${x.groupSize}`)).toEqual(["1/1", "1/1", "1/1"]);
+    });
+
+    test("a catalogue identity cannot leapfrog on an incommensurable score", () => {
+        // rankTieScore returns raw DEGREES for an identity hypothesis but a
+        // composite (straightFlightScore + err/0.05) for a forward model. Sorted
+        // on that number directly, the satellite's 0.05 beats the balloon's
+        // larger composite and a planet would head the gallery on units alone.
+        // Category priority must break the tie before secondaryScore is reached.
+        const items = rankAllHypotheses([
+            hypothesis("satellite", {name: "Satellite", errDeg: 0.05,
+                params: {satellite: "X", sunlit: true}, identity: true}),
+            hypothesis("lantern", {name: "Balloon", errDeg: 0.01}),
+        ]);
+        expect(items.map((x) => x.h.name)).toEqual(["Balloon", "Satellite"]);
+        // Guard the premise: the scores really are on different scales, so this
+        // test would fail without the priority tiebreak rather than pass by luck.
+        const sat = items.find((x) => x.h.name === "Satellite");
+        const balloon = items.find((x) => x.h.name === "Balloon");
+        expect(sat.r.secondaryScore).toBeLessThan(balloon.r.secondaryScore);
+    });
+
+    test("a truth track overrides category priority in the flat order", () => {
+        // Truth separation in metres IS comparable across categories, so it
+        // must beat the priority tiebreak: a closer LOS-constrained fit outranks
+        // a more distant physical one.
+        const near = hypothesis("constAlt", {name: "Constant Altitude", errDeg: 0.01});
+        near.truthComparison = {comparable: true, score: 40};
+        const far = hypothesis("lantern", {name: "Balloon", errDeg: 0.01});
+        far.truthComparison = {comparable: true, score: 900};
+        expect(rankAllHypotheses([far, near]).map((x) => x.h.name))
+            .toEqual(["Constant Altitude", "Balloon"]);
     });
 
     test("incomplete search sorts behind a complete peer and never becomes eligible", () => {
@@ -186,11 +244,38 @@ describe("Traverse ranking", () => {
             .toBe("Search incomplete");
     });
 
-    test("Low and Moderate keep distinct badges; nonpassing sets receive no positive tie", () => {
+    test("the badge names whichever of fit or kinematics is binding", () => {
+        // Ordinary motion (0 g, 100 kt), poor residual. The evidence is about
+        // the FIT, so the badge must not say something about the object. This
+        // is the real case that motivated the split: a quadcopter drifting at
+        // 6 kt / 0.09 g — closest of five to truth — read as "Implausible".
+        const poorFit = plausibilityRating(hypothesis("lantern", {errDeg: 0.9}));
+        expect(poorFit.label).toBe("Poor fit");
+        expect(poorFit.rank).toBe(0);
+        expect(poorFit.fitRank).toBe(0);
+        expect(poorFit.kinematicRank).toBe(3);
+
+        // Exact fit, extraordinary motion. Now the badge SHOULD talk about the
+        // motion — and it must be distinguishable from a fit that diverged,
+        // which previously shared both this badge and this sort position.
+        const extreme = plausibilityRating(hypothesis("lantern", {
+            errDeg: 0.01, metrics: metrics({gMax: 12}),
+        }));
+        expect(extreme.label).toBe("Kinematically extreme");
+        expect(extreme.fitRank).toBe(3);
+        expect(extreme.kinematicRank).toBe(0);
+        expect(extreme.label).not.toBe(poorFit.label);
+
+        // The tier itself is still the worse of the two, so ordering and
+        // eligibility are unchanged by the relabelling.
+        expect(extreme.rank).toBe(0);
+
         const low = plausibilityRating(hypothesis("lantern", {errDeg: 0.3}));
         const moderate = plausibilityRating(hypothesis("lantern", {errDeg: 0.1}));
-        expect(tierBadge(low).label).toBe("Low");
-        expect(tierBadge(moderate).label).toBe("Moderate");
+        expect(tierBadge(low).label).toBe("Weak fit");
+        expect(tierBadge(moderate).label).toBe("Fair fit");
+        expect(low.rank).toBe(1);
+        expect(moderate.rank).toBe(2);
 
         const ranked = rankHypotheses([
             hypothesis("lantern", {errDeg: 0.3}),
@@ -214,6 +299,88 @@ describe("Traverse ranking", () => {
         const r = plausibilityRating(bad);
         expect(r.rank).toBe(-1);
         expect(r.secondaryScore).toBe(Infinity);
+    });
+});
+
+// A balloon is physically constrained to a steady vertical trend and a
+// one-direction drift; a drone is not. When two physical fits are otherwise
+// close, that signature is evidence for the balloon, so it earns a bounded
+// promotion — and an un-balloon-like "balloon" (vertical reversal, curved drift)
+// is demoted the same amount. The nudge lives in secondaryScore, which the
+// comparator only consults after the tier ties, so it can reorder equally-good
+// fits but never lift a balloon over a clearly-better one.
+describe("balloon-consistency scoring", () => {
+    // Flat [x,y,z]*n track in the shapes the metric must tell apart.
+    function shapeTrack(mode, n = 80) {
+        const t = new Float64Array(n * 3);
+        for (let f = 0; f < n; f++) {
+            const s = n === 1 ? 0 : f / (n - 1);
+            if (mode === "balloon") { t[f * 3] = 1200 * s; t[f * 3 + 1] = 0; t[f * 3 + 2] = 300 + 120 * s; }
+            else if (mode === "level") { t[f * 3] = 1200 * s; t[f * 3 + 1] = 0; t[f * 3 + 2] = 300; }
+            else if (mode === "oscillate") { t[f * 3] = 1200 * s; t[f * 3 + 1] = 0; t[f * 3 + 2] = 300 + 200 * Math.sin(4 * Math.PI * s); }
+            else if (mode === "circle") { const a = 2 * Math.PI * s; t[f * 3] = 500 * Math.cos(a); t[f * 3 + 1] = 500 * Math.sin(a); t[f * 3 + 2] = 300 + 120 * s; }
+            else if (mode === "hover") { t[f * 3] = 0; t[f * 3 + 1] = 0; t[f * 3 + 2] = 300; }
+        }
+        return t;
+    }
+
+    // Slow, gentle metrics so the kinematic tier is always "passes" and the fit
+    // residual (errDeg) is what sets the tier — isolating the nudge.
+    const gentle = () => metrics({gRms: 0.02, gMax: 0.1, speedMeanKt: 8, speedMaxKt: 12});
+
+    function buoyant(mode, errDeg) {
+        const h = hypothesis("lantern", {errDeg, metrics: gentle()});
+        h.track = shapeTrack(mode);
+        return h;
+    }
+
+    test("scores a steady rise + one-direction drift high, oscillation and circling low", () => {
+        expect(balloonConsistency(shapeTrack("balloon"))).toBeGreaterThan(0.9);
+        expect(balloonConsistency(shapeTrack("level"))).toBeGreaterThan(0.9);   // level is balloon-like
+        expect(balloonConsistency(shapeTrack("oscillate"))).toBeLessThan(0.5);  // up-and-down is not
+        expect(balloonConsistency(shapeTrack("circle"))).toBeLessThan(0.5);     // circling is not
+    });
+
+    test("a balloon-like buoyant fit is promoted and an un-balloon-like one demoted, symmetrically", () => {
+        const like = plausibilityRating(buoyant("balloon", 0.3)).secondaryScore;
+        const notLike = plausibilityRating(buoyant("oscillate", 0.3)).secondaryScore;
+        // Same fit, same kinematics — only the shape differs. The promotion and
+        // demotion straddle the un-nudged base by the full nudge each way.
+        const base = plausibilityRating({...buoyant("balloon", 0.3), key: "quadcopter"}).secondaryScore;
+        expect(like).toBeLessThan(base);
+        expect(notLike).toBeGreaterThan(base);
+        // C=1 gives -6, C=0 gives +6: the two straddle the base by the full nudge.
+        expect(base - like).toBeCloseTo(6, 5);
+        expect(notLike - base).toBeCloseTo(6, 5);
+    });
+
+    test("the nudge overturns a modest residual edge between same-tier physical fits", () => {
+        // Balloon fits a little worse (0.42°) but its motion is textbook; the
+        // drone fits better (0.22°) but both are the same fit tier. The balloon
+        // should lead once the signature is weighed.
+        const balloon = buoyant("balloon", 0.42);
+        const drone = hypothesis("droneControl", {errDeg: 0.22, metrics: gentle()});
+        drone.track = shapeTrack("balloon");   // drone flew the same path; it just isn't credited for looking like a balloon
+        const order = rankAllHypotheses([drone, balloon]);
+        expect(order[0].h.key).toBe("lantern");
+        expect(order[1].h.key).toBe("droneControl");
+    });
+
+    test("but it cannot lift a balloon over a drone that fits a whole tier better", () => {
+        const balloon = buoyant("balloon", 0.42);         // fitRank 1
+        const drone = hypothesis("droneControl", {errDeg: 0.09, metrics: gentle()}); // fitRank 2 — better tier
+        drone.track = shapeTrack("balloon");
+        const order = rankAllHypotheses([balloon, drone]);
+        expect(order[0].h.key).toBe("droneControl");      // tier gate wins; nudge can't cross it
+    });
+
+    test("a near-hover track is treated as neutral, not penalised", () => {
+        // A calm-wind, neutrally-buoyant balloon barely moves: holds altitude and
+        // barely drifts. Not distinctively balloon, but certainly not un-balloon,
+        // so it scores neutral (0.5) rather than being pushed either way.
+        expect(balloonConsistency(shapeTrack("hover"))).toBeCloseTo(0.5, 5);
+        // A level track that DOES drift one way is fully balloon-like.
+        expect(balloonConsistency(shapeTrack("level"))).toBeGreaterThan(0.9);
     });
 });
 
