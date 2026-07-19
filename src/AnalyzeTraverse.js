@@ -53,8 +53,8 @@ import {
     traverseMinSpeed,
     traversePlausible,
 } from "./TraverseAnalysis";
-import {fitAlternatingLSQ, fitConstantAcceleration, fitConstantVelocity, fitMonteCarlo, fitMonteCarlo2, fitPhysicsModel} from "./LOSFitting";
-import {DroneControlModel} from "./DroneControlFit";
+import {fitAlternatingLSQ, fitConstantAcceleration, fitConstantVelocity, fitKalmanFilter, fitMonteCarlo, fitMonteCarlo2, fitPhysicsModel} from "./LOSFitting";
+import {DroneControlModel, knotsForDuration} from "./DroneControlFit";
 import {SkyLanternModel} from "./SkyLanternModel";
 import {QuadcopterModel} from "./QuadcopterModel";
 import {classifyFixedWing, classifyQuadcopter} from "./VehicleModels";
@@ -70,6 +70,7 @@ import {
     completenessBadges,
     formatRawLosResidual,
     groupAndRankHypotheses,
+    rankAllHypotheses,
     rankingExplanation,
     tierBadge,
 } from "./TraverseRanking";
@@ -1288,15 +1289,16 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
             params: {
                 range: range0,
                 headingTravelDeg: headingTravel,
-                knots: DRONE_CONTROL_KNOTS,
+                knots: m ? m.K : DRONE_CONTROL_KNOTS,
                 freeModelErrDeg: freeErr,
                 plausibleVsPossibleGapDeg: gap,
                 priors: droneCtl.params.priors,
                 errFloor,
             },
             notes: (m ? `Fitted as the control inputs a drone would be flown with — ${m.describe(pv)}. ` : "")
-                + "Seeded from the least-manoeuvring geometric track, inverted into the speed, "
-                + "heading and climb history needed to fly it, then refined against the sightlines. "
+                + "Seeded from the best geometric path (Kalman smoother or least-manoeuvring track), "
+                + "inverted into the speed, heading and climb history needed to fly it, then refined "
+                + "against the sightlines. "
                 + "Holding an input costs nothing; changing one costs, so an ordinary flight is free "
                 + "and only motion that buys no residual is priced out. Nothing is forbidden — an "
                 + "aggressive manoeuvre remains reachable if the sightlines require it.\n\n"
@@ -1963,10 +1965,15 @@ export function addAnalyzeButton(folder) {
             fitPhysicsModel,
             SkyLanternModel,
             QuadcopterModel,
+            DroneControlModel,
+            knotsForDuration,
+            fitKalmanFilter,
+            fitPlausibleBestRange,
             datasetForSolvedModelWind,
             traverseMinSpeed,
             trackMetrics,
             meanAngularError,
+            runTraverseAnalysis,
         };
     }
     const existing = analyzeButtons.get(folder);
@@ -2597,6 +2604,16 @@ export async function runTraverseAnalysis() {
         await yieldToDOM();
         const {dataset, originLat, originLon} = buildAnalysisDataset(losNode, analysisWindNode, anchorDist, analysisFrames);
         const failures = [];
+        // Terrain tiles can finish loading WHILE the analysis runs. The elevation
+        // that actually feeds the fits is sampled once at the start, so a later
+        // change means the report's ground samples and the fits are marginally
+        // inconsistent — but "marginally" is the operative word: a camera tile
+        // arriving elsewhere in the quadtree, or a slightly refined height under
+        // the object, does not change which object it looks like. So we NOTE the
+        // change and finish the run rather than discarding minutes of work and
+        // asking the analyst to try again (which, while terrain streams in, could
+        // loop). Set at the sample points below; surfaced as a caveat.
+        let terrainChangedDuringRun = false;
         // Sensor-baseline observability: with a (near-)static LOS origin no
         // free-range method can determine distance — every range along the ray
         // fan admits a trajectory, and smoothness scoring then collapses the
@@ -2748,6 +2765,7 @@ export async function runTraverseAnalysis() {
             sensorPos: dataset.S, losDir: dataset.D, times: physicsTimes,
             count: dataset.n, maxRange: null,
         };
+        const clipDurationSec = (dataset.n - 1) / dataset.fps;
         const physicsOpts = {
             optimizer: "de", sampleStride: 5, dePop: 48, deGens: 120,
             // let the overlay's Cancel button actually stop the DE search
@@ -2755,13 +2773,71 @@ export async function runTraverseAnalysis() {
         };
         if (groundPrior) physicsOpts.groundPrior = groundPrior;
 
+        // Geometric SEED for the physically-based fits, so they start on a path
+        // that already fits the sightlines and refine from there (the balloon's
+        // time-varying wind and the drone's control inputs are otherwise
+        // unsearchable at the shipping DE budget — see SkyLanternModel.seedFromTrack
+        // and DroneControlFit).
+        //
+        // Seed from the KALMAN SMOOTHER specifically — not "whichever geometric
+        // track has the lowest LOS residual". An LOS fit is degenerate along
+        // range: a track that collapses toward the sensor and speeds up rides the
+        // rays with an arbitrarily small residual while being physically
+        // meaningless (measured here: a 222 m / 255 kt "plausible" member scored
+        // 0.05 deg but seeded the drone into a 24-revolution corkscrew). The
+        // Kalman smoother is regularised — it penalises acceleration — so it
+        // cannot collapse that way and stays a good basin to refine from; the
+        // least-manoeuvring track is only a fallback for the rare case the
+        // smoother returns nothing. This carries NO truth and NO object
+        // assumptions, so it cannot bias which object wins — it only decides
+        // where the search starts. The free quadcopter is deliberately NOT
+        // seeded: it stays the unconstrained, anomaly-reachable envelope fit.
+        let seedTrack = null;
+        try {
+            const kNoise = (id) => { const nd = NodeMan.get(id, false); return nd ? (nd.v0 ?? nd.value) : undefined; };
+            const ks = fitKalmanFilter(physicsDS, new Set(), {
+                processNoise: kNoise("kalmanProcessNoise"),
+                measurementNoise: kNoise("kalmanMeasurementNoise"),
+            });
+            if (ks && ks.positions) seedTrack = Float64Array.from(ks.positions);
+        } catch (e) {
+            // Non-fatal: a seeding failure must never abort the analysis.
+            console.warn("Kalman seed for the physics fits failed; "
+                + "falling back to the least-manoeuvring track:", e);
+        }
+        // Fall back to the least-manoeuvring plausible track only if the smoother
+        // is unavailable.
+        if (!seedTrack && plausible && plausible.track) seedTrack = plausible.track;
+        // Build a {name: value} initial-guess override from a seeded model's
+        // seedParams() vector (feeds fitPhysicsModel's paramOverrides, which
+        // becomes the DE seed and the Nelder-Mead start).
+        const seededOverrides = (model) => {
+            const v = model.seedParams();
+            if (!v) return null;
+            const o = {};
+            model.getParameterDefs().forEach((d, i) => { o[d.name] = v[i]; });
+            return o;
+        };
+
         await phase(0.82, 0.05, "Fitting balloon model (free wind)...")(0);
         let lantern = null;
         try {
             // FREE reconstruction: fit wind + lift together with NO measured-wind
             // input — "does a plausible balloon fit these sightlines?" — and yield
             // the inferred wind + lift profile.
-            lantern = await fitPhysicsModel(physicsDS, new Set(), new SkyLanternModel(), physicsOpts);
+            const freeModel = new SkyLanternModel();
+            // lets the model's wind vary across the clip in duration-invariant
+            // units (see SkyLanternModel._windAt)
+            freeModel.clipDuration = clipDurationSec;
+            // Seed the time-varying wind from the best geometric path so DE
+            // starts in the right basin instead of scattering in 12-D.
+            let freeOpts = physicsOpts;
+            if (seedTrack) {
+                freeModel.seedFromTrack(seedTrack, physicsDS);
+                const ov = seededOverrides(freeModel);
+                if (ov) freeOpts = {...physicsOpts, paramOverrides: ov};
+            }
+            lantern = await fitPhysicsModel(physicsDS, new Set(), freeModel, freeOpts);
         } catch (e) {
             if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
             failures.push({method: "Sky Lantern / Balloon (free wind)", error: (e && e.message) || "fit failed"});
@@ -2785,8 +2861,15 @@ export async function runTraverseAnalysis() {
                 `Fitting balloon model (${windPrior.measured ? "measured" : "sitch"} wind)...`)(0);
             try {
                 const m = new SkyLanternModel();
+                m.clipDuration = clipDurationSec;
                 m.windPriorE = windPrior.E; m.windPriorN = windPrior.N;
-                lanternMeasured = await fitPhysicsModel(physicsDS, new Set(), m, physicsOpts);
+                let measuredOpts = physicsOpts;
+                if (seedTrack) {
+                    m.seedFromTrack(seedTrack, physicsDS);
+                    const ov = seededOverrides(m);
+                    if (ov) measuredOpts = {...physicsOpts, paramOverrides: ov};
+                }
+                lanternMeasured = await fitPhysicsModel(physicsDS, new Set(), m, measuredOpts);
             } catch (e) {
                 if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
                 lanternMeasured = null;  // non-fatal — the free fit is the primary
@@ -2813,28 +2896,55 @@ export async function runTraverseAnalysis() {
         }
 
         // Drone as CONTROL INPUTS — the plausible-flight counterpart to the
-        // free quadcopter above. Seeded from the plausible least-manoeuvring
-        // track (geometry only, no drone assumptions and no truth), inverted
-        // into the speed/heading/climb history a drone would need to fly it,
-        // compressed onto a few knots, then refined against the sightlines
-        // while paying for control EFFORT rather than for path shape.
+        // free quadcopter above. Seeded from the best geometric path (Kalman
+        // smoother or least-manoeuvring track; geometry only, no drone
+        // assumptions and no truth), inverted into the speed/heading/climb
+        // history a drone would need to fly it, compressed onto a few knots,
+        // then refined against the sightlines while paying for control EFFORT
+        // rather than for path shape.
+        //
+        // The knot count scales with clip length (knotsForDuration): 4 knots on
+        // a 667 s clip is one held input per 167 s, too coarse to describe any
+        // real flight let alone follow the seeded path, so the seed's detail was
+        // thrown away before the fit began.
         //
         // Run alongside, never instead of, the free fit: the difference between
         // the two residuals is the informative quantity (an ordinary flight
         // explaining the rays as well as a contorted one, versus not), and
         // keeping the free fit means nothing is foreclosed.
         let droneCtl = null;
-        if (plausible && plausible.track) {
+        if (seedTrack) {
             await phase(0.93, 0.01, "Fitting drone control inputs...")(0);
             try {
-                const m = new DroneControlModel(DRONE_CONTROL_KNOTS);
-                m.seedFromTrack(plausible.track, physicsDS);
+                const m = new DroneControlModel(knotsForDuration(clipDurationSec));
+                m.seedFromTrack(seedTrack, physicsDS);
                 const seeded = m.seedParams();
                 const defs = m.getParameterDefs();
                 const paramOverrides = {};
                 defs.forEach((d, i) => { paramOverrides[d.name] = seeded[i]; });
+                // This is the highest-dimensional fit in the analysis (1 + 3K
+                // params, K up to 12 => 37), and the seed already sits on the
+                // smoother path — so it is a LOCAL-REFINEMENT problem, not a
+                // global search. Skip differential evolution entirely (optimizer
+                // "nm" runs Nelder-Mead straight from the seed) and integrate the
+                // search cost coarsely (fitMaxDt 1 s — the controls are linear
+                // over ~60 s knots, so a 1 s step is plenty; the final
+                // full-resolution trajectory still uses the model's 0.25 s step)
+                // on a wider stride.
+                //
+                // maxIter is deliberately low. Nelder-Mead makes almost all its
+                // progress from a good seed in the first few hundred iterations
+                // (measured: 1500 iters -> 0.199 deg in 3.6 s, 400 -> 0.23 deg in
+                // 1.2 s, 150 -> 0.36 deg in 0.5 s — all plausible flights), and
+                // unlike the DE phases NM does not yield, so every iteration is
+                // frozen UI. 400 keeps the fit well under a couple of seconds and
+                // the residual excellent; the drone's exact residual is not the
+                // deciding factor anyway (see balloonConsistency ranking). Safe:
+                // NM is monotonic from the seed, so it can never return worse than
+                // the seed — a corkscrew (huge residual) can't appear.
                 droneCtl = await fitPhysicsModel(physicsDS, new Set(), m,
-                    {...physicsOpts, paramOverrides});
+                    {...physicsOpts, paramOverrides, optimizer: "nm",
+                        sampleStride: 20, fitMaxDt: 1.0, maxIter: 400});
                 if (droneCtl) {
                     droneCtl.model = m;
                     droneCtl.solvedVector = defs.map((d) => droneCtl.params.solved[d.name]);
@@ -2890,7 +3000,9 @@ export async function runTraverseAnalysis() {
                 localGroundProbeECEF(dataset, originLat, originLon))];
             if (!terrainDependencyRecordsMatch(groundPriorDependencyAtStart,
                 groundPriorDependencyNow)) {
-                throw new Error("terrain_changed");
+                terrainChangedDuringRun = true;
+                console.warn("Traverse analysis: local ground elevation changed during the run; "
+                    + "keeping the start-of-run sample (change is unlikely to be significant).");
             }
         }
 
@@ -2909,11 +3021,31 @@ export async function runTraverseAnalysis() {
         // for them — mark them not-comparable instead.
         const truth = buildTruthReference(dataset, originLat, originLon);
         if (truth) {
+            // The truth track's OWN LOS residual: what a perfect answer scores
+            // against these rays. This is the real achievable floor, MEASURED
+            // rather than inferred — and it is nothing like the "generic
+            // reference" (params.errFloor), which is just a free
+            // constant-acceleration fit and can be many times worse than
+            // achievable (measured 0.58° where truth scores 0.051°). Quoting
+            // the generic reference makes a mediocre fit look respectable;
+            // where truth exists, quote truth instead.
+            //
+            // Only meaningful if the truth track covers essentially the whole
+            // analysis window — a partially-overlapping truth would contribute
+            // garbage angles on the frames it does not cover.
+            let validFrac = 0;
+            for (let f = 0; f < dataset.n; f++) if (truth.valid[f]) validFrac++;
+            validFrac /= Math.max(1, dataset.n);
+            const truthResidualDeg = validFrac > 0.99
+                ? meanAngularError(dataset, truth.track) * 180 / Math.PI
+                : NaN;
+
             for (const h of hypotheses) {
                 if (!h.track) continue;
                 h.truthComparison = h.atInfinity
                     ? {comparable: false, note: "direction-only hypothesis (at infinity); 3D separation is not meaningful"}
                     : compareTrackToTruth(dataset, h.track, truth);
+                if (Number.isFinite(truthResidualDeg)) h.truthResidualDeg = truthResidualDeg;
             }
         }
 
@@ -2929,13 +3061,17 @@ export async function runTraverseAnalysis() {
             Globals.equatorRadius, Globals.polarRadius, terrainDataEpoch(terrainAtPublish));
         if (terrainConfigAtPublish.length !== terrainConfigAtStart.length
             || terrainConfigAtPublish.some((value, i) => !Object.is(value, terrainConfigAtStart[i]))) {
-            throw new Error("terrain_changed");
+            terrainChangedDuringRun = true;
+            console.warn("Traverse analysis: terrain configuration changed during the run; "
+                + "reporting results computed at the start-of-run terrain.");
         }
         const terrainDependenciesAtPublish = resampleTerrainDependencies(
             terrainDependenciesAtBuild);
         if (!terrainDependencyRecordsMatch(terrainDependenciesAtBuild,
             terrainDependenciesAtPublish)) {
-            throw new Error("terrain_changed");
+            terrainChangedDuringRun = true;
+            console.warn("Traverse analysis: sampled elevation changed during the run; "
+                + "reporting results computed at the start-of-run elevation.");
         }
 
         // detailed per-frame series. The sweep's best is always computed (the
@@ -3080,6 +3216,7 @@ export async function runTraverseAnalysis() {
             truth,
             buildHtml, html: null,
             provenance, failures, manifest,
+            terrainChangedDuringRun,
         };
         window.lastTraverseAnalysis = results;
         // View-dependent global tile LOD is not an analysis input. Preserve the
@@ -3087,10 +3224,8 @@ export async function runTraverseAnalysis() {
         _analysisCache = {fp, terrainDependencies, results};
     } catch (error) {
         if (error && error.message === "cancelled") return null;
-        if (error && error.message === "terrain_changed") {
-            showError("Traverse analysis: elevation data changed during the run. Wait for terrain to settle, then Analyze again.");
-            return null;
-        }
+        // Elevation changing mid-run no longer aborts — it is noted and the run
+        // finishes (see terrainChangedDuringRun). Any other error is a real fault.
         throw error;
     } finally {
         overlay.remove();
@@ -4063,11 +4198,14 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
 function showResultGallery(results) {
     const {dataset, hypotheses} = results;
 
-    // Rank only within comparable categories. A trajectory construction,
-    // forward physical model, catalogue identity and estimator do not share a
-    // calibrated cross-model likelihood and therefore cannot have one winner.
-    const rankedGroups = groupAndRankHypotheses(hypotheses);
-    const tiles = rankedGroups.flatMap((group) => group.items);
+    // One flat, best-first ordering. Each tile carries its category as a
+    // coloured corner label rather than sitting under a section heading, so the
+    // strongest candidate leads regardless of which question it answers — a
+    // physically-based "looks like a balloon" result is what an analyst is
+    // after, and section order used to bury it. The categories still cannot be
+    // compared by a calibrated cross-model likelihood; see the comparator in
+    // rankAllHypotheses for exactly which keys are and are not commensurable.
+    const tiles = rankAllHypotheses(hypotheses);
 
     const overlay = document.createElement("div");
     overlay.className = "traverse-gallery-overlay";
@@ -4225,12 +4363,12 @@ function showResultGallery(results) {
             display:flex; flex-direction:column; }
         .traverse-gallery-overlay .tg-grid { display:grid;
             grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
-        .traverse-gallery-overlay .tg-group-head { grid-column:1/-1; padding:12px 2px 2px;
-            border-top:1px solid rgba(255,255,255,0.11); margin-top:5px; }
-        .traverse-gallery-overlay .tg-group-head:first-child { border-top:none; margin-top:0; padding-top:0; }
-        .traverse-gallery-overlay .tg-group-title { color:#dce3eb; font-size:15px; font-weight:750; }
-        .traverse-gallery-overlay .tg-group-desc { color:#8a9099; font-size:12px; line-height:1.45;
-            margin-top:3px; max-width:100ch; }
+        /* Category label, upper-left of each tile. Colour-coded so the kind of
+           question a tile answers is readable at a glance in a flat list.
+           Right-padded to clear the set-aside X, which is upper-RIGHT. */
+        .traverse-gallery-overlay .tg-cat { font-size:11px; font-weight:700;
+            letter-spacing:0.06em; text-transform:uppercase; margin:0 34px 7px 1px;
+            line-height:1.2; }
         .traverse-gallery-overlay .tg-tile { position:relative; background:#14161a;
             border:1px solid rgba(255,255,255,0.09);
             border-radius:12px; padding:12px; display:flex; flex-direction:column; cursor:pointer;
@@ -4238,7 +4376,9 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-tile:hover { border-color:rgba(120,170,240,0.5); }
         /* Dismiss ("X") — top-LEFT, mirroring the fullscreen/zoom buttons on the
            right so the two corners read as separate concerns. */
-        .traverse-gallery-overlay .tg-tile-dismiss { position:absolute; top:20px; left:20px; z-index:4;
+        /* Positioned against the CHART SHELL, not the tile: the category label
+           now occupies the tile's top-left corner. */
+        .traverse-gallery-overlay .tg-tile-dismiss { position:absolute; top:8px; left:8px; z-index:4;
             width:30px; height:30px; display:grid; place-items:center; padding:0; border-radius:7px;
             border:1px solid rgba(255,255,255,0.28); background:rgba(7,10,14,0.72);
             color:#e8eaed; font-size:16px; line-height:1; cursor:pointer; }
@@ -4500,6 +4640,17 @@ function showResultGallery(results) {
             ". They were not silently counted as evidence.";
         panel.appendChild(warn);
     }
+    if (results.terrainChangedDuringRun) {
+        // A calmer note than the failures banner: nothing failed, the run simply
+        // observed terrain finish loading while it worked.
+        const note = document.createElement("div");
+        note.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
+            "background:#2a2b22; color:#d7d08a; border:1px solid #55572f; font-size:13px;";
+        note.textContent = "ℹ︎ Elevation data finished loading while this analysis ran. Results use the "
+            + "elevation sampled at the start and are unlikely to be materially affected; re-run once "
+            + "terrain has settled if you need the ground samples exact.";
+        panel.appendChild(note);
+    }
 
     const toolbar = document.createElement("div");
     toolbar.className = "tg-toolbar";
@@ -4637,20 +4788,14 @@ function showResultGallery(results) {
     // Layout model for the tile grid. Tiles can be SET ASIDE (the X button),
     // which moves them below a separator at the end rather than deleting them —
     // the reader can still see what was excluded, and "Restore Closed" brings
-    // them all back. Group headings are re-emitted on each relayout and skipped
-    // when every tile in that group has been set aside, so no empty headings.
+    // them all back. There are no group headings: the tiles are in one flat
+    // best-first order and each carries its category as a coloured corner label.
     const dismissed = new Set();
-    const headingByCategory = new Map();
 
     const relayout = () => {
         while (grid.firstChild) grid.removeChild(grid.firstChild);
-        let lastCategoryKey = null;
-        tiles.forEach(({category}, i) => {
+        tiles.forEach((_, i) => {
             if (dismissed.has(i)) return;
-            if (category.key !== lastCategoryKey) {
-                grid.appendChild(headingByCategory.get(category.key));
-                lastCategoryKey = category.key;
-            }
             grid.appendChild(tileEls[i]);
         });
         if (dismissed.size > 0) {
@@ -4815,13 +4960,6 @@ function showResultGallery(results) {
     });
 
     tiles.forEach(({h, r, category, groupIndex, groupSize, tied}, i) => {
-        if (!headingByCategory.has(category.key)) {
-            const heading = document.createElement("div");
-            heading.className = "tg-group-head";
-            heading.innerHTML = `<div class="tg-group-title">${escapeHtml(category.label)}</div>` +
-                `<div class="tg-group-desc">${escapeHtml(category.description)}</div>`;
-            headingByCategory.set(category.key, heading);
-        }
         const badges = [tierBadge(r), ...completenessBadges(r)];
         const badgesHTML = badges.map((badge) =>
             `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
@@ -4833,9 +4971,11 @@ function showResultGallery(results) {
         const tile = document.createElement("div");
         tile.className = "tg-tile";
         tile.innerHTML =
-            `<button class="tg-tile-dismiss" type="button" title="Set aside — exclude from consideration" ` +
-            `aria-label="Set aside ${escapeHtml(h.name)}">✕</button>` +
+            `<div class="tg-cat" style="color:${category.color}" title="${escapeHtml(category.description)}">` +
+                `${escapeHtml(category.label)}</div>` +
             `<div class="tg-chart-shell tg-thumb-shell">` +
+                `<button class="tg-tile-dismiss" type="button" title="Set aside — exclude from consideration" ` +
+                `aria-label="Set aside ${escapeHtml(h.name)}">✕</button>` +
                 `<canvas class="tg-thumb tg-chart-3d" data-chart-role="tile" role="img" title="Drag to rotate" ` +
                 `aria-label="3D volume view of the ${escapeHtml(h.name)} trajectory"></canvas>` +
                 `<button class="tg-chart-fullscreen" type="button" title="Fullscreen graph" ` +
