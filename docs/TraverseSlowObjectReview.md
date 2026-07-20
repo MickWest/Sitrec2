@@ -12,6 +12,13 @@
 
 # Traverse Analysis — Slow-Object Surfacing Review
 
+> **Status: point-in-time record (2026-07-18), items partly shipped.** Several
+> findings here (range-floor and prior-disclosure repairs, the fit/kinematic
+> split) have since been implemented; others remain open. Treat each item as
+> Open / Fixed / Superseded and verify against the code — line numbers have
+> drifted. See `TraverseReviewResponse-2026-07-19.md` for the current status of
+> the later external review's findings.
+
 Review brief: make the analysis better at surfacing and confirming SLOW, mundane
 explanations (balloon, lantern, bird, debris, distant aircraft misjudged as near),
 while never making a fast, far, or maneuvering solution UNREACHABLE. Section 4

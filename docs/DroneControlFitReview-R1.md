@@ -2,6 +2,12 @@
 
 # DroneControlFit — Round 1 Refinement Plan
 
+> **Status: provisional refinement plan, partly superseded.** As noted below, no
+> fits were run for this plan and the cited line numbers have moved. Several items
+> have since shipped (duration-scaled knot count, knot-invariant speed/climb
+> effort, seed-clamping disclosure); the ground-relative-vs-air-relative control
+> frame (TA-06) remains open. See `TraverseReviewResponse-2026-07-19.md`.
+
 Everything below is from reading the code at the cited lines plus closed-form algebra on the cost terms. **I ran no fits.** Where a number comes from the brief's replication rather than from the source or my own arithmetic, I say so.
 
 ---

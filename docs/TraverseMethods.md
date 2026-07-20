@@ -248,7 +248,7 @@ For excluded frames (gaps in the data), positions are linearly interpolated betw
 
 **Method**: Random sampling with consensus scoring:
 
-For each trial (default 500):
+For each trial (default 1000):
 1. Randomly select (order + 1) LOS frames without replacement.
 2. Perturb each selected LOS direction by a random angle up to `losUncertaintyDeg` using Rodrigues rotation around a random perpendicular axis. The sensor origin is unchanged.
 3. Sample a random range along each perturbed ray to get a 3D point.
@@ -258,7 +258,7 @@ For each trial (default 500):
 The trial with the lowest mean angular error wins.
 
 **Parameters**:
-- *Num Trials* (default 500): More trials explore more of the solution space but take longer. 500 is usually sufficient for linear or quadratic fits.
+- *Num Trials* (default 1000): More trials explore more of the solution space but take longer. Around 1000 is usually sufficient for linear or quadratic fits.
 - *LOS Uncertainty* (default 2 degrees): The maximum random perturbation applied to each LOS direction. Should match your estimate of the actual LOS measurement error. Too small = the fit follows noise in the LOS data. Too large = the fit is too loose.
 - *Polynomial Order* (default 1 = linear): Order 1 fits a straight line (like CV), order 2 fits a parabola (like CA), order 3 fits a cubic, etc. Higher orders need more frames and more trials.
 

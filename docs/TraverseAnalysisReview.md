@@ -1,5 +1,13 @@
 # Traverse Analysis System — Comprehensive Review Verdict
 
+> **Status: point-in-time record (2026-07-10), partly superseded.** Some behaviour
+> described here has since changed — notably the gallery is now a single flat,
+> best-first screening order (not grouped-only), and the fit/kinematic tier split,
+> Kalman-seeded physical fits, and balloon-consistency ranking have shipped. Line
+> numbers have drifted. For current behaviour see `TraverseMethods.md`; for the
+> latest external review and what was done in response see
+> `TraverseReviewResponse-2026-07-19.md`.
+
 **Review date:** 2026-07-10
 
 **Review target:** the complete current uncommitted working tree, including Claude's implementation and the corrections made during this review
