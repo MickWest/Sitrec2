@@ -2032,6 +2032,7 @@ const tweaksFolders = new WeakMap();
 let _truthTrackCtrl = null;            // current lil-gui controller (rebuilt per sitch)
 let _truthTrackListener = null;        // our live tracksChanged hook, so we can unregister it
 const _autoSelectedTruthIDs = new Set();  // Truth_ tracks we already auto-selected once
+let _autoSelectTruthGen = -1;             // sitch generation the set above belongs to (TA-20)
 
 // Current {label → trackID} options for the dropdown, from the loaded tracks.
 function truthTrackOptions() {
@@ -2074,7 +2075,15 @@ function refreshTruthTrackOptions() {
         analyzeTweaks.truthTrack = TRUTH_NONE;
     }
 
-    // auto-select a newly loaded Truth_ track (once per track id)
+    // auto-select a newly loaded Truth_ track (once per track id, PER SITCH).
+    // The "already auto-selected" memory is scoped to the sitch generation
+    // (bumped on every teardown) — otherwise, after a reload or a switch to a
+    // different sitch that happens to reuse a truth id, the reset controls would
+    // never re-auto-select it because the id was seen in a previous sitch (TA-20).
+    if (Globals.loadGeneration !== _autoSelectTruthGen) {
+        _autoSelectedTruthIDs.clear();
+        _autoSelectTruthGen = Globals.loadGeneration;
+    }
     if (analyzeTweaks.truthTrack === TRUTH_NONE) {
         for (const [label, id] of Object.entries(options)) {
             if (/^truth_/i.test(label) && !_autoSelectedTruthIDs.has(id)) {
