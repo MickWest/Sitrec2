@@ -1306,6 +1306,17 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
             ? quad.params.errDeg : null;
         const ownErr = droneCtl.params.errDeg;
         const gap = freeErr !== null ? ownErr - freeErr : null;
+        // Convergence + seed-clamp status (TA-09). The drone runs a deliberately
+        // capped local Nelder-Mead (400 iters) from a good seed, so hitting the
+        // iteration limit is expected and bounded — it is DISCLOSED, not flagged.
+        // Seed-clamping, however, means the seed was outside its own bounds and
+        // the fit started somewhere the caller did not intend: that IS flagged as
+        // an optimizer warning so plausibilityRating marks the tile incomplete.
+        const dcOpt = droneCtl.params.optimizer || null;
+        const dcClamp = m && typeof m.seedClamping === "function" ? m.seedClamping() : null;
+        const droneWarnings = dcClamp
+            ? [`seed clamped to bounds (${dcClamp.intervals} interval(s), worst ${dcClamp.worstExcessDeg.toFixed(0)}° over) — fit started off the intended seed`]
+            : [];
         list.push({
             key: "droneControl",
             name: "Drone (flown inputs)",
@@ -1314,6 +1325,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
             track,
             metricsFull: dm,
             errDeg: ownErr,
+            optimizerWarnings: droneWarnings,
             params: {
                 range: range0,
                 headingTravelDeg: headingTravel,
@@ -1321,6 +1333,8 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
                 freeModelErrDeg: freeErr,
                 plausibleVsPossibleGapDeg: gap,
                 priors: droneCtl.params.priors,
+                optimizer: dcOpt,
+                seedClamping: dcClamp,
                 errFloor,
             },
             notes: (m ? `Fitted as the control inputs a drone would be flown with — ${m.describe(pv)}. ` : "")
@@ -1340,6 +1354,13 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
                             ? "matches or beats it — the sightlines need no unusual motion."
                             : `costs ${gap.toFixed(3)}° more. Compare that against the scene's own `
                                 + `${Number.isFinite(errFloor) ? errFloor.toFixed(2) : "?"}° reference before reading it as significant.`)
+                    : "")
+                + (dcOpt
+                    ? `\n\nLocal refinement: ${dcOpt.iterations} Nelder-Mead iteration(s), `
+                        + (dcOpt.stopReason === "iteration_limit"
+                            ? "stopped at the iteration budget — a local fit from a good seed is bounded by that seed, so this is expected rather than a failure."
+                            : "converged to tolerance.")
+                        + (dcClamp ? " NOTE: the seed was clamped to its bounds, so the fit began off the intended seed — read this tile with caution." : "")
                     : ""),
         });
     }
