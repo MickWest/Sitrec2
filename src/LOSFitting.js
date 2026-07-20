@@ -925,8 +925,13 @@ export function fitAlternatingLSQ(dataset, excluded, options = {}) {
 export function fitKalmanFilter(dataset, excluded, options = {}) {
     const {sensorPos, losDir, times, count} = dataset;
 
-    const processNoise = options.processNoise ?? 1e-4;
-    const measurementNoise = options.measurementNoise ?? 1.0;
+    // Covariances must be positive and finite. A caller that passes a log10
+    // slider exponent by mistake (e.g. -4) would otherwise seed a negative
+    // process variance and produce an all-NaN smoother track; fall back to the
+    // defaults rather than propagate that.
+    const posFinite = (v, dflt) => (Number.isFinite(v) && v > 0 ? v : dflt);
+    const processNoise = posFinite(options.processNoise, 1e-4);
+    const measurementNoise = posFinite(options.measurementNoise, 1.0);
 
     const active = [];
     for (let i = 0; i < count; i++) {
@@ -1506,6 +1511,20 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         }
     }
     const errDeg = errCount > 0 ? (errSum / errCount) * 180 / Math.PI : NaN;
+
+    // Fail closed on non-finite output. The divergence guard inside the
+    // integrator only catches LARGE magnitudes, and NaN compares false to every
+    // threshold, so a NaN trajectory (e.g. from a poisoned seed) would otherwise
+    // pass silently and be published as a tile with NaN positions/metrics while
+    // the run reports no failures. Returning null makes the caller record a
+    // typed numerical failure instead.
+    if (!Number.isFinite(errDeg)) return null;
+    for (let i = 0; i < bestParams.length; i++) {
+        if (!Number.isFinite(bestParams[i])) return null;
+    }
+    for (let i = 0; i < positions.length; i++) {
+        if (!Number.isFinite(positions[i])) return null;
+    }
 
     // Package solved parameter values with names for display
     const solvedParams = {};

@@ -133,6 +133,17 @@ const FAR_ASTRO = 200 * METERS_PER_NM;
 // measured) — adaptive knot placement is the known next step.
 const DRONE_CONTROL_KNOTS = 4;
 
+// True only if every element of a numeric array is finite. Used to keep a
+// non-finite fit result (e.g. a Kalman seed that went NaN) out of the physical
+// fits and the gallery — see the TA-01/TA-02 seed and hypothesis guards.
+function allFinite(arr) {
+    if (!arr) return false;
+    for (let i = 0; i < arr.length; i++) {
+        if (!Number.isFinite(arr[i])) return false;
+    }
+    return true;
+}
+
 const MC_SWEEP_MAX_ORDER = 5;
 const ORDER_NAMES = {
     1: "linear (constant velocity)",
@@ -2794,12 +2805,30 @@ export async function runTraverseAnalysis() {
         // seeded: it stays the unconstrained, anomaly-reachable envelope fit.
         let seedTrack = null;
         try {
-            const kNoise = (id) => { const nd = NodeMan.get(id, false); return nd ? (nd.v0 ?? nd.value) : undefined; };
+            // The kalmanProcessNoise / kalmanMeasurementNoise GUI sliders hold
+            // log10 EXPONENTS, not variances — the live Kalman node converts them
+            // with Math.pow(10, v0) (see CNodeLOSFitKalman._doCompute). Passing the
+            // raw exponent here made processNoise negative at the default -4, which
+            // produced an all-non-finite smoother track and a NaN drone seed. Undefined
+            // (no node) leaves fitKalmanFilter on its own 1e-4 / 1.0 defaults.
+            const kNoise = (id) => {
+                const nd = NodeMan.get(id, false);
+                const v = nd ? (nd.v0 ?? nd.value) : undefined;
+                return Number.isFinite(v) ? Math.pow(10, v) : undefined;
+            };
             const ks = fitKalmanFilter(physicsDS, new Set(), {
                 processNoise: kNoise("kalmanProcessNoise"),
                 measurementNoise: kNoise("kalmanMeasurementNoise"),
             });
-            if (ks && ks.positions) seedTrack = Float64Array.from(ks.positions);
+            // Only seed from a finite smoother track. A non-finite result must
+            // fall through to the plausible track (or no seed), never poison the
+            // physical fits with NaN initial parameters.
+            if (ks && ks.positions && allFinite(ks.positions)) {
+                seedTrack = Float64Array.from(ks.positions);
+            } else if (ks && ks.positions) {
+                console.warn("Kalman seed produced a non-finite track; "
+                    + "falling back to the least-manoeuvring track.");
+            }
         } catch (e) {
             // Non-fatal: a seeding failure must never abort the analysis.
             console.warn("Kalman seed for the physics fits failed; "
@@ -2955,6 +2984,12 @@ export async function runTraverseAnalysis() {
                 droneCtl = null;
             }
             if (overlay.isCancelled()) throw new Error("cancelled");
+            // A null return means the fit produced no finite solution (fail-closed
+            // in fitPhysicsModel); record it as a typed failure rather than
+            // silently omitting the candidate.
+            if (!droneCtl && !failures.some((f) => f.method === "Drone (control inputs)")) {
+                failures.push({method: "Drone (control inputs)", error: "fit returned no finite solution"});
+            }
         }
 
         // Polynomial-order sweep across the three curve-fitting strategies. This
@@ -4578,9 +4613,12 @@ function showResultGallery(results) {
     // one-line explainer
     const explain = document.createElement("div");
     explain.className = "tg-explain";
-    explain.textContent = "Results are grouped by the question they answer. There is no global 'most likely object' " +
-        "ranking: trajectory families, forward models, catalogue checks, and estimator diagnostics use different " +
-        "assumptions and scores. Order is only meaningful within a group. Open a tile for the exact rank basis.";
+    explain.textContent = "Candidates are shown in one flat, best-first screening order, each labelled with the " +
+        "question it answers (physically based, LOS constrained, geometric, geometric approximation, known object). " +
+        "This is a screening order, not a calibrated 'most likely object' probability: it is decided by keys that ARE " +
+        "comparable across categories — screen pass, completeness, broad-screen tier — before any within-category " +
+        "score that is not, with category priority only breaking otherwise-equal ties. Each tile also shows its rank " +
+        "within its own category; open a tile for the exact rank basis.";
     panel.appendChild(explain);
 
     // Truth-mode banner: ordering is by separation from the reference track
@@ -4588,9 +4626,10 @@ function showResultGallery(results) {
         const truthNote = document.createElement("div");
         truthNote.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
             "background:#3a1e2e; color:#f4a6cd; border:1px solid #7a3b5c; font-size:13px;";
-        truthNote.textContent = `Truth track "${results.truth.label}" selected — methods in each group are ` +
-            "ordered by mean 3D separation from it, and each rank basis reports where they agree or diverge " +
-            "(location, altitude, speed, heading). The truth track is the dashed pink line in the 3D graphs.";
+        truthNote.textContent = `Truth track "${results.truth.label}" selected — comparable candidates are ` +
+            "GLOBALLY ordered by mean 3D separation from it (across categories, not within), and each rank basis " +
+            "reports where they agree or diverge (location, altitude, speed, heading). The truth track is the dashed " +
+            "pink line in the 3D graphs.";
         panel.appendChild(truthNote);
     }
 
