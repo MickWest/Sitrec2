@@ -158,9 +158,9 @@ const ORDER_NAMES = {
 // they search for it, so putting them side by side at matching orders shows how
 // much of a result is the data and how much is the method.
 const SWEEP_VARIANTS = [
-    {key: "gfMC1", name: "Global Fit: Monte Carlo 1", fit: fitMonteCarlo,
+    {key: "gfMC1", name: "Global Fit: Monte Carlo 1", fit: fitMonteCarlo, mc: true,
         color: "#b79be0", flavour: "best-of-N sampled polynomial"},
-    {key: "gfMC2", name: "Global Fit: Monte Carlo 2", fit: fitMonteCarlo2,
+    {key: "gfMC2", name: "Global Fit: Monte Carlo 2", fit: fitMonteCarlo2, mc: true,
         color: "#9b7fd0", flavour: "least-squares over perturbed frames"},
     // Deterministic alternative. Ignores numTrials/losUncertainty (it doesn't
     // sample at all), and unlike the two above it lets range move freely rather
@@ -236,9 +236,13 @@ function prepareSweep(dataset) {
 async function sweepPolynomialOrders(dataset, report) {
     const {ds, opts, seedMedian} = prepareSweep(dataset);
     const results = [];
-    const total = SWEEP_VARIANTS.length * MC_SWEEP_MAX_ORDER;
+    // Only the deterministic Polynomial LSQ sweep runs by default; the two Monte
+    // Carlo strategies are an opt-in diagnostic (they add 10 tiles and are the
+    // bulk of the sweep's cost — ~5 s per order each on a 20k-frame clip). TA-27.
+    const variants = SWEEP_VARIANTS.filter((v) => analyzeTweaks.mcOrderSweep || !v.mc);
+    const total = variants.length * MC_SWEEP_MAX_ORDER;
     let done = 0;
-    for (const variant of SWEEP_VARIANTS) {
+    for (const variant of variants) {
         for (let order = 1; order <= MC_SWEEP_MAX_ORDER; order++) {
             await report(done, total, `${variant.name} (order ${order})`);
             let res = null;
@@ -268,6 +272,10 @@ export const analyzeTweaks = {
     satellite: false,   // loads the LEO catalogue for the date (network, slow first time)
     groundMode: "Airborne (any)",   // ground-contact constraint (see GROUND_MODES)
     truthTrack: "-",    // track NODE id of the ground-truth reference track ("-" = none)
+    // Off by default: only the deterministic Polynomial LSQ order sweep runs, so
+    // the gallery is not dominated by 10 extra Monte Carlo diagnostic tiles.
+    // Enabling it adds the two Monte Carlo strategies across orders (TA-27).
+    mcOrderSweep: false,
 };
 
 // "no truth track selected" sentinel for the Truth Track dropdown
@@ -2265,6 +2273,12 @@ export function addAnalyzeTweaks(traverseMenu) {
     const cbKnownNow = folder.add(analyzeTweaks, "aoKnownNow").name("AO: Known object (this time)");
     const cbKnownOther = folder.add(analyzeTweaks, "aoKnownOther").name("AO: Known object (find time)");
     const cbSat = folder.add(analyzeTweaks, "satellite").name("Satellite: LEO pass for date");
+    const cbMcSweep = folder.add(analyzeTweaks, "mcOrderSweep").name("Monte Carlo order sweep (diagnostic)");
+    if (cbMcSweep.tooltip) {
+        cbMcSweep.tooltip("Off by default: only the deterministic Polynomial LSQ curve fit is swept over " +
+            "polynomial order. Enable to also run the two Monte Carlo strategies across orders — 10 extra " +
+            "diagnostic tiles that show method/order sensitivity, at a noticeable cost on long clips.");
+    }
     const windMode = folder.add(analyzeTweaks, "windMode", ["Sitch wind", "Zero wind"]).name("Wind for analysis");
     if (windMode.tooltip) {
         windMode.tooltip("Choose the shared wind used by ray-following metrics and the fixed-wing gallery fit, " +
@@ -2436,6 +2450,7 @@ function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
         // Ground-contact mode reshapes the candidate set (adds/removes the
         // Ground Vehicle, changes underground/mode flags and the ground priors).
         analyzeTweaks.groundMode,
+        analyzeTweaks.mcOrderSweep,   // toggling the Monte Carlo sweep changes the tile set
         ...terrainState,
         analyzeTweaks.aoFixedPoint, analyzeTweaks.aoKnownNow, analyzeTweaks.aoKnownOther,
         Sit.name || "", Sit.frames || 0, Sit.fps || 0,
