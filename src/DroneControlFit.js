@@ -167,9 +167,16 @@ export class DroneControlModel extends PhysicsModel {
         // Cost weights, in fit-cost units (errSigma = 0.02 deg each, so 1 unit
         // = 0.02 deg of residual budget). Deliberately modest: these should
         // decide between fits that are otherwise close, not overrule geometry.
-        this.wHeadingRate = 0.02;   // per (deg/s) of sustained yaw, squared
-        this.wSpeedChange = 0.05;   // per (m/s) of speed change between knots
-        this.wClimbChange = 0.05;   // per (m/s) of climb change between knots
+        this.wHeadingRate = 0.02;   // per (deg/s)^2 of sustained yaw rate, integrated
+        // Speed and climb are HELD settings changed occasionally, so their effort
+        // is the TOTAL VARIATION of the setting over the clip (sum of |changes|),
+        // squared — knot-invariant (splitting or merging a change does not alter
+        // the total) and duration-invariant (a 10 m/s change is a 10 m/s change
+        // however long the clip). 0.0167 preserves the previous per-interval
+        // calibration for a monotonic change at the reference knot count (the old
+        // sum-of-squares form gave w*ΔV²/3 there); see TA-10.
+        this.wSpeedChange = 0.0167;   // per (m/s)^2 of total speed variation
+        this.wClimbChange = 0.0167;   // per (m/s)^2 of total climb variation
     }
 
     getName() { return "Drone (control-input fit)"; }
@@ -337,16 +344,22 @@ export class DroneControlModel extends PhysicsModel {
         // and calibration at the reference K is preserved.
         const sRef = dur / (REFERENCE_KNOTS - 1);
         const norm = span / sRef;
-        let yaw = 0, spd = 0, clb = 0;
+        // Yaw is a sustained RATE integrated over time (norm makes it a time
+        // integral, knot-invariant). Speed and climb are total-VARIATION of a
+        // held setting: accumulate the absolute changes, then square the total
+        // once outside the loop, so the cost depends only on how far the setting
+        // moved in all, not on how many knots it was chunked across (TA-10).
+        let yaw = 0, spdTV = 0, clbTV = 0;
         for (let k = 0; k < K - 1; k++) {
             const dh = this._headingDelta(params, k);
             const rate = dh / span;             // deg/s over this interval
             yaw += this.wHeadingRate * rate * rate * norm;
-            const ds = params[1 + k + 1] - params[1 + k];
-            spd += this.wSpeedChange * ds * ds * norm;
-            const dc = params[1 + 2 * K + k + 1] - params[1 + 2 * K + k];
-            clb += this.wClimbChange * dc * dc * norm;
+            spdTV += Math.abs(params[1 + k + 1] - params[1 + k]);
+            clbTV += Math.abs(params[1 + 2 * K + k + 1] - params[1 + 2 * K + k]);
         }
+        // (total variation)^2 — knot- and duration-invariant.
+        const spd = this.wSpeedChange * spdTV * spdTV;
+        const clb = this.wClimbChange * clbTV * clbTV;
         const out = {};
         if (yaw > 0) out["yaw input"] = yaw;
         if (spd > 0) out["speed changes"] = spd;

@@ -273,4 +273,36 @@ describe("drone control-input fit", () => {
         // ...and turning must remain far cheaper than spiralling.
         expect(cost(orbiting)).toBeLessThan(cost(corkscrew) / 100);
     });
+
+    // The same physical flight must cost the same however many knots describe it,
+    // for SPEED and CLIMB — not just yaw (TA-10). The old sum-of-squared-per-knot-
+    // differences form made the same total speed/climb change ~(K-1)^2 cheaper as
+    // K grew, so long clips (K scales with duration) under-priced throttle/climb
+    // activity. Total-variation-squared removes that.
+    test("speed and climb effort are knot-count invariant", () => {
+        const T = 600, dV = 6, dC = 2;
+        // A monotonic speed ramp V0->V0+dV, climb ramp C0->C0+dC, no turning.
+        const rampParams = (K) => {
+            const p = new Array(1 + 3 * K).fill(0);
+            p[0] = 2000;                                   // range
+            for (let k = 0; k < K; k++) p[1 + k] = 8 + dV * k / (K - 1);        // speed knots
+            p[1 + K] = 0;                                  // heading0
+            for (let k = 0; k < K - 1; k++) p[1 + K + 1 + k] = 0;               // no heading change
+            for (let k = 0; k < K; k++) p[1 + 2 * K + k] = 0 + dC * k / (K - 1); // climb knots
+            return p;
+        };
+        const terms = (K) => new DroneControlModel(K).extraCostTerms(rampParams(K), null, T);
+        const t4 = terms(4), t8 = terms(8), t12 = terms(12);
+        // identical total change => identical cost at any K
+        expect(t8["speed changes"]).toBeCloseTo(t4["speed changes"], 9);
+        expect(t12["speed changes"]).toBeCloseTo(t4["speed changes"], 9);
+        expect(t8["climb changes"]).toBeCloseTo(t4["climb changes"], 9);
+        expect(t12["climb changes"]).toBeCloseTo(t4["climb changes"], 9);
+        // and it is (total variation)^2 * weight
+        expect(t4["speed changes"]).toBeCloseTo(0.0167 * dV * dV, 9);
+        expect(t4["climb changes"]).toBeCloseTo(0.0167 * dC * dC, 9);
+        // duration-invariant too: a longer clip does not change a total-variation cost
+        const t4long = new DroneControlModel(4).extraCostTerms(rampParams(4), null, 6000);
+        expect(t4long["speed changes"]).toBeCloseTo(t4["speed changes"], 9);
+    });
 });
