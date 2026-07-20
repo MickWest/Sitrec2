@@ -744,16 +744,23 @@ function datasetForSolvedModelWind(dataset, track, solved, modelKind) {
     const dt = 1 / dataset.fps;
     const x0 = track[0], y0 = track[1], z0 = track[2];
     const h0 = z0 + (x0 * x0 + y0 * y0) / (2 * EARTH_RADIUS_M);
+    const nm1 = Math.max(1, dataset.n - 1);   // normalised time runs 0..1 over the clip
     for (let f = 0; f < dataset.n; f++) {
-        let mult = 1;
+        let we = solved.windE, wn = solved.windN, mult = 1;
         if (modelKind === "lantern") {
+            // Reconstruct the SAME wind the model integrated, including its
+            // time-varying part (SkyLanternModel._windAt): base + drift·s +
+            // curve·s². Omitting it made the balloon's air-relative metrics
+            // (airspeed, etc.) subtract the wrong wind — see TA-04.
+            const s = f / nm1;
+            we += (solved.windDriftE || 0) * s + (solved.windCurveE || 0) * s * s;
+            wn += (solved.windDriftN || 0) * s + (solved.windCurveN || 0) * s * s;
             const x = track[f * 3], y = track[f * 3 + 1], z = track[f * 3 + 2];
             const h = z + (x * x + y * y) / (2 * EARTH_RADIUS_M);
-            mult = 1 + (solved.shearPerM || 0) * (h - h0);
-            mult = Math.max(0.25, Math.min(3, mult));
+            mult = Math.max(0.25, Math.min(3, 1 + (solved.shearPerM || 0) * (h - h0)));
         }
-        W[f * 3] = solved.windE * mult * dt;
-        W[f * 3 + 1] = solved.windN * mult * dt;
+        W[f * 3] = we * mult * dt;
+        W[f * 3 + 1] = wn * mult * dt;
     }
     return {...dataset, W};
 }
@@ -805,7 +812,8 @@ function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy
     // "not rising/sinking") is physical for a becalmed balloon; only capability
     // MAX pins and range/wind extremes mean "the data wants more than a balloon".
     const lanSplit = splitBoundPins(fit.params.pinned,
-        (p) => (["initialRange", "windE", "windN", "shearPerM"].includes(p.name))
+        (p) => (["initialRange", "windE", "windN", "shearPerM",
+            "windDriftE", "windDriftN", "windCurveE", "windCurveN"].includes(p.name))
             || (["vRise", "vSink"].includes(p.name) && p.side === "hi"),
         (p) => p.name === "shearPerM" ? "windShear" : p.name);
     const lanClamps = [];
@@ -839,6 +847,11 @@ function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy
         params: {
             range: range0,
             windE: solved.windE, windN: solved.windN, shearPerM: solved.shearPerM,
+            // Time-varying wind coefficients (linear + quadratic change in each
+            // component across the clip), disclosed so the fit is reproducible
+            // from the visible parameters — see TA-04.
+            windDriftE: solved.windDriftE, windDriftN: solved.windDriftN,
+            windCurveE: solved.windCurveE, windCurveN: solved.windCurveN,
             vRise: solved.vRise, vSink: solved.vSink, tBurn: solved.tBurn, tauCool: solved.tauCool,
             clipT: (dataset.n - 1) / dataset.fps,
             windPolicy,
@@ -2243,6 +2256,10 @@ export function addAnalyzeTweaks(traverseMenu) {
 // fingerprint the inputs and reuse the last result when the fingerprint
 // matches, so re-running the traverse analysis is instant when nothing changed.
 let _analysisCache = null;   // {fp, results}
+// True while a run is in flight. A second Analyze click would otherwise start a
+// concurrent run that races the shared _analysisCache / window.lastTraverseAnalysis
+// and stacks a second gallery overlay (see TA-22).
+let _analysisRunning = false;
 const _terrainMapEpochs = new WeakMap();
 let _nextTerrainMapEpoch = 1;
 
@@ -2440,6 +2457,12 @@ function terrainElevationIsLoading() {
  * or null if there was no LOS data or the user cancelled.
  */
 export async function runTraverseAnalysis() {
+    // One run at a time: a second concurrent run would race the shared cache and
+    // last-result globals and stack a second gallery (TA-22).
+    if (_analysisRunning) {
+        showError("Traverse analysis is already running. Wait for it to finish, or Cancel it, before starting another.");
+        return null;
+    }
     let losNode = resolveLOSNode();
     if (!losNode) {
         showError("Traverse analysis: no LOS node found.\n" +
@@ -2567,19 +2590,22 @@ export async function runTraverseAnalysis() {
         const terrainDrift = terrainDependencyMismatch(
             _analysisCache.terrainDependencies, currentTerrainDependencies);
         if (terrainDrift) {
-            // Dynamic terrain LOD is render-camera state. Keep the exact terrain
-            // samples with which this immutable result was graded; otherwise
-            // merely orbiting mainView feeds a different quadtree resolution
-            // back into the scientific analysis. An explicit terrain reload or
-            // source/configuration change has a new data epoch in `fp` and does
-            // not take this path.
-            console.log("Traverse analysis cache: hit; ignoring view-only terrain LOD drift", terrainDrift);
+            // A truthy mismatch is AUTHORITATIVE, not view-only: terrainDependency-
+            // Mismatch already returns null for a render-camera lower-resolution
+            // fallback (bz < az). So an equal-or-higher-resolution ground height
+            // that actually changed means this cached grading is STALE — recompute
+            // rather than re-serve it (which is what made the "rerun after terrain
+            // settles" instruction a no-op). Drop the stale entry and fall through
+            // to a full run. (Stage-level regrading without a full refit is the
+            // larger TA-28 follow-up.)
+            console.log("Traverse analysis cache: terrain grading is stale, recomputing", terrainDrift);
+            _analysisCache = null;
         } else {
             console.log("Traverse analysis cache: hit (evidence and assumptions unchanged)");
+            window.lastTraverseAnalysis = cached;
+            showResultGallery(cached);
+            return cached;
         }
-        window.lastTraverseAnalysis = cached;
-        showResultGallery(cached);
-        return cached;
     } else if (_analysisCache) {
         console.log("Traverse analysis cache: evidence/configuration changed", {
             cached: _analysisCache.fp, current: fp,
@@ -2594,6 +2620,7 @@ export async function runTraverseAnalysis() {
         return null;
     }
 
+    _analysisRunning = true;
     const overlay = createProgressOverlay("Analyzing Traverse Methods");
     // Yield via MessageChannel, not setTimeout: a backgrounded tab clamps
     // setTimeout to ~1/minute (Chrome intensive throttling), which would drag a
@@ -2796,13 +2823,18 @@ export async function runTraverseAnalysis() {
         // rays with an arbitrarily small residual while being physically
         // meaningless (measured here: a 222 m / 255 kt "plausible" member scored
         // 0.05 deg but seeded the drone into a 24-revolution corkscrew). The
-        // Kalman smoother is regularised — it penalises acceleration — so it
-        // cannot collapse that way and stays a good basin to refine from; the
-        // least-manoeuvring track is only a fallback for the rare case the
-        // smoother returns nothing. This carries NO truth and NO object
-        // assumptions, so it cannot bias which object wins — it only decides
-        // where the search starts. The free quadcopter is deliberately NOT
-        // seeded: it stays the unconstrained, anomaly-reachable envelope fit.
+        // Kalman smoother is regularised (it penalises acceleration) AND we give
+        // its constant-velocity seed an explicit range floor (minRange), because
+        // that seed treats the sensor's own path as a zero-residual solution for
+        // a CV-representable sensor motion unless a floor is supplied
+        // (LOSFitting.js fitConstantVelocity). Regularisation alone does not
+        // create the missing radial observability. With both, the smoother stays
+        // a good basin to refine from; the least-manoeuvring track is only a
+        // fallback for the rare case it returns nothing. The seed carries NO truth
+        // and NO object assumptions, so it only decides where the search starts,
+        // not which object wins; the free quadcopter is deliberately NOT seeded
+        // (the unconstrained, anomaly-reachable envelope fit).
+        const KS_SEED_MIN_RANGE = 500;   // metres; matches the sweep floor, below every physical model's own floor
         let seedTrack = null;
         try {
             // The kalmanProcessNoise / kalmanMeasurementNoise GUI sliders hold
@@ -2816,7 +2848,7 @@ export async function runTraverseAnalysis() {
                 const v = nd ? (nd.v0 ?? nd.value) : undefined;
                 return Number.isFinite(v) ? Math.pow(10, v) : undefined;
             };
-            const ks = fitKalmanFilter(physicsDS, new Set(), {
+            const ks = fitKalmanFilter({...physicsDS, minRange: KS_SEED_MIN_RANGE}, new Set(), {
                 processNoise: kNoise("kalmanProcessNoise"),
                 measurementNoise: kNoise("kalmanMeasurementNoise"),
             });
@@ -3071,8 +3103,11 @@ export async function runTraverseAnalysis() {
             let validFrac = 0;
             for (let f = 0; f < dataset.n; f++) if (truth.valid[f]) validFrac++;
             validFrac /= Math.max(1, dataset.n);
+            // Average the truth track's own residual over ONLY its valid frames —
+            // the up-to-1% held/clamped frames outside its coverage are not part
+            // of what a perfect answer scores.
             const truthResidualDeg = validFrac > 0.99
-                ? meanAngularError(dataset, truth.track) * 180 / Math.PI
+                ? meanAngularError(dataset, truth.track, truth.valid) * 180 / Math.PI
                 : NaN;
 
             for (const h of hypotheses) {
@@ -3241,7 +3276,7 @@ export async function runTraverseAnalysis() {
             slowBestRow, slowTrack,
             closeLoM, closeHiM,
             hypotheses, provenance, failures, manifest,
-            truth,
+            truth, terrainChangedDuringRun,
         });
 
         const terrainDependencies = terrainDependenciesAtBuild;
@@ -3264,6 +3299,7 @@ export async function runTraverseAnalysis() {
         throw error;
     } finally {
         overlay.remove();
+        _analysisRunning = false;
     }
 
     const b = results.sweep.best;
@@ -4102,9 +4138,23 @@ function solutionSpaceHTML(h, ss) {
             `LEO satellites propagated for the date. There isn't a continuous trajectory family here, only the best ` +
             `catalogue match and how far off it is (${(h.errDeg || 0).toFixed(2)}°). A clean, ` +
             `sunlit sub-degree match merits follow-up against timing/catalogue uncertainty; a large residual means no known satellite fits.`;
+    } else if (h.key === "straightLine" || String(h.key || "").startsWith("gf")) {
+        // The Global Fit family (constant velocity/acceleration, Kalman smoother,
+        // Monte Carlo, Polynomial LSQ) and the straight line are curve fits to the
+        // rays, NOT object-type tests — do not let them fall through to the
+        // stationary-object prose below.
+        const isSwept = /order/i.test(String(h.key || "")) || /Monte Carlo|Polynomial/i.test(String(h.name || ""));
+        return `This is a <b>geometric curve fit</b> to the sightlines (residual ` +
+            `<b>${(h.errDeg || 0).toFixed(3)}°</b>), shown for comparison and exact application — it does not test a ` +
+            `specific object type or infer a range from physics. ` +
+            (isSwept
+                ? `A lower residual higher in a polynomial-order sweep is largely arithmetic — a more flexible curve ` +
+                  `hugs the rays more closely regardless of the object — so read the sweep as a diagnostic of how much ` +
+                  `curvature the sightlines admit, not as evidence for one interpretation.`
+                : `Read it as a smooth baseline the physical and LOS-constrained candidates can be compared against.`);
     }
-    return `A stationary-object test: the residual (<b>${(h.errDeg || 0).toFixed(2)}°</b>) is how nearly the ` +
-        `sightlines are consistent with something that never moves.`;
+    return `No method-specific solution-space explanation is available for this candidate (residual ` +
+        `<b>${(h.errDeg || 0).toFixed(2)}°</b>).`;
 }
 
 // Magnifier button placed on every interactive 3D chart shell: toggles the
@@ -6085,7 +6135,7 @@ function buildReportHTML(ctx) {
         bestTrack, bestMetrics, slowBestRow, slowTrack,
         sweepBestMetrics = ctx.bestMetrics, constAirPick = null,
         closeLoM, closeHiM, hypotheses, provenance, failures = [], manifest = {},
-        truth = null,
+        truth = null, terrainChangedDuringRun = false,
     } = ctx;
     const {n, fps, D} = dataset;
     const globalFrame0 = dataset.frame0 ?? 0;
@@ -6494,6 +6544,9 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
     ${truth ? truthSummaryHTML : metricsSummaryHTML}
     ${failures.length ? `<p><strong>Unavailable checks:</strong> ${failures.map((f) =>
         `${escapeHtml(f.method)} (${escapeHtml(f.error)})`).join("; ")}.</p>` : ""}
+    ${terrainChangedDuringRun ? `<p><strong>Terrain note:</strong> elevation data finished loading while this
+        analysis ran. Results use the elevation sampled during the run and are unlikely to be materially affected;
+        re-run once terrain has settled if you need the ground samples exact.</p>` : ""}
 </section>
 
 <section>
@@ -6634,16 +6687,21 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
     turning, climbing, and straying from the preferred speed.</p>
     <p><strong>Forward physical models.</strong> Several interpretations are forward-integrated models fit
     to the sightlines rather than paths pinned to the rays:
-    the fixed-wing aircraft (constant horizontal airspeed, slowly varying turn rate, constant climb) and the sky
-    lantern / balloon (a wind tracer: horizontal velocity equals the bounded altitude-sheared wind,
-    with a rise / buoyancy-decay / terminal-sink vertical life cycle).
-    Because none is forced onto the lines of sight, each leaves a training residual. Those residuals are
-    not object-type probabilities and are not directly comparable without accounting for parameter count,
-    priors, bounds, wind freedom, and measurement covariance. A flexible constant-acceleration residual is
-    shown only as a generic reference; it combines pointing error and model mismatch and is not a sensor-noise estimate.</p>
-    <p><strong>Scoring.</strong> All criteria are deliberately <em>soft targets</em> (a preferred speed,
-    roughly level flight, low g), not hard constraints: LOS-only data admits infinitely many exact
-    solutions, so the analysis characterizes the plausible family rather than claiming a unique answer.
+    the fixed-wing aircraft (constant horizontal airspeed, slowly varying turn rate, constant climb); the sky
+    lantern / balloon (a wind tracer: horizontal velocity equals the bounded altitude-sheared wind — which may
+    also vary smoothly across the clip — with a rise / buoyancy-decay / terminal-sink vertical life cycle);
+    the quadcopter (a hover-capable multirotor, free ground speed and steep climb within a bounded envelope);
+    and the drone flown-inputs fit (the same object described as a few held control inputs, priced by control
+    effort rather than path shape). Because none is forced onto the lines of sight, each leaves a training
+    residual. Those residuals are not object-type probabilities and are not directly comparable without
+    accounting for parameter count, priors, bounds, wind freedom, and measurement covariance. A flexible
+    constant-acceleration residual is shown only as a generic reference; it combines pointing error and model
+    mismatch and is not a sensor-noise estimate.</p>
+    <p><strong>Scoring.</strong> The plausibility <em>priors</em> — a preferred speed, roughly level flight,
+    low g — are deliberately <em>soft</em>, so LOS-only data (which admits infinitely many exact solutions) is
+    characterized as a plausible family rather than a unique answer. The physical models additionally carry
+    <em>hard</em> parameter and search bounds (range, speed, climb, turn envelopes); a solution resting on one
+    of those bounds is flagged, because there the bound, not the data, is shaping the result.
     Metrics use ~0.5 s central differences, so scores reflect sustained maneuvering, not solver noise.</p>
 </section>
 

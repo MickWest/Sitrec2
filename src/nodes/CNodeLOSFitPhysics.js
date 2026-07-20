@@ -6,7 +6,7 @@
 // while it is computing, the node serves its last computed track (if any).
 
 import {CNodeTrack} from "./CNodeTrack";
-import {fitPhysicsModel, buildLOSDataset, unpackFitPositions} from "../LOSFitting";
+import {fitPhysicsModel, fitKalmanFilter, buildLOSDataset, unpackFitPositions} from "../LOSFitting";
 import {SkyLanternModel} from "../SkyLanternModel";
 import {FixedWingModel} from "../FixedWingModel";
 import {QuadcopterModel} from "../QuadcopterModel";
@@ -124,6 +124,37 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
         }
         if (this.in.initialRange) {
             overrides.initialRange = this.in.initialRange.v0;
+        }
+        // Sky Lantern parity with the analysis gallery (TA-05): the gallery
+        // enables the model's time-varying wind (clipDuration) and seeds it from
+        // the Kalman smoother, without which the extra wind freedom is
+        // unsearchable and the fit REGRESSES. Mirror both here so applying or
+        // re-running a gallery balloon uses the same forward model. The KS seed
+        // only fills parameters the user has not explicitly overridden (their
+        // wind guess / initial range still win).
+        if (model instanceof SkyLanternModel) {
+            model.clipDuration = dataset.count > 1
+                ? (dataset.times[dataset.count - 1] - dataset.times[0]) : null;
+            try {
+                // Range floor on the CV seed so the smoother cannot collapse onto
+                // the sensor path (see the gallery's KS_SEED_MIN_RANGE / TA-03).
+                const ks = fitKalmanFilter({...dataset, minRange: 500}, new Set(), {});
+                let ksFinite = !!(ks && ks.positions);
+                if (ksFinite) for (let i = 0; i < ks.positions.length; i++) {
+                    if (!Number.isFinite(ks.positions[i])) { ksFinite = false; break; }
+                }
+                if (ksFinite) {
+                    // buildLOSDataset already exposes sensorPos/losDir/times/count,
+                    // exactly what seedFromTrack reads.
+                    model.seedFromTrack(Float64Array.from(ks.positions), dataset);
+                    const sv = model.seedParams();
+                    if (sv) model.getParameterDefs().forEach((d, i) => {
+                        if (overrides[d.name] === undefined) overrides[d.name] = sv[i];
+                    });
+                }
+            } catch (e) {
+                console.warn("Sky Lantern KS seed failed; fitting unseeded:", e);
+            }
         }
         if (Object.keys(overrides).length > 0) {
             options.paramOverrides = overrides;

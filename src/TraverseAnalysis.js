@@ -206,20 +206,27 @@ export function trackMetrics(dataset, track, options = {}) {
     };
 }
 
-/** Mean angular error (radians) between a track and the LOS rays. */
-export function meanAngularError(dataset, track) {
+/**
+ * Mean angular error (radians) between a track and the LOS rays. An optional
+ * `valid` mask (truthy per frame) restricts the average to the frames the track
+ * actually covers — a partially-covering truth track holds/clamps its missing
+ * frames, and those would otherwise contribute garbage angles to the mean.
+ */
+export function meanAngularError(dataset, track, valid = null) {
     const {n, S, D} = dataset;
-    let sum = 0;
+    let sum = 0, count = 0;
     for (let f = 0; f < n; f++) {
+        if (valid && !valid[f]) continue;
         const b = f * 3;
         let rx = track[b] - S[b], ry = track[b + 1] - S[b + 1], rz = track[b + 2] - S[b + 2];
         const rl = Math.hypot(rx, ry, rz);
+        count++;
         if (rl < 1e-9) { sum += Math.PI; continue; }
         rx /= rl; ry /= rl; rz /= rl;
         const dot = Math.min(1, Math.max(-1, rx * D[b] + ry * D[b + 1] + rz * D[b + 2]));
         sum += Math.acos(dot);
     }
-    return sum / n;
+    return count > 0 ? sum / count : NaN;
 }
 
 /**
