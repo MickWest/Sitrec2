@@ -5106,8 +5106,15 @@ function showResultGallery(results) {
             // yield a frame so the label paints before the heavy chart encodes
             requestAnimationFrame(() => setTimeout(() => {
                 try {
-                    results.html = results.buildHtml();
+                    if (!results.html) results.html = results.buildHtml();
                     openReport(results.html);
+                } catch (err) {
+                    // Keep the gallery open and tell the user, rather than leaving
+                    // an uncaught async error with no explanation (TA-23).
+                    console.error("Traverse report generation failed:", err);
+                    showError("Full report generation failed while building or opening the report: "
+                        + ((err && err.message) || err)
+                        + "\n\nThe gallery is still available; see the browser console for the full stack.");
                 } finally {
                     reportBtn.textContent = "Open Full Report";
                     reportBtn.disabled = false;
