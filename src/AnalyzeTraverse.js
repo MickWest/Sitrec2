@@ -2988,7 +2988,15 @@ export async function runTraverseAnalysis() {
         await phase(0.89, 0.04, "Fitting quadcopter (drone) model...")(0);
         let quad = null;
         try {
-            quad = await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(), physicsOpts);
+            // Coarsen the SEARCH integration (fitMaxDt): the quadcopter's dynamics
+            // (linearly-varying turn rate, along-track accel, constant climb, wind)
+            // are smooth, so a 0.5 s step is accurate for the plausible solutions
+            // the turning-effort prior admits, while the frame-rate 1/30 s step ran
+            // ~20k RK4 substeps per DE evaluation and made this the slowest phase of
+            // the whole analysis (TA-25). The final full-resolution trajectory still
+            // integrates at the model's own maxDt.
+            quad = await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(),
+                {...physicsOpts, fitMaxDt: 0.5});
         } catch (e) {
             if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
             failures.push({method: "Quadcopter", error: (e && e.message) || "fit failed"});
