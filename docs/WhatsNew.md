@@ -9,6 +9,29 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.103.0 (2026-07-19)
+
+### New Features
+- **Set aside gallery tiles** (Traverse → Analyze Traverse Methods...): dismiss a candidate with the X on its tile and it animates below a separator — kept and still readable, keeping its original ranking, never silently deleted — with a *Restore Closed* button to bring them all back.
+- **New curve-fit diagnostic tiles** (traverse gallery): each curve-fitting strategy is now shown across polynomial orders 1–5, and a new deterministic *Global Fit: Polynomial LSQ* joins the two Monte Carlo fits — it is far faster and, unlike them, can reach a far or fast solution when the sightlines support one. They carry the *Geometric Approximations* label and are meant to be read as method diagnostics, not as ranked answers.
+
+### Improvements
+- **Flatter, best-first traverse-analysis gallery** (Traverse → Analyze Traverse Methods...): candidate explanations are now one ranked, best-first list with a coloured category label on each tile — *Physically based*, *LOS Constrained*, *Geometric*, *Geometric Approximations*, or *Known Object* — instead of being split into sections that buried the strongest answer.
+- **Clearer fit labels in the gallery**: how well a candidate matches the sightlines and how ordinary its motion is are now judged separately, so a slow, everyday object with a so-so sightline fit reads as *Weak fit* rather than *Implausible*, and the badge names whichever of the two is the real limitation.
+- **Better Sky Lantern / Balloon and drone fits** (traverse analysis): the balloon explanation can now follow a gently curving drift (its wind is allowed to change smoothly across the clip), and both the balloon and the drone "flown inputs" candidate now start from the best geometric approximation of the path and refine from there, so they land physically plausible, close-fitting solutions instead of contorted or wildly-off ones.
+- **Much faster drone "flown inputs" fit** (traverse analysis): the drone control-input fit drops from tens of seconds to about a second, with the same result.
+- **Balloon-like motion gently favoured in ranking** (traverse analysis): a Sky Lantern / Balloon candidate whose fitted path is a steady climb, level, or descent drifting one way — textbook balloon behaviour — gets a small ranking nudge up, while one that had to yo-yo vertically or curve back on itself is nudged down. It is a bounded tie-breaker only, so a clearly better-fitting drone or anomalous solution still wins.
+- **Both balloon wind reconstructions are now shown** (traverse analysis): the second balloon explanation — the one that reconstructs the flight from a *known* wind rather than inferring it — now appears even on ordinary sitches, labelled *(measured wind)* when a sounding or forecast is loaded or *(sitch wind)* for a hand-set constant, with a note that it is an assumption and the free wind-finding fit is the stronger evidence.
+- **Fits now disclose their assumptions** (traverse gallery): a tile whose fit was helped by a soft preference (for example a calm-wind preference) now shows a *Model priors cost* line, and the reported fit error is pure sightline error with the prior's contribution excluded — so a claim that a value was inferred from the sightlines rather than assumed can be checked.
+
+### Bug Fixes
+- Fixed terrain finishing loading during a traverse analysis throwing the whole run away and asking you to retry. The analysis now completes using the elevation sampled when it started, and the gallery shows a small note that terrain finished loading (re-run if you need the ground samples exact).
+- Fixed the Quadcopter physics fit converging on a physically impossible spinning solution (many revolutions) that still reported a good-looking fit; turning effort is now priced, so it settles on a sensible slow-drone solution instead.
+- Fixed the **Truth Track** dropdown (traverse analysis) being permanently empty after loading a second sitch in the same session.
+- Fixed traverse-analysis graphs showing a false slow wave where a fast oscillation was aliased away by downsampling; downsampled graphs now show the true minimum/maximum envelope of each interval.
+- Fixed traverse analysis aborting on some older sitches whose wind was set but never built into a grid; a missing wind grid is now handled gracefully instead of ending the run.
+- Fixed the **Line Color** picker appearing to do nothing on balloon, synthetic, and atmospheric-sounding (sonde) tracks: balloon and synthetic tracks no longer render white, and sonde tracks gain a **Color Mode** control (Flat / Temperature / Altitude / Pressure) so a picked flat colour takes effect while the gradient colouring is still available.
+
 ## Version 2.102.0 (2026-07-17)
 
 ### New Features

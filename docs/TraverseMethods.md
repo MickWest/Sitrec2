@@ -359,7 +359,11 @@ near-perfect wind tracer (grams of mass, large drag area), so its horizontal
 velocity *is* the wind at its current altitude: a solved wind vector with a
 linear altitude shear (clamped so it can never reverse or blow up — the wind
 aloft is allowed to be stronger, e.g. "wind from the east, increasing with
-altitude"). Vertical motion follows the lantern life cycle — rise while the
+altitude"). The wind may also **vary smoothly across the clip** (a duration-
+invariant linear + quadratic drift, priced by a variability prior so it cannot
+wander without support), letting the balloon follow a gently curving drift as
+real wind veers over minutes — a constant wind can only produce a straight
+ground track. Vertical motion follows the lantern life cycle — rise while the
 flame burns, exponential buoyancy decay after flame-out, terminal sink — and
 the solved flame-out time can fall before the clip (a lantern already in its
 cooling descent, the Aguadilla case), inside it, or after it (still climbing
@@ -409,6 +413,20 @@ models are not directly comparable object-type probabilities: the models have
 different parameter counts, priors, bounds, and wind freedom. Use them as
 model-conditioned diagnostics and inspect bound hits and sensitivity.
 
+**Drone (flown inputs)** — a gallery-only companion to the free Quadcopter that
+asks a different question. The free Quadcopter asks "is there *any* path inside
+the envelope that fits?" — almost always yes, which is how it can produce a
+many-revolution corkscrew that buys a tiny residual. The flown-inputs fit instead
+models a drone as a *few held control inputs* (forward speed, yaw, climb, changed
+occasionally): it seeds from the best geometric path, inverts it into the control
+history needed to fly it, and refines while paying for control **effort** — how
+much the inputs must move — rather than for path shape. Holding an input is free,
+a steady orbit is cheap, and an aggressive-but-deliberate manoeuvre stays
+reachable; only motion that buys no residual (the corkscrew) is priced out.
+Reading the gap between its residual and the free Quadcopter's is the point: a
+small gap means an ordinary flight explains the sightlines as well as any
+contortion.
+
 ### Ground contact and underground rejection
 
 LOS-only geometry can produce trajectories that pass **underground**. The
@@ -447,22 +465,56 @@ cannot determine:
   input/run into its stochastic searches and records optimizer metadata. This
   makes supported runs repeatable for the same code and inputs; it does not
   prove that a retained basin is the global optimum.
+- **Physical fits are seeded from the smoother**: the balloon (with its wind free
+  to vary over the clip) and the drone control-input candidate start from the
+  best geometric approximation — the Kalman-smoother path — and refine from
+  there, rather than searching their high-dimensional parameter spaces blind.
+  The smoother is used specifically because it is regularised and cannot collapse
+  toward the sensor the way a raw lowest-residual track can (an LOS fit is
+  degenerate along range). The seed carries no truth and no object assumptions,
+  so it only decides where each search starts, not which object wins; the free
+  Quadcopter is deliberately left unseeded as the unconstrained, anomaly-reachable
+  fit. Because the drone fit then starts on a good path it needs only local
+  refinement (Nelder-Mead from the seed), which is why it now solves in about a
+  second where it once took tens.
 - **Circular-LOS detection**: when the sightlines are *constructed* from the
   target being tested (Camera Heading = "To Target" with LOS Source = raw
   Camera Center), the gallery and verdict carry a prominent
   "Constructed LOS — validation only" banner. Fits recovering the target then
   confirm internal consistency, not an independent discovery.
-- **No global object winner**: results are separated into geometric/LOS
-  trajectory families, object-conditioned forward models, known-object
-  catalogue checks, and estimator diagnostics. Ordering is meaningful only
-  within one group. A trajectory construction cannot outrank a balloon or
-  satellite as though those were comparable object probabilities.
-- **Absolute screen and completeness are separate**: every tile retains its
-  actual `Passes broad screen` / `Moderate` / `Low` / `Implausible` state while
-  search-edge, active-model-limit, inactive-bound, internal-clamp, and
-  optimizer-incomplete badges remain independently visible. A Low result is
-  never relabelled Medium, and an incomplete result cannot receive an
-  affirmative global winner badge.
+- **No global object winner**: every tile carries a coloured **category label**
+  — *Physically based* (balloon, drone, aircraft), *LOS Constrained* (constant
+  air speed / altitude / minimum acceleration), *Geometric* (stationary, ground,
+  at-infinity), *Geometric Approximations* (the curve/Kalman/least-squares fits),
+  and *Known Object* (star, planet, satellite). The gallery is shown in one flat,
+  best-first order, but that order is decided by keys which ARE comparable across
+  categories (closeness to a selected truth track; otherwise broad-screen pass,
+  eligibility, completeness, tier, and bound-pin count) *before* it ever reaches
+  a within-category score that is not — so a trajectory construction cannot
+  outrank a balloon or satellite as though those were comparable object
+  probabilities, and category order only breaks what would otherwise be an
+  unsound tie. Each tile still reports its standing within its own category
+  ("#1 of 4 physically based").
+- **Fit quality and ordinariness are separate judgements**: a tile's tier is
+  the worse of how well the model reproduces the sightlines and how ordinary the
+  motion it requires is, but the **badge names whichever one is binding**. When
+  the fit is the limit the labels read `Passes broad screen` / `Fair fit` /
+  `Weak fit` / `Poor fit`; when the motion is the limit they read `Passes broad
+  screen` / `Moderate` / `Low` / `Kinematically extreme`. This stops a slow,
+  ordinary object with a middling residual being called "Implausible" (that word
+  is about the object; the evidence was about the fit), and stops a 12 g solution
+  that threads the rays exactly being hidden as merely a good fit. Search-edge,
+  active-model-limit, inactive-bound, internal-clamp, and optimizer-incomplete
+  badges remain independently visible; a tier is never relabelled upward, and an
+  incomplete result cannot receive an affirmative global winner badge.
+- **Balloon-consistency tie-break**: a *Physically based* balloon whose fitted
+  motion is genuinely balloon-like — a steady climb, level, or descent drifting
+  in one direction — earns a small ranking boost, and one that had to yo-yo
+  vertically or curve back on itself is nudged down. It is bounded and only ever
+  reorders otherwise equally-well-fitting candidates (it can never lift a balloon
+  over a clearly better-fitting drone), so a "looks like a balloon" reading
+  surfaces first when the motion supports it without foreclosing a genuine
+  drone or anomalous solution.
 - **Family bands**: flat solution valleys are reported as bands ("50–650 kt at
   19–41 NM fit about equally") with a deterministic representative (nearest
   the Target Speed prior), instead of a knife-edge argmin that flips with
@@ -497,7 +549,10 @@ cannot determine:
 ### The Analyze button
 
 **Traverse ▸ Analyze Traverse Methods...** runs the full battery against the current
-LOS data and opens a grouped hypothesis gallery with within-group ordering. The standalone HTML report is
+LOS data and opens a single flat, best-first hypothesis gallery — each tile
+carrying a coloured category label rather than being buried under a section
+heading, so the answer an analyst actually wants ("looks like a balloon")
+surfaces first when the evidence supports it. The standalone HTML report is
 built on demand. **Use This** installs the analyzed trajectory as a frozen
 Analysis Snapshot; it does not silently rewrite the speed/range assumptions
 used by the next run.
@@ -531,7 +586,13 @@ or orbiting a render camera does not change those inputs and reopens the prior
 gallery immediately. Render-camera terrain LOD (active tiles/revision) is kept
 out of the scientific key; the cached result retains the terrain samples used
 when it was graded. An explicit terrain reload/source change receives a new
-data epoch and invalidates normally.
+data epoch and invalidates normally. If terrain tiles merely finish loading
+*while* an analysis is running, the run is **not** discarded — it completes using
+the elevation sampled at the start (a late tile is unlikely to be material) and
+the gallery shows a small note that terrain finished loading, which you can act
+on by re-running once it settles if you need the ground samples exact. Starting
+an analysis while terrain is still doing its initial load is still blocked, since
+a half-loaded start could be genuinely wrong rather than marginally off.
 
 Notes on the gallery tiles:
 
@@ -539,11 +600,13 @@ Notes on the gallery tiles:
   Acceleration) show their analyzed, lightly smoothed paths. **Use This**
   installs that exact sampled path as a snapshot, so preview, metrics, and
   applied output refer to the same result.
-- Tiles are headed by their **comparison group** and numbered only within that
-  group. Within a group, complete results come before incomplete searches,
-  followed by broad screening tier, unique active model constraints, and a
-  documented secondary score. The 0.05 display-tie threshold is a formatting
-  convention, not a statistical claim.
+- Tiles are shown in one flat, best-first order, each labelled with its
+  **category** and its rank within that category ("#1 of 4 physically based").
+  The order is decided first by keys comparable across categories — screen pass,
+  eligibility, completeness, broad-screen tier, unique active model constraints —
+  and only then by a within-category secondary score (which is not comparable
+  across categories), with category priority breaking otherwise-equal ties. The
+  0.05 display-tie threshold is a formatting convention, not a statistical claim.
 - The **raw LOS residual is always shown**. A flexible constant-acceleration
   reference is displayed separately as context and never substituted for the
   raw value or used as a noise estimate. Ray-constrained smoothing residuals
