@@ -1437,6 +1437,8 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     let result;
     if (options.optimizer === "de") {
         const {differentialEvolution, mulberry32} = require("./DifferentialEvolution");
+        const _clock = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+        let _lastYield = _clock();
         const de = await differentialEvolution(costFn, lo, hi, {
             pop: options.dePop ?? 48,
             gens: options.deGens ?? 120,
@@ -1451,7 +1453,13 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
             // options.shouldCancel lets the analysis overlay's Cancel button
             // actually stop the physics fits (returning false ends the search).
             onGeneration: async (g) => {
-                if ((g & 7) === 7) await _macroYield();
+                // Yield on a wall-clock budget, not a fixed generation count: a
+                // single generation can itself be long on a big clip, which left
+                // Cancel and repaint unresponsive for many seconds. Yielding every
+                // ~60 ms keeps the overlay responsive regardless of generation
+                // speed (TA-26), while shouldCancel is still checked every gen.
+                const now = _clock();
+                if (now - _lastYield > 60) { await _macroYield(); _lastYield = _clock(); }
                 if (options.shouldCancel && options.shouldCancel()) return false;
                 return true;
             },
