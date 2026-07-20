@@ -12,7 +12,7 @@ lockstep with docs/WhatsNew-Details.md.
 ## Version 2.103.0 (2026-07-19)
 
 ### New Features
-- **Set aside gallery tiles** (Traverse → Analyze Traverse Methods...): dismiss a candidate with the X on its tile and it animates below a separator — kept and still readable, keeping its original ranking, never silently deleted — with a *Restore Closed* button to bring them all back.
+- **Set aside gallery tiles** (Traverse → Analyze Traverse Methods...): dismiss a candidate with the X on its tile and it animates below a separator — kept and still readable, keeping its original ranking, never silently deleted — with a *Restore set-aside* button to bring them all back.
 - **New curve-fit diagnostic tiles** (traverse gallery): each curve-fitting strategy is now shown across polynomial orders 1–5, and a new deterministic *Global Fit: Polynomial LSQ* joins the two Monte Carlo fits — it is far faster and, unlike them, can reach a far or fast solution when the sightlines support one. They carry the *Geometric Approximations* label and are meant to be read as method diagnostics, not as ranked answers.
 
 ### Improvements

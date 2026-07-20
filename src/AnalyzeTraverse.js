@@ -4774,7 +4774,7 @@ function showResultGallery(results) {
     const restoreBtn = document.createElement("button");
     restoreBtn.className = "tg-toggle";
     restoreBtn.type = "button";
-    restoreBtn.textContent = "Restore Closed";
+    restoreBtn.textContent = "Restore set-aside";
     restoreBtn.title = "Bring every set-aside candidate back into consideration.";
     restoreBtn.disabled = true;
     toolbar.appendChild(syncOrientationBtn);
@@ -4876,7 +4876,7 @@ function showResultGallery(results) {
 
     // Layout model for the tile grid. Tiles can be SET ASIDE (the X button),
     // which moves them below a separator at the end rather than deleting them —
-    // the reader can still see what was excluded, and "Restore Closed" brings
+    // the reader can still see what was excluded, and "Restore set-aside" brings
     // them all back. There are no group headings: the tiles are in one flat
     // best-first order and each carries its category as a coloured corner label.
     const dismissed = new Set();
@@ -4892,14 +4892,14 @@ function showResultGallery(results) {
             sep.className = "tg-sep";
             sep.innerHTML = `<div class="tg-sep-title">Set aside (${dismissed.size})</div>`
                 + `<div class="tg-sep-desc">Excluded from consideration. They are still shown, and `
-                + `still ranked as they were, so nothing is silently dropped — use "Restore Closed" `
+                + `still ranked as they were, so nothing is silently dropped — use "Restore set-aside" `
                 + `to bring them back.</div>`;
             grid.appendChild(sep);
             tiles.forEach((_, i) => { if (dismissed.has(i)) grid.appendChild(tileEls[i]); });
         }
         restoreBtn.disabled = dismissed.size === 0;
         restoreBtn.textContent = dismissed.size === 0
-            ? "Restore Closed" : `Restore Closed (${dismissed.size})`;
+            ? "Restore set-aside" : `Restore set-aside (${dismissed.size})`;
     };
 
     // ---- Dismissal animation ----------------------------------------------
