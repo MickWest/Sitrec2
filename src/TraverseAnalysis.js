@@ -1976,6 +1976,37 @@ export async function fitAircraft(dataset, options = {}) {
     const pinNames = ["startDist", "heading", "tas", "turnRate", "turnAccel", "climb"];
     const pinned = assessBoundPins(best.params, lo, hi, pinNames, cost,
         {baseCost: best.cost, excludeIndices: [1]});
+
+    // Itemise the soft priors at the solution, in DEGREES of fit budget (each
+    // cost term × errSigma), matching the physics models' {total, terms} schema
+    // so the fixed-wing tile can disclose the assumptions that shaped it (TA-08).
+    const wEndBest = best.params[3] + best.params[4] * T;
+    const priorTerms = {};
+    const addPrior = (name, unitCost) => {
+        const deg = unitCost * errSigma;
+        if (Number.isFinite(deg) && deg > 0) priorTerms[name] = deg;
+    };
+    addPrior("start turn rate toward straight", (best.params[3] / turnSigma) ** 2);
+    addPrior("end turn rate toward straight", (wEndBest / turnSigma) ** 2);
+    addPrior("climb toward level", (best.params[5] / climbSigma) ** 2);
+    addPrior("cruise-speed target", ((best.params[2] - tasTarget) / tasSigma) ** 2);
+    if (groundPrior) {
+        const sig = groundPrior.sigma ?? 40;
+        const gx = gpS0[0] + best.params[0] * gpD0[0];
+        const gy = gpS0[1] + best.params[0] * gpD0[1];
+        const gz = gpS0[2] + best.params[0] * gpD0[2];
+        const gh0 = gz + (gx * gx + gy * gy) / (2 * EARTH_RADIUS_M);
+        if (groundPrior.startZ !== undefined && groundPrior.startZ !== null) {
+            addPrior("ground contact (start)", ((gh0 - groundPrior.startZ) / sig) ** 2);
+        }
+        if (groundPrior.endZ !== undefined && groundPrior.endZ !== null) {
+            addPrior("ground contact (end)", ((gh0 + best.params[5] * T - groundPrior.endZ) / sig) ** 2);
+        }
+    }
+    let priorTotal = 0;
+    for (const k in priorTerms) priorTotal += priorTerms[k];
+    const priors = priorTotal > 0 ? {total: priorTotal, terms: priorTerms} : null;
+
     return {
         pinned,
         params: {
@@ -1985,6 +2016,7 @@ export async function fitAircraft(dataset, options = {}) {
             turnRate: w0,
             turnAccel: wd,
             climb,
+            priors,
         },
         cost: best.cost,
         errDeg: aircraftAngErrDeg(dataset, best.params, 1),

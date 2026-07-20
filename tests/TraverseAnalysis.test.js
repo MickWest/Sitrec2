@@ -414,6 +414,31 @@ describe("TraverseAnalysis core", () => {
         let dh = ((fit.params.heading - heading) % 360 + 540) % 360 - 180;
         expect(Math.abs(dh)).toBeLessThan(15);
     }, 60000);
+
+    test("fitAircraft discloses its soft priors in the {total, terms} schema (TA-08)", async () => {
+        const {dataset, airSpeed} = makeDataset();
+        // Push the cruise-speed target well below the true speed so the fit must
+        // trade residual against the speed prior — that term must then be
+        // disclosed rather than shaping the solution invisibly.
+        const fit = await fitAircraft(dataset, {
+            tasTarget: airSpeed * 0.5, tasSigma: 20, runs: 2, pop: 48, gens: 80,
+            rangeMin: 2000, rangeMax: 40000,
+        });
+        const priors = fit.params.priors;
+        expect(priors).not.toBeNull();
+        expect(priors.total).toBeGreaterThan(0);
+        // The itemised terms sum to the reported total, and every term is a
+        // positive, finite number of degrees.
+        const sum = Object.values(priors.terms).reduce((a, b) => a + b, 0);
+        expect(sum).toBeCloseTo(priors.total, 6);
+        for (const v of Object.values(priors.terms)) {
+            expect(Number.isFinite(v)).toBe(true);
+            expect(v).toBeGreaterThan(0);
+        }
+        // The offset cruise-speed target guarantees that term is present.
+        expect(Object.keys(priors.terms)).toEqual(
+            expect.arrayContaining(["cruise-speed target"]));
+    }, 60000);
 });
 
 describe("compareTrackToTruth", () => {
