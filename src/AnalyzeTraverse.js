@@ -4364,6 +4364,14 @@ function showResultGallery(results) {
 
     const overlay = document.createElement("div");
     overlay.className = "traverse-gallery-overlay";
+    // Dialog semantics + focus management so keyboard and screen-reader users can
+    // reach and leave the gallery (TA-24, focused subset). Full ARIA/keyboard
+    // coverage of the tile grid remains a larger follow-up.
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Traverse analysis results");
+    overlay.tabIndex = -1;
+    const _prevFocus = (typeof document !== "undefined" && document.activeElement) || null;
     overlay.style.cssText = "position:fixed;inset:0;z-index:10000;display:flex;" +
         "align-items:flex-start;justify-content:center;padding:24px 16px;box-sizing:border-box;" +
         "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;";
@@ -4479,6 +4487,10 @@ function showResultGallery(results) {
         window.removeEventListener("resize", onResize);
         disposeAllCharts();
         if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        // Return focus to whatever opened the gallery (TA-24).
+        if (_prevFocus && typeof _prevFocus.focus === "function") {
+            try { _prevFocus.focus(); } catch (e) { /* element may be gone */ }
+        }
     };
     document.addEventListener("keydown", onKey, true);
 
@@ -5207,6 +5219,9 @@ function showResultGallery(results) {
     panel.appendChild(footer);
 
     document.body.appendChild(overlay);
+    // Move focus into the dialog so keyboard users start inside it and Escape /
+    // Tab act on the gallery, not the page behind it (TA-24).
+    if (typeof overlay.focus === "function") overlay.focus();
 
     if (typeof ResizeObserver !== "undefined") {
         resizeObserver = new ResizeObserver((entries) => {
