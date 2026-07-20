@@ -1906,6 +1906,25 @@ export class QuadTreeTile {
 
     async applyMaterial() {
         const sourceDef = this.map.terrainNode.UI.getSourceDef();
+
+        // Google Photorealistic 3D Tiles fully replace the 2D basemap, so the terrain
+        // group is hidden and none of this imagery is ever drawn. Fetching it is pure
+        // waste — one ground-level scene was observed streaming 605 ESRI tiles (20 of
+        // them at zoom 20) into an invisible group, where the out-of-coverage zoom-20
+        // tiles were also the source of the "blocked by CORS" console spam.
+        //
+        // Skip the fetch and keep the shared placeholder `tileMaterial` the mesh was
+        // created with (no allocation, nothing to dispose). addAfterLoaded() still
+        // gives the tile its scene membership, layer mask and `loaded` flag, so the
+        // consumers that read tile GEOMETRY rather than imagery are unaffected: the
+        // ocean surface (meshed from these tiles, and only ever shown in this exact
+        // state), ground-overlay drapes, and every terrain raycast. The elevation
+        // quadtree is separate and untouched, so all height/AGL math is unchanged.
+        if (this.map.terrainNode.UI.suppressMapImagery()) {
+            this.addAfterLoaded();
+            return Promise.resolve(this.mesh.material);
+        }
+
         if (sourceDef.isDebug) {
 
             // Simulate failure percentage for debug tiles (see "Debuggy" source)

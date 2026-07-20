@@ -2,6 +2,7 @@ import {CanvasTexture, Texture} from "three";
 import {createTerrainDayNightMaterial} from "./TerrainDayNightMaterial";
 import {TileUsageTracker} from "../../../TileUsageTracker";
 import {ServiceAvailability} from "../../../ServiceAvailability";
+import {badTextureUrls} from "../../../QuadTreeTileCache";
 
 function logNetwork(url, status) {
     // if (Globals.regression) {
@@ -73,6 +74,17 @@ export function loadTextureWithRetries(url, maxRetries = 0, delay = 100, current
     // Pre-flight: reject immediately if the service is known to be unavailable
     if (!ServiceAvailability.isAvailableByUrl(url[0])) {
       reject(new Error('ServiceUnavailable'));
+      return;
+    }
+
+    // Pre-flight: reject immediately if every candidate URL already failed
+    // terminally this session (placeholder tile, 404, exhausted retries). This
+    // is what actually implements the "avoid retrying" promise of
+    // badTextureUrls — without it, tiles pruned and later reactivated by
+    // subdivision churn re-fetched the same known-dead URL every time.
+    // Cleared by CNodeTerrain.reloadMap() (Terrain Refresh / map change).
+    if (url.every(u => badTextureUrls.has(u))) {
+      reject(new Error('KnownBadUrl'));
       return;
     }
 
@@ -155,12 +167,17 @@ export function loadTextureWithRetries(url, maxRetries = 0, delay = 100, current
             ServiceAvailability.recordFailureByUrl(currentUrl);
           }
 
+          // The ESRI placeholder is deterministic — the server returns the same
+          // placeholder bytes for this URL on every request — so fallback URLs
+          // and retries are pure waste. Go straight to the terminal branch.
+          const deterministicFailure = err.message === 'PlaceholderTile';
+
           // Try next URL in the list
-          if (urlIndex < url.length - 1) {
+          if (!deterministicFailure && urlIndex < url.length - 1) {
             urlIndex++;
             activeRequests++;
             attemptLoad();
-          } else if (currentAttempt < maxRetries) {
+          } else if (!deterministicFailure && currentAttempt < maxRetries) {
             console.log(`Retry ${currentAttempt + 1}/${maxRetries} for ${currentUrl} after delay`);
             setTimeout(() => {
               if (abortSignal?.aborted) {
@@ -172,10 +189,13 @@ export function loadTextureWithRetries(url, maxRetries = 0, delay = 100, current
                   .catch(reject);
             }, delay);
           } else {
+            // Terminal failure: remember the URL so later activations of this
+            // tile skip the fetch entirely (KnownBadUrl pre-flight above).
+            badTextureUrls.add(currentUrl);
             // PlaceholderTile is an expected "tile not available" signal from
             // ESRI — already logged as 'placeholder' above; don't add console noise.
-            if (err.message !== 'PlaceholderTile') {
-              console.log(`Failed to load ${currentUrl} after ${maxRetries} attempts`);
+            if (!deterministicFailure) {
+              console.log(`Failed to load ${currentUrl} after ${currentAttempt + 1} attempt(s)`);
               logNetwork(currentUrl, 'failed');
             }
             reject(err);

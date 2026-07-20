@@ -24,6 +24,7 @@ import {
 } from "../terrainSourceUtils";
 import {getEnv} from "../envUtils";
 import {ServiceAvailability} from "../ServiceAvailability";
+import {badTextureUrls} from "../QuadTreeTileCache";
 import {identifyServiceFromUrl} from "../TileUsageTracker";
 import {
     disposeAttributionOverlay,
@@ -730,6 +731,9 @@ export class CNodeTerrainUI extends CNode {
         // 3D Buildings support
         this.buildingsSource = v.buildingsSource ?? "google-photorealistic";
         this.buildingsNode = null;
+        // Tracks whether basemap imagery fetching is currently suppressed, so
+        // updateTerrainAndOceanVisibility() can spot the un-suppress transition.
+        this.mapImagerySuppressed = false;
         // "Flatten Trees" heuristics — one stable object shared by reference
         // with the buildings node and all GUI controls. Serialized as a whole
         // via modSerialize/modDeserialize (merged, not replaced, on load).
@@ -1160,6 +1164,16 @@ export class CNodeTerrainUI extends CNode {
         return !!this.buildingsNode && this.buildingsNode._activeSource === "google-photorealistic";
     }
 
+    // Should the 2D basemap imagery (ESRI, MapBox, …) be fetched at all?
+    //
+    // Google Photorealistic 3D Tiles REPLACE the basemap — updateTerrainAndOceanVisibility()
+    // hides the terrain group entirely — so downloading map imagery for it is pure waste.
+    // Cesium OSM buildings are an ADDITIONAL layer drawn ON TOP of the basemap, so they
+    // keep their imagery. Consumed by QuadTreeTile.applyMaterial().
+    suppressMapImagery() {
+        return this.isGooglePhotorealisticActive();
+    }
+
     // Build the "Remove Geometry" GUI folder, data-driven from TREE_FLATTEN_DEFS
     // so the controls and the algorithm never drift. Manual-remove controls
     // (`top`) sit at the folder root, followed by the "Restore Geometry" reset;
@@ -1468,8 +1482,24 @@ export class CNodeTerrainUI extends CNode {
 
     updateTerrainAndOceanVisibility() {
         const googleActive = this.isGooglePhotorealisticActive();
+        const wasSuppressed = this.mapImagerySuppressed;
+        this.mapImagerySuppressed = this.suppressMapImagery();
+
         this.setTerrainVisible(!googleActive);
         this.setOceanSurfaceVisible(googleActive && this.showOceanSurface);
+
+        // Tiles built while imagery was suppressed kept the placeholder material and
+        // never fetched a texture, so the basemap would come back untextured. Reload
+        // it — the same path used when the user switches map source.
+        if (wasSuppressed && !this.mapImagerySuppressed
+            && this.terrainNode?.elevationMap
+            && this.terrainNode.maps?.[this.mapType]?.map) {
+            this.terrainNode.reloadMap(this.mapType);
+            // Subdivision is gated on camera movement, so a reload with a stationary
+            // camera would leave the basemap stuck at the single zoom-0 tile until the
+            // user nudged the view. Same kick refresh() uses.
+            this.requestSubdivisionPass();
+        }
     }
 
     disposeOceanSurface() {
@@ -1708,9 +1738,25 @@ export class CNodeTerrainUI extends CNode {
         this.log("Refreshing terrain")
         assert(this.terrainNode.maps[this.mapType].map !== undefined, "Terrain map not defined when trying the set startLoading")
 
+        // Refresh is the recovery gesture the ServiceAvailability error message
+        // advertises. The dynamic branch clears these inside reloadMap(), but the
+        // non-dynamic branch (startLoading → recalculate) bypasses reloadMap, so
+        // clear here too: forget per-URL failures and re-close the service
+        // circuit breaker (which can never self-heal — while tripped, its
+        // pre-flight rejects every request, so no success can be recorded).
+        badTextureUrls.clear();
+        ServiceAvailability.reset();
+
         if (!this.dynamic) {
             // old way, defer loading
             this.startLoading = true;
+            // recalculate() early-outs when lat/lon/zoom/nTiles are all
+            // unchanged — which is exactly the state after clicking Refresh —
+            // so failed tiles were never rebuilt or re-fetched. `refresh` is
+            // recalculate()'s designed escape hatch (checked in its early-out,
+            // cleared when consumed): it forces the full dispose-and-rebuild
+            // path, whose fresh tiles re-fetch with the caches cleared above.
+            this.refresh = true;
             this.flagForRecalculation();
         } else {
             // for dynamic maps, they are async anyway

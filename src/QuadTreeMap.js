@@ -1658,7 +1658,10 @@ export class QuadTreeMap {
             const materialPromise = tile.applyMaterial().then(() => {
                 tile.usingParentData = false; // Mark as using high-res data now
             }).catch(error => {
-                if (error.message === 'PlaceholderTile') {
+                // PlaceholderTile and KnownBadUrl are terminal for this URL —
+                // retrying (below) would loop forever against the badTextureUrls
+                // pre-flight without ever succeeding. Mark the branch dead.
+                if (error.message === 'PlaceholderTile' || error.message === 'KnownBadUrl') {
                     tile.needsHighResLoad = false;
                     tile.isDeadBranch = true;
                     return;

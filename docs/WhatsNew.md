@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.103.1 (2026-07-20)
+
+### Improvements
+- **No wasted map downloads under Google 3D buildings** (Terrain → 3D Buildings, *Google Photorealistic* source): the flat map imagery hidden underneath the 3D tiles is no longer downloaded at all — previously hundreds of invisible map tiles streamed per scene, causing the failed-download errors some users saw in the console — and the map re-textures automatically when you turn the buildings off.
+- Map tiles that fail to download from a brief network glitch now get one automatic retry instead of staying blank until you refresh.
+
+### Bug Fixes
+- Fixed the *Refresh* button (Terrain menu) doing nothing when *Dynamic Subdivision* is off — failed tiles are now properly rebuilt and re-downloaded.
+- Fixed map tiles with no available imagery (e.g. beyond a provider's maximum zoom) being requested again and again as the view changed, wasting bandwidth and spamming errors.
+- Fixed a map imagery provider that had repeated failures staying disabled for the rest of the session; the *Refresh* button (Terrain menu) now really does give it another chance, as its error message always promised.
+
 ## Version 2.103.0 (2026-07-20)
 
 ### New Features

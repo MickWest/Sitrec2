@@ -14,6 +14,7 @@ sitrecServer/config.php
 config/config.php
 CLAUDE.md
 CLAUDE.local.md
+.wt.local.conf
 .claude/
 debug/
 __image_snapshots__/

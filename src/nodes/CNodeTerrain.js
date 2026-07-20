@@ -11,6 +11,8 @@ import {CTileMappingGoogleCRS84Quad, CTileMappingGoogleMapsCompatible} from "../
 import {EventManager} from "../CEventManager";
 import {QuadTreeMapTexture} from "../QuadTreeMapTexture";
 import {QuadTreeMapElevation} from "../QuadTreeMapElevation";
+import {badTextureUrls} from "../QuadTreeTileCache";
+import {ServiceAvailability} from "../ServiceAvailability";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import * as LAYER from "../LayerMasks";
 import {ViewMan} from "../CViewManager";
@@ -506,6 +508,19 @@ export class CNodeTerrain extends CNode {
 
 
     reloadMap(mapID) {
+        // A reload is the "try again" gesture (Terrain Refresh button, map-type
+        // change, imagery un-suppression) — forget the per-URL failure history
+        // so tiles that failed transiently, or while a service was down, get a
+        // fresh fetch instead of the session blacklist. This is the recovery
+        // path the ServiceAvailability error message points users at.
+        badTextureUrls.clear();
+        // Also re-close the service-level circuit breaker. Once a service trips
+        // (5 failures) its pre-flight rejects every request, so no success can
+        // ever be recorded and it would stay "unavailable" until a full page
+        // reload — despite the error message promising Refresh will retry. If
+        // the outage persists, real traffic re-trips the breaker after 5
+        // failures, which is the intended behavior.
+        ServiceAvailability.reset();
         // clear elevation and texture maps
         // and reload the map
         this.elevationMap.clean()

@@ -23,7 +23,7 @@ import {globalMipmapGenerator} from "./MipmapGenerator";
 import {processTextureColors} from "./TextureColorProcessor";
 import {createTerrainDayNightMaterial} from "./js/map33/material/TerrainDayNightMaterial";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
-import {badTextureUrls, materialCache, textureLoadPromises} from "./QuadTreeTileCache";
+import {materialCache, textureLoadPromises} from "./QuadTreeTileCache";
 
 // Module-level implementations of the cache-management statics that used to live
 // on the QuadTreeTile class. They're re-exposed as statics on the class from
@@ -188,9 +188,13 @@ export const materialMethods = {
             ? new Promise(resolve => setTimeout(resolve, Globals.tileDelay * 1000))
             : Promise.resolve();
 
-        // Create and cache the loading promise to prevent concurrent loads
-        const loadPromise = delayPromise.then(() => 
-            loadTextureWithRetries(url, 0, 100, 0, 0, abortSignal)
+        // Create and cache the loading promise to prevent concurrent loads.
+        // One retry after 500ms: a transient failure (browser resource
+        // starvation while Google 3D tiles stream, brief network blip) must not
+        // permanently dead-branch the tile. Deterministic failures
+        // (PlaceholderTile) skip the retry inside the loader.
+        const loadPromise = delayPromise.then(() =>
+            loadTextureWithRetries(url, 1, 500, 0, 0, abortSignal)
         ).then((texture) => {
             let finalTexture = texture;
 
@@ -224,19 +228,16 @@ export const materialMethods = {
             this.textureAbortController = null;
             return material;
         }).catch((error) => {
-            // add it to the badUrls set to avoid retrying
-            // but not if aborted, and silently for ESRI placeholder tiles
-            // (expected condition for tiles beyond the available zoom level)
-            if (error.message === "Aborted") {
-                // no-op
-            } else if (error.message === "PlaceholderTile") {
-                badTextureUrls.add(url);
-            } else {
+            // Terminal fetch failures are recorded in badTextureUrls by
+            // loadTextureWithRetries itself (so processing errors here — mipmap
+            // generation, color processing — never poison the URL blacklist).
+            // Keep the console quiet for the expected cases: aborts, ESRI
+            // placeholder tiles, and URLs already known bad from a prior attempt.
+            if (error.message !== "Aborted"
+                && error.message !== "PlaceholderTile"
+                && error.message !== "KnownBadUrl") {
                 console.warn(`Failed to load texture for tile ${this.key()} from URL: ${url}`, error);
-                badTextureUrls.add(url);
             }
-
-
 
             // Clean up on error
             textureLoadPromises.delete(cacheKey);
@@ -300,7 +301,11 @@ export const materialMethods = {
                     } else {
 
                         // Create and cache the base texture loading promise
-                        const baseLoadPromise = loadTextureWithRetries(url, 0, 100, 0, 0, abortSignal).then((texture) => {
+                        // One retry, matching the dynamic-tile path above. Extra
+                        // important here: this static texture is shared by ALL
+                        // tiles, so a single transient failure would blank the
+                        // entire layer.
+                        const baseLoadPromise = loadTextureWithRetries(url, 1, 500, 0, 0, abortSignal).then((texture) => {
                             let finalTexture = texture;
 
                             // Apply color processing if enabled for this source

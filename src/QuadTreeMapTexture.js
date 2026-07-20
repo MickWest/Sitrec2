@@ -544,6 +544,15 @@ class QuadTreeMapTexture extends QuadTreeMap {
 //                console.log(`Reactivated tile ${tile.key()} needs texture loading`);
                 const key = `${z}/${x}/${y}`;
                 const materialPromise = tile.applyMaterial().catch(error => {
+                    // Terminal per-URL failures: mark dead so the reactivation
+                    // path stops re-requesting this texture on every subdivision
+                    // churn (this was the repeat-fetch storm for out-of-coverage
+                    // ESRI tiles at max zoom).
+                    if (error.message === 'PlaceholderTile' || error.message === 'KnownBadUrl') {
+                        tile.isLoading = false;
+                        tile.isDeadBranch = true;
+                        return;
+                    }
                     // Don't log abort errors or cancellation errors - they're expected when tiles are cancelled
                     if (error.message !== 'Aborted' && error.message !== 'Tile is being cancelled') {
                         showErrorOnce("TILE_LOADING_ERROR", `Failed to load texture for reactivated tile ${key}:`, error);
@@ -773,9 +782,10 @@ class QuadTreeMapTexture extends QuadTreeMap {
         // Track the async texture loading (normal path or fallback if parent data unavailable)
         const materialPromise = tile.applyMaterial().catch(error => {
             // ESRI placeholder ("Map Data Not Yet Available") for tiles beyond
-            // the available zoom level for an area. Expected condition, not an
-            // error — silently mark dead so further refinement stops.
-            if (error.message === 'PlaceholderTile') {
+            // the available zoom level for an area, or a URL that already failed
+            // terminally this session (badTextureUrls). Expected conditions, not
+            // errors — silently mark dead so further refinement stops.
+            if (error.message === 'PlaceholderTile' || error.message === 'KnownBadUrl') {
                 tile.isLoading = false;
                 tile.isDeadBranch = true;
                 return;
@@ -819,6 +829,15 @@ class QuadTreeMapTexture extends QuadTreeMap {
 
     applyParentDataFallback(tile) {
         if (!tile || tile.z <= 0) return false;
+
+        // No imagery under Google Photorealistic 3D Tiles (see QuadTreeTile.applyMaterial).
+        // This path needs no network, but it still rescales the parent's texture through a
+        // canvas into a new texture per tile — ~800 of them for an invisible group. Return
+        // false so the tile falls through to applyMaterial(), which keeps the shared
+        // placeholder material instead.
+        // (Optional chaining: unit tests build this map without a terrainNode/UI;
+        // no UI wired means nothing to suppress.)
+        if (this.terrainNode?.UI?.suppressMapImagery()) return false;
 
         // Don't resurrect a tile that PlaceholderTile already marked dead.
         // The dead-branch flag is the signal that high-res loads here will
