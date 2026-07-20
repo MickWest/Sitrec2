@@ -136,9 +136,13 @@ export function balloonConsistency(track) {
     const hNet = Math.hypot(track[(n - 1) * 3] - track[0], track[(n - 1) * 3 + 1] - track[1]);
     // Below this total travel an axis has essentially not moved: level flight,
     // or a hover. Neither is un-balloon-like, so score it neutral rather than
-    // letting 0/0 noise decide.
-    const LEVEL_EPS = 20; // metres
-    const vDir = vPath < LEVEL_EPS ? 1.0 : vNet / vPath;     // level or monotonic → 1
+    // letting 0/0 noise decide. The vertical threshold scales with the horizontal
+    // extent (min 20 m) so a 19 m vs 21 m path does not straddle a fixed boundary
+    // and a long, far-drifting clip is judged on the same relative footing (TA-18);
+    // a true hover (tiny horizontal travel) still uses the absolute floor.
+    const LEVEL_EPS = 20; // metres — absolute floor
+    const vLevelEps = Math.max(LEVEL_EPS, 0.02 * hPath);
+    const vDir = vPath < vLevelEps ? 1.0 : vNet / vPath;     // level or monotonic → 1
     const hDir = hPath < LEVEL_EPS ? 0.5 : hNet / hPath;     // straight drift → 1, circling → 0
     // A balloon needs BOTH: a steady vertical trend AND a one-direction drift.
     // Take the weaker of the two, not their average — a monotonic climb does not
@@ -367,10 +371,15 @@ export function plausibilityRating(h) {
     const balloonC = buoyant ? balloonConsistency(h?.track) : null;
     const balloonAdj = balloonC === null ? 0 : BALLOON_CONSISTENCY_NUDGE * (1 - 2 * balloonC);
     if (balloonC !== null) {
+        // Disclose the nudge's MAGNITUDE in residual-equivalent (secondaryScore
+        // counts 0.05 deg of LOS residual per unit), so the reader can see exactly
+        // how strong this object-class prior is and that it only reorders within a
+        // fit-quality tier — it never crosses one (TA-18).
+        const nudgeDeg = (Math.abs(balloonAdj) * 0.05).toFixed(2);
         if (balloonC >= 0.75) {
-            reasons.push(`steady vertical trend and one-direction drift — characteristic balloon motion (consistency ${balloonC.toFixed(2)})`);
+            reasons.push(`steady vertical trend and one-direction drift — characteristic balloon motion (consistency ${balloonC.toFixed(2)}); this promotes it by up to ${nudgeDeg}° of residual-equivalent within its fit tier, so it leads a drone or geometric fit only when they sit inside that margin`);
         } else if (balloonC <= 0.45) {
-            reasons.push(`the fitted motion reverses vertically or curves back on itself — atypical for a balloon (consistency ${balloonC.toFixed(2)})`);
+            reasons.push(`the fitted motion reverses vertically or curves back on itself — atypical for a balloon (consistency ${balloonC.toFixed(2)}); this demotes it by up to ${nudgeDeg}° of residual-equivalent within its fit tier`);
         }
     }
 
