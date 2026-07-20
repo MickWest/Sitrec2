@@ -227,8 +227,14 @@ export async function enumerateSitches() {
                 continue;
             }
             const sitchLabels = Array.isArray(meta.sitchLabels) ? {} : (meta.sitchLabels || {});
-            for (const [n, labs] of Object.entries(sitchLabels))
-                if (Array.isArray(labs) && labs.includes(CONFIG.label)) nameSet.add(n);
+            for (const [n, labs] of Object.entries(sitchLabels)) {
+                if (!Array.isArray(labs) || !labs.includes(CONFIG.label)) continue;
+                // Skip sitches that were soft-deleted in the sitch browser — the
+                // "Deleted" permanent label wins over Regression, matching how the
+                // app itself hides them (CFileManager / CustomSupport / CSitchBrowser).
+                if (labs.includes('Deleted')) continue;
+                nameSet.add(n);
+            }
         }
         names = [...nameSet].sort((a, b) => a.localeCompare(b));
     }
