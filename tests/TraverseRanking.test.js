@@ -5,6 +5,7 @@ import {
     formatRawLosResidual,
     groupAndRankHypotheses,
     hypothesisCategory,
+    localFitCompletionWarnings,
     plausibilityRating,
     rankingExplanation,
     rankAllHypotheses,
@@ -103,6 +104,24 @@ describe("Traverse ranking", () => {
         expect(unstableRating.rank).toBe(1);
         expect(unstableRating.incomplete).toBe(true);
         expect(completenessBadges(unstableRating).map((b) => b.label)).toContain("Optimizer incomplete");
+    });
+
+    test("an iteration-limited local fit is retained but marked optimizer-incomplete", () => {
+        const warnings = localFitCompletionWarnings({
+            stopReason: "iteration_limit", iterations: 400, parameterSpread: 0.0238955,
+        });
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("400-iteration budget before convergence");
+        expect(warnings[0]).toContain("2.39% of parameter bounds");
+
+        const h = hypothesis("droneControl", {optimizerWarnings: warnings, errDeg: 0.01});
+        const rating = plausibilityRating(h);
+        expect(rating.incomplete).toBe(true);
+        expect(rating.eligible).toBe(false);
+        expect(rating.label).toBe("Provisional fit");
+        expect(rankingExplanation(h, rating)).toContain("optimizer incomplete");
+        expect(localFitCompletionWarnings({stopReason: "cost_and_parameter_tolerance"}))
+            .toEqual([]);
     });
 
     test("peak rather than mean speed controls the broad screen", () => {
@@ -417,6 +436,22 @@ describe("Truth-track mode", () => {
         expect(ranked[0].h).toBe(hUgly);
         expect(ranked[1].h).toBe(hClean);
         expect(ranked.every((item) => !item.tied)).toBe(true);
+    });
+
+    test("a completed truth fit leads a closer optimizer-incomplete fit", () => {
+        const completed = hypothesis("lantern", {name: "Balloon", errDeg: 0.01});
+        completed.truthComparison = comparison(53);
+        const provisional = hypothesis("droneControl", {
+            name: "Drone", errDeg: 0.01,
+            optimizerWarnings: localFitCompletionWarnings({
+                stopReason: "iteration_limit", iterations: 400, parameterSpread: 0.02,
+            }),
+        });
+        provisional.truthComparison = comparison(42);
+
+        const ranked = rankAllHypotheses([provisional, completed]);
+        expect(ranked.map((item) => item.h.name)).toEqual(["Balloon", "Drone"]);
+        expect(ranked[1].r.incomplete).toBe(true);
     });
 
     test("not-comparable hypotheses fall to the end in truth mode", () => {

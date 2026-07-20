@@ -8,9 +8,12 @@
 > consistency ranking nudge** (`balloonConsistency` in `TraverseRanking.js`) that
 > boosts a *Physically based* balloon whose fitted motion is genuinely balloon-
 > like and demotes one that is not — a bounded within-tier tie-break, not an
-> anomaly gate. The core **Envelope Feasibility Profile** (`EnvelopeFeasibility.js`,
-> Milestone 0 onward), the `DwellDashModel`, and the four prerequisite prior
-> repairs are **not yet built**. Treat the rest of this file as the intended
+> anomaly gate. Of the four Milestone-1 prerequisites, fixed-wing prior
+> disclosure and duration-scaled drone knots have shipped, as has knot-count-
+> invariant speed/climb effort; cross-model turn-prior calibration, seed-relative
+> drone effort, and envelope-relative climb pricing remain planned. The core
+> **Envelope Feasibility Profile** (`EnvelopeFeasibility.js`, Milestone 0 onward)
+> and the `DwellDashModel` are **not yet built**. Treat the rest of this file as the intended
 > direction, and verify against the code before relying on any specific claim.
 
 ## 1. What is being built, and what is deliberately not
@@ -113,12 +116,12 @@ If either of the first two reports `infeasibleEverywhere`, **the metric is wrong
 
 ## 4. Milestone 1 — the four prerequisite prior repairs
 
-Each is an independent bias generator today and each lands as its **own commit**, so regression-baseline movement is attributable. Verified against source:
+Each is an independent bias generator and should land as its **own commit**, so regression-baseline movement is attributable. Current status, verified against source:
 
-1. **`fitAircraft` discloses nothing.** `src/TraverseAnalysis.js:1972-1993` returns no `priors` key, so `src/AnalyzeTraverse.js:1127` reads `undefined` and the disclosure block never renders — for the model whose priors are strongest. Itemise the four terms (`straight flight`, `level flight`, `cruise speed`, `ground`) at `best.params`, multiply by `errSigma`, return `{total, terms}` in the shape `fitPhysicsModel` already produces. Extend `tests/PhysicsPriorDisclosure.test.js` to assert the itemisation sums to the cost actually minimised.
-2. **Turn-rate pricing is incoherent 3200 : 24 : 1** across `FixedWingModel` (`8r²`), `DroneControlFit` (`0.06r²`), `QuadcopterModel` (`0.0025r²`). New `src/TurnPrior.js` exporting `turnEffortCost(rateStart, rateEnd, {ref = 20})`, lifted verbatim from `QuadcopterModel._turnEffortCost` (duration-invariant, independently judged correctly calibrated). Call from all three sites including the inline cost in `fitAircraft`.
-3. **`knotsForDuration` is dead code** (`src/DroneControlFit.js:118`, zero callers) while `DRONE_CONTROL_KNOTS = 4` is hardcoded (`src/AnalyzeTraverse.js:133`). Its own JSDoc records K=4 giving 4.29° / 1268 m from truth on the 667 s Generated Orbit Test — a cage being read as evidence. Wire it at the construction site.
-4. **`DroneControlFit.extraCostTerms`** (`:309-348`) measures absolute knot-to-knot deltas and never reads `this.seed`, contradicting its own comment at `:154-158`. Measure deviation from the seed. Also make `FixedWingModel.climbSigma` follow the selected envelope the way `_tasTarget/_tasSigma` already do.
+1. **Shipped — `fitAircraft` prior disclosure.** The return value now itemises straight-flight, level-flight, cruise-speed, and ground terms in the same `{total, terms}` schema used by the other physics fits, with regression coverage in `tests/PhysicsPriorDisclosure.test.js`.
+2. **Planned — cross-model turn-rate calibration.** Turn pricing remains incoherent across `FixedWingModel`, `DroneControlFit`, and `QuadcopterModel`. Add a shared duration-invariant `turnEffortCost` and call it from all three sites, including the inline `fitAircraft` cost.
+3. **Shipped — duration-scaled drone knots.** The gallery construction now calls `knotsForDuration(clipDurationSec)` instead of hardcoding K=4, so long clips retain maneuver resolution.
+4. **Partly shipped.** Drone speed/climb change effort is now knot-count-invariant total variation. Seed-relative effort and envelope-relative fixed-wing climb pricing remain planned.
 
 **Test:** a 3 °/s standard-rate turn must cost < 0.05° of fit budget in *every* model. Cross-model: a 20 °/s sustained turn costs the same within 10% across all three.
 

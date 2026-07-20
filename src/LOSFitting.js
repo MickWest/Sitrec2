@@ -55,13 +55,20 @@ function _solveLinearSystem(A, b) {
 // Macrotask yield immune to background-tab timer throttling (see AnalyzeTraverse
 // makeYield). Used to keep the async DE fit responsive without setTimeout.
 const _macroYield = (() => {
+    // Node also exposes MessageChannel, but keeping one at module scope is
+    // reported as an open async handle by test runners. setImmediate provides
+    // the same macrotask boundary there without a persistent resource.
+    const isNode = typeof globalThis !== "undefined" && !!globalThis.process?.versions?.node;
+    if (isNode && typeof globalThis.setImmediate === "function") {
+        return () => new Promise((resolve) => globalThis.setImmediate(resolve));
+    }
     if (typeof MessageChannel === "undefined") {
         return () => new Promise((resolve) => setTimeout(resolve, 0));
     }
     const channel = new MessageChannel();
-    let pending = null;
-    channel.port1.onmessage = () => { const r = pending; pending = null; if (r) r(); };
-    return () => new Promise((resolve) => { pending = resolve; channel.port2.postMessage(0); });
+    const pending = [];
+    channel.port1.onmessage = () => pending.shift()?.();
+    return () => new Promise((resolve) => { pending.push(resolve); channel.port2.postMessage(0); });
 })();
 
 function _pointToRayDistance(P, O, D) {
@@ -1346,11 +1353,13 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
             const s = states[k];
             if (!s) return null;
             const b = fi * 3;
-            totalErr += _angularError(
+            const angularError = _angularError(
                 s[0], s[1], s[2],
                 sensorPos[b], sensorPos[b + 1], sensorPos[b + 2],
                 losDir[b], losDir[b + 1], losDir[b + 2]
             );
+            if (!Number.isFinite(angularError)) return null;
+            totalErr += angularError;
         }
         return totalErr / frames.length;
     }
@@ -1366,8 +1375,10 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     const EARTH_R = 6371000;   // tangent-plane curvature for the ground prior
     function costFn(params) {
         const errRad = _meanErrRad(params, costFrames, costTimes);
-        if (errRad === null) return 1e10;
-        let cost = (errRad * 180 / Math.PI) / errSigma + model.extraCost(params, dataset, T);
+        if (errRad === null || !Number.isFinite(errRad)) return Infinity;
+        const priorCost = model.extraCost(params, dataset, T);
+        if (!Number.isFinite(priorCost)) return Infinity;
+        let cost = (errRad * 180 / Math.PI) / errSigma + priorCost;
         if (groundPrior) {
             const sig = groundPrior.sigma ?? 40;
             const init = model.getInitialState(params, dataset);
@@ -1380,10 +1391,14 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
                     const st = _integrateRK4_inline(model, init, params, [0, T], fitMaxDt);
                     const e = st[st.length - 1];
                     cost += ((hae(e) - groundPrior.endZ) / sig) ** 2;
-                } catch (err) { /* diverged; the 1e10 error branch handles it */ }
+                } catch (err) {
+                    // A failed end-state integration cannot simply omit the
+                    // requested ground prior and leave the candidate cheaper.
+                    return Infinity;
+                }
             }
         }
-        return cost;
+        return Number.isFinite(cost) ? cost : Infinity;
     }
 
     // Inline RK4 to avoid import overhead — same logic as PhysicsModel.js.
@@ -1434,11 +1449,23 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     // or global differential evolution followed by a Nelder-Mead polish.
     const {nelderMead} = require("./NelderMead");
     const maxIter = options.maxIter ?? 5000;
+    const _clock = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+    let _lastYield = _clock();
+    // Called after every objective evaluation in both DE and Nelder-Mead. A
+    // generation or polish iteration can contain dozens of expensive long-clip
+    // integrations, so generation-level cooperation alone still froze Cancel.
+    const optimizerPulse = () => {
+        if (options.shouldCancel && options.shouldCancel()) return false;
+        const now = _clock();
+        if (now - _lastYield <= 60) return true;
+        return _macroYield().then(() => {
+            _lastYield = _clock();
+            return !(options.shouldCancel && options.shouldCancel());
+        });
+    };
     let result;
     if (options.optimizer === "de") {
         const {differentialEvolution, mulberry32} = require("./DifferentialEvolution");
-        const _clock = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
-        let _lastYield = _clock();
         const de = await differentialEvolution(costFn, lo, hi, {
             pop: options.dePop ?? 48,
             gens: options.deGens ?? 120,
@@ -1447,27 +1474,19 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
             // fit (was unseeded Math.random — user-visible parameters flipped
             // between runs on near-degenerate scenes). options.seed overrides.
             rng: mulberry32(options.seed ?? 0xF17DE5),
-            // Yield to the UI periodically so a long fit doesn't freeze the page.
-            // MessageChannel (not setTimeout) so a backgrounded tab — which clamps
-            // setTimeout to ~1/minute — doesn't drag the fit out to many minutes.
-            // options.shouldCancel lets the analysis overlay's Cancel button
-            // actually stop the physics fits (returning false ends the search).
-            onGeneration: async (g) => {
-                // Yield on a wall-clock budget, not a fixed generation count: a
-                // single generation can itself be long on a big clip, which left
-                // Cancel and repaint unresponsive for many seconds. Yielding every
-                // ~60 ms keeps the overlay responsive regardless of generation
-                // speed (TA-26), while shouldCancel is still checked every gen.
-                const now = _clock();
-                if (now - _lastYield > 60) { await _macroYield(); _lastYield = _clock(); }
-                if (options.shouldCancel && options.shouldCancel()) return false;
-                return true;
-            },
+            // Candidate-level cooperation covers the initial population and the
+            // inside of every generation, not just generation boundaries.
+            onEvaluation: optimizerPulse,
         });
         if (de.cancelled || (options.shouldCancel && options.shouldCancel())) {
             throw new Error("cancelled");
         }
-        result = nelderMead(costFn, de.params, {lo, hi, initialScale: scales, maxIter});
+        result = await nelderMead(costFn, de.params, {
+            lo, hi, initialScale: scales, maxIter, onEvaluation: optimizerPulse,
+        });
+        if (result.cancelled || (options.shouldCancel && options.shouldCancel())) {
+            throw new Error("cancelled");
+        }
         if (de.cost < result.cost) result = de; // polish should never regress, but be safe
         result.de = {
             generations: de.generations,
@@ -1475,7 +1494,12 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
             stopReason: de.stopReason,
         };
     } else {
-        result = nelderMead(costFn, x0, {lo, hi, initialScale: scales, maxIter});
+        result = await nelderMead(costFn, x0, {
+            lo, hi, initialScale: scales, maxIter, onEvaluation: optimizerPulse,
+        });
+        if (result.cancelled || (options.shouldCancel && options.shouldCancel())) {
+            throw new Error("cancelled");
+        }
     }
 
     // Generate full trajectory at all frames using best params
@@ -1526,12 +1550,15 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     // pass silently and be published as a tile with NaN positions/metrics while
     // the run reports no failures. Returning null makes the caller record a
     // typed numerical failure instead.
-    if (!Number.isFinite(errDeg)) return null;
+    if (!Number.isFinite(result.cost) || !Number.isFinite(errDeg)) return null;
     for (let i = 0; i < bestParams.length; i++) {
         if (!Number.isFinite(bestParams[i])) return null;
     }
     for (let i = 0; i < positions.length; i++) {
         if (!Number.isFinite(positions[i])) return null;
+    }
+    for (let i = 0; i < residuals.length; i++) {
+        if (!excluded.has(i) && !Number.isFinite(residuals[i])) return null;
     }
 
     // Package solved parameter values with names for display

@@ -1864,7 +1864,8 @@ function aircraftCostErrDeg(dataset, params, costFrames, cumW) {
  *   errSigma             LOS fit weight (default 0.02 deg per unit cost)
  *   rangeMin/rangeMax    search bounds for R0 (default 1..45 NM)
  *   runs, pop, gens      DE effort (defaults 3, 60, 150)
- *   progress(frac)       awaited between runs/generations
+ *   progress(frac)       awaited on a wall-clock budget between evaluations
+ *   shouldCancel()       checked between optimizer evaluations
  *
  * Returns {params: {startDist, heading, tas, turnRate, turnAccel, climb},
  *          cost, errDeg, track, metrics, runs: [per-run summaries]}
@@ -1926,7 +1927,7 @@ export async function fitAircraft(dataset, options = {}) {
                 c += ((h0 + p[5] * T - groundPrior.endZ) / sig) ** 2;
             }
         }
-        return c;
+        return Number.isFinite(c) ? c : Infinity;
     };
 
     // Generic horizontal-speed floor. It is intentionally low enough to keep
@@ -1936,26 +1937,46 @@ export async function fitAircraft(dataset, options = {}) {
     const hi = [rangeMax, 360, 700 * KNOTS_TO_MS, 4, 0.3, 40];
     const runs = [];
     for (let r = 0; r < nRuns; r++) {
+        const clock = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+        let lastYield = clock();
+        let stage = "de";
+        let stageEvaluations = 0;
+        const expectedDEEvaluations = pop * (gens + 1);
+        const expectedPolishEvaluations = 1 + 300 * lo.length * 2;
+        const optimizerPulse = () => {
+            stageEvaluations++;
+            if (options.shouldCancel && options.shouldCancel()) return false;
+            if (!options.progress || clock() - lastYield <= 60) return true;
+            const local = stage === "de"
+                ? 0.9 * Math.min(1, stageEvaluations / expectedDEEvaluations)
+                : 0.9 + 0.1 * Math.min(1, stageEvaluations / expectedPolishEvaluations);
+            return Promise.resolve(options.progress((r + local) / nRuns)).then(() => {
+                lastYield = clock();
+                return !(options.shouldCancel && options.shouldCancel());
+            });
+        };
         const de = await differentialEvolution(cost, lo, hi, {
             pop, gens,
             // Deterministic per-run seed: identical inputs give identical
             // fits (run-to-run variance was user-visible); distinct seeds per
             // run preserve the independent-restart diversity.
             rng: mulberry32(0x51F17A + r * 0x9E3779),
-            // Report/yield only every 8th generation — hundreds of per-generation
-            // setTimeout yields stall badly if the tab is backgrounded (Chrome
-            // clamps hidden-tab timers), and add round-trip overhead even in the
-            // foreground.
-            onGeneration: options.progress
-                ? async (g) => {
-                    if (g % 8 === 0) await options.progress((r + g / gens) / nRuns);
-                    return true;
-                }
-                : undefined,
+            // A long generation contains `pop` full-clip integrations. Yield and
+            // check Cancel between candidates rather than waiting for all of them.
+            onEvaluation: optimizerPulse,
         });
+        if (de.cancelled || (options.shouldCancel && options.shouldCancel())) {
+            throw new Error("cancelled");
+        }
         // polish on the same strided cost (still 2nd-order accurate)
-        const pol = patternSearchPolish(
-            cost, de.params, [200, 0.5, 2, 0.02, 0.002, 0.5], {lo, hi});
+        stage = "polish";
+        stageEvaluations = 0;
+        const pol = await patternSearchPolish(
+            cost, de.params, [200, 0.5, 2, 0.02, 0.002, 0.5],
+            {lo, hi, onEvaluation: optimizerPulse});
+        if (pol.cancelled || (options.shouldCancel && options.shouldCancel())) {
+            throw new Error("cancelled");
+        }
         pol.de = {
             seed: (0x51F17A + r * 0x9E3779) >>> 0,
             generations: de.generations,
@@ -1966,7 +1987,16 @@ export async function fitAircraft(dataset, options = {}) {
     }
     runs.sort((a, b) => a.cost - b.cost);
     const best = runs[0];
+    if (!best || !Number.isFinite(best.cost)
+        || !Array.isArray(best.params) || best.params.some((value) => !Number.isFinite(value))) {
+        throw new Error("fixed-wing optimizer produced no finite solution");
+    }
     const track = simulateAircraft(dataset, best.params);
+    for (let i = 0; i < track.length; i++) {
+        if (!Number.isFinite(track[i])) {
+            throw new Error("fixed-wing optimizer produced a non-finite trajectory");
+        }
+    }
     const metrics = trackMetrics(dataset, track);
     const [R0, h0, V, w0, wd, climb] = best.params;
     // Diagnose coordinates near a search bound.  Heading is excluded because
@@ -2007,6 +2037,10 @@ export async function fitAircraft(dataset, options = {}) {
     for (const k in priorTerms) priorTotal += priorTerms[k];
     const priors = priorTotal > 0 ? {total: priorTotal, terms: priorTerms} : null;
 
+    const errDeg = aircraftAngErrDeg(dataset, best.params, 1);
+    if (!Number.isFinite(errDeg)) {
+        throw new Error("fixed-wing optimizer produced a non-finite residual");
+    }
     return {
         pinned,
         params: {
@@ -2019,7 +2053,7 @@ export async function fitAircraft(dataset, options = {}) {
             priors,
         },
         cost: best.cost,
-        errDeg: aircraftAngErrDeg(dataset, best.params, 1),
+        errDeg,
         track,
         metrics: summarizeMetrics(metrics),
         series: metrics.series,

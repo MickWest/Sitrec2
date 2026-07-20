@@ -149,6 +149,18 @@ export function balloonConsistency(track) {
     // excuse a circling ground track, nor a straight drift a vertical yo-yo.
     return Math.max(0, Math.min(1, Math.min(vDir, hDir)));
 }
+
+// A capped local optimizer may return a useful provisional path, but reaching
+// its iteration budget is not convergence. Keep that path visible while making
+// it ineligible to lead a completed alternative. The normalized simplex spread
+// tells the analyst how unresolved the parameter basin still is.
+export function localFitCompletionWarnings(optimizer) {
+    if (!optimizer || optimizer.stopReason !== "iteration_limit") return [];
+    const spread = Number.isFinite(optimizer.parameterSpread)
+        ? `; simplex still spans ${(optimizer.parameterSpread * 100).toFixed(2)}% of parameter bounds`
+        : "";
+    return [`local refinement reached its ${optimizer.iterations ?? "configured"}-iteration budget before convergence${spread}`];
+}
 const RAY_KEYS = new Set(["constAir", "constAlt", "plausible", "saddle", "groundVehicle"]);
 const GEOMETRIC_KEYS = new Set(["fixedPoint", "ground"]);
 
@@ -349,7 +361,8 @@ export function plausibilityRating(h) {
     }
     if (optimizerWarnings.length) {
         if (result.rank > 1) result = tierForRank(1);
-        reasons.push(`optimizer incomplete: an inward probe improved ${optimizerWarnings.join(", ")}`);
+        result = {...result, label: "Provisional fit"};
+        reasons.push(`optimizer incomplete: ${optimizerWarnings.join("; ")}`);
     }
     if (boundaryLimited) {
         const where = Array.isArray(h?.searchBounds) && h.searchBounds.length
@@ -433,6 +446,11 @@ function makeComparator(crossCategory) {
         // why truth mode gives a genuinely quality-led flat order.
         const ta = truthSortScore(a), tb = truthSortScore(b);
         if (ta !== null || tb !== null) {
+            // Truth separation compares completed solutions. A provisional fit
+            // that stopped before convergence must not lead merely because its
+            // current iterate happens to sit closer to the known answer.
+            const completeness = Number(a.r.incomplete) - Number(b.r.incomplete);
+            if (completeness) return completeness;
             const va = ta ?? Infinity, vb = tb ?? Infinity;
             if (va !== vb) return va - vb;
         }
@@ -631,7 +649,8 @@ export function truthComparisonSummary(tc) {
 
     let text = `Truth track: mean 3D separation ${fmtMeters(tc.sep3D.mean)} ` +
         `(max ${fmtMeters(tc.sep3D.max)}) at ~${fmtMeters(range)} mean truth range, ` +
-        `over ${tc.framesUsed} frames — methods are ordered by this separation.`;
+        `over ${tc.framesUsed} frames — completed methods are ordered by this separation; ` +
+        `incomplete searches follow them.`;
     if (concur.length) text += ` Concurs on ${concur.join("; ")}.`;
     if (partial.length) text += ` Roughly tracks ${partial.join("; ")}.`;
     if (diverge.length) text += ` Diverges on ${diverge.join("; ")}.`;
@@ -645,8 +664,8 @@ export function rankingExplanation(h, rating = plausibilityRating(h)) {
     const inactive = rating.inactivePins?.length
         ? ` Parameters at bounds but not locally load-bearing: ${rating.inactivePins.join(", ")}.`
         : "";
-    // With a truth track selected, the truth comparison leads: it is the
-    // actual rank driver; the broad screen remains as context.
+    // With a truth track selected, completeness gates the truth comparison,
+    // which then drives rank; the broad screen remains as context.
     const truth = truthComparisonSummary(h?.truthComparison);
     const truthText = truth ? `${truth} Broad screen: ` : "";
     return `${truthText}${rating.label}: ${rating.reasons.join("; ")}.${inactive}${score}`;

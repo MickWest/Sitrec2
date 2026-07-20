@@ -469,10 +469,11 @@ cannot determine:
   to vary over the clip) and the drone control-input candidate start from the
   best geometric approximation — the Kalman-smoother path — and refine from
   there, rather than searching their high-dimensional parameter spaces blind.
-  The smoother is used specifically because it is regularised and cannot collapse
-  toward the sensor the way a raw lowest-residual track can (an LOS fit is
-  degenerate along range). The seed carries no truth and no object assumptions,
-  so it only decides where each search starts, not which object wins; the free
+  The smoother is regularised, and its constant-velocity start is given an
+  explicit 500 m range floor because regularisation alone cannot remove an LOS
+  fit's degeneracy along range. The seed carries no truth and no object
+  assumptions, but it can still affect convergence and which local basin is
+  retained; the free
   Quadcopter is deliberately left unseeded as the unconstrained, anomaly-reachable
   fit. Because the drone fit then starts on a good path it needs only local
   refinement (Nelder-Mead from the seed), which is why it now solves in about a
@@ -488,8 +489,10 @@ cannot determine:
   at-infinity), *Geometric Approximations* (the curve/Kalman/least-squares fits),
   and *Known Object* (star, planet, satellite). The gallery is shown in one flat,
   best-first order, but that order is decided by keys which ARE comparable across
-  categories (closeness to a selected truth track; otherwise broad-screen pass,
-  eligibility, completeness, tier, and bound-pin count) *before* it ever reaches
+  categories (with a usable truth track — at least five overlapping frames:
+  completeness, then closeness to that track; otherwise broad-screen pass,
+  eligibility, completeness, tier, and
+  bound-pin count) *before* it ever reaches
   a within-category score that is not — so a trajectory construction cannot
   outrank a balloon or satellite as though those were comparable object
   probabilities, and category order only breaks what would otherwise be an
@@ -514,7 +517,7 @@ cannot determine:
   reorders otherwise equally-well-fitting candidates (it can never lift a balloon
   over a clearly better-fitting drone), so a "looks like a balloon" reading
   surfaces first when the motion supports it without foreclosing a genuine
-  drone or anomalous solution.
+  better-fitting energetic or maneuvering solution.
 - **Family bands**: flat solution valleys are reported as bands ("50–650 kt at
   19–41 NM fit about equally") with a deterministic representative (nearest
   the Target Speed prior), instead of a knife-edge argmin that flips with
@@ -551,8 +554,9 @@ cannot determine:
 **Traverse ▸ Analyze Traverse Methods...** runs the full battery against the current
 LOS data and opens a single flat, best-first hypothesis gallery — each tile
 carrying a coloured category label rather than being buried under a section
-heading, so the answer an analyst actually wants ("looks like a balloon")
-surfaces first when the evidence supports it. The standalone HTML report is
+heading, so the best-screening candidates an analyst wants to inspect (for
+example, "looks like a balloon") surface early when the evidence supports them.
+This is a screening order, not an object verdict. The standalone HTML report is
 built on demand. **Use This** installs the analyzed trajectory as a frozen
 Analysis Snapshot; it does not silently rewrite the speed/range assumptions
 used by the next run.
@@ -585,10 +589,14 @@ options, priors, and stable terrain-data configuration. Choosing **Use exact**
 or orbiting a render camera does not change those inputs and reopens the prior
 gallery immediately. Render-camera terrain LOD (active tiles/revision) is kept
 out of the scientific key; the cached result retains the terrain samples used
-when it was graded. An explicit terrain reload/source change receives a new
-data epoch and invalidates normally. If terrain tiles merely finish loading
+when it was graded. Adjacent terrain LODs that reconstruct the same surface
+within 0.1 m are treated as equivalent; a larger change from an equal- or
+higher-resolution authoritative sample, explicit terrain reload, or source
+change invalidates normally. A lower-resolution fallback never overrides the
+cached authoritative sample. If terrain tiles merely finish loading
 *while* an analysis is running, the run is **not** discarded — it completes using
-the elevation sampled at the start (a late tile is unlikely to be material) and
+the ground samples consumed while building and grading the candidates (a late
+sub-decimetre refinement is unlikely to be material) and
 the gallery shows a small note that terrain finished loading, which you can act
 on by re-running once it settles if you need the ground samples exact. Starting
 an analysis while terrain is still doing its initial load is still blocked, since

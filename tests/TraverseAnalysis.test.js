@@ -142,7 +142,7 @@ describe("TraverseAnalysis core", () => {
         expect(atTrue).toBeLessThan(run(R0 * 0.6));
     });
 
-    test("simulateAircraft round-trips through patternSearchPolish", () => {
+    test("simulateAircraft round-trips through patternSearchPolish", async () => {
         const {dataset} = makeDataset();
         // truth: straight level-ish flight
         const truth = [15000, 65, 100, 0.15, 0, 1.5];
@@ -162,7 +162,8 @@ describe("TraverseAnalysis core", () => {
             return meanAngularError(dataset, t) * 180 / Math.PI;
         };
         const perturbed = [16500, 62, 92, 0.05, 0.01, 0];
-        const {params, cost: c} = patternSearchPolish(cost, perturbed, [200, 0.5, 2, 0.02, 0.002, 0.5]);
+        const {params, cost: c} = await patternSearchPolish(
+            cost, perturbed, [200, 0.5, 2, 0.02, 0.002, 0.5]);
         expect(c).toBeLessThan(0.01);
         expect(Math.abs(params[0] - truth[0]) / truth[0]).toBeLessThan(0.1);
         expect(Math.abs(params[2] - truth[2]) / truth[2]).toBeLessThan(0.1);
@@ -439,6 +440,27 @@ describe("TraverseAnalysis core", () => {
         expect(Object.keys(priors.terms)).toEqual(
             expect.arrayContaining(["cruise-speed target"]));
     }, 60000);
+
+    test("fitAircraft fails closed when every candidate has a non-finite residual", async () => {
+        const {dataset, airSpeed} = makeDataset({n: 24});
+        const poisoned = {...dataset, D: Float64Array.from(dataset.D)};
+        poisoned.D[0] = NaN;
+        await expect(fitAircraft(poisoned, {
+            tasTarget: airSpeed, runs: 1, pop: 6, gens: 2,
+            rangeMin: 2000, rangeMax: 40000,
+        })).rejects.toThrow("no finite solution");
+    });
+
+    test("fitAircraft observes cancellation inside differential evolution", async () => {
+        const {dataset, airSpeed} = makeDataset({n: 24});
+        let checks = 0;
+        await expect(fitAircraft(dataset, {
+            tasTarget: airSpeed, runs: 1, pop: 20, gens: 20,
+            rangeMin: 2000, rangeMax: 40000,
+            shouldCancel: () => ++checks >= 7,
+        })).rejects.toThrow("cancelled");
+        expect(checks).toBeLessThan(20);
+    });
 });
 
 describe("compareTrackToTruth", () => {

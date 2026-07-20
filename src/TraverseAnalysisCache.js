@@ -32,7 +32,16 @@ export function terrainAnalysisConfigScalars(terrain, equatorRadius, polarRadius
  * authoritative: if its effective ground height changed, the cached terrain
  * grading is stale and must be recomputed.
  */
-export function terrainDependencyMismatch(cached, current, toleranceM = 1e-6) {
+// Adjacent terrain LODs routinely interpolate the same source surface a few
+// millimetres or centimetres apart. That numerical/rendering noise is far below
+// every terrain-dependent analysis threshold (40 m underground, 150 m ground
+// contact), and must not turn an immediate rerun into another full fit battery.
+// A decimetre remains small enough to preserve meaningful grading changes while
+// absorbing the observed sub-centimetre/centimetre LOD jitter.
+export const TERRAIN_DEPENDENCY_TOLERANCE_M = 0.1;
+
+export function terrainDependencyMismatch(cached, current,
+    toleranceM = TERRAIN_DEPENDENCY_TOLERANCE_M) {
     if (!Array.isArray(cached) || !Array.isArray(current) || cached.length !== current.length) {
         return {reason: "record-count", cachedCount: cached?.length, currentCount: current?.length};
     }
@@ -54,6 +63,7 @@ export function terrainDependencyMismatch(cached, current, toleranceM = 1e-6) {
     return null;
 }
 
-export function terrainDependencyRecordsMatch(cached, current, toleranceM = 1e-6) {
+export function terrainDependencyRecordsMatch(cached, current,
+    toleranceM = TERRAIN_DEPENDENCY_TOLERANCE_M) {
     return terrainDependencyMismatch(cached, current, toleranceM) === null;
 }

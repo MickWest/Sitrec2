@@ -1,4 +1,5 @@
 import {
+    TERRAIN_DEPENDENCY_TOLERANCE_M,
     terrainAnalysisConfigScalars,
     terrainDependencyRecordsMatch,
 } from "../src/TraverseAnalysisCache";
@@ -71,5 +72,18 @@ describe("Traverse analysis cache", () => {
         improved[1].tileZ = 13;
         improved[1].groundAltitudeM = 34;
         expect(terrainDependencyRecordsMatch(cached, improved)).toBe(false);
+    });
+
+    test("adjacent-LOD interpolation noise does not invalidate an immediate rerun", () => {
+        const cached = [{key: "local-ground", groundAltitudeM: -11.5236044, tileZ: 14}];
+        const subMillimetre = [{key: "local-ground", groundAltitudeM: -11.5239919, tileZ: 15}];
+        const centimetre = [{key: "local-ground", groundAltitudeM: -11.5375562, tileZ: 15}];
+        const material = [{key: "local-ground",
+            groundAltitudeM: cached[0].groundAltitudeM + 2 * TERRAIN_DEPENDENCY_TOLERANCE_M,
+            tileZ: 15}];
+
+        expect(terrainDependencyRecordsMatch(cached, subMillimetre)).toBe(true);
+        expect(terrainDependencyRecordsMatch(cached, centimetre)).toBe(true);
+        expect(terrainDependencyRecordsMatch(cached, material)).toBe(false);
     });
 });

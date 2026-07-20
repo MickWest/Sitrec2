@@ -70,6 +70,7 @@ import {
     completenessBadges,
     formatRawLosResidual,
     groupAndRankHypotheses,
+    localFitCompletionWarnings,
     rankAllHypotheses,
     rankingExplanation,
     tierBadge,
@@ -79,6 +80,7 @@ import {
     terrainDependencyMismatch,
     terrainDependencyRecordsMatch,
 } from "./TraverseAnalysisCache";
+import {solvedHorizontalWindAt} from "./TraverseWind";
 
 const MS_TO_FPM = 60 / 0.3048;      // m/s -> feet per minute
 
@@ -758,21 +760,16 @@ function datasetForSolvedModelWind(dataset, track, solved, modelKind) {
     const h0 = z0 + (x0 * x0 + y0 * y0) / (2 * EARTH_RADIUS_M);
     const nm1 = Math.max(1, dataset.n - 1);   // normalised time runs 0..1 over the clip
     for (let f = 0; f < dataset.n; f++) {
-        let we = solved.windE, wn = solved.windN, mult = 1;
-        if (modelKind === "lantern") {
-            // Reconstruct the SAME wind the model integrated, including its
-            // time-varying part (SkyLanternModel._windAt): base + drift·s +
-            // curve·s². Omitting it made the balloon's air-relative metrics
-            // (airspeed, etc.) subtract the wrong wind — see TA-04.
-            const s = f / nm1;
-            we += (solved.windDriftE || 0) * s + (solved.windCurveE || 0) * s * s;
-            wn += (solved.windDriftN || 0) * s + (solved.windCurveN || 0) * s * s;
-            const x = track[f * 3], y = track[f * 3 + 1], z = track[f * 3 + 2];
-            const h = z + (x * x + y * y) / (2 * EARTH_RADIUS_M);
-            mult = Math.max(0.25, Math.min(3, 1 + (solved.shearPerM || 0) * (h - h0)));
-        }
-        W[f * 3] = we * mult * dt;
-        W[f * 3 + 1] = wn * mult * dt;
+        const x = track[f * 3], y = track[f * 3 + 1], z = track[f * 3 + 2];
+        const altitudeM = z + (x * x + y * y) / (2 * EARTH_RADIUS_M);
+        const wind = solvedHorizontalWindAt(solved, {
+            modelKind,
+            normalizedTime: f / nm1,
+            altitudeM,
+            referenceAltitudeM: h0,
+        });
+        W[f * 3] = wind.u * dt;
+        W[f * 3 + 1] = wind.v * dt;
     }
     return {...dataset, W};
 }
@@ -855,7 +852,7 @@ function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy
         boundPinned: lanPins,
         boundInactive: lanInactive,
         modelClamps: lanClamps,
-        optimizerWarnings: lanUnstable,
+        optimizerWarnings: lanUnstable.map((w) => `inward bound probe improved ${w}`),
         params: {
             range: range0,
             windE: solved.windE, windN: solved.windN, shearPerM: solved.shearPerM,
@@ -1122,7 +1119,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
     }
 
     // 4. Fixed-wing aircraft model — parametric fit with a small residual error.
-    {
+    if (aircraft && aircraft.track) {
         const track = aircraft.track;
         const aircraftMetrics = trackMetrics(dataset, track);
         // Only locally load-bearing bounds demote the model. Coordinates that
@@ -1152,7 +1149,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
             errDeg: aircraft.errDeg,
             boundPinned: fwPins,
             boundInactive: fwInactive,
-            optimizerWarnings: fwUnstable,
+            optimizerWarnings: fwUnstable.map((w) => `inward bound probe improved ${w}`),
             params: {
                 range: aircraft.params.startDist,
                 heading: aircraft.params.heading,
@@ -1253,7 +1250,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
             errDeg: quad.params.errDeg,
             boundPinned: quadPins,
             boundInactive: quadInactive,
-            optimizerWarnings: quadUnstable,
+            optimizerWarnings: quadUnstable.map((w) => `inward bound probe improved ${w}`),
             params: {
                 range: range0,
                 speed: solved.speed,
@@ -1314,17 +1311,17 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
             ? quad.params.errDeg : null;
         const ownErr = droneCtl.params.errDeg;
         const gap = freeErr !== null ? ownErr - freeErr : null;
-        // Convergence + seed-clamp status (TA-09). The drone runs a deliberately
-        // capped local Nelder-Mead (400 iters) from a good seed, so hitting the
-        // iteration limit is expected and bounded — it is DISCLOSED, not flagged.
-        // Seed-clamping, however, means the seed was outside its own bounds and
-        // the fit started somewhere the caller did not intend: that IS flagged as
-        // an optimizer warning so plausibilityRating marks the tile incomplete.
+        // Convergence + seed-clamp status (TA-09). The fast local fit remains
+        // useful when it reaches the 400-iteration budget, but that is a
+        // provisional iterate rather than demonstrated convergence, so retain the
+        // tile and mark it incomplete/ineligible. Seed clamping is independently
+        // incomplete because it means refinement began somewhere unintended.
         const dcOpt = droneCtl.params.optimizer || null;
         const dcClamp = m && typeof m.seedClamping === "function" ? m.seedClamping() : null;
-        const droneWarnings = dcClamp
-            ? [`seed clamped to bounds (${dcClamp.intervals} interval(s), worst ${dcClamp.worstExcessDeg.toFixed(0)}° over) — fit started off the intended seed`]
-            : [];
+        const droneWarnings = localFitCompletionWarnings(dcOpt);
+        if (dcClamp) {
+            droneWarnings.push(`seed clamped to bounds (${dcClamp.intervals} interval(s), worst ${dcClamp.worstExcessDeg.toFixed(0)}° over) — fit started off the intended seed`);
+        }
         list.push({
             key: "droneControl",
             name: "Drone (flown inputs)",
@@ -1366,7 +1363,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
                 + (dcOpt
                     ? `\n\nLocal refinement: ${dcOpt.iterations} Nelder-Mead iteration(s), `
                         + (dcOpt.stopReason === "iteration_limit"
-                            ? "stopped at the iteration budget — a local fit from a good seed is bounded by that seed, so this is expected rather than a failure."
+                            ? "stopped at the iteration budget before convergence — the path is retained as a provisional result and marked optimizer-incomplete."
                             : "converged to tolerance.")
                         + (dcClamp ? " NOTE: the seed was clamped to its bounds, so the fit began off the intended seed — read this tile with caution." : "")
                     : ""),
@@ -1906,15 +1903,20 @@ function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
     if (truth) {
         out += `<strong>Scored against the truth track "${escapeHtml(truth.label)}".</strong> ` +
             `Every method is measured by its mean 3D separation from the reference trajectory ` +
-            `over the analysis window — smaller means it reproduces the truth more closely — and ` +
-            `ordered by that separation. `;
-        const comparable = groups.flatMap((g) => g.items)
-            .filter((item) => item.h.truthComparison?.comparable)
-            .sort((a, b) => a.h.truthComparison.score - b.h.truthComparison.score);
+            `over the analysis window — smaller means it reproduces the truth more closely. Completed ` +
+            `fits are ordered before incomplete searches, then by that separation. `;
+        const comparable = rankAllHypotheses(withTrack)
+            .filter((item) => item.h.truthComparison?.comparable);
         if (comparable.length) {
             const best = comparable[0];
-            out += `Overall, <strong>${escapeHtml(best.h.name)}</strong> comes closest to the truth, ` +
+            out += `The top-ranked completed-first result is <strong>${escapeHtml(best.h.name)}</strong>, ` +
                 `at a mean 3D separation of <strong>${escapeHtml(fmtSepMeters(best.h.truthComparison.score))}</strong>. `;
+            const closest = comparable.slice().sort((a, b) =>
+                a.h.truthComparison.score - b.h.truthComparison.score)[0];
+            if (closest !== best) {
+                out += `A geometrically closer but incomplete result, <strong>${escapeHtml(closest.h.name)}</strong> ` +
+                    `at ${escapeHtml(fmtSepMeters(closest.h.truthComparison.score))}, follows completed fits. `;
+            }
         }
         for (const group of groups) {
             const leader = group.items[0];
@@ -1927,7 +1929,8 @@ function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
                 const secondText = stc?.comparable
                     ? ` (next: <strong>${escapeHtml(second.h.name)}</strong> at ${escapeHtml(fmtSepMeters(stc.score))})`
                     : "";
-                out += `Within ${groupName}, <strong>${escapeHtml(leader.h.name)}</strong> is closest at ` +
+                out += `Within ${groupName}, the top-ranked completed-first result is ` +
+                    `<strong>${escapeHtml(leader.h.name)}</strong> at ` +
                     `<strong>${escapeHtml(fmtSepMeters(tc.score))}</strong>${secondText}. `;
             } else {
                 out += `Within ${groupName}, no candidate could be compared against the truth track. `;
@@ -1935,7 +1938,7 @@ function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
         }
         out += `The per-method breakdowns below report where each candidate agrees with or diverges from ` +
             `the truth (location, altitude, speed, heading). Screening tiers (maneuvering, speed, LOS ` +
-            `residual) are shown only as context; they do not control the order.`;
+            `residual) are shown only as context; fit completeness is the sole gate before truth separation.`;
         return out;
     }
 
@@ -2251,7 +2254,7 @@ export function addAnalyzeTweaks(traverseMenu) {
     _truthTrackCtrl = folder.add(analyzeTweaks, "truthTrack", {[TRUTH_NONE]: TRUTH_NONE}).name("Truth Track");
     if (_truthTrackCtrl.tooltip) {
         _truthTrackCtrl.tooltip("Reference track the analysis results are compared against. When selected, " +
-            "methods are scored and ordered by mean 3D separation from this track, each rank basis reports " +
+            "completed methods are ordered by mean 3D separation from this track, with incomplete fits shown after them; each rank basis reports " +
             "where they agree/diverge (location, altitude, speed, heading), and the track is drawn dashed " +
             "in the 3D graphs. A loaded \"Truth_\" track (e.g. from truth_lat/truth_long CSV columns) is " +
             "selected automatically.");
@@ -2771,13 +2774,20 @@ export async function runTraverseAnalysis() {
             ranges: resolvedRanges,
             progress: phase(0.30, 0.12, "Range profile: slow object..."),
         });
-        const aircraft = await fitAircraft(dataset, {
-            tasTarget: speedTarget,
-            rangeMin: fitRangeMin, rangeMax: fitRangeMax,
-            runs: 3,
-            groundPrior,
-            progress: phase(0.42, 0.34, "Fitting fixed-wing aircraft model..."),
-        });
+        let aircraft = null;
+        try {
+            aircraft = await fitAircraft(dataset, {
+                tasTarget: speedTarget,
+                rangeMin: fitRangeMin, rangeMax: fitRangeMax,
+                runs: 3,
+                groundPrior,
+                shouldCancel: () => overlay.isCancelled(),
+                progress: phase(0.42, 0.34, "Fitting fixed-wing aircraft model..."),
+            });
+        } catch (e) {
+            if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
+            failures.push({method: "Fixed-Wing Aircraft", error: (e && e.message) || "fit failed"});
+        }
 
         // --- Extra interpretation fits for the hypothesis gallery ---------
         await phase(0.76, 0.02, "Fitting constant-altitude path...")(0);
@@ -2889,8 +2899,8 @@ export async function runTraverseAnalysis() {
         // create the missing radial observability. With both, the smoother stays
         // a good basin to refine from; the least-manoeuvring track is only a
         // fallback for the rare case it returns nothing. The seed carries NO truth
-        // and NO object assumptions, so it only decides where the search starts,
-        // not which object wins; the free quadcopter is deliberately NOT seeded
+        // and NO object assumptions, but a local optimizer can still retain a
+        // different basin from a different seed; the free quadcopter is deliberately NOT seeded
         // (the unconstrained, anomaly-reachable envelope fit).
         const KS_SEED_MIN_RANGE = 500;   // metres; matches the sweep floor, below every physical model's own floor
         let seedTrack = null;
@@ -3319,7 +3329,7 @@ export async function runTraverseAnalysis() {
                 minimumAccelerationBoundaryLimited: !!plausible.boundaryLimited,
             },
             optimizers: {
-                aircraftRuns: aircraft.runs.map((r) => ({
+                aircraftRuns: (aircraft?.runs ?? []).map((r) => ({
                     seed: r.de?.seed,
                     deGenerations: r.de?.generations,
                     deEvaluations: r.de?.evaluations,
@@ -3373,10 +3383,15 @@ export async function runTraverseAnalysis() {
     }
 
     const b = results.sweep.best;
-    const a = results.aircraft.params;
-    console.log(`Traverse analysis: best const-air ${nm1(b.startDist)} NM @ ${kt1(b.speed)} kt ` +
-        `(score ${b.score.toFixed(2)}); aircraft fit ${nm1(a.startDist)} NM, hdg ${a.heading.toFixed(0)}, ` +
-        `horizontal airspeed ${kt1(a.tas)} kt, err ${results.aircraft.errDeg.toFixed(3)} deg`);
+    if (results.aircraft) {
+        const a = results.aircraft.params;
+        console.log(`Traverse analysis: best const-air ${nm1(b.startDist)} NM @ ${kt1(b.speed)} kt ` +
+            `(score ${b.score.toFixed(2)}); aircraft fit ${nm1(a.startDist)} NM, hdg ${a.heading.toFixed(0)}, ` +
+            `horizontal airspeed ${kt1(a.tas)} kt, err ${results.aircraft.errDeg.toFixed(3)} deg`);
+    } else {
+        console.log(`Traverse analysis: best const-air ${nm1(b.startDist)} NM @ ${kt1(b.speed)} kt ` +
+            `(score ${b.score.toFixed(2)}); fixed-wing fit unavailable`);
+    }
 
     // The primary result is now a full-screen interactive gallery of candidate
     // interpretations (each with a "Use This" apply button); the full HTML
@@ -3968,6 +3983,24 @@ function detailProse(h, r, ss) {
                 ? `${windKt.toFixed(0)} kt from ${windFrom.toFixed(0)}°` : "?";
             const shearTxt = p.shearPerM !== undefined
                 ? `${(p.shearPerM * 100 >= 0 ? "+" : "")}${(p.shearPerM * 100).toFixed(2)}%/m` : "?";
+            const startAlt = h.track && h.track.length >= 3
+                ? h.track[2] + (h.track[0] * h.track[0] + h.track[1] * h.track[1])
+                    / (2 * EARTH_RADIUS_M)
+                : 0;
+            const windAtTimeTxt = (s) => {
+                const w = solvedHorizontalWindAt(p, {normalizedTime: s,
+                    altitudeM: startAlt, referenceAltitudeM: startAlt});
+                if (!w) return "?";
+                const kt = toKt(Math.hypot(w.u, w.v));
+                const from = ((Math.atan2(-w.u, -w.v) * 180 / Math.PI + 360) % 360);
+                return `${kt.toFixed(0)} kt from ${from.toFixed(0)}°`;
+            };
+            const temporalWind = [p.windDriftE, p.windDriftN, p.windCurveE, p.windCurveN]
+                .some((v) => Number.isFinite(v) && Math.abs(v) > 1e-6)
+                ? ` Across the clip at the starting altitude, that fitted wind changes from `
+                    + `${windAtTimeTxt(0)} to ${windAtTimeTxt(0.5)} at midpoint and `
+                    + `${windAtTimeTxt(1)} at the end.`
+                : "";
             // which life-cycle stages does the clip cover?
             const T = p.clipT ?? 0;
             const phaseTxt = p.tBurn === undefined ? "" :
@@ -3986,9 +4019,9 @@ function detailProse(h, r, ss) {
                 derived: `Wind-drift kinematics: the lantern's horizontal velocity IS the wind at its ` +
                     `altitude (solved ${windTxt}, shear ${shearTxt}), and its vertical motion follows the ` +
                     `lantern life cycle (rise while lit, buoyancy decay after flame-out, terminal sink), ` +
-                    `fit to the sightlines by differential evolution.${phaseTxt}`,
+                    `fit to the sightlines by differential evolution.${temporalWind}${phaseTxt}`,
                 constraint: screenContext("This bounded drift parameterization") +
-                    ` The fitted priors limit initial wind components to ±20 m/s, clamp altitude shear to ` +
+                    ` The hard model/search bounds limit initial wind components to ±20 m/s, clamp altitude shear to ` +
                     `0.25–3×, and limit vertical rates to 4 m/s; this test does not exclude balloon models ` +
                     `outside those assumptions.` + inactiveBoundContext() + floorContext(err, p.errFloor),
             };
@@ -4255,12 +4288,9 @@ function windProfileComparisonHTML(h) {
     if (!Number.isFinite(p.windE) || !Number.isFinite(p.windN) || !h.track) return "";
     const t = h.track;
     const h0 = t[2] + (t[0] * t[0] + t[1] * t[1]) / (2 * EARTH_RADIUS_M);
-    const shear = Number.isFinite(p.shearPerM) ? p.shearPerM : 0;
-    const inferredAt = (altM) => {
-        let m = 1 + shear * (altM - h0);
-        if (m < 0.25) m = 0.25; else if (m > 3) m = 3;
-        return {u: p.windE * m, v: p.windN * m};
-    };
+    const inferredAt = (altM, normalizedTime) => solvedHorizontalWindAt(p, {
+        modelKind: "lantern", normalizedTime, altitudeM: altM, referenceAltitudeM: h0,
+    });
     const wf = NodeMan.get("windField", false);
     const canMeasure = wf && wf.source && wf.source !== "manual"
         && typeof wf.sampleWindAtAltitude === "function";
@@ -4277,19 +4307,25 @@ function windProfileComparisonHTML(h) {
     for (let i = 0; i <= 6; i++) {
         const altM = loM + (hiM - loM) * i / 6;
         const meas = canMeasure ? wf.sampleWindAtAltitude(Sit.lat, Sit.lon, altM) : null;
-        rows.push(`<tr><td>${(altM / 304.8).toFixed(1)}</td><td>${fmt(inferredAt(altM))}</td>`
+        rows.push(`<tr><td>${(altM / 304.8).toFixed(1)}</td>`
+            + `<td>${fmt(inferredAt(altM, 0))}</td>`
+            + `<td>${fmt(inferredAt(altM, 0.5))}</td>`
+            + `<td>${fmt(inferredAt(altM, 1))}</td>`
             + `<td>${fmt(meas)}</td></tr>`);
     }
-    return `<h4 class="tg-d-h">Inferred wind profile${canMeasure ? " vs measured" : ""}</h4>`
-        + `<table class="tg-wind"><thead><tr><th>Alt (kft)</th><th>Inferred (fit)</th>`
-        + `<th>Measured</th></tr></thead><tbody>${rows.join("")}</tbody></table>`
+    return `<h4 class="tg-d-h">Inferred wind profile over the clip${canMeasure ? " vs measured" : ""}</h4>`
+        + `<table class="tg-wind"><thead><tr><th>Alt (kft)</th><th>Fit start</th>`
+        + `<th>Fit midpoint</th><th>Fit end</th><th>Measured</th></tr></thead>`
+        + `<tbody>${rows.join("")}</tbody></table>`
         + `<p class="tg-d-p" style="font-size:12px;margin-top:6px">`
         + (canMeasure
-            ? "A plausible balloon should need winds close to those measured nearby; large "
-            + "disagreement weakens the balloon interpretation. Measured winds are themselves only "
-            + "loosely representative (a sonde can be 200+ mi and 12 h away)."
-            : "The wind this free fit inferred. Load a sounding/GFS wind field to compare it against "
-            + "measured winds aloft.")
+            ? "The three fitted columns include the solved quadratic time variation and altitude shear. "
+                + "A plausible balloon should need winds close to those measured nearby; large "
+                + "disagreement weakens the balloon interpretation. Measured winds are themselves only "
+                + "loosely representative (a sonde can be 200+ mi and 12 h away)."
+            : "The start, midpoint and end winds this free fit inferred, including altitude shear. "
+                + "Load a sounding/GFS wind field to compare them against "
+                + "measured winds aloft.")
         + "</p>";
 }
 
@@ -4760,7 +4796,7 @@ function showResultGallery(results) {
             "background:#3a1e2e; color:#f4a6cd; border:1px solid #7a3b5c; font-size:13px;";
         truthNote.textContent = results.truth.usable
             ? `Truth track "${results.truth.label}" selected — comparable candidates are `
-              + "GLOBALLY ordered by mean 3D separation from it (across categories, not within), and each rank basis "
+              + "GLOBALLY ordered with complete fits first, then by mean 3D separation from it (across categories, not within), and each rank basis "
               + "reports where they agree or diverge (location, altitude, speed, heading). The truth track is the dashed "
               + "pink line in the 3D graphs."
             : `Truth track "${results.truth.label}" is selected but overlaps only `
@@ -4822,8 +4858,8 @@ function showResultGallery(results) {
         note.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
             "background:#2a2b22; color:#d7d08a; border:1px solid #55572f; font-size:13px;";
         note.textContent = "ℹ︎ Elevation data finished loading while this analysis ran. Results use the "
-            + "elevation sampled at the start and are unlikely to be materially affected; re-run once "
-            + "terrain has settled if you need the ground samples exact.";
+            + "ground samples consumed during fitting and grading. A rerun recomputes only if an equal- or "
+            + "higher-resolution authoritative sample changes materially (more than 0.1 m).";
         panel.appendChild(note);
     }
 
@@ -6171,15 +6207,18 @@ function buildReportHypothesisDetails(dataset, rankedHyps, ss) {
     }).join("");
 }
 
-// Truth-mode executive summary: every method ranked by mean 3D separation
-// from the truth track, with the per-aspect deltas that the rank bases cite.
+// Truth-mode executive summary: completed methods first, then ranked by mean 3D
+// separation from the truth track, with the per-aspect deltas the rank bases cite.
 // Cross-group ordering is deliberate here — all methods are measured against
 // the same external reference with the same metric.
 function buildTruthSummaryHTML(rankedHyps, truth) {
-    const comparable = rankedHyps
-        .filter((item) => item.h.truthComparison?.comparable)
-        .sort((a, b) => a.h.truthComparison.score - b.h.truthComparison.score);
-    const notComparable = rankedHyps.filter((item) => item.h.truthComparison
+    // Report cards stay grouped for explanation, but this executive table is a
+    // genuinely cross-group comparison. Reapply the flat shared comparator so
+    // its completeness-before-truth order is preserved across category edges.
+    const globallyRanked = rankAllHypotheses(rankedHyps.map((item) => item.h));
+    const comparable = globallyRanked
+        .filter((item) => item.h.truthComparison?.comparable);
+    const notComparable = globallyRanked.filter((item) => item.h.truthComparison
         && !item.h.truthComparison.comparable);
 
     const rows = comparable.map(({h, category}, i) => {
@@ -6217,8 +6256,9 @@ function buildTruthSummaryHTML(rankedHyps, truth) {
         <tbody>${rows}</tbody>
     </table>
     </div>
-    <p class="sub">All methods measured against the same reference over the analysis window, ordered by mean 3D
-    separation (this cross-group ordering is valid because the metric is external to every method's own
+    <p class="sub">All methods measured against the same reference over the analysis window. Completed fits are
+    ordered first by mean 3D separation, followed by incomplete searches (the cross-group truth metric is
+    external to every method's own
     assumptions). Alt Δ arrows mark a consistent bias above (↑) or below (↓) the truth. Speed and heading
     deltas use ~0.5 s smoothed motion; heading is only compared while both tracks are moving.</p>
     ${notCompHTML}`;
@@ -6635,9 +6675,9 @@ ${provenance?.rangeUnobservable ? `<div class="warning" style="background:#4a151
     `and each method's range reflects its own priors, not measurement.</div>` : ""}
 
 ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-color:#7a3b5c">` +
-    `<strong>Truth track "${escapeHtml(truth.label)}" selected.</strong> Every method is scored and ` +
-    `ordered by its mean 3D separation from this reference track; the usual screening metrics are ` +
-    `shown as context only.</div>` : ""}
+    `<strong>Truth track "${escapeHtml(truth.label)}" selected.</strong> Every method is scored against ` +
+    `this reference. Within each report comparison group, complete fits are shown first and completed methods ` +
+    `are then ordered by mean 3D separation; the usual screening metrics are context only.</div>` : ""}
 
 <section class="summary">
     <h2>Executive summary</h2>
@@ -6690,8 +6730,8 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
         <tbody>${compRows}</tbody>
     </table>
     </div>
-    ${truth ? `<p class="sub">Grouped first, then ordered by mean 3D separation from the truth track
-    ("Truth Δ" — the quantity that controls order); the screening tier is context only. Rows passing the
+    ${truth ? `<p class="sub">Grouped first, then complete fits before incomplete searches, then by mean 3D separation from the truth track
+    ("Truth Δ"); the screening tier is context only. Rows passing the
     broad screen are highlighted. Alt and air speed are means; max accel is kinematic. The candidate cards
     above give each LOS residual against the generic reference.</p>` : `<p class="sub">Grouped first, then ordered by completeness, broad screening tier, and within-group score.
     No order across groups is implied. Rows passing the broad screen are highlighted. Alt and air speed are means;

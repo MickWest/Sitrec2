@@ -99,7 +99,7 @@ async function fitQuad(dataset, {stride = 5, pop = 48, gens = 120} = {}) {
     };
 
     const de = await differentialEvolution(costFn, lo, hi, {pop, gens, seeds: [x0]});
-    let best = nelderMead(costFn, de.params, {lo, hi, initialScale: scales, maxIter: 3000});
+    let best = await nelderMead(costFn, de.params, {lo, hi, initialScale: scales, maxIter: 3000});
     if (de.cost < best.cost) best = de;
 
     const allTimes = Array.from(times);

@@ -1,7 +1,7 @@
 // Nelder-Mead simplex optimizer
 // Minimizes costFn(params) over a parameter vector with optional box bounds.
 
-export function nelderMead(costFn, x0, options = {}) {
+export async function nelderMead(costFn, x0, options = {}) {
     const n = x0.length;
     const maxIter = options.maxIter ?? 2000;
     const tol = options.tol ?? 1e-8;
@@ -42,7 +42,28 @@ export function nelderMead(costFn, x0, options = {}) {
         simplex.push(clamp(v));
     }
 
-    const costs = simplex.map(v => costFn(v));
+    let evaluations = 0;
+    let cancelled = false;
+    const evaluate = (value) => {
+        evaluations++;
+        const cost = costFn(value);
+        return Number.isFinite(cost) ? cost : Infinity;
+    };
+    const afterEvaluation = async (payload) => {
+        if (!options.onEvaluation) return true;
+        const signal = options.onEvaluation(payload);
+        return signal && typeof signal.then === "function"
+            ? (await signal) !== false : signal !== false;
+    };
+    const costs = new Array(simplex.length).fill(Infinity);
+    for (let i = 0; i < simplex.length; i++) {
+        costs[i] = evaluate(simplex[i]);
+        if (!(await afterEvaluation({phase: "initial", iteration: -1,
+            vertex: i, evaluations}))) {
+            cancelled = true;
+            break;
+        }
+    }
 
     function centroid(exclude) {
         const c = new Array(n).fill(0);
@@ -69,7 +90,8 @@ export function nelderMead(costFn, x0, options = {}) {
 
     let iterations = 0;
     let stopReason = "iteration_limit";
-    for (let iter = 0; iter < maxIter; iter++) {
+    outer:
+    for (let iter = 0; iter < maxIter && !cancelled; iter++) {
         iterations = iter + 1;
         // Sort simplex by cost
         const indices = Array.from({length: n + 1}, (_, i) => i);
@@ -105,12 +127,20 @@ export function nelderMead(costFn, x0, options = {}) {
 
         // Reflection
         const xr = reflect(c, worst, alpha);
-        const fr = costFn(xr);
+        const fr = evaluate(xr);
+        if (!(await afterEvaluation({phase: "reflection", iteration: iter, evaluations}))) {
+            cancelled = true;
+            break;
+        }
 
         if (fr < costs[0]) {
             // Try expansion
             const xe = reflect(c, worst, gamma);
-            const fe = costFn(xe);
+            const fe = evaluate(xe);
+            if (!(await afterEvaluation({phase: "expansion", iteration: iter, evaluations}))) {
+                cancelled = true;
+                break;
+            }
             if (fe < fr) {
                 simplex[n] = xe; costs[n] = fe;
             } else {
@@ -125,7 +155,11 @@ export function nelderMead(costFn, x0, options = {}) {
             const xc = inside
                 ? reflect(c, worst, -rho)   // inside contraction
                 : reflect(c, worst, rho);    // outside contraction (toward reflected)
-            const fc = costFn(xc);
+            const fc = evaluate(xc);
+            if (!(await afterEvaluation({phase: "contraction", iteration: iter, evaluations}))) {
+                cancelled = true;
+                break;
+            }
 
             if (fc < (inside ? costs[n] : fr)) {
                 simplex[n] = xc; costs[n] = fc;
@@ -136,7 +170,12 @@ export function nelderMead(costFn, x0, options = {}) {
                         simplex[i][j] = simplex[0][j] + sigma * (simplex[i][j] - simplex[0][j]);
                     }
                     simplex[i] = clamp(simplex[i]);
-                    costs[i] = costFn(simplex[i]);
+                    costs[i] = evaluate(simplex[i]);
+                    if (!(await afterEvaluation({phase: "shrink", iteration: iter,
+                        vertex: i, evaluations}))) {
+                        cancelled = true;
+                        break outer;
+                    }
                 }
             }
         }
@@ -157,5 +196,9 @@ export function nelderMead(costFn, x0, options = {}) {
                 Math.abs(simplex[i][j] - simplex[bestIdx][j]) / scale);
         }
     }
-    return {params: simplex[bestIdx], cost: costs[bestIdx], iterations, stopReason, parameterSpread};
+    return {
+        params: simplex[bestIdx], cost: costs[bestIdx], iterations,
+        stopReason: cancelled ? "cancelled" : stopReason,
+        parameterSpread, evaluations, cancelled,
+    };
 }

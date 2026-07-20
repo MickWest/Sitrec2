@@ -38,6 +38,8 @@ export function mulberry32(seed) {
  *   seeds      - array of parameter vectors to seed into the initial population
  *   rng        - random source (default Math.random); pass mulberry32(seed)
  *                for reproducible fits
+ *   onEvaluation - optional callback after each objective evaluation; returning
+ *                false cancels promptly, and a returned promise is awaited
  *   onGeneration - optional callback (gen, bestCost) called after each generation;
  *                  if it returns a promise it is awaited (lets the UI breathe),
  *                  and if it resolves/returns false the search stops early.
@@ -62,11 +64,38 @@ export async function differentialEvolution(costFn, lo, hi, options = {}) {
     for (let i = 0; i < seeds.length && i < pop; i++) {
         P[i] = clampVec(seeds[i].slice(), lo, hi);
     }
-    const costs = P.map(costFn);
+    const costs = new Array(pop).fill(Infinity);
 
     let generations = 0;
     let cancelled = false;
+    let evaluations = 0;
+    const evaluate = (x) => {
+        evaluations++;
+        const value = costFn(x);
+        return Number.isFinite(value) ? value : Infinity;
+    };
+    const afterEvaluation = async (payload) => {
+        if (!options.onEvaluation) return true;
+        const signal = options.onEvaluation(payload);
+        return signal && typeof signal.then === "function"
+            ? (await signal) !== false : signal !== false;
+    };
+
+    // Initial-population evaluation used to be one uninterrupted P.map(costFn),
+    // which could block longer than an entire later generation. Cooperate after
+    // every candidate here too so repaint/cancel works from the first second.
+    for (let i = 0; i < pop; i++) {
+        costs[i] = evaluate(P[i]);
+        if (!(await afterEvaluation({phase: "initial", generation: -1,
+            individual: i, evaluations}))) {
+            cancelled = true;
+            break;
+        }
+    }
+
+    outer:
     for (let g = 0; g < gens; g++) {
+        if (cancelled) break;
         for (let i = 0; i < pop; i++) {
             let a, b, c;
             do { a = (rng() * pop) | 0; } while (a === i);
@@ -84,13 +113,20 @@ export async function differentialEvolution(costFn, lo, hi, options = {}) {
                     trial[d] = v;
                 }
             }
-            const tc = costFn(trial);
+            const tc = evaluate(trial);
             if (tc <= costs[i]) { P[i] = trial; costs[i] = tc; }
+            if (!(await afterEvaluation({phase: "generation", generation: g,
+                individual: i, evaluations}))) {
+                cancelled = true;
+                break outer;
+            }
         }
         if (options.onGeneration) {
             let bi = 0;
             for (let i = 1; i < pop; i++) if (costs[i] < costs[bi]) bi = i;
-            const keepGoing = await options.onGeneration(g, costs[bi]);
+            const signal = options.onGeneration(g, costs[bi]);
+            const keepGoing = signal && typeof signal.then === "function"
+                ? await signal : signal;
             generations = g + 1;
             if (keepGoing === false) { cancelled = true; break; }
         } else {
@@ -104,7 +140,7 @@ export async function differentialEvolution(costFn, lo, hi, options = {}) {
         params: P[bi],
         cost: costs[bi],
         generations,
-        evaluations: pop * (generations + 1),
+        evaluations,
         cancelled,
         stopReason: cancelled ? "cancelled" : "generation_limit",
     };
@@ -121,17 +157,34 @@ export async function differentialEvolution(costFn, lo, hi, options = {}) {
  * @param {object} options - {maxIter (default 300), minStep (default 1e-4), lo, hi}
  * @returns {{params: number[], cost: number}}
  */
-export function patternSearchPolish(costFn, x0, scales, options = {}) {
+export async function patternSearchPolish(costFn, x0, scales, options = {}) {
     const maxIter = options.maxIter ?? 300;
     const minStep = options.minStep ?? 1e-4;
     const {lo, hi} = options;
     let x = x0.slice();
     if (lo && hi) x = clampVec(x, lo, hi);
-    let c = costFn(x);
+    let evaluations = 0;
+    let cancelled = false;
+    const evaluate = (value) => {
+        evaluations++;
+        const cost = costFn(value);
+        return Number.isFinite(cost) ? cost : Infinity;
+    };
+    const afterEvaluation = async (payload) => {
+        if (!options.onEvaluation) return true;
+        const signal = options.onEvaluation(payload);
+        return signal && typeof signal.then === "function"
+            ? (await signal) !== false : signal !== false;
+    };
+    let c = evaluate(x);
+    if (!(await afterEvaluation({phase: "initial", iteration: -1, evaluations}))) {
+        cancelled = true;
+    }
     let step = 1.0;
     let iterations = 0;
     let stopReason = "iteration_limit";
-    for (let it = 0; it < maxIter; it++) {
+    outer:
+    for (let it = 0; it < maxIter && !cancelled; it++) {
         iterations = it + 1;
         let improved = false;
         for (let d = 0; d < x.length; d++) {
@@ -140,8 +193,13 @@ export function patternSearchPolish(costFn, x0, scales, options = {}) {
                 y[d] += scales[d] * s;
                 if (lo && y[d] < lo[d]) continue;
                 if (hi && y[d] > hi[d]) continue;
-                const cy = costFn(y);
+                const cy = evaluate(y);
                 if (cy < c) { x = y; c = cy; improved = true; }
+                if (!(await afterEvaluation({phase: "iteration", iteration: it,
+                    dimension: d, evaluations}))) {
+                    cancelled = true;
+                    break outer;
+                }
             }
         }
         if (!improved) {
@@ -149,7 +207,9 @@ export function patternSearchPolish(costFn, x0, scales, options = {}) {
             if (step < minStep) { stopReason = "step_tolerance"; break; }
         }
     }
-    return {params: x, cost: c, iterations, stopReason};
+    return {params: x, cost: c, iterations,
+        stopReason: cancelled ? "cancelled" : stopReason,
+        evaluations, cancelled};
 }
 
 function clampVec(x, lo, hi) {

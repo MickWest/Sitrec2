@@ -10,6 +10,7 @@
 
 import {fitPhysicsModel} from "../src/LOSFitting";
 import {SkyLanternModel} from "../src/SkyLanternModel";
+import {PhysicsModel} from "../src/PhysicsModel";
 
 // Synthetic lantern drifting through constant wind, watched by a turning
 // sensor (same construction as the model suites, smaller for speed).
@@ -59,4 +60,44 @@ describe("fitPhysicsModel determinism (production seeded path)", () => {
         expect(b.params.errDeg).toBe(a.params.errDeg);
         expect(Array.from(b.positions)).toEqual(Array.from(a.positions));
     }, 60000);
+
+    test("a non-finite composite cost fails closed even when the track is finite", async () => {
+        class NaNPriorModel extends PhysicsModel {
+            maxDt = 1;
+            getName() { return "NaN prior test"; }
+            getParameterDefs() {
+                return [{name: "range", min: 100, max: 2000, default: 1000, scale: 100}];
+            }
+            getInitialState(params, dataset) {
+                return [
+                    dataset.sensorPos[0] + params[0] * dataset.losDir[0],
+                    dataset.sensorPos[1] + params[0] * dataset.losDir[1],
+                    dataset.sensorPos[2] + params[0] * dataset.losDir[2],
+                    0, 0, 0,
+                ];
+            }
+            extraCost() { return NaN; }
+        }
+
+        const dataset = {
+            sensorPos: new Float64Array([0, 0, 0, 0, 0, 0]),
+            losDir: new Float64Array([1, 0, 0, 1, 0, 0]),
+            times: new Float64Array([0, 1]),
+            count: 2,
+        };
+        const result = await fitPhysicsModel(dataset, new Set(), new NaNPriorModel(), {
+            optimizer: "nm", maxIter: 4,
+        });
+        expect(result).toBeNull();
+    });
+
+    test("the production Nelder-Mead path observes cancellation during refinement", async () => {
+        const dataset = makeScenario({n: 60});
+        let checks = 0;
+        await expect(fitPhysicsModel(dataset, new Set(), new SkyLanternModel(), {
+            optimizer: "nm", maxIter: 1000,
+            shouldCancel: () => ++checks >= 5,
+        })).rejects.toThrow("cancelled");
+        expect(checks).toBeLessThan(20);
+    });
 });
