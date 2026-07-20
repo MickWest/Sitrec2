@@ -272,6 +272,10 @@ export const analyzeTweaks = {
 
 // "no truth track selected" sentinel for the Truth Track dropdown
 const TRUTH_NONE = "-";
+// Minimum overlapping frames for a selected truth track to drive ordering
+// (compareTrackToTruth needs >= 5). Below this, truth mode is not "usable" and
+// the banners must not claim truth ordering — see TA-19.
+const MIN_TRUTH_OVERLAP_FRAMES = 5;
 
 // Ground-contact constraint modes for the traverse analysis. In every mode,
 // any candidate whose trajectory passes underground (below the terrain) is
@@ -2148,10 +2152,19 @@ function buildTruthReference(dataset, originLat, originLon) {
         valid[f] = (tMs >= t0 && tMs <= t1) ? 1 : 0;
         if (valid[f]) anyValid = true;
     }
-    if (!anyValid) {
-        console.warn("Traverse analysis: truth track has no time overlap with the analysis window");
+    let validCount = 0;
+    for (let f = 0; f < n; f++) if (valid[f]) validCount++;
+    // Truth mode is only "usable" with enough overlapping frames to compare
+    // (compareTrackToTruth itself needs >= 5). Below that, the banners must NOT
+    // claim truth-based ordering — the comparator would silently fall back to
+    // screening order (TA-19). The object is still returned so the UI can say a
+    // truth track was selected but does not overlap this A-B window.
+    const usable = validCount >= MIN_TRUTH_OVERLAP_FRAMES;
+    if (!usable) {
+        console.warn(`Traverse analysis: truth track overlaps only ${validCount} frame(s) of the `
+            + "analysis window — truth ordering disabled for this run");
     }
-    return {track, valid, label: truthSel.label, trackID: truthSel.trackID};
+    return {track, valid, validCount, usable, label: truthSel.label, trackID: truthSel.trackID};
 }
 
 /**
@@ -3095,8 +3108,12 @@ export async function runTraverseAnalysis() {
         // into the rank-basis text. Direction-only (at infinity) hypotheses
         // have arbitrary helper-track ranges, so 3D separation is meaningless
         // for them — mark them not-comparable instead.
-        const truth = buildTruthReference(dataset, originLat, originLon);
-        if (truth) {
+        let truth = buildTruthReference(dataset, originLat, originLon);
+        // A truth track with too little overlap must NOT drive ordering — leave
+        // its comparisons unattached so the comparator uses screening order, but
+        // keep the object so the gallery/report can say it was selected and why
+        // it is not usable (TA-19).
+        if (truth && truth.usable) {
             // The truth track's OWN LOS residual: what a perfect answer scores
             // against these rays. This is the real achievable floor, MEASURED
             // rather than inferred — and it is nothing like the "generic
@@ -4685,10 +4702,14 @@ function showResultGallery(results) {
         const truthNote = document.createElement("div");
         truthNote.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
             "background:#3a1e2e; color:#f4a6cd; border:1px solid #7a3b5c; font-size:13px;";
-        truthNote.textContent = `Truth track "${results.truth.label}" selected — comparable candidates are ` +
-            "GLOBALLY ordered by mean 3D separation from it (across categories, not within), and each rank basis " +
-            "reports where they agree or diverge (location, altitude, speed, heading). The truth track is the dashed " +
-            "pink line in the 3D graphs.";
+        truthNote.textContent = results.truth.usable
+            ? `Truth track "${results.truth.label}" selected — comparable candidates are `
+              + "GLOBALLY ordered by mean 3D separation from it (across categories, not within), and each rank basis "
+              + "reports where they agree or diverge (location, altitude, speed, heading). The truth track is the dashed "
+              + "pink line in the 3D graphs."
+            : `Truth track "${results.truth.label}" is selected but overlaps only `
+              + `${results.truth.validCount || 0} frame(s) of this A-B window, so truth ordering is OFF — candidates `
+              + "are shown in the ordinary screening order. Adjust the A-B range or pick a truth track that covers it.";
         panel.appendChild(truthNote);
     }
 
@@ -6151,8 +6172,14 @@ function buildReportHTML(ctx) {
         bestTrack, bestMetrics, slowBestRow, slowTrack,
         sweepBestMetrics = ctx.bestMetrics, constAirPick = null,
         closeLoM, closeHiM, hypotheses, provenance, failures = [], manifest = {},
-        truth = null, terrainChangedDuringRun = false,
+        truth: _truth = null, terrainChangedDuringRun = false,
     } = ctx;
+    // A truth track with too little overlap does not drive ordering (TA-19):
+    // treat it as no-truth for the whole report so nothing claims truth-based
+    // order, and surface a note that it was selected but unusable.
+    const truthUnusableLabel = (_truth && !_truth.usable) ? _truth.label : null;
+    const truthUnusableFrames = (_truth && !_truth.usable) ? (_truth.validCount || 0) : 0;
+    const truth = (_truth && _truth.usable) ? _truth : null;
     const {n, fps, D} = dataset;
     const globalFrame0 = dataset.frame0 ?? 0;
     const globalFrame1 = dataset.frame1 ?? (globalFrame0 + n - 1);
@@ -6563,6 +6590,9 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
     ${terrainChangedDuringRun ? `<p><strong>Terrain note:</strong> elevation data finished loading while this
         analysis ran. Results use the elevation sampled during the run and are unlikely to be materially affected;
         re-run once terrain has settled if you need the ground samples exact.</p>` : ""}
+    ${truthUnusableLabel ? `<p><strong>Truth note:</strong> the selected truth track
+        "${escapeHtml(truthUnusableLabel)}" overlaps only ${truthUnusableFrames} frame(s) of this A-B window, so
+        truth-based ordering is off and candidates are shown in the ordinary screening order.</p>` : ""}
 </section>
 
 <section>
