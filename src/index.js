@@ -1435,6 +1435,14 @@ async function newSitch(situation, customSetup = false ) {
     try {
     setSitchEstablished(false);
 
+    // Invalidate any in-flight load's generation NOW, before this transition's
+    // awaits (parsing/terrain/settle below) — disposeEverything() bumps it again,
+    // but that is seconds away, and in that window a superseded load could still
+    // pass its stale-load guards, complete, and call setSitchEstablished(true)
+    // over the false we just set. Double-bumping is harmless (the counter is
+    // monotonic; guards only test inequality).
+    Globals.loadGeneration++;
+
     // for the built-in sitches, we change the url, but we don't reload the page
     // that way the user can share the url direct to this sitch
     let url;
@@ -2890,6 +2898,20 @@ function disposeEverything() {
 
     // ensure the next sitch has a good default value (false) for Globals.dynamicSubdivision
     Globals.dynamicSubdivision = false;
+
+    // A custom-sitch deserialize sets dontAutoZoom=true for its file-load phase and
+    // deserializing=true for its whole span, clearing both when it completes — but
+    // its continuations deliberately abort WITHOUT touching either flag when their
+    // load was superseded (stale-load guards in CustomManagerSerialize). Reset both
+    // here: an in-flight deserialize is dead the moment we tear down for a new
+    // sitch, and a leaked flag would suppress auto-centering / keep the app in
+    // "deserializing" state for the next sitch.
+    Globals.dontAutoZoom = false;
+    Globals.deserializing = false;
+    // dontRecalculate is set true for the mods pass and cleared only by a
+    // SUCCESSFUL finishDeserialization — a stale-aborted load would leak it and
+    // leave recalculation disabled for the next sitch.
+    Globals.dontRecalculate = false;
 
     // Clear any fullscreen/double-click zoom state so new sitch views are all visible
     ViewMan.fullscreenView = null;

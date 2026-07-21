@@ -887,6 +887,13 @@ export const serializeMethods = {
 
         Globals.deserializing = true;
 
+        // Captured BEFORE any await: disposeEverything() bumps loadGeneration when a
+        // newer sitch load tears this one down, and every post-await continuation
+        // below must check against THIS value. deserializeMods' own capture happens
+        // too late — by the time it runs, a supersede during the (awaited) file
+        // loading would already have moved loadGeneration, blinding its guard.
+        const myGeneration = Globals.loadGeneration;
+
         // Restore Sit.ignores early, BEFORE files are loaded.
         // extractKMLObjectsInternal checks shouldIgnore() to avoid recreating
         // features that are already saved in featureMarkers.
@@ -954,6 +961,13 @@ export const serializeMethods = {
                     : Promise.resolve(null);
                 loadingPromises.push(overridePromise.then(metadataOverride => FileManager.loadAsset(Sit.loadedFiles[id], id, metadataOverride)).then(
                     async (parsedResult) => {
+                        // A newer sitch load has superseded this one while the asset
+                        // was in flight — do not write this file's tracks/state onto
+                        // the new sitch's graph.
+                        if (Globals.loadGeneration !== myGeneration) {
+                            return;
+                        }
+
                         // Skip files that failed to parse (e.g. corrupt KLV)
                         if (parsedResult === null) {
                             return;
@@ -972,6 +986,11 @@ export const serializeMethods = {
 
                         // for each parsed result, handle it just like it was drag-and-dropped
                         for (const x of parsedResult) {
+                            // handleParsedFile below is awaited, so a supersede can also
+                            // land mid-loop — re-check per item.
+                            if (Globals.loadGeneration !== myGeneration) {
+                                return;
+                            }
                             const parsedFile = x.parsed;
                             const filename = x.filename;
                             const fileID = x.id ?? x.filename; // use filename as fallback id
@@ -1049,6 +1068,15 @@ export const serializeMethods = {
         // wait for the files to load
         Promise.all(loadingPromises).then(async () => {
 
+            // Superseded while the files were loading: everything below (units,
+            // synthetic/balloon tracks, mods, finishDeserialization) would mutate
+            // the NEW sitch's graph with this dead sitch's state. Bail. dontAutoZoom
+            // is left alone — disposeEverything() reset it for the new load.
+            if (Globals.loadGeneration !== myGeneration) {
+                console.warn(`deserialize: sitch load superseded during file loading (gen ${myGeneration} -> ${Globals.loadGeneration}); aborting stale deserialize continuation`);
+                return;
+            }
+
             Globals.dontAutoZoom = false;
 
             // We supress recalculation while we apply the mods
@@ -1088,6 +1116,12 @@ export const serializeMethods = {
             // double-create it.
             if (sitchData.appFlight && !FileManager.list["App Flight.kml"]) {
                 await buildAppFlightTrack(sitchData.appFlight)
+                // Only await between the entry check above and the mods pass —
+                // re-check before continuing to mutate the graph.
+                if (Globals.loadGeneration !== myGeneration) {
+                    console.warn(`deserialize: sitch load superseded during app-flight rebuild (gen ${myGeneration} -> ${Globals.loadGeneration}); aborting stale deserialize continuation`);
+                    return;
+                }
             }
             // Restore the fromApp marker (fixed mode has no flight track to rebuild it),
             // so applyFlightLightweightGating() below gates the LOS-analysis machinery.
@@ -1115,18 +1149,19 @@ export const serializeMethods = {
             // now we've either got
             // console.log("Promised files loaded in Custom Manager deserialize")
             if (sitchData.mods) {
-                // apply the mods
-                this.deserializeMods(sitchData.mods).then((completed) => {
+                // apply the mods — passing the generation captured before file loading,
+                // so the mods-loop supersede guard measures against the RIGHT baseline
+                this.deserializeMods(sitchData.mods, myGeneration).then((completed) => {
                     // deserializeMods returns false when a newer sitch load superseded
                     // this one mid-flight. finishDeserialization applies pars, restores
                     // fullscreen-from-mods, etc. — all of which would land on the NEW
                     // sitch's graph/views, so skip it for a dead load.
-                    if (completed === false) {
+                    if (completed === false || Globals.loadGeneration !== myGeneration) {
                         console.warn("Deserialization superseded by a newer sitch load; skipping finishDeserialization for the stale load.");
                         return;
                     }
                     setSitchEstablished(true); // flag that we've done some editing, so any future drag-and-drop will not mess with the sitch
-                    this.finishDeserialization(sitchData);
+                    this.finishDeserialization(sitchData, myGeneration);
                 }).catch((err) => {
                     // Last-resort guard so the app is never wedged in "deserializing" state.
                     // Part 1 (per-node try/catch in deserializeMods) already tolerates a single
@@ -1139,7 +1174,7 @@ export const serializeMethods = {
                 });
                 return; // Exit early, finishDeserialization will continue the process
             } else {
-                this.finishDeserialization(sitchData);
+                this.finishDeserialization(sitchData, myGeneration);
             }
 
         })
@@ -1327,8 +1362,8 @@ export const serializeMethods = {
      * @returns {Promise<boolean>} - Resolves true when all mods were applied; false if a
      *          newer sitch load superseded this one mid-flight (mods were NOT fully applied).
      */
-    async deserializeMods(mods) {
-        // Snapshot the load generation. This loop awaits waitForPendingActions()
+    async deserializeMods(mods, generation) {
+        // Load generation guard. This loop awaits waitForPendingActions()
         // between mods (e.g. when a mod kicks off an async model/video load), so it
         // can be parked across a sitch transition. If the user switches sitches
         // before a slow load finishes, NodeMan is disposed and rebuilt for the new
@@ -1336,7 +1371,10 @@ export const serializeMethods = {
         // doubled/fullscreen mainView) onto the NEW sitch's nodes — black look/video
         // views + a half-applied graph. Bail out if the generation changed. See
         // Globals.loadGeneration and disposeEverything().
-        const myGeneration = Globals.loadGeneration;
+        // The caller passes the generation captured BEFORE file loading started —
+        // deserialize() awaits file handling, so a supersede during those loads
+        // would otherwise be invisible to a snapshot taken here.
+        const myGeneration = generation ?? Globals.loadGeneration;
 
         // If a wind field mod exists, auto-create the node before the standard
         // deserialize loop so its modDeserialize can restore source/altitude/
@@ -1400,6 +1438,13 @@ export const serializeMethods = {
         // the scenario has been activated.
         await ScenarioManager.activateForMods(mods);
 
+        // activateForMods awaits (lazy scenario import + activation) — a supersede
+        // parked there must not continue into the mods loop on the new sitch.
+        if (Globals.loadGeneration !== myGeneration) {
+            console.warn(`deserializeMods: sitch load superseded during scenario activation (gen ${myGeneration} -> ${Globals.loadGeneration}); aborting stale mod application`);
+            return false;
+        }
+
         this.remapLegacyTrackMods(mods);
 
         // some things are required to be deserialized before others, so we force them to the top.
@@ -1459,6 +1504,13 @@ export const serializeMethods = {
                 }
             }
         }
+        // The loop-entry guard never runs again after the LAST mod — if that mod's
+        // waitForPendingActions parked us across a sitch transition, returning true
+        // here would let the caller run finishDeserialization against the new sitch.
+        if (Globals.loadGeneration !== myGeneration) {
+            console.warn(`deserializeMods: sitch load superseded during final mod wait (gen ${myGeneration} -> ${Globals.loadGeneration}); reporting stale load`);
+            return false;
+        }
         return true; // all mods applied for this (still-current) sitch load
     },
 
@@ -1484,7 +1536,13 @@ export const serializeMethods = {
      * Complete the deserialization process after mods have been applied
      * @param {Object} sitchData - The complete sitch data
      */
-    async finishDeserialization(sitchData) {
+    async finishDeserialization(sitchData, generation) {
+        // Same supersede contract as deserialize()/deserializeMods(): this function
+        // awaits (motion-analysis restore can park on loadOpenCV), so re-check the
+        // load generation after each await before mutating the live graph/globals.
+        // On a stale abort we touch NOTHING — disposeEverything() already reset the
+        // per-load globals (deserializing, dontAutoZoom) for the new sitch.
+        const myGeneration = generation ?? Globals.loadGeneration;
         // apply the pars
         if (sitchData.pars) {
             for (let key in sitchData.pars) {
@@ -1531,8 +1589,21 @@ export const serializeMethods = {
 
         // and the globals
         if (sitchData.globals) {
+            // Serialization only writes the display toggles in globalsNeeded, but this
+            // restore loop copies ANY key from the save file — so a hand-edited or
+            // hostile save could overwrite lifecycle state (loadGeneration in
+            // particular would defeat every stale-load guard above). Refuse the
+            // lifecycle fields; everything else restores as before.
+            const lifecycleGlobals = new Set([
+                "loadGeneration", "deserializing", "disposing",
+                "dontAutoZoom", "dontRecalculate",
+                "parsing", "pendingActions", "loadingTerrain", "sitchEstablished",
+            ]);
             for (let key in sitchData.globals) {
-                //console.warn("Applying global "+key+" with value "+sitchData.globals[key])
+                if (lifecycleGlobals.has(key)) {
+                    console.warn(`finishDeserialization: ignoring lifecycle global "${key}" from saved sitch`);
+                    continue;
+                }
                 Globals[key] = sitchData.globals[key];
             }
         }
@@ -1580,10 +1651,18 @@ export const serializeMethods = {
 
         if (sitchData.motionAnalysis) {
             await deserializeMotionAnalysis(sitchData.motionAnalysis);
+            if (Globals.loadGeneration !== myGeneration) {
+                console.warn(`finishDeserialization: sitch load superseded during motion-analysis restore (gen ${myGeneration} -> ${Globals.loadGeneration}); aborting stale finish`);
+                return;
+            }
         }
 
         if (sitchData.autoTracking) {
             await deserializeAutoTracking(sitchData.autoTracking);
+            if (Globals.loadGeneration !== myGeneration) {
+                console.warn(`finishDeserialization: sitch load superseded during auto-tracking restore (gen ${myGeneration} -> ${Globals.loadGeneration}); aborting stale finish`);
+                return;
+            }
         }
 
         if (sitchData.horizonExtractor) {
