@@ -31,6 +31,7 @@ import {abFrameRange, buildAnalysisDataset, unpackTrackToECEF} from "./TraverseA
 import {getPointBelow, calculateAltitude} from "./threeExt";
 import {
     compareTrackToTruth,
+    compareWindVectorSeries,
     constAirSpeedTrack,
     fitAircraft,
     fitConstAltitude,
@@ -67,6 +68,8 @@ import {applyRefractionECI, refractionOptsFromUniforms} from "./atmosphere/refra
 import {loadLEOSatrecsForDate, findBestSatellite, satelliteTrackENU, satelliteECEF, satelliteSunlit} from "./SatelliteSearch";
 import {Chart3D, Chart3DGroup} from "./Chart3D";
 import {
+    assessExecutiveVerdict,
+    balloonConsistency,
     completenessBadges,
     formatRawLosResidual,
     groupAndRankHypotheses,
@@ -803,11 +806,11 @@ function physicsBoundSubtitle(base, active, inactive, unstable = []) {
 // Used for BOTH the free-wind fit and the measured-wind fit (same model, the
 // wind either inferred or softly pinned), so the two reconstructions appear as
 // distinct hypotheses that share grouping/apply/prose (both keyed "lantern").
-function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy}) {
+function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy, windEvidenceRole}) {
     if (!fit || !fit.positions) {
         return {
             key, name, subtitle: "Wind-drift model unavailable", color: VIZ.slowObj,
-            track: null, metricsFull: null, errDeg: NaN, params: {},
+            track: null, metricsFull: null, errDeg: NaN, params: {}, windEvidenceRole,
             notes: "Fit failed — no plausible buoyant-object trajectory converged.",
         };
     }
@@ -846,13 +849,20 @@ function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy
         subtitle: physicsBoundSubtitle("Bounded wind-drift/life-cycle model", lanPins, lanInactive, lanUnstable)
             + (lanClamps.length ? `; internal clamp reached: ${lanClamps.join(", ")}` : ""),
         color: VIZ.slowObj,
+        windEvidenceRole,
         track,
         metricsFull: lanternMetrics,
         errDeg: fit.params.errDeg,
         boundPinned: lanPins,
         boundInactive: lanInactive,
         modelClamps: lanClamps,
-        optimizerWarnings: lanUnstable.map((w) => `inward bound probe improved ${w}`),
+        // Includes the optimizer's own completion state (iteration-limit
+        // stops), matching the drone fit — this also gates the wind-evidence
+        // rating, which must not call an unconverged fit "supporting".
+        optimizerWarnings: [
+            ...lanUnstable.map((w) => `inward bound probe improved ${w}`),
+            ...localFitCompletionWarnings(fit.params.optimizer),
+        ],
         params: {
             range: range0,
             windE: solved.windE, windN: solved.windN, shearPerM: solved.shearPerM,
@@ -1181,6 +1191,10 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
     list.push(lanternHypothesis(lantern, dataset, errFloor, {
         key: "lantern",
         name: lanternMeasured ? "Sky Lantern / Balloon (free wind)" : "Sky Lantern / Balloon",
+        // The free fit's solved wind is the only balloon wind that can be
+        // INDEPENDENTLY checked against an external reference — see
+        // attachBalloonWindEvidence.
+        windEvidenceRole: "free",
         windPolicy: "free-diagnostic: wind fitted by this model, no wind input",
         notes: "FREE reconstruction: wind-drift lantern kinematics (rise, buoyancy decay, terminal "
             + "sink; altitude-sheared wind) fit to the sightlines with the wind INFERRED, not assumed. "
@@ -1191,6 +1205,9 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
         list.push(lanternHypothesis(lanternMeasured, dataset, errFloor, {
             key: "lantern",
             name: `Sky Lantern / Balloon (${pinnedWindLabel})`,
+            // This fit CONSUMED the wind reference, so its agreement with that
+            // wind is expected, not independent evidence.
+            windEvidenceRole: "externally-conditioned",
             windPolicy: windMeasured
                 ? `measured-corrected: drift wind pinned loosely to the loaded ${windPrior.source} profile`
                 : "assumed-wind: drift wind pinned loosely to the hand-set sitch wind (an assumption, not a measurement)",
@@ -1864,6 +1881,325 @@ function methodNodeHypothesis(meth, node, dataset, originLat, originLon, losSig)
 // Data-driven verdict paragraph (HTML): group-specific screening results plus
 // a diagnostic head-to-head of the two forward-integrated physics models.
 // Residuals are never converted into object-type probabilities.
+// --- Independent balloon wind evidence --------------------------------------
+//
+// Most real-world subjects turn out to be windblown balloons, and that
+// conclusion is only reachable if the analysis can SAY so with evidence. The
+// one independently checkable signal is the FREE balloon fit's solved wind:
+// that fit never saw the loaded wind field, so when the wind it REQUIRES
+// matches the wind independently measured/modelled aloft, the agreement is
+// genuine evidence for passive drift. The wind-pinned variant's agreement is
+// CIRCULAR — it consumed the reference — and is labelled as such, never
+// counted.
+//
+// Everything is sampled and FROZEN at analysis time: results are cached and
+// redisplayed while the live wind field can change underneath them, so a
+// render-time read would silently re-grade old results (and the analysis
+// fingerprint already invalidates the cache when the wind field changes).
+//
+// The verdict is deliberately ASYMMETRIC: agreement can SUPPORT a balloon;
+// disagreement is only TENSION — the LOS range degeneracy means the fitted
+// altitude is partly model-selected, and a sonde can be 200+ mi and 12 h
+// away — so "ruled out" is never produced here. And per the standing design
+// rule, evidence surfaces as prose and badges only: gallery ORDERING is
+// untouched, so anomalous/fast candidates keep their positions.
+
+const WIND_SOURCE_CLASSES = {
+    manual: "assumption",
+    gfs: "model", custom: "model", openmeteo: "model",
+    uwyo: "observation", igra2: "observation", "manual-soundings": "observation",
+};
+
+// {u,v} m/s → "22 kt from 260°" (meteorological FROM direction)
+function fmtWindVec(w) {
+    if (!w || !Number.isFinite(w.u) || !Number.isFinite(w.v)) return "—";
+    const kt = Math.hypot(w.u, w.v) / KNOTS_TO_MS;
+    const dir = ((Math.atan2(w.u, w.v) * 180 / Math.PI + 180) % 360 + 360) % 360;
+    return `${kt.toFixed(0)} kt from ${dir.toFixed(0)}°`;
+}
+
+// The 7 altitude rows the detail table shows, with the external wind sampled
+// NOW so the table can be re-rendered later without touching the live field.
+function frozenWindProfileRows(h, wf, latDeg, lonDeg) {
+    const t = h.track;
+    if (!t) return null;
+    const h0 = t[2] + (t[0] * t[0] + t[1] * t[1]) / (2 * EARTH_RADIUS_M);
+    const alt = h.metricsFull && h.metricsFull.altitude;
+    const loM = alt && Number.isFinite(alt.min) ? alt.min : h0;
+    const hiM = alt && Number.isFinite(alt.max) ? alt.max : h0 + 3000;
+    const rows = [];
+    for (let i = 0; i <= 6; i++) {
+        const altM = loM + (hiM - loM) * i / 6;
+        let s = null;
+        try { s = wf.sampleWindAtAltitude(latDeg, lonDeg, altM); } catch (e) { s = null; }
+        rows.push({altM, observed: (s && Number.isFinite(s.u) && Number.isFinite(s.v))
+            ? {u: s.u, v: s.v} : null});
+    }
+    return rows;
+}
+
+// Interpretation of the pure metric, given what the wind source IS. Owns the
+// Supports / Compatible / Tension / Inconclusive vocabulary and its asymmetry.
+function rateBalloonWindEvidence(metrics, sourceClass, incomplete, meanRequired, meanObserved) {
+    if (sourceClass === "assumption") {
+        return {rating: "inconclusive",
+            why: "the loaded wind is a hand-set constant — an assumption, not a measurement — so "
+                + "agreement with it cannot support or weaken the balloon interpretation"};
+    }
+    if (!metrics || metrics.comparable === false) {
+        const got = metrics ? ` (${metrics.count} of ${metrics.total} samples usable)` : "";
+        return {rating: "inconclusive",
+            why: "the wind source produced too few usable samples along the fitted trajectory "
+                + `to compare${got}`};
+    }
+    if (metrics.coverage < 0.5) {
+        return {rating: "inconclusive",
+            why: `the wind source covers only ${(metrics.coverage * 100).toFixed(0)}% of the fitted `
+                + "trajectory (stale, distant, or vertically out of range)"};
+    }
+    // Both MEAN speeds calm, no individual sample strong enough to carry a
+    // direction, AND the vector error itself is small: genuinely calm-vs-calm.
+    // All three are required — offset gusts on different frames produce calm
+    // means and zero direction pairs while the RMSE still exposes the
+    // disagreement, and those must fall through to the normal scoring below.
+    if (metrics.bothMeanCalm && metrics.dirSamples === 0 && metrics.vectorRMSE <= 2.5) {
+        return {rating: "compatible",
+            why: "both the required and the observed winds are near calm — consistent, but too light "
+                + "to discriminate direction"};
+    }
+    const rmseKt = metrics.vectorRMSE / KNOTS_TO_MS;
+    const obsSpeed = Math.max(metrics.meanObservedSpeed, 1);
+    const closeMatch = metrics.vectorRMSE <= Math.max(2.5, 0.35 * obsSpeed)
+        && (metrics.alignment === null || metrics.alignment >= 0.6);
+    const looseMatch = metrics.vectorRMSE <= Math.max(5, 0.7 * obsSpeed);
+    const requiredText = fmtWindVec(meanRequired);
+    const observedText = fmtWindVec(meanObserved);
+    if (closeMatch && !incomplete) {
+        return {rating: "supports",
+            why: `the free fit independently requires ${requiredText}, and the loaded wind shows `
+                + `${observedText} along the fitted path (vector RMSE ${rmseKt.toFixed(1)} kt)`};
+    }
+    if (closeMatch) {
+        return {rating: "compatible",
+            why: `the required wind (${requiredText}) matches the loaded ${observedText}, but the fit `
+                + "reached model limits, so treat this as compatible rather than supporting"};
+    }
+    if (looseMatch) {
+        return {rating: "compatible",
+            why: `the free fit requires ${requiredText} against a loaded ${observedText} `
+                + `(vector RMSE ${rmseKt.toFixed(1)} kt) — broadly compatible given wind-source `
+                + "uncertainty, but not a close match"};
+    }
+    return {rating: "tension",
+        why: `the free fit requires ${requiredText}, while the loaded wind shows ${observedText} `
+            + `(vector RMSE ${rmseKt.toFixed(1)} kt) — tension with passive drift at the fitted `
+            + "altitude; this weakens the balloon interpretation but does not exclude it "
+            + "(other altitudes along the sightlines and wind representativeness remain uncertain)"};
+}
+
+// Shared source for the executive verdict and the gallery banner: the three
+// SEPARATE judgements for the free balloon fit — fit quality, motion
+// character, independent wind evidence. Never collapsed into one word (see
+// the FIT QUALITY vs ORDINARINESS comment in TraverseRanking).
+function balloonEvidenceSummary(hypotheses) {
+    const free = (hypotheses || []).find((h) => h.key === "lantern"
+        && h.windEvidenceRole === "free" && h.track && h.metricsFull);
+    if (!free) return null;
+    const err = free.errDeg;
+    // Same tier boundaries as TraverseRanking's fitRank, so the verdict and
+    // the tile badges can never describe the same residual differently.
+    const fitWord = !Number.isFinite(err) ? "unknown"
+        : err > 0.5 ? "poor" : err > 0.15 ? "fair" : err > 0.05 ? "good" : "excellent";
+    const consistency = balloonConsistency(free.track);
+    const motionWord = consistency >= 0.75 ? "characteristic balloon motion"
+        : consistency >= 0.5 ? "broadly balloon-like motion"
+        : "motion atypical for a balloon (it reverses vertically or curves back)";
+    const altMean = free.metricsFull.altitude ? free.metricsFull.altitude.mean : NaN;
+    const altText = Number.isFinite(altMean) ? `~${(altMean / 304.8).toFixed(0)} kft` : null;
+    const ev = free.windEvidence || null;
+    return {
+        h: free, errDeg: err, fitWord, consistency, motionWord, altText,
+        rating: (ev && ev.role === "free") ? (ev.rating ?? null) : null,
+        why: (ev && ev.why) || "no wind comparison was captured for this analysis",
+        statusText: (ev && ev.statusText) || null,
+    };
+}
+
+// Badge only for the INDEPENDENT positive case — the detail pane carries the
+// full nuance for every other rating.
+function windEvidenceBadges(h) {
+    return (h.windEvidence?.role === "free" && h.windEvidence.rating === "supports")
+        ? [{label: "Independent wind match", color: "#2f6a42"}] : [];
+}
+
+// Capture-and-freeze pass, run once per analysis right after the hypotheses
+// are built. Attaches h.windEvidence to both balloon variants; never throws
+// into the caller (a wind problem must not abort the analysis).
+function attachBalloonWindEvidence(hypotheses, dataset, originLat, originLon, provenance = null) {
+    const balloons = (hypotheses || []).filter((h) => h.key === "lantern");
+    if (!balloons.length) return;
+    const latDeg = originLat * 180 / Math.PI;
+    const lonDeg = originLon * 180 / Math.PI;
+    const wf = NodeMan.get("windField", false);
+    const wfUsable = analyzeTweaks.windMode !== "Zero wind"
+        && wf && wf.source && typeof wf.sampleWindAtAltitude === "function";
+    const sourceClass = wfUsable ? (WIND_SOURCE_CLASSES[wf.source] ?? "unknown") : null;
+    // No measured column for a hand-set constant: it is an assumption, and
+    // rendering it beside "measured" invites exactly the confusion the
+    // evidence rating exists to prevent.
+    const profileFor = (h) => (wfUsable && sourceClass !== "assumption")
+        ? frozenWindProfileRows(h, wf, latDeg, lonDeg) : null;
+
+    for (const h of balloons) {
+        if (h.windEvidenceRole === "externally-conditioned") {
+            h.windEvidence = {
+                role: "externally-conditioned",
+                source: wfUsable ? wf.source : null,
+                profileRows: h.track ? profileFor(h) : null,
+                note: "agreement with the loaded wind is EXPECTED here — this fit consumed the wind "
+                    + "reference, so it is not independent evidence",
+            };
+            continue;
+        }
+        if (h.windEvidenceRole !== "free") continue;
+        if (!h.track || !h.params || !Number.isFinite(h.params.windE)) continue;
+        if (analyzeTweaks.windMode === "Zero wind") {
+            h.windEvidence = {role: "free", rating: "inconclusive",
+                why: "wind comparison is off (\"Zero wind\" selected in the analysis tweaks)"};
+            continue;
+        }
+        if (!wfUsable) {
+            h.windEvidence = {role: "free", rating: "inconclusive",
+                why: "no external wind source is loaded — load a sounding or GFS wind field to check "
+                    + "the wind this fit requires"};
+            continue;
+        }
+
+        // Required (solved) vs observed (external) wind along the fitted track.
+        // Observed samples use each fitted point's OWN lat/lon (small-angle
+        // ENU offset from the origin), not the sensor origin — a spatially
+        // varying source (GFS grid, sonde IDW) must be read where the balloon
+        // would actually be.
+        const t = h.track;
+        const n = dataset.n;
+        const h0 = t[2] + (t[0] * t[0] + t[1] * t[1]) / (2 * EARTH_RADIUS_M);
+        const cosLat = Math.max(0.05, Math.cos(originLat));
+        const SAMPLES = Math.min(25, n);
+        const required = [], observed = [];
+        const sampleAlts = [];
+        let sumReqU = 0, sumReqV = 0, sumObsU = 0, sumObsV = 0, paired = 0;
+        for (let i = 0; i < SAMPLES; i++) {
+            const f = Math.round(i * (n - 1) / Math.max(1, SAMPLES - 1));
+            const x = t[f * 3], y = t[f * 3 + 1], z = t[f * 3 + 2];
+            const altM = z + (x * x + y * y) / (2 * EARTH_RADIUS_M);
+            sampleAlts.push(altM);
+            const req = solvedHorizontalWindAt(h.params, {modelKind: "lantern",
+                normalizedTime: f / Math.max(1, n - 1), altitudeM: altM, referenceAltitudeM: h0});
+            const latI = latDeg + (y / EARTH_RADIUS_M) * 180 / Math.PI;
+            const lonI = lonDeg + (x / (EARTH_RADIUS_M * cosLat)) * 180 / Math.PI;
+            let obs = null;
+            try { obs = wf.sampleWindAtAltitude(latI, lonI, altM); } catch (e) { obs = null; }
+            if (obs && !(Number.isFinite(obs.u) && Number.isFinite(obs.v))) obs = null;
+            required.push(req);
+            observed.push(obs);
+            if (req && obs) {
+                sumReqU += req.u; sumReqV += req.v;
+                sumObsU += obs.u; sumObsV += obs.v;
+                paired++;
+            }
+        }
+        const metrics = compareWindVectorSeries(required, observed);
+        const meanRequired = paired ? {u: sumReqU / paired, v: sumReqV / paired} : null;
+        const meanObserved = paired ? {u: sumObsU / paired, v: sumObsV / paired} : null;
+        const incomplete = !!((h.boundPinned && h.boundPinned.length)
+            || (h.modelClamps && h.modelClamps.length)
+            || (h.optimizerWarnings && h.optimizerWarnings.length));
+        const rated = rateBalloonWindEvidence(metrics, sourceClass, incomplete, meanRequired, meanObserved);
+        // A static sensor makes range — and therefore the fitted altitude —
+        // a model choice, not a measurement. A wind match at a model-chosen
+        // altitude is not evidence either way (see the rangeUnobservable
+        // banner); the numbers stay visible, the rating must not.
+        if (provenance && provenance.rangeUnobservable && rated.rating !== "inconclusive") {
+            rated.rating = "inconclusive";
+            rated.why = "range (and so altitude) is not observable in this geometry — the fitted "
+                + "altitude reflects the model's own priors, so a wind comparison at that "
+                + "altitude cannot support or weaken the balloon interpretation";
+        }
+        // Evidence-quality caps: "supports" is the strongest word this feature
+        // can say, so it is reserved for references that can actually bear the
+        // weight. Conservative structural checks until per-sample source
+        // metadata (valid time, per-sample distance) lands: an unrecognised
+        // source class never supports, and sounding evidence is capped when
+        // the nearest station is far away or the fitted altitude is above
+        // every station's measured wind top (the sampler HOLDS the top wind
+        // up there rather than refusing — see sampleWindAtAltitude).
+        if (rated.rating === "supports") {
+            if (sourceClass !== "observation" && sourceClass !== "model") {
+                rated.rating = "compatible";
+                rated.why += "; capped at compatible — unrecognised wind-source type";
+            } else if (sourceClass === "observation") {
+                // Distance must be measured to the stations that actually
+                // CONTRIBUTE at each sampled altitude — a nearby station whose
+                // sounding tops out below the fit does not vouch for winds
+                // above it (the IDW blend hands those altitudes to whatever
+                // distant station still reaches them; see
+                // sampleWindAtAltitude). And when the station metadata cannot
+                // be read at all, the cap FAILS CLOSED: "supports" needs a
+                // reference that can be shown to bear the weight.
+                let profiles = [];
+                if (typeof wf._gatherSondeProfiles === "function") {
+                    try {
+                        profiles = wf._gatherSondeProfiles(
+                            wf.source === "manual-soundings" ? null : wf.source) || [];
+                    } catch (e) { profiles = []; }
+                }
+                const positioned = profiles.filter(
+                    (prof) => prof.stationLat != null && prof.stationLon != null);
+                if (!positioned.length) {
+                    rated.rating = "compatible";
+                    rated.why += "; capped at compatible — sounding station positions unavailable";
+                } else {
+                    let worstNearestKm = 0, aboveAllTops = false;
+                    for (const altM of sampleAlts) {
+                        let nearest = Infinity;
+                        for (const prof of positioned) {
+                            // same participation rule as sampleWindAtAltitude:
+                            // a station only vouches up to its measured top
+                            if (prof.topWindAlt != null && altM > prof.topWindAlt) continue;
+                            const dKm = 111.19 * Math.hypot(prof.stationLat - latDeg,
+                                (prof.stationLon - lonDeg) * cosLat);
+                            if (dKm < nearest) nearest = dKm;
+                        }
+                        if (!Number.isFinite(nearest)) { aboveAllTops = true; break; }
+                        if (nearest > worstNearestKm) worstNearestKm = nearest;
+                    }
+                    if (aboveAllTops) {
+                        rated.rating = "compatible";
+                        rated.why += "; capped at compatible — part of the fitted trajectory is "
+                            + "above every station's measured wind top, so the reference wind "
+                            + "there is held, not measured";
+                    } else if (worstNearestKm > 300) {
+                        rated.rating = "compatible";
+                        rated.why += `; capped at compatible — winds along the fitted path rely on `
+                            + `a sounding station ~${Math.round(worstNearestKm)} km away`;
+                    }
+                }
+            }
+        }
+        h.windEvidence = {
+            role: "free",
+            source: wf.source,
+            sourceClass,
+            statusText: wf.statusText ?? null,
+            metrics,
+            meanRequired,
+            meanObserved,
+            profileRows: profileFor(h),
+            ...rated,
+        };
+    }
+}
+
 // meters → "412 m" / "2.4 NM" for truth-separation displays
 function fmtSepMeters(v) {
     if (!isFinite(v)) return "n/a";
@@ -1878,6 +2214,9 @@ function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
     const withTrack = (hypotheses || []).filter((h) => h.track && h.metricsFull);
     const groups = groupAndRankHypotheses(withTrack);
 
+    // The executive headline is NOT repeated here: the report leads with the
+    // Assessment section (the frozen executiveAssessment record) and the
+    // gallery has its own strip — one record, one rendering per surface.
     let out = "";
     // Constructed-LOS gate: conclusions from target-derived sightlines are
     // internal-consistency checks, and must never read as discovery.
@@ -1940,6 +2279,25 @@ function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
             `the truth (location, altitude, speed, heading). Screening tiers (maneuvering, speed, LOS ` +
             `residual) are shown only as context; fit completeness is the sole gate before truth separation.`;
         return out;
+    }
+
+    // Ordinary-explanation check: most real subjects are windblown balloons,
+    // so the free balloon fit gets an explicit three-part reading — fit
+    // quality, motion character, independent wind evidence — kept as SEPARATE
+    // judgements and never folded into the ordering (prose only).
+    const bev = balloonEvidenceSummary(hypotheses);
+    if (bev) {
+        const ratingText = {
+            supports: "<strong>SUPPORTS a wind-blown balloon</strong>",
+            compatible: "COMPATIBLE with a wind-blown balloon",
+            tension: "in TENSION with passive drift",
+            inconclusive: "INCONCLUSIVE",
+        }[bev.rating] ?? "not checked";
+        out += `<strong>Wind-blown balloon check:</strong> LOS fit ${escapeHtml(bev.fitWord)}` +
+            (Number.isFinite(bev.errDeg) ? ` (${bev.errDeg.toFixed(2)}°)` : "") +
+            `; ${escapeHtml(bev.motionWord)} (consistency ${bev.consistency.toFixed(2)})` +
+            (bev.altText ? ` at ${escapeHtml(bev.altText)}` : "") +
+            `; independent wind evidence ${ratingText} — ${escapeHtml(bev.why)}. `;
     }
 
     out += `<strong>No global object winner is computed.</strong> The panels answer different questions and are ` +
@@ -2424,6 +2782,13 @@ function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
         const wf = NodeMan.get("windField", false);
         if (wf) {
             windSeries.push("field", wf.source ?? "", wf.statusText ?? "", wf._windDataVersion ?? 0);
+            // Soundings arrive ASYNCHRONOUSLY and bump none of the coarse
+            // fields above — sondeProfileSignature exists precisely so
+            // memoizing consumers re-run when profiles land. Without it, a
+            // run made before the soundings arrive keeps serving its frozen
+            // "inconclusive" balloon wind evidence forever.
+            windSeries.push(typeof wf.sondeProfileSignature === "function"
+                ? wf.sondeProfileSignature() : "");
         }
     }
     const provenance = capturedProvenance || losProvenance();
@@ -3156,6 +3521,27 @@ export async function runTraverseAnalysis() {
             provenance, failures, windPrior, mcSweep, droneCtl,
         });
 
+        // Independent balloon wind evidence: sample the external wind field
+        // along the free balloon fit and FREEZE the comparison into the
+        // hypotheses now — cached results persist while the live wind field
+        // changes underneath them, so this must not be a render-time read.
+        try {
+            attachBalloonWindEvidence(hypotheses, dataset, originLat, originLon, provenance);
+        } catch (e) {
+            console.warn("Balloon wind-evidence capture failed (non-fatal):", e);
+        }
+
+        // Executive assessment: the corroboration-first headline ("Probably a
+        // wind-blown balloon" / "Consistent with ..." / "Unresolved"), frozen
+        // here so the gallery, verdict, and report all render ONE record.
+        // Reads ranking + wind evidence; never feeds back into ordering.
+        let executiveAssessment = null;
+        try {
+            executiveAssessment = assessExecutiveVerdict(hypotheses, {provenance});
+        } catch (e) {
+            console.warn("Executive assessment failed (non-fatal):", e);
+        }
+
         // Ground-truth reference: when a truth track is selected in the Tweaks,
         // score every candidate by its closeness to it. The comparison record
         // rides on each hypothesis; TraverseRanking orders by it and folds it
@@ -3347,6 +3733,25 @@ export async function runTraverseAnalysis() {
                 satellite: analyzeTweaks.satellite,
                 failures: failures.map((f) => ({...f})),
             },
+            // Machine-readable gate audit for the executive headline: which
+            // verdict was reached and the per-class evidence that produced it.
+            executive: executiveAssessment ? {
+                code: executiveAssessment.code,
+                headline: executiveAssessment.headline,
+                gates: executiveAssessment.gates,
+                notRun: executiveAssessment.notRun,
+                notModelled: executiveAssessment.notModelled,
+                classes: executiveAssessment.classes.map((c) => ({
+                    key: c.key, tested: c.tested, viable: c.viable,
+                    complete: c.complete, close: c.close, ordinary: c.ordinary,
+                    supported: c.supported, blocker: c.blocker,
+                    bestName: c.bestName, bestErrDeg: c.bestErrDeg,
+                    // consistency is a direct "Probably" gate (>= 0.75), so the
+                    // audit must record the value that was judged against it
+                    ...(c.key === "balloon" ? {windRating: c.windRating ?? null,
+                        consistency: Number.isFinite(c.consistency) ? c.consistency : null} : {}),
+                })),
+            } : null,
         });
         const buildHtml = () => buildReportHTML({
             sitName: Sit.name ?? "unnamed sitch",
@@ -3357,6 +3762,7 @@ export async function runTraverseAnalysis() {
             closeLoM, closeHiM,
             hypotheses, provenance, failures, manifest,
             truth, terrainChangedDuringRun,
+            executiveAssessment,
         });
 
         const terrainDependencies = terrainDependenciesAtBuild;
@@ -3367,6 +3773,7 @@ export async function runTraverseAnalysis() {
             buildHtml, html: null,
             provenance, failures, manifest,
             terrainChangedDuringRun,
+            executiveAssessment,
         };
         window.lastTraverseAnalysis = results;
         // View-dependent global tile LOD is not an analysis input. Preserve the
@@ -4291,42 +4698,87 @@ function windProfileComparisonHTML(h) {
     const inferredAt = (altM, normalizedTime) => solvedHorizontalWindAt(p, {
         modelKind: "lantern", normalizedTime, altitudeM: altM, referenceAltitudeM: h0,
     });
-    const wf = NodeMan.get("windField", false);
-    const canMeasure = wf && wf.source && wf.source !== "manual"
-        && typeof wf.sampleWindAtAltitude === "function";
+    const ev = h.windEvidence || null;
+
+    // External-wind rows: FROZEN at analysis time when the evidence record
+    // exists (results are cached and redisplayed while the live wind field can
+    // change underneath them). The live read remains only as a fallback for
+    // results produced before evidence capture existed.
+    let rows;   // [{altM, observed: {u,v}|null}]
+    if (ev) {
+        rows = ev.profileRows;
+    } else {
+        const wf = NodeMan.get("windField", false);
+        const canMeasure = wf && wf.source && wf.source !== "manual"
+            && typeof wf.sampleWindAtAltitude === "function";
+        rows = canMeasure ? frozenWindProfileRows(h, wf, Sit.lat, Sit.lon) : null;
+    }
+    if (!rows) {
+        // No external reference: still show the inferred profile at the fit's
+        // own altitude span.
+        const alt = h.metricsFull && h.metricsFull.altitude;
+        const loM = alt && Number.isFinite(alt.min) ? alt.min : h0;
+        const hiM = alt && Number.isFinite(alt.max) ? alt.max : h0 + 3000;
+        rows = [];
+        for (let i = 0; i <= 6; i++) {
+            rows.push({altM: loM + (hiM - loM) * i / 6, observed: null});
+        }
+    }
+    const hasMeasured = rows.some((r) => r.observed);
+
     const fmt = (s) => {
         if (!s || !Number.isFinite(s.u) || !Number.isFinite(s.v)) return "—";
-        const kt = Math.hypot(s.u, s.v) * 1.94384;
+        const kt = Math.hypot(s.u, s.v) / KNOTS_TO_MS;
         const dir = ((Math.atan2(s.u, s.v) * 180 / Math.PI + 180) % 360 + 360) % 360;
         return `${kt.toFixed(0)} kt @ ${dir.toFixed(0)}°`;
     };
-    const alt = h.metricsFull && h.metricsFull.altitude;
-    const loM = alt && Number.isFinite(alt.min) ? alt.min : h0;
-    const hiM = alt && Number.isFinite(alt.max) ? alt.max : h0 + 3000;
-    const rows = [];
-    for (let i = 0; i <= 6; i++) {
-        const altM = loM + (hiM - loM) * i / 6;
-        const meas = canMeasure ? wf.sampleWindAtAltitude(Sit.lat, Sit.lon, altM) : null;
-        rows.push(`<tr><td>${(altM / 304.8).toFixed(1)}</td>`
-            + `<td>${fmt(inferredAt(altM, 0))}</td>`
-            + `<td>${fmt(inferredAt(altM, 0.5))}</td>`
-            + `<td>${fmt(inferredAt(altM, 1))}</td>`
-            + `<td>${fmt(meas)}</td></tr>`);
+    // The reference column only exists when there is reference data — a
+    // column of em-dashes reads as "checked, found nothing", which is wrong.
+    const rowsHTML = rows.map((r) =>
+        `<tr><td>${(r.altM / 304.8).toFixed(1)}</td>`
+        + `<td>${fmt(inferredAt(r.altM, 0))}</td>`
+        + `<td>${fmt(inferredAt(r.altM, 0.5))}</td>`
+        + `<td>${fmt(inferredAt(r.altM, 1))}</td>`
+        + (hasMeasured ? `<td>${fmt(r.observed)}</td>` : "")
+        + `</tr>`).join("");
+
+    // Role framing: the pinned variant's agreement is circular and must say
+    // so even when no evidence record was captured (the role rides on the
+    // hypothesis itself); the free variant carries the independent rating.
+    const role = (ev && ev.role) || h.windEvidenceRole || null;
+    let evidenceHTML = "";
+    if (role === "externally-conditioned") {
+        const note = (ev && ev.note)
+            || "agreement with the loaded wind is EXPECTED here — this fit consumed the wind "
+                + "reference, so it is not independent evidence";
+        evidenceHTML = `<p class="tg-d-p" style="font-size:12px;margin-top:6px"><strong>Not independent `
+            + `evidence:</strong> ${escapeHtml(note)}.</p>`;
+    } else if (ev && ev.rating) {
+        const ratingLabel = {supports: "Supports a wind-blown balloon",
+            compatible: "Compatible with a wind-blown balloon",
+            tension: "In tension with passive drift",
+            inconclusive: "Inconclusive"}[ev.rating] ?? ev.rating;
+        evidenceHTML = `<p class="tg-d-p" style="font-size:12px;margin-top:6px"><strong>Independent wind `
+            + `check — ${escapeHtml(ratingLabel)}:</strong> ${escapeHtml(ev.why || "")}`
+            + (ev.statusText ? ` <span style="opacity:0.75">[${escapeHtml(ev.statusText)}]</span>` : "")
+            + `.</p>`;
     }
-    return `<h4 class="tg-d-h">Inferred wind profile over the clip${canMeasure ? " vs measured" : ""}</h4>`
+
+    return `<h4 class="tg-d-h">Inferred wind profile over the clip${hasMeasured ? " vs loaded winds aloft" : ""}</h4>`
         + `<table class="tg-wind"><thead><tr><th>Alt (kft)</th><th>Fit start</th>`
-        + `<th>Fit midpoint</th><th>Fit end</th><th>Measured</th></tr></thead>`
-        + `<tbody>${rows.join("")}</tbody></table>`
+        + `<th>Fit midpoint</th><th>Fit end</th>${hasMeasured ? "<th>Loaded</th>" : ""}</tr></thead>`
+        + `<tbody>${rowsHTML}</tbody></table>`
         + `<p class="tg-d-p" style="font-size:12px;margin-top:6px">`
-        + (canMeasure
+        + (hasMeasured
             ? "The three fitted columns include the solved quadratic time variation and altitude shear. "
-                + "A plausible balloon should need winds close to those measured nearby; large "
-                + "disagreement weakens the balloon interpretation. Measured winds are themselves only "
+                + "A plausible balloon should need winds close to those loaded; large "
+                + "disagreement weakens the balloon interpretation. Loaded winds are themselves only "
                 + "loosely representative (a sonde can be 200+ mi and 12 h away)."
-            : "The start, midpoint and end winds this free fit inferred, including altitude shear. "
-                + "Load a sounding/GFS wind field to compare them against "
+            : "The start, midpoint and end winds this fit solved for, including altitude shear. "
+                + "Load a sounding/GFS wind field (before analyzing) to compare them against "
                 + "measured winds aloft.")
-        + "</p>";
+        + "</p>"
+        + evidenceHTML;
 }
 
 function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = false) {
@@ -4338,7 +4790,7 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
 
     const prose = detailProse(h, r, ss);
     const spaceHTML = solutionSpaceHTML(h, ss);
-    const badges = [tierBadge(r), ...completenessBadges(r)];
+    const badges = [tierBadge(r), ...completenessBadges(r), ...windEvidenceBadges(h)];
     const badgesHTML = badges.map((badge) =>
         `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
     const tieText = tied ? " · within the 0.05 display-score tie threshold" : "";
@@ -4397,6 +4849,28 @@ function showResultGallery(results) {
     // compared by a calibrated cross-model likelihood; see the comparator in
     // rankAllHypotheses for exactly which keys are and are not commensurable.
     const tiles = rankAllHypotheses(hypotheses);
+
+    // The polynomial-order sweep produces one tile per swept order per strategy
+    // (5 by default, 15 with the Monte Carlo sweep on), and those tiles are a
+    // method diagnostic rather than independent candidates — see the sweep-tile
+    // builder in buildHypotheses. Presenting them all up front buries the real
+    // contenders, so keep each strategy's best-RANKED order in the main list
+    // and move the remaining orders below an "Extras" separator at the end:
+    // still ranked as they were, still selectable, nothing silently dropped.
+    // Sweep tiles are exactly the ones carrying a swept order in their params.
+    const isSweepTile = (t) => Number.isFinite(t.h?.params?.mcOrder);
+    const bestSweepSeen = new Set();
+    const mainTiles = [];
+    const extraTiles = [];
+    for (const t of tiles) {
+        if (isSweepTile(t) && bestSweepSeen.has(t.h.key)) { extraTiles.push(t); continue; }
+        if (isSweepTile(t)) bestSweepSeen.add(t.h.key);
+        mainTiles.push(t);
+    }
+    tiles.length = 0;
+    tiles.push(...mainTiles, ...extraTiles);
+    // First index of the demoted sweep tiles; tiles.length when there are none.
+    const extrasStart = mainTiles.length;
 
     const overlay = document.createElement("div");
     overlay.className = "traverse-gallery-overlay";
@@ -4786,7 +5260,8 @@ function showResultGallery(results) {
         "This is a screening order, not a calibrated 'most likely object' probability: it is decided by keys that ARE " +
         "comparable across categories — screen pass, completeness, broad-screen tier — before any within-category " +
         "score that is not, with category priority only breaking otherwise-equal ties. Each tile also shows its rank " +
-        "within its own category; open a tile for the exact rank basis.";
+        "within its own category; open a tile for the exact rank basis. Repeated polynomial-order sweep fits sit " +
+        "below the Extras separator at the end — only each strategy's best-ranked order appears in the main list.";
     panel.appendChild(explain);
 
     // Truth-mode banner: ordering is by separation from the reference track
@@ -4861,6 +5336,62 @@ function showResultGallery(results) {
             + "ground samples consumed during fitting and grading. A rerun recomputes only if an equal- or "
             + "higher-resolution authoritative sample changes materially (more than 0.1 m).";
         panel.appendChild(note);
+    }
+
+    // Executive headline strip: the corroboration-first verdict, frozen with
+    // the results. Sits ABOVE the wind-check strip — the one-line answer, then
+    // its strongest single piece of evidence. Prose only: tile ORDER stays
+    // exactly as ranked, so anomalous/fast candidates keep their positions.
+    {
+        // Suppressed only when truth ordering is actually ON — an unusable
+        // truth selection (insufficient overlap) leaves the ordinary evidence
+        // reasoning in force, and the report already shows the assessment in
+        // that state, so the gallery must match.
+        const truthActive = !!(results.truth && results.truth.usable);
+        const ea = (!truthActive && results.executiveAssessment) ? results.executiveAssessment : null;
+        if (ea && ea.headline) {
+            const styles = {
+                "probably-balloon": "background:#16321f; color:#9fd8ae; border:1px solid #2f6a42;",
+                "consistent-one": "background:#1e2a33; color:#a9c8dd; border:1px solid #3a5a72;",
+                "consistent-several": "background:#1e2a33; color:#a9c8dd; border:1px solid #3a5a72;",
+                "unresolved": "background:#4a3a12; color:#ffd479; border:1px solid #8a6d2a;",
+                "insufficient": "background:#2a2a2e; color:#b9b9c0; border:1px solid #4a4a52;",
+            };
+            const strip = document.createElement("div");
+            strip.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px; font-size:13px;"
+                + (styles[ea.code] ?? styles.insufficient);
+            const head = document.createElement("strong");
+            head.textContent = ea.headline;
+            strip.appendChild(head);
+            strip.appendChild(document.createTextNode(" " + ea.detail));
+            panel.appendChild(strip);
+        }
+    }
+
+    // Evidence strip: the balloon wind check backing the headline above,
+    // colour-coded by rating. Same rules — prose and badge only, no ordering.
+    {
+        const bev = balloonEvidenceSummary(hypotheses);
+        if (bev && bev.rating) {
+            const styles = {
+                supports: "background:#16321f; color:#9fd8ae; border:1px solid #2f6a42;",
+                compatible: "background:#1e2a33; color:#a9c8dd; border:1px solid #3a5a72;",
+                tension: "background:#4a3a12; color:#ffd479; border:1px solid #8a6d2a;",
+                inconclusive: "background:#2a2a2e; color:#b9b9c0; border:1px solid #4a4a52;",
+            };
+            const label = {supports: "SUPPORTS", compatible: "compatible",
+                tension: "in tension", inconclusive: "inconclusive"}[bev.rating] ?? bev.rating;
+            const note = document.createElement("div");
+            note.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px; font-size:13px;"
+                + (styles[bev.rating] ?? styles.inconclusive);
+            note.textContent = `Evidence — balloon wind check: ${label}. `
+                + `LOS fit ${bev.fitWord}`
+                + (Number.isFinite(bev.errDeg) ? ` (${bev.errDeg.toFixed(2)}°)` : "")
+                + `, ${bev.motionWord} (consistency ${bev.consistency.toFixed(2)})`
+                + (bev.altText ? ` at ${bev.altText}` : "")
+                + `. Independent wind evidence: ${bev.why}.`;
+            panel.appendChild(note);
+        }
     }
 
     const toolbar = document.createElement("div");
@@ -5005,8 +5536,21 @@ function showResultGallery(results) {
 
     const relayout = () => {
         while (grid.firstChild) grid.removeChild(grid.firstChild);
+        // The Extras separator goes before the first VISIBLE demoted tile, so
+        // it disappears entirely when every extra has been set aside.
+        let extrasSep = null;
         tiles.forEach((_, i) => {
             if (dismissed.has(i)) return;
+            if (i >= extrasStart && !extrasSep) {
+                extrasSep = document.createElement("div");
+                extrasSep.className = "tg-sep";
+                extrasSep.innerHTML = `<div class="tg-sep-title">Extras</div>`
+                    + `<div class="tg-sep-desc">The remaining polynomial-order sweep fits — one tile per `
+                    + `swept order, with each strategy's best-ranked order already shown above. Read them `
+                    + `as a method diagnostic (how much curvature the sightlines admit, and where extra `
+                    + `order stops buying anything); they are still ranked as they were.</div>`;
+                grid.appendChild(extrasSep);
+            }
             grid.appendChild(tileEls[i]);
         });
         if (dismissed.size > 0) {
@@ -5097,10 +5641,13 @@ function showResultGallery(results) {
     const pickSuccessor = (i, vacatedRect) => {
         const group = tiles[i].category.key;
         const inPlay = (k) => k !== i && !dismissed.has(k);
-        for (let k = i + 1; k < tiles.length && tiles[k].category.key === group; k++) {
+        // The Extras separator spans the grid like a group heading, so the
+        // directional scans must not walk across it either.
+        const sameSide = (k) => (k >= extrasStart) === (i >= extrasStart);
+        for (let k = i + 1; k < tiles.length && tiles[k].category.key === group && sameSide(k); k++) {
             if (inPlay(k)) return k;          // slides into the vacated slot
         }
-        for (let k = i - 1; k >= 0 && tiles[k].category.key === group; k--) {
+        for (let k = i - 1; k >= 0 && tiles[k].category.key === group && sameSide(k); k--) {
             if (inPlay(k)) return k;          // the one to its left
         }
         let best = -1, bestDist = Infinity;
@@ -5171,7 +5718,7 @@ function showResultGallery(results) {
     });
 
     tiles.forEach(({h, r, category, groupIndex, groupSize, tied}, i) => {
-        const badges = [tierBadge(r), ...completenessBadges(r)];
+        const badges = [tierBadge(r), ...completenessBadges(r), ...windEvidenceBadges(h)];
         const badgesHTML = badges.map((badge) =>
             `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
         const statsHTML = hypothesisStats(h).map(([k, v]) =>
@@ -6272,6 +6819,7 @@ function buildReportHTML(ctx) {
         sweepBestMetrics = ctx.bestMetrics, constAirPick = null,
         closeLoM, closeHiM, hypotheses, provenance, failures = [], manifest = {},
         truth: _truth = null, terrainChangedDuringRun = false,
+        executiveAssessment = null,
     } = ctx;
     // A truth track with too little overlap does not drive ordering (TA-19):
     // treat it as no-truth for the whole report so nothing claims truth-based
@@ -6506,6 +7054,51 @@ function buildReportHTML(ctx) {
 
     const verdictHTML = buildVerdict(hypotheses, provenance, truth);
     const truthSummaryHTML = truth ? buildTruthSummaryHTML(rankedHyps, truth) : "";
+
+    // Executive assessment block: the frozen headline plus the per-class
+    // evidence matrix — the SAME record the gallery strip and verdict render,
+    // never a reclassification. Truth mode keeps its own reference summary.
+    const ea = (!truth && executiveAssessment) ? executiveAssessment : null;
+    const executiveHTML = ea ? `
+<section>
+    <h2>Assessment</h2>
+    <p><strong>${escapeHtml(ea.headline)}</strong> ${escapeHtml(ea.detail)}</p>
+    <table class="comp">
+        <thead><tr><th>Interpretation</th><th>Tested</th><th>Complete</th><th>Close fit</th>
+            <th>Ordinary motion</th><th>Independent evidence</th><th>Status</th></tr></thead>
+        <tbody>
+        ${ea.classes.map((c) => {
+        const status = c.viable
+            ? (c.supported ? "viable — independently supported" : "viable")
+            : (c.tested ? (c.blocker || "not viable") : "not run");
+        // A negative evidence result may only be reported where an evidence
+        // CHECK actually exists and ran. Only two do in this release: the
+        // balloon wind comparison and the catalogue angular match. The other
+        // classes have no corroboration input yet (no ADS-B/radar), so their
+        // cell is "not checked" — never "none available", which would falsely
+        // read as a check that came back empty.
+        const evCell = c.key === "balloon"
+            ? (c.windRating ? `wind: ${c.windRating}` : "not checked")
+            : c.key === "knownObject"
+                ? (c.viable ? "close catalogue match (pointing uncertainty uncalibrated)"
+                    // the blocker distinguishes "matched but shadowed/faint"
+                    // from a genuinely distant match — never collapse the two
+                    : c.tested ? (c.blocker || "no close catalogue match") : "not checked")
+                : "not checked (no corroboration input in this release)";
+        const yn = (v) => (v ? "✓" : "—");
+        return `<tr><td style="text-align:left">${escapeHtml(c.label)}</td>`
+            + `<td>${yn(c.tested)}</td><td>${yn(c.complete)}</td><td>${yn(c.close)}</td>`
+            + `<td>${yn(c.ordinary)}</td><td>${escapeHtml(evCell)}</td>`
+            + `<td style="text-align:left">${escapeHtml(status)}</td></tr>`;
+    }).join("")}
+        </tbody>
+    </table>
+    <p class="sub">"Probably" requires independent corroboration; a sole passing fit reads "consistent
+    with". Checks not run or unavailable this pass:
+    ${ea.notRun.length ? escapeHtml(ea.notRun.join("; ")) : "none"}.
+    Causes with no model in this analysis (never tested, never excluded):
+    ${escapeHtml(ea.notModelled.join("; "))}.</p>
+</section>` : "";
     const reportSS = analyzeSolutionSpace({dataset, fastProfile});
     const solutionDetailsHTML = buildReportHypothesisDetails(dataset, rankedHyps, reportSS);
 
@@ -6661,6 +7254,8 @@ details.manifest pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1
         <div><div class="k">Analysis coverage</div><div class="v">${hypotheses.filter((h) => h.track).length} results · ${failures.length} failed/unavailable</div></div>
     </div>
 </header>
+
+${executiveHTML}
 
 ${provenance?.circular ? `<div class="warning"><strong>Constructed LOS — validation only.</strong> ` +
     `${escapeHtml(provenance.reason)} Fits below test internal consistency, not independent object inference.</div>` : ""}

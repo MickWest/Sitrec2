@@ -423,6 +423,280 @@ export function plausibilityRating(h) {
     };
 }
 
+// --- Executive interpretation-class assessment ------------------------------
+//
+// The executive verdict ("Probably a wind-blown balloon", "Consistent with
+// several conventional interpretations", ...) is CORROBORATION-FIRST: a
+// "Probably" headline is licensed by independent class-specific evidence
+// (today: the free balloon fit's frozen wind agreement), never by gallery
+// position or by being the sole surviving fit. This preserves the
+// no-global-winner rule — the ranking comparator above is untouched and the
+// assessment must never feed back into ordering.
+//
+// Interpretation CLASSES are not the gallery display categories: the free and
+// wind-pinned balloon fits are one class, as are the two drone fits. Geometric
+// and curve fits (constAir, plausible, gf*, sweeps) are compatibility screens,
+// not object classes, and do not appear here.
+//
+// Everything below is pure data-in/data-out (no DOM, no NodeMan) so it is
+// unit-testable and so the gallery, verdict, and report all render the SAME
+// frozen record instead of reclassifying separately.
+
+// Mundane causes the analysis has NO model for. The verdict must disclose
+// these — "does not fit any tested model" is meaningless without them — and
+// the list is deliberately static so it cannot silently drift out of sync
+// with a claim of coverage.
+export const NOT_MODELLED_DISCLOSURE = [
+    "birds and insects",
+    "airborne debris",
+    "helicopters and rockets",
+    "reflections, glare, and bokeh",
+    "video-processing artefacts",
+];
+
+const INTERPRETATION_CLASS_DEFS = [
+    // "astroTime" is the date-SWEEPING diagnostic and must never support an
+    // event-time identification, so it is deliberately absent from knownObject.
+    {key: "balloon", label: "wind-blown balloon", keys: ["lantern"]},
+    {key: "fixedWing", label: "conventional fixed-wing aircraft", keys: ["aircraft"]},
+    {key: "multirotor", label: "multirotor drone", keys: ["quadcopter", "droneControl"]},
+    {key: "stationary", label: "stationary or ground-bound object",
+        keys: ["fixedPoint", "ground", "groundVehicle"]},
+    {key: "knownObject", label: "catalogued satellite or astronomical object",
+        keys: ["satellite", "astroNow"]},
+];
+
+// One representative hypothesis, judged. The predicates are deliberately
+// STRICTER than gallery eligibility: "complete" also rejects load-bearing
+// bound pins and internal model clamps — a fit that only works pressed
+// against its own limits cannot carry an executive conclusion.
+function judgeRepresentative(h) {
+    const r = plausibilityRating(h);
+    const kind = hypothesisFitKind(h);
+    if (kind === "identity") {
+        // Catalogue identification: rank 3 is the close-angular-match screen.
+        // Kinematic ordinariness does not apply to an identification, so it is
+        // null (not true) — the matrix must not show a ✓ for a predicate that
+        // was never evaluated.
+        //
+        // The ANGULAR match and the VISIBILITY/illumination check are separate
+        // facts and must be reported separately: a satellite 0.05° away but in
+        // Earth's shadow was matched-and-ruled-out, which is the opposite of
+        // "no close catalogue match".
+        const p = h.params || {};
+        const err = Number.isFinite(h.errDeg) ? h.errDeg : Infinity;
+        const angularClose = err <= (p.satellite !== undefined ? 0.15 : 0.1);
+        const notVisible = p.visible === false || p.sunlit === false;
+        // "close" states the ANGULAR fact alone — the matrix column must agree
+        // with prose that says "close angular match". Viability additionally
+        // requires the object to be visible/sunlit (rank 3 folds both in).
+        const close = angularClose;
+        const viable = r.rank === 3;
+        let blocker = null;
+        if (!viable) {
+            blocker = (angularClose && notVisible)
+                ? (p.satellite !== undefined
+                    ? `close angular match (${err.toFixed(2)}°), but the satellite is in Earth's `
+                        + "shadow at this time"
+                    : `close angular match (${err.toFixed(2)}°), but the object is too faint under `
+                        + "the current field-of-view assumption")
+                : (r.reasons?.[0] ?? "no close angular match");
+        }
+        return {r, complete: true, close, ordinary: null, viable, blocker,
+            angularClose, notVisible};
+    }
+    if (kind === "directional-geometry" || h.atInfinity) {
+        // A direction-only geometric check (e.g. a point at infinity) fits
+        // angles but evaluates NO physical motion — it must never make an
+        // object class "viable", however small its residual.
+        return {r, complete: false, close: false, ordinary: false, viable: false,
+            blocker: "direction-only geometric check — no physical motion is evaluated"};
+    }
+    // Early-return ratings (underground, non-physical, off-mode, invalid
+    // metrics) carry no fitRank; their first reason is the honest blocker.
+    if (!h.track || r.rank < 0 || r.fitRank == null) {
+        return {r, complete: false, close: false, ordinary: false, viable: false,
+            blocker: h.track ? (r.reasons?.[0] ?? r.label) : "fit failed or returned no solution"};
+    }
+    const complete = !r.incomplete
+        && !(r.activePins && r.activePins.length)
+        && !(r.modelClamps && r.modelClamps.length);
+    const close = r.fitRank === 3;
+    const ordinary = r.kinematicRank === 3;
+    let blocker = null;
+    if (!complete) blocker = "search incomplete (bound pins, clamps, or an unconverged optimizer)";
+    else if (!close) blocker = `LOS fit not close (${Number.isFinite(r.scoredErrDeg)
+        ? r.scoredErrDeg.toFixed(2) : "?"}° scored residual)`;
+    else if (!ordinary) blocker = "requires non-ordinary kinematics";
+    return {r, complete, close, ordinary, viable: complete && close && ordinary, blocker};
+}
+
+/**
+ * Aggregate the hypothesis list into interpretation classes with the
+ * executive predicates: tested, complete/close/ordinary, viable, and (for the
+ * balloon class) the independent wind evidence carried by the free fit.
+ */
+export function aggregateInterpretationClasses(hypotheses) {
+    const list = hypotheses || [];
+    return INTERPRETATION_CLASS_DEFS.map((def) => {
+        const reps = list.filter((h) => def.keys.includes(h.key));
+        const judged = reps.map((h) => ({h, ...judgeRepresentative(h)}));
+        const viableRep = judged.find((j) => j.viable) ?? null;
+        const best = viableRep ?? judged.slice().sort((a, b) =>
+            (a.r.scoredErrDeg ?? Infinity) - (b.r.scoredErrDeg ?? Infinity))[0] ?? null;
+        const cls = {
+            key: def.key,
+            label: def.label,
+            tested: judged.length > 0,
+            viable: !!viableRep,
+            complete: !!best?.complete,
+            close: !!best?.close,
+            ordinary: !!best?.ordinary,
+            blocker: viableRep ? null : (best?.blocker ?? "not tested in this run"),
+            bestName: best?.h?.name ?? null,
+            bestErrDeg: Number.isFinite(best?.r?.scoredErrDeg) ? best.r.scoredErrDeg : null,
+            supported: false,
+            supportNote: null,
+        };
+        if (def.key === "balloon") {
+            const free = reps.find((h) => h.windEvidenceRole === "free");
+            const freeJudged = judged.find((j) => j.h === free) ?? null;
+            const ev = free?.windEvidence ?? null;
+            cls.windRating = (ev && ev.role === "free") ? (ev.rating ?? null) : null;
+            cls.windWhy = ev?.why ?? null;
+            cls.windSource = ev?.source ?? null;
+            cls.consistency = freeJudged?.r?.balloonConsistency
+                ?? (free?.track ? balloonConsistency(free.track) : null);
+            // Only the free fit's agreement is independent — and "supports"
+            // already carries every capture-time quality cap (source class,
+            // sounding distance at contributing altitudes, measured tops,
+            // completeness, observable range).
+            cls.supported = !!(freeJudged?.viable && cls.windRating === "supports");
+            cls.supportNote = cls.windRating
+                ? `independent wind evidence: ${cls.windRating}` : null;
+        }
+        return cls;
+    });
+}
+
+// Corroboration wording for a sole viable class that CANNOT claim "Probably".
+function noCorroborationReason(cls) {
+    if (cls.key === "balloon" && cls.windRating) {
+        if (cls.windRating === "supports") {
+            // Reachable when the wind supports passive drift but the motion
+            // itself is not distinctly balloon-like (consistency below the
+            // "Probably" gate) — the supporting evidence must be acknowledged,
+            // never misdescribed as inconclusive.
+            const c = Number.isFinite(cls.consistency) ? cls.consistency.toFixed(2) : "low";
+            return `although the independent wind evidence supports passive drift (${cls.windWhy}), `
+                + `the fitted motion is not distinctly balloon-like (consistency ${c}), so `
+                + `"probably" is not claimed`;
+        }
+        if (cls.windRating === "tension") {
+            return `the independent wind evidence is in tension — ${cls.windWhy} — which `
+                + "weakens but does not exclude the balloon interpretation";
+        }
+        if (cls.windRating === "compatible") {
+            return `the independent wind evidence is only compatible, not supporting — ${cls.windWhy}`;
+        }
+        return `the independent wind evidence is inconclusive — ${cls.windWhy}`;
+    }
+    if (cls.key === "knownObject") {
+        // The catalogue match IS what made this class viable — the missing
+        // piece is a calibrated pointing uncertainty, without which a close
+        // angular offset cannot be promoted to a positive identification.
+        return "although the catalogued object's angular match is close, the sightline pointing "
+            + "uncertainty is not calibrated in this analysis, so a positive identification "
+            + "is not claimed";
+    }
+    return "no independent corroborating evidence (an ADS-B/radar track, a catalogue match, "
+        + "or a supporting wind comparison) is available for it";
+}
+
+/**
+ * The frozen executive assessment: a verdict code, a one-sentence plain-text
+ * headline, a supporting detail paragraph, and the per-class audit trail. The
+ * caller freezes this into the analysis results; gallery, verdict, and report
+ * all render THIS record. Plain text throughout — renderers escape.
+ *
+ * Deliberately asymmetric and conservative: "Probably" needs independent
+ * corroboration; a sole survivor is only "Consistent with"; and the absence
+ * of any passing model yields "Unresolved" — never an anomaly claim, because
+ * this release has no calibrated LOS noise floor and no envelope-wide
+ * exclusion certificates (see the design notes; the strict negative verdict
+ * lands only once those exist).
+ */
+export function assessExecutiveVerdict(hypotheses, context = {}) {
+    const prov = context.provenance || {};
+    const classes = aggregateInterpretationClasses(hypotheses);
+    const notRun = classes.filter((c) => !c.tested).map((c) => c.label);
+    const base = {classes, notRun, notModelled: NOT_MODELLED_DISCLOSURE,
+        gates: {circular: !!prov.circular, rangeUnobservable: !!prov.rangeUnobservable}};
+
+    if (prov.circular) {
+        return {...base, code: "insufficient",
+            headline: "Insufficient independent evidence to discriminate.",
+            detail: "The sightlines are constructed from the target being tested, so these results "
+                + "validate the scene's internal consistency only and cannot identify the object."};
+    }
+    if (prov.rangeUnobservable) {
+        return {...base, code: "insufficient",
+            headline: "Insufficient evidence to discriminate.",
+            detail: "Range is not determined by this evidence — the sensor's motion provides no "
+                + "usable parallax, so every model's distance reflects its own priors and "
+                + "range-dependent classification is not possible."};
+    }
+
+    const viable = classes.filter((c) => c.viable);
+    const balloon = classes.find((c) => c.key === "balloon");
+    const knownObject = classes.find((c) => c.key === "knownObject");
+
+    if (balloon && balloon.viable && balloon.supported
+        && Number.isFinite(balloon.consistency) && balloon.consistency >= 0.75
+        && !(knownObject && knownObject.viable)) {
+        return {...base, code: "probably-balloon",
+            headline: "Probably a wind-blown balloon.",
+            detail: "The complete free-wind balloon model reproduces the sightlines with ordinary, "
+                + `balloon-like motion (consistency ${balloon.consistency.toFixed(2)}), and the wind `
+                + `it requires independently agrees with the loaded winds aloft — ${balloon.windWhy}. `
+                + "Other displayed candidates remain compatibility screens; this conclusion comes "
+                + "from independent wind corroboration, not from a global object-probability ranking."};
+    }
+
+    if (viable.length === 1) {
+        const c = viable[0];
+        return {...base, code: "consistent-one",
+            headline: `Consistent with a ${c.label}, but not identified.`,
+            detail: `The ${c.label} interpretation gives a complete, ordinary, close fit, but `
+                + `${noCorroborationReason(c)}. The sightlines alone do not establish the object type.`};
+    }
+
+    if (viable.length >= 2) {
+        return {...base, code: "consistent-several",
+            headline: "Consistent with several conventional interpretations.",
+            detail: `Complete, ordinary, close fits were found for: ${viable.map((c) => c.label).join("; ")}. `
+                + "The available sightline and external evidence does not distinguish among them. "
+                + "No cross-category probability comparison has been made."};
+    }
+
+    // Nothing viable. This is the safety valve, not an anomaly claim.
+    const reasons = [];
+    for (const c of classes) {
+        // "not run or did not complete": coverage is inferred from hypothesis
+        // presence, and a check that ran but errored also leaves no record —
+        // the failures banner carries the specifics.
+        if (!c.tested) reasons.push(`the ${c.label} checks were not run or did not complete`);
+        else if (!c.viable) reasons.push(`${c.label}: ${c.blocker}`);
+    }
+    reasons.push("the sightline noise floor is not calibrated and model envelopes were not "
+        + "exhaustively excluded, so a strict exclusion audit has not been performed");
+    return {...base, code: "unresolved",
+        headline: "Unresolved — no completed tested conventional model passes the current screen.",
+        detail: "This is not, by itself, evidence of anomalous motion or an anomalous object. A "
+            + "negative conventional-model conclusion is not licensed here because: "
+            + `${reasons.join("; ")}.`};
+}
+
 // Truth-mode primary sort key: mean 3D separation from the selected truth
 // track (meters, lower is better). null = no truth track selected for this
 // hypothesis; Infinity = truth selected but not comparable (direction-only

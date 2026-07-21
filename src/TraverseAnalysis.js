@@ -329,6 +329,148 @@ export function compareTrackToTruth(dataset, track, truth, options = {}) {
     };
 }
 
+/**
+ * Compare a REQUIRED horizontal-wind series (the wind a free-wind balloon fit
+ * needs at each sample in order to drift as fitted) against an OBSERVED series
+ * (an external wind reference sampled at the same places/times), as full E/N
+ * VECTORS — never as mean speeds or a single correlation, which both hide
+ * real disagreement (equal speeds in opposite directions; time-varying errors
+ * cancelling into a matching mean).
+ *
+ * required / observed: arrays of {u, v} in m/s (E, N), or null/non-finite for
+ * samples with no data — such samples are skipped and reported via coverage.
+ *
+ * Pure metric only: no wind-source classification, no verdict wording, no
+ * thresholds beyond the calm cutoff. The caller owns interpretation, because
+ * "3 m/s RMSE" means different things against a nearby sounding versus a
+ * hand-set constant.
+ *
+ * Returns {comparable:false, reason, count, total, coverage, minPairs} with
+ * fewer than minPairs usable pairs — structured rather than null, so a caller
+ * freezing evidence can still record HOW it failed. Else comparable:true plus:
+ *   count / coverage        usable pairs, and their fraction of the series
+ *   vectorRMSE              sqrt(mean |required - observed|^2), m/s
+ *   meanRequiredSpeed, meanObservedSpeed, speedBias (required - observed), m/s
+ *   alignment               magnitude-weighted mean cosine, computed ONLY over
+ *                           pairs where BOTH winds exceed calmThresholdMs — a
+ *                           calm vector has no meaningful direction, so calm
+ *                           pairs must not be allowed to claim agreement.
+ *                           null when no such pair exists (dirSamples === 0)
+ *   meanAbsDirDiffDeg       mean |direction difference| over those same
+ *                           above-calm pairs; null if none
+ *   dirSamples              how many samples the direction stats used
+ *   bothMeanCalm            true when both series' MEAN speeds are below the
+ *                           calm threshold. Means only — individual gusts may
+ *                           still exceed it (check dirSamples), so this alone
+ *                           never proves "both stayed calm"
+ *   temporalCorrelation     centered Pearson correlation of the E/N components
+ *                           over time, reported ONLY when both series actually
+ *                           vary (else null) — a static profile must not be
+ *                           presented as measured temporal agreement
+ *   requiredVaries / observedVaries   whether each centered series varies
+ *                           enough for that statistic: pooled-component RMS of
+ *                           the centered E and N series (energy spread over
+ *                           both axes, so one-axis variation needs ~1.4x the
+ *                           floor) must exceed varianceFloorMs
+ */
+export function compareWindVectorSeries(required, observed, options = {}) {
+    // Options are clamped to sane values: a negative or NaN threshold must not
+    // silently turn constants into "varying" series or admit empty comparisons.
+    const nonneg = (v, dflt) => (Number.isFinite(v) && v >= 0 ? v : dflt);
+    const calmMs = nonneg(options.calmThresholdMs, 2);
+    const minPairs = Math.max(1, Math.round(nonneg(options.minPairs, 3)));
+    const varianceFloorMs = nonneg(options.varianceFloorMs, 0.5);
+    const total = Math.max(required?.length ?? 0, observed?.length ?? 0);
+    const n = Math.min(required?.length ?? 0, observed?.length ?? 0);
+
+    let count = 0, sumSq = 0;
+    let sumReqSpeed = 0, sumObsSpeed = 0;
+    let sumDot = 0, sumMag = 0;
+    let dirCount = 0, sumAbsDirDiff = 0;
+    const reqU = [], reqV = [], obsU = [], obsV = [];
+
+    for (let i = 0; i < n; i++) {
+        const r = required[i], o = observed[i];
+        if (!r || !o || !Number.isFinite(r.u) || !Number.isFinite(r.v)
+            || !Number.isFinite(o.u) || !Number.isFinite(o.v)) continue;
+        count++;
+        const du = r.u - o.u, dv = r.v - o.v;
+        sumSq += du * du + dv * dv;
+        const rs = Math.hypot(r.u, r.v), os = Math.hypot(o.u, o.v);
+        sumReqSpeed += rs;
+        sumObsSpeed += os;
+        if (rs > calmMs && os > calmMs) {
+            // Direction-bearing stats (alignment included) come ONLY from
+            // pairs where both vectors are strong enough to HAVE a direction —
+            // otherwise a series of matched calms reads as perfect agreement.
+            sumDot += r.u * o.u + r.v * o.v;
+            sumMag += rs * os;
+            let d = (Math.atan2(r.u, r.v) - Math.atan2(o.u, o.v)) * 180 / Math.PI;
+            d = ((d + 540) % 360) - 180;
+            dirCount++;
+            sumAbsDirDiff += Math.abs(d);
+        }
+        reqU.push(r.u); reqV.push(r.v);
+        obsU.push(o.u); obsV.push(o.v);
+    }
+    if (count < minPairs) {
+        return {
+            comparable: false,
+            reason: "insufficient-pairs",
+            count, total,
+            coverage: count / Math.max(1, total),
+            minPairs,
+        };
+    }
+
+    const meanRequiredSpeed = sumReqSpeed / count;
+    const meanObservedSpeed = sumObsSpeed / count;
+
+    // Centered temporal-pattern correlation over the concatenated E and N
+    // component series. Guarded on BOTH series varying: correlating against a
+    // constant is undefined, and a static sounding correlating at 1.0 with a
+    // static fit would falsely read as "measured temporal agreement".
+    const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
+    const center = (a) => { const m = mean(a); return a.map((x) => x - m); };
+    const rc = [...center(reqU), ...center(reqV)];
+    const oc = [...center(obsU), ...center(obsV)];
+    const std = (a) => Math.sqrt(a.reduce((s, x) => s + x * x, 0) / a.length);
+    const requiredVaries = std(rc) > varianceFloorMs;
+    const observedVaries = std(oc) > varianceFloorMs;
+    let temporalCorrelation = null;
+    if (requiredVaries && observedVaries) {
+        let dot = 0, r2 = 0, o2 = 0;
+        for (let i = 0; i < rc.length; i++) {
+            dot += rc[i] * oc[i];
+            r2 += rc[i] * rc[i];
+            o2 += oc[i] * oc[i];
+        }
+        temporalCorrelation = dot / Math.sqrt(r2 * o2);
+    }
+
+    return {
+        comparable: true,
+        count,
+        total,
+        coverage: count / Math.max(1, total),
+        vectorRMSE: Math.sqrt(sumSq / count),
+        meanRequiredSpeed,
+        meanObservedSpeed,
+        speedBias: meanRequiredSpeed - meanObservedSpeed,
+        alignment: (dirCount && sumMag > 0) ? sumDot / sumMag : null,
+        meanAbsDirDiffDeg: dirCount ? sumAbsDirDiff / dirCount : null,
+        dirSamples: dirCount,
+        bothMeanCalm: meanRequiredSpeed <= calmMs && meanObservedSpeed <= calmMs,
+        temporalCorrelation,
+        requiredVaries,
+        observedVaries,
+        // Every threshold the numbers depended on, frozen with them.
+        calmThresholdMs: calmMs,
+        minPairs,
+        varianceFloorMs,
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Constant-speed traverse (mirrors CNodeLOSTraverseConstantSpeed)
 // ---------------------------------------------------------------------------
