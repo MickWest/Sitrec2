@@ -209,7 +209,9 @@ function niceStep(span, target) {
     const s = n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10;
     return s * mag;
 }
-function niceTicks(lo, hi, target = 5) {
+// Exported for tests: an axis whose floor is NOT a nice value (e.g. terrain
+// at 0.7343 NM) must still tick at nice values above it (0.8, 1.0, ...).
+export function niceTicks(lo, hi, target = 5) {
     if (!(hi > lo)) return [lo];
     const step = niceStep(hi - lo, target);
     const start = Math.ceil(lo / step) * step;
@@ -396,34 +398,61 @@ export class Chart3D {
         const nzOf = (vz) => (vz - (b.minZ + b.maxZ) / 2) / baseN;
         const ticksX = niceTicks(b.minX, b.maxX, 5).filter((v) => v >= b.minX && v <= b.maxX);
         const ticksY = niceTicks(b.minY, b.maxY, 5).filter((v) => v >= b.minY && v <= b.maxY);
-        const ticksZ = niceTicks(b.minZ, b.maxZ, 5).filter((v) => v >= b.minZ && v <= b.maxZ);
+        // Z ticks: {v, d} pairs — v positions the tick in DATA units, d is the
+        // DISPLAY value the label shows. When the scene provides a zTicks
+        // transform (altitude shown in the small unit while geometry stays in
+        // the big unit), nice values are chosen in DISPLAY space, so the axis
+        // ticks at 5,000/6,000 ft rather than at un-nice big-unit multiples.
+        const zT = this.scene.zTicks || null;
+        const ticksZ = zT
+            ? niceTicks(zT.toDisplay(b.minZ), zT.toDisplay(b.maxZ), 5)
+                .map((d) => ({v: zT.fromDisplay(d), d}))
+                .filter(({v}) => v >= b.minZ && v <= b.maxZ)
+            : niceTicks(b.minZ, b.maxZ, 5)
+                .filter((v) => v >= b.minZ && v <= b.maxZ)
+                .map((v) => ({v, d: v}));
 
-        // Solid ground plane at min-Z. Drawn only when the box floor actually
-        // sits at z = 0 (the full-volume graphs, whose bounds force it there).
-        // A zoomed box floats around the tracks — its floor is an arbitrary
-        // altitude, so filling it would falsely read as terrain.
-        if (Math.abs(b.minZ) <= 1e-9) {
-            const ground = [
-                projN(-hx, -hy, -hz),
-                projN(hx, -hy, -hz),
-                projN(hx, hy, -hz),
-                projN(-hx, hy, -hz),
-            ];
-            ctx.fillStyle = "#062015";
-            ctx.beginPath();
-            ctx.moveTo(ground[0].x, ground[0].y);
-            for (let i = 1; i < ground.length; i++) ctx.lineTo(ground[i].x, ground[i].y);
-            ctx.closePath();
-            ctx.fill();
+        // Solid ground plane at the scene's declared GROUND level (data units;
+        // real terrain altitude when the scene provides groundZ, else the
+        // legacy 0). Drawn wherever that level falls inside the box — usually
+        // the floor of the full-volume graphs, but a zoomed box whose window
+        // reaches down to terrain shows it at the right height too. A box that
+        // floats entirely above ground gets no fill: painting its arbitrary
+        // floor would falsely read as terrain.
+        {
+            const groundZ = this.scene.groundZ ?? 0;
+            const eps = Math.max(1e-9, (b.maxZ - b.minZ) * 1e-6);
+            if (groundZ >= b.minZ - eps && groundZ <= b.maxZ + eps) {
+                // The normal case is floor == ground (padGraphBounds starts
+                // the altitude axis AT ground level): snap the fill exactly
+                // onto the bottom grid so the plane IS the base of the box,
+                // never a hair above it. Mid-box only when a candidate dips
+                // below ground and the floor followed it down.
+                const gz = Math.abs(b.minZ - groundZ) <= eps
+                    ? -hz
+                    : Math.max(-hz, Math.min(hz, nzOf(groundZ)));
+                const ground = [
+                    projN(-hx, -hy, gz),
+                    projN(hx, -hy, gz),
+                    projN(hx, hy, gz),
+                    projN(-hx, hy, gz),
+                ];
+                ctx.fillStyle = "#062015";
+                ctx.beginPath();
+                ctx.moveTo(ground[0].x, ground[0].y);
+                for (let i = 1; i < ground.length; i++) ctx.lineTo(ground[i].x, ground[i].y);
+                ctx.closePath();
+                ctx.fill();
+            }
         }
 
         // --- back-plane grids ---
         // X = backX plane (spans Y,Z)
         for (const vy of ticksY) line(projN(backX, nyOf(vy), -hz), projN(backX, nyOf(vy), hz), gridCol, 1);
-        for (const vz of ticksZ) line(projN(backX, -hy, nzOf(vz)), projN(backX, hy, nzOf(vz)), gridCol, 1);
+        for (const {v: vz} of ticksZ) line(projN(backX, -hy, nzOf(vz)), projN(backX, hy, nzOf(vz)), gridCol, 1);
         // Y = backY plane (spans X,Z)
         for (const vx of ticksX) line(projN(nxOf(vx), backY, -hz), projN(nxOf(vx), backY, hz), gridCol, 1);
-        for (const vz of ticksZ) line(projN(-hx, backY, nzOf(vz)), projN(hx, backY, nzOf(vz)), gridCol, 1);
+        for (const {v: vz} of ticksZ) line(projN(-hx, backY, nzOf(vz)), projN(hx, backY, nzOf(vz)), gridCol, 1);
         // Z = backZ plane (spans X,Y) — the floor/ceiling grid
         for (const vx of ticksX) line(projN(nxOf(vx), -hy, backZ), projN(nxOf(vx), hy, backZ), gridCol, 1);
         for (const vy of ticksY) line(projN(-hx, nyOf(vy), backZ), projN(hx, nyOf(vy), backZ), gridCol, 1);
@@ -462,9 +491,9 @@ export class Chart3D {
         }
         // Z ticks along the vertical back edge at x=backX, y=backY
         ctx.textAlign = "end"; ctx.textBaseline = "middle";
-        for (const vz of ticksZ) {
+        for (const {v: vz, d: dz} of ticksZ) {
             const pnt = projN(backX, backY, nzOf(vz));
-            ctx.fillText(fz(vz), pnt.x - 4, pnt.y);
+            ctx.fillText(fz(dz), pnt.x - 4, pnt.y);
         }
 
         // axis titles

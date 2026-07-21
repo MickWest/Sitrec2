@@ -3,12 +3,29 @@
 // containment. These are what keep the LOS rays drawn INSIDE the zoomed volume
 // instead of spilling across the page.
 
-import {clipSegmentToBounds, boundsContainPoint} from "../src/Chart3D";
+import {clipSegmentToBounds, boundsContainPoint, niceTicks} from "../src/Chart3D";
 
 const BOX = {minX: 0, maxX: 10, minY: 0, maxY: 10, minZ: 0, maxZ: 10};
 
 const close = (a, b) => expect(a).toBeCloseTo(b, 9);
 const closePt = (p, q) => { close(p[0], q[0]); close(p[1], q[1]); close(p[2], q[2]); };
+
+describe("niceTicks", () => {
+    test("an un-snapped terrain floor still gets nice ticks above it", () => {
+        // The altitude axis starts exactly at ground level (e.g. 0.7343 NM) —
+        // the floor itself is not rounded, but every tick is a nice value at
+        // or above it, never below the ground plane.
+        const ticks = niceTicks(0.7343, 2.1, 5);
+        expect(ticks.length).toBeGreaterThan(2);
+        expect(Math.min(...ticks)).toBeGreaterThanOrEqual(0.7343);
+        for (const t of ticks) {
+            // every tick is an integer multiple of the chosen nice step
+            const step = ticks[1] - ticks[0];
+            expect(Math.abs(t / step - Math.round(t / step))).toBeLessThan(1e-9);
+        }
+        expect(ticks[0]).toBeCloseTo(0.8, 10);
+    });
+});
 
 describe("boundsContainPoint", () => {
     test("inside, on-face, and outside points", () => {

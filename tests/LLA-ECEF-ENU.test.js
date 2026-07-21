@@ -1,5 +1,6 @@
 import {
     ECEF2ENU,
+    ECEF2ENU_radii,
     ECEFToLLA,
     ECEFToLLA_Sphere,
     ENU2ECEF,
@@ -7,6 +8,7 @@ import {
     haversineDistanceKM,
     LLAToECEF_Sphere,
     RLLAToECEF,
+    RLLAToECEF_radii,
     RLLAToECEFV_Sphere,
     wgs84
 } from '../src/LLA-ECEF-ENU';
@@ -270,5 +272,30 @@ describe('getN (radius of curvature)', () => {
         const N45 = getN(Math.PI / 4);
         const Nminus45 = getN(-Math.PI / 4);
         expect(N45).toBeCloseTo(Nminus45, 5);
+    });
+});
+
+describe('ENU z vs geodetic altitude away from the origin', () => {
+    test('a ground point 30 km east sits BELOW the tangent plane by the curvature drop', () => {
+        // Why the traverse graphs' ground level must be sampled in the local
+        // ENU frame (ECEF2ENU_radii .z), never as geodetic altitude: away
+        // from the ENU origin the tangent plane leaves the Earth's surface,
+        // so a point at geodetic altitude A has ENU z ~= A - d^2/(2R).
+        // At 30 km that drop is ~70 m - a plane placed at geodetic altitude
+        // would float that far above the displayed ground.
+        const lat = 40 * Math.PI / 180;
+        const lon = -105 * Math.PI / 180;
+        const altM = 500;
+        const dEastM = 30000;
+        // move ~30 km east along the parallel
+        const R = 6378137;
+        const dLon = dEastM / (R * Math.cos(lat));
+        const p = RLLAToECEF_radii(lat, lon + dLon, altM);
+        const enu = ECEF2ENU_radii(p, lat, lon);
+        expect(enu.x).toBeCloseTo(dEastM, -3);          // ~east offset (within ~500 m)
+        const expectedDrop = (dEastM * dEastM) / (2 * R);   // ~70.6 m
+        const drop = altM - enu.z;
+        expect(drop).toBeGreaterThan(expectedDrop * 0.8);
+        expect(drop).toBeLessThan(expectedDrop * 1.2);
     });
 });

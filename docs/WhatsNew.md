@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.105.0 (2026-07-21)
+
+### New Features
+- **Light view for the printable report** (Traverse → Analyze Traverse Methods... → *Open Full Report*): a *Light view (print)* button switches the full report to a light theme designed to print clearly — dark text on white, with the charts recoloured to match — and printing always uses it automatically, whatever is on screen. Your choice is remembered, and a report saved with *Download this report* while in light view reopens in light view.
+
+### Improvements
+- **Analysis graphs in your units** (Traverse → Analyze Traverse Methods...): the 3D volume graphs now use your chosen unit system instead of always nautical miles — distances in your large unit, and the altitude axis labelled in your small unit with round tick values like 5,000 and 6,000 ft.
+- **Real ground in the analysis graphs** (Traverse → Analyze Traverse Methods...): the green ground plane now sits at the actual local terrain level instead of sea level, and the altitude axis starts at the ground rather than zero. Candidates flagged for passing below the terrain additionally show a dashed line tracing the actual ground directly beneath their path, so a burial is visible even on sloped ground, and sightline rays now stop at the ground instead of continuing beneath it.
+- **Roomier analysis gallery** (Traverse → Analyze Traverse Methods...): the results are now two full-height columns — the title, notices, and toolbar scroll away with the tile list instead of taking a fixed band, and the *Open Full Report* and *Close* buttons sit at the bottom of the details pane. Setting a tile aside no longer jumps the list back to the top, and all the analysis text can be selected and copied.
+- **Your sightline choice is respected** (Traverse → Analyze Traverse Methods...): the analysis always runs on the sightline source you have selected — it no longer silently swaps in the camera's recorded sensor angles. When the camera track also carries recorded angles you aren't currently using, a note names the exact menu setting to change so you can re-run and compare which source the data supports better.
+
+### Security
+- Updated a web-request library used by the server, fixing five moderate security issues in how it handles cookies, proxy credentials, and web addresses during redirects. Applies to self-hosted server and Docker installs; the browser app and desktop versions don't use it and are unchanged.
+
 ## Version 2.104.0 (2026-07-21)
 
 ### New Features

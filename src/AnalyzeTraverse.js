@@ -22,7 +22,7 @@
  *   runTraverseAnalysis()          — run everything; returns the results object
  */
 
-import {GlobalDateTimeNode, Globals, NodeMan, Sit, TrackManager, setRenderOne} from "./Globals";
+import {GlobalDateTimeNode, Globals, NodeMan, Sit, TrackManager, Units, setRenderOne} from "./Globals";
 import {EventManager} from "./CEventManager";
 import {addOptionToGUIMenu, removeOptionFromGUIMenu} from "./lil-gui-extras";
 import {showError} from "./showError";
@@ -649,18 +649,30 @@ function trackGroundStats(track, n, originLat, originLon, samples = 48) {
     const ecef = unpackTrackToECEF(track, n, originLat, originLon);
     const step = Math.max(1, Math.floor((n - 1) / samples) || 1);
     let minAGL = Infinity, maxAGL = -Infinity, below = 0, tested = 0;
+    // Frozen ground TRACE: the local terrain level directly under each
+    // sampled track point ([x, y, zGround] metres, ENU). At the same
+    // horizontal location the geodetic-altitude difference IS the local-z
+    // difference, so zGround = trackZ - AGL with no extra conversions. The
+    // 3D graphs draw this under an underground-flagged candidate so a local
+    // burial is visible against the LOCAL terrain, which a single flat
+    // minimum plane cannot show on sloped ground.
+    const trace = [];
     for (let f = 0; f < n; f += step) {
         const agl = signedAGL(ecef[f].position);
         if (agl < minAGL) minAGL = agl;
         if (agl > maxAGL) maxAGL = agl;
         if (agl < -UNDERGROUND_TOL) below++;
         tested++;
+        if (Number.isFinite(agl)) {
+            trace.push(track[f * 3], track[f * 3 + 1], track[f * 3 + 2] - agl);
+        }
     }
     return {
         minAGL, maxAGL,
         startAGL: signedAGL(ecef[0].position),
         endAGL: signedAGL(ecef[n - 1].position),
         fracBelow: tested ? below / tested : 0,
+        trace: Float64Array.from(trace),
     };
 }
 
@@ -685,6 +697,80 @@ function localGroundProbeECEF(dataset, originLat, originLon) {
     }
     return unpackTrackToECEF(new Float64Array([hx, hy, 0]), 1,
         originLat, originLon)[0].position;
+}
+
+// The lowest terrain level over the analysis's area of concern — the
+// horizontal extent of the sensor path plus every finite candidate track —
+// sampled on a coarse grid. Returned in the LOCAL ENU-Z frame the 3D graphs
+// actually plot (ECEF2ENU_radii .z), NOT geodetic altitude: away from the
+// ENU origin the two differ by the Earth-curvature drop (~100 m at 20 NM),
+// and a plane placed at geodetic altitude would float above the displayed
+// tracks' ground. The graphs put their green plane at this level and start
+// their altitude axis here, instead of pretending ground is at 0 (wrong
+// anywhere inland). Computed once per analysis and frozen onto the dataset,
+// so cached results keep the ground they were graded against.
+function analysisGroundLevelM(dataset, hypotheses, originLat, originLon, grid = 6) {
+    const ext = {minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity};
+    const S = dataset.S;
+    // Centre of the sensor path: the anchor of the "area of concern". Track
+    // points are only allowed to widen the sampled area within a hard radius
+    // of it — a runaway non-physical fit (a polynomial sweep blowing up to
+    // thousands of km) must not stretch the extent to where the tangent
+    // plane's curvature drop (d²/2R — half a megametre at 2,500 km) swamps
+    // the graphs' altitude axis.
+    const sStep = Math.max(1, Math.floor(dataset.n / 40));
+    let cx = 0, cy = 0, cN = 0;
+    for (let f = 0; f < dataset.n; f += sStep) { cx += S[f * 3]; cy += S[f * 3 + 1]; cN++; }
+    cx /= Math.max(1, cN); cy /= Math.max(1, cN);
+    const MAX_AREA_RADIUS_M = 100000;   // curvature drop at 100 km is ~0.8 km
+    const grow = (x, y) => {
+        if (!isFinite(x) || !isFinite(y)) return;
+        if (Math.hypot(x - cx, y - cy) > MAX_AREA_RADIUS_M) return;
+        if (x < ext.minX) ext.minX = x;
+        if (x > ext.maxX) ext.maxX = x;
+        if (y < ext.minY) ext.minY = y;
+        if (y > ext.maxY) ext.maxY = y;
+    };
+    for (let f = 0; f < dataset.n; f += sStep) grow(S[f * 3], S[f * 3 + 1]);
+    for (const h of hypotheses || []) {
+        if (!h?.track || h.atInfinity || h.identity || h.nonPhysical) continue;
+        const t = h.track;
+        const tStep = Math.max(1, Math.floor(dataset.n / 24));
+        for (let f = 0; f < dataset.n; f += tStep) grow(t[f * 3], t[f * 3 + 1]);
+    }
+    if (!isFinite(ext.minX)) return 0;
+    const pts = new Float64Array(grid * grid * 3);
+    let i = 0;
+    for (let gy = 0; gy < grid; gy++) {
+        for (let gx = 0; gx < grid; gx++, i++) {
+            pts[i * 3] = ext.minX + (ext.maxX - ext.minX) * (gx / (grid - 1));
+            pts[i * 3 + 1] = ext.minY + (ext.maxY - ext.minY) * (gy / (grid - 1));
+        }
+    }
+    // The coarse grid can miss a dip, and the spot that matters most is under
+    // the sensor itself, so also sample directly below the sensor path. This
+    // makes a sensor-below-sampled-ground contradiction UNLIKELY, not
+    // impossible (no finite sampling could guarantee it for an arbitrary
+    // path); the residual case is still rendered honestly — the floor follows
+    // the sensor data down and the plane sits mid-box at the sampled level.
+    const sensorSamples = Math.min(40, dataset.n);
+    const sPts = new Float64Array(sensorSamples * 3);
+    for (let k = 0; k < sensorSamples; k++) {
+        const f = Math.round(k * (dataset.n - 1) / Math.max(1, sensorSamples - 1));
+        sPts[k * 3] = S[f * 3];
+        sPts[k * 3 + 1] = S[f * 3 + 1];
+    }
+    let minZ = Infinity;
+    const probe = (flat, count) => {
+        for (const rec of unpackTrackToECEF(flat, count, originLat, originLon)) {
+            const ground = getPointBelow(rec.position, false, {});
+            const z = ECEF2ENU_radii(ground, originLat, originLon).z;
+            if (Number.isFinite(z) && z < minZ) minZ = z;
+        }
+    };
+    probe(pts, grid * grid);
+    probe(sPts, sensorSamples);
+    return Number.isFinite(minZ) ? minZ : 0;
 }
 
 function terrainDependencySample(key, ecefPoint) {
@@ -1612,18 +1698,7 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
         // swept over polynomial order below (see the MC sweep block).
         {key: "straightLine", label: "Straight Line", subtitle: "Straight constant-velocity line", color: "#cf8fae"},
     ];
-    if (provenance?.measuredSubstituted) {
-        // The live method nodes fit the JetLOS switch's CURRENT (constructed)
-        // sightlines; grading those fits against the substituted measured
-        // dataset would mix evidence — the tiles would look wrong for the
-        // wrong reason and their "apply" would re-fit different rays. Skip
-        // them and say so, rather than counting them silently.
-        failures?.push({
-            method: "Live-method contenders (Global Fit family, Straight Line)",
-            error: "they fit the currently selected constructed LOS; this analysis used the "
-                + "measured sensor LOS instead",
-        });
-    } else if (sel && sel.inputs) {
+    if (sel && sel.inputs) {
         // LOS-only signature: a method node's cached fit is stale if the LOS
         // changed, even when its own GUI params did not.
         const losSig = String(analysisFingerprint(losNode, [], dataset.frame0 ?? 0,
@@ -1783,6 +1858,10 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
             // otherwise a shell can pass through a ridge and still be promoted.
             if (stats.minAGL < -UNDERGROUND_TOL && stats.fracBelow >= 0.05) {
                 h.underground = {depth: -stats.minAGL, frac: stats.fracBelow};
+                // The tile draws the LOCAL terrain under this track, so the
+                // burial is visible even where sloped ground sits above the
+                // flat area-minimum plane.
+                h.groundTrace = stats.trace;
             }
             const violation = groundContactViolation(stats, mode);
             if (violation) h.groundMismatch = {mode, reason: violation};
@@ -2225,8 +2304,8 @@ function buildVerdict(hypotheses, capturedProvenance = null, truth = null) {
         out += `<strong>⚠ Constructed LOS — validation only:</strong> ${escapeHtml(prov.reason)} ` +
             `Everything below describes the scene's internal consistency, not independent inference. `;
     }
-    if (prov.measuredSubstituted) {
-        out += `<strong>Measured sensor LOS used:</strong> ${escapeHtml(prov.substitutionNote ?? "")} `;
+    if (prov.measuredAlternativeNote) {
+        out += `<strong>Alternative sightlines available:</strong> ${escapeHtml(prov.measuredAlternativeNote)} `;
     }
     if (prov.rangeUnobservable) {
         out += `<strong>⛔ Range not determined by the evidence:</strong> the sensor's motion over the ` +
@@ -2810,10 +2889,6 @@ function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
         ...windSeries,
         ...truthSeries,
         provenance.circular ? 1 : 0, provenance.losSource, provenance.cameraHeading,
-        // Measured-LOS substitution changes which sightlines the whole run
-        // consumes; the frame hash usually differs too, but a perfectly
-        // aligned constructed/measured pair must still get a distinct key.
-        provenance.measuredSubstituted ? 1 : 0, provenance.measuredLOSId ?? "",
         speedTarget, anchorDist, userMin, userMax,
         // Ground-contact mode reshapes the candidate set (adds/removes the
         // Ground Vehicle, changes underground/mode flags and the ground priors).
@@ -2895,37 +2970,76 @@ export async function runTraverseAnalysis() {
             "Need a 'JetLOS' node or a Const Air Spd traverse with an LOS input.");
         return null;
     }
-    // LOS provenance, with measured-sensor substitution. When the selected LOS
-    // is CONSTRUCTED from the target being tested (camera aimed "To Target"),
-    // any fit that recovers the target is only an internal-consistency check.
-    // If the camera track carries independently recorded sensor angles (MISB
-    // az/el — its Track_<name>_LOS node), those ARE the measurement: analyze
-    // them instead of the constructed centerline, and say so prominently.
+    // LOS provenance. The analysis ALWAYS runs on the LOS the user selected —
+    // "To Target" (target-derived sightlines, where the target may itself be
+    // valid recorded platform data such as a MISB FrameCenter track) and
+    // "Use Angles" (recorded sensor angles) are BOTH legitimate evidence, and
+    // running the analysis on each and comparing the results is exactly how
+    // an analyst determines which source is more accurate. An earlier design
+    // silently substituted the recorded-angles LOS for a target-aimed camera
+    // boresight; that overrode a deliberate selection and made the two-run
+    // comparison impossible. When the camera track ALSO carries recorded
+    // sensor angles that are not the current selection, that is surfaced as
+    // an ADVISORY — never a substitution — so the comparison run is one
+    // selection away.
     let provenance = losProvenance();
-    // Substitute ONLY when the selected source is the plain camera-center
-    // boresight. Tracking-derived sources ("Camera + Point Track") are also
-    // flagged circular, but they carry a real measured pixel offset that the
-    // recorded boresight angles do NOT contain — swapping would silently
-    // discard that measurement while claiming measurement-grade sightlines.
-    if (provenance.circular && provenance.selectedIsCameraCenter) {
+    {
+        // Fires whenever a recorded-angles LOS exists and is NOT the current
+        // selection — not just for the camera-center case; a comparison run
+        // is worth advising for any selected source. The instruction names
+        // the EXACT selection that exists in this sitch's UI (a "LOS Source"
+        // option resolving to the measured node, else the Camera Heading
+        // switch's recorded-angles option); if neither selection exists, no
+        // advisory is shown — never point at a control the user cannot find.
         const measured = resolveMeasuredLOSNode(losNode);
-        if (measured) {
-            const constructedSource = provenance.losSource;
-            provenance = {
-                ...provenance,
-                circular: false,
-                reason: undefined,
-                measuredSubstituted: true,
-                measuredLOSId: measured.id,
-                constructedSource,
-                losSource: `Measured sensor angles (${measured.id})`,
-                substitutionNote: `The selected "${constructedSource}" sightlines are re-derived from the ` +
-                    `target-aimed camera attitude (circular), but the camera track carries independently ` +
-                    `recorded sensor angles — the analysis used those measured sightlines (${measured.id}) instead.`,
-            };
-            losNode = measured;
-            console.log("Traverse analysis: substituted measured sensor LOS " + measured.id
-                + " for circular '" + constructedSource + "' sightlines");
+        // Resolve what the LOS switch is ACTUALLY delivering (losNode may be
+        // the switch itself): if the current selection already resolves to
+        // the measured node — or the camera heading is already the recorded
+        // angles driving the plain boresight — there is nothing to advise.
+        const jetLOSSwitch = NodeMan.get("JetLOS", false);
+        let selectedInput = jetLOSSwitch?.inputs?.[jetLOSSwitch.choice] ?? null;
+        if (typeof selectedInput === "string") selectedInput = NodeMan.get(selectedInput, false);
+        const headSwitch = NodeMan.get("CameraLOSController", false);
+        // The heading option must be THE CAMERA TRACK'S recorded angles —
+        // "Angles_<camera track>" — never whichever Angles_* option happens to
+        // exist first: with several angle-bearing tracks loaded, a generic
+        // pattern match could recommend (or suppress on) the wrong track.
+        const camShortForAngles = NodeMan.get("cameraTrackSwitch", false)?.choice ?? null;
+        const headAnglesKey = (headSwitch?.inputs && camShortForAngles
+            && headSwitch.inputs["Angles_" + camShortForAngles] !== undefined)
+            ? "Angles_" + camShortForAngles : null;
+        const alreadyOnAngles = (selectedInput === measured)
+            || (provenance.selectedIsCameraCenter && headAnglesKey
+                && headSwitch.choice === headAnglesKey);
+        if (measured && measured !== losNode && !alreadyOnAngles) {
+            // Both the switch TITLE and the option TEXT are read from the
+            // live GUI (controller name, guiLabels display overrides), so the
+            // instruction always matches what the menu actually shows.
+            const switchTitle = (sw, fallback) =>
+                (sw?.controller?._name ?? fallback).replace(/^\*/, "");
+            const optionLabel = (sw, key) => sw?.guiLabels?.[key] ?? key;
+            let action = null;
+            if (jetLOSSwitch?.inputs) {
+                for (const [key, input] of Object.entries(jetLOSSwitch.inputs)) {
+                    const n = typeof input === "string" ? NodeMan.get(input, false) : input;
+                    if (n === measured && jetLOSSwitch.choice !== key) {
+                        action = `set "${switchTitle(jetLOSSwitch, "LOS Source")}" to `
+                            + `"${optionLabel(jetLOSSwitch, key)}"`;
+                        break;
+                    }
+                }
+            }
+            if (!action && headAnglesKey && headSwitch.choice !== headAnglesKey) {
+                action = `set "${switchTitle(headSwitch, "Camera Heading")}" to `
+                    + `"${optionLabel(headSwitch, headAnglesKey)}" (with the LOS source on the camera boresight)`;
+            }
+            if (action) {
+                provenance.measuredAlternativeId = measured.id;
+                provenance.measuredAlternativeNote =
+                    `This analysis used the selected "${provenance.losSource}" sightlines. The camera ` +
+                    `track also carries independently recorded sensor angles (${measured.id}) — ` +
+                    `${action} and re-run to compare which source the data supports better.`;
+            }
         }
     }
     const analysisFrames = analysisFrameRange(losNode);
@@ -3471,7 +3585,7 @@ export async function runTraverseAnalysis() {
         // bar and reports which fit is running — the progress callback awaits a
         // DOM yield, which is what keeps the bar moving and Cancel responsive.
         let mcSweep = null;
-        if (!provenance?.measuredSubstituted) {
+        {
             mcSweep = await sweepPolynomialOrders(dataset, async (done, total, label) => {
                 await phase(0.93, 0.05,
                     `Sweeping curve fits (${done + 1}/${total}): ${label}...`)(done / total);
@@ -3540,6 +3654,44 @@ export async function runTraverseAnalysis() {
             executiveAssessment = assessExecutiveVerdict(hypotheses, {provenance});
         } catch (e) {
             console.warn("Executive assessment failed (non-fatal):", e);
+        }
+
+        // Ground level for the 3D graphs — frozen with the results so the
+        // green plane cannot drift under a cached analysis when terrain tiles
+        // load later. 0 (≈ sea level) when no terrain is available.
+        try {
+            dataset.groundLevelM = analysisGroundLevelM(dataset, hypotheses, originLat, originLon);
+            // Fold in the lowest candidate-track point (a terrain-riding
+            // track can sit in a dip the coarse ground grid missed), so
+            // EVERY scene's floor equals the ground level exactly. This is
+            // what keeps the green plane on the base under Sync Scale too:
+            // synced charts share the SELECTED chart's bounds, and any
+            // below-ground data would push that shared floor beneath the
+            // plane on every other chart.
+            //
+            // But only SAMPLING-NOISE-scale dips fold in: a rejected
+            // underground candidate (flagged, or diving far below the sampled
+            // terrain) must not redefine "ground" for the whole gallery — it
+            // renders below the plane on its own tile, which is exactly what
+            // "passes below the terrain" should look like.
+            const GROUND_FOLD_TOLERANCE_M = 50;
+            const sampledGroundM = dataset.groundLevelM;
+            for (const h of hypotheses) {
+                if (!h?.track || h.atInfinity || h.identity || h.underground
+                    || h.nonPhysical) continue;
+                let low = Infinity;
+                for (let f = 0; f < dataset.n; f++) {
+                    const z = h.track[f * 3 + 2];
+                    if (Number.isFinite(z) && z < low) low = z;
+                }
+                if (low < dataset.groundLevelM
+                    && low >= sampledGroundM - GROUND_FOLD_TOLERANCE_M) {
+                    dataset.groundLevelM = low;
+                }
+            }
+        } catch (e) {
+            console.warn("Ground-level sampling for the 3D graphs failed (non-fatal):", e);
+            dataset.groundLevelM = 0;
         }
 
         // Ground-truth reference: when a truth track is selected in the Tweaks,
@@ -3694,8 +3846,9 @@ export async function runTraverseAnalysis() {
                 constructedLOS: provenance.circular,
                 losSource: provenance.losSource,
                 cameraHeading: provenance.cameraHeading,
-                measuredLOSSubstituted: provenance.measuredSubstituted
-                    ? provenance.measuredLOSId : null,
+                // The analysis always runs on the selected LOS; a recorded-
+                // angles alternative is advisory only (never substituted).
+                measuredLOSAlternative: provenance.measuredAlternativeId ?? null,
                 rangeUnobservable: !!provenance.rangeUnobservable,
                 sensorBaselineM: Number.isFinite(provenance.sensorSpan)
                     ? Math.round(provenance.sensorSpan) : null,
@@ -4107,8 +4260,16 @@ function hypothesisStats(h) {
     return stats;
 }
 
+// Axis units for the 3D volume graphs, from the user's chosen unit system:
+// GEOMETRY on all three axes is in the BIG unit (the volume must stay
+// spatially true — one shared spatial scale), while the altitude axis TICKS
+// and LABEL display in the SMALL unit (see the zTicks transform on the
+// scene). Falls back to nautical when Units is not initialised.
+function toBigUnits(m) { return m / (Units?.big2M ?? METERS_PER_NM); }
+function bigPerSmall() { return (Units?.big2M ?? METERS_PER_NM) / (Units?.small2M ?? 0.3048); }
+
 function graphPoint(arr, f) {
-    return [toNM(arr[f * 3]), toNM(arr[f * 3 + 1]), toNM(arr[f * 3 + 2])];
+    return [toBigUnits(arr[f * 3]), toBigUnits(arr[f * 3 + 1]), toBigUnits(arr[f * 3 + 2])];
 }
 
 function growGraphBounds(b, p) {
@@ -4129,13 +4290,18 @@ function padAxisRange(lo, hi, frac, fallback) {
     return [mid - fallback / 2, mid + fallback / 2];
 }
 
-function padGraphBounds(b) {
-    if (!isFinite(b.minX)) return {minX: -1, maxX: 1, minY: -1, maxY: 1, minZ: 0, maxZ: 1};
+// groundZ (NM): the real terrain floor for the volume. The altitude axis
+// starts there — not at 0 — unless a candidate actually goes lower (an
+// underground track must stay visible, so the floor follows it down).
+function padGraphBounds(b, groundZ = 0) {
+    if (!isFinite(b.minX)) {
+        return {minX: -1, maxX: 1, minY: -1, maxY: 1, minZ: groundZ, maxZ: groundZ + 1};
+    }
     const [minX, maxX] = padAxisRange(b.minX, b.maxX, 0.08, 1);
     const [minY, maxY] = padAxisRange(b.minY, b.maxY, 0.08, 1);
-    const minZ = 0;
-    const zMax = Math.max(0, b.maxZ);
-    const maxZ = zMax + Math.max(zMax, 1) * 0.14;
+    const minZ = Math.min(groundZ, b.minZ);
+    const zMax = Math.max(minZ, b.maxZ);
+    const maxZ = zMax + Math.max(zMax - minZ, 1) * 0.14;
     return {minX, maxX, minY, maxY, minZ, maxZ};
 }
 
@@ -4168,9 +4334,9 @@ function sampledPolyline(arr, n, target = 520) {
 function rayEndPoint(dataset, f, lenM) {
     const {S, D} = dataset;
     return [
-        toNM(S[f * 3] + D[f * 3] * lenM),
-        toNM(S[f * 3 + 1] + D[f * 3 + 1] * lenM),
-        toNM(S[f * 3 + 2] + D[f * 3 + 2] * lenM),
+        toBigUnits(S[f * 3] + D[f * 3] * lenM),
+        toBigUnits(S[f * 3 + 1] + D[f * 3 + 1] * lenM),
+        toBigUnits(S[f * 3 + 2] + D[f * 3 + 2] * lenM),
     ];
 }
 
@@ -4188,6 +4354,24 @@ function meanLOSDirection(dataset) {
 
 function hypothesisVolumeScene(dataset, hyp, opts = {}) {
     const {n, S, D} = dataset;
+    // Real terrain floor (frozen at analysis time; ~0 for older cached
+    // results and over ocean, reproducing the old altitude-0 plane).
+    const groundLevel = toBigUnits(dataset.groundLevelM ?? 0);
+    // Sightlines terminate at the terrain: clip each helper ray at ground
+    // level, so a long ray cannot punch below the green plane and drag the
+    // graph floor beneath it — the plane must BE the base of the box.
+    const clipRayToGround = (a, c) => {
+        if (!(c[2] < groundLevel)) return c;        // ray stays at/above ground
+        if (a[2] > groundLevel) {                    // origin above ground: true intersection
+            const t = (a[2] - groundLevel) / (a[2] - c[2]);
+            return [a[0] + (c[0] - a[0]) * t, a[1] + (c[1] - a[1]) * t, groundLevel];
+        }
+        // Origin at/below the sampled ground with a descending sightline: the
+        // ray meets terrain immediately, so there is NO segment to draw.
+        // Omit it (null) — synthesizing any endpoint here would render a
+        // sightline direction that never existed.
+        return null;
+    };
     const b = {minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity};
     // Second accumulator for the magnifier ("zoom to tracks") view: grown ONLY
     // over the traverse track and the truth track, never the sensor path or
@@ -4208,12 +4392,13 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
         const segs = [];
         for (const f of sampledFrames(n, opts.compact ? 6 : 9)) {
             const a = graphPoint(S, f);
-            const c = [
-                toNM(S[f * 3] + dir[0] * lenM),
-                toNM(S[f * 3 + 1] + dir[1] * lenM),
-                toNM(S[f * 3 + 2] + dir[2] * lenM),
-            ];
             growGraphBounds(b, a);
+            const c = clipRayToGround(a, [
+                toBigUnits(S[f * 3] + dir[0] * lenM),
+                toBigUnits(S[f * 3 + 1] + dir[1] * lenM),
+                toBigUnits(S[f * 3 + 2] + dir[2] * lenM),
+            ]);
+            if (!c) continue;
             growGraphBounds(b, c);
             segs.push([...a, ...c]);
         }
@@ -4233,11 +4418,31 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
         const segs = [];
         for (const f of sampledFrames(n, opts.compact ? 7 : 11)) {
             const a = graphPoint(S, f);
-            const c = rayEndPoint(dataset, f, rayLenM);
+            const c = clipRayToGround(a, rayEndPoint(dataset, f, rayLenM));
+            if (!c) continue;
             growGraphBounds(b, c);
             segs.push([...a, ...c]);
         }
         series.push({type: "rays", segs, color: VIZ.ray, alpha: 0.52, width: 1});
+        // Underground-flagged candidate: draw the LOCAL terrain profile under
+        // the track (frozen at grading time), pushed BEFORE the track so the
+        // track overlays it. On sloped ground this is what actually shows the
+        // burial — the flat plane sits at the AREA minimum and a hillside can
+        // rise well above it.
+        if (hyp.groundTrace && hyp.groundTrace.length >= 6) {
+            const gt = hyp.groundTrace;
+            const gtPts = [];
+            for (let i = 0; i < gt.length; i += 3) {
+                gtPts.push([toBigUnits(gt[i]), toBigUnits(gt[i + 1]), toBigUnits(gt[i + 2])]);
+            }
+            // Grows the ZOOM bounds too: the trace lies directly beneath the
+            // track's own footprint, so it cannot inflate the zoom scale the
+            // way the sensor path could — and "zoom to tracks" is exactly the
+            // view where the burial evidence must not be clipped away.
+            for (const p of gtPts) { growGraphBounds(b, p); growGraphBounds(zb, p); }
+            series.push({type: "line", pts: gtPts, color: "#5a8a52",
+                width: opts.compact ? 1.4 : 1.8, dash: [3, 3]});
+        }
         series.push({type: "line", pts: trackPts, color: hyp.color, width: opts.compact ? 2.2 : 2.8,
             startDot: true, endRing: true});
     }
@@ -4261,12 +4466,31 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
         }
     }
 
+    // The green plane sits at the GROUND level — which the analysis-time
+    // fold-in already lowered to any credible terrain-hugging dip, so for
+    // every ordinary scene the floor equals ground and the plane IS the base
+    // of the box. The plane must NOT chase data below that: a rejected
+    // underground candidate keeps the plane at true ground on its own tile
+    // (padGraphBounds lets the floor follow the track down, and the plane
+    // renders mid-box above it — what "passes below the terrain" looks like).
+    const perSmall = bigPerSmall();
+    const bigAb = Units?.bigUnitsAbbrev ?? "NM";
+    const smallAb = Units?.smallUnitsAbbrev ?? "ft";
     return {
-        bounds: padGraphBounds(b),
+        bounds: padGraphBounds(b, groundLevel),
         zoomBounds: padZoomBounds(zb),
+        groundZ: groundLevel,
         series,
-        labels: {x: "East (NM)", y: "North (NM)", z: "Alt (NM)"},
-        fmt: {x: (v) => fmtNum(v), y: (v) => fmtNum(v), z: (v) => fmtNum(v)},
+        labels: {x: `East (${bigAb})`, y: `North (${bigAb})`, z: `Alt (${smallAb})`},
+        // Altitude ticks are chosen and shown in the SMALL unit (nice values
+        // like 5,000 ft), while the geometry stays in big units — Chart3D
+        // uses this transform to generate display-space ticks.
+        zTicks: {
+            toDisplay: (v) => v * perSmall,
+            fromDisplay: (v) => v / perSmall,
+        },
+        fmt: {x: (v) => fmtNum(v), y: (v) => fmtNum(v),
+            z: (v) => (Math.abs(v) >= 100 ? Math.round(v).toLocaleString() : fmtNum(v))},
     };
 }
 
@@ -5017,6 +5241,14 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-backdrop { position:absolute; inset:0; background:rgba(0,0,0,0.93); }
         .traverse-gallery-overlay .tg-panel { position:relative; z-index:1; width:96vw; max-width:1720px;
             height:100%; display:flex; flex-direction:column; padding:20px 22px 16px 22px; box-sizing:border-box; }
+        /* Analysis text is evidence — it must be selectable and copyable. The
+           app root disables selection globally (3D viewport, mobile long
+           press); re-enable it across the gallery, then re-disable only where
+           a drag means something else: buttons, and the 3D chart canvases
+           (drag rotates the chart). */
+        .traverse-gallery-overlay .tg-panel { user-select:text; -webkit-user-select:text; }
+        .traverse-gallery-overlay button,
+        .traverse-gallery-overlay canvas { user-select:none; -webkit-user-select:none; }
         .traverse-gallery-overlay .tg-titlerow { display:flex; align-items:center; justify-content:space-between;
             gap:16px; flex:0 0 auto; }
         .traverse-gallery-overlay .tg-title { color:#e8eaed; font-size:21px; font-weight:700; }
@@ -5035,7 +5267,7 @@ function showResultGallery(results) {
             border-color:#3987e5; color:#eef6ff; }
         .traverse-gallery-overlay .tg-body { flex:1 1 auto; min-height:0; display:flex; gap:18px; }
         .traverse-gallery-overlay .tg-tiles { flex:2 1 0; min-width:0; overflow-y:auto; padding-right:4px; }
-        .traverse-gallery-overlay .tg-details { flex:1 1 0; min-width:360px; overflow-y:auto;
+        .traverse-gallery-overlay .tg-details { flex:1 1 0; min-width:360px; overflow:hidden;
             background:#101216; border:1px solid rgba(255,255,255,0.09); border-radius:12px;
             display:flex; flex-direction:column; }
         .traverse-gallery-overlay .tg-grid { display:grid;
@@ -5121,7 +5353,8 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-use:hover { background:#4f97ec; }
         .traverse-gallery-overlay .tg-use:disabled { background:#2a2f37; color:#8a9099;
             cursor:default; font-weight:600; }
-        .traverse-gallery-overlay .tg-d-content { padding:15px 16px 20px 16px; }
+        .traverse-gallery-overlay .tg-d-content { padding:15px 16px 20px 16px;
+            flex:1 1 auto; min-height:0; overflow-y:auto; }
         .traverse-gallery-overlay .tg-d-chart { width:100%; height:100%; display:block; border-radius:8px;
             border:1px solid rgba(255,255,255,0.07); background:#0c0e11; }
         .traverse-gallery-overlay .tg-d-head { display:flex; align-items:center; justify-content:space-between;
@@ -5154,7 +5387,7 @@ function showResultGallery(results) {
         .traverse-gallery-overlay .tg-wind td:first-child, .traverse-gallery-overlay .tg-wind th:first-child { text-align:left; }
         .traverse-gallery-overlay .tg-wind td { color:#dfe3e8; }
         .traverse-gallery-overlay .tg-footer { flex:0 0 auto; display:flex; justify-content:flex-end; gap:12px;
-            margin-top:12px; flex-wrap:wrap; }
+            padding:12px 15px; border-top:1px solid rgba(255,255,255,0.08); flex-wrap:wrap; }
         .traverse-gallery-overlay .tg-btn { padding:9px 18px; font-size:14px; font-weight:600; cursor:pointer;
             border-radius:8px; border:1px solid rgba(255,255,255,0.16); }
         .traverse-gallery-overlay .tg-btn-primary { background:#3987e5; color:#fff; border-color:#3987e5; }
@@ -5237,6 +5470,27 @@ function showResultGallery(results) {
     panel.className = "tg-panel";
     overlay.appendChild(panel);
 
+    // Two full-height columns and nothing else. Everything that used to be a
+    // full-width fixed band (title row, explainer, banners, toolbar) lives in
+    // tilesHead at the TOP of the scrollable tiles column — it scrolls away
+    // with the list — and the report/close actions sit at the BOTTOM of the
+    // details column, so the tile grid gets the whole screen height.
+    const body = document.createElement("div");
+    body.className = "tg-body";
+    panel.appendChild(body);
+    const tilesCol = document.createElement("div");
+    tilesCol.className = "tg-tiles";
+    body.appendChild(tilesCol);
+    const tilesHead = document.createElement("div");
+    tilesHead.className = "tg-tiles-head";
+    tilesCol.appendChild(tilesHead);
+    const grid = document.createElement("div");
+    grid.className = "tg-grid";
+    tilesCol.appendChild(grid);
+    const detailsCol = document.createElement("div");
+    detailsCol.className = "tg-details";
+    body.appendChild(detailsCol);
+
     // title row + close X
     const titleRow = document.createElement("div");
     titleRow.className = "tg-titlerow";
@@ -5250,7 +5504,7 @@ function showResultGallery(results) {
     xBtn.addEventListener("click", remove);
     titleRow.appendChild(title);
     titleRow.appendChild(xBtn);
-    panel.appendChild(titleRow);
+    tilesHead.appendChild(titleRow);
 
     // one-line explainer
     const explain = document.createElement("div");
@@ -5262,7 +5516,7 @@ function showResultGallery(results) {
         "score that is not, with category priority only breaking otherwise-equal ties. Each tile also shows its rank " +
         "within its own category; open a tile for the exact rank basis. Repeated polynomial-order sweep fits sit " +
         "below the Extras separator at the end — only each strategy's best-ranked order appears in the main list.";
-    panel.appendChild(explain);
+    tilesHead.appendChild(explain);
 
     // Truth-mode banner: ordering is by separation from the reference track
     if (results.truth) {
@@ -5277,7 +5531,7 @@ function showResultGallery(results) {
             : `Truth track "${results.truth.label}" is selected but overlaps only `
               + `${results.truth.validCount || 0} frame(s) of this A-B window, so truth ordering is OFF — candidates `
               + "are shown in the ordinary screening order. Adjust the A-B range or pick a truth track that covers it.";
-        panel.appendChild(truthNote);
+        tilesHead.appendChild(truthNote);
     }
 
     // Circular-LOS provenance banner: when the sightlines are CONSTRUCTED from
@@ -5292,16 +5546,17 @@ function showResultGallery(results) {
             " Fits that recover the target confirm the scene's internal consistency; they are NOT " +
             "independent evidence of what the object is. Use independently measured camera attitude " +
             "and video tracking before treating the result as inference.";
-        panel.appendChild(warn);
+        tilesHead.appendChild(warn);
     }
-    // Measured-LOS substitution: the analysis silently upgrading its evidence
-    // is only acceptable if it is not silent.
-    if (results.provenance && results.provenance.measuredSubstituted) {
+    // Recorded-angles alternative: the analysis runs on the SELECTED LOS —
+    // when the camera track also carries recorded sensor angles, advise the
+    // comparison run rather than silently substituting.
+    if (results.provenance && results.provenance.measuredAlternativeNote) {
         const note = document.createElement("div");
         note.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
             "background:#16321f; color:#9fd8ae; border:1px solid #2f6a42; font-size:13px;";
-        note.textContent = "✓ Measured sensor LOS used. " + results.provenance.substitutionNote;
-        panel.appendChild(note);
+        note.textContent = "ℹ︎ " + results.provenance.measuredAlternativeNote;
+        tilesHead.appendChild(note);
     }
     // Static sensor: range is NOT determined by the evidence — free-range
     // methods below are placeholders, not findings. This must be impossible
@@ -5315,7 +5570,7 @@ function showResultGallery(results) {
             "negligible at the assumed working distance, so the sightlines contain no usable parallax: " +
             "every distance along them fits equally well, and each method's range reflects its own " +
             "priors, not measurement. Use a moving sensor, or treat all ranges below as arbitrary.";
-        panel.appendChild(warn);
+        tilesHead.appendChild(warn);
     }
     if (results.failures && results.failures.length) {
         const warn = document.createElement("div");
@@ -5324,7 +5579,7 @@ function showResultGallery(results) {
         warn.textContent = `${results.failures.length} analysis check(s) failed or were unavailable: ` +
             results.failures.map((f) => `${f.method} (${f.error})`).join("; ") +
             ". They were not silently counted as evidence.";
-        panel.appendChild(warn);
+        tilesHead.appendChild(warn);
     }
     if (results.terrainChangedDuringRun) {
         // A calmer note than the failures banner: nothing failed, the run simply
@@ -5335,7 +5590,7 @@ function showResultGallery(results) {
         note.textContent = "ℹ︎ Elevation data finished loading while this analysis ran. Results use the "
             + "ground samples consumed during fitting and grading. A rerun recomputes only if an equal- or "
             + "higher-resolution authoritative sample changes materially (more than 0.1 m).";
-        panel.appendChild(note);
+        tilesHead.appendChild(note);
     }
 
     // Executive headline strip: the corroboration-first verdict, frozen with
@@ -5364,7 +5619,7 @@ function showResultGallery(results) {
             head.textContent = ea.headline;
             strip.appendChild(head);
             strip.appendChild(document.createTextNode(" " + ea.detail));
-            panel.appendChild(strip);
+            tilesHead.appendChild(strip);
         }
     }
 
@@ -5390,7 +5645,7 @@ function showResultGallery(results) {
                 + `, ${bev.motionWord} (consistency ${bev.consistency.toFixed(2)})`
                 + (bev.altText ? ` at ${bev.altText}` : "")
                 + `. Independent wind evidence: ${bev.why}.`;
-            panel.appendChild(note);
+            tilesHead.appendChild(note);
         }
     }
 
@@ -5433,23 +5688,7 @@ function showResultGallery(results) {
     toolbar.appendChild(syncOrientationBtn);
     toolbar.appendChild(syncScaleBtn);
     toolbar.appendChild(restoreBtn);
-    panel.appendChild(toolbar);
-
-    // two-pane body: tiles (2/3) + details (1/3)
-    const body = document.createElement("div");
-    body.className = "tg-body";
-    panel.appendChild(body);
-
-    const tilesCol = document.createElement("div");
-    tilesCol.className = "tg-tiles";
-    const grid = document.createElement("div");
-    grid.className = "tg-grid";
-    tilesCol.appendChild(grid);
-    body.appendChild(tilesCol);
-
-    const detailsCol = document.createElement("div");
-    detailsCol.className = "tg-details";
-    body.appendChild(detailsCol);
+    tilesHead.appendChild(toolbar);
 
     // shared solution-space context for every Details pane
     const ctx = {dataset, ss: analyzeSolutionSpace(results)};
@@ -5492,7 +5731,7 @@ function showResultGallery(results) {
             if (groupZoomed && detailChart.scene.zoomBounds) detailChart.setZoom(true);
             syncZoomButton(detailChart);
         }
-        detailsCol.scrollTop = 0;
+        dContent.scrollTop = 0;
         if (h.identity) {
             // An identification (astronomical body, satellite, point at infinity),
             // not a selectable traverse method — nothing to apply.
@@ -5511,17 +5750,9 @@ function showResultGallery(results) {
                 // landing on Constant Ground Speed in a sitch with no
                 // air-speed method). A null return means no live method
                 // matched — say so instead of claiming success.
-                // Under measured-LOS substitution the applied track was fitted
-                // to the recorded sensor angles, while the scene still draws
-                // the constructed (target-aimed) sightline fan — the track will
-                // visibly sit beside those rays. Say so at the moment the
-                // divergence becomes visible, not only in the analysis banner.
-                const subNote = window.lastTraverseAnalysis?.provenance?.measuredSubstituted
-                    ? " (fitted to the measured sensor LOS; the displayed sightlines are the constructed camera aim and will not lie on the track)"
-                    : "";
                 showGalleryToast(applied
-                    ? (applied !== h.name ? `Applied: ${h.name} (method: ${applied})${subNote}`
-                                          : `Applied: ${h.name}${subNote}`)
+                    ? (applied !== h.name ? `Applied: ${h.name} (method: ${applied})`
+                                          : `Applied: ${h.name}`)
                     : `No matching traverse method to apply for: ${h.name}`);
             };
         }
@@ -5535,6 +5766,12 @@ function showResultGallery(results) {
     const dismissed = new Set();
 
     const relayout = () => {
+        // Emptying the grid collapses its height for a moment, which clamps
+        // the tiles column's scrollTop to 0 — so setting a tile aside yanked
+        // the reader back to the top of the list. Preserve the scroll position
+        // across the rebuild; the FLIP pass then animates only what actually
+        // moved near the viewport.
+        const scrollBefore = tilesCol.scrollTop;
         while (grid.firstChild) grid.removeChild(grid.firstChild);
         // The Extras separator goes before the first VISIBLE demoted tile, so
         // it disappears entirely when every extra has been set aside.
@@ -5566,6 +5803,9 @@ function showResultGallery(results) {
         restoreBtn.disabled = dismissed.size === 0;
         restoreBtn.textContent = dismissed.size === 0
             ? "Restore set-aside" : `Restore set-aside (${dismissed.size})`;
+        // Clamped to the rebuilt content height, so a shorter list simply
+        // scrolls to its new bottom instead of the top.
+        tilesCol.scrollTop = scrollBefore;
     };
 
     // ---- Dismissal animation ----------------------------------------------
@@ -5799,7 +6039,7 @@ function showResultGallery(results) {
     closeBtn.addEventListener("click", remove);
     footer.appendChild(reportBtn);
     footer.appendChild(closeBtn);
-    panel.appendChild(footer);
+    detailsCol.appendChild(footer);
 
     document.body.appendChild(overlay);
     // Move focus into the dialog so keyboard users start inside it and Escape /
@@ -7144,6 +7384,43 @@ function buildReportHTML(ctx) {
         '});\n' +
         '<\/script>';
 
+    // Light/dark toggle. The choice persists (localStorage, guarded — a saved
+    // copy opened from file:// may not have storage), and printing ALWAYS gets
+    // the light theme: forced on beforeprint, restored on afterprint. A report
+    // downloaded while in light mode keeps the class in its saved markup and
+    // still carries this script, so the toggle works in saved copies too.
+    const themeScript =
+        '<script>\n' +
+        '(function () {\n' +
+        '    var KEY = "sitrec-report-theme";\n' +
+        '    var btn = document.getElementById("theme-toggle");\n' +
+        '    // Seed from the DOCUMENT, not a hardcoded default: a copy saved in\n' +
+        '    // light mode carries the class in its markup, and must reopen light\n' +
+        '    // even where storage is unavailable (file://). Stored preference,\n' +
+        '    // when readable, still wins over the snapshot state.\n' +
+        '    var mode = document.documentElement.classList.contains("light") ? "light" : "dark";\n' +
+        '    function apply(m) {\n' +
+        '        document.documentElement.classList.toggle("light", m === "light");\n' +
+        '        btn.textContent = (m === "light") ? "Dark view" : "Light view (print)";\n' +
+        '    }\n' +
+        '    try { mode = localStorage.getItem(KEY) || mode; } catch (e) { }\n' +
+        '    apply(mode);\n' +
+        '    btn.addEventListener("click", function () {\n' +
+        '        mode = (mode === "light") ? "dark" : "light";\n' +
+        '        try { localStorage.setItem(KEY, mode); } catch (e) { }\n' +
+        '        apply(mode);\n' +
+        '    });\n' +
+        '    var preprint = null;\n' +
+        '    window.addEventListener("beforeprint", function () {\n' +
+        '        preprint = mode;\n' +
+        '        apply("light");\n' +
+        '    });\n' +
+        '    window.addEventListener("afterprint", function () {\n' +
+        '        if (preprint !== null) { apply(preprint); preprint = null; }\n' +
+        '    });\n' +
+        '})();\n' +
+        '<\/script>';
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7235,9 +7512,67 @@ details.manifest { background:#14161a; border:1px solid rgba(255,255,255,0.08);
 details.manifest summary { cursor:pointer; color:#e8eaed; font-weight:600; }
 details.manifest pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.45 ui-monospace, monospace;
     color:#b9bfc7; }
+/* ---- Light theme: designed to PRINT clearly (dark text on white, no solid
+   ink blocks). Toggled by the fixed button; printing forces it for the
+   duration of the print regardless of the on-screen choice (beforeprint /
+   afterprint hooks in the theme script). ---- */
+html.light { color-scheme: light; }
+html.light body { background: #fff; color: #23262a; }
+html.light h1, html.light h2 { color: #111; }
+html.light h2 { border-bottom-color: rgba(0,0,0,0.18); }
+html.light .sub, html.light figcaption, html.light footer { color: #5a6068; }
+html.light .meta > div, html.light figure, html.light details.manifest,
+html.light .card { background: #f4f5f7; border-color: rgba(0,0,0,0.14); }
+html.light .meta .k, html.light .stk, html.light th,
+html.light .card-sub, html.light .solution-sub { color: #5a6068; }
+html.light .meta .v, html.light .stv, html.light .card-name, html.light strong,
+html.light tr.best td, html.light .solution-head h3,
+html.light details.manifest summary, html.light .candidate-group h3 { color: #111; }
+html.light th, html.light td { border-bottom-color: rgba(0,0,0,0.14); }
+html.light footer { border-top-color: rgba(0,0,0,0.18); }
+html.light .candidate-group { border-top-color: rgba(0,0,0,0.18); }
+html.light .card-thumb, html.light .solution-series img { border-color: rgba(0,0,0,0.12); }
+html.light .card-order, html.light .solution-order,
+html.light .solution-detail h4 { color: #2b64ad; }
+html.light .solution-metrics { background: #eef0f3; }
+html.light .solution-lead { color: #23262a; }
+html.light .solution-detail { border-bottom-color: rgba(0,0,0,0.14); }
+html.light .rank-basis { color: #2d3238; background: #eef2f7; border-left-color: #3d78c2; }
+html.light a { color: #1a6fd0; }
+html.light details.manifest pre { color: #444; }
+/* The inline-styled banner variants (amber/green/red/pink) flatten to ONE
+   neutral light card here — their meaning rides on the symbols and lead text,
+   and solid dark ink blocks are exactly what a printout must not have. */
+html.light .warning { background: #f4f5f7 !important; color: #23262a !important;
+    border-color: rgba(0,0,0,0.3) !important; }
+/* Charts and plots are pre-rendered dark PNGs. In light mode invert them —
+   dark background becomes light, light gridlines/labels become dark — with a
+   180° hue rotation so each series keeps a recognizable colour (invert alone
+   would turn every hue into its complement). Scoped to html.light only, so
+   the dark view ships the exact same untouched pixels as before. */
+html.light figure img, html.light .solution-series img, html.light .card-thumb {
+    filter: invert(1) hue-rotate(180deg); }
+/* Inversion flips BRIGHTNESS, so any caption that describes a brightness
+   encoding must flip its wording with the theme (the heatmap: dark mode
+   "darker = more plausible", light mode "lighter = more plausible"). */
+.light-only { display: none; }
+html.light .light-only { display: inline; }
+html.light .dark-only { display: none; }
+#theme-toggle { position: fixed; top: 14px; right: 14px; z-index: 50;
+    padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+    border-radius: 8px; border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(20,22,26,0.92); color: #e8eaed; }
+html.light #theme-toggle { background: rgba(255,255,255,0.95); color: #23262a;
+    border-color: rgba(0,0,0,0.3); }
+@media print {
+    #theme-toggle, #dl-report { display: none !important; }
+    body { padding: 0; }
+}
 </style>
 </head>
 <body>
+<button id="theme-toggle" type="button"
+    title="Toggle a light rendering designed to print clearly. Printing always uses it.">Light view (print)</button>
 <div class="wrap">
 <header>
     <h1>Traverse Analysis — ${escapeHtml(sitName)}</h1>
@@ -7260,8 +7595,8 @@ ${executiveHTML}
 ${provenance?.circular ? `<div class="warning"><strong>Constructed LOS — validation only.</strong> ` +
     `${escapeHtml(provenance.reason)} Fits below test internal consistency, not independent object inference.</div>` : ""}
 
-${provenance?.measuredSubstituted ? `<div class="warning" style="background:#16321f;color:#9fd8ae;border-color:#2f6a42">` +
-    `<strong>Measured sensor LOS used.</strong> ${escapeHtml(provenance.substitutionNote ?? "")}</div>` : ""}
+${provenance?.measuredAlternativeNote ? `<div class="warning" style="background:#16321f;color:#9fd8ae;border-color:#2f6a42">` +
+    `<strong>Alternative sightlines available.</strong> ${escapeHtml(provenance.measuredAlternativeNote)}</div>` : ""}
 
 ${provenance?.rangeUnobservable ? `<div class="warning" style="background:#4a1512;color:#ffab9e;border-color:#a03a2e">` +
     `<strong>⛔ Range is NOT determined by this evidence.</strong> The sensor's motion over the analysis ` +
@@ -7345,7 +7680,8 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
     <figure>
         <img src="${chartA}" alt="Heatmap of plausibility score over start range and air speed">
         <figcaption>Score for every (start range, air speed) combination of the constant-air-speed
-        traverse; log color scale — darker = lower score = more plausible. ${scoreNote}.</figcaption>
+        traverse; log color scale — <span class="dark-only">darker</span><span
+        class="light-only">lighter</span> = lower score = more plausible. ${scoreNote}.</figcaption>
     </figure>
 </section>
 
@@ -7451,6 +7787,7 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
 </footer>
 </div>
 ${downloadScript}
+${themeScript}
 </body>
 </html>`;
 }
