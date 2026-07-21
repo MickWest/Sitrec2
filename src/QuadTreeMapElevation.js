@@ -594,6 +594,171 @@ export class QuadTreeMapElevation extends QuadTreeMap {
         return {elevation: meanSeaLevelOffset(lat, lon), tileZ: -1, tileX: -1, tileY: -1};
     }
 
+    // Proven Lipschitz bound (meters of elevation per meter of ground
+    // distance, before zScale) of ONE tile's clamped bilinear surface —
+    // max(interpolated elevation, geoid sea level), which is the surface the
+    // elevation ray marcher (raycastGroundElevationFast) actually queries.
+    // Within one bilinear cell |∂z/∂x| is a convex combination of that
+    // cell's two x post-differences / spacing, so the per-axis max clamped
+    // post-difference over the tile bounds it, and the gradient magnitude is
+    // ≤ hypot of the two axis bounds. Posts are clamped to the tile's
+    // MINIMUM geoid height before differencing: max(·, G) is jointly
+    // 1-Lipschitz, so clamping at a level at or below the true local geoid
+    // keeps the bound valid for the served surface while legitimately
+    // erasing below-sea-level data artifacts (isolated bathymetry spikes
+    // produce absurd raw slopes that the clamped surface never shows).
+    // The result is cached keyed on the elevation array's identity — tiles
+    // always ASSIGN a fresh Float32Array when (re)loaded, never fill one in
+    // place, so identity change is exactly "data changed". tileZ < 0 (the
+    // geoid fallback region) returns 0; geoid gradients (~1e-4) are covered
+    // by the marcher's own floor on L.
+    tileSlopeBound(tileZ, tileX, tileY) {
+        if (tileZ < 0) return 0;
+        const tile = this.getTile(tileX, tileY, tileZ);
+        if (!tile || !tile.elevation || tile.elevationLoadFailed) return 0;
+        if (tile._slopeBoundFor !== tile.elevation) {
+            tile._slopeBound = this._computeTileSlopeBound(tile);
+            tile._slopeBoundFor = tile.elevation;
+        }
+        return tile._slopeBound;
+    }
+
+    // Geographic rectangle of a tile, degrees. getCorners arg order is (y,z,x).
+    _tileRect(tile) {
+        const {lat0, lon0, lat1, lon1} = this.options.mapProjection.getCorners(tile.y, tile.z, tile.x);
+        return {
+            latS: Math.min(lat0, lat1),
+            latN: Math.max(lat0, lat1),
+            lonW: Math.min(lon0, lon1),
+            lonE: Math.max(lon0, lon1),
+        };
+    }
+
+    // Index of every SERVABLE loaded tile (z ≤ maxZoom — deeper tiles are
+    // never returned by geo2TileFractionAndZoom without desiredZoom), built
+    // once per tile-set epoch (the base map bumps _tileEpoch on every
+    // setTile/deleteTile). For each servable tile key AND every ancestor
+    // key up to z=0 it records:
+    //   bound     — max clamped slope bound over the tile-or-subtree,
+    //   hasDesc   — whether any servable strict descendant is loaded,
+    //   rect      — the tile's own rectangle (null on unloaded ancestors),
+    //   descRects — rectangles of ALL servable strict descendants.
+    // The ancestor walk is by coordinates, not parent/child links, so a
+    // loaded grandchild under an UNLOADED child is still indexed (it is
+    // still servable — the zoom search doesn't need the intermediate tile).
+    // The elevation ray marcher uses descRects (and globalRects for the
+    // no-tile geoid region) to cut its steps at served-surface borders,
+    // where the surface can change discontinuously.
+    _getServedIndex() {
+        const epoch = this._tileEpoch || 0;
+        if (this._servedIndexEpoch === epoch) return this._servedIndex;
+        const index = new Map();
+        const globalRects = [];
+        const getEntry = (key) => {
+            let ent = index.get(key);
+            if (!ent) {
+                ent = {bound: 0, hasDesc: false, rect: null, descRects: []};
+                index.set(key, ent);
+            }
+            return ent;
+        };
+        for (const tile of this.allTiles) {
+            if (!tile || !tile.elevation || tile.elevationLoadFailed || tile.z > this.maxZoom) continue;
+            const bound = this.tileSlopeBound(tile.z, tile.x, tile.y);
+            const rect = this._tileRect(tile);
+            const ent = getEntry(tile.z + "/" + tile.x + "/" + tile.y);
+            ent.rect = rect;
+            if (bound > ent.bound) ent.bound = bound;
+            globalRects.push(rect);
+            let az = tile.z;
+            let ax = tile.x;
+            let ay = tile.y;
+            while (az > 0) {
+                az--;
+                ax = Math.floor(ax / 2);
+                ay = Math.floor(ay / 2);
+                const aent = getEntry(az + "/" + ax + "/" + ay);
+                if (bound > aent.bound) aent.bound = bound;
+                aent.hasDesc = true;
+                aent.descRects.push(rect);
+            }
+        }
+        this._servedIndex = {index, globalRects};
+        this._servedIndexEpoch = epoch;
+        return this._servedIndex;
+    }
+
+    // Info covering a servable tile AND everything that can answer inside
+    // its footprint (see _getServedIndex).
+    subtreeSlopeBound(tileZ, tileX, tileY) {
+        if (tileZ < 0) return {bound: 0, hasDesc: false, rect: null, descRects: []};
+        const ent = this._getServedIndex().index.get(tileZ + "/" + tileX + "/" + tileY);
+        return ent || {bound: 0, hasDesc: false, rect: null, descRects: []};
+    }
+
+    // Rectangles of every servable loaded tile — the border-cut candidates
+    // for marcher samples that land OUTSIDE all loaded tiles (geoid region).
+    servedGlobalRects() {
+        return this._getServedIndex().globalRects;
+    }
+
+    _computeTileSlopeBound(tile) {
+        const e = tile.elevation;
+        const n = Math.round(Math.sqrt(e.length));
+        if (n < 2) return 0;
+
+        // Ground extent of the tile from its geographic corners. Post spacing
+        // uses a deliberately LOW Earth radius (≈1% under the true meridian /
+        // parallel radii anywhere on the ellipsoid) and the cosine of the
+        // tile's highest-|latitude| edge, so the spacing is an underestimate
+        // for every row of both supported projections (mercator rows and
+        // plate-carrée rows alike) — underestimating spacing overestimates
+        // slope, keeping the bound conservative.
+        const R_LOW = 6.3e6;
+        const {lat0, lon0, lat1, lon1} = this.options.mapProjection.getCorners(tile.y, tile.z, tile.x);
+        const toRad = Math.PI / 180;
+        // cos at the tile's highest-|lat| edge (min) and lowest-|lat| edge (max)
+        const cosMin = Math.max(Math.cos(Math.max(Math.abs(lat0), Math.abs(lat1)) * toRad), 1e-6);
+        const cosMax = Math.max(Math.cos(Math.min(Math.abs(lat0), Math.abs(lat1)) * toRad), 1e-6);
+        // EW row spacing scales with cos(lat) in both projections → min at cosMin.
+        const sx = Math.abs(lon1 - lon0) * toRad * R_LOW * cosMin / (n - 1);
+        // NS: plate-carrée rows are uniform (factor < 1 just adds margin);
+        // mercator row spacing ∝ cos(lat), so min/avg ≥ cosMin/cosMax.
+        const sy = Math.abs(lat0 - lat1) * toRad * R_LOW * (cosMin / cosMax) / (n - 1);
+
+        // Clamp floor: at or below the geoid height anywhere on the tile
+        // (sampled at corners + center, minus a margin for interior
+        // variation — the geoid undulates by well under 1 m across a tile).
+        const midLat = (lat0 + lat1) / 2;
+        const midLon = (lon0 + lon1) / 2;
+        const G = Math.min(
+            meanSeaLevelOffset(lat0, lon0),
+            meanSeaLevelOffset(lat0, lon1),
+            meanSeaLevelOffset(lat1, lon0),
+            meanSeaLevelOffset(lat1, lon1),
+            meanSeaLevelOffset(midLat, midLon)
+        ) - 1;
+
+        let maxDx = 0;
+        let maxDy = 0;
+        for (let r = 0; r < n; r++) {
+            const row = r * n;
+            let a = Math.max(e[row], G);
+            for (let c = 1; c < n; c++) {
+                const b = Math.max(e[row + c], G);
+                const d = Math.abs(b - a);
+                if (d > maxDx) maxDx = d;
+                a = b;
+            }
+        }
+        const lastRowStart = (n - 1) * n;
+        for (let i = 0; i < lastRowStart; i++) {
+            const d = Math.abs(Math.max(e[i + n], G) - Math.max(e[i], G));
+            if (d > maxDy) maxDy = d;
+        }
+        return Math.hypot(maxDx / sx, maxDy / sy);
+    }
+
     tileHasHigherZoom(z, x, y) {
         const childZ = z + 1;
         const childX0 = x * 2;

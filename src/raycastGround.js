@@ -1,6 +1,8 @@
-import {Vector3} from "three";
+import {Raycaster, Vector3} from "three";
 import {NodeMan} from "./Globals";
-import {wgs84} from "./LLA-ECEF-ENU";
+import {ECEFToLLAVD_radii, wgs84} from "./LLA-ECEF-ENU";
+import {meanSeaLevelOffset} from "./EGM96Geoid";
+import * as LAYER from "./LayerMasks";
 
 // Cast a Raycaster's ray at "the ground," in order of preference:
 //
@@ -99,4 +101,264 @@ export function raycastLocalGround(raycaster, camera = undefined) {
         point: new Vector3(o.x + d.x * t0, o.y + d.y * t0, o.z + d.z * t0),
         isTerrain: false,
     };
+}
+
+// One sample of the served ground surface under an ECEF point: signed
+// clearance above it, footprint lat/lon, which elevation tile answered, its
+// subtree slope bound, and the border-cut rectangles for the marcher (see
+// QuadTreeMapElevation._getServedIndex). The surface is
+// max(bilinear elevation, EGM96 geoid) — the same clamp as
+// CNodeTerrain.getPointBelow. Where no elevation data exists (outside the
+// sitch region, tiles still loading, no TerrainModel at all) the surface
+// degrades to the geoid, i.e. sea level, with tileKey "-1/-1/-1".
+function sampleGroundSurface(p, elevationMap, out) {
+    const LLA = ECEFToLLAVD_radii(p);
+    const seaLevel = meanSeaLevelOffset(LLA.x, LLA.y);
+    let elevation = seaLevel;
+    let tileZ = -1;
+    let tileX = -1;
+    let tileY = -1;
+    if (elevationMap) {
+        const info = elevationMap.getElevationWithTileInfo(LLA.x, LLA.y);
+        if (info.elevation > seaLevel) elevation = info.elevation;
+        tileZ = info.tileZ;
+        tileX = info.tileX;
+        tileY = info.tileY;
+    }
+    out.lat = LLA.x;
+    out.lon = LLA.y;
+    out.clearance = LLA.z - elevation;
+    out.tileKey = tileZ + "/" + tileX + "/" + tileY;
+    if (!elevationMap) {
+        out.slope = 0;
+        out.rect = null;
+        out.descRects = null;
+    } else if (tileZ < 0) {
+        // Geoid region: flat (geoid gradients ~1e-4, covered by the L
+        // floor); step cutting below stops the march just outside any
+        // loaded tile's rectangle, so no tile can be entered mid-step.
+        out.slope = 0;
+        out.rect = null;
+        out.descRects = elevationMap.servedGlobalRects();
+    } else {
+        const sub = elevationMap.subtreeSlopeBound(tileZ, tileX, tileY);
+        out.slope = sub.bound;
+        out.rect = sub.rect;
+        out.descRects = sub.descRects;
+    }
+    return out;
+}
+
+// First parameter s in (0, 1] at which the lat/lon segment enters the
+// rectangle expanded by (padLat, padLon), or Infinity. Standard slab test;
+// division by zero yields ±Infinity which the min/max logic handles.
+function segmentRectEntry(lat0, lon0, lat1, lon1, rect, padLat, padLon) {
+    const dLat = lat1 - lat0;
+    const dLon = lon1 - lon0;
+    let s0 = 0;
+    let s1 = 1;
+    for (const [p0, d, lo, hi] of [
+        [lat0, dLat, rect.latS - padLat, rect.latN + padLat],
+        [lon0, dLon, rect.lonW - padLon, rect.lonE + padLon],
+    ]) {
+        if (d === 0) {
+            if (p0 < lo || p0 > hi) return Infinity;
+        } else {
+            let a = (lo - p0) / d;
+            let b = (hi - p0) / d;
+            if (a > b) { const tmp = a; a = b; b = tmp; }
+            if (a > s0) s0 = a;
+            if (b < s1) s1 = b;
+        }
+    }
+    if (s0 > s1 || s0 <= 0 || s0 > 1) return Infinity;
+    return s0;
+}
+
+// Parameter s in (0, 1] at which the lat/lon segment (starting inside)
+// leaves the rectangle shrunk by (padLat, padLon); 0 if it starts outside
+// the shrunk rectangle; Infinity if it never leaves within the segment.
+function segmentRectExit(lat0, lon0, lat1, lon1, rect, padLat, padLon) {
+    const latS = rect.latS + padLat;
+    const latN = rect.latN - padLat;
+    const lonW = rect.lonW + padLon;
+    const lonE = rect.lonE - padLon;
+    if (lat0 < latS || lat0 > latN || lon0 < lonW || lon0 > lonE) return 0;
+    let s = Infinity;
+    const dLat = lat1 - lat0;
+    const dLon = lon1 - lon0;
+    if (dLat > 0) s = Math.min(s, (latN - lat0) / dLat);
+    else if (dLat < 0) s = Math.min(s, (latS - lat0) / dLat);
+    if (dLon > 0) s = Math.min(s, (lonE - lon0) / dLon);
+    else if (dLon < 0) s = Math.min(s, (lonW - lon0) / dLon);
+    return s > 1 ? Infinity : s;
+}
+
+// Fast ray→ground intersection against the terrain ELEVATION MAP instead of
+// the terrain mesh triangles. raycastLocalGround above is exact against the
+// rendered polygons, but terrain tiles have no BVH, so Three.js brute-forces
+// every triangle of every tile whose bounding sphere the ray touches — ~1 ms
+// per ray on a loaded terrain. Sphere-tracing the same source elevation data
+// costs a few dozen sub-microsecond map lookups per ray instead, which is what
+// makes bulk per-frame queries viable (the 20,000-frame MISB export spent 25
+// of its 25.5 seconds in Raycaster.intersectObjects before this existed).
+//
+// Differences from raycastLocalGround:
+//  - the hit is on the bilinear elevation surface, not the triangulated mesh,
+//    so it can differ from the render by interpolation error (sub-meter on
+//    ordinary terrain, worst on steep tiles);
+//  - buildings / Google 3D tiles are never considered;
+//  - where no elevation data exists the fallback surface is the EGM96 geoid
+//    (sea level) rather than the camera-latitude geocentric sphere;
+//  - terrain "flattening" (flat-earth sitches) bends the rendered mesh away
+//    from this analytic surface, so flattened terrain routes to the exact
+//    mesh raycast instead of the marcher;
+//  - elevation exaggeration (zScale) is honored — the marcher reads it from
+//    the elevation map and widens its step safety margin to match.
+//
+// direction must be normalized. Returns a freshly allocated ECEF Vector3, or
+// null if the ray never reaches the ground (looking up / over the horizon)
+// within maxDistance.
+export function raycastGroundElevationFast(origin, direction, maxDistance = 1000000) {
+    const terrainNode = NodeMan.exists("TerrainModel") ? NodeMan.get("TerrainModel") : null;
+
+    // Terrain "flattening" (flat-earth sitches) bends the rendered mesh away
+    // from the ellipsoid the elevation surface lives on — the analytic model
+    // below simply does not describe the rendered terrain, so use the exact
+    // mesh raycast instead.
+    if (terrainNode && terrainNode.in.flattening !== undefined && terrainNode.in.flattening.v0 > 0) {
+        return raycastGroundMeshFallback(origin, direction);
+    }
+
+    const elevationMap = terrainNode ? terrainNode.elevationMap : null;
+    const zScale = (elevationMap && elevationMap.options && elevationMap.options.zScale) || 1;
+
+    // Conservative sphere-trace. CONTRACT — what is and is not guaranteed:
+    //
+    // Core argument: along the ray, the clearance
+    // c(t) = rayAltitude − servedElevation falls at a rate of at most
+    // (1 + L) per meter — geodetic altitude is 1-Lipschitz in position, the
+    // ray's ground-footprint speed is ≤ 1, and the served surface rises at
+    // most L per meter of ground distance. Stepping c/(1+L) therefore does
+    // not step over a crossing ANYWHERE the L in hand actually bounds the
+    // surface being traversed. L is measured, not assumed: per sample,
+    // subtreeSlopeBound gives the max clamped bilinear-cell gradient of the
+    // answering tile's raster and every loaded descendant that could answer
+    // inside its footprint (cached), scaled by the live elevation-
+    // exaggeration setting (options.zScale multiplies every elevation and
+    // therefore every slope), with a small floor for the geoid fallback
+    // surface (geoid gradients are ~1e-4).
+    //
+    // Where the L-in-hand can fail to bound the traversed surface, and the
+    // corresponding defenses:
+    //  - a step whose endpoints answer from DIFFERENT tiles: the served
+    //    surface can jump at the border (zoom transitions, parent/child
+    //    data disagreement). Defense: bisect to the border, check the far
+    //    side's clearance right at entry (a downward jump there is itself
+    //    the crossing), and re-derive the step from the new tile's bound.
+    //  - a descendant "pocket" interior to a same-tile step (transition
+    //    ring). Defense: the subtree bound covers pocket SLOPES, and below
+    //    CREEP_CEILING clearance in descendant-bearing tiles the marcher
+    //    creeps at 1 m steps so a pocket border wall taller than the local
+    //    clearance cannot be straddled unobserved.
+    //  - footprint-path curvature: the lat/lon footprint of a straight ECEF
+    //    ray bows away from its chord by ~dt²/2R, which would let a long
+    //    step's path wander into a NEIGHBORING tile and back unobserved.
+    //    Defense: MAX_STEP caps dt so the bow stays ≈ 0.1 m, restoring the
+    //    convex-rectangle prefix argument to that tolerance.
+    //
+    // EXPLICIT ASSUMPTIONS AND RESIDUAL MISS CLASSES (not proven, stated):
+    //  (1) parent/child served-data disagreement is assumed ≤ CREEP_CEILING
+    //      where clearance exceeds it;
+    //  (2) slivers below the working tolerances — the ~1 cm border-bisection
+    //      window, ~0.1 m footprint bow, sub-meter pocket corner-clips —
+    //      can hide only GRAZES, with undetected penetration bounded by
+    //      ~(1 + L) × sliver length (meter-scale at worst).
+    // Exact closure of (1)–(2) would need quadtree DDA traversal. Callers
+    // needing exactness against the RENDERED MESH (which this elevation
+    // surface only approximates) must use raycastLocalGround; flattening,
+    // and step-budget exhaustion, route there automatically.
+    //
+    // There is deliberately no distance-proportional step floor (an earlier
+    // version had one and it could skip narrow ridges at long range); the
+    // 1 m floor is far below the raster's representable feature size.
+    const CREEP_CEILING = 30; // m — generous vs typical parent/child disagreement
+    const MAX_STEP = 1000;    // m — keeps footprint chord bow ≈ dt²/2R ≤ ~0.1 m
+    const MAX_STEPS = 30000;
+
+    const p = new Vector3();
+    const probe = {};
+    const A = {};
+    const B = {};
+    const at = (tt, slot) => {
+        p.copy(origin).addScaledVector(direction, tt);
+        return sampleGroundSurface(p, elevationMap, slot);
+    };
+
+    // bisect a bracket [lo: clearance>0, hi: clearance<=0] to ~1 cm
+    const bisectHit = (lo, hi) => {
+        while (hi - lo > 0.01) {
+            const mid = 0.5 * (lo + hi);
+            if (at(mid, probe).clearance > 0) lo = mid;
+            else hi = mid;
+        }
+        return new Vector3().copy(origin).addScaledVector(direction, hi);
+    };
+
+    at(0, A);
+    if (A.clearance <= 0) return origin.clone(); // started at or below the ground
+
+    let t = 0;
+    for (let i = 0; i < MAX_STEPS; i++) {
+        if (t >= maxDistance) return null; // never reached the ground
+        const L = Math.max(0.01, A.slope * zScale);
+        let dt = Math.min(MAX_STEP, Math.max(1, A.clearance / (1 + L)));
+        if (A.hasDescendants && A.clearance < CREEP_CEILING) dt = 1;
+        const tNext = Math.min(t + dt, maxDistance);
+        at(tNext, B);
+        if (B.tileKey !== A.tileKey) {
+            // Footprint crossed into a different served tile: advance only
+            // to the border (bisect on the answering tile — the footprint
+            // chord exits this tile's convex rectangle exactly once, so the
+            // "still tile A" region is a prefix) and check the far side.
+            let lo = t;
+            let hi = tNext;
+            while (hi - lo > 0.01) {
+                const mid = 0.5 * (lo + hi);
+                if (at(mid, probe).tileKey === A.tileKey) lo = mid;
+                else hi = mid;
+            }
+            at(hi, B);
+            if (B.clearance <= 0) return bisectHit(t, hi);
+            t = hi;
+        } else if (B.clearance <= 0) {
+            return bisectHit(t, tNext);
+        } else {
+            t = tNext;
+        }
+        A.clearance = B.clearance;
+        A.tileKey = B.tileKey;
+        A.slope = B.slope;
+        A.hasDescendants = B.hasDescendants;
+    }
+
+    // Step budget exhausted (pathological grazing ray skimming the surface).
+    // Do it the exact, slow way instead of guessing.
+    return raycastGroundMeshFallback(origin, direction);
+}
+
+// Exact mesh-raycast fallback for rays the elevation marcher gives up on —
+// same terrain-mesh + local-sphere preference order as raycastLocalGround.
+let fallbackRaycaster = null;
+function raycastGroundMeshFallback(origin, direction) {
+    if (!fallbackRaycaster) {
+        fallbackRaycaster = new Raycaster();
+        // terrain tile meshes live on the MAIN/LOOK layers, not layer 0
+        fallbackRaycaster.layers.mask |= LAYER.MASK_MAIN | LAYER.MASK_LOOK;
+    }
+    fallbackRaycaster.set(origin, direction);
+    fallbackRaycaster.near = 0;
+    fallbackRaycaster.far = Infinity;
+    const hit = raycastLocalGround(fallbackRaycaster);
+    return hit ? hit.point : null;
 }

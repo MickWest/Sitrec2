@@ -402,6 +402,13 @@ export const serializeMethods = {
         let mods = {}
         NodeMan.iterate((id, node) => {
 
+            // Nodes flagged skipModSerialize are transient/debug-only (e.g. the local-build
+            // labelMainViewTerrain overlay, created lazily on the first render frame) —
+            // their mod could never re-attach on load, it would just warn and be dropped.
+            if (node.skipModSerialize) {
+                return;
+            }
+
             if (node.modSerialize !== undefined) {
                 const nodeMod = node.modSerialize()
 
@@ -915,6 +922,11 @@ export const serializeMethods = {
                 }
             }
             // load the files as if they have been drag-and-dropped in
+            // Suppress track auto-centering for the whole file-load phase (cleared when
+            // Promise.all below resolves). Previously toggled inside each load callback,
+            // which cleared it before the un-awaited async addTracks actually ran.
+            Globals.dontAutoZoom = true;
+
             for (let id in sitchData.loadedFiles) {
                 const sidecarMeta = sitchData.loadedFilesMetadata?.[id];
                 const sidecarURL = sidecarMeta?.pesSidecarURL;
@@ -941,9 +953,7 @@ export const serializeMethods = {
                     })
                     : Promise.resolve(null);
                 loadingPromises.push(overridePromise.then(metadataOverride => FileManager.loadAsset(Sit.loadedFiles[id], id, metadataOverride)).then(
-                    (parsedResult) => {
-                        Globals.dontAutoZoom = true;
-
+                    async (parsedResult) => {
                         // Skip files that failed to parse (e.g. corrupt KLV)
                         if (parsedResult === null) {
                             return;
@@ -1016,12 +1026,14 @@ export const serializeMethods = {
                             } else if (FileManager.list[fileID]?.dataType === "tle") {
                                 trackOptions.tleAction = "merge";
                             }
-                            FileManager.handleParsedFile(fileID, parsedFile, trackOptions);
+                            // MUST await: handleParsedFile is async, and for some file types the
+                            // track nodes are only created after a real network await (e.g. sonde
+                            // soundings fetch the IGRA2 station list in refineStationCoords before
+                            // addTracks runs). deserializeMods runs as soon as Promise.all(loadingPromises)
+                            // resolves, so if track creation escapes this promise chain the mods for
+                            // those nodes hit "does not exist ... cannot apply mod" and are dropped.
+                            await FileManager.handleParsedFile(fileID, parsedFile, trackOptions);
                         }
-
-                        Globals.dontAutoZoom = false;
-
-
                     }
                 ).catch((err) => {
                     // Don't let one missing/failed asset crash the rest of
@@ -1036,6 +1048,8 @@ export const serializeMethods = {
 
         // wait for the files to load
         Promise.all(loadingPromises).then(async () => {
+
+            Globals.dontAutoZoom = false;
 
             // We supress recalculation while we apply the mods
             // otherwise we get multiple recalculations of the same thing
@@ -1369,6 +1383,10 @@ export const serializeMethods = {
         for (const removedId of REMOVED_NODE_IDS) {
             if (mods[removedId] !== undefined) delete mods[removedId];
         }
+
+        // Older saves captured a mod for the local-build lazy debug overlay (now excluded
+        // at save time via skipModSerialize); the node never exists at mod time, so drop it.
+        delete mods["labelMainViewTerrain"];
 
         // Migration for older custom sitches saved before stable shortName metadata
         // existed for track files.

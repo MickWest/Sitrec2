@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.103.2 (2026-07-20)
+
+### Improvements
+- **Much faster MISB CSV export** (File → Export): computing where each frame's view line meets the ground previously dominated the export of long camera and line-of-sight tracks — about 25 seconds of a 25.5-second, 20,000-frame export — and is now near-instant, with results matching the old method to within about a meter on ordinary terrain.
+
+### Bug Fixes
+- Fixed saved sitches losing settings on tracks loaded from data files (e.g. radiosonde soundings): colors, smoothing, and wind-arrow settings now survive reloading instead of silently resetting with a flood of console warnings, and loading no longer unexpectedly re-centers the view on those tracks.
+- Fixed selections pointing at a hand-drawn track (right-click → *Create Track with Object* / *Create Track (No Object)*) — such as an orbit-target choice — failing to restore when reloading a saved sitch that also contains tracks loaded from files.
+- Fixed a roughly ten-second interface freeze while loading a saved sitch containing a very long (e.g. 20,000-frame) camera track.
+
 ## Version 2.103.1 (2026-07-20)
 
 ### Improvements

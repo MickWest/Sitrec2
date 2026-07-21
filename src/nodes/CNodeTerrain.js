@@ -294,6 +294,9 @@ export class CNodeTerrain extends CNode {
             }
             
             const labelMainViewTerrain = new CNodeViewUI({id: "labelMainViewTerrain", overlayView: ViewMan.list.mainView.data});
+            // Local-build debug overlay, created lazily on the first render frame — after
+            // deserializeMods has run — so a saved mod could never re-attach to it.
+            labelMainViewTerrain.skipModSerialize = true;
             labelMainViewTerrain.ignoreMouseEvents(); // Allow mouse events to pass through to the 3D view
             const terrain = this;
             

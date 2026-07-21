@@ -2657,6 +2657,12 @@ class CTrackManager extends CManager {
                 // will be restored when mods are applied
                 const options = {
                     name: trackData.menuText,
+                    // MUST pass the saved shortName: switch options (orbitTargetSwitch,
+                    // targetTrackSwitch, ...) and their saved choice mods are keyed by it.
+                    // Without it addSyntheticTrack regenerates "synth_NN_d" from the current
+                    // track count, which drifts when other tracks (e.g. sondes) load first.
+                    // Fall back to menuText for older saves (they were kept identical).
+                    shortName: trackData.shortName ?? trackData.menuText,
                     curveType: trackData.curveType,
                     editMode: false, // Will be restored by mods
                     color: trackData.color,

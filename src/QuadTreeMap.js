@@ -106,6 +106,9 @@ export class QuadTreeMap {
         if (!this.tileCache[z][x]) this.tileCache[z][x] = {};
         this.tileCache[z][x][y] = tile;
         this.allTiles.add(tile);
+        // monotone change counter for caches derived from the tile SET
+        // (e.g. the elevation map's subtree slope bounds)
+        this._tileEpoch = (this._tileEpoch || 0) + 1;
     }
 
     deleteTile(x, y, z) {
@@ -140,6 +143,7 @@ export class QuadTreeMap {
             tile.parent = null;
             
             this.allTiles.delete(tile);
+            this._tileEpoch = (this._tileEpoch || 0) + 1;
             delete this.tileCache[z][x][y];
             // Clean up empty objects to prevent memory leaks
             if (Object.keys(this.tileCache[z][x]).length === 0) {

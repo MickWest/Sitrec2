@@ -10,9 +10,7 @@ import {saveAs} from "file-saver";
 import {degrees} from "../utils";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {clampTerrainElevationHAE, terrainCacheMatchesLocation} from "./trackElevationUtils";
-import {Raycaster} from "three";
-import * as LAYER from "../LayerMasks";
-import {raycastLocalGround} from "../raycastGround";
+import {raycastGroundElevationFast} from "../raycastGround";
 import {ecefDisplacementToENU, headingSpeedFromENU, METERS_PER_FOOT} from "../TrackExportMath";
 
 export class CNodeTrack extends CNodeEmptyArray {
@@ -252,16 +250,15 @@ export class CNodeTrack extends CNodeEmptyArray {
         return null;
     }
 
-    // Ground intersection of one LOS (frame center): nearest terrain-mesh hit,
-    // else the local-radius sea-level sphere for descending rays (the shared
-    // raycastLocalGround preference order). Returns an ECEF Vector3 or null
-    // when the ray never meets the ground (e.g. camera looking up).
-    frameCenterGroundPoint(frameData, raycaster) {
-        raycaster.set(frameData.position, frameData.heading);
-        raycaster.near = 0;
-        raycaster.far = Infinity;
-        const hit = raycastLocalGround(raycaster);
-        return hit ? hit.point : null;
+    // Ground intersection of one LOS (frame center): sphere-traced against the
+    // terrain elevation map (the same data the terrain mesh is triangulated
+    // from), falling back to the EGM96 geoid where no data is loaded. A mesh
+    // raycast here matches the render slightly better but costs ~1 ms per ray
+    // (no BVH on terrain tiles) — that was 25 of the 25.5 seconds of a
+    // 20,000-frame MISB export. Returns an ECEF Vector3 or null when the ray
+    // never meets the ground (e.g. camera looking up).
+    frameCenterGroundPoint(frameData) {
+        return raycastGroundElevationFast(frameData.position, frameData.heading);
     }
 
     exportMISBCompliantCSV(inspect=false) {
@@ -303,24 +300,19 @@ export class CNodeTrack extends CNodeEmptyArray {
 
         const lookCamera = NodeMan.get("lookCamera", false);
 
-        // Raycaster for the frame-center ground track, reused across frames.
-        // Per-frame terrain-mesh raycasts are acceptable here: export is a
-        // one-off operation, and with Tracking Wobble the boresight motion is
-        // high-frequency, so the step-and-interpolate shortcut used by
-        // CNodeLOSTraverseTerrain would smear the center track.
-        const raycaster = isLOSExport ? new Raycaster() : null;
-        if (raycaster) {
-            // terrain tile meshes live on the MAIN/LOOK layers, not layer 0 —
-            // a default raycaster mask would skip them all (same widening as
-            // CNodeTerrain.getPointBelow and CNodeLOSTraverseTerrain)
-            raycaster.layers.mask |= LAYER.MASK_MAIN | LAYER.MASK_LOOK;
-        }
-
         // ~0.5 s central-difference window for truth heading/speed, matching
         // the smoothing horizon used by the traverse-analysis truth metrics.
         const truthWindow = Math.max(1, Math.round(Sit.fps / 4));
 
-        for (let f = 0; f < this.frames; f++) {
+        // Inspect mode only feeds the makeExportButton tooltip (header + one
+        // example row) — bound the loop to a single row. Computing every frame
+        // here ran the per-frame ground raycast at node CREATION time: ~10 s of
+        // frozen UI loading a 20,000-frame sitch. Loop bound only — the truth
+        // window clamp below stays on this.frames so the example row is
+        // byte-identical to row 1 of a real export.
+        const frameCount = inspect ? Math.min(1, this.frames) : this.frames;
+
+        for (let f = 0; f < frameCount; f++) {
             const frameData = this.v(f);
             const timeMS = GlobalDateTimeNode.frameToMS(f);
 
@@ -405,10 +397,12 @@ export class CNodeTrack extends CNodeEmptyArray {
                 // Frame center: where this frame's boresight meets the ground.
                 // With Tracking Wobble enabled this wobbles with the camera —
                 // that is the point: the center ground track reflects what the
-                // sensor actually recorded, while truth_* stays clean.
+                // sensor actually recorded, while truth_* stays clean. It is
+                // computed per frame (no step-and-interpolate shortcut à la
+                // CNodeLOSTraverseTerrain, which would smear the wobble).
                 let centerCells = ["", "", ""];
                 if (frameData.position && frameData.heading?.isVector3) {
-                    const hit = this.frameCenterGroundPoint(frameData, raycaster);
+                    const hit = this.frameCenterGroundPoint(frameData);
                     if (hit) {
                         const hitLLA = ECEFToLLAVD_radii(hit);
                         // FrameCenterElevation (tag 25) is MSL: H = h - N
