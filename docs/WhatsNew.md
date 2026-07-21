@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.104.0 (2026-07-21)
+
+### New Features
+- **Independent balloon wind check** (Traverse → Analyze Traverse Methods...): the analysis now compares the wind the free-fitting balloon explanation would *need* against the winds-aloft data actually loaded (soundings or forecast), sampled along the fitted path, and rates the agreement — *Supports*, *Compatible*, *In tension*, or *Inconclusive* — in a colour-coded evidence strip, with the reasoning spelled out on the balloon tile. The check is deliberately conservative: agreement can support a balloon but disagreement only counts as tension, never a rule-out; it refuses to rate itself against a hand-set wind, the Zero-wind mode, or geometry where distance can't be determined; "supports" is withheld unless nearby sounding data genuinely covers the fitted altitudes; and the second balloon reconstruction — the one built *from* the loaded wind — is clearly labelled as circular, not independent evidence.
+- **Executive assessment headline** (Traverse → Analyze Traverse Methods...): each analysis now leads with a one-line overall verdict. "Probably a wind-blown balloon" appears only when the balloon explanation fits closely, moves like a balloon, AND is independently backed by the wind check; otherwise the verdict is "Consistent with…" (one or several conventional interpretations), "Insufficient evidence" when the geometry can't discriminate, or a plainly-worded "Unresolved" that is explicitly *not* a claim of anything anomalous. The printable report gains a matching Assessment section: a per-interpretation evidence table, the checks that didn't run, and an honest list of ordinary causes the analysis has no model for at all (birds, debris, reflections, and so on). The ranking and tile order are completely unchanged.
+
+### Improvements
+- **Tidier analysis gallery** (Traverse → Analyze Traverse Methods...): the repeated polynomial-order diagnostic tiles no longer crowd the main list — only each strategy's best-ranked one stays up front, and the rest move below a new *Extras* separator at the end, still ranked and still selectable.
+
+### Bug Fixes
+- Fixed opening a new sitch while a saved sitch was still loading: the abandoned load could bleed its tracks and settings into the newly opened sitch, or leave it stuck loading, not centering the view, or not responding to changes.
+
 ## Version 2.103.2 (2026-07-20)
 
 ### Improvements
