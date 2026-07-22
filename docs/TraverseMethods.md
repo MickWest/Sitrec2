@@ -635,3 +635,108 @@ Notes on the gallery tiles:
 - The flexible constant-acceleration residual shown for scale is a
   **model-reference residual**, not an estimate of sensor noise. It must not be
   used to make statistical confidence or likelihood claims.
+
+### How the tiles are ranked
+
+The gallery mixes unlike questions — object models, LOS-constrained
+trajectory families, fixed-geometry checks, curve fits, catalogue matches —
+and there is no cross-model likelihood that could rank them as competing
+object probabilities. The flat best-first order is instead decided
+**lexicographically**, by a cascade of keys that *are* comparable across
+categories, before anything model-specific is consulted:
+
+1. **Truth separation** (only when a truth track is selected): completed fits
+   first, then mean 3D separation from the truth in metres — the one score
+   that is soundly comparable across every category.
+2. **Broad-screen pass** — anything rated *Kinematically extreme* / *Poor
+   fit* (or flagged invalid, underground, or off-mode) sorts below
+   everything that passed, even an incomplete pass. This ordering is
+   deliberate: broad, weakly-constrained slow families are the ones that
+   honestly report touching a search edge, and completeness-first would
+   bury them under extreme-but-cleanly-converged solutions.
+3. **Eligibility** — complete *and* top tier.
+4. **Completeness** — no search-boundary or optimizer-incomplete flags.
+5. **Tier** (see below), then the count of locally load-bearing model limits.
+6. **Category priority** — *Physically based* → *LOS Constrained* →
+   *Geometric* → *Geometric Approximations* → *Known Object*. Used only in
+   the flat ordering, and only here, because the next key is not
+   commensurable across categories (catalogue and at-infinity tiles score
+   raw degrees; the rest a smoothness composite roughly an order of
+   magnitude larger).
+   "Looks like a balloon" leading a curve fit that merely threads the same
+   rays is the intended effect.
+7. **Within-category secondary score**, then raw LOS residual as the final
+   tie-break.
+
+Three worked examples. A *Minimum Acceleration* path that threads the rays
+at 0.03° but needs 6 g is rated *Low*, so a complete balloon fit at 0.04°
+and 0.3 g — top tier and eligible — leads it at the eligibility key; their
+scores are never compared. A slow drifting family flagged *Search
+incomplete* because its range band touches the grid edge still leads a
+cleanly-converged 900 kt / 12 g solution: the extreme candidate fails the
+broad-screen pass, which is decided *before* completeness, so honestly
+reporting a search edge is not punished by a worse tile that merely
+finished. And a catalogued planet with a close angular match (say 0.08°,
+the top catalogue grade) ties a passing drone fit on every key down
+through tier and pin count — but its secondary score is 0.08 (raw
+degrees) while the drone's smoothness-plus-residual composite is several
+units. Compared directly the planet would "win" purely on units, so
+category priority decides that pair and the unsound comparison is never
+made.
+
+**The tier** for trajectory tiles is the worse of two independent 0–3
+grades, and the badge names whichever one is binding. *Fit quality*, from
+the scored LOS residual (ray-constrained solutions first get a fixed 0.05°
+solver-fidelity allowance subtracted): ≤ 0.05° is the top grade, then
+≤ 0.15° (*Fair fit*), ≤ 0.5° (*Weak fit*), and worse (*Poor fit*).
+*Kinematic ordinariness*: ≤ 1.5 g and ≤ 650 kt is the top grade; up to 4 g
+(still ≤ 650 kt) is *Moderate*; above 4 g or 650 kt is *Low*; above 9 g or
+900 kt is *Kinematically extreme*. One locally load-bearing model limit
+caps the tier at 2, two or more at 1, and an unconverged optimizer caps it
+at 1 as a *Provisional fit*. Catalogue and at-infinity tiles have no
+kinematics to grade: they are tiered on angular offset alone, with the
+visibility / illumination check folded in for catalogue objects.
+
+**The secondary score** for trajectory tiles is a smoothness composite plus
+the residual: `4·rms(g) + max(g) + 0.05·std(turn rate) + 0.02·(mean
+vertical speed beyond 5 m/s)`, plus the scored residual divided by 0.05 —
+so one score unit equals 0.05° of LOS residual, putting "how much
+manoeuvring does this require" and "how well does it thread the rays" on
+one scale. The composite prices exactly the things a wrong assumed
+distance forces on a solution: sustained and peak acceleration, erratic
+turning, and implausible climb or descent.
+
+**The balloon special case.** Buoyant tiles get a bounded consistency
+nudge. A passive wind tracer is physically confined to a single steady
+vertical trend and an essentially one-direction drift, so consistency
+`C ∈ [0, 1]` is measured from the solved track as net displacement over
+path length per axis, taking the *weaker* of the vertical and horizontal
+values (a monotonic climb does not excuse a circling ground track). A
+near-level vertical axis counts as a steady trend — a neutrally-buoyant
+balloon is ordinary — and a near-hovering horizontal axis scores neutral,
+so calm-wind cases are never penalised for not moving. The
+nudge is `6·(1 − 2C)` score units — at most ±0.3° of residual-equivalent,
+symmetric: textbook balloon motion is promoted, and a "balloon" that had
+to yo-yo vertically or curve back on itself is demoted by the same
+amount. The nudge lives entirely inside the secondary score, which the
+cascade consults only for candidates that already tie on screen pass,
+eligibility, completeness, the combined tier, and load-bearing-limit
+count. Within such a group it moves the balloon's score by at most 6
+units (0.3° of residual-equivalent), so that is the most
+smoothness-plus-residual disadvantage it can overcome; any candidate
+ahead on one of the earlier keys — a better combined tier, a complete
+search where the balloon's is not, fewer load-bearing limits — is out of
+its reach.
+
+**Surfacing true anomalies.** Several deliberate choices keep a genuinely
+anomalous solution from being ranked or labelled out of sight. The
+fit/ordinariness split means a 12 g solution that reproduces the
+sightlines exactly is badged *Kinematically extreme* — a good fit
+describing extraordinary motion — rather than blending in among good
+fits or being dismissed as a bad one. The free Quadcopter fit is left
+unseeded as the unconstrained, anomaly-reachable search. The balloon
+nudge is tier-bounded and symmetric, so no mundane reading is ever
+forced. And when nothing passes, the verdict is *Unresolved* — stated
+with what was and wasn't tested — rather than either a manufactured
+conventional winner or an anomaly claim the uncalibrated noise floor
+cannot support.

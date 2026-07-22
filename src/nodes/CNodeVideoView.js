@@ -71,6 +71,7 @@ import {analysisMethods} from "./CNodeVideoViewAnalysis";
 import {CNodeVideoHistogramView} from "./CNodeVideoHistogramView";
 import {CNodeVideoCurvesView} from "./CNodeVideoCurvesView";
 import {CNodeVideoLevelsView} from "./CNodeVideoLevelsView";
+import {CNodeAudioSpectrumView} from "./CNodeAudioSpectrumView";
 
 // Re-export for external consumers (e.g. CMotionAnalysis).
 export {addFiltersToVideoNode, applyConvolution} from "./CNodeVideoViewFilters";
@@ -125,6 +126,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.setupHistogramView();
         this.setupLevelsView();
         this.setupCurvesView();
+        this.setupSpectrumView();
 
         this.positioned = false;
         this.autoFill = v.autoFill ?? true; // default to autofill
@@ -230,6 +232,24 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         this.updateHistogramVisibilityFromVideoAdjustments();
         this.setupVideoAdjustmentsVisibilityHandler();
+    }
+
+    setupSpectrumView() {
+        if (this.id !== "video") return;
+        if (this.spectrumView) return;
+
+        // Free-floating analyzer panel, toggled from Show → Views ("Audio Spectrum"),
+        // hidden by default. Unlike the histogram/levels/curves helpers its visibility
+        // is user-controlled, so it is NOT excluded from the views menu.
+        this.spectrumView = new CNodeAudioSpectrumView({
+            id: this.id + "Spectrum",
+            menuName: "Audio Spectrum",
+            videoView: this,
+            left: 0.02,
+            top: 0.63,
+            width: 0.34,
+            height: -0.4,
+        });
     }
 
     isVideoAdjustmentsOpen() {

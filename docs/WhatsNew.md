@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.106.0 (2026-07-21)
+
+### New Features
+- **Audio Spectrum analyzer** (Show → Views → Audio Spectrum): a real-time frequency spectrum of the loaded video's soundtrack — 3 Hz to 20 kHz on a logarithmic axis, with a decibel grid and a separate trace for each stereo channel — that stays locked to the playhead whether you are playing, scrubbing, stepping while paused, or muted. The three strongest tones are labeled with their exact frequency, the axis labels gain detail as you widen the panel, and the panel can be dragged, resized, docked, or popped out into its own window.
+
 ## Version 2.105.0 (2026-07-21)
 
 ### New Features
