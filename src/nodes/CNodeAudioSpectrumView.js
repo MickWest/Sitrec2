@@ -1,5 +1,5 @@
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
-import {Sit, setRenderOne} from "../Globals";
+import {setRenderOne, Sit} from "../Globals";
 
 /**
  * Real-time audio spectrum analyzer view for the loaded video/audio soundtrack.
@@ -34,7 +34,7 @@ const DB_GRID_STEP = 6;     // horizontal gridline spacing in dB
 const FREQ_MIN = 3;         // Hz at the left edge
 const FREQ_MAX_CAP = 20000; // Hz cap for the right edge (min with Nyquist)
 const FFT_SIZE = 32768;     // power of two; ~1.5 Hz bins at 48 kHz
-const SMOOTH = 0.5;         // blend factor for successive spectra (analyser-like)
+const SMOOTH = 0.99;         // blend factor for successive spectra (analyser-like)
 const LABEL_TOP = 26;       // y of the frequency axis labels — below the ~24px view header
 const PEAK_LABELS = 3;      // how many spectral peaks get a frequency readout
 const PEAK_MIN_DIP_DB = 6;  // required dB dip between two labeled peaks (prominence)
