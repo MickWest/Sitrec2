@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.106.1 (2026-07-22)
+
+### Bug Fixes
+- Fixed loading a new sitch while a view (such as the Audio Spectrum analyzer, Notes, or the node graph) was popped out into its own browser window: the load could break partway and leave the popped-out window stranded — it now closes automatically and the view comes back normally in the new sitch.
+
 ## Version 2.106.0 (2026-07-21)
 
 ### New Features

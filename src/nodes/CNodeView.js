@@ -563,6 +563,15 @@ class CNodeView extends CNode {
         console.log("Disposing CNodeView: "+this.id)
         const sidebar = this.dockedSidebar ? this.getDockSidebar(this.dockedSidebar) : null;
 
+        // If popped out into a separate browser window, dock back FIRST: the view's
+        // content (e.g. a canvas) lives in the popup's document while popped, so
+        // tearing down the in-page div now would leave the popup orphaned (with its
+        // poll interval running) and make child removal in subclass dispose paths
+        // (CNodeViewCanvas.dispose's div.removeChild(canvas)) throw mid-teardown.
+        // dockWindow() moves the content home, closes the popup, and stops the
+        // popup poll/render loop; it is a safe no-op when not popped.
+        if (this._poppedWindow) this.dockWindow();
+
         // Clear any pending resize timeout to prevent post-disposal callbacks
         if (this._resizeTimeout) {
             clearTimeout(this._resizeTimeout);

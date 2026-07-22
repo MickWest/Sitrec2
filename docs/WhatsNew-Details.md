@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.106.1 (2026-07-22)
+
+### Bug Fixes
+- **Fixed sitch teardown breaking when a view was popped out into its own browser window** (`src/nodes/CNodeView.js`). While popped, `popOut()` moves everything under the view's header into the popup's document via `adoptNode` — so when a new sitch was loaded in-page and `disposeEverything()` tore the views down, `CNodeViewCanvas.dispose()`'s `this.div.removeChild(this.canvas)` threw `NotFoundError` (the canvas was no longer a child of the in-page div), breaking teardown mid-way, and the popup was left orphaned with its 600 ms fallback poll (`_popPoll`) still running — the poll only docks once the popup is *closed*, and the main-window `pagehide` closer never fires on an in-page load, so the dead window just stayed. `CNodeView.dispose()` now checks `_poppedWindow` first and calls `dockWindow()` before any DOM teardown: the content is adopted back into the main document, the popup window closes, and the popup poll and `renderWhileWindowed` render loop stop; nothing happens when the view isn't popped. Fixes every poppable view — Notes (`CNodeNotes`), text views (`CNodeViewText`), the node-graph DAG (`CNodeViewDAG`), the script editor, and the Audio Spectrum analyzer added in 2.106.0. Verified by reproducing the popped state (content adopted into the popup's document) and loading a new sitch: clean teardown, popup closed, view rebuilt correctly.
+
 ## Version 2.106.0 (2026-07-21)
 
 ### New Features
