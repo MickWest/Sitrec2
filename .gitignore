@@ -43,5 +43,8 @@ AGENTS.md
 /tests_regression/snapshots-diffs/
 /tests_regression/snapshots-baseline/
 /analysis/
+# BOT Bench local sweep output (benchmarks/botbench/PLAN.md) — results are
+# regenerated locally; only the harness + plan are tracked
+/benchmarks/botbench/results/
 # Local code-review / audit reports (not part of the codebase)
 /CODE-REVIEW-*.md

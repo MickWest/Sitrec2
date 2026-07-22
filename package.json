@@ -74,7 +74,10 @@
     "build-video-viewer": "npm run build-desktop",
     "app-video-viewer": "npm run app-desktop",
     "dist-video-viewer": "npm run dist-desktop",
-    "bench-losfit": "npx jest benchmarks/losFitting.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit"
+    "bench-losfit": "npx jest benchmarks/losFitting.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot": "npx jest benchmarks/botbench/botbench.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot-classify": "npx jest benchmarks/botbench/classify.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot-export": "npx jest benchmarks/botbench/export.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit"
   },
   "jest": {
     "testPathIgnorePatterns": [
