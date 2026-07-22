@@ -161,6 +161,57 @@ export function localFitCompletionWarnings(optimizer) {
         : "";
     return [`local refinement reached its ${optimizer.iterations ?? "configured"}-iteration budget before convergence${spread}`];
 }
+
+// An "iteration_limit" stop is NOT always an unfinished search. Nelder-Mead
+// here requires BOTH a flat objective AND a collapsed simplex (cost-only
+// stopping is unsafe on LOS fits — see NelderMead.js), so a model parameter
+// with no effect on the trajectory over this particular clip legitimately
+// holds the simplex wide forever: a lantern whose solved flame-out lies
+// beyond the clip never exercises its sink/cool-down parameters, so their
+// spread carries no information about the FIT being unfinished. Measured
+// case: a genuine easy balloon (recovered by Constant Altitude to the exact
+// range and drift speed) was badged "Optimizer incomplete" for exactly this.
+//
+// This classifies that case: returns a note string when the objective is
+// settled (final cost spread within tolerance) and every dimension still
+// wide is one the CALLER declares unobservable for this clip; else null
+// (keep the ordinary incomplete warning). The note must be presented as an
+// identifiability statement — those parameters were NOT measured — never as
+// a convergence success for them.
+export function settledButUnidentifiable(optimizer, allowedWideNames, requireMinAtLeast = null) {
+    if (!optimizer || optimizer.stopReason !== "iteration_limit") return null;
+    if (!Array.isArray(optimizer.parameterSpreads) || !Array.isArray(optimizer.paramNames)) return null;
+    if (!allowedWideNames || !allowedWideNames.length) return null;
+    const tol = Number.isFinite(optimizer.tol) ? optimizer.tol : 1e-8;
+    const xTol = Number.isFinite(optimizer.xTol) ? optimizer.xTol : 1e-6;
+    if (!(Number.isFinite(optimizer.costSpread) && optimizer.costSpread < tol)) return null;
+    const allowed = new Set(allowedWideNames);
+    const wide = [];
+    for (let j = 0; j < optimizer.parameterSpreads.length; j++) {
+        if (optimizer.parameterSpreads[j] >= xTol) {
+            wide.push(optimizer.paramNames[j] ?? `param${j}`);
+        }
+    }
+    if (!wide.length) return null;              // nothing wide: not this case
+    if (wide.some((name) => !allowed.has(name))) return null;
+    // The WHOLE simplex must sit in the unobservable region, not just the
+    // best vertex: a lantern tBurn simplex straddling the clip end is a real
+    // ambiguity between "still burning" and "already cooling" — that stays an
+    // incomplete search. requireMinAtLeast = {paramName: minValue} demands
+    // the simplex's minimum for each named parameter be at/above the value;
+    // missing minima metadata refuses conservatively.
+    if (requireMinAtLeast) {
+        if (!Array.isArray(optimizer.parameterMins)) return null;
+        for (const [name, minValue] of Object.entries(requireMinAtLeast)) {
+            const j = optimizer.paramNames.indexOf(name);
+            if (j < 0) return null;
+            const lo = optimizer.parameterMins[j];
+            if (!Number.isFinite(lo) || lo < minValue) return null;
+        }
+    }
+    return `objective settled; ${wide.join(", ")} unconstrained by this clip `
+        + `(not measured — an identifiability limit, not an optimizer failure)`;
+}
 const RAY_KEYS = new Set(["constAir", "constAlt", "plausible", "saddle", "groundVehicle"]);
 const GEOMETRIC_KEYS = new Set(["fixedPoint", "ground"]);
 

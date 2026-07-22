@@ -54,7 +54,7 @@ import {
     traverseMinSpeed,
     traversePlausible,
 } from "./TraverseAnalysis";
-import {fitAlternatingLSQ, fitConstantAcceleration, fitConstantVelocity, fitKalmanFilter, fitMonteCarlo, fitMonteCarlo2, fitPhysicsModel} from "./LOSFitting";
+import {fitAlternatingLSQ, fitConstantAcceleration, fitConstantVelocity, fitKalmanFilter, fitMonteCarlo, fitMonteCarlo2, fitPhysicsModel, assessLinearFitConditioning} from "./LOSFitting";
 import {DroneControlModel, knotsForDuration} from "./DroneControlFit";
 import {SkyLanternModel} from "./SkyLanternModel";
 import {QuadcopterModel} from "./QuadcopterModel";
@@ -74,6 +74,7 @@ import {
     formatRawLosResidual,
     groupAndRankHypotheses,
     localFitCompletionWarnings,
+    settledButUnidentifiable,
     rankAllHypotheses,
     rankingExplanation,
     tierBadge,
@@ -930,10 +931,29 @@ function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy
     const lanPins = Array.from(lanSplit.active.values());
     const lanInactive = Array.from(lanSplit.inactive.values());
     const lanUnstable = Array.from(lanSplit.unstable.values());
+    // Identifiability vs incompleteness: with flame-out solved at/beyond the
+    // clip end the sink/cool-down parameters never affect the fitted window,
+    // so they legitimately hold the Nelder-Mead simplex wide and the
+    // iteration-limit stop is NOT an unfinished search (measured: a genuine
+    // easy balloon was badged "Optimizer incomplete" for exactly this). The
+    // note replaces the warning ONLY when the objective is settled and the
+    // wide dimensions are exactly the lifecycle set — see
+    // settledButUnidentifiable in TraverseRanking.js.
+    // The gate requires the WHOLE final simplex's tBurn at/beyond the clip
+    // end (requireMinAtLeast), not just the best vertex — a simplex
+    // straddling the clip end is a real still-burning/already-cooling
+    // ambiguity and stays a genuine incomplete.
+    const lanternClipT = (dataset.n - 1) / dataset.fps;
+    const lanternLifecycleNote = (Number.isFinite(solved.tBurn)
+        && solved.tBurn >= lanternClipT)
+        ? settledButUnidentifiable(fit.params.optimizer, ["vSink", "tauCool", "tBurn"],
+            {tBurn: lanternClipT})
+        : null;
     return {
         key, name,
         subtitle: physicsBoundSubtitle("Bounded wind-drift/life-cycle model", lanPins, lanInactive, lanUnstable)
-            + (lanClamps.length ? `; internal clamp reached: ${lanClamps.join(", ")}` : ""),
+            + (lanClamps.length ? `; internal clamp reached: ${lanClamps.join(", ")}` : "")
+            + (lanternLifecycleNote ? `; ${lanternLifecycleNote}` : ""),
         color: VIZ.slowObj,
         windEvidenceRole,
         track,
@@ -947,8 +967,13 @@ function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy
         // rating, which must not call an unconverged fit "supporting".
         optimizerWarnings: [
             ...lanUnstable.map((w) => `inward bound probe improved ${w}`),
-            ...localFitCompletionWarnings(fit.params.optimizer),
+            // Suppressed when the stop is a settled-objective identifiability
+            // limit (lanternLifecycleNote above) — the note is carried in the
+            // subtitle instead, and those parameters are still reported as
+            // NOT measured.
+            ...(lanternLifecycleNote ? [] : localFitCompletionWarnings(fit.params.optimizer)),
         ],
+        ...(lanternLifecycleNote ? {identifiabilityNote: lanternLifecycleNote} : {}),
         params: {
             range: range0,
             windE: solved.windE, windN: solved.windN, shearPerM: solved.shearPerM,
@@ -1753,8 +1778,21 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
                         track[f * 3 + 1] - S[f * 3 + 1], track[f * 3 + 2] - S[f * 3 + 2]);
                 }
                 const sortedR = Array.from(ranges).sort((a, b) => a - b);
+                // CV-family conditioning: the MC pair samples only near the
+                // CV seed and the alternating fit seeds from it, so all three
+                // inherit the linear family's range degeneracy. The caution
+                // sentence is rank-neutral (notes only).
+                const sweepConditioning = assessLinearFitConditioning(dataset, {positions: track});
+                const sweepCollapseNote = !sweepConditioning.collapse ? ""
+                    : sweepConditioning.collapseReason === "near-camera-weak-geometry"
+                        ? " CAUTION: near-camera result under poor CV-family "
+                            + "conditioning — high artifact risk; treat its range "
+                            + "and speed as unreliable."
+                        : " CAUTION: this fit has collapsed onto the sensor path — "
+                            + "its range and speed are artifacts, not measurements.";
                 list.push({
                     key: variant.key,
+                    linearConditioning: sweepConditioning,
                     name: `${variant.name} (order ${order})`,
                     subtitle: `${ORDER_NAMES[order] ?? ("order " + order)} — ${variant.flavour}`
                         + (variant.key === "gfPolyALS" ? "" : ", fixed seed"),
@@ -1798,7 +1836,8 @@ function buildHypotheses({dataset, sweep, ca, plausible, aircraft, lantern, lant
                                 + "small one suggests the extra freedom is just absorbing noise. Note also that a "
                                 + `degree-${order} curve can only change direction about ${Math.max(1, Math.floor(order / 2))} `
                                 + "time(s) across the whole clip.")
-                        + " Shown as a fitting-method diagnostic, not an independent object hypothesis.",
+                        + " Shown as a fitting-method diagnostic, not an independent object hypothesis."
+                        + sweepCollapseNote,
                 });
             }
         }
@@ -1947,13 +1986,32 @@ function methodNodeHypothesis(meth, node, dataset, originLat, originLon, losSig)
     }
     const sorted = Array.from(ranges).sort((a, b) => a - b);
     const shown = meth.display ?? meth.label;
+    // CV-family conditioning + collapse state, method-local metadata ONLY
+    // (never OR-ed into the global rangeUnobservable evidence veto — that
+    // flag invalidates every method's range, while this speaks for the
+    // linear/CV-seeded family alone; a stationary-point or physics fit can
+    // succeed where CV collapses). See assessLinearFitConditioning.
+    const linearConditioning = meth.key.startsWith("gf")
+        ? assessLinearFitConditioning(dataset, {positions: track})
+        : null;
+    // Reason-specific wording: the on/behind-sensor verdicts are demonstrated
+    // by the track itself; near-camera-weak-geometry is a RISK classification
+    // and must not be stated as an accomplished collapse.
+    const collapsedNote = !linearConditioning?.collapse ? ""
+        : linearConditioning.collapseReason === "near-camera-weak-geometry"
+            ? " CAUTION: near-camera result under poor CV-family conditioning — "
+              + "high artifact risk; treat its range and speed as unreliable."
+            : " CAUTION: this fit has collapsed onto the sensor path — its "
+              + "range and speed are artifacts, not measurements.";
     return {
         key: meth.key, name: shown, subtitle: meth.subtitle, color: meth.color,
         track, metricsFull: m, errDeg, nonPhysical,
+        ...(linearConditioning ? {linearConditioning} : {}),
         params: {range: sorted[Math.floor(n / 2)], methodLabel: meth.label},
-        notes: nonPhysical
+        notes: (nonPhysical
             ? `The ${shown} method's current track is non-physical (its endpoints/parameters don't fit the sightlines) — shown for completeness; selecting it applies exactly this path.`
-            : `The ${shown} traverse fit, read straight from the sitch — selecting it applies exactly this path.`,
+            : `The ${shown} traverse fit, read straight from the sitch — selecting it applies exactly this path.`)
+            + collapsedNote,
     };
 }
 
@@ -3202,6 +3260,14 @@ export async function runTraverseAnalysis() {
             sensorPathLen: sensorStats.pathLen,
             sensorSpan: sensorStats.span,
             rangeUnobservable: isRangeUnobservable(sensorStats, anchorDist),
+            // CV-family conditioning of these sightlines (BOT Bench diagnostic).
+            // DELIBERATELY SEPARATE from rangeUnobservable: that flag is a
+            // global evidence veto (wind evidence, executive verdict, report
+            // banners), while poor CV conditioning only says the LINEAR fit
+            // family cannot determine range here — stationary-point, physics
+            // and ray-constrained methods may still be fine. One-way warning:
+            // "good" is never a guarantee of recovered range.
+            linearFitConditioning: assessLinearFitConditioning(dataset),
         };
         const terrainAtStart = NodeMan.get("TerrainModel", false);
         const terrainConfigAtStart = terrainAnalysisConfigScalars(terrainAtStart,
@@ -3852,6 +3918,13 @@ export async function runTraverseAnalysis() {
                 rangeUnobservable: !!provenance.rangeUnobservable,
                 sensorBaselineM: Number.isFinite(provenance.sensorSpan)
                     ? Math.round(provenance.sensorSpan) : null,
+                // CV-family conditioning (method-local; never a global veto —
+                // see the provenance note where this is computed).
+                linearFitConditioning: provenance.linearFitConditioning ? {
+                    rcond: provenance.linearFitConditioning.rcond,
+                    log10Rcond: provenance.linearFitConditioning.log10Rcond,
+                    conditioning: provenance.linearFitConditioning.conditioning,
+                } : null,
             },
             searchBounds: {
                 userSpecified: !rangeIsDefault,

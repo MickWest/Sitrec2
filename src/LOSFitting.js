@@ -1611,6 +1611,17 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
                 stopReason: result.stopReason ?? "best_de_candidate",
                 iterations: result.iterations ?? 0,
                 parameterSpread: result.parameterSpread ?? null,
+                // Identifiability metadata (see NelderMead.js return note):
+                // per-parameter normalized spreads + the final cost spread let
+                // callers distinguish "search unfinished" from "objective
+                // settled, some parameters unobservable from this clip".
+                parameterSpreads: result.parameterSpreads ?? null,
+                parameterMins: result.parameterMins ?? null,
+                parameterMaxs: result.parameterMaxs ?? null,
+                paramNames: paramDefs.map((p) => p.name),
+                costSpread: result.costSpread ?? null,
+                tol: result.tol ?? null,
+                xTol: result.xTol ?? null,
                 de: result.de ?? null,
             },
         },
@@ -1722,4 +1733,203 @@ export function unpackFitPositions(positions, nWin, originLat, originLon,
         else result[f] = win[f - frame0];
     }
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// CV-family conditioning diagnostic (from the BOT Bench benchmark —
+// benchmarks/botbench/, which is the reference implementation and the source
+// of the thresholds below).
+//
+// WHAT THIS IS: the reciprocal condition number of the column-equilibrated
+// constant-velocity DESIGN system over the sightlines — a measure of whether
+// the linear-fit family (CV, CA, the Kalman smoother's CV process model, and
+// the Monte Carlo fits seeded from CV) can determine range from this geometry
+// at all. Benchmarked against known truth (GEO-DURATION block): the CV
+// collapse rate was 82% in the log10(rcond) ~ -3 bin, 72% at ~ -2.5, and 0%
+// at ~ -2 and above — a sharp RISK gradient, not a per-case guarantee in
+// either direction (a formally derived detection threshold landed at
+// 10^-2.457 with weighted ROC-AUC 0.79).
+//
+// WHAT THIS IS NOT: a universal range-observability proof. It speaks for the
+// CV FAMILY only — a stationary-point, physical, or ray-constrained method
+// can succeed where CV collapses (measured: fixed-point at 8% error in cells
+// where CV sat at 100%). It is also ONE-WAY: observed pointing error can
+// inflate apparent conditioning, so "good" must never be presented as a
+// guarantee that the recovered range is right — only "poor" is load-bearing,
+// as a warning.
+// ---------------------------------------------------------------------------
+
+export const LINEAR_RCOND_POOR = 10 ** -2.5;
+export const LINEAR_RCOND_MARGINAL = 1e-2;
+
+// An estimate within this distance of the sensor has no defined apparent
+// direction — the fit has collapsed onto the camera (matches the benchmark's
+// convention; meanAngularError reads such points as PI).
+const ON_SENSOR_EPS_M = 1e-6;
+
+// Eigenvalues of a symmetric m x m matrix (flat row-major) by cyclic Jacobi.
+function _symmetricEigenvalues(A, m) {
+    const a = A.slice();
+    for (let sweep = 0; sweep < 64; sweep++) {
+        let off = 0;
+        for (let p = 0; p < m - 1; p++)
+            for (let q = p + 1; q < m; q++) off += a[p * m + q] * a[p * m + q];
+        if (off < 1e-24) break;
+        for (let p = 0; p < m - 1; p++) {
+            for (let q = p + 1; q < m; q++) {
+                const apq = a[p * m + q];
+                if (Math.abs(apq) < 1e-30) continue;
+                const app = a[p * m + p], aqq = a[q * m + q];
+                const theta = (aqq - app) / (2 * apq);
+                const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+                const c = 1 / Math.sqrt(t * t + 1);
+                const s = t * c;
+                for (let k = 0; k < m; k++) {
+                    const akp = a[k * m + p], akq = a[k * m + q];
+                    a[k * m + p] = c * akp - s * akq;
+                    a[k * m + q] = s * akp + c * akq;
+                }
+                for (let k = 0; k < m; k++) {
+                    const apk = a[p * m + k], aqk = a[q * m + k];
+                    a[p * m + k] = c * apk - s * aqk;
+                    a[q * m + k] = s * apk + c * aqk;
+                }
+            }
+        }
+    }
+    const ev = [];
+    for (let i = 0; i < m; i++) ev.push(a[i * m + i]);
+    ev.sort((x, y) => x - y);
+    return ev;
+}
+
+/**
+ * Assess CV-family conditioning of a sightline dataset, and (optionally) the
+ * collapse state of a fitted track.
+ *
+ * dataset: either the LOSFitting form {sensorPos, losDir, times, count} or
+ * the TraverseAnalysis form {S, D, n, fps} (normalized internally).
+ * options.excluded: optional Set of excluded frame indices.
+ * options.positions: optional Float64Array(count*3) of fitted ENU positions;
+ * when given, collapse statistics are computed against the sightlines.
+ *
+ * Returns {rcond, log10Rcond, effectiveRank, conditioning} plus, with
+ * positions, {finiteFraction, onSensorFraction, behindSensorFraction,
+ * medianSignedRangeM, collapse}. `conditioning` is "poor" | "marginal" |
+ * "good"; treat it as a one-way warning (see the header note).
+ */
+export function assessLinearFitConditioning(dataset, options = {}) {
+    const excluded = options.excluded ?? null;
+    const sensorPos = dataset.sensorPos ?? dataset.S;
+    const losDir = dataset.losDir ?? dataset.D;
+    const count = dataset.count ?? dataset.n ?? 0;
+    let times = dataset.times;
+    if (!times && dataset.fps > 0) {
+        times = new Float64Array(count);
+        for (let i = 0; i < count; i++) times[i] = i / dataset.fps;
+    }
+
+    const active = [];
+    for (let i = 0; i < count; i++) {
+        if (!excluded || !excluded.has(i)) active.push(i);
+    }
+
+    const out = {rcond: null, log10Rcond: null, effectiveRank: null, conditioning: "poor"};
+    if (active.length >= 2 && times) {
+        let tMin = Infinity, tMax = -Infinity;
+        for (const f of active) {
+            if (times[f] < tMin) tMin = times[f];
+            if (times[f] > tMax) tMax = times[f];
+        }
+        const mid = (tMin + tMax) / 2;
+        const halfSpan = (tMax - tMin) / 2 || 1;
+
+        // G = sum B^T B with B_i = P_i [I, tau_i I], P_i = I - d d^T, tau
+        // centered/normalized time. Equilibrate columns, then rcond =
+        // sqrt(lambdaMin/lambdaMax) of the standardized system.
+        const G = new Float64Array(36);
+        for (const f of active) {
+            const b = f * 3;
+            const dl = Math.hypot(losDir[b], losDir[b + 1], losDir[b + 2]) || 1;
+            const dx = losDir[b] / dl, dy = losDir[b + 1] / dl, dz = losDir[b + 2] / dl;
+            const tau = (times[f] - mid) / halfSpan;
+            const P = [
+                1 - dx * dx, -dx * dy, -dx * dz,
+                -dy * dx, 1 - dy * dy, -dy * dz,
+                -dz * dx, -dz * dy, 1 - dz * dz,
+            ];
+            for (let i = 0; i < 3; i++) {
+                for (let j = 0; j < 3; j++) {
+                    const p = P[i * 3 + j];
+                    G[i * 6 + j] += p;
+                    G[i * 6 + (j + 3)] += tau * p;
+                    G[(i + 3) * 6 + j] += tau * p;
+                    G[(i + 3) * 6 + (j + 3)] += tau * tau * p;
+                }
+            }
+        }
+        const dinv = new Float64Array(6);
+        for (let i = 0; i < 6; i++) {
+            const dii = G[i * 6 + i];
+            dinv[i] = dii > 0 ? 1 / Math.sqrt(dii) : 0;
+        }
+        const C = new Float64Array(36);
+        for (let i = 0; i < 6; i++)
+            for (let j = 0; j < 6; j++) C[i * 6 + j] = G[i * 6 + j] * dinv[i] * dinv[j];
+        const ev = _symmetricEigenvalues(C, 6);
+        const lambdaMax = ev[5];
+        if (lambdaMax > 0) {
+            const rcond = Math.sqrt(Math.max(0, ev[0]) / lambdaMax);
+            out.rcond = rcond;
+            out.log10Rcond = Math.log10(Math.max(rcond, Number.MIN_VALUE));
+            out.effectiveRank = ev.filter((e) => e > 1e-10 * lambdaMax).length;
+            out.conditioning = rcond < LINEAR_RCOND_POOR ? "poor"
+                : rcond < LINEAR_RCOND_MARGINAL ? "marginal" : "good";
+        }
+    }
+
+    const positions = options.positions ?? null;
+    if (positions && count > 0) {
+        // Collapse statistics honor the same exclusions as the conditioning:
+        // fractions are over ACTIVE finite frames, so an excluded segment
+        // cannot dilute or trigger the verdict.
+        let activeCount = 0, finite = 0, onSensor = 0, behind = 0;
+        const signedRanges = [];
+        for (let i = 0; i < count; i++) {
+            if (excluded && excluded.has(i)) continue;
+            activeCount++;
+            const b = i * 3;
+            const px = positions[b], py = positions[b + 1], pz = positions[b + 2];
+            if (!Number.isFinite(px) || !Number.isFinite(py) || !Number.isFinite(pz)) continue;
+            finite++;
+            const rx = px - sensorPos[b], ry = py - sensorPos[b + 1], rz = pz - sensorPos[b + 2];
+            const r = Math.hypot(rx, ry, rz);
+            if (r <= ON_SENSOR_EPS_M) { onSensor++; signedRanges.push(0); continue; }
+            const dl = Math.hypot(losDir[b], losDir[b + 1], losDir[b + 2]) || 1;
+            const lambda = (rx * losDir[b] + ry * losDir[b + 1] + rz * losDir[b + 2]) / dl;
+            if (lambda < 0) behind++;
+            signedRanges.push(lambda);
+        }
+        signedRanges.sort((a, b) => a - b);
+        const median = signedRanges.length
+            ? signedRanges[signedRanges.length >> 1] : null;
+        out.finiteFraction = activeCount ? finite / activeCount : 0;
+        out.onSensorFraction = finite ? onSensor / finite : 0;
+        out.behindSensorFraction = finite ? behind / finite : 0;
+        out.medianSignedRangeM = median;
+        // Collapse verdicts, most to least direct:
+        //  - on-sensor / behind-sensor: the track itself demonstrates it;
+        //  - near-camera-weak-geometry: a sub-10 m median range (the measured
+        //    1-8 m parallax-free failures) counts ONLY when conditioning is
+        //    also poor — a well-conditioned genuinely-close solution that the
+        //    sightline geometry actually supports must never be condemned by
+        //    an absolute distance rule.
+        out.collapseReason = out.onSensorFraction > 0.5 ? "on-sensor"
+            : out.behindSensorFraction > 0.5 ? "behind-sensor"
+            : (median !== null && median < 10 && out.conditioning === "poor")
+                ? "near-camera-weak-geometry"
+                : null;
+        out.collapse = out.collapseReason !== null;
+    }
+    return out;
 }

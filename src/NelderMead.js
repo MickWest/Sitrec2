@@ -183,22 +183,47 @@ export async function nelderMead(costFn, x0, options = {}) {
 
     // Return best
     let bestIdx = 0;
+    let worstCost = -Infinity;
     for (let i = 1; i <= n; i++) {
         if (costs[i] < costs[bestIdx]) bestIdx = i;
     }
+    for (let i = 0; i <= n; i++) {
+        if (costs[i] > worstCost) worstCost = costs[i];
+    }
+    // Per-dimension normalized spreads, not just the max: an "iteration_limit"
+    // stop with a SETTLED cost and width confined to parameters the model
+    // cannot observe from this data (e.g. a lantern's sink/cool-down when the
+    // solved flame-out lies beyond the clip) is an identifiability statement,
+    // not an unfinished search — but only the caller can make that call, and
+    // only if it can see WHICH dimensions stayed wide (see
+    // TraverseRanking.settledButUnidentifiable).
     let parameterSpread = 0;
+    const parameterSpreads = new Array(n).fill(0);
+    // Actual per-parameter extremes over the FINAL simplex (unnormalized).
+    // A caller reclassifying an iteration-limit stop as an identifiability
+    // limit must prove the whole simplex sits in the unobservable region —
+    // the best vertex alone cannot (e.g. a lantern tBurn simplex straddling
+    // the clip end is a REAL ambiguity, not an inert parameter).
+    const parameterMins = new Array(n).fill(Infinity);
+    const parameterMaxs = new Array(n).fill(-Infinity);
     for (let i = 0; i <= n; i++) {
         for (let j = 0; j < n; j++) {
             const scale = lo && hi
                 ? Math.max(1e-12, hi[j] - lo[j])
                 : Math.max(1, Math.abs(simplex[bestIdx][j]));
-            parameterSpread = Math.max(parameterSpread,
-                Math.abs(simplex[i][j] - simplex[bestIdx][j]) / scale);
+            const s = Math.abs(simplex[i][j] - simplex[bestIdx][j]) / scale;
+            if (s > parameterSpreads[j]) parameterSpreads[j] = s;
+            if (s > parameterSpread) parameterSpread = s;
+            if (simplex[i][j] < parameterMins[j]) parameterMins[j] = simplex[i][j];
+            if (simplex[i][j] > parameterMaxs[j]) parameterMaxs[j] = simplex[i][j];
         }
     }
     return {
         params: simplex[bestIdx], cost: costs[bestIdx], iterations,
         stopReason: cancelled ? "cancelled" : stopReason,
-        parameterSpread, evaluations, cancelled,
+        parameterSpread, parameterSpreads, parameterMins, parameterMaxs,
+        costSpread: worstCost - costs[bestIdx],
+        tol, xTol,
+        evaluations, cancelled,
     };
 }

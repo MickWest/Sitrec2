@@ -178,6 +178,51 @@ All global fits operate in a local East-North-Up (ENU) coordinate system centere
 
 Unlike sequential traversals, global fits have no start distance parameter and no frame-to-frame state propagation. They see all the data at once and find the trajectory that best explains it.
 
+#### Range observability and collapse (CV-family conditioning)
+
+Bearings-only data only determines range through **parallax**: the sensor has
+to move *around* the sightlines, not just along them. When the sensor flies a
+path the constant-velocity model can represent — straight and level cruise
+exactly, a gently curving arc over a short clip approximately — the sensor's
+own trajectory is a (near-)zero-residual solution to every
+perpendicular-distance fit, and the CV family (Constant Velocity, Constant
+Acceleration, the Kalman smoother whose process model is CV, and the Monte
+Carlo / polynomial fits that are seeded from CV) tends to **collapse onto the
+camera**: the "object" lands metres from the sensor, usually behind it. The
+residual looks fine; the range is an artifact. Measured against known truth
+(the BOT Bench synthetic benchmark, `benchmarks/botbench/`), a straight-flying
+sensor produced total collapse at every clip length, while a 60-second orbit
+recovered range to a fraction of a percent — and the transition between the
+regimes is sharp.
+
+Sitrec computes a **CV-family conditioning** diagnostic
+(`assessLinearFitConditioning` in `LOSFitting.js`): the reciprocal condition
+number of the normalized constant-velocity design system over the sightlines.
+In the benchmark's geometry/duration block, the CV collapse rate was 82% in
+the log10(rcond) ≈ −3 bin, 72% at ≈ −2.5, and 0% at ≈ −2 and above — a
+sharp risk gradient, reported as a risk, not a per-case proof (a formally
+derived detection threshold landed at 10^−2.46 with weighted ROC-AUC 0.79).
+Each live Global Fit method (CV, Constant
+Acceleration, Kalman Smoother, Monte Carlo 1/2) shows it in a **Fit
+Diagnostics** folder in the Traverse menu, along with whether the fitted
+track actually sits on/behind the camera; the traverse-analysis gallery
+attaches the same metadata to its linear-fit tiles and records it in the
+report provenance.
+
+Two honest limits, both deliberate:
+
+- **It speaks for the CV family only.** A stationary-point, ground,
+  ray-constrained or physics fit can still be meaningful when CV collapses
+  (benchmarked: the stationary-point fit held ~8% error in scenes where CV
+  sat at 100%). Poor conditioning is therefore *method-local* metadata — it
+  is never folded into the analysis's global "range unobservable" flag,
+  which speaks about every method at once.
+- **It is a one-way warning.** Pointing noise can inflate apparent
+  conditioning, so "good" is never a guarantee that the recovered range is
+  right; only "poor" is load-bearing, as a warning that the fit's range is
+  unreliable (measured high artifact risk), not a per-case proof that it is
+  wrong.
+
 #### Constant Velocity (CV)
 
 **Model**: P(t) = P0 + V * t (6 unknowns: 3 position + 3 velocity)
@@ -192,13 +237,13 @@ This projects any vector onto the plane perpendicular to the ray. The predicted 
 
 Substituting the linear model and stacking all frames builds a 6x6 normal equation system `A^T A * x = A^T b`, solved by Gaussian elimination with partial pivoting.
 
-**Soft range constraints**: After solving, the algorithm checks whether any predicted position falls behind its sensor (negative range) or beyond a maximum range. Violated frames add quadratic penalty terms to the normal equations, and the system is re-solved. This prevents physically impossible solutions without hard-clipping.
+**Soft range constraints**: After solving, the algorithm checks whether any predicted position falls behind its sensor (negative range) or beyond a maximum range. Violated frames add quadratic penalty terms to the normal equations, and the system is re-solved. This *discourages* impossible solutions without hard-clipping — it does not prevent them: on weak geometry the penalized re-solve still lands on or just behind the sensor (see "Range observability and collapse" above), which is why the live method surfaces the conditioning diagnostic instead of silently publishing the track.
 
 **Minimum data**: 2 frames (the system is exactly determined with 2 rays in general position, overdetermined with more).
 
-**When to use**: First thing to try. If the target is moving in a roughly straight line at roughly constant speed, CV will find it with no user input. The residuals tell you how well a straight-line model fits.
+**When to use**: First thing to try — *after checking the Fit Diagnostics folder*. If the conditioning reads poor, the geometry gives CV-family fits little to work with: the measured collapse risk is high and the fitted range should be treated as unreliable no matter how clean the residuals look. Otherwise, if the target is moving in a roughly straight line at roughly constant speed, CV will find it with no user input. The residuals tell you how well a straight-line model fits — they do not tell you the range is right.
 
-**Limits**: Cannot capture turns, climbs, or speed changes. With only 2 frames the fit is exact (zero residuals) regardless of the true trajectory.
+**Limits**: Cannot capture turns, climbs, or speed changes. With only 2 frames the fit is exact (zero residuals) regardless of the true trajectory. Prone to collapsing onto the sensor when the sensor's own path is (approximately) CV-representable — check the conditioning diagnostic.
 
 #### Constant Acceleration (CA)
 
@@ -220,7 +265,7 @@ Substituting the linear model and stacking all frames builds a 6x6 normal equati
 
 **Method**: Three-stage Rauch-Tung-Striebel forward-backward smoother:
 
-1. **Initialization**: Seeds from the CV least-squares fit to get a physically reasonable starting state. This avoids the cold-start problem where the filter would otherwise place the target 1 meter from the first sensor.
+1. **Initialization**: Seeds from the CV least-squares fit. This avoids the cold-start problem where the filter would otherwise place the target 1 meter from the first sensor — but the seed is only as good as the CV fit itself: on weak geometry the CV seed is already collapsed onto the sensor, and the smoother then grinds the whole track down to machine-zero range from the camera (measured in the benchmark). Check the conditioning diagnostic before trusting the smoother's range.
 
 2. **Forward Kalman pass**: For each frame in time order:
    - **Predict**: propagate state forward using constant-velocity model: x_pred = F * x, P_pred = F * P * F^T + Q
@@ -233,12 +278,23 @@ The backward pass is what distinguishes this from a plain Kalman filter. Every s
 For excluded frames (gaps in the data), positions are linearly interpolated between the nearest smoothed states.
 
 **Tuning parameters**:
-- *Process Noise* (default 1e-4): Velocity random walk variance per unit time. Higher values let the filter track rapid maneuvers but produce noisier output. Lower values enforce smoother trajectories but may lag behind true motion.
-- *Measurement Noise* (default 1.0): LOS measurement component variance. Higher values tell the filter the LOS data is noisy, producing smoother output. Lower values trust the LOS data more closely.
+- *Process Noise* (default 1e-4): Velocity random walk variance per unit time. Higher values let the filter track rapid maneuvers but produce noisier output. Lower values enforce smoother trajectories but may lag behind true motion. Note this is an implementation tuning quantity, not a calibrated physical variance.
+- *Measurement Noise* (default 1.0): variance on the projected positional pseudo-measurement (not an angular noise in degrees). Higher values tell the filter the LOS data is noisy, producing smoother output. Lower values trust the LOS data more closely.
 
 **Minimum data**: 2 frames.
 
-**When to use**: Best results on noisy data. The bidirectional smoothing gives more stable estimates than any of the sequential traversals, especially near the start and end of the track. The tunable noise parameters let you balance responsiveness vs. smoothness. Start with defaults, then adjust if the trajectory looks too smooth (increase process noise) or too noisy (increase measurement noise).
+**When to use**: Strong on noisy data *when the geometry supports range recovery at all*. The bidirectional smoothing gives more stable estimates than any of the sequential traversals, especially near the start and end of the track. Start with defaults, then adjust if the trajectory looks too smooth (increase process noise) or too noisy (increase measurement noise).
+
+**Noise color matters** (measured, BOT Bench): real operator tracking error is
+*autocorrelated* — the operator drifts, notices, corrects — and at matched
+noise power it hurts stiff trackers far more than white noise. In the
+benchmark's recoverable regime, CV degraded ~4.7&times; under simulated
+operator wobble vs matched-power white noise; the default smoother (1e-4)
+~2.8&times;; a soft smoother (process noise 1e-3) was essentially immune
+(0.9&times;) — at the price of a several-times-worse clean-data baseline. If
+the sightlines come from hand or autotracker pointing rather than surveyed
+attitude, a process-noise sensitivity sweep across 1e-4 to 1e-3 is worth the
+minute it takes; neither setting is universally superior.
 
 **Limits**: The constant-velocity process model means the filter assumes the target is not accelerating between frames. Rapid maneuvers will show as lag in the smoothed trajectory unless process noise is increased. Very large process noise makes the smoother degenerate toward the individual LOS measurements. The 6x6 matrix inversions can become numerically unstable for extremely ill-conditioned covariance matrices, though the implementation falls back to scaled identity in degenerate cases.
 
@@ -266,7 +322,20 @@ The trial with the lowest mean angular error wins.
 
 **When to use**: When some LOS measurements may be significantly wrong (outliers, tracking glitches, bad frames). The random sampling means outlier frames are unlikely to be chosen in the winning trial, making this method naturally robust. Also useful as an independent cross-check against the least-squares methods.
 
-**Limits**: Non-deterministic (different runs give slightly different results). For clean data, CV or CA will give more precise results because they use all frames simultaneously rather than sampling subsets. High polynomial orders (> 3) tend to overfit and produce wild extrapolation beyond the data range. The scoring uses angular error rather than perpendicular distance, which weights nearby points more heavily than distant ones.
+**Limits**: Deterministic in production — the random sampling runs from a
+fixed seed, so the same inputs give the same answer every time (pass a
+different seed to vary it). For clean data, CV or CA will give more precise
+results because they use all frames simultaneously rather than sampling
+subsets. High polynomial orders (> 3) tend to overfit and produce wild
+extrapolation beyond the data range. The scoring uses angular error rather
+than perpendicular distance, which weights nearby points more heavily than
+distant ones. **Both Monte Carlo variants inherit the CV fit's range
+degeneracy**: their sampled ranges are centered on the CV solution, so when
+CV collapses they search around a collapsed seed. Note one live/gallery
+asymmetry: the analysis gallery's Monte Carlo sweep applies a 500 m floor to
+its seed ranges, while the live Monte Carlo methods clamp a collapsed seed to
+1 m — the live methods therefore rely on the Fit Diagnostics folder to flag
+the collapse rather than a seed floor to mask it.
 
 ---
 
