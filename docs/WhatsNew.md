@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.107.0 (2026-07-27)
+
+### New Features
+- **STANAG 4676 CSV files now load properly**: the flat CSV export that GXP InMotion produces alongside the XML is now recognised as STANAG data and imports the full set of tracks — the tracked object *(Target)*, the sensor platform *(Platform)*, and the ground end of the sightline *(Ground)* — instead of loading as a plain spreadsheet with only the target position and everything else silently dropped. Columns can be in any order or capitalisation, extra columns are ignored, and the XML and CSV versions of the same data now load identically.
+- **Fit Diagnostics for the sightline-fitting methods** (Traverse): the Constant Velocity, Constant Acceleration, Kalman Smoother and Monte Carlo methods each now show a diagnostics folder reporting whether the camera moved enough *across* the sightlines for these methods to determine range at all, and whether the fitted track has actually collapsed onto the camera — a case where the result looks like a clean fit but its range and speed are meaningless. The folder opens by itself when there is something you need to see. The fits themselves are unchanged: the problem is now shown to you rather than silently published, and a good reading is reported as encouraging, never as a guarantee.
+
+### Improvements
+- **Collapse warnings in the analysis results** (Traverse → Analyze Traverse Methods...): tiles for the fitting methods that share this weakness now carry a plain warning when their fit has landed on or behind the camera, or is at high risk of it. The warnings are informational only and do not change how the results are ranked.
+- **Snappier Audio Spectrum display** (Show → Views → Audio Spectrum): the trace now follows the sound almost instantly instead of visibly lagging behind it, so short sounds and sweeps are much easier to see.
+
+### Bug Fixes
+- Fixed *Sky Lantern / Balloon* results being marked *Optimizer incomplete* (Traverse → Analyze Traverse Methods...) when the fit had in fact settled. If the lantern's flame-out lands at or beyond the end of the clip, its sink and cool-down behaviour simply never happens on screen, so those values can't be measured from that clip — that is now reported as what it is, a limit of the footage rather than a failed fit, and such results are no longer held back in the rankings. Fits that are genuinely still unfinished are still flagged as before.
+- Fixed a STANAG 4676 file whose points carry a time but no usable position being imported as an empty track that produced nothing.
+
 ## Version 2.106.1 (2026-07-22)
 
 ### Bug Fixes

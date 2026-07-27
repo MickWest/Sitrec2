@@ -1,0 +1,504 @@
+<title>BOT Interchange Format v1.0</title>
+<style>
+  :root {
+    --paper:      #f5f7f8;
+    --panel:      #ffffff;
+    --ink:        #131a20;
+    --muted:      #5c6a73;
+    --rule:       #d5dde1;
+    --accent:     #0d6d75;
+    --accent-dim: #e2eef0;
+    --warn:       #9c5311;
+    --warn-dim:   #f6ece3;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --serif: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0f1519; --panel: #151d22; --ink: #dfe7ea; --muted: #8b9aa3;
+      --rule: #2a353c; --accent: #4bb8c0; --accent-dim: #173034;
+      --warn: #d5893f; --warn-dim: #2c2117;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0f1519; --panel: #151d22; --ink: #dfe7ea; --muted: #8b9aa3;
+    --rule: #2a353c; --accent: #4bb8c0; --accent-dim: #173034;
+    --warn: #d5893f; --warn-dim: #2c2117;
+  }
+  :root[data-theme="light"] {
+    --paper: #f5f7f8; --panel: #ffffff; --ink: #131a20; --muted: #5c6a73;
+    --rule: #d5dde1; --accent: #0d6d75; --accent-dim: #e2eef0;
+    --warn: #9c5311; --warn-dim: #f6ece3;
+  }
+
+  body {
+    background: var(--paper); color: var(--ink);
+    font-family: var(--serif); font-size: 17px; line-height: 1.62;
+    margin: 0; padding: 0 1.25rem 6rem;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 44rem; margin: 0 auto; }
+
+  header.masthead {
+    padding: 4rem 0 2rem; border-bottom: 2px solid var(--ink); margin-bottom: 3rem;
+  }
+  .eyebrow {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 1rem;
+  }
+  h1 {
+    font-family: var(--mono); font-weight: 600; font-size: clamp(1.6rem, 4.5vw, 2.3rem);
+    line-height: 1.15; letter-spacing: -.02em; margin: 0 0 .9rem; text-wrap: balance;
+  }
+  .standfirst { font-size: 1.08rem; color: var(--muted); margin: 0; text-wrap: pretty; }
+
+  section { margin: 0 0 3.25rem; }
+  h2 {
+    font-family: var(--mono); font-size: .82rem; font-weight: 600;
+    letter-spacing: .12em; text-transform: uppercase;
+    margin: 0 0 1.1rem; padding-bottom: .5rem; border-bottom: 1px solid var(--rule);
+  }
+  h3 {
+    font-family: var(--mono); font-size: .95rem; font-weight: 600;
+    margin: 2rem 0 .6rem; letter-spacing: -.01em;
+  }
+  p { margin: 0 0 1.05rem; }
+  ul { margin: 0 0 1.05rem; padding-left: 1.2rem; }
+  li { margin-bottom: .5rem; }
+  code {
+    font-family: var(--mono); font-size: .86em;
+    background: var(--accent-dim); color: var(--ink);
+    padding: .1em .34em; border-radius: 2px;
+  }
+  strong { font-weight: 600; }
+
+  .scroll { overflow-x: auto; margin: 0 0 1.05rem; }
+  table {
+    border-collapse: collapse; width: 100%; min-width: 30rem;
+    font-family: var(--mono); font-size: .78rem; font-variant-numeric: tabular-nums;
+  }
+  th {
+    text-align: left; font-weight: 600; color: var(--accent);
+    border-bottom: 1px solid var(--rule); padding: .5rem .7rem .5rem 0;
+    letter-spacing: .04em;
+  }
+  td { padding: .42rem .7rem .42rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  td:first-child { white-space: nowrap; }
+  td.note { font-family: var(--serif); font-size: .95rem; color: var(--muted); }
+  .req { color: var(--accent); }
+  .opt { color: var(--muted); }
+
+  pre.code {
+    font-family: var(--mono); font-size: .76rem; line-height: 1.55;
+    background: var(--panel); border: 1px solid var(--rule); border-left: 2px solid var(--accent);
+    padding: .95rem 1.1rem; overflow-x: auto; margin: 0 0 1.05rem; border-radius: 2px;
+  }
+
+  .caution {
+    background: var(--warn-dim); border-left: 2px solid var(--warn);
+    padding: .9rem 1.1rem; margin: 0 0 1.05rem; border-radius: 2px;
+  }
+  .caution .tag {
+    font-family: var(--mono); font-size: .66rem; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--warn); display: block; margin-bottom: .4rem;
+  }
+  .caution p { margin: 0; font-size: .95rem; }
+
+  figure { margin: 1.5rem 0 1.8rem; }
+  figcaption {
+    font-family: var(--mono); font-size: .7rem; color: var(--muted);
+    line-height: 1.5; margin-top: .7rem; letter-spacing: .01em;
+  }
+  svg { display: block; width: 100%; height: auto; }
+
+  /* Release flow. Built from the page tokens rather than a diagram library so
+     it themes with everything else and cannot fall back to a foreign palette. */
+  .flow { display: flex; align-items: center; gap: .1rem; min-width: 42rem; padding: .15rem; }
+  .lanes { display: flex; flex-direction: column; gap: .6rem; }
+  .lane { display: flex; align-items: center; gap: .45rem; }
+  /* The bracket is the scoring JOIN: it spans both lanes and carries them into
+     the scorer, which cannot run on either half alone. */
+  .join { display: flex; align-items: center; gap: .5rem; }
+  .bracket {
+    width: .85rem; height: 4.4rem; flex: none;
+    border: 1.5px solid var(--muted); border-left: none;
+    border-radius: 0 5px 5px 0;
+  }
+  .lane-tag {
+    font-family: var(--mono); font-size: .66rem; letter-spacing: .1em;
+    text-transform: uppercase; width: 5.4rem; flex: none;
+  }
+  .lane-tag.ship { color: var(--accent); }
+  .lane-tag.hold { color: var(--warn); }
+  .chip {
+    font-family: var(--mono); font-size: .74rem; white-space: nowrap;
+    border: 1px solid var(--rule); background: var(--panel);
+    padding: .34rem .6rem; border-radius: 2px;
+  }
+  .chip.fill { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+  .chip.held { border-style: dashed; border-color: var(--warn); color: var(--warn); }
+  .arrow { color: var(--muted); font-size: .9rem; line-height: 1; }
+  .held-note {
+    font-family: var(--mono); font-size: .66rem; color: var(--muted); margin-left: .2rem;
+  }
+
+  .issue { border-top: 1px solid var(--rule); padding: 1rem 0 .2rem; }
+  .issue:last-child { border-bottom: 1px solid var(--rule); margin-bottom: 1rem; }
+  .issue h4 {
+    font-family: var(--mono); font-size: .8rem; font-weight: 600; margin: 0 0 .35rem;
+    display: flex; gap: .7rem; align-items: baseline; flex-wrap: wrap;
+  }
+  .sev {
+    font-size: .62rem; letter-spacing: .12em; text-transform: uppercase;
+    padding: .12em .5em; border-radius: 2px; font-weight: 600;
+  }
+  .sev.open  { background: var(--warn-dim);   color: var(--warn); }
+  .sev.known { background: var(--accent-dim); color: var(--accent); }
+  .issue p { margin: 0 0 .6rem; font-size: .97rem; color: var(--muted); }
+
+  footer {
+    border-top: 2px solid var(--ink); margin-top: 3.5rem; padding-top: 1.2rem;
+    font-family: var(--mono); font-size: .72rem; color: var(--muted); line-height: 1.7;
+  }
+  a { color: var(--accent); }
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Sitrec · BOT Bench</p>
+  <h1>BOT Interchange Format</h1>
+  <p class="standfirst">A CSV interchange for bearings-only tracking problems, so
+  algorithms written outside Sitrec can be run on the same scenarios and scored
+  against the same ground truth. Specification v1.0.</p>
+</header>
+
+<section>
+  <h2>The problem it carries</h2>
+  <p>A bearings-only sensor measures <em>direction</em>, never distance. Every
+  sightline is consistent with a target anywhere along it — and that does not
+  improve with more sightlines. For a target free to manoeuvre, some range
+  profile reproduces <em>any</em> set of bearings exactly, at any sensor
+  geometry.</p>
+
+  <p>Range becomes recoverable only once you impose dynamics on the target: a
+  constant-velocity model, a physical one, or a smoothness prior. Which
+  geometries then work depends on how much freedom that model leaves. The
+  classic condition is that the sensor must out-manoeuvre the target model — a
+  constant-velocity sensor cannot resolve a constant-velocity target — so on
+  this benchmark's straight-platform cells the CV and Kalman fits land on the
+  sensor every time: median relative separation 1.00, fail rate 1.00.</p>
+
+  <p>The same cells are untroubled by a rigid model. A fixed-point fit holds
+  0.08–0.09 relative separation there and never collapses, because a stationary
+  target is over-determined by a straight baseline. "Observable" is therefore a
+  property of the <em>pairing</em> — geometry and model together — and never of
+  the geometry alone.</p>
+
+  <figure>
+    <svg viewBox="0 0 640 260" role="img"
+         aria-label="Four sightlines from a curving sensor path. Three candidate
+                     target tracks — nearer, truth, and farther — each pass
+                     through every sightline, so all three produce identical
+                     bearings.">
+      <!-- sensor path: the dots below are evaluated on this cubic -->
+      <path d="M 50 215 C 140 190, 240 182, 330 200" fill="none"
+            stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 4"/>
+      <!-- sightlines, drawn out to the farthest candidate -->
+      <g stroke="var(--accent)" stroke-width="1" opacity=".55">
+        <line x1="50" y1="215" x2="425" y2="72.5"/>
+        <line x1="142.6" y1="196" x2="453.7" y2="70"/>
+        <line x1="237.4" y1="190.3" x2="481.3" y2="63.8"/>
+        <line x1="330" y1="200" x2="510" y2="53"/>
+      </g>
+      <!-- three candidate tracks: every vertex sits on its own sightline -->
+      <g fill="none" stroke-width="1.6">
+        <polyline points="175,167.5 246.3,154 318.7,148.2 390,151"
+                  stroke="var(--warn)" stroke-dasharray="5 4"/>
+        <polyline points="425,72.5 453.7,70 481.3,63.8 510,53"
+                  stroke="var(--warn)" stroke-dasharray="5 4"/>
+        <polyline points="300,120 350,112 400,106 450,102" stroke="var(--accent)"/>
+      </g>
+      <g fill="var(--warn)">
+        <circle cx="175" cy="167.5" r="3"/><circle cx="246.3" cy="154" r="3"/>
+        <circle cx="318.7" cy="148.2" r="3"/><circle cx="390" cy="151" r="3"/>
+        <circle cx="425" cy="72.5" r="3"/><circle cx="453.7" cy="70" r="3"/>
+        <circle cx="481.3" cy="63.8" r="3"/><circle cx="510" cy="53" r="3"/>
+      </g>
+      <g fill="var(--accent)">
+        <circle cx="300" cy="120" r="4"/><circle cx="350" cy="112" r="4"/>
+        <circle cx="400" cy="106" r="4"/><circle cx="450" cy="102" r="4"/>
+      </g>
+      <!-- sensor positions -->
+      <g fill="var(--muted)">
+        <circle cx="50" cy="215" r="3.5"/><circle cx="142.6" cy="196" r="3.5"/>
+        <circle cx="237.4" cy="190.3" r="3.5"/><circle cx="330" cy="200" r="3.5"/>
+      </g>
+      <g font-family="ui-monospace, Menlo, monospace" font-size="11">
+        <text x="50" y="238" fill="var(--muted)">sensor path</text>
+        <text x="522" y="49" fill="var(--warn)">farther</text>
+        <text x="462" y="100" fill="var(--accent)">truth</text>
+        <text x="160" y="186" fill="var(--warn)">nearer</text>
+      </g>
+    </svg>
+    <figcaption>All three tracks pass through every sightline, so all three
+    produce identical bearings — they differ only in range, and therefore in
+    speed. Nothing in the measurements distinguishes them, and adding sightlines
+    does not help. A motion model is what selects one: constant velocity would
+    reject a track that lurches, a balloon model one that outruns the wind. The
+    input reserves <code>MinRange</code> because without a floor the degenerate
+    solution — collapsing onto the sensor — is formally optimal, and the answer
+    key marks range-observability because how well a model separates these
+    candidates depends on the sensor's path <em>and</em> on how much freedom the
+    model leaves — a path that defeats one model can be ample for a stricter
+    one.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>The four forms</h2>
+  <p>Each scenario is four files. The first two are the challenge; the last two
+  are the answer key, written to a separate directory so a sealed set can ship by
+  handing over one folder.</p>
+
+  <figure>
+    <div class="scroll">
+      <div class="flow" role="img"
+           aria-label="The challenge lane — input.csv and scenario.json — feeds
+                       your algorithm, which produces output.csv. The answers
+                       lane — truth.csv and truth.json — is withheld until
+                       scoring. A bracket joins output.csv and the answers lane
+                       together into the scorer, which emits a score.">
+        <div class="lanes">
+          <div class="lane">
+            <span class="lane-tag ship">challenge/</span>
+            <span class="chip">input.csv</span>
+            <span class="chip">scenario.json</span>
+            <span class="arrow" aria-hidden="true">&rarr;</span>
+            <span class="chip fill">your algorithm</span>
+            <span class="arrow" aria-hidden="true">&rarr;</span>
+            <span class="chip">output.csv</span>
+          </div>
+          <div class="lane">
+            <span class="lane-tag hold">answers/</span>
+            <span class="chip held">truth.csv</span>
+            <span class="chip held">truth.json</span>
+            <span class="held-note">withheld until scoring</span>
+          </div>
+        </div>
+        <div class="join">
+          <span class="bracket" aria-hidden="true"></span>
+          <span class="chip fill">scorer</span>
+          <span class="arrow" aria-hidden="true">&rarr;</span>
+          <span class="chip">score</span>
+        </div>
+      </div>
+    </div>
+    <figcaption>A sealed release ships <code>challenge/</code> and keeps
+    <code>answers/</code>. The development set writes both side by side, because
+    it is a set you read rather than a set you compete on.</figcaption>
+  </figure>
+
+  <h3>input.csv</h3>
+  <p>One row per frame, per track. All coordinates in metres, ENU.</p>
+  <div class="scroll"><table>
+    <tr><th>Column</th><th>Req</th><th>Meaning</th></tr>
+    <tr><td>TrackID</td><td class="req">yes</td><td class="note">Join key across all four files.</td></tr>
+    <tr><td>TrackSource</td><td class="req">yes</td><td class="note">Free-text provenance label. Not a sensor key — one sensor per track in v1.0.</td></tr>
+    <tr><td>Time</td><td class="req">yes</td><td class="note">Seconds from <code>epochISO</code>.</td></tr>
+    <tr><td>Valid</td><td class="req">yes</td><td class="note">0/1. A zero <em>keeps the row</em> — target out of frame, occluded, dropout. Deleting rows breaks the uniform time grid.</td></tr>
+    <tr><td>SensorPosE/N/U</td><td class="req">yes</td><td class="note">Sensor position.</td></tr>
+    <tr><td>LosE/N/U</td><td class="req">yes</td><td class="note">Sightline unit vector. Consumers may renormalise.</td></tr>
+    <tr><td>LosSigmaDeg</td><td class="req">col</td><td class="note">Per-axis <em>white</em> 1σ in the pan/tilt tangent plane; total angular RMS is σ√2. <strong>Blank for correlated error models</strong>, which have no white σ — read <code>losError</code> in <code>scenario.json</code> for the model and its scale before weighting anything by this column.</td></tr>
+    <tr><td>MinRange</td><td class="req">col</td><td class="note">Metres. The column is always present, but <strong>blank means unconstrained and every scenario in the current release ships blank</strong> — the generator asserts no range bounds. Impose your own floor: without one the solution that collapses onto the sensor is formally optimal, which is exactly the trap the straight-platform scenario sets.</td></tr>
+    <tr><td>MaxRange</td><td class="req">col</td><td class="note">Metres; blank if unconstrained. Also blank throughout the current release.</td></tr>
+  </table></div>
+
+  <h3>truth.csv</h3>
+  <p>Two shapes. Finite targets carry positions; effectively-infinite ones
+  (a star, a planet) carry bearings, because there is no position to recover.</p>
+  <pre class="code">TrackID,Time,TruthPosE,TruthPosN,TruthPosU,TruthVelE,TruthVelN,TruthVelU
+TrackID,Time,TruthDirE,TruthDirN,TruthDirU</pre>
+  <p>Velocity is derived by central difference, and <code>truth.json</code> says
+  so — the balloon and bird truths come out of a numerical integration with no
+  analytic velocity.</p>
+
+  <h3>scenario.json &amp; truth.json</h3>
+  <p><code>scenario.json</code> carries the frame, datum, timing, declared sensor
+  error, an analyst-available wind estimate, and integrity digests.
+  <code>truth.json</code> carries what a table of positions cannot: object class,
+  event markers, realised noise statistics, the provenance needed to regenerate
+  the scenario, and the degenerate-cell gate. That gate is three fields rather
+  than one flag, because a single boolean conflated three unrelated claims:</p>
+  <pre class="code">"geometry": {
+  "rangeDefined":               false,               // structural
+  "cvConditioningApplicable":   false,               // gate before stratifying
+  "cvConditioningBucket":       null,                // measured, or null
+  "observabilityBasis":         "constant-velocity",
+  "cvDesignLog10RcondObserved": -3.14,               // raw, no verdict attached
+  "designIntent":               "no-finite-range"    // editorial
+}</pre>
+  <p><code>rangeDefined</code> is derived from the truth kind: a target at
+  effective infinity has no range to recover, which is categorically different
+  from a range that exists but is badly conditioned.
+  <code>cvConditioningBucket</code> is measured from the constant-velocity design
+  matrix and says nothing about whether CV <em>describes</em> the target — a
+  rising balloon in shear can be well-conditioned under CV and still badly
+  modelled by it. <code>designIntent</code> is why the cell is in the set at all.</p>
+
+  <p>Where there is no range, there is no conditioning verdict:
+  <code>cvConditioningBucket</code> is <code>null</code> and
+  <code>cvConditioningApplicable</code> is false. Gate on that before
+  stratifying. A direction-truth cell's sightlines are near-singular <em>because
+  the target is at infinity</em>, not because the geometry is weak, so binning it
+  as <code>degenerate</code> would file it alongside the straight-platform cells
+  and undo the whole point of splitting the gate up. The raw rcond still ships —
+  it is a real measurement of the sightline series — but carries no verdict.</p>
+  <p>The three can disagree, and that is the point of separating them. In the
+  shipped set both members of the anomaly pair carry
+  <code>designIntent: "weak-geometry"</code>, yet one measures <em>well-posed</em>
+  and the other <em>marginal</em> — same sensor path, different target motion.
+  Stratify on the measurement; read the intent as a note from the author.</p>
+  <pre class="code">"frame": {
+  "type": "ENU",
+  "originLLA": [35, -125, 0],
+  "ellipsoid": "WGS84",
+  "surfaceModel": "flat-plane",
+  "directionBasis": "originLLA"
+}</pre>
+</section>
+
+<section>
+  <h2>Reading the frame</h2>
+  <p>Two properties of the frame are invisible in the CSV and will silently
+  change your answer if you assume the other one.</p>
+
+  <div class="caution">
+    <span class="tag">surfaceModel</span>
+    <p><code>flat-plane</code> means truth sits on a flat plane and geodetic
+    altitude equals the U coordinate directly. A <code>wgs84-tangent</code> set
+    would need <code>alt = U − (E²+N²)/2R</code> — about 2 m at 5 km, 240 m at
+    55 km. Pure sightline fits do not care; anything altitude-coupled does.</p>
+  </div>
+
+  <div class="caution">
+    <span class="tag">directionBasis</span>
+    <p>The whole scene is <em>one</em> tangent frame anchored at
+    <code>originLLA</code>, and every direction is expressed in the ENU basis at
+    that origin — not the sensor's own local basis. The two diverge as the sensor
+    moves away from the origin, by roughly <code>d / R_earth</code>. Compute
+    ephemerides at <code>originLLA</code>.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Using it</h2>
+  <pre class="code"># development set — descriptive filenames, truth alongside
+npm run bench-bot-interchange
+
+# sealed release — opaque ids, parameters drawn from a withheld salt
+BOTBENCH_OPAQUE=1 BOTBENCH_SEAL_SALT=$(openssl rand -hex 32) \
+  npm run bench-bot-interchange</pre>
+
+  <p>The <strong>development set</strong> names files after their setup
+  (<code>straight-70ms-3000m_r5km_15s-10fps_partyneutral-500m…</code>) and ships
+  truth next to the challenge. That is what you want while building a reader.
+  Those names are of course total truth leakage, which is the point of the other
+  mode.</p>
+
+  <p>A <strong>sealed release</strong> splits into <code>challenge/</code> and
+  <code>answers/</code>, permutes ids under the salt, and — critically — draws
+  the scenario <em>parameters</em> from the salt too. Without that last part the
+  set is reproducible straight from the public templates in this repo, and the
+  ids are exactly re-identifiable. The builder fails closed if no salt is given,
+  and stamps <code>NOT SAFE TO PUBLISH</code> into any release built with
+  hardening off.</p>
+
+  <p>Sealed hardening also withholds noiseless members and truth-sharing
+  duplicates, replaces sensor paths that reveal the target's position, and
+  measures both known extraction attacks at build time — re-drawing any geometry
+  that fails. Publish the manifest digest up front; release the salt at scoring.</p>
+</section>
+
+<section>
+  <h2>Known issues</h2>
+
+  <div class="issue">
+    <h4>No scoring specification <span class="sev open">open</span></h4>
+    <p>The file formats are perhaps a fifth of this. Without one defined metric,
+    a stratification rule for degenerate geometry, and a credit rule for
+    abstention, two teams' numbers will not be comparable. <code>output.csv</code>
+    is specified below but nothing writes or reads it yet.</p>
+    <pre class="code">TrackID,AlgorithmID,Time,Status,EstPosE/N/U,
+  Kind,DirE/N/U,EstVelE/N/U,CovEE,CovNN,CovUU,CovEN,CovEU,CovNU</pre>
+    <p><code>Status</code> is <code>ok</code> / <code>abstain</code> /
+    <code>failed</code>. The distinction is not pedantry: counting collapsed runs
+    as successes rather than non-detections inflated one measured anomaly-detection
+    AUC from 0.55 to 0.74.</p>
+  </div>
+
+  <div class="issue">
+    <h4>Covariance is optional, and mostly absent <span class="sev known">known</span></h4>
+    <p>None of Sitrec's eight solvers emits a position covariance. The Kalman
+    path computes a full 6×6 internally and discards it. Blank means not
+    reported; a scorer should rank accuracy for everyone and calibration only
+    over the subset that supplies one.</p>
+  </div>
+
+  <div class="issue">
+    <h4>Flat Earth <span class="sev known">known</span></h4>
+    <p>Every scenario is <code>flat-plane</code>. The curved-surface variant is
+    specified but not generated, so altitude-coupled results at long range are
+    idealised.</p>
+  </div>
+
+  <div class="issue">
+    <h4>designIntent is editorial, and disagrees with the measurement <span class="sev open">open</span></h4>
+    <p>The intent labels are hand-set per scenario and have not been reconciled
+    against the measured conditioning. Both anomaly-pair members are labelled
+    <code>weak-geometry</code>; one measures well-posed. A scorer should
+    stratify on <code>cvConditioningBucket</code> or on the raw
+    <code>cvDesignLog10RcondObserved</code> — bucket thresholds come from
+    measured collapse rates of 84% / 8% / 0% around log₁₀ rcond −3 / −2 / −1.</p>
+    <p>No field here claims observability in the abstract, because per the
+    diagram above no set of bearings has it. On straight-platform cells the CV
+    and Kalman fits fail at a rate of 1.00 while a fixed-point fit succeeds on
+    every one at 0.08–0.09 relative separation, so a solver imposing stricter
+    dynamics can and does recover range where the CV bucket reads
+    <code>degenerate</code>.</p>
+  </div>
+
+  <div class="issue">
+    <h4>Matched pairs remain linkable <span class="sev known">known</span></h4>
+    <p>A matched pair shares its sensor trajectory by construction, so anyone can
+    group shipped files by their SensorPos columns. For an anomaly/control pair
+    that reveals one of the two is anomalous. The manifest publishes the grouping
+    rather than implying it is hidden; a release that must not reveal pairing
+    should ship one member of each.</p>
+  </div>
+
+  <div class="issue">
+    <h4>Metadata fingerprinting against a public candidate list <span class="sev known">known</span></h4>
+    <p>Ids are salt-permuted and rows id-sorted, so the mapping is not recoverable
+    from order. It can still be narrowed by content when the candidate list is
+    public source. A release that must resist that should draw from the full
+    block matrix under a withheld seed.</p>
+  </div>
+
+  <div class="issue">
+    <h4>Celestial truth is ephemeris-derivable <span class="sev known">known</span></h4>
+    <p>A direction-truth scenario's answer follows from the published site and
+    epoch plus any ephemeris. That is the intended solution path rather than a
+    leak, but an entrant can score it without doing any tracking work.</p>
+  </div>
+</section>
+
+<footer>
+  BOT Interchange Format v1.0 · Sitrec 2.106.1<br/>
+  Generator: <code>benchmarks/botbench/lib/interchangeRelease.js</code><br/>
+  Writers: <code>benchmarks/botbench/lib/exportInterchange.js</code><br/>
+  Security properties: <code>tests/botbench/interchangeReidentification.test.js</code>,
+  <code>tests/botbench/venusEphemerisContract.test.js</code>
+</footer>
+
+</div>

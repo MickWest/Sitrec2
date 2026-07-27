@@ -77,7 +77,13 @@
     "bench-losfit": "npx jest benchmarks/losFitting.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot": "npx jest benchmarks/botbench/botbench.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-classify": "npx jest benchmarks/botbench/classify.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
-    "bench-bot-export": "npx jest benchmarks/botbench/export.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit"
+    "bench-bot-export": "npx jest benchmarks/botbench/export.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot-interchange": "npx jest benchmarks/botbench/interchange.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot-physics": "npx jest benchmarks/botbench/physics.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot-physics-par": "node benchmarks/botbench/run-physics-parallel.mjs",
+    "bench-bot-rate": "npx jest benchmarks/botbench/samplerate.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot-capability": "npx jest benchmarks/botbench/capability.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
+    "bench-bot-capval": "npx jest benchmarks/botbench/capability-validation.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit"
   },
   "jest": {
     "testPathIgnorePatterns": [

@@ -1,0 +1,652 @@
+<title>A Ground-Truth Benchmark of Bearings-Only Trajectory Recovery — draft paper</title>
+<style>
+:root {
+  --paper:#FBFBF9; --ink:#191F26; --ink2:#4C5560; --ink3:#7B848E;
+  --hair:#DCDED8; --acc:#14577E; --warn:#9C3B31; --surface2:#F1F1EC;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    --paper:#12181E; --ink:#E5EAEF; --ink2:#9AA6B0; --ink3:#6A7681;
+    --hair:#28323C; --acc:#4E9CCB; --warn:#D97463; --surface2:#1A222A;
+  }
+}
+:root[data-theme="dark"] {
+  --paper:#12181E; --ink:#E5EAEF; --ink2:#9AA6B0; --ink3:#6A7681;
+  --hair:#28323C; --acc:#4E9CCB; --warn:#D97463; --surface2:#1A222A;
+}
+:root[data-theme="light"] {
+  --paper:#FBFBF9; --ink:#191F26; --ink2:#4C5560; --ink3:#7B848E;
+  --hair:#DCDED8; --acc:#14577E; --warn:#9C3B31; --surface2:#F1F1EC;
+}
+html { background: var(--paper); }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font-family: Charter, "Bitstream Charter", "Iowan Old Style", Georgia, serif;
+  font-size: 16.5px; line-height: 1.62;
+}
+.page { max-width: 760px; margin: 0 auto; padding: 56px 24px 110px; }
+h1, h2, h3 {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.22; text-wrap: balance;
+}
+h1 { font-size: 1.75rem; font-weight: 740; letter-spacing: -0.012em; margin: 10px 0 6px; }
+h2 { font-size: 1.18rem; font-weight: 700; margin: 2.4em 0 0.5em; }
+h3 { font-size: 1.0rem; font-weight: 660; margin: 1.7em 0 0.35em; }
+p { margin: 0.7em 0; }
+.eyebrow {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink3);
+}
+.byline { color: var(--ink2); font-size: 0.95rem; margin: 2px 0 0; }
+.draftbar {
+  border: 1px solid var(--hair); background: var(--surface2); border-radius: 6px;
+  padding: 9px 14px; font-size: 0.85rem; color: var(--ink2); margin: 20px 0 30px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.abstract {
+  border-left: 3px solid var(--acc); padding: 4px 18px; margin: 26px 0;
+  background: var(--surface2); border-radius: 0 6px 6px 0;
+}
+.abstract h3 { margin-top: 8px; }
+.mono, td.num, th.num { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; }
+.small { font-size: 0.86rem; color: var(--ink2); }
+.secnum { color: var(--acc); margin-right: 0.4em; font-variant-numeric: tabular-nums; }
+
+.tblwrap { overflow-x: auto; margin: 14px 0 6px; }
+table { border-collapse: collapse; font-size: 0.85rem; min-width: 460px; width: 100%; }
+caption { caption-side: top; text-align: left; padding-bottom: 7px;
+  font-size: 0.84rem; color: var(--ink2); }
+caption b { color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+th, td { padding: 5px 12px 5px 0; text-align: left; border-bottom: 1px solid var(--hair); vertical-align: top; }
+th { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+     font-size: 0.74rem; font-weight: 650; color: var(--ink2);
+     text-transform: uppercase; letter-spacing: 0.05em; }
+td.num, th.num { text-align: right; padding-right: 16px; }
+tr.hl td { font-weight: 620; }
+.footnote { font-size: 0.82rem; color: var(--ink2); margin-top: 4px; }
+.kbox {
+  border: 1px solid var(--hair); border-radius: 6px; background: var(--surface2);
+  padding: 12px 18px; margin: 18px 0; font-size: 0.93rem;
+}
+.kbox b { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+ol.refs { font-size: 0.9rem; padding-left: 1.3em; }
+ol.refs li { margin: 6px 0; }
+ul { margin: 0.5em 0; }
+li { margin: 0.28em 0; }
+@media print { body { font-size: 11.2pt; } .page { max-width: 100%; padding: 0; } .draftbar { display: none; } }
+</style>
+
+<div class="page">
+<p class="eyebrow">Draft manuscript &middot; v0.7</p>
+<h1>A Ground-Truth Benchmark of Bearings-Only Trajectory Recovery for Narrow-Field Airborne Sensors</h1>
+<p class="byline">Mick West &middot; Sitrec project (github.com/MickWest/Sitrec2)</p>
+<p class="byline small">Draft prepared with an AI-assisted adversarial analysis loop
+(two independent models cross-auditing design, code, and results); all findings
+reproduce deterministically from the cited open-source harness.</p>
+
+<div class="draftbar">DRAFT v0.7 for author review (emerging-threats capability section added and audited) — every quantitative and operational claim verified against the benchmark records through the adversarial audit loop; the capability section carries a final estimator-discipline pass (α* the family minimum vs α̂ the reported optimizer upper-bound estimate; the geometry test named a pairwise separability screen, distinct from forced-exceedance attributability) now under re-verification. Figures reference reproducible
+benchmark output; numbers below are from the audited round-1 (855 scenarios / 6,848
+solver runs) and round-2 (140 cells / 980 runs) sweeps of 2026-07-22.</div>
+
+<div class="abstract">
+<h3>Abstract</h3>
+<p>Video from narrow-field airborne electro-optical sensors records <em>directions</em>,
+not positions: every disputed object trajectory must be reconstructed from
+bearings alone, and the same sightlines are typically consistent with a slow
+nearby object, a fast distant one, and a continuum between. We present a
+deterministic, ground-truth benchmark for this reconstruction problem —
+855 synthetic scenarios spanning surveillance-relevant platform geometries
+(orbits, arcs, cruise, weaves), target classes (balloons, birds, aircraft,
+celestial objects, and kinematically impossible controls), wind models, clip
+lengths of 5–120&nbsp;s, and pointing-error models including simulated
+human-operator tracking wobble — and evaluate fourteen solver configurations spanning four method families
+against known truth — from constant-velocity least squares and a
+Rauch–Tung–Striebel smoother to physically constrained balloon, multirotor,
+and fixed-wing model fits (the physics and spline methods on a 140-cell
+subset). Four results are operationally significant:
+(1)&nbsp;sensor geometry and observation time dominate everything else —
+under a non-maneuvering sensor with realistic (0.03°) pointing noise the
+fully swept linear estimators recovered no range at any clip length (a rigid stationary-point hypothesis stayed within
+3–12% on its near-stationary targets), while a 60-second orbit at 2&nbsp;km
+range recovered it to under one percent (the same orbit at 20&nbsp;km still
+failed); (2)&nbsp;a single
+conditioning statistic computed from the sightlines alone grades, before any
+fitting, the risk that the linear estimator family will collapse onto the
+sensor; (3)&nbsp;physically constrained model fits recover useful range in
+geometries where the tested linear estimators fail, at the cost of reduced
+accuracy where geometry is strong; and (4)&nbsp;a solver-selection rule using
+only observable features eliminates essentially all <em>avoidable</em> gross
+range error on held-out scenarios (0.0 added percentage points above the
+58.9% floor that geometry imposes on the benchmarked estimator set, versus
++31.2 for always using the standard estimator). The benchmark also functioned as a defect-discovery instrument
+for the analysis tool itself, surfacing and confirming two production issues
+in deployed fitting code. For the emerging-threats question — surfacing an
+adversary capability a modest margin outside a known envelope, or a coherent
+new capability class — we frame anomalous motion as one endpoint of a
+capability continuum, characterize a geometry-dependent separability screen
+for when an exceedance is even distinguishable from its in-envelope
+counterpart, and give a constrained-feasibility statistic (α*, the minimum
+envelope scale a searched family of bearings-consistent trajectories requires;
+reported as an optimizer upper-bound estimate α̂) validated as a
+measurement. We find that signature separability and forced
+exceedance are distinct thresholds, and we deliberately make no quantitative
+detection-rate claim, as that awaits threshold calibration. We state
+limitations plainly: results are synthetic, the operator-wobble model is
+uncalibrated, and terrain is a flat-datum proxy.</p>
+</div>
+
+<h2><span class="secnum">1</span>The operational problem</h2>
+<p>Assessments of unidentified objects recorded by airborne sensors almost
+always reduce to a single estimation problem: given a time series of camera positions and
+pointing directions, what trajectories are consistent with the recording?
+This is the classic bearings-only target motion analysis (TMA) problem
+[1], transplanted from towed-array sonar to gimballed electro-optical pods
+with fields of view under one degree.</p>
+<p>The difficulty is structural, not technological. A bearing measurement
+constrains the target to a ray; range along that ray is only determined by
+<em>parallax</em> — the sensor must move around the sightlines, not merely
+along them. When it does not, the data admit a family of mutually
+contradictory reconstructions: the slow close drifter and the fast distant
+maneuverer produce the same pixels, and disagreements over particular
+recordings are frequently disagreements over which member of that family to
+prefer — often without any statement of whether the data can distinguish
+them at all.</p>
+<p>An analyst therefore needs answers to four questions before any
+interpretation is defensible:</p>
+<ul>
+<li>Does this geometry support range recovery <em>at all</em>?</li>
+<li>Which reconstruction method is appropriate, and how would one know
+without access to truth?</li>
+<li>What does goodness-of-fit actually prove? (Short answer: far less than
+intuition suggests.)</li>
+<li>Would a genuinely anomalous trajectory even be visible through these
+methods, or would they smooth it away?</li>
+</ul>
+<p>This paper answers those questions with measured error rates rather than
+argument, using a ground-truth benchmark built around the open-source Sitrec
+reconstruction tool. The benchmark's scenario families were chosen to span the commonly proposed
+candidate explanations for narrow-field airborne recordings (a coverage
+choice, not a prevalence-weighted population): wind-borne balloons of several types, birds, conventional
+aircraft, celestial objects, and — as controls — trajectories containing
+deliberately impossible kinematic events.</p>
+
+<h2><span class="secnum">2</span>Methods under test</h2>
+<p>Fourteen solver configurations were evaluated, in four families (the
+linear family includes one smoother at three tunings; the physics and
+ray-constrained methods ran on a 140-cell round-2 subset):</p>
+<ul>
+<li><b>Linear kinematic fits.</b> Constant-velocity (CV) and
+constant-acceleration least squares over perpendicular ray distance; a
+six-state Rauch–Tung–Striebel smoother [2] with the CV process model at
+three process-noise settings; seeded Monte&nbsp;Carlo and deterministic
+alternating polynomial fits. These are fast (milliseconds) and assumption-light.</li>
+<li><b>Rigid geometric hypotheses.</b> A single stationary point best
+explaining all sightlines, and a fixed direction (the at-infinity hypothesis
+appropriate to celestial objects).</li>
+<li><b>Ray-constrained smoothness methods.</b> A minimum-acceleration spline
+over range profiles (with a soft speed prior for degenerate geometry) and a
+minimum-speed solve (the slowest object consistent with the sightlines).</li>
+<li><b>Physically constrained model fits.</b> Forward-integrated dynamics
+fitted by differential evolution with local polish: a wind-driven balloon
+model, a hover-capable multirotor model, and a constant-airspeed fixed-wing
+model.</li>
+</ul>
+<p>All methods consume the same sightlines — sensor positions and unit
+pointing vectors per frame; the ray-constrained spline methods and the
+fixed-wing fit additionally receive the scenario's wind series (as in the
+deployed tool), while the balloon and multirotor fits solve for wind
+themselves. The Monte&nbsp;Carlo configuration ran on eight sentinel
+scenarios only. Finite-track results are scored by angular residual against the
+sightlines (how well the answer explains the data) and three-dimensional
+separation from truth (whether the answer is right); celestial cases are
+scored by apparent-direction error. Residual and truth error are reported
+<em>separately</em> throughout, because the benchmark repeatedly measures
+them disagreeing.</p>
+
+<h2><span class="secnum">3</span>Benchmark design</h2>
+<p>Scenarios are generated deterministically (every random draw is seeded;
+identical commands reproduce identical results bit-for-bit) across nine
+blocks totalling 855 scenarios. Table&nbsp;1 summarizes the space.</p>
+
+<div class="tblwrap">
+<table>
+<caption><b>Table 1.</b> Scenario space (855 scenarios; a scenario is one
+generated observation stream — methods do not multiply the count).</caption>
+<thead><tr><th>Axis</th><th>Values</th></tr></thead>
+<tbody>
+<tr><td>Sensor platform</td><td>Fixed-wing, 70&nbsp;m/s, 3,000&nbsp;m AGL; six path types: orbit of the target point, orbit of a <em>misestimated</em> target position (0.5×/1×/2× true range), constant-bank arc, straight cruise, S-weave toward / across the line of sight. All paths satisfy a 30° bank-limit feasibility constraint.</td></tr>
+<tr><td>Targets</td><td>Rising and neutral party balloons, rising weather balloon, high-altitude balloon (18–20&nbsp;km), tethered aerostat, meandering bird, cruising and turning aircraft, Venus (true ephemeris), and aircraft-like targets carrying one impossible event (20–100&nbsp;g pulses, instantaneous 150&nbsp;m/s velocity steps, 1&nbsp;s course reversals), each paired with a 2.5&nbsp;g ordinary-maneuver control sharing onset, direction, and pointing-error realization.</td></tr>
+<tr><td>Wind</td><td>Calm; fixed vector; fixed + gusts; layered shear with directional veer + gusts.</td></tr>
+<tr><td>Clip length</td><td>5, 15, 60&nbsp;s core; 120&nbsp;s sentinels.</td></tr>
+<tr><td>Sample rate</td><td>10&nbsp;Hz core; 30&nbsp;Hz sentinels.</td></tr>
+<tr><td>Pointing error</td><td>None (labeled control); isotropic white, σ=0.03°; simulated operator wobble (drift–notice–correct model, autocorrelated), with a matched-power white twin rescaled to identical realized error energy.</td></tr>
+<tr><td>Field of view</td><td>0.5° full (0.9° in noise-isolation blocks); frames whose pointing error exceeds half the FOV are marked target-lost and excluded from fitting.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Three design rules were enforced from the outset. First, <b>no inverse
+crime</b>: truth generators do not live inside any solver's model class
+(balloon truth comes from an independent integrator with gusts and layered
+veer no fitted model can represent), and sightlines carry noise — except in
+cells <em>deliberately</em> constructed as oracle-compatible controls
+(constant-velocity aircraft, constant-wind floaters, clean observation),
+which are labeled as controls and flagged wherever they inform a conclusion
+(as in §4.6's strong-geometry comparison, whose target is deliberately
+CV-representable). Second, <b>fit quality and truth
+error are never conflated</b>: the benchmark's own data contain cases where a
+method's residual <em>improves</em> while its truth error grows severalfold.
+Third, <b>adversarial audit</b>: every phase — design, implementation,
+statistics — was independently reviewed by a second AI system with full code
+access, which re-derived results before they were accepted. This process
+materially changed published numbers: it caught a selection bias that had
+inflated an anomaly-detection score from 0.55 to 0.74, two train/test leakage
+paths in the selection-rule evaluation, an invalid bootstrap, and a
+prevalence artifact in a detector threshold. We describe this because the
+corrected findings are only as credible as the process that attacked
+them.</p>
+
+<h2><span class="secnum">4</span>Results</h2>
+
+<h3>4.1&nbsp;&nbsp;Geometry and time dominate everything</h3>
+<p>Table&nbsp;2 shows median range-recovery error for the constant-velocity
+fit (the Kalman smoother tracks it closely) as a fraction of true range, on a
+drifting balloon observed under 0.03° white noise.</p>
+
+<div class="tblwrap">
+<table>
+<caption><b>Table 2.</b> CV fit: median truth error ÷ true range. 1.00 =
+complete failure (the fit "collapses" onto the sensor's own flight path,
+which satisfies the fit's perpendicular-distance objective when that path is
+representable by the fit's own motion model; the benchmark's angular scoring
+flags such collapsed tracks at 90–180°, but the fit's own objective reports
+success).</caption>
+<thead><tr><th>Platform path</th><th class="num">2 km, 5 s</th><th class="num">2 km, 15 s</th><th class="num">2 km, 60 s</th><th class="num">20 km, 60 s</th></tr></thead>
+<tbody>
+<tr><td>Orbit of target point</td><td class="num">0.65</td><td class="num">0.022</td><td class="num">0.0001</td><td class="num">0.93</td></tr>
+<tr><td>Constant-bank arc</td><td class="num">0.74</td><td class="num">0.051</td><td class="num">0.0001</td><td class="num">0.069</td></tr>
+<tr><td>Straight and level</td><td class="num">1.00</td><td class="num">1.00</td><td class="num">1.00</td><td class="num">1.00</td></tr>
+</tbody>
+</table>
+</div>
+<p>The operational reading: <b>under realistic pointing noise, a non-maneuvering sensor gives the swept
+linear estimators no range at any clip length</b> (noiseless controls can land arbitrarily: a degenerate system breaks its
+ties unpredictably) (one exception in the record: the sentinel-only
+Monte&nbsp;Carlo configuration recovered a single straight-flight case to
+4.4% — an isolated result whose mechanism we did not investigate) — the
+sensor's own trajectory satisfies the estimator's least-squares objective
+exactly, and the estimator returns it as confidently as any genuine
+solution — the failure is invisible to the method itself. An orbiting sensor
+transitions from useless (5&nbsp;s of arc) to sub-percent recovery
+(60&nbsp;s) as subtended arc accumulates; distance pushes the transition
+later. This is the Nardone–Aidala observability requirement [1] made
+quantitative for this sensor class. Notably, the humble stationary-point
+hypothesis scored 3–12% error across <em>every</em> cell of this table
+(median per cell; the target drifts only slowly, so a fixed point is nearly
+correct) — a rigid, nearly correct model is robust precisely where flexible
+ones collapse.</p>
+
+<h3>4.2&nbsp;&nbsp;Failure is predictable before fitting</h3>
+<p>The reciprocal condition number of the (column-equilibrated,
+time-normalized) constant-velocity design system — computable from the
+sightlines alone, before any fitting — grades collapse risk sharply. In the
+geometry/duration block, the CV collapse rate was 82% in the
+log<span class="mono">10</span>(rcond) ≈ −3 bin, 72% at ≈ −2.5, and 0% at ≈
+−2 and above. A formally trained binary detector on this one feature
+(threshold selected by Youden's&nbsp;J on training data at −2.46; weighted
+ROC-AUC 0.79) reached zero false positives on the held-out sentinel pool.
+Two disciplined caveats: the statistic speaks only for the linear estimator
+family — rigid and physically constrained methods can succeed where it warns
+— and it is one-way: good conditioning is never proof the recovered range is
+right. These findings have since been implemented in the analysis tool: each
+live linear-family fit now displays its conditioning and collapse state
+rather than silently publishing a degenerate track.</p>
+
+<h3>4.3&nbsp;&nbsp;Human-like tracking error is worse than its power suggests</h3>
+<p>The benchmark's simulated operator error is autocorrelated — aim drifts,
+is noticed, and is corrected — where analysis conventionally assumes white
+noise. (Real-operator calibration is future work; the mechanism, not the
+magnitudes, is the claim here.) With wobble
+and white twins matched to identical realized error power in the recoverable
+regime: constant velocity degraded 4.7× under wobble relative to white on
+the orbit cells and 3.3× on the arc cells; the default-tuned smoother 2.8×
+and 1.9×; a soft-tuned smoother (process noise 10× higher) was essentially
+immune (0.9× and 0.4×) — at the price of a several-times-worse baseline
+against the same matched-power white noise (6.5&nbsp;m vs CV's 1.0&nbsp;m
+and the default smoother's 2.2&nbsp;m). <b>Noise color, not just noise power, should set
+filter tuning</b>, and hand-tracked or autotracker-derived pointing merits a
+process-noise sensitivity sweep as standard practice. (Five pairs per cell,
+overlapping spreads — a leading interpretation, not settled law; and the
+wobble model itself is behaviorally plausible but not yet calibrated against
+measured operator tracking error.)</p>
+
+<h3>4.4&nbsp;&nbsp;Anomaly detection requires rigid reference models</h3>
+<p>Can an impossible maneuver be detected from residual behavior alone,
+without knowing where in the clip it occurs? Event-blind detection scores
+(ROC-AUC, anomalous vs. matched ordinary-maneuver controls):</p>
+
+<div class="tblwrap">
+<table>
+<caption><b>Table 3.</b> Event-blind anomaly detection by residual robust-Z
+in a deliberately weak-geometry block (20&nbsp;km, 15&nbsp;s); collapsed fits
+count as non-detections (an earlier scoring that silently dropped them
+inflated CV to 0.74 — corrected values follow).</caption>
+<thead><tr><th>Method</th><th class="num">AUC</th><th class="num">Runs collapsed</th></tr></thead>
+<tbody>
+<tr class="hl"><td>Fixed direction (at-infinity)</td><td class="num">0.89</td><td class="num">0%</td></tr>
+<tr><td>Stationary point</td><td class="num">0.78</td><td class="num">0%</td></tr>
+<tr><td>Constant velocity</td><td class="num">0.55</td><td class="num">46%</td></tr>
+<tr><td>Kalman smoother</td><td class="num">0.54</td><td class="num">46%</td></tr>
+<tr><td>Constant acceleration</td><td class="num">0.50</td><td class="num">49%</td></tr>
+<tr><td>Order-2 polynomial</td><td class="num">0.44</td><td class="num">0%</td></tr>
+</tbody>
+</table>
+</div>
+<p>Rigid hypotheses leave the anomaly in the residual where it can be seen.
+Among the flexible estimators the mechanisms differ: the polynomial (which
+never collapsed) <em>absorbs</em> the event into its spare degrees of
+freedom, while CV, the smoother, and constant acceleration are additionally
+confounded by collapse in this weak-geometry block (46–49% of their runs) —
+either way, none is a usable detector here.
+The physically constrained fits sharpen this in a second way: on anomalous
+cells the fixed-wing model's residual jumps 23× (0.010°→0.222°) because its
+dynamics <em>cannot</em> thread an impossible event, while the
+broad-envelope multirotor threads nearly everything by design. The discriminating signal is
+the <em>pattern of residuals across a panel of model classes</em>, not any
+single fit — though this is event-dependent (a pure velocity step along the
+line of sight barely registers) and was measured on clean sightlines;
+noise-robustness testing remains open.</p>
+
+<h3>4.5&nbsp;&nbsp;Celestial objects present a distinctive signature</h3>
+<p>On true-ephemeris Venus scenarios the at-infinity hypothesis matched the
+apparent direction to 0.016°. The moving-model estimators (constant
+velocity, constant acceleration, the smoother) collapsed onto the camera —
+fitted ranges of metres, direction errors of 74–90°, with a median per-scenario 33–49% of frames behind the sensor (pooled frame
+rates run higher, 53–76%; 83–100% of scenarios contain behind-sensor frames) — and the order-2 polynomial collapsed similarly (median
+range 4&nbsp;m, 1.7° direction error). The stationary-point hypothesis
+behaved differently, as it should for a target at infinity: it matched the
+direction well (0.09°) at an arbitrary large distance (~70&nbsp;km), since
+any sufficiently distant fixed point fits near-parallel sightlines. The
+celestial signature is therefore a <em>pattern</em>: unanimous moving-model
+collapse, a stationary point at large but unstable range, and one excellent
+at-infinity fit — a pattern suitable for an automated screen (observed on
+twelve scenarios; no such screen was implemented or evaluated here).</p>
+
+<h3>4.6&nbsp;&nbsp;Physical constraints rescue range where geometry fails —
+and cost accuracy where it doesn't</h3>
+<p>The physically constrained fits were evaluated on 140 cells spanning all
+regimes (420 physics-model runs, alongside 280 spline and 280 linear-baseline
+runs; 980 total). Two complementary results:</p>
+<ul>
+<li>In the geometry/duration block — including straight-flight sensors where
+every linear fit collapses to 100% error — the balloon model recovered range
+to a median 9% and the multirotor model to 4%<span class="small">
+(the multirotor figure is partially bound-assisted at the 20&nbsp;km tier,
+where its search cap coincides with true range)</span>. Physical priors
+(a balloon must ride the wind; a drone obeys an envelope) supply the
+constraint that geometry does not.</li>
+<li>Where geometry is strong, the ordering reverses: on recoverable balloon
+cells the linear fits achieved 0.05–0.3% error against the balloon model's
+1.1–2.5% and the multirotor's 0.1–1.9% — flexibility, regularization, and
+stochastic search have a cost when parallax already pins the answer.</li>
+</ul>
+<div class="kbox"><b>Two-regime rule.</b> Strong geometry → prefer simple
+kinematic estimators, with the conditioning check used as a warning gauge
+(a "good" reading is never proof of recovered range). Weak geometry → only
+physically constrained hypotheses (and rigid geometric ones) carry
+information; the linear fits return artifacts with excellent-looking
+objective values.</div>
+<p>The balloon model's inferred base wind agreed with truth to ~1&nbsp;m/s
+in the recoverable-geometry cells (median 2.3&nbsp;m/s across all sixty
+balloon cells), degrading to ~5.9&nbsp;m/s — with a documented calm-wind
+prior pull toward zero — in the weak-geometry block. This quantifies when
+"the fitted wind matches the weather data" constitutes evidence, with one
+label of honesty: the metric covers the model's base-wind parameters only,
+not its full time-varying wind representation.</p>
+
+<h3>4.7&nbsp;&nbsp;Method selection from observables alone</h3>
+<p>Finally, the practical question: can a rule choose the right method using
+only what an analyst can actually observe — residuals of cheap fits, the
+conditioning statistic, coverage and stability diagnostics — never the truth?
+On a leakage-controlled held-out test set, 58.9% (group-weighted) of
+scenarios defeated
+<em>every method in the benchmarked selection set</em> (the linear family
+plus the stationary point): no choice within that set gets within 10% of
+true range. This is an action-set-specific floor, not proof that range is
+fundamentally unknowable there — §4.6 shows physically constrained methods
+recovering useful range in some of the same geometries. Against that floor:</p>
+
+<div class="tblwrap">
+<table>
+<caption><b>Table 4.</b> Solver selection on held-out scenarios, within the
+benchmarked action set (the linear family plus the stationary point).
+"Added catastrophe" is gross range
+failure introduced above that set's 58.9% floor; regret is accuracy given up
+relative to the (unrealizable) truth-informed choice.</caption>
+<thead><tr><th>Decision rule</th><th class="num">Selection accuracy</th><th class="num">Added catastrophe</th><th class="num">90th-pct regret</th></tr></thead>
+<tbody>
+<tr class="hl"><td>Cost-sensitive tree (depth ≤ 3, two realized splits, observable features)</td><td class="num">0.89</td><td class="num">+0.0 pts</td><td class="num">0.000</td></tr>
+<tr><td>Always constant-velocity</td><td class="num">0.18</td><td class="num">+31.2 pts</td><td class="num">0.91</td></tr>
+<tr><td>Pick the best-fitting method (lowest residual)</td><td class="num">0.22</td><td class="num">+29.0 pts</td><td class="num">0.91</td></tr>
+</tbody>
+</table>
+</div>
+<p>Two lessons stand out. Choosing whichever method best hugs the sightlines
+is nearly as bad as never adapting at all — <b>residual quality is not
+evidence of truth</b>. And in structurally collapsed scenarios every choice within this action set
+is catastrophic; the honest output there is to declare range indeterminate
+for unconstrained methods and fall back to the physically constrained panel
+of §4.6. The conditioning statistic is a candidate trigger for that declaration —
+though thresholding it was measured to trade coverage for honesty without
+by itself improving safety, so it flags indeterminacy rather than
+guaranteeing anything. Caveats recorded: the rule's cross-geometry transfer is imperfect
+(a rule trained without straight-flight scenarios degrades on them), the
+evaluation is audit-corrected rather than freshly preregistered, and
+celestial-regime conclusions rest on a small sentinel pool.</p>
+
+<h3>4.8&nbsp;&nbsp;Surfacing emerging capability, not just excluding anomalies</h3>
+<p>An emerging-threats reading of §4.4 inverts its question. There, physically
+impossible maneuvers were <em>controls</em> — the far endpoint of a spectrum,
+used to check that the residual machinery reacts to gross incompatibility. The
+operationally harder problem is the <em>middle</em> of that spectrum: an
+adversary system running a modest margin outside a known performance envelope
+(say 20% over a catalogued top speed or climb rate), or a physically coherent
+capability <em>combination</em> that no catalogued class holds (fighter-class
+sustained g at drone speeds; a hover-to-dash transition; extreme sustained
+climb). We treat the whole range as one continuum — in-envelope → marginal
+exceedance → unrepresented-but-coherent technology → gross/impossible — and
+ask, for each rung, whether bearings-only data can <em>surface</em> it.</p>
+<p><b>Two questions, kept separate.</b> First, <em>pairwise separability</em>:
+does an exceeded signature look different, in the sightlines, from its matched
+in-envelope (λ=1) counterpart? (This is a pairwise test against one
+counterfactual — not distinguishability from every admissible alternative,
+which is the harder attributability question below.) This is geometry, not
+algorithm — we measure the clean-truth angular separation between a signature
+flown at scale λ and the same signature at λ=1, and compare it to the
+amplitude of the (uncalibrated) operator-wobble model (~0.15°) as a rough
+screening scale, not an empirically established detection threshold.
+At the recoverable geometry (a 60-second orbit at 2&nbsp;km) a 20% multirotor
+speed or climb excess separates well clear of that scale (1.05° and 0.51°
+respectively); at weak geometry (a 15-second orbit at 20&nbsp;km) the same
+small-platform excess is far smaller (0.04° and 0.03°) — nonzero in clean
+data, but of the same order as the wobble-model amplitude, so whether it
+would survive realistic pointing error is untested here. A larger platform's
+speed signature (fixed-wing) remains well separated even there (0.25° at +20%). This is a geometry- and platform-dependent
+<em>separability screen</em> — when an exceeded signature is even
+distinguishable in principle from its in-envelope counterpart. It is
+<em>not</em> a minimum-detectable-exceedance estimate (only three scales,
+λ&nbsp;=&nbsp;{1, 1.2, 2}, were sampled) and, uncalibrated against noise, it is
+not by itself grounds for a "nothing unusual" conclusion.</p>
+<p><b>Measuring exceedance is a constrained-feasibility question, not a
+recovery.</b> A negative result governs the method. Because bearings only
+constrain the object to the rays — X(t)=S(t)+λ(t)·D(t) is consistent with the
+data for <em>any</em> positive range profile λ(t) — there is no prior-free way
+to recover the range, and "how fast was it going" is ill-posed. The
+well-posed version treats range as a nuisance parameter and asks an
+<em>existence</em> question: over a searched family of bandwidth-limited
+on-ray range profiles consistent with the sightlines, what is the minimum
+envelope scale α* that any of them requires? If some searched trajectory stays
+within the catalogued envelope (α*&nbsp;≤&nbsp;1), exceedance is not forced
+within that family — an in-envelope explanation exists, and the honest output
+is abstention (also the correct output at weak geometry, where a slower,
+nearer in-envelope reading always exists). The statistic uses hard catalogue
+limits over the whole trajectory — horizontal speed, signed vertical rate,
+load factor — with no plausibility preference (a cruise-speed or calm-wind
+prior would bias toward the mundane reading and hide real exceedance), and its
+only regularization is the bandwidth limit implied by the spline knot spacing.
+Two honest qualifications bound the claim. The search is over a
+<em>finite-dimensional</em> family (a continuous log-range B-spline of bounded
+knot count, 3-second bandwidth, a range floor), not literally every consistent
+trajectory; and the solver returns an optimizer estimate α̂ that is an
+<em>upper bound</em> on that family's true minimum α*. So
+α̂&nbsp;&gt;&nbsp;1 is evidence, not proof, that
+exceedance is forced — which is precisely why it drives a calibrated screen
+rather than a bare threshold (below).</p>
+<p>On known truth the α̂ estimate behaves as intended where the exceeded
+dimension resists the range degeneracy, and it exposes — rather than hides —
+where it does not. For a small multirotor exceeding its <em>speed</em> or
+<em>climb</em> envelope, α̂ rises monotonically with true exceedance (for a
+speed excess: 0.82 in-envelope, 1.00 at +20%, 1.76 at +100%), so the
+in-envelope control is separated from a 20% excess at recoverable geometry,
+and α̂ <em>under</em>-estimates the true exceedance in these tested cells
+(1.00 and 1.76 against true 1.2 and 2.0; similarly for climb) — an empirically
+conservative direction here, though an upper-bound optimizer estimate is not
+guaranteed to underestimate truth in general. For a fixed-wing <em>speed</em>
+dash, however, α̂ is essentially flat across scale (0.59 / 0.59 / 0.59
+whether the truth is in-envelope or twice it) even though the signature is
+plainly <em>separable</em> in the sightlines (6.5° of clean separation at 2×):
+a nearer, slower in-envelope aircraft within the searched family reproduces
+the same bearings, so a horizontal speed excess is not <em>forced</em> by the
+geometry and cannot be attributed from bearings alone. This is the central
+lesson of the capability analysis — <b>pairwise signature separability (the
+exceeded signature differs from its in-envelope counterpart) and forced
+envelope exceedance (no in-envelope trajectory reproduces the bearings) are
+distinct thresholds</b>, and a candidate exceedance can be clearly separable
+yet formally unattributable. At weak geometry the small-platform speed and
+climb excesses fall below even the separability screen.</p>
+<div class="kbox"><b>Status of the capability detector.</b> The α̂ statistic
+is a validated <em>measurement</em>; converting it into a binary
+"exceedance forced" <em>detection</em> requires a calibrated threshold —
+because α̂ is an optimizer estimate of the family minimum α* (hence biased
+upward), the threshold must be set empirically from the null distribution of
+α̂ over in-envelope controls, not from the nominal unit scale (α̂ = 1). That calibration and a frozen held-out
+evaluation are future work; this paper reports the method, the separability
+screen, and the measurement's validated behavior, and makes <em>no</em>
+quantitative detection-rate claim. In the benchmark harness the binary claim
+is disabled by construction (a null result) until a calibration artifact,
+bound to the exact detector configuration, is supplied; the statistic is not
+wired into the interactive analysis tool.</div>
+
+<h2><span class="secnum">5</span>The benchmark as a defect-discovery instrument</h2>
+<p>Because truth is known, the benchmark doubles as a test harness for the
+analysis software itself. Round-1 findings led to changes now in the tool's source: live
+linear fits surface conditioning and collapse rather than publishing
+degenerate tracks silently, and an optimizer-stopping rule that had
+mislabeled a genuine balloon fit "incomplete" (its unresolved parameters were
+provably unobservable from the clip — flame-out beyond the clip end leaves
+sink parameters without effect) was reclassified as an identifiability
+statement. Round 2 confirmed, by independent replay against production code,
+two further issues, confirmed and documented for repair: a decisiveness gate in the
+minimum-acceleration method that vetoes correct geometric range on slow
+targets (its pure-smoothness optimum sat at truth — 1.5–1.8&nbsp;NM against
+1.73 — before a resolution-dependent secondary test forced the speed prior — at
+the 300&nbsp;kt default the answer moved to 5.9&nbsp;NM at a 0.003°
+residual, and a replay with the deployed 380&nbsp;kt input returned
+6.9&nbsp;NM, worse),
+and a convergence failure in the fixed-wing fit (returned cost 13.7 versus
+9.9 available in-bounds). We highlight the first because of its direct bearing wherever slow, close
+candidate explanations are weighed against fast, distant ones: on slow,
+close objects, this class of
+method can currently overstate range by several times <em>while reporting
+an excellent fit</em>, and the failure is invisible without ground truth.</p>
+
+<h2><span class="secnum">6</span>Guidance for analysts</h2>
+<ul>
+<li><b>Check geometry before interpreting anything.</b> Compute the
+conditioning statistic — a linear-family diagnostic, sharper than intuition
+about subtended arc. A warning means any linear-family range should be
+treated as unreliable pending corroboration — not categorically rejected:
+the detector's false-positive rate on the held-out test partition was 45%
+at its balanced operating point (0% on the external sentinel pool), so it
+flags risk, and a clean reading proves nothing.</li>
+<li><b>Never rank hypotheses by residual alone.</b> The benchmark's clearest
+repeated result is fits that thread the sightlines beautifully at the wrong
+distance.</li>
+<li><b>Use model panels, not single fits.</b> Which model classes can
+cheaply explain the sightlines — and which cannot — carries more information
+than any one method's answer.</li>
+<li><b>Treat filter tuning as noise-color dependent.</b> Hand-tracked
+pointing error is plausibly autocorrelated (demonstrated here in simulation;
+calibration pending); run a process-noise sweep before trusting smoother
+output.</li>
+<li><b>Prefer declared indeterminacy to confident artifacts.</b> "These
+methods cannot determine range from this data" is a finding, and often the
+correct one: it was true of the unconstrained-method set for 59% of this
+benchmark's held-out scenarios.</li>
+</ul>
+
+<h2><span class="secnum">7</span>Limitations</h2>
+<p>All results are synthetic; external validity rests on the generators,
+which were built adversarially but not validated against instrumented truth.
+The operator-wobble model is behaviorally plausible, not calibrated to real
+tracking data (calibration from autotracked archival footage is planned).
+Terrain is a flat-datum proxy; the benchmark uses a single 70&nbsp;m/s
+sensor speed — surveillance-class, not fast-jet, geometry. Optimizer budgets were not identical across methods: the balloon and
+multirotor fits ran a deterministic search at reduced budget and without
+production parameter seeding, while the
+fixed-wing and spline methods ran their production defaults — within-family
+comparisons are consistent, but cross-family speed/accuracy contrasts carry
+that asymmetry, and deployed (seeded, larger-budget) physics fits are likely
+modestly better than benchmarked here. The simulation also omits several
+real error sources entirely: platform navigation and boresight error,
+rolling-shutter and compression artifacts, and terrain-induced effects. The wind-agreement metric covers base-wind
+parameters only. Selection-rule results are audit-corrected re-evaluations,
+not preregistered, and their cross-geometry transfer limits are stated in
+§4.7. The capability detector (§4.8) is reported as a validated measurement
+only: its detection threshold is uncalibrated, so no detection-rate,
+false-alarm, or minimum-detectable-exceedance performance number is claimed.
+α̂ is an optimizer upper-bound estimate of a finite-dimensional search family's minimum,
+validated on <em>clean</em> truth for three dimensions of two catalogue
+airframes (multirotor speed/climb, fixed-wing speed) at three scales; the
+coherent novel-combination signatures are not in that validation table, and
+behavior under observation noise and across the full catalogue is untested
+here. The per-cell repeats share one deterministic truth (capability truth,
+orbit geometry, and clean observation do not depend on the seed), so they
+confirm reproducibility rather than sampling independent realizations.</p>
+
+<h2><span class="secnum">8</span>Reproducibility</h2>
+<p>The complete harness, scenario definitions, audit history, and analysis
+protocols are in the open-source repository (<span class="mono">benchmarks/botbench/</span>
+in Sitrec). Scenario generation and all solver results are deterministic (identical
+inputs reproduce identical estimates and metrics; wall-clock timings
+naturally vary). Three commands regenerate the sweep results on commodity
+hardware: <span class="mono">npm run bench-bot</span>
+(~40&nbsp;s), <span class="mono">npm run bench-bot-classify</span> (~45&nbsp;s),
+<span class="mono">npm run bench-bot-physics</span> (~1&nbsp;h), and — for the
+§4.8 capability separability screen and α̂ measurement —
+<span class="mono">npm run bench-bot-capval</span> (~6&nbsp;min). The production-issue replay diagnostics quoted in §5 come from
+targeted single-scenario replays documented in the audit trail, not from
+these sweep commands. Sightline-to-scenario
+bridges allow any benchmark case to be loaded into the interactive tool for
+visual inspection; the tool's independent analysis of a bridged case matched
+the generated truth to the reported precision (3.0&nbsp;NM slant range,
+12.3&nbsp;kt drift, against a 12.3&nbsp;kt true wind).</p>
+
+<h2><span class="secnum">9</span>References</h2>
+<ol class="refs">
+<li>S.&nbsp;C. Nardone and V.&nbsp;J. Aidala, "Observability criteria for
+bearings-only target motion analysis," <i>IEEE Transactions on Aerospace and
+Electronic Systems</i>, vol. AES-17, no. 2, pp. 162–166, March 1981.</li>
+<li>H.&nbsp;E. Rauch, F.&nbsp;Tung, and C.&nbsp;T. Striebel, "Maximum
+likelihood estimates of linear dynamic systems," <i>AIAA Journal</i>,
+vol. 3, no. 8, pp. 1445–1450, August 1965.</li>
+<li>Sitrec: situation recreation and analysis tool. Open source,
+github.com/MickWest/Sitrec2. Benchmark contract, audit trail, and results:
+<span class="mono">benchmarks/botbench/PLAN.md</span>.</li>
+</ol>
+
+<p class="small" style="margin-top:40px">Draft v0.7 &middot; 855 + 140 scenarios,
+7,828 total solver runs, zero execution failures &middot; all analyses deterministic
+and independently re-derived under adversarial audit.</p>
+</div>

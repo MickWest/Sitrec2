@@ -85,7 +85,7 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
         generatePlatformPath(spec.platform, n, times, fps, R);
 
     // --- target truth ------------------------------------------------------
-    let target, events;
+    let target, events, capabilityProfile = null;
     if (spec.target.kind === "venus") {
         // Lazy import keeps astronomy-engine out of non-venus scenarios.
         // eslint-disable-next-line global-require
@@ -94,6 +94,14 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
             site: {...site, id: spec.siteId},
             n, times, platformPositionENU: platformPos,
         });
+        events = [];
+    } else if (spec.target.kind === "capability") {
+        // Emerging-threats capability targets (envelope exceedance / novel tech).
+        // eslint-disable-next-line global-require
+        const {generateCapabilityTruth} = require("./capabilityTargets");
+        const r = generateCapabilityTruth(spec.target, {n, fps});
+        target = r.target;
+        capabilityProfile = r.capabilityProfile;
         events = [];
     } else {
         const r = generateTargetTruth(spec.target, {
@@ -161,6 +169,7 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
         },
         platform: {positionENU: platformPos, feasibility},
         target,
+        capabilityProfile,
         wind: {displacementPerFrameENU: windStep, sampledVelocityENU: windVel},
         observation,
         events,
