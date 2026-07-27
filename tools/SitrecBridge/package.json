@@ -18,7 +18,8 @@
     "esbuild": "^0.28.1"
   },
   "overrides": {
-    "ip-address": "^10.2.0"
+    "ip-address": "^10.2.0",
+    "@hono/node-server": "^2.0.5"
   },
   "engines": {
     "node": ">=18"
