@@ -42,8 +42,10 @@ Military-standard metadata (STANAG 0601) from surveillance platforms. Contains s
 
 ### STANAG 4676
 
-NATO track exchange format (XML). The track point's `dynamics/pos` is the standard's
-authoritative estimate of the tracked object and imports as the **primary track**,
+NATO track exchange format, accepted as **XML** (the standard's own container) and as a
+flattened **CSV** export of the same data — both load identically. The track point's
+`dynamics/pos` is the standard's authoritative estimate of the tracked object and
+imports as the **primary track**,
 labelled **(Target)**. Files produced by GXP InMotion also carry two proprietary
 positions per point — the endpoints of the sensor's line of sight through the tracked
 pixel — which import as supplementary reference tracks: **(Platform)** (`posHigh`, the
@@ -56,9 +58,27 @@ ground-locks the target, `dynamics/pos` coincides with `posLow` and the duplicat
 dropped automatically, so such files yield two tracks instead of three (the surviving
 Target track is on the ground in that case).
 
-STANAG heights are WGS-84 ellipsoidal (HAE), declared by the `<dynamics cs="...">`
-attribute. Sitrec reads it and skips the MSL→HAE geoid conversion that other (MSL)
-sources get — without this the track would sit ~N metres underground (N is the local
+The **CSV** flavour carries one row per track point, with the three positions in parallel
+column families:
+
+| Columns | Meaning |
+|---------|---------|
+| `UTC0` | file base time, epoch milliseconds (constant on every row) |
+| `UTC` / `t` | epoch milliseconds for this point / its time in seconds relative to `UTC0` |
+| `FRM` | source video frame number (not used — the pipeline is time-based) |
+| `TPLAT`, `TPLON`, `TPHAE` | the tracked object — XML `dynamics/pos` → **(Target)** |
+| `SLAT`, `SLON`, `SHAE` | the sensor end of the ray — XML `posHigh` → **(Platform)** |
+| `GLAT`, `GLON`, `HAE` | the ground intersection — XML `posLow` → **(Ground)** |
+
+Header matching is case-insensitive and order-independent, and extra columns are ignored.
+Detection requires the `TP*` family plus at least one of the `S*`/`G*` families, so a CSV
+carrying only a target position keeps loading as a [generic CSV](#generic-csv). A missing
+`UTC` column falls back to `UTC0` + `t`.
+
+STANAG heights are WGS-84 ellipsoidal (HAE) — declared in XML by the `<dynamics cs="...">`
+attribute, and stated outright by the CSV's `HAE`/`SHAE`/`TPHAE` column names. Sitrec
+reads this and skips the MSL→HAE geoid conversion that other (MSL) sources get — without
+this the track would sit ~N metres underground (N is the local
 EGM96 geoid undulation, e.g. ≈ −19 m in Colorado). Note the **(Ground)** point is the
 *producer's* line-of-sight/DEM intersection: it can sit a few metres above or below
 Sitrec's terrain wherever the two elevation models disagree, which is normal.
@@ -381,7 +401,7 @@ Exports write each format's conventional datum, converting via the EGM96 geoid a
   re-importing such a CSV detects the HAE column and preserves the datum, so a
   STANAG → MISB CSV → Sitrec round trip is loss-free.
 
-There is no STANAG 4676 (XML) exporter; STANAG-derived tracks export through the
+There is no STANAG 4676 exporter (XML or CSV); STANAG-derived tracks export through the
 formats above.
 
 ## MISB Track Data

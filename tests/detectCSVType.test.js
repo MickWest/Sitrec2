@@ -2,9 +2,9 @@
  * Tests for detectCSVType() — the CSV format classifier in CFileManager.
  *
  * detectCSVType takes a parsed CSV (array of arrays) and returns a string
- * identifying the format: "Airdata", "MISB_FULL", "MISB1", "CUSTOM1",
- * "CUSTOM_FLL", "FR24CSV", "AZIMUTH", "ELEVATION", "HEADING", "FOV",
- * "FEATURES", or "Unknown".
+ * identifying the format: "Airdata", "MISB_FULL", "MISB1", "STANAG_CSV",
+ * "CUSTOM1", "CUSTOM_FLL", "FR24CSV", "AZIMUTH", "ELEVATION", "HEADING",
+ * "FOV", "FEATURES", or "Unknown".
  *
  * Since CFileManager has a deep dependency chain (Three.js, DOM, etc.),
  * we re-implement the detection logic from source and test it directly.
@@ -15,6 +15,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import {isSTANAGCSV} from '../src/TrackFiles/CTrackFileSTANAGCSV';
 
 // Extract detectCSVType source and re-implement it for testing
 // This avoids the deep CFileManager import chain
@@ -42,6 +43,9 @@ function detectCSVType(csv, options = {}) {
     if (csv[0][0] === "DPTS" && csv[0][1] === "Security:") return "MISB1";
     if (csv[0].includes("Sensor Latitude") || csv[0].includes("SensorLatitude")) return "MISB1";
     if (csv[0][0].toLowerCase() === "frame" && csv[0][1].toLowerCase() === "latitude" && csv[0][2].toLowerCase() === "longitude") return "CUSTOM_FLL";
+    // Uses the real predicate (dependency-free) — its position ahead of isCustom1 is
+    // load-bearing: a STANAG CSV also matches the generic Custom1 header lists.
+    if (isSTANAGCSV(csv)) return "STANAG_CSV";
     if (isCustom1(csv)) return "CUSTOM1";
     if (isFR24CSV(csv)) return "FR24CSV";
     if ((csv[0][0].toLowerCase() === "frame" || csv[0][0].toLowerCase() === "time") && csv[0][1].toLowerCase() === "az") return "AZIMUTH";
@@ -102,6 +106,30 @@ describe('detectCSVType', () => {
         test('detects FR24CSV when isFR24CSV returns true', () => {
             const csv = [["Timestamp", "UTC", "Callsign", "Position"]];
             expect(detectCSVType(csv, {isFR24CSV: () => true})).toBe("FR24CSV");
+        });
+    });
+
+    // The STANAG 4676 CSV export carries the tracked object plus both line-of-sight
+    // endpoints. It must be classified before CUSTOM1, which would otherwise claim it on
+    // its UTC/TPLAT/TPLON headers and import only the target position.
+    describe('STANAG 4676 CSV', () => {
+        const stanagCSV = [
+            ["UTC0", "FRM", "UTC", "t", "GLAT", "GLON", "HAE", "SLAT", "SLON", "SHAE", "TPLAT", "TPLON", "TPHAE"],
+            ["1467215856006", "42", "1467215856006", "0",
+                "40.4536", "-104.8801", "1430.7", "40.4213", "-104.8666", "3305.4", "40.4482", "-104.8779", "1744.3"],
+        ];
+
+        test('detects STANAG_CSV by its column families', () => {
+            expect(detectCSVType(stanagCSV)).toBe("STANAG_CSV");
+        });
+
+        test('wins over CUSTOM1, which also matches these headers', () => {
+            expect(detectCSVType(stanagCSV, {isCustom1: () => true})).toBe("STANAG_CSV");
+        });
+
+        test('a target-only CSV still classifies as CUSTOM1', () => {
+            const targetOnly = [["UTC", "TPLAT", "TPLON", "TPHAE"], ["1467215856006", "40.4", "-104.8", "1744"]];
+            expect(detectCSVType(targetOnly, {isCustom1: () => true})).toBe("CUSTOM1");
         });
     });
 

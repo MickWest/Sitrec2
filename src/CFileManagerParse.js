@@ -20,6 +20,7 @@ import {
     parseXml,
 } from "./KMLUtils";
 import {CNodeArray} from "./nodes/CNodeArray";
+import {CTrackFileSTANAGCSV, isSTANAGCSV} from "./TrackFiles/CTrackFileSTANAGCSV";
 
 const trackFileClasses = [
     CTrackFileKML,
@@ -88,7 +89,7 @@ export function detectTXTType(text) {
 
 /**
  * Detects the type of a CSV file based on header row patterns.
- * Returns "Airdata", "MISB1", "CUSTOM1", "CUSTOM_FLL", "FR24CSV",
+ * Returns "Airdata", "MISB1", "STANAG_CSV", "CUSTOM1", "CUSTOM_FLL", "FR24CSV",
  * "AZIMUTH", "ELEVATION", "HEADING", "FOV", "FEATURES", or "Unknown".
  */
 export function detectCSVType(csvRows) {
@@ -111,6 +112,13 @@ export function detectCSVType(csvRows) {
 
     if (csvRows[0][0].toLowerCase() === "frame" && csvRows[0][1].toLowerCase() === "latitude" && csvRows[0][2].toLowerCase() === "longitude") {
         return "CUSTOM_FLL";
+    }
+
+    // Must precede isCustom1: a STANAG CSV's UTC/TPLAT/TPLON headers also satisfy the
+    // generic Custom1 header lists, which would import only the target position and
+    // silently drop the Platform and Ground line-of-sight tracks.
+    if (isSTANAGCSV(csvRows)) {
+        return "STANAG_CSV";
     }
 
     if (isCustom1(csvRows)) {
@@ -1443,6 +1451,13 @@ export const parseMethods = {
                         } else {
                             parsed = new CTrackFileMISB(csvMisb);
                         }
+                        dataType = "trackfile";
+                    } else if (dataType === "STANAG_CSV") {
+                        // The CSV flavour of STANAG 4676. Wrapped in its own CTrackFile
+                        // (not converted to a single MISB array) so it yields the same
+                        // Target/Platform/Ground sub-tracks, roles and HAE datum as the
+                        // XML flavour — see CTrackFileSTANAGBase.
+                        parsed = new CTrackFileSTANAGCSV(parsed);
                         dataType = "trackfile";
                     } else if (dataType === "CUSTOM1") {
                         const custom1Misb = parseCustom1CSV(parsed);
