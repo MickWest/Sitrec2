@@ -84,8 +84,13 @@ export class CTrackFileSTANAGBase extends CTrackFile {
         return this._pointsCache;
     }
 
+    // True only if the file yields at least one track. Deliberately the same condition as
+    // getTrackCount() > 0, so the two can never disagree: doesContainTrack() is the gate
+    // that decides whether to hand the file to TrackManager.addTracks() (see
+    // CFileManagerParse.handleParsedFile), so a file of rows that carry a timestamp but no
+    // position must report false here rather than be imported as an empty track.
     doesContainTrack() {
-        return this._points().length > 0;
+        return this._distinctTracks().length > 0;
     }
 
     _hasPlatformOrGround() {

@@ -156,6 +156,59 @@ describe('CTrackFileSTANAGCSV', () => {
             expect(misb[1][MISB.UnixTimeStamp]).toBeCloseTo(1467215860535.028, 1);
         });
 
+        // doesContainTrack() gates whether CFileManagerParse hands the file to
+        // TrackManager.addTracks(), so it must never claim a track the file cannot
+        // produce. It is defined as getTrackCount() > 0 precisely so the two agree.
+        describe('position-less rows are not a track', () => {
+            const header = [...HEADER];
+
+            const expectNoTrack = (rows) => {
+                const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+                const f = new CTrackFileSTANAGCSV(rows);
+                expect(f.doesContainTrack()).toBe(false);
+                expect(f.getTrackCount()).toBe(0);
+                expect(f.toMISB(0)).toBe(false);
+                warnSpy.mockRestore();
+            };
+
+            test('rows with a timestamp but every position blank', () => {
+                const row = new Array(header.length).fill('');
+                row[0] = '1467215856006';   // UTC0
+                row[2] = '1467215856006';   // UTC
+                row[3] = '0';               // t
+                expectNoTrack([header, row, row.slice()]);
+            });
+
+            test('entirely blank rows', () => {
+                expectNoTrack([header, new Array(header.length).fill('')]);
+            });
+
+            test('rows whose positions are non-numeric', () => {
+                const row = new Array(header.length).fill('n/a');
+                row[2] = '1467215856006';
+                expectNoTrack([header, row]);
+            });
+
+            test('a file with real points is unaffected', () => {
+                expect(trackFile.doesContainTrack()).toBe(true);
+                expect(trackFile.getTrackCount()).toBeGreaterThan(0);
+            });
+
+            // A position-less row must not displace the real points around it.
+            test('a blank row between real rows is dropped, not counted', () => {
+                const blank = new Array(HEADER.length).fill('');
+                blank[2] = '1467215858000';
+                const withHole = [csvRows[0], csvRows[1], blank, ...csvRows.slice(2)];
+                const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+                const f = new CTrackFileSTANAGCSV(withHole);
+                expect(f.getTrackCount()).toBe(3);
+                expect(f.toMISB(0).length).toBe(11);
+                expect(f.toMISB(1).length).toBe(11);
+                expect(f.toMISB(2).length).toBe(11);
+                warnSpy.mockRestore();
+            });
+        });
+
         test('returns false for an out-of-range track index', () => {
             const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
             expect(trackFile.toMISB(3)).toBe(false);

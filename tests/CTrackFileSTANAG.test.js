@@ -66,6 +66,24 @@ describe('CTrackFileSTANAG', () => {
             const stringTrack = new CTrackFileSTANAG('not an object');
             expect(stringTrack.doesContainTrack()).toBe(false);
         });
+
+        // doesContainTrack() gates whether the file is handed to TrackManager.addTracks(),
+        // so a structurally valid <track> that yields no usable position must report false
+        // rather than be imported as an empty track. Same contract as the CSV flavour:
+        // doesContainTrack() agrees with getTrackCount() > 0.
+        test('returns false for a track whose points have no usable position', () => {
+            const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+            const empty = parseXml(`<?xml version="1.0"?>
+                <nitsRoot xmlns="urn:nato:niia:stanag:4676:isrtrackingstandard:b:1">
+                    <message><baseTime>2016-06-29T15:57:36.006Z</baseTime><track><segment>
+                        <tp><relTime>0</relTime><dynamics cs="WGS_84"><pos></pos></dynamics></tp>
+                    </segment></track></message>
+                </nitsRoot>`);
+            const emptyTrack = new CTrackFileSTANAG(empty);
+            expect(emptyTrack.doesContainTrack()).toBe(false);
+            expect(emptyTrack.getTrackCount()).toBe(0);
+            warnSpy.mockRestore();
+        });
     });
 
     describe('toMISB', () => {

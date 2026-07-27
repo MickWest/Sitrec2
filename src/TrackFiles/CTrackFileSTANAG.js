@@ -23,22 +23,25 @@ export class CTrackFileSTANAG extends CTrackFileSTANAGBase {
         }
     }
 
-    // Structural check: a well-formed message with a track element. Kept separate from the
-    // base's points-based default so an empty-but-valid <track> is still recognised as a
-    // STANAG file (toMISB then reports the lack of usable points).
+    // Structural check (a well-formed message with a track element) AND the base's
+    // requirement that the file actually yields a track. The structural half short-circuits
+    // so malformed data is rejected without attempting a parse; the base half keeps the
+    // contract that doesContainTrack() agrees with getTrackCount() > 0, so a <track>
+    // holding no usable <tp> positions is not imported as an empty track.
     doesContainTrack() {
         if (!this.data || typeof this.data !== 'object') {
             return false;
         }
 
         try {
-            if (this.data.nitsRoot?.message?.track) {
-                return true;
+            if (!this.data.nitsRoot?.message?.track) {
+                return false;
             }
-            return false;
         } catch (e) {
             return false;
         }
+
+        return super.doesContainTrack();
     }
 
     // Return the array of track-point (<tp>) nodes, normalising the single-vs-array case.

@@ -126,23 +126,31 @@ export class CTrackFileSTANAGCSV extends CTrackFileSTANAGBase {
                     time = baseTime + t * 1000;
                 }
             }
-            // A point with no usable time can't be placed on the timeline, and dropping the
-            // whole row keeps all three position sequences the same length and aligned.
+            // A point with no usable time can't be placed on the timeline.
             if (!Number.isFinite(time)) {
                 skipped++;
                 continue;
             }
 
-            points.push({
-                time,
-                target: triple(row, targetCols),
-                platform: triple(row, platformCols),
-                ground: triple(row, groundCols),
-            });
+            const target = triple(row, targetCols);
+            const platform = triple(row, platformCols);
+            const ground = triple(row, groundCols);
+            // A row carrying a timestamp but no position at all is not a track point —
+            // it contributes nothing to any of the three tracks. Dropping it here (rather
+            // than letting toMISB skip it) keeps _points() honest, so doesContainTrack()
+            // does not report a track for a file of position-less rows. Dropping is safe:
+            // all three sequences are derived from this same array, so they stay aligned
+            // and equal-length for the duplicate check.
+            if (!target && !platform && !ground) {
+                skipped++;
+                continue;
+            }
+
+            points.push({time, target, platform, ground});
         }
 
         if (skipped > 0) {
-            console.warn(`STANAG CSV: skipped ${skipped} rows with no usable timestamp`);
+            console.warn(`STANAG CSV: skipped ${skipped} rows with no usable timestamp or position`);
         }
 
         return points;
