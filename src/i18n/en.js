@@ -376,6 +376,7 @@ const en = {
         extrapolateTrack: "Extrapolate Track",
         curveType: "Curve Type",
         altLockAGL: "Alt Lock AGL",
+        exportSpline: "Export Spline",
         deleteTrack: "Delete Track",
     },
     gpuMonitor: {

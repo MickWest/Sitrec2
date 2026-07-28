@@ -407,7 +407,27 @@ export function plausibilityRating(h) {
     const baseRank = result.rank;
     if (pins.length) {
         const capRank = pins.length >= 2 ? 1 : 2;
-        if (result.rank > capRank) result = tierForRank(capRank);
+        // The RANK cap stays (ordering and eligibility are unchanged), but when
+        // the PIN is what binds, the label must not come from tierForRank, whose
+        // words — "Moderate", "Low" — describe how ordinary the OBJECT's motion
+        // is. A pinned fit has not been judged on its motion at all; its search
+        // hit one of the model's own limits and stopped. Naming that "Low" is
+        // the fit-vs-ordinariness confusion the comment above exists to prevent,
+        // with pins as a third binding dimension that had no vocabulary.
+        //
+        // Measured: bot-0009's balloon — closest to truth on that scenario at
+        // 0.037 deg — was badged "Moderate"; bot-0006's genuine high-altitude
+        // balloon was badged "Low".
+        //
+        // ONLY WHEN THE PIN IS BINDING. If the fit or the kinematics is already
+        // at or below the cap, that is a real, measured failure and its label is
+        // the stronger statement — a model that reproduces the sightlines poorly
+        // AND pins should be reported as fitting poorly, not as merely untested.
+        // Relabelling unconditionally (as a first version of this did) would
+        // overwrite "Poor fit" and "Kinematically extreme" and hide them.
+        if (result.rank > capRank) {
+            result = {...tierForRank(capRank), label: "Not fully tested"};
+        }
         reasons.push(`${pins.length} locally load-bearing model limit${pins.length === 1 ? "" : "s"}: ${pins.join(", ")}`);
     }
     if (optimizerWarnings.length) {
@@ -753,7 +773,13 @@ export function assessExecutiveVerdict(hypotheses, context = {}) {
 // hypothesis; Infinity = truth selected but not comparable (direction-only
 // hypothesis, or no time overlap) — those fall to the end of the group and
 // keep the normal screening order among themselves.
-function truthSortScore(x) {
+//
+// useTruth = false presents the SAME already-computed results blind: the
+// comparisons stay attached to the hypotheses (the report and the tiles still
+// show them) but they no longer decide the order. That is what the gallery's
+// "Use Truth Track" toggle switches, without re-running anything.
+function truthSortScore(x, useTruth = true) {
+    if (!useTruth) return null;
     const tc = x?.h?.truthComparison;
     if (tc === undefined || tc === null) return null;
     return tc.comparable && Number.isFinite(tc.score) ? tc.score : Infinity;
@@ -763,13 +789,13 @@ function truthSortScore(x) {
 // ordering. `crossCategory` inserts the category-priority tiebreak, which must
 // NOT apply when sorting within a single category (there it would be a no-op
 // anyway) and which exists to keep the flat order sound — see rankAllHypotheses.
-function makeComparator(crossCategory) {
+function makeComparator(crossCategory, useTruth = true) {
     return (a, b) => {
         // With a truth track selected, closeness to it IS the score — it
         // overrides the screening tiers; they remain the tiebreak. This is the
         // one key that IS soundly comparable across every category, which is
         // why truth mode gives a genuinely quality-led flat order.
-        const ta = truthSortScore(a), tb = truthSortScore(b);
+        const ta = truthSortScore(a, useTruth), tb = truthSortScore(b, useTruth);
         if (ta !== null || tb !== null) {
             // Truth separation compares completed solutions. A provisional fit
             // that stopped before convergence must not lead merely because its
@@ -822,12 +848,15 @@ function makeComparator(crossCategory) {
 
 const compareWithinCategory = makeComparator(false);
 const compareAcrossCategories = makeComparator(true);
+// Blind variants: identical except that a truth comparison never decides order.
+const compareWithinCategoryBlind = makeComparator(false, false);
+const compareAcrossCategoriesBlind = makeComparator(true, false);
 
-export function rankHypotheses(hypotheses) {
+export function rankHypotheses(hypotheses, {useTruth = true} = {}) {
     const ranked = (hypotheses || [])
         .filter((h) => h.track && h.metricsFull)
         .map((h) => ({h, r: plausibilityRating(h)}))
-        .sort(compareWithinCategory);
+        .sort(useTruth ? compareWithinCategory : compareWithinCategoryBlind);
 
     // A display tie is intentionally narrow: same comparison category, both
     // complete, both passing the broad screen, and within the documented score
@@ -835,7 +864,7 @@ export function rankHypotheses(hypotheses) {
     // Truth mode has its own explicit metric (meters of separation), so the
     // secondary-score tie flag does not apply there.
     if (ranked.length > 1 && ranked[0].r.eligible && ranked[0].r.rank >= 3
-        && truthSortScore(ranked[0]) === null) {
+        && truthSortScore(ranked[0], useTruth) === null) {
         const top = ranked[0];
         for (const x of ranked) {
             x.tied = x.r.eligible && x.r.rank === top.r.rank
@@ -864,17 +893,17 @@ export function rankHypotheses(hypotheses) {
  * ordinals are computed from the per-category sort, which is the only place a
  * within-category score comparison is sound.
  */
-export function rankAllHypotheses(hypotheses) {
+export function rankAllHypotheses(hypotheses, opts = {}) {
     const items = [];
-    for (const group of groupAndRankHypotheses(hypotheses)) items.push(...group.items);
-    items.sort(compareAcrossCategories);
+    for (const group of groupAndRankHypotheses(hypotheses, opts)) items.push(...group.items);
+    items.sort(opts.useTruth === false ? compareAcrossCategoriesBlind : compareAcrossCategories);
     return items;
 }
 
-export function groupAndRankHypotheses(hypotheses) {
+export function groupAndRankHypotheses(hypotheses, opts = {}) {
     return RANKING_CATEGORIES.map((category) => {
         const members = (hypotheses || []).filter((h) => hypothesisCategory(h).key === category.key);
-        const items = rankHypotheses(members);
+        const items = rankHypotheses(members, opts);
         items.forEach((item, index) => {
             item.category = category;
             item.groupIndex = index;
@@ -982,16 +1011,18 @@ export function truthComparisonSummary(tc) {
     return text;
 }
 
-export function rankingExplanation(h, rating = plausibilityRating(h)) {
+export function rankingExplanation(h, rating = plausibilityRating(h), {useTruth = true} = {}) {
     const score = Number.isFinite(rating.secondaryScore)
         ? ` Within-group score ${rating.secondaryScore.toFixed(2)} (lower is better within this category).`
         : "";
     const inactive = rating.inactivePins?.length
         ? ` Parameters at bounds but not locally load-bearing: ${rating.inactivePins.join(", ")}.`
         : "";
-    // With a truth track selected, completeness gates the truth comparison,
-    // which then drives rank; the broad screen remains as context.
-    const truth = truthComparisonSummary(h?.truthComparison);
+    // With a truth track selected AND applied, completeness gates the truth
+    // comparison, which then drives rank; the broad screen remains as context.
+    // With it merely selected (gallery "Use Truth Track" off), the order is the
+    // ordinary screening order, so the basis must not claim otherwise.
+    const truth = useTruth ? truthComparisonSummary(h?.truthComparison) : null;
     const truthText = truth ? `${truth} Broad screen: ` : "";
     return `${truthText}${rating.label}: ${rating.reasons.join("; ")}.${inactive}${score}`;
 }

@@ -2290,6 +2290,13 @@ class CTrackManager extends CManager {
             setRenderOne(true);
         });
 
+        // Write the control points out as a droppable .spline.json. Lives on the
+        // unsmoothed spline node (that's where the control points are), but is
+        // surfaced here so it sits with the rest of the track's controls.
+        guiFolder.add({
+            exportSpline: () => splineEditorNode.exportSplineJSON()
+        }, "exportSpline").name(t("trackManager.exportSpline"));
+
         // Add delete button to the folder
         const dummy = {
             deleteTrack: async () => {

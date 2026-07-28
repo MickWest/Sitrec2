@@ -25,6 +25,17 @@ export class CNodeTrack extends CNodeEmptyArray {
         this.checkDisplayOutputs = true;
         this.elevationCache = null;
         this._needsRecalculate = false;
+
+        // Opt-in: offer this track in the traverse analysis "Truth Track"
+        // dropdown even though it is not a TrackManager data track. That
+        // dropdown is normally sourced from imported data tracks; sitch-built
+        // reference paths (e.g. the hand-authored Lantern/UAP spline solutions
+        // in the legacy Aguadilla sitch) have no TrackManager entry, so they
+        // declare themselves here. Set to a string to name the menu entry, or
+        // just true to use the node's menuText/id.
+        if (v.truthTrackCandidate) {
+            this.truthTrackCandidate = v.truthTrackCandidate;
+        }
     }
 
     // Ensure deferred recalculation has run. Call this instead of recalculate()

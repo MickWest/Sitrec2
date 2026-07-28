@@ -9,6 +9,8 @@ import {adjustHeightAboveGround, adjustHeightHAE, pointAbove} from "../threeExt"
 import {EventManager} from "../CEventManager";
 import {conformControlPointsToAltitudeLock} from "./trackElevationUtils";
 import {isAGLLockActive, isAltitudeLockActive} from "../AltitudeLock";
+import {makeSplineJSON} from "../SplineInterchange";
+import {saveAs} from "file-saver";
 
 // a node wrapper for varioius spline editors
 export class CNodeSplineEditor extends CNodeTrack {
@@ -25,7 +27,14 @@ export class CNodeSplineEditor extends CNodeTrack {
         
         // Store the curve type
         this.curveType = v.type ? v.type.toLowerCase() : 'chordal';
-        
+
+        // Human-readable name, used for the Export Spline filename and the
+        // "name" field in the exported interchange file. TrackManager sets
+        // this directly for synthetic tracks; sitch-built splines pass it in.
+        if (v.menuText !== undefined) {
+            this.menuText = v.menuText;
+        }
+
         assert(v.view !== undefined, "CNodeSplineEditor needs a view");
         const view = NodeMan.get(v.view) // convert id to node, if needed
         const renderer = view.renderer;
@@ -80,7 +89,7 @@ export class CNodeSplineEditor extends CNodeTrack {
             this.gui.add(this,"enable").onChange( v =>{
                this.splineEditor.setEnable(v)
             })
-            this.gui.add(this,"exportSpline")
+            this.gui.add(this,"exportSplineJSON").name("Export Spline")
         }
 
         EventManager.addEventListener("elevationChanged", () => {
@@ -286,8 +295,46 @@ export class CNodeSplineEditor extends CNodeTrack {
         }
     }
 
-    exportSpline() {
-        this.splineEditor.exportSpline()
+    // Display name for this spline. Synthetic tracks get menuText/shortName
+    // from TrackManager; sitch-built splines fall back to the node id.
+    splineName() {
+        return this.menuText || this.shortName || this.id;
+    }
+
+    // Colour, when this spline is the data node of a synthetic track. Sitch-built
+    // splines keep their colour on a separate CNodeDisplayTrack, so they export
+    // without one and the importer picks a palette colour.
+    splineColorHex() {
+        const trackOb = TrackManager.get(this.id.replace(/_unsmoothed$/, ""), false);
+        const c = trackOb?.trackColor;
+        if (!c) return undefined;
+        const hex = (Math.round(c.r * 255) << 16) | (Math.round(c.g * 255) << 8) | Math.round(c.b * 255);
+        return "#" + hex.toString(16).padStart(6, "0");
+    }
+
+    // Write the control points out as a .spline.json interchange file — the
+    // droppable equivalent of the hard-coded initialPoints arrays in the older
+    // sitches. See src/SplineInterchange.js for the format.
+    exportSplineJSON(inspect = false) {
+        const json = makeSplineJSON({
+            name: this.splineName(),
+            positions: this.splineEditor.positions,
+            frameNumbers: this.splineEditor.frameNumbers,
+            frames: this.frames,
+            curveType: this.curveType,
+            constantSpeed: this.constantSpeed,
+            extrapolateTrack: this.extrapolateTrack,
+            altitudeLock: this.altitudeLock,
+            altitudeLockAGL: this.altitudeLockAGL,
+            color: this.splineColorHex(),
+        });
+
+        if (inspect) {
+            return {desc: "Spline Control Points (JSON)", json};
+        }
+
+        saveAs(new Blob([JSON.stringify(json, null, 2)], {type: "application/json"}),
+            json.name + ".spline.json");
     }
 
     update(f) {

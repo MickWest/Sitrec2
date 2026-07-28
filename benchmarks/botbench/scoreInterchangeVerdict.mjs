@@ -31,6 +31,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const IN = process.argv[2] || path.resolve(__dirname, "results/interchange-verdict.json");
 const ALL = path.resolve(__dirname, "results/interchange/answers/All");
 
+// The three truth classes Sitrec actually models. Declared here rather than
+// beside score(), because the input validation below needs it — a `const` is in
+// its temporal dead zone until its declaration runs, so referring to it from
+// earlier code throws at startup rather than failing a check.
+const HAS_CLASS = new Set(["balloon", "aircraft", "venus"]);
+
 const rows = JSON.parse(fs.readFileSync(IN, "utf8"));
 
 // REFUSE TO SCORE AN INVALID *OR* INCOMPLETE ARTIFACT.
@@ -64,11 +70,22 @@ if (!Array.isArray(rows) || rows.length === 0) {
     refuse("the file holds no rows", [`parsed type: ${Array.isArray(rows) ? "empty array" : typeof rows}`]);
 }
 
-const invalid = rows.filter((r) => r.error || r.executiveCode === null);
+// `== null` deliberately, to catch BOTH null and undefined. A row from an older
+// schema, a hand-edited file, or a partially-written object may lack the key
+// entirely — and `undefined === null` is false, so a strict check waves it
+// through to score() where it falls out as "miss" and is blamed on the analysis.
+// Identity and config are checked the same way: a row that cannot say which
+// scenario it is cannot be counted in any denominator.
+const invalid = rows.filter((r) => r.error
+    || r.executiveCode == null || r.id == null || r.config == null
+    || !Array.isArray(r.viableClasses));
 if (invalid.length) {
-    refuse(`${invalid.length} of ${rows.length} rows carry no verdict`,
-        invalid.map((r) => `${r.id} [${r.config}] `
-            + (r.error ? `errored: ${String(r.error).split("\n")[0]}` : "no executive verdict")));
+    refuse(`${invalid.length} of ${rows.length} rows are not scoreable`,
+        invalid.map((r) => `${r.id ?? "<no id>"} [${r.config ?? "<no config>"}] `
+            + (r.error ? `errored: ${String(r.error).split("\n")[0]}`
+                : r.executiveCode == null ? "no executive verdict"
+                    : !Array.isArray(r.viableClasses) ? "viableClasses missing or not an array"
+                        : "missing id or config")));
 }
 
 // DUPLICATES, always — a repeated row corrupts every denominator.
@@ -91,6 +108,74 @@ const dupes = [...counts.entries()].filter(([, c]) => c > 1);
 if (dupes.length) {
     refuse(`${dupes.length} (scenario, config) pair(s) appear more than once`,
         dupes.map(([k, c]) => `${k.replace("|", " [")}] appears ${c} times`));
+}
+
+// TRUTH LABELS — the fields score() BRANCHES on, and the ones whose absence is
+// silently survivable.
+//
+// The checks above cover the verdict side. They do nothing for the truth side,
+// and score() reads `objectClass`, `truthClass` and `anomalous` without
+// verifying any of them:
+//
+//   objectClass missing -> HAS_CLASS.has(undefined) is false -> the row is
+//     treated as an UNMODELLED truth, so a failure becomes "honest-unknown",
+//     which is a pass. Measured: strip bot-0002's label and a balloon `miss`
+//     silently becomes a pass.
+//   truthClass missing on a modelled class -> every comparison against it fails
+//     -> a correct identification is recorded as a false ID.
+//   anomalous missing on an "anomalous" row -> control detection fails, and a
+//     control cell is scored against rules written for a real anomaly.
+//
+// readInterchange leaves `labels` null when a .truth.json is absent, so this is
+// reachable by deleting one file — and it fails in the flattering direction,
+// like every other defect this harness has had.
+// VALIDATE AGAINST A KNOWN SET, NOT MERELY AGAINST null.
+//
+// A first version only tested `objectClass != null`, which fails OPEN: any
+// unrecognised value — a typo like "ballon", a class added to the generator but
+// not here — is not in HAS_CLASS, so it is silently treated as an UNMODELLED
+// truth and its failures score as "honest-unknown" passes. An unknown label is
+// not an unmodelled object; it is a label this scorer does not understand, and
+// the two must not share a bucket.
+//
+// The expected truth -> Sitrec class map, mirroring the runner's. Duplicated
+// deliberately: the point is to CHECK the runner's output, so deriving it from
+// the same import would make the check vacuous.
+const TRUTH_TO_CLASS = {
+    balloon: "balloon",
+    aircraft: "fixedWing",
+    venus: "knownObject",
+    bird: null,
+    aerostat: null,
+    anomalous: null,
+};
+
+const truthProblem = (r) => {
+    if (typeof r.objectClass !== "string" || !r.objectClass) {
+        return "no objectClass — is its .truth.json missing?";
+    }
+    if (!(r.objectClass in TRUTH_TO_CLASS)) {
+        return `unrecognised objectClass "${r.objectClass}" — this scorer has no `
+            + "rule for it, and guessing would score it as an unmodelled object";
+    }
+    const want = TRUTH_TO_CLASS[r.objectClass];
+    // `undefined` (key absent) is distinct from an explicit null, which is the
+    // correct value for an unmodelled class.
+    if (r.truthClass === undefined) return "truthClass key is absent";
+    if ((r.truthClass ?? null) !== want) {
+        return `truthClass "${r.truthClass}" contradicts objectClass `
+            + `"${r.objectClass}" (expected ${want === null ? "null" : `"${want}"`})`;
+    }
+    if (r.objectClass === "anomalous" && typeof r.anomalous !== "boolean") {
+        return "anomalous cell with no anomalous flag — control vs anomaly is undecidable";
+    }
+    return null;
+};
+
+const untruthed = rows.map((r) => [r, truthProblem(r)]).filter(([, p]) => p);
+if (untruthed.length) {
+    refuse(`${untruthed.length} of ${rows.length} rows have unusable truth labels`,
+        untruthed.map(([r, p]) => `${r.id} [${r.config}] ${p}`));
 }
 
 // Completeness: every published scenario must appear for every config present.
@@ -124,7 +209,6 @@ for (const r of rows) {
     };
 }
 
-const HAS_CLASS = new Set(["balloon", "aircraft", "venus"]);
 
 /**
  * The four "anomalous" cells are TWO MATCHED PAIRS, and the truth file's

@@ -437,6 +437,7 @@ export const SitAguadilla = {
 
         const groundSpline = new CNodeSplineEditor({
             id:"groundSplineEditor",
+            menuText: "Aguadilla Ground Spline",
 //            type:"linear",   // linear or catmull
             type:"chordal",   // chordal give smoother velocities
 //            type:"catmull",   // linear or catmull
@@ -500,6 +501,7 @@ export const SitAguadilla = {
 
         const uapSpline = new CNodeSplineEditor({
             id:"uapSplineEditor",
+            menuText: "Aguadilla UAP Spline",
 //            type:"linear",   // linear or catmull
             type:"chordal",   // chordal give smoother velocities
 //            type:"catmull",   // linear or catmull
@@ -511,6 +513,9 @@ export const SitAguadilla = {
 
             snapCamera:"jetTrackSmooth",
             snapTarget:"groundSplineEditor",
+
+            // hand-authored solution: offer it as a traverse-analysis Truth Track
+            truthTrackCandidate: "UAP Spline",
 
             initialPoints:[
                 [0, -4269.432647523577, 27.735346321459588, -943.2859957415844],
@@ -578,6 +583,7 @@ export const SitAguadilla = {
 
         const lanternSpline = new CNodeSplineEditor({
             id:"lanternSplineEditor",
+            menuText: "Aguadilla Lantern Spline",
 //            type:"linear",   // linear or catmull
             type:"chordal",   // linear or catmull
             scene: GlobalScene,
@@ -587,6 +593,9 @@ export const SitAguadilla = {
             terrainClamp: "TerrainModel",
             snapCamera:"jetTrackSmooth",
             snapTarget:"groundSplineEditor",
+
+            // hand-authored solution: offer it as a traverse-analysis Truth Track
+            truthTrackCandidate: "Lantern Spline",
 
             initialPoints:[
 

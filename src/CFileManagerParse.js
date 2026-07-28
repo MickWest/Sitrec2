@@ -76,6 +76,7 @@ import {convertTiffBufferToPngImage} from "./TIFFUtils";
 import {extractFlightClubInfo, flightClubToCSVStrings, isFlightClubJSON} from "./ParseFlightClubJSON";
 import {isSupportedModelFile} from "./ModelLoader";
 import {addOptionToGUIMenu} from "./lil-gui-extras";
+import {importSplineJSON, isSplineJSON} from "./SplineInterchange";
 
 /**
  * Detects the type of a TXT file based on content patterns.
@@ -552,6 +553,16 @@ export const parseMethods = {
 
         if (fileManagerEntry.dataType === "flightclub") {
             await this.handleFlightClubJSON(filename, parsedFile, fileManagerEntry);
+            return true;
+        }
+
+        if (fileManagerEntry.dataType === "spline") {
+            importSplineJSON(filename, parsedFile);
+            // The control points now live in the synthetic track, which the sitch
+            // serializes itself (TrackManager.serialize). Keeping the file too would
+            // re-import it on reload and duplicate the track — same reason FEATURES
+            // files are consumed rather than persisted.
+            fileManagerEntry.skipSerialization = true;
             return true;
         }
 
@@ -1575,6 +1586,12 @@ export const parseMethods = {
                         parsed = buffer;
                     } else if (isFlightClubJSON(jsonParsed)) {
                         dataType = "flightclub";
+                        parsed = jsonParsed;
+                    } else if (isSplineJSON(jsonParsed)) {
+                        // .spline.json — control points for a synthetic track.
+                        // Checked before detectTrackFile so it can't be claimed
+                        // by the generic JSON track handlers.
+                        dataType = "spline";
                         parsed = jsonParsed;
                     } else {
                         parsed = this.detectTrackFile(filename, jsonParsed);

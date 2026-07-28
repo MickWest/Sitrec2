@@ -85,6 +85,46 @@ describe("Traverse ranking", () => {
         expect(rankingExplanation(h, r)).toContain("vSink (max)");
     });
 
+    test("a pinned fit is labelled by INCOMPLETENESS, never by ordinariness", () => {
+        // The rank cap is an ordering device. The LABEL is a claim about the
+        // object, and a pinned fit has not been judged on its motion at all —
+        // its search hit one of the model's own limits and stopped. Labelling
+        // that "Moderate" or "Low" says the object's motion is unusual, which
+        // is not what was measured, and is the exact fit-vs-ordinariness
+        // confusion the surrounding code was written to prevent.
+        //
+        // Measured on BOT Bench: bot-0009's balloon, the closest candidate to
+        // truth on that scenario at 0.037 deg, was badged "Moderate"; bot-0006's
+        // genuine high-altitude balloon was badged "Low".
+        for (const pins of [["wind shear (max)"], ["wind shear (max)", "vRise (max)"]]) {
+            const r = plausibilityRating(hypothesis("lantern", {boundPinned: pins, errDeg: 0.01}));
+            expect(r.label).toBe("Not fully tested");
+            expect(r.label).not.toMatch(/Moderate|Low|Implausible|extreme/i);
+        }
+    });
+
+    test("...but a pin must NOT mask a fit that is independently bad", () => {
+        // "Not fully tested" is the right word only when the PIN is what binds.
+        // A model that reproduces the sightlines poorly, or requires extreme
+        // motion, has been measured and genuinely failed — that is the stronger
+        // statement and it must survive. Relabelling on every pin (as a first
+        // version of this fix did) overwrites it and downgrades a real failure
+        // into "we did not finish looking".
+        const badFit = plausibilityRating(hypothesis("lantern", {
+            boundPinned: ["wind shear (max)"], errDeg: 3.0,
+        }));
+        expect(badFit.label).toMatch(/Poor fit/i);
+        expect(badFit.label).not.toBe("Not fully tested");
+
+        const extreme = plausibilityRating(hypothesis("lantern", {
+            boundPinned: ["wind shear (max)"], errDeg: 0.01,
+            metrics: metrics({gMax: 40}),
+        }));
+        expect(extreme.label).toMatch(/extreme/i);
+        expect(extreme.label).not.toBe("Not fully tested");
+        expect(extreme.rank).toBe(0);
+    });
+
     test("inactive pins do not cap a tier, active unique constraints do", () => {
         const inactive = hypothesis("lantern", {boundInactive: ["vSink (max)"], errDeg: 0.01});
         expect(plausibilityRating(inactive).rank).toBe(3);

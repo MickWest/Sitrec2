@@ -1485,14 +1485,34 @@ let _truthTrackListener = null;        // our live tracksChanged hook, so we can
 const _autoSelectedTruthIDs = new Set();  // Truth_ tracks we already auto-selected once
 let _autoSelectTruthGen = -1;             // sitch generation the set above belongs to (TA-20)
 
-// Current {label → trackID} options for the dropdown, from the loaded tracks.
+// Menu label for a node that opted in via truthTrackCandidate (see CNodeTrack).
+function truthCandidateLabel(node) {
+    return typeof node.truthTrackCandidate === "string"
+        ? node.truthTrackCandidate
+        : (node.menuText ?? node.id);
+}
+
+// Current {label → trackID} options for the dropdown.
+//
+// Two sources: the loaded data tracks (TrackManager), plus any track NODE that
+// declares itself a candidate with truthTrackCandidate. The second source
+// exists for sitch-built reference paths that never go through TrackManager —
+// notably the legacy Aguadilla Lantern/UAP spline editors, which are
+// hand-authored solutions worth scoring the analysis against.
 function truthTrackOptions() {
     const options = {};
-    if (!TrackManager) return options;
-    TrackManager.iterate((key, trackOb) => {
-        if (trackOb?.trackID && trackOb?.trackNode) {
-            options[trackOb.menuText ?? trackOb.trackID] = trackOb.trackID;
-        }
+    if (TrackManager) {
+        TrackManager.iterate((key, trackOb) => {
+            if (trackOb?.trackID && trackOb?.trackNode) {
+                options[trackOb.menuText ?? trackOb.trackID] = trackOb.trackID;
+            }
+        });
+    }
+    NodeMan.iterate((id, node) => {
+        if (!node?.truthTrackCandidate) return;
+        const label = truthCandidateLabel(node);
+        // never shadow a data track that already claimed this label
+        if (options[label] === undefined) options[label] = id;
     });
     return options;
 }
@@ -1574,7 +1594,20 @@ function resolveTruthTrack() {
     TrackManager.iterate((key, trackOb) => {
         if (!found && trackOb?.trackID === id) found = trackOb;
     });
-    if (!found || !found.trackNode) return null;
+    if (!found || !found.trackNode) {
+        // Not a TrackManager data track — try a node that opted in directly.
+        // It has no track DATA node, so buildTruthReference gets no start/end
+        // time and treats the whole analysis window as covered. That is right
+        // for these: a spline editor is defined over all of Sit.frames.
+        const node = NodeMan.get(id, false);
+        if (!node?.truthTrackCandidate) return null;
+        return {
+            trackID: id,
+            label: truthCandidateLabel(node),
+            trackNode: node,
+            dataNode: null,
+        };
+    }
     return {
         trackID: id,
         label: found.menuText ?? id,
@@ -4354,7 +4387,7 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
         <div class="tg-d-sub">${escapeHtml(h.subtitle || "")}</div>
         <div class="tg-d-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}</div>
         <div class="tg-d-metrics">${statsHTML}</div>
-        <div class="tg-d-rank"><strong>Why it is screened and ordered here:</strong> ${escapeHtml(rankingExplanation(h, r))}</div>
+        <div class="tg-d-rank"><strong>Why it is screened and ordered here:</strong> ${escapeHtml(rankingExplanation(h, r, {useTruth: ctx.useTruth !== false}))}</div>
         <p class="tg-d-lead">${escapeHtml(prose.lead)}</p>
         ${seriesHTML}
         ${h.key === "lantern" ? windProfileComparisonHTML(h) : ""}
@@ -4416,8 +4449,23 @@ function familyDetailHTML(h) {
  * analysis. Removable via the X, the Close button, Escape, or a click on the
  * dark backdrop. Does not leak listeners.
  */
-function showResultGallery(results) {
+/**
+ * @param results the analysis results
+ * @param uiState carried across a "Use Truth Track" re-present (see
+ *        rerenderWithTruth): {useTruth, dismissed:Set<hypothesis>,
+ *        selected:hypothesis}. Reader state is carried by hypothesis IDENTITY
+ *        because the tile INDICES change when the ordering does.
+ */
+function showResultGallery(results, uiState = null) {
     const {dataset, hypotheses} = results;
+
+    // The truth track is applied only when the reader asks for it. It is
+    // deliberately OFF by default: a selected truth track silently reordering
+    // and rewording the gallery hides what the analysis concluded on its own,
+    // which is the thing being validated. Toggling costs no re-analysis — the
+    // comparisons were computed during the run and ride on the hypotheses.
+    const truthAvailable = !!(results.truth && results.truth.usable);
+    const useTruth = truthAvailable && (uiState?.useTruth ?? false);
 
     // One flat, best-first ordering. Each tile carries its category as a
     // coloured corner label rather than sitting under a section heading, so the
@@ -4426,7 +4474,7 @@ function showResultGallery(results) {
     // after, and section order used to bury it. The categories still cannot be
     // compared by a calibrated cross-model likelihood; see the comparator in
     // rankAllHypotheses for exactly which keys are and are not commensurable.
-    const tiles = rankAllHypotheses(hypotheses);
+    const tiles = rankAllHypotheses(hypotheses, {useTruth});
 
     // The polynomial-order sweep produces one tile per swept order per strategy
     // (5 by default, 15 with the Monte Carlo sweep on), and those tiles are a
@@ -4878,10 +4926,16 @@ function showResultGallery(results) {
         truthNote.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px;" +
             "background:#3a1e2e; color:#f4a6cd; border:1px solid #7a3b5c; font-size:13px;";
         truthNote.textContent = results.truth.usable
-            ? `Truth track "${results.truth.label}" selected — comparable candidates are `
-              + "GLOBALLY ordered with complete fits first, then by mean 3D separation from it (across categories, not within), and each rank basis "
-              + "reports where they agree or diverge (location, altitude, speed, heading). The truth track is the dashed "
-              + "pink line in the 3D graphs."
+            ? (useTruth
+                ? `Truth track "${results.truth.label}" APPLIED — comparable candidates are `
+                  + "GLOBALLY ordered with complete fits first, then by mean 3D separation from it (across categories, not within), and each rank basis "
+                  + "reports where they agree or diverge (location, altitude, speed, heading). The truth track is the dashed "
+                  + "pink line in the 3D graphs."
+                : `Truth track "${results.truth.label}" is selected but NOT applied — candidates are in the `
+                  + "ordinary screening order and no rank basis uses it, so this is what the analysis concludes "
+                  + "on its own. Each tile still reports its Truth Δ, and the truth track is the dashed pink line "
+                  + "in the 3D graphs. Press \"Use Truth Track\" to re-order and re-word this page by separation "
+                  + "from it — no re-analysis, the comparisons are already computed.")
             : `Truth track "${results.truth.label}" is selected but overlaps only `
               + `${results.truth.validCount || 0} frame(s) of this A-B window, so truth ordering is OFF — candidates `
               + "are shown in the ordinary screening order. Adjust the A-B range or pick a truth track that covers it.";
@@ -4953,26 +5007,52 @@ function showResultGallery(results) {
     // exactly as ranked, so anomalous/fast candidates keep their positions.
     {
         // Suppressed only when truth ordering is actually ON — an unusable
-        // truth selection (insufficient overlap) leaves the ordinary evidence
-        // reasoning in force, and the report already shows the assessment in
-        // that state, so the gallery must match.
-        const truthActive = !!(results.truth && results.truth.usable);
-        const ea = (!truthActive && results.executiveAssessment) ? results.executiveAssessment : null;
+        // truth selection (insufficient overlap), or a usable one the reader
+        // has not applied, leaves the ordinary evidence reasoning in force, and
+        // the report already shows the assessment in that state, so the gallery
+        // must match.
+        const ea = (!useTruth && results.executiveAssessment) ? results.executiveAssessment : null;
         if (ea && ea.headline) {
+            // "unresolved" and "insufficient" are BOTH statements that nothing
+            // was concluded, and neither is a finding about the object. They
+            // used to be styled amber and grey respectively — the alert palette
+            // going to the one whose headline reads "no conventional model
+            // passes", which in a UAP tool is the sentence most likely to be
+            // screenshotted and read as "unidentified". That ranked the more
+            // alarming-sounding of two non-results above the calmer one, which
+            // is backwards: "the evidence cannot discriminate" is the MORE
+            // informative statement. Both are neutral now; amber is reserved for
+            // the wind-evidence "tension" strip below, where it flags a genuine
+            // conflict in the evidence.
+            const NEUTRAL = "background:#2a2a2e; color:#b9b9c0; border:1px solid #4a4a52;";
             const styles = {
                 "probably-balloon": "background:#16321f; color:#9fd8ae; border:1px solid #2f6a42;",
                 "consistent-one": "background:#1e2a33; color:#a9c8dd; border:1px solid #3a5a72;",
                 "consistent-several": "background:#1e2a33; color:#a9c8dd; border:1px solid #3a5a72;",
-                "unresolved": "background:#4a3a12; color:#ffd479; border:1px solid #8a6d2a;",
-                "insufficient": "background:#2a2a2e; color:#b9b9c0; border:1px solid #4a4a52;",
+                "unresolved": NEUTRAL,
+                "insufficient": NEUTRAL,
             };
             const strip = document.createElement("div");
             strip.style.cssText = "margin:8px 0 4px; padding:8px 12px; border-radius:6px; font-size:13px;"
-                + (styles[ea.code] ?? styles.insufficient);
+                + (styles[ea.code] ?? NEUTRAL);
             const head = document.createElement("strong");
             head.textContent = ea.headline;
             strip.appendChild(head);
             strip.appendChild(document.createTextNode(" " + ea.detail));
+
+            // The five common causes that were never modelled at all. This is
+            // already computed and already on the record, and it appears only in
+            // the HTML report — not on the strip where the headline appears. On
+            // an "unresolved" verdict it is the context that stops "no
+            // conventional model passes" reading as an anomaly claim, so it is
+            // exactly the surface that needs it.
+            if (ea.code === "unresolved" && Array.isArray(ea.notModelled) && ea.notModelled.length) {
+                const nm = document.createElement("div");
+                nm.style.cssText = "margin-top:6px; opacity:0.85;";
+                nm.textContent = "Not modelled here, and therefore not excluded: "
+                    + ea.notModelled.join("; ") + ".";
+                strip.appendChild(nm);
+            }
             tilesHead.appendChild(strip);
         }
     }
@@ -5042,10 +5122,78 @@ function showResultGallery(results) {
     toolbar.appendChild(syncOrientationBtn);
     toolbar.appendChild(syncScaleBtn);
     toolbar.appendChild(restoreBtn);
+    // Apply / set aside the selected truth track. Shown only when a usable one
+    // was computed for this run — with nothing to compare against there is
+    // nothing to toggle. rerenderWithTruth is a function declaration so this
+    // listener can reach it before its definition further down.
+    if (truthAvailable) {
+        const useTruthBtn = document.createElement("button");
+        useTruthBtn.className = useTruth ? "tg-toggle on" : "tg-toggle";
+        useTruthBtn.type = "button";
+        useTruthBtn.textContent = "Use Truth Track";
+        useTruthBtn.title = `Order and word this page by closeness to the truth track `
+            + `"${results.truth.label}". Off, the page shows what the analysis concluded without it. `
+            + "Switching re-presents the same results — nothing is re-analyzed.";
+        useTruthBtn.setAttribute("aria-pressed", useTruth ? "true" : "false");
+        useTruthBtn.addEventListener("click", () => {
+            // Queued, not immediate. A set-aside in flight is two animation
+            // beats (~600ms) and only reaches `dismissed.add(i)` between them,
+            // so re-presenting synchronously here would capture state from
+            // before the click and silently drop it. Going through the same
+            // queue lets anything already in flight finish and be carried.
+            queueAnimation(() => rerenderWithTruth(!useTruth));
+            representing = true;
+        });
+        toolbar.appendChild(useTruthBtn);
+    }
     tilesHead.appendChild(toolbar);
 
+    // Re-present the SAME results with the truth track applied or set aside.
+    // No fit is re-run: rankAllHypotheses is a sort over comparisons already
+    // attached to the hypotheses, and every text builder re-reads them. The
+    // gallery is rebuilt rather than patched in place because the tile order,
+    // the Extras split and the set-aside indices all move together — carrying
+    // the reader's set-aside choices and selection across by hypothesis
+    // identity is exact, where remapping indices would not be.
+    function rerenderWithTruth(on) {
+        // The gallery can go away while this sits in the animation queue, and
+        // re-showing from here would pop it back open — so a gallery that is
+        // already gone stays gone. Two distinct ways it goes away, and both
+        // must be checked:
+        //   removed          — the reader closed it (×, Close, backdrop,
+        //                      Escape). Those paths call remove() directly
+        //                      rather than going through queueAnimation.
+        //   !overlay.isConnected — it was detached WITHOUT remove() (a stray
+        //                      removeChild, a sitch reload, an exception), so
+        //                      `removed` is still false. Same condition onKey
+        //                      self-heals on; here it matters more, because
+        //                      this is the one deferred action that CREATES
+        //                      DOM — a sitch reload would otherwise be followed
+        //                      by a gallery rebuilt from the previous sitch.
+        // `removed` is only ever set by remove(), and the sole remove() that
+        // precedes a legitimate re-present is the one below — after this check.
+        if (removed) return;              // teardown already ran
+        if (!overlay.isConnected) {
+            // Detached without remove(), so the teardown it owns never ran: the
+            // document keydown capture, the window resize handler, the
+            // ResizeObserver and every Chart3D are all still live. Run it here
+            // rather than only declining to re-show — this is the moment the
+            // orphan is detected, and remove() is safe on an already-detached
+            // overlay (its removeChild is parentNode-guarded).
+            remove();
+            return;
+        }
+        const carried = {
+            useTruth: on,
+            dismissed: new Set(Array.from(dismissed, (i) => tiles[i].h)),
+            selected: selected >= 0 ? tiles[selected].h : null,
+        };
+        remove();
+        showResultGallery(results, carried);
+    }
+
     // shared solution-space context for every Details pane
-    const ctx = {dataset, ss: analyzeSolutionSpace(results)};
+    const ctx = {dataset, ss: analyzeSolutionSpace(results), useTruth};
 
     if (tiles.length === 0) {
         const empty = document.createElement("div");
@@ -5207,7 +5355,15 @@ function showResultGallery(results) {
     // Clicks are queued rather than dropped, so impatient double-clicks still
     // land instead of being silently swallowed mid-animation.
     let animQueue = Promise.resolve();
-    const queueAnimation = (fn) => { animQueue = animQueue.then(fn).catch(() => {}); };
+    // Set once a truth re-present is queued: this DOM is about to be replaced,
+    // so further tile actions are refused rather than run against a gallery
+    // that is going away (their effect would be invisible AND lost, since the
+    // replacement reads the state captured when the re-present runs).
+    let representing = false;
+    const queueAnimation = (fn) => {
+        if (representing) return;
+        animQueue = animQueue.then(fn).catch(() => {});
+    };
 
     // The per-tile button is a toggle, so it states what it will DO next: an X
     // while the tile is in play, an up-arrow once it has been set aside.
@@ -5341,7 +5497,7 @@ function showResultGallery(results) {
             `<div class="tg-sub">${escapeHtml(h.subtitle)}</div>` +
             `<div class="tg-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}</div>` +
             `<div class="tg-stats">${statsHTML}</div>` +
-            `<div class="tg-rank-basis"><strong>Rank basis:</strong> ${escapeHtml(rankingExplanation(h, r))}</div>`;
+            `<div class="tg-rank-basis"><strong>Rank basis:</strong> ${escapeHtml(rankingExplanation(h, r, {useTruth}))}</div>`;
         tile.addEventListener("click", () => selectTile(i));
         // stopPropagation so setting a tile aside doesn't also select it
         tile.querySelector(".tg-tile-dismiss").addEventListener("click", (ev) => {
@@ -5351,6 +5507,17 @@ function showResultGallery(results) {
         tileEls.push(tile);
         pendingTileCharts.push({canvas: tile.querySelector("canvas[data-chart-role='tile']"), h, i});
     });
+    // Re-apply set-aside choices carried across a truth toggle. Matched by
+    // hypothesis, since the same candidate sits at a different index once the
+    // ordering changes.
+    if (uiState?.dismissed?.size) {
+        tiles.forEach(({h}, i) => {
+            if (!uiState.dismissed.has(h)) return;
+            dismissed.add(i);
+            tileEls[i].classList.add("dismissed");
+            syncDismissButton(i);
+        });
+    }
     // Guarded: with no tiles the grid holds the "no candidates" message, and
     // relayout() would clear it.
     if (tiles.length > 0) relayout();
@@ -5420,8 +5587,12 @@ function showResultGallery(results) {
     }
 
     // Start with the first trajectory-family result. This is only the leader of
-    // that comparison group, not a global object winner.
-    if (tiles.length > 0) selectTile(0);
+    // that comparison group, not a global object winner. After a truth toggle,
+    // stay on whatever the reader was reading instead of jumping to the top.
+    if (tiles.length > 0) {
+        const carried = uiState?.selected ? tiles.findIndex(({h}) => h === uiState.selected) : -1;
+        selectTile(carried >= 0 ? carried : 0);
+    }
 }
 
 /**
