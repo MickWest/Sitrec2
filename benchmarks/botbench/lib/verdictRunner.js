@@ -60,12 +60,28 @@ const SPEED_TARGET_MS = 380 * KNOTS_TO_MS;
 const SLOW_OPTS = {vTarget: 5 * KNOTS_TO_MS, vSigma: 20 * KNOTS_TO_MS, scoreSpeedWeight: 0.2};
 const KS_SEED_MIN_RANGE = 500;
 
-/** The production range bracket: 44 log-spaced rungs around an anchor. */
+/**
+ * The production range bracket, transcribed from AnalyzeTraverse.adaptiveRangeList.
+ *
+ * 44 rungs LINEARLY spaced from 0.1c to max(8, 2c) nautical miles, clamped to
+ * [0.3, 90] NM. It is not exported from AnalyzeTraverse (which is GUI-coupled and
+ * cannot be imported here — it pulls in three/addons, which breaks under Jest), so
+ * it is duplicated. Unifying the two is the right fix; until then, any edit to the
+ * production function must be mirrored here or the benchmark stops measuring the
+ * shipping analysis.
+ *
+ * This previously read `lo = max(200, c/12)`, `hi = 4c`, LOG-spaced — a bracket
+ * production never uses, wider on both sides and differently distributed. Every
+ * result taken with it was measuring a search the app does not perform.
+ */
 function adaptiveRangeList(centerMeters, count = 44) {
-    const lo = Math.max(200, centerMeters / 12);
-    const hi = centerMeters * 4;
+    const cNM = Math.max(0.5, centerMeters / METERS_PER_NM);
+    const loNM = Math.max(0.3, 0.1 * cNM);
+    const hiNM = Math.min(90, Math.max(8, 2 * cNM));
     const out = [];
-    for (let i = 0; i < count; i++) out.push(lo * Math.pow(hi / lo, i / (count - 1)));
+    for (let i = 0; i < count; i++) {
+        out.push((loNM + (hiNM - loNM) * i / (count - 1)) * METERS_PER_NM);
+    }
     return out;
 }
 
@@ -100,40 +116,95 @@ export function truthReference(scenario) {
  * containment test per frame (see TraverseFamily.losRangeAt). Reported per
  * class AND as the union across classes — the union is what an analyst reading
  * the whole gallery would take as the reported uncertainty.
+ *
+ * A FRAME IS CONTAINED IF SOME SINGLE INTERVAL CONTAINS IT. That rule holds for
+ * the union exactly as it holds within one class, and it is the whole reason
+ * this function cannot use losRangeEnvelope for the union.
+ *
+ * It previously did, and the number that came out was not a coverage figure.
+ * losRangeEnvelope collapses every member it is given to ONE min/max per frame,
+ * so handing it every admitted member of every class produced a single hull from
+ * the global minimum to the global maximum. That hull spans the gaps between a
+ * class's own disjoint intervals AND the gaps between classes. With balloon
+ * admitting 1-2 km and multirotor admitting 8-9 km, the hull claims 1-9 km and
+ * counts a truth at 5 km as "contained" when no model admits 5 km at all.
+ *
+ * The per-class loop below already had the rule, and a comment explaining it.
+ * The union broke it three lines later, which is how the headline
+ * band-containment result came to be computed from a span nothing admitted.
  */
 export function familyCoverage(dataset, families, truth) {
     if (!truth) return null;      // direction-only truth: no range to contain
     const perClass = {};
-    const unionMembers = [];
+    // Every admitted interval from every class, kept SEPARATE. Merging is the bug.
+    const allIntervals = [];
+    let unionMembers = 0;
     for (const [id, fam] of families) {
         const admitted = fam.members.filter((m) => m.screened);
         if (!admitted.length) { perClass[id] = {coverageFrac: null, covered: false, members: 0}; continue; }
-        unionMembers.push(...admitted);
+        unionMembers += admitted.length;
+        allIntervals.push(...fam.intervals);
         // A band with disjoint intervals contains a frame if ANY interval does.
         // Merging them into one min/max would claim coverage across a gap no
         // interval actually admits.
-        let inside = 0, total = 0;
-        for (let f = 0; f < dataset.n; f++) {
-            if (!truth.valid[f]) continue;
-            total++;
-            const r = losRangeAt(dataset, truth.track, f);
-            if (!Number.isFinite(r)) continue;
-            for (const iv of fam.intervals) {
-                if (r >= iv.envelope[f * 2] && r <= iv.envelope[f * 2 + 1]) { inside++; break; }
-            }
-        }
-        const frac = total ? inside / total : null;
+        const frac = intervalCoverage(dataset, fam.intervals, truth);
         perClass[id] = {coverageFrac: frac, covered: frac !== null && frac >= 0.95,
             members: admitted.length};
     }
-    let union = {coverageFrac: null, covered: false, members: 0};
-    if (unionMembers.length) {
-        const env = losRangeEnvelope(dataset, unionMembers);
-        const {coverageFrac} = envelopeCoverage(dataset, env, truth.track, truth.valid);
-        union = {coverageFrac, covered: Number.isFinite(coverageFrac) && coverageFrac >= 0.95,
-            members: unionMembers.length};
+    const unionFrac = allIntervals.length ? intervalCoverage(dataset, allIntervals, truth) : null;
+    return {
+        perClass,
+        union: {
+            coverageFrac: unionFrac,
+            covered: Number.isFinite(unionFrac) && unionFrac >= 0.95,
+            members: unionMembers,
+            intervals: allIntervals.length,
+        },
+    };
+}
+
+/**
+ * Fraction of scorable frames whose truth range falls inside AT LEAST ONE of the
+ * given intervals. The intervals are never merged, so a gap between them is a
+ * gap in coverage — which is what a gap means.
+ *
+ * A ONE-MEMBER INTERVAL HAS ZERO WIDTH, and without a tolerance it can only
+ * "contain" a truth range that matches it to the last bit of a double. Such a
+ * band therefore scores 0 by construction no matter how close it lands, which
+ * is a property of the metric and not of the band. `envelopeCoverage` has always
+ * taken a `tolM` for this; the first version of this function dropped it, and
+ * bot-0015's headline 0.00 was partly that artefact rather than a real miss.
+ *
+ * The tolerance is NOT a fudge factor to make bands look better: it is the width
+ * below which "inside" is not a meaningful question. Callers must state it, and
+ * a zero-width band should be reported as a single sample rather than scored as
+ * a range at all (see the report's F6).
+ */
+function intervalCoverage(dataset, intervals, truth, tolM = 0) {
+    let inside = 0, total = 0;
+    for (let f = 0; f < dataset.n; f++) {
+        if (!truth.valid[f]) continue;
+        total++;
+        const r = losRangeAt(dataset, truth.track, f);
+        if (!Number.isFinite(r)) continue;
+        for (const iv of intervals) {
+            if (r >= iv.envelope[f * 2] - tolM && r <= iv.envelope[f * 2 + 1] + tolM) {
+                inside++;
+                break;
+            }
+        }
     }
-    return {perClass, union};
+    return total ? inside / total : null;
+}
+
+/** True when every interval given is a single point (no width to contain anything). */
+function allZeroWidth(dataset, intervals) {
+    for (const iv of intervals) {
+        for (let f = 0; f < dataset.n; f++) {
+            if (iv.envelope[f * 2 + 1] > iv.envelope[f * 2]) return false;
+        }
+    }
+    return true;
 }
 
 /**
@@ -145,16 +216,36 @@ export function familyCoverage(dataset, families, truth) {
  */
 export async function runVerdict(scenario, {
     K = 1.5, families: wantFamilies = true, extraHypotheses = null,
+    anchorM: anchorOverrideM = null, ranges: rangesOverride = null,
+    expand: expandOverride = null,
 } = {}) {
     const t0 = Date.now();
     const dataset = toTraverseDataset(scenario);
     const truth = truthReference(scenario);
     const failures = [];
 
-    const anchorM = scenario.spec?.initialHorizontalRangeM ?? 5000;
-    const ranges = adaptiveRangeList(anchorM);
+    // The range-ladder anchor. `spec.initialHorizontalRangeM` is a GENERATING
+    // parameter — the target's true starting range — so anchoring on it hands the
+    // search a bracket centred on the answer, which no analyst has. It is kept as
+    // the fallback only because the in-repo generator path has nothing else; a
+    // caller measuring honestly (e.g. from the interchange release, whose sidecar
+    // deliberately withholds the spec) must pass anchorM explicitly, and the same
+    // value for every scenario.
+    const anchorM = anchorOverrideM ?? scenario.spec?.initialHorizontalRangeM ?? 5000;
+    // `ranges` mirrors production's two branches: left null this is the adaptive
+    // bracket around the anchor (GUI Min/Max Dist at their defaults); supplied, it
+    // is the uniform list production builds when the user pins a band.
+    const ranges = rangesOverride ?? adaptiveRangeList(anchorM);
 
-    const sweep = await sweepConstAirSpeed(dataset, {ranges, speedTarget: SPEED_TARGET_MS, expand: true});
+    // Production expands the bracket ONLY when the user has not pinned a band:
+    // `expand: rangeIsDefault` (AnalyzeTraverse.js:2442). Expansion is not a
+    // detail — it extends the grid geometrically by up to two rounds of x2.5,
+    // so a 0.3-8 NM default bracket can reach ~50 NM. Hard-coding `true` here
+    // meant this runner could never model the pinned branch at all, and a
+    // caller that passed an explicit band had it silently widened underneath.
+    const expand = expandOverride ?? (rangesOverride === null);
+
+    const sweep = await sweepConstAirSpeed(dataset, {ranges, speedTarget: SPEED_TARGET_MS, expand});
     const resolvedRanges = sweep.ranges;
     const rLo = resolvedRanges[0], rHi = resolvedRanges[resolvedRanges.length - 1];
 
@@ -282,6 +373,14 @@ export async function runVerdict(scenario, {
         truthFamily: scenario.target?.family ?? null,
         truthKind: scenario.spec?.target?.kind ?? null,
         n: dataset.n, fps: dataset.fps,
+        // The bracket ASKED FOR and the bracket actually searched. They differ
+        // whenever expansion fires, and reporting only the first makes a
+        // configuration look controlled when it was not.
+        requestedRangeLoM: ranges[0],
+        requestedRangeHiM: ranges[ranges.length - 1],
+        resolvedRangeLoM: resolvedRanges[0],
+        resolvedRangeHiM: resolvedRanges[resolvedRanges.length - 1],
+        expandEnabled: expand,
         provenance,
         absentHypotheses: ABSENT_HYPOTHESES,
         failures,
@@ -290,6 +389,14 @@ export async function runVerdict(scenario, {
             errDeg: Number.isFinite(h.errDeg) ? h.errDeg : null,
             tier: r.label, rank: r.rank, eligible: r.eligible,
             fitRank: r.fitRank, kinematicRank: r.kinematicRank,
+            // WHICH limit the search ran into. The class-level blocker collapses
+            // this to "search incomplete (bound pins, clamps, or an unconverged
+            // optimizer)", which names the symptom and hides the cause — so a
+            // pinned model cannot be diagnosed without re-running.
+            activePins: r.activePins ?? null,
+            modelClamps: r.modelClamps ?? null,
+            incomplete: r.incomplete ?? null,
+            optimizerWarnings: r.optimizerWarnings ?? null,
             truthSepM: truthSeparation(dataset, h, truth),
             band: h.family ? bandRecord(h.family) : null,
         })),

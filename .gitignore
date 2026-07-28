@@ -48,3 +48,9 @@ AGENTS.md
 /benchmarks/botbench/results/
 # Local code-review / audit reports (not part of the codebase)
 /CODE-REVIEW-*.md
+
+# Working notes: investigation write-ups, findings reports, scratch analysis.
+# These are drafts that get rewritten as a task progresses — often several times
+# in a session — so they are kept local rather than committed. Anything that
+# earns a permanent home belongs in docs/ proper.
+/docs/temp/

@@ -133,6 +133,32 @@ describe("truth handling", () => {
         expect(good.perClass["x"].coverageFrac).toBeCloseTo(1, 6);
         expect(bad.perClass["x"].covered).toBe(false);
         expect(bad.perClass["x"].coverageFrac).toBe(0);
+
+        // THE UNION MUST NOT SPAN THE GAP BETWEEN CLASSES.
+        //
+        // Two classes, one admitting 0.4-0.6x the true range and one admitting
+        // 1.4-1.6x. Truth sits at 1.0x — in the gap, admitted by NEITHER. The
+        // union previously merged every member into a single min/max hull, which
+        // reads 0.4-1.6x and "contains" a truth that no model admits. That is
+        // what produced a 17/18 band-containment headline off a span nothing
+        // admitted.
+        const split = familyCoverage(dataset, new Map([
+            ["low", band(0.4, 0.6)],
+            ["high", band(1.4, 1.6)],
+        ]), truth);
+        expect(split.perClass["low"].coverageFrac).toBe(0);
+        expect(split.perClass["high"].coverageFrac).toBe(0);
+        expect(split.union.coverageFrac).toBe(0);
+        expect(split.union.covered).toBe(false);
+
+        // ...and a union of several classes still covers when one genuinely does.
+        const oneGood = familyCoverage(dataset, new Map([
+            ["far", band(3.0, 4.0)],
+            ["right", band(0.8, 1.2)],
+        ]), truth);
+        expect(oneGood.perClass["far"].coverageFrac).toBe(0);
+        expect(oneGood.union.coverageFrac).toBeCloseTo(1, 6);
+        expect(oneGood.union.covered).toBe(true);
     });
 });
 
