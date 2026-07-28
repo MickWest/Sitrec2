@@ -81,6 +81,7 @@
     "bench-bot-interchange": "npx jest benchmarks/botbench/interchange.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-physics": "npx jest benchmarks/botbench/physics.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-physics-par": "node benchmarks/botbench/run-physics-parallel.mjs",
+    "bench-bot-verdict": "npx jest benchmarks/botbench/verdict.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-rate": "npx jest benchmarks/botbench/samplerate.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-capability": "npx jest benchmarks/botbench/capability.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-capval": "npx jest benchmarks/botbench/capability-validation.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit"

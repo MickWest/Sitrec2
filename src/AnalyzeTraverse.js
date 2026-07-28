@@ -86,6 +86,9 @@ import {
 } from "./TraverseAnalysisCache";
 import {solvedHorizontalWindAt} from "./TraverseWind";
 import {
+    buildRangeLadder, rangeConditionedFamily, familyBandSummary, gapDisclosure,
+} from "./TraverseFamily";
+import {
     buildHypotheses as buildCoreHypotheses,
     DRONE_CONTROL_KNOTS, ORDER_NAMES, UNDERGROUND_TOL, GROUND_CONTACT_TOL, VIZ,
     toNM, toKt, nm1, kt1, losAngularRateSeries,
@@ -304,6 +307,10 @@ export const analyzeTweaks = {
     // the gallery is not dominated by 10 extra Monte Carlo diagnostic tiles.
     // Enabling it adds the two Monte Carlo strategies across orders (TA-27).
     mcOrderSweep: false,
+    // Off by default because it re-fits each physics model at every rung of a
+    // range ladder — the honest cost of asking "which ranges does this model
+    // admit?" rather than only "where is its best answer?".
+    solutionFamilies: false,
 };
 
 // "no truth track selected" sentinel for the Truth Track dropdown
@@ -1710,6 +1717,14 @@ export function addAnalyzeTweaks(traverseMenu) {
             "polynomial order. Enable to also run the two Monte Carlo strategies across orders — 10 extra " +
             "diagnostic tiles that show method/order sensitivity, at a noticeable cost on long clips.");
     }
+    const cbFamilies = folder.add(analyzeTweaks, "solutionFamilies").name("Solution families (range bands)");
+    if (cbFamilies.tooltip) {
+        cbFamilies.tooltip("Off by default. Sightlines alone rarely pin a range: for any distance profile " +
+            "there is a path that follows the rays, so a distance is only determined once an object model " +
+            "is assumed. Enable to re-fit each physics model at a ladder of held ranges and show the whole " +
+            "band of distances that model admits, drawn as faint tracks around the headline one. Costs " +
+            "several extra fits per model.");
+    }
     const windMode = folder.add(analyzeTweaks, "windMode", ["Sitch wind", "Zero wind"]).name("Wind for analysis");
     if (windMode.tooltip) {
         windMode.tooltip("Choose the shared wind used by ray-following metrics and the fixed-wing gallery fit, " +
@@ -1885,6 +1900,9 @@ function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
         // Ground Vehicle, changes underground/mode flags and the ground priors).
         analyzeTweaks.groundMode,
         analyzeTweaks.mcOrderSweep,   // toggling the Monte Carlo sweep changes the tile set
+        // Families are attached to the hypotheses and drawn in every graph, so
+        // toggling them must not serve the other setting's cached results.
+        analyzeTweaks.solutionFamilies ? 1 : 0,
         ...terrainState,
         analyzeTweaks.aoFixedPoint, analyzeTweaks.aoKnownNow, analyzeTweaks.aoKnownOther,
         Sit.name || "", Sit.frames || 0, Sit.fps || 0,
@@ -1940,6 +1958,200 @@ function terrainElevationIsLoading() {
         if ((value?.pendingLoads ?? 0) > 0) return true;
     }
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// Solution families (range bands)
+// ---------------------------------------------------------------------------
+
+// Kinematic ceiling a family member must stay under to count as a physical
+// solution. These are the rank-0 boundaries plausibilityRating already uses, so
+// a member the band admits is one the gallery would not call kinematically
+// extreme.
+const FAMILY_MAX_G = 9;
+const FAMILY_MAX_SPEED_KT = 900;
+
+/**
+ * The physical screen a range-conditioned member must pass on top of its LOS
+ * residual. A member can thread the sightlines perfectly and still be buried in
+ * a hillside or require 40 g; including those would widen a band that is
+ * supposed to describe REAL solutions.
+ */
+function makeFamilyScreen(dataset, originLat, originLon) {
+    return (member) => {
+        const m = member.metrics;
+        const gMax = m?.gLoad?.max;
+        const vMaxKt = m?.airSpeed?.max / KNOTS_TO_MS;
+        if (!Number.isFinite(gMax) || !Number.isFinite(vMaxKt)) {
+            return {ok: false, reason: "metrics are not finite"};
+        }
+        if (gMax > FAMILY_MAX_G) {
+            return {ok: false, reason: `requires ${gMax.toFixed(1)} g`};
+        }
+        if (vMaxKt > FAMILY_MAX_SPEED_KT) {
+            return {ok: false, reason: `requires ${vMaxKt.toFixed(0)} kt`};
+        }
+        const stats = trackGroundStats(member.track, dataset.n, originLat, originLon, signedAGL);
+        if (stats && stats.minAGL < -UNDERGROUND_TOL) {
+            return {ok: false, reason: "passes below the sampled terrain"};
+        }
+        if (stats && groundContactViolation(stats, analyzeTweaks.groundMode)) {
+            return {ok: false, reason: "does not satisfy the selected ground-contact mode"};
+        }
+        return {ok: true, reason: null};
+    };
+}
+
+/**
+ * Trace the range band for each physically-based interpretation.
+ *
+ * ONE band per interpretation CLASS, on the independent member only: the
+ * free-wind balloon (the wind-pinned variant is conditioned on an external
+ * prior, so its band would answer a different question) and the free
+ * quadcopter (the drone-control fit is a seeded refinement of one path, not a
+ * family), plus the fixed-wing fit.
+ *
+ * Keyed by `key|windEvidenceRole` because the two balloon hypotheses share the
+ * key "lantern"; the caller attaches by the same identity after buildHypotheses.
+ */
+async function buildSolutionFamilies({
+    dataset, physicsDS, physicsOpts, clipDurationSec, seedTrack,
+    lantern, quad, aircraft, resolvedRanges, speedTarget, groundPrior,
+    originLat, originLon, failures, progress, shouldCancel,
+}) {
+    const out = new Map();
+    const ladderBracket = {
+        loM: resolvedRanges[0],
+        hiM: resolvedRanges[resolvedRanges.length - 1],
+    };
+    const screen = makeFamilyScreen(dataset, originLat, originLon);
+    const seededOverrides = (model) => {
+        const v = model.seedParams();
+        if (!v) return null;
+        const o = {};
+        model.getParameterDefs().forEach((d, i) => { o[d.name] = v[i]; });
+        return o;
+    };
+
+    // Each entry describes one class: where its anchor sits, what its own
+    // initialRange bounds are, and how to fit it at a held range (cheap, seeded
+    // — the continuation march) or from cold (the basin probe).
+    const specs = [];
+
+    if (lantern && Number.isFinite(lantern.params?.solved?.initialRange)) {
+        const defs = new SkyLanternModel().getParameterDefs();
+        const rd = defs.find((d) => d.name === "initialRange");
+        const makeModel = () => {
+            const m = new SkyLanternModel();
+            m.clipDuration = clipDurationSec;
+            if (seedTrack) m.seedFromTrack(seedTrack, physicsDS);
+            return m;
+        };
+        specs.push({
+            id: "lantern|free",
+            label: "Sky Lantern / Balloon",
+            anchorM: lantern.params.solved.initialRange,
+            anchorFit: toFamilyFit(lantern),
+            modelLoM: rd.min, modelHiM: rd.max,
+            fitAt: async (rangeM, seed) => {
+                const m = makeModel();
+                const overrides = seed?.solved
+                    ? {...seed.solved} : (seedTrack ? seededOverrides(m) : null);
+                return toFamilyFit(await fitPhysicsModel(physicsDS, new Set(), m, {
+                    ...physicsOpts, optimizer: "nm", maxIter: 600,
+                    ...(overrides ? {paramOverrides: overrides} : {}),
+                    paramLocks: {initialRange: rangeM},
+                }));
+            },
+            basinProbe: async (rangeM) => toFamilyFit(
+                await fitPhysicsModel(physicsDS, new Set(), makeModel(), {
+                    ...physicsOpts, dePop: 24, deGens: 40,
+                    paramLocks: {initialRange: rangeM},
+                })),
+        });
+    }
+
+    if (quad && Number.isFinite(quad.params?.solved?.initialRange)) {
+        const defs = new QuadcopterModel().getParameterDefs();
+        const rd = defs.find((d) => d.name === "initialRange");
+        specs.push({
+            id: "quadcopter|",
+            label: "Quadcopter",
+            anchorM: quad.params.solved.initialRange,
+            anchorFit: toFamilyFit(quad),
+            modelLoM: rd.min, modelHiM: rd.max,
+            fitAt: async (rangeM, seed) => toFamilyFit(
+                await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(), {
+                    ...physicsOpts, optimizer: "nm", maxIter: 600, fitMaxDt: 0.5,
+                    ...(seed?.solved ? {paramOverrides: {...seed.solved}} : {}),
+                    paramLocks: {initialRange: rangeM},
+                })),
+            basinProbe: async (rangeM) => toFamilyFit(
+                await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(), {
+                    ...physicsOpts, dePop: 24, deGens: 40, fitMaxDt: 0.5,
+                    paramLocks: {initialRange: rangeM},
+                })),
+        });
+    }
+
+    if (aircraft && Number.isFinite(aircraft.params?.startDist)) {
+        // fitAircraft is DE + pattern search, and both take a zero-width bound
+        // safely, so "locking" its range is just rangeMin === rangeMax — and
+        // assessBoundPins skips zero-span coordinates, so the lock can never be
+        // misreported as a load-bearing capability limit.
+        const aircraftAt = async (rangeM, runs) => {
+            const fit = await fitAircraft(dataset, {
+                tasTarget: speedTarget, rangeMin: rangeM, rangeMax: rangeM,
+                runs, groundPrior, shouldCancel,
+            });
+            return fit ? {track: fit.track, errDeg: fit.errDeg, solved: fit.params} : null;
+        };
+        specs.push({
+            id: "aircraft|",
+            label: "Fixed-Wing Aircraft",
+            anchorM: aircraft.params.startDist,
+            anchorFit: {track: aircraft.track, errDeg: aircraft.errDeg, solved: aircraft.params},
+            modelLoM: 0, modelHiM: Infinity,
+            fitAt: (rangeM) => aircraftAt(rangeM, 1),
+            basinProbe: (rangeM) => aircraftAt(rangeM, 2),
+        });
+    }
+
+    let done = 0;
+    for (const spec of specs) {
+        if (shouldCancel && shouldCancel()) throw new Error("cancelled");
+        const {ranges, clippedLow, clippedHigh, noModelOverlap} = buildRangeLadder({
+            ...ladderBracket, anchorM: spec.anchorM,
+            modelLoM: spec.modelLoM, modelHiM: spec.modelHiM,
+        });
+        // No range in the searched bracket is inside this model's own envelope,
+        // so there is nothing it can honestly be asked. No band, rather than a
+        // band traced at ranges the model cannot represent.
+        if (!ranges.length || noModelOverlap) { done++; continue; }
+        const slice = (frac) => (done + frac) / specs.length;
+        try {
+            const family = await rangeConditionedFamily({
+                dataset, ranges, anchorM: spec.anchorM, anchorFit: spec.anchorFit,
+                fitAt: spec.fitAt, basinProbe: spec.basinProbe, screen,
+                shouldCancel,
+                progress: progress ? (frac) => progress(slice(frac), spec.label) : null,
+            });
+            family.modelClippedLow = clippedLow;
+            family.modelClippedHigh = clippedHigh;
+            out.set(spec.id, family);
+        } catch (e) {
+            if (e && e.message === "cancelled") throw e;
+            failures.push({method: `${spec.label} range band`, error: (e && e.message) || "failed"});
+        }
+        done++;
+    }
+    return out;
+}
+
+// Normalise a fitPhysicsModel result into what rangeConditionedFamily wants.
+function toFamilyFit(fit) {
+    if (!fit || !fit.positions) return null;
+    return {track: fit.positions, errDeg: fit.params?.errDeg, solved: fit.params?.solved ?? null};
 }
 
 /**
@@ -2578,6 +2790,29 @@ export async function runTraverseAnalysis() {
             }
         }
 
+        // Range BANDS for the physically-based interpretations: refit each model
+        // at a ladder of held ranges and keep the ranges it still admits. Gated
+        // off by default — it is several extra fits per model — but when on it
+        // is the difference between "the balloon is at 3.1 NM" and "any range
+        // from 2.1 to 7.4 NM fits a balloon equally well".
+        let families = null;
+        if (analyzeTweaks.solutionFamilies) {
+            try {
+                families = await buildSolutionFamilies({
+                    dataset, physicsDS, physicsOpts, clipDurationSec, seedTrack,
+                    lantern, quad, aircraft, resolvedRanges, speedTarget, groundPrior,
+                    originLat, originLon, failures,
+                    shouldCancel: () => overlay.isCancelled(),
+                    progress: (frac, label) =>
+                        phase(0.92, 0.03, `Tracing range band: ${label}...`)(frac),
+                });
+            } catch (e) {
+                if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
+                failures.push({method: "Solution families", error: (e && e.message) || "failed"});
+            }
+            if (overlay.isCancelled()) throw new Error("cancelled");
+        }
+
         // Polynomial-order sweep across the three curve-fitting strategies. This
         // is the longest single block in the analysis (Monte Carlo 2 is ~5 s per
         // order on a 20,000-frame clip), so it gets a real slice of the progress
@@ -2633,6 +2868,18 @@ export async function runTraverseAnalysis() {
             losNode, originLat, originLon,
             provenance, failures, windPrior, mcSweep, droneCtl,
         });
+
+        // Attach the range bands AFTER the hypothesis set is built, keyed by the
+        // same identity buildSolutionFamilies used. Attaching rather than
+        // threading another builder argument keeps the (deliberately pure)
+        // hypothesis builder unaware of them, and handles the two balloon
+        // hypotheses sharing the key "lantern".
+        if (families) {
+            for (const h of hypotheses) {
+                const fam = families.get(`${h.key}|${h.windEvidenceRole ?? ""}`);
+                if (fam) h.family = fam;
+            }
+        }
 
         // Independent balloon wind evidence: sample the external wind field
         // along the free balloon fit and FREEZE the comparison into the
@@ -2867,6 +3114,21 @@ export async function runTraverseAnalysis() {
                 constantAltitudeRangeM: [caRangeMin, caRangeMax],
                 minimumAccelerationRangeM: [plausRangeMin, plausRangeMax],
             },
+            // Range bands, compact: counts, extents and the acceptance the band
+            // was cut at. The member TRACKS live once, on the hypotheses — the
+            // manifest is an audit record, not a second copy of the analysis.
+            solutionFamilies: families ? Array.from(families.entries()).map(([id, f]) => ({
+                id,
+                acceptDeg: f.accept, K: f.K, bestErrDeg: f.bestErrDeg,
+                ladderLoM: f.ladderLoM, ladderHiM: f.ladderHiM,
+                intervals: f.intervals.map((iv) => ({loM: iv.loM, hiM: iv.hiM, count: iv.count})),
+                screenedCount: f.band.screenedCount,
+                residualCount: f.band.residualCount,
+                fitted: f.band.fitted, total: f.band.total,
+                boundaryLimited: f.boundaryLimited,
+                modelClippedLow: !!f.modelClippedLow, modelClippedHigh: !!f.modelClippedHigh,
+                basinReseeded: f.basinCheck?.reseeded ?? [],
+            })) : null,
             completeness: {
                 constantAirBoundaryAxes: sweep.boundaryAxes,
                 fastProfileBoundaryLimited: !!fastProfile.boundaryLimited,
@@ -2928,6 +3190,7 @@ export async function runTraverseAnalysis() {
         results = {
             dataset, sweep, fastProfile, slowProfile, aircraft,
             best: sweep.best, bestMetrics, slowBestRow, hypotheses,
+            families,
             truth,
             buildHtml, html: null,
             provenance, failures, manifest,
@@ -3256,6 +3519,24 @@ function hypothesisStats(h) {
         stats.push(["Model priors cost",
             `${priors.total.toFixed(3)}°${parts.length ? ` (${parts.join(", ")})` : ""}`]);
     }
+    // Range BAND, when traced: the slant range above is this one solution's
+    // extent over the clip, which says nothing about whether the distance was
+    // determined. This row does — and it sits next to it deliberately.
+    const fam = h.family;
+    if (fam?.band?.screenedCount) {
+        const b = fam.band;
+        // "of N sampled", never "of N tested" — and never a bare distance. The
+        // ladder samples discrete ranges, so this is the extent of the samples
+        // that passed, not a measured boundary.
+        stats.push(["Range band (model-conditional)",
+            b.screenedCount === 1
+                ? `${nm1(b.rangeLoM)} NM only sampled range (1 of ${b.total})`
+                : `${nm1(b.rangeLoM)}–${nm1(b.rangeHiM)} NM `
+                    + `(${b.screenedCount} of ${b.total} sampled`
+                    + (fam.intervals.length > 1 ? `, ${fam.intervals.length} disjoint` : "")
+                    + `)`]);
+    }
+
     // Truth-mode headline: the separation that actually orders this group
     const tc = h.truthComparison;
     if (tc) {
@@ -3448,6 +3729,28 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
             for (const p of gtPts) { growGraphBounds(b, p); growGraphBounds(zb, p); }
             series.push({type: "line", pts: gtPts, color: "#5a8a52",
                 width: opts.compact ? 1.4 : 1.8, dash: [3, 3]});
+        }
+        // Range BAND: every other distance this same model also admits, drawn
+        // faint in the hypothesis's own colour so the bundle reads as one
+        // interpretation with a width, not as competing answers. Pushed BEFORE
+        // the representative track so the headline solution overlays its family.
+        // Members that follow the sightlines but fail the physical screen are
+        // dashed and dimmer — visible, because "the rays allow this and physics
+        // does not" is exactly the thing the analyst needs to see, but never
+        // mistakable for part of the answer.
+        if (hyp.family && Array.isArray(hyp.family.members)) {
+            for (const m of hyp.family.members) {
+                // isHeadline marks the member that IS this tile's solid track.
+                if (!m.residualOk || m.isHeadline) continue;
+                const pts = sampledPolyline(m.track, n, opts.compact ? 180 : 360);
+                for (const p of pts) { growGraphBounds(b, p); growGraphBounds(zb, p); }
+                series.push({
+                    type: "line", pts, color: hyp.color,
+                    alpha: m.screened ? 0.28 : 0.14,
+                    width: opts.compact ? 1 : 1.3,
+                    ...(m.screened ? {} : {dash: [3, 4]}),
+                });
+            }
         }
         series.push({type: "line", pts: trackPts, color: hyp.color, width: opts.compact ? 2.2 : 2.8,
             startDot: true, endRing: true});
@@ -4059,8 +4362,53 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
         <p class="tg-d-p">${prose.derived}</p>
         <h4 class="tg-d-h">What constrains it — and its plausibility</h4>
         <p class="tg-d-p">${prose.constraint}</p>
+        ${familyDetailHTML(h)}
         <h4 class="tg-d-h">Where it sits in the solution space</h4>
         <p class="tg-d-p">${spaceHTML}</p>`;
+}
+
+/**
+ * The range band for one hypothesis: which held distances this same model still
+ * fits. Its job is to stop a single drawn line reading as a determined range —
+ * so it states the tested count as prominently as the span, and names the
+ * distances that follow the sightlines but fail the physical screen rather than
+ * quietly omitting them.
+ */
+function familyDetailHTML(h) {
+    const f = h.family;
+    if (!f || !f.band) return "";
+    const summary = familyBandSummary(f);
+    if (!summary) return "";
+    const notes = [];
+    if (f.modelClippedLow || f.modelClippedHigh) {
+        notes.push("The ladder was clipped to this model's own range limits, so the band's "
+            + (f.modelClippedHigh ? "far" : "near") + " edge is a model envelope, not a measurement.");
+    }
+    if (f.boundaryLimited) {
+        notes.push("The band reaches the edge of the searched range bracket — widen the "
+            + "Min/Max Dist tweaks to find out where it really ends.");
+    }
+    if (f.basinCheck?.reseeded?.length) {
+        notes.push("A global re-search at the ladder edge found a better solution than the "
+            + "marched one, so the band was re-traced from there; bands elsewhere on the "
+            + "ladder may still be conservative.");
+    }
+    // Each gap described separately, by its OWN sampled extent — see
+    // gapDisclosure, which owns the wording so it can be unit-tested.
+    const gapText = gapDisclosure(f);
+    if (gapText) notes.push(gapText);
+    return `<h4 class="tg-d-h">Range band — what distances this model admits</h4>`
+        + `<p class="tg-d-p">${escapeHtml(summary)}. Each admitted range is a full re-fit of `
+        + `this same model with the distance held there, judged against a `
+        + `${f.accept.toFixed(2)}° acceptance cut from its own best fit of `
+        + `${Number.isFinite(f.bestErrDeg) ? f.bestErrDeg.toFixed(3) : "?"}°. Two limits on how `
+        + `far this can be read: the band is conditional on THIS model — it is not a general `
+        + `uncertainty on the object's distance, and a different model will admit a different `
+        + `band — and it is a SAMPLE of ${f.band.total} discrete ranges, so its edges are where `
+        + `the sampling changed answer, not measured boundaries. Untested distances between a `
+        + `passing range and its rejected neighbour may well pass too.`
+        + (notes.length ? ` ${escapeHtml(notes.join(" "))}` : "")
+        + `</p>`;
 }
 
 /**

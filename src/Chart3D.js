@@ -15,7 +15,7 @@
 //     bounds: {minX,maxX, minY,maxY, minZ,maxZ},   // X=East, Y=North, Z=Alt
 //     zoomBounds: {…} | null,   // optional tighter box for setZoom(true)
 //     series: [
-//       {type:'line',  pts:[[x,y,z],...], color, width, startDot, endRing},
+//       {type:'line',  pts:[[x,y,z],...], color, width, alpha, startDot, endRing},
 //       {type:'rays',  segs:[[x0,y0,z0, x1,y1,z1],...], color, alpha, width},
 //       {type:'points',pts:[[x,y,z],...], color, size},
 //     ],
@@ -527,6 +527,9 @@ export class Chart3D {
                 ctx.stroke(); ctx.globalAlpha = 1;
             } else if (s.type === "line") {
                 ctx.strokeStyle = s.color; ctx.lineWidth = s.width ?? 2;
+                // Applies to the polyline AND its end markers, so a faint
+                // solution-family member fades as one object.
+                ctx.globalAlpha = s.alpha ?? 1;
                 ctx.lineJoin = "round";
                 if (s.dash) ctx.setLineDash(s.dash);
                 ctx.beginPath();
@@ -563,6 +566,7 @@ export class Chart3D {
                         ctx.beginPath(); ctx.arc(q.x, q.y, 3.5, 0, Math.PI * 2); ctx.stroke();
                     }
                 }
+                ctx.globalAlpha = 1;
             } else if (s.type === "points") {
                 ctx.fillStyle = s.color;
                 for (const p of s.pts) {

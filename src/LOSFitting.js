@@ -1272,6 +1272,8 @@ export function fitKalmanFilter(dataset, excluded, options = {}) {
 //                  bounds, then Nelder-Mead polish from the DE best)
 //   dePop, deGens  DE population/generations (defaults 48/120)
 //   paramOverrides {name: value} initial-guess overrides (also seeds DE)
+//   paramLocks     {name: value} hold these parameters FIXED and search only
+//                  the rest (used to trace a range-conditioned solution family)
 //
 // Returns {positions, residuals, params: {model, cost, errDeg, solved}, activeCount}
 // where cost is the composite cost above and errDeg is the full-resolution
@@ -1303,6 +1305,35 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
             }
         }
     }
+
+    // Optional parameter LOCKS {name: value}: hold named parameters fixed and
+    // search only the rest. Used to trace a solution FAMILY — refit everything
+    // else at each of a ladder of ranges — so the analysis can show which
+    // ranges a model admits rather than only its single best.
+    //
+    // Locks are applied as a REDUCED search vector, not by collapsing lo/hi to
+    // the locked value: Nelder-Mead builds its simplex from the bounds, and a
+    // zero-width dimension degenerates it. Locked coordinates are removed from
+    // the vector the optimizer sees and re-inserted before the trajectory is
+    // integrated, so everything downstream is unchanged. (fitAircraft needs no
+    // equivalent — it is DE + pattern search, both of which take a zero-width
+    // bound safely, so locking its range is just rangeMin === rangeMax.)
+    const locks = options.paramLocks;
+    const freeIdx = [];
+    const lockedIdx = [];
+    for (let i = 0; i < nParams; i++) {
+        const v = locks ? locks[paramDefs[i].name] : undefined;
+        if (v === undefined) freeIdx.push(i);
+        else { x0[i] = v; lockedIdx.push(i); }
+    }
+    const hasLocks = lockedIdx.length > 0;
+    const subset = (arr) => freeIdx.map((i) => arr[i]);
+    // The locked values live in x0, so it is the correct base to expand into.
+    const expand = (reduced) => {
+        const full = x0.slice();
+        for (let k = 0; k < freeIdx.length; k++) full[freeIdx[k]] = reduced[k];
+        return full;
+    };
 
     // Collect sample times relative to first active frame
     const t0 = times[active[0]];
@@ -1463,13 +1494,21 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
             return !(options.shouldCancel && options.shouldCancel());
         });
     };
+    // What the optimizer actually searches: the full parameter vector, or the
+    // free subset with the locked coordinates spliced back in (see paramLocks).
+    const searchCost = hasLocks ? (p) => costFn(expand(p)) : costFn;
+    const searchX0 = hasLocks ? subset(x0) : x0;
+    const searchLo = hasLocks ? subset(lo) : lo;
+    const searchHi = hasLocks ? subset(hi) : hi;
+    const searchScales = hasLocks ? subset(scales) : scales;
+
     let result;
     if (options.optimizer === "de") {
         const {differentialEvolution, mulberry32} = require("./DifferentialEvolution");
-        const de = await differentialEvolution(costFn, lo, hi, {
+        const de = await differentialEvolution(searchCost, searchLo, searchHi, {
             pop: options.dePop ?? 48,
             gens: options.deGens ?? 120,
-            seeds: [x0],
+            seeds: [searchX0],
             // Deterministic by default: identical dataset + options => identical
             // fit (was unseeded Math.random — user-visible parameters flipped
             // between runs on near-degenerate scenes). options.seed overrides.
@@ -1481,8 +1520,9 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         if (de.cancelled || (options.shouldCancel && options.shouldCancel())) {
             throw new Error("cancelled");
         }
-        result = await nelderMead(costFn, de.params, {
-            lo, hi, initialScale: scales, maxIter, onEvaluation: optimizerPulse,
+        result = await nelderMead(searchCost, de.params, {
+            lo: searchLo, hi: searchHi, initialScale: searchScales,
+            maxIter, onEvaluation: optimizerPulse,
         });
         if (result.cancelled || (options.shouldCancel && options.shouldCancel())) {
             throw new Error("cancelled");
@@ -1494,8 +1534,9 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
             stopReason: de.stopReason,
         };
     } else {
-        result = await nelderMead(costFn, x0, {
-            lo, hi, initialScale: scales, maxIter, onEvaluation: optimizerPulse,
+        result = await nelderMead(searchCost, searchX0, {
+            lo: searchLo, hi: searchHi, initialScale: searchScales,
+            maxIter, onEvaluation: optimizerPulse,
         });
         if (result.cancelled || (options.shouldCancel && options.shouldCancel())) {
             throw new Error("cancelled");
@@ -1503,7 +1544,7 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     }
 
     // Generate full trajectory at all frames using best params
-    const bestParams = result.params;
+    const bestParams = hasLocks ? expand(result.params) : result.params;
     const bestState0 = model.getInitialState(bestParams, dataset);
     const allTimes = [];
     for (let i = 0; i < count; i++) allTimes.push(times[i] - t0);
@@ -1590,8 +1631,11 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     // pre-burn lantern vSink), flat, or numerical drift.  Probe each detected
     // bound inward and retain whether it is locally load-bearing.  Consumers
     // demote only load-bearing constraints and report the others as unresolved.
+    // A LOCKED coordinate was never searched, so it cannot be a load-bearing
+    // search limit however close to a bound the caller parked it.
     const pinned = assessBoundPins(bestParams, lo, hi,
-        paramDefs.map((d) => d.name), costFn, {baseCost: result.cost});
+        paramDefs.map((d) => d.name), costFn,
+        {baseCost: result.cost, excludeIndices: lockedIdx});
 
     return {
         positions,
@@ -1618,7 +1662,13 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
                 parameterSpreads: result.parameterSpreads ?? null,
                 parameterMins: result.parameterMins ?? null,
                 parameterMaxs: result.parameterMaxs ?? null,
-                paramNames: paramDefs.map((p) => p.name),
+                // The names of the coordinates the optimizer ACTUALLY searched,
+                // so they stay index-aligned with the spread arrays above —
+                // settledButUnidentifiable indexes one by the other. A locked
+                // coordinate is absent because it was never searched.
+                paramNames: (hasLocks ? freeIdx.map((i) => paramDefs[i]) : paramDefs)
+                    .map((p) => p.name),
+                lockedParams: hasLocks ? lockedIdx.map((i) => paramDefs[i].name) : null,
                 costSpread: result.costSpread ?? null,
                 tol: result.tol ?? null,
                 xTol: result.xTol ?? null,

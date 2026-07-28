@@ -629,3 +629,75 @@ explicit deviations from the original contract text:
   - **Round-2 lead**: the Sky Lantern/Balloon tile came back "Provisional
     fit — Optimizer incomplete" on a GENUINE balloon scenario (right range,
     but flagged). Investigate the in-app DE budget/window against this cell.
+
+## Q6 — Solution families and calibrated class percentages (2026-07-27)
+
+Added after the round-2 sitch bridge, on the same contract terms as the rest of
+this file: the numbers must be measurable, and every limit on what they mean
+must be printed with them rather than left to a reader's charity.
+
+**The question.** Two things the gallery could not do. It drew ONE trajectory
+per interpretation even when the evidence supports a family, so a reader could
+not see the uncertainty; and with ~100 tracks there was no way to triage
+without reading ~20 tiles each. Q6 is: *can the analysis report the range it
+actually admits, and can a bulk run assign calibrated per-class percentages?*
+
+**Range bands (`src/TraverseFamily.js`).** Each physics model is re-fitted with
+its start range LOCKED at each rung of a ladder; the rungs whose fit stays
+acceptable are the model's admitted band. Locking is a reduced search vector in
+`fitPhysicsModel` (`options.paramLocks`) because Nelder-Mead degenerates on a
+zero-width bound; `fitAircraft` needs no change, since DE and pattern search
+both take one safely and `assessBoundPins` already skips zero-span coordinates
+so a lock can never be reported as a capability limit. The march is a
+continuation (each rung seeded from its solved neighbour), with a global
+DE probe at both ladder ends to catch a march that followed the wrong basin —
+these landscapes are multimodal, which is why the production fits use DE.
+Non-contiguous admitted sets are reported as SEPARATE intervals: a gap was
+tested and rejected, and filling it would invent excluded solutions.
+
+**Acceptance width.** `accept = max(bestErr·K, bestErr + 0.02°, 0.05°)`. K is
+the one free knob and is NOT derivable — there is no calibrated σ_LOS here
+(`params.errFloor` is a generic CA-fit residual, explicitly not a noise
+estimate). It is calibrated against truth coverage: pick the SMALLEST K
+reaching 90% containment on train, report achieved coverage on test. A class
+that never reaches the target is a finding (the band construction is missing a
+degree of freedom), not something to fix by widening.
+
+**Bulk runner (`lib/verdictRunner.js`, `verdict.bench.test.js`).** Calls the
+SHIPPING analysis — `buildHypotheses` / `rankAllHypotheses` /
+`assessExecutiveVerdict` — so a change to the app shows up in the numbers.
+~18 s per scenario without bands, ~30-60 s with; the full matrix is an
+overnight job, hence `BOTBENCH_VERDICT=smoke|pilot|full` plus OFFSET/LIMIT
+chunking.
+
+**Percentages (`lib/classProbability.js`).** NOT a cross-model likelihood —
+Sitrec computes none and none is implied. They are measured frequencies over
+this population: of the scenarios whose analysis produced the same evidence
+signature, this fraction actually were each class. Equal weight per
+`truthContentKey` group (so repeated seeds cannot outvote distinct content),
+intervals from resampling GROUPS (a Jeffreys binomial would be incoherent with
+fractional weights), split by group so no truth content appears on both sides,
+and a hierarchical backoff whose coarser keys are strict prefixes of the finer
+ones. A bin under 8 independent groups abstains to Unknown rather than guessing.
+
+**What this matrix CANNOT calibrate — reported as such, never as 0%:**
+
+- `multirotor`: no multirotor target exists. Adding one needs independent truth
+  equations; generating it from `QuadcopterModel` would violate design law 1.
+- `stationary`: no stationary or ground-bound target.
+- `bird`, `aerostat`, `anomalous`/`anomalous-control`: no Sitrec class. They
+  count as Unknown, which is the correct answer. How often a bird instead reads
+  as a balloon is a headline result, not a rounding error.
+
+**Why the balloon class tops out at "consistent with".** A scenario's wind is a
+hand-set constant, which `rateBalloonWindEvidence` already classifies as an
+assumption and rates *inconclusive*. Feeding it in as though it were a measured
+sounding would MANUFACTURE the corroboration that licenses "Probably a
+wind-blown balloon". So the benchmark deliberately cannot reach that verdict,
+and `verdictRunner.test.js` asserts it never does. Calibrating that verdict
+needs real sounding fixtures (the deferred UWYO/GFS work).
+
+**Reduced profile.** The runner omits the wind-pinned balloon variant, the
+drone-control fit, live LOS-fit method nodes, and balloon wind evidence. The
+list is exported as `ABSENT_HYPOTHESES` and printed in every report, so a
+coverage claim cannot quietly omit half the analysis.

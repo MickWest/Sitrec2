@@ -519,3 +519,54 @@ describe("Truth-track mode", () => {
         expect(text).toContain("max 10 NM");
     });
 });
+
+// A hypothesis's range BAND is reporting metadata. If it ever reached the
+// comparator it would become a covert cross-model preference — "the model with
+// the tighter band wins" — which is exactly the calibrated object-probability
+// claim this module refuses to make (see the file header). Attaching one must
+// change nothing about order, tier, eligibility or score.
+describe("solution families never affect ranking", () => {
+    const build = () => [
+        hypothesis("lantern", {name: "Sky Lantern / Balloon", errDeg: 0.04,
+            metrics: metrics({gRms: 0.02, gMax: 0.05, speedMeanKt: 12})}),
+        hypothesis("aircraft", {name: "Fixed-Wing Aircraft", errDeg: 0.03,
+            metrics: metrics({gRms: 0.3, gMax: 0.9, speedMeanKt: 300})}),
+        hypothesis("quadcopter", {name: "Quadcopter", errDeg: 0.06,
+            metrics: metrics({gRms: 0.1, gMax: 0.4, speedMeanKt: 20})}),
+        hypothesis("constAir", {name: "Constant Air Speed", errDeg: 0.02,
+            metrics: metrics({gRms: 0.05, gMax: 0.2, speedMeanKt: 90})}),
+    ];
+    const project = (items) => items.map((i) => [
+        i.h.key, i.h.name, i.r.rank, i.r.label, i.r.eligible, i.r.secondaryScore, i.tied,
+    ]);
+
+    test("order, tier, eligibility and score are identical with and without bands", () => {
+        const bare = rankAllHypotheses(build());
+        const withFamilies = build();
+        // A deliberately lopsided set of bands: the balloon gets a tight one and
+        // the aircraft a wide, disjoint, boundary-limited one. If band width
+        // leaked into the comparator at all, this is what would move.
+        withFamilies[0].family = {
+            band: {rangeLoM: 4000, rangeHiM: 4200, screenedCount: 1, residualCount: 1,
+                total: 11, fitted: 11},
+            intervals: [{loM: 4000, hiM: 4200, count: 1}],
+            accept: 0.06, bestErrDeg: 0.04, boundaryLimited: false,
+        };
+        withFamilies[1].family = {
+            band: {rangeLoM: 2000, rangeHiM: 80000, screenedCount: 9, residualCount: 11,
+                total: 11, fitted: 11},
+            intervals: [{loM: 2000, hiM: 9000, count: 5}, {loM: 40000, hiM: 80000, count: 4}],
+            accept: 0.05, bestErrDeg: 0.03, boundaryLimited: true,
+        };
+        expect(project(rankAllHypotheses(withFamilies))).toEqual(project(bare));
+    });
+
+    test("plausibilityRating ignores the band entirely", () => {
+        const h = hypothesis("lantern", {errDeg: 0.04});
+        const before = plausibilityRating(h);
+        h.family = {band: {rangeLoM: 1, rangeHiM: 1e9, screenedCount: 11, residualCount: 11,
+            total: 11, fitted: 11}, intervals: [], accept: 9, bestErrDeg: 0.04,
+            boundaryLimited: true};
+        expect(plausibilityRating(h)).toEqual(before);
+    });
+});

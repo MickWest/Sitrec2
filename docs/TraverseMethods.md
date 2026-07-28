@@ -705,6 +705,70 @@ Notes on the gallery tiles:
   **model-reference residual**, not an estimate of sensor noise. It must not be
   used to make statistical confidence or likelihood claims.
 
+### Solution families — the range band a model admits
+
+*Traverse Analysis Tweaks → "Solution families (range bands)". Off by default;
+it re-fits each physics model several times.*
+
+A single drawn trajectory is the most misleading thing this analysis can
+produce, because bearings alone rarely determine range. For **any** distance
+profile R(t), the path `S(t) + R(t)·D(t)` reproduces the sightlines exactly —
+so a distance is only pinned once you assume something about how the object
+moves, and then only as far as that assumption actually constrains it.
+
+With this enabled, each physically-based interpretation (balloon, quadcopter,
+fixed-wing) is re-fitted at a ladder of **held** ranges: the start distance is
+locked to each rung and every other parameter is re-solved under the same
+model. The rungs whose fit stays acceptable are the model's **admitted band**.
+
+- Admitted members are drawn as faint tracks in the tile's own colour, with
+  the headline solution solid on top. A member that follows the sightlines but
+  fails the physical screen (underground, extreme kinematics) is drawn dashed
+  and dimmer — visible, because "the rays allow this and physics does not" is
+  worth seeing, but never mistakable for part of the answer.
+- The tile reports the band next to the slant range, with the number of rungs
+  **sampled**: "3.0–3.6 NM (2 of 12 sampled)". A narrow band says the range is
+  well constrained *for that model*; a wide one says it is not.
+- **The ladder is a sample, not a measurement of the boundary.** An admitted
+  rung shows that distance works; it never shows that the untested ground
+  between it and its rejected neighbour does not. So a band's edges are where
+  the *sampling* changed answer, and the analysis says so rather than quoting a
+  distance: "2.2 NM was the only sampled range admitted; the nearest sampled
+  ranges below 1.1 NM and above 4.3 NM were rejected, so the true edges lie
+  between those and the band shown". Nothing here ever reports a resolved or
+  exact distance, however few rungs survive.
+- Admitted ranges are reported as **separate intervals** when they are not
+  contiguous, and filling a gap in would invent solutions the analysis never
+  found. Each gap is described on its own terms — with three bands there are
+  two gaps and they can mean different things:
+  - every sampled rung in it rejected → **those samples** are excluded (the
+    untested ground between them is not — the ladder is discrete);
+  - a rung in it produced no fit → that part is **untested, not ruled out**,
+    because a failure to solve is not evidence the range is unavailable.
+
+Four cautions, all of which the tile states:
+
+1. **The band is conditional on its model.** It is not a general uncertainty
+   on the object's distance. A balloon band and a drone band answer different
+   questions and are never merged.
+2. **The acceptance cut is empirical, not derived.** There is no calibrated
+   sightline noise floor here (the constant-acceleration reference residual is
+   explicitly not one), so the cut is set relative to the model's own best fit.
+   Its width is calibrated against benchmark truth coverage — see
+   `benchmarks/botbench/verdict.bench.test.js`.
+3. **A band that reaches the searched bracket's edge is a bound, not a
+   result.** Widen Min/Max Dist to find where it really ends.
+4. **The search marches outward from the best fit, seeded from each
+   neighbour.** That is far cheaper than a global search per rung, but these
+   landscapes are multimodal — so a global re-search runs at each end of the
+   ladder, and if it finds a better basin the band is re-traced from there and
+   says so.
+
+The band is reporting only. It never enters the ranking: a model with a
+tighter band does not sort higher, because "the more determined model wins"
+would be exactly the calibrated object-probability claim this analysis
+declines to make.
+
 ### How the tiles are ranked
 
 The gallery mixes unlike questions — object models, LOS-constrained
