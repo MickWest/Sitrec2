@@ -181,7 +181,14 @@ export function SteppedKeyframes(input, outLen, indexCol = 0, dataCol = 1) {
 // and we've get the columnIndex into that
 // however a misbRow might be reused over several frames
 // so first creat an array of [frame, misbRow] pairs for the first usage of each misbRow
-export function ExpandMISBKeyframes(array, columnIndex) {
+// `degrees` makes the interpolation between keyframes take the SHORT way around the
+// 0/360 seam. It matters whenever keyframes are sparse: an azimuth going 0.03 -> 359.3
+// in one keyframe step is a 0.7 degree change, but interpolated as plain numbers it
+// sweeps 359 degrees the other way, and every frame in between points somewhere wrong.
+// Per-frame MISB (30 fps video) hides this because consecutive keyframes are adjacent
+// frames with nothing to interpolate; a 1 Hz source resampled to 30 fps puts ~30
+// frames inside each step and the sweep is glaring.
+export function ExpandMISBKeyframes(array, columnIndex, degrees = false) {
     const keyframes = []
     let lastMISBRow = null;
     for (let i=0;i<array.length;i++) {
@@ -209,7 +216,7 @@ export function ExpandMISBKeyframes(array, columnIndex) {
     }
 
     // then just expand it.
-    return ExpandKeyframes(keyframes, array.length, 0, 1)
+    return ExpandKeyframes(keyframes, array.length, 0, 1, false, false, degrees)
 
 
 }

@@ -596,7 +596,8 @@ class CTrackManager extends CManager {
                             }
                             selectedIndicesMap.set(trackFileName, new Set(selected));
                         }
-                    } else if (cameraLOSLoaded && tIdx >= 0 && trackCount >= 2) {
+                    } else if (cameraLOSLoaded && tIdx >= 0 && trackCount >= 2
+                        && file.hasRedundantLOSReferenceTracks?.() === true) {
                         // A STANAG-style file (has a target track plus platform/ground
                         // reference tracks) loaded while a camera LOS already exists: offer
                         // to load just the target, since the platform/ground tracks duplicate
@@ -645,6 +646,10 @@ class CTrackManager extends CManager {
 
             let moreTracks = true;
             let trackIndex = 0;
+            // Whether this file has already re-timed the sitch. See the sync block
+            // below: it must fire on the first track actually LOADED, which is not
+            // necessarily index 0 once the multi-track picker has filtered.
+            let syncedFromThisFile = false;
             while (moreTracks) {
 
                 console.log("------------------------------------")
@@ -714,8 +719,19 @@ class CTrackManager extends CManager {
                     // and call it to sync the time. Note we do this BEFORE we create the actual tracks
                     // to ensure we have the correct start time, and hence we can get good track positions for use
                     // with determining the initial terrain
-                    // Only sync for the primary track (index 0), not for supplementary tracks like center tracks
-                    // (and not when the caller suppresses it, e.g. legacy sitch setup with an explicit startTime).
+                    // Sync ONCE per file, on the first track actually loaded — not on
+                    // supplementary tracks after it, and not when the caller suppresses
+                    // it (e.g. legacy sitch setup with an explicit startTime).
+                    //
+                    // This used to test trackIndex === 0, which silently skipped the
+                    // sync whenever the multi-track picker deselected the first track.
+                    // The sitch timeline then stayed wherever it already was while the
+                    // loaded tracks kept their own timestamps, so every track was
+                    // resampled far outside its own time range and the extrapolated
+                    // positions landed thousands of km from the site — a wrecked import
+                    // with no error anywhere. Supplementary tracks share their primary's
+                    // timeline, so syncing on one when the primary is absent gives the
+                    // same answer the primary would have.
                     // Sonde (radiosonde) tracks are reference WIND data — fetching a
                     // sounding must never re-time the sitch to the balloon launch
                     // (same exemption as auto-select/centering further down).
@@ -723,8 +739,39 @@ class CTrackManager extends CManager {
                     const isSondeForSync = !!(loadedFileForSync
                         && loadedFileForSync.isSondeTrack
                         && loadedFileForSync.isSondeTrack());
-                    if (syncTime && !Globals.sitchEstablished && trackIndex === 0 && !isSondeForSync) {
+                    if (syncTime && !Globals.sitchEstablished && !syncedFromThisFile && !isSondeForSync) {
+                        // Some formats are a whole recording rather than a clip of one
+                        // (STANAG, BOT), so fit the sitch to the track's full length as
+                        // well as its start. Duration FIRST: it changes Sit.frames and
+                        // rebuilds, so doing it before the start-time sync leaves that
+                        // cascade — the one the comment above needs for good initial
+                        // terrain positions — as the last word.
+                        //
+                        if (loadedFileForSync?.syncsSitchDuration?.()) {
+                            // Bounded HERE, in the automatic path, not inside
+                            // syncDurationToTrack: the "Sync Duration to" menu is a
+                            // deliberate click on a track the user chose and still syncs
+                            // to any length. This runs unattended on whatever was
+                            // dropped, and a day at 30 fps is already 2.6M frames — every
+                            // per-frame array in the graph is sized from Sit.frames, so a
+                            // track with a broken timestamp (a row left at the Unix epoch
+                            // spans decades) would take the tab out. Skipping leaves the
+                            // timeline where it was; the track still loads either way.
+                            const durationNode = NodeMan.get(trackDataID, false);
+                            const spanMs = durationNode?.getTrackEndTime
+                                ? durationNode.getTrackEndTime() - durationNode.getTrackStartTime()
+                                : 0;
+                            if (spanMs > 24 * 3600 * 1000) {
+                                console.warn(`TrackManager: ${trackDataID} spans `
+                                    + `${(spanMs / 3600000).toFixed(1)} hours — not sizing the `
+                                    + `sitch to it automatically. Check the track's timestamps, `
+                                    + `or use "Sync Duration to" in the Time menu.`);
+                            } else {
+                                GlobalDateTimeNode.syncDurationToTrack(trackDataID);
+                            }
+                        }
                         GlobalDateTimeNode.syncStartTimeTrack();
+                        syncedFromThisFile = true;
                     }
 
                     this.makeTrackFromMISBData(trackFileName, trackDataID, trackID, undefined, guiFolder, trackIndex);
@@ -1236,10 +1283,16 @@ class CTrackManager extends CManager {
             // trigger CPA against track 0.
             const track0 = TrackManager.getByIndex(0);
             const trackFile = FileManager.get(trackOb.trackFileName);
-            const isSupplementary = trackFile
-                ? trackFile.isSupplementaryTrack(trackIndex)
-                : trackIndex > 0;
-            if (track0 !== trackOb && !isSupplementary) {
+            // Ask the CPA question directly rather than inferring it from
+            // isSupplementaryTrack. The default answer is still "any primary track",
+            // but a file whose primaries are separate RECORDINGS rather than
+            // co-observed flights answers false — they stay primary (visible, with
+            // their platform models) while never re-timing the sitch to a closest
+            // approach that has no physical meaning.
+            const cpaCandidate = trackFile
+                ? trackFile.cpaCandidate(trackIndex)
+                : trackIndex === 0;
+            if (track0 !== trackOb && cpaCandidate) {
                 let time = closestIntersectionTime(track0.trackDataNode, trackOb.trackDataNode);
 //                console.log("Closest intersection time: ", time);
 
@@ -1362,6 +1415,61 @@ class CTrackManager extends CManager {
             }
         }
 
+        // The one track that may take over BOTH the camera position and the camera
+        // heading: it carries the file's measured angles AND is the file's camera.
+        //
+        // Both halves are needed. anglesAreMeasurement is a property of the DATA, so
+        // a file could hold more than one track answering true to it; the camera role
+        // names the single track that drives the view. Keying the takeover off the
+        // measurement flag alone lets a later track override an earlier one on load
+        // order — position and heading stay consistent with each other, so nothing
+        // looks wrong, you are just quietly flying the wrong one.
+        const trackHasMeasuredAngles =
+            roleFile?.anglesAreMeasurement?.(trackOb?.trackIndex) === true;
+
+        // Which track from ANOTHER file currently holds a switch, if it holds that
+        // role there. Used to tell a deliberate cross-file arrangement apart from an
+        // accidental one produced by two files loading at once.
+        const roleOwner = (switchId, role) => {
+            const short = NodeMan.get(switchId, false)?.choice;
+            const ob = short ? this.get("Track_" + short, false) : null;
+            if (!ob || ob.trackFileName === trackOb.trackFileName) return null;
+            return FileManager.get(ob.trackFileName)
+                ?.trackRoleHint?.(ob.trackIndex) === role ? ob : null;
+        };
+
+        // A role-declaring file that supplies NO target of its own must not take the
+        // camera from a file that already has a coherent camera+target pair loaded.
+        //
+        // Taking it would leave the camera on one scenario and the target on either
+        // another scenario's object or the sitch's default fixedTarget — and
+        // fixedTarget is not an absence, it is a real point (measured at 667 km from
+        // the camera after a BOT import), so every range and altitude readout would
+        // quietly describe it. Declining is the only outcome with no decoy in it: the
+        // established pair survives, and this file's tracks and angles are still
+        // offered for the user to select deliberately.
+        const suppliesTarget = () => {
+            const n = roleFile?.getTrackCount?.() ?? 0;
+            for (let i = 0; i < n; i++) {
+                if (roleFile.trackRoleHint?.(i) === "target") return true;
+            }
+            return false;
+        };
+        const coherentPairElsewhere = () => {
+            const camOb = roleOwner("cameraTrackSwitch", "camera");
+            if (!camOb) return false;
+            const tgtShort = NodeMan.get("targetTrackSwitch", false)?.choice;
+            const tgtOb = tgtShort ? this.get("Track_" + tgtShort, false) : null;
+            return !!(tgtOb && tgtOb.trackFileName === camOb.trackFileName);
+        };
+        const mayTakeCamera = !fileHasRoleHints || suppliesTarget() || !coherentPairElsewhere();
+
+        // The heading rides with the camera: if this file is not taking one it must
+        // not take the other, or the sightlines come from a different platform than
+        // the camera position.
+        const isMeasuredCameraTrack =
+            trackHasMeasuredAngles && roleHint === "camera" && mayTakeCamera;
+
         if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
             const dropTargets = Sit.dropTargets["track"]
             for (let dropTargetSwitch of dropTargets) {
@@ -1416,8 +1524,58 @@ class CTrackManager extends CManager {
                         } else {
                             autoSelect = trackNumber === selectNumber;
                         }
+
+                        // A role-declaring file nominates BOTH a camera and a target,
+                        // so its pair describes ONE scenario and must stay together.
+                        // Drop two such files at once and their tracks interleave, so
+                        // the last write to each switch can come from a DIFFERENT file
+                        // — camera on one scenario, target on another's object. The
+                        // display looks right (the heading still follows its own
+                        // camera), but every range readout and the traverse analysis
+                        // then measures a sensor against something it never saw.
+                        //
+                        // Two guards keep the ends together whatever the interleaving:
+                        // don't claim the target while another file's camera holds the
+                        // switch, and drop a foreign target the moment this file claims
+                        // the camera. Both are limited to role-declaring files, so an
+                        // ordinary two-file drop (jet from one, object from another)
+                        // keeps its load-order pairing untouched.
+                        const blockedByForeignCamera = fileHasRoleHints
+                            && switchNode.id === "targetTrackSwitch"
+                            && roleOwner("cameraTrackSwitch", "camera") !== null;
+                        const blockedClaim = blockedByForeignCamera
+                            || (switchNode.id === "cameraTrackSwitch" && !mayTakeCamera);
+                        // Claiming the camera hands the target to THIS file's own target
+                        // track when it has already loaded; when it has not arrived yet,
+                        // a foreign nomination is merely dropped and the track claims the
+                        // switch itself once processed. Both orders end matched — or with
+                        // no target at all, when this file has none to give, which is the
+                        // honest answer rather than another scenario's object.
+                        const syncTargetToThisFile = () => {
+                            if (!fileHasRoleHints) return;
+                            const tgt = NodeMan.get("targetTrackSwitch", false);
+                            if (!tgt) return;
+                            let own = null;
+                            this.iterate((k, t) => {
+                                if (own || t.trackFileName !== trackOb.trackFileName) return;
+                                if (FileManager.get(t.trackFileName)
+                                    ?.trackRoleHint?.(t.trackIndex) === "target") own = t;
+                            });
+                            // Only ever hand the switch to a REAL matching track. There
+                            // is no "no target" option to fall back on — fixedTarget is
+                            // a real point in the sitch, hundreds of km away here — so
+                            // when this file has no target loaded we leave the switch
+                            // alone. mayTakeCamera is what stops that leaving a stale
+                            // cross-file pair: a file with no target of its own never
+                            // takes the camera from a coherent pair in the first place.
+                            if (own?.shortName && tgt.inputs?.[own.shortName]) {
+                                tgt.selectOptionQuietly(own.shortName);
+                            }
+                        };
+
                         // (Quietly, as we don't want to zoom to it yet)
-                        if (autoSelect && !Globals.sitchEstablished) {
+                        if (autoSelect && !blockedClaim && !Globals.sitchEstablished) {
+                            if (switchNode.id === "cameraTrackSwitch") syncTargetToThisFile();
                             switchNode.selectOptionQuietly(shortName)
 
                             // bit of a patch, this will be the second track, and we already set the
@@ -1453,10 +1611,40 @@ class CTrackManager extends CManager {
                             }
                         }
 
+                        // Symmetric with the camera takeover below: once this file's own
+                        // camera track owns the camera switch, its target track takes the
+                        // target switch even in an established sitch. Two files dropped
+                        // together flip sitchEstablished partway through, so without this
+                        // the pair can be left half-set — the camera claimed, the other
+                        // file's target correctly dropped, and this track's own claim then
+                        // skipped by the established gate, leaving no target at all.
+                        if (switchNode.id === "targetTrackSwitch" && fileHasRoleHints
+                            && roleHint === "target" && Globals.sitchEstablished) {
+                            const camShortNow = NodeMan.get("cameraTrackSwitch", false)?.choice;
+                            const camObNow = camShortNow ? this.get("Track_" + camShortNow, false) : null;
+                            if (camObNow && camObNow.trackFileName === trackOb.trackFileName) {
+                                switchNode.selectOptionQuietly(shortName);
+                            }
+                        }
+
                         // Track files like NITF that define their own camera should auto-select
                         // as the camera track, even after sitch is established
                         const autoTrackFile = FileManager.get(trackOb.trackFileName);
-                        if (autoTrackFile && autoTrackFile.autoSelectAsCamera && switchNode.id === "cameraTrackSwitch") {
+                        // A measured-angles track must take the camera POSITION as well as
+                        // the heading. The two are one measurement: bearings are only
+                        // meaningful from the platform that recorded them. Selecting the
+                        // heading alone (which the angles block below does, even in an
+                        // established sitch) would leave the camera sitting on whatever
+                        // track was already chosen while pointing along this file's
+                        // sightlines — a composite of two different sensors that
+                        // corresponds to no real observation, and one that looks
+                        // perfectly normal on screen.
+                        if (switchNode.id === "cameraTrackSwitch"
+                            && ((autoTrackFile && autoTrackFile.autoSelectAsCamera)
+                                || isMeasuredCameraTrack)) {
+                            // Same pairing rule as above: taking the camera invalidates
+                            // a target nominated by a different role-declaring file.
+                            syncTargetToThisFile();
                             switchNode.selectOption(shortName);
                         }
                     }
@@ -1545,9 +1733,17 @@ class CTrackManager extends CManager {
 
         //
         if (hasAngles && Sit.dropTargets !== undefined && Sit.dropTargets["angles"] !== undefined) {
+            // 120 frames is a ~4 s window at the 30 fps of a typical MISB video, and
+            // stays the default. A source whose angles must not be pre-filtered, or
+            // whose tracks are shorter than the window (RollingAverage shrinks the
+            // window symmetrically at the ends, so a 120-frame average over a
+            // 61-frame track collapses its middle to the mean of the whole track),
+            // overrides it via CTrackFile.anglesSmoothing.
+            const anglesSmooth = roleFile?.anglesSmoothing
+                ? roleFile.anglesSmoothing(trackOb.trackIndex) : 120;
             let data = {
                 id: trackID + "_LOS",
-                smooth: 120, // maybe GUI this?
+                smooth: anglesSmooth, // maybe GUI this?
             }
             let anglesNode = makeLOSNodeFromTrackAngles(trackID, data);
             trackOb.anglesNode = anglesNode;
@@ -1570,7 +1766,18 @@ class CTrackManager extends CManager {
 
             const dropTargets = Sit.dropTargets["angles"]
             const autoTrackFile = FileManager.get(trackOb.trackFileName);
-            const forceAngles = autoTrackFile && autoTrackFile.autoSelectAsCamera;
+            // A file whose angles ARE its measurement (a bearings-only interchange
+            // file) must select them even into an established sitch. Adding the
+            // option without selecting it leaves the heading on its previous value
+            // — normally "To Target" — which aims the camera at the target track
+            // and substitutes sightlines derived from the answer for the measured
+            // ones, with nothing on screen to say so.
+            // isMeasuredCameraTrack, not the bare measurement flag: the heading has
+            // to follow the same single track the camera POSITION follows, or a
+            // second scenario in the same file would supply the heading while the
+            // first supplied the position.
+            const forceAngles = (autoTrackFile && autoTrackFile.autoSelectAsCamera)
+                || isMeasuredCameraTrack;
             // Display the per-track angle option as "<shortName> angles" rather than
             // the raw "Angles_<shortName>" key (which reads like a leaked variable).
             const anglesLabel = shortName + " angles";
@@ -1579,7 +1786,15 @@ class CTrackManager extends CManager {
                     const switchNode = NodeMan.get(dropTargetSwitch);
                     switchNode.removeOption(anglesID)
                     switchNode.addOption(anglesID, NodeMan.get(anglesID), anglesLabel)
-                    if (!Globals.sitchEstablished || forceAngles) {
+                    // The unestablished-sitch auto-select needs the same restriction
+                    // as forceAngles. A file with several angle-bearing sub-tracks
+                    // (two concatenated BOT scenarios) would otherwise let whichever
+                    // loads LAST claim the heading, while the camera POSITION
+                    // correctly follows the claiming track — pointing one scenario's
+                    // bearings from another scenario's platform. Files whose angles
+                    // are not a declared measurement keep the previous behaviour.
+                    const anglesAutoOk = !trackHasMeasuredAngles || isMeasuredCameraTrack;
+                    if (forceAngles || (!Globals.sitchEstablished && anglesAutoOk)) {
                         switchNode.selectOption(anglesID)
                     }
                 }

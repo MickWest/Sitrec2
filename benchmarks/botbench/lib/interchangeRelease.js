@@ -38,7 +38,8 @@ import {generateScenario} from "./generateScenario";
 import {WIND_CONFIGS} from "./wind";
 import {VENUS_EPOCH_ISO} from "./venus";
 import {deriveSeed, makeStream} from "./rng";
-import {writeInterchange, scenarioBaseName, sha256, saltedCommit} from "./exportInterchange";
+import {writeInterchange, scenarioBaseName, sha256, saltedCommit,
+    INTERCHANGE_SPEC_VERSION} from "./exportInterchange";
 
 const OCEAN = "ocean";
 const EPOCH = "2025-02-01T20:00:00Z";
@@ -50,10 +51,33 @@ const EPOCH = "2025-02-01T20:00:00Z";
 // a few other scenarios removes the tell at zero cost to their truth.
 const NIGHT_EPOCH = VENUS_EPOCH_ISO;
 
+// SAMPLE RATE. The whole set is generated at 1 Hz: one measurement per second,
+// which is what a human-operated sensor or a downsampled feed actually delivers,
+// and the rate at which the range problem is hardest per unit of clip time.
+// n = durationSeconds * FPS + 1, so a 60 s clip is 61 rows and a 15 s clip is 16.
+//
+// One consequence worth knowing before you weight anything: the operator-wobble
+// model's time constants (0.4 s reaction, 1.0 correction speed) are FASTER than
+// the 1 s sample interval, so at this rate its error is heavily aliased and
+// looks close to white in the sampled series even though the underlying process
+// is correlated. scenario.json still declares it correlated with no white sigma,
+// which is the honest declaration; do not conclude from a lag-1 autocorrelation
+// near zero that you may treat it as white.
+const FPS = 1;
+
 const CLEAN = {kind: "clean", fovFullDeg: 0.5};
 const WHITE_003 = {kind: "white", fovFullDeg: 0.5, gaussianSigmaDeg: 0.03};
+// Fast or long-crossing targets need a sensor that is not zoomed all the way
+// in, or they leave the frame mid-clip and the cell measures FOV bookkeeping
+// instead of the geometry it was chosen for.
+const WHITE_003_WIDE = {kind: "white", fovFullDeg: 4.0, gaussianSigmaDeg: 0.03};
 const WOBBLE = {
     kind: "wobble", fovFullDeg: 0.9,
+    wobble: {amplitude: 0.15, driftSpeed: 0.10, reactionTime: 0.4,
+        correctionSpeed: 1.0, accuracy: 0.8},
+};
+const WOBBLE_WIDE = {
+    kind: "wobble", fovFullDeg: 4.0,
     wobble: {amplitude: 0.15, driftSpeed: 0.10, reactionTime: 0.4,
         correctionSpeed: 1.0, accuracy: 0.8},
 };
@@ -61,16 +85,41 @@ const WOBBLE = {
 const ORBIT = {kind: "orbit-point", speedMS: 70, altitudeAGL: 3000};
 const STRAIGHT = {kind: "straight", speedMS: 70, altitudeAGL: 3000};
 const CURVE = {kind: "curve", bankDeg: 10, speedMS: 70, altitudeAGL: 3000};
+// rangeErrorFactor 2.0, NOT 1.0. The factor scales where the orbit centre sits
+// along the initial sightline, so 1.0 puts it exactly ON the target and a Kasa
+// circle fit to the published sensor columns hands over the target's initial
+// ground position — the same leak that forces orbit-point to be rewritten for a
+// sealed release, except randomizeSpec would leave an explicit 1.0 alone and
+// the sealed extraction gate would then fail to draw a geometry at all.
+const ORBIT_DIR_2 = {kind: "orbit-direction", rangeErrorFactor: 2.0,
+    speedMS: 70, altitudeAGL: 3000};
+const S_CURVE_TOWARD = {kind: "s-curve-toward", bankAmplitudeDeg: 15,
+    bankPeriodSeconds: 12, speedMS: 70, altitudeAGL: 3000};
+const S_CURVE_PERP = {kind: "s-curve-perp", bankAmplitudeDeg: 15,
+    bankPeriodSeconds: 12, speedMS: 70, altitudeAGL: 3000};
 
 const BALLOON_NEUTRAL = {kind: "party-neutral", family: "balloon",
     parameters: {startAGL: 500}};
 const BALLOON_RISING = {kind: "weather-rising", family: "balloon",
     parameters: {startAGL: 300, ascentRate: 5}};
+const BALLOON_PARTY_RISING = {kind: "party-rising", family: "balloon",
+    parameters: {startAGL: 300, ascentRate: 3}};
+const HAB = {kind: "hab-stable", family: "balloon",
+    parameters: {startAGL: 20000, mslKm: 20}};
+const AEROSTAT = {kind: "tethered-aerostat", family: "aerostat", parameters: {}};
+const BIRD = {kind: "bird", family: "bird", parameters: {}};
+const AIRCRAFT_CRUISE = {kind: "aircraft-cruise", family: "aircraft", parameters: {}};
+const AIRCRAFT_TURN = {kind: "aircraft-turn", family: "aircraft", parameters: {}};
+
+const anomalousTarget = (tupleId, anomalous) => ({
+    kind: "anomalous", family: "anomalous", parameters: {tupleId, anomalous},
+});
 
 // Shared pointing-error realization for the anomaly/control pair: both members
 // see the EXACT same noise, so any difference in solver behaviour is the
 // manoeuvre, not the draw.
 const PAIR_KEY = "interchange-impulse-east";
+const PAIR_KEY_20G = "interchange-pulse-20g";
 
 /**
  * The curated set. PUBLIC by construction — these live in the repo. A sealed
@@ -90,7 +139,7 @@ export const SCENARIOS = [
             + "'my reader works'.",
         designIntent: "recoverable",
         scenarioSeed: 101,
-        spec: {epochISO: EPOCH, durationSeconds: 60, fps: 10,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
             initialHorizontalRangeM: 5000, siteId: OCEAN,
             platform: ORBIT, target: BALLOON_NEUTRAL,
             wind: {kind: "fixed"}, observation: CLEAN},
@@ -101,7 +150,7 @@ export const SCENARIOS = [
             + "(0.03 deg per-axis). The workhorse case.",
         designIntent: "recoverable",
         scenarioSeed: 101,
-        spec: {epochISO: EPOCH, durationSeconds: 60, fps: 10,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
             initialHorizontalRangeM: 5000, siteId: OCEAN,
             platform: ORBIT, target: BALLOON_NEUTRAL,
             wind: {kind: "fixed"}, observation: WHITE_003},
@@ -115,7 +164,7 @@ export const SCENARIOS = [
             + "a confident position is not.",
         designIntent: "degenerate-by-design",
         scenarioSeed: 101,
-        spec: {epochISO: NIGHT_EPOCH, durationSeconds: 15, fps: 10,
+        spec: {epochISO: NIGHT_EPOCH, durationSeconds: 15, fps: FPS,
             initialHorizontalRangeM: 5000, siteId: OCEAN,
             platform: STRAIGHT, target: BALLOON_NEUTRAL,
             wind: {kind: "fixed"}, observation: WHITE_003},
@@ -128,7 +177,7 @@ export const SCENARIOS = [
             + "mis-specified here — that is the point.",
         designIntent: "recoverable",
         scenarioSeed: 102,
-        spec: {epochISO: EPOCH, durationSeconds: 60, fps: 10,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
             initialHorizontalRangeM: 5000, siteId: OCEAN,
             platform: CURVE, target: BALLOON_NEUTRAL,
             wind: {kind: "fixed"}, observation: WOBBLE},
@@ -140,7 +189,7 @@ export const SCENARIOS = [
             + "motion coupled to a changing horizontal drift.",
         designIntent: "recoverable",
         scenarioSeed: 103,
-        spec: {epochISO: NIGHT_EPOCH, durationSeconds: 60, fps: 10,
+        spec: {epochISO: NIGHT_EPOCH, durationSeconds: 60, fps: FPS,
             initialHorizontalRangeM: 5000, siteId: OCEAN,
             platform: ORBIT, target: BALLOON_RISING,
             wind: {kind: "layered-gust"}, observation: WHITE_003},
@@ -154,7 +203,7 @@ export const SCENARIOS = [
             + "from a 20 km orbit over 15 s. Physically impossible.",
         designIntent: "weak-geometry",
         scenarioSeed: 401,
-        spec: {epochISO: EPOCH, durationSeconds: 15, fps: 10,
+        spec: {epochISO: EPOCH, durationSeconds: 15, fps: FPS,
             initialHorizontalRangeM: 20000, siteId: OCEAN,
             platform: ORBIT,
             target: {kind: "anomalous", family: "anomalous",
@@ -170,7 +219,7 @@ export const SCENARIOS = [
             + "difference from the anomaly member is the manoeuvre alone.",
         designIntent: "weak-geometry",
         scenarioSeed: 401,
-        spec: {epochISO: EPOCH, durationSeconds: 15, fps: 10,
+        spec: {epochISO: EPOCH, durationSeconds: 15, fps: FPS,
             initialHorizontalRangeM: 20000, siteId: OCEAN,
             platform: ORBIT,
             target: {kind: "anomalous", family: "anomalous",
@@ -181,17 +230,191 @@ export const SCENARIOS = [
     {
         jitterKey: "venus-orbit",
         note: "DIRECTION-ONLY truth. Venus: effectively at infinity, so there "
-            + "is no finite position to recover and truth.csv carries bearings "
-            + "instead of positions. Every finite-range solver collapses onto "
-            + "the sensor; a fixed-direction fit lands at ~0.016 deg. Tests "
-            + "that a consumer handles truthKind='direction'.",
+            + "is no finite position to recover and truth.csv's TruePosition "
+            + "columns are EMPTY — the bearings are in truth.json's "
+            + "directionTruth. Every finite-range solver collapses onto the "
+            + "sensor; a fixed-direction fit lands at ~0.016 deg. Tests that a "
+            + "consumer handles truthKind='direction'.",
         designIntent: "no-finite-range",
         scenarioSeed: 501,
-        spec: {epochISO: NIGHT_EPOCH, durationSeconds: 60, fps: 10,
+        spec: {epochISO: NIGHT_EPOCH, durationSeconds: 60, fps: FPS,
             initialHorizontalRangeM: 5000, siteId: OCEAN,
             platform: ORBIT,
             target: {kind: "venus", family: "venus", parameters: {}},
             wind: {kind: "zero"}, observation: WHITE_003},
+    },
+
+    // --- Added for the v1.1 set: sensor, target and range coverage ----------
+    // The eight above are the diagnostic cases — each one exists to catch a
+    // specific reader or solver mistake. These twelve broaden the set so a
+    // consumer meets more than one sensor construction, more than one object
+    // class and more than two decades of range.
+
+    {
+        jitterKey: "aerostat-straight-60s",
+        note: "STRAIGHT SENSOR THAT IS NOT A TRAP. A tethered aerostat is "
+            + "stationary, and a stationary target is over-determined by a "
+            + "straight baseline: a fixed-point fit holds 0.08-0.09 relative "
+            + "separation here while CV and Kalman collapse. Read alongside "
+            + "the collapse trap — same sensor construction, opposite verdict, "
+            + "which is why observability is a property of the geometry AND "
+            + "the model, never of the geometry alone.",
+        designIntent: "recoverable",
+        scenarioSeed: 104,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
+            initialHorizontalRangeM: 5000, siteId: OCEAN,
+            platform: STRAIGHT, target: AEROSTAT,
+            wind: {kind: "fixed"}, observation: WHITE_003},
+    },
+    {
+        jitterKey: "aerostat-scurve-perp",
+        note: "S-curve sensor weaving perpendicular to the sightline against "
+            + "the same stationary aerostat. The weave manufactures a baseline "
+            + "a straight pass does not have; compare its conditioning with "
+            + "the straight cell above.",
+        designIntent: "recoverable",
+        scenarioSeed: 105,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
+            initialHorizontalRangeM: 5000, siteId: OCEAN,
+            platform: S_CURVE_PERP, target: AEROSTAT,
+            wind: {kind: "zero"}, observation: WHITE_003},
+    },
+    {
+        jitterKey: "balloon-scurve-toward-2km",
+        note: "CLOSE RANGE, 2 km. Party balloon rising at 3 m/s seen from an "
+            + "S-curve flown toward it. Weaving along the sightline buys far "
+            + "less baseline than weaving across it — the near-range twin of "
+            + "the perpendicular cell.",
+        designIntent: "recoverable",
+        scenarioSeed: 106,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
+            initialHorizontalRangeM: 2000, siteId: OCEAN,
+            platform: S_CURVE_TOWARD, target: BALLOON_PARTY_RISING,
+            wind: {kind: "fixed-gust"}, observation: WHITE_003},
+    },
+    {
+        jitterKey: "balloon-curve-20km",
+        note: "LONG RANGE BALLOON, 20 km. The same neutral party balloon as "
+            + "the reference cell, four times further out from a banked curve. "
+            + "Angular size of the manoeuvre falls with range, so this is the "
+            + "reference case's difficulty knob.",
+        designIntent: "recoverable",
+        scenarioSeed: 107,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
+            initialHorizontalRangeM: 20000, siteId: OCEAN,
+            platform: CURVE, target: BALLOON_NEUTRAL,
+            wind: {kind: "fixed"}, observation: WHITE_003},
+    },
+    {
+        jitterKey: "hab-50km",
+        note: "HIGH-ALTITUDE BALLOON at 50 km, 20 km MSL, in a 20 m/s steady "
+            + "upper wind, from an orbit centred on the sightline rather than "
+            + "on the target. The altitude-coupling case: at this range the "
+            + "flat-plane surface model matters, and a solver that assumes a "
+            + "curved earth without reading scenario.json is wrong by "
+            + "hundreds of metres in Z.",
+        designIntent: "recoverable",
+        scenarioSeed: 108,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
+            initialHorizontalRangeM: 50000, siteId: OCEAN,
+            platform: ORBIT_DIR_2, target: HAB,
+            wind: {kind: "hab-steady"}, observation: WHITE_003_WIDE},
+    },
+    {
+        jitterKey: "aircraft-cruise-curve",
+        note: "COOPERATIVE TARGET. Airliner in level cruise at 20 km from a "
+            + "banked curve: constant velocity is the RIGHT model here, so a "
+            + "CV fit should be near-optimal. The set needs a case where the "
+            + "cheap solver wins, or it reads as an argument for physics "
+            + "priors everywhere.",
+        designIntent: "recoverable",
+        scenarioSeed: 109,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
+            initialHorizontalRangeM: 20000, siteId: OCEAN,
+            platform: CURVE, target: AIRCRAFT_CRUISE,
+            wind: {kind: "fixed"}, observation: WHITE_003_WIDE},
+    },
+    {
+        jitterKey: "aircraft-turn-orbit",
+        note: "MANOEUVRING TARGET. The same airliner in a sustained turn — a "
+            + "physically ordinary manoeuvre that breaks constant velocity. "
+            + "Distinguishing this from an anomaly is the discrimination the "
+            + "benchmark is for: both violate CV, only one violates physics.",
+        designIntent: "recoverable",
+        scenarioSeed: 110,
+        spec: {epochISO: NIGHT_EPOCH, durationSeconds: 60, fps: FPS,
+            initialHorizontalRangeM: 20000, siteId: OCEAN,
+            platform: ORBIT, target: AIRCRAFT_TURN,
+            wind: {kind: "fixed"}, observation: WHITE_003_WIDE},
+    },
+    {
+        jitterKey: "aircraft-straight-wobble",
+        note: "MIS-SPECIFIED NOISE ON A WEAK GEOMETRY. Cruising aircraft, "
+            + "straight sensor, operator wobble. Both the range degeneracy and "
+            + "the correlated error are present at once; a solver that "
+            + "abstains here is behaving correctly.",
+        designIntent: "degenerate-by-design",
+        scenarioSeed: 111,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
+            initialHorizontalRangeM: 20000, siteId: OCEAN,
+            platform: STRAIGHT, target: AIRCRAFT_CRUISE,
+            wind: {kind: "fixed"}, observation: WOBBLE_WIDE},
+    },
+    {
+        jitterKey: "bird-orbit",
+        note: "SMALL ERRATIC TARGET. A bird at 5 km: slow, close, and "
+            + "manoeuvring on its own timescale. Its truth comes from a seeded "
+            + "integration, so it is the cell most sensitive to reading the "
+            + "time grid correctly.",
+        designIntent: "recoverable",
+        scenarioSeed: 112,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
+            initialHorizontalRangeM: 5000, siteId: OCEAN,
+            platform: ORBIT, target: BIRD,
+            wind: {kind: "fixed"}, observation: WHITE_003},
+    },
+    {
+        jitterKey: "balloon-rising-wobble-curve",
+        note: "CLIMB THROUGH SHEAR UNDER CORRELATED NOISE. The rising "
+            + "weather balloon of the shear cell, but tracked by a wobbling "
+            + "operator instead of a clean sensor — vertical motion, changing "
+            + "drift and mis-specified error together.",
+        designIntent: "recoverable",
+        scenarioSeed: 113,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
+            initialHorizontalRangeM: 5000, siteId: OCEAN,
+            platform: CURVE, target: BALLOON_RISING,
+            wind: {kind: "layered-gust"}, observation: WOBBLE},
+    },
+    {
+        // Matched pair, so both members share a jitter key and a noise draw.
+        jitterKey: "pulse-20g-pair",
+        note: "ANOMALY member of a second matched pair, at a RECOVERABLE "
+            + "geometry rather than the 20 km weak one: a 20 g pulse seen "
+            + "from a 5 km orbit over 60 s. The impulse pair asks whether you "
+            + "can detect an anomaly you cannot localise; this one asks "
+            + "whether you can detect one you can.",
+        designIntent: "recoverable",
+        scenarioSeed: 402,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
+            initialHorizontalRangeM: 5000, siteId: OCEAN,
+            platform: ORBIT, target: anomalousTarget("pulse-20g", true),
+            wind: {kind: "zero"},
+            observation: {...WHITE_003_WIDE, sharedSeedKey: PAIR_KEY_20G}},
+    },
+    {
+        jitterKey: "pulse-20g-pair",
+        note: "CONTROL member of the recoverable pair: the same manoeuvre "
+            + "within a physically achievable envelope, identical geometry and "
+            + "an IDENTICAL pointing-error realization. Any difference in "
+            + "solver behaviour is the manoeuvre alone.",
+        designIntent: "recoverable",
+        scenarioSeed: 402,
+        spec: {epochISO: EPOCH, durationSeconds: 60, fps: FPS,
+            initialHorizontalRangeM: 5000, siteId: OCEAN,
+            platform: ORBIT, target: anomalousTarget("pulse-20g", false),
+            wind: {kind: "zero"},
+            observation: {...WHITE_003_WIDE, sharedSeedKey: PAIR_KEY_20G}},
     },
 ];
 
@@ -519,6 +742,10 @@ export function analystWind(scenario, trackId) {
     const mid = (scenario.n >> 1) * 3;
     const uTrue = scenario.wind.sampledVelocityENU[mid];
     const vTrue = scenario.wind.sampledVelocityENU[mid + 1];
+    // "1.0" here is a SEED NAMESPACE, not the spec version — do not swap it for
+    // INTERCHANGE_SPEC_VERSION. It feeds deriveSeed, so changing the string
+    // changes every analyst wind estimate in every shipped file, and would
+    // silently do so on each future spec bump.
     const stream = makeStream(deriveSeed(trackId, 0, "wind-estimate", "1.0"));
     return {
         model: "constant",
@@ -774,7 +1001,7 @@ export function buildRelease({
         .map((g) => [...g].sort());
 
     const manifest = {
-        specVersion: "1.0",
+        specVersion: INTERCHANGE_SPEC_VERSION,
         sealed,
         saltedCommitments: sealed,
         parametersRandomized: doRandomize,
@@ -839,7 +1066,7 @@ export function buildRelease({
     manifest.manifestSha256 = sha256(JSON.stringify(manifest));
 
     const fullIndex = {
-        specVersion: "1.0", sealed,
+        specVersion: INTERCHANGE_SPEC_VERSION, sealed,
         scenarios: index.map(({files, ...r}) => r),
     };
     fs.writeFileSync(path.join(challengeDir, "MANIFEST.json"),
@@ -849,10 +1076,10 @@ export function buildRelease({
         fs.writeFileSync(path.join(answersDir, "index-full.json"),
             JSON.stringify(fullIndex, null, 2) + "\n");
         fs.writeFileSync(path.join(answersDir, "opaque-map.json"),
-            JSON.stringify({specVersion: "1.0", mapping: opaqueMap}, null, 2) + "\n");
+            JSON.stringify({specVersion: INTERCHANGE_SPEC_VERSION, mapping: opaqueMap}, null, 2) + "\n");
         fs.writeFileSync(path.join(answersDir, "seal-salt.txt"), `${saltHex}\n`);
         fs.writeFileSync(path.join(answersDir, "withheld-scenarios.json"),
-            JSON.stringify({specVersion: "1.0", reason: "shared truth with a "
+            JSON.stringify({specVersion: INTERCHANGE_SPEC_VERSION, reason: "shared truth with a "
                 + "shipped member; the easier member is exactly solvable and "
                 + "would hand over the harder member's answer",
             withheld: droppedForSharedTruth,
@@ -860,7 +1087,7 @@ export function buildRelease({
         // The realized specs are answer-key material: publishing them would
         // undo the randomization.
         fs.writeFileSync(path.join(answersDir, "realized-specs.json"),
-            JSON.stringify({specVersion: "1.0", scenarios: realized.map((r) => ({
+            JSON.stringify({specVersion: INTERCHANGE_SPEC_VERSION, scenarios: realized.map((r) => ({
                 descriptive: r.descriptive, spec: r.spec, scenarioSeed: r.scenarioSeed,
                 // Required to reproduce the shipped bytes: the rigid placement
                 // is applied after generation, so spec+seed alone rebuild a
@@ -868,7 +1095,7 @@ export function buildRelease({
                 placement: r.placement,
             }))}, null, 2) + "\n");
         fs.writeFileSync(path.join(challengeDir, "index.json"), JSON.stringify({
-            specVersion: "1.0", sealed: true,
+            specVersion: INTERCHANGE_SPEC_VERSION, sealed: true,
             scenarios: index.map((r) => ({
                 name: r.name, trackId: r.trackId, frames: r.frames,
                 fps: r.fps, durationSeconds: r.durationSeconds,

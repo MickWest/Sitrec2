@@ -97,6 +97,24 @@ export class CTrackFileSTANAGBase extends CTrackFile {
         return this._points().some(p => p.platform || p.ground);
     }
 
+    // A STANAG file is a complete recording rather than a clip of one, so a fresh
+    // sitch should be sized to show all of it: TrackManager syncs the sitch DURATION
+    // to the track as well as its start time, which is the same operation as the
+    // "Sync Duration to" entry in the time menu. Only when no sitch is established —
+    // dropping a track into an existing setup must never resize the timeline under
+    // the user. Formats that do not define this method are unaffected.
+    syncsSitchDuration() {
+        return true;
+    }
+
+    // The platform/ground sub-tracks ARE the two ends of the sensor line of sight,
+    // so an already-loaded camera LOS makes them redundant and the "load just the
+    // tracked target" prompt is meaningful. This is the only format for which that
+    // is true — see CTrackFile.hasRedundantLOSReferenceTracks.
+    hasRedundantLOSReferenceTracks() {
+        return this._hasPlatformOrGround();
+    }
+
     // The DISTINCT position sources of this file, in priority order.
     //
     // When the tracker ground-locks the target, `target` comes out IDENTICAL to `ground`

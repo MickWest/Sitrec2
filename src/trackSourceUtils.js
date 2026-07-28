@@ -96,17 +96,23 @@ export function shouldSerializeLoadedFileEntry(fileID, fileEntry, activeTrackSou
  * Keep the angles ONLY when both hold:
  * - the current heading choice IS the camera track's own recorded-angles
  *   controller ("Angles_<cameraShortName>"), i.e. a real measured attitude; and
- * - the arriving target is that same track's derived "Center_" frame-center
- *   track (same source file, supplementary). Aiming the camera at the smoothed
- *   Center track would RE-derive the sightlines from the target being studied
- *   (circular) and silently discard the measurement.
+ * - the arriving target is a supplementary track from that same source file —
+ *   a MISB "Center_" frame-center track, or a BOT interchange file's Truth
+ *   track. Aiming the camera at it would RE-derive the sightlines from the
+ *   target being studied (circular) and silently discard the measurement.
  *
  * Everything else — STANAG role-hinted targets, ordinary second-track drops —
  * must still force "To Target" exactly as before.
  *
- * The exact-name match handles the common case; the sameSourceFile +
+ * The exact-name match handles the common MISB case; the sameSourceFile +
  * isSupplementary relationship survives shortName uniquification (a collision
- * can rename the camera track to "name_1" while its Center stays "Center_name").
+ * can rename the camera track to "name_1" while its Center stays "Center_name")
+ * and covers formats that do not use the "Center_" naming at all. That
+ * relationship — not the name — is what makes the aim circular: a BOT Truth
+ * track is literally the answer the sightlines are evidence about, so pointing
+ * the camera at it is the same mistake wearing a different label. The heading
+ * check above already limits this to files that supply measured angles, so no
+ * ordinary two-track import can reach it.
  *
  * @param {Object} p
  * @param {string|null} p.headingChoice     current CameraLOSController choice (raw option key)
@@ -120,7 +126,11 @@ export function shouldPreserveAnglesHeading({headingChoice, cameraShortName, arr
     sameSourceFile, isSupplementary}) {
     if (!cameraShortName || !headingChoice) return false;
     if (headingChoice !== "Angles_" + cameraShortName) return false;
-    if (!arrivingShortName || !arrivingShortName.startsWith("Center_")) return false;
-    return arrivingShortName === "Center_" + cameraShortName
-        || (sameSourceFile === true && isSupplementary === true);
+    if (!arrivingShortName) return false;
+    // The camera track's own derived frame-center track, by name.
+    if (arrivingShortName === "Center_" + cameraShortName) return true;
+    // Otherwise the FILE has to vouch for the relationship. This used to also
+    // require a "Center_" prefix, which silently excluded every format that
+    // derives its target track under a different name.
+    return sameSourceFile === true && isSupplementary === true;
 }

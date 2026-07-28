@@ -21,6 +21,7 @@ import {
 } from "./KMLUtils";
 import {CNodeArray} from "./nodes/CNodeArray";
 import {CTrackFileSTANAGCSV, isSTANAGCSV} from "./TrackFiles/CTrackFileSTANAGCSV";
+import {CTrackFileBOT, isBOTCSV} from "./TrackFiles/CTrackFileBOT";
 
 const trackFileClasses = [
     CTrackFileKML,
@@ -119,6 +120,11 @@ export function detectCSVType(csvRows) {
     // silently drop the Platform and Ground line-of-sight tracks.
     if (isSTANAGCSV(csvRows)) {
         return "STANAG_CSV";
+    }
+
+    // BOT interchange (bearings-only benchmark): Input, Truth or All shape.
+    if (isBOTCSV(csvRows)) {
+        return "BOT_CSV";
     }
 
     if (isCustom1(csvRows)) {
@@ -1458,6 +1464,12 @@ export const parseMethods = {
                         // Target/Platform/Ground sub-tracks, roles and HAE datum as the
                         // XML flavour — see CTrackFileSTANAGBase.
                         parsed = new CTrackFileSTANAGCSV(parsed);
+                        dataType = "trackfile";
+                    } else if (dataType === "BOT_CSV") {
+                        // Any of the three BOT shapes. The file carries no
+                        // georeference, so the class applies its default origin and
+                        // epoch — see CTrackFileBOT for what that costs.
+                        parsed = new CTrackFileBOT(parsed);
                         dataType = "trackfile";
                     } else if (dataType === "CUSTOM1") {
                         const custom1Misb = parseCustom1CSV(parsed);

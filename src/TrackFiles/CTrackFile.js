@@ -145,4 +145,54 @@ export class CTrackFile {
     trackRoleHint(trackIndex) {
         return null;
     }
+
+    // Rolling-average window, in frames, applied to the platform/sensor angle columns
+    // when TrackManager builds this track's "<name> angles" LOS node. Default 120 is
+    // a ~4 second window at the 30 fps of a typical MISB video. Override with 0 when
+    // the angles are a measurement that must not be pre-filtered, or when the track
+    // is shorter than the window — RollingAverage shrinks its window symmetrically at
+    // the ends, so averaging 120 frames over a 61-frame track leaves the endpoints
+    // untouched while collapsing the middle to the mean of the entire track.
+    anglesSmoothing(trackIndex = 0) {
+        return 120;
+    }
+
+    // True when this track's angles ARE the measurement the file exists to carry,
+    // rather than incidental recorded attitude. Such a file must land with its own
+    // sightlines selected as the camera heading, even when dropped into an already
+    // established sitch (where the default is to add the option without selecting
+    // it). Otherwise the heading stays on whatever was already chosen — typically
+    // "To Target", which aims the camera at the target track and REPLACES the
+    // measured bearings with ones re-derived from the answer.
+    anglesAreMeasurement(trackIndex = 0) {
+        return false;
+    }
+
+    // True when this file's non-target tracks are line-of-sight ENDPOINTS that a
+    // already-loaded camera LOS makes redundant — STANAG's posHigh/posLow pair.
+    // Only such a file may offer the "load just the tracked target" prompt, whose
+    // whole premise is that the other tracks duplicate geometry already present.
+    //
+    // Default false: for any other multi-track file the extra tracks are not
+    // redundant with anything, and dropping them loses real data. A BOT
+    // interchange file is the sharp case — its Sensor track carries the measured
+    // bearings, so "target track only" would keep the answer and throw away the
+    // evidence.
+    hasRedundantLOSReferenceTracks() {
+        return false;
+    }
+
+    // True when the track at trackIndex is a DISTINCT FLIGHT that the
+    // closest-point-of-approach heuristic may re-time the sitch to (it sets the start
+    // time to when this track and track 0 are nearest).
+    //
+    // This is NOT the same question as isSupplementaryTrack, though it usually has
+    // the same answer. A file can hold several independent primary tracks that are
+    // nonetheless not co-observed flights — separate recordings that merely share a
+    // coordinate frame — and computing a closest approach between two of those is
+    // meaningless. Such a file returns false here while still reporting its tracks as
+    // primary, so they stay visible and keep their platform models.
+    cpaCandidate(trackIndex) {
+        return !this.isSupplementaryTrack(trackIndex);
+    }
 }

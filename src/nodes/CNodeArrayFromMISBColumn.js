@@ -44,7 +44,12 @@ export class CNodeArrayFromMISBColumn extends CNodeEmptyArray {
 
         this.frames = inputArray.length; // not sure if we want to do it like that
 
-        this.array = ExpandMISBKeyframes(inputArray, this.columnIndex);
+        // this.degrees has to reach the INTERPOLATION, not just the smoothing below.
+        // Every angle column is created with degrees=true (see
+        // makeLOSNodeFromTrackAngles), but the flag used to stop here, so a heading
+        // or azimuth crossing north between two sparse keyframes was interpolated
+        // the long way round — 359 degrees of sweep in place of a fraction of one.
+        this.array = ExpandMISBKeyframes(inputArray, this.columnIndex, this.degrees);
 
         if (this.smooth !== 0) {
             if (this.degrees)

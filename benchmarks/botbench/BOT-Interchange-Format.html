@@ -1,4 +1,4 @@
-<title>BOT Interchange Format v1.0</title>
+<title>BOT Interchange Format v1.1</title>
 <style>
   :root {
     --paper:      #f5f7f8;
@@ -170,7 +170,7 @@
   <h1>BOT Interchange Format</h1>
   <p class="standfirst">A CSV interchange for bearings-only tracking problems, so
   algorithms written outside Sitrec can be run on the same scenarios and scored
-  against the same ground truth. Specification v1.0.</p>
+  against the same ground truth. Specification v1.1.</p>
 </header>
 
 <section>
@@ -245,33 +245,41 @@
     produce identical bearings — they differ only in range, and therefore in
     speed. Nothing in the measurements distinguishes them, and adding sightlines
     does not help. A motion model is what selects one: constant velocity would
-    reject a track that lurches, a balloon model one that outruns the wind. The
-    input reserves <code>MinRange</code> because without a floor the degenerate
-    solution — collapsing onto the sensor — is formally optimal, and the answer
-    key marks range-observability because how well a model separates these
-    candidates depends on the sensor's path <em>and</em> on how much freedom the
-    model leaves — a path that defeats one model can be ample for a stricter
-    one.</figcaption>
+    reject a track that lurches, a balloon model one that outruns the wind.
+    Nothing in the input file supplies that model, and nothing in it stops you
+    collapsing onto the sensor — with no floor on range, the collapsed solution
+    is formally optimal, and imposing one is <em>your</em> job, not the format's.
+    The answer key marks range-observability because how well a model separates
+    these candidates depends on the sensor's path <em>and</em> on how much
+    freedom the model leaves — a path that defeats one model can be ample for a
+    stricter one.</figcaption>
   </figure>
 </section>
 
 <section>
-  <h2>The four forms</h2>
-  <p>Each scenario is four files. The first two are the challenge; the last two
-  are the answer key, written to a separate directory so a sealed set can ship by
-  handing over one folder.</p>
+  <h2>The three folders</h2>
+  <p>A release is three folders. <code>Input/</code> is the challenge.
+  <code>Truth/</code> is the answer key. <code>All/</code> is the two joined
+  column-wise — the same rows, with the answer beside the measurement.</p>
+
+  <p>That join is a convenience for reading and plotting, and it is the file most
+  likely to be handed to the wrong person. <strong><code>All/</code> is answer-key
+  material.</strong> It ships with <code>Truth/</code> and never with
+  <code>Input/</code>; a sealed release puts <code>Input/</code> under
+  <code>challenge/</code> and both of the others under <code>answers/</code>.</p>
 
   <figure>
     <div class="scroll">
       <div class="flow" role="img"
-           aria-label="The challenge lane — input.csv and scenario.json — feeds
-                       your algorithm, which produces output.csv. The answers
-                       lane — truth.csv and truth.json — is withheld until
-                       scoring. A bracket joins output.csv and the answers lane
-                       together into the scorer, which emits a score.">
+           aria-label="The challenge lane — the Input folder, holding input.csv
+                       and scenario.json — feeds your algorithm, which produces
+                       output.csv. The answers lane — the Truth and All folders
+                       — is withheld until scoring. A bracket joins output.csv
+                       and the answers lane together into the scorer, which
+                       emits a score.">
         <div class="lanes">
           <div class="lane">
-            <span class="lane-tag ship">challenge/</span>
+            <span class="lane-tag ship">Input/</span>
             <span class="chip">input.csv</span>
             <span class="chip">scenario.json</span>
             <span class="arrow" aria-hidden="true">&rarr;</span>
@@ -280,9 +288,10 @@
             <span class="chip">output.csv</span>
           </div>
           <div class="lane">
-            <span class="lane-tag hold">answers/</span>
+            <span class="lane-tag hold">Truth/ All/</span>
             <span class="chip held">truth.csv</span>
             <span class="chip held">truth.json</span>
+            <span class="chip held">all.csv</span>
             <span class="held-note">withheld until scoring</span>
           </div>
         </div>
@@ -295,33 +304,57 @@
       </div>
     </div>
     <figcaption>A sealed release ships <code>challenge/</code> and keeps
-    <code>answers/</code>. The development set writes both side by side, because
-    it is a set you read rather than a set you compete on.</figcaption>
+    <code>answers/</code>. The development set writes all three folders side by
+    side, because it is a set you read rather than a set you compete on.</figcaption>
   </figure>
 
-  <h3>input.csv</h3>
-  <p>One row per frame, per track. All coordinates in metres, ENU.</p>
+  <h3>Input/&lt;name&gt;.input.csv</h3>
+  <p>One row per frame, per track. All coordinates in metres, in the frame
+  declared by <code>scenario.json</code>.</p>
+  <pre class="code">TrackID,TrackSource,Time,SensorPositionX,SensorPositionY,SensorPositionZ,
+LOSUnitVectorX,LOSUnitVectorY,LOSUnitVectorZ,MaxRange,LOSUncertainty</pre>
   <div class="scroll"><table>
     <tr><th>Column</th><th>Req</th><th>Meaning</th></tr>
-    <tr><td>TrackID</td><td class="req">yes</td><td class="note">Join key across all four files.</td></tr>
-    <tr><td>TrackSource</td><td class="req">yes</td><td class="note">Free-text provenance label. Not a sensor key — one sensor per track in v1.0.</td></tr>
-    <tr><td>Time</td><td class="req">yes</td><td class="note">Seconds from <code>epochISO</code>.</td></tr>
-    <tr><td>Valid</td><td class="req">yes</td><td class="note">0/1. A zero <em>keeps the row</em> — target out of frame, occluded, dropout. Deleting rows breaks the uniform time grid.</td></tr>
-    <tr><td>SensorPosE/N/U</td><td class="req">yes</td><td class="note">Sensor position.</td></tr>
-    <tr><td>LosE/N/U</td><td class="req">yes</td><td class="note">Sightline unit vector. Consumers may renormalise.</td></tr>
-    <tr><td>LosSigmaDeg</td><td class="req">col</td><td class="note">Per-axis <em>white</em> 1σ in the pan/tilt tangent plane; total angular RMS is σ√2. <strong>Blank for correlated error models</strong>, which have no white σ — read <code>losError</code> in <code>scenario.json</code> for the model and its scale before weighting anything by this column.</td></tr>
-    <tr><td>MinRange</td><td class="req">col</td><td class="note">Metres. The column is always present, but <strong>blank means unconstrained and every scenario in the current release ships blank</strong> — the generator asserts no range bounds. Impose your own floor: without one the solution that collapses onto the sensor is formally optimal, which is exactly the trap the straight-platform scenario sets.</td></tr>
-    <tr><td>MaxRange</td><td class="req">col</td><td class="note">Metres; blank if unconstrained. Also blank throughout the current release.</td></tr>
+    <tr><td>TrackID</td><td class="req">yes</td><td class="note">Join key across all three folders.</td></tr>
+    <tr><td>TrackSource</td><td class="req">yes</td><td class="note">Free-text provenance label. Not a sensor key — one sensor per track in v1.1.</td></tr>
+    <tr><td>Time</td><td class="req">yes</td><td class="note">Seconds from <code>epochISO</code>. Uniform grid; the current release is 1 Hz throughout.</td></tr>
+    <tr><td>SensorPosition X/Y/Z</td><td class="req">yes</td><td class="note">Sensor position, metres. See <code>frame.axisOrder</code> — X/Y/Z is <em>East/North/Up</em> in this release, and the names are frame-neutral precisely so that a future curved-earth or ECEF set can use the same schema.</td></tr>
+    <tr><td>LOSUnitVector X/Y/Z</td><td class="req">yes</td><td class="note">Sightline unit vector, same axes. Consumers may renormalise.</td></tr>
+    <tr><td>MaxRange</td><td class="req">col</td><td class="note">Metres; <strong>blank means unconstrained, and every scenario in the current release ships blank</strong>. There is no MinRange column: the floor that stops a solver collapsing onto the sensor is a property of your estimator, not of the measurements, and v1.0 shipped it blank in every scenario anyway.</td></tr>
+    <tr><td>LOSUncertainty</td><td class="req">col</td><td class="note">Degrees. Per-axis <em>white</em> 1σ in the pan/tilt tangent plane; total angular RMS is σ√2. <strong>Blank for correlated error models</strong>, which have no white σ — read <code>losError</code> in <code>scenario.json</code> for the model and its scale before weighting anything by this column.</td></tr>
   </table></div>
 
-  <h3>truth.csv</h3>
-  <p>Two shapes. Finite targets carry positions; effectively-infinite ones
-  (a star, a planet) carry bearings, because there is no position to recover.</p>
-  <pre class="code">TrackID,Time,TruthPosE,TruthPosN,TruthPosU,TruthVelE,TruthVelN,TruthVelU
-TrackID,Time,TruthDirE,TruthDirN,TruthDirU</pre>
-  <p>Velocity is derived by central difference, and <code>truth.json</code> says
-  so — the balloon and bird truths come out of a numerical integration with no
-  analytic velocity.</p>
+  <p>Every frame gets a row, including frames where the target was outside the
+  sensor's field of view. Those indices are listed in <code>scenario.json</code>'s
+  <code>invalidFrames</code> — drop them from a fit, but do not delete the rows,
+  because the uniform time grid is what makes per-frame quantities line up.
+  (v1.0 carried this as a per-row <code>Valid</code> column.)</p>
+
+  <h3>Truth/&lt;name&gt;.truth.csv</h3>
+  <p>One shape, always.</p>
+  <pre class="code">TrackID,Time,TruePositionX,TruePositionY,TruePositionZ</pre>
+  <p>The position columns are <strong>empty</strong> for an effectively-infinite
+  target — a star or a planet has no position to recover, only a bearing, and its
+  answer is <code>truth.json</code>'s <code>directionTruth</code> (flat
+  <code>[x,y,z,…]</code> unit vectors on the same time grid). The header does not
+  change shape per scenario: parse one schema and branch on
+  <code>truthKind</code>.</p>
+
+  <p>There is no velocity column. v1.0 shipped a central difference of the
+  position column, which a consumer can compute for themselves, and scoring
+  against it graded the differencing scheme rather than the estimate.</p>
+
+  <h3>All/&lt;name&gt;.all.csv</h3>
+  <p>Exactly the input columns followed by the truth columns — the same rows, in
+  the same order, joined on <code>(TrackID, Time)</code>.</p>
+  <pre class="code">TrackID,TrackSource,Time,SensorPositionX,SensorPositionY,SensorPositionZ,
+LOSUnitVectorX,LOSUnitVectorY,LOSUnitVectorZ,MaxRange,LOSUncertainty,
+TruePositionX,TruePositionY,TruePositionZ</pre>
+  <p>It is generated from the same builders as the other two and checked
+  column-wise against them at build time, so it cannot drift into being a
+  subtly different problem wearing the same name. <code>All/</code> also carries
+  copies of both JSON sidecars, so that folder alone is enough to work with —
+  which is exactly why it must not be shipped to an entrant.</p>
 
   <h3>scenario.json &amp; truth.json</h3>
   <p><code>scenario.json</code> carries the frame, datum, timing, declared sensor
@@ -360,25 +393,41 @@ TrackID,Time,TruthDirE,TruthDirN,TruthDirU</pre>
   and the other <em>marginal</em> — same sensor path, different target motion.
   Stratify on the measurement; read the intent as a note from the author.</p>
   <pre class="code">"frame": {
-  "type": "ENU",
-  "originLLA": [35, -125, 0],
-  "ellipsoid": "WGS84",
-  "surfaceModel": "flat-plane",
-  "directionBasis": "originLLA"
+  "type":                  "ENU",
+  "axisOrder":             "X=East, Y=North, Z=Up",
+  "originLLA":             [35, -125, 0],
+  "ellipsoid":             "WGS84",
+  "surfaceModel":          "flat-plane",
+  "groundElevationMSL":    0,
+  "directionBasis":        "originLLA",
+  "geodeticAltitudeRule":  "altitude = U + groundElevationMSL"
 }</pre>
 </section>
 
 <section>
   <h2>Reading the frame</h2>
-  <p>Two properties of the frame are invisible in the CSV and will silently
-  change your answer if you assume the other one.</p>
+  <p>Three properties of the frame are invisible in the CSV and will silently
+  change your answer if you assume a different one.</p>
+
+  <div class="caution">
+    <span class="tag">axisOrder</span>
+    <p>The columns are named X/Y/Z so the schema does not presume a frame. In
+    this release <code>X=East, Y=North, Z=Up</code> — but the other common
+    convention is X=North, Y=East, and swapping them <em>mirrors</em> the scene.
+    A mirrored scene still reproduces its own bearings, so every internal
+    consistency check you might run on it passes; the error only shows up when
+    you compare against a map or an ephemeris. Read the field.</p>
+  </div>
 
   <div class="caution">
     <span class="tag">surfaceModel</span>
-    <p><code>flat-plane</code> means truth sits on a flat plane and geodetic
-    altitude equals the U coordinate directly. A <code>wgs84-tangent</code> set
-    would need <code>alt = U − (E²+N²)/2R</code> — about 2 m at 5 km, 240 m at
-    55 km. Pure sightline fits do not care; anything altitude-coupled does.</p>
+    <p><code>flat-plane</code> means truth sits on a flat plane, so geodetic
+    altitude is <code>Z + groundElevationMSL</code> — equal to Z only at a
+    zero-elevation site such as this release's <code>ocean</code>. A
+    <code>wgs84-tangent</code> set would additionally need
+    <code>alt −= (X²+Y²)/2R</code> — about 2 m at 5 km, 240 m at 55 km, and the
+    50 km high-altitude-balloon cell is where you will notice. Pure sightline
+    fits do not care; anything altitude-coupled does.</p>
   </div>
 
   <div class="caution">
@@ -401,10 +450,23 @@ BOTBENCH_OPAQUE=1 BOTBENCH_SEAL_SALT=$(openssl rand -hex 32) \
   npm run bench-bot-interchange</pre>
 
   <p>The <strong>development set</strong> names files after their setup
-  (<code>straight-70ms-3000m_r5km_15s-10fps_partyneutral-500m…</code>) and ships
-  truth next to the challenge. That is what you want while building a reader.
+  (<code>straight-70ms-3000m_r5km_15s-1fps_partyneutral-500m…</code>) and writes
+  all three folders side by side. That is what you want while building a reader.
   Those names are of course total truth leakage, which is the point of the other
   mode.</p>
+
+  <p>The current set is <strong>20 scenarios at 1 Hz</strong> — one measurement
+  per second, which is what a human-operated sensor or a downsampled feed
+  actually delivers. A 60 s clip is 61 rows; a 15 s clip is 16. Rate is not a
+  free difficulty knob: sampling faster buys √N against white noise and almost
+  nothing against a correlated error or against a degenerate geometry, because
+  range unobservability is a property of the sensor's <em>path</em>, not of how
+  often it is sampled. One consequence to know before you weight anything: the
+  operator-wobble model's time constants are shorter than the 1 s interval, so
+  its error is heavily aliased and looks nearly white in the sampled series.
+  <code>scenario.json</code> still declares it correlated with no white σ, which
+  is the honest declaration — do not conclude otherwise from a lag-1
+  autocorrelation near zero.</p>
 
   <p>A <strong>sealed release</strong> splits into <code>challenge/</code> and
   <code>answers/</code>, permutes ids under the salt, and — critically — draws
@@ -429,8 +491,9 @@ BOTBENCH_OPAQUE=1 BOTBENCH_SEAL_SALT=$(openssl rand -hex 32) \
     a stratification rule for degenerate geometry, and a credit rule for
     abstention, two teams' numbers will not be comparable. <code>output.csv</code>
     is specified below but nothing writes or reads it yet.</p>
-    <pre class="code">TrackID,AlgorithmID,Time,Status,EstPosE/N/U,
-  Kind,DirE/N/U,EstVelE/N/U,CovEE,CovNN,CovUU,CovEN,CovEU,CovNU</pre>
+    <pre class="code">TrackID,AlgorithmID,Time,Status,EstPositionX,EstPositionY,EstPositionZ,
+  Kind,DirectionX,DirectionY,DirectionZ,EstVelocityX,EstVelocityY,EstVelocityZ,
+  CovXX,CovYY,CovZZ,CovXY,CovXZ,CovYZ</pre>
     <p><code>Status</code> is <code>ok</code> / <code>abstain</code> /
     <code>failed</code>. The distinction is not pedantry: counting collapsed runs
     as successes rather than non-detections inflated one measured anomaly-detection
@@ -469,12 +532,22 @@ BOTBENCH_OPAQUE=1 BOTBENCH_SEAL_SALT=$(openssl rand -hex 32) \
   </div>
 
   <div class="issue">
+    <h4>All/ is trivially mis-shippable <span class="sev known">known</span></h4>
+    <p>Its name says "everything" and its rows are the friendliest thing in the
+    release, which is exactly the problem: handing an entrant <code>All/</code>
+    hands them the answers. The layout puts it under <code>answers/</code> and
+    the sealed-release test asserts the challenge tree contains no
+    <code>All/</code> directory and no <code>TruePosition</code> column anywhere
+    — but a release assembled by hand has no such check.</p>
+  </div>
+
+  <div class="issue">
     <h4>Matched pairs remain linkable <span class="sev known">known</span></h4>
     <p>A matched pair shares its sensor trajectory by construction, so anyone can
-    group shipped files by their SensorPos columns. For an anomaly/control pair
-    that reveals one of the two is anomalous. The manifest publishes the grouping
-    rather than implying it is hidden; a release that must not reveal pairing
-    should ship one member of each.</p>
+    group shipped files by their SensorPosition columns. For an anomaly/control
+    pair that reveals one of the two is anomalous. The manifest publishes the
+    grouping rather than implying it is hidden; a release that must not reveal
+    pairing should ship one member of each.</p>
   </div>
 
   <div class="issue">
@@ -494,7 +567,7 @@ BOTBENCH_OPAQUE=1 BOTBENCH_SEAL_SALT=$(openssl rand -hex 32) \
 </section>
 
 <footer>
-  BOT Interchange Format v1.0 · Sitrec 2.106.1<br/>
+  BOT Interchange Format v1.1 · Sitrec 2.106.1<br/>
   Generator: <code>benchmarks/botbench/lib/interchangeRelease.js</code><br/>
   Writers: <code>benchmarks/botbench/lib/exportInterchange.js</code><br/>
   Security properties: <code>tests/botbench/interchangeReidentification.test.js</code>,

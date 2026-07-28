@@ -2,15 +2,36 @@
 // file set, so algorithms outside Sitrec can be run against these scenarios
 // and scored against the same truth.
 //
-// Four forms per scenario (spec: benchmarks/botbench/BOT-Interchange-Format.html):
+// THREE FOLDERS per release (spec: benchmarks/botbench/BOT-Interchange-Format.html):
 //
-//   <name>.input.csv      sensor positions + LOS unit vectors + declared error
-//   <name>.scenario.json  ENU origin, datum, surface model, epoch, timing
-//   <name>.truth.csv      truth positions (or directions) on the same grid
-//   <name>.truth.json     object class, envelope, events, realized noise stats
+//   Input/<name>.input.csv       sensor positions + LOS unit vectors + declared
+//                                error. THE CHALLENGE.
+//   Input/<name>.scenario.json   ENU origin, datum, surface model, epoch, timing
+//   Truth/<name>.truth.csv       true positions on the same time grid
+//   Truth/<name>.truth.json      object class, events, realized noise, geometry
+//   All/<name>.all.csv           input.csv and truth.csv joined column-wise
+//   All/<name>.scenario.json     copies of both sidecars, so All/ is self-
+//   All/<name>.truth.json        contained
 //
-// The first two are the challenge; the last two are the answer key. They are
-// written to SEPARATE directories so a challenge set can ship without truth.
+// All/ IS ANSWER-KEY MATERIAL. It carries TruePosition columns, so it ships
+// with Truth/ and never with Input/. The convenience of one row per frame with
+// the answer beside the measurement is exactly what makes it unshippable to an
+// entrant. A sealed release puts Input/ under challenge/ and both All/ and
+// Truth/ under answers/.
+//
+// v1.1 CHANGES FROM v1.0. Column names are frame-neutral (X/Y/Z rather than
+// E/N/U, with the axis mapping declared in scenario.json), the Valid and
+// MinRange columns are gone, and truth carries position only:
+//
+//   Valid       -> scenario.json invalidFrames[]. The column had to be read to
+//                  know a row was out of frame; the row itself is still there,
+//                  because deleting it would break the uniform time grid.
+//   MinRange    -> nothing. It was blank in every shipped scenario anyway, and
+//                  the floor that keeps a solver off the sensor is the SOLVER's
+//                  business, not a property of the measurements.
+//   TruthVel*   -> nothing. It was a central difference of the position column
+//                  a consumer already has; publishing a derived quantity as if
+//                  it were measured truth invited scoring against it.
 //
 // NAMING. Default names are descriptive of the setup and its numbers:
 //
@@ -36,7 +57,7 @@ import path from "path";
 import crypto from "crypto";
 import {WIND_CONFIGS} from "./wind";
 
-export const INTERCHANGE_SPEC_VERSION = "1.0";
+export const INTERCHANGE_SPEC_VERSION = "1.1";
 
 // ---------------------------------------------------------------------------
 // Integrity commitments
@@ -186,87 +207,118 @@ function declaredLosError(obsSpec) {
 // File builders
 // ---------------------------------------------------------------------------
 
-const INPUT_HEADER = [
-    "TrackID", "TrackSource", "Time", "Valid",
-    "SensorPosE", "SensorPosN", "SensorPosU",
-    "LosE", "LosN", "LosU",
-    "LosSigmaDeg", "MinRange", "MaxRange",
+// The three headers are ONE schema in three projections: Input is the leading
+// columns of All, Truth is the TrackID/Time key plus the trailing columns. A
+// consumer that can read All can read the other two by ignoring what is absent,
+// and a scorer joins Truth to an algorithm's output on (TrackID, Time).
+const INPUT_COLUMNS = [
+    "TrackID", "TrackSource", "Time",
+    "SensorPositionX", "SensorPositionY", "SensorPositionZ",
+    "LOSUnitVectorX", "LOSUnitVectorY", "LOSUnitVectorZ",
+    "MaxRange", "LOSUncertainty",
 ];
+const TRUTH_COLUMNS = ["TruePositionX", "TruePositionY", "TruePositionZ"];
+
+const INPUT_HEADER = INPUT_COLUMNS;
+const TRUTH_HEADER = ["TrackID", "Time", ...TRUTH_COLUMNS];
+const ALL_HEADER = [...INPUT_COLUMNS, ...TRUTH_COLUMNS];
+
+/**
+ * The measurement row for one frame, without the TrackID/Time key. Shared by
+ * the input and all builders so the two files cannot drift: a joined file whose
+ * measurement columns disagreed with the challenge file would be a silently
+ * different problem wearing the same name.
+ */
+function measurementFields(scenario, i, trackSource, sigmaStr, maxR) {
+    const b = i * 3;
+    const S = scenario.platform.positionENU;
+    const D = scenario.observation.observedDirectionENU;
+    return [
+        trackSource,
+        f(scenario.times[i]),
+        f(S[b]), f(S[b + 1]), f(S[b + 2]),
+        f(D[b]), f(D[b + 1]), f(D[b + 2]),
+        maxR, sigmaStr,
+    ];
+}
+
+// LOSUncertainty is defined by the spec as a per-axis WHITE 1-sigma in degrees.
+// A correlated model has no such quantity — emitting its deadband amplitude
+// there published a number that is neither a sigma nor in those units, and a
+// consumer weighting by it (or feeding it to fitMonteCarlo2 as
+// losUncertaintyDeg) was silently misled. Leave the field EMPTY for correlated
+// models; scenario.json's losError carries the model and its scale, and the
+// empty field is the spec's missing-value representation.
+function declaredSigmaField(scenario) {
+    const declared = declaredLosError(scenario.spec.observation);
+    return declared.correlated ? "" : f(declared.sigmaDeg);
+}
+
+/**
+ * True position for frame i, as three CSV fields.
+ *
+ * Direction-kind truth (venus and other effectively-infinite targets) has NO
+ * finite position, so all three fields are empty. The bearings live in
+ * truth.json's directionTruth, and truthKind says which shape applies — the
+ * CSV header stays identical across the whole release rather than mutating
+ * per scenario, so a scorer parses one schema and gates on truthKind.
+ */
+function truthFields(scenario, i) {
+    if (scenario.target.kind === "direction") return ["", "", ""];
+    const P = scenario.target.positionENU;
+    const b = i * 3;
+    return [f(P[b]), f(P[b + 1]), f(P[b + 2])];
+}
 
 export function buildInputCsv(scenario, trackId, trackSource) {
-    const {n, times, platform, observation, constraints} = scenario;
-    const S = platform.positionENU;
-    const D = observation.observedDirectionENU;
-    const targetValid = scenario.target.valid ?? null;
-    // LosSigmaDeg is defined by the spec as a per-axis WHITE 1-sigma. A
-    // correlated model has no such quantity — emitting its deadband amplitude
-    // there published a number that is neither a sigma nor in those units, and
-    // a consumer weighting by it (or feeding it to fitMonteCarlo2 as
-    // losUncertaintyDeg) was silently misled. Leave the field EMPTY for
-    // correlated models; scenario.json's losError carries the model and its
-    // scale, and the empty field is the spec's missing-value representation.
-    const declared = declaredLosError(scenario.spec.observation);
-    const sigmaStr = declared.correlated ? "" : f(declared.sigmaDeg);
-    const minR = f(constraints.minRangeM);
-    const maxR = f(constraints.maxRangeM);
-
+    const sigmaStr = declaredSigmaField(scenario);
+    const maxR = f(scenario.constraints.maxRangeM);
     const rows = [];
-    for (let i = 0; i < n; i++) {
-        const b = i * 3;
-        // Valid=0 keeps the row. Deleting out-of-frame rows would break the
-        // uniform time grid that per-frame wind and fps-derived quantities
-        // depend on (adapters.js makes the same refusal).
-        const valid = (observation.inFov[i] && (!targetValid || targetValid[i])) ? 1 : 0;
-        rows.push([
-            trackId, trackSource, f(times[i]), valid,
-            f(S[b]), f(S[b + 1]), f(S[b + 2]),
-            f(D[b]), f(D[b + 1]), f(D[b + 2]),
-            sigmaStr, minR, maxR,
-        ]);
+    // Every frame gets a row, including frames where the target left the field
+    // of view: deleting them would break the uniform time grid that per-frame
+    // wind and fps-derived quantities depend on (adapters.js makes the same
+    // refusal). scenario.json's invalidFrames lists them.
+    for (let i = 0; i < scenario.n; i++) {
+        rows.push([trackId, ...measurementFields(scenario, i, trackSource, sigmaStr, maxR)]);
     }
     return csv(INPUT_HEADER, rows);
 }
 
-const TRUTH_POS_HEADER = [
-    "TrackID", "Time",
-    "TruthPosE", "TruthPosN", "TruthPosU",
-    "TruthVelE", "TruthVelN", "TruthVelU",
-];
-const TRUTH_DIR_HEADER = ["TrackID", "Time", "TruthDirE", "TruthDirN", "TruthDirU"];
-
 export function buildTruthCsv(scenario, trackId) {
-    const {n, times, target} = scenario;
-
-    // Direction-kind truth (venus and other effectively-infinite targets): the
-    // answer is a bearing, so there is no finite position to score against.
-    if (target.kind === "direction") {
-        const Dt = target.directionENU;
-        const rows = [];
-        for (let i = 0; i < n; i++) {
-            const b = i * 3;
-            rows.push([trackId, f(times[i]), f(Dt[b]), f(Dt[b + 1]), f(Dt[b + 2])]);
-        }
-        return csv(TRUTH_DIR_HEADER, rows);
-    }
-
-    const P = target.positionENU;
-    // Velocity by central difference (one-sided at the ends). The balloon and
-    // bird truths come out of a numeric integration with no analytic velocity,
-    // so this is derived rather than exact — truth.json records that.
     const rows = [];
-    for (let i = 0; i < n; i++) {
-        const b = i * 3;
-        const iA = i === 0 ? 0 : i - 1;
-        const iB = i === n - 1 ? n - 1 : i + 1;
-        const dt = times[iB] - times[iA];
-        const vel = [0, 1, 2].map((k) => (dt > 0 ? (P[iB * 3 + k] - P[iA * 3 + k]) / dt : 0));
+    for (let i = 0; i < scenario.n; i++) {
+        rows.push([trackId, f(scenario.times[i]), ...truthFields(scenario, i)]);
+    }
+    return csv(TRUTH_HEADER, rows);
+}
+
+export function buildAllCsv(scenario, trackId, trackSource) {
+    const sigmaStr = declaredSigmaField(scenario);
+    const maxR = f(scenario.constraints.maxRangeM);
+    const rows = [];
+    for (let i = 0; i < scenario.n; i++) {
         rows.push([
-            trackId, f(times[i]),
-            f(P[b]), f(P[b + 1]), f(P[b + 2]),
-            f(vel[0]), f(vel[1]), f(vel[2]),
+            trackId,
+            ...measurementFields(scenario, i, trackSource, sigmaStr, maxR),
+            ...truthFields(scenario, i),
         ]);
     }
-    return csv(TRUTH_POS_HEADER, rows);
+    return csv(ALL_HEADER, rows);
+}
+
+/**
+ * Frames where the target was outside the sensor's field of view or otherwise
+ * unmeasurable. v1.0 carried this as a per-row Valid column; it moves to
+ * scenario.json because it is a property of a handful of frames in a handful of
+ * scenarios, not of every row in every file. The rows themselves stay.
+ */
+export function invalidFrames(scenario) {
+    const targetValid = scenario.target.valid ?? null;
+    const out = [];
+    for (let i = 0; i < scenario.n; i++) {
+        if (!(scenario.observation.inFov[i] && (!targetValid || targetValid[i]))) out.push(i);
+    }
+    return out;
 }
 
 /**
@@ -287,6 +339,12 @@ export function buildScenarioJson(scenario, trackId, {
         label,
         frame: {
             type: "ENU",
+            // The CSV columns are named X/Y/Z so the schema does not presume a
+            // frame. THIS is what they mean. A consumer that assumes the more
+            // common X=North/Y=East gets a mirrored scene that still fits its
+            // own bearings, so the error survives every internal consistency
+            // check it might run.
+            axisOrder: "X=East, Y=North, Z=Up",
             originLLA: [site.latDeg, site.lonDeg, site.groundElevationMSL],
             ellipsoid: "WGS84",
             // The generator places truth on a FLAT plane; the ellipsoid does
@@ -315,6 +373,11 @@ export function buildScenarioJson(scenario, trackId, {
         frameCount: scenario.n,
         durationSeconds: scenario.durationSeconds,
         timeIsUniform: true,
+        // Frames whose LOS is not a valid measurement (target out of the field
+        // of view). The rows are still present so the time grid stays uniform;
+        // drop these indices from a fit rather than the rows from the file.
+        // Empty means every row is a measurement.
+        invalidFrames: invalidFrames(scenario),
         losError: declaredLosError(scenario.spec.observation),
         wind: windEstimate,
         sensor: {
@@ -383,7 +446,18 @@ export function buildTruthJson(scenario, trackId,
         objectClass: t.family ?? null,
         targetKind: scenario.spec.target.kind,
         anomalous: scenario.spec.target.parameters?.anomalous === true,
-        velocityDerivation: t.kind === "direction" ? null : "central-difference",
+        // The whole answer for a direction-kind target, because truth.csv's
+        // position columns are empty for one: at effective infinity there is no
+        // position to write. Flat [x,y,z, x,y,z, ...] unit vectors in the frame
+        // declared by scenario.json, one triple per frame, same time grid.
+        // Null for a position target — its answer is in the CSV.
+        directionTruth: t.kind === "direction"
+            ? Array.from(t.directionENU) : null,
+        // v1.0 shipped a central-difference velocity in truth.csv. It is gone:
+        // it was derived from the position column a consumer already has, and
+        // scoring against a derived quantity as though it were measured truth
+        // penalised the numerical scheme rather than the estimate. Difference
+        // the positions yourself if you want it.
         events: scenario.events ?? [],
         // Scorer stratification: cvDesignLog10Rcond buckets -3/-2/-1 carry
         // measured collapse rates of 84%/8%/0%.
@@ -470,24 +544,32 @@ export function buildTruthJson(scenario, trackId,
 // ---------------------------------------------------------------------------
 
 /**
- * Write the four files for one scenario.
+ * Write the three folders for one scenario.
  *
- * The challenge (input.csv + scenario.json) and the answer key (truth.csv +
- * truth.json) go to SEPARATE roots, so a sealed set can be distributed by
- * shipping one directory. Defaulting answersDir to challengeDir keeps the
- * convenient side-by-side layout for development.
+ *   <challengeDir>/Input/  input.csv + scenario.json      THE CHALLENGE
+ *   <answersDir>/Truth/    truth.csv + truth.json         THE ANSWER KEY
+ *   <answersDir>/All/      all.csv + both sidecars        JOINED, answer key
+ *
+ * All/ goes to the ANSWERS root, not the challenge root. Its rows carry
+ * TruePosition beside the measurement, which is the whole point of the file and
+ * exactly what an entrant must not have. Getting this wrong ships the answers
+ * inside the challenge, so the sealed-release test greps the challenge tree for
+ * the truth column names.
+ *
+ * Defaulting answersDir to challengeDir keeps all three side by side for
+ * development, which is the mode you want while writing a reader.
  *
  * @param scenario   generated BotScenario
- * @param challengeDir root for input/; input/ is created under it
- * @param opts.answersDir      root for truth/ (defaults to challengeDir)
+ * @param challengeDir root for Input/
+ * @param opts.answersDir      root for Truth/ and All/ (defaults to challengeDir)
  * @param opts.basename        override the descriptive name (opaque ids)
  * @param opts.trackId         override the in-file TrackID (defaults to basename)
- * @param opts.trackSource     provenance string for the input rows
+ * @param opts.trackSource     provenance string for the measurement rows
  * @param opts.designIntent    editorial label for the cell; see buildTruthJson
  * @param opts.windEstimate    analyst-available wind for scenario.json
  * @param opts.sealSaltHex     REQUIRED for a sealed release; see saltedCommit
  * @returns {{basename, trackId, inputFile, scenarioFile, truthFile,
- *            truthJsonFile, digests}}
+ *            truthJsonFile, allFile, digests}}
  */
 export function writeInterchange(scenario, challengeDir, opts = {}) {
     const basename = opts.basename
@@ -497,18 +579,22 @@ export function writeInterchange(scenario, challengeDir, opts = {}) {
     const answersDir = opts.answersDir ?? challengeDir;
     const saltHex = opts.sealSaltHex ?? null;
 
-    const inputDir = path.join(challengeDir, "input");
-    const truthDir = path.join(answersDir, "truth");
+    const inputDir = path.join(challengeDir, "Input");
+    const truthDir = path.join(answersDir, "Truth");
+    const allDir = path.join(answersDir, "All");
     fs.mkdirSync(inputDir, {recursive: true});
     fs.mkdirSync(truthDir, {recursive: true});
+    fs.mkdirSync(allDir, {recursive: true});
 
     const inputFile = path.join(inputDir, `${basename}.input.csv`);
     const scenarioFile = path.join(inputDir, `${basename}.scenario.json`);
     const truthFile = path.join(truthDir, `${basename}.truth.csv`);
     const truthJsonFile = path.join(truthDir, `${basename}.truth.json`);
+    const allFile = path.join(allDir, `${basename}.all.csv`);
 
     const inputCsv = buildInputCsv(scenario, trackId, trackSource);
     const truthCsv = buildTruthCsv(scenario, trackId);
+    const allCsv = buildAllCsv(scenario, trackId, trackSource);
     const truthJson = JSON.stringify(buildTruthJson(scenario, trackId, {
         label: basename,
         designIntent: opts.designIntent ?? null,
@@ -524,10 +610,14 @@ export function writeInterchange(scenario, challengeDir, opts = {}) {
         // Public file, public digest: entrants must be able to check this one.
         inputCsvSha256: sha256(inputCsv),
         // Answer-key files get SALTED commitments — a plain digest over
-        // enumerable content is not a commitment (see saltedCommit).
+        // enumerable content is not a commitment (see saltedCommit). all.csv
+        // is committed on the same terms as truth.csv because it CONTAINS
+        // truth.csv; a plain digest of it would be brute-forceable in exactly
+        // the same way.
         salted: Boolean(saltHex),
         truthCsvCommit: saltHex ? saltedCommit(truthCsv, saltHex) : sha256(truthCsv),
         truthJsonCommit: saltHex ? saltedCommit(truthJson, saltHex) : sha256(truthJson),
+        allCsvCommit: saltHex ? saltedCommit(allCsv, saltHex) : sha256(allCsv),
     };
 
     const scenarioJson = JSON.stringify(buildScenarioJson(scenario, trackId, {
@@ -540,14 +630,22 @@ export function writeInterchange(scenario, challengeDir, opts = {}) {
     fs.writeFileSync(truthFile, truthCsv);
     fs.writeFileSync(truthJsonFile, truthJson);
     fs.writeFileSync(scenarioFile, scenarioJson);
+    fs.writeFileSync(allFile, allCsv);
+    // All/ is self-contained: a consumer handed that folder alone still gets
+    // the frame declaration (without which X/Y/Z are unanchored numbers) and
+    // the class/events/geometry metadata that no CSV column can carry.
+    fs.writeFileSync(path.join(allDir, `${basename}.scenario.json`), scenarioJson);
+    fs.writeFileSync(path.join(allDir, `${basename}.truth.json`), truthJson);
 
     return {
         basename, trackId, inputFile, scenarioFile, truthFile, truthJsonFile,
+        allFile,
         digests: {
             inputCsvSha256: seal.inputCsvSha256,
             scenarioJsonSha256: sha256(scenarioJson),
             truthCsvCommit: seal.truthCsvCommit,
             truthJsonCommit: seal.truthJsonCommit,
+            allCsvCommit: seal.allCsvCommit,
             salted: seal.salted,
         },
     };

@@ -305,3 +305,33 @@ describe('CTrackFileSTANAGCSV', () => {
         });
     });
 });
+
+describe('STANAG sitch duration sync', () => {
+    // A STANAG file is a whole recording, not a clip of one, so loading it into a
+    // sitch that has not been established yet fits the sitch to the track's full
+    // length — the same operation as the "Sync Duration to" entry in the time menu.
+    // TrackManager calls this optionally (`file.syncsSitchDuration?.()`), so a format
+    // that does not define it is simply unaffected; that is why the negative case
+    // below checks for the ABSENCE of the method rather than a false return.
+    test('both STANAG flavours ask for it', () => {
+        const csvRows = csv.toArrays(fs.readFileSync(testCSVPath, 'utf-8'));
+        expect(new CTrackFileSTANAGCSV(csvRows).syncsSitchDuration()).toBe(true);
+        const xml = parseXml(fs.readFileSync(testXMLPath, 'utf-8'));
+        expect(new CTrackFileSTANAG(xml).syncsSitchDuration()).toBe(true);
+    });
+
+    test('the duration it implies is the track\'s own span', () => {
+        // What syncDurationToTrack reads: end - start of the loaded track data.
+        const csvRows = csv.toArrays(fs.readFileSync(testCSVPath, 'utf-8'));
+        const misb = new CTrackFileSTANAGCSV(csvRows).toMISB(0);
+        const spanMs = misb[misb.length - 1][MISB.UnixTimeStamp] - misb[0][MISB.UnixTimeStamp];
+        expect(spanMs).toBeGreaterThan(0);
+        // Sanity: a real recording, not a single frame.
+        expect(misb.length).toBeGreaterThan(2);
+    });
+
+    test('other formats do not define it, so nothing else is resized', () => {
+        const {CTrackFile} = require('../src/TrackFiles/CTrackFile');
+        expect(typeof new CTrackFile([]).syncsSitchDuration).toBe('undefined');
+    });
+});

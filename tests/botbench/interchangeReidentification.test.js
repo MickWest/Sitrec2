@@ -62,7 +62,7 @@ function attack(challengeDir, shippedNames) {
 
     for (const name of shippedNames) {
         const text = fs.readFileSync(
-            path.join(challengeDir, "input", `${name}.input.csv`), "utf8");
+            path.join(challengeDir, "Input", `${name}.input.csv`), "utf8");
         const p = payload(text);
         for (const c of candidates) {
             if (c.payload === p) hits.push({shipped: name, templateIndex: c.i});
@@ -101,17 +101,21 @@ function extractTruthViaOrigin(challengeDir, answersDir, name) {
         const c = lines[1].split(",");
         const o = {}; hdr.forEach((h, i) => { o[h] = c[i]; }); return o;
     };
-    const i0 = read(path.join(challengeDir, "input", `${name}.input.csv`));
-    const t0 = read(path.join(answersDir, "truth", `${name}.truth.csv`));
-    if (t0.TruthPosE === undefined) return Infinity;      // direction truth
+    const i0 = read(path.join(challengeDir, "Input", `${name}.input.csv`));
+    const t0 = read(path.join(answersDir, "Truth", `${name}.truth.csv`));
+    // Direction truth: the column EXISTS in v1.1 and is empty, so an
+    // undefined-check no longer detects it — and Number("") is 0, which would
+    // have turned "no position to extract" into a confident extraction at the
+    // origin and quietly weakened this assertion.
+    if (!t0.TruePositionX) return Infinity;
 
-    const S = [Number(i0.SensorPosE), Number(i0.SensorPosN), Number(i0.SensorPosU)];
-    const L = [Number(i0.LosE), Number(i0.LosN), Number(i0.LosU)];
+    const S = [Number(i0.SensorPositionX), Number(i0.SensorPositionY), Number(i0.SensorPositionZ)];
+    const L = [Number(i0.LOSUnitVectorX), Number(i0.LOSUnitVectorY), Number(i0.LOSUnitVectorZ)];
     const lam = ((0 - S[0]) * L[0] + (0 - S[1]) * L[1]) / (L[0] * L[0] + L[1] * L[1]);
     return Math.hypot(
-        S[0] + lam * L[0] - Number(t0.TruthPosE),
-        S[1] + lam * L[1] - Number(t0.TruthPosN),
-        S[2] + lam * L[2] - Number(t0.TruthPosU),
+        S[0] + lam * L[0] - Number(t0.TruePositionX),
+        S[1] + lam * L[1] - Number(t0.TruePositionY),
+        S[2] + lam * L[2] - Number(t0.TruePositionZ),
     );
 }
 
@@ -124,15 +128,15 @@ function extractTruth(challengeDir, answersDir, name) {
             hdr.forEach((h, i) => { o[h] = c[i]; }); return o;
         });
     };
-    const input = rows(path.join(challengeDir, "input", `${name}.input.csv`));
-    const truth = rows(path.join(answersDir, "truth", `${name}.truth.csv`));
-    if (truth[0].TruthPosE === undefined) return Infinity;   // direction truth
+    const input = rows(path.join(challengeDir, "Input", `${name}.input.csv`));
+    const truth = rows(path.join(answersDir, "Truth", `${name}.truth.csv`));
+    if (!truth[0].TruePositionX) return Infinity;   // direction truth: empty column
 
     // Kasa circle fit over the sensor ground track.
     let Sx = 0, Sy = 0, Sxx = 0, Syy = 0, Sxy = 0, Sxxx = 0, Syyy = 0, Sxyy = 0, Sxxy = 0;
     const N = input.length;
     for (const r of input) {
-        const x = Number(r.SensorPosE), y = Number(r.SensorPosN);
+        const x = Number(r.SensorPositionX), y = Number(r.SensorPositionY);
         Sx += x; Sy += y; Sxx += x * x; Syy += y * y; Sxy += x * y;
         Sxxx += x * x * x; Syyy += y * y * y; Sxyy += x * y * y; Sxxy += x * x * y;
     }
@@ -147,13 +151,13 @@ function extractTruth(challengeDir, answersDir, name) {
 
     // Least squares over BOTH horizontal components: solving either alone
     // divides by a LOS component that can vanish.
-    const S = [Number(input[0].SensorPosE), Number(input[0].SensorPosN),
-        Number(input[0].SensorPosU)];
-    const L = [Number(input[0].LosE), Number(input[0].LosN), Number(input[0].LosU)];
+    const S = [Number(input[0].SensorPositionX), Number(input[0].SensorPositionY),
+        Number(input[0].SensorPositionZ)];
+    const L = [Number(input[0].LOSUnitVectorX), Number(input[0].LOSUnitVectorY), Number(input[0].LOSUnitVectorZ)];
     const lam = ((cE - S[0]) * L[0] + (cN - S[1]) * L[1]) / (L[0] * L[0] + L[1] * L[1]);
     const est = [S[0] + lam * L[0], S[1] + lam * L[1], S[2] + lam * L[2]];
-    const act = [Number(truth[0].TruthPosE), Number(truth[0].TruthPosN),
-        Number(truth[0].TruthPosU)];
+    const act = [Number(truth[0].TruePositionX), Number(truth[0].TruePositionY),
+        Number(truth[0].TruePositionZ)];
     return Math.hypot(est[0] - act[0], est[1] - act[1], est[2] - act[2]);
 }
 
@@ -315,9 +319,20 @@ describe("sealed interchange release: re-identification resistance", () => {
             .map((r) => extractTruthViaOrigin(rel.challengeDir, rel.answersDir, r.name))
             .filter((e) => Number.isFinite(e));
         expect(errs.length).toBeGreaterThan(0);
-        // The clean member is exact; noisy members are pinned to a few metres.
+        // The clean member is exact; noisy members are pinned to a small
+        // FRACTION OF RANGE. The bound is relative, not the absolute 50 m it
+        // used to be: the residual here is the pointing error projected out to
+        // the target, so it grows with range, and an absolute bound silently
+        // became a statement about which ranges happened to be in the set.
+        // Measured worst case is 1.6e-3 of range; extractionFloorM is 0.2.
         expect(Math.min(...errs)).toBeLessThan(1e-6);
-        expect(Math.max(...errs)).toBeLessThan(50);
+        for (const r of rel.realized) {
+            const name = rel.index.find((x) => x.truthSha256 === r.truthSha256)?.name;
+            if (!name) continue;
+            const err = extractTruthViaOrigin(rel.challengeDir, rel.answersDir, name);
+            if (!Number.isFinite(err)) continue;                 // direction truth
+            expect(err).toBeLessThan(0.005 * r.spec.initialHorizontalRangeM);
+        }
     });
 
     test("no sealed member yields truth via the origin attack", () => {
@@ -457,7 +472,7 @@ describe("sealed interchange release: re-identification resistance", () => {
 
         for (const r of rel.index) {
             const tj = JSON.parse(fs.readFileSync(
-                path.join(rel.answersDir, "truth", `${r.name}.truth.json`), "utf8"));
+                path.join(rel.answersDir, "Truth", `${r.name}.truth.json`), "utf8"));
             const p = tj.provenance;
             expect(p.placement).toBeDefined();
 
@@ -467,7 +482,7 @@ describe("sealed interchange release: re-identification resistance", () => {
                 generatorVersion: p.generatorVersion,
             });
             const shipped = fs.readFileSync(
-                path.join(rel.challengeDir, "input", `${r.name}.input.csv`), "utf8");
+                path.join(rel.challengeDir, "Input", `${r.name}.input.csv`), "utf8");
             expect(buildInputCsv(rebuilt, r.trackId, "botbench")).toBe(shipped);
         }
 
