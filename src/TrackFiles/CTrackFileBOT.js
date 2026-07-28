@@ -370,6 +370,15 @@ export class CTrackFileBOT extends CTrackFile {
         return key === "sensor" ? "camera" : key === "truth" ? "target" : null;
     }
 
+    // The Truth sub-track is the generator's own answer, so it is the traverse
+    // analysis's scoring reference. True for it in both shapes that carry one — the
+    // Truth file (sub-track 0, the answer key alone) and the All file (sub-track 1,
+    // scenario and answer together) — which is why this asks the sub-track's key
+    // rather than its index. The Sensor track is the measurement and never truth.
+    isGroundTruthTrack(trackIndex) {
+        return this._subTracks()[trackIndex]?.key === "truth";
+    }
+
     /**
      * NEVER. No BOT track may re-time the sitch by closest approach.
      *

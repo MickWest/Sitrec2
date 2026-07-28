@@ -13,6 +13,7 @@ import {
     CTrackFileBOT,
     isBOTCSV,
 } from "../src/TrackFiles/CTrackFileBOT";
+import {CTrackFile} from "../src/TrackFiles/CTrackFile";
 import {MISB} from "../src/MISBFields";
 import {ECEF2ENU_radii, LLAToECEF} from "../src/LLA-ECEF-ENU";
 
@@ -182,6 +183,31 @@ describe("BOT sub-tracks", () => {
         expect(f.getTrackCount()).toBe(1);
         expect(f.trackRoleHint(0)).toBe("camera");
         expect(new CTrackFileBOT(truthCsv(3, true)).doesContainTrack()).toBe(false);
+    });
+
+    test("only the Truth sub-track declares itself ground truth", () => {
+        // The traverse analysis auto-selects a ground-truth track as its scoring
+        // reference, so this must be the sub-track's KEY and not its index: truth is
+        // index 1 in an All file and index 0 in a Truth file. The Sensor track is the
+        // measurement — scoring the analysis against it would score it against its
+        // own input.
+        const all = new CTrackFileBOT(allCsv());
+        expect(all.isGroundTruthTrack(0)).toBe(false);   // Sensor
+        expect(all.isGroundTruthTrack(1)).toBe(true);    // Truth
+
+        expect(new CTrackFileBOT(truthCsv()).isGroundTruthTrack(0)).toBe(true);
+        expect(new CTrackFileBOT(inputCsv()).isGroundTruthTrack(0)).toBe(false);
+
+        // Out-of-range indices must be false, not throw — the lookup runs over every
+        // loaded track, including ones from other files.
+        expect(all.isGroundTruthTrack(2)).toBe(false);
+        expect(all.isGroundTruthTrack(-1)).toBe(false);
+    });
+
+    test("the default for any other track file is NOT ground truth", () => {
+        // A target ROLE is not truth: a STANAG target track is somebody else's
+        // estimate, and scoring against it would compare two answers.
+        expect(new CTrackFile([]).isGroundTruthTrack(0)).toBe(false);
     });
 
     test("a concatenated multi-TrackID file keeps the FIRST scenario only", () => {

@@ -146,6 +146,18 @@ export class CTrackFile {
         return null;
     }
 
+    // True when the track at `trackIndex` is GROUND TRUTH: the known answer for the
+    // scenario, not a measurement of it. The traverse analysis auto-selects such a
+    // track as its "Truth Track" reference and scores every method against it.
+    //
+    // This is NOT trackRoleHint("target"). A STANAG target track is the object being
+    // observed, but its positions are somebody else's ESTIMATE — scoring our analysis
+    // against it would be comparing two answers and calling the difference error.
+    // Only a file that knows the truth (a synthetic benchmark) may return true.
+    isGroundTruthTrack(trackIndex) {
+        return false;
+    }
+
     // Rolling-average window, in frames, applied to the platform/sensor angle columns
     // when TrackManager builds this track's "<name> angles" LOS node. Default 120 is
     // a ~4 second window at the 30 fps of a typical MISB video. Override with 0 when

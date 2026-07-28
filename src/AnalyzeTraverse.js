@@ -22,7 +22,7 @@
  *   runTraverseAnalysis()          — run everything; returns the results object
  */
 
-import {GlobalDateTimeNode, Globals, NodeMan, Sit, TrackManager, Units, setRenderOne} from "./Globals";
+import {FileManager, GlobalDateTimeNode, Globals, NodeMan, Sit, TrackManager, Units, setRenderOne} from "./Globals";
 import {EventManager} from "./CEventManager";
 import {addOptionToGUIMenu, removeOptionFromGUIMenu} from "./lil-gui-extras";
 import {showError} from "./showError";
@@ -1490,10 +1490,28 @@ function truthTrackOptions() {
     return options;
 }
 
+// Track IDs whose SOURCE FILE declares them ground truth (CTrackFile.isGroundTruthTrack)
+// — currently the BOT interchange Truth sub-track, from a .truth or an .all file.
+//
+// Kept separate from the "Truth_" label test below because the two are different kinds
+// of evidence: a name is a convention the user can break by renaming a track, while
+// this is the importer stating what the track IS. Neither subsumes the other, so a
+// track auto-selects if EITHER says truth.
+function fileDeclaredTruthTrackIDs() {
+    const ids = new Set();
+    if (!TrackManager || !FileManager) return ids;
+    TrackManager.iterate((key, trackOb) => {
+        if (!trackOb?.trackID) return;
+        const file = FileManager.get(trackOb.trackFileName, false);
+        if (file?.isGroundTruthTrack?.(trackOb.trackIndex)) ids.add(trackOb.trackID);
+    });
+    return ids;
+}
+
 // Rebuild the dropdown's option list in place from the currently loaded
 // tracks. Runs on tweaks-folder construction and on every tracksChanged
 // event (imports AND removals — deserialization re-adds tracks through the
-// same path). Auto-selects a newly appearing "Truth_" track exactly once,
+// same path). Auto-selects a newly appearing truth track exactly once,
 // so the user can still deselect it without the refresh fighting them.
 function refreshTruthTrackOptions() {
     const ctrl = _truthTrackCtrl;
@@ -1519,7 +1537,7 @@ function refreshTruthTrackOptions() {
         analyzeTweaks.truthTrack = TRUTH_NONE;
     }
 
-    // auto-select a newly loaded Truth_ track (once per track id, PER SITCH).
+    // auto-select a newly loaded truth track (once per track id, PER SITCH).
     // The "already auto-selected" memory is scoped to the sitch generation
     // (bumped on every teardown) — otherwise, after a reload or a switch to a
     // different sitch that happens to reuse a truth id, the reset controls would
@@ -1529,12 +1547,13 @@ function refreshTruthTrackOptions() {
         _autoSelectTruthGen = Globals.loadGeneration;
     }
     if (analyzeTweaks.truthTrack === TRUTH_NONE) {
+        const declared = fileDeclaredTruthTrackIDs();
         for (const [label, id] of Object.entries(options)) {
-            if (/^truth_/i.test(label) && !_autoSelectedTruthIDs.has(id)) {
-                _autoSelectedTruthIDs.add(id);
-                analyzeTweaks.truthTrack = id;
-                break;
-            }
+            if (!declared.has(id) && !/^truth_/i.test(label)) continue;
+            if (_autoSelectedTruthIDs.has(id)) continue;
+            _autoSelectedTruthIDs.add(id);
+            analyzeTweaks.truthTrack = id;
+            break;
         }
     }
     ctrl.updateDisplay();
@@ -1658,14 +1677,15 @@ export function addAnalyzeTweaks(traverseMenu) {
 
     // Ground-truth reference track. When set, the gallery scores and orders
     // every method by its closeness to this track, and draws the track
-    // (dashed) in each 3D graph. A loaded "Truth_" track auto-selects.
+    // (dashed) in each 3D graph. A loaded "Truth_" track auto-selects, as does
+    // any track whose file declares itself ground truth (a BOT Truth sub-track).
     _truthTrackCtrl = folder.add(analyzeTweaks, "truthTrack", {[TRUTH_NONE]: TRUTH_NONE}).name("Truth Track");
     if (_truthTrackCtrl.tooltip) {
         _truthTrackCtrl.tooltip("Reference track the analysis results are compared against. When selected, " +
             "completed methods are ordered by mean 3D separation from this track, with incomplete fits shown after them; each rank basis reports " +
             "where they agree/diverge (location, altitude, speed, heading), and the track is drawn dashed " +
-            "in the 3D graphs. A loaded \"Truth_\" track (e.g. from truth_lat/truth_long CSV columns) is " +
-            "selected automatically.");
+            "in the 3D graphs. Selected automatically for a loaded \"Truth_\" track (e.g. from " +
+            "truth_lat/truth_long CSV columns) and for the Truth track of a BOT interchange file.");
     }
     refreshTruthTrackOptions();
     // Re-register the tracksChanged hook on EVERY rebuild. EventManager.removeAll()
