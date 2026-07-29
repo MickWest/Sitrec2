@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.109.0 (2026-07-29)
+
+### New Features
+- **WESCAM MX camera display** (Show → Views → *WescamMXUI*): overlays the look view with a WESCAM MX-15/MX-20 style gimbal display — date, time and UTC offset, focal length, a scrolling azimuth tape along the bottom, a scrolling elevation tape down the left, a north needle, a centre reticle, and live aircraft and target latitude, longitude and altitude with the bearing and slant range to the target. The layout, tape scales and reticle were measured from real MX footage rather than approximated, the azimuth tape reads relative to the aircraft's nose while the elevation tape reads absolute depression below the horizon (as a stabilised turret does), and altitudes are given in feet above sea level. It is off by default and appears in any sitch you can edit, including ones you saved before this release.
+- **The heading and azimuth tape stay blank when there is nothing to read them from**: the aircraft heading comes from the camera's own motion, so a fixed camera, or one moving only straight up or down, has no direction of travel to report. In that case the heading shows `---` and the azimuth tape is hidden, instead of showing an invented bearing — previously a stationary camera in a wind would have reported the wind direction as its heading.
+
 ## Version 2.108.0 (2026-07-28)
 
 ### New Features
