@@ -3,9 +3,11 @@ import {
     BoxGeometry,
     ConeGeometry,
     Line3,
+    Matrix4,
     Mesh,
     MeshBasicMaterial,
     MeshLambertMaterial,
+    Quaternion,
     Raycaster,
     Vector2,
     Vector3
@@ -21,7 +23,7 @@ import {undoManager as UndoManager} from "./UndoManager";
 import * as LAYER from "./LayerMasks";
 import {CNodePositionXYZ} from "./nodes/CNodePositionLLA";
 import {CNodeMeasureAltitude, setupMeasurementUI} from "./nodes/CNodeLabels3D";
-import {getLocalUpVector} from "./SphericalMath";
+import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
 
 export class PointEditor {
     constructor(_scene, _camera, _renderer, controls, onChange, initialPoints, isLLA=false, legacyEUS=false) {
@@ -206,6 +208,10 @@ export class PointEditor {
             this.positions[i].z = new_positions[i][3]
         }
 
+        // The cubes were created by addPoint() above, before these positions existed,
+        // so anything derived from the positions can only be resolved now.
+        this.refreshEditingGraphics();
+
     }
 
     snapPointByIndex(i) {
@@ -231,6 +237,11 @@ export class PointEditor {
         for (let i = 0; i < this.numPoints; i++) {
             this.snapPointByIndex(i)
         }
+        // Snapping slides the control points along their LOS. This runs from
+        // CNodeSplineEdit.recalculate(), which does not go through
+        // updatePointEditorGraphics(), so refresh here or the cubes keep the
+        // rotations — and the spline the shape — they had before the snap.
+        this.refreshEditingGraphics();
     }
 
 
@@ -334,6 +345,8 @@ export class PointEditor {
             toCamera.multiplyScalar(scale)
             this.positions[i].add(toCamera)
         }
+        // Every point moved, so everything derived from them is out of date.
+        this.refreshEditingGraphics();
     }
 
     /**
@@ -707,9 +720,90 @@ export class PointEditor {
         // construct an object rather than derive a new class.
 
        // console.log("+++ Set Editor DIRTY here")
+        this.refreshEditingGraphics();
         this.dirty = true;
         setRenderOne(true);
 
+    }
+
+    // Refresh everything derived from the control-point positions. Call this from
+    // any path that moves control points; subclasses extend it to also rebuild
+    // whatever they draw from those points.
+    //
+    // Deliberately does NOT set this.dirty. updateSnapping() runs inside
+    // CNodeSplineEdit.recalculate(), and CNodeSplineEdit.update() kicks off another
+    // recalculateCascade() whenever dirty is set — so setting it here would schedule
+    // a fresh recalculate every frame, forever. (See the note at CNodeSplineEdit:64,
+    // where the drag path clears dirty for the same reason.)
+    refreshEditingGraphics() {
+        this.updateCubeOrientations();
+    }
+
+    // Direction of travel at control point i, written into `out` (not normalised).
+    //
+    // The base editor interpolates linearly between control points, so the chord
+    // through the neighbouring points is exactly the direction of the track it
+    // draws, with the single adjacent segment used at each end. SplineEditor draws
+    // a curve instead and overrides this with that curve's tangent.
+    getControlPointDirection(i, out) {
+        const prev = this.positions[i - 1] ?? this.positions[i];
+        const next = this.positions[i + 1] ?? this.positions[i];
+        return out.copy(next).sub(prev);
+    }
+
+    // Sit each control-point cube level with the local horizon, turned so the track
+    // runs through two opposite corners.
+    //
+    // The render frame is ECEF, so a cube left at the default identity rotation is
+    // aligned to the Earth-centred axes and only looks level near lat/lon 0,0 —
+    // anywhere else it sits at an arbitrary tilt. (It used to look right because the
+    // render frame was a local EUS tangent plane centred on the sitch.) So the basis
+    // comes from the ellipsoid normal at each cube's OWN position, the same way
+    // updatePositionIndicator() orients the cone.
+    //
+    // The extra 45 degrees about local up turns the track-aligned faces into
+    // track-aligned corners. A cube has 90-degree rotational symmetry about that
+    // axis, so +45 and -45 give the same orientation, just relabelled corners.
+    //
+    // Orientation is view-independent, so unlike updateCubeScales() this belongs on
+    // change rather than in the render loop.
+    updateCubeOrientations() {
+        const up = new Vector3();
+        const forward = new Vector3();
+        const right = new Vector3();
+        const basis = new Matrix4();
+        const cornerTwist = new Quaternion().setFromAxisAngle(V3(0, 1, 0), Math.PI / 4);
+
+        for (let i = 0; i < this.splineHelperObjects.length; i++) {
+            const cube = this.splineHelperObjects[i];
+            up.copy(getLocalUpVector(cube.position));
+
+            this.getControlPointDirection(i, forward);
+
+            // Heading is a horizontal quantity, so drop the vertical component. A
+            // vertical-only segment (or a lone control point) leaves no direction of
+            // travel at all, and the horizontal part of a vertical vector is
+            // floating-point noise that normalises to an arbitrary bearing — so fall
+            // back to a defined direction instead.
+            forward.addScaledVector(up, -forward.dot(up));
+            if (forward.lengthSq() < 1e-12) {
+                forward.copy(getLocalNorthVector(cube.position));
+                // North is itself undefined at the poles (it comes out zero there),
+                // where every horizontal direction is equivalent anyway — so take any
+                // axis that is not parallel to up and drop its vertical component.
+                if (forward.lengthSq() < 1e-12) {
+                    const axis = Math.abs(up.x) < 0.9 ? V3(1, 0, 0) : V3(0, 1, 0);
+                    forward.copy(axis).addScaledVector(up, -axis.dot(up));
+                }
+            }
+            forward.normalize();
+
+            // Right-handed: right x up === forward, so makeBasis gives a pure
+            // rotation (determinant +1) rather than a mirror.
+            right.crossVectors(up, forward);
+            basis.makeBasis(right, up, forward);
+            cube.quaternion.setFromRotationMatrix(basis).multiply(cornerTwist);
+        }
     }
 
     /**

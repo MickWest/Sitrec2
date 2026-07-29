@@ -71,14 +71,42 @@ export class   SplineEditor extends PointEditor{
         }
     }
 
-    // Override load to update local positions after loading new points
-    load(new_positions, LLA = false) {
-        super.load(new_positions, LLA);
-        // Update local positions if they exist (they won't during initial construction)
-        if (this.splineLocalOrigin && this.localPositions) {
-            this.syncLocalPositions();
+    // The rendered track is a Catmull-Rom curve with chordal or centripetal knot
+    // spacing, so its tangent at a control point is NOT the chord between that
+    // point's neighbours — on the Aguadilla ground spline the two differ by up to
+    // 16.6 degrees (median 1.8). Marker orientation has to follow the curve that is
+    // actually drawn, so take the tangent from the curve itself.
+    //
+    // In 'linear' mode this class interpolates the control points directly (see
+    // getPoint) and this.spline is not what gets drawn, so the base chord is exact.
+    getControlPointDirection(i, out) {
+        if (this.curveType === 'linear' || !this.spline || !this.localPositions || this.localPositions.length < 2) {
+            return super.getControlPointDirection(i, out);
         }
+        // CatmullRomCurve3 maps t across the whole curve as p = (n-1)*t, so control
+        // point i sits exactly at t = i/(n-1).
+        this.spline.getTangent(i / (this.localPositions.length - 1), out);
+        return out;
     }
+
+    // Everything this class derives from the control points, refreshed together so
+    // they can never disagree: the curve itself, then the cube orientations read off
+    // its tangent, then the line mesh drawn from it. Doing this in one place means
+    // every caller — load(), updatePointEditorGraphics(), updateSnapping(),
+    // adjustUp() — gets a fully consistent editor, and none of them has to know the
+    // ordering. (syncLocalPositions self-guards, so this is safe during base
+    // construction, before this.spline exists.)
+    //
+    // Order matters: the curve must be current before getControlPointDirection()
+    // samples its tangent, and before the mesh is rebuilt from it.
+    refreshEditingGraphics() {
+        this.syncLocalPositions();
+        super.refreshEditingGraphics();
+        this.updateSplineMesh();
+    }
+
+    // No load() override is needed: PointEditor.load() ends by calling
+    // refreshEditingGraphics(), which syncs localPositions and rebuilds the curve.
 
     // Sync localPositions with world positions relative to the local origin
     // Called after positions change to keep the CatmullRomCurve3 in sync
@@ -141,16 +169,15 @@ export class   SplineEditor extends PointEditor{
     }
 
 
-    updatePointEditorGraphics() {
-        super.updatePointEditorGraphics()
-
+    // Rebuild the drawn curve from the current control points. Split out of
+    // updatePointEditorGraphics() so it can run on EVERY path that moves control
+    // points: syncing localPositions without this would leave getPoint() reporting
+    // the new curve while the visible line still showed the old shape.
+    updateSplineMesh() {
         // Guard: spline may not exist yet during parent constructor call
         if (!this.spline || !this.spline.mesh || !this.localPositions) {
             return;
         }
-
-        // Sync local positions with world positions
-        this.syncLocalPositions();
 
         // Guard: need at least 2 points for CatmullRomCurve3 to work
         if (this.localPositions.length < 2) {
