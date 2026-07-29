@@ -9,6 +9,33 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.108.0 (2026-07-28)
+
+### New Features
+- **Save and reload a hand-drawn track as a file** (Contents → *your track* → *Export Spline*, or Physics → *Spline …* → *Export Spline*): writes the track's control points out as a small .spline.json file that can be dropped into any sitch, where it comes back as a fully editable hand-drawn track with its curve type, altitude settings and colour intact. Because the points are saved as latitude, longitude and altitude, a file made in one sitch still lands correctly in another.
+- **Save the camera zoom as editable keyframes** (Camera → FOV (Zoom) → *Export for FOV Editor*): captures whatever is currently driving the camera's zoom over the whole clip and reduces it to the smallest set of keyframes that reproduce it, saved as a .fov.json file. Drop that file back in and the zoom appears in the FOV Editor ready to adjust — including in sitches whose zoom was previously locked away and uneditable. Instant zoom changes stay instant rather than becoming slow ramps.
+- **MX-style turret camera roll** (Camera → Heading → *Roll From MX-Style Camera*): rolls the view the way a WESCAM MX-style ball turret does, combining the aircraft's bank and pitch with the turret's own azimuth and elevation, instead of using the bank alone. Unlike the ATFLIR-style pod Sitrec already models, this type of turret adds no roll at all in level flight, and the two can differ by as much as 90 degrees when looking off to the side. An *MX Roll Amount* slider scales between an unstabilised turret and a fully stabilised one, so you can match the horizon tilt in the actual video.
+- **Range bands for each interpretation** (Traverse → Traverse Analysis Tweaks → *Solution families (range bands)*): sightlines alone rarely pin down a distance, so this re-fits each object model at a ladder of held ranges and shows the whole band of distances that model still fits, drawn as faint tracks around the headline one. A narrow band means the distance is well constrained for that model; a wide one means it is not. Turned off by default because it costs several extra fits per model. The results always say how many distances were actually sampled, report disconnected bands separately rather than filling the gap in, and never affect how candidates are ranked.
+- **Bearings-only benchmark scenario files load directly**: dropping a BOT interchange file on Sitrec builds the sensor track with its measured sightlines plus the known-answer track, and the known-answer track is picked up automatically as the Truth Track for the traverse analysis.
+
+### Improvements
+- **The Truth Track is now applied only when you ask for it** (Traverse → Analyze Traverse Methods... → *Use Truth Track*): choosing a truth track used to silently reorder and reword the whole results gallery, hiding what the analysis concluded on its own. The gallery now opens in its ordinary order, with a *Use Truth Track* button that switches to truth-based ordering and back. Switching re-presents the same results instantly — nothing is re-analyzed — and keeps whichever tile you were reading along with any candidates you had set aside.
+- **Tracks built into a sitch can now be chosen as the Truth Track** (Traverse → *Truth Track*): the dropdown previously offered only imported data tracks. The Aguadilla sitch's hand-authored solutions are now selectable as *UAP Spline* and *Lantern Spline*.
+- **A fit that ran into one of its model's own limits is now labelled "Not fully tested"** (Traverse → Analyze Traverse Methods...), instead of *Moderate* or *Low* — those words describe how ordinary the object's motion is, and a fit that stopped at a search limit was never judged on its motion at all. A model that also fits the sightlines poorly or needs extreme motion still says so, because that is a real measured failure. Ordering is unchanged; only the wording moves.
+- **The verdict now says what was never modelled** (Traverse → Analyze Traverse Methods...): when no conventional model passes, the verdict line lists the common explanations the analysis does not cover at all — birds and insects, airborne debris, helicopters and rockets, reflections and glare, and video-processing artefacts — so "no conventional model passes" is not read as "unidentified". The two "nothing was concluded" verdicts are also no longer shown in warning colours; the amber highlight is now reserved for a genuine conflict in the evidence.
+- **Whole-recording track files now fit the timeline to their full length**: dropping a STANAG or bearings-only recording into a fresh sitch sizes the timeline to the entire recording as well as setting its start time. Previously a 60-second recording loaded into the default 30-second window with its second half off the end of the timeline.
+- **KML export is available for more tracks**, including closest-approach tracks, which previously had no way to export to Google Earth.
+- **Alt offset for hand-drawn tracks** (Contents → *your track*): the same non-destructive altitude slider imported tracks already had, for raising or lowering a whole hand-drawn track without disturbing its control points.
+
+### Bug Fixes
+- Fixed exported KML files coming back as "Unnamed Track" when re-imported into Sitrec.
+- Fixed low-rate heading and azimuth data spinning the long way round when it crosses north — a fraction of a degree of real movement could be drawn as a full sweep the other way. Only affected data recorded at well below the video's frame rate.
+- Fixed a multi-track import landing thousands of kilometres from the site when the first track was deselected in the track picker: the sitch's time was never set, so every loaded track was sampled far outside its own time range.
+- Fixed the *Alt Lock* control disappearing from a hand-drawn track whenever any other track was deleted.
+- Fixed a hand-drawn track's name being taken over by a track imported afterwards.
+- Fixed a hand-drawn track being cut short when the sitch's duration changed — it now follows the sitch length instead of staying at whatever it was when you drew it.
+- Fixed the spline editing line staying visible after leaving edit mode, which drew every spline track twice and ignored the track's own colour.
+
 ## Version 2.107.0 (2026-07-27)
 
 ### New Features
