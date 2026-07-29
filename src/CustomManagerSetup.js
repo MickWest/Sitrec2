@@ -1740,6 +1740,8 @@ export const setupMethods = {
 
         this.setupSimInfoMenu();
 
+        this.setupWescamMXUI();
+
         this.setupOSDDataSeriesController();
 
         setupHorizonExtractorMenu();
