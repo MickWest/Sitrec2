@@ -1850,9 +1850,12 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
 
     exportTrackKML(inspect = false) {
         const trackName = Sit.name + "-" + this.id;
+        // <Document>, not <Folder> — see the note on CNodeArray.exportTrackKML: the KML
+        // reader only resolves a track name for Document>Placemark, so a Folder-rooted
+        // export re-imports into Sitrec as "Unnamed Track".
         let kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
-<Folder>
+<Document>
 <name>${trackName}</name>
 <Placemark>
 <name>${trackName}</name>
@@ -1883,7 +1886,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         kml += coordLines.join("\n") + "\n";
         kml += `</gx:Track>
 </Placemark>
-</Folder>
+</Document>
 </kml>`;
 
         if (inspect) {

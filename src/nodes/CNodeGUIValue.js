@@ -253,7 +253,9 @@ export class CNodeGUIValue extends CNodeGUIConstant {
 
 
     // given a value, and the units and unitType, set the value in the gui
-    // example: setValueWithUnits(10, "meters", "small")
+    // fromUnits is a unit SYSTEM key from CUnits.factors — "metric", "imperial",
+    // "nautical" or "feet" — not a unit name, so metres is ("metric", "small")
+    // example: setValueWithUnits(10, "metric", "small")
     // if the current units are metric, then this will be converted from 10 meters to 32.8084 feet
     setValueWithUnits(value, fromUnits, unitType, ignoreOnChange=false) {
         if (this.unitType === "none") {

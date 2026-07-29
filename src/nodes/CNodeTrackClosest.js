@@ -10,6 +10,11 @@ export class CNodeTrackClosest extends CNodeArray {
         this.input("to")
         this.frames = this.in.from.frames
         this.recalculate()
+        // CNodeArray's constructor ran while this.array was still empty, so its
+        // export-button probe found nothing. Retry now the positions exist.
+        if (this.exportable) {
+            this.addArrayExportButtons();
+        }
     }
 
     recalculate() {

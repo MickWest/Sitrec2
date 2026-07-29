@@ -157,6 +157,105 @@ Rocket and high-altitude balloon trajectory data from FlightClub, with orbital p
 
 National Imagery Transmission Format files with embedded metadata.
 
+### Sitrec Spline (.spline.json)
+
+Sitrec's own interchange format for a **hand-drawn** track — the control points of a
+spline, not a per-frame path. Dropping one in creates a synthetic track, identical to
+one made with **Add Track**, with the control points already placed and editable.
+
+This is how a hand-authored solution moves between sitches as a data file instead of
+being hard-coded in a `Sit*.js`. Write one out with the **Export Spline** button, found
+both in a synthetic track's folder under **Contents** and in the spline editor's own
+folder under **Physics**.
+
+```json
+{
+  "fileType": "sitrec-spline",
+  "version": 1,
+  "name": "Aguadilla UAP Spline",
+  "sourceSitch": "agua",
+  "fps": 29.97,
+  "frames": 7028,
+  "curveType": "chordal",
+  "constantSpeed": false,
+  "extrapolateTrack": true,
+  "altitudeLock": -1,
+  "altitudeLockAGL": true,
+  "altitudeDatum": "HAE",
+  "columns": ["frame", "lat", "lon", "alt"],
+  "points": [
+    [0, 18.503705640095387, -67.1504289887557, 29.22562827449292],
+    [121, 18.500549008435044, -67.14880906435559, 57.510756713338196]
+  ]
+}
+```
+
+Points are `[frame, lat, lon, alt]`. Being geodetic, the file survives a change of Earth
+model or sitch origin — unlike the raw ECEF arrays older sitches embed. Altitude is
+**HAE** (height above ellipsoid), so the round trip is exact with no geoid lookup.
+`color` is optional: omit it and the importer takes the next palette colour.
+
+The file is validated on import and refused with a message naming the problem, so
+hand-editing is safe to attempt. In particular **frame numbers must strictly
+increase** — the spline's frame-to-curve mapping divides by the gap between
+adjacent control points, so a repeated frame would put NaN into every frame of the
+track. `curveType` must be one of `linear`, `catmull`, `centripetal`, `chordal`.
+
+Two things to watch:
+
+- **Frames are video frames.** Load the video (or otherwise set the sitch's frame
+  count) *before* dropping the spline. The control points are expanded across
+  `Sit.frames` at import and are not re-expanded if the frame count changes later, so
+  a spline whose points run to frame 7027 dropped into a 900-frame sitch is truncated.
+- **The file is consumed, not kept.** Once imported, the control points belong to the
+  synthetic track and are saved with the sitch, so the `.spline.json` itself is not
+  persisted or re-uploaded — otherwise reloading would import a second copy.
+
+### Sitrec Camera FOV (.fov.json)
+
+Not a track — camera zoom keyframes — but it is a droppable Sitrec data file, so it
+is listed here with the rest. Dropping one loads it into the **FOV Editor** and
+selects that editor as the camera's FOV source.
+
+Write one with **Camera ▸ FOV (Zoom) ▸ Export for FOV Editor**. That samples
+whatever is *currently* driving the camera FOV — the selected Camera FOV source in a
+custom sitch, or the camera itself in a legacy sitch that computes zoom in code —
+across every frame, then reduces those samples to keyframes that reproduce them
+under the editor's linear interpolation to within a small tolerance (1e-4 degrees).
+Each straight run of samples is collapsed to its two endpoints, so a constant zoom
+becomes two keyframes rather than one.
+
+```json
+{
+  "fileType": "sitrec-fov",
+  "version": 1,
+  "name": "agua-fov",
+  "sourceSitch": "agua",
+  "sourceNode": "lookCamera.preRenderFunction",
+  "fps": 29.97,
+  "frames": 7028,
+  "units": "degrees",
+  "axis": "vertical",
+  "interpolation": "linear",
+  "columns": ["frame", "fov"],
+  "keyframes": [[0, 0.8], [6, 0.8], [7, 4], [634, 4], [635, 0.8]]
+}
+```
+
+`fov` is the **vertical** field of view in degrees, matching both the editor's y
+axis and Three.js's `PerspectiveCamera.fov`.
+
+An **instant** zoom change — a real camera stepping between discrete zoom levels —
+comes out as two keyframes one frame apart, as in the sample above (frame 6 at 0.8°,
+frame 7 at 4°). Under linear interpolation that is a step, not a ramp. A gradual
+zoom reduces to just the endpoints of each linear segment.
+
+This is how the Aguadilla sitch's zoom track, which lives in code as a CSV column
+read per frame, becomes 12 editable keyframes in a custom sitch.
+
+Keyframe frame numbers are absolute, so a file authored over a different frame count
+will not line up with the video — the importer warns when the counts differ.
+
 ## Importing Tracks
 
 There are two ways to get a track into Sitrec:
@@ -385,6 +484,8 @@ Sitrec can export tracks in several formats via the export buttons in the **Expo
 | **CSV** | Frame, Time, Lat, Lon, Alt(m) — simple tabular data |
 | **KML** | Google Earth compatible with `<gx:Track>`, timestamps, and altitude mode |
 | **MISB CSV** | Full 12-column MISB-standard format including heading, pitch, roll, FOV, gimbal angles |
+| **Spline JSON** | Control points of a hand-drawn spline track — see [Sitrec Spline](#sitrec-spline-splinejson). Exported with the **Export Spline** button rather than from the Export folder |
+| **FOV JSON** | Camera zoom keyframes — see [Sitrec Camera FOV](#sitrec-camera-fov-fovjson). Exported with **Camera ▸ FOV (Zoom) ▸ Export for FOV Editor** |
 
 Exported files are downloaded directly to your browser's download folder.
 

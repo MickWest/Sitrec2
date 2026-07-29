@@ -14,6 +14,7 @@ import {assert} from "../assert";
 import {getCursorPositionFromTopView} from "../mouseMoveView";
 import {get_real_horizon_angle_for_frame} from "../JetUtils";
 import {t} from "../i18n";
+import {extractFOV} from "../FOVUtils";
 
 
 // Position the camera on the source track
@@ -359,22 +360,10 @@ export class CNodeControllerLookAtLLA extends CNodeController {
 
 }
 
-export function extractFOV(value) {
-
-    // if it's a number then use that directly as the FOV
-    if (typeof value === "number") {
-        return value;
-    } else if (value.misbRow !== undefined) {
-        // Note: some tracks have both misbRow and vFOV
-        // in that case, we'll ignore the vFOV and just use the MISB row
-        return value.misbRow[MISB.SensorVerticalFieldofView];
-    } else if (value.vFOV !== undefined) {
-        // it's a track with a vFOV member
-        return  value.vFOV;
-    } else {
-        assert(0, "extractFOV: no vFOV or misbRow member in value, can't find FOV, value = "+value);
-    }
-}
+// extractFOV now lives in ../FOVUtils — a leaf module, so it can be used from
+// code that must stay importable under Jest (this file reaches three/addons).
+// Re-exported here so the existing import sites don't have to change.
+export {extractFOV};
 
 // control FOV directly with a source node that can be a value, an object with a vFOV, or a track with MISB data
 export class CNodeControllerFOV extends CNodeController {

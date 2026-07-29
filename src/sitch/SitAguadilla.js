@@ -293,6 +293,9 @@ export const SitAguadilla = {
                id:id,
                array:points,
                reprojectFromLLA: true,
+               // exportable so the plane track can be pulled out as KML/CSV and
+               // dropped into a custom sitch (see docs/Tracks.md, spline interchange)
+               exportable: true,
            })
 
            return track;
@@ -319,13 +322,16 @@ export const SitAguadilla = {
 //            intervals: new CNodeGUIValue({value: 119, start:1, end:200, step:1, desc:"Catmull Intervals"},gui),
             intervals: new CNodeGUIValue({value: 20, start:1, end:200, step:1, desc:"Catmull Intervals"},guiMenus.camera),
             tension: new CNodeGUIValue({value: 0.5, start:0, end:5, step:0.001, desc:"Catmull Tension"},guiMenus.camera),
+            exportable: true,
         })
 
 //        new CNodeTransferSpeed({
         new CNodeTrackClosest({
             id:"jetTrackSmooth",
             from:"jetTrackAverage", // node with good speed
-            to:"jetTrackSpline"
+            to:"jetTrackSpline",
+            // the track the camera actually follows — the one to export for a port
+            exportable: true,
         })
 
 

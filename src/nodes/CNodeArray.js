@@ -4,6 +4,7 @@ import {assert} from "../assert";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {roundIfClose} from "../utils";
 import {saveAs} from "file-saver";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
 
 export class CNodeArray extends CNode {
     constructor(v) {
@@ -19,9 +20,30 @@ export class CNodeArray extends CNode {
         }
 
         this.exportable = v.exportable ?? false;
-        if (this.exportable) {
-            NodeMan.addExportButton(this, "exportArray")
+        // Direct CNodeArray instances ONLY. Registering an export button probes the
+        // export function immediately (makeExportButton calls it with inspect=true),
+        // and doing that from a base constructor calls it on a half-built object:
+        // a subclass override like CNodeMISBDataTrack.exportTrackKML reads this.misb,
+        // which that subclass assigns AFTER super() returns, so it throws and leaves
+        // a registered-but-unconstructed node in NodeMan.
+        //
+        // Nothing is lost. A CNodeEmptyArray subclass has array = [] at this point,
+        // so both probes found nothing anyway; subclasses register their own buttons
+        // once their data exists (see CNodeMISBDataTrack, CNodeSmoothedPositionTrack,
+        // and CNodeTrackClosest's addArrayExportButtons() call after recalculate).
+        if (this.exportable && this.constructor === CNodeArray) {
+            this.addArrayExportButtons();
         }
+    }
+
+    // Subclasses that fill this.array AFTER super() (e.g. CNodeTrackClosest) call
+    // this again once the data exists: exportArray's probe returns null on an empty
+    // array, so the constructor pass adds no CSV button. (The KML probe is
+    // capability-based and does add its button on the first pass; addExportButton
+    // dedupes, so the retry is harmless.)
+    addArrayExportButtons() {
+        NodeMan.addExportButton(this, "exportArray")
+        NodeMan.addExportButton(this, "exportTrackKML")
     }
 
     // generic export function
@@ -82,6 +104,87 @@ export class CNodeArray extends CNode {
         else {
             saveAs(new Blob([csv]), "sitrecArray-" + this.id + ".csv")
         }
+    }
+
+    // Google Earth gx:Track. Moved down here from CNodeTrack so that any array
+    // of per-frame {position} or {lla} can export one — CNodeTrackClosest and
+    // the raw LLA track arrays are plain CNodeArrays, not CNodeTracks.
+    exportTrackKML(inspect = false) {
+        // The inspect probe runs at node CREATION for every export button, so it
+        // must stay O(1) — building the whole KML here (as this did when it lived
+        // on CNodeTrack) meant 7000+ Date.toISOString() calls before the node was
+        // even usable. Probe by capability, not by data: an empty array means a
+        // lazily-recalculated track, which still gets its button.
+        if (inspect) {
+            const first = this.array?.[0];
+            if (first !== undefined && typeof first !== "object") {
+                // a scalar array (FOV, heading, ...) — nothing to put in a gx:Track
+                return null;
+            }
+            return {desc: "KML Track Export"};
+        }
+
+        const trackName = Sit.name + "-" + this.id;
+        // <Document>, not <Folder>: CTrackFileKML.legacyTrackName resolves a name for
+        // Document>Placemark but NOT for Folder>Placemark, where it deliberately leaves
+        // the name unset for back-compat — so a Folder-rooted export re-imports as
+        // "Unnamed Track". Document is also the conventional KML root container.
+        let kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+<Document>
+<name>${trackName}</name>
+<Placemark>
+<name>${trackName}</name>
+<Style>
+<LineStyle><color>ff0000ff</color><width>4</width></LineStyle>
+<IconStyle><Icon><href>http://maps.google.com/mapfiles/kml/shapes/airports.png</href></Icon></IconStyle>
+</Style>
+<gx:Track>
+<altitudeMode>absolute</altitudeMode>
+<extrude>1</extrude>
+`;
+        const whenLines = [];
+        const coordLines = [];
+
+        for (let f = 0; f < this.frames; f++) {
+            const timeMS = GlobalDateTimeNode.frameToMS(f);
+            const dateStr = new Date(timeMS).toISOString();
+            whenLines.push(`<when>${dateStr}</when>`);
+
+            const frameData = this.v(f);
+            let lat, lon, alt;
+            let altReference = "HAE";
+            if (frameData.lla) {
+                [lat, lon, alt] = frameData.lla;
+                altReference = frameData.altReference ?? "HAE";
+            } else if (frameData.position) {
+                const llaVec = ECEFToLLAVD_radii(frameData.position);
+                lat = llaVec.x;
+                lon = llaVec.y;
+                alt = llaVec.z;
+            } else {
+                lat = 0;
+                lon = 0;
+                alt = 0;
+            }
+
+            // KML "absolute" altitude is measured from the EGM96 geoid (MSL) per
+            // OGC KML 2.2/2.3 — Google Earth reads it as height above sea level.
+            // Convert HAE frames to MSL (H = h - N), mirroring exportMISBCompliantCSV.
+            if (altReference === "HAE") {
+                alt -= meanSeaLevelOffset(lat, lon);
+            }
+            coordLines.push(`<gx:coord>${lon} ${lat} ${alt}</gx:coord>`);
+        }
+
+        kml += whenLines.join("\n") + "\n";
+        kml += coordLines.join("\n") + "\n";
+        kml += `</gx:Track>
+</Placemark>
+</Document>
+</kml>`;
+
+        saveAs(new Blob([kml], {type: "application/vnd.google-earth.kml+xml"}), trackName + ".kml");
     }
 
     dispose() {

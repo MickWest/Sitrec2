@@ -178,10 +178,19 @@ export class CNodeManager extends CManager{
             node.exportButtons = [];
         }
 
+        // The same export can be offered twice: a base class and a subclass both
+        // register it (CNodeArray + CNodeSmoothedPositionTrack both want KML), or
+        // a node retries after its lazily-filled array exists. One button only.
+        if (node.exportButtons.some(b => b._exportFunction === exportFunction)) {
+            return;
+        }
 
         const button = FileManager.makeExportButton(node, node.exportFunction, node.exportType, node.id);
 
         if (button) {
+            // Tagged rather than counted, so a probe that returned null (no data
+            // yet) doesn't block a later successful retry.
+            button._exportFunction = exportFunction;
             node.exportButtons.push(button)
         }
     }

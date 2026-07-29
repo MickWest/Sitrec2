@@ -110,6 +110,32 @@ function XYZ2EA(v) {
 // But there's always a solution with the same negative pitch
 // and roll+180 or roll-180
 // if you are seeing minimum movement, then the algorithm should consider that.
+//
+// ---------------------------------------------------------------------------
+// MEASURED SEMANTICS (so nobody has to work these out again). This is the inverse
+// of the ATFLIR ROLL-NOD chain in JetHorizon.js. The returned `roll` is the clock
+// angle of the LOS about the pod boresight; with podPitch = 30 and jetPitch = 0:
+//
+//      roll    LOS points          (el / az)
+//      ----    -----------------   ---------
+//         0    straight DOWN       -30 /   0     <- zero is nadir, sensible for a
+//       +90    to PORT (left)        0 / -30        belly-mounted pod
+//       180    UP                  +30 /   0
+//       -90    to STARBOARD          0 / +30
+//
+// The y/z mixing below is exactly Rx(-jetPitch), the inverse of the Rx(+jetPitch)
+// in the pod chain: it moves the LOS into the frame whose z IS the pod roll axis.
+//
+// The returned roll is the TOTAL roll (airframe + pod ring), which is why callers
+// then do `podRoll = totalRoll - jetRoll`. That works only because those two
+// rotations are coaxial — see the note in JetHorizon.js. Note this function takes
+// no jetRoll and cannot: the required total is independent of the bank.
+//
+// Its singularity is at pitch 0 or 180 (LOS along the roll axis), where the roll
+// ring must spin arbitrarily fast — the familiar ATFLIR ring-spin as a target
+// crosses the nose. An az-el turret's keyhole is in a different place (nadir /
+// zenith); see src/TurretRoll.js.
+// ---------------------------------------------------------------------------
 function XYZJ2PR(v,jetPitch) {
 
     const jetPitchR = radians(-jetPitch)
@@ -332,6 +358,49 @@ export function calcHorizonPoint(A, fwd, horizonAlt) {
 // the roll angle is the angle or y from a vector orthogonal to z and pointing up
 // find the angle the y basis vector is rotated around the z basis vector
 // from a y-up orientation
+//
+// ---------------------------------------------------------------------------
+// NOTES FOR FUTURE READERS — established by reverse-engineering + numeric test,
+// so you don't have to do it again. (Every number below was measured by running
+// this function, not derived on paper.)
+//
+// 1. WORLD-UP IS HARD-CODED TO (0,1,0). This is a landmine if you reuse this
+//    function. It is only correct in the legacy FLAT local frame the Jet*/pod
+//    code runs in (see LocalFrame in JetStuff.js: +Y=up, -Z=heading, +X=starboard),
+//    and in JetHorizon.js the Object3D hierarchy is deliberately UNPARENTED so its
+//    matrixWorld stays in that flat frame. It would be WRONG applied to a real
+//    scene-graph matrixWorld, which is ECEF — there "up" is getLocalUpVector(pos),
+//    not (0,1,0). For ECEF work do the same geometry with vectors instead; see
+//    azElTurretImageRoll() in src/TurretRoll.js.
+//
+// 2. THE COMMENT ABOVE SAYS "-z is the forward basis" BUT THE CODE USES +zBasis
+//    in both cross products below. That is not a bug: the "upright y" reference
+//    is invariant to the flip, since (-r) x (-f) = r x f. Only the sign test at
+//    the end depends on the choice — using -zBasis would negate the result.
+//    Relatedly, the variable named `right` is actually screen-LEFT: for an
+//    identity matrix it evaluates to (-1,0,0) = -xBasis.
+//
+// 3. SIGN CONVENTION: positive = the horizon appears rotated COUNTER-CLOCKWISE in
+//    the image (y-up image coords), i.e. the airframe is banked RIGHT. Measured:
+//    a pure 20 deg right bank returns +20.000; a camera with rotation.z = +15
+//    returns -15.000. This agrees with horizonAngle() and
+//    getHumanHorizonFromPitchRollAzEl() (all three return +20 for a 20 deg right
+//    bank at az=0), so the three horizon measures are interchangeable in sign.
+//
+// 4. KEY ALGEBRAIC IDENTITY, relied on by all the derotation code:
+//        H(M . Rz(d)) === H(M) - d        (exact)
+//    So to level a horizon sitting at H you apply camera.rotateZ(radians(H)), and
+//    to REPRODUCE a target tilt T on a camera that lookAt() left level you apply
+//    camera.rotateZ(radians(-T)).
+//
+// 5. Equivalent closed form (verified to 1.4e-12 rad over 20k random frames):
+//        extractRollFromMatrix(M) === -atan2(w . xBasis, w . yBasis),  w = (0,1,0)
+//
+// 6. It has its own singularity, separate from any gimbal's: when the forward
+//    direction is world-vertical, zBasis.cross(worldUp) vanishes and the returned
+//    angle is meaningless. Guard before calling if the LOS can point straight
+//    up or down.
+// ---------------------------------------------------------------------------
 export function extractRollFromMatrix(m) {
     const xBasis = V3();
     const yBasis = V3();

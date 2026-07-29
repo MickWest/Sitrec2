@@ -28,6 +28,33 @@ export function horizonAngle(jetPitch, jetRoll, az) {
     return Math.atan2(y, x) / d2r;
 }
 
+// The horizon tilt seen by an observer riding the aircraft with their head aligned
+// to the aircraft's up axis: it builds jetUp/jetRight, swings jetRight about jetUp
+// by the relative azimuth, and compares that to the true level horizon.
+//
+// USEFUL FACT, verified numerically (max deviation 1.2e-6 deg over 256 combinations
+// of pitch/bank/az/el): this is EXACTLY the image roll of an idealised TWO-AXIS
+// azimuth-elevation mount. (Real WESCAM MX turrets are four-axis stabilised, so this
+// is the un-derotated baseline, not their actual output - see src/TurretRoll.js.)
+//
+// That equivalence is not a coincidence: an az-el mount slews about the aircraft's
+// vertical and then elevates, which is precisely what the observer above does, so
+// its image "up" is trapped in the same plane. A roll-nod pod (ATFLIR) is NOT the
+// same, which is exactly why ATFLIR footage needs derotation and an az-el mount's
+// does not.
+//
+// Corollaries, also verified numerically:
+//   - wings level AND level pitch -> the roll is identically 0 at every azimuth and
+//     elevation (excluding the mount's own nadir/zenith keyhole, where azimuth is
+//     undefined rather than zero);
+//   - looking abeam (az = +/-90) AT ZERO ELEVATION -> 0 whatever the bank. This does
+//     NOT hold at all elevations: depress far enough and the line of sight sweeps
+//     through world-nadir, past which the roll flips to 180 degrees.
+//
+// Caveat before reusing this OUTSIDE the legacy flat local frame: like
+// extractRollFromMatrix, the maths here assumes world up is (0,1,0). In ECEF
+// (custom sitches) use azElTurretImageRoll() in src/TurretRoll.js instead, which is
+// the same geometry done coordinate-free with vectors.
 export function getHumanHorizonFromPitchRollAzEl(jetPitch, jetRoll, az, el) {
 
 

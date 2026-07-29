@@ -109,6 +109,7 @@ import {DragDropHandler} from "./DragDropHandler";
 // See FpsMismatchDialog.js for the rationale and detection logic.
 import "./FpsMismatchDialog";
 import {CGuiMenuBar, setupHelpSearch} from "./lil-gui-extras";
+import {exportFOVForEditor} from "./FOVInterchange";
 import {initUILogging} from "./UILogging";
 import {assert} from "./assert";
 import {CNodeFactory} from "./nodes/CNodeFactory";
@@ -1891,6 +1892,19 @@ async function initializeOnce() {
     addGUIFolder("cameraLocation", "Location", "camera").open();
     addGUIFolder("cameraHeading", "Heading", "camera").open();
     addGUIFolder("cameraFOV", "FOV (Zoom)", "camera").open();
+
+    // Lift whatever is currently driving the camera FOV into a .fov.json of
+    // keyframes, for loading into the FOV Editor (of this or another sitch).
+    // Added here, alongside the permanent folder, so it is available in legacy
+    // sitches too — those are the ones whose zoom track is locked up in code
+    // (Aguadilla computes it from a CSV column in a preRenderFunction) and so
+    // are exactly what this is for. .perm() keeps it across sitch loads.
+    guiMenus.cameraFOV.add({
+        exportForFOVEditor: () => exportFOVForEditor(),
+    }, "exportForFOVEditor").name("Export for FOV Editor").perm()
+        .tooltip("Sample the current FOV source over every frame and save it as\n" +
+            "keyframes (.fov.json). Drop that file on Sitrec to load it into the\n" +
+            "FOV Editor. Instant zoom changes become two keyframes one frame apart.");
 
     // Permanent sub-folder inside Camera for the less-common per-camera tweaks
     // (look-camera Y-compress, lens X/Y offset, near plane, orbit camera, and

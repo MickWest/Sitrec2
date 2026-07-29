@@ -24,6 +24,48 @@ export const localPodFrame = new Object3D()
 localPodFrame.add(localEOSU)
 localEOSU.add(localBall)
 
+// ---------------------------------------------------------------------------
+// THE ATFLIR GIMBAL CHAIN — notes for future readers, established by
+// reverse-engineering and verified numerically. Please keep these accurate.
+//
+// ATFLIR is a ROLL-NOD gimbal: its FIRST axis is the aircraft's LONGITUDINAL
+// (nose-tail) axis, and the second is a pitch/nod axis. The camera is mounted on
+// the aircraft, so the rotations COMPOUND — hence the parent/child Object3Ds
+// above (localPodFrame > localEOSU > localBall), which mirror the real
+// PodFrame > Pod > HEAD(EOSU) > BALL graph in JetStuff.js/CNodeDisplayATFLIR.js.
+//
+// EULER ORDER. Three.js's default is 'XYZ', which composes M = Rx . Ry . Rz. So
+// localPodFrame, setting both .z and .x, is Rx(jetPitch) . Rz(-jetRoll) — NOT
+// Rz then Rx. The order the two lines are written in is irrelevant; they are
+// components of one Euler and only `order` decides. Read intrinsically that is
+// "pitch the nose up, THEN bank about the already-pitched longitudinal axis",
+// which is the standard aircraft order.
+//
+// THE COMPOSED MATRIX (verified to 1e-10):
+//     M_ball = Rx(jetPitch) . Rz(-jetRoll) . Rz(-podRoll) . Rx(-podPitch)
+//            = Rx(jetPitch) . Rz(-(jetRoll + podRoll)) . Rx(-podPitch)
+//
+// *** THE SINGLE MOST IMPORTANT STRUCTURAL FACT ***
+// The airframe roll and the pod roll are about the SAME axis and are ADJACENT in
+// the chain, so they collapse into one rotation and simply ADD. That is the only
+// reason `podRoll = totalRoll - jetRoll` (line ~69 below) is valid, and why
+// EAJP2PR takes no jetRoll argument — it cannot, because the required TOTAL roll
+// is independent of how the airframe is banked.
+//
+// THIS DOES NOT GENERALISE TO OTHER GIMBAL TYPES. An azimuth-elevation mount
+// (as on a WESCAM-style ball turret) has its first axis on the aircraft's VERTICAL, so its Ry
+// neither commutes with nor merges into the airframe's Rz; there is no
+// subtraction trick and the inverse must transform the LOS into the body frame
+// first. See src/TurretRoll.js, which also documents why an az-el turret's image
+// roll turns out to equal the plain "human horizon" angle.
+//
+// Note the pod roll axis is the NOSE axis, which is elevated by jetPitch (default
+// 3.6 deg, further scaled by 1/cos(roll) when par.scaleJetPitch is on) — it is
+// NOT world-horizontal, though it is independent of bank.
+//
+// The updateMatrixWorld() calls below are redundant after the first: it recurses
+// into children. The quaternion.identity() calls are what clear rotation.y.
+// ---------------------------------------------------------------------------
 export function getPodHorizonFromJetAndPod(jetRoll, jetPitch, podRollPhysical, podPitchPhysical) {
 
     localBall.quaternion.identity()
@@ -66,6 +108,15 @@ export function getPodRollFromGlareAngleFrame(frame) {
     let podPitch, totalRoll;
     [podPitch, totalRoll] = EAJP2PR(el, az, jetPitch);
 
+    // Valid ONLY because the airframe roll and the pod roll are about the same axis
+    // and adjacent in the chain, so they add — see the long note on
+    // getPodHorizonFromJetAndPod above. The airframe already supplies jetRoll of the
+    // total, so the pod ring provides the remainder: bank right 30 deg and the pod,
+    // carried along by the airframe, needs 30 deg less of its own roll.
+    // Do NOT copy this line for a different gimbal type (e.g. an az-el ball turret) —
+    // it is a property of coaxial rotations, not a general pod/airframe relationship.
+    // Note also this subtraction is NOT wrapped to +/-180 here, while
+    // podRollFromFrame() in JetUtils.js DOES wrap. Only matters at large jetRoll.
     const podRoll = totalRoll - jetRoll
 
     // what we want the dero to be
@@ -99,6 +150,13 @@ export function getPodRollFromGlareAngleFrame(frame) {
             }
         } else {
             // horizon is decreasing from A to B
+            // KNOWN BUG (flagged, not fixed — this is load-bearing legacy glare code):
+            // the condition below is duplicated, so the inner `else` is unreachable
+            // and this whole decreasing-horizon branch has no fallback. When the
+            // horizon decreases from A to B and horizonTarget >= horizonMid, neither
+            // rollA nor rollB is narrowed and the bisection stalls until it runs out
+            // of iterations, returning rollA unchanged. Verify against real glare
+            // data before touching it.
             if (horizonTarget < horizonMid) {
                 if (horizonTarget < horizonMid) {
                     // target is in the smaller upper part, so Mid is the new A

@@ -87,6 +87,7 @@ import {CNodeSimInfoUI} from "./nodes/CNodeSimInfoUI";
 import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
 import {CNodeGUIFlag, CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {CNodeControllerCameraBankRoll} from "./nodes/CNodeControllerCameraBankRoll";
+import {CNodeControllerMXRoll} from "./nodes/CNodeControllerMXRoll";
 import {CNodeTurnRateBS} from "./nodes/CNodeTurnRateBS";
 import {CNodeHorizonAngle} from "./CHorizonExtractor";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
@@ -961,6 +962,53 @@ export class CCustomManager {
                 enabled: "lookCameraBankRoll",
             });
             NodeMan.get("lookCamera").addControllerNode(ctrl);
+        }
+
+        // Roll the look camera the way a WESCAM MX-style AZIMUTH-ELEVATION ball
+        // turret would, rather than by the aircraft's bank alone. The turret is
+        // bolted to the aircraft, so its azimuth axis is the jet's (tilted) vertical
+        // and the rotations compound: the visible image roll is the combined result
+        // of jet bank/pitch and turret azimuth/elevation. See src/TurretRoll.js.
+        if (!NodeMan.exists("lookCameraMXRoll")) {
+            new CNodeGUIFlag({
+                id: "lookCameraMXRoll",
+                value: false,
+                desc: "Roll From MX-Style Camera",
+                tooltip: "Roll the look camera as an azimuth-elevation ball turret (WESCAM MX style) would, "
+                    + "combining the jet's bank and pitch with the turret's azimuth and elevation.\n\n"
+                    + "Unlike an ATFLIR roll-nod pod, an az-el turret adds NO roll in level flight — "
+                    + "all of it comes from the aircraft's attitude tilting the turret's vertical axis.",
+            }, guiMenus.cameraHeading);
+        }
+
+        if (!NodeMan.exists("lookCameraMXRollScale")) {
+            new CNodeGUIValue({
+                id: "lookCameraMXRollScale",
+                value: 1, start: 0, end: 1, step: 0.01,
+                desc: "MX Roll Amount",
+                tooltip: "1 = an unstabilised two-axis turret (the full geometric roll).\n"
+                    + "0 = a perfectly roll-stabilised turret (level horizon, no roll).\n"
+                    + "A real MX-10 is four-axis stabilised, so the truth may lie in between — "
+                    + "set this by matching the horizon tilt in the actual video.",
+            }, guiMenus.cameraHeading);
+        }
+
+        // No target track input: the roll depends on where the camera is ALREADY
+        // aimed, which it reads off the camera itself. That keeps it compatible with
+        // every heading mode (To Target, Manual, Celestial, Custom Az/El) instead of
+        // overriding them.
+        if (NodeMan.exists("lookCamera")
+            && NodeMan.exists("cameraTrackSwitchSmooth")
+            && !NodeMan.exists("mxRollController")) {
+            const mxCtrl = new CNodeControllerMXRoll({
+                id: "mxRollController",
+                track: "cameraTrackSwitchSmooth",
+                enabled: "lookCameraMXRoll",
+                scale: "lookCameraMXRollScale",
+            });
+            // Added last so it runs AFTER TrackToTrack's lookAt(), which leaves the
+            // horizon level for this controller to then tilt.
+            NodeMan.get("lookCamera").addControllerNode(mxCtrl);
         }
 
         // Consolidated "Turn Rate Source" dropdown. Selects which signal

@@ -24,6 +24,68 @@ import {CNodeSmoothedPositionTrack} from "./CNodeSmoothedPositionTrack";
 // the same direction as the simulated aircraft (right turn → right side
 // down), which renders the horizon tilted opposite the bank — what a pilot
 // would see.
+/**
+ * Coordinated-turn bank angle, in RADIANS, derived from a track's curvature:
+ *     bank = atan(angularVelocity * speed / g)
+ * Positive = right wing down. Matches CNodeControllerObjectTilt's "banking" mode.
+ *
+ * Extracted so the MX-style turret roll (CNodeControllerMXRoll) derives the
+ * aircraft's attitude from exactly the same signal this controller does — two
+ * different bank numbers driving the same camera would be a subtle and very
+ * confusing bug.
+ *
+ * @param {CNodeTrack} smoothedTrack a SMOOTHED position track; raw tracks make the
+ *        finite differences below far too noisy to differentiate twice
+ * @param {number} f frame
+ * Two DIFFERENT failure outcomes, and the distinction is load-bearing:
+ *   null : no usable estimate at all (missing/duplicate samples). Callers should
+ *          leave the roll alone — snapping it to level would be a visible jolt.
+ *   0    : the wide-baseline samples are unavailable but the track is moving, so
+ *          "no measurable turn" is the honest answer. Callers should apply it.
+ * This mirrors the original inline code exactly: its early `return`s left the roll
+ * untouched, while its `let bankAngle = 0` fallback was applied.
+ *
+ * @returns {number|null} bank in radians, 0 for "no measurable turn", or null for
+ *        "cannot estimate — do not touch the roll"
+ */
+export function coordinatedTurnBankAngle(smoothedTrack, f) {
+    if (!Number.isFinite(f) || f < 0) return null;
+    const c0 = smoothedTrack.p(f);
+    const c1 = smoothedTrack.p(f + 1);
+    if (!c0 || !c1) return null;
+    const v0 = c1.clone().sub(c0);
+    // NOTE the comparisons below are written as `!(x >= k)` rather than `x < k`.
+    // A NaN coordinate (a corrupt or interpolated-off-the-end sample) makes every
+    // `<` comparison false, so it would sail through a naive guard and propagate
+    // NaN into the camera pose, which is far harder to diagnose than a missing
+    // roll. `!(x >= k)` rejects NaN as well as the small values.
+    const v0LenSq = v0.lengthSq();
+    if (!(v0LenSq >= 0.5)) return null;      // duplicate/stationary, or NaN
+
+    const halfFps = Math.floor((Sit.fps || 30) / 2);
+    const a0 = smoothedTrack.p(f - halfFps);
+    const a1 = smoothedTrack.p(f - halfFps + 1);
+    const b0 = smoothedTrack.p(f + halfFps);
+    const b1 = smoothedTrack.p(f + halfFps + 1);
+    // Beyond this point the ORIGINAL code fell back to a bank of zero and still
+    // applied it, so return 0 rather than null to preserve that behaviour.
+    if (!a0 || !a1 || !b0 || !b1) return 0;
+
+    const vA = a1.clone().sub(a0);
+    const vB = b1.clone().sub(b0);
+    if (!(vA.lengthSq() >= 0.5) || !(vB.lengthSq() >= 0.5)) return 0;
+
+    const speed = v0.length() * Sit.fps;
+    if (!(speed >= 0.01)) return 0;
+
+    let angV = vA.angleTo(vB);
+    const cross = V3().crossVectors(vA, vB);
+    if (cross.dot(getLocalUpVector(c0)) > 0) angV = -angV;
+    const bank = Math.atan(angV * speed / 9.77468);
+    // Final backstop: never hand a NaN to the camera.
+    return Number.isFinite(bank) ? bank : null;
+}
+
 export class CNodeControllerCameraBankRoll extends CNodeController {
     constructor(v) {
         super(v);
@@ -55,32 +117,13 @@ export class CNodeControllerCameraBankRoll extends CNodeController {
         const ptz = NodeMan.list.ptzAngles?.data;
         if (!ptz || ptz.roll === undefined) return;
 
-        const sm = this.smoothedTrack;
-        const c0 = sm.p(f);
-        const c1 = sm.p(f + 1);
-        if (!c0 || !c1) return;
-        const v0 = c1.clone().sub(c0);
-        if (v0.lengthSq() < 0.5) return;
-
-        let bankAngle = 0;
-        const halfFps = Math.floor((Sit.fps || 30) / 2);
-        const a0 = sm.p(f - halfFps);
-        const a1 = sm.p(f - halfFps + 1);
-        const b0 = sm.p(f + halfFps);
-        const b1 = sm.p(f + halfFps + 1);
-        if (a0 && a1 && b0 && b1) {
-            const vA = a1.clone().sub(a0);
-            const vB = b1.clone().sub(b0);
-            if (vA.lengthSq() >= 0.5 && vB.lengthSq() >= 0.5) {
-                const speed = v0.length() * Sit.fps;
-                if (speed >= 0.01) {
-                    let angV = vA.angleTo(vB);
-                    const cross = V3().crossVectors(vA, vB);
-                    if (cross.dot(getLocalUpVector(c0)) > 0) angV = -angV;
-                    bankAngle = Math.atan(angV * speed / 9.77468);
-                }
-            }
-        }
+        // Shared with CNodeControllerMXRoll — see coordinatedTurnBankAngle above.
+        // null means "cannot estimate": return WITHOUT writing, leaving the previous
+        // roll in place. Mapping it to 0 instead would snap the horizon level on a
+        // duplicate track sample, which is exactly what the original inline code
+        // avoided by returning early.
+        const bankAngle = coordinatedTurnBankAngle(this.smoothedTrack, f);
+        if (bankAngle === null) return;
 
         // PTZ has two different parameters that look like "roll" depending on
         // the satellite-mode flag:

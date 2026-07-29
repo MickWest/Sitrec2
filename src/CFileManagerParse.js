@@ -77,6 +77,7 @@ import {extractFlightClubInfo, flightClubToCSVStrings, isFlightClubJSON} from ".
 import {isSupportedModelFile} from "./ModelLoader";
 import {addOptionToGUIMenu} from "./lil-gui-extras";
 import {importSplineJSON, isSplineJSON} from "./SplineInterchange";
+import {importFOVJSON, isFOVJSON} from "./FOVInterchange";
 
 /**
  * Detects the type of a TXT file based on content patterns.
@@ -557,11 +558,32 @@ export const parseMethods = {
         }
 
         if (fileManagerEntry.dataType === "spline") {
-            importSplineJSON(filename, parsedFile);
+            const trackOb = importSplineJSON(filename, parsedFile);
+            if (!trackOb) {
+                // Import rejected the file and has already said why. Drop it from
+                // serialization as well as returning "nothing changed": keeping it
+                // would embed a file that cannot be loaded, so every future open of
+                // the sitch would raise the same error, and the two halves would
+                // disagree — an unsaved change the sitch was never marked dirty for.
+                fileManagerEntry.skipSerialization = true;
+                return false;
+            }
             // The control points now live in the synthetic track, which the sitch
             // serializes itself (TrackManager.serialize). Keeping the file too would
             // re-import it on reload and duplicate the track — same reason FEATURES
             // files are consumed rather than persisted.
+            fileManagerEntry.skipSerialization = true;
+            return true;
+        }
+
+        if (fileManagerEntry.dataType === "fov") {
+            const editor = importFOVJSON(filename, parsedFile);
+            if (!editor) {
+                fileManagerEntry.skipSerialization = true;
+                return false;
+            }
+            // The keyframes now live in the fovEditor node, which the sitch
+            // serializes itself — same reasoning as the spline files above.
             fileManagerEntry.skipSerialization = true;
             return true;
         }
@@ -1592,6 +1614,10 @@ export const parseMethods = {
                         // Checked before detectTrackFile so it can't be claimed
                         // by the generic JSON track handlers.
                         dataType = "spline";
+                        parsed = jsonParsed;
+                    } else if (isFOVJSON(jsonParsed)) {
+                        // .fov.json — camera zoom keyframes for the FOV Editor.
+                        dataType = "fov";
                         parsed = jsonParsed;
                     } else {
                         parsed = this.detectTrackFile(filename, jsonParsed);

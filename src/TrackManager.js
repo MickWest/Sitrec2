@@ -2018,6 +2018,16 @@ class CTrackManager extends CManager {
             return null;
         }
 
+        // Claim the short name in the shared registry that the imported-track and
+        // balloon-track paths uniquify against. disposeSyntheticTrack (and
+        // CMetaTrack.dispose) already RELEASE it, so without this the pair was
+        // one-sided: a KML or balloon loaded after a synthetic track could pick the
+        // same short name and take over its drop-target switch options. Registered
+        // here — after the early returns, before anything is built — so a failed
+        // creation cannot leave an orphaned reservation. Covers every route in:
+        // the Add Track menu, spline import, and deserialization of a saved sitch.
+        this.usedShortNames.add(shortName);
+
         // Prepare initial points - CNodeSplineEditor expects [frame, x, y, z] format
         let initialPoints = [];
         if (options.initialPoints) {
@@ -2050,7 +2060,12 @@ class CTrackManager extends CManager {
             scene: scene,
             camera: "mainCamera",
             view: viewID,
-            frames: Sit.frames,
+            // -1 means "track Sit.frames" (CNode sets useSitFrames), rather than
+            // snapshotting the count that happened to be current at creation. A
+            // hand-drawn track has to span the sitch: the normal order of work is
+            // to draw or import a track and THEN load the video that sets the real
+            // duration, and a snapshot would leave it stuck at the old length.
+            frames: -1,
             initialPoints: initialPoints,
             // Synthetic tracks are created in current world coordinates (EUS/ECEF in current model),
             // not legacy local-tangent EUS from old sitches.
@@ -2248,6 +2263,29 @@ class CTrackManager extends CManager {
             console.log(`Curve type changed to ${value} for track: ${shortName}`);
         });
         
+        // Same control the imported data tracks get from CNodeDisplayTrack (which
+        // only builds it when there's a dataTrack input, so synthetic tracks never
+        // saw one). Matched label, range and units; ordered before Alt Lock as there.
+        trackOb.altitudeOffset = 0;
+        new CNodeGUIValue({
+            id: trackID + "_altitudeOffset",
+            value: 0,
+            start: -1000,
+            end: 1000,
+            step: 1,
+            desc: "Alt offset",
+            unitType: "small",
+            onChange: (v) => {
+                trackOb.altitudeOffset = v;
+                splineEditorNode.setAltitudeOffset(v);
+            },
+            // NOT pruneIfUnused: this drives its track through an onChange callback
+            // rather than a graph edge, so it has no inputs and no outputs and
+            // pruneUnusedFlagged() (which runs whenever any track is removed) would
+            // delete it — the control would vanish from a spline that still exists.
+            // disposeSyntheticTrack removes it by name instead.
+        }, guiFolder);
+
         trackOb.altitudeLock = -1;
         new CNodeGUIValue({
             id: trackID + "_altitudeLock",
@@ -2264,7 +2302,8 @@ class CTrackManager extends CManager {
             elastic: true,
             elasticMin: 1000,
             elasticMax: 100000,
-            pruneIfUnused: true
+            // Same reason as Alt offset above — it was prunable, so removing any
+            // other track silently deleted this spline's Alt Lock control.
         }, guiFolder);
 
         trackOb.altitudeLockAGL = true;
@@ -2429,6 +2468,7 @@ class CTrackManager extends CManager {
         NodeMan.unlinkDisposeRemove(trackID + "_polyOrderValue"); // SavGol polynomial order GUI value
         NodeMan.unlinkDisposeRemove(trackID + "_edgeOrderValue"); // SavGol edge fit order GUI value
         NodeMan.unlinkDisposeRemove(trackID + "_fitWindowValue"); // SavGol edge fit window GUI value
+        NodeMan.unlinkDisposeRemove(trackID + "_altitudeOffset"); // Altitude offset GUI value
         NodeMan.unlinkDisposeRemove(trackID + "_altitudeLock"); // Altitude lock GUI value
         NodeMan.unlinkDisposeRemove(trackID + "_unsmoothed"); // Unsmoothed spline editor
         NodeMan.unlinkDisposeRemove(trackID); // Smoothed track wrapper

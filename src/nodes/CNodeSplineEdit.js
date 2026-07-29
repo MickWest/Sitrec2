@@ -16,7 +16,12 @@ import {saveAs} from "file-saver";
 export class CNodeSplineEditor extends CNodeTrack {
     constructor(v) {
         super(v);
-        this.frames = v.frames ?? Sit.frames
+        // CNode maps frames:-1 to Sit.frames AND sets useSitFrames, which is what
+        // makes NodeMan.updateSitFramesChanged() re-expand this spline when the
+        // sitch duration changes. Don't clobber that with the raw -1.
+        if (!this.useSitFrames) {
+            this.frames = v.frames ?? Sit.frames
+        }
         assert(this.frames >0, "CNodeSplineEditor has frames=0")
 
         // Default to time-based interpolation (not constant speed)
@@ -24,6 +29,10 @@ export class CNodeSplineEditor extends CNodeTrack {
         
         // Default to extrapolating beyond first/last control points
         this.extrapolateTrack = true;
+
+        // Raise/lower the whole output track. Non-destructive, like the "Alt offset"
+        // on imported data tracks.
+        this.altitudeOffset = 0;
         
         // Store the curve type
         this.curveType = v.type ? v.type.toLowerCase() : 'chordal';
@@ -138,6 +147,7 @@ export class CNodeSplineEditor extends CNodeTrack {
             extrapolateTrack: this.extrapolateTrack,
             altitudeLock: this.altitudeLock,
             altitudeLockAGL: this.altitudeLockAGL,
+            altitudeOffset: this.altitudeOffset,
             curveType: this.curveType,
         };
         const elevCache = this.serializeElevationCache();
@@ -169,6 +179,9 @@ export class CNodeSplineEditor extends CNodeTrack {
             this.altitudeLock = v.altitudeLock
             this.altitudeLockAGL = v.altitudeLockAGL ?? true
             this.updateAltitudeLock()
+        }
+        if (v.altitudeOffset !== undefined) {
+            this.altitudeOffset = v.altitudeOffset
         }
         if (v.curveType !== undefined) {
             this.setCurveType(v.curveType)
@@ -242,6 +255,29 @@ export class CNodeSplineEditor extends CNodeTrack {
             this.splineEditor.transformControl.setAltitudeLocked(this.altitudeLock >= 0, this.altitudeLock);
         }
         this.syncControlPointsToAltitudeLock();
+    }
+
+    setAltitudeOffset(value) {
+        this.altitudeOffset = value;
+        this.recalculateCascade();
+    }
+
+    // Altitude adjustments for the OUTPUT track, in the same order the imported
+    // data tracks use (CNodeMISBDataTrack.adjustAlt): an active altitude lock pins
+    // the altitude and the offset does not stack on top of it; otherwise the offset
+    // shifts the whole track.
+    //
+    // Deliberately separate from applyAltitudeLock, which is also used to conform
+    // the CONTROL POINTS to the lock — the offset must not get baked into those,
+    // so that returning the slider to zero restores the original altitudes exactly.
+    applyAltitudeAdjustments(position, frame) {
+        if (isAltitudeLockActive(this)) {
+            return this.applyAltitudeLock(position, frame);
+        }
+        if (this.altitudeOffset) {
+            return pointAbove(position, this.altitudeOffset);
+        }
+        return position;
     }
 
     syncControlPointsToAltitudeLock() {
@@ -326,6 +362,7 @@ export class CNodeSplineEditor extends CNodeTrack {
             extrapolateTrack: this.extrapolateTrack,
             altitudeLock: this.altitudeLock,
             altitudeLockAGL: this.altitudeLockAGL,
+            altitudeOffset: this.altitudeOffset,
             color: this.splineColorHex(),
         });
 
@@ -482,7 +519,7 @@ export class CNodeSplineEditor extends CNodeTrack {
                 // Get position at this t value
                 var framePos = new Vector3();
                 this.splineEditor.getPoint(t, framePos);
-                this.array.push({position: this.applyAltitudeLock(framePos, frame)});
+                this.array.push({position: this.applyAltitudeAdjustments(framePos, frame)});
             }
         } else {
             // TIME-BASED MODE: Use frame numbers to determine position (original behavior)
@@ -490,7 +527,7 @@ export class CNodeSplineEditor extends CNodeTrack {
             // and will work out the t value for you
           for (var i=0;i<this.frames;i++) {
               var pos = this.splineEditor.getPointFrame(i)
-              this.array.push({position: this.applyAltitudeLock(pos, i)})
+              this.array.push({position: this.applyAltitudeAdjustments(pos, i)})
           }
         }
 

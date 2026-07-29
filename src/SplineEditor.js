@@ -51,8 +51,24 @@ export class   SplineEditor extends PointEditor{
 
         this.scene.add(this.spline.mesh);
 
+        // The base constructor already ran setEnable(false), but this mesh did not
+        // exist yet, so apply the current state to it now.
+        this.spline.mesh.visible = this.enable;
+
         this.updatePointEditorGraphics()
 
+    }
+
+    // The curve line is an EDITING AID, like the control cubes — the track itself
+    // is drawn by a separate CNodeDisplayTrack with a user-controllable colour.
+    // Leaving it on outside edit mode double-draws every spline track. setEnable
+    // lives on PointEditor, which knows nothing about this mesh, so extend it here.
+    // (Guarded because the base constructor calls setEnable before this.spline exists.)
+    setEnable(enable) {
+        super.setEnable(enable);
+        if (this.spline && this.spline.mesh) {
+            this.spline.mesh.visible = enable;
+        }
     }
 
     // Override load to update local positions after loading new points
