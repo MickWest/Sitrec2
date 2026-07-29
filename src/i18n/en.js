@@ -955,6 +955,7 @@ const en = {
         celestial: {
             raHours: "RA (hours)", decDegrees: "Dec (degrees)", magnitude: "Magnitude",
             noradNumber: "NORAD Number", name: "Name",
+            satTrack1: "Sat Track 1", satTrack2: "Sat Track 2",
         },
     },
     nightSky: {

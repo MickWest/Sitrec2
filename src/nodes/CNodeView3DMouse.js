@@ -542,6 +542,33 @@ export const mouseMethods = {
             }
         }
         
+        // For satellites, offer to point one of the two "Satellite to Track" fields in
+        // the Satellites menu at this satellite. setSatelliteText() is the same code
+        // path as typing it in by hand, so the track, the camera/target track switches
+        // and the Contents folder all update.
+        // We pass the NORAD number rather than the name: names are not unique in the
+        // TLE data (e.g. two satellites called SAPPHIRE) and a name lookup returns the
+        // first match, which could be a different satellite than the one clicked.
+        // setSatelliteText() resolves the number and then puts the name in the field.
+        if (celestialObject.type === 'satellite') {
+            const satTrackActions = {};
+            const satTrackSlots = [
+                ["satelliteTrack", "satTrack1", "view3d.celestial.satTrack1", "Sat Track 1"],
+                ["satelliteTrack2", "satTrack2", "view3d.celestial.satTrack2", "Sat Track 2"],
+            ];
+            for (const [nodeID, key, labelKey, defaultLabel] of satTrackSlots) {
+                // the satellite track nodes only exist in sitches that define them (e.g. custom)
+                const trackNode = NodeMan.get(nodeID, false);
+                if (!trackNode) continue;
+                satTrackActions[key] = () => {
+                    standaloneMenu.destroy();
+                    trackNode.setSatelliteText(celestialObject.number);
+                    console.log(`Set ${nodeID} to track satellite: ${celestialObject.name} (${celestialObject.number})`);
+                };
+                standaloneMenu.add(satTrackActions, key).name(t(labelKey, {defaultValue: defaultLabel}));
+            }
+        }
+
         // Make disabled controller values selectable and copyable
         // Override lil-gui's user-select:none and pointer-events:none on disabled controllers
         const style = document.createElement('style');

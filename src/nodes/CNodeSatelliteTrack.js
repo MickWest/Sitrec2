@@ -27,23 +27,7 @@ export class CNodeSatelliteTrack extends CNodeTrack {
          const name = v.name ?? "Satellite To Track";
 
          guiMenus.satellites.add(this, "satelliteText").name(name).onFinishChange(v => {
-             this.satellite = this.satelliteText;
-             this.norad = null; // reset the norad number to force recalculation of the satellite data
-
-
-             this.checkSatelliteTrackValid();
-
-             if (this.norad === null) {
-                 if (this.satellite) {
-                     this.satelliteText = this.satellite + " not found";
-                 } else {
-                     this.satelliteText = "";
-                 }
-             }
-             this.updateUI();
-             this.recalculateCascade();
-             setRenderOne();
-
+             this.setSatelliteText(this.satelliteText);
          }).listen().tooltip("Name or NORAD number of satellite to track. \nStart of name is ok (i.e. ISS)");
 
          // Use event listeners to update the track when the satellite changes
@@ -56,6 +40,29 @@ export class CNodeSatelliteTrack extends CNodeTrack {
          this.recalculate()
          this.updateUI();
 
+     }
+
+
+     // Set the tracked satellite from a name or NORAD number, exactly as if the user
+     // had typed it into the "Satellite to Track" text field in the Satellites menu.
+     // Called both by that field's onFinishChange and by the satellite context menu.
+     setSatelliteText(nameOrNumber) {
+         this.satelliteText = nameOrNumber;
+         this.satellite = this.satelliteText;
+         this.norad = null; // reset the norad number to force recalculation of the satellite data
+
+         this.checkSatelliteTrackValid();
+
+         if (this.norad === null) {
+             if (this.satellite) {
+                 this.satelliteText = this.satellite + " not found";
+             } else {
+                 this.satelliteText = "";
+             }
+         }
+         this.updateUI();
+         this.recalculateCascade();
+         setRenderOne();
      }
 
 
