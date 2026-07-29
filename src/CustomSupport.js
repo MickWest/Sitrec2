@@ -84,6 +84,7 @@ import {CNodeControllerCelestial} from "./nodes/CNodeControllerVarious";
 import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
 import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
 import {CNodeSimInfoUI} from "./nodes/CNodeSimInfoUI";
+import {CNodeWescamMXUI} from "./nodes/CNodeWescamMXUI";
 import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
 import {CNodeGUIFlag, CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {CNodeControllerCameraBankRoll} from "./nodes/CNodeControllerCameraBankRoll";
@@ -881,6 +882,27 @@ export class CCustomManager {
         if (!simInfo) return;
 
         simInfo.setupMenu(guiMenus.showhide);
+    }
+
+    // Wescam MX gimbal OSD overlay on the look view. Created here rather than
+    // in the SitCustom definition so sitches saved before it existed get it too.
+    // relativeTo (not overlayView) keeps it in the Views menu, matching MQ9UI.
+    //
+    // Note this runs for every canMod sitch, not just Custom, and it runs BEFORE
+    // Sit.setup() — so sitches that build their tracks there (SitAguadilla's
+    // jetTrack) have none yet. The node therefore resolves its camera track
+    // lazily on first render rather than being gated on one here.
+    setupWescamMXUI() {
+        if (NodeMan.exists("WescamMXUI")) return;
+        if (!NodeMan.exists("lookView") || !NodeMan.exists("lookCamera")) return;
+
+        new CNodeWescamMXUI({
+            id: "WescamMXUI",
+            camera: "lookCamera",
+            relativeTo: "lookView",
+            visible: false,
+            passThrough: true,
+        });
     }
 
     setupOSDDataSeriesController() {
