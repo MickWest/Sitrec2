@@ -1257,7 +1257,9 @@ class NumberController extends Controller {
 
         const pointerDown = e => {
             if (e.button === 2) return;
-            // touch is handled by the touchstart path below
+            // Touch goes through the touchstart path below - that is the one that can
+            // tell a slide from a scroll, and committing a value here on touch-down
+            // would move the slider under anyone trying to scroll the menu.
             if (e.pointerType === 'touch') return;
             // One drag at a time. Without this a second pen or mouse landing on the
             // slider would take over dragPointerId, killing the drag already in
@@ -1265,21 +1267,48 @@ class NumberController extends Controller {
             // they cannot tell a hijacking press from a legitimate one.
             if (dragging || touchDragging) return;
 
+            // Claim the drag and register its cleanup FIRST. Everything below can fail:
+            // setValueFromX() runs the controller's onChange, which may rebuild the menu
+            // out from under this slider, or simply throw. If that happened before the
+            // listeners were in place, the lil-gui-dragging class would be left on
+            // document.body with nothing able to take it off again, and this controller
+            // would refuse every future drag.
+            dragging = true;
+            dragPointerId = e.pointerId;
+            this.$slider.addEventListener( 'pointermove', pointerMove );
+            this.$slider.addEventListener( 'pointerup', pointerUp );
+            this.$slider.addEventListener( 'pointercancel', pointerUp );
+
+            // Those listeners live on the slider, so if it is taken out of the DOM
+            // mid-drag they stop firing and nothing ever ends the drag. Measured in
+            // Chrome: on removal the lostpointercapture is dispatched where only a
+            // document-level listener sees it (the element's own does not fire), and the
+            // eventual pointerup still reaches the window. Use both as the safety net.
+            // All three in the CAPTURE phase: a bubble-phase pointerup handler elsewhere
+            // in the page may call stopPropagation (Chart3D and the script timeline both
+            // do), which would keep a bubble-phase backstop from ever running.
+            document.addEventListener( 'lostpointercapture', pointerUp, true );
+            window.addEventListener( 'pointerup', pointerUp, true );
+            window.addEventListener( 'pointercancel', pointerUp, true );
+
+            // Capture throws if the slider is not in the document. Its bounding rect
+            // would then be all zeros, and setValueFromX() would map the press to an
+            // endpoint or NaN, so give up on the drag rather than corrupt the value.
+            try {
+                this.$slider.setPointerCapture( e.pointerId );
+            } catch ( err ) {
+                endDrag();
+                return;
+            }
+
             this._setDraggingStyle( true );
             // MICK: added minClick and maxClick to support elastic sliders
             this._minClick = this._min;
             this._maxClick = this._max;
 
-            setValueFromX( e.clientX , false); // don't allow wrapping on initial click
             this.prevDragX = e.clientX;
             this.deltaX = 0;
-
-            dragging = true;
-            dragPointerId = e.pointerId;
-            this.$slider.setPointerCapture( e.pointerId );
-            this.$slider.addEventListener( 'pointermove', pointerMove );
-            this.$slider.addEventListener( 'pointerup', pointerUp );
-            this.$slider.addEventListener( 'pointercancel', pointerUp );
+            setValueFromX( e.clientX , false); // don't allow wrapping on initial click
         };
 
         // Only the pointer that started the drag may steer or end it. The listeners sit
@@ -1292,21 +1321,31 @@ class NumberController extends Controller {
             setValueFromX( e.clientX );
         };
 
-        const pointerUp = e => {
-            if ( !dragging || e.pointerId !== dragPointerId ) return;
+        // Tear the drag down completely. Kept separate from onFinishChange so that the
+        // user callback runs last: if it throws, the listeners and the global
+        // lil-gui-dragging class are already gone rather than stranded.
+        const endDrag = () => {
             dragging = false;
-
-            this._callOnFinishChange();
             this._setDraggingStyle( false );
 
             this.$slider.removeEventListener( 'pointermove', pointerMove );
             this.$slider.removeEventListener( 'pointerup', pointerUp );
             this.$slider.removeEventListener( 'pointercancel', pointerUp );
+            // removed before releasing the capture, so the release cannot re-enter here
+            document.removeEventListener( 'lostpointercapture', pointerUp, true );
+            window.removeEventListener( 'pointerup', pointerUp, true );
+            window.removeEventListener( 'pointercancel', pointerUp, true );
 
             if ( dragPointerId !== null && this.$slider.hasPointerCapture( dragPointerId ) ) {
                 this.$slider.releasePointerCapture( dragPointerId );
             }
             dragPointerId = null;
+        };
+
+        const pointerUp = e => {
+            if ( !dragging || e.pointerId !== dragPointerId ) return;
+            endDrag();
+            this._callOnFinishChange();
         };
 
         // Touch drag
@@ -1351,6 +1390,16 @@ class NumberController extends Controller {
             touchDragging = true;
             touchDragId = e.touches[ 0 ].identifier;
 
+            // MICK: registered up front, before anything that can throw - see pointerDown.
+            // beginTouchDrag() below runs the controller's onChange, and if that threw
+            // with no touchend listener yet installed, touchDragging and the body's
+            // lil-gui-dragging class would both be stranded for good.
+            // touchcancel is here because a cancelled touch (system gesture, incoming
+            // call, palm rejection) never sends touchend.
+            window.addEventListener( 'touchmove', onTouchMove, { passive: false } );
+            window.addEventListener( 'touchend', onTouchEnd );
+            window.addEventListener( 'touchcancel', onTouchEnd );
+
             // MICK: added minClick and maxClick to support elastic sliders
             this._minClick = this._min;
             this._maxClick = this._max;
@@ -1375,12 +1424,6 @@ class NumberController extends Controller {
                 beginTouchDrag( e, e.touches[ 0 ] );
 
             }
-
-            window.addEventListener( 'touchmove', onTouchMove, { passive: false } );
-            window.addEventListener( 'touchend', onTouchEnd );
-            // MICK: a cancelled touch (system gesture, call, palm rejection) never sends
-            // touchend, which would strand touchDragging and lock the slider for good
-            window.addEventListener( 'touchcancel', onTouchEnd );
 
         };
 
@@ -1407,11 +1450,7 @@ class NumberController extends Controller {
                 } else {
 
                     // This was, in fact, an attempt to scroll. Abort.
-                    touchDragging = false;
-                    touchDragId = null;
-                    window.removeEventListener( 'touchmove', onTouchMove );
-                    window.removeEventListener( 'touchend', onTouchEnd );
-                    window.removeEventListener( 'touchcancel', onTouchEnd );
+                    endTouchDrag();
 
                 }
 
@@ -1428,17 +1467,24 @@ class NumberController extends Controller {
 
         };
 
-        const onTouchEnd = e => {
-            // another finger lifting is not the end of our drag
-            if ( e && !findDragTouch( e.changedTouches ) ) return;
-
+        // As with endDrag() above: unhook everything first, so a throwing onFinishChange
+        // cannot leave the touch listeners or the body's drag class behind.
+        const endTouchDrag = () => {
             touchDragging = false;
             touchDragId = null;
-            this._callOnFinishChange();
+            testingForScroll = false;
             this._setDraggingStyle( false );
             window.removeEventListener( 'touchmove', onTouchMove );
             window.removeEventListener( 'touchend', onTouchEnd );
             window.removeEventListener( 'touchcancel', onTouchEnd );
+        };
+
+        const onTouchEnd = e => {
+            // another finger lifting is not the end of our drag
+            if ( e && !findDragTouch( e.changedTouches ) ) return;
+
+            endTouchDrag();
+            this._callOnFinishChange();
         };
 
         // Mouse wheel

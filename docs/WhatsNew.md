@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.109.1 (2026-07-30)
+
+### New Features
+- **Track a satellite straight from the 3D view** (right-click a satellite → *Sat Track 1* / *Sat Track 2*): points the *Satellite to Track* or *Satellite to Track 2* field in the Satellites menu at whatever satellite you clicked, exactly as if you had typed its name in — the track, the camera and target choices and the Contents folder all update. It uses the satellite's catalogue number, so when two satellites share a name you still get the one you clicked. The entries only appear in sitches that have satellite tracking.
+
+### Improvements
+- **A slider drag now belongs to the one mouse, pen or finger that started it**: a second press, or a second finger on a touchscreen, can no longer take the slider over, steer it, or end the drag early. Dragging a wrapping slider — the time sliders, for instance — still stops wrapping once the pointer reaches the edge of the screen.
+
+### Bug Fixes
+- Fixed the time sliders falling out of step during a fast drag (Time menu): flicking the *Second* slider round several times now advances *Minute* by every turn it made rather than just one, and the same for minutes into hours, hours into days, and so on.
+- Fixed wrapping sliders not carrying into the slider above them at all on a touchscreen, and a touch drag sometimes inheriting the leftover movement of the previous mouse drag.
+- Fixed the control-point markers on a hand-drawn track sitting at an arbitrary tilt anywhere away from the equator: they now sit level with the local horizon, turned so the track runs through two opposite corners, and they follow the curve that is actually drawn.
+- Fixed a hand-drawn track's guide line and the track it produces lagging behind its control points whenever they all moved at once — loading a track, snapping to a sightline, or a whole-track altitude adjustment.
+
 ## Version 2.109.0 (2026-07-29)
 
 ### New Features
