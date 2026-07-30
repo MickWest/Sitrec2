@@ -29,32 +29,24 @@ import {showError} from "./showError";
 import {t} from "./i18n";
 import {abFrameRange, buildAnalysisDataset, unpackTrackToECEF} from "./TraverseAnalysisData";
 import {getPointBelow, calculateAltitude} from "./threeExt";
+// The fit battery moved to TraverseBattery.js, and with it every solver this
+// file used to call directly. What remains here are the ones the REPORT and the
+// GALLERY still need: series the charts draw, the truth comparison, and the
+// physics models the "Use This" apply path re-runs.
 import {
     compareTrackToTruth,
     compareWindVectorSeries,
     constAirSpeedTrack,
-    fitAircraft,
-    fitConstAltitude,
-    fitFixedDirection,
-    fitFixedPoint,
-    fitGroundPoint,
-    fitGroundVehicle,
     fitPlausibleBestRange,
     EARTH_RADIUS_M,
     KNOTS_TO_MS,
     meanAngularError,
     METERS_PER_NM,
-    isRangeUnobservable,
-    pickConstAirRegime,
-    rangeProfile,
-    sensorMotionStats,
-    straightFlightScore,
-    sweepConstAirSpeed,
     trackMetrics,
     traverseMinSpeed,
     traversePlausible,
 } from "./TraverseAnalysis";
-import {fitAlternatingLSQ, fitConstantAcceleration, fitConstantVelocity, fitKalmanFilter, fitMonteCarlo, fitMonteCarlo2, fitPhysicsModel, assessLinearFitConditioning} from "./LOSFitting";
+import {fitKalmanFilter, fitPhysicsModel, assessLinearFitConditioning} from "./LOSFitting";
 import {DroneControlModel, knotsForDuration} from "./DroneControlFit";
 import {SkyLanternModel} from "./SkyLanternModel";
 import {QuadcopterModel} from "./QuadcopterModel";
@@ -68,7 +60,6 @@ import {applyRefractionECI, refractionOptsFromUniforms} from "./atmosphere/refra
 import {loadLEOSatrecsForDate, findBestSatellite, satelliteTrackENU, satelliteECEF, satelliteSunlit} from "./SatelliteSearch";
 import {Chart3D, Chart3DGroup} from "./Chart3D";
 import {
-    assessExecutiveVerdict,
     balloonConsistency,
     completenessBadges,
     formatRawLosResidual,
@@ -85,9 +76,8 @@ import {
     terrainDependencyRecordsMatch,
 } from "./TraverseAnalysisCache";
 import {solvedHorizontalWindAt} from "./TraverseWind";
-import {
-    buildRangeLadder, rangeConditionedFamily, familyBandSummary, gapDisclosure,
-} from "./TraverseFamily";
+import {familyBandSummary, gapDisclosure} from "./TraverseFamily";
+import {kinematicFamilyScreen, runTraverseBattery} from "./TraverseBattery";
 import {
     buildHypotheses as buildCoreHypotheses,
     DRONE_CONTROL_KNOTS, ORDER_NAMES, UNDERGROUND_TOL, GROUND_CONTACT_TOL, VIZ,
@@ -171,124 +161,17 @@ const FAR_ASTRO = 200 * METERS_PER_NM;
 // 4 under-recovers a sharp mid-clip course change (~39 deg of a 90 deg truth,
 // measured) — adaptive knot placement is the known next step.
 
-// True only if every element of a numeric array is finite. Used to keep a
-// non-finite fit result (e.g. a Kalman seed that went NaN) out of the physical
-// fits and the gallery — see the TA-01/TA-02 seed and hypothesis guards.
-function allFinite(arr) {
-    if (!arr) return false;
-    for (let i = 0; i < arr.length; i++) {
-        if (!Number.isFinite(arr[i])) return false;
-    }
-    return true;
-}
-
-const MC_SWEEP_MAX_ORDER = 5;
-
-// The three curve-fitting strategies swept over polynomial order. They all fit
-// the same sightlines with the same degree of curve; they differ only in HOW
-// they search for it, so putting them side by side at matching orders shows how
-// much of a result is the data and how much is the method.
-const SWEEP_VARIANTS = [
-    {key: "gfMC1", name: "Global Fit: Monte Carlo 1", fit: fitMonteCarlo, mc: true,
-        color: "#b79be0", flavour: "best-of-N sampled polynomial"},
-    {key: "gfMC2", name: "Global Fit: Monte Carlo 2", fit: fitMonteCarlo2, mc: true,
-        color: "#9b7fd0", flavour: "least-squares over perturbed frames"},
-    // Deterministic alternative. Ignores numTrials/losUncertainty (it doesn't
-    // sample at all), and unlike the two above it lets range move freely rather
-    // than staying within 0.9-1.1x of the constant-velocity seed — so a far or
-    // fast solution stays reachable if the sightlines support one.
-    {key: "gfPolyALS", name: "Global Fit: Polynomial LSQ", fit: fitAlternatingLSQ,
-        color: "#7fc4d0", flavour: "deterministic alternating least squares"},
-];
-
-// Set up the shared inputs for the order sweep. Cheap and synchronous; the
-// actual fits are driven by sweepPolynomialOrders so they can report progress.
-function prepareSweep(dataset) {
-    const times = new Float64Array(dataset.n);
-    for (let f = 0; f < dataset.n; f++) times[f] = f / dataset.fps;
-    const ds = {
-        sensorPos: dataset.S, losDir: dataset.D, times,
-        count: dataset.n, maxRange: null,
-        // The closed-form fits minimise PERPENDICULAR DISTANCE IN METRES, and
-        // that objective falls monotonically as a trajectory scales toward the
-        // sensor — the sensor's own path is an exact zero-residual solution
-        // whenever the sensor flies a CV-representable trajectory (see the
-        // contract at LOSFitting.js:80-88). Without this floor the seed below
-        // can collapse onto the camera, and because the Monte Carlo fits sample
-        // range only within 0.9-1.1x of that seed, a collapsed seed silently
-        // pins ALL of their tiles to a near-zero range. 500 m matches the
-        // existing noise-floor caller and sits below every model's own floor,
-        // so it excludes the degenerate optimum without foreclosing any
-        // physically plausible near-field solution.
-        minRange: 500,
-    };
-    const opts = {};
+// The polynomial-order sweep, the range-band tracer and the rest of the fit
+// battery now live in TraverseBattery.js, so the bulk BotBench runner drives the
+// same code this button does. The Monte Carlo trial count / LOS uncertainty are
+// still read off THIS sitch's sliders and passed in.
+function sweepOverridesFromGUI() {
     const trialsNode = NodeMan.get("mcNumTrials", false);
     const uncertNode = NodeMan.get("mcLOSUncertainty", false);
-    if (trialsNode) opts.numTrials = trialsNode.v0;
-    if (uncertNode) opts.losUncertaintyDeg = uncertNode.v0;
-    // Per-frame range estimates from a constant-velocity fit focus the random
-    // range sampling, exactly as CNodeLOSFitMonteCarlo does — without them the
-    // sampler draws blindly out to 10x the scene extent and the higher orders
-    // degenerate into noise. (Only the Monte Carlo fits use these; the
-    // alternating fit derives and then freely moves its own ranges.)
-    let seedMedian = null;
-    const cv = fitConstantVelocity(ds, new Set());
-    if (cv) {
-        const rangeEstimates = new Float32Array(dataset.n);
-        for (let i = 0; i < dataset.n; i++) {
-            const b = i * 3;
-            rangeEstimates[i] = Math.max(1,
-                (cv.positions[b] - dataset.S[b]) * dataset.D[b]
-                + (cv.positions[b + 1] - dataset.S[b + 1]) * dataset.D[b + 1]
-                + (cv.positions[b + 2] - dataset.S[b + 2]) * dataset.D[b + 2]);
-        }
-        opts.rangeEstimates = rangeEstimates;
-        // Median seed range, so the Monte Carlo tiles can name the range their
-        // sampling window is actually centred on instead of referring vaguely
-        // to "the constant-velocity fit". A visibly tiny median is the symptom
-        // of the collapse the minRange floor above guards against.
-        const sorted = Array.from(rangeEstimates).sort((a, b) => a - b);
-        seedMedian = sorted[Math.floor(sorted.length / 2)];
-    }
-    return {ds, opts, seedMedian};
-}
-
-// Run every (strategy, order) fit, reporting progress between each one.
-//
-// This is async purely so the progress bar can move: each individual fit is a
-// synchronous number-crunch that locks the main thread (Monte Carlo 2 alone is
-// ~5 s per order on a 20,000-frame clip, because its cost is trials x frames),
-// and without a yield in between the whole sweep would appear as one long
-// freeze with a stalled bar and a dead Cancel button.
-//
-// `report(done, total, label)` is awaited between fits — that await is what
-// actually lets the browser repaint.
-async function sweepPolynomialOrders(dataset, report) {
-    const {ds, opts, seedMedian} = prepareSweep(dataset);
-    const results = [];
-    // Only the deterministic Polynomial LSQ sweep runs by default; the two Monte
-    // Carlo strategies are an opt-in diagnostic (they add 10 tiles and are the
-    // bulk of the sweep's cost — ~5 s per order each on a 20k-frame clip). TA-27.
-    const variants = SWEEP_VARIANTS.filter((v) => analyzeTweaks.mcOrderSweep || !v.mc);
-    const total = variants.length * MC_SWEEP_MAX_ORDER;
-    let done = 0;
-    for (const variant of variants) {
-        for (let order = 1; order <= MC_SWEEP_MAX_ORDER; order++) {
-            await report(done, total, `${variant.name} (order ${order})`);
-            let res = null;
-            try {
-                // A short clip can't support the higher orders (needs order + 1
-                // points); the fit returns null rather than guessing.
-                res = variant.fit(ds, new Set(), {...opts, order});
-            } catch (e) {
-                res = null;
-            }
-            done++;
-            if (res && res.positions) results.push({variant, order, result: res});
-        }
-    }
-    return {results, numTrials: opts.numTrials, losUncertaintyDeg: opts.losUncertaintyDeg, seedMedian};
+    return {
+        numTrials: trialsNode ? trialsNode.v0 : undefined,
+        losUncertaintyDeg: uncertNode ? uncertNode.v0 : undefined,
+    };
 }
 
 // User toggles for the extra physical-interpretation hypotheses, surfaced in the
@@ -1997,33 +1880,20 @@ function terrainElevationIsLoading() {
 // Solution families (range bands)
 // ---------------------------------------------------------------------------
 
-// Kinematic ceiling a family member must stay under to count as a physical
-// solution. These are the rank-0 boundaries plausibilityRating already uses, so
-// a member the band admits is one the gallery would not call kinematically
-// extreme.
-const FAMILY_MAX_G = 9;
-const FAMILY_MAX_SPEED_KT = 900;
-
 /**
  * The physical screen a range-conditioned member must pass on top of its LOS
  * residual. A member can thread the sightlines perfectly and still be buried in
  * a hillside or require 40 g; including those would widen a band that is
  * supposed to describe REAL solutions.
+ *
+ * The g / speed ceilings are the shared kinematic screen (TraverseBattery); the
+ * terrain and ground-contact tests are added here because they need the loaded
+ * scene. A headless caller gets the kinematic half only, and says so.
  */
 function makeFamilyScreen(dataset, originLat, originLon) {
     return (member) => {
-        const m = member.metrics;
-        const gMax = m?.gLoad?.max;
-        const vMaxKt = m?.airSpeed?.max / KNOTS_TO_MS;
-        if (!Number.isFinite(gMax) || !Number.isFinite(vMaxKt)) {
-            return {ok: false, reason: "metrics are not finite"};
-        }
-        if (gMax > FAMILY_MAX_G) {
-            return {ok: false, reason: `requires ${gMax.toFixed(1)} g`};
-        }
-        if (vMaxKt > FAMILY_MAX_SPEED_KT) {
-            return {ok: false, reason: `requires ${vMaxKt.toFixed(0)} kt`};
-        }
+        const kinematic = kinematicFamilyScreen(member);
+        if (!kinematic.ok) return kinematic;
         const stats = trackGroundStats(member.track, dataset.n, originLat, originLon, signedAGL);
         if (stats && stats.minAGL < -UNDERGROUND_TOL) {
             return {ok: false, reason: "passes below the sampled terrain"};
@@ -2035,157 +1905,125 @@ function makeFamilyScreen(dataset, originLat, originLon) {
     };
 }
 
+
 /**
- * Trace the range band for each physically-based interpretation.
+ * The wind the wind-tracer fits (Sky Lantern / Balloon, Quadcopter) are softly
+ * pinned to: the sitch's wind field, sampled at the least-manoeuvring track's
+ * mean geodetic altitude. Returns null when there is no wind to pin to, which
+ * simply means the wind-pinned balloon variant is not built.
  *
- * ONE band per interpretation CLASS, on the independent member only: the
- * free-wind balloon (the wind-pinned variant is conditioned on an external
- * prior, so its band would answer a different question) and the free
- * quadcopter (the drone-control fit is a seeded refinement of one path, not a
- * family), plus the fixed-wing fit.
+ * This is what makes "using existing wind" a hypothesis distinct from "finding
+ * wind" — the two are fitted separately and both reported. It is deliberately
+ * NOT restricted to measured sources: a hand-set ("manual") constant is an
+ * assumption rather than a measurement, but excluding it made the split
+ * invisible on every manual-wind sitch, which is most of them. Instead the
+ * provenance is carried on the prior and LABELLED in the hypothesis
+ * name/notes, so the analyst can see whether the pinned wind was measured or
+ * asserted.
  *
- * Keyed by `key|windEvidenceRole` because the two balloon hypotheses share the
- * key "lantern"; the caller attaches by the same identity after buildHypotheses.
+ * Honours the analysis-wide "Wind for analysis" toggle: "Zero wind" means the
+ * analyst asked for no wind input at all.
  */
-async function buildSolutionFamilies({
-    dataset, physicsDS, physicsOpts, clipDurationSec, seedTrack,
-    lantern, quad, aircraft, resolvedRanges, speedTarget, groundPrior,
-    originLat, originLon, failures, progress, shouldCancel,
-}) {
-    const out = new Map();
-    const ladderBracket = {
-        loM: resolvedRanges[0],
-        hiM: resolvedRanges[resolvedRanges.length - 1],
+function sampleWindPriorForAnalysis({dataset, track, originLat, originLon}) {
+    const windFieldNode = NodeMan.get("windField", false);
+    if (analyzeTweaks.windMode === "Zero wind"
+        || !windFieldNode || !windFieldNode.source
+        || typeof windFieldNode.sampleWindAtAltitude !== "function") {
+        return null;
+    }
+    let sumAlt = 0;
+    for (let f = 0; f < dataset.n; f++) {
+        const x = track[f * 3], y = track[f * 3 + 1], z = track[f * 3 + 2];
+        sumAlt += z + (x * x + y * y) / (2 * EARTH_RADIUS_M);  // geodetic; ENU origin at MSL
+    }
+    const meanAltM = sumAlt / dataset.n;
+    // originLat/originLon are RADIANS here; sampleWindAtAltitude wants DEGREES.
+    // The wind field resolves every source, including a manual constant, to an
+    // East/North vector at this altitude. A throw propagates to the battery,
+    // which degrades to "no wind-pinned hypothesis" rather than aborting the run.
+    const s = windFieldNode.sampleWindAtAltitude(
+        originLat * 180 / Math.PI, originLon * 180 / Math.PI, meanAltM);
+    if (!s || !Number.isFinite(s.u) || !Number.isFinite(s.v)) return null;
+    return {
+        E: s.u, N: s.v, altM: meanAltM,
+        source: windFieldNode.source,
+        // "manual" is a hand-set constant; every other source (gfs / custom /
+        // uwyo / igra2 / manual-soundings / openmeteo) is measured or modelled data.
+        measured: windFieldNode.source !== "manual",
+        statusText: windFieldNode.statusText ?? null,
     };
-    const screen = makeFamilyScreen(dataset, originLat, originLon);
-    const seededOverrides = (model) => {
-        const v = model.seedParams();
-        if (!v) return null;
-        const o = {};
-        model.getParameterDefs().forEach((d, i) => { o[d.name] = v[i]; });
-        return o;
-    };
-
-    // Each entry describes one class: where its anchor sits, what its own
-    // initialRange bounds are, and how to fit it at a held range (cheap, seeded
-    // — the continuation march) or from cold (the basin probe).
-    const specs = [];
-
-    if (lantern && Number.isFinite(lantern.params?.solved?.initialRange)) {
-        const defs = new SkyLanternModel().getParameterDefs();
-        const rd = defs.find((d) => d.name === "initialRange");
-        const makeModel = () => {
-            const m = new SkyLanternModel();
-            m.clipDuration = clipDurationSec;
-            if (seedTrack) m.seedFromTrack(seedTrack, physicsDS);
-            return m;
-        };
-        specs.push({
-            id: "lantern|free",
-            label: "Sky Lantern / Balloon",
-            anchorM: lantern.params.solved.initialRange,
-            anchorFit: toFamilyFit(lantern),
-            modelLoM: rd.min, modelHiM: rd.max,
-            fitAt: async (rangeM, seed) => {
-                const m = makeModel();
-                const overrides = seed?.solved
-                    ? {...seed.solved} : (seedTrack ? seededOverrides(m) : null);
-                return toFamilyFit(await fitPhysicsModel(physicsDS, new Set(), m, {
-                    ...physicsOpts, optimizer: "nm", maxIter: 600,
-                    ...(overrides ? {paramOverrides: overrides} : {}),
-                    paramLocks: {initialRange: rangeM},
-                }));
-            },
-            basinProbe: async (rangeM) => toFamilyFit(
-                await fitPhysicsModel(physicsDS, new Set(), makeModel(), {
-                    ...physicsOpts, dePop: 24, deGens: 40,
-                    paramLocks: {initialRange: rangeM},
-                })),
-        });
-    }
-
-    if (quad && Number.isFinite(quad.params?.solved?.initialRange)) {
-        const defs = new QuadcopterModel().getParameterDefs();
-        const rd = defs.find((d) => d.name === "initialRange");
-        specs.push({
-            id: "quadcopter|",
-            label: "Quadcopter",
-            anchorM: quad.params.solved.initialRange,
-            anchorFit: toFamilyFit(quad),
-            modelLoM: rd.min, modelHiM: rd.max,
-            fitAt: async (rangeM, seed) => toFamilyFit(
-                await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(), {
-                    ...physicsOpts, optimizer: "nm", maxIter: 600, fitMaxDt: 0.5,
-                    ...(seed?.solved ? {paramOverrides: {...seed.solved}} : {}),
-                    paramLocks: {initialRange: rangeM},
-                })),
-            basinProbe: async (rangeM) => toFamilyFit(
-                await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(), {
-                    ...physicsOpts, dePop: 24, deGens: 40, fitMaxDt: 0.5,
-                    paramLocks: {initialRange: rangeM},
-                })),
-        });
-    }
-
-    if (aircraft && Number.isFinite(aircraft.params?.startDist)) {
-        // fitAircraft is DE + pattern search, and both take a zero-width bound
-        // safely, so "locking" its range is just rangeMin === rangeMax — and
-        // assessBoundPins skips zero-span coordinates, so the lock can never be
-        // misreported as a load-bearing capability limit.
-        const aircraftAt = async (rangeM, runs) => {
-            const fit = await fitAircraft(dataset, {
-                tasTarget: speedTarget, rangeMin: rangeM, rangeMax: rangeM,
-                runs, groundPrior, shouldCancel,
-            });
-            return fit ? {track: fit.track, errDeg: fit.errDeg, solved: fit.params} : null;
-        };
-        specs.push({
-            id: "aircraft|",
-            label: "Fixed-Wing Aircraft",
-            anchorM: aircraft.params.startDist,
-            anchorFit: {track: aircraft.track, errDeg: aircraft.errDeg, solved: aircraft.params},
-            modelLoM: 0, modelHiM: Infinity,
-            fitAt: (rangeM) => aircraftAt(rangeM, 1),
-            basinProbe: (rangeM) => aircraftAt(rangeM, 2),
-        });
-    }
-
-    let done = 0;
-    for (const spec of specs) {
-        if (shouldCancel && shouldCancel()) throw new Error("cancelled");
-        const {ranges, clippedLow, clippedHigh, noModelOverlap} = buildRangeLadder({
-            ...ladderBracket, anchorM: spec.anchorM,
-            modelLoM: spec.modelLoM, modelHiM: spec.modelHiM,
-        });
-        // No range in the searched bracket is inside this model's own envelope,
-        // so there is nothing it can honestly be asked. No band, rather than a
-        // band traced at ranges the model cannot represent.
-        if (!ranges.length || noModelOverlap) { done++; continue; }
-        const slice = (frac) => (done + frac) / specs.length;
-        try {
-            const family = await rangeConditionedFamily({
-                dataset, ranges, anchorM: spec.anchorM, anchorFit: spec.anchorFit,
-                fitAt: spec.fitAt, basinProbe: spec.basinProbe, screen,
-                shouldCancel,
-                progress: progress ? (frac) => progress(slice(frac), spec.label) : null,
-            });
-            family.modelClippedLow = clippedLow;
-            family.modelClippedHigh = clippedHigh;
-            out.set(spec.id, family);
-        } catch (e) {
-            if (e && e.message === "cancelled") throw e;
-            failures.push({method: `${spec.label} range band`, error: (e && e.message) || "failed"});
-        }
-        done++;
-    }
-    return out;
 }
 
-// Normalise a fitPhysicsModel result into what rangeConditionedFamily wants.
-function toFamilyFit(fit) {
-    if (!fit || !fit.positions) return null;
-    return {track: fit.positions, errDeg: fit.params?.errDeg, solved: fit.params?.solved ?? null};
+/**
+ * The catalogued-satellite check: load the historical LEO catalogue for the
+ * clip's date and find the pass that best matches the sightlines. Network and
+ * slow on first use, which is why it is gated off by default.
+ */
+async function searchSatellitesForAnalysis(dataset, losNode, analysisFrames, yieldToDOM) {
+    const date0 = dateAtDatasetFrame(dataset, Math.floor(dataset.n / 2));
+    const sats = await loadLEOSatrecsForDate(date0);
+    await yieldToDOM();
+    const best = findBestSatellite(sats,
+        losFrameView(losNode, analysisFrames.frame0, analysisFrames.frame1),
+        (f) => dateAtFrame(analysisFrames.frame0 + f), 12);
+    return {loaded: sats.length, best};
 }
+
+/**
+ * The derived per-frame series and display windows the report and gallery draw,
+ * from the battery's output. Exported so the BotBench bulk runner produces the
+ * same report for a scenario it analysed headlessly, rather than a second
+ * approximation of it.
+ */
+export function traverseReportSeries({dataset, sweep, resolvedRanges, hypotheses,
+    slowProfile, slowOpts}) {
+    // The sweep's best is always computed (the report's sweep paragraph quotes
+    // it), but the SELECTED constant-air representative — what the charts and
+    // plan view draw — follows the regime pick: the slow-drift valley when it
+    // demoted the sweep best.
+    const bestTrav = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed);
+    const sweepBestMetrics = trackMetrics(dataset, bestTrav.track);
+    const constAirHyp = hypotheses.find((h) => h.key === "constAir" && h.track && h.metricsFull);
+    const constAirIsSlow = constAirHyp?.params?.regime === "slow";
+    const bestTrack = constAirIsSlow ? constAirHyp.track : bestTrav.track;
+    const bestMetrics = constAirIsSlow ? constAirHyp.metricsFull : sweepBestMetrics;
+    const constAirPick = constAirIsSlow ? {
+        range: constAirHyp.params.range,
+        airSpeed: constAirHyp.params.airSpeed,
+        slowScore: constAirHyp.params.slowScore,
+        fastScore: constAirHyp.params.fastScore,
+    } : null;
+
+    // slow-object plausible track at ITS best range, for the plan view
+    const slowBestRow = slowProfile.reduce((a, b) => (b.score < a.score ? b : a));
+    const slowTrack = traversePlausible(dataset, slowBestRow.startDist, slowOpts).track;
+
+    // "Cost of proximity" window over the DISPLAY grid: 6-8 NM for far-field
+    // sitches (the classic Gimbal question), else an adaptive close-end window
+    // for close scenes.
+    const gridLo = resolvedRanges[0];
+    const gridHi = resolvedRanges[resolvedRanges.length - 1];
+    let closeLoM, closeHiM;
+    if (gridHi > 12 * METERS_PER_NM && gridLo <= 6 * METERS_PER_NM) {
+        closeLoM = 6 * METERS_PER_NM;
+        closeHiM = 8 * METERS_PER_NM;
+    } else {
+        const span = gridHi - gridLo;
+        closeLoM = gridLo + span * 0.12;
+        closeHiM = gridLo + span * 0.30;
+    }
+
+    return {bestTrav, sweepBestMetrics, bestTrack, bestMetrics, constAirPick,
+        slowBestRow, slowTrack, closeLoM, closeHiM};
+}
+
+/**
+ * The self-contained dark-theme HTML report, and the full-screen candidate
+ * gallery. Both are pure functions of a results object, which is what lets the
+ * BotBench table open a stored bulk result without re-running anything.
+ */
+export {buildReportHTML as buildTraverseReportHTML};
+export {showResultGallery as showTraverseGallery};
 
 /**
  * Run the full traverse analysis. Shows a cancellable progress overlay, then
@@ -2417,7 +2255,6 @@ export async function runTraverseAnalysis() {
         overlay.setStatus("Building LOS dataset...");
         await yieldToDOM();
         const {dataset, originLat, originLon} = buildAnalysisDataset(losNode, analysisWindNode, anchorDist, analysisFrames);
-        const failures = [];
         // Terrain tiles can finish loading WHILE the analysis runs. The elevation
         // that actually feeds the fits is sampled once at the start, so a later
         // change means the report's ground samples and the fits are marginally
@@ -2428,25 +2265,6 @@ export async function runTraverseAnalysis() {
         // asking the analyst to try again (which, while terrain streams in, could
         // loop). Set at the sample points below; surfaced as a caveat.
         let terrainChangedDuringRun = false;
-        // Sensor-baseline observability: with a (near-)static LOS origin no
-        // free-range method can determine distance — every range along the ray
-        // fan admits a trajectory, and smoothness scoring then collapses the
-        // solution toward the sensor. Detect it here and warn everywhere.
-        const sensorStats = sensorMotionStats(dataset);
-        provenance = {
-            ...provenance,
-            sensorPathLen: sensorStats.pathLen,
-            sensorSpan: sensorStats.span,
-            rangeUnobservable: isRangeUnobservable(sensorStats, anchorDist),
-            // CV-family conditioning of these sightlines (BOT Bench diagnostic).
-            // DELIBERATELY SEPARATE from rangeUnobservable: that flag is a
-            // global evidence veto (wind evidence, executive verdict, report
-            // banners), while poor CV conditioning only says the LINEAR fit
-            // family cannot determine range here — stationary-point, physics
-            // and ray-constrained methods may still be fine. One-way warning:
-            // "good" is never a guarantee of recovered range.
-            linearFitConditioning: assessLinearFitConditioning(dataset),
-        };
         const terrainAtStart = NodeMan.get("TerrainModel", false);
         const terrainConfigAtStart = terrainAnalysisConfigScalars(terrainAtStart,
             Globals.equatorRadius, Globals.polarRadius, terrainDataEpoch(terrainAtStart));
@@ -2468,418 +2286,62 @@ export async function runTraverseAnalysis() {
             else { groundPrior.startZ = gz; groundPrior.endZ = gz; }   // "On the ground"
         }
 
-        const sweep = await sweepConstAirSpeed(dataset, {
-            ranges,
-            speedTarget,
-            // Auto-expand the range bracket when the winner sits on a grid
-            // edge (only when the user hasn't pinned an explicit band).
-            expand: rangeIsDefault,
-            progress: phase(0.00, 0.18, "Sweeping constant-air-speed grid..."),
-        });
-        // Expansion is part of the search result, not a display-only detail.
-        // Every downstream profile/model must inspect the same resolved bracket.
-        const resolvedRanges = sweep.ranges;
-        fitRangeMin = Math.min(fitRangeMin, resolvedRanges[0]);
-        fitRangeMax = Math.max(fitRangeMax, resolvedRanges[resolvedRanges.length - 1]);
-        caRangeMin = Math.min(caRangeMin, resolvedRanges[0]);
-        caRangeMax = Math.max(caRangeMax, resolvedRanges[resolvedRanges.length - 1]);
-        plausRangeMin = Math.min(plausRangeMin, resolvedRanges[0]);
-        plausRangeMax = Math.max(plausRangeMax, resolvedRanges[resolvedRanges.length - 1]);
-        const fastProfile = await rangeProfile(dataset, {
-            ranges: resolvedRanges,
-            vTarget: speedTarget,
-            vSigma: 60 * KNOTS_TO_MS,
-            progress: phase(0.18, 0.12, "Range profile: fast object..."),
-        });
-        const slowOpts = {vTarget: 5 * KNOTS_TO_MS, vSigma: 20 * KNOTS_TO_MS, scoreSpeedWeight: 0.2};
-        const slowProfile = await rangeProfile(dataset, {
-            ...slowOpts,
-            ranges: resolvedRanges,
-            progress: phase(0.30, 0.12, "Range profile: slow object..."),
-        });
-        let aircraft = null;
-        try {
-            aircraft = await fitAircraft(dataset, {
-                tasTarget: speedTarget,
-                rangeMin: fitRangeMin, rangeMax: fitRangeMax,
-                runs: 3,
-                groundPrior,
-                shouldCancel: () => overlay.isCancelled(),
-                progress: phase(0.42, 0.34, "Fitting fixed-wing aircraft model..."),
-            });
-        } catch (e) {
-            if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
-            failures.push({method: "Fixed-Wing Aircraft", error: (e && e.message) || "fit failed"});
-        }
-
-        // --- Extra interpretation fits for the hypothesis gallery ---------
-        await phase(0.76, 0.02, "Fitting constant-altitude path...")(0);
-        const ca = fitConstAltitude(dataset, {rangeMin: caRangeMin, rangeMax: caRangeMax});
-
-        await phase(0.79, 0.02, "Fitting least-maneuvering path...")(0);
-        const plausible = fitPlausibleBestRange(dataset, {
-            vTarget: speedTarget,
-            vSigma: 60 * KNOTS_TO_MS,
-            rangeMin: plausRangeMin,
-            rangeMax: plausRangeMax,
-        });
-
-        // Wind input for the wind-tracer fits (Sky Lantern / Balloon and
-        // Quadcopter): sample the sitch's wind at the analysis origin and the
-        // plausible object altitude, and pin their solved wind loosely to it.
-        // A wind tracer's drift SHOULD match the winds aloft, not slide slow to
-        // trade range against an invented calm (the coupled range/wind
-        // unobservable pair).
-        //
-        // This is what makes "using existing wind" a hypothesis distinct from
-        // "finding wind" — the two are fitted separately and both reported.
-        // It is deliberately NOT restricted to measured sources: a hand-set
-        // ("manual") constant is an assumption rather than a measurement, but
-        // excluding it made the split invisible on every manual-wind sitch,
-        // which is most of them. Instead the provenance is carried on the prior
-        // and LABELLED in the hypothesis name/notes, so the analyst can see
-        // whether the pinned wind was measured or asserted.
-        //
-        // Honours the analysis-wide "Wind for analysis" toggle: "Zero wind"
-        // means the analyst asked for no wind input at all, so no wind-pinned
-        // variant is built (the free fit still runs and infers its own wind).
-        let windPrior = null;
-        const windFieldNode = NodeMan.get("windField", false);
-        if (analyzeTweaks.windMode !== "Zero wind"
-            && windFieldNode && windFieldNode.source
-            && typeof windFieldNode.sampleWindAtAltitude === "function"
-            && plausible && plausible.track) {
-            let sumAlt = 0;
-            for (let f = 0; f < dataset.n; f++) {
-                const x = plausible.track[f * 3], y = plausible.track[f * 3 + 1], z = plausible.track[f * 3 + 2];
-                sumAlt += z + (x * x + y * y) / (2 * EARTH_RADIUS_M);  // geodetic; ENU origin at MSL
-            }
-            const meanAltM = sumAlt / dataset.n;
-            // originLat/originLon are RADIANS here; sampleWindAtAltitude wants
-            // DEGREES. The wind field resolves every source, including a manual
-            // constant, to an East/North vector at this altitude.
-            //
-            // Wrapped: the wind field is shared, user-configurable state that
-            // varies a lot between sitches (a legacy sitch may carry a wind node
-            // whose grid was never built at all). A wind problem must degrade to
-            // "no wind-pinned hypothesis", never abort the whole analysis — the
-            // free-wind fit doesn't need wind input and still runs.
-            let s = null;
-            try {
-                s = windFieldNode.sampleWindAtAltitude(
-                    originLat * 180 / Math.PI, originLon * 180 / Math.PI, meanAltM);
-            } catch (e) {
-                console.warn("Wind sample for the balloon prior failed; "
-                    + "continuing with the free-wind fit only:", e);
-                s = null;
-            }
-            if (s && Number.isFinite(s.u) && Number.isFinite(s.v)) {
-                windPrior = {
-                    E: s.u, N: s.v, altM: meanAltM,
-                    source: windFieldNode.source,
-                    // "manual" is a hand-set constant; every other source
-                    // (gfs / custom / uwyo / igra2 / manual-soundings /
-                    // openmeteo) is measured or modelled data.
-                    measured: windFieldNode.source !== "manual",
-                    statusText: windFieldNode.statusText ?? null,
-                };
-            }
-        }
-
-        // Shared physics-fit dataset shape (frame-0-indexed sensor/LOS arrays +
-        // uniform times) reused by the lantern and quadcopter model fits.
-        const physicsTimes = new Float64Array(dataset.n);
-        for (let f = 0; f < dataset.n; f++) physicsTimes[f] = f / dataset.fps;
-        const physicsDS = {
-            sensorPos: dataset.S, losDir: dataset.D, times: physicsTimes,
-            count: dataset.n, maxRange: null,
-        };
-        const clipDurationSec = (dataset.n - 1) / dataset.fps;
-        const physicsOpts = {
-            optimizer: "de", sampleStride: 5, dePop: 48, deGens: 120,
-            // let the overlay's Cancel button actually stop the DE search
-            shouldCancel: () => overlay.isCancelled(),
-        };
-        if (groundPrior) physicsOpts.groundPrior = groundPrior;
-
-        // Geometric SEED for the physically-based fits, so they start on a path
-        // that already fits the sightlines and refine from there (the balloon's
-        // time-varying wind and the drone's control inputs are otherwise
-        // unsearchable at the shipping DE budget — see SkyLanternModel.seedFromTrack
-        // and DroneControlFit).
-        //
-        // Seed from the KALMAN SMOOTHER specifically — not "whichever geometric
-        // track has the lowest LOS residual". An LOS fit is degenerate along
-        // range: a track that collapses toward the sensor and speeds up rides the
-        // rays with an arbitrarily small residual while being physically
-        // meaningless (measured here: a 222 m / 255 kt "plausible" member scored
-        // 0.05 deg but seeded the drone into a 24-revolution corkscrew). The
-        // Kalman smoother is regularised (it penalises acceleration) AND we give
-        // its constant-velocity seed an explicit range floor (minRange), because
-        // that seed treats the sensor's own path as a zero-residual solution for
-        // a CV-representable sensor motion unless a floor is supplied
-        // (LOSFitting.js fitConstantVelocity). Regularisation alone does not
-        // create the missing radial observability. With both, the smoother stays
-        // a good basin to refine from; the least-manoeuvring track is only a
-        // fallback for the rare case it returns nothing. The seed carries NO truth
-        // and NO object assumptions, but a local optimizer can still retain a
-        // different basin from a different seed; the free quadcopter is deliberately NOT seeded
-        // (the unconstrained, anomaly-reachable envelope fit).
-        const KS_SEED_MIN_RANGE = 500;   // metres; matches the sweep floor, below every physical model's own floor
-        let seedTrack = null;
-        try {
-            // The kalmanProcessNoise / kalmanMeasurementNoise GUI sliders hold
-            // log10 EXPONENTS, not variances — the live Kalman node converts them
-            // with Math.pow(10, v0) (see CNodeLOSFitKalman._doCompute). Passing the
-            // raw exponent here made processNoise negative at the default -4, which
-            // produced an all-non-finite smoother track and a NaN drone seed. Undefined
-            // (no node) leaves fitKalmanFilter on its own 1e-4 / 1.0 defaults.
-            const kNoise = (id) => {
+        // ------------------------------------------------------------------
+        // The fit battery. It lives in TraverseBattery.js so the bulk BotBench
+        // runner drives the SAME sequence this button does — see that module's
+        // header for why a second implementation was not an option. Everything
+        // scene-coupled is handed in below; nothing inside reads the node graph,
+        // the terrain model or the GUI.
+        // ------------------------------------------------------------------
+        const battery = await runTraverseBattery({
+            dataset, originLat, originLon, provenance,
+            anchorDist, speedTarget,
+            ranges, rangeIsDefault,
+            fitRangeMin, fitRangeMax, caRangeMin, caRangeMax, plausRangeMin, plausRangeMax,
+            solutionFamilies: analyzeTweaks.solutionFamilies,
+            mcOrderSweep: analyzeTweaks.mcOrderSweep,
+            sweepOverrides: sweepOverridesFromGUI(),
+            groundPrior,
+            // The GUI/scene-aware hypothesis builder (terrain probes, clip start,
+            // astronomy and the live method nodes).
+            buildHypotheses: (args) => buildHypotheses({...args, losNode}),
+            // Adds terrain and the ground-contact mode to the shared kinematic screen.
+            familyScreen: makeFamilyScreen(dataset, originLat, originLon),
+            // The kalmanProcessNoise / kalmanMeasurementNoise sliders hold log10
+            // EXPONENTS, not variances — the live Kalman node converts them with
+            // Math.pow(10, v0) (see CNodeLOSFitKalman._doCompute). Passing the raw
+            // exponent made processNoise negative at the default -4, which produced
+            // an all-non-finite smoother track and a NaN drone seed.
+            kalmanNoise: (id) => {
                 const nd = NodeMan.get(id, false);
                 const v = nd ? (nd.v0 ?? nd.value) : undefined;
                 return Number.isFinite(v) ? Math.pow(10, v) : undefined;
-            };
-            const ks = fitKalmanFilter({...physicsDS, minRange: KS_SEED_MIN_RANGE}, new Set(), {
-                processNoise: kNoise("kalmanProcessNoise"),
-                measurementNoise: kNoise("kalmanMeasurementNoise"),
-            });
-            // Only seed from a finite smoother track. A non-finite result must
-            // fall through to the plausible track (or no seed), never poison the
-            // physical fits with NaN initial parameters.
-            if (ks && ks.positions && allFinite(ks.positions)) {
-                seedTrack = Float64Array.from(ks.positions);
-            } else if (ks && ks.positions) {
-                console.warn("Kalman seed produced a non-finite track; "
-                    + "falling back to the least-manoeuvring track.");
-            }
-        } catch (e) {
-            // Non-fatal: a seeding failure must never abort the analysis.
-            console.warn("Kalman seed for the physics fits failed; "
-                + "falling back to the least-manoeuvring track:", e);
-        }
-        // Fall back to the least-manoeuvring plausible track only if the smoother
-        // is unavailable.
-        if (!seedTrack && plausible && plausible.track) seedTrack = plausible.track;
-        // Build a {name: value} initial-guess override from a seeded model's
-        // seedParams() vector (feeds fitPhysicsModel's paramOverrides, which
-        // becomes the DE seed and the Nelder-Mead start).
-        const seededOverrides = (model) => {
-            const v = model.seedParams();
-            if (!v) return null;
-            const o = {};
-            model.getParameterDefs().forEach((d, i) => { o[d.name] = v[i]; });
-            return o;
-        };
+            },
+            sampleWindPrior: sampleWindPriorForAnalysis,
+            searchSatellites: analyzeTweaks.satellite
+                ? () => searchSatellitesForAnalysis(dataset, losNode, analysisFrames, yieldToDOM)
+                : null,
+            // Independent balloon wind evidence: sample the external wind field
+            // along the free balloon fit and FREEZE the comparison into the
+            // hypotheses now — cached results persist while the live wind field
+            // changes underneath them, so this must not be a render-time read.
+            // Runs before the executive verdict, which reads it.
+            afterHypotheses: (ctx) => attachBalloonWindEvidence(
+                ctx.hypotheses, ctx.dataset, ctx.originLat, ctx.originLon, ctx.provenance),
+            phase,
+            isCancelled: () => overlay.isCancelled(),
+        });
 
-        await phase(0.82, 0.05, "Fitting balloon model (free wind)...")(0);
-        let lantern = null;
-        try {
-            // FREE reconstruction: fit wind + lift together with NO measured-wind
-            // input — "does a plausible balloon fit these sightlines?" — and yield
-            // the inferred wind + lift profile.
-            const freeModel = new SkyLanternModel();
-            // lets the model's wind vary across the clip in duration-invariant
-            // units (see SkyLanternModel._windAt)
-            freeModel.clipDuration = clipDurationSec;
-            // Seed the time-varying wind from the best geometric path so DE
-            // starts in the right basin instead of scattering in 12-D.
-            let freeOpts = physicsOpts;
-            if (seedTrack) {
-                freeModel.seedFromTrack(seedTrack, physicsDS);
-                const ov = seededOverrides(freeModel);
-                if (ov) freeOpts = {...physicsOpts, paramOverrides: ov};
-            }
-            lantern = await fitPhysicsModel(physicsDS, new Set(), freeModel, freeOpts);
-        } catch (e) {
-            if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
-            failures.push({method: "Sky Lantern / Balloon (free wind)", error: (e && e.message) || "fit failed"});
-            lantern = null;
-        }
-        if (overlay.isCancelled()) throw new Error("cancelled");
-        if (!lantern && !failures.some((f) => f.method === "Sky Lantern / Balloon (free wind)")) {
-            failures.push({method: "Sky Lantern / Balloon (free wind)", error: "fit returned no solution"});
-        }
-
-        // "USING EXISTING WIND" reconstruction: a second balloon fit whose drift
-        // wind is softly pinned to the sitch's wind (kept loose — even a real
-        // sounding is only loosely representative). Runs whenever the sitch has
-        // a wind and the analyst hasn't selected "Zero wind"; the prior carries
-        // its provenance so the hypothesis can say whether that wind was
-        // measured or hand-set. Kept SEPARATE from the free fit so both modes
-        // coexist and the inferred-vs-existing wind comparison is available.
-        let lanternMeasured = null;
-        if (windPrior) {
-            await phase(0.87, 0.02,
-                `Fitting balloon model (${windPrior.measured ? "measured" : "sitch"} wind)...`)(0);
-            try {
-                const m = new SkyLanternModel();
-                m.clipDuration = clipDurationSec;
-                m.windPriorE = windPrior.E; m.windPriorN = windPrior.N;
-                let measuredOpts = physicsOpts;
-                if (seedTrack) {
-                    m.seedFromTrack(seedTrack, physicsDS);
-                    const ov = seededOverrides(m);
-                    if (ov) measuredOpts = {...physicsOpts, paramOverrides: ov};
-                }
-                lanternMeasured = await fitPhysicsModel(physicsDS, new Set(), m, measuredOpts);
-            } catch (e) {
-                if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
-                lanternMeasured = null;  // non-fatal — the free fit is the primary
-            }
-            if (overlay.isCancelled()) throw new Error("cancelled");
-        }
-
-        // Quadcopter (multirotor drone) — hover-capable near-field object. Runs
-        // the generic multirotor envelope; the hypothesis classifies the solved
-        // trajectory to the nearest common model. May fail / be implausible for
-        // far-field scenes (its range is capped at 20 km) — degrade gracefully.
-        await phase(0.89, 0.04, "Fitting quadcopter (drone) model...")(0);
-        let quad = null;
-        try {
-            // Coarsen the SEARCH integration (fitMaxDt): the quadcopter's dynamics
-            // (linearly-varying turn rate, along-track accel, constant climb, wind)
-            // are smooth, so a 0.5 s step is accurate for the plausible solutions
-            // the turning-effort prior admits, while the frame-rate 1/30 s step ran
-            // ~20k RK4 substeps per DE evaluation and made this the slowest phase of
-            // the whole analysis (TA-25). The final full-resolution trajectory still
-            // integrates at the model's own maxDt.
-            quad = await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(),
-                {...physicsOpts, fitMaxDt: 0.5});
-        } catch (e) {
-            if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
-            failures.push({method: "Quadcopter", error: (e && e.message) || "fit failed"});
-            quad = null;
-        }
-        if (overlay.isCancelled()) throw new Error("cancelled");
-        if (!quad && !failures.some((f) => f.method === "Quadcopter")) {
-            failures.push({method: "Quadcopter", error: "fit returned no solution"});
-        }
-
-        // Drone as CONTROL INPUTS — the plausible-flight counterpart to the
-        // free quadcopter above. Seeded from the best geometric path (Kalman
-        // smoother or least-manoeuvring track; geometry only, no drone
-        // assumptions and no truth), inverted into the speed/heading/climb
-        // history a drone would need to fly it, compressed onto a few knots,
-        // then refined against the sightlines while paying for control EFFORT
-        // rather than for path shape.
-        //
-        // The knot count scales with clip length (knotsForDuration): 4 knots on
-        // a 667 s clip is one held input per 167 s, too coarse to describe any
-        // real flight let alone follow the seeded path, so the seed's detail was
-        // thrown away before the fit began.
-        //
-        // Run alongside, never instead of, the free fit: the difference between
-        // the two residuals is the informative quantity (an ordinary flight
-        // explaining the rays as well as a contorted one, versus not), and
-        // keeping the free fit means nothing is foreclosed.
-        let droneCtl = null;
-        if (seedTrack) {
-            await phase(0.93, 0.01, "Fitting drone control inputs...")(0);
-            try {
-                const m = new DroneControlModel(knotsForDuration(clipDurationSec));
-                m.seedFromTrack(seedTrack, physicsDS);
-                const seeded = m.seedParams();
-                const defs = m.getParameterDefs();
-                const paramOverrides = {};
-                defs.forEach((d, i) => { paramOverrides[d.name] = seeded[i]; });
-                // This is the highest-dimensional fit in the analysis (1 + 3K
-                // params, K up to 12 => 37), and the seed already sits on the
-                // smoother path — so it is a LOCAL-REFINEMENT problem, not a
-                // global search. Skip differential evolution entirely (optimizer
-                // "nm" runs Nelder-Mead straight from the seed) and integrate the
-                // search cost coarsely (fitMaxDt 1 s — the controls are linear
-                // over ~60 s knots, so a 1 s step is plenty; the final
-                // full-resolution trajectory still uses the model's 0.25 s step)
-                // on a wider stride.
-                //
-                // maxIter is deliberately low. Nelder-Mead makes almost all its
-                // progress from a good seed in the first few hundred iterations
-                // (measured: 1500 iters -> 0.199 deg in 3.6 s, 400 -> 0.23 deg in
-                // 1.2 s, 150 -> 0.36 deg in 0.5 s — all plausible flights), and
-                // unlike the DE phases NM does not yield, so every iteration is
-                // frozen UI. 400 keeps the fit well under a couple of seconds and
-                // the residual excellent; the drone's exact residual is not the
-                // deciding factor anyway (see balloonConsistency ranking). Safe:
-                // NM is monotonic from the seed, so it can never return worse than
-                // the seed — a corkscrew (huge residual) can't appear.
-                droneCtl = await fitPhysicsModel(physicsDS, new Set(), m,
-                    {...physicsOpts, paramOverrides, optimizer: "nm",
-                        sampleStride: 20, fitMaxDt: 1.0, maxIter: 400});
-                if (droneCtl) {
-                    droneCtl.model = m;
-                    droneCtl.solvedVector = defs.map((d) => droneCtl.params.solved[d.name]);
-                }
-            } catch (e) {
-                if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
-                failures.push({method: "Drone (control inputs)", error: (e && e.message) || "fit failed"});
-                droneCtl = null;
-            }
-            if (overlay.isCancelled()) throw new Error("cancelled");
-            // A null return means the fit produced no finite solution (fail-closed
-            // in fitPhysicsModel); record it as a typed failure rather than
-            // silently omitting the candidate.
-            if (!droneCtl && !failures.some((f) => f.method === "Drone (control inputs)")) {
-                failures.push({method: "Drone (control inputs)", error: "fit returned no finite solution"});
-            }
-        }
-
-        // Range BANDS for the physically-based interpretations: refit each model
-        // at a ladder of held ranges and keep the ranges it still admits. Gated
-        // off by default — it is several extra fits per model — but when on it
-        // is the difference between "the balloon is at 3.1 NM" and "any range
-        // from 2.1 to 7.4 NM fits a balloon equally well".
-        let families = null;
-        if (analyzeTweaks.solutionFamilies) {
-            try {
-                families = await buildSolutionFamilies({
-                    dataset, physicsDS, physicsOpts, clipDurationSec, seedTrack,
-                    lantern, quad, aircraft, resolvedRanges, speedTarget, groundPrior,
-                    originLat, originLon, failures,
-                    shouldCancel: () => overlay.isCancelled(),
-                    progress: (frac, label) =>
-                        phase(0.92, 0.03, `Tracing range band: ${label}...`)(frac),
-                });
-            } catch (e) {
-                if ((e && e.message === "cancelled") || overlay.isCancelled()) throw new Error("cancelled");
-                failures.push({method: "Solution families", error: (e && e.message) || "failed"});
-            }
-            if (overlay.isCancelled()) throw new Error("cancelled");
-        }
-
-        // Polynomial-order sweep across the three curve-fitting strategies. This
-        // is the longest single block in the analysis (Monte Carlo 2 is ~5 s per
-        // order on a 20,000-frame clip), so it gets a real slice of the progress
-        // bar and reports which fit is running — the progress callback awaits a
-        // DOM yield, which is what keeps the bar moving and Cancel responsive.
-        let mcSweep = null;
-        {
-            mcSweep = await sweepPolynomialOrders(dataset, async (done, total, label) => {
-                await phase(0.93, 0.05,
-                    `Sweeping curve fits (${done + 1}/${total}): ${label}...`)(done / total);
-            });
-            if (overlay.isCancelled()) throw new Error("cancelled");
-        }
-
-        // Satellite (LEO pass) — gated OFF: loads the historical catalogue for the
-        // sitch's date through the server (network, slow first time) and finds the
-        // pass best matching the sightlines. Degrades to a note on any failure.
-        let satellite = null;
-        if (analyzeTweaks.satellite) {
-            await phase(0.98, 0.01, "Loading LEO satellites for the date...")(0);
-            try {
-                const date0 = dateAtDatasetFrame(dataset, Math.floor(dataset.n / 2));
-                const sats = await loadLEOSatrecsForDate(date0);
-                await yieldToDOM();
-                const best = findBestSatellite(sats,
-                    losFrameView(losNode, analysisFrames.frame0, analysisFrames.frame1),
-                    (f) => dateAtFrame(analysisFrames.frame0 + f), 12);
-                satellite = {loaded: sats.length, best};
-            } catch (e) {
-                console.warn("Satellite search skipped:", e);
-                satellite = {error: (e && e.message) || "failed", loaded: 0, best: null};
-                failures.push({method: "Satellite catalogue", error: satellite.error});
-            }
-        }
+        const {
+            sweep, resolvedRanges, fastProfile, slowProfile, slowOpts,
+            aircraft, ca, plausible, lantern, quad, families, mcSweep, satellite,
+            hypotheses, executiveAssessment, failures, windPrior,
+        } = battery;
+        // Bracket expansion happens inside the sweep, so the manifest must quote
+        // the widened values, not the ones asked for.
+        ({fitRangeMin, fitRangeMax, caRangeMin, caRangeMax,
+            plausRangeMin, plausRangeMax} = battery);
+        provenance = battery.provenance;
 
         // A non-airborne fit includes local ground height in its optimizer
         // cost. Re-run only if that actual sample improved/changed—not because
@@ -2895,45 +2357,6 @@ export async function runTraverseAnalysis() {
             }
         }
 
-        const hypotheses = buildHypotheses({
-            dataset, sweep, ca, plausible, aircraft, lantern, lanternMeasured, quad, satellite,
-            slowProfile, slowOpts,
-            losNode, originLat, originLon,
-            provenance, failures, windPrior, mcSweep, droneCtl,
-        });
-
-        // Attach the range bands AFTER the hypothesis set is built, keyed by the
-        // same identity buildSolutionFamilies used. Attaching rather than
-        // threading another builder argument keeps the (deliberately pure)
-        // hypothesis builder unaware of them, and handles the two balloon
-        // hypotheses sharing the key "lantern".
-        if (families) {
-            for (const h of hypotheses) {
-                const fam = families.get(`${h.key}|${h.windEvidenceRole ?? ""}`);
-                if (fam) h.family = fam;
-            }
-        }
-
-        // Independent balloon wind evidence: sample the external wind field
-        // along the free balloon fit and FREEZE the comparison into the
-        // hypotheses now — cached results persist while the live wind field
-        // changes underneath them, so this must not be a render-time read.
-        try {
-            attachBalloonWindEvidence(hypotheses, dataset, originLat, originLon, provenance);
-        } catch (e) {
-            console.warn("Balloon wind-evidence capture failed (non-fatal):", e);
-        }
-
-        // Executive assessment: the corroboration-first headline ("Probably a
-        // wind-blown balloon" / "Consistent with ..." / "Unresolved"), frozen
-        // here so the gallery, verdict, and report all render ONE record.
-        // Reads ranking + wind evidence; never feeds back into ordering.
-        let executiveAssessment = null;
-        try {
-            executiveAssessment = assessExecutiveVerdict(hypotheses, {provenance});
-        } catch (e) {
-            console.warn("Executive assessment failed (non-fatal):", e);
-        }
 
         // Ground level for the 3D graphs — frozen with the results so the
         // green plane cannot drift under a cached analysis when terrain tiles
@@ -3041,26 +2464,9 @@ export async function runTraverseAnalysis() {
                 + "reporting results computed at the start-of-run elevation.");
         }
 
-        // detailed per-frame series. The sweep's best is always computed (the
-        // report's sweep paragraph quotes it), but the SELECTED constant-air
-        // representative — what the charts and plan view draw — follows the
-        // regime pick: the slow-drift valley when it demoted the sweep best.
-        const bestTrav = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed);
-        const sweepBestMetrics = trackMetrics(dataset, bestTrav.track);
-        const constAirHyp = hypotheses.find((h) => h.key === "constAir" && h.track && h.metricsFull);
-        const constAirIsSlow = constAirHyp?.params?.regime === "slow";
-        const bestTrack = constAirIsSlow ? constAirHyp.track : bestTrav.track;
-        const bestMetrics = constAirIsSlow ? constAirHyp.metricsFull : sweepBestMetrics;
-        const constAirPick = constAirIsSlow ? {
-            range: constAirHyp.params.range,
-            airSpeed: constAirHyp.params.airSpeed,
-            slowScore: constAirHyp.params.slowScore,
-            fastScore: constAirHyp.params.fastScore,
-        } : null;
-
-        // slow-object plausible track at ITS best range, for the plan view
-        const slowBestRow = slowProfile.reduce((a, b) => (b.score < a.score ? b : a));
-        const slowTrack = traversePlausible(dataset, slowBestRow.startDist, slowOpts).track;
+        const {sweepBestMetrics, bestTrack, bestMetrics, constAirPick, slowBestRow, slowTrack,
+            closeLoM, closeHiM} = traverseReportSeries({
+            dataset, sweep, resolvedRanges, hypotheses, slowProfile, slowOpts});
 
         let windText = "zero / ignored";
         if (analysisWindNode && isFinite(analysisWindNode.knots)) {
@@ -3083,21 +2489,6 @@ export async function runTraverseAnalysis() {
                 windText = `${Number(analysisWindNode.knots).toFixed(0)} kt from ` +
                     `${Number(analysisWindNode.from).toFixed(0)}°`;
             }
-        }
-
-        // "Cost of proximity" window over the DISPLAY grid: 6-8 NM for
-        // far-field sitches (the classic Gimbal question), else an adaptive
-        // close-end window for close scenes.
-        const gridLo = resolvedRanges[0];
-        const gridHi = resolvedRanges[resolvedRanges.length - 1];
-        let closeLoM, closeHiM;
-        if (gridHi > 12 * METERS_PER_NM && gridLo <= 6 * METERS_PER_NM) {
-            closeLoM = 6 * METERS_PER_NM;
-            closeHiM = 8 * METERS_PER_NM;
-        } else {
-            const span = gridHi - gridLo;
-            closeLoM = gridLo + span * 0.12;
-            closeHiM = gridLo + span * 0.30;
         }
 
         // LAZY report: the full HTML report (dozens of 2x PNG chart encodes,

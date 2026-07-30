@@ -232,6 +232,14 @@ async function analyzeKlvBuffer(buffer, context) {
         report: renderMisbTimingReport(analysis),
         frameRows,
         frameMisbColumns,
+        // The decoded records themselves, on request only — the folder scan
+        // keeps every file's result in memory, and these arrays are large.
+        // BotBench needs them because it reconstructs sightlines from the
+        // platform/gimbal angles, which the timing summary does not carry.
+        // NOTE the units of MISB.UnixTimeStamp here are MICROSECONDS (ST 0601
+        // tag 2 as decoded); the CSV importers in MISBUtils write milliseconds
+        // into the same column.
+        misb: context.includeMisb ? misb : null,
     };
 }
 
@@ -256,6 +264,7 @@ async function analyzeTransportStreamFile(fileLike, context, options) {
                 videoPid: primaryVideoStream?.pid ?? null,
                 videoTimingLabel: "Video PES PTS",
                 includeFrameRows: options.includeFrameRows,
+                includeMisb: options.includeMisb,
             });
             if (streamAnalysis) {
                 analyses.push(streamAnalysis);
@@ -318,11 +327,13 @@ async function analyzeTransportStreamFile(fileLike, context, options) {
     };
 }
 
-async function analyzeStandaloneKlvFile(fileLike, context) {
+async function analyzeStandaloneKlvFile(fileLike, context, options = {}) {
     const buffer = await readWholeFile(fileLike);
     const analysis = await analyzeKlvBuffer(buffer, {
         sourceName: context.relativePath || context.name,
         container: "KLV",
+        includeFrameRows: options.includeFrameRows,
+        includeMisb: options.includeMisb,
     });
     const analyses = analysis ? [analysis] : [];
     return {
@@ -357,6 +368,7 @@ export async function analyzeVideoFileLike(fileLike, {
     onProgress = null,
     chunkSize = undefined,
     includeFrameRows = false,
+    includeMisb = false,
 } = {}) {
     const ext = extensionForName(name || relativePath);
     const size = fileSize(fileLike);
@@ -374,10 +386,11 @@ export async function analyzeVideoFileLike(fileLike, {
                 onProgress,
                 chunkSize,
                 includeFrameRows,
+                includeMisb,
             });
         }
         if (KLV_EXTENSIONS.has(ext)) {
-            return await analyzeStandaloneKlvFile(fileLike, context);
+            return await analyzeStandaloneKlvFile(fileLike, context, {includeFrameRows, includeMisb});
         }
     } catch (error) {
         return {

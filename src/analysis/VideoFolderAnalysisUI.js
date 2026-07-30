@@ -8,6 +8,7 @@ import {
 import {showError} from "../showError";
 import {showTimingAnalysis} from "../showTimingAnalysis";
 import {analyzeVideoFileLike, isVideoAnalysisCandidateName} from "./AnalyzeVideoFile";
+import {addBotBenchMenu} from "./BotBenchUI";
 import {par} from "../par";
 
 let activeDialog = null;
@@ -894,4 +895,5 @@ export function addFileAnalysisMenu() {
         .name("Analyze Video FMV Data...")
         .tooltip("Open the FMV timing/MISB analyzer — drag in files or a folder, or choose them")
         .perm();
+    addBotBenchMenu(fileAnalysisFolder);
 }
