@@ -1206,23 +1206,29 @@ class NumberController extends Controller {
                     value = this._min + ((clientX - rect.right) % sliderWidth) / sliderWidth * (this._max - this._min);
                 }
             }
-            const oldValue = this.getValue();
             this._snapClampSetValue(value);
-            const newValue = this.getValue();
 
-            if (allowWrapping && this._canWrap && this._wrapReceiver && newValue !== oldValue) {
-//            if (this._canWrap && this._wrapReceiver && newValue !== oldValue) {
-                // we have this.lastEvent, and can get deltaX
-                // if the sign of deltaX is NOT the same as the sign of the change in value
-                // then we have wrapped
-                // and we need to increment or decremnt the wrapReceiver
-                // by +/- 1
-                if (this.deltaX > 0 && newValue < oldValue) {
-                    this._wrapReceiver.setValue(this._wrapReceiver.getValue() + 1);
-                } else if (this.deltaX < 0 && newValue > oldValue) {
-                    this._wrapReceiver.setValue(this._wrapReceiver.getValue() - 1);
+            if (allowWrapping && this._canWrap && this._wrapReceiver && Number.isFinite(this.deltaX)) {
+                // MICK: count how many whole slider widths this move crossed, and carry
+                // all of them into the wrapReceiver (e.g. seconds -> minutes).
+                // A single move can cross the end of the slider more than once - a fast
+                // flick, or a pointermove the browser has coalesced. Carrying only +/-1
+                // in that case leaves the minutes running behind the seconds.
+                //
+                // wrapIndex() deliberately mirrors the branch tests above, so it steps at
+                // exactly the X values where the mapped value jumps. In particular the
+                // ends are inclusive: at clientX === rect.right the value is still an
+                // un-wrapped _max, so that must be index 0, not 1.
+                const wrapIndex = x => {
+                    if (x > rect.right) return Math.floor((x - rect.right) / sliderWidth) + 1;
+                    if (x < rect.left) return -(Math.floor((rect.left - x) / sliderWidth) + 1);
+                    return 0;
+                };
+                const carry = wrapIndex(clientX) - wrapIndex(clientX - this.deltaX);
+
+                if (carry !== 0) {
+                    this._wrapReceiver.setValue(this._wrapReceiver.getValue() + carry);
                 }
-
             }
 
 
@@ -1237,8 +1243,28 @@ class NumberController extends Controller {
         // Mouse drag
         // ---------------------------------------------------------------------
 
-        const mouseDown = e => {
+        // MICK: the drag takes a pointer capture, so it keeps tracking after the pointer
+        // leaves the slider, and after it leaves the browser window.
+        // It is still bounded by the edge of the screen: once the OS pins the cursor
+        // there clientX stops changing and a wrapping slider stops wrapping. The only way
+        // to get past that is the Pointer Lock API, and Chrome answers every lock outside
+        // fullscreen with a "to show your cursor press Esc" bubble that cannot be
+        // suppressed by the page - too intrusive for a slider drag, so we don't use it.
+
+        let dragging = false;
+        let dragPointerId = null;
+        let touchDragging = false;
+
+        const pointerDown = e => {
             if (e.button === 2) return;
+            // touch is handled by the touchstart path below
+            if (e.pointerType === 'touch') return;
+            // One drag at a time. Without this a second pen or mouse landing on the
+            // slider would take over dragPointerId, killing the drag already in
+            // progress - the move/up guards below only reject a stray move or release,
+            // they cannot tell a hijacking press from a legitimate one.
+            if (dragging || touchDragging) return;
+
             this._setDraggingStyle( true );
             // MICK: added minClick and maxClick to support elastic sliders
             this._minClick = this._min;
@@ -1246,98 +1272,173 @@ class NumberController extends Controller {
 
             setValueFromX( e.clientX , false); // don't allow wrapping on initial click
             this.prevDragX = e.clientX;
-            window.addEventListener( 'mousemove', mouseMove );
-            window.addEventListener( 'mouseup', mouseUp );
+            this.deltaX = 0;
+
+            dragging = true;
+            dragPointerId = e.pointerId;
+            this.$slider.setPointerCapture( e.pointerId );
+            this.$slider.addEventListener( 'pointermove', pointerMove );
+            this.$slider.addEventListener( 'pointerup', pointerUp );
+            this.$slider.addEventListener( 'pointercancel', pointerUp );
         };
 
-        const mouseMove = e => {
+        // Only the pointer that started the drag may steer or end it. The listeners sit
+        // on the slider, so a second pointer over it - a finger on a touchscreen, a pen -
+        // would otherwise yank the value to its own X, or release the drag early.
+        const pointerMove = e => {
+            if ( e.pointerId !== dragPointerId ) return;
             this.deltaX = e.clientX - this.prevDragX;
             this.prevDragX = e.clientX;
             setValueFromX( e.clientX );
         };
 
-        const mouseUp = () => {
+        const pointerUp = e => {
+            if ( !dragging || e.pointerId !== dragPointerId ) return;
+            dragging = false;
+
             this._callOnFinishChange();
             this._setDraggingStyle( false );
-            window.removeEventListener( 'mousemove', mouseMove );
-            window.removeEventListener( 'mouseup', mouseUp );
+
+            this.$slider.removeEventListener( 'pointermove', pointerMove );
+            this.$slider.removeEventListener( 'pointerup', pointerUp );
+            this.$slider.removeEventListener( 'pointercancel', pointerUp );
+
+            if ( dragPointerId !== null && this.$slider.hasPointerCapture( dragPointerId ) ) {
+                this.$slider.releasePointerCapture( dragPointerId );
+            }
+            dragPointerId = null;
         };
 
         // Touch drag
         // ---------------------------------------------------------------------
 
         let testingForScroll = false, prevClientX, prevClientY;
+        let touchDragId = null;
 
-        const beginTouchDrag = e => {
+        // MICK: the drag belongs to the one contact that started it. The handlers are on
+        // the window and see every finger, so without this a second finger's move would
+        // steer the slider, and its release would end the drag early.
+        const findDragTouch = list => {
+            for ( let i = 0; i < list.length; i++ ) {
+                if ( list[ i ].identifier === touchDragId ) return list[ i ];
+            }
+            return null;
+        };
+
+        const beginTouchDrag = ( e, touch ) => {
             e.preventDefault();
             this._setDraggingStyle( true );
 
-            setValueFromX( e.touches[ 0 ].clientX );
+            // MICK: measure from the drag origin seeded in onTouchStart, not from here.
+            // In a scrollable container this runs on the FIRST touchmove, after the
+            // scroll/slide test - so the finger has already travelled, and that first
+            // step has to carry the wrapReceiver like any other.
+            const x = touch.clientX;
+            this.deltaX = x - this.prevDragX;
+            this.prevDragX = x;
+
+            setValueFromX( x );
             testingForScroll = false;
         };
 
         const onTouchStart = e => {
 
             if ( e.touches.length > 1 ) return;
+            // MICK: the touch path shares prevDragX/deltaX and the value itself with the
+            // pointer path, so a finger landing mid pointer-drag would move the origin
+            // out from under it. One drag at a time here too.
+            if ( dragging || touchDragging ) return;
+            touchDragging = true;
+            touchDragId = e.touches[ 0 ].identifier;
 
             // MICK: added minClick and maxClick to support elastic sliders
             this._minClick = this._min;
             this._maxClick = this._max;
 
+            // MICK: seed the drag origin at finger-down. The wrap carry works from
+            // this.deltaX, which would otherwise still hold the last mouse drag's value
+            // and let a touch invent a carry it never made.
+            prevClientX = e.touches[ 0 ].clientX;
+            prevClientY = e.touches[ 0 ].clientY;
+            this.prevDragX = prevClientX;
+            this.deltaX = 0;
+
             // If we're in a scrollable container, we should wait for the first
             // touchmove to see if the user is trying to slide or scroll.
             if ( this._hasScrollBar ) {
 
-                prevClientX = e.touches[ 0 ].clientX;
-                prevClientY = e.touches[ 0 ].clientY;
                 testingForScroll = true;
 
             } else {
 
                 // Otherwise, we can set the value straight away on touchstart.
-                beginTouchDrag( e );
+                beginTouchDrag( e, e.touches[ 0 ] );
 
             }
 
             window.addEventListener( 'touchmove', onTouchMove, { passive: false } );
             window.addEventListener( 'touchend', onTouchEnd );
+            // MICK: a cancelled touch (system gesture, call, palm rejection) never sends
+            // touchend, which would strand touchDragging and lock the slider for good
+            window.addEventListener( 'touchcancel', onTouchEnd );
 
         };
 
         const onTouchMove = e => {
 
+            // Only the contact that started the drag may move it - and only on the events
+            // where it is the one that actually moved, hence changedTouches rather than
+            // touches. A second finger moving while ours is still would otherwise be read
+            // as our finger reporting no motion at all: dx === dy === 0 fails the test
+            // below and aborts a drag that never got the chance to start.
+            const touch = findDragTouch( e.changedTouches );
+            if ( !touch ) return;
+
             if ( testingForScroll ) {
 
-                const dx = e.touches[ 0 ].clientX - prevClientX;
-                const dy = e.touches[ 0 ].clientY - prevClientY;
+                const dx = touch.clientX - prevClientX;
+                const dy = touch.clientY - prevClientY;
 
                 if ( Math.abs( dx ) > Math.abs( dy ) ) {
 
                     // We moved horizontally, set the value and stop checking.
-                    beginTouchDrag( e );
+                    beginTouchDrag( e, touch );
 
                 } else {
 
                     // This was, in fact, an attempt to scroll. Abort.
+                    touchDragging = false;
+                    touchDragId = null;
                     window.removeEventListener( 'touchmove', onTouchMove );
                     window.removeEventListener( 'touchend', onTouchEnd );
+                    window.removeEventListener( 'touchcancel', onTouchEnd );
 
                 }
 
             } else {
 
                 e.preventDefault();
-                setValueFromX( e.touches[ 0 ].clientX );
+                // MICK: track deltaX here too, so the wrap carry works on touch
+                const x = touch.clientX;
+                this.deltaX = x - this.prevDragX;
+                this.prevDragX = x;
+                setValueFromX( x );
 
             }
 
         };
 
-        const onTouchEnd = () => {
+        const onTouchEnd = e => {
+            // another finger lifting is not the end of our drag
+            if ( e && !findDragTouch( e.changedTouches ) ) return;
+
+            touchDragging = false;
+            touchDragId = null;
             this._callOnFinishChange();
             this._setDraggingStyle( false );
             window.removeEventListener( 'touchmove', onTouchMove );
             window.removeEventListener( 'touchend', onTouchEnd );
+            window.removeEventListener( 'touchcancel', onTouchEnd );
         };
 
         // Mouse wheel
@@ -1371,7 +1472,7 @@ class NumberController extends Controller {
 
         };
 
-        this.$slider.addEventListener( 'mousedown', mouseDown );
+        this.$slider.addEventListener( 'pointerdown', pointerDown );
         this.$slider.addEventListener( 'touchstart', onTouchStart, { passive: false } );
         this.$slider.addEventListener( 'wheel', onWheel, { passive: false } );
 
