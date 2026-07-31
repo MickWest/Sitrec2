@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.110.0 (2026-07-31)
+
+### New Features
+- **Star Tracker** (Video → Star Tracker): analyses night-sky video — or a single photo — between the In and Out points, picking out the stars and separating them from anything that moves, and grouping the flashing lights of one aircraft together as a single object. Detected points are circled on the video by class, a one-click *Detect Star Size (current frame)* button calibrates the detection to your footage, clicking a circled star toggles it out of the analysis, and *Make Star Chart (PNG)* downloads a chart of everything it found, with the paths of moving objects marked.
+- **Identify Stars** (Video → Star Tracker → *Identify Stars (catalog)*): names the detected stars by matching their pattern against a 118,000-star catalogue, assuming nothing about where or when the video was taken or which way the camera pointed. It works on wide phone-lens fields and single photos, and the identified names appear on both the video overlay and the star chart, along with where in the sky the camera was looking.
+- **Sync Camera to Star Field** (Video → Star Tracker): once the stars are identified, points Sitrec's camera along the real sky the video shows, frame by frame — a *Star Track* option appears in the camera's Heading and FOV choices (Camera menu) and can be switched back and forth with Manual and the other sources.
+- **Star Chart** (Show → Star Chart): a Heavens-Above style chart of the whole visible sky for the current time and place — stars sized by brightness, constellation lines and names, the naked-eye planets, and compass points around the rim. Four colour schemes (printable white by default), and a *Satellite Track* option that draws the tracked satellite's path across the chart with local-time labels and a direction arrow.
+- **BotBench batch analysis** (File → File Analysis → *BotBench...*): point it at a folder of bearings-only benchmark scenarios or FMV clips and it runs the full traverse analysis on every file in turn, filling in a results table as it goes — each row opens the same candidate gallery and full report the Analyze button produces. Alongside each verdict the table reports the file's own measured quality — length, camera movement, and how noisy its sightlines actually are — and a file whose clock or coordinate details cannot be trusted is refused with the reason rather than analysed anyway.
+
+### Bug Fixes
+- Fixed *Open Full Report* (Traverse → Analyze Traverse Methods...) failing with an error whenever the fixed-wing fit had found no solution: the report now opens, says that fit returned no solution, and shows all the other candidates.
+- Fixed Point Track switching itself back on when a saved sitch was reloaded (Video → Point Track): saving with tracking disabled now stays disabled, and the tracking cursor keeps its saved position when you re-enable it.
+
 ## Version 2.109.1 (2026-07-30)
 
 ### New Features
