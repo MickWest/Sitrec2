@@ -577,7 +577,9 @@ async function renderLongExposure(mgr) {
     Globals.scriptedVideoRendering = true;   // exclusive rendering control (same flag as Scripted Video):
                                              // stops the live RAF loop resizing views / re-pinning par.frame mid-await
     const savedVisible = lookView.visible;
-    lookView.setVisible(true);
+    // Raw: a mechanical force-visible for the offline pass, not a user reveal - it must not
+    // lift fullscreen suppression (see CNodeView.setVisibleRaw).
+    lookView.setVisibleRaw(true);
 
     // opaque cover: the offline render drives the live view (camera nudges,
     // terrain streams) which would otherwise flash on screen; captured buffers
@@ -1319,7 +1321,7 @@ async function renderLongExposure(mgr) {
         if (theSunNode) theSunNode.moonlightMode = false;
         for (const h of hiddenSprites) h.obj.visible = h.was;
         for (const ln of lightNodes) ln.suppressBillboard = false;
-        lookView.setVisible(savedVisible);
+        lookView.setVisibleRaw(savedVisible);
         Globals.scriptedVideoRendering = false;
         Sit.frames = savedSitFrames;
         Sit.aFrame = savedSitA;

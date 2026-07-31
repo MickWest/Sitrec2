@@ -6,6 +6,11 @@ class CViewManager extends CManager {
     constructor(v) {
         super(v);
         this.fullscreenView = null; // tracks which view is in fullscreen mode (null = none)
+        // The views fullscreen SUPPRESSES: exactly the ones visible when fullscreen was
+        // entered. Views the user opens DURING fullscreen (chat, a graph...) are not in the
+        // set, so they show on top of the fullscreen view; exit restores the covered set
+        // (their own .visible flags never changed) and leaves the additions alone.
+        this.fullscreenSuppressed = new Set();
         if (!isConsole) { // will not be used in console mode, so just an empty singleton
             setupPageStructure();
             this.topPx = 24;
@@ -132,8 +137,11 @@ class CViewManager extends CManager {
             effective = effective && this._computeEV(view.in.relativeTo);
         }
 
-        // Fullscreen: only fullscreen view and its descendants are visible
-        if (this.fullscreenView && !this.isDescendantOf(view, this.fullscreenView)) {
+        // Fullscreen: hide the views fullscreen covered at entry. Views shown DURING
+        // fullscreen are not in the suppressed set - the user opened them over the
+        // fullscreen view on purpose, so they render on top of it.
+        if (this.fullscreenView && !this.isDescendantOf(view, this.fullscreenView)
+            && this.fullscreenSuppressed.has(view)) {
             effective = false;
         }
 
@@ -160,34 +168,92 @@ class CViewManager extends CManager {
         });
     }
 
+    // Enter or exit fullscreen for a view (null = exit). The one place fullscreenView should
+    // be assigned: entry snapshots the views being covered - exactly the ones visible right
+    // now - into fullscreenSuppressed, so later additions are not suppressed with them.
+    setFullscreenView(view) {
+        // Switching owners (fullscreening B while A is fullscreen): un-double the incumbent
+        // first, or A would keep its 1x1 fullscreen geometry forever - exiting B's fullscreen
+        // would reveal A still covering the whole screen. A's undouble() re-enters here with
+        // null; by then A.doubled is already false, so the recursion terminates immediately,
+        // and the assignment below overrides the null it wrote.
+        if (this.fullscreenView && this.fullscreenView !== view && this.fullscreenView.doubled) {
+            this.fullscreenView.undouble();
+        }
+        this.fullscreenView = view;
+        this.fullscreenSuppressed = new Set();
+        if (view) {
+            this.iterate((id, v) => {
+                // Only INDEPENDENT views belong in the set. Children (relativeTo, and
+                // overlays without separateVisibility) inherit their parent's effective
+                // visibility in _computeEV - suppressing them directly would keep a child
+                // hidden even after its parent is deliberately re-shown during fullscreen,
+                // since un-suppression happens per-view on the parent alone.
+                if (v.in.relativeTo || (v.overlayView && !v.separateVisibility)) return;
+                if (v.visible && !v.windowed && !this.isDescendantOf(v, view)) {
+                    this.fullscreenSuppressed.add(v);
+                }
+            });
+        }
+    }
+
+    // Lift fullscreen suppression from a view AND its separateVisibility overlay children.
+    // Those overlays are snapshotted independently (they do not inherit effective
+    // visibility), so a deliberately re-shown parent must bring them along - otherwise
+    // showView("video") displays the video without its enabled tracking/annotation
+    // overlays. Returns true when anything was actually removed.
+    unsuppressView(view) {
+        let hit = this.fullscreenSuppressed.delete(view);
+        for (const v of [...this.fullscreenSuppressed]) {
+            if (v.separateVisibility && this.isDescendantOf(v, view)) {
+                this.fullscreenSuppressed.delete(v);
+                hit = true;
+            }
+        }
+        return hit;
+    }
+
     // Called after all view mods have been deserialized.
     // Finds views with doubled:true and restores fullscreen for exactly one.
     // If multiple views claim doubled (corrupted legacy save), un-doubles all.
     restoreFullscreenFromMods() {
+        const undouble = (view) => {
+            if (view.preDoubledWidth !== undefined) {
+                view.left = view.preDoubledLeft;
+                view.top = view.preDoubledTop;
+                view.width = view.preDoubledWidth;
+                view.height = view.preDoubledHeight;
+                view.updateWH();
+            }
+            view.doubled = false;
+        };
+
         const doubledViews = [];
         this.iterate((key, view) => {
             if (view.doubled && view.doubleClickFullScreen) {
+                // A HIDDEN view must never own fullscreen: fullscreen suppresses every other
+                // view, so a hidden owner is a blank screen. Reachable from legacy saves that
+                // captured doubled:true with visible:false (closing a full-screened view used
+                // to hide it without un-doubling). Un-double it, so a later re-show comes
+                // back windowed at its saved pre-fullscreen rect.
+                if (!view.visible) {
+                    undouble(view);
+                    return;
+                }
                 doubledViews.push(view);
             }
         });
 
         if (doubledViews.length === 1) {
             // Clean save: exactly one doubled view → restore fullscreen
-            this.fullscreenView = doubledViews[0];
+            this.setFullscreenView(doubledViews[0]);
         } else if (doubledViews.length > 1) {
             // Corrupted save: multiple doubled views → un-double all
             console.warn(`restoreFullscreenFromMods: ${doubledViews.length} views had doubled:true — clearing all`);
             for (const view of doubledViews) {
-                if (view.preDoubledWidth !== undefined) {
-                    view.left = view.preDoubledLeft;
-                    view.top = view.preDoubledTop;
-                    view.width = view.preDoubledWidth;
-                    view.height = view.preDoubledHeight;
-                    view.updateWH();
-                }
-                view.doubled = false;
+                undouble(view);
             }
-            this.fullscreenView = null;
+            this.setFullscreenView(null);
         }
         // doubledViews.length === 0: no fullscreen, nothing to do
     }

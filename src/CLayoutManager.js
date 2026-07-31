@@ -339,6 +339,17 @@ class CLayoutManager {
         return true;
     }
 
+    // Does this view, at its CURRENT rect, share a flush edge (i.e. would a seam form) with
+    // any other view? Computed fresh rather than read from _seams, which can be stale
+    // mid-operation - the close-on-fullscreen path runs this right after restoring the
+    // view's geometry, before the per-frame updateSeams pass has seen the new rects.
+    viewSharesEdge(id) {
+        const rects = this._collectRects();
+        if (!rects.some(r => r.id === id)) return false;
+        return this._computeSeams(rects)
+            .some(s => s.before.includes(id) || s.after.includes(id));
+    }
+
     // --- Compatibility stubs for the retired guillotine-tree API ---
     // Views persist/restore via their own fractional rects, so these are all no-ops. Old saved
     // sitches with a serialized `layout` tree just ignore it and come back as free rects at the

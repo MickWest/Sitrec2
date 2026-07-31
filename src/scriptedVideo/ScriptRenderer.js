@@ -32,7 +32,9 @@ async function renderViewAt(sv, view, sf, t, width, height) {
         if (n.videoData && n.videoData.waitForFrame) { try { await n.videoData.waitForFrame(sf); } catch (e) {} }
     }
     if (!view) return;
-    view.setVisible(true);
+    // Raw: forcing the view on for the offline frame, not a user reveal - it must not lift
+    // fullscreen suppression (see CNodeView.setVisibleRaw).
+    view.setVisibleRaw(true);
     // Force the target (super-sampled) render size: camera.aspect & render size
     // derive from widthPx/heightPx, divided by the renderer's devicePixelRatio so
     // the backing lands on width*ss x height*ss. The look view's own video-aspect

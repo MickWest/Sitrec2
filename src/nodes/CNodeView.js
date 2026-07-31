@@ -477,14 +477,17 @@ class CNodeView extends CNode {
     // Close (hide) this view via the header ✕, recorded as an undoable action so Undo
     // reopens it (and Redo closes it again). UndoManager.add is a no-op while undoing/redoing.
     closeViewWithUndo(name) {
-        // Closing a full-screened view must not leave fullscreen engaged: ViewMan.fullscreenView
-        // would keep suppressing every other view while the one view it shows is hidden - a
-        // blank screen. Un-fullscreen FIRST (doubleClick restores the saved pre-fullscreen
-        // geometry, and early-outs on hidden views, so it must run before show(false)); the
-        // close then leaves the ordinary layout with this view closed, and an undo re-shows
-        // the view windowed.
-        if (this.doubled && ViewMan.fullscreenView === this) {
-            this.doubleClick();
+        // Closing a FULL-SCREENED view always restores the pre-fullscreen layout - but only a
+        // FLOATING view then actually closes. A view that sits edge-to-edge with others (the
+        // preset layouts) is structural: closing it would leave a hole, so its X reads as
+        // "exit fullscreen" and the tiles come back intact. Order matters: undouble() first,
+        // so the seam test runs against this view's real restored rect, whatever its aspect
+        // conventions - not against the fullscreen rect or a hand-computed one.
+        if (ViewMan.fullscreenView === this) {
+            this.undouble();
+            if (LayoutMan.viewSharesEdge(this.id)) {
+                return;
+            }
         }
         this.show(false);
         if (UndoManager) {
@@ -1125,7 +1128,7 @@ class CNodeView extends CNode {
                 // Mark fullscreen BEFORE updateWH so applyLayoutRect lets this view take the
                 // full screen instead of pinning it to (and mirroring back) its tile rect.
                 if (this.doubleClickFullScreen) {
-                    ViewMan.fullscreenView = this;
+                    ViewMan.setFullscreenView(this);
                 }
 
                 if (this.doubleClickResizes) {
@@ -1161,16 +1164,8 @@ class CNodeView extends CNode {
                 this.snapInsidePx(0, 0, this.containerWidth(), this.containerHeight());
 
             } else {
-                this.doubled = false;
-                this.left = this.preDoubledLeft;
-                this.top = this.preDoubledTop;
-                if (this.width > 0) this.width = this.preDoubledWidth;
-                if (this.height > 0) this.height = this.preDoubledHeight;
-                this.updateWH();
-
-                if (this.doubleClickFullScreen) {
-                    ViewMan.fullscreenView = null;
-                }
+                this.undouble();
+                return;
             }
 
             // Hide/show the split-tree seam overlay to match fullscreen (the seams must not
@@ -1185,7 +1180,65 @@ class CNodeView extends CNode {
         }
     }
 
+    // The exit half of doubleClick(): restore the saved pre-doubled/pre-fullscreen geometry and
+    // release ViewMan.fullscreenView. Split out WITHOUT doubleClick's visibility guard because
+    // the hide path must run it while the view is on its way to hidden - and the Show/Views
+    // checkbox even forces this.visible = undefined before calling setVisible, which that guard
+    // would read as "not visible, do nothing".
+    undouble() {
+        if (!this.doubled) return;
+        this.doubled = false;
+        this.left = this.preDoubledLeft;
+        this.top = this.preDoubledTop;
+        if (this.width > 0) this.width = this.preDoubledWidth;
+        if (this.height > 0) this.height = this.preDoubledHeight;
+        this.updateWH();
+
+        if (this.doubleClickFullScreen) {
+            ViewMan.setFullscreenView(null);
+        }
+
+        // Same tail as doubleClick, and for the same reasons (seams back, repaint guaranteed).
+        LayoutMan.updateDividerVisibility();
+        setRenderOne(true);
+    }
+
     setVisible(visible) {
+        // A view shown WHILE another is fullscreen is a deliberate reveal on top of it - lift
+        // its fullscreen suppression, or it stays invisible despite the action that showed it
+        // (the Show/Views checkbox, setViewPosition({visible:true}), Notes opening, the
+        // second-video reveal...). Same-value shows count too - a suppressed view still has
+        // visible === true - so this runs BEFORE the same-value early-out below. Calling
+        // setVisible IS the intent signal: the offline-render machinery that merely forces
+        // and restores flags (LongExposure's lookView, Scripted Video's per-shot views) uses
+        // setVisibleRaw instead, so it never trips this - and a genuine reveal arriving in
+        // the middle of one of those renders still lands. The repaint is armed because
+        // effective visibility is applied in the render pass; nothing else would repaint a
+        // pure suppression change.
+        if (visible && ViewMan.fullscreenView && ViewMan.unsuppressView(this)) {
+            setRenderOne(true);
+        }
+
+        if (this.visible === visible)
+            return;
+
+        // Hiding the FULLSCREEN view - by ANY path: header X, Show/Views checkbox, title-menu
+        // close, an API hide(), or the redo of a close - must exit fullscreen first. Fullscreen
+        // suppresses every other view, so hiding the one view it shows leaves a blank screen
+        // owned by a view that is no longer there; undouble() restores the pre-fullscreen
+        // layout, so the hide leaves the ordinary layout with this view closed.
+        if (!visible && ViewMan.fullscreenView === this) {
+            this.undouble();
+        }
+
+        this.setVisibleRaw(visible);
+    }
+
+    // Set the visible flag with NO intent semantics: no fullscreen un-suppression, no
+    // fullscreen exit. For render machinery (LongExposure, Scripted Video) mechanically
+    // forcing or restoring a view's flag around an offline pass - every user-facing and API
+    // path goes through setVisible, where a show during fullscreen is a deliberate reveal.
+    setVisibleRaw(visible) {
         if (this.visible === visible)
             return;
 

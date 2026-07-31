@@ -8,6 +8,7 @@ import {
     markSitchDirty,
     NodeMan,
     setNewSitchObject,
+    setRenderOne,
     Sit,
     SitchMan,
     Synth3DManager,
@@ -1305,6 +1306,11 @@ class CSitrecAPI {
                     const view = ViewMan.get(v.view, false);
                     if (!view) return { success: false, error: `View '${v.view}' not found` };
                     view.setVisible(true);
+                    // An explicit command to show the view: lift fullscreen suppression even
+                    // when the visible flag was already true - setVisible deliberately
+                    // early-outs on same-value calls (see CNodeView.setVisible), which would
+                    // otherwise leave this view hidden while we report success.
+                    if (ViewMan.unsuppressView(view)) setRenderOne(true);
                     return { success: true };
                 }
             },
@@ -2028,7 +2034,7 @@ class CSitrecAPI {
         const n = views.length;
 
         // Clear fullscreen state
-        ViewMan.fullscreenView = null;
+        ViewMan.setFullscreenView(null);
         ViewMan.iterate((id, v) => {
             if (v.doubled) {
                 v.doubled = false;

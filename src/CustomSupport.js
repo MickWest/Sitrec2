@@ -1205,7 +1205,7 @@ export class CCustomManager {
             LayoutMan.clearLayout();
 
             // Clear any fullscreen state before applying preset
-            ViewMan.fullscreenView = null;
+            ViewMan.setFullscreenView(null);
             ViewMan.iterate((id, v) => {
                 if (v.doubled) {
                     v.doubled = false;

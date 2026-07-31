@@ -2933,7 +2933,7 @@ function disposeEverything() {
     Globals.dontRecalculate = false;
 
     // Clear any fullscreen/double-click zoom state so new sitch views are all visible
-    ViewMan.fullscreenView = null;
+    ViewMan.setFullscreenView(null);
 
     // Bump the load generation so any async work still in flight from the
     // sitch we're tearing down (asset fetches resolving late, or the deferred

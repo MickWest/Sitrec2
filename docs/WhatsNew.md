@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.110.1 (2026-07-31)
+
+### Improvements
+- **One-click Star Tracker** (Video → Star Tracker): a new *Measure/Analyze/Identify/Sync* button runs the whole pipeline — measure the stars, analyze the In/Out range, identify against the catalogue, sync the camera — and stops cleanly if a step comes up empty or the video changes mid-run. The individual sliders and per-stage buttons move into a *Star Tracker Tweaks* subfolder, leaving the everyday controls at the top.
+- **Toggling clumped stars** (Video → Star Tracker): clicking where several star circles overlap now toggles them all together — off if any of them was on, all back on otherwise — instead of only the smallest circle under the click.
+- **Better full-screen views** (double-click a view): anything you open while a view is full-screen — the chat, a graph — now appears on top of it and is still there when you leave full-screen; closing a full-screened view takes you back to the layout you had, with a view that is part of the tiled layout simply leaving full-screen rather than leaving a hole; and full-screening a second view while one already is swaps cleanly.
+- The Star Chart is now shown and hidden only from its own Show → Star Chart folder; the duplicate entry in Show → Views is gone.
+
+### Bug Fixes
+- Fixed the Sky Plot (Show → Celestial) drawing at double size on high-resolution displays, with its centre pushed to the bottom-right corner.
+- Fixed the Sky Plot showing no satellites unless the Satellite Ephemeris table happened to be open.
+- Fixed a blank screen when a full-screened view was closed or hidden — by its ✕ button, the Show → Views checkbox, or anything else — and when loading an older save made in that state.
+- Fixed swapping in a different video keeping the previous video's *Detect Star Size* measurement (Video → Star Tracker); a calibration now applies only to the video it was measured on.
+- Fixed the Star Tracker's moving-object circles staying pinned to the sky before the object appears and after it leaves; they now draw only while it is actually seen, at half strength so they don't cover it.
+
 ## Version 2.110.0 (2026-07-31)
 
 ### New Features
