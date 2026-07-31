@@ -18,16 +18,29 @@ import {radians} from "./utils";
  * Sensor orientation at an ECEF position, as a Matrix4 whose third column is
  * the boresight.
  *
+ * NO DEFAULTS. Every angle is used exactly as given, which is what the original
+ * inline code in CNodeLOSTrackMISB did, and callers must supply finite values.
+ *
+ * An earlier version of this extraction defaulted each angle to 0, and that was
+ * a behaviour change dressed up as tidiness: a missing angle is an UNKNOWN
+ * attitude, not a level one, and substituting zero turns "this file has
+ * incomplete metadata" into a confidently wrong sightline with nothing anywhere
+ * to fail. Passing the value through preserves the old contract, where an
+ * absent number poisons the matrix visibly instead.
+ *
+ * Validation belongs to the caller, which is the only layer that knows what a
+ * missing field means for its source: BotBenchIngest.misbHasSightline rejects
+ * any record without the full platform triple plus gimbal az/el, and explains
+ * there why platform roll in particular cannot be assumed.
+ *
  * @param posECEF  Vector3, the platform/sensor position in ECEF metres
  * @param angles   degrees: {platformHeading, platformPitch, platformRoll,
- *                 sensorAz, sensorEl, sensorRoll}. Missing values are 0 — a
- *                 level, north-aligned platform — which is what a source that
- *                 reports only gimbal angles is asserting.
+ *                 sensorAz, sensorEl, sensorRoll}
  * @returns Matrix4
  */
 export function misbSensorMatrix(posECEF, {
-    platformHeading = 0, platformPitch = 0, platformRoll = 0,
-    sensorAz = 0, sensorEl = 0, sensorRoll = 0,
+    platformHeading, platformPitch, platformRoll,
+    sensorAz, sensorEl, sensorRoll,
 } = {}) {
     // Basis vectors for the platform at this position.
     let right = getLocalEastVector(posECEF);

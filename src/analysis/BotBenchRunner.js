@@ -457,6 +457,14 @@ export async function runBotBenchAnalysis(record, {
         provenance: battery.provenance, failures, manifest,
         terrainChangedDuringRun: false,
         executiveAssessment,
+        // Why the gallery's "Use exact result" is disabled for this result: the
+        // track is in THIS FILE's local ENU frame at THIS FILE's epoch, and the
+        // loaded sitch — whatever it happens to be — never saw this object.
+        applyDisabledReason:
+            `This result was computed from ${record.label}, not from the loaded sitch. `
+            + `Its trajectory is in that file's own local frame and epoch, so applying it here `
+            + `would install a track the current scene never observed. Load the file itself to `
+            + `work with it.`,
         // Carried so the HTML report can state what the table already shows.
         // `truth` above is the POSITIONAL reference and is null here by design
         // for a direction-only target; without this field the report simply

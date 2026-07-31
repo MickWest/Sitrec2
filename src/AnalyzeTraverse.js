@@ -3848,6 +3848,19 @@ function familyDetailHTML(h) {
  *        because the tile INDICES change when the ordering does.
  */
 function showResultGallery(results, uiState = null) {
+    // APPLY IS OFF FOR A RESULT THAT IS NOT THIS SCENE'S.
+    //
+    // "Use exact result" installs a trajectory into the LOADED sitch — it sets
+    // nodes, mutates the scene and can be serialized into the user's save. That
+    // is exactly right for a result computed from the loaded sitch's own
+    // sightlines, and exactly wrong for one BotBench computed from some file in
+    // a folder: the track is in that file's local ENU frame, at that file's
+    // epoch, describing an object the current scene never saw. Applying it
+    // would silently corrupt whatever the user happens to have open.
+    //
+    // The results object says which it is. Only the live analysis leaves this
+    // unset; every bulk result carries it.
+    const applyDisabledReason = results.applyDisabledReason ?? null;
     const {dataset, hypotheses} = results;
 
     // The truth track is applied only when the reader asks for it. It is
@@ -4625,7 +4638,12 @@ function showResultGallery(results, uiState = null) {
             syncZoomButton(detailChart);
         }
         dContent.scrollTop = 0;
-        if (h.identity) {
+        if (applyDisabledReason) {
+            useBtn.textContent = "Cannot apply to this sitch";
+            useBtn.title = applyDisabledReason;
+            useBtn.disabled = true;
+            useBtn.onclick = null;
+        } else if (h.identity) {
             // An identification (astronomical body, satellite, point at infinity),
             // not a selectable traverse method — nothing to apply.
             useBtn.textContent = "Identification — not a traverse";

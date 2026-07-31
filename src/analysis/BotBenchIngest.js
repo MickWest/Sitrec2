@@ -36,6 +36,7 @@
  */
 
 import {ECEF2ENU_radii, ECEFToLLA_radii, LLAToECEF} from "../LLA-ECEF-ENU";
+import {Globals} from "../Globals";
 import {MISB} from "../MISBFields";
 import {findColumn} from "../ParseUtils";
 import {isBOTCSV, BOT_DEFAULT_ORIGIN, BOT_DEFAULT_EPOCH_ISO} from "../TrackFiles/CTrackFileBOT";
@@ -43,7 +44,9 @@ import {misbSightlineHeading} from "../MISBSightline";
 import {assessLinearFitConditioning} from "../LOSFitting";
 import {sensorMotionStats} from "../TraverseAnalysis";
 import {ensureGeoidLoaded, isGeoidLoaded, meanSeaLevelOffset} from "../EGM96Geoid";
-import {analyzeVideoFileLike, isVideoAnalysisCandidateName} from "./AnalyzeVideoFile";
+import {
+    analyzeVideoFileLike, KLV_EXTENSIONS, TRANSPORT_STREAM_EXTENSIONS,
+} from "./AnalyzeVideoFile";
 
 const DEG = Math.PI / 180;
 
@@ -51,6 +54,7 @@ const DEG = Math.PI / 180;
 const BOT_CSV_RE = /\.(input|truth|all)\.csv$/i;
 const BOT_SIDECAR_RE = /\.scenario\.json$/i;
 const BOT_LABELS_RE = /\.truth\.json$/i;
+const BOT_TRUTH_CSV_RE = /\.truth\.csv$/i;
 
 /**
  * What role a filename plays in a BotBench run. Sidecars are collected but
@@ -59,8 +63,17 @@ const BOT_LABELS_RE = /\.truth\.json$/i;
 export function botBenchFileRole(name = "") {
     if (BOT_SIDECAR_RE.test(name)) return "bot-sidecar";
     if (BOT_LABELS_RE.test(name)) return "bot-labels";
+    // A .truth.csv is the ANSWER KEY — positions with no sightlines. Queuing it
+    // guaranteed an error row on every scenario in an answers folder and
+    // doubled the apparent failure count; it is a sidecar, not a problem.
+    if (BOT_TRUTH_CSV_RE.test(name)) return "bot-truth-csv";
     if (BOT_CSV_RE.test(name) || /\.csv$/i.test(name)) return "bot-csv";
-    if (isVideoAnalysisCandidateName(name)) return "fmv";
+    // Only the containers that can actually be scanned. isVideoAnalysisCandidateName
+    // also matches mp4/mov/mkv, which AnalyzeVideoFile explicitly reports as
+    // unsupported — so a folder of ordinary video produced a row per file, each
+    // one a guaranteed error, burying the real results in the error tally.
+    const ext = String(name).toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "";
+    if (TRANSPORT_STREAM_EXTENSIONS.has(ext) || KLV_EXTENSIONS.has(ext)) return "fmv";
     return null;
 }
 
@@ -130,7 +143,7 @@ function cell(v) {
  * `items` must already be filtered to the ones worth keeping and sorted by
  * time. Returns the longest such run, and how many were left out.
  */
-export function longestUniformRun(items, timeOf, gapFactor = 1.5) {
+export function longestUniformRun(items, timeOf, gapFactor = 1.5, expectedDt = null) {
     if (items.length <= 1) return {items: items.slice(), medianDt: NaN, breaks: 0};
 
     const deltas = [];
@@ -143,7 +156,14 @@ export function longestUniformRun(items, timeOf, gapFactor = 1.5) {
     // caller warn — refusing here would reject a file for lacking a clock it
     // may not need.
     if (!deltas.length) return {items: items.slice(), medianDt: NaN, breaks: 0};
-    const medianDt = median(deltas);
+    // PREFER THE DECLARED RATE. Deriving the expected spacing from the observed
+    // median is circular when the drops are REGULAR: lose every other sample
+    // and the median interval becomes 2x nominal, every remaining step matches
+    // it, no gap is detected, and the clip is compacted onto the nominal
+    // cadence — doubling every speed and quadrupling every acceleration. A
+    // sidecar that states the generator's rate is the ground truth for what a
+    // step SHOULD be; the observed median is only the fallback.
+    const medianDt = Number.isFinite(expectedDt) && expectedDt > 0 ? expectedDt : median(deltas);
     const limit = medianDt * gapFactor;
 
     let bestStart = 0, bestLen = 1, start = 0, breaks = 0;
@@ -167,6 +187,16 @@ export function longestUniformRun(items, timeOf, gapFactor = 1.5) {
 // ---------------------------------------------------------------------------
 // Quality metrics
 // ---------------------------------------------------------------------------
+
+// Math.max(...array) passes every element as an ARGUMENT, and blows the engine's
+// argument limit (~65k in V8) with a RangeError. These arrays are one entry per
+// frame, and a 30 fps clip passes 65k frames in half an hour — so the spread
+// form turns a long real-world FMV file into an ingestion crash. Loop instead.
+function maxOf(values) {
+    let m = -Infinity;
+    for (let i = 0; i < values.length; i++) if (values[i] > m) m = values[i];
+    return m;
+}
 
 function median(values) {
     if (!values.length) return NaN;
@@ -231,7 +261,7 @@ export function losAngleStats(dataset) {
         netSweepDeg,
         sweepPathDeg,
         rateMedianDegPerS: median(stepDeg) / dt,
-        rateMaxDegPerS: stepDeg.length ? Math.max(...stepDeg) / dt : NaN,
+        rateMaxDegPerS: stepDeg.length ? maxOf(stepDeg) / dt : NaN,
         jitterDeg,
         noiseEstDeg: Number.isFinite(jitterDeg) ? jitterDeg / 1.4422 : NaN,
     };
@@ -251,7 +281,7 @@ export function timingStats(times) {
     // A "gap" is an interval more than 3x the median — a dropout, not jitter.
     const gaps = d.filter((x) => x > 3 * med).length;
     return {meanDt: mean, cv: mean > 0 ? Math.sqrt(varr) / mean : NaN,
-        gaps, maxDt: Math.max(...d)};
+        gaps, maxDt: maxOf(d)};
 }
 
 /**
@@ -449,7 +479,9 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
             + `was analysed — one scenario per file. Split the file to run the others.`);
     }
 
-    const run = longestUniformRun(candidates, (p) => p.t);
+    const declaredDt = Number.isFinite(sidecar?.nominalFps) && sidecar.nominalFps > 0
+        ? 1 / sidecar.nominalFps : null;
+    const run = longestUniformRun(candidates, (p) => p.t, 1.5, declaredDt);
     const kept = run.items;
     if (kept.length < candidates.length) {
         warnings.push(`Analysed the longest UNIFORMLY SAMPLED span: frames `
@@ -506,6 +538,17 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
             T[f * 3] = p.truth[0]; T[f * 3 + 1] = p.truth[1]; T[f * 3 + 2] = p.truth[2];
             tValid[f] = 1;
             anyTruth = true;
+        } else if (f > 0) {
+            // HOLD THE LAST KNOWN POSITION on a frame with no truth, rather than
+            // leaving the zero-fill. Scoring already honours `tValid`, but the
+            // charts plot the raw array — and a zero triple is the ENU ORIGIN,
+            // kilometres away, so a sparse truth track drew a line diving to the
+            // origin and back on every gap. Holding makes the gap invisible
+            // rather than a fictitious manoeuvre; it is never scored, because
+            // tValid stays 0 here.
+            T[f * 3] = T[(f - 1) * 3];
+            T[f * 3 + 1] = T[(f - 1) * 3 + 1];
+            T[f * 3 + 2] = T[(f - 1) * 3 + 2];
         }
         if (Number.isFinite(p.maxRange)) {
             maxRangeM = maxRangeM === null ? p.maxRange : Math.max(maxRangeM, p.maxRange);
@@ -513,8 +556,66 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
         if (Number.isFinite(p.losSigma)) { sigmaSum += p.losSigma; sigmaCount++; }
     }
 
-    const [oLat, oLon, oAlt] = sidecar?.frame?.originLLA
-        ?? [BOT_DEFAULT_ORIGIN.latDeg, BOT_DEFAULT_ORIGIN.lonDeg, 0];
+    // THE SIDECAR'S FRAME DECLARATION IS CHECKED, NOT ASSUMED.
+    //
+    // Everything below reads the CSV as local ENU metres with X=East, Y=North,
+    // Z=Up, directions expressed at the origin, on a flat plane whose altitude
+    // rule is `altitude = U + groundElevationMSL`. That is what the shipped
+    // release declares — and the format has a specVersion precisely because it
+    // need not stay the only shape. A sidecar describing anything else would be
+    // read as though it did, producing a confident answer to a question about a
+    // different coordinate system, so each field is compared and any mismatch
+    // is refused rather than warned about: a silently misread frame is not a
+    // degraded result, it is a wrong one.
+    const frame = sidecar?.frame ?? null;
+    if (frame) {
+        const mismatches = [];
+        const expect = (label, actual, want) => {
+            if (actual !== undefined && actual !== null
+                && String(actual).toLowerCase() !== want) {
+                mismatches.push(`${label} is "${actual}", expected "${want}"`);
+            }
+        };
+        expect("frame.type", frame.type, "enu");
+        expect("frame.axisOrder", frame.axisOrder, "x=east, y=north, z=up");
+        expect("frame.directionBasis", frame.directionBasis, "originlla");
+        expect("frame.surfaceModel", frame.surfaceModel, "flat-plane");
+        expect("frame.geodeticAltitudeRule", frame.geodeticAltitudeRule,
+            "altitude = u + groundelevationmsl");
+        if (mismatches.length) {
+            throw new Error(`This BOT sidecar declares a frame this importer does not read: `
+                + `${mismatches.join("; ")}. Reading it anyway would answer a question about a `
+                + `different coordinate system.`);
+        }
+    }
+    if (sidecar?.specVersion && !/^1\./.test(String(sidecar.specVersion))) {
+        warnings.push(`Sidecar specVersion ${sidecar.specVersion} is newer than the 1.x this `
+            + `importer was written against; fields it does not know are ignored.`);
+    }
+
+    const originLLA = frame?.originLLA;
+    const originOk = Array.isArray(originLLA) && originLLA.length >= 2
+        && Number.isFinite(Number(originLLA[0])) && Number.isFinite(Number(originLLA[1]))
+        && Math.abs(Number(originLLA[0])) <= 90 && Math.abs(Number(originLLA[1])) <= 180;
+    if (originLLA && !originOk) {
+        throw new Error(`Sidecar frame.originLLA is not a usable lat/lon `
+            + `(${JSON.stringify(originLLA)}).`);
+    }
+    // The forward hold above cannot fill frames BEFORE the first valid one, so
+    // back-fill them from it. Same reasoning: never leave the zero-fill, which
+    // plots as the ENU origin.
+    if (anyTruth) {
+        let first = -1;
+        for (let f = 0; f < n; f++) if (tValid[f]) { first = f; break; }
+        for (let f = 0; f < first; f++) {
+            T[f * 3] = T[first * 3];
+            T[f * 3 + 1] = T[first * 3 + 1];
+            T[f * 3 + 2] = T[first * 3 + 2];
+        }
+    }
+
+    const [oLat, oLon, oAlt] = originOk ? originLLA
+        : [BOT_DEFAULT_ORIGIN.latDeg, BOT_DEFAULT_ORIGIN.lonDeg, 0];
     if (!sidecar) {
         warnings.push("No .scenario.json sidecar — using the shipped set's default origin "
             + `(${BOT_DEFAULT_ORIGIN.latDeg}, ${BOT_DEFAULT_ORIGIN.lonDeg}) and epoch. `
@@ -710,7 +811,13 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     const usable = [];
     let noSightline = 0, noPosition = 0, noRoll = 0;
 
+    // Per-record PES PTS, paired by index with the MISB array (MISBUtils sets it
+    // on the array itself when the TS demuxer supplied PES entries).
+    const pesPTS = Array.isArray(misb.pesPTSus) && misb.pesPTSus.length === misb.length
+        ? misb.pesPTSus : null;
+    let rowIndex = -1;
     for (const row of misb) {
+        rowIndex++;
         if (!row) continue;
         const lat = row[MISB.SensorLatitude];
         const lon = row[MISB.SensorLongitude];
@@ -733,6 +840,12 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
             // MISB.UnixTimeStamp depend on which reader produced the array.
             // This function is only ever handed a KLV-decoded one.
             t: Number.isFinite(t) ? t / 1e6 : NaN,
+            // PES PTS for the SAME record, when the demuxer supplied it. This is
+            // the SYNCHRONOUS timebase — locked to the encoder's clock — and on
+            // a stream whose UnixTimeStamp is absent or erratic it is the better
+            // one. Without it such a file fell back to "assume 30 Hz", which is
+            // a guess presented as a measurement.
+            pts: Number.isFinite(pesPTS?.[rowIndex]) ? pesPTS[rowIndex] / 1e6 : NaN,
             lat, lon,
             altHAE: Number.isFinite(hae) ? hae : null,
             altMSL: Number.isFinite(hae) ? null : msl,
@@ -770,12 +883,24 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     // other in the array with a multi-frame jump between their timestamps, and
     // only the timestamps reveal it.
     const complete = usable.filter(Boolean);
-    const haveAllTimes = complete.every((u) => Number.isFinite(u.t));
-    const run = longestUniformRun(complete, (u) => u.t);
+    // Pick the timebase BEFORE judging continuity: a stream with good PES PTS
+    // and a broken wall clock is a normal FMV case, and trimming it on the
+    // broken clock would discard perfectly timed data.
+    const utsOk = complete.length > 1 && complete.every((u) => Number.isFinite(u.t));
+    const ptsOk = complete.length > 1 && complete.every((u) => Number.isFinite(u.pts));
+    const useTimeOf = utsOk ? ((u) => u.t) : (ptsOk ? ((u) => u.pts) : ((u) => u.t));
+    if (!utsOk && ptsOk) {
+        warnings.push("UnixTimeStamp is missing or incomplete, so the KLV PES presentation "
+            + "timestamps were used for cadence instead. They are locked to the encoder clock, "
+            + "which is the right timebase for spacing, but they carry no wall-clock epoch.");
+    }
+    const haveAllTimes = utsOk || ptsOk;
+    const run = longestUniformRun(complete, useTimeOf);
     const kept = run.items;
     if (!haveAllTimes) {
-        warnings.push("Some records carry no UnixTimeStamp, so their continuity could not be "
-            + "checked. A dropout among them would be stitched over silently.");
+        warnings.push("Neither UnixTimeStamp nor KLV PES PTS is complete across these records, "
+            + "so continuity could not be checked and a dropout would be stitched over "
+            + "silently. Cadence falls back to an assumed 30 Hz.");
     }
     if (kept.length < complete.length) {
         warnings.push(`Analysed the longest UNIFORMLY SAMPLED span: ${kept.length} of `
@@ -792,11 +917,10 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     }
 
     const n = kept.length;
-    const times = Float64Array.from(kept, (u) => u.t);
-    const haveTimes = times.every(Number.isFinite);
-    const timing = haveTimes ? timingStats(times) : null;
+    const times = Float64Array.from(kept, useTimeOf);
+    const timing = haveAllTimes ? timingStats(times) : null;
     let fps = 30;
-    if (haveTimes && timing && timing.meanDt > 0) {
+    if (haveAllTimes && timing && timing.meanDt > 0) {
         const d = [];
         for (let i = 1; i < n; i++) d.push(times[i] - times[i - 1]);
         fps = 1 / median(d);
@@ -805,7 +929,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
             + "accelerations are only as good as that assumption.");
     }
 
-    if (haveTimes && timing && (timing.cv > 0.05 || timing.gaps > 0)) {
+    if (haveAllTimes && timing && (timing.cv > 0.05 || timing.gaps > 0)) {
         warnings.push(`Metadata cadence is not uniform (CV ${(timing.cv * 100).toFixed(1)}%, `
             + `${timing.gaps} gap(s) over 3x the median interval). The fits assume an even `
             + `${fps.toFixed(2)} Hz, so every speed, acceleration and g-load is distorted across `
@@ -815,6 +939,19 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     if (geoid && !isGeoidLoaded()) {
         warnings.push("The EGM96 geoid was not loaded, so MSL sensor altitudes were used as "
             + "ellipsoidal heights (up to ~100 m off, ~30 m in CONUS).");
+    }
+
+    // WHICH EARTH. LLAToECEF and ECEF2ENU_radii read the app's GLOBAL radii,
+    // which `updateEarthRadii(useEllipsoid)` can switch to a sphere for a
+    // legacy sitch. So the same file can convert differently depending on what
+    // happens to be loaded, and calling the result WGS84 regardless would be a
+    // false label. Record what was actually in force; the row reports it.
+    const usingEllipsoid = Math.abs(Globals.equatorRadius - Globals.polarRadius) > 1;
+    if (!usingEllipsoid) {
+        warnings.push("The app is currently in SPHERICAL Earth mode, so this file's positions "
+            + "were converted on a sphere rather than the WGS84 ellipsoid. Geometry will differ "
+            + "from an ellipsoid run of the same file — switch the sitch to ellipsoid mode for "
+            + "comparable numbers.");
     }
 
     // ECEF first, then a local ENU frame at the MEAN sensor position — the same
@@ -860,7 +997,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
 
     const dataset = {n, fps, S, D, W, frame0: 0, frame1: n - 1};
     const quality = assessSourceQuality(dataset, {
-        times: haveTimes ? times : null,
+        times: haveAllTimes ? times : null,
         declaredLosSigmaDeg: null,
         droppedRows: noPosition + noSightline,
     });
@@ -883,7 +1020,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
         // is reported on the row rather than assumed away — but the datum part
         // of it is free to get right.
         groundZ: geoidN,
-        clipStartMs: haveTimes ? kept[0].t * 1000 : null,
+        clipStartMs: utsOk ? kept[0].t * 1000 : null,
         truth: null,
         labels: null,
         meta: {
@@ -891,13 +1028,15 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
             usableRecords: n,
             completeRecords: complete.length,
             originLLA: [originLat / DEG, originLon / DEG, 0],
-            epochISO: haveTimes ? new Date(kept[0].t * 1000).toISOString() : null,
+            epochISO: utsOk ? new Date(kept[0].t * 1000).toISOString() : null,
             fovFullDeg: null,
             windEstimate: null,
             maxRangeM: null,
-            surfaceModel: geoidApplied
-                ? "sea level via EGM96 (no terrain)"
-                : "WGS84 ellipsoid (no terrain, geoid unavailable)",
+            surfaceModel: (usingEllipsoid ? "" : "SPHERICAL Earth mode; ")
+                + (geoidApplied
+                    ? "sea level via EGM96 (no terrain)"
+                    : "ellipsoid height (no terrain, geoid unavailable)"),
+            earthModel: usingEllipsoid ? "WGS84 ellipsoid" : "sphere",
             geoidAppliedM: geoidApplied ? geoidN : null,
             hasSidecar: false,
         },

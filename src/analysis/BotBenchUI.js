@@ -61,7 +61,7 @@ const SUMMARY_TOOLTIPS = {
     "Errors": "Files that could not be ingested or analysed.",
     "Good source": "Files whose source data has no flagged degeneracy — enough frames, a real sensor baseline, a swept sightline and good CV-family conditioning.",
     "Range unobservable": "Files where the sensor baseline is too small for any free-range method to determine distance. No fit can recover range here; that is a property of the data, not the analysis.",
-    "Resolved": "Files whose executive verdict was something other than 'unresolved'.",
+    "Resolved": "Files whose executive verdict was something other than 'unresolved' AND whose top candidate does not contradict the file's declared MaxRange. A parenthesised figure is how many were excluded for that contradiction — a verdict resting on a candidate the measurement says is impossible is not a resolution.",
     "With truth": "Files whose conclusion can be scored — a TruePosition column, or a direction truth for a target that has a bearing but no finite range. The two are scored in different units and are never averaged together; the counts are shown as positional+direction.",
     "Median |err|": "Median LOS residual of the top-ranked interpretation across the run, in degrees.",
     "Median rel. sep": "Median of (top interpretation's mean 3D separation from truth) / (mean true range), over the files that carry truth. Scale-free, so a 2 km and a 50 km scenario compare.",
@@ -165,6 +165,7 @@ const CSV_COLUMNS = [
     "sourceGrade", "sourceReasons",
     "verdictCode", "headline", "viableClasses", "rangeUnobservable",
     "declaredMaxRangeM", "maxRangeViolationCount", "topViolatesMaxRange",
+    "optAnchorNM", "optRangeBands", "optMcSweep",
     "topKey", "topName", "topTier", "topErrDeg", "topRangeM", "topSpeedKt",
     "candidates", "failures",
     "truthLabel", "truthTopSepM", "truthTopRelSep", "truthBestSepM", "truthBestName",
@@ -198,6 +199,9 @@ function rowToCsvRecord(entry) {
         verdictCode: r?.verdictCode ?? "", headline: r?.headline ?? "",
         viableClasses: (r?.viableClasses ?? []).join("+"),
         rangeUnobservable: r?.rangeUnobservable ?? "",
+        optAnchorNM: entry.options ? (entry.options.anchorM / METERS_PER_NM).toFixed(2) : "",
+        optRangeBands: entry.options ? entry.options.solutionFamilies : "",
+        optMcSweep: entry.options ? entry.options.mcOrderSweep : "",
         declaredMaxRangeM: r?.declaredMaxRangeM,
         maxRangeViolationCount: r?.maxRangeViolations?.length ?? "",
         topViolatesMaxRange: r ? (r.maxRangeViolations ?? []).some((v) => v.key === r.top?.key
@@ -244,6 +248,11 @@ function padCell(value, width, right = false) {
 }
 
 function buildSummaryReport(entries, options) {
+    // Which option sets are actually represented among these rows. If a run
+    // spans more than one, the header says so instead of quoting the controls'
+    // current state as though it applied to everything.
+    const optionSets = [...new Set(entries.filter((e) => e.options)
+        .map((e) => JSON.stringify(e.options)))];
     const done = entries.filter((e) => e.status === "done" && e.row);
     const errors = entries.filter((e) => e.status === "error");
     const rows = done.map((e) => e.row);
@@ -257,10 +266,23 @@ function buildSummaryReport(entries, options) {
     L.push(`  Files queued:            ${entries.length}`);
     L.push(`  Analysed:                ${done.length}`);
     L.push(`  Errors:                  ${errors.length}`);
-    L.push(`  Range anchor:            ${(options.anchorM / METERS_PER_NM).toFixed(1)} NM `
-        + `(the same for every file — see the note below)`);
-    L.push(`  Range bands:             ${options.solutionFamilies ? "on" : "off"}`);
-    L.push(`  Monte Carlo order sweep: ${options.mcOrderSweep ? "on" : "off"}`);
+    if (optionSets.length > 1) {
+        L.push(`  MIXED SETTINGS — this table holds ${optionSets.length} batches run under`);
+        L.push("  different options. Rows are NOT comparable across them; the per-row settings");
+        L.push("  are in the CSV/JSON export.");
+        for (const set of optionSets) {
+            const o = JSON.parse(set);
+            L.push(`    anchor ${(o.anchorM / METERS_PER_NM).toFixed(1)} NM, `
+                + `bands ${o.solutionFamilies ? "on" : "off"}, `
+                + `MC sweep ${o.mcOrderSweep ? "on" : "off"}`);
+        }
+    } else {
+        const o = optionSets.length ? JSON.parse(optionSets[0]) : options;
+        L.push(`  Range anchor:            ${(o.anchorM / METERS_PER_NM).toFixed(1)} NM `
+            + `(the same for every file — see the note below)`);
+        L.push(`  Range bands:             ${o.solutionFamilies ? "on" : "off"}`);
+        L.push(`  Monte Carlo order sweep: ${o.mcOrderSweep ? "on" : "off"}`);
+    }
     L.push("");
     L.push("  A bulk run has no loaded scene, so the following are ABSENT from every");
     L.push("  result. They are not failures and must not be read as negative evidence:");
@@ -833,7 +855,14 @@ function updateSummary(state) {
     const errors = state.entries.filter((e) => e.status === "error").length;
     const good = rows.filter((r) => sourceQualityGrade(r.quality).grade === "good").length;
     const unobs = rows.filter((r) => r.rangeUnobservable).length;
-    const resolved = rows.filter((r) => r.verdictCode && r.verdictCode !== "unresolved").length;
+    // A verdict whose top candidate contradicts the file's own declared
+    // MaxRange is not a resolution — counting it as one advertises agreement
+    // the evidence does not support.
+    const contradicted = (r) => (r.maxRangeViolations ?? []).some((v) =>
+        v.key === r.top?.key && v.name === r.top?.name);
+    const resolved = rows.filter((r) => r.verdictCode && r.verdictCode !== "unresolved"
+        && !contradicted(r)).length;
+    const contradictedCount = rows.filter(contradicted).length;
     const truthRows = rows.filter((r) => r.truthScore);
     // Direction-truth rows ARE scored — in degrees rather than metres — so
     // counting only the positional ones reported Venus as unscored in the
@@ -846,7 +875,8 @@ function updateSummary(state) {
     state.summary.appendChild(summaryCell("Errors", errors));
     state.summary.appendChild(summaryCell("Good source", good));
     state.summary.appendChild(summaryCell("Range unobservable", unobs));
-    state.summary.appendChild(summaryCell("Resolved", resolved));
+    state.summary.appendChild(summaryCell("Resolved",
+        contradictedCount ? `${resolved} (−${contradictedCount})` : resolved));
     state.summary.appendChild(summaryCell("With truth",
         dirRows.length ? `${truthRows.length}+${dirRows.length}` : truthRows.length));
     state.summary.appendChild(summaryCell("Median |err|",
@@ -1018,7 +1048,21 @@ function fillRow(state, entry) {
     c[16].appendChild(galleryButton);
     const reportButton = smallButton("Report", "#455a64", BUTTON_TOOLTIPS["Report"]);
     reportButton.style.marginLeft = "3px";
-    reportButton.onclick = () => openReport(entry, reportButton);
+    // buildReportHTML reads `aircraft.params` unguarded, so a run whose
+    // fixed-wing fit failed cannot produce a report at all — it throws. That is
+    // pre-existing behaviour shared with the live "Open Full Report" button,
+    // but a bulk run meets it far more often than one interactive analysis
+    // does. Offering a button that is certain to fail is worse than saying why
+    // it is unavailable; the Gallery still shows every candidate.
+    if (!entry.results?.aircraft) {
+        setButtonDisabled(reportButton, true);
+        reportButton.title = "The full report cannot be built for this file: its fixed-wing fit "
+            + "failed, and the report renders that fit unconditionally. Use Gallery — every "
+            + "other candidate is there.";
+        reportButton.onclick = null;
+    } else {
+        reportButton.onclick = () => openReport(entry, reportButton);
+    }
     c[16].appendChild(reportButton);
 
     entry.tr.style.background = grade.grade === "weak" ? "#fff5f5"
@@ -1054,9 +1098,15 @@ function openReport(entry, button) {
     // Yield once so the placeholder paints before the build locks the thread.
     setTimeout(() => {
         try {
-            if (!entry.results.html) entry.results.html = entry.results.buildHtml();
+            // NOT cached on the entry. The report is ~10 MB of string per file,
+            // and a bulk run holds every row for the lifetime of the dialog —
+            // caching it turned "opened a few reports" into hundreds of
+            // megabytes retained for no benefit, since the window keeps the
+            // copy it was handed. Rebuilding costs a few seconds on the rare
+            // second look.
+            const html = entry.results.buildHtml();
             w.document.open();
-            w.document.write(entry.results.html);
+            w.document.write(html);
             w.document.close();
         } catch (e) {
             try { w.close(); } catch (_) { /* already gone */ }
@@ -1155,7 +1205,13 @@ async function analyzeEntries(state, found) {
 
     for (let i = 0; i < found.length; i++) {
         if (state.cancelled) break;
-        const entry = {...found[i], key: state.nextRowId++, status: "queued", row: null, results: null};
+        // The options this file was actually run under, frozen per entry. The
+        // dialog's controls stay live between batches, so a run at one anchor
+        // followed by a run at another used to have BOTH batches labelled with
+        // whatever the controls read at export time — making a deliberately
+        // mixed comparison look uniform, which is the one thing it must not do.
+        const entry = {...found[i], key: state.nextRowId++, status: "queued", row: null,
+            results: null, options: {...options}};
         state.entries.push(entry);
         makeRow(state, entry);
         state.progress.value = i / found.length;
@@ -1196,6 +1252,17 @@ async function analyzeEntries(state, found) {
 
     state.progress.value = state.cancelled ? state.progress.value : 1;
     const done = state.entries.filter((e) => e.status === "done").length;
+    // EVERY ROW HOLDS ITS FULL RESULTS — that is what makes "Gallery" instant,
+    // and it means memory grows with files x frames x candidates. A 19-scenario
+    // 1 Hz run is a few MB; a folder of long 30 Hz FMV clips is not. Warn rather
+    // than silently degrade, and point at the control that frees it.
+    const heldFrames = state.entries.reduce((sum, e) =>
+        sum + (e.results?.dataset?.n ?? 0) * (e.results?.hypotheses?.length ?? 0), 0);
+    if (heldFrames > 2e6) {
+        state.status.title = `This table is holding roughly ${(heldFrames / 1e6).toFixed(1)}M `
+            + `candidate-frames of trajectory data so every row's Gallery opens instantly. `
+            + `Use "Clear Results" before starting another large batch if the browser slows.`;
+    }
     state.status.textContent = state.cancelled
         ? `Cancelled. ${done} result(s) in the table.`
         : `Done. ${done} result(s) in the table.`;
@@ -1327,7 +1394,10 @@ export function openBotBenchDialog() {
             // Rows only — the fitted tracks stay in memory. A run over 100
             // scenarios would otherwise be hundreds of megabytes of JSON.
             results: state.entries.map((e) => ({
-                file: e.relativePath, status: e.status, error: e.error ?? null, row: e.row,
+                file: e.relativePath, status: e.status, error: e.error ?? null,
+                // Per row, because the controls are live between batches.
+                options: e.options ?? null,
+                row: e.row,
             })),
         };
         saveAs(new Blob([JSON.stringify(payload, null, 2)], {type: "application/json;charset=utf-8"}),
