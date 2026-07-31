@@ -464,6 +464,13 @@ class CNodeControllerStarTrack extends CNodeController {
     }
 }
 
+/** The constant vertical FOV the solve implies, in degrees: the fitted plate scale applied to
+ * the frame height through the pinhole model. */
+function starTrackVfovDeg(solvedIdentify, videoH) {
+    const tanPerPx = (Math.PI / 180) / solvedIdentify.pxPerDeg;
+    return 2 * Math.atan(tanPerPx * videoH / 2) * 180 / Math.PI;
+}
+
 /**
  * Register the star-field camera in the Camera menu's Heading (and FOV) source dropdowns and
  * switch to it. The user can switch back to Manual - or anything else - in the Camera menu;
@@ -496,9 +503,7 @@ export function syncCameraToStarTrack() {
     // the rendered sky matches the video's framing, selectable alongside the heading.
     const fovSwitch = NodeMan.get("fovSwitch", false);
     if (fovSwitch && result.videoH) {
-        const s = result.identify.solved;
-        const tanPerPx = (Math.PI / 180) / s.pxPerDeg;
-        const vfovDeg = 2 * Math.atan(tanPerPx * result.videoH / 2) * 180 / Math.PI;
+        const vfovDeg = starTrackVfovDeg(result.identify.solved, result.videoH);
         let fovNode = NodeMan.get("starTrackFOV", false);
         if (fovNode) {
             fovNode.array = new Array(Sit.frames).fill(vfovDeg);
@@ -518,6 +523,12 @@ export function syncCameraToStarTrack() {
 function detachStarTrackCamera() {
     NodeMan.get("CameraLOSController", false)?.removeOption?.("Star Track");
     NodeMan.get("fovSwitch", false)?.removeOption?.("Star Track");
+    // The controller node itself stays attached to the camera across solves. removeOption only
+    // stops the switch MANAGING its enabled flag - it does not clear it - and a stale
+    // enabled=true would sit dormant while there is no solve, then silently override Manual
+    // the moment a new analysis gives it data again.
+    const ctrl = NodeMan.get("starTrackCameraController", false);
+    if (ctrl) ctrl.enabled = false;
 }
 
 /**
@@ -545,8 +556,26 @@ export async function identifyStars() {
         const {catalog, names} = await ensureIdentifyData();
         if (!fresh()) return;
 
+        // Identify from the WELL-OBSERVED stars only. A long panning range tracks through
+        // rough stretches (blur, weak fits) that break some tracks into short fragments, and
+        // the pieces land displaced by the very registration error that broke them - so each
+        // fragment enters the map as an extra "star" that no catalog position will ever match,
+        // inflating the consensus denominator while contributing nothing to the numerator.
+        // Span length is the discriminator: real anchor stars persist, fragments are short
+        // BECAUSE they are broken. Stills keep everything (every star there has one observation
+        // by construction).
+        // On a still every star has exactly ONE observation by construction, and its transforms
+        // array is the single solve EXPANDED across the nominal timeline - so the threshold must
+        // come from the still flag, never from transform count, or every star gets filtered.
+        const totalFrames = myResult.solved.transforms.length || 1;
+        const minIdentifyObs = myResult.still ? 1
+            : Math.min(25, Math.max(1, Math.ceil(0.15 * totalFrames)));
+        // disabledStars holds the circles the user clicked off in the video view - their call,
+        // no questions asked: a light they know is a planet, a plane, or a bad track.
         const stars = myResult.solved.classified
-            .filter((c) => c.klass === "star" && c.position && Number.isFinite(c.magnitude))
+            .filter((c) => c.klass === "star" && c.position && Number.isFinite(c.magnitude)
+                && c.n >= minIdentifyObs
+                && !myResult.disabledStars?.has(c.index))
             .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index}));
 
         // When the source carries optics metadata, the plate scale is KNOWN - the strongest
@@ -574,16 +603,27 @@ export async function identifyStars() {
             }
             params.status = `matching against ${quadIndexes[tier].n} catalog quads (tier ${tier + 1})`;
             await yieldToBrowser();
-            // The reference frame is frame-0 pixels, so the camera's centre and extent ARE
-            // the video frame's - without them the solver would report the detected stars'
-            // bounding box as the field, which a sparse or lopsided sky misstates. The extent
-            // is the LARGER frame dimension: the solver derives its catalog field radius from
-            // it, and a portrait frame's corners lie beyond a width-derived radius.
+            // The reference frame is frame-0 pixels, but a panning clip carries the star map
+            // far beyond the frame-0 rectangle - stars that entered the view later live at
+            // reference positions outside it, and confining the solver's bounds to the video
+            // rect makes those stars unmatchable while still counting them in the consensus
+            // denominator (a wide-range solve fails outright on exactly the map that has the
+            // MOST evidence). The field is therefore the UNION of the video rectangle and the
+            // map's own bounding box: never smaller than the frame - so a sparse or lopsided
+            // sky cannot misstate a narrow field - and exactly as large as the pan made it.
+            let bx0 = 0, by0 = 0, bx1 = myResult.videoW || 0, by1 = myResult.videoH || 0;
+            for (const s of stars) {
+                if (s.x < bx0) bx0 = s.x;
+                if (s.x > bx1) bx1 = s.x;
+                if (s.y < by0) by0 = s.y;
+                if (s.y > by1) by1 = s.y;
+            }
+            const boundsPad = 12;
             solved = solveField(stars, catalog, [quadIndexes[tier]], {
                 ...(myResult.videoW ? {
-                    center: [myResult.videoW / 2, myResult.videoH / 2],
-                    width: Math.max(myResult.videoW, myResult.videoH),
-                    bounds: [0, 0, myResult.videoW, myResult.videoH],
+                    center: [(bx0 + bx1) / 2, (by0 + by1) / 2],
+                    width: Math.max(bx1 - bx0, by1 - by0),
+                    bounds: [bx0 - boundsPad, by0 - boundsPad, bx1 + boundsPad, by1 + boundsPad],
                 } : {}),
                 ...(scalePrior ? {scalePrior} : {}),
             });
@@ -609,6 +649,16 @@ export async function identifyStars() {
             });
         }
         myResult.identify = {solved, identified};
+
+        // If the camera is already synced, a re-identification (say, after toggling stars off)
+        // refines the plate scale under it. The heading controller reads the new refToSky live
+        // at apply time, so the cached Star Track FOV must follow - otherwise heading and zoom
+        // would come from two different solves.
+        const fovNode = NodeMan.get("starTrackFOV", false);
+        if (fovNode && myResult.videoH) {
+            fovNode.array = new Array(Sit.frames).fill(starTrackVfovDeg(solved, myResult.videoH));
+            setRenderOne();
+        }
         const raH = solved.centerRaDeg / 15;
         params.status = `identified ${solved.matches.length}/${stars.length} stars - `
             + `field ${solved.fovDeg.toFixed(1)} deg at RA ${raH.toFixed(2)}h `
@@ -855,6 +905,11 @@ export async function runStarTracker() {
             }
         }
 
+        // The camera options registered by Sync Camera rest on the PREVIOUS solve - its
+        // refToSky, its plate scale. Detach them before the result they describe is replaced,
+        // or the heading stays selected but inert (the fresh result has no identify yet) and
+        // the FOV keeps serving the old solve's zoom.
+        detachStarTrackCamera();
         result = {frame0, frame1, generation, videoData, perFrame, chain, solved, clusters,
             videoW, videoH, still, rejectCounts, rejectSamples};
         // Published for inspection and for other tools, the way camera motion publishes its own
@@ -882,6 +937,30 @@ export async function runStarTracker() {
 // while the new view went unhooked, leaving the overlay frozen on the last drawn frame.
 let hookedView = null;
 
+// The star circles as drawn THIS frame, in overlay-canvas pixels: {x, y, r, index}. Rebuilt on
+// every overlay draw, so click hit-testing always tests against exactly what is on screen - the
+// same transform, rescale and visibility filters, with no second copy of the mapping to drift.
+let overlayStarHits = [];
+
+/** The drawn star circle containing this overlay-canvas point, most specific (smallest) first. */
+function starHitAt(px, py) {
+    let best = null;
+    for (const h of overlayStarHits) {
+        if (Math.hypot(px - h.x, py - h.y) > h.r + 3) continue;
+        if (!best || h.r < best.r) best = h;
+    }
+    return best;
+}
+
+/** Toggle a star in or out of the working set: dimmed on the overlay, excluded from Identify. */
+function toggleStarEnabled(index) {
+    if (!result) return;
+    if (!result.disabledStars) result.disabledStars = new Set();
+    if (result.disabledStars.has(index)) result.disabledStars.delete(index);
+    else result.disabledStars.add(index);
+    setRenderOne();
+}
+
 /** The overlay canvas, created lazily over the video view, and hooked to redraw each frame. */
 function ensureOverlay() {
     const view = videoView();
@@ -893,6 +972,28 @@ function ensureOverlay() {
             "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:100";
         view.div.appendChild(overlay);
         overlayCtx = overlay.getContext("2d");
+    }
+
+    // Clicking inside a star circle toggles that star. The overlay itself stays
+    // pointer-transparent so the view's own drag/zoom handling is untouched; instead the DIV is
+    // listened to in the capture phase, and a toggle fires only for a stationary click (a press
+    // that moved is a drag, whatever it landed on). Marked on the div because the div IS the
+    // per-sitch object - a new sitch builds a new one, which then needs its own hook.
+    if (!view.div._starTrackClickHooked) {
+        view.div._starTrackClickHooked = true;
+        let downAt = null;
+        view.div.addEventListener("pointerdown", (e) => {
+            downAt = [e.clientX, e.clientY];
+        }, true);
+        view.div.addEventListener("pointerup", (e) => {
+            if (!downAt || !result || !overlay) return;
+            const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]);
+            downAt = null;
+            if (moved > 4) return;
+            const rect = overlay.getBoundingClientRect();
+            const hit = starHitAt(e.clientX - rect.left, e.clientY - rect.top);
+            if (hit) toggleStarEnabled(hit.index);
+        }, true);
     }
 
     // Redraw after the view has painted the frame, so the circles land on the frame they describe.
@@ -940,6 +1041,9 @@ export function drawStarTrackerOverlay() {
         overlay.height = rect.height;
     }
     overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    // Cleared with the canvas, not inside the star loop: any early return below leaves the
+    // screen empty, and an empty screen must not keep last frame's invisible circles clickable.
+    overlayStarHits = [];
 
     const i = Math.round(par.frame) - result.frame0;
     const T = result.solved.transforms[i];
@@ -991,6 +1095,12 @@ export function drawStarTrackerOverlay() {
             ? (magMax - c.magnitude) / (magMax - magMin) : 0.5;
         const radius = 6 + t01 * 18;
 
+        // Stars are clickable: register the circle as drawn, and dim a toggled-off star to 30% -
+        // still visible enough to click back on, clearly out of the working set.
+        const disabled = c.klass === "star" && result.disabledStars?.has(c.index);
+        if (c.klass === "star") overlayStarHits.push({x: px, y: py, r: radius, index: c.index});
+        if (disabled) overlayCtx.globalAlpha = 0.3;
+
         overlayCtx.beginPath();
         overlayCtx.arc(px, py, radius, 0, Math.PI * 2);
         overlayCtx.strokeStyle = COLORS[c.klass] || "#888";
@@ -1016,6 +1126,7 @@ export function drawStarTrackerOverlay() {
                 overlayCtx.fillText(id.label, px + radius + 4, py + 4);
             }
         }
+        if (disabled) overlayCtx.globalAlpha = 1;
     }
 
     // Light clusters - several lights moving together, no one of them trackable on its own.
@@ -1066,6 +1177,7 @@ export function resetStarTracker() {
     detachStarTrackCamera();
     result = null;
     Globals.starTrackerResult = undefined;
+    overlayStarHits = [];
     params.status = "not run";
     if (overlay && overlayCtx) overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
 }

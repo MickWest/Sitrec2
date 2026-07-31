@@ -330,3 +330,71 @@ describe("StarIdentify blind solve", () => {
         expect(result.ok).toBe(false);
     });
 });
+
+describe("StarIdentify wide-mosaic acceptance", () => {
+    // The REAL star map that motivated the strong-count acceptance path: a 379-frame panning
+    // clip's map, mosaicked by per-frame similarities across a ~21-degree span. The mosaic
+    // carries intrinsic warp (a similarity cannot express the gnomonic scale change across the
+    // pan) plus a few duplicate entries from tracks broken at a mid-clip camera jerk - so only
+    // ~47% of its 66 entries can land within tolerance HOWEVER correct the solve is, and the
+    // 0.5-fraction rule refused a solve backed by 31 simultaneous matches at 3.6 px rms.
+    // Positions are reference-frame pixels from the actual clip (video 1276x720, head of Draco).
+    const MOSAIC = [
+        [341.52, 688.05, -10.775], [148.61, 398.38, -10.418], [826.99, 514.38, -9.526],
+        [1027.56, 610.35, -9.207], [681.37, 297.64, -9.403], [830.53, 562.71, -8.925],
+        [1130.51, 590.7, -8.015], [468.87, 346.11, -8.657], [1229.79, 307.82, -8.779],
+        [758.2, 414.64, -8.353], [362.52, 574.09, -8.312], [436.87, 208.27, -8.059],
+        [1275.82, 696.49, -7.666], [1063.95, 868.01, -8.411], [631.95, 947.49, -9.35],
+        [174.73, 933.34, -7.955], [462.09, 1154.71, -8.653], [413.1, 1160.24, -8.34],
+        [329.47, 675.31, -10.757], [1057.67, 830.93, -7.827], [346.03, 560.39, -8.293],
+        [1411.19, 725.5, -8.205], [1393.97, 1209.24, -8.905], [1157.09, 1290.02, -10.726],
+        [616.04, 922.9, -9.376], [1441.81, 1314.08, -8.785], [1349.63, 1243.9, -8.386],
+        [1045.6, 827.91, -8.017], [450.7, 1153.53, -8.415], [1447.21, 945.32, -9.643],
+        [1473.62, 1043.58, -9.587], [1515.72, 909.24, -10.848], [595.75, 1374.05, -8.9],
+        [403.58, 1392.65, -8.433], [1564.1, 1017.5, -8.138], [1313.88, 1262.35, -7.865],
+        [1588.34, 1233.64, -7.704], [1468.91, 1229.39, -7.81], [601.97, 1451.32, -7.462],
+        [1500.16, 1364.6, -7.63], [1500.81, 807.65, -7.711], [1334.05, 1103.17, -7.902],
+        [627.97, 1463.85, -7.838], [1635.5, 1239.57, -7.747], [1642.47, 1011.04, -9.124],
+        [1641.06, 795.2, -8.007], [1734.99, 1157.36, -10.422], [1241.21, 175.17, -7.525],
+        [852.33, 285.2, -8.026], [1171.31, 704.87, -8.032], [1224.95, 288.82, -7.715],
+        [924.61, 775.56, -6.919], [629.01, 925.52, -9.475], [1013.17, 574.35, -9.151],
+        [1238.04, 1244.22, -8.027], [846.37, 1262.47, -8.393], [402.35, 1159.42, -8.246],
+        [1400.96, 988.61, -7.952], [1398.58, 722.6, -8.309], [1272.04, 1253.99, -7.941],
+        [1498.06, 1019.71, -7.998], [821.85, 1192.3, -7.597], [928.66, 1426.39, -8.189],
+        [905.24, 1003.25, -7.571], [916.6, 1277.45, -7.546], [752.63, 1363.55, -7.787],
+    ].map(([x, y, mag]) => ({x, y, mag}));
+
+    const opts = (() => {
+        let bx0 = 0, by0 = 0, bx1 = 1276, by1 = 720;
+        for (const s of MOSAIC) {
+            bx0 = Math.min(bx0, s.x); bx1 = Math.max(bx1, s.x);
+            by0 = Math.min(by0, s.y); by1 = Math.max(by1, s.y);
+        }
+        return {
+            center: [(bx0 + bx1) / 2, (by0 + by1) / 2],
+            width: Math.max(bx1 - bx0, by1 - by0),
+            bounds: [bx0 - 12, by0 - 12, bx1 + 12, by1 + 12],
+        };
+    })();
+
+    test("a warped wide mosaic is accepted on the strong absolute count", () => {
+        const result = solveField(MOSAIC, catalog, [index], opts);
+        expect(result.ok).toBe(true);
+        // Head of Draco, as every solve of this clip has agreed.
+        expect(Math.abs(result.centerRaDeg / 15 - 18.23)).toBeLessThan(0.4);
+        expect(Math.abs(result.centerDecDeg - 45.6)).toBeLessThan(2);
+        expect(result.matches.length).toBeGreaterThanOrEqual(25);
+        // The premise of the strong-count path: the reachable fraction here really is below
+        // the narrow-field rule. If this ever rises above it, the fixture no longer tests
+        // the alternative gate and should be replaced.
+        expect(result.matches.length).toBeLessThan(0.5 * result.nImage);
+    });
+
+    test("without the strong-count path this map is refused (the old behavior)", () => {
+        // maxHypotheses trimmed to keep the deliberate failure cheap; the live failure ran the
+        // full 3000 and failed identically.
+        const result = solveField(MOSAIC, catalog, [index],
+            {...opts, strongMatchCount: Infinity, maxHypotheses: 600});
+        expect(result.ok).toBe(false);
+    });
+});

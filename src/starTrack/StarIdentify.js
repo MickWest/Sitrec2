@@ -67,6 +67,16 @@ export const STAR_IDENTIFY_DEFAULTS = {
     // the strong consensus. A wrong provisional refines on garbage and dies at the final gate.
     provisionalMatchFraction: 0.15,
     minMatchFraction: 0.5,
+    // The fraction rule is the NARROW-field standard. A star map mosaicked from a long panning
+    // clip is stitched by per-frame similarities, and over a 20-degree span the gnomonic scale
+    // variation those similarities cannot express warps the mosaic by tens of pixels at the
+    // edges - capping the within-tolerance fraction near one half however correct the solve is.
+    // Absolute count is the honest evidence measure there: the chance of N image stars landing
+    // within tolerance of projected catalog stars under one converged similarity is vanishing
+    // long before N reaches 25 (astrometry.net accepts on absolute odds for the same reason).
+    // So a solve also passes with strongMatchCount matches at the reduced fraction floor.
+    strongMatchCount: 25,
+    strongMatchFraction: 0.35,
     maxHypotheses: 3000,
     // Stop early once a hypothesis explains this fraction of the image stars.
     earlyExitFraction: 0.85,
@@ -681,6 +691,15 @@ function consensusNeeded(nImage, nProjected, fraction) {
     return fraction * Math.min(nImage, nProjected);
 }
 
+/** Final acceptance: the full narrow-field fraction, OR the strong absolute count at the
+ * reduced fraction floor (see strongMatchCount in the defaults - wide similarity-stitched
+ * mosaics cap the reachable fraction near one half regardless of correctness). */
+function consensusMet(O, nImage, nMatches, nProjected) {
+    if (nMatches >= consensusNeeded(nImage, nProjected, O.minMatchFraction)) return true;
+    return nMatches >= O.strongMatchCount
+        && nMatches >= consensusNeeded(nImage, nProjected, O.strongMatchFraction);
+}
+
 /**
  * Verify one hypothesis PROVISIONALLY: the detected stars must be where the catalog says stars
  * are, in numbers coincidence does not produce - at the modest bar a four-point transform can
@@ -783,7 +802,7 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
         const pm = projectAndMatch(imageStars, mirrored, T, c0, b0, allIdx, allVec, tolPx,
             width, centerPx, bounds, catalog, maxProjected);
         if (!pm || pm.matches.length < O.minMatches
-            || pm.matches.length < consensusNeeded(imageStars.length, pm.nProjected, O.minMatchFraction)) {
+            || !consensusMet(O, imageStars.length, pm.matches.length, pm.nProjected)) {
             ({T, c0, b0, matches} = prev);
             break;
         }
@@ -794,7 +813,7 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
     // Refinement only ever rematches with the verification gate, but hold the acceptance
     // criteria at the end regardless - a solve that degrades below them must not ship.
     if (matches.length < O.minMatches
-        || matches.length < consensusNeeded(imageStars.length, nProjected, O.minMatchFraction)) {
+        || !consensusMet(O, imageStars.length, matches.length, nProjected)) {
         return {ok: false, reason: "refinement lost the match consensus"};
     }
 
