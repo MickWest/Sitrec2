@@ -6,7 +6,8 @@
 //
 // The menu lives under Video, alongside the other motion-analysis tools.
 
-import {Globals, guiMenus, NodeMan, Sit, setRenderOne} from "../Globals";
+import {FileManager, Globals, guiMenus, NodeMan, Sit, setRenderOne} from "../Globals";
+import {SITREC_APP} from "../configUtils";
 import {par} from "../par";
 import {abFrameRange} from "../TraverseAnalysisData";
 import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator";
@@ -15,6 +16,13 @@ import {STAR_DETECT_DEFAULTS, calibrateDetection, detectSources, rejectReason} f
 import {applyTransform, invertTransform, solveFrameChain} from "./StarMatch";
 import {STAR_SOLVE_DEFAULTS, solveStarField} from "./StarSolve";
 import {STAR_CLUSTER_DEFAULTS, groupMovingClusters} from "./StarCluster";
+import {
+    STAR_IDENTIFY_DEFAULTS,
+    buildQuadIndex,
+    parseStarCatalog,
+    parseStarNames,
+    solveField,
+} from "./StarIdentify";
 
 let folder = null;
 let overlay = null;
@@ -50,8 +58,74 @@ const params = {
     showMoving: true,
     showClusters: true,
     showRejected: false,
+    showStarNames: true,
+    chartTracks: true,
     status: "not run",
 };
+
+// ---------------------------------------------------------------------------------------------
+// Star catalog, lazily
+// ---------------------------------------------------------------------------------------------
+
+// The catalog (2.5 MB) and names file are fetched only when Identify Stars is first pressed,
+// and the quad index tiers are built only as the solve needs them - the same cached-promise
+// shape EGM96Geoid uses, stable URLs so the browser's HTTP cache carries them across deploys.
+const quadIndexes = [];
+let catalogPromise = null;
+let namesPromise = null;
+
+// Both loaders follow the same discipline: the promise is ASSIGNED before the loader body can
+// throw - an async function runs synchronously up to its first await, so a synchronous parse
+// error in a "clear the cache" catch would fire before the assignment and then be overwritten
+// by the rejected promise, poisoning every retry - and a failed load clears the cache BY
+// IDENTITY, so it never clobbers a newer attempt.
+function ensureStarCatalog() {
+    if (catalogPromise) return catalogPromise;
+    const p = (async () => {
+        // A night-sky sitch has already fetched the catalog through FileManager; reuse those
+        // bytes rather than downloading 2.5 MB again.
+        let buffer = FileManager.get?.("BSC5", false);
+        if (!buffer) {
+            const resp = await fetch(SITREC_APP + "data/nightsky/sitrec_bsc_lite.bin");
+            if (!resp.ok) throw new Error(`star catalog fetch failed: ${resp.status}`);
+            buffer = await resp.arrayBuffer();
+        }
+        return parseStarCatalog(buffer);
+    })();
+    catalogPromise = p;
+    p.catch(() => { if (catalogPromise === p) catalogPromise = null; });
+    return p;
+}
+
+// Names are cached SEPARATELY from the catalog: they are an enrichment, so one failed attempt
+// must neither fail the identification nor freeze "nameless" in as the permanent answer - the
+// next Identify press simply tries the file again.
+function ensureStarNames() {
+    if (namesPromise) return namesPromise;
+    const p = (async () => {
+        let nameText = FileManager.get?.("IAUCSN", false);
+        if (!nameText) {
+            const resp = await fetch(SITREC_APP + "data/nightsky/IAU-CSN.txt");
+            if (!resp.ok) throw new Error(`star names fetch failed: ${resp.status}`);
+            nameText = await resp.text();
+        }
+        return parseStarNames(nameText);
+    })();
+    namesPromise = p;
+    p.catch(() => { if (namesPromise === p) namesPromise = null; });
+    return p;
+}
+
+async function ensureIdentifyData() {
+    const catalog = await ensureStarCatalog();
+    let names;
+    try {
+        names = await ensureStarNames();
+    } catch (e) {
+        names = new Map();      // nameless identifications are still identifications
+    }
+    return {catalog, names};
+}
 
 /**
  * Yield to the event loop - a real macrotask, not a microtask.
@@ -195,13 +269,43 @@ export function makeStarChart() {
         return;
     }
 
+    // The moving objects' tracks, drawn as paths across the same reference frame the stars
+    // live in - a chart of what moved against what stayed. Off by a toggle for a stars-only
+    // chart.
+    const trackPaths = [];
+    if (params.chartTracks) {
+        for (const c of result.solved.classified) {
+            if (c.klass !== "moving") continue;
+            const t = result.solved.tracks[c.index];
+            const pts = t.obs.filter((o) => Number.isFinite(o.rx)).map((o) => [o.rx, o.ry]);
+            if (pts.length >= 2) trackPaths.push({pts, kind: "moving"});
+        }
+        for (const cl of result.clusters || []) {
+            const pts = [];
+            for (let f = cl.first; f <= cl.last; f += 2) pts.push(cl.at(f));
+            // The stride skips the final frame on odd spans, and the arrowhead marks the
+            // path's END - it must sit at the actual endpoint.
+            if (pts.length && (cl.last - cl.first) % 2 !== 0) pts.push(cl.at(cl.last));
+            if (pts.length >= 2) trackPaths.push({pts, kind: "cluster"});
+        }
+    }
+
+    // Plain loops, not Math.min(...spread): a long clip's tracks contribute thousands of
+    // points, and spreading them into an argument list overflows it.
     const MARGIN = 50;
-    const xs = stars.map((c) => c.position[0]);
-    const ys = stars.map((c) => c.position[1]);
-    const x0 = Math.floor(Math.min(...xs)) - MARGIN;
-    const y0 = Math.floor(Math.min(...ys)) - MARGIN;
-    const fullW = Math.ceil(Math.max(...xs)) + MARGIN - x0;
-    const fullH = Math.ceil(Math.max(...ys)) + MARGIN - y0;
+    let bMinX = Infinity, bMaxX = -Infinity, bMinY = Infinity, bMaxY = -Infinity;
+    const grow = (x, y) => {
+        if (x < bMinX) bMinX = x;
+        if (x > bMaxX) bMaxX = x;
+        if (y < bMinY) bMinY = y;
+        if (y > bMaxY) bMaxY = y;
+    };
+    for (const c of stars) grow(c.position[0], c.position[1]);
+    for (const tp of trackPaths) for (const [x, y] of tp.pts) grow(x, y);
+    const x0 = Math.floor(bMinX) - MARGIN;
+    const y0 = Math.floor(bMinY) - MARGIN;
+    const fullW = Math.ceil(bMaxX) + MARGIN - x0;
+    const fullH = Math.ceil(bMaxY) + MARGIN - y0;
     // The map's bounding box grows with the pan, without limit - a long clip can sweep the
     // reference frame across many thousands of pixels, and asking the browser for a canvas
     // that size gets an allocation failure or a freeze, not a PNG. Scale to fit a safe
@@ -219,8 +323,11 @@ export function makeStarChart() {
     g.fillStyle = "#000";
     g.fillRect(0, 0, canvas.width, canvas.height);
 
-    const mags = stars.map((c) => c.magnitude);
-    const magMin = Math.min(...mags), magMax = Math.max(...mags);
+    let magMin = Infinity, magMax = -Infinity;
+    for (const c of stars) {
+        if (c.magnitude < magMin) magMin = c.magnitude;
+        if (c.magnitude > magMax) magMax = c.magnitude;
+    }
     for (const c of stars) {
         const t = magMax > magMin ? (magMax - c.magnitude) / (magMax - magMin) : 0.5;
         const r = (1.4 + t * 6.6) * Math.max(scale, 0.35);
@@ -239,6 +346,40 @@ export function makeStarChart() {
         g.beginPath();
         g.arc(px, py, r, 0, Math.PI * 2);
         g.fill();
+
+        // When the field has been identified, the chart says which star is which.
+        if (result.identify) {
+            const id = result.identify.identified.get(c.index);
+            if (id) {
+                g.fillStyle = "#8a8f96";
+                g.font = `${Math.max(10, Math.round(11 * Math.max(scale, 0.35)))}px sans-serif`;
+                g.fillText(id.label, px + r + 4 * scale + 3, py + 4);
+            }
+        }
+    }
+
+    // Object tracks: a path with an arrowhead at its final position, so direction reads at a
+    // glance. Movers solid red, cluster ensembles dashed orange - the overlay's colour code.
+    for (const tp of trackPaths) {
+        const pts = tp.pts.map(([x, y]) => [(x - x0) * scale, (y - y0) * scale]);
+        g.strokeStyle = tp.kind === "moving" ? "#ff2a2a" : "#ff9500";
+        g.lineWidth = Math.max(1, 1.5 * scale);
+        g.setLineDash(tp.kind === "cluster" ? [6, 4] : []);
+        g.beginPath();
+        g.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+        g.stroke();
+        g.setLineDash([]);
+        const [ex, ey] = pts[pts.length - 1];
+        const [px1, py1] = pts[Math.max(0, pts.length - 2)];
+        const ang = Math.atan2(ey - py1, ex - px1);
+        const ah = Math.max(5, 8 * scale);
+        g.beginPath();
+        g.moveTo(ex, ey);
+        g.lineTo(ex - ah * Math.cos(ang - 0.4), ey - ah * Math.sin(ang - 0.4));
+        g.moveTo(ex, ey);
+        g.lineTo(ex - ah * Math.cos(ang + 0.4), ey - ah * Math.sin(ang + 0.4));
+        g.stroke();
     }
 
     canvas.toBlob((blob) => {
@@ -251,6 +392,85 @@ export function makeStarChart() {
         setTimeout(() => URL.revokeObjectURL(a.href), 30000);
     }, "image/png");
     params.status = `star chart: ${stars.length} stars`;
+}
+
+/**
+ * Blind-identify the solved star map against the star catalog: no location, no time, no
+ * pointing assumed - the field is found purely from the geometry of the stars themselves
+ * (quad hashing; see StarIdentify). On success each confirmed star gains a name, and the
+ * overlay and chart label them.
+ */
+export async function identifyStars() {
+    if (!result) {
+        params.status = "run Analyze first";
+        return;
+    }
+    const myResult = result;
+    const generation = myResult.generation;
+    // Freshness includes the VIDEO's identity: replacing the video in the same view does not
+    // change the result object or the generation, and an identification of the old sky must
+    // not attach to (or report status over) the new one.
+    const fresh = () => result === myResult
+        && Globals.loadGeneration === generation
+        && videoView()?.videoData === myResult.videoData;
+    try {
+        params.status = "loading star catalog";
+        await yieldToBrowser();
+        const {catalog, names} = await ensureIdentifyData();
+        if (!fresh()) return;
+
+        const stars = myResult.solved.classified
+            .filter((c) => c.klass === "star" && c.position && Number.isFinite(c.magnitude))
+            .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index}));
+
+        let solved = null;
+        for (let tier = 0; tier < STAR_IDENTIFY_DEFAULTS.tiers.length; tier++) {
+            if (!quadIndexes[tier]) {
+                params.status = `building star geometry index (tier ${tier + 1})`;
+                await yieldToBrowser();
+                quadIndexes[tier] = buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[tier]);
+                if (!fresh()) return;
+            }
+            params.status = `matching against ${quadIndexes[tier].n} catalog quads (tier ${tier + 1})`;
+            await yieldToBrowser();
+            // The reference frame is frame-0 pixels, so the camera's centre and extent ARE
+            // the video frame's - without them the solver would report the detected stars'
+            // bounding box as the field, which a sparse or lopsided sky misstates. The extent
+            // is the LARGER frame dimension: the solver derives its catalog field radius from
+            // it, and a portrait frame's corners lie beyond a width-derived radius.
+            solved = solveField(stars, catalog, [quadIndexes[tier]], myResult.videoW ? {
+                center: [myResult.videoW / 2, myResult.videoH / 2],
+                width: Math.max(myResult.videoW, myResult.videoH),
+            } : {});
+            if (!fresh()) return;
+            if (solved.ok) break;
+        }
+        if (!solved || !solved.ok) {
+            params.status = `identify failed: ${solved ? solved.reason : "no result"}`;
+            return;
+        }
+
+        // Join the names on, keyed by the classified-track index the overlay draws from.
+        const identified = new Map();
+        for (const m of solved.matches) {
+            const nm = names.get(m.hip);
+            const label = nm?.name
+                || (nm?.greek ? `${nm.greek} ${nm.constellation}` : `HIP ${m.hip}`);
+            identified.set(stars[m.image].index, {
+                label, hip: m.hip, mag: m.mag, raDeg: m.raDeg, decDeg: m.decDeg, dPx: m.dPx,
+            });
+        }
+        myResult.identify = {solved, identified};
+        const raH = solved.centerRaDeg / 15;
+        params.status = `identified ${solved.matches.length}/${stars.length} stars - `
+            + `field ${solved.fovDeg.toFixed(1)} deg at RA ${raH.toFixed(2)}h `
+            + `Dec ${solved.centerDecDeg.toFixed(1)} deg, rms ${solved.rmsPx.toFixed(1)} px`;
+        setRenderOne();
+    } catch (e) {
+        // Only while this run still owns the state - a failure surfacing after a sitch change
+        // must not write over the new sitch's status.
+        if (fresh()) params.status = `identify failed: ${e?.message ?? e}`;
+    }
 }
 
 /**
@@ -362,6 +582,7 @@ export async function runStarTracker() {
 
     try {
         const perFrame = [];
+        let videoW = 0, videoH = 0;
         for (let f = frame0; f <= frame1; f++) {
             if (ctx.stale()) {
                 params.status = aborted ? "aborted" : "cancelled (video changed)";
@@ -374,6 +595,7 @@ export async function runStarTracker() {
             await yieldToBrowser();
             const px = await framePixels(view, f, ctx);
             if (!px) { perFrame.push([]); continue; }
+            if (!videoW) { videoW = px.W; videoH = px.H; }
 
             const {sources} = detectSources(px.data, px.W, px.H, {
                 threshSigma: ctx.threshSigma,
@@ -435,7 +657,8 @@ export async function runStarTracker() {
             }
         }
 
-        result = {frame0, frame1, generation, videoData, perFrame, chain, solved, clusters};
+        result = {frame0, frame1, generation, videoData, perFrame, chain, solved, clusters,
+            videoW, videoH};
         // Published for inspection and for other tools, the way camera motion publishes its own
         // per-video data on Globals.
         Globals.starTrackerResult = result;
@@ -522,10 +745,16 @@ export function drawStarTrackerOverlay() {
     const T = result.solved.transforms[i];
     if (!T) return;
 
-    const mags = result.solved.classified
-        .map((c) => c.magnitude).filter(Number.isFinite);
-    const magMin = mags.length ? Math.min(...mags) : -11;
-    const magMax = mags.length ? Math.max(...mags) : -7;
+    let magMin = Infinity, magMax = -Infinity;
+    for (const c of result.solved.classified) {
+        if (!Number.isFinite(c.magnitude)) continue;
+        if (c.magnitude < magMin) magMin = c.magnitude;
+        if (c.magnitude > magMax) magMax = c.magnitude;
+    }
+    // When every magnitude is the SAME finite value the range stays empty and the radius
+    // formula's magMax > magMin guard falls through to its mid-size default. Substituting an
+    // arbitrary range here instead would put that one real magnitude OUTSIDE it, drive the
+    // radius negative, and abort the whole overlay when arc() throws.
 
     for (const c of result.solved.classified) {
         if (!c.position) continue;
@@ -562,6 +791,17 @@ export function drawStarTrackerOverlay() {
             overlayCtx.fillStyle = COLORS.moving;
             overlayCtx.font = "bold 13px sans-serif";
             overlayCtx.fillText(`moves ${c.totalDrift.toFixed(0)} px vs stars`, px + radius + 6, py + 4);
+        }
+
+        // Identified stars carry their catalog names.
+        if (c.klass === "star" && params.showStarNames && result.identify) {
+            const id = result.identify.identified.get(c.index);
+            if (id) {
+                overlayCtx.setLineDash([]);
+                overlayCtx.fillStyle = "#9fdcb0";
+                overlayCtx.font = "11px sans-serif";
+                overlayCtx.fillText(id.label, px + radius + 4, py + 4);
+            }
         }
     }
 
@@ -692,11 +932,15 @@ export function setupStarTrackerMenu() {
 
     folder.add({run: async () => { await runStarTracker(); setRenderOne(); }}, "run")
         .name("Analyze In/Out range");
+    folder.add({identify: () => { identifyStars(); }}, "identify")
+        .name("Identify Stars (catalog)");
     folder.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)");
+    folder.add(params, "chartTracks").name("Chart: object tracks");
 
     folder.add(params, "showStars").name("Show stars").onChange(setRenderOne);
     folder.add(params, "showMoving").name("Show moving").onChange(setRenderOne);
     folder.add(params, "showClusters").name("Show light clusters").onChange(setRenderOne);
+    folder.add(params, "showStarNames").name("Show star names").onChange(setRenderOne);
     folder.add(params, "showRejected").name("Show rejected").onChange(setRenderOne);
 
     folder.add({clear: () => { resetStarTracker(); setRenderOne(); }}, "clear").name("Clear");
