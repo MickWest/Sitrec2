@@ -44,6 +44,7 @@ import {CNodeDisplaySkyOverlay} from "./CNodeDisplaySkyOverlay";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CNodeViewEphemeris} from "./CNodeViewEphemeris";
 import {CNodeSkyPlotView} from "./CNodeSkyPlotView";
+import {CNodeStarChartView} from "./CNodeStarChartView";
 //import { eci_to_geodetic } from '../../pkg/eci_convert';
 // npm install satellite.js --save-dev
 // installed with
@@ -780,6 +781,18 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                     this.celestialGUI.close();
                 });
             }
+        });
+
+        // Star Chart: printable Heavens-Above style whole-sky chart, with its
+        // own "Star Chart" folder under Show. Created here (not on tleLoaded)
+        // because stars and constellations don't need TLE data; the satellite
+        // track option just draws nothing until a satellite is tracked.
+        this.starChartView = new CNodeStarChartView({
+            id: "starChartView",
+            nightSkyNode: this,
+            visible: false,
+            draggable: true, resizable: true, freeAspect: true,
+            left: 0.53, top: 0.06, width: -1, height: 0.85,
         });
 
 //        console.log("Done with CNodeDisplayNightSky constructor")
