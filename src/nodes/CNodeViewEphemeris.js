@@ -54,16 +54,22 @@ export class CNodeViewEphemeris extends CNodeViewText {
     }
 
     update(f) {
+        if (!this.visible) {
+            return;
+        }
+        this.ensureSatData();
+    }
+
+    // Refresh the satellite az/el data on the shared throttle. The Sky Plot reads
+    // filteredSatData off this view, so the computation must be reachable while this view is
+    // HIDDEN - update() above must not consume the throttle window when it declines to run, or
+    // a hidden ephemeris view would starve the Sky Plot of every refresh.
+    ensureSatData() {
         const now = Date.now();
         if (now - this.lastUpdateTime < this.updateInterval) {
             return;
         }
         this.lastUpdateTime = now;
-
-        if (!this.visible) {
-            return;
-        }
-
         this.updateEphemeris();
     }
 

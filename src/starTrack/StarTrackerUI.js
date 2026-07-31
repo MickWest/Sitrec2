@@ -38,6 +38,10 @@ let aborted = false;
 // Measured pixel-scale parameters from "Detect Star Size", applied to subsequent analyses.
 // Null means the hand-tuned defaults, which were measured on the reference footage.
 let calibration = null;
+// The video the calibration was measured on. A same-sitch video swap (selectVideo) replaces
+// videoData with no teardown, and a plate-scale measurement of one video says nothing about
+// another - consumers drop the calibration when this no longer matches.
+let calibrationVideoData = null;
 let minAreaController = null;
 // Whether params.minArea currently holds a MEASURED value rather than a user-chosen one - it
 // must fall with the calibration it came from, or teardown leaves a half-calibrated set.
@@ -194,6 +198,25 @@ async function framePixels(view, globalFrame, ctx) {
 }
 
 /**
+ * Drop the calibration when it was measured on a DIFFERENT video than the one about to use it.
+ *
+ * Both the measured parameter set and the measured minArea fall together, exactly as they do in
+ * disposeStarTracker and for the same reason: keeping one without the other hands the analysis a
+ * half-calibrated mismatch - default apertures against a blob gate measured at some other
+ * plate scale. A hand-edited minArea is a preference, not a measurement, and stays.
+ */
+function dropCalibrationForOtherVideo(videoData) {
+    if (!calibration || calibrationVideoData === videoData) return;
+    calibration = null;
+    calibrationVideoData = null;
+    if (minAreaCalibrated) {
+        params.minArea = STAR_DETECT_DEFAULTS.minArea;
+        minAreaCalibrated = false;
+        if (minAreaController) minAreaController.updateDisplay();
+    }
+}
+
+/**
  * Measure the star blobs on the CURRENT frame and adopt the pixel-scale parameters they imply.
  *
  * The hand-tuned defaults assume the reference footage's resolution, zoom and exposure; on
@@ -213,6 +236,9 @@ export async function detectStarSize() {
     if (!view || !view.videoData || running) return false;
     const generation = Globals.loadGeneration;
     const videoData = view.videoData;
+    // "Keeping previous calibration" below is only honest when the previous calibration
+    // measured THIS video.
+    dropCalibrationForOtherVideo(videoData);
     const ctx = {
         lockToInFrame: !!view.lockToInFrame,
         aFrame: Sit.aFrame ?? 0,
@@ -240,6 +266,7 @@ export async function detectStarSize() {
             return true;
         }
         calibration = cal;
+        calibrationVideoData = videoData;
         params.minArea = cal.minArea;
         minAreaCalibrated = true;
         if (minAreaController) minAreaController.updateDisplay();
@@ -710,6 +737,9 @@ export async function runStarTracker() {
     // and attach its results over the new one.
     const generation = Globals.loadGeneration;
     const videoData = view.videoData;
+    // The snapshot below trusts `calibration`; a same-sitch video swap must not let it carry
+    // another video's plate scale into this analysis.
+    dropCalibrationForOtherVideo(videoData);
     const ctx = {
         threshSigma: params.threshSigma,
         minArea: params.minArea,
@@ -1225,6 +1255,7 @@ export function disposeStarTracker() {
     // same half-calibrated mismatch a failed recalibration must not create. A value the user
     // set by hand is a preference, not a measurement, and stays.
     calibration = null;
+    calibrationVideoData = null;
     if (minAreaCalibrated) {
         params.minArea = STAR_DETECT_DEFAULTS.minArea;
         minAreaCalibrated = false;

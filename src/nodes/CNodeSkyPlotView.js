@@ -27,8 +27,11 @@ export class CNodeSkyPlotView extends CNodeTabbedCanvasView {
         }
 
         const ctx = this.ctx;
-        const width = this.canvas.width;
-        const height = this.canvas.height;
+        // CSS units, not canvas.width: the base class scales the backing store AND the
+        // context by devicePixelRatio, so drawing in backing pixels lands everything at
+        // 2x on a high-DPI display - the plot's centre ends up at the bottom-right corner.
+        const width = this.widthPx;
+        const height = this.heightPx;
         
         // Clear canvas
         ctx.fillStyle = '#000000';
@@ -101,9 +104,15 @@ export class CNodeSkyPlotView extends CNodeTabbedCanvasView {
     }
 
     plotSatellites(ctx, centerX, centerY, radius) {
-        // Get the filtered satellite list from the ephemeris view
+        // Get the filtered satellite list from the ephemeris view. That view only refreshes
+        // itself while VISIBLE, so ask it to refresh on its own throttle - otherwise this plot
+        // is empty (or frozen) unless the ephemeris table happens to be open.
         const ephemerisView = this.nightSkyNode.ephemerisView;
-        if (!ephemerisView || !ephemerisView.filteredSatData) {
+        if (!ephemerisView) {
+            return;
+        }
+        ephemerisView.ensureSatData();
+        if (!ephemerisView.filteredSatData) {
             return;
         }
 

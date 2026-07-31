@@ -477,6 +477,15 @@ class CNodeView extends CNode {
     // Close (hide) this view via the header ✕, recorded as an undoable action so Undo
     // reopens it (and Redo closes it again). UndoManager.add is a no-op while undoing/redoing.
     closeViewWithUndo(name) {
+        // Closing a full-screened view must not leave fullscreen engaged: ViewMan.fullscreenView
+        // would keep suppressing every other view while the one view it shows is hidden - a
+        // blank screen. Un-fullscreen FIRST (doubleClick restores the saved pre-fullscreen
+        // geometry, and early-outs on hidden views, so it must run before show(false)); the
+        // close then leaves the ordinary layout with this view closed, and an undo re-shows
+        // the view windowed.
+        if (this.doubled && ViewMan.fullscreenView === this) {
+            this.doubleClick();
+        }
         this.show(false);
         if (UndoManager) {
             UndoManager.add({
