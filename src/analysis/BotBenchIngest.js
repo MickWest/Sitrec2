@@ -924,79 +924,72 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     // Pick the timebase BEFORE judging continuity: a stream with good PES PTS
     // and a broken wall clock is a normal FMV case, and trimming it on the
     // broken clock would discard perfectly timed data.
-    // TIMEBASE CHOSEN ON QUALITY, NOT ON MERE FINITENESS.
+    // TIMEBASE CHOSEN BY HOW MUCH DATA IT ACTUALLY KEEPS.
     //
-    // Both candidate clocks can be present and useless in different ways: a
-    // wall clock can be finite on every record and still jump around, and PES
-    // PTS can repeat when several KLV records ride one PES packet. Judging
-    // either by "are all the numbers finite" picked an erratic UTS over a clean
-    // PTS, and let a duplicate-riddled PTS through to be shredded into
-    // sub-10-record runs by the continuity test.
+    // Both candidate clocks can be present and broken in different ways: a wall
+    // clock can be finite on every record and still jump, and PES PTS repeats
+    // when several KLV records ride one packet. Two earlier discriminators both
+    // failed, and the second failed in an instructive way:
     //
-    // Score each instead: it must be strictly increasing (a repeat or a
-    // backwards step is not a timeline) and reasonably regular. Prefer the wall
-    // clock when both qualify, because only it carries an epoch.
-    const rateTimebase = (get) => {
-        if (complete.length < 2) return null;
-        const d = [];
-        for (let i = 1; i < complete.length; i++) {
-            const a = get(complete[i - 1]), b = get(complete[i]);
-            if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-            d.push(b - a);
-        }
-        const increasing = d.filter((x) => x > 0).length;
-        if (increasing < 2) return null;
-        const med = median(d.filter((x) => x > 0));
-        if (!(med > 0)) return null;
-        // Fraction of steps that are a clean single interval. A repeated
-        // timestamp scores 0 for that step, as does a wild jump.
-        const clean = d.filter((x) => x > 0 && x <= med * 1.5).length / d.length;
-        return {get, med, clean, strict: increasing === d.length};
-    };
-    const utsScore = rateTimebase((u) => u.t);
-    const ptsScore = rateTimebase((u) => u.pts);
-    const USABLE_CLEAN = 0.8;
-    // Pick the BETTER clock, not merely an adequate one. Preferring the wall
-    // clock whenever it cleared the bar meant a 0.82-clean UTS beat a perfect
-    // PTS, and the run was then trimmed on the worse timeline for no reason.
-    // The wall clock only wins when the two are comparable, where its epoch is
-    // a genuine tiebreak.
-    const EPOCH_TIEBREAK = 0.05;
-    let chosen = null, chosenName = "none";
-    const uc = utsScore?.clean ?? -1;
-    const pc = ptsScore?.clean ?? -1;
-    if (uc < 0 && pc < 0) { chosen = null; }
-    else if (pc > uc + EPOCH_TIEBREAK) { chosen = ptsScore; chosenName = "pts"; }
-    else if (uc >= 0) { chosen = utsScore; chosenName = "uts"; }
-    else { chosen = ptsScore; chosenName = "pts"; }
+    //   "all values finite"  picked an erratic wall clock over a clean PTS.
+    //   "fraction of clean steps"  looks reasonable and is not, because the
+    //   COST of a bad step has nothing to do with how many there are — it is
+    //   decided by WHERE they fall. One repeated timestamp in the middle of a
+    //   700-record clip scores 0.9986, beats a perfect PTS under any sane
+    //   tolerance, and then splits the run in half, throwing away ~350 good
+    //   records for a single duplicate.
+    //
+    // So do not score a proxy. Run the actual continuity selection on each
+    // timebase and keep the one that yields the longest usable span — the exact
+    // quantity that matters. The wall clock wins ties, and only ties, because
+    // it alone carries an epoch.
+    const timebases = [];
+    for (const [nameOf, get] of [["uts", (u) => u.t], ["pts", (u) => u.pts]]) {
+        if (complete.length < 2) continue;
+        if (!complete.every((u) => Number.isFinite(get(u)))) continue;
+        const trial = longestUniformRun(complete, get);
+        if (trial.degenerateClock || !trial.items.length) continue;
+        timebases.push({name: nameOf, get, run: trial, kept: trial.items.length});
+    }
+    // Strictly more data wins; equal data goes to the wall clock (listed first).
+    timebases.sort((a, b) => b.kept - a.kept);
+    const best = timebases[0] ?? null;
+    const chosenName = best ? best.name : "none";
     const utsOk = chosenName === "uts";
-    const useTimeOf = chosen ? chosen.get : ((u) => u.t);
+    const useTimeOf = best ? best.get : ((u) => u.t);
+    const chosen = best;
+
     if (chosenName === "pts") {
-        warnings.push(`UnixTimeStamp is absent or irregular (${utsScore
-            ? `${(utsScore.clean * 100).toFixed(0)}% of its steps are a clean single interval`
-            : "not present on every record"}), so the KLV PES presentation timestamps were used `
-            + `for cadence instead. They are locked to the encoder clock, which is the right `
-            + `timebase for spacing, but they carry no wall-clock epoch.`);
+        const uts = timebases.find((t) => t.name === "uts");
+        warnings.push(`The KLV PES presentation timestamps were used for cadence rather than `
+            + `UnixTimeStamp${uts ? `, which yields only ${uts.kept} usable frames against `
+                + `${best.kept}` : ", which is absent or non-finite on some records"}. PES PTS is `
+            + `locked to the encoder clock, which is the right timebase for spacing, but it `
+            + `carries no wall-clock epoch.`);
     }
-    if (chosen && chosen.clean < USABLE_CLEAN) {
-        warnings.push(`Neither timebase is regular — the best available `
-            + `(${chosenName.toUpperCase()}) has only ${(chosen.clean * 100).toFixed(0)}% clean `
-            + `steps. Expect the run to be trimmed heavily, and treat every derived speed and `
-            + `acceleration with suspicion.`);
+    if (timebases.length > 1 && timebases[0].kept > timebases[1].kept) {
+        warnings.push(`Timebases disagree: ${timebases[0].name.toUpperCase()} keeps `
+            + `${timebases[0].kept} frames and ${timebases[1].name.toUpperCase()} keeps `
+            + `${timebases[1].kept}. One of the two clocks in this file is damaged.`);
     }
+    // NO CLOCK IS A REFUSAL, NOT A FALLBACK.
+    //
+    // This used to assume 30 Hz when neither series was usable, and that
+    // assumption then sat underneath every speed, acceleration, g-load and
+    // turn-rate the analysis reports — a whole page of numbers invented from a
+    // guess, with nothing on the row to say so. It is the same situation as a
+    // Time column that never advances, which is already refused, and treating
+    // the two differently was an inconsistency rather than a feature. (Real KLV
+    // carries ST 0601 tag 2: the shipped Truck.klv resolves 4.94 Hz from it.)
     const haveAllTimes = !!chosen;
+    if (!haveAllTimes) {
+        throw new Error("Neither UnixTimeStamp nor KLV PES PTS gives a usable, advancing "
+            + "timeline for these records, so this clip carries no timing. Every speed, "
+            + "acceleration and g-load the analysis reports is derived from it, so there is "
+            + "nothing honest to compute here.");
+    }
     const run = longestUniformRun(complete, useTimeOf);
     const kept = run.items;
-    if (!haveAllTimes) {
-        warnings.push("Neither UnixTimeStamp nor KLV PES PTS is complete across these records, "
-            + "so continuity could not be checked and a dropout would be stitched over "
-            + "silently. Cadence falls back to an assumed 30 Hz.");
-    }
-    if (run.degenerateClock) {
-        throw new Error("Neither the UnixTimeStamp nor the KLV PES PTS series ever advances, so "
-            + "this clip carries no usable timing. Every speed, acceleration and g-load the "
-            + "analysis reports is derived from it.");
-    }
     if (kept.length < complete.length) {
         warnings.push(`Analysed the longest UNIFORMLY SAMPLED span: ${kept.length} of `
             + `${complete.length} complete records (${usable.length} decoded), split by `
@@ -1014,15 +1007,11 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     const n = kept.length;
     const times = Float64Array.from(kept, useTimeOf);
     const timing = haveAllTimes ? timingStats(times) : null;
-    let fps = 30;
-    if (haveAllTimes && timing && timing.meanDt > 0) {
-        const d = [];
-        for (let i = 1; i < n; i++) d.push(times[i] - times[i - 1]);
-        fps = 1 / median(d);
-    } else {
-        warnings.push("No usable UnixTimeStamp series; assuming 30 Hz. Speeds and "
-            + "accelerations are only as good as that assumption.");
-    }
+    // Always derived — the no-clock case was refused above, so there is no
+    // assumed rate anywhere in this path.
+    const dSteps = [];
+    for (let i = 1; i < n; i++) dSteps.push(times[i] - times[i - 1]);
+    const fps = 1 / median(dSteps);
 
     if (haveAllTimes && timing && (timing.cv > 0.05 || timing.gaps > 0)) {
         warnings.push(`Metadata cadence is not uniform (CV ${(timing.cv * 100).toFixed(1)}%, `
@@ -1214,20 +1203,32 @@ export async function ingestBotBenchEntry(entry) {
         const file = await entry.getFile();
         const text = await file.text();
         let sidecar = null, labels = null;
-        if (entry.sidecarText) {
-            // A sidecar that EXISTS and does not parse is a different thing from
-            // no sidecar at all: the producer stated the frame and we failed to
-            // read it. Treating the two alike quietly substituted the shipped
-            // set's default site for whatever this file actually declares, so
-            // the geometry would be analysed at the wrong place on the globe
-            // with nothing to show for it.
+        // A sidecar that EXISTS and cannot be used is a different thing from no
+        // sidecar at all: the producer stated the frame and we failed to read
+        // it. Treating the two alike quietly substituted the shipped set's
+        // default site for whatever the file actually declares.
+        //
+        // PRESENCE IS TESTED AGAINST undefined, NOT TRUTHINESS. `sidecarText`
+        // is undefined when the walk found no sidecar, and an EMPTY STRING when
+        // it found an empty file — and `if (text)` cannot tell those apart, so
+        // an empty sidecar silently became "no sidecar". Likewise a file
+        // containing `null`, `false` or `0` parses successfully to a falsy
+        // value, which every later `if (sidecar)` then read as absent.
+        if (entry.sidecarText !== undefined && entry.sidecarText !== null) {
+            let parsed;
             try {
-                sidecar = JSON.parse(entry.sidecarText);
+                parsed = JSON.parse(entry.sidecarText);
             } catch (e) {
                 throw new Error(`This scenario's .scenario.json could not be parsed `
                     + `(${e.message}). It states the coordinate frame, origin and rate, so it `
                     + `cannot be skipped — fix or remove it.`);
             }
+            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+                throw new Error(`This scenario's .scenario.json parsed to `
+                    + `${Array.isArray(parsed) ? "an array" : JSON.stringify(parsed)} rather than `
+                    + `an object, so it states no coordinate frame. Fix or remove it.`);
+            }
+            sidecar = parsed;
         }
         if (entry.labelsText) {
             try { labels = JSON.parse(entry.labelsText); } catch (e) { labels = null; }
