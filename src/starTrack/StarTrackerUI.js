@@ -745,6 +745,15 @@ export function drawStarTrackerOverlay() {
     const T = result.solved.transforms[i];
     if (!T) return;
 
+    // The analysis lives in the DECODED pixel space of its run - and the decode size is a user
+    // setting (Settings > Performance Tweaks > Max Resolution), so a 4K source may have been
+    // analysed at 1080P or 720P, and the setting can change after the run. Coordinates are
+    // therefore rescaled from the analysed frame size to the CURRENT decoded size before the
+    // display mapping; when nothing changed the factor is one.
+    const rsx = result.videoW ? view.videoWidth / result.videoW : 1;
+    const rsy = result.videoH ? view.videoHeight / result.videoH : 1;
+    const toCanvas = (vx, vy) => view.videoToCanvasCoords(vx * rsx, vy * rsy);
+
     let magMin = Infinity, magMax = -Infinity;
     for (const c of result.solved.classified) {
         if (!Number.isFinite(c.magnitude)) continue;
@@ -772,7 +781,10 @@ export function drawStarTrackerOverlay() {
             rx = o.rx; ry = o.ry;
         }
         const [vx, vy] = applyTransform(T, rx, ry);
-        const [px, py] = view.videoToCanvasCoordsOriginal(vx, vy);
+        // Display-space mapping, not videoToCanvasCoordsOriginal: that one expects ORIGINAL
+        // source coordinates, and on a 4K clip decoded at a capped resolution it compresses
+        // every circle toward the top-left, parting them from their stars.
+        const [px, py] = toCanvas(vx, vy);
         if (px < -40 || py < -40 || px > overlay.width + 40 || py > overlay.height + 40) continue;
 
         const t01 = Number.isFinite(c.magnitude) && magMax > magMin
@@ -813,11 +825,11 @@ export function drawStarTrackerOverlay() {
             if (i < cl.first - 3 || i > cl.last + 3) continue;
             const [rx, ry] = cl.at(Math.min(Math.max(i, cl.first), cl.last));
             const [vx, vy] = applyTransform(T, rx, ry);
-            const [px, py] = view.videoToCanvasCoordsOriginal(vx, vy);
+            const [px, py] = toCanvas(vx, vy);
             if (px < -80 || py < -80 || px > overlay.width + 80 || py > overlay.height + 80) continue;
             // The ring's radius is the formation extent, mapped through the same video-to-canvas
             // scaling as the position so it hugs the same pixels at any window size.
-            const [ex, ey] = view.videoToCanvasCoordsOriginal(vx + cl.extent + 10, vy);
+            const [ex, ey] = toCanvas(vx + cl.extent + 10, vy);
             const radius = Math.max(20, Math.hypot(ex - px, ey - py));
             overlayCtx.beginPath();
             overlayCtx.arc(px, py, radius, 0, Math.PI * 2);
