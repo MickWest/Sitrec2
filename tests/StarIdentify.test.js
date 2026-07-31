@@ -11,6 +11,7 @@ import {
     STAR_IDENTIFY_DEFAULTS,
     parseStarCatalog,
     parseStarNames,
+    scalePriorFromFov,
     raDecToVec,
     vecToRaDec,
     tangentBasis,
@@ -191,6 +192,15 @@ describe("StarIdentify blind solve", () => {
         // survive on stale credit.
         const tol = Math.max(4, 0.005 * field.W);
         for (const m of result.matches) expect(m.dPx).toBeLessThanOrEqual(tol);
+
+        // The exported calibration function agrees with the identifications it shipped: a
+        // matched star's image position maps to its catalog place on the sky.
+        for (const m of result.matches.slice(0, 10)) {
+            const sky = result.refToSky(stars[m.image].x, stars[m.image].y);
+            const dRaDeg = Math.abs(sky.raDeg - m.raDeg) * Math.cos(m.decDeg * D2R);
+            const dDecDeg = Math.abs(sky.decDeg - m.decDeg);
+            expect(Math.hypot(dRaDeg, dDecDeg)).toBeLessThan(0.2);
+        }
     });
 
     test("a narrower southern field around Crux is identified too", () => {
@@ -226,6 +236,37 @@ describe("StarIdentify blind solve", () => {
         expect(result.matches.length).toBeGreaterThan(100);
         const {right, wrong} = scoreSolve(result, stars);
         expect(right).toBeGreaterThanOrEqual(0.8 * result.matches.length);
+    });
+
+    test("a letterboxed strip identifies: off-frame catalog stars do not count against it", () => {
+        // The in-field gate is a circle around the centre; a 1276x400 strip sees only a slice
+        // of that circle, and stars projecting OFF the frame can match nothing - counted, they
+        // inflate the consensus denominator and consume the brightest-N pool until a valid
+        // deep field fails. Projection is confined to the image rectangle.
+        const field = {raDeg: 84, decDeg: 2, rollDeg: 10, pxPerDeg: 51, W: 1276, H: 400,
+            magLimit: 9.0};
+        const truth = projectField(field);
+        expect(truth.length).toBeGreaterThan(60);
+        const stars = degrade(truth, {seed: 23, W: field.W, H: field.H});
+
+        const result = solveField(stars, catalog, [index], {
+            center: [field.W / 2, field.H / 2],
+            bounds: [0, 0, field.W, field.H],
+        });
+        expect(result.ok).toBe(true);
+        const {right} = scoreSolve(result, stars);
+        expect(right).toBeGreaterThanOrEqual(0.8 * result.matches.length);
+    });
+
+    test("the scale prior converts field of view in tangent units on the short axis", () => {
+        // Portrait and landscape frames of the same camera share the same prior - the
+        // metadata's vertical FOV describes the sensor's SHORT axis - and the conversion uses
+        // gnomonic tangent units, where half the frame spans tan(fov/2).
+        const landscape = scalePriorFromFov(53.13, 4032, 3024);
+        const portrait = scalePriorFromFov(53.13, 3024, 4032);
+        expect(portrait).toBeCloseTo(landscape, 12);
+        expect(landscape).toBeCloseTo(2 * Math.tan(53.13 * Math.PI / 360) / 3024, 9);
+        expect(scalePriorFromFov(0, 100, 100)).toBeUndefined();
     });
 
     test("bright terrestrial clutter cannot hijack the quad stars", () => {

@@ -6,7 +6,10 @@
 //
 // The menu lives under Video, alongside the other motion-analysis tools.
 
-import {FileManager, Globals, guiMenus, NodeMan, Sit, setRenderOne} from "../Globals";
+import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, Sit, setRenderOne} from "../Globals";
+import {getCelestialDirectionFromRaDec} from "../CelestialMath";
+import {CNodeController} from "../nodes/CNodeController";
+import {CNodeArray} from "../nodes/CNodeArray";
 import {SITREC_APP} from "../configUtils";
 import {CVideoImageData} from "../CVideoImageData";
 import {par} from "../par";
@@ -22,6 +25,7 @@ import {
     buildQuadIndex,
     parseStarCatalog,
     parseStarNames,
+    scalePriorFromFov,
     solveField,
 } from "./StarIdentify";
 
@@ -397,6 +401,125 @@ export function makeStarChart() {
     params.status = `star chart: ${stars.length} stars`;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Sync Camera: drive the look camera through the star field
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The camera's per-frame pose through the star field, as two SKY DIRECTIONS: where the frame's
+ * centre points, and where a point directly above the centre points. Two directions define the
+ * whole orientation - boresight and roll together - and sampling them numerically through the
+ * per-frame transform and the identify calibration sidesteps every angle-convention question
+ * (roll sign, mirroring, pole behaviour) that a formula would have to get right.
+ *
+ * Frames outside the analysed range hold the nearest solved pose, matching how the overlay
+ * treats them.
+ */
+function starTrackPose(globalFrame) {
+    const r = result;
+    const refToSky = r?.identify?.solved?.refToSky;
+    if (!refToSky || !r.videoW) return null;
+    const transforms = r.solved.transforms;
+    const i = Math.max(0, Math.min(transforms.length - 1, Math.round(globalFrame) - r.frame0));
+    const T = transforms[i];
+    if (!T) return null;
+    const inv = invertTransform(T);
+    if (!inv) return null;
+    const cx = r.videoW / 2, cy = r.videoH / 2;
+    const upOffset = Math.max(50, r.videoH * 0.1);
+    const [rx0, ry0] = applyTransform(inv, cx, cy);
+    const [rx1, ry1] = applyTransform(inv, cx, cy - upOffset);
+    return {centre: refToSky(rx0, ry0), above: refToSky(rx1, ry1)};
+}
+
+/**
+ * A camera controller that orients the look camera along the star-field solve: boresight at
+ * the identified sky position of each frame's centre, rolled so that the sky direction "above
+ * centre" in the video is up in the camera. Orientation only - position, and FOV via its own
+ * switch, stay under whatever else controls them.
+ *
+ * The pose is computed AT APPLY TIME from the current result and the frame's own instant, so
+ * a changed start time or timezone re-points the camera without any cache to invalidate; and
+ * the apply is idempotent - it rebuilds the orientation from scratch each call, never rotating
+ * relative to whatever pose it found (CNode3D can run a controller chain many times per frame).
+ */
+class CNodeControllerStarTrack extends CNodeController {
+    apply(f, objectNode) {
+        const pose = starTrackPose(f);
+        if (!pose) return;
+        const camera = objectNode.camera;
+        const date = GlobalDateTimeNode.frameToDate(f);
+        const D2R = Math.PI / 180;
+        const fwd = getCelestialDirectionFromRaDec(
+            pose.centre.raDeg * D2R, pose.centre.decDeg * D2R, date);
+        const aboveDir = getCelestialDirectionFromRaDec(
+            pose.above.raDeg * D2R, pose.above.decDeg * D2R, date);
+        // Up = the above-centre direction, orthogonalised against the boresight.
+        const up = aboveDir.clone().sub(fwd.clone().multiplyScalar(fwd.dot(aboveDir)));
+        if (up.lengthSq() < 1e-12) return;
+        up.normalize();
+        camera.up = up;
+        camera.lookAt(camera.position.clone().add(fwd));
+        objectNode.syncUIPosition?.();
+    }
+}
+
+/**
+ * Register the star-field camera in the Camera menu's Heading (and FOV) source dropdowns and
+ * switch to it. The user can switch back to Manual - or anything else - in the Camera menu;
+ * the option stays available until the analysis is cleared.
+ */
+export function syncCameraToStarTrack() {
+    if (!result?.identify?.solved?.ok) {
+        params.status = "run Analyze and Identify Stars first";
+        return;
+    }
+    const lookCamera = NodeMan.get("lookCamera", false);
+    const headingSwitch = NodeMan.get("CameraLOSController", false);
+    if (!lookCamera || !headingSwitch) {
+        params.status = "no look camera to sync in this sitch";
+        return;
+    }
+
+    let controller = NodeMan.get("starTrackCameraController", false);
+    if (!controller) {
+        controller = new CNodeControllerStarTrack({id: "starTrackCameraController"});
+        lookCamera.addControllerNode(controller);
+        // Tracking Wobble is attached at setup time; an absolute pose applied BEFORE it would
+        // be wobbled, applied after it would wipe the wobble - keep wobble last.
+        lookCamera.moveControllerToEnd?.("trackingWobbleController");
+    }
+    headingSwitch.replaceOption("Star Track", controller);
+    headingSwitch.selectOption("Star Track");
+
+    // The solve knows the zoom too: a constant vertical FOV from the fitted plate scale, so
+    // the rendered sky matches the video's framing, selectable alongside the heading.
+    const fovSwitch = NodeMan.get("fovSwitch", false);
+    if (fovSwitch && result.videoH) {
+        const s = result.identify.solved;
+        const tanPerPx = (Math.PI / 180) / s.pxPerDeg;
+        const vfovDeg = 2 * Math.atan(tanPerPx * result.videoH / 2) * 180 / Math.PI;
+        let fovNode = NodeMan.get("starTrackFOV", false);
+        if (fovNode) {
+            fovNode.array = new Array(Sit.frames).fill(vfovDeg);
+        } else {
+            fovNode = new CNodeArray({id: "starTrackFOV", array: new Array(Sit.frames).fill(vfovDeg)});
+        }
+        fovSwitch.replaceOption("Star Track", fovNode);
+        fovSwitch.selectOption("Star Track");
+    }
+
+    params.status = "camera synced to the star field";
+    setRenderOne();
+}
+
+/** Take the Star Track options out of the camera dropdowns - BEFORE the solve they rest on
+ * goes away, so the switches fall back to a valid choice rather than a dangling one. */
+function detachStarTrackCamera() {
+    NodeMan.get("CameraLOSController", false)?.removeOption?.("Star Track");
+    NodeMan.get("fovSwitch", false)?.removeOption?.("Star Track");
+}
+
 /**
  * Blind-identify the solved star map against the star catalog: no location, no time, no
  * pointing assumed - the field is found purely from the geometry of the stars themselves
@@ -430,10 +553,12 @@ export async function identifyStars() {
         // prune a blind solver can be handed - and the field of view says which index tier to
         // try first: a 24mm phone frame spans ~67 deg, which only the wide tier can represent.
         const optics = myResult.videoData?.importMetadata?.optics;
-        let scalePrior;
-        if (optics?.verticalFovDeg > 0 && myResult.videoH) {
-            scalePrior = (optics.verticalFovDeg * Math.PI / 180) / myResult.videoH;
-        }
+        // The metadata's vertical FOV describes the sensor's SHORT axis, and the solver's scale
+        // lives in gnomonic tangent units - scalePriorFromFov handles both, so portrait photos
+        // do not arrive with a 40% prior error that fails every tier.
+        const scalePrior = optics?.verticalFovDeg > 0 && myResult.videoH
+            ? scalePriorFromFov(optics.verticalFovDeg, myResult.videoW, myResult.videoH)
+            : undefined;
         const fovWdeg = scalePrior
             ? scalePrior * Math.max(myResult.videoW, myResult.videoH) * 180 / Math.PI : 0;
         const tierOrder = STAR_IDENTIFY_DEFAULTS.tiers.map((_, i) => i);
@@ -458,6 +583,7 @@ export async function identifyStars() {
                 ...(myResult.videoW ? {
                     center: [myResult.videoW / 2, myResult.videoH / 2],
                     width: Math.max(myResult.videoW, myResult.videoH),
+                    bounds: [0, 0, myResult.videoW, myResult.videoH],
                 } : {}),
                 ...(scalePrior ? {scalePrior} : {}),
             });
@@ -935,6 +1061,9 @@ export function drawStarTrackerOverlay() {
  * time a fresh one is needed.
  */
 export function resetStarTracker() {
+    // The camera options rest on the solve being discarded; remove them FIRST so the switches
+    // fall back to a valid choice rather than a dangling one.
+    detachStarTrackCamera();
     result = null;
     Globals.starTrackerResult = undefined;
     params.status = "not run";
@@ -1021,6 +1150,8 @@ export function setupStarTrackerMenu() {
         .name("Analyze In/Out range");
     folder.add({identify: () => { identifyStars(); }}, "identify")
         .name("Identify Stars (catalog)");
+    folder.add({sync: () => { syncCameraToStarTrack(); }}, "sync")
+        .name("Sync Camera to Star Field");
     folder.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)");
     folder.add(params, "chartTracks").name("Chart: object tracks");
 
