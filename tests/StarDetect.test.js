@@ -344,10 +344,12 @@ describe("StarDetect source extraction", () => {
 
     test("a source clipped in green everywhere is not silently accepted", () => {
         // The mirror of the luma bug. This blob is (100,245,100) throughout: green hard-clipped
-        // in every pixel, red and blue mid-range. There is no spatially consistent sample to
-        // measure color from, so the detector must say so - and the policy must refuse to accept
-        // a source it has no color evidence about, rather than defaulting to "not green" and
-        // passing it through as a star.
+        // in every pixel, red and blue mid-range. There are no CLEAN samples - but red and blue
+        // are readable and the clipped green is a LOWER BOUND, and even the bound exceeds the
+        // green ratio against them. So the source is convicted as GREEN on partial evidence,
+        // rather than merely refused for having none - which matters, because "no colour
+        // evidence" alone must no longer condemn (a white-clipped bright star is colourless
+        // too, and round).
         const W = 64, H = 64;
         const rgba = new Uint8ClampedArray(W * H * 4);
         for (let y = 0; y < H; y++) {
@@ -365,9 +367,10 @@ describe("StarDetect source extraction", () => {
         expect(blob).toBeDefined();
         expect(blob.colorUnknown).toBe(true);
         // Round and modest in size, so neither the elongation nor the area cut can save us here -
-        // the color-evidence rule has to be what rejects it.
+        // the partial-channel colour evidence has to be what rejects it.
         expect(blob.elongation).toBeLessThan(2.5);
-        expect(rejectReason(blob)).toBe("noColor");
+        expect(blob.green).toBe(true);
+        expect(rejectReason(blob)).toBe("green");
     });
 
     test("sky pixels swept in by smoothing do not count as color evidence", () => {
@@ -393,7 +396,7 @@ describe("StarDetect source extraction", () => {
         expect(blob).toBeDefined();
         expect(blob.area).toBeGreaterThan(3);          // the mask really did grow past the source
         expect(blob.colorUnknown).toBe(true);
-        expect(rejectReason(blob)).toBe("noColor");
+        expect(rejectReason(blob)).toBe("green");
     });
 
     test("a minimum-area source is not rejected for lack of color", () => {
@@ -420,6 +423,77 @@ describe("StarDetect source extraction", () => {
         expect(blob.area).toBeGreaterThan(3);      // smoothing really did dilate the mask
         expect(blob.colorUnknown).toBe(false);
         expect(rejectReason(blob)).not.toBe("noColor");
+    });
+
+    test("a small round green light is kept: a laser is never a dot", () => {
+        // Green rejection exists for the laser, whose beam is elongated and whose core is
+        // large. An aircraft's starboard light is a compact round green dot - and on a
+        // twilight still, two of those were the only real sources the unconditional rule
+        // deleted. Small relative to the frame and round, green passes.
+        const W = 512, H = 512;
+        const rgba = new Uint8ClampedArray(W * H * 4);
+        for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+                const i = (y * W + x) * 4;
+                const inside = Math.hypot(x - 256, y - 256) < 3.2;
+                rgba[i] = inside ? 60 : 24;
+                rgba[i + 1] = inside ? 190 : 24;
+                rgba[i + 2] = inside ? 60 : 24;
+                rgba[i + 3] = 255;
+            }
+        }
+        const blob = detectSources(rgba, W, H).sources.find((s) => s.area >= 3);
+        expect(blob).toBeDefined();
+        expect(blob.green).toBe(true);
+        expect(blob.area).toBeLessThan(1e-3 * W * H);
+        expect(rejectReason(blob)).toBeNull();
+    });
+
+    test("a white-clipped round disk is accepted: it is a bright star, not a beam", () => {
+        // On a deep exposure the BRIGHTEST stars clip all three channels across their whole
+        // disk - the least ambiguous objects in the image, and an unconditional no-colour rule
+        // deleted exactly those. With every channel clipped there is nothing for colour to
+        // say; shape decides, and this disk is round.
+        const W = 64, H = 64;
+        const rgba = new Uint8ClampedArray(W * H * 4);
+        for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+                const i = (y * W + x) * 4;
+                const inside = Math.hypot(x - 32, y - 32) < 9;
+                const v = inside ? 245 : 24;
+                rgba[i] = v; rgba[i + 1] = v; rgba[i + 2] = v; rgba[i + 3] = 255;
+            }
+        }
+        const blob = detectSources(rgba, W, H, {detectSmoothSigma: 0}).sources
+            .find((s) => s.area > 50);
+        expect(blob).toBeDefined();
+        expect(blob.colorUnknown).toBe(true);
+        expect(blob.green).toBe(false);
+        expect(rejectReason(blob)).toBeNull();
+    });
+
+    test("a white-clipped streak is still refused: colourless AND non-round", () => {
+        // The shape exception must not reopen the door to clipped beam cores: a colourless
+        // blob that is a streak rather than a disk has neither colour nor shape vouching for
+        // it. Elongation ~2, between the no-colour roundness bar (1.6) and the general
+        // elongation cut (2.5), so only the no-colour rule can be what rejects it.
+        const W = 64, H = 64;
+        const rgba = new Uint8ClampedArray(W * H * 4);
+        for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+                const i = (y * W + x) * 4;
+                const inside = ((x - 32) / 16) ** 2 + ((y - 32) / 7) ** 2 < 1;
+                const v = inside ? 245 : 24;
+                rgba[i] = v; rgba[i + 1] = v; rgba[i + 2] = v; rgba[i + 3] = 255;
+            }
+        }
+        const blob = detectSources(rgba, W, H, {detectSmoothSigma: 0}).sources
+            .find((s) => s.area > 100);
+        expect(blob).toBeDefined();
+        expect(blob.colorUnknown).toBe(true);
+        expect(blob.elongation).toBeGreaterThan(1.6);
+        expect(blob.elongation).toBeLessThan(2.5);
+        expect(rejectReason(blob)).toBe("noColor");
     });
 
     test("a fixed aperture does not swallow a neighbouring source's pixels", () => {

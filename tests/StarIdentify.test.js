@@ -207,6 +207,74 @@ describe("StarIdentify blind solve", () => {
         expect(right).toBeGreaterThanOrEqual(0.7 * result.matches.length);
     });
 
+    test("an image far deeper than the verification catalog still identifies", () => {
+        // A 12-megapixel astrophoto detects hundreds of stars, most fainter than the mag-7
+        // verification pool can show. A consensus fraction measured against the RAW image
+        // count is then unreachable by any correct solve - the evidence is matching most of
+        // what the catalog CAN show in the field, and the refinement then names the fainter
+        // stars from a depth-adaptive pool.
+        const field = {raDeg: 84, decDeg: 2, rollDeg: 10, pxPerDeg: 51, W: 1276, H: 720,
+            magLimit: 9.0};
+        const truth = projectField(field);
+        expect(truth.length).toBeGreaterThan(120);
+        const stars = degrade(truth, {seed: 21, W: field.W, H: field.H});
+
+        const result = solveField(stars, catalog, [index], {center: [field.W / 2, field.H / 2]});
+        expect(result.ok).toBe(true);
+        expect(Math.abs(result.centerDecDeg - field.decDeg)).toBeLessThan(0.5);
+        // The deep rematch reaches well past the verification pool's depth.
+        expect(result.matches.length).toBeGreaterThan(100);
+        const {right, wrong} = scoreSolve(result, stars);
+        expect(right).toBeGreaterThanOrEqual(0.8 * result.matches.length);
+    });
+
+    test("bright terrestrial clutter cannot hijack the quad stars", () => {
+        // The real failure this encodes: a lit tree in the corner of a twilight photo detects
+        // as dozens of blobs BRIGHTER than any star, so the brightest-N quad set was all
+        // foliage and no hypothesis could be right. Clutter is texture - many detections
+        // packed together - and sky is sparse; anchors are drawn from the sparse population.
+        // Enough sky stars that the clutter is a minority of detections, as on a real photo -
+        // the density bar is a median, and a majority-clutter frame would move the median.
+        const field = {raDeg: 84, decDeg: 2, rollDeg: 25, pxPerDeg: 51, W: 1276, H: 720,
+            magLimit: 6.5};
+        const truth = projectField(field);
+        const stars = degrade(truth, {seed: 7, W: field.W, H: field.H});
+        // Forty very bright blobs crammed into a corner square, like foliage.
+        const rng = mulberry32(41);
+        for (let i = 0; i < 40; i++) {
+            stars.push({x: 30 + rng() * 150, y: 560 + rng() * 130,
+                mag: -13 + rng() * 3, hip: -1});
+        }
+        const result = solveField(stars, catalog, [index], {center: [field.W / 2, field.H / 2]});
+        expect(result.ok).toBe(true);
+        const {right} = scoreSolve(result, stars);
+        expect(right).toBeGreaterThanOrEqual(0.8 * result.matches.length);
+    });
+
+    test("a phone-lens wide field solves - verification is exact at any field of view", () => {
+        // A 24mm-equivalent phone frame spans ~67 degrees. A pinhole camera is exactly
+        // "gnomonic about the optical axis plus a similarity", so once verification re-centres
+        // its tangent point on the image centre the model has NO field-size error - and even
+        // the narrow tier's locally-small quads then verify correctly from anywhere in the
+        // frame. Both the ordinary and the wide tier must solve this field; the wide tier
+        // remains for skies where only the naked-eye-bright stars are visible at all.
+        const field = {raDeg: 40, decDeg: 25, rollDeg: 15, pxPerDeg: 19, W: 1276, H: 957,
+            magLimit: 5.5};
+        const truth = projectField(field);
+        expect(truth.length).toBeGreaterThan(60);
+        const stars = degrade(truth, {seed: 31, W: field.W, H: field.H});
+        const scalePrior = (Math.PI / 180) / field.pxPerDeg;
+
+        for (const idx of [index, buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[2])]) {
+            const result = solveField(stars, catalog, [idx],
+                {center: [field.W / 2, field.H / 2], scalePrior});
+            expect(result.ok).toBe(true);
+            expect(Math.abs(result.centerDecDeg - field.decDeg)).toBeLessThan(1.5);
+            const {right} = scoreSolve(result, stars);
+            expect(right).toBeGreaterThanOrEqual(0.6 * result.matches.length);
+        }
+    });
+
     test("points that are not a sky refuse to solve rather than inventing a field", () => {
         const rng = mulberry32(99);
         const stars = Array.from({length: 30}, () => ({

@@ -8,6 +8,7 @@
 
 import {FileManager, Globals, guiMenus, NodeMan, Sit, setRenderOne} from "../Globals";
 import {SITREC_APP} from "../configUtils";
+import {CVideoImageData} from "../CVideoImageData";
 import {par} from "../par";
 import {abFrameRange} from "../TraverseAnalysisData";
 import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator";
@@ -347,12 +348,14 @@ export function makeStarChart() {
         g.arc(px, py, r, 0, Math.PI * 2);
         g.fill();
 
-        // When the field has been identified, the chart says which star is which.
+        // When the field has been identified, the chart says which star is which - proper
+        // names a touch larger and in white, fallback designations quiet grey.
         if (result.identify) {
             const id = result.identify.identified.get(c.index);
             if (id) {
-                g.fillStyle = "#8a8f96";
-                g.font = `${Math.max(10, Math.round(11 * Math.max(scale, 0.35)))}px sans-serif`;
+                const base = Math.max(10, Math.round(11 * Math.max(scale, 0.35)));
+                g.fillStyle = id.named ? "#fff" : "#8a8f96";
+                g.font = `${id.named ? base + 1 : base}px sans-serif`;
                 g.fillText(id.label, px + r + 4 * scale + 3, py + 4);
             }
         }
@@ -423,8 +426,21 @@ export async function identifyStars() {
             .filter((c) => c.klass === "star" && c.position && Number.isFinite(c.magnitude))
             .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index}));
 
+        // When the source carries optics metadata, the plate scale is KNOWN - the strongest
+        // prune a blind solver can be handed - and the field of view says which index tier to
+        // try first: a 24mm phone frame spans ~67 deg, which only the wide tier can represent.
+        const optics = myResult.videoData?.importMetadata?.optics;
+        let scalePrior;
+        if (optics?.verticalFovDeg > 0 && myResult.videoH) {
+            scalePrior = (optics.verticalFovDeg * Math.PI / 180) / myResult.videoH;
+        }
+        const fovWdeg = scalePrior
+            ? scalePrior * Math.max(myResult.videoW, myResult.videoH) * 180 / Math.PI : 0;
+        const tierOrder = STAR_IDENTIFY_DEFAULTS.tiers.map((_, i) => i);
+        if (fovWdeg > 35) tierOrder.reverse();
+
         let solved = null;
-        for (let tier = 0; tier < STAR_IDENTIFY_DEFAULTS.tiers.length; tier++) {
+        for (const tier of tierOrder) {
             if (!quadIndexes[tier]) {
                 params.status = `building star geometry index (tier ${tier + 1})`;
                 await yieldToBrowser();
@@ -438,10 +454,13 @@ export async function identifyStars() {
             // bounding box as the field, which a sparse or lopsided sky misstates. The extent
             // is the LARGER frame dimension: the solver derives its catalog field radius from
             // it, and a portrait frame's corners lie beyond a width-derived radius.
-            solved = solveField(stars, catalog, [quadIndexes[tier]], myResult.videoW ? {
-                center: [myResult.videoW / 2, myResult.videoH / 2],
-                width: Math.max(myResult.videoW, myResult.videoH),
-            } : {});
+            solved = solveField(stars, catalog, [quadIndexes[tier]], {
+                ...(myResult.videoW ? {
+                    center: [myResult.videoW / 2, myResult.videoH / 2],
+                    width: Math.max(myResult.videoW, myResult.videoH),
+                } : {}),
+                ...(scalePrior ? {scalePrior} : {}),
+            });
             if (!fresh()) return;
             if (solved.ok) break;
         }
@@ -458,6 +477,9 @@ export async function identifyStars() {
                 || (nm?.greek ? `${nm.greek} ${nm.constellation}` : `HIP ${m.hip}`);
             identified.set(stars[m.image].index, {
                 label, hip: m.hip, mag: m.mag, raDeg: m.raDeg, decDeg: m.decDeg, dPx: m.dPx,
+                // A PROPER name (Altair, Deneb) - drawn more prominently than the Bayer and
+                // HIP-number fallbacks.
+                named: !!nm?.name,
             });
         }
         myResult.identify = {solved, identified};
@@ -580,34 +602,72 @@ export async function runStarTracker() {
         onAbort: () => { aborted = true; },
     });
 
+    // A still image on a video timeline (CVideoImageData) has ONE real frame however many the
+    // timeline claims - detecting it hundreds of times over would be minutes of work for one
+    // answer, and with no motion there is nothing to solve or classify: every detected point
+    // is presumed a star, which is all a single exposure of the sky can honestly claim.
+    const still = videoData instanceof CVideoImageData;
+
     try {
         const perFrame = [];
         let videoW = 0, videoH = 0;
-        for (let f = frame0; f <= frame1; f++) {
+        const rejectCounts = {};
+        const rejectSamples = [];
+        const lastFrame = still ? frame0 : frame1;
+        for (let f = frame0; f <= lastFrame; f++) {
             if (ctx.stale()) {
                 params.status = aborted ? "aborted" : "cancelled (video changed)";
                 return null;
             }
             const done = f - frame0 + 1;
-            params.status = `detecting ${done}/${total}`;
-            updateProgress({percent: (done / total) * 90, status: `Detecting sources: ${done}/${total}`});
+            params.status = still ? "detecting (still image)" : `detecting ${done}/${total}`;
+            updateProgress({
+                percent: still ? 40 : (done / total) * 90,
+                status: still ? "Detecting sources in the still image"
+                    : `Detecting sources: ${done}/${total}`,
+            });
 
             await yieldToBrowser();
             const px = await framePixels(view, f, ctx);
             if (!px) { perFrame.push([]); continue; }
             if (!videoW) { videoW = px.W; videoH = px.H; }
 
+            // The "too big to be a star" bound scales with SENSOR AREA: the default was
+            // measured on 720p-class footage, and on a 12-megapixel astrophoto the saturated
+            // disk of a first-magnitude star legitimately covers tens of thousands of pixels -
+            // a fixed bound silently deletes exactly the brightest stars in the image.
+            const dynMaxArea = Math.round(STAR_DETECT_DEFAULTS.maxArea
+                * Math.max(1, (px.W * px.H) / (1276 * 720)));
             const {sources} = detectSources(px.data, px.W, px.H, {
                 threshSigma: ctx.threshSigma,
                 minArea: ctx.minArea,
+                maxArea: dynMaxArea,
                 ...ctx.calDetect,
             });
             // The WHOLE detector record is kept, not a trimmed copy. Stage 3's photometry reads
             // apertureFlux/apertureComplete/apertureContaminated off it, and stripping the object
             // down to positions silently demotes every magnitude to the biased isophotal fallback.
             // Rejection runs with the SAME settings detection did, or the two disagree about
-            // minArea and quietly re-reject blobs the user's setting admitted.
-            perFrame.push(sources.filter((s) => !rejectReason(s, {minArea: ctx.minArea})));
+            // minArea and quietly re-reject blobs the user's setting admitted. What gets
+            // rejected, and why, is tallied onto the result - "why is that star not circled"
+            // should be answerable by looking.
+            const kept = [];
+            for (const s of sources) {
+                const why = rejectReason(s, {minArea: ctx.minArea, maxArea: dynMaxArea});
+                if (why) {
+                    rejectCounts[why] = (rejectCounts[why] || 0) + 1;
+                    if (rejectSamples.length < 200) {
+                        rejectSamples.push({
+                            why, f, x: Math.round(s.x), y: Math.round(s.y),
+                            area: s.area, elongation: +s.elongation.toFixed(2),
+                            peakSNR: +s.peakSNR.toFixed(1),
+                        });
+                    }
+                } else {
+                    kept.push(s);
+                }
+            }
+            perFrame.push(kept);
         }
 
         if (ctx.stale()) {
@@ -624,7 +684,10 @@ export async function runStarTracker() {
         updateProgress({percent: 96, status: "Building star map"});
         await yieldToBrowser();
         const solved = solveStarField(perFrame, chain.cumulative, {
-            minObservations: ctx.minObservations,
+            // On a still, single observations carry the whole claim, and two detections in
+            // one frame are two stars by definition - so merging is off.
+            minObservations: still ? 1 : ctx.minObservations,
+            ...(still ? {starMergeRadius: 0} : {}),
             driftSignificance: ctx.driftSignificance,
             driftMinSigmas: ctx.driftMinSigmas,
             ...ctx.calSolve,
@@ -634,13 +697,22 @@ export async function runStarTracker() {
             return null;
         }
 
+        // A still's solve covers one frame; the overlay indexes transforms by the CURRENT
+        // slider position, and the image is the same at every one of them - so the single
+        // transform is held across the whole nominal range.
+        if (still) {
+            const T0 = solved.transforms[0] ?? {A: [1, 0], B: [0, 0]};
+            solved.transforms = Array.from({length: total}, () => T0);
+        }
+
         // Stage 4: the lights that move TOGETHER - an aircraft's flashing cluster - grouped into
-        // objects that no individual track is good enough to establish.
+        // objects that no individual track is good enough to establish. Meaningless for a
+        // still: motion is the one thing a single exposure cannot show.
         updateProgress({percent: 99, status: "Grouping moving clusters"});
         await yieldToBrowser();
         const sigma = solved.classified.find((c) => c.sigma)?.sigma ?? 1;
-        const clusters = groupMovingClusters(solved.tracks, solved.classified, solved.transforms,
-            sigma, {...ctx.calSolve, ...ctx.calCluster});
+        const clusters = still ? [] : groupMovingClusters(solved.tracks, solved.classified,
+            solved.transforms, sigma, {...ctx.calSolve, ...ctx.calCluster});
 
         // Reference-frame positions of every observation, recomputed against the FINAL transforms.
         // The rx/ry stored during association were measured against the first refinement, and the
@@ -658,15 +730,17 @@ export async function runStarTracker() {
         }
 
         result = {frame0, frame1, generation, videoData, perFrame, chain, solved, clusters,
-            videoW, videoH};
+            videoW, videoH, still, rejectCounts, rejectSamples};
         // Published for inspection and for other tools, the way camera motion publishes its own
         // per-video data on Globals.
         Globals.starTrackerResult = result;
         const counts = {};
         for (const c of solved.classified) counts[c.klass] = (counts[c.klass] || 0) + 1;
-        params.status = `${counts.star || 0} stars, ${counts.moving || 0} moving`
-            + (clusters.length ? `, ${clusters.length} light cluster${clusters.length > 1 ? "s" : ""}` : "")
-            + `, sigma ${solved.classified[0] ? solved.classified[0].sigma.toFixed(2) : "?"} px`;
+        params.status = still
+            ? `${counts.star || 0} stars (still image)`
+            : `${counts.star || 0} stars, ${counts.moving || 0} moving`
+                + (clusters.length ? `, ${clusters.length} light cluster${clusters.length > 1 ? "s" : ""}` : "")
+                + `, sigma ${solved.classified[0] ? solved.classified[0].sigma.toFixed(2) : "?"} px`;
         ensureOverlay();
         return result;
     } finally {
@@ -805,13 +879,14 @@ export function drawStarTrackerOverlay() {
             overlayCtx.fillText(`moves ${c.totalDrift.toFixed(0)} px vs stars`, px + radius + 6, py + 4);
         }
 
-        // Identified stars carry their catalog names.
+        // Identified stars carry their catalog names. A star with a PROPER name reads a
+        // touch larger and in white; Bayer and HIP-number fallbacks stay quiet.
         if (c.klass === "star" && params.showStarNames && result.identify) {
             const id = result.identify.identified.get(c.index);
             if (id) {
                 overlayCtx.setLineDash([]);
-                overlayCtx.fillStyle = "#9fdcb0";
-                overlayCtx.font = "11px sans-serif";
+                overlayCtx.fillStyle = id.named ? "#fff" : "#9fdcb0";
+                overlayCtx.font = id.named ? "12px sans-serif" : "11px sans-serif";
                 overlayCtx.fillText(id.label, px + radius + 4, py + 4);
             }
         }

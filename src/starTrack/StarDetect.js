@@ -54,6 +54,12 @@ export const STAR_DETECT_DEFAULTS = {
 
     // Shape rejection: semi-major/semi-minor axis ratio above this is a streak, not a star.
     maxElongation: 2.5,
+    // Colourless (all-channel-clipped) blobs are held to a stricter roundness than ordinary
+    // sources: with no colour evidence, shape is the only witness left.
+    noColorMaxElongation: 1.6,
+    // A green blob bigger than this fraction of the whole frame is laser-scale, not
+    // light-scale; smaller AND round, it is somebody's green light and is kept.
+    greenMaxAreaFraction: 1e-3,
 
     // A blob whose peak barely clears the threshold but which covers a large area is a background
     // model failure, not a source. Require peak >= bg + peakSigma*sigma for blobs over minArea*4.
@@ -360,6 +366,7 @@ export function detectSources(rgba, W, H, opts = {}) {
         // them as color samples means a blob whose every real pixel is clipped still reports
         // plenty of "clean" samples and a confident color of exactly nothing.
         let sr = 0, sg = 0, sb = 0, nClean = 0, nCore = 0;
+        let srP = 0, sgP = 0, sbP = 0, nPartial = 0;
         let minX = W, maxX = -1, minY = H, maxY = -1;
 
         while (sp > 0) {
@@ -381,12 +388,21 @@ export function detectSources(rgba, W, H, opts = {}) {
             // A color sample must come from the source, not from sky the smoothing dragged in.
             if (v - bgPix[i] > P.threshSigma * sgPix[i]) {
                 nCore++;
+                const k = bgPix[i] / skyLuma;   // local sky level, in units of the global sky
                 if (!cr && !cg && !cb) {
-                    const k = bgPix[i] / skyLuma;   // local sky level, in units of the global sky
                     sr += pr - skyRGB[0] * k;
                     sg += pg - skyRGB[1] * k;
                     sb += pb - skyRGB[2] * k;
                     nClean++;
+                }
+                // PARTIAL evidence: red and blue readable, green possibly clipped. A clipped
+                // green value is a LOWER BOUND on the truth, so these samples can still convict
+                // a green source - they just can never acquit one.
+                if (!cr && !cb) {
+                    srP += pr - skyRGB[0] * k;
+                    sgP += pg - skyRGB[1] * k;
+                    sbP += pb - skyRGB[2] * k;
+                    nPartial++;
                 }
             }
             if (x === 0 || y === 0 || x === W - 1 || y === H - 1) edge = 1;
@@ -442,6 +458,18 @@ export function detectSources(rgba, W, H, opts = {}) {
         const g = colorUnknown ? 0 : sg / nClean;
         const b = colorUnknown ? 0 : sb / nClean;
 
+        // With no clean pixels at all, the partial samples still testify: a green-clipped core
+        // has readable red and blue and a green LOWER BOUND, and if even the bound exceeds the
+        // green ratio, the source is green - clean pixels or none. This is what convicts a
+        // saturated laser core as GREEN instead of letting it hide behind "no colour", and it
+        // is what frees the no-colour rejection to mean what it says: all three channels
+        // clipped, nothing readable anywhere.
+        let partialGreen = false;
+        if (colorUnknown && nPartial >= needClean) {
+            const rP = srP / nPartial, gLB = sgP / nPartial, bP = sbP / nPartial;
+            partialGreen = gLB > 0 && gLB > P.greenRatio * Math.max(rP, bP, 0);
+        }
+
         sources.push({
             component: myComponent,
             x: cx, y: cy,
@@ -463,9 +491,13 @@ export function detectSources(rgba, W, H, opts = {}) {
             // and any residual sky mis-estimate can push them negative - and a ratio test on
             // negative numbers inverts, making a neutral source look green. A source with no
             // positive green excess at all cannot be a green laser.
-            green: !colorUnknown && g > 0 && g > P.greenRatio * Math.max(r, b, 0),
+            green: (!colorUnknown && g > 0 && g > P.greenRatio * Math.max(r, b, 0)) || partialGreen,
             edgeTouching: !!edge,
             width: maxX - minX + 1, height: maxY - minY + 1,
+            // The frame's pixel count rides along so rejection policy can reason about size
+            // RELATIVE to the image - absolute pixel areas mean different things at 720p and
+            // 12 megapixels.
+            imageArea: W * H,
             // Bounding box, kept so proximity tests can bound an ELONGATED component. An
             // equivalent-circle radius from the area badly under-states the reach of a streak.
             minX, minY, maxX, maxY,
@@ -599,12 +631,22 @@ export function rejectReason(s, opts = {}) {
     const P = {...STAR_DETECT_DEFAULTS, ...opts};
     if (s.area < P.minArea) return "tiny";
     if (s.area > P.maxArea) return "huge";
-    if (s.green) return "green";
-    // Every channel clipped across the whole blob means we cannot tell a very bright star from a
-    // laser core. Refuse to guess: a tool whose job is to reject non-stars must not accept a
-    // source it has no evidence about. A real star has unclipped wings between the clip level and
-    // the detection threshold, so this fires only on pathologically flat, hard-edged blobs.
-    if (s.colorUnknown) return "noColor";
+    // Green convicts a LASER, and a laser is never a dot: its beam is elongated and its core
+    // large. A COMPACT, ROUND green source is a light - an aircraft's starboard light is
+    // exactly this, and on a twilight still two bright green lights were the only sources the
+    // old unconditional rule deleted. So green only rejects a blob that is also non-round or
+    // big relative to the image (a fixed pixel bound would mean different things at 720p and
+    // 12 megapixels).
+    if (s.green && (s.elongation > P.noColorMaxElongation
+        || s.area > P.greenMaxAreaFraction * (s.imageArea || Infinity))) return "green";
+    // Every channel clipped across the whole blob means colour has nothing to say - but
+    // colourlessness alone is no longer a conviction, because on a deep exposure it is exactly
+    // the BRIGHTEST stars that clip all three channels, and rejecting them deletes the most
+    // recognisable objects in the image. Green-clipped cores are already convicted as "green"
+    // by the partial-channel evidence above, so what reaches here is white-clipped - and there
+    // SHAPE separates the cases: a star clips into a round disk, a beam's clipped core into a
+    // streak. Only a colourless blob that is also non-round is refused.
+    if (s.colorUnknown && s.elongation > P.noColorMaxElongation) return "noColor";
     if (s.elongation > P.maxElongation) return "elongated";
     if (s.nPeaks > 1) return "blended";
     if (s.edgeTouching) return "edge";
