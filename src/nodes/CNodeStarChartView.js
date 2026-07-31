@@ -13,17 +13,17 @@
 // location, so it stays consistent with the 3D night sky rendering.
 
 import {CNodeTabbedCanvasView} from "./CNodeTabbedCanvasView";
-import {FileManager, GlobalDateTimeNode, NodeMan, guiShowHide, setRenderOne} from "../Globals";
+import {FileManager, GlobalDateTimeNode, guiShowHide, NodeMan, setRenderOne} from "../Globals";
 import {par} from "../par";
 import {ECEFToLLAVD_radii, getLST, raDecToAzElRADIANS} from "../LLA-ECEF-ENU";
 import {getAzElFromPositionAndForward} from "../SphericalMath";
-import {radians, degrees} from "../utils";
+import {degrees, radians} from "../utils";
 import * as Astronomy from "astronomy-engine";
 
 // Named color schemes for the chart. "Heavens-Above" mimics the pale blue
 // surround / white disk / black stars of heavens-above.com finder charts.
 const starChartSchemes = {
-    "Heavens-Above": {
+    "Lavendar": {
         outer: "#D3D9F0", disk: "#FFFFFF", edge: "#000050",
         tick: "#000050", azLabel: "#000050", cardinal: "#8890AC",
         star: "#000000", constLine: "#BBBBBB", constName: "#999999",
@@ -53,7 +53,7 @@ const starChartSchemes = {
     },
 };
 
-const defaultScheme = "Heavens-Above";
+const defaultScheme = "White";
 
 // Naked-eye bodies, with dot radii (px at a 400px chart radius) roughly
 // following apparent brightness. Sun/Moon drawn as disks, not magnitudes.
