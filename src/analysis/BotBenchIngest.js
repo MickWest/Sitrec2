@@ -163,7 +163,17 @@ export function longestUniformRun(items, timeOf, gapFactor = 1.5, expectedDt = n
     // cadence — doubling every speed and quadrupling every acceleration. A
     // sidecar that states the generator's rate is the ground truth for what a
     // step SHOULD be; the observed median is only the fallback.
-    const medianDt = Number.isFinite(expectedDt) && expectedDt > 0 ? expectedDt : median(deltas);
+    const observedDt = median(deltas);
+    // The declared rate is only authoritative if the timestamps AGREE with it.
+    // Checking one direction is not enough: a gapFactor test alone catches
+    // samples arriving too SLOWLY, and silently accepts a stream arriving twice
+    // as fast — which is then replayed at the slower nominal rate, halving
+    // every speed and quartering every acceleration. Disagreement in either
+    // direction means the metadata and the data are describing different
+    // things, and the timestamps are the data.
+    const declaredUsable = Number.isFinite(expectedDt) && expectedDt > 0
+        && observedDt > 0 && Math.abs(observedDt / expectedDt - 1) <= 0.1;
+    const medianDt = declaredUsable ? expectedDt : observedDt;
     const limit = medianDt * gapFactor;
 
     let bestStart = 0, bestLen = 1, start = 0, breaks = 0;
@@ -180,7 +190,10 @@ export function longestUniformRun(items, timeOf, gapFactor = 1.5, expectedDt = n
     }
     return {
         items: items.slice(bestStart, bestStart + bestLen),
-        medianDt, breaks,
+        medianDt, breaks, observedDt,
+        // True when a declared rate was supplied but the timestamps contradict
+        // it; the caller reports this rather than quietly preferring one.
+        declaredMismatch: Number.isFinite(expectedDt) && expectedDt > 0 && !declaredUsable,
     };
 }
 
@@ -482,6 +495,12 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
     const declaredDt = Number.isFinite(sidecar?.nominalFps) && sidecar.nominalFps > 0
         ? 1 / sidecar.nominalFps : null;
     const run = longestUniformRun(candidates, (p) => p.t, 1.5, declaredDt);
+    if (run.declaredMismatch) {
+        warnings.push(`The sidecar declares ${(1 / declaredDt).toFixed(3)} Hz but the Time column `
+            + `steps every ${run.observedDt.toFixed(4)} s (${(1 / run.observedDt).toFixed(3)} Hz). `
+            + `The TIMESTAMPS were used, since they are the data — but one of the two is wrong, `
+            + `and every speed and acceleration here depends on which.`);
+    }
     const kept = run.items;
     if (kept.length < candidates.length) {
         warnings.push(`Analysed the longest UNIFORMLY SAMPLED span: frames `
@@ -503,9 +522,13 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
     // rather than assuming a video frame rate.
     const times = Float64Array.from(kept, (p) => p.t);
     const timing = timingStats(times);
-    const fps = Number.isFinite(sidecar?.nominalFps) && sidecar.nominalFps > 0
+    // The rate the FITS run at must be the one the continuity test just
+    // validated, not the declared figure it may have just rejected.
+    const fps = (Number.isFinite(sidecar?.nominalFps) && sidecar.nominalFps > 0
+        && !run.declaredMismatch)
         ? sidecar.nominalFps
-        : (timing.meanDt > 0 ? 1 / median(Array.from({length: n - 1}, (_, i) => times[i + 1] - times[i])) : 1);
+        : (Number.isFinite(run.observedDt) && run.observedDt > 0 ? 1 / run.observedDt
+            : (timing.meanDt > 0 ? 1 / timing.meanDt : 1));
     if (!Number.isFinite(sidecar?.nominalFps)) {
         warnings.push(`No sidecar rate; using ${fps.toFixed(3)} Hz from the Time column.`);
     }
@@ -568,19 +591,34 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
     // is refused rather than warned about: a silently misread frame is not a
     // degraded result, it is a wrong one.
     const frame = sidecar?.frame ?? null;
-    if (frame) {
+    if (sidecar) {
+        // FAIL CLOSED. An earlier version only complained when a field was
+        // present AND wrong, so a sidecar that simply OMITTED frame.type — or
+        // omitted `frame` altogether — sailed through and was read with v1 ENU
+        // defaults it never claimed. Absence is not agreement.
+        const major = String(sidecar.specVersion ?? "1").split(".")[0];
+        if (major !== "1") {
+            throw new Error(`This sidecar declares specVersion ${sidecar.specVersion}. This `
+                + `importer reads the 1.x frame contract, and a major version exists precisely `
+                + `because the later one may mean something different by the same fields.`);
+        }
+        if (!frame) {
+            throw new Error("This BOT sidecar has no `frame` block, so the coordinate system, "
+                + "axis order and altitude rule of its CSV are unstated. They are not assumed.");
+        }
         const mismatches = [];
-        const expect = (label, actual, want) => {
-            if (actual !== undefined && actual !== null
-                && String(actual).toLowerCase() !== want) {
+        const require_ = (label, actual, want) => {
+            if (actual === undefined || actual === null) {
+                mismatches.push(`${label} is missing`);
+            } else if (String(actual).toLowerCase() !== want) {
                 mismatches.push(`${label} is "${actual}", expected "${want}"`);
             }
         };
-        expect("frame.type", frame.type, "enu");
-        expect("frame.axisOrder", frame.axisOrder, "x=east, y=north, z=up");
-        expect("frame.directionBasis", frame.directionBasis, "originlla");
-        expect("frame.surfaceModel", frame.surfaceModel, "flat-plane");
-        expect("frame.geodeticAltitudeRule", frame.geodeticAltitudeRule,
+        require_("frame.type", frame.type, "enu");
+        require_("frame.axisOrder", frame.axisOrder, "x=east, y=north, z=up");
+        require_("frame.directionBasis", frame.directionBasis, "originlla");
+        require_("frame.surfaceModel", frame.surfaceModel, "flat-plane");
+        require_("frame.geodeticAltitudeRule", frame.geodeticAltitudeRule,
             "altitude = u + groundelevationmsl");
         if (mismatches.length) {
             throw new Error(`This BOT sidecar declares a frame this importer does not read: `
@@ -588,56 +626,23 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
                 + `different coordinate system.`);
         }
     }
-    if (sidecar?.specVersion && !/^1\./.test(String(sidecar.specVersion))) {
-        warnings.push(`Sidecar specVersion ${sidecar.specVersion} is newer than the 1.x this `
-            + `importer was written against; fields it does not know are ignored.`);
-    }
 
+    // Origin: real NUMBERS, in range. Not strings that happen to coerce — a
+    // quoted latitude means the producer's schema is not what is assumed here,
+    // and Number("35") succeeding would hide that.
     const originLLA = frame?.originLLA;
-    const originOk = Array.isArray(originLLA) && originLLA.length >= 2
-        && Number.isFinite(Number(originLLA[0])) && Number.isFinite(Number(originLLA[1]))
-        && Math.abs(Number(originLLA[0])) <= 90 && Math.abs(Number(originLLA[1])) <= 180;
-    if (originLLA && !originOk) {
-        throw new Error(`Sidecar frame.originLLA is not a usable lat/lon `
-            + `(${JSON.stringify(originLLA)}).`);
-    }
-    // The forward hold above cannot fill frames BEFORE the first valid one, so
-    // back-fill them from it. Same reasoning: never leave the zero-fill, which
-    // plots as the ENU origin.
-    if (anyTruth) {
-        let first = -1;
-        for (let f = 0; f < n; f++) if (tValid[f]) { first = f; break; }
-        for (let f = 0; f < first; f++) {
-            T[f * 3] = T[first * 3];
-            T[f * 3 + 1] = T[first * 3 + 1];
-            T[f * 3 + 2] = T[first * 3 + 2];
+    if (sidecar) {
+        const ok = Array.isArray(originLLA) && originLLA.length >= 2
+            && originLLA.slice(0, 2).every((v) => typeof v === "number" && Number.isFinite(v))
+            && Math.abs(originLLA[0]) <= 90 && Math.abs(originLLA[1]) <= 180;
+        if (!ok) {
+            throw new Error(`Sidecar frame.originLLA must be finite numeric [lat, lon] in range; `
+                + `got ${JSON.stringify(originLLA)}.`);
         }
     }
-
-    const [oLat, oLon, oAlt] = originOk ? originLLA
+    const [oLat, oLon, oAlt] = sidecar ? originLLA
         : [BOT_DEFAULT_ORIGIN.latDeg, BOT_DEFAULT_ORIGIN.lonDeg, 0];
-    if (!sidecar) {
-        warnings.push("No .scenario.json sidecar — using the shipped set's default origin "
-            + `(${BOT_DEFAULT_ORIGIN.latDeg}, ${BOT_DEFAULT_ORIGIN.lonDeg}) and epoch. `
-            + "Geometry is correct; the place on the globe may not be.");
-    }
-    // GROUND IS AT Z = 0 IN THIS FRAME, ALWAYS.
-    //
-    // The sidecar's rule is `altitude = U + groundElevationMSL`, so the CSV's Z
-    // column IS height above the site's ground and the ground plane sits at
-    // Z = 0 — `groundElevationMSL` is what converts Z to an MSL altitude, not
-    // where the ground is in these coordinates.
-    //
-    // Using it as the ground level put the plane a full site elevation too
-    // high: on the `denver` site (1,609 m) a target 500 m above the ground
-    // scored -1,109 m AGL and was rejected by the range-band screen as
-    // underground, and every candidate on `cheyenne-mountain` (2,900 m) would
-    // have gone the same way. It never showed on the shipped interchange set
-    // only because that set is generated at the `ocean` site, where the
-    // elevation is 0 and the two readings coincide.
-    //
-    // verdictRunner.js makes the same choice (`const groundZ = 0`) for the same
-    // reason, with the same flat-plane probes.
+
     const groundZ = 0;
     const siteElevationMSL = Number.isFinite(sidecar?.frame?.groundElevationMSL)
         ? sidecar.frame.groundElevationMSL : 0;
@@ -886,15 +891,61 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     // Pick the timebase BEFORE judging continuity: a stream with good PES PTS
     // and a broken wall clock is a normal FMV case, and trimming it on the
     // broken clock would discard perfectly timed data.
-    const utsOk = complete.length > 1 && complete.every((u) => Number.isFinite(u.t));
-    const ptsOk = complete.length > 1 && complete.every((u) => Number.isFinite(u.pts));
-    const useTimeOf = utsOk ? ((u) => u.t) : (ptsOk ? ((u) => u.pts) : ((u) => u.t));
-    if (!utsOk && ptsOk) {
-        warnings.push("UnixTimeStamp is missing or incomplete, so the KLV PES presentation "
-            + "timestamps were used for cadence instead. They are locked to the encoder clock, "
-            + "which is the right timebase for spacing, but they carry no wall-clock epoch.");
+    // TIMEBASE CHOSEN ON QUALITY, NOT ON MERE FINITENESS.
+    //
+    // Both candidate clocks can be present and useless in different ways: a
+    // wall clock can be finite on every record and still jump around, and PES
+    // PTS can repeat when several KLV records ride one PES packet. Judging
+    // either by "are all the numbers finite" picked an erratic UTS over a clean
+    // PTS, and let a duplicate-riddled PTS through to be shredded into
+    // sub-10-record runs by the continuity test.
+    //
+    // Score each instead: it must be strictly increasing (a repeat or a
+    // backwards step is not a timeline) and reasonably regular. Prefer the wall
+    // clock when both qualify, because only it carries an epoch.
+    const rateTimebase = (get) => {
+        if (complete.length < 2) return null;
+        const d = [];
+        for (let i = 1; i < complete.length; i++) {
+            const a = get(complete[i - 1]), b = get(complete[i]);
+            if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+            d.push(b - a);
+        }
+        const increasing = d.filter((x) => x > 0).length;
+        if (increasing < 2) return null;
+        const med = median(d.filter((x) => x > 0));
+        if (!(med > 0)) return null;
+        // Fraction of steps that are a clean single interval. A repeated
+        // timestamp scores 0 for that step, as does a wild jump.
+        const clean = d.filter((x) => x > 0 && x <= med * 1.5).length / d.length;
+        return {get, med, clean, strict: increasing === d.length};
+    };
+    const utsScore = rateTimebase((u) => u.t);
+    const ptsScore = rateTimebase((u) => u.pts);
+    const USABLE_CLEAN = 0.8;
+    let chosen = null, chosenName = "none";
+    if (utsScore && utsScore.clean >= USABLE_CLEAN) { chosen = utsScore; chosenName = "uts"; }
+    else if (ptsScore && ptsScore.clean >= USABLE_CLEAN) { chosen = ptsScore; chosenName = "pts"; }
+    else if (utsScore || ptsScore) {
+        chosen = (utsScore?.clean ?? -1) >= (ptsScore?.clean ?? -1) ? utsScore : ptsScore;
+        chosenName = chosen === utsScore ? "uts" : "pts";
     }
-    const haveAllTimes = utsOk || ptsOk;
+    const utsOk = chosenName === "uts";
+    const useTimeOf = chosen ? chosen.get : ((u) => u.t);
+    if (chosenName === "pts") {
+        warnings.push(`UnixTimeStamp is absent or irregular (${utsScore
+            ? `${(utsScore.clean * 100).toFixed(0)}% of its steps are a clean single interval`
+            : "not present on every record"}), so the KLV PES presentation timestamps were used `
+            + `for cadence instead. They are locked to the encoder clock, which is the right `
+            + `timebase for spacing, but they carry no wall-clock epoch.`);
+    }
+    if (chosen && chosen.clean < USABLE_CLEAN) {
+        warnings.push(`Neither timebase is regular — the best available `
+            + `(${chosenName.toUpperCase()}) has only ${(chosen.clean * 100).toFixed(0)}% clean `
+            + `steps. Expect the run to be trimmed heavily, and treat every derived speed and `
+            + `acceleration with suspicion.`);
+    }
+    const haveAllTimes = !!chosen;
     const run = longestUniformRun(complete, useTimeOf);
     const kept = run.items;
     if (!haveAllTimes) {

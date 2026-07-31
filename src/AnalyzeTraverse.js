@@ -4938,30 +4938,31 @@ function showResultGallery(results, uiState = null) {
     reportBtn.className = "tg-btn tg-btn-primary";
     reportBtn.textContent = "Open Full Report";
     reportBtn.addEventListener("click", () => {
-        // built lazily on first open (and cached) — see runTraverseAnalysis
-        if (!results.html && typeof results.buildHtml === "function") {
-            reportBtn.textContent = "Building report…";
-            reportBtn.disabled = true;
-            // yield a frame so the label paints before the heavy chart encodes
-            requestAnimationFrame(() => setTimeout(() => {
-                try {
-                    if (!results.html) results.html = results.buildHtml();
-                    openReport(results.html);
-                } catch (err) {
-                    // Keep the gallery open and tell the user, rather than leaving
-                    // an uncaught async error with no explanation (TA-23).
-                    console.error("Traverse report generation failed:", err);
-                    showError("Full report generation failed while building or opening the report: "
-                        + ((err && err.message) || err)
-                        + "\n\nThe gallery is still available; see the browser console for the full stack.");
-                } finally {
-                    reportBtn.textContent = "Open Full Report";
-                    reportBtn.disabled = false;
-                }
-            }, 0));
-            return;
-        }
-        openReport(results.html);
+        if (typeof results.buildHtml !== "function") return;
+        reportBtn.textContent = "Building report…";
+        reportBtn.disabled = true;
+        // yield a frame so the label paints before the heavy chart encodes
+        requestAnimationFrame(() => setTimeout(() => {
+            try {
+                // NOT cached on the results object. The report is ~10 MB of
+                // string, the window it is written into keeps its own copy, and
+                // a cached second copy is pinned for as long as the results
+                // live — which, for a bulk run holding one results object per
+                // file, is the whole session. Rebuilding costs a few seconds on
+                // the rare second look.
+                openReport(results.buildHtml());
+            } catch (err) {
+                // Keep the gallery open and tell the user, rather than leaving
+                // an uncaught async error with no explanation (TA-23).
+                console.error("Traverse report generation failed:", err);
+                showError("Full report generation failed while building or opening the report: "
+                    + ((err && err.message) || err)
+                    + "\n\nThe gallery is still available; see the browser console for the full stack.");
+            } finally {
+                reportBtn.textContent = "Open Full Report";
+                reportBtn.disabled = false;
+            }
+        }, 0));
     });
     const closeBtn = document.createElement("button");
     closeBtn.className = "tg-btn tg-btn-ghost";
@@ -6007,7 +6008,14 @@ function buildReportHTML(ctx) {
     const durationS = (n - 1) / fps;
     const b = sweep.best;
     const bRaw = sweep.bestRaw ?? b;
-    const ap = aircraft.params;
+    // THE FIXED-WING FIT CAN FAIL, and the report must still render.
+    // fitAircraft is wrapped in a try/catch that records a typed failure and
+    // leaves `aircraft` null; every use below then has to tolerate that.
+    // Previously they did not, so "Open Full Report" threw for any analysis
+    // whose aircraft fit failed — deterministically, with no way to read the
+    // other candidates. A bulk run meets this far more often than one
+    // interactive analysis does.
+    const ap = aircraft ? aircraft.params : null;
 
     // LOS az/el at first/last frame (ENU: az from North, clockwise)
     const azOf = (f) => {
@@ -6044,26 +6052,28 @@ function buildReportHTML(ctx) {
     // time series: best const-air vs aircraft fit
     const tSec = Array.from({length: n}, (_, f) => f / fps);
     const bs = bestMetrics.series;
-    const as = aircraft.series;
+    const as = aircraft ? aircraft.series : null;
     const tsChart = (title, yLabel, yA, yB, transform = (v) => v) => lineChart({
         width: 620, height: 340, title, xLabel: "time (s)", yLabel,
         series: [
             {xs: tSec, ys: Array.from(yA, transform), color: VIZ.constAir,
                 label: constAirPick ? "const air spd (slow valley)" : "const air spd (sweep best)"},
-            {xs: tSec, ys: Array.from(yB, transform), color: VIZ.aircraft, label: "aircraft fit"},
+            ...(yB ? [{xs: tSec, ys: Array.from(yB, transform), color: VIZ.aircraft,
+                label: "aircraft fit"}] : []),
         ],
     });
-    const chartC1 = tsChart("Air speed", "air speed (kt)", bs.airSpeed, as.airSpeed, toKt);
-    const chartC2 = tsChart("Kinematic acceleration", "acceleration (g)", bs.gLoad, as.gLoad);
-    const chartC3 = tsChart("Turn rate", "turn rate (°/s)", bs.turnRate, as.turnRate);
+    // `as` is null when the fixed-wing fit failed; tsChart omits the series.
+    const chartC1 = tsChart("Air speed", "air speed (kt)", bs.airSpeed, as?.airSpeed, toKt);
+    const chartC2 = tsChart("Kinematic acceleration", "acceleration (g)", bs.gLoad, as?.gLoad);
+    const chartC3 = tsChart("Turn rate", "turn rate (°/s)", bs.turnRate, as?.turnRate);
 
     const chartD = planViewChart(dataset, [
         {track: bestTrack, color: VIZ.constAir,
             label: constAirPick
                 ? `const air spd (slow valley): ${nm1(constAirPick.range)} NM @ ${kt1(constAirPick.airSpeed)} kt`
                 : `const air spd: ${nm1(b.startDist)} NM @ ${kt1(b.speed)} kt`},
-        {track: aircraft.track, color: VIZ.aircraft,
-            label: `aircraft fit: ${nm1(ap.startDist)} NM, hdg ${ap.heading.toFixed(0)}°`},
+        ...(aircraft ? [{track: aircraft.track, color: VIZ.aircraft,
+            label: `aircraft fit: ${nm1(ap.startDist)} NM, hdg ${ap.heading.toFixed(0)}°`}] : []),
         {track: slowTrack, color: VIZ.slowObj,
             label: `plausible slow object: ${nm1(slowBestRow.startDist)} NM`},
         ...(truth ? [{track: truth.track, color: VIZ.truth,
@@ -6160,11 +6170,14 @@ function buildReportHTML(ctx) {
         (soft target 5 kt) reaches its minimum at <strong>${nm1(slowRegion.best.startDist)} NM</strong>
         (region ${nm1(slowRegion.loM)}–${nm1(slowRegion.hiM)} NM).</p>
 
-        <p>The parametric fixed-wing fit (constant horizontal airspeed, slowly varying turn rate, constant climb, advected by
+        ${aircraft ? `<p>The parametric fixed-wing fit (constant horizontal airspeed, slowly varying turn rate, constant climb, advected by
         the wind) returned its lowest-cost deterministic solution at a start range of <strong>${nm1(ap.startDist)} NM</strong>, heading
         <strong>${ap.heading.toFixed(1)}° in the sensor-origin ENU frame</strong>, horizontal airspeed <strong>${kt1(ap.tas)} kt</strong>,
         turn rate ${ap.turnRate.toFixed(3)} °/s, climb ${fpm0(ap.climb)} fpm, with a mean LOS error of
-        <strong>${aircraft.errDeg.toFixed(3)}°</strong>.</p>
+        <strong>${aircraft.errDeg.toFixed(3)}°</strong>.</p>`
+        : `<p><strong>The parametric fixed-wing fit did not return a solution</strong>, so no fixed-wing
+        trajectory appears in the charts or the candidate list below. This is a failure of that fit,
+        not evidence against an aircraft: see the Checks section for the recorded reason.</p>`}
         ${closeRangeHTML}`;
 
     // ---- candidate-interpretation gallery, comparison, verdict ----
@@ -6287,7 +6300,7 @@ function buildReportHTML(ctx) {
             <td>${r.spdErr !== undefined ? kt1(r.spdErr) : "—"}</td>
         </tr>`).join("");
 
-    const runRows = aircraft.runs.map((r, i) => `
+    const runRows = (aircraft?.runs ?? []).map((r, i) => `
         <tr${i === 0 ? ' class="best"' : ""}>
             <td>${i + 1}</td><td>${r.cost.toFixed(2)}</td><td>${nm1(r.startDist)}</td>
             <td>${r.heading.toFixed(1)}</td><td>${kt1(r.tas)}</td>

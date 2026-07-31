@@ -594,6 +594,11 @@ export function summarizeRun(record, results, battery, elapsedMs, directionScore
         label: record.label,
         kind: record.kind,
         trackId: record.meta?.trackId ?? null,
+        // Reported on the row because the ingest's comment promises it is: the
+        // conversion reads the app's global radii, so the same file can convert
+        // differently depending on what sitch is loaded.
+        earthModel: record.meta?.earthModel ?? null,
+        surfaceModel: record.meta?.surfaceModel ?? null,
         quality: record.quality,
         warnings: record.warnings,
         verdictCode: results.executiveAssessment?.code ?? null,

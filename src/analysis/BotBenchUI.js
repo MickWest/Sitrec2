@@ -162,7 +162,7 @@ const CSV_COLUMNS = [
     "rcond", "log10Rcond", "conditioning", "effectiveRank",
     "losErrorModel", "losErrorCorrelated",
     "timeCv", "timeGaps", "invalidFrames", "droppedRows",
-    "sourceGrade", "sourceReasons",
+    "sourceGrade", "sourceReasons", "earthModel", "surfaceModel",
     "verdictCode", "headline", "viableClasses", "rangeUnobservable",
     "declaredMaxRangeM", "maxRangeViolationCount", "topViolatesMaxRange",
     "optAnchorNM", "optRangeBands", "optMcSweep",
@@ -196,6 +196,7 @@ function rowToCsvRecord(entry) {
         timeCv: q.timeCv, timeGaps: q.timeGaps,
         invalidFrames: q.invalidFrames, droppedRows: q.droppedRows,
         sourceGrade: grade?.grade ?? "", sourceReasons: grade?.reasons.join("; ") ?? "",
+        earthModel: r?.earthModel ?? "", surfaceModel: r?.surfaceModel ?? "",
         verdictCode: r?.verdictCode ?? "", headline: r?.headline ?? "",
         viableClasses: (r?.viableClasses ?? []).join("+"),
         rangeUnobservable: r?.rangeUnobservable ?? "",
@@ -827,6 +828,8 @@ function createDialog() {
         cancelled: false,
         running: false,
         pauseLock: null,
+        heldFrames: 0,
+        memoryNote: "",
     };
     acquireAnalysisPauseLock(state);
     activeDialog = state;
@@ -860,9 +863,12 @@ function updateSummary(state) {
     // the evidence does not support.
     const contradicted = (r) => (r.maxRangeViolations ?? []).some((v) =>
         v.key === r.top?.key && v.name === r.top?.name);
-    const resolved = rows.filter((r) => r.verdictCode && r.verdictCode !== "unresolved"
-        && !contradicted(r)).length;
-    const contradictedCount = rows.filter(contradicted).length;
+    const wouldResolve = (r) => r.verdictCode && r.verdictCode !== "unresolved";
+    const resolved = rows.filter((r) => wouldResolve(r) && !contradicted(r)).length;
+    // Only the rows this actually SUBTRACTS. Counting every contradicted row
+    // included ones already unresolved for other reasons, so the parenthetical
+    // claimed to have excluded more than it did.
+    const contradictedCount = rows.filter((r) => wouldResolve(r) && contradicted(r)).length;
     const truthRows = rows.filter((r) => r.truthScore);
     // Direction-truth rows ARE scored — in degrees rather than metres — so
     // counting only the positional ones reported Venus as unscored in the
@@ -964,7 +970,9 @@ function fillRow(state, entry) {
     c[10].textContent = grade.grade;
     c[10].style.color = GRADE_COLOURS[grade.grade] ?? "";
     c[10].style.fontWeight = "700";
-    c[10].title = grade.reasons.length ? grade.reasons.join("\n") : "No flagged degeneracy.";
+    c[10].title = (grade.reasons.length ? grade.reasons.join("\n") : "No flagged degeneracy.")
+        + (r.earthModel ? `\n\nEarth model in force: ${r.earthModel}.` : "")
+        + (r.surfaceModel ? `\nGround: ${r.surfaceModel}.` : "");
 
     c[11].textContent = shortVerdict(r.headline, r.verdictCode);
     c[11].title = (r.headline ? r.headline + "\n\n" : "")
@@ -1048,21 +1056,7 @@ function fillRow(state, entry) {
     c[16].appendChild(galleryButton);
     const reportButton = smallButton("Report", "#455a64", BUTTON_TOOLTIPS["Report"]);
     reportButton.style.marginLeft = "3px";
-    // buildReportHTML reads `aircraft.params` unguarded, so a run whose
-    // fixed-wing fit failed cannot produce a report at all — it throws. That is
-    // pre-existing behaviour shared with the live "Open Full Report" button,
-    // but a bulk run meets it far more often than one interactive analysis
-    // does. Offering a button that is certain to fail is worse than saying why
-    // it is unavailable; the Gallery still shows every candidate.
-    if (!entry.results?.aircraft) {
-        setButtonDisabled(reportButton, true);
-        reportButton.title = "The full report cannot be built for this file: its fixed-wing fit "
-            + "failed, and the report renders that fit unconditionally. Use Gallery — every "
-            + "other candidate is there.";
-        reportButton.onclick = null;
-    } else {
-        reportButton.onclick = () => openReport(entry, reportButton);
-    }
+    reportButton.onclick = () => openReport(entry, reportButton);
     c[16].appendChild(reportButton);
 
     entry.tr.style.background = grade.grade === "weak" ? "#fff5f5"
@@ -1146,6 +1140,8 @@ function refreshControls(state) {
 function clearResults(state) {
     if (state.running) return;
     state.entries = [];
+    state.heldFrames = 0;
+    state.memoryNote = "";
     state.tbody.innerHTML = "";
     state.progress.value = 0;
     state.status.textContent = "Cleared. Choose a folder or drag one onto this window.";
@@ -1215,7 +1211,8 @@ async function analyzeEntries(state, found) {
         state.entries.push(entry);
         makeRow(state, entry);
         state.progress.value = i / found.length;
-        state.status.textContent = `Analysing ${i + 1} of ${found.length}: ${entry.relativePath}`;
+        state.status.textContent = `Analysing ${i + 1} of ${found.length}: `
+            + `${entry.relativePath}${state.memoryNote ?? ""}`;
         await yieldToDOM();
 
         try {
@@ -1247,25 +1244,26 @@ async function analyzeEntries(state, found) {
             setRowError(entry, entry.error);
         }
         updateSummary(state);
+        // EVERY ROW HOLDS ITS FULL RESULTS — that is what makes "Gallery"
+        // instant, and it means memory grows with files x frames x candidates.
+        // Checked EVERY FILE, not once at the end: a warning that arrives after
+        // the batch arrives after the browser has already struggled. Shown in
+        // the visible status line rather than a tooltip nobody hovers.
+        state.heldFrames = state.entries.reduce((sum, e) =>
+            sum + (e.results?.dataset?.n ?? 0) * (e.results?.hypotheses?.length ?? 0), 0);
+        if (state.heldFrames > 2e6) {
+            state.memoryNote = ` — holding ~${(state.heldFrames / 1e6).toFixed(1)}M `
+                + `candidate-frames; use Clear Results before another large batch`;
+        }
         await yieldToDOM();
     }
 
     state.progress.value = state.cancelled ? state.progress.value : 1;
     const done = state.entries.filter((e) => e.status === "done").length;
-    // EVERY ROW HOLDS ITS FULL RESULTS — that is what makes "Gallery" instant,
-    // and it means memory grows with files x frames x candidates. A 19-scenario
-    // 1 Hz run is a few MB; a folder of long 30 Hz FMV clips is not. Warn rather
-    // than silently degrade, and point at the control that frees it.
-    const heldFrames = state.entries.reduce((sum, e) =>
-        sum + (e.results?.dataset?.n ?? 0) * (e.results?.hypotheses?.length ?? 0), 0);
-    if (heldFrames > 2e6) {
-        state.status.title = `This table is holding roughly ${(heldFrames / 1e6).toFixed(1)}M `
-            + `candidate-frames of trajectory data so every row's Gallery opens instantly. `
-            + `Use "Clear Results" before starting another large batch if the browser slows.`;
-    }
-    state.status.textContent = state.cancelled
+
+    state.status.textContent = (state.cancelled
         ? `Cancelled. ${done} result(s) in the table.`
-        : `Done. ${done} result(s) in the table.`;
+        : `Done. ${done} result(s) in the table.`) + (state.memoryNote ?? "");
     state.running = false;
     refreshControls(state);
     updateSummary(state);
@@ -1387,9 +1385,15 @@ export function openBotBenchDialog() {
     state.chooseFolderButton.onclick = () => runFolderScan(state);
     state.chooseFilesButton.onclick = () => runChooseFiles(state);
     state.exportJsonButton.onclick = () => {
+        // Option sets AS RUN, not the controls' current state. The controls stay
+        // live between batches, so a single top-level `options` block was a
+        // second, contradicting description of a mixed run.
+        const optionSets = [...new Set(state.entries.filter((e) => e.options)
+            .map((e) => JSON.stringify(e.options)))].map((t) => JSON.parse(t));
         const payload = {
             generatedAt: new Date().toISOString(),
-            options: runOptions(state),
+            optionSets,
+            mixedOptions: optionSets.length > 1,
             absentHypotheses: ABSENT_HYPOTHESES,
             // Rows only — the fitted tracks stay in memory. A run over 100
             // scenarios would otherwise be hundreds of megabytes of JSON.
