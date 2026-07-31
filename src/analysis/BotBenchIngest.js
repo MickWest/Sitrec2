@@ -220,6 +220,26 @@ function maxOf(values) {
     return m;
 }
 
+/**
+ * Mean of the middle (1 - 2*trim) of the values.
+ *
+ * A RATE is an average — total elapsed over intervals — so the mean is the
+ * right estimator, and the median is not: on a bimodally jittering clock whose
+ * steps alternate 0.09 s and 0.1101 s the median IS one of the two modes
+ * (0.09), reporting 11.1 Hz for a clock running at exactly 10. Trimming keeps
+ * the robustness against outliers that made the median attractive in the first
+ * place, without inheriting that failure.
+ */
+function trimmedMean(values, trim = 0.1) {
+    if (!values.length) return NaN;
+    const s = Array.from(values).sort((a, b) => a - b);
+    const cut = Math.floor(s.length * trim);
+    const kept = s.length - 2 * cut >= 1 ? s.slice(cut, s.length - cut) : s;
+    let sum = 0;
+    for (const v of kept) sum += v;
+    return sum / kept.length;
+}
+
 function median(values) {
     if (!values.length) return NaN;
     const s = Float64Array.from(values).sort();
@@ -971,25 +991,45 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     const utsTrial = trialOf((u) => u.t);
     const ptsTrial = trialOf((u) => u.pts);
 
-    // THE RATIO IS A MEDIAN OF PER-STEP RATIOS, NOT A RATIO OF SPANS.
+    // COMPARE TYPICAL STEP SIZES, NOT TYPICAL STEP RATIOS.
     //
-    // Endpoint spans are destroyed by a single discontinuity: one GPS relock
-    // part-way through adds its whole offset to the wall-clock span, the ratio
-    // swings wildly, and a perfectly healthy PES timeline gets rejected — or a
-    // broken one accepted — on the strength of one bad sample. Comparing the
-    // two clocks STEP BY STEP and taking the median asks the right question
-    // (does the encoder clock advance one second per real second?) and lets
-    // half the steps be corrupt without changing the answer.
-    const stepRatios = [];
+    // Two wrong measurements preceded this one:
+    //
+    //   RATIO OF ENDPOINT SPANS  is destroyed by a single discontinuity. One
+    //     GPS relock adds its whole offset to the wall-clock span, and a
+    //     healthy PES timeline is rejected on the strength of one bad sample.
+    //
+    //   MEDIAN OF PER-STEP RATIOS  is robust to outliers but BIASED by jitter,
+    //     because E[1/x] != 1/E[x]. A correct 10 Hz wall clock dithering
+    //     0.09/0.11 s against an exact PES 0.1 s yields per-step ratios of
+    //     1.111 and 0.909 — and any asymmetry in how they fall pushes the
+    //     median off 1.0 and starts reporting a rate disagreement that does
+    //     not exist.
+    //
+    //   MEDIAN OF EACH CLOCK'S STEPS  removes that bias but inherits another:
+    //     the median of a BIMODAL series is one of its two modes. The same
+    //     0.09/0.1101 clock has median step 0.09 and is reported at 11.1 Hz.
+    //
+    // A rate is an average, so use a TRIMMED MEAN of each clock's own steps and
+    // divide those: robust to each clock's outliers, unbiased for the quantity
+    // actually being measured, and jitter cancels instead of accumulating.
+    const dU = [], dP = [];
     for (let i = 1; i < complete.length; i++) {
         const a = complete[i - 1], b = complete[i];
         const du = b.t - a.t, dp = b.pts - a.pts;
-        if (Number.isFinite(du) && Number.isFinite(dp) && du > 0 && dp > 0) stepRatios.push(dp / du);
+        if (Number.isFinite(du) && Number.isFinite(dp) && du > 0 && dp > 0) {
+            dU.push(du); dP.push(dp);
+        }
     }
     // Enough overlapping steps to be a measurement rather than an anecdote.
-    const ratioKnown = stepRatios.length >= 5;
-    const rateRatio = ratioKnown ? median(stepRatios) : NaN;
-    const encoderIsRealTime = ratioKnown && Math.abs(rateRatio - 1) <= 0.02;
+    const ratioKnown = dU.length >= 5;
+    const medU = ratioKnown ? trimmedMean(dU) : NaN;
+    const medP = ratioKnown ? trimmedMean(dP) : NaN;
+    const rateRatio = ratioKnown && medU > 0 ? medP / medU : NaN;
+    const encoderIsRealTime = Number.isFinite(rateRatio) && Math.abs(rateRatio - 1) <= 0.02;
+    // A ratio we could measure and that came out wrong is a POSITIVE finding
+    // about the encoder clock, and must outrank any retention argument.
+    const encoderProvenWrong = Number.isFinite(rateRatio) && Math.abs(rateRatio - 1) > 0.02;
 
     let best = null, why = "";
     if (ptsTrial && utsTrial) {
@@ -1002,7 +1042,31 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
         const ptsKeepsEnough = ptsTrial.kept >= utsTrial.kept * 0.9;
         const utsKeepsEnough = utsTrial.kept >= ptsTrial.kept * 0.9;
 
-        if (encoderIsRealTime && ptsKeepsEnough) {
+        if (encoderProvenWrong) {
+            // MEASURED-WRONG BEATS BETTER-RETAINED. The retention gate below
+            // used to be reached first, so a wall clock split by a relock could
+            // hand cadence to a PES timeline we had just measured as 2x off —
+            // selecting a clock already proven not to measure real seconds, and
+            // scaling every speed by that factor. A positive finding about a
+            // clock outranks how much of the clip it happens to cover; if the
+            // wall clock is then too short to fit, the insufficient-run error
+            // says so accurately rather than silently substituting a bad clock.
+            best = utsTrial;
+            why = `UnixTimeStamp (the clocks disagree by ${rateRatio.toFixed(3)}x)`;
+            warnings.push(`THE CLOCKS DISAGREE ABOUT RATE by ${rateRatio.toFixed(3)}x (median `
+                + `step ${medP.toFixed(4)} s on PES PTS against ${medU.toFixed(4)} s on the wall `
+                + `clock, over ${dU.length} overlapping steps)`
+                + `${Math.abs(rateRatio - 1) > 0.2
+                    ? ` — a factor that size is the classic "-r N without an fps filter" encoder `
+                      + `misconfiguration` : ""}`
+                + `. Cadence was taken from UnixTimeStamp, because it is a real-time clock by `
+                + `definition while PES PTS is a presentation timebase. This does NOT prove the `
+                + `PES timeline is the faulty one — if the wall clock is the damaged one here, `
+                + `every speed and g-load below is off by that factor.`
+                + `${utsTrial.kept < ptsTrial.kept
+                    ? ` The wall clock also covers less of the clip (${utsTrial.kept} frames `
+                      + `against ${ptsTrial.kept}), so this costs data as well.` : ""}`);
+        } else if (encoderIsRealTime && ptsKeepsEnough) {
             best = ptsTrial;
             why = "PES PTS (encoder clock verified real-time against UnixTimeStamp)";
         } else if (!ptsKeepsEnough) {
@@ -1018,33 +1082,14 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
                 + `${complete.length} records, so it cannot give a cadence and could not be used `
                 + `to check the encoder clock against real time. Spacing came from PES PTS; treat `
                 + `derived speeds as conditional on the encoder having run at real time.`);
-        } else if (!ratioKnown) {
-            // Both retain the clip, neither can be checked against the other.
-            // Fall back to the clock that is real-time BY DEFINITION.
+        } else {
+            // Both retain the clip, neither can be checked against the other
+            // (too few overlapping steps). Fall back to the clock that is
+            // real-time BY DEFINITION rather than assume the other one is.
             best = utsTrial;
             why = "UnixTimeStamp (too few overlapping steps to verify the encoder clock)";
             warnings.push("The two clocks overlap on too few records to check whether the encoder "
                 + "clock runs at real time, so cadence came from UnixTimeStamp.");
-        } else {
-            best = utsTrial;
-            why = `UnixTimeStamp (the clocks disagree by ${rateRatio.toFixed(3)}x)`;
-            // A DISAGREEMENT IS NOT A VERDICT ON PES PTS. The ratio proves the
-            // two clocks differ; it cannot say which is damaged, and a wall
-            // clock can itself be skewed. The tie is broken on what the fields
-            // ARE, not on blame: UnixTimeStamp is definitionally a real-time
-            // clock and may be inaccurate, while PES PTS is a presentation
-            // timebase with no claim to real time at all. Kinematics are metres
-            // per REAL second, so the clock that at least intends to measure
-            // that wins — and the reader is told the size of the doubt.
-            warnings.push(`THE CLOCKS DISAGREE ABOUT RATE by ${rateRatio.toFixed(3)}x (median `
-                + `over ${stepRatios.length} overlapping steps)`
-                + `${Math.abs(rateRatio - 1) > 0.2
-                    ? ` — a factor that size is the classic "-r N without an fps filter" encoder `
-                      + `misconfiguration` : ""}`
-                + `. Cadence was taken from UnixTimeStamp, because it is a real-time clock by `
-                + `definition while PES PTS is a presentation timebase. This does NOT prove the `
-                + `PES timeline is the faulty one — if the wall clock is the damaged one here, `
-                + `every speed and g-load below is off by that factor.`);
         }
     } else if (ptsTrial || utsTrial) {
         best = ptsTrial ?? utsTrial;
@@ -1096,9 +1141,24 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     const timing = timingStats(times);
     // Always derived from the selected timebase — the no-clock case was refused
     // above, so no assumed rate exists anywhere in this path.
-    const dSteps = [];
-    for (let i = 1; i < n; i++) dSteps.push(times[i] - times[i - 1]);
-    const fps = 1 / median(dSteps);
+    // Total elapsed over intervals. The retained run is dropout-free by
+    // construction, so nothing outlying is left for a median to protect against
+    // — and a median step would misreport a bimodally jittering clock by
+    // returning one of its modes rather than its average rate.
+    const fps = (n - 1) / (times[n - 1] - times[0]);
+
+    // Jitter WITHIN the retained span is flattened into this single rate, and
+    // that is a real distortion of every derived quantity — the fits index time
+    // as frame/rate, so a sample that actually arrived early or late is
+    // reported at the nominal instant regardless. The run selection removes
+    // DROPOUTS; it does not and cannot remove jitter. This warning was present,
+    // then lost in a rewrite of this block; without it the flattening is silent.
+    if (timing && (timing.cv > 0.05 || timing.gaps > 0)) {
+        warnings.push(`Retained cadence is not uniform (CV ${(timing.cv * 100).toFixed(1)}%`
+            + `${timing.gaps ? `, ${timing.gaps} interval(s) over 3x the median` : ""}). The fits `
+            + `assume an even ${fps.toFixed(3)} Hz, so speeds, accelerations and g-loads are `
+            + `distorted wherever the real spacing differs from it.`);
+    }
 
     // THE EPOCH IS FRAME ZERO'S TIME, BACK-PROJECTED IF NEED BE.
     //
@@ -1117,14 +1177,37 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     // Cadence availability and epoch availability are also different questions:
     // a wall clock too broken to give SPACING can still carry one usable
     // absolute stamp, which is all an epoch needs.
+    // BACK-PROJECTION NEEDS THE OFFSET TO BE IN REAL SECONDS, and that is only
+    // true when the selected timebase is the wall clock, or is a PES timeline
+    // MEASURED to run at real time. There are branches above that select PES
+    // PTS without being able to verify it (the wall clock too sparse to give a
+    // cadence, or absent entirely), and projecting along an unverified encoder
+    // clock can move frame zero by the whole rate error — a 2x-off PTS with a
+    // lone wall-clock anchor late in the clip lands the epoch minutes out.
+    const offsetsAreRealSeconds = (best === utsTrial) || encoderIsRealTime;
     let clipStartS = NaN;
+    let epochAnchorIndex = -1;
     for (let i = 0; i < kept.length; i++) {
         if (!Number.isFinite(kept[i].t)) continue;
-        // times[] is in the SELECTED timebase; when that is PES PTS it was
-        // verified real-time above, so the offset is in real seconds either way.
+        epochAnchorIndex = i;
         const offset = times[i] - times[0];
-        clipStartS = kept[i].t - (Number.isFinite(offset) ? offset : 0);
+        if (i === 0 || (offsetsAreRealSeconds && Number.isFinite(offset))) {
+            clipStartS = kept[i].t - (i === 0 ? 0 : offset);
+        } else {
+            // Cannot project. Use the anchor's own stamp and say what it is.
+            clipStartS = kept[i].t;
+        }
         break;
+    }
+    if (haveEpochUnprojected(epochAnchorIndex, offsetsAreRealSeconds)) {
+        warnings.push(`The only UnixTimeStamp in the analysed span is at frame `
+            + `${epochAnchorIndex}, and the cadence timebase could not be verified against real `
+            + `time — so frame zero's absolute time could not be projected back and the epoch is `
+            + `that frame's stamp instead. It is late by however long those ${epochAnchorIndex} `
+            + `frames actually took.`);
+    }
+    function haveEpochUnprojected(idx, realSeconds) {
+        return idx > 0 && !realSeconds;
     }
     const haveEpoch = Number.isFinite(clipStartS);
     if (!haveEpoch) {
