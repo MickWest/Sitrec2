@@ -239,7 +239,11 @@ function trimmedMean(values, trim = 0.1) {
     // wall-clock relock dragged the mean far enough to "prove" the encoder
     // clock wrong, forcing cadence onto the very clock that had just jumped.
     // Five samples minus one from each end still leaves three to average.
-    const cut = s.length >= 5
+    // Force at least one from each end only once the sample can AFFORD it. At
+    // five samples a forced cut discards 40% of them, and on balanced jitter
+    // that lands asymmetrically and shifts the mean enough to invent a rate
+    // disagreement. Ten is where a 1-in-10 cut is what "10%" actually means.
+    const cut = s.length >= 10
         ? Math.max(1, Math.floor(s.length * trim))
         : Math.floor(s.length * trim);
     const kept = s.length - 2 * cut >= 1 ? s.slice(cut, s.length - cut) : s;
@@ -1029,8 +1033,13 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
             dU.push(du); dP.push(dp);
         }
     }
-    // Enough overlapping steps to be a measurement rather than an anecdote.
-    const ratioKnown = dU.length >= 5;
+    // Enough overlapping steps to tell a RATE ERROR from JITTER. Five is not:
+    // on a handful of samples the spread of ordinary dither is comparable to
+    // the 2% band below, so a verdict either way is noise. Below this the
+    // ratio is reported as unknown, which already has its own branch and its
+    // own honest message.
+    const RATIO_MIN_STEPS = 20;
+    const ratioKnown = dU.length >= RATIO_MIN_STEPS;
     const medU = ratioKnown ? trimmedMean(dU) : NaN;
     const medP = ratioKnown ? trimmedMean(dP) : NaN;
     const rateRatio = ratioKnown && medU > 0 ? medP / medU : NaN;
@@ -1061,8 +1070,8 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
             // says so accurately rather than silently substituting a bad clock.
             best = utsTrial;
             why = `UnixTimeStamp (the clocks disagree by ${rateRatio.toFixed(3)}x)`;
-            warnings.push(`THE CLOCKS DISAGREE ABOUT RATE by ${rateRatio.toFixed(3)}x (median `
-                + `typical step ${medP.toFixed(4)} s on PES PTS against ${medU.toFixed(4)} s on `
+            warnings.push(`THE CLOCKS DISAGREE ABOUT RATE by ${rateRatio.toFixed(3)}x (typical `
+                + `step ${medP.toFixed(4)} s on PES PTS against ${medU.toFixed(4)} s on `
                 + `the wall clock — trimmed means over ${dU.length} overlapping steps)`
                 + `${Math.abs(rateRatio - 1) > 0.2
                     ? ` — a factor that size is the classic "-r N without an fps filter" encoder `
@@ -1208,41 +1217,92 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     const offsetsAreRealSeconds = (best === utsTrial) || encoderIsRealTime;
     let clipStartS = NaN;
     let epochBasis = null;
-    // Real seconds per frame, measured from the anchors themselves. Taken as a
-    // TRIMMED MEAN over consecutive anchor pairs rather than across the widest
-    // pair, so a wall-clock relock sitting inside the retained span contributes
-    // one outlying pair instead of adding its whole offset to the estimate.
+    // Real seconds per frame, measured from the anchors themselves.
+    //
+    // A RATE IS A WEIGHTED QUANTITY: total elapsed over total frames. Averaging
+    // the per-pair rates unweighted gives a short pair the same say as a long
+    // one, and on sparse anchors that is badly wrong — pairs spanning 1 frame
+    // at 0.2 s and 100 frames at 9.9 s average to 0.1495 s/frame (6.7 Hz) when
+    // the true rate is 0.1 (10 Hz). The 100-frame measurement is a hundred
+    // times the evidence and must count as such.
+    //
+    // So the per-pair rates are computed for OUTLIER DETECTION only, and the
+    // estimate itself is the weighted sum over the pairs that survive: one
+    // wall-clock relock is excluded as a pair, and the rest contribute in
+    // proportion to how much of the clip they actually measure.
     let realDt = NaN;
+    let anchorPairsUsed = 0;
     if (anchors.length >= 2) {
-        const rates = [];
+        const pairs = [];
         for (let k = 1; k < anchors.length; k++) {
             const i = anchors[k - 1], j = anchors[k];
-            const r = (kept[j].t - kept[i].t) / (j - i);
-            if (Number.isFinite(r) && r > 0) rates.push(r);
+            const dt = kept[j].t - kept[i].t;
+            const df = j - i;
+            if (Number.isFinite(dt) && dt > 0 && df > 0) pairs.push({dt, df, rate: dt / df});
         }
-        if (rates.length) realDt = trimmedMean(rates);
+        if (pairs.length === 1) {
+            // ONE PAIR CANNOT BE CHECKED. A single interval spanning a relock
+            // reads as an hour per frame, and with nothing to compare it
+            // against there is no way to notice. Accept it only if it is
+            // broadly consistent with the cadence clock's own spacing; a lone
+            // wildly different figure is two contradictory measurements with no
+            // tiebreak, so neither is used.
+            const cadenceDt = (times[n - 1] - times[0]) / (n - 1);
+            const r = pairs[0].rate;
+            if (Number.isFinite(cadenceDt) && cadenceDt > 0
+                && r / cadenceDt > 0.25 && r / cadenceDt < 4) {
+                realDt = r;
+                anchorPairsUsed = 1;
+            } else {
+                warnings.push(`The only pair of wall-clock stamps in this span implies `
+                    + `${(1 / r).toFixed(3)} Hz, against ${(1 / cadenceDt).toFixed(3)} Hz from the `
+                    + `cadence timeline — too far apart to be a measurement rather than a clock `
+                    + `step, and with a single pair there is nothing to check it against. `
+                    + `Neither the epoch nor the rate was taken from it.`);
+            }
+        } else if (pairs.length > 1) {
+            // Reject outlying pairs by RATE, then weight the survivors by span.
+            const mid = trimmedMean(pairs.map((pp) => pp.rate));
+            const good = pairs.filter((pp) => Number.isFinite(mid) && mid > 0
+                && pp.rate / mid > 0.5 && pp.rate / mid < 2);
+            const use = good.length ? good : pairs;
+            let sumDt = 0, sumDf = 0;
+            for (const pp of use) { sumDt += pp.dt; sumDf += pp.df; }
+            if (sumDf > 0) { realDt = sumDt / sumDf; anchorPairsUsed = use.length; }
+            if (good.length && good.length < pairs.length) {
+                warnings.push(`${pairs.length - good.length} of ${pairs.length} wall-clock `
+                    + `intervals in this span are inconsistent with the rest — a clock step or `
+                    + `reset — and were excluded from the measured rate.`);
+            }
+        }
     }
 
     if (Number.isFinite(realDt) && realDt > 0) {
         const i0 = anchors[0];
         clipStartS = kept[i0].t - i0 * realDt;
         epochBasis = `measured across ${anchors.length} wall-clock stamps `
-            + `(frames ${i0}-${anchors[anchors.length - 1]})`;
-    } else if (anchors.length === 1) {
+            + `(frames ${i0}-${anchors[anchors.length - 1]}, ${anchorPairsUsed} interval(s) used)`;
+    } else if (anchors.length >= 1) {
+        // REACHED WHENEVER NO USABLE RATE CAME OUT, not only when there is a
+        // single anchor. Duplicate or decreasing stamps yield no valid pair at
+        // all, and an `anchors.length === 1` guard here skipped this branch
+        // entirely in that case — discarding even a perfectly good frame-zero
+        // timestamp, with no epoch and no warning to say so.
         const i0 = anchors[0];
         if (i0 === 0) {
             clipStartS = kept[0].t;
             epochBasis = "the wall-clock stamp on frame 0";
         } else if (offsetsAreRealSeconds) {
             clipStartS = kept[i0].t - (times[i0] - times[0]);
-            epochBasis = `projected back from the single wall-clock stamp at frame ${i0} `
+            epochBasis = `projected back from the earliest wall-clock stamp (frame ${i0}) `
                 + `along a cadence measured in real seconds`;
         } else {
-            warnings.push(`The analysed span carries exactly one UnixTimeStamp, at frame `
-                + `${i0}, and the cadence timebase could not be verified against real time — so `
-                + `there is no way to convert that frame's offset into real seconds and no `
-                + `honest value for frame zero. This clip is reported with NO absolute time `
-                + `rather than a shifted one; date-dependent results are unavailable for it.`);
+            warnings.push(`No usable interval could be measured between the wall-clock stamps in `
+                + `this span (the earliest is at frame ${i0}), and the cadence timebase could not `
+                + `be verified against real time — so there is no way to convert that frame's `
+                + `offset into real seconds and no honest value for frame zero. This clip is `
+                + `reported with NO absolute time rather than a shifted one; date-dependent `
+                + `results are unavailable for it.`);
         }
     }
     // THE ANCHORS ALSO SETTLE THE SCALE. Two wall-clock stamps measure real
