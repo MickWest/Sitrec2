@@ -199,10 +199,18 @@ async function framePixels(view, globalFrame, ctx) {
  * The hand-tuned defaults assume the reference footage's resolution, zoom and exposure; on
  * anything else the same constants are wrong in proportion to the blob size. One measured frame
  * fixes that - see calibrateDetection for what is derived and why.
+ *
+ * Returns whether the CONTEXT the caller clicked in still stands: false when the sitch or video
+ * changed during the decode wait, a newer calibration superseded this one, or there was nothing
+ * to run against - true otherwise, including when the measurement itself failed (a failed
+ * calibration keeps the previous parameters precisely so analysis remains runnable, so it must
+ * not read as "stop"). The chained Measure/Analyze/Identify/Sync button gates on this; a false
+ * that went unchecked would let a click's analysis and camera sync land on a video the user
+ * swapped in AFTER clicking.
  */
 export async function detectStarSize() {
     const view = videoView();
-    if (!view || !view.videoData || running) return;
+    if (!view || !view.videoData || running) return false;
     const generation = Globals.loadGeneration;
     const videoData = view.videoData;
     const ctx = {
@@ -219,8 +227,8 @@ export async function detectStarSize() {
         // The decode wait can outlive the sitch, and it can also outlive a NEWER calibration
         // click on the same video. After it, nothing here may touch state unless this is still
         // both the current video and the current request.
-        if (ctx.stale() || request !== calibrationRequest) return;
-        if (!px) { params.status = "no decoded frame to measure"; return; }
+        if (ctx.stale() || request !== calibrationRequest) return false;
+        if (!px) { params.status = "no decoded frame to measure"; return true; }
 
         const cal = calibrateDetection(px.data, px.W, px.H, {threshSigma: params.threshSigma});
         if (!cal.ok) {
@@ -229,7 +237,7 @@ export async function detectStarSize() {
             // value would leave a half-calibrated, mismatched parameter set.
             params.status = `calibration failed: only ${cal.count} usable blobs on this frame`
                 + (calibration ? "; keeping previous calibration" : "");
-            return;
+            return true;
         }
         calibration = cal;
         params.minArea = cal.minArea;
@@ -237,13 +245,17 @@ export async function detectStarSize() {
         if (minAreaController) minAreaController.updateDisplay();
         params.status = `${cal.count} blobs, median ${cal.medianArea} px, r ~${cal.rPsf.toFixed(1)} px`
             + ` -> min area ${cal.minArea}, aperture ${cal.apertureRadius}`;
+        return true;
     } catch (e) {
         // The button fires this without awaiting it, so a throw anywhere above would otherwise
         // become an unhandled rejection with the status stuck at "measuring". Report it - but
         // only if this request still owns the status.
         if (request === calibrationRequest && !ctx.stale()) {
             params.status = `calibration failed: ${e?.message ?? e}`;
+            // A throw with the context intact is a measurement failure like any other.
+            return true;
         }
+        return false;
     } finally {
         // EVERY exit clears the pending flag - stale returns and exceptions included - but
         // only while this is still the current request; a newer one owns the flag otherwise.
@@ -942,22 +954,27 @@ let hookedView = null;
 // same transform, rescale and visibility filters, with no second copy of the mapping to drift.
 let overlayStarHits = [];
 
-/** The drawn star circle containing this overlay-canvas point, most specific (smallest) first. */
-function starHitAt(px, py) {
-    let best = null;
-    for (const h of overlayStarHits) {
-        if (Math.hypot(px - h.x, py - h.y) > h.r + 3) continue;
-        if (!best || h.r < best.r) best = h;
-    }
-    return best;
+/** ALL drawn star circles containing this overlay-canvas point - a click toggles every one of
+ * them, so a tight clump of overlapping circles goes in one click instead of one per circle. */
+function starHitsAt(px, py) {
+    return overlayStarHits.filter((h) => Math.hypot(px - h.x, py - h.y) <= h.r + 3);
 }
 
-/** Toggle a star in or out of the working set: dimmed on the overlay, excluded from Identify. */
-function toggleStarEnabled(index) {
-    if (!result) return;
+/**
+ * Toggle the clicked stars in or out of the working set: dimmed on the overlay, excluded from
+ * Identify. One click, one outcome: if ANY of the clicked circles is still enabled the click
+ * disables them all, otherwise it re-enables them all - a clump in mixed states unifies rather
+ * than each circle flipping independently, which would swap the states forever without ever
+ * reaching "all off".
+ */
+function toggleStarsEnabled(indices) {
+    if (!result || !indices.length) return;
     if (!result.disabledStars) result.disabledStars = new Set();
-    if (result.disabledStars.has(index)) result.disabledStars.delete(index);
-    else result.disabledStars.add(index);
+    const disableAll = indices.some((ix) => !result.disabledStars.has(ix));
+    for (const ix of indices) {
+        if (disableAll) result.disabledStars.add(ix);
+        else result.disabledStars.delete(ix);
+    }
     setRenderOne();
 }
 
@@ -991,8 +1008,8 @@ function ensureOverlay() {
             downAt = null;
             if (moved > 4) return;
             const rect = overlay.getBoundingClientRect();
-            const hit = starHitAt(e.clientX - rect.left, e.clientY - rect.top);
-            if (hit) toggleStarEnabled(hit.index);
+            toggleStarsEnabled(
+                starHitsAt(e.clientX - rect.left, e.clientY - rect.top).map((h) => h.index));
         }, true);
     }
 
@@ -1078,6 +1095,10 @@ export function drawStarTrackerOverlay() {
 
         let rx = c.position[0], ry = c.position[1];
         if (c.klass === "moving") {
+            // Only while the track is actually following the object: the nearest-observation
+            // mapping below would happily carry its position to every OTHER frame too, pinning
+            // a red circle to the sky before the object appears and after it has gone.
+            if (i < c.first || i > c.last) continue;
             // A mover has no fixed map position, so show it where it actually was in the nearest
             // frame it was seen, brought into this frame through the solved transform.
             const t = result.solved.tracks[c.index];
@@ -1096,10 +1117,12 @@ export function drawStarTrackerOverlay() {
         const radius = 6 + t01 * 18;
 
         // Stars are clickable: register the circle as drawn, and dim a toggled-off star to 30% -
-        // still visible enough to click back on, clearly out of the working set.
+        // still visible enough to click back on, clearly out of the working set. Movers draw at
+        // half strength so the circle and its label mark the object without painting over it.
         const disabled = c.klass === "star" && result.disabledStars?.has(c.index);
         if (c.klass === "star") overlayStarHits.push({x: px, y: py, r: radius, index: c.index});
-        if (disabled) overlayCtx.globalAlpha = 0.3;
+        const alpha = disabled ? 0.3 : c.klass === "moving" ? 0.5 : 1;
+        if (alpha !== 1) overlayCtx.globalAlpha = alpha;
 
         overlayCtx.beginPath();
         overlayCtx.arc(px, py, radius, 0, Math.PI * 2);
@@ -1126,7 +1149,7 @@ export function drawStarTrackerOverlay() {
                 overlayCtx.fillText(id.label, px + radius + 4, py + 4);
             }
         }
-        if (disabled) overlayCtx.globalAlpha = 1;
+        if (alpha !== 1) overlayCtx.globalAlpha = 1;
     }
 
     // Light clusters - several lights moving together, no one of them trackable on its own.
@@ -1218,6 +1241,28 @@ export function getStarTrackerResult() {
 }
 
 /**
+ * The one-click path: calibrate on the current frame, analyze the In/Out range, identify the
+ * stars against the catalog, and sync the camera to the solve.
+ *
+ * Each stage gates the next on what it actually produced, not on the shared module state: a
+ * calibration whose context died (sitch/video changed mid-decode, or a newer calibration click
+ * superseded it) returns false, a failed or aborted analysis returns null, and an identify that
+ * found nothing leaves no solved.ok - in each case the chain stops so the stage's own failure
+ * status stays on screen rather than being overwritten by the next stage's "run Analyze first"
+ * complaint, and so a click's analysis and camera sync can never land on a video swapped in
+ * after the click. A failed MEASUREMENT does not stop the chain: detectStarSize keeps the
+ * previous (or default) parameters on failure precisely so the analysis remains runnable.
+ */
+async function runFullStarTracker() {
+    if (!await detectStarSize()) return;
+    const analyzed = await runStarTracker();
+    setRenderOne();
+    if (!analyzed) return;
+    await identifyStars();
+    if (analyzed.identify?.solved?.ok) syncCameraToStarTrack();
+}
+
+/**
  * Add the "Star Tracker" folder under Video.
  *
  * Idempotent, and a no-op without a video - the same guards the neighbouring motion-analysis
@@ -1233,14 +1278,25 @@ export function setupStarTrackerMenu() {
 
     folder = guiMenus.video.addFolder("Star Tracker").close();
 
+    folder.add({all: () => { runFullStarTracker(); }}, "all")
+        .name("Measure/Analyze/Identify/Sync");
     folder.add(params, "status").name("Status").listen().disable();
 
-    folder.add(params, "threshSigma", 3, 10, 0.5).name("Detect threshold (sigma)");
+    folder.add(params, "showStars").name("Show stars").onChange(setRenderOne);
+    folder.add(params, "showMoving").name("Show moving").onChange(setRenderOne);
+    folder.add(params, "showClusters").name("Show light clusters").onChange(setRenderOne);
+    folder.add(params, "showStarNames").name("Show star names").onChange(setRenderOne);
+    folder.add(params, "showRejected").name("Show rejected").onChange(setRenderOne);
+    folder.add(params, "chartTracks").name("Chart: object tracks");
+
+    const tweaks = folder.addFolder("Star Tracker Tweaks").close();
+
+    tweaks.add(params, "threshSigma", 3, 10, 0.5).name("Detect threshold (sigma)");
     // A hand-edited value is a user preference, not a measurement - it must survive sitch
     // teardown, where a calibrated one falls with its calibration. The edit also invalidates
     // any calibration still awaiting its frame, or that request would land afterwards,
     // overwrite the user's choice, and mark it calibrated.
-    minAreaController = folder.add(params, "minArea", 2, 40, 1).name("Min blob area (px)")
+    minAreaController = tweaks.add(params, "minArea", 2, 40, 1).name("Min blob area (px)")
         .onFinishChange(() => {
             minAreaCalibrated = false;
             calibrationRequest++;
@@ -1253,25 +1309,18 @@ export function setupStarTrackerMenu() {
         });
     // Blob sizes depend on resolution, zoom and exposure, so the pixel-scale settings are
     // measurable rather than guessable - this measures them from the frame on screen.
-    folder.add({cal: () => { detectStarSize(); }}, "cal").name("Detect Star Size (current frame)");
-    folder.add(params, "minObservations", 3, 40, 1).name("Min detections per track");
-    folder.add(params, "driftSignificance", 2, 20, 0.5).name("Moving: significance");
-    folder.add(params, "driftMinSigmas", 2, 40, 1).name("Moving: min drift (sigma)");
+    tweaks.add({cal: () => { detectStarSize(); }}, "cal").name("Detect Star Size (current frame)");
+    tweaks.add(params, "minObservations", 3, 40, 1).name("Min detections per track");
+    tweaks.add(params, "driftSignificance", 2, 20, 0.5).name("Moving: significance");
+    tweaks.add(params, "driftMinSigmas", 2, 40, 1).name("Moving: min drift (sigma)");
 
-    folder.add({run: async () => { await runStarTracker(); setRenderOne(); }}, "run")
+    tweaks.add({run: async () => { await runStarTracker(); setRenderOne(); }}, "run")
         .name("Analyze In/Out range");
-    folder.add({identify: () => { identifyStars(); }}, "identify")
+    tweaks.add({identify: () => { identifyStars(); }}, "identify")
         .name("Identify Stars (catalog)");
-    folder.add({sync: () => { syncCameraToStarTrack(); }}, "sync")
+    tweaks.add({sync: () => { syncCameraToStarTrack(); }}, "sync")
         .name("Sync Camera to Star Field");
-    folder.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)");
-    folder.add(params, "chartTracks").name("Chart: object tracks");
-
-    folder.add(params, "showStars").name("Show stars").onChange(setRenderOne);
-    folder.add(params, "showMoving").name("Show moving").onChange(setRenderOne);
-    folder.add(params, "showClusters").name("Show light clusters").onChange(setRenderOne);
-    folder.add(params, "showStarNames").name("Show star names").onChange(setRenderOne);
-    folder.add(params, "showRejected").name("Show rejected").onChange(setRenderOne);
+    tweaks.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)");
 
     folder.add({clear: () => { resetStarTracker(); setRenderOne(); }}, "clear").name("Clear");
 }

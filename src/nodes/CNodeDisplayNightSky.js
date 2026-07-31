@@ -791,6 +791,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             id: "starChartView",
             nightSkyNode: this,
             visible: false,
+            // The chart is shown/hidden by its own Show > Star Chart folder; a second
+            // toggle in Show > Views would fight it.
+            excludeFromViewsMenu: true,
             draggable: true, resizable: true, freeAspect: true,
             left: 0.53, top: 0.06, width: -1, height: 0.85,
         });
