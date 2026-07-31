@@ -27,6 +27,7 @@ import {
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {setupHorizonExtractorMenu} from "./CHorizonExtractor";
 import {setupCameraMotionMenu} from "./CameraMotionFromVideo";
+import {setupStarTrackerMenu} from "./starTrack/StarTrackerUI";
 import {ScenarioManager} from "./CScenarioManager";
 import {setupStreetViewPanoMenu} from "./StreetViewPanoUI";
 import {CustomGraphManager} from "./CCustomGraphManager";
@@ -1747,6 +1748,8 @@ export const setupMethods = {
         setupHorizonExtractorMenu();
 
         setupCameraMotionMenu();
+
+        setupStarTrackerMenu();
 
         // Street View pano needs the PHP stitcher endpoint (sitrecServer/streetview.php), which is
         // absent in serverless/desktop (no-PHP) builds — gate the menu so it isn't a dead UI there.
