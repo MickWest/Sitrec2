@@ -233,12 +233,6 @@ function maxOf(values) {
 function trimmedMean(values, trim = 0.1) {
     if (!values.length) return NaN;
     const s = Array.from(values).sort((a, b) => a - b);
-    // AT LEAST ONE FROM EACH END once the sample can spare it. A proportional
-    // cut alone rounds to ZERO below ten samples — so on the 5-to-9 overlapping
-    // steps this is often given, nothing was trimmed at all and a single
-    // wall-clock relock dragged the mean far enough to "prove" the encoder
-    // clock wrong, forcing cadence onto the very clock that had just jumped.
-    // Five samples minus one from each end still leaves three to average.
     // Force at least one from each end only once the sample can AFFORD it. At
     // five samples a forced cut discards 40% of them, and on balanced jitter
     // that lands asymmetrically and shifts the mean enough to invent a rate
@@ -1232,6 +1226,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     // proportion to how much of the clip they actually measure.
     let realDt = NaN;
     let anchorPairsUsed = 0;
+    let anchorsInconsistent = false;
     if (anchors.length >= 2) {
         const pairs = [];
         for (let k = 1; k < anchors.length; k++) {
@@ -1240,40 +1235,69 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
             const df = j - i;
             if (Number.isFinite(dt) && dt > 0 && df > 0) pairs.push({dt, df, rate: dt / df});
         }
-        if (pairs.length === 1) {
-            // ONE PAIR CANNOT BE CHECKED. A single interval spanning a relock
-            // reads as an hour per frame, and with nothing to compare it
-            // against there is no way to notice. Accept it only if it is
-            // broadly consistent with the cadence clock's own spacing; a lone
-            // wildly different figure is two contradictory measurements with no
-            // tiebreak, so neither is used.
-            const cadenceDt = (times[n - 1] - times[0]) / (n - 1);
-            const r = pairs[0].rate;
-            if (Number.isFinite(cadenceDt) && cadenceDt > 0
-                && r / cadenceDt > 0.25 && r / cadenceDt < 4) {
-                realDt = r;
-                anchorPairsUsed = 1;
-            } else {
-                warnings.push(`The only pair of wall-clock stamps in this span implies `
-                    + `${(1 / r).toFixed(3)} Hz, against ${(1 / cadenceDt).toFixed(3)} Hz from the `
-                    + `cadence timeline — too far apart to be a measurement rather than a clock `
-                    + `step, and with a single pair there is nothing to check it against. `
-                    + `Neither the epoch nor the rate was taken from it.`);
-            }
-        } else if (pairs.length > 1) {
-            // Reject outlying pairs by RATE, then weight the survivors by span.
-            const mid = trimmedMean(pairs.map((pp) => pp.rate));
+
+        // Weighted rate over a set of pairs: total elapsed / total frames.
+        const weighted = (ps) => {
+            let sumDt = 0, sumDf = 0;
+            for (const pp of ps) { sumDt += pp.dt; sumDf += pp.df; }
+            return sumDf > 0 ? sumDt / sumDf : NaN;
+        };
+        const cadenceDt = (times[n - 1] - times[0]) / (n - 1);
+        const plausible = (r) => Number.isFinite(cadenceDt) && cadenceDt > 0
+            && r / cadenceDt > 0.25 && r / cadenceDt < 4;
+
+        if (pairs.length >= 3) {
+            // MEDIAN-CENTRED, and the median is finally doing the job it is
+            // actually good at: locating the bulk of a sample so outliers can
+            // be identified. It is NOT the rate estimate — that is the weighted
+            // sum below. A trimmed MEAN was used here and inherited the very
+            // outlier it was meant to reject: below ten samples the
+            // proportional cut rounds to zero, so nine intervals containing one
+            // 3600 s relock centred on ~400 s, every honest pair fell outside
+            // the band, and the fail-open branch reinstated the lot — turning
+            // 10 Hz into 0.0025 Hz. The median of nine values with one outlier
+            // is simply the middle one.
+            const mid = median(pairs.map((pp) => pp.rate));
             const good = pairs.filter((pp) => Number.isFinite(mid) && mid > 0
                 && pp.rate / mid > 0.5 && pp.rate / mid < 2);
-            const use = good.length ? good : pairs;
-            let sumDt = 0, sumDf = 0;
-            for (const pp of use) { sumDt += pp.dt; sumDf += pp.df; }
-            if (sumDf > 0) { realDt = sumDt / sumDf; anchorPairsUsed = use.length; }
-            if (good.length && good.length < pairs.length) {
-                warnings.push(`${pairs.length - good.length} of ${pairs.length} wall-clock `
-                    + `intervals in this span are inconsistent with the rest — a clock step or `
-                    + `reset — and were excluded from the measured rate.`);
+            if (good.length) {
+                realDt = weighted(good);
+                anchorPairsUsed = good.length;
+                if (good.length < pairs.length) {
+                    warnings.push(`${pairs.length - good.length} of ${pairs.length} wall-clock `
+                        + `intervals in this span are inconsistent with the rest — a clock step `
+                        + `or reset — and were excluded from the measured rate.`);
+                }
+            } else {
+                // NEVER FAIL OPEN. "No interval agreed with any other" is a
+                // finding about the clock, not a licence to average them all.
+                anchorsInconsistent = true;
             }
+        } else if (pairs.length >= 1) {
+            // ONE OR TWO PAIRS CANNOT OUTVOTE EACH OTHER. With two, a
+            // mean-centred filter sits midway between an honest 0.1 s step and
+            // a 450 s relock — and the RELOCK is the one that lands inside the
+            // band, selecting the corrupt interval and reporting 0.002 Hz.
+            // There is no majority to appeal to, so the only check available is
+            // against the cadence timeline: accept the pairs wholesale if their
+            // combined rate is in the same world, otherwise take neither.
+            const r = weighted(pairs);
+            if (Number.isFinite(r) && plausible(r)) {
+                realDt = r;
+                anchorPairsUsed = pairs.length;
+            } else {
+                anchorsInconsistent = true;
+                warnings.push(`The ${pairs.length === 1 ? "only pair" : "two pairs"} of `
+                    + `wall-clock stamps in this span imply ${(1 / r).toFixed(4)} Hz, against `
+                    + `${(1 / cadenceDt).toFixed(3)} Hz from the cadence timeline — too far apart `
+                    + `to be a measurement rather than a clock step, and with so few stamps there `
+                    + `is nothing to check them against. Neither the epoch nor the rate was taken `
+                    + `from them.`);
+            }
+        } else {
+            // Anchors exist but no interval between them advances: duplicated
+            // or decreasing stamps.
+            anchorsInconsistent = true;
         }
     }
 
@@ -1282,12 +1306,19 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
         clipStartS = kept[i0].t - i0 * realDt;
         epochBasis = `measured across ${anchors.length} wall-clock stamps `
             + `(frames ${i0}-${anchors[anchors.length - 1]}, ${anchorPairsUsed} interval(s) used)`;
+    } else if (anchorsInconsistent) {
+        // A CLOCK THAT CONTRADICTS ITSELF CANNOT VOUCH FOR ANY OF ITS STAMPS.
+        // The fallback below trusts frame 0 unconditionally, which is right
+        // when nothing disputes it — and wrong here: several anchors that
+        // cannot produce one agreeing interval are positive evidence the wall
+        // clock is unreliable, so a stamp from it (frame zero's included) is
+        // not a fact to build an epoch on. Better no time than a wrong one.
+        warnings.push("The wall-clock stamps in this span contradict each other — no interval "
+            + "between them is usable — so none of them can be trusted as an absolute time, "
+            + "frame zero's included. This clip is reported with NO absolute time; "
+            + "date-dependent results are unavailable for it.");
     } else if (anchors.length >= 1) {
-        // REACHED WHENEVER NO USABLE RATE CAME OUT, not only when there is a
-        // single anchor. Duplicate or decreasing stamps yield no valid pair at
-        // all, and an `anchors.length === 1` guard here skipped this branch
-        // entirely in that case — discarding even a perfectly good frame-zero
-        // timestamp, with no epoch and no warning to say so.
+        // A single anchor, with nothing to contradict it.
         const i0 = anchors[0];
         if (i0 === 0) {
             clipStartS = kept[0].t;
