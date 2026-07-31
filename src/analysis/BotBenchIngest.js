@@ -144,18 +144,27 @@ function cell(v) {
  * time. Returns the longest such run, and how many were left out.
  */
 export function longestUniformRun(items, timeOf, gapFactor = 1.5, expectedDt = null) {
-    if (items.length <= 1) return {items: items.slice(), medianDt: NaN, breaks: 0};
+    if (items.length <= 1) {
+        return {items: items.slice(), medianDt: NaN, breaks: 0, observedDt: NaN,
+            degenerateClock: true, declaredMismatch: false};
+    }
 
     const deltas = [];
     for (let i = 1; i < items.length; i++) {
         const dt = timeOf(items[i]) - timeOf(items[i - 1]);
         if (Number.isFinite(dt) && dt > 0) deltas.push(dt);
     }
-    // No usable timing at all: every interval is unknown, so no gap can be
-    // proven and none can be ruled out. Return the whole list and let the
-    // caller warn — refusing here would reject a file for lacking a clock it
-    // may not need.
-    if (!deltas.length) return {items: items.slice(), medianDt: NaN, breaks: 0};
+    // No usable timing at all: every interval is unknown or non-positive, so no
+    // gap can be proven and none ruled out. Return the whole list and let the
+    // caller decide — but say DEGENERATE, and set declaredMismatch, because a
+    // constant or non-advancing Time column is exactly the case where applying
+    // a declared FPS regardless produces confident nonsense. Returning early
+    // without that flag let the caller treat the declared rate as validated.
+    if (!deltas.length) {
+        return {items: items.slice(), medianDt: NaN, breaks: 0, observedDt: NaN,
+            degenerateClock: true,
+            declaredMismatch: Number.isFinite(expectedDt) && expectedDt > 0};
+    }
     // PREFER THE DECLARED RATE. Deriving the expected spacing from the observed
     // median is circular when the drops are REGULAR: lose every other sample
     // and the median interval becomes 2x nominal, every remaining step matches
@@ -360,6 +369,7 @@ export function sourceQualityGrade(q) {
     else if (q.conditioning === "marginal") reasons.push("CV-family conditioning marginal");
     if (q.timeCv !== null && q.timeCv > 0.25) reasons.push("irregular sample timing");
     if (q.timeGaps > 0) reasons.push(`${q.timeGaps} timing gap(s)`);
+    if (q.frameStated === false) reasons.push("coordinate frame/origin unstated (no sidecar)");
 
     const hard = reasons.some((r) => /fewer than|barely/.test(r));
     const grade = hard ? "weak" : q.conditioning === "poor" ? "hard"
@@ -495,6 +505,12 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
     const declaredDt = Number.isFinite(sidecar?.nominalFps) && sidecar.nominalFps > 0
         ? 1 / sidecar.nominalFps : null;
     const run = longestUniformRun(candidates, (p) => p.t, 1.5, declaredDt);
+    if (run.degenerateClock) {
+        throw new Error("The Time column never advances (no positive interval between any two "
+            + "rows), so this file carries no usable timing. Every speed, acceleration and "
+            + "g-load the analysis reports is derived from it, so there is nothing honest to "
+            + "compute here.");
+    }
     if (run.declaredMismatch) {
         warnings.push(`The sidecar declares ${(1 / declaredDt).toFixed(3)} Hz but the Time column `
             + `steps every ${run.observedDt.toFixed(4)} s (${(1 / run.observedDt).toFixed(3)} Hz). `
@@ -640,6 +656,22 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
                 + `got ${JSON.stringify(originLLA)}.`);
         }
     }
+    // The forward hold in the fill loop cannot reach frames BEFORE the first
+    // valid truth, so back-fill those from it. Both halves are needed and this
+    // one was lost in a later edit to this block: without it a truth track that
+    // starts blank keeps the zero-fill on its opening frames, and zero is the
+    // ENU ORIGIN — kilometres away — so the report drew a trajectory sweeping
+    // in from nowhere. Never scored either way; tValid stays 0.
+    if (anyTruth) {
+        let first = -1;
+        for (let f = 0; f < n; f++) if (tValid[f]) { first = f; break; }
+        for (let f = 0; f < first; f++) {
+            T[f * 3] = T[first * 3];
+            T[f * 3 + 1] = T[first * 3 + 1];
+            T[f * 3 + 2] = T[first * 3 + 2];
+        }
+    }
+
     const [oLat, oLon, oAlt] = sidecar ? originLLA
         : [BOT_DEFAULT_ORIGIN.latDeg, BOT_DEFAULT_ORIGIN.lonDeg, 0];
 
@@ -678,6 +710,7 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
     const quality = assessSourceQuality(dataset, {
         times, declaredLosSigmaDeg: declaredSigma, invalidFrames, droppedRows,
     });
+    quality.frameStated = !!sidecar;
     quality.losErrorModel = losErrorModel;
     quality.losErrorCorrelated = losErrorCorrelated;
     quality.losErrorNote = sidecar?.losError?.note ?? null;
@@ -923,13 +956,19 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     const utsScore = rateTimebase((u) => u.t);
     const ptsScore = rateTimebase((u) => u.pts);
     const USABLE_CLEAN = 0.8;
+    // Pick the BETTER clock, not merely an adequate one. Preferring the wall
+    // clock whenever it cleared the bar meant a 0.82-clean UTS beat a perfect
+    // PTS, and the run was then trimmed on the worse timeline for no reason.
+    // The wall clock only wins when the two are comparable, where its epoch is
+    // a genuine tiebreak.
+    const EPOCH_TIEBREAK = 0.05;
     let chosen = null, chosenName = "none";
-    if (utsScore && utsScore.clean >= USABLE_CLEAN) { chosen = utsScore; chosenName = "uts"; }
-    else if (ptsScore && ptsScore.clean >= USABLE_CLEAN) { chosen = ptsScore; chosenName = "pts"; }
-    else if (utsScore || ptsScore) {
-        chosen = (utsScore?.clean ?? -1) >= (ptsScore?.clean ?? -1) ? utsScore : ptsScore;
-        chosenName = chosen === utsScore ? "uts" : "pts";
-    }
+    const uc = utsScore?.clean ?? -1;
+    const pc = ptsScore?.clean ?? -1;
+    if (uc < 0 && pc < 0) { chosen = null; }
+    else if (pc > uc + EPOCH_TIEBREAK) { chosen = ptsScore; chosenName = "pts"; }
+    else if (uc >= 0) { chosen = utsScore; chosenName = "uts"; }
+    else { chosen = ptsScore; chosenName = "pts"; }
     const utsOk = chosenName === "uts";
     const useTimeOf = chosen ? chosen.get : ((u) => u.t);
     if (chosenName === "pts") {
@@ -952,6 +991,11 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
         warnings.push("Neither UnixTimeStamp nor KLV PES PTS is complete across these records, "
             + "so continuity could not be checked and a dropout would be stitched over "
             + "silently. Cadence falls back to an assumed 30 Hz.");
+    }
+    if (run.degenerateClock) {
+        throw new Error("Neither the UnixTimeStamp nor the KLV PES PTS series ever advances, so "
+            + "this clip carries no usable timing. Every speed, acceleration and g-load the "
+            + "analysis reports is derived from it.");
     }
     if (kept.length < complete.length) {
         warnings.push(`Analysed the longest UNIFORMLY SAMPLED span: ${kept.length} of `
@@ -1171,8 +1215,19 @@ export async function ingestBotBenchEntry(entry) {
         const text = await file.text();
         let sidecar = null, labels = null;
         if (entry.sidecarText) {
-            try { sidecar = JSON.parse(entry.sidecarText); }
-            catch (e) { /* falls back to defaults, with a warning from ingestBotCSV */ }
+            // A sidecar that EXISTS and does not parse is a different thing from
+            // no sidecar at all: the producer stated the frame and we failed to
+            // read it. Treating the two alike quietly substituted the shipped
+            // set's default site for whatever this file actually declares, so
+            // the geometry would be analysed at the wrong place on the globe
+            // with nothing to show for it.
+            try {
+                sidecar = JSON.parse(entry.sidecarText);
+            } catch (e) {
+                throw new Error(`This scenario's .scenario.json could not be parsed `
+                    + `(${e.message}). It states the coordinate frame, origin and rate, so it `
+                    + `cannot be skipped — fix or remove it.`);
+            }
         }
         if (entry.labelsText) {
             try { labels = JSON.parse(entry.labelsText); } catch (e) { labels = null; }

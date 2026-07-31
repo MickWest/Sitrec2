@@ -6650,8 +6650,9 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
         <figure><img src="${chartC3}" alt="Turn rate time series"></figure>
     </div>
     <figure style="background:none;border:none;padding:0">
-        <figcaption>Per-frame physical demands of the selected constant-air-speed family representative and the
-        aircraft fit. Values near the clip ends use shortened smoothing windows.</figcaption>
+        <figcaption>Per-frame physical demands of the selected constant-air-speed family representative${aircraft
+            ? " and the aircraft fit" : ""}. Values near the clip ends use shortened smoothing
+        windows.${aircraft ? "" : " The fixed-wing fit returned no solution, so it is absent from these charts."}</figcaption>
     </figure>
 </section>
 
@@ -6680,7 +6681,7 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
 
 <section>
     <h2>Aircraft fit runs</h2>
-    <div class="tablebox">
+    ${runRows ? `<div class="tablebox">
     <table>
         <thead><tr>
             <th>Run</th><th>Cost</th><th>Range (NM)</th><th>Heading (ENU °)</th>
@@ -6691,7 +6692,10 @@ ${truth ? `<div class="warning" style="background:#3a1e2e;color:#f4a6cd;border-c
     </table>
     </div>
     <p class="sub">Deterministically seeded differential-evolution restarts, each polished with a pattern search.
-    Agreement is a useful stability diagnostic, but is not proof of global convergence.</p>
+    Agreement is a useful stability diagnostic, but is not proof of global convergence.</p>`
+    : `<p class="sub">The fixed-wing fit produced no runs to report — it returned no solution for
+    this geometry. An empty table would read as "the search found nothing interesting"; it did not
+    run to completion at all. See Checks for the recorded reason.</p>`}
 </section>
 
 <section class="methods">
