@@ -139,31 +139,29 @@ describe("measureAnchorRate", () => {
         expect(r.epochAnchor).toBe(-1);
     });
 
-    test("an even split of steps and honest intervals recovers the rate, not the epoch", () => {
-        // [0.1, 0.1, 450, 450] once reported 0.0022 Hz: a median-centred band
-        // landed between the two populations and kept the wrong half. The 450s
-        // intervals are now identified positively as steps — 4500x the cadence
-        // — so they are excised and the honest rate survives. Two jumps of
-        // unknown size mean the absolute offset does not.
+    test("an even split of steps and honest intervals covers too little to trust", () => {
+        // [0.1, 0.1, 450, 450] once reported 0.0022 Hz. The 450s intervals are
+        // now identified as steps and excised — but what remains covers only
+        // 20 of the 40 anchor frames, and half a clip whose other half is two
+        // large jumps is not enough to rescale the whole clip's kinematics.
+        // Cadence falls back to the timeline the frames are spaced on, which
+        // costs far less than a silently wrong rate.
         const {idx, timeAt} = anchorsFromRates([0.1, 0.1, 450, 450]);
         const r = measureAnchorRate(idx, timeAt, CADENCE);
-        expect(1 / r.realDt).toBeCloseTo(10, 1);
-        expect(r.stepDetected).toBe(true);
-        expect(r.epochAnchor).toBe(-1);
+        expect(r.inconsistent).toBe(true);
+        expect(r.reason).toMatch(/cover only/);
     });
 
-    test("two pairs that disagree are not averaged into a plausible middle", () => {
+    test("two pairs that disagree are never averaged into a plausible middle", () => {
         // 0.1 and 0.4 s/frame. Averaging them gives 0.25, which slips under a
         // broad sanity band against a 0.1 cadence and rescaled 10 Hz to 4 Hz.
-        // The 0.4 pair is now recognised as a step and dropped, leaving the
-        // honest one — the true rate, rather than either the bad average or a
-        // blanket refusal.
+        // That average must never be the answer. The 0.4 pair is dropped as a
+        // step, and what survives covers only 10 of 20 anchor frames — too
+        // little to rescale the clip, so this falls back to the cadence.
         const times = {0: 0, 10: 1, 20: 5};
         const r = measureAnchorRate([0, 10, 20], (f) => times[f], CADENCE);
-        expect(r.realDt).not.toBeCloseTo(0.25, 2);   // never the average
-        expect(1 / r.realDt).toBeCloseTo(10, 1);
-        expect(r.stepDetected).toBe(true);
-        expect(r.epochAnchor).toBe(-1);
+        expect(r.realDt).not.toBeCloseTo(0.25, 2);
+        expect(r.inconsistent).toBe(true);
     });
 
     test("non-advancing intervals count against the majority", () => {
@@ -202,14 +200,18 @@ describe("measureAnchorRate", () => {
         expect(r.epochAnchor).toBe(-1);   // a step costs the epoch
     });
 
-    test("a duplicate does not let two conflicting pairs take the lenient path", () => {
-        // [0, 1, 2, 9] at times [0, 0, 0.2, 0.9]: one non-advancing interval
-        // plus two disagreeing pairs. Counting the duplicate toward the branch
-        // THRESHOLD sent this down the majority path, where both pairs fitted a
-        // band around their own median, and returned 0.1125 s/frame.
+    test("a stall early on does not stop a well-covered later measurement", () => {
+        // [0, 1, 2, 9] at times [0, 0, 0.2, 0.9]. The stall makes anchor 1
+        // stale, so the interval measured from it is dropped as contaminated —
+        // it once dragged a weighted answer to 0.1125 s/frame. What is left
+        // spans frames 2 to 9, which is 78% of the clip and reads 0.1 s/frame:
+        // the TRUE rate, checked directly as (0.9-0.2)/(9-2). Recovering it
+        // beats refusing the clip.
         const times = {0: 0, 1: 0, 2: 0.2, 9: 0.9};
         const r = measureAnchorRate([0, 1, 2, 9], (f) => times[f], 0.1);
-        expect(r.inconsistent).toBe(true);
+        expect(r.inconsistent).toBe(false);
+        expect(r.realDt).toBeCloseTo(0.1, 6);
+        expect(r.epochAnchor).toBe(-1);    // frame zero is behind the stall
     });
 
     test("a discarded step does not inflate the branch past the strict check", () => {
@@ -286,6 +288,18 @@ describe("measureAnchorRate", () => {
         }
         const r = measureAnchorRate(idx, (f) => times[f], CADENCE);
         expect(r.inconsistent).toBe(true);
+    });
+
+    test("pairs rejected by the agreement filter do not count as coverage", () => {
+        // Rates [0.1, 0.1, 0.3, 10, 10]. The two 10s are excised as steps and
+        // the 0.3 then fails the agreement band — leaving two intervals over
+        // 40% of the clip. A guard that compared USABLE against STEPS ran
+        // before that filter, so the 0.3 counted as usable and the clip was
+        // accepted on 2 of 5 intervals, silently rescaling every speed.
+        const {idx, timeAt} = anchorsFromRates([0.1, 0.1, 0.3, 10, 10]);
+        const r = measureAnchorRate(idx, timeAt, CADENCE);
+        expect(r.inconsistent).toBe(true);
+        expect(r.reason).toMatch(/cover only/);
     });
 
     test("fewer than two anchors yields nothing, without throwing", () => {

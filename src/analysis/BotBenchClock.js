@@ -240,71 +240,62 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
         return out;
     }
 
-    // A MAJORITY OF ALL INTERVALS MUST BE USABLE — applied in EVERY branch, so
-    // there is one rule rather than a veto in one path and a threshold in
-    // another. `total` counts non-advancing intervals too, so a mostly-stalled
-    // clock cannot look unanimous by having its duplicates quietly dropped
-    // first: one good step among eight duplicates is 1-of-9, not 1-of-1.
+    // TRUST IS COVERAGE, NOT COUNT.
     //
-    // This replaces a blanket "any non-advancing interval rejects" rule in the
-    // two-pair path. That veto was doing the majority test's job badly: two
-    // agreeing 0.1 s intervals beside a single repeated timestamp are a
-    // two-thirds majority and a perfectly good rate, and were being thrown away
-    // for the duplicate alone.
-    // The denominator counts intervals the CLOCK failed to provide — stalls,
-    // and intervals measured from a stale anchor — but NOT steps we identified
-    // and removed. Excising a known step is a correction; counting it against
-    // the survivors would reject a clip for the very fault we just repaired,
-    // which is what threw away a lone honest interval beside one relock.
-    const reliability = sane.length + nonAdvancing + staleStarts;
-    const majorityOf = (k) => k >= Math.ceil(reliability * 0.6);
-    // A FEW steps are a correction; MANY are a verdict on the clock. Excluding
-    // them from the denominator entirely let one honest interval among
-    // arbitrarily many out-of-band ones pass as 1-of-1 and rescale every
-    // derived quantity. Requiring the honest intervals to at least match the
-    // steps keeps the two-interval repair (one relock beside one good reading)
-    // while refusing a clock that is more jump than measurement.
-    const steps = stepPairs + backwardResets;
-    if (sane.length < steps) {
-        out.inconsistent = true;
-        out.reason = `${steps} of the wall-clock intervals are clock jumps and only `
-            + `${sane.length} are usable measurements`;
-        return out;
-    }
-    if (!majorityOf(sane.length)) {
-        out.inconsistent = true;
-        out.reason = `only ${sane.length} of ${reliability} wall-clock intervals are usable`
-            + (nonAdvancing ? ` (${nonAdvancing} do not advance)` : "")
-            + (stepPairs ? ` (${stepPairs} imply a rate far from the cadence timeline)` : "");
-        return out;
-    }
+    // Four guards here have counted intervals — usable-vs-steps,
+    // majority-of-usable, majority-of-agreeing — and each was defeated by a
+    // case the others let through, because interval count says nothing about
+    // how much of the clip a measurement actually measures. One interval
+    // spanning 100 of 101 frames is strong evidence; two intervals spanning 40%
+    // of the clip are weak, and counting rates them 1-of-2 against 2-of-5 — the
+    // wrong way round.
+    //
+    // So there is ONE test: the intervals finally used must cover a majority of
+    // the anchor span. Rejection is cheap — cadence falls back to the timeline
+    // the frames are actually spaced on — while a wrong anchor rate silently
+    // rescales every speed, acceleration and g-load in the report. Strictness
+    // is the right side to err on.
+    const anchorSpan = anchorIndices[anchorIndices.length - 1] - anchorIndices[0];
+    const coverageOf = (ps) => {
+        if (!(anchorSpan > 0)) return 0;
+        let df = 0;
+        for (const pp of ps) df += pp.df;
+        return df / anchorSpan;
+    };
+    const MIN_COVERAGE = 0.6;
 
-    // BRANCH ON THE NUMBER OF USABLE MEASUREMENTS, not on how many intervals
-    // happened to advance. Keying this on the raw pair count let a discarded
-    // step inflate the branch: rates [0.1, 0.25, 10] drop the 10 as a step and
-    // leave TWO conflicting survivors, which then took the lenient majority
-    // path — they fitted a band around their own median and returned
-    // 0.175 s/frame, silently rescaling 10 Hz to 5.7 Hz. Two measurements
-    // cannot outvote each other however many were discarded to reach them.
+    const accept = (used) => {
+        const r = weighted(used);
+        const cover = coverageOf(used);
+        if (cover < MIN_COVERAGE || !Number.isFinite(r) || !plausible(r)) {
+            out.inconsistent = true;
+            out.reason = cover < MIN_COVERAGE
+                ? `the usable wall-clock intervals cover only `
+                  + `${(cover * 100).toFixed(0)}% of the clip`
+                : `the measured rate is far from the cadence timeline`;
+            return false;
+        }
+        out.realDt = r;
+        out.pairsUsed = used.length;
+        // Anything discarded that was a JUMP (a step or a backward reset)
+        // destroys the absolute offset; a stall does not.
+        out.stepDetected = stepPairs > 0 || backwardResets > 0
+            || used.length < sane.length;
+        out.epochAnchor = epochAnchorFor(out.stepDetected, used, anchorIndices[0]);
+        return true;
+    };
+
     if (sane.length >= 3) {
         // A MAJORITY MUST AGREE. A band around a centre detects an outlier
         // among agreeing samples; it cannot detect disagreement itself. The
         // median of an odd sample is one of the samples and always passes its
         // own band, and on an even split the median lands between two
-        // populations and keeps whichever it drifts toward.
+        // populations and keeps whichever it drifts toward — so the coverage
+        // test above is what actually decides whether the survivors are enough.
         const mid = median(sane.map((pp) => pp.rate));
         const good = sane.filter((pp) => Number.isFinite(mid) && mid > 0
             && pp.rate / mid > 0.5 && pp.rate / mid < 2);
-        const r = good.length ? weighted(good) : NaN;
-        if (!majorityOf(good.length) || !Number.isFinite(r) || !plausible(r)) {
-            out.inconsistent = true;
-            out.reason = `only ${good.length} of ${reliability} wall-clock intervals agree`;
-            return out;
-        }
-        out.realDt = r;
-        out.pairsUsed = good.length;
-        out.stepDetected = steps > 0 || good.length < sane.length;
-        out.epochAnchor = epochAnchorFor(out.stepDetected, good, anchorIndices[0]);
+        accept(good);
         return out;
     }
 
@@ -317,24 +308,17 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
     // AGREEMENT IS ONLY MEANINGFUL BETWEEN COMPARABLE MEASUREMENTS. Two pairs
     // spanning 1 frame and 100 frames are not two opinions of equal weight: the
     // short one is a single noisy sample, the long one averages a hundred. So
-    // demand mutual agreement only when the spans are within a factor of four —
-    // the plausibility filter above has already removed anything that is a step
-    // rather than a difference of precision.
+    // demand mutual agreement only when the spans are within a factor of four.
     const spans = sane.map((pp) => pp.df);
     const comparableEvidence = maxOf(spans) <= minOf(spans) * 4;
     const agree = sane.length === 1 || !comparableEvidence
         || sane.every((pp) => pp.rate / sane[0].rate > 0.5 && pp.rate / sane[0].rate < 2);
-    const combined = weighted(sane);
-    if (!agree || !Number.isFinite(combined) || !plausible(combined)) {
+    if (!agree) {
         out.inconsistent = true;
-        out.reason = agree ? "the wall-clock interval disagrees with the cadence timeline"
-            : "the two wall-clock intervals disagree with each other";
+        out.reason = "the two wall-clock intervals disagree with each other";
         return out;
     }
-    out.realDt = combined;
-    out.pairsUsed = sane.length;
-    out.stepDetected = steps > 0;
-    out.epochAnchor = epochAnchorFor(out.stepDetected, sane, anchorIndices[0]);
+    accept(sane);
     return out;
 }
 
