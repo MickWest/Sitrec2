@@ -924,63 +924,74 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     // Pick the timebase BEFORE judging continuity: a stream with good PES PTS
     // and a broken wall clock is a normal FMV case, and trimming it on the
     // broken clock would discard perfectly timed data.
-    // TIMEBASE CHOSEN BY HOW MUCH DATA IT ACTUALLY KEEPS.
+    // CADENCE COMES FROM PES PTS; THE EPOCH COMES FROM UnixTimeStamp.
     //
-    // Both candidate clocks can be present and broken in different ways: a wall
-    // clock can be finite on every record and still jump, and PES PTS repeats
-    // when several KLV records ride one packet. Two earlier discriminators both
-    // failed, and the second failed in an instructive way:
+    // This is what the two fields ARE, and grounding the rule there beats any
+    // further heuristic — two of which I have already got wrong here:
     //
-    //   "all values finite"  picked an erratic wall clock over a clean PTS.
-    //   "fraction of clean steps"  looks reasonable and is not, because the
-    //   COST of a bad step has nothing to do with how many there are — it is
-    //   decided by WHERE they fall. One repeated timestamp in the middle of a
-    //   700-record clip scores 0.9986, beats a perfect PTS under any sane
-    //   tolerance, and then splits the run in half, throwing away ~350 good
-    //   records for a single duplicate.
+    //   "all values finite"   picked an erratic wall clock over a clean PTS.
+    //   "fraction of clean steps"  ignores WHERE the bad steps fall; one
+    //     duplicate mid-clip scores 0.9986, beats a perfect PTS, and halves the
+    //     run.
+    //   "longest retained run"  is better but still not a correctness test: a
+    //     DAMAGED clock can retain more precisely BECAUSE it is too uniform —
+    //     if it papers over a dropout the good clock honestly reports, it wins
+    //     the comparison by hiding the very thing we are trying to detect.
     //
-    // So do not score a proxy. Run the actual continuity selection on each
-    // timebase and keep the one that yields the longest usable span — the exact
-    // quantity that matters. The wall clock wins ties, and only ties, because
-    // it alone carries an epoch.
-    const timebases = [];
-    for (const [nameOf, get] of [["uts", (u) => u.t], ["pts", (u) => u.pts]]) {
-        if (complete.length < 2) continue;
-        if (!complete.every((u) => Number.isFinite(get(u)))) continue;
+    // ST 0601 tag 2 is a wall clock: authoritative for WHEN, and subject to
+    // steps, resets and coarse resolution. The KLV PES PTS is the encoder's
+    // synchronous timebase: it is what the container uses to space frames, and
+    // spacing is exactly the question here. So prefer PTS for cadence whenever
+    // it yields a usable run, and keep the wall clock for the epoch — never
+    // mixing the two roles.
+    //
+    // Neither is required to be complete: parseKLVFile deliberately writes a
+    // null PTS for a record it cannot pair (MISBUtils.js), so demanding every
+    // value be finite disqualified a whole timebase over one hole that
+    // longestUniformRun would simply have trimmed around.
+    const MIN_RUN = 10;
+    const trialOf = (get) => {
+        if (complete.length < 2) return null;
+        // At least two finite values, or there is nothing to difference.
+        if (complete.filter((u) => Number.isFinite(get(u))).length < 2) return null;
         const trial = longestUniformRun(complete, get);
-        if (trial.degenerateClock || !trial.items.length) continue;
-        timebases.push({name: nameOf, get, run: trial, kept: trial.items.length});
-    }
-    // Strictly more data wins; equal data goes to the wall clock (listed first).
-    timebases.sort((a, b) => b.kept - a.kept);
-    const best = timebases[0] ?? null;
-    const chosenName = best ? best.name : "none";
-    const utsOk = chosenName === "uts";
+        if (trial.degenerateClock || trial.items.length < MIN_RUN) return null;
+        return {get, run: trial, kept: trial.items.length, dt: trial.observedDt};
+    };
+    const utsTrial = trialOf((u) => u.t);
+    const ptsTrial = trialOf((u) => u.pts);
+
+    const best = ptsTrial ?? utsTrial;
+    const chosenName = best ? (best === ptsTrial ? "pts" : "uts") : "none";
+    const utsOk = !!utsTrial;                    // an epoch is available
     const useTimeOf = best ? best.get : ((u) => u.t);
     const chosen = best;
 
     if (chosenName === "pts") {
-        const uts = timebases.find((t) => t.name === "uts");
-        warnings.push(`The KLV PES presentation timestamps were used for cadence rather than `
-            + `UnixTimeStamp${uts ? `, which yields only ${uts.kept} usable frames against `
-                + `${best.kept}` : ", which is absent or non-finite on some records"}. PES PTS is `
-            + `locked to the encoder clock, which is the right timebase for spacing, but it `
-            + `carries no wall-clock epoch.`);
+        warnings.push(`Cadence was taken from the KLV PES presentation timestamps — the `
+            + `encoder's synchronous timebase, which is what spacing means in a transport `
+            + `stream. UnixTimeStamp is used only for the wall-clock epoch`
+            + `${utsTrial ? "" : ", and is not usable here, so this clip has no absolute time"}.`);
     }
-    if (timebases.length > 1 && timebases[0].kept > timebases[1].kept) {
-        warnings.push(`Timebases disagree: ${timebases[0].name.toUpperCase()} keeps `
-            + `${timebases[0].kept} frames and ${timebases[1].name.toUpperCase()} keeps `
-            + `${timebases[1].kept}. One of the two clocks in this file is damaged.`);
+    // A disagreement about RATE is the dangerous case: every speed, g-load and
+    // turn rate scales with it, and the two clocks cannot both be right. There
+    // is no principled way to tell which from the file alone, so say so plainly
+    // instead of picking silently.
+    if (utsTrial && ptsTrial && Number.isFinite(utsTrial.dt) && Number.isFinite(ptsTrial.dt)
+        && Math.abs(ptsTrial.dt / utsTrial.dt - 1) > 0.1) {
+        warnings.push(`THE TWO CLOCKS DISAGREE ABOUT RATE: PES PTS steps every `
+            + `${ptsTrial.dt.toFixed(4)} s (${(1 / ptsTrial.dt).toFixed(2)} Hz), UnixTimeStamp `
+            + `every ${utsTrial.dt.toFixed(4)} s (${(1 / utsTrial.dt).toFixed(2)} Hz). Cadence `
+            + `was taken from PES PTS, but one of the two is wrong and every speed, acceleration `
+            + `and g-load below scales directly with that choice.`);
     }
-    // NO CLOCK IS A REFUSAL, NOT A FALLBACK.
-    //
-    // This used to assume 30 Hz when neither series was usable, and that
-    // assumption then sat underneath every speed, acceleration, g-load and
-    // turn-rate the analysis reports — a whole page of numbers invented from a
-    // guess, with nothing on the row to say so. It is the same situation as a
-    // Time column that never advances, which is already refused, and treating
-    // the two differently was an inconsistency rather than a feature. (Real KLV
-    // carries ST 0601 tag 2: the shipped Truck.klv resolves 4.94 Hz from it.)
+    // Retention is no longer the selector, but a large gap between the two is
+    // still worth surfacing: it means one clock is hiding or inventing a break.
+    if (utsTrial && ptsTrial && Math.abs(ptsTrial.kept - utsTrial.kept) > 0.1 * complete.length) {
+        warnings.push(`The clocks retain different amounts of this clip — PES PTS `
+            + `${ptsTrial.kept} frames, UnixTimeStamp ${utsTrial.kept}, of ${complete.length}. `
+            + `One of them is either hiding a real dropout or inventing one.`);
+    }
     const haveAllTimes = !!chosen;
     if (!haveAllTimes) {
         throw new Error("Neither UnixTimeStamp nor KLV PES PTS gives a usable, advancing "
