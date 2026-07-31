@@ -1227,13 +1227,17 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     let realDt = NaN;
     let anchorPairsUsed = 0;
     let anchorsInconsistent = false;
+    let epochAnchor = -1;
     if (anchors.length >= 2) {
         const pairs = [];
         for (let k = 1; k < anchors.length; k++) {
             const i = anchors[k - 1], j = anchors[k];
             const dt = kept[j].t - kept[i].t;
             const df = j - i;
-            if (Number.isFinite(dt) && dt > 0 && df > 0) pairs.push({dt, df, rate: dt / df});
+            // `i` is the kept-index this pair STARTS at — the epoch projects
+            // from the earliest anchor that survives filtering, not from
+            // anchors[0], which may sit on the far side of an excluded step.
+            if (Number.isFinite(dt) && dt > 0 && df > 0) pairs.push({dt, df, i, rate: dt / df});
         }
 
         // Weighted rate over a set of pairs: total elapsed / total frames.
@@ -1247,52 +1251,79 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
             && r / cadenceDt > 0.25 && r / cadenceDt < 4;
 
         if (pairs.length >= 3) {
-            // MEDIAN-CENTRED, and the median is finally doing the job it is
-            // actually good at: locating the bulk of a sample so outliers can
-            // be identified. It is NOT the rate estimate — that is the weighted
-            // sum below. A trimmed MEAN was used here and inherited the very
-            // outlier it was meant to reject: below ten samples the
-            // proportional cut rounds to zero, so nine intervals containing one
-            // 3600 s relock centred on ~400 s, every honest pair fell outside
-            // the band, and the fail-open branch reinstated the lot — turning
-            // 10 Hz into 0.0025 Hz. The median of nine values with one outlier
-            // is simply the middle one.
+            // A MAJORITY MUST AGREE — a band around the median is not enough on
+            // its own. The median of an ODD sample is one of the samples, so it
+            // always passes its own band and the fail-closed path could never
+            // be reached; on an EVEN split like [0.1, 0.1, 450, 450] the median
+            // lands between the two populations and the band keeps whichever
+            // half it drifts toward, reporting 0.0022 Hz for a 10 Hz clip.
+            //
+            // A clock with one relock has one odd interval out of many. A clock
+            // whose intervals split down the middle is not a clock with an
+            // outlier — it is two different timelines, and there is no honest
+            // way to pick between them. So require most of the pairs to agree,
+            // and require the answer they give to be in the same world as the
+            // cadence timeline.
             const mid = median(pairs.map((pp) => pp.rate));
             const good = pairs.filter((pp) => Number.isFinite(mid) && mid > 0
                 && pp.rate / mid > 0.5 && pp.rate / mid < 2);
-            if (good.length) {
-                realDt = weighted(good);
+            const majority = good.length >= Math.ceil(pairs.length * 0.6);
+            const r = good.length ? weighted(good) : NaN;
+            if (majority && Number.isFinite(r) && plausible(r)) {
+                realDt = r;
                 anchorPairsUsed = good.length;
+                // THE EPOCH MUST RIDE ON A SURVIVING PAIR. Projecting from
+                // anchors[0] regardless puts frame zero on the wrong side of an
+                // excluded clock step — the stale pre-relock stamp is exactly
+                // the one the filter just rejected, and using it shifts
+                // clipStartMs by the whole jump.
+                epochAnchor = Math.min(...good.map((pp) => pp.i));
                 if (good.length < pairs.length) {
                     warnings.push(`${pairs.length - good.length} of ${pairs.length} wall-clock `
                         + `intervals in this span are inconsistent with the rest — a clock step `
-                        + `or reset — and were excluded from the measured rate.`);
+                        + `or reset — and were excluded from the measured rate and the epoch.`);
                 }
             } else {
-                // NEVER FAIL OPEN. "No interval agreed with any other" is a
-                // finding about the clock, not a licence to average them all.
+                // NEVER FAIL OPEN. Disagreement is a finding about the clock,
+                // not a licence to average it.
                 anchorsInconsistent = true;
+                warnings.push(`The wall-clock intervals in this span do not agree `
+                    + `(${good.length} of ${pairs.length} within a factor of two of the median`
+                    + `${Number.isFinite(r) && !plausible(r)
+                        ? `, and their combined ${(1 / r).toFixed(4)} Hz is far from the `
+                          + `${(1 / cadenceDt).toFixed(3)} Hz of the cadence timeline` : ""}). `
+                        + `No rate or epoch was taken from them.`);
             }
         } else if (pairs.length >= 1) {
-            // ONE OR TWO PAIRS CANNOT OUTVOTE EACH OTHER. With two, a
-            // mean-centred filter sits midway between an honest 0.1 s step and
-            // a 450 s relock — and the RELOCK is the one that lands inside the
-            // band, selecting the corrupt interval and reporting 0.002 Hz.
-            // There is no majority to appeal to, so the only check available is
-            // against the cadence timeline: accept the pairs wholesale if their
-            // combined rate is in the same world, otherwise take neither.
+            // ONE OR TWO PAIRS CANNOT OUTVOTE EACH OTHER, and must not be
+            // averaged BEFORE they are checked: 0.1 s and 0.4 s average to
+            // 0.25 s, which sits inside a broad sanity band against a 0.1 s
+            // cadence and quietly rescaled a 10 Hz clip to 4 Hz. Two
+            // measurements that disagree with each other are not evidence for
+            // their mean — they are evidence that one of them is wrong.
+            //
+            // So check each pair on its own, and require them to agree with
+            // each other as well as with the cadence timeline.
+            const allPlausible = pairs.every((pp) => plausible(pp.rate));
+            const mutuallyAgree = pairs.length === 1
+                || pairs.every((pp) => pp.rate / pairs[0].rate > 0.5
+                    && pp.rate / pairs[0].rate < 2);
             const r = weighted(pairs);
-            if (Number.isFinite(r) && plausible(r)) {
+            if (allPlausible && mutuallyAgree && Number.isFinite(r)) {
                 realDt = r;
                 anchorPairsUsed = pairs.length;
+                epochAnchor = pairs[0].i;
             } else {
                 anchorsInconsistent = true;
                 warnings.push(`The ${pairs.length === 1 ? "only pair" : "two pairs"} of `
-                    + `wall-clock stamps in this span imply ${(1 / r).toFixed(4)} Hz, against `
-                    + `${(1 / cadenceDt).toFixed(3)} Hz from the cadence timeline — too far apart `
-                    + `to be a measurement rather than a clock step, and with so few stamps there `
-                    + `is nothing to check them against. Neither the epoch nor the rate was taken `
-                    + `from them.`);
+                    + `wall-clock stamps in this span `
+                    + `${pairs.length > 1 && !mutuallyAgree
+                        ? `disagree with each other (${pairs.map((pp) =>
+                            (1 / pp.rate).toFixed(3)).join(" Hz and ")} Hz)`
+                        : `imply ${(1 / pairs[0].rate).toFixed(4)} Hz, against `
+                          + `${(1 / cadenceDt).toFixed(3)} Hz from the cadence timeline`}`
+                    + ` — and with so few stamps there is nothing to check them against. `
+                    + `Neither the epoch nor the rate was taken from them.`);
             }
         } else {
             // Anchors exist but no interval between them advances: duplicated
@@ -1301,11 +1332,11 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
         }
     }
 
-    if (Number.isFinite(realDt) && realDt > 0) {
-        const i0 = anchors[0];
+    if (Number.isFinite(realDt) && realDt > 0 && epochAnchor >= 0) {
+        const i0 = epochAnchor;
         clipStartS = kept[i0].t - i0 * realDt;
         epochBasis = `measured across ${anchors.length} wall-clock stamps `
-            + `(frames ${i0}-${anchors[anchors.length - 1]}, ${anchorPairsUsed} interval(s) used)`;
+            + `(${anchorPairsUsed} interval(s) used, projected from frame ${i0})`;
     } else if (anchorsInconsistent) {
         // A CLOCK THAT CONTRADICTS ITSELF CANNOT VOUCH FOR ANY OF ITS STAMPS.
         // The fallback below trusts frame 0 unconditionally, which is right
