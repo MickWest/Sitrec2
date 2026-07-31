@@ -207,27 +207,66 @@ export function trackMetrics(dataset, track, options = {}) {
 }
 
 /**
- * Mean angular error (radians) between a track and the LOS rays. An optional
- * `valid` mask (truthy per frame) restricts the average to the frames the track
- * actually covers — a partially-covering truth track holds/clamps its missing
- * frames, and those would otherwise contribute garbage angles to the mean.
+ * Mean angular error (radians) between a track and the camera LOS rays. An
+ * optional `valid` mask (truthy per frame) restricts the average to the frames
+ * the track actually covers — a track that does not span the whole analysis
+ * window holds/clamps its missing frames, and those held positions would
+ * otherwise contribute garbage angles to the mean.
  */
 export function meanAngularError(dataset, track, valid = null) {
+    // S = sensor (camera) position per frame, D = OBSERVED sightline per frame
+    // as a unit vector.  Both are flat Float64Array(n*3) in the dataset's local
+    // ENU metres (origin at the clip's mean sensor position), same layout and
+    // frame grid as `track`.
     const {n, S, D} = dataset;
+    // MEAN of absolute per-frame angles, not RMS.  This deliberately matches
+    // the fitters' cost function (LOSFitting: meanAngularErrorDegrees/errSigma)
+    // — scoring a solution on a different statistic than the search minimised
+    // would let one candidate win the search and lose the report.
+    //
+    // Frames therefore combine L1 (least-absolute-deviations, median-like)
+    // rather than L2/least-squares: a lost-lock frame 50x the typical error
+    // costs 50x a normal frame, not 50^2.  So a single bad tracking frame
+    // neither drags the fit nor dominates the number.  Note that
+    // fitConstAltitude squares the value returned here, so that a
+    // smooth-but-off-ray path is penalised sharply enough to lose; that shapes
+    // how the term trades against the rest of its score, but reweights no
+    // individual frame, since the averaging has already happened.
     let sum = 0, count = 0;
     for (let f = 0; f < n; f++) {
+        // skip invalid frames
         if (valid && !valid[f]) continue;
+        // Flat xyz triples, so frame f starts at 3f.
         const b = f * 3;
+        // The sightline this candidate IMPLIES: sensor -> where the candidate
+        // says the object was, at this same frame.  Compared against D below,
+        // the angle between them is this frame's residual.
         let rx = track[b] - S[b], ry = track[b + 1] - S[b + 1], rz = track[b + 2] - S[b + 2];
         const rl = Math.hypot(rx, ry, rz);
+        // Counted BEFORE the degeneracy check so a degenerate frame still
+        // divides into the mean — otherwise a track that collapses onto the
+        // camera could score well simply by contributing fewer frames.
         count++;
+        // Candidate sits on the camera: the implied direction is undefined, so
+        // there is no angle to measure.  Charge the worst possible error (PI)
+        // rather than skipping, which keeps such a track from ranking at all.
         if (rl < 1e-9) { sum += Math.PI; continue; }
         rx /= rl; ry /= rl; rz /= rl;
+        // Both unit vectors now, so the dot product is the cosine of the angle
+        // between them.  Clamp because rounding can push it a few ulp outside
+        // [-1, 1], where acos returns NaN and poisons the whole mean.
         const dot = Math.min(1, Math.max(-1, rx * D[b] + ry * D[b + 1] + rz * D[b + 2]));
+        // acos amplifies input error by ~1/sqrt(1-dot^2) near dot=1, which at
+        // typical residuals (~0.05 deg) is a factor of ~1000.  Harmless here:
+        // against a double's ~1e-16 that is ~1e-13 rad of noise on a ~1e-3 rad
+        // signal.  It would NOT be harmless in float32.
         sum += Math.acos(dot);
     }
+    // NaN rather than 0 when nothing was counted — an empty average is "no
+    // measurement", and 0 would read as a perfect fit.
     return count > 0 ? sum / count : NaN;
 }
+
 
 /**
  * Compare a candidate track against a ground-truth reference track, both as
