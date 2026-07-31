@@ -68,6 +68,10 @@ class ObjectTracker {
 
         this.trackX = 0;
         this.trackY = 0;
+        // True once trackX/trackY hold a real position rather than the placeholder
+        // above - set when a save is restored. createOverlay() seeds the cursor to
+        // the middle of the video only while this is false.
+        this.trackPositionSet = false;
         this.trackRadius = 30;
 
         this.trackedPositions = new Map();
@@ -156,9 +160,16 @@ class ObjectTracker {
         
         this.hookMouseHandler();
         
-        const {width, height} = this.getImageDimensions();
-        this.trackX = width / 2;
-        this.trackY = height / 2;
+        // Seed the cursor only when nothing has placed it yet. A tracker restored
+        // from a save already has its position, and the overlay may not be created
+        // until well after the restore (a track loaded disabled creates it on the
+        // user's first enable) - seeding then would discard the saved position.
+        if (!this.trackPositionSet) {
+            const {width, height} = this.getImageDimensions();
+            this.trackX = width / 2;
+            this.trackY = height / 2;
+            this.trackPositionSet = true;
+        }
     }
     
     hookMouseHandler() {
@@ -2479,6 +2490,10 @@ export function serializeAutoTracking() {
     // so no scaling is needed at serialize time.
     return {
         coordSpace: "original",
+        // Whether the tracker is switched on. Disabling leaves the tracker and its
+        // trackedPositions intact, so without this flag a disabled tracker serializes
+        // identically to an enabled one and always comes back enabled.
+        enabled: objectTracker.enabled,
         referenceVideoWidth: videoData?.originalVideoWidth ?? null,
         referenceVideoHeight: videoData?.originalVideoHeight ?? null,
         trackX: objectTracker.trackX,
@@ -2518,7 +2533,9 @@ export async function deserializeAutoTracking(data) {
     const videoData = videoView.videoData;
     if (!videoData) return;
 
-    // Create and enable the tracker
+    // Create the tracker. Whether it is switched on is saved state; saves made
+    // before the `enabled` flag existed have tracking data only, so a missing
+    // flag means "on" — the behaviour those saves were made under.
     if (!objectTracker) {
         objectTracker = new ObjectTracker(videoView);
         // Local-only debug hook so MCP / console can reach the module-scoped
@@ -2526,8 +2543,20 @@ export async function deserializeAutoTracking(data) {
         // production builds.
         if (isLocal) window._objectTracker = objectTracker;
     }
-    objectTracker.enable();
-    if (enableMenuItem) enableMenuItem.name(t("tracking.enable.disableLabel"));
+    const enableTracker = data.enabled ?? true;
+    if (enableTracker) {
+        objectTracker.enable();
+    } else if (objectTracker.enabled) {
+        // Only when a live tracker carried over from a previous sitch; a freshly
+        // constructed one is already disabled. The overlay is deliberately left
+        // uncreated - creating it would install the tracker's mouse handlers over
+        // the video view's own, and createOverlay() no longer recenters a restored
+        // track, so deferring it to the user's first enable is safe.
+        objectTracker.disable();
+    }
+    if (enableMenuItem) {
+        enableMenuItem.name(enableTracker ? t("tracking.enable.disableLabel") : t("tracking.enable.label"));
+    }
 
     // Hook rendering if not already done
     if (!renderHooked) {
@@ -2544,6 +2573,12 @@ export async function deserializeAutoTracking(data) {
     // Restore tracker state (positions stored in original-video coords)
     objectTracker.trackX = data.trackX ?? 0;
     objectTracker.trackY = data.trackY ?? 0;
+    // The restored position has to survive a createOverlay() that happens later:
+    // a track loaded disabled does not build its overlay until the user first
+    // enables it, by which point the track may even have been cleared.
+    if (data.trackX !== undefined) {
+        objectTracker.trackPositionSet = true;
+    }
     objectTracker.trackRadius = data.trackRadius ?? 30;
     objectTracker.searchRadius = data.searchRadius ?? 50;
     objectTracker.brightnessThreshold = data.brightnessThreshold ?? 128;
