@@ -139,13 +139,17 @@ describe("measureAnchorRate", () => {
         expect(r.epochAnchor).toBe(-1);
     });
 
-    test("an even split is two timelines, not an outlier — and is refused", () => {
-        // [0.1, 0.1, 450, 450] reported 0.0022 Hz: the median landed between
-        // the populations and the band kept the wrong half.
+    test("an even split of steps and honest intervals recovers the rate, not the epoch", () => {
+        // [0.1, 0.1, 450, 450] once reported 0.0022 Hz: a median-centred band
+        // landed between the two populations and kept the wrong half. The 450s
+        // intervals are now identified positively as steps — 4500x the cadence
+        // — so they are excised and the honest rate survives. Two jumps of
+        // unknown size mean the absolute offset does not.
         const {idx, timeAt} = anchorsFromRates([0.1, 0.1, 450, 450]);
         const r = measureAnchorRate(idx, timeAt, CADENCE);
-        expect(r.inconsistent).toBe(true);
-        expect(Number.isNaN(r.realDt)).toBe(true);
+        expect(1 / r.realDt).toBeCloseTo(10, 1);
+        expect(r.stepDetected).toBe(true);
+        expect(r.epochAnchor).toBe(-1);
     });
 
     test("two pairs that disagree are not averaged into a plausible middle", () => {
@@ -205,6 +209,42 @@ describe("measureAnchorRate", () => {
         // band around their own median, and returned 0.1125 s/frame.
         const times = {0: 0, 1: 0, 2: 0.2, 9: 0.9};
         const r = measureAnchorRate([0, 1, 2, 9], (f) => times[f], 0.1);
+        expect(r.inconsistent).toBe(true);
+    });
+
+    test("a discarded step does not inflate the branch past the strict check", () => {
+        // Rates [0.1, 0.25, 10]. The 10 is dropped as a step, leaving TWO
+        // conflicting survivors — which took the lenient majority path because
+        // the branch keyed on the raw pair count, fitted a band around their
+        // own median and returned 0.175 s/frame: 10 Hz silently rescaled to
+        // 5.7 Hz. Two measurements cannot outvote each other however many were
+        // discarded to reach them.
+        const {idx, timeAt} = anchorsFromRates([0.1, 0.25, 10]);
+        const r = measureAnchorRate(idx, timeAt, CADENCE);
+        expect(r.inconsistent).toBe(true);
+    });
+
+    test("one stall in a long healthy run does not veto the clock", () => {
+        // A blanket "any non-advancing interval rejects" rule threw a whole
+        // clip away for a single repeated stamp. It is now a majority test:
+        // one stall costs TWO intervals (the stall itself, and the one measured
+        // from the stale anchor after it), which a long run absorbs easily.
+        const idx = [], times = {};
+        for (let k = 0; k <= 10; k++) { idx.push(k * 10); times[k * 10] = k * 1; }
+        times[50] = times[40];               // frame 50 repeats frame 40's stamp
+        const r = measureAnchorRate(idx, (f) => times[f], CADENCE);
+        expect(r.inconsistent).toBe(false);
+        expect(r.realDt).toBeCloseTo(0.1, 6);
+        expect(r.epochAnchor).toBeGreaterThanOrEqual(0);
+    });
+
+    test("a stall-heavy clock is still rejected", () => {
+        // The same rule in the other direction: when stalls are most of what
+        // the clock produced, one surviving interval is not a measurement.
+        const idx = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90];
+        const times = {0: 0, 10: 1};
+        for (const f of [20, 30, 40, 50, 60, 70, 80, 90]) times[f] = 1;
+        const r = measureAnchorRate(idx, (f) => times[f], CADENCE);
         expect(r.inconsistent).toBe(true);
     });
 

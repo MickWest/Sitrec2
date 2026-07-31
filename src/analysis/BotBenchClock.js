@@ -172,14 +172,27 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
     // duplicates and one good step scored 1-of-1 rather than 1-of-9.
     const pairs = [];
     let nonAdvancing = 0;
+    let staleStarts = 0;
+    // An anchor whose stamp does not advance on its predecessor is STALE: the
+    // clock did not move, so that anchor still reports the earlier instant. Any
+    // interval measured FROM it therefore spans more real time than its
+    // timestamps admit, and reads high. Dropping those is precise — it removes
+    // exactly the contaminated measurements — where a blanket rule about
+    // duplicates would also discard the honest intervals around them.
+    const stale = new Set();
+    for (let k = 1; k < anchorIndices.length; k++) {
+        const dt = timeAt(anchorIndices[k]) - timeAt(anchorIndices[k - 1]);
+        if (!(Number.isFinite(dt) && dt > 0)) stale.add(anchorIndices[k]);
+    }
     for (let k = 1; k < anchorIndices.length; k++) {
         const i = anchorIndices[k - 1], j = anchorIndices[k];
         const dt = timeAt(j) - timeAt(i);
         const df = j - i;
-        if (Number.isFinite(dt) && dt > 0 && df > 0) pairs.push({dt, df, i, rate: dt / df});
-        else nonAdvancing++;
+        if (!(Number.isFinite(dt) && dt > 0 && df > 0)) { nonAdvancing++; continue; }
+        if (stale.has(i)) { staleStarts++; continue; }
+        pairs.push({dt, df, i, rate: dt / df});
     }
-    const total = pairs.length + nonAdvancing;
+    const total = pairs.length + nonAdvancing + staleStarts;
     out.pairsTotal = total;
 
     if (!pairs.length) {
@@ -213,14 +226,40 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
         return out;
     }
 
-    // BRANCH ON THE NUMBER OF REAL MEASUREMENTS, not on the total. Counting
-    // non-advancing intervals toward the branch threshold let two conflicting
-    // pairs plus one duplicate take the lenient majority path and evade the
-    // stricter two-pair check — [0, 1, 2, 9] at times [0, 0, 0.2, 0.9] returned
-    // 0.1125 s/frame instead of being rejected as a duplicate-then-catch-up
-    // clock. The total still sets the majority DENOMINATOR, so a broken clock
-    // cannot look unanimous.
-    if (pairs.length >= 3) {
+    // A MAJORITY OF ALL INTERVALS MUST BE USABLE — applied in EVERY branch, so
+    // there is one rule rather than a veto in one path and a threshold in
+    // another. `total` counts non-advancing intervals too, so a mostly-stalled
+    // clock cannot look unanimous by having its duplicates quietly dropped
+    // first: one good step among eight duplicates is 1-of-9, not 1-of-1.
+    //
+    // This replaces a blanket "any non-advancing interval rejects" rule in the
+    // two-pair path. That veto was doing the majority test's job badly: two
+    // agreeing 0.1 s intervals beside a single repeated timestamp are a
+    // two-thirds majority and a perfectly good rate, and were being thrown away
+    // for the duplicate alone.
+    // The denominator counts intervals the CLOCK failed to provide — stalls,
+    // and intervals measured from a stale anchor — but NOT steps we identified
+    // and removed. Excising a known step is a correction; counting it against
+    // the survivors would reject a clip for the very fault we just repaired,
+    // which is what threw away a lone honest interval beside one relock.
+    const reliability = sane.length + nonAdvancing + staleStarts;
+    const majorityOf = (k) => k >= Math.ceil(reliability * 0.6);
+    if (!majorityOf(sane.length)) {
+        out.inconsistent = true;
+        out.reason = `only ${sane.length} of ${reliability} wall-clock intervals are usable`
+            + (nonAdvancing ? ` (${nonAdvancing} do not advance)` : "")
+            + (stepPairs ? ` (${stepPairs} imply a rate far from the cadence timeline)` : "");
+        return out;
+    }
+
+    // BRANCH ON THE NUMBER OF USABLE MEASUREMENTS, not on how many intervals
+    // happened to advance. Keying this on the raw pair count let a discarded
+    // step inflate the branch: rates [0.1, 0.25, 10] drop the 10 as a step and
+    // leave TWO conflicting survivors, which then took the lenient majority
+    // path — they fitted a band around their own median and returned
+    // 0.175 s/frame, silently rescaling 10 Hz to 5.7 Hz. Two measurements
+    // cannot outvote each other however many were discarded to reach them.
+    if (sane.length >= 3) {
         // A MAJORITY MUST AGREE. A band around a centre detects an outlier
         // among agreeing samples; it cannot detect disagreement itself. The
         // median of an odd sample is one of the samples and always passes its
@@ -229,25 +268,24 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
         const mid = median(sane.map((pp) => pp.rate));
         const good = sane.filter((pp) => Number.isFinite(mid) && mid > 0
             && pp.rate / mid > 0.5 && pp.rate / mid < 2);
-        const majority = good.length >= Math.ceil(total * 0.6);
         const r = good.length ? weighted(good) : NaN;
-        if (!majority || !Number.isFinite(r) || !plausible(r)) {
+        if (!majorityOf(good.length) || !Number.isFinite(r) || !plausible(r)) {
             out.inconsistent = true;
-            out.reason = `only ${good.length} of ${total} wall-clock intervals agree`;
+            out.reason = `only ${good.length} of ${reliability} wall-clock intervals agree`;
             return out;
         }
         out.realDt = r;
         out.pairsUsed = good.length;
-        out.stepDetected = good.length < total;
+        out.stepDetected = stepPairs > 0 || good.length < sane.length;
         out.epochAnchor = out.stepDetected ? -1 : minOf(good.map((pp) => pp.i));
         return out;
     }
 
-    // ONE OR TWO PAIRS CANNOT OUTVOTE EACH OTHER, and must not be averaged
-    // BEFORE they are checked: 0.1 s and 0.4 s average to 0.25 s, which sits
-    // inside a broad sanity band against a 0.1 s cadence. Two measurements that
-    // disagree are not evidence for their mean — they are evidence that one is
-    // wrong.
+    // ONE OR TWO USABLE MEASUREMENTS CANNOT OUTVOTE EACH OTHER, and must not be
+    // averaged BEFORE they are checked: 0.1 s and 0.4 s average to 0.25 s,
+    // which sits inside a broad sanity band against a 0.1 s cadence. Two
+    // measurements that disagree are not evidence for their mean — they are
+    // evidence that one is wrong.
     //
     // AGREEMENT IS ONLY MEANINGFUL BETWEEN COMPARABLE MEASUREMENTS. Two pairs
     // spanning 1 frame and 100 frames are not two opinions of equal weight: the
@@ -260,17 +298,17 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
     const agree = sane.length === 1 || !comparableEvidence
         || sane.every((pp) => pp.rate / sane[0].rate > 0.5 && pp.rate / sane[0].rate < 2);
     const combined = weighted(sane);
-    if (!agree || !Number.isFinite(combined) || !plausible(combined) || nonAdvancing) {
+    if (!agree || !Number.isFinite(combined) || !plausible(combined)) {
         out.inconsistent = true;
-        out.reason = nonAdvancing
-            ? `${nonAdvancing} of ${total} wall-clock intervals do not advance`
-            : (agree ? "the wall-clock interval disagrees with the cadence timeline"
-                : "the two wall-clock intervals disagree with each other");
+        out.reason = agree ? "the wall-clock interval disagrees with the cadence timeline"
+            : "the two wall-clock intervals disagree with each other";
         return out;
     }
     out.realDt = combined;
     out.pairsUsed = sane.length;
-    // A discarded step means the absolute offset is unknowable here too.
+    // A discarded STEP means the absolute offset is unknowable. A repeated
+    // timestamp does not: a stalled clock has not moved, so the offset still
+    // holds and the epoch survives.
     out.stepDetected = stepPairs > 0;
     out.epochAnchor = out.stepDetected ? -1 : sane[0].i;
     return out;
