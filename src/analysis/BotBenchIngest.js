@@ -233,7 +233,15 @@ function maxOf(values) {
 function trimmedMean(values, trim = 0.1) {
     if (!values.length) return NaN;
     const s = Array.from(values).sort((a, b) => a - b);
-    const cut = Math.floor(s.length * trim);
+    // AT LEAST ONE FROM EACH END once the sample can spare it. A proportional
+    // cut alone rounds to ZERO below ten samples — so on the 5-to-9 overlapping
+    // steps this is often given, nothing was trimmed at all and a single
+    // wall-clock relock dragged the mean far enough to "prove" the encoder
+    // clock wrong, forcing cadence onto the very clock that had just jumped.
+    // Five samples minus one from each end still leaves three to average.
+    const cut = s.length >= 5
+        ? Math.max(1, Math.floor(s.length * trim))
+        : Math.floor(s.length * trim);
     const kept = s.length - 2 * cut >= 1 ? s.slice(cut, s.length - cut) : s;
     let sum = 0;
     for (const v of kept) sum += v;
@@ -1054,8 +1062,8 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
             best = utsTrial;
             why = `UnixTimeStamp (the clocks disagree by ${rateRatio.toFixed(3)}x)`;
             warnings.push(`THE CLOCKS DISAGREE ABOUT RATE by ${rateRatio.toFixed(3)}x (median `
-                + `step ${medP.toFixed(4)} s on PES PTS against ${medU.toFixed(4)} s on the wall `
-                + `clock, over ${dU.length} overlapping steps)`
+                + `typical step ${medP.toFixed(4)} s on PES PTS against ${medU.toFixed(4)} s on `
+                + `the wall clock — trimmed means over ${dU.length} overlapping steps)`
                 + `${Math.abs(rateRatio - 1) > 0.2
                     ? ` — a factor that size is the classic "-r N without an fps filter" encoder `
                       + `misconfiguration` : ""}`
@@ -1145,7 +1153,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     // construction, so nothing outlying is left for a median to protect against
     // — and a median step would misreport a bimodally jittering clock by
     // returning one of its modes rather than its average rate.
-    const fps = (n - 1) / (times[n - 1] - times[0]);
+    let fps = (n - 1) / (times[n - 1] - times[0]);
 
     // Jitter WITHIN the retained span is flattened into this single rate, and
     // that is a real distortion of every derived quantity — the fits index time
@@ -1177,40 +1185,85 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     // Cadence availability and epoch availability are also different questions:
     // a wall clock too broken to give SPACING can still carry one usable
     // absolute stamp, which is all an epoch needs.
-    // BACK-PROJECTION NEEDS THE OFFSET TO BE IN REAL SECONDS, and that is only
-    // true when the selected timebase is the wall clock, or is a PES timeline
-    // MEASURED to run at real time. There are branches above that select PES
-    // PTS without being able to verify it (the wall clock too sparse to give a
-    // cadence, or absent entirely), and projecting along an unverified encoder
-    // clock can move frame zero by the whole rate error — a 2x-off PTS with a
-    // lone wall-clock anchor late in the clip lands the epoch minutes out.
+    // FRAME ZERO'S ABSOLUTE TIME, FROM THE WALL-CLOCK ANCHORS THEMSELVES.
+    //
+    // Every wall-clock stamp in the analysed span is an anchor, and TWO of them
+    // are enough to measure real seconds per frame directly — no dependence on
+    // whether the cadence timebase runs at real time. That matters, because
+    // there are branches above that select PES PTS without being able to verify
+    // it, and projecting along a 2x-off encoder clock puts frame zero minutes
+    // out.
+    //
+    // With one anchor and a verified real-time cadence, project along it. With
+    // one anchor and an UNVERIFIED cadence, the offset cannot be converted to
+    // real seconds at all — and the earlier version still exported that stamp
+    // as clipStartMs, so every celestial and satellite calculation ran at a
+    // time the clip was never at. There is no honest number in that case, so
+    // there is no number: the epoch is null and the row says why. A missing
+    // epoch disables the date-dependent hypotheses; a wrong one corrupts them
+    // silently.
+    const anchors = [];
+    for (let i = 0; i < kept.length; i++) if (Number.isFinite(kept[i].t)) anchors.push(i);
+
     const offsetsAreRealSeconds = (best === utsTrial) || encoderIsRealTime;
     let clipStartS = NaN;
-    let epochAnchorIndex = -1;
-    for (let i = 0; i < kept.length; i++) {
-        if (!Number.isFinite(kept[i].t)) continue;
-        epochAnchorIndex = i;
-        const offset = times[i] - times[0];
-        if (i === 0 || (offsetsAreRealSeconds && Number.isFinite(offset))) {
-            clipStartS = kept[i].t - (i === 0 ? 0 : offset);
-        } else {
-            // Cannot project. Use the anchor's own stamp and say what it is.
-            clipStartS = kept[i].t;
+    let epochBasis = null;
+    // Real seconds per frame, measured from the anchors themselves. Taken as a
+    // TRIMMED MEAN over consecutive anchor pairs rather than across the widest
+    // pair, so a wall-clock relock sitting inside the retained span contributes
+    // one outlying pair instead of adding its whole offset to the estimate.
+    let realDt = NaN;
+    if (anchors.length >= 2) {
+        const rates = [];
+        for (let k = 1; k < anchors.length; k++) {
+            const i = anchors[k - 1], j = anchors[k];
+            const r = (kept[j].t - kept[i].t) / (j - i);
+            if (Number.isFinite(r) && r > 0) rates.push(r);
         }
-        break;
+        if (rates.length) realDt = trimmedMean(rates);
     }
-    if (haveEpochUnprojected(epochAnchorIndex, offsetsAreRealSeconds)) {
-        warnings.push(`The only UnixTimeStamp in the analysed span is at frame `
-            + `${epochAnchorIndex}, and the cadence timebase could not be verified against real `
-            + `time — so frame zero's absolute time could not be projected back and the epoch is `
-            + `that frame's stamp instead. It is late by however long those ${epochAnchorIndex} `
-            + `frames actually took.`);
+
+    if (Number.isFinite(realDt) && realDt > 0) {
+        const i0 = anchors[0];
+        clipStartS = kept[i0].t - i0 * realDt;
+        epochBasis = `measured across ${anchors.length} wall-clock stamps `
+            + `(frames ${i0}-${anchors[anchors.length - 1]})`;
+    } else if (anchors.length === 1) {
+        const i0 = anchors[0];
+        if (i0 === 0) {
+            clipStartS = kept[0].t;
+            epochBasis = "the wall-clock stamp on frame 0";
+        } else if (offsetsAreRealSeconds) {
+            clipStartS = kept[i0].t - (times[i0] - times[0]);
+            epochBasis = `projected back from the single wall-clock stamp at frame ${i0} `
+                + `along a cadence measured in real seconds`;
+        } else {
+            warnings.push(`The analysed span carries exactly one UnixTimeStamp, at frame `
+                + `${i0}, and the cadence timebase could not be verified against real time — so `
+                + `there is no way to convert that frame's offset into real seconds and no `
+                + `honest value for frame zero. This clip is reported with NO absolute time `
+                + `rather than a shifted one; date-dependent results are unavailable for it.`);
+        }
     }
-    function haveEpochUnprojected(idx, realSeconds) {
-        return idx > 0 && !realSeconds;
+    // THE ANCHORS ALSO SETTLE THE SCALE. Two wall-clock stamps measure real
+    // seconds per frame directly, and that outranks a cadence clock which may
+    // not run at real time at all: without this, a clip whose PES timeline is
+    // 2x off reported half the true rate — halving every speed — while the
+    // information needed to correct it sat right here, already computed for the
+    // epoch. The cadence clock still decides WHICH frames are contiguous; the
+    // anchors decide what a frame is worth in seconds.
+    if (Number.isFinite(realDt) && realDt > 0 && best !== utsTrial && !encoderIsRealTime) {
+        const wasFps = fps;
+        fps = 1 / realDt;
+        warnings.push(`Cadence was rescaled to ${fps.toFixed(3)} Hz using the `
+            + `${anchors.length} wall-clock stamps in this span; the ${
+                chosenTimebaseNote.startsWith("PES") ? "PES" : "selected"} timeline alone implied `
+            + `${wasFps.toFixed(3)} Hz. Spacing still comes from that timeline, but its scale `
+            + `does not run at real time.`);
     }
+
     const haveEpoch = Number.isFinite(clipStartS);
-    if (!haveEpoch) {
+    if (!haveEpoch && anchors.length === 0) {
         warnings.push("No record in the analysed span carries a UnixTimeStamp, so this clip has "
             + "no absolute time. Anything date-dependent (sun/moon position, satellite passes) "
             + "cannot be computed for it.");
@@ -1313,6 +1366,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
             windEstimate: null,
             maxRangeM: null,
             timebase: chosenTimebaseNote || null,
+            epochBasis,
             surfaceModel: (usingEllipsoid ? "" : "SPHERICAL Earth mode; ")
                 + (geoidApplied
                     ? "sea level via EGM96 (no terrain)"
