@@ -173,26 +173,40 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
     const pairs = [];
     let nonAdvancing = 0;
     let staleStarts = 0;
-    // An anchor whose stamp does not advance on its predecessor is STALE: the
-    // clock did not move, so that anchor still reports the earlier instant. Any
-    // interval measured FROM it therefore spans more real time than its
-    // timestamps admit, and reads high. Dropping those is precise — it removes
-    // exactly the contaminated measurements — where a blanket rule about
-    // duplicates would also discard the honest intervals around them.
+    let backwardResets = 0;
+
+    // A STALL AND A BACKWARD RESET ARE NOT THE SAME FAULT, and treating both as
+    // "non-advancing" discarded good data.
+    //
+    //   dt === 0  the clock FROZE. The later anchor still reports the earlier
+    //             instant, so it is STALE and any interval measured from it
+    //             spans more real time than its timestamps admit — it reads
+    //             high, and must be dropped.
+    //
+    //   dt < 0    the clock JUMPED BACKWARD. The later anchor is not stale at
+    //             all; it is the first reading on a new, self-consistent
+    //             timeline, and intervals measured from it are perfectly good
+    //             RATE evidence. Only the absolute offset is destroyed.
+    //
+    // Marking the anchor after a reset stale threw away its healthy following
+    // interval too: [100, 0, 1, 2, 3] lost half its intervals and was rejected
+    // 2-of-4 instead of recovering the 0.1 rate it plainly contains.
     const stale = new Set();
     for (let k = 1; k < anchorIndices.length; k++) {
         const dt = timeAt(anchorIndices[k]) - timeAt(anchorIndices[k - 1]);
-        if (!(Number.isFinite(dt) && dt > 0)) stale.add(anchorIndices[k]);
+        if (Number.isFinite(dt) && dt === 0) stale.add(anchorIndices[k]);
     }
     for (let k = 1; k < anchorIndices.length; k++) {
         const i = anchorIndices[k - 1], j = anchorIndices[k];
         const dt = timeAt(j) - timeAt(i);
         const df = j - i;
-        if (!(Number.isFinite(dt) && dt > 0 && df > 0)) { nonAdvancing++; continue; }
+        if (!Number.isFinite(dt) || df <= 0) { nonAdvancing++; continue; }
+        if (dt === 0) { nonAdvancing++; continue; }
+        if (dt < 0) { backwardResets++; continue; }
         if (stale.has(i)) { staleStarts++; continue; }
         pairs.push({dt, df, i, rate: dt / df});
     }
-    const total = pairs.length + nonAdvancing + staleStarts;
+    const total = pairs.length + nonAdvancing + staleStarts + backwardResets;
     out.pairsTotal = total;
 
     if (!pairs.length) {
@@ -244,6 +258,19 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
     // which is what threw away a lone honest interval beside one relock.
     const reliability = sane.length + nonAdvancing + staleStarts;
     const majorityOf = (k) => k >= Math.ceil(reliability * 0.6);
+    // A FEW steps are a correction; MANY are a verdict on the clock. Excluding
+    // them from the denominator entirely let one honest interval among
+    // arbitrarily many out-of-band ones pass as 1-of-1 and rescale every
+    // derived quantity. Requiring the honest intervals to at least match the
+    // steps keeps the two-interval repair (one relock beside one good reading)
+    // while refusing a clock that is more jump than measurement.
+    const steps = stepPairs + backwardResets;
+    if (sane.length < steps) {
+        out.inconsistent = true;
+        out.reason = `${steps} of the wall-clock intervals are clock jumps and only `
+            + `${sane.length} are usable measurements`;
+        return out;
+    }
     if (!majorityOf(sane.length)) {
         out.inconsistent = true;
         out.reason = `only ${sane.length} of ${reliability} wall-clock intervals are usable`
@@ -276,8 +303,8 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
         }
         out.realDt = r;
         out.pairsUsed = good.length;
-        out.stepDetected = stepPairs > 0 || good.length < sane.length;
-        out.epochAnchor = out.stepDetected ? -1 : minOf(good.map((pp) => pp.i));
+        out.stepDetected = steps > 0 || good.length < sane.length;
+        out.epochAnchor = epochAnchorFor(out.stepDetected, good, anchorIndices[0]);
         return out;
     }
 
@@ -306,10 +333,34 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
     }
     out.realDt = combined;
     out.pairsUsed = sane.length;
-    // A discarded STEP means the absolute offset is unknowable. A repeated
-    // timestamp does not: a stalled clock has not moved, so the offset still
-    // holds and the epoch survives.
-    out.stepDetected = stepPairs > 0;
-    out.epochAnchor = out.stepDetected ? -1 : sane[0].i;
+    out.stepDetected = steps > 0;
+    out.epochAnchor = epochAnchorFor(out.stepDetected, sane, anchorIndices[0]);
     return out;
+}
+
+/**
+ * Which anchor frame zero's time may be projected from, or -1 for none.
+ *
+ * BACK-PROJECTION CROSSES GROUND, and the ground has to be sound. Projecting
+ * from an anchor at frame i assumes the elapsed time to it really is i * realDt
+ * — which is false if a stall or a reset sits in between, because that is
+ * exactly where the clock stopped telling the truth about elapsed time. A run
+ * beginning [0, 0, 1, 2, ...] has its first usable interval starting at frame
+ * 20; projecting back through the stall put frame zero at -1 s instead of 0,
+ * shifting every date-dependent result.
+ *
+ * So the only anchor that may be used is the run's FIRST — where no projection
+ * happens at all and the clock's own reading is taken directly. If the first
+ * usable interval does not start there, the offset is unknowable.
+ *
+ * A detected STEP disqualifies it outright: a clock that jumped is direct
+ * evidence its absolute readings are unreliable somewhere in this clip, and
+ * there is no way to tell whether frame zero sits on the good side. A STALL
+ * does not — a frozen clock has not lied about where it was, only about how
+ * much time passed after.
+ */
+function epochAnchorFor(stepDetected, usablePairs, firstAnchor) {
+    if (stepDetected || !usablePairs.length) return -1;
+    const firstUsableStart = minOf(usablePairs.map((pp) => pp.i));
+    return firstUsableStart === firstAnchor ? firstUsableStart : -1;
 }

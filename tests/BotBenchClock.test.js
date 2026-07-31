@@ -248,6 +248,46 @@ describe("measureAnchorRate", () => {
         expect(r.inconsistent).toBe(true);
     });
 
+    test("back-projection does not cross a stall", () => {
+        // Times [0, 0, 1, 2, ...]: the first interval is a stall, so the first
+        // USABLE interval starts at frame 20. Projecting back from there put
+        // frame zero at -1 s instead of 0, shifting every date-dependent
+        // result. The offset across a stall is precisely what is unknown.
+        const idx = [0, 10, 20, 30, 40];
+        const times = {0: 0, 10: 0, 20: 1, 30: 2, 40: 3};
+        const r = measureAnchorRate(idx, (f) => times[f], CADENCE);
+        expect(r.epochAnchor).toBe(-1);
+    });
+
+    test("a backward reset is a step, not a stall — its next interval is good", () => {
+        // [100, 0, 1, 2, 3]. Marking the anchor after a reset STALE discarded
+        // its healthy following interval too, leaving 2 of 4 and a rejection,
+        // when the 0.1 rate is plainly there. A frozen clock makes the next
+        // anchor stale; a clock that jumped backward starts a new, internally
+        // consistent timeline.
+        const idx = [0, 10, 20, 30, 40];
+        const times = {0: 100, 10: 0, 20: 1, 30: 2, 40: 3};
+        const r = measureAnchorRate(idx, (f) => times[f], CADENCE);
+        expect(r.inconsistent).toBe(false);
+        expect(r.realDt).toBeCloseTo(0.1, 6);
+        expect(r.stepDetected).toBe(true);
+        expect(r.epochAnchor).toBe(-1);      // the offset is still destroyed
+    });
+
+    test("one honest interval among many jumps is not a measurement", () => {
+        // Excluding steps from the denominator entirely let this pass as
+        // 1-of-1 and rescale every derived quantity from a single reading.
+        const idx = [0], times = {0: 0};
+        let t = 0;
+        for (let k = 1; k <= 12; k++) {
+            t += (k === 1 ? 1 : 5000);       // one honest second, then jumps
+            idx.push(k * 10);
+            times[k * 10] = t;
+        }
+        const r = measureAnchorRate(idx, (f) => times[f], CADENCE);
+        expect(r.inconsistent).toBe(true);
+    });
+
     test("fewer than two anchors yields nothing, without throwing", () => {
         expect(measureAnchorRate([], () => 0, CADENCE).realDt).toBeNaN();
         expect(measureAnchorRate([5], () => 0, CADENCE).realDt).toBeNaN();

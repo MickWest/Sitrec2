@@ -80,12 +80,6 @@ export function botBenchFileRole(name = "") {
     return null;
 }
 
-/** True for anything BotBench will queue as a row (sidecars are not rows). */
-export function isBotBenchCandidateName(name = "") {
-    const role = botBenchFileRole(name);
-    return role === "bot-csv" || role === "fmv";
-}
-
 /** `bot-0001` from `bot-0001.input.csv` — the key a sidecar is matched on. */
 export function botBenchScenarioBase(name = "") {
     return String(name)
