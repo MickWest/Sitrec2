@@ -196,29 +196,49 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
     const plausible = (r) => Number.isFinite(cadenceDt) && cadenceDt > 0
         && r / cadenceDt > 0.25 && r / cadenceDt < 4;
 
-    if (total >= 3) {
+    // A PAIR WHOSE IMPLIED RATE IS NOWHERE NEAR THE CADENCE IS A CLOCK STEP,
+    // whatever its span. Filtering these out FIRST is what stops a short pair
+    // from poisoning a weighted estimate: anchors [0, 1, 101] with times
+    // [0, 30, 40] hold a 30-second jump across one frame and an honest 0.1 s
+    // rate across a hundred, and the weighted mean of the two is 0.396 s/frame
+    // — which slipped under a 4x sanity bound and rescaled a 10 Hz clip to
+    // 2.5 Hz. Unequal spans meant the agreement test was skipped, so nothing
+    // else was looking.
+    const sane = pairs.filter((pp) => plausible(pp.rate));
+    const stepPairs = pairs.length - sane.length;
+    if (!sane.length) {
+        out.inconsistent = true;
+        out.reason = `none of the ${total} wall-clock intervals implies a rate near the cadence `
+            + `timeline`;
+        return out;
+    }
+
+    // BRANCH ON THE NUMBER OF REAL MEASUREMENTS, not on the total. Counting
+    // non-advancing intervals toward the branch threshold let two conflicting
+    // pairs plus one duplicate take the lenient majority path and evade the
+    // stricter two-pair check — [0, 1, 2, 9] at times [0, 0, 0.2, 0.9] returned
+    // 0.1125 s/frame instead of being rejected as a duplicate-then-catch-up
+    // clock. The total still sets the majority DENOMINATOR, so a broken clock
+    // cannot look unanimous.
+    if (pairs.length >= 3) {
         // A MAJORITY MUST AGREE. A band around a centre detects an outlier
         // among agreeing samples; it cannot detect disagreement itself. The
         // median of an odd sample is one of the samples and always passes its
         // own band, and on an even split the median lands between two
         // populations and keeps whichever it drifts toward.
-        const mid = median(pairs.map((pp) => pp.rate));
-        const good = pairs.filter((pp) => Number.isFinite(mid) && mid > 0
+        const mid = median(sane.map((pp) => pp.rate));
+        const good = sane.filter((pp) => Number.isFinite(mid) && mid > 0
             && pp.rate / mid > 0.5 && pp.rate / mid < 2);
         const majority = good.length >= Math.ceil(total * 0.6);
         const r = good.length ? weighted(good) : NaN;
         if (!majority || !Number.isFinite(r) || !plausible(r)) {
             out.inconsistent = true;
-            out.reason = `only ${good.length} of ${total} wall-clock intervals agree`
-                + (Number.isFinite(r) && !plausible(r)
-                    ? `, and their combined rate is far from the cadence timeline` : "");
+            out.reason = `only ${good.length} of ${total} wall-clock intervals agree`;
             return out;
         }
         out.realDt = r;
         out.pairsUsed = good.length;
         out.stepDetected = good.length < total;
-        // minOf, not Math.min(...): these arrays are one entry per anchor and
-        // the spread form throws RangeError on a long clip.
         out.epochAnchor = out.stepDetected ? -1 : minOf(good.map((pp) => pp.i));
         return out;
     }
@@ -228,23 +248,19 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
     // inside a broad sanity band against a 0.1 s cadence. Two measurements that
     // disagree are not evidence for their mean — they are evidence that one is
     // wrong.
+    //
     // AGREEMENT IS ONLY MEANINGFUL BETWEEN COMPARABLE MEASUREMENTS. Two pairs
     // spanning 1 frame and 100 frames are not two opinions of equal weight: the
     // short one is a single noisy sample, the long one averages a hundred. So
-    // demand mutual agreement only when the spans are within a factor of four;
-    // beyond that the weighted estimate is dominated by the longer span, which
-    // is the right answer, and the plausibility bound is what guards against a
-    // long span that is itself a clock step.
-    const spans = pairs.map((pp) => pp.df);
+    // demand mutual agreement only when the spans are within a factor of four —
+    // the plausibility filter above has already removed anything that is a step
+    // rather than a difference of precision.
+    const spans = sane.map((pp) => pp.df);
     const comparableEvidence = maxOf(spans) <= minOf(spans) * 4;
-    const allPlausible = pairs.every((pp) => plausible(pp.rate));
-    const agree = pairs.length === 1 || !comparableEvidence
-        || pairs.every((pp) => pp.rate / pairs[0].rate > 0.5 && pp.rate / pairs[0].rate < 2);
-    // With unequal evidence the individual short pair may be off; the combined
-    // estimate is the thing that has to stand up.
-    const combined = weighted(pairs);
-    const passes = comparableEvidence ? allPlausible : plausible(combined);
-    if (!passes || !agree || nonAdvancing) {
+    const agree = sane.length === 1 || !comparableEvidence
+        || sane.every((pp) => pp.rate / sane[0].rate > 0.5 && pp.rate / sane[0].rate < 2);
+    const combined = weighted(sane);
+    if (!agree || !Number.isFinite(combined) || !plausible(combined) || nonAdvancing) {
         out.inconsistent = true;
         out.reason = nonAdvancing
             ? `${nonAdvancing} of ${total} wall-clock intervals do not advance`
@@ -253,7 +269,9 @@ export function measureAnchorRate(anchorIndices, timeAt, cadenceDt) {
         return out;
     }
     out.realDt = combined;
-    out.pairsUsed = pairs.length;
-    out.epochAnchor = pairs[0].i;
+    out.pairsUsed = sane.length;
+    // A discarded step means the absolute offset is unknowable here too.
+    out.stepDetected = stepPairs > 0;
+    out.epochAnchor = out.stepDetected ? -1 : sane[0].i;
     return out;
 }

@@ -29,8 +29,10 @@ function anchorsFromRates(rates, spacing = 10) {
 
 describe("maxOf / minOf", () => {
     test("handle arrays far past the spread-argument limit", () => {
-        // Math.max(...a) throws RangeError here. One entry per frame means a
-        // 30 fps clip passes this in half an hour.
+        // Math.max(...a) throws RangeError here — the limit on this runtime is
+        // about 125k, so a smaller array would pass either way and prove
+        // nothing. One entry per frame means a 30 fps clip passes 125k in a
+        // little over an hour.
         const a = new Float64Array(200000);
         a[123456] = 5;
         a[7] = -3;
@@ -147,11 +149,17 @@ describe("measureAnchorRate", () => {
     });
 
     test("two pairs that disagree are not averaged into a plausible middle", () => {
-        // 0.1 and 0.4 average to 0.25, which passes a broad sanity band against
-        // a 0.1 cadence and rescaled 10 Hz to 4 Hz.
+        // 0.1 and 0.4 s/frame. Averaging them gives 0.25, which slips under a
+        // broad sanity band against a 0.1 cadence and rescaled 10 Hz to 4 Hz.
+        // The 0.4 pair is now recognised as a step and dropped, leaving the
+        // honest one — the true rate, rather than either the bad average or a
+        // blanket refusal.
         const times = {0: 0, 10: 1, 20: 5};
         const r = measureAnchorRate([0, 10, 20], (f) => times[f], CADENCE);
-        expect(r.inconsistent).toBe(true);
+        expect(r.realDt).not.toBeCloseTo(0.25, 2);   // never the average
+        expect(1 / r.realDt).toBeCloseTo(10, 1);
+        expect(r.stepDetected).toBe(true);
+        expect(r.epochAnchor).toBe(-1);
     });
 
     test("non-advancing intervals count against the majority", () => {
@@ -177,15 +185,41 @@ describe("measureAnchorRate", () => {
         expect(r.epochAnchor).toBe(0);
     });
 
+    test("a short pair spanning a clock step cannot poison the weighted rate", () => {
+        // Anchors [0, 1, 101] at times [0, 30, 40]: a 30 s jump across ONE
+        // frame beside an honest 0.1 s rate across a hundred. Their weighted
+        // mean is 0.396 s/frame, which slipped under the 4x sanity bound and
+        // rescaled a 10 Hz clip to 2.5 Hz — the unequal spans meant the
+        // agreement test was skipped, so nothing else was looking.
+        const times = {0: 0, 1: 30, 101: 40};
+        const r = measureAnchorRate([0, 1, 101], (f) => times[f], 0.1);
+        expect(1 / r.realDt).toBeCloseTo(10, 1);
+        expect(r.stepDetected).toBe(true);
+        expect(r.epochAnchor).toBe(-1);   // a step costs the epoch
+    });
+
+    test("a duplicate does not let two conflicting pairs take the lenient path", () => {
+        // [0, 1, 2, 9] at times [0, 0, 0.2, 0.9]: one non-advancing interval
+        // plus two disagreeing pairs. Counting the duplicate toward the branch
+        // THRESHOLD sent this down the majority path, where both pairs fitted a
+        // band around their own median, and returned 0.1125 s/frame.
+        const times = {0: 0, 1: 0, 2: 0.2, 9: 0.9};
+        const r = measureAnchorRate([0, 1, 2, 9], (f) => times[f], 0.1);
+        expect(r.inconsistent).toBe(true);
+    });
+
     test("fewer than two anchors yields nothing, without throwing", () => {
         expect(measureAnchorRate([], () => 0, CADENCE).realDt).toBeNaN();
         expect(measureAnchorRate([5], () => 0, CADENCE).realDt).toBeNaN();
     });
 
-    test("thousands of anchors do not blow the argument limit", () => {
-        // minOf over the surviving pairs; Math.min(...) throws here.
+    test("many anchors do not blow the argument limit", () => {
+        // minOf over the surviving pairs. Math.min(...) throws past ~125k on
+        // this runtime, so the count has to clear that with margin — an
+        // earlier version of this test used 80k and would have passed with the
+        // spread call still in place.
         const idx = [], times = {};
-        for (let k = 0; k <= 80000; k++) { idx.push(k); times[k] = k * 0.1; }
+        for (let k = 0; k <= 200000; k++) { idx.push(k); times[k] = k * 0.1; }
         const r = measureAnchorRate(idx, (f) => times[f], CADENCE);
         expect(r.realDt).toBeCloseTo(0.1, 6);
         expect(r.epochAnchor).toBe(0);
