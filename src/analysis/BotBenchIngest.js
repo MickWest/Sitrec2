@@ -921,72 +921,103 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     // other in the array with a multi-frame jump between their timestamps, and
     // only the timestamps reveal it.
     const complete = usable.filter(Boolean);
+    let chosenTimebaseNote = "";
     // Pick the timebase BEFORE judging continuity: a stream with good PES PTS
     // and a broken wall clock is a normal FMV case, and trimming it on the
     // broken clock would discard perfectly timed data.
-    // CADENCE COMES FROM PES PTS; THE EPOCH COMES FROM UnixTimeStamp.
+    // WHICH CLOCK MEASURES REAL SECONDS.
     //
-    // This is what the two fields ARE, and grounding the rule there beats any
-    // further heuristic — two of which I have already got wrong here:
+    // Four rules for this have now been wrong, and the last one was wrong for
+    // an interesting reason, so the reasoning is worth keeping:
     //
-    //   "all values finite"   picked an erratic wall clock over a clean PTS.
+    //   "all values finite"        picked an erratic wall clock over a clean PTS.
     //   "fraction of clean steps"  ignores WHERE the bad steps fall; one
-    //     duplicate mid-clip scores 0.9986, beats a perfect PTS, and halves the
-    //     run.
-    //   "longest retained run"  is better but still not a correctness test: a
-    //     DAMAGED clock can retain more precisely BECAUSE it is too uniform —
-    //     if it papers over a dropout the good clock honestly reports, it wins
-    //     the comparison by hiding the very thing we are trying to detect.
+    //     duplicate mid-clip scores 0.9986, beats a perfect PTS, halves the run.
+    //   "longest retained run"     is not a correctness test: a DAMAGED clock
+    //     can retain more precisely BECAUSE it is too uniform, winning by
+    //     hiding the dropout the good clock honestly reports.
+    //   "always prefer PES PTS"    assumes the encoder clock runs at real time.
+    //     It does not always: MISBUtils' encoder-cadence analysis exists for the
+    //     "ffmpeg -r N without an fps filter" footgun, where PES PTS values are
+    //     written at one cadence while frames were captured at another. Prefer
+    //     PTS there and every speed, acceleration and g-load is scaled by the
+    //     ratio between them. A warning does not make wrong numbers right.
     //
-    // ST 0601 tag 2 is a wall clock: authoritative for WHEN, and subject to
-    // steps, resets and coarse resolution. The KLV PES PTS is the encoder's
-    // synchronous timebase: it is what the container uses to space frames, and
-    // spacing is exactly the question here. So prefer PTS for cadence whenever
-    // it yields a usable run, and keep the wall clock for the epoch — never
-    // mixing the two roles.
+    // MISBUtils also supplies the test: real_fps = pcr_fps x (klvPesSpan /
+    // klvUtsSpan). That ratio IS the question — it says whether the encoder
+    // clock advances at one second per real second. So:
     //
-    // Neither is required to be complete: parseKLVFile deliberately writes a
-    // null PTS for a record it cannot pair (MISBUtils.js), so demanding every
-    // value be finite disqualified a whole timebase over one hole that
-    // longestUniformRun would simply have trimmed around.
-    const MIN_RUN = 10;
+    //   ratio ~ 1  the encoder clock is real-time. Prefer PES PTS: it is
+    //              synchronous, finer, and immune to wall-clock steps.
+    //   otherwise  the encoder clock is not measuring real seconds. Use the
+    //              WALL CLOCK, which by definition is, because kinematics are
+    //              metres per REAL second.
+    //
+    // The wall clock always supplies the epoch regardless; the two roles stay
+    // separate.
+    //
+    // Neither series need be complete — parseKLVFile deliberately writes a null
+    // PTS for a record it cannot pair (MISBUtils.js) — and no minimum length is
+    // applied HERE: a short-but-honest timeline is a "not enough frames"
+    // result, not a "this clip has no timing" one, and that distinction is
+    // already drawn further down.
     const trialOf = (get) => {
         if (complete.length < 2) return null;
-        // At least two finite values, or there is nothing to difference.
         if (complete.filter((u) => Number.isFinite(get(u))).length < 2) return null;
         const trial = longestUniformRun(complete, get);
-        if (trial.degenerateClock || trial.items.length < MIN_RUN) return null;
+        if (trial.degenerateClock || !trial.items.length) return null;
         return {get, run: trial, kept: trial.items.length, dt: trial.observedDt};
     };
     const utsTrial = trialOf((u) => u.t);
     const ptsTrial = trialOf((u) => u.pts);
 
-    const best = ptsTrial ?? utsTrial;
+    // Spans measured over the records where BOTH clocks are finite, so the
+    // ratio compares like with like.
+    const paired = complete.filter((u) => Number.isFinite(u.t) && Number.isFinite(u.pts));
+    const utsSpan = paired.length >= 2 ? paired[paired.length - 1].t - paired[0].t : NaN;
+    const pesSpan = paired.length >= 2 ? paired[paired.length - 1].pts - paired[0].pts : NaN;
+    const spanRatio = utsSpan > 0 && pesSpan > 0 ? pesSpan / utsSpan : NaN;
+    const encoderIsRealTime = Number.isFinite(spanRatio) && Math.abs(spanRatio - 1) <= 0.02;
+
+    let best = null, why = "";
+    if (ptsTrial && utsTrial) {
+        // Retention still matters: partial PES pairing can leave a short PTS
+        // run beside a long clean wall-clock one, and taking the encoder clock
+        // then throws away most of the clip for a purity that buys nothing.
+        const ptsKeepsEnough = ptsTrial.kept >= utsTrial.kept * 0.9;
+        if (encoderIsRealTime && ptsKeepsEnough) {
+            best = ptsTrial;
+            why = "PES PTS (encoder clock verified real-time against UnixTimeStamp)";
+        } else if (!encoderIsRealTime) {
+            best = utsTrial;
+            why = `UnixTimeStamp (the encoder clock runs at ${spanRatio.toFixed(3)}x real time, `
+                + `so it does not measure real seconds)`;
+            warnings.push(`The KLV PES timeline spans ${spanRatio.toFixed(3)}x the wall-clock `
+                + `interval over the same records — the "-r N without an fps filter" encoder `
+                + `footgun. Cadence was taken from UnixTimeStamp, because speeds and g-loads are `
+                + `per REAL second.`);
+        } else {
+            best = utsTrial;
+            why = "UnixTimeStamp (PES PTS is only partially paired)";
+            warnings.push(`PES PTS is paired on too little of this clip to use for cadence `
+                + `(${ptsTrial.kept} usable frames against ${utsTrial.kept} on the wall clock), `
+                + `so UnixTimeStamp was used.`);
+        }
+    } else if (ptsTrial || utsTrial) {
+        best = ptsTrial ?? utsTrial;
+        why = ptsTrial ? "PES PTS (no usable UnixTimeStamp)" : "UnixTimeStamp (no usable PES PTS)";
+        if (ptsTrial && !utsTrial) {
+            warnings.push("UnixTimeStamp gives no usable timeline, so cadence came from the KLV "
+                + "PES timestamps. Without a wall clock this clip has no absolute time, and the "
+                + "encoder clock could not be checked against one — treat derived speeds as "
+                + "conditional on the encoder having run at real time.");
+        }
+    }
     const chosenName = best ? (best === ptsTrial ? "pts" : "uts") : "none";
-    const utsOk = !!utsTrial;                    // an epoch is available
     const useTimeOf = best ? best.get : ((u) => u.t);
     const chosen = best;
+    if (best) chosenTimebaseNote = why;
 
-    if (chosenName === "pts") {
-        warnings.push(`Cadence was taken from the KLV PES presentation timestamps — the `
-            + `encoder's synchronous timebase, which is what spacing means in a transport `
-            + `stream. UnixTimeStamp is used only for the wall-clock epoch`
-            + `${utsTrial ? "" : ", and is not usable here, so this clip has no absolute time"}.`);
-    }
-    // A disagreement about RATE is the dangerous case: every speed, g-load and
-    // turn rate scales with it, and the two clocks cannot both be right. There
-    // is no principled way to tell which from the file alone, so say so plainly
-    // instead of picking silently.
-    if (utsTrial && ptsTrial && Number.isFinite(utsTrial.dt) && Number.isFinite(ptsTrial.dt)
-        && Math.abs(ptsTrial.dt / utsTrial.dt - 1) > 0.1) {
-        warnings.push(`THE TWO CLOCKS DISAGREE ABOUT RATE: PES PTS steps every `
-            + `${ptsTrial.dt.toFixed(4)} s (${(1 / ptsTrial.dt).toFixed(2)} Hz), UnixTimeStamp `
-            + `every ${utsTrial.dt.toFixed(4)} s (${(1 / utsTrial.dt).toFixed(2)} Hz). Cadence `
-            + `was taken from PES PTS, but one of the two is wrong and every speed, acceleration `
-            + `and g-load below scales directly with that choice.`);
-    }
-    // Retention is no longer the selector, but a large gap between the two is
-    // still worth surfacing: it means one clock is hiding or inventing a break.
     if (utsTrial && ptsTrial && Math.abs(ptsTrial.kept - utsTrial.kept) > 0.1 * complete.length) {
         warnings.push(`The clocks retain different amounts of this clip — PES PTS `
             + `${ptsTrial.kept} frames, UnixTimeStamp ${utsTrial.kept}, of ${complete.length}. `
@@ -1017,6 +1048,26 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
 
     const n = kept.length;
     const times = Float64Array.from(kept, useTimeOf);
+
+    // THE EPOCH IS A PROPERTY OF THE SELECTED RUN, not of the file.
+    //
+    // A previous version gated this on "a usable UTS run exists somewhere",
+    // which says nothing about the run actually chosen: when cadence came from
+    // PES PTS, kept[0] is a PTS-selected record whose own wall-clock stamp may
+    // be absent — and `new Date(NaN).toISOString()` throws a RangeError, taking
+    // down ingestion of an otherwise perfectly good clip. Read the value that
+    // will actually be used, and fall back to the first record in the run that
+    // has one.
+    let clipStartS = NaN;
+    for (const u of kept) {
+        if (Number.isFinite(u.t)) { clipStartS = u.t; break; }
+    }
+    const haveEpoch = Number.isFinite(clipStartS);
+    if (!haveEpoch) {
+        warnings.push("No record in the analysed span carries a UnixTimeStamp, so this clip has "
+            + "no absolute time. Anything date-dependent (sun/moon position, satellite passes) "
+            + "cannot be computed for it.");
+    }
     const timing = haveAllTimes ? timingStats(times) : null;
     // Always derived — the no-clock case was refused above, so there is no
     // assumed rate anywhere in this path.
@@ -1115,7 +1166,7 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
         // is reported on the row rather than assumed away — but the datum part
         // of it is free to get right.
         groundZ: geoidN,
-        clipStartMs: utsOk ? kept[0].t * 1000 : null,
+        clipStartMs: haveEpoch ? clipStartS * 1000 : null,
         truth: null,
         labels: null,
         meta: {
@@ -1123,10 +1174,11 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
             usableRecords: n,
             completeRecords: complete.length,
             originLLA: [originLat / DEG, originLon / DEG, 0],
-            epochISO: utsOk ? new Date(kept[0].t * 1000).toISOString() : null,
+            epochISO: haveEpoch ? new Date(clipStartS * 1000).toISOString() : null,
             fovFullDeg: null,
             windEstimate: null,
             maxRangeM: null,
+            timebase: chosenTimebaseNote || null,
             surfaceModel: (usingEllipsoid ? "" : "SPHERICAL Earth mode; ")
                 + (geoidApplied
                     ? "sea level via EGM96 (no terrain)"
