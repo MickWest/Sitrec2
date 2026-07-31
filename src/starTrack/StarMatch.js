@@ -69,6 +69,29 @@ export const STAR_MATCH_DEFAULTS = {
     invariantMinInliers: 5,
     invariantMinInlierFraction: 0.5,
 
+    // Translation-consensus re-acquisition (offset voting): the bridge of last resort when both
+    // prediction and triangles fail. Bin width trades peak sharpness against vote splitting;
+    // the offset cap bounds the hypothesis space to displacements a bridged gap could plausibly
+    // contain; the vote gates mirror the invariant path's "corroborated, not merely produced"
+    // standard at the histogram stage.
+    offsetVoteBin: 6,
+    offsetVoteMinVotes: 5,
+    offsetVoteMinFraction: 0.25,
+    offsetVoteMaxOffset: 150,
+    // The vote is quadratic in source count and runs on every frame pair, so it votes on the
+    // brightest K per side - consensus needs the anchor stars, not the full population, and an
+    // uncapped dense frame (thousands of detections) would stall the synchronous solve. The
+    // seeded REFIT still runs against the full populations, so the returned inlier count stays
+    // comparable with the other matchers'.
+    offsetVoteMaxSources: 60,
+
+    // Bridging tries the most recent trusted frames, newest first, not only the very last one.
+    // The frame at the edge of an outage is often itself degraded - it is the tail end of the
+    // blur that CAUSED the outage - and anchoring every retry to it walls off a recovery that
+    // any other recent frame would provide.
+    bridgeAnchorPool: 8,
+    bridgeAnchorTries: 4,
+
     // Camera-fixed artifact removal (hot pixels, dust, reticle).
     excludeCameraFixed: true,
     fixedRadius: 2.0,           // px: how close across frames counts as the same fixed position
@@ -354,15 +377,44 @@ export function fitSimilarity(P, Q, opts = {}) {
  */
 function pairWithinGate(from, to, gate) {
     const g2 = gate * gate;
+
+    // Gate-sized spatial hash of the target points: each source point examines only the 3x3
+    // cell neighbourhood, which contains every point within the gate by construction. This is
+    // what keeps the WHOLE chain's pairing near-linear - the prediction matcher runs on every
+    // frame pair, and a dense frame under brute-force O(nA*nB) pairing stalls the synchronous
+    // solve. The d2 filter below is exact, so a hash-key collision (merged cells) only costs a
+    // distance check, never a wrong pair. The cell uses |gate| to stay consistent with g2,
+    // which is sign-blind - a (nonsense) negative gate keeps behaving as its absolute radius
+    // rather than silently matching nothing.
+    const cell = Math.max(Math.abs(gate), 1e-6);
+    const grid = new Map();
+    for (let j = 0; j < to.length; j++) {
+        const key = (Math.floor(to[j][0] / cell) + 50000) * 100000
+            + (Math.floor(to[j][1] / cell) + 50000);
+        let bucket = grid.get(key);
+        if (!bucket) grid.set(key, bucket = []);
+        bucket.push(j);
+    }
+
     const cands = [];
     for (let i = 0; i < from.length; i++) {
-        for (let j = 0; j < to.length; j++) {
-            const dx = from[i][0] - to[j][0], dy = from[i][1] - to[j][1];
-            const d2 = dx * dx + dy * dy;
-            if (d2 <= g2) cands.push([d2, i, j]);
+        const cx = Math.floor(from[i][0] / cell), cy = Math.floor(from[i][1] / cell);
+        for (let ox = -1; ox <= 1; ox++) {
+            for (let oy = -1; oy <= 1; oy++) {
+                const bucket = grid.get((cx + ox + 50000) * 100000 + (cy + oy + 50000));
+                if (!bucket) continue;
+                for (const j of bucket) {
+                    const dx = from[i][0] - to[j][0], dy = from[i][1] - to[j][1];
+                    const d2 = dx * dx + dy * dy;
+                    if (d2 <= g2) cands.push([d2, i, j]);
+                }
+            }
         }
     }
-    cands.sort((a, b) => a[0] - b[0]);
+
+    // Ties broken by index, so the greedy assignment is a function of the POINTS, not of the
+    // order the grid happened to surface candidates in.
+    cands.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
     const usedI = new Set(), usedJ = new Set();
     const pairs = [];
     for (const [, i, j] of cands) {
@@ -534,6 +586,90 @@ export function matchByInvariants(prev, cur, opts = {}) {
     return {transform: {A: fit.A, B: fit.B}, fit, pairs};
 }
 
+/**
+ * Re-acquire a frame pair by TRANSLATION CONSENSUS when triangles cannot.
+ *
+ * Triangle invariants pick their vertices from the brightest sources, so they die precisely in
+ * the situation that creates long re-acquisition gaps in real footage: a motion-blurred stretch
+ * scrambles the brightness ranking (bright stars smear and fragment, faint ones vanish), and the
+ * two frames' "brightest fourteen" barely intersect even though most of the FIELD is shared.
+ * Position consensus does not care about ranking. Every cross-frame source pair votes for the
+ * offset it implies; when the frames genuinely share a star field displaced by a roughly
+ * constant translation, the true offset collects a vote from every shared star while unrelated
+ * pairs scatter theirs. (Rotation over the few-frame gaps this bridges is far below the bin
+ * width at the arm lengths involved, so a pure-translation histogram still concentrates.)
+ *
+ * The voted offset is only a HYPOTHESIS. It seeds the standard predicted match-and-refine, and
+ * the resulting fit must clear the same corroboration gates as an invariant re-acquisition -
+ * "corroborated, not merely produced" applies to a histogram peak exactly as it does to
+ * coincidental triangle votes, and an uncorroborated peak (a periodic field's alias, two
+ * unrelated dense fields) is refused rather than composed into the chain.
+ */
+export function matchByOffsetVote(prev, cur, opts = {}) {
+    const O = {...STAR_MATCH_DEFAULTS, ...opts};
+    if (prev.length < O.minPairs || cur.length < O.minPairs) return null;
+
+    // Bound the quadratic voting stage to the brightest sources per side.
+    const cap = (list) => (list.length <= O.offsetVoteMaxSources ? list
+        : [...list]
+            .sort((a, b) => (b.flux ?? b.area ?? 0) - (a.flux ?? a.area ?? 0))
+            .slice(0, O.offsetVoteMaxSources));
+    const pv = cap(prev), cv = cap(cur);
+
+    // Each pair votes into its bin AND the next one up in each axis, so a cluster of true
+    // offsets straddling a bin edge still lands together in at least one bin.
+    const bin = O.offsetVoteBin;
+    const votes = new Map();
+    for (const p of pv) {
+        for (const q of cv) {
+            const dx = q.x - p.x, dy = q.y - p.y;
+            if (Math.abs(dx) > O.offsetVoteMaxOffset || Math.abs(dy) > O.offsetVoteMaxOffset) continue;
+            // +500 keeps both bin indices positive (offsets are capped well inside +/-500 bins),
+            // so the packed key cannot collide across axes for negative offsets.
+            const kx = Math.floor(dx / bin) + 500, ky = Math.floor(dy / bin) + 500;
+            for (let ox = 0; ox <= 1; ox++) {
+                for (let oy = 0; oy <= 1; oy++) {
+                    const key = (kx + ox) * 100000 + (ky + oy);
+                    votes.set(key, (votes.get(key) || 0) + 1);
+                }
+            }
+        }
+    }
+    if (votes.size === 0) return null;
+
+    let bestKey = null, bestVotes = 0;
+    for (const [key, v] of votes) {
+        if (v > bestVotes) { bestVotes = v; bestKey = key; }
+    }
+    const needed = Math.max(O.offsetVoteMinVotes,
+        Math.ceil(O.offsetVoteMinFraction * Math.min(pv.length, cv.length)));
+    if (bestVotes < needed) return null;
+
+    // The winning bin covers floor(d/bin) in {k-1, k}; gather the offsets that voted for it and
+    // take their MEDIAN as the seed - robust to the unrelated pairs that happened to land there.
+    const kx = Math.floor(bestKey / 100000) - 500, ky = (bestKey % 100000) - 500;
+    const dxs = [], dys = [];
+    for (const p of pv) {
+        for (const q of cv) {
+            const dx = q.x - p.x, dy = q.y - p.y;
+            const fx = Math.floor(dx / bin), fy = Math.floor(dy / bin);
+            if ((fx === kx || fx === kx - 1) && (fy === ky || fy === ky - 1)) {
+                dxs.push(dx); dys.push(dy);
+            }
+        }
+    }
+    if (dxs.length < O.minPairs) return null;
+    const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
+    const seed = {A: [1, 0], B: [med(dxs), med(dys)]};
+
+    const m = matchByPrediction(prev, cur, seed, O);
+    if (!m) return null;
+    if (!m.fit.converged) return null;
+    if (m.fit.inliers < O.invariantMinInliers) return null;
+    if (m.fit.inliers < O.invariantMinInlierFraction * m.fit.n) return null;
+    return m;
+}
+
 /** Largest corner displacement a transform produces over a frame of the given size. */
 function motionMagnitude(T, W, H) {
     let worst = 0;
@@ -650,6 +786,12 @@ function solveChainOnce(usable, O) {
     // The most recent frame whose position in the reference frame we actually trust. Bridging back
     // to it is what stops a dropout from permanently losing the motion across the gap.
     let lastGood = 0;
+    // Recent STRONGLY-fitted frames, oldest first: the alternative bridge anchors. lastGood alone
+    // is not enough - a weakly-accepted frame at the edge of an outage (the tail of the blur that
+    // caused it) can become lastGood and then fail every bridge attempt, walling off a recovery
+    // that any well-detected frame a few steps earlier would provide. Measured on the real clip
+    // this converts a 197-frame permanent outage into a 2-frame gap.
+    const anchorPool = [0];
 
     // A fit that never reached a fixed point is NOT trusted, however many inliers it reports.
     //
@@ -665,23 +807,35 @@ function solveChainOnce(usable, O) {
         && fit.inliers >= O.minInliers
         && fit.inliers >= O.minInlierFraction * Math.min(a.length, b.length);
 
+    // Every matcher is consulted EVERY time, and the corroborated fit explaining the most
+    // sources wins (ties keep the earlier, prediction-refined one). "Fall back only when the
+    // prediction match is weak" has a reachable hole with no threshold fix: a coherent cluster
+    // of stationary artifacts is itself a strong-looking lock - six decoys among fourteen
+    // detections clears the strength gates while the real field sits shifted beyond the
+    // prediction gate - and it registers the frame WRONG with no failure and no weak flag,
+    // which is worse than failing. Inlier count is the honest arbiter between corroborated
+    // interpretations: the fit that explains eight sources beats the one that explains six.
+    const best = (m, alt) => (alt && (!m || alt.fit.inliers > m.fit.inliers) ? alt : m);
+
     for (let f = 1; f < n; f++) {
         const prev = usable[f - 1], cur = usable[f];
         let base = f - 1;
-        let step = matchByPrediction(prev, cur, prediction, O);
+        const predicted = matchByPrediction(prev, cur, prediction, O);
+        let step = predicted;
+        step = best(step, matchByInvariants(prev, cur, O));
+        step = best(step, matchByOffsetVote(prev, cur, O));
 
         // Only recorded once the step it describes actually survives - a re-acquisition that is
         // later discarded for resting on a stale anchor must not leave the frame listed as both
         // failed and reacquired.
-        let usedInvariants = false;
+        let usedInvariants = step !== null && step !== predicted;
 
-        if (!strong(step && step.fit, prev, cur)) {
-            const alt = matchByInvariants(prev, cur, O);
-            if (alt && (!step || alt.fit.inliers > step.fit.inliers)) {
-                step = alt;
-                usedInvariants = true;
-            }
-        }
+        // When the winner DISPLACED a strong prediction fit, two corroborated interpretations
+        // disagreed about this frame. Majority arbitration is the best local answer, but it is
+        // an arbitration, not a certainty - the frame is reported weak so the contested
+        // registration is visible downstream instead of passing as uncontested.
+        const contested = usedInvariants && predicted !== null
+            && strong(predicted.fit, prev, cur);
 
         // When the preceding frame was itself a failure, its cumulative transform is a HELD copy
         // of an older one - it asserts the camera did not move during the gap. Anything composed
@@ -694,14 +848,38 @@ function solveChainOnce(usable, O) {
         // that hole open, and so does silently keeping the adjacent match when no bridge is
         // available. The only valid anchors are the last frame we trust, or nothing.
         if (lastGood !== f - 1) {
-            const canBridge = usable[lastGood].length >= O.minPairs;
-            const bridged = canBridge
-                ? (matchByPrediction(usable[lastGood], cur, null, O)
-                    || matchByInvariants(usable[lastGood], cur, O))
-                : null;
+            // Anchor candidates: lastGood first (the cheapest, most recent registration), then
+            // recent strong frames, newest first. Every candidate is a TRUSTED frame, so any of
+            // them is an equally honest base - the choice is about detection quality, not truth.
+            const candidates = [lastGood];
+            for (let k = anchorPool.length - 1;
+                 k >= 0 && candidates.length < O.bridgeAnchorTries; k--) {
+                if (anchorPool[k] !== lastGood) candidates.push(anchorPool[k]);
+            }
+            let bridged = null, bridgeBase = lastGood;
+            for (const a of candidates) {
+                if (usable[a].length < O.minPairs) continue;
+                // Same alternatives rule as the adjacent path: all matchers, most inliers wins.
+                // Neither weakness nor strength of the prediction match is grounds to skip the
+                // re-acquisition matchers - a decoy cluster can hand it either.
+                let m = matchByPrediction(usable[a], cur, null, O);
+                m = best(m, matchByInvariants(usable[a], cur, O));
+                m = best(m, matchByOffsetVote(usable[a], cur, O));
+                if (!m) continue;
+                // The first STRONG re-acquisition wins outright. A weak one is only held as a
+                // fallback while the remaining anchors are tried: the anchor nearest the outage
+                // is often the most degraded, and letting its marginal 3-inlier fit preempt a
+                // 20-inlier re-acquisition from one frame further back - purely by search
+                // order - would compose the worst available answer into the chain.
+                if (strong(m.fit, usable[a], cur)) { bridged = m; bridgeBase = a; break; }
+                if (!bridged || m.fit.inliers > bridged.fit.inliers) {
+                    bridged = m;
+                    bridgeBase = a;
+                }
+            }
             if (bridged) {
                 step = bridged;
-                base = lastGood;
+                base = bridgeBase;
                 usedInvariants = true;
             } else {
                 // Discard the adjacent match rather than anchor it to a stale transform. Failing
@@ -724,7 +902,9 @@ function solveChainOnce(usable, O) {
         // A fit can be accepted while still being weak - re-acquisition may be unavailable or no
         // better. Accumulating it beats holding still, but it must be reported rather than
         // silently blended into a chain that looks uniformly trustworthy.
-        if (!strong(step.fit, usable[base], cur)) weakFrames.push(f);
+        if (!strong(step.fit, usable[base], cur) || (contested && base === f - 1)) {
+            weakFrames.push(f);
+        }
 
         if (usedInvariants) reacquired.push(f);
 
@@ -735,6 +915,13 @@ function solveChainOnce(usable, O) {
         cumulative[f] = composeTransform(step.transform, cumulative[base]);
         prediction = base === f - 1 ? step.transform : null;
         lastGood = f;
+
+        // Only strongly-fitted frames join the bridge-anchor pool: a weak frame may be trusted
+        // enough to continue FROM, but it makes a poor pattern to re-acquire AGAINST.
+        if (strong(step.fit, usable[base], cur)) {
+            anchorPool.push(f);
+            if (anchorPool.length > O.bridgeAnchorPool) anchorPool.shift();
+        }
     }
 
     return {steps, cumulative, reacquired, failed, weakFrames};

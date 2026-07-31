@@ -747,6 +747,30 @@ describe("StarSolve end to end", () => {
         expect(solved.classified).toEqual([]);
         expect(solved.tracks).toEqual([]);
     });
+
+    test("a single frame solves to stars when single observations are allowed to count", () => {
+        // A still image gives the pipeline one frame: no motion to solve, nothing to
+        // classify against - every detected point is presumed a star, which is what a
+        // single exposure of the night sky can honestly claim. The app layer requests this
+        // with minObservations 1 (and merging off - two detections in one frame are two
+        // stars by definition).
+        const dets = [
+            {x: 100, y: 100, flux: 4000}, {x: 300, y: 220, flux: 900},
+            {x: 520, y: 80, flux: 2000}, {x: 240, y: 400, flux: 300},
+            {x: 610, y: 330, flux: 1200},
+        ];
+        const solved = solveStarField([dets], [{A: [1, 0], B: [0, 0]}],
+            {minObservations: 1, starMergeRadius: 0});
+        const stars = solved.classified.filter((c) => c.klass === "star");
+        expect(stars.length).toBe(5);
+        for (const s of stars) {
+            expect(Number.isFinite(s.magnitude)).toBe(true);
+            expect(s.position).not.toBeNull();
+        }
+        // Brighter flux, smaller (more negative) magnitude.
+        const byFlux = [...solved.classified].sort((a, b) => a.magnitude - b.magnitude);
+        expect(solved.tracks[byFlux[0].index].obs[0].src.flux).toBe(4000);
+    });
 });
 
 describe("StarSolve temporal regularisation", () => {

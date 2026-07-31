@@ -16,6 +16,7 @@ import {
     fitSimilarity,
     invertTransform,
     matchByInvariants,
+    matchByOffsetVote,
     matchByPrediction,
     solveFrameChain,
     transformParams,
@@ -687,5 +688,228 @@ describe("StarMatch whole-clip solve", () => {
         const truthLast = composeTransform(scene.transforms[15], inv0);
         // One dropped frame costs roughly one frame of motion, not the whole path.
         expect(cornerDisagreement(cumulative[15], truthLast)).toBeLessThan(10);
+    });
+});
+
+// Modelled on the real failure that motivated offset voting: a camera jerk blurs a couple of
+// frames, the blur scrambles which sources are brightest (bright stars smear and fragment, faint
+// ones vanish, new artifacts flare), and on the far side the field sits tens of pixels from where
+// prediction can reach. Triangle invariants pick vertices by brightness rank, so the scramble
+// starves them; the old chain then retried its one bridge anchor forever and stayed broken for
+// the remaining 197 frames of a real clip. Each test pins one link of the repaired behavior, and
+// the "control" runs (mechanism disabled via options) re-create the old code's outcome so the
+// failure these tests guard against stays machine-checked.
+describe("StarMatch offset-vote re-acquisition", () => {
+    test("re-acquires a large offset through a scrambled brightness ranking", () => {
+        const rnd = mulberry32(42);
+        const field = Array.from({length: 30}, () => ({
+            x: 40 + rnd() * 1180, y: 40 + rnd() * 620, flux: 200 + rnd() * 5000, area: 6,
+        }));
+        const prev = field.map((s) => ({...s}));
+        // After the "blur": shifted (-5, -44); the 8 brightest sources gone, 8 new bright
+        // impostors elsewhere, and every surviving flux re-drawn (ranking destroyed).
+        const byFlux = [...field].sort((a, b) => b.flux - a.flux);
+        const gone = new Set(byFlux.slice(0, 8));
+        const rnd2 = mulberry32(77);
+        const cur = field.filter((s) => !gone.has(s)).map((s) => ({
+            x: s.x - 5, y: s.y - 44, flux: 200 + rnd2() * 800, area: 6,
+        })).filter((s) => s.x > 0 && s.y > 0);
+        for (let i = 0; i < 8; i++) {
+            cur.push({x: 30 + rnd2() * 1200, y: 30 + rnd2() * 650, flux: 4000 + rnd2() * 4000, area: 9});
+        }
+
+        // The premise: neither existing matcher can register this pair. If either ever starts
+        // succeeding here, offset voting's role has changed and this file should say so.
+        expect(matchByInvariants(prev, cur)).toBeNull();
+        expect(matchByPrediction(prev, cur, null)).toBeNull();
+
+        const m = matchByOffsetVote(prev, cur);
+        expect(m).not.toBeNull();
+        expect(m.transform.B[0]).toBeCloseTo(-5, 1);
+        expect(m.transform.B[1]).toBeCloseTo(-44, 1);
+        expect(m.fit.inliers).toBeGreaterThanOrEqual(15);
+    });
+
+    test("refuses two unrelated star fields", () => {
+        // The corroboration gate is what separates a histogram peak from evidence. Unrelated
+        // dense fields still produce a best bin; composing it would invent camera motion.
+        const ra = mulberry32(1), rb = mulberry32(2);
+        const A = Array.from({length: 28}, () => ({x: 20 + ra() * 1200, y: 20 + ra() * 680, flux: 100 + ra() * 3000, area: 6}));
+        const B = Array.from({length: 28}, () => ({x: 20 + rb() * 1200, y: 20 + rb() * 680, flux: 100 + rb() * 3000, area: 6}));
+        expect(matchByOffsetVote(A, B)).toBeNull();
+    });
+
+    test("bridges a blur outage with a jerk that the old chain never recovered from", () => {
+        const rnd = mulberry32(9);
+        const stars = Array.from({length: 26}, () => ({
+            x: 60 + rnd() * 1140, y: 60 + rnd() * 600, flux: 200 + rnd() * 4000,
+        }));
+        const rnd2 = mulberry32(31);
+        const postFlux = stars.map(() => 150 + rnd2() * 900);
+        const offsetAt = (f) => (f <= 9
+            ? [1.5 * f, -0.8 * f]
+            : [1.5 * f + 4, -0.8 * f - 40]);       // (+4, -40) jerk accumulated in the blur
+        const bright = new Set([...stars.keys()].sort((a, b) => stars[b].flux - stars[a].flux).slice(0, 7));
+        const frames = [];
+        for (let f = 0; f < 20; f++) {
+            if (f === 10 || f === 11) {
+                frames.push(Array.from({length: 6}, () => ({x: rnd2() * 1276, y: rnd2() * 720, flux: 500, area: 20})));
+                continue;
+            }
+            const [ox, oy] = offsetAt(f);
+            let dets = stars.map((s, i) => ({x: s.x + ox, y: s.y + oy, flux: f <= 9 ? s.flux : postFlux[i], area: 6, i}));
+            if (f >= 10) {
+                dets = dets.filter((d) => !bright.has(d.i));
+                for (let k = 0; k < 7; k++) {
+                    dets.push({x: 50 + rnd2() * 1150, y: 50 + rnd2() * 620, flux: 5000 + rnd2() * 3000, area: 9, i: -1});
+                }
+            }
+            frames.push(dets
+                .filter((d) => d.x > 0 && d.x < 1276 && d.y > 0 && d.y < 720)
+                .map(({i, ...d}) => d));
+        }
+
+        // Control: offset voting disabled reproduces the old behavior - the outage is permanent.
+        const control = solveFrameChain(frames, {excludeCameraFixed: false, offsetVoteMinVotes: Infinity});
+        expect(control.failed).toEqual([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+
+        // Fixed: only the genuinely unmatchable blur frames fail, and the registration on the
+        // far side of the gap carries the full jerk.
+        const {cumulative, failed} = solveFrameChain(frames, {excludeCameraFixed: false});
+        expect(failed).toEqual([10, 11]);
+        const [ex, ey] = offsetAt(19);
+        const got = applyTransform(cumulative[19], 100, 100);
+        expect(got[0]).toBeCloseTo(100 + ex, 0);
+        expect(got[1]).toBeCloseTo(100 + ey, 0);
+    });
+
+    test("bridging tries a pool of recent strong anchors, not only the last accepted frame", () => {
+        // The frame at the edge of an outage is the tail of the blur that caused it: here six
+        // smeared centroids that fit weakly enough to be ACCEPTED (becoming lastGood) while
+        // making a hopeless re-acquisition pattern. Anchoring every bridge retry there is what
+        // turned a 2-frame gap into a permanent outage on the real clip.
+        const rnd = mulberry32(5);
+        const stars = Array.from({length: 24}, () => ({x: 80 + rnd() * 1100, y: 80 + rnd() * 560, flux: 200 + rnd() * 4000}));
+        const rnd2 = mulberry32(105);
+        const frames = [];
+        for (let f = 0; f < 18; f++) {
+            const jerked = f >= 12;
+            const ox = 2 * f + (jerked ? 3 : 0);
+            const oy = jerked ? -42 : 0;
+            if (f === 9) {
+                frames.push(stars.slice(0, 6).map((s) => ({
+                    x: s.x + ox + (rnd2() - 0.5) * 4, y: s.y + (rnd2() - 0.5) * 4, flux: s.flux, area: 12,
+                })));
+                continue;
+            }
+            if (f === 10 || f === 11) {
+                frames.push(Array.from({length: 6}, () => ({x: rnd2() * 1276, y: rnd2() * 720, flux: 400, area: 18})));
+                continue;
+            }
+            frames.push(stars.map((s) => ({x: s.x + ox, y: s.y + oy, flux: s.flux, area: 6})));
+        }
+
+        // Control: with only lastGood tried, the weak frame 9 anchors every retry and the chain
+        // dies for the rest of the clip.
+        const control = solveFrameChain(frames, {excludeCameraFixed: false, bridgeAnchorTries: 1});
+        expect(control.failed).toEqual([10, 11, 12, 13, 14, 15, 16, 17]);
+
+        // With the pool, a strong pre-blur frame re-anchors the far side immediately.
+        const {failed, weakFrames} = solveFrameChain(frames, {excludeCameraFixed: false});
+        expect(failed).toEqual([10, 11]);
+        expect(weakFrames).toContain(9);
+    });
+
+    test("a weak coincidental prediction match cannot shadow a strong re-acquisition", () => {
+        // A dropout followed by a shift beyond the prediction gate, plus three faint decoys
+        // standing where stars stood BEFORE the shift. The gate-limited prediction match locks
+        // those decoys - non-null, convergent, three inliers, wrong by the whole shift - and a
+        // matcher chain that short-circuits on any non-null match composes it into the chain
+        // SILENTLY (no failure recorded), which is worse than failing. The re-acquisition
+        // matchers from the very same anchor see the true field at 26 inliers.
+        const rnd = mulberry32(7);
+        const stars = Array.from({length: 26}, () => ({
+            x: 100 + rnd() * 1050, y: 100 + rnd() * 520, flux: 300 + rnd() * 4000,
+        }));
+        const frames = [];
+        for (let f = 0; f < 12; f++) {
+            const jumped = f >= 6;
+            const ox = 2 * f + (jumped ? 40 : 0);
+            const oy = jumped ? 18 : 0;
+            if (f === 5) { frames.push([]); continue; }        // one-frame dropout
+            const dets = stars.map((s) => ({x: s.x + ox, y: s.y + oy, flux: s.flux, area: 6}));
+            if (jumped) {
+                for (let k = 0; k < 3; k++) {
+                    const s = stars[k * 7];
+                    dets.push({x: s.x + 9, y: s.y + 0.5, flux: 220, area: 5});
+                }
+            }
+            frames.push(dets);
+        }
+
+        // Control: with the re-acquisition matchers disabled, the coincidental 3-inlier match
+        // is all the bridge has, and it accepts it - the chain lands ~43 px wrong with NO
+        // failure recorded. This is the corruption mode the alternatives-not-chain rule stops.
+        const control = solveFrameChain(frames,
+            {excludeCameraFixed: false, offsetVoteMinVotes: Infinity, triangleMinVotes: Infinity});
+        expect(control.failed).toEqual([5]);
+        const gotC = applyTransform(control.cumulative[11], 200, 200);
+        expect(Math.hypot(gotC[0] - 262, gotC[1] - 218)).toBeGreaterThan(25);
+
+        const {cumulative, failed, steps} = solveFrameChain(frames, {excludeCameraFixed: false});
+        expect(failed).toEqual([5]);
+        expect(steps[6].fit.inliers).toBeGreaterThanOrEqual(20);
+        const got = applyTransform(cumulative[11], 200, 200);
+        expect(got[0]).toBeCloseTo(262, 0);
+        expect(got[1]).toBeCloseTo(218, 0);
+    });
+
+    test("a STRONG decoy lock cannot out-vote the fuller re-acquisition", () => {
+        // The harder version: the decoy cluster is big enough that the prediction match's lock
+        // on it passes the strength gates outright - six stationary glints among fourteen
+        // detections is 43%, clearing minInliers and minInlierFraction - so any rule of the
+        // form "consult the re-acquisition matchers only when the prediction match is weak"
+        // registers the frame wrong with no failure and no weak flag. All matchers always run;
+        // the corroborated fit explaining MORE sources (the eight real stars, shifted) wins.
+        const rnd = mulberry32(3);
+        const stars = Array.from({length: 8}, () => ({
+            x: 120 + rnd() * 1000, y: 120 + rnd() * 480, flux: 500 + rnd() * 4000,
+        }));
+        const decoys = Array.from({length: 6}, () => ({
+            x: 100 + rnd() * 1050, y: 100 + rnd() * 520, flux: 300 + rnd() * 800,
+        }));
+        const frames = [];
+        for (let f = 0; f < 12; f++) {
+            const jumped = f >= 6;
+            const ox = 2 * f + (jumped ? 30 : 0);
+            const oy = jumped ? 12 : 0;
+            const dets = stars.map((s) => ({x: s.x + ox, y: s.y + oy, flux: s.flux, area: 6}));
+            // Transient glints, present only around the jump - too brief for the camera-fixed
+            // stripper's persistence rule, exactly the contaminant that reaches the matcher.
+            if (f >= 4 && f <= 8) {
+                for (const d of decoys) dets.push({x: d.x, y: d.y, flux: d.flux, area: 5});
+            }
+            frames.push(dets);
+        }
+
+        // Control: re-acquisition matchers disabled. The strong decoy lock is accepted and the
+        // chain lands ~37 px wrong - silently: nothing failed, nothing flagged weak.
+        const control = solveFrameChain(frames,
+            {excludeCameraFixed: false, offsetVoteMinVotes: Infinity, triangleMinVotes: Infinity});
+        expect(control.failed).toEqual([]);
+        const gotC = applyTransform(control.cumulative[11], 200, 200);
+        expect(Math.hypot(gotC[0] - 252, gotC[1] - 212)).toBeGreaterThan(25);
+
+        // Fixed: the jump step is carried by the eight-star recovery (small residual error is
+        // the mixed-fit bias while the transient decoys are on screen, not a registration miss).
+        const {cumulative, failed, steps, weakFrames} = solveFrameChain(frames, {excludeCameraFixed: false});
+        expect(failed).toEqual([]);
+        expect(steps[6].fit.inliers).toBeGreaterThanOrEqual(8);
+        const got = applyTransform(cumulative[11], 200, 200);
+        expect(Math.hypot(got[0] - 252, got[1] - 212)).toBeLessThan(6);
+        // Two corroborated interpretations disagreed at the jump - the arbitration must be
+        // VISIBLE: a frame whose strong prediction fit was displaced is reported weak
+        // (contested), never passed off as uncontested registration.
+        expect(weakFrames).toContain(6);
     });
 });

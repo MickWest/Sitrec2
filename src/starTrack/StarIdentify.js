@@ -32,6 +32,12 @@ export const STAR_IDENTIFY_DEFAULTS = {
     tiers: [
         {magLimit: 5.0, maxAngleDeg: 22, neighbors: 8},
         {magLimit: 6.5, maxAngleDeg: 8, neighbors: 8},
+        // The wide tier serves phone-lens fields (a 24mm-equivalent frame spans ~67 deg): only
+        // the naked-eye-bright stars, quads up to 50 deg across, and a much looser code
+        // tolerance - at these spans the gnomonic shear between the catalog quad's tangent
+        // point and the camera's differs by several percent, which is exactly why wide-field
+        // solves NEED the scale prior to prune what the loose tolerance lets through.
+        {magLimit: 4.0, maxAngleDeg: 50, neighbors: 8, codeTolerance: 0.05},
     ],
     // Verification catalog depth. Deeper than the index: the index only needs the bright stars
     // that form quads, but verification wants every star the video could plausibly have seen.
@@ -53,12 +59,34 @@ export const STAR_IDENTIFY_DEFAULTS = {
     verifyPixelFraction: 0.005,
     verifyPixelMin: 4,
     minMatches: 8,
+    // Acceptance is TWO-STAGE. A hypothesis transform comes from four stars, and no four-point
+    // fit aligns a whole field to the pixel tolerance - on a dense field, demanding the full
+    // consensus of it rejects every correct hypothesis. So a hypothesis is accepted
+    // PROVISIONALLY on modest evidence (eight exclusive tolerance-matches is already no
+    // coincidence), refinement then fits the full match set, and the FINAL model must carry
+    // the strong consensus. A wrong provisional refines on garbage and dies at the final gate.
+    provisionalMatchFraction: 0.15,
     minMatchFraction: 0.5,
+    // The fraction rule is the NARROW-field standard. A star map mosaicked from a long panning
+    // clip is stitched by per-frame similarities, and over a 20-degree span the gnomonic scale
+    // variation those similarities cannot express warps the mosaic by tens of pixels at the
+    // edges - capping the within-tolerance fraction near one half however correct the solve is.
+    // Absolute count is the honest evidence measure there: the chance of N image stars landing
+    // within tolerance of projected catalog stars under one converged similarity is vanishing
+    // long before N reaches 25 (astrometry.net accepts on absolute odds for the same reason).
+    // So a solve also passes with strongMatchCount matches at the reduced fraction floor.
+    strongMatchCount: 25,
+    strongMatchFraction: 0.35,
     maxHypotheses: 3000,
     // Stop early once a hypothesis explains this fraction of the image stars.
     earlyExitFraction: 0.85,
 
     refineRounds: 2,
+
+    // When the caller KNOWS the plate scale - camera optics metadata gives the field of view
+    // exactly - hypotheses whose implied scale strays beyond this relative tolerance are
+    // discarded before verification. Set `scalePrior` (radians per pixel) in the options.
+    scalePriorTolerance: 0.35,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -141,6 +169,21 @@ export function parseStarNames(text) {
 // ---------------------------------------------------------------------------------------------
 // Sphere and tangent-plane geometry
 // ---------------------------------------------------------------------------------------------
+
+/**
+ * The plate-scale prior (tangent-plane units per pixel at the image centre) implied by a
+ * camera's field of view. Two traps this exists to avoid: the solver's scale lives in GNOMONIC
+ * tangent units, where half the frame spans tan(fov/2), not fov/2 - a linear conversion is 8%
+ * off at phone-lens widths and worse beyond; and the metadata's vertical FOV describes the
+ * sensor's SHORT axis, so it must be paired with the short pixel dimension - pairing it with
+ * "height" breaks the moment the photo is portrait, and a 33% orientation error on top of the
+ * 8% pushed valid fields straight through the prior gate.
+ */
+export function scalePriorFromFov(shortAxisFovDeg, widthPx, heightPx) {
+    const short = Math.min(widthPx, heightPx);
+    if (!(shortAxisFovDeg > 0) || !(short > 0)) return undefined;
+    return 2 * Math.tan(shortAxisFovDeg * Math.PI / 360) / short;
+}
 
 /** RA/Dec (radians) to a unit vector in the equatorial frame. */
 export function raDecToVec(ra, dec) {
@@ -405,16 +448,6 @@ export function solveField(imageStars, catalog, indexes, opts = {}) {
     const nImage = imageStars.length;
     if (nImage < 5) return {ok: false, reason: "too few stars to identify"};
 
-    // The brightest image stars, each with its nearest bright neighbours, form the image quads
-    // - the same generator the catalog index used, so the two quad populations overlap.
-    const brightIdx = imageStars
-        .map((s, i) => [s.mag ?? 0, i])
-        .sort((p, q) => p[0] - q[0])
-        .slice(0, O.imageQuadStars)
-        .map((p) => p[1]);
-    const bpts = brightIdx.map((i) => [imageStars[i].x, imageStars[i].y]);
-    const tri = triples(O.imageNeighbors);
-
     // Image extent, for tolerances and the field-of-view report. The reported field CENTRE is
     // the caller's image centre when given (the frame midpoint, usually), else the middle of
     // the stars' bounding box - the centroid would drift toward whichever corner happens to
@@ -429,6 +462,44 @@ export function solveField(imageStars, catalog, indexes, opts = {}) {
     const width = O.width ?? Math.max(maxX - minX, maxY - minY, 1);
     const tolPx = Math.max(O.verifyPixelMin, O.verifyPixelFraction * width);
     const centerPx = O.center ?? [(minX + maxX) / 2, (minY + maxY) / 2];
+    // The image rectangle, for confining projected catalog stars to what the frame can
+    // actually see. Callers that know the frame pass it; headless use falls back to the
+    // detected stars' bounding box, padded.
+    const bounds = O.bounds
+        ?? [minX - 4 * tolPx, minY - 4 * tolPx, maxX + 4 * tolPx, maxY + 4 * tolPx];
+
+    // Quad stars must look like SKY: isolated points, not texture. Terrestrial clutter - lit
+    // foliage, a contrail - detects as dozens of bright blobs packed together, and on a real
+    // twilight photo those blobs WERE the brightest "stars", so every quad the solver built
+    // was anchored in a tree. A detection whose neighbourhood holds several times the image's
+    // average density is excluded from quad building; it can still be matched and named by
+    // verification and refinement. The bar is RELATIVE, so a genuinely rich star field - which
+    // is dense everywhere - keeps its anchors.
+    const clutterR2 = (0.04 * width) ** 2;
+    const neighborCounts = imageStars.map((s) => {
+        let c = 0;
+        for (const t of imageStars) {
+            if (t === s) continue;
+            if ((t.x - s.x) ** 2 + (t.y - s.y) ** 2 < clutterR2) c++;
+        }
+        return c;
+    });
+    // The typical density is the MEDIAN, not the mean: the clutter's own inflated counts would
+    // otherwise raise a mean-based bar right past themselves.
+    const sortedCounts = [...neighborCounts].sort((a, b) => a - b);
+    const medianNeighbors = sortedCounts[sortedCounts.length >> 1] ?? 0;
+    const clutterMax = Math.max(4, 4 * medianNeighbors);
+
+    // The brightest sky-like image stars, each with its nearest bright neighbours, form the
+    // image quads - the same generator the catalog index used, so the two populations overlap.
+    const brightIdx = imageStars
+        .map((s, i) => [s.mag ?? 0, i])
+        .filter(([, i]) => neighborCounts[i] <= clutterMax)
+        .sort((p, q) => p[0] - q[0])
+        .slice(0, O.imageQuadStars)
+        .map((p) => p[1]);
+    const bpts = brightIdx.map((i) => [imageStars[i].x, imageStars[i].y]);
+    const tri = triples(O.imageNeighbors);
 
     // Verification stars, deep, with unit vectors ready.
     const deep = [];
@@ -465,13 +536,14 @@ export function solveField(imageStars, catalog, indexes, opts = {}) {
     // Large quads first: their codes are the least noise-sensitive.
     imageQuads.sort((p, q) => q.diam - p.diam);
 
-    let best = null;
+    const candidates = [];
     let tried = 0;
 
     for (const index of indexes) {
+        const codeTol = index.tier?.codeTolerance ?? O.codeTolerance;
         for (const iq of imageQuads) {
             if (tried >= O.maxHypotheses) break;
-            const hits = lookupCode(index, iq.code, O.codeTolerance);
+            const hits = lookupCode(index, iq.code, codeTol);
             for (const h of hits) {
                 if (tried >= O.maxHypotheses) break;
                 tried++;
@@ -497,6 +569,13 @@ export function solveField(imageStars, catalog, indexes, opts = {}) {
                 // The four points must actually agree with the fitted model before the
                 // expensive verification runs.
                 const scale = Math.hypot(T.A[0], T.A[1]);       // rad per px
+                // A known plate scale is the strongest single prune there is: any hypothesis
+                // whose implied scale is not the camera's is wrong regardless of how well its
+                // four points agree.
+                if (O.scalePrior
+                    && Math.abs(scale - O.scalePrior) > O.scalePriorTolerance * O.scalePrior) {
+                    continue;
+                }
                 let quadRms = 0;
                 for (let j = 0; j < 4; j++) {
                     const e = applySim(T, P[j][0], P[j][1]);
@@ -504,21 +583,36 @@ export function solveField(imageStars, catalog, indexes, opts = {}) {
                 }
                 if (Math.sqrt(quadRms / 4) > 2 * tolPx * scale) continue;
 
-                const cand = verifyHypothesis(imageStars, iq.mirrored, T, c0, b0,
-                    catalog, deep, deepVec, tolPx, width, centerPx, O);
+                const cand = verifyHypothesis(imageStars, iq.mirrored, T, c0, b0, P, catStars,
+                    catalog, deep, deepVec, tolPx, width, centerPx, bounds, O);
                 if (!cand) continue;
-                if (!best || cand.matches.length > best.matches.length) best = cand;
+                candidates.push(cand);
                 if (cand.matches.length >= O.earlyExitFraction * nImage) break;
             }
-            if (best && best.matches.length >= O.earlyExitFraction * nImage) break;
+            if (candidates.length
+                && candidates[candidates.length - 1].matches.length >= O.earlyExitFraction * nImage) {
+                break;
+            }
         }
-        if (best) break;      // a verified solve from a coarser tier needs no deeper one
+        if (candidates.length) break;   // verified solves from a coarser tier need no deeper one
     }
 
-    if (!best) {
+    if (!candidates.length) {
         return {ok: false, reason: `no verified match (${tried} hypotheses tried)`};
     }
-    return finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, centerPx, O);
+    // Finalise candidates BEST-FIRST until one carries the full consensus. Refinement is the
+    // stricter judge, and the best provisional is occasionally a lucky wrong one - discarding
+    // the runners-up when it fails its finals would turn one impostor into a failed
+    // identification of a perfectly solvable field.
+    candidates.sort((a, b) => b.matches.length - a.matches.length);
+    let lastFailure = null;
+    for (const cand of candidates.slice(0, 5)) {
+        const done = finishSolve(cand, imageStars, catalog, deep, deepVec, tolPx, width,
+            centerPx, bounds, O);
+        if (done.ok) return done;
+        lastFailure = done;
+    }
+    return lastFailure;
 }
 
 /**
@@ -530,7 +624,8 @@ export function solveField(imageStars, catalog, indexes, opts = {}) {
  * @returns {{matches: Array, centre: number[]}|null} null when the geometry is not a camera
  *   field at all (implausible scale, or nothing in view)
  */
-function projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, width, centerPx) {
+function projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, width, centerPx,
+    bounds, catalog, maxProjected) {
     const inv = invertSim(T);
     const scale = Math.hypot(T.A[0], T.A[1]);              // rad per px
     const fovRadiusRad = width * scale * 0.75;             // generous half-diagonal
@@ -541,17 +636,32 @@ function projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, 
     const cPlane = applySim(T, centerPx[0], mirrored ? -centerPx[1] : centerPx[1]);
     const centre = unGnomonic(cPlane[0], cPlane[1], c0, b0);
 
-    // Project the in-field catalog into image pixels.
-    const proj = [];
+    // Project the in-field catalog into image pixels - and keep only what lands INSIDE the
+    // image. The angular gate is a circle around the centre, which for a letterboxed or
+    // portrait frame covers far more sky than the rectangle sees; stars projecting off-frame
+    // can match nothing, yet uncorrected they would consume the brightest-N cap and inflate
+    // the consensus denominator until a valid narrow field fails identification.
+    const bx0 = bounds[0] - tolPx, by0 = bounds[1] - tolPx;
+    const bx1 = bounds[2] + tolPx, by1 = bounds[3] + tolPx;
+    let proj = [];
     for (let k = 0; k < deep.length; k++) {
         const v = deepVec[k];
         if (v[0] * centre[0] + v[1] * centre[1] + v[2] * centre[2] < minDot) continue;
         const g = gnomonic(v, c0, b0);
         if (!g) continue;
         const p = applySim(inv, g[0], g[1]);
-        proj.push([p[0], mirrored ? -p[1] : p[1], deep[k]]);
+        const px = p[0], py = mirrored ? -p[1] : p[1];
+        if (px < bx0 || px > bx1 || py < by0 || py > by1) continue;
+        proj.push([px, py, deep[k]]);
     }
     if (proj.length < 4) return null;
+    // Cap the projected catalog at the brightest `maxProjected` stars in the field: matching
+    // evidence depends on the catalog being SPARSE relative to the tolerance, and an uncapped
+    // deep pool would let chance neighbours accumulate.
+    if (maxProjected && proj.length > maxProjected) {
+        proj.sort((a, b) => catalog.mag[a[2]] - catalog.mag[b[2]]);
+        proj = proj.slice(0, maxProjected);
+    }
 
     // Greedy nearest matching, image star to closest projected catalog star.
     const t2 = tolPx * tolPx;
@@ -569,20 +679,60 @@ function projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, 
             matches.push({image: i, cat: proj[bj][2], dPx: Math.sqrt(bd)});
         }
     }
-    return {matches, centre};
+    return {matches, centre, nProjected: proj.length};
+}
+
+/** The consensus a match set must reach: a fraction of what COULD have matched. An image far
+ * deeper than the verification catalog - a 12-megapixel astrophoto against a mag-7 pool - has
+ * hundreds of stars with no possible counterpart, and a fraction of the raw image count would
+ * be unreachable by any correct solve. Matching most of what the catalog can show in the field
+ * is the evidence; the image's surplus depth is not evidence against. */
+function consensusNeeded(nImage, nProjected, fraction) {
+    return fraction * Math.min(nImage, nProjected);
+}
+
+/** Final acceptance: the full narrow-field fraction, OR the strong absolute count at the
+ * reduced fraction floor (see strongMatchCount in the defaults - wide similarity-stitched
+ * mosaics cap the reachable fraction near one half regardless of correctness). */
+function consensusMet(O, nImage, nMatches, nProjected) {
+    if (nMatches >= consensusNeeded(nImage, nProjected, O.minMatchFraction)) return true;
+    return nMatches >= O.strongMatchCount
+        && nMatches >= consensusNeeded(nImage, nProjected, O.strongMatchFraction);
 }
 
 /**
- * Verify one hypothesis: the detected stars must be where the catalog says stars are, in
- * numbers no coincidence produces.
+ * Verify one hypothesis PROVISIONALLY: the detected stars must be where the catalog says stars
+ * are, in numbers coincidence does not produce - at the modest bar a four-point transform can
+ * actually reach. Final acceptance happens after refinement, at full consensus.
+ *
+ * The tangent point is RE-CENTRED on the image centre before anything is projected. A pinhole
+ * camera is exactly "gnomonic about the optical axis, then a similarity" - but the hypothesis
+ * arrives projected about the CATALOG QUAD'S anchor, which on a phone-lens field can sit 30
+ * degrees from the image centre, and about the wrong tangent point even a correct hypothesis
+ * carries tens of pixels of pure projection distortion and dies here, never reaching the
+ * refinement that would have re-centred it. About the right tangent point the model is exact,
+ * for any field of view.
  */
-function verifyHypothesis(imageStars, mirrored, T, c0, b0, catalog, deep, deepVec, tolPx, width, centerPx, O) {
-    const pm = projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, width, centerPx);
+function verifyHypothesis(imageStars, mirrored, T, c0, b0, P, catQ, catalog, deep, deepVec, tolPx, width, centerPx, bounds, O) {
+    // Where does this hypothesis put the image centre? Re-anchor there and refit the quad.
+    const cPlane = applySim(T, centerPx[0], mirrored ? -centerPx[1] : centerPx[1]);
+    const c1 = unGnomonic(cPlane[0], cPlane[1], c0, b0);
+    const b1 = tangentBasis(c1);
+    const Q1 = [];
+    for (const ci of catQ) {
+        const g = gnomonic(raDecToVec(catalog.ra[ci], catalog.dec[ci]), c1, b1);
+        if (!g) return null;
+        Q1.push(g);
+    }
+    const T1 = fitSimilarityFree(P, Q1);
+    if (!T1) return null;
+
+    const pm = projectAndMatch(imageStars, mirrored, T1, c1, b1, deep, deepVec, tolPx, width, centerPx, bounds);
     if (!pm) return null;
     const {matches} = pm;
     if (matches.length < O.minMatches) return null;
-    if (matches.length < O.minMatchFraction * imageStars.length) return null;
-    return {matches, mirrored, T, c0, b0};
+    if (matches.length < consensusNeeded(imageStars.length, pm.nProjected, O.provisionalMatchFraction)) return null;
+    return {matches, mirrored, T: T1, c0: c1, b0: b1};
 }
 
 /**
@@ -599,9 +749,22 @@ function verifyHypothesis(imageStars, mirrored, T, c0, b0, catalog, deep, deepVe
  *
  * The final numbers all come from the last consistent (basis, transform, matches) triple.
  */
-function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, centerPx, O) {
+function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, centerPx, bounds, O) {
     let {matches, mirrored} = best;
     let T = best.T, c0 = best.c0, b0 = best.b0;
+
+    // The refinement rematches against a DEPTH-ADAPTIVE pool: the whole catalog, capped to the
+    // brightest ~3x the image's star count within the field. Hypothesis verification stays on
+    // the shallow pool - sparse is what makes its evidence strong - but once the field is
+    // established, a deep image's fainter stars deserve names too, and the cap keeps the
+    // catalog density bounded so tolerance matching stays honest.
+    const byMag = new Int32Array(catalog.n);
+    for (let i = 0; i < catalog.n; i++) byMag[i] = i;
+    byMag.sort((a, b) => catalog.mag[a] - catalog.mag[b]);
+    const allIdx = Array.from(byMag);
+    const allVec = allIdx.map((i) => raDecToVec(catalog.ra[i], catalog.dec[i]));
+    const maxProjected = Math.max(3 * imageStars.length, 100);
+    let nProjected = Math.min(deep.length, maxProjected) || matches.length;
 
     for (let round = 0; round < O.refineRounds; round++) {
         // The round either completes wholly or leaves no trace: a break after the refit would
@@ -631,23 +794,26 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
         }
         T = refit;
 
-        // 3. Rematch, tolerance-gated, under the refit model. A rematch is only COMMITTED if
-        // it would itself pass the acceptance gates - both of them. Committing on the count
-        // alone lets a rematch that kept eight stars but lost the required consensus fraction
-        // through, and the final gate then rejects a solve that was valid before refinement
-        // touched it, instead of the failed round being rolled back.
-        const pm = projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, width, centerPx);
+        // 3. Rematch, tolerance-gated, under the refit model against the deep pool. A rematch
+        // is only COMMITTED if it would itself pass the acceptance gates - both of them.
+        // Committing on the count alone lets a rematch that kept eight stars but lost the
+        // required consensus through, and the final gate then rejects a solve that was valid
+        // before refinement touched it, instead of the failed round being rolled back.
+        const pm = projectAndMatch(imageStars, mirrored, T, c0, b0, allIdx, allVec, tolPx,
+            width, centerPx, bounds, catalog, maxProjected);
         if (!pm || pm.matches.length < O.minMatches
-            || pm.matches.length < O.minMatchFraction * imageStars.length) {
+            || !consensusMet(O, imageStars.length, pm.matches.length, pm.nProjected)) {
             ({T, c0, b0, matches} = prev);
             break;
         }
         matches = pm.matches;
+        nProjected = pm.nProjected;
     }
 
     // Refinement only ever rematches with the verification gate, but hold the acceptance
     // criteria at the end regardless - a solve that degrades below them must not ship.
-    if (matches.length < O.minMatches || matches.length < O.minMatchFraction * imageStars.length) {
+    if (matches.length < O.minMatches
+        || !consensusMet(O, imageStars.length, matches.length, nProjected)) {
         return {ok: false, reason: "refinement lost the match consensus"};
     }
 
@@ -684,5 +850,15 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
         nImage: imageStars.length,
         matchedFraction: matches.length / imageStars.length,
         rmsPx: Math.sqrt(sse / matches.length),
+        // The full calibration as a function: any reference-frame pixel to its place on the
+        // sky under the final model. This is the bridge a camera sync needs - the per-frame
+        // transforms give each video frame's centre in reference pixels, and this turns that
+        // into a celestial pointing.
+        refToSky: (x, y) => {
+            const pl = applySim(T, x, mirrored ? -y : y);
+            const v = unGnomonic(pl[0], pl[1], c0, b0);
+            const rd = vecToRaDec(v);
+            return {raDeg: rd.ra * 180 / Math.PI, decDeg: rd.dec * 180 / Math.PI};
+        },
     };
 }
