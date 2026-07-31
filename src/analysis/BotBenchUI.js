@@ -36,8 +36,9 @@ import {showTraverseGallery} from "../AnalyzeTraverse";
 import {METERS_PER_NM} from "../TraverseAnalysis";
 import {
     botBenchFileRole, botBenchScenarioBase, ingestBotBenchEntry, ingestMISBRecords,
-    longestUniformRun, sourceQualityGrade,
+    sourceQualityGrade,
 } from "./BotBenchIngest";
+import {longestUniformRun, measureAnchorRate} from "./BotBenchClock";
 import {ABSENT_HYPOTHESES, DEFAULT_ANCHOR_M, runBotBenchAnalysis} from "./BotBenchRunner";
 
 let activeDialog = null;
@@ -1441,7 +1442,7 @@ export function addBotBenchMenu(fileAnalysisFolder) {
             // The two ingest internals worth exercising directly: a timebase
             // choice and a continuity decision are hard to provoke through a
             // real file and trivial to provoke through a synthetic one.
-            ingestMISBRecords, longestUniformRun,
+            ingestMISBRecords, longestUniformRun, measureAnchorRate,
             buildSummaryReport, resultsToCsv,
             get state() { return activeDialog; },
         };

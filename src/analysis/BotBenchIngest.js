@@ -47,6 +47,9 @@ import {ensureGeoidLoaded, isGeoidLoaded, meanSeaLevelOffset} from "../EGM96Geoi
 import {
     analyzeVideoFileLike, KLV_EXTENSIONS, TRANSPORT_STREAM_EXTENSIONS,
 } from "./AnalyzeVideoFile";
+import {
+    longestUniformRun, maxOf, measureAnchorRate, median, timingStats, trimmedMean,
+} from "./BotBenchClock";
 
 const DEG = Math.PI / 180;
 
@@ -112,146 +115,13 @@ function cell(v) {
     return s === "" ? NaN : Number(s);
 }
 
-/**
- * The longest run of items that is UNIFORMLY SAMPLED IN TIME.
- *
- * The fits index time as `frame / rate`, so the frame grid must be evenly
- * spaced. Compacting past a gap silently rewrites WHEN every later sample
- * happened, which corrupts every speed, acceleration and g-load downstream —
- * invisibly, because the resulting track still looks perfectly smooth.
- *
- * CONTINUITY IS A PROPERTY OF THE TIMESTAMPS, NOT OF THE ARRAY. An earlier
- * version tested array adjacency, which is only equivalent when the array holds
- * exactly one entry per source frame — and that is false in every case that
- * matters:
- *
- *   - a KLV stream that drops packets simply has FEWER records; the survivors
- *     sit next to each other with a two-frame jump between their timestamps
- *   - a CSV can omit a row outright, so Time steps 0,1,2,4 while the indices
- *     step 0,1,2,3
- *   - an interleaved multi-track CSV puts other tracks' rows in between, so
- *     one track's own samples are never array-adjacent at all
- *
- * Testing the times instead handles all three, and lets the caller filter to
- * one track first without that filtering looking like a dropout.
- *
- * A run BREAKS on a dropout — an interval more than `gapFactor` times the
- * median — and not on ordinary jitter, which is a separate measurement
- * (timingStats.cv) and a separate warning. Items with a non-finite time break
- * the run too: an unknown timestamp cannot be shown to be contiguous.
- *
- * `items` must already be filtered to the ones worth keeping and sorted by
- * time. Returns the longest such run, and how many were left out.
- */
-export function longestUniformRun(items, timeOf, gapFactor = 1.5, expectedDt = null) {
-    if (items.length <= 1) {
-        return {items: items.slice(), medianDt: NaN, breaks: 0, observedDt: NaN,
-            degenerateClock: true, declaredMismatch: false};
-    }
-
-    const deltas = [];
-    for (let i = 1; i < items.length; i++) {
-        const dt = timeOf(items[i]) - timeOf(items[i - 1]);
-        if (Number.isFinite(dt) && dt > 0) deltas.push(dt);
-    }
-    // No usable timing at all: every interval is unknown or non-positive, so no
-    // gap can be proven and none ruled out. Return the whole list and let the
-    // caller decide — but say DEGENERATE, and set declaredMismatch, because a
-    // constant or non-advancing Time column is exactly the case where applying
-    // a declared FPS regardless produces confident nonsense. Returning early
-    // without that flag let the caller treat the declared rate as validated.
-    if (!deltas.length) {
-        return {items: items.slice(), medianDt: NaN, breaks: 0, observedDt: NaN,
-            degenerateClock: true,
-            declaredMismatch: Number.isFinite(expectedDt) && expectedDt > 0};
-    }
-    // PREFER THE DECLARED RATE. Deriving the expected spacing from the observed
-    // median is circular when the drops are REGULAR: lose every other sample
-    // and the median interval becomes 2x nominal, every remaining step matches
-    // it, no gap is detected, and the clip is compacted onto the nominal
-    // cadence — doubling every speed and quadrupling every acceleration. A
-    // sidecar that states the generator's rate is the ground truth for what a
-    // step SHOULD be; the observed median is only the fallback.
-    const observedDt = median(deltas);
-    // The declared rate is only authoritative if the timestamps AGREE with it.
-    // Checking one direction is not enough: a gapFactor test alone catches
-    // samples arriving too SLOWLY, and silently accepts a stream arriving twice
-    // as fast — which is then replayed at the slower nominal rate, halving
-    // every speed and quartering every acceleration. Disagreement in either
-    // direction means the metadata and the data are describing different
-    // things, and the timestamps are the data.
-    const declaredUsable = Number.isFinite(expectedDt) && expectedDt > 0
-        && observedDt > 0 && Math.abs(observedDt / expectedDt - 1) <= 0.1;
-    const medianDt = declaredUsable ? expectedDt : observedDt;
-    const limit = medianDt * gapFactor;
-
-    let bestStart = 0, bestLen = 1, start = 0, breaks = 0;
-    for (let i = 1; i <= items.length; i++) {
-        let contiguous = false;
-        if (i < items.length) {
-            const dt = timeOf(items[i]) - timeOf(items[i - 1]);
-            contiguous = Number.isFinite(dt) && dt > 0 && dt <= limit;
-        }
-        if (!contiguous) {
-            if (i - start > bestLen) { bestLen = i - start; bestStart = start; }
-            if (i < items.length) { breaks++; start = i; }
-        }
-    }
-    return {
-        items: items.slice(bestStart, bestStart + bestLen),
-        medianDt, breaks, observedDt,
-        // True when a declared rate was supplied but the timestamps contradict
-        // it; the caller reports this rather than quietly preferring one.
-        declaredMismatch: Number.isFinite(expectedDt) && expectedDt > 0 && !declaredUsable,
-    };
-}
 
 // ---------------------------------------------------------------------------
 // Quality metrics
 // ---------------------------------------------------------------------------
 
-// Math.max(...array) passes every element as an ARGUMENT, and blows the engine's
-// argument limit (~65k in V8) with a RangeError. These arrays are one entry per
-// frame, and a 30 fps clip passes 65k frames in half an hour — so the spread
-// form turns a long real-world FMV file into an ingestion crash. Loop instead.
-function maxOf(values) {
-    let m = -Infinity;
-    for (let i = 0; i < values.length; i++) if (values[i] > m) m = values[i];
-    return m;
-}
 
-/**
- * Mean of the middle (1 - 2*trim) of the values.
- *
- * A RATE is an average — total elapsed over intervals — so the mean is the
- * right estimator, and the median is not: on a bimodally jittering clock whose
- * steps alternate 0.09 s and 0.1101 s the median IS one of the two modes
- * (0.09), reporting 11.1 Hz for a clock running at exactly 10. Trimming keeps
- * the robustness against outliers that made the median attractive in the first
- * place, without inheriting that failure.
- */
-function trimmedMean(values, trim = 0.1) {
-    if (!values.length) return NaN;
-    const s = Array.from(values).sort((a, b) => a - b);
-    // Force at least one from each end only once the sample can AFFORD it. At
-    // five samples a forced cut discards 40% of them, and on balanced jitter
-    // that lands asymmetrically and shifts the mean enough to invent a rate
-    // disagreement. Ten is where a 1-in-10 cut is what "10%" actually means.
-    const cut = s.length >= 10
-        ? Math.max(1, Math.floor(s.length * trim))
-        : Math.floor(s.length * trim);
-    const kept = s.length - 2 * cut >= 1 ? s.slice(cut, s.length - cut) : s;
-    let sum = 0;
-    for (const v of kept) sum += v;
-    return sum / kept.length;
-}
 
-function median(values) {
-    if (!values.length) return NaN;
-    const s = Float64Array.from(values).sort();
-    const m = s.length >> 1;
-    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-}
 
 /**
  * The angle statistics of the sightline series: how far the bearing swept, how
@@ -315,22 +185,6 @@ export function losAngleStats(dataset) {
     };
 }
 
-/** Uniformity of a timestamp series (seconds). */
-export function timingStats(times) {
-    const d = [];
-    for (let i = 1; i < times.length; i++) {
-        const dt = times[i] - times[i - 1];
-        if (Number.isFinite(dt) && dt > 0) d.push(dt);
-    }
-    if (!d.length) return {meanDt: NaN, cv: NaN, gaps: 0, maxDt: NaN};
-    const mean = d.reduce((a, b) => a + b, 0) / d.length;
-    const varr = d.reduce((a, b) => a + (b - mean) * (b - mean), 0) / d.length;
-    const med = median(d);
-    // A "gap" is an interval more than 3x the median — a dropout, not jitter.
-    const gaps = d.filter((x) => x > 3 * med).length;
-    return {meanDt: mean, cv: mean > 0 ? Math.sqrt(varr) / mean : NaN,
-        gaps, maxDt: maxOf(d)};
-}
 
 /**
  * Everything about the SOURCE DATA that governs whether a bearings-only
@@ -1224,112 +1078,30 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
     // estimate itself is the weighted sum over the pairs that survive: one
     // wall-clock relock is excluded as a pair, and the rest contribute in
     // proportion to how much of the clip they actually measure.
-    let realDt = NaN;
-    let anchorPairsUsed = 0;
-    let anchorsInconsistent = false;
-    let epochAnchor = -1;
-    if (anchors.length >= 2) {
-        const pairs = [];
-        for (let k = 1; k < anchors.length; k++) {
-            const i = anchors[k - 1], j = anchors[k];
-            const dt = kept[j].t - kept[i].t;
-            const df = j - i;
-            // `i` is the kept-index this pair STARTS at — the epoch projects
-            // from the earliest anchor that survives filtering, not from
-            // anchors[0], which may sit on the far side of an excluded step.
-            if (Number.isFinite(dt) && dt > 0 && df > 0) pairs.push({dt, df, i, rate: dt / df});
-        }
+    // The measurement itself lives in BotBenchClock.measureAnchorRate, which is
+    // pure and has regression tests covering every case that has ever been
+    // wrong here — majority agreement, even splits, non-advancing intervals,
+    // unequal evidence, and the argument-limit hazard. It had been revised six
+    // times with nothing but hand checks behind it.
+    const cadenceDt = (times[n - 1] - times[0]) / (n - 1);
+    const anchorFit = measureAnchorRate(anchors, (f) => kept[f].t, cadenceDt);
+    const realDt = anchorFit.realDt;
+    const anchorPairsUsed = anchorFit.pairsUsed;
+    const anchorsInconsistent = anchorFit.inconsistent;
+    const epochAnchor = anchorFit.epochAnchor;
 
-        // Weighted rate over a set of pairs: total elapsed / total frames.
-        const weighted = (ps) => {
-            let sumDt = 0, sumDf = 0;
-            for (const pp of ps) { sumDt += pp.dt; sumDf += pp.df; }
-            return sumDf > 0 ? sumDt / sumDf : NaN;
-        };
-        const cadenceDt = (times[n - 1] - times[0]) / (n - 1);
-        const plausible = (r) => Number.isFinite(cadenceDt) && cadenceDt > 0
-            && r / cadenceDt > 0.25 && r / cadenceDt < 4;
-
-        if (pairs.length >= 3) {
-            // A MAJORITY MUST AGREE — a band around the median is not enough on
-            // its own. The median of an ODD sample is one of the samples, so it
-            // always passes its own band and the fail-closed path could never
-            // be reached; on an EVEN split like [0.1, 0.1, 450, 450] the median
-            // lands between the two populations and the band keeps whichever
-            // half it drifts toward, reporting 0.0022 Hz for a 10 Hz clip.
-            //
-            // A clock with one relock has one odd interval out of many. A clock
-            // whose intervals split down the middle is not a clock with an
-            // outlier — it is two different timelines, and there is no honest
-            // way to pick between them. So require most of the pairs to agree,
-            // and require the answer they give to be in the same world as the
-            // cadence timeline.
-            const mid = median(pairs.map((pp) => pp.rate));
-            const good = pairs.filter((pp) => Number.isFinite(mid) && mid > 0
-                && pp.rate / mid > 0.5 && pp.rate / mid < 2);
-            const majority = good.length >= Math.ceil(pairs.length * 0.6);
-            const r = good.length ? weighted(good) : NaN;
-            if (majority && Number.isFinite(r) && plausible(r)) {
-                realDt = r;
-                anchorPairsUsed = good.length;
-                // THE EPOCH MUST RIDE ON A SURVIVING PAIR. Projecting from
-                // anchors[0] regardless puts frame zero on the wrong side of an
-                // excluded clock step — the stale pre-relock stamp is exactly
-                // the one the filter just rejected, and using it shifts
-                // clipStartMs by the whole jump.
-                epochAnchor = Math.min(...good.map((pp) => pp.i));
-                if (good.length < pairs.length) {
-                    warnings.push(`${pairs.length - good.length} of ${pairs.length} wall-clock `
-                        + `intervals in this span are inconsistent with the rest — a clock step `
-                        + `or reset — and were excluded from the measured rate and the epoch.`);
-                }
-            } else {
-                // NEVER FAIL OPEN. Disagreement is a finding about the clock,
-                // not a licence to average it.
-                anchorsInconsistent = true;
-                warnings.push(`The wall-clock intervals in this span do not agree `
-                    + `(${good.length} of ${pairs.length} within a factor of two of the median`
-                    + `${Number.isFinite(r) && !plausible(r)
-                        ? `, and their combined ${(1 / r).toFixed(4)} Hz is far from the `
-                          + `${(1 / cadenceDt).toFixed(3)} Hz of the cadence timeline` : ""}). `
-                        + `No rate or epoch was taken from them.`);
-            }
-        } else if (pairs.length >= 1) {
-            // ONE OR TWO PAIRS CANNOT OUTVOTE EACH OTHER, and must not be
-            // averaged BEFORE they are checked: 0.1 s and 0.4 s average to
-            // 0.25 s, which sits inside a broad sanity band against a 0.1 s
-            // cadence and quietly rescaled a 10 Hz clip to 4 Hz. Two
-            // measurements that disagree with each other are not evidence for
-            // their mean — they are evidence that one of them is wrong.
-            //
-            // So check each pair on its own, and require them to agree with
-            // each other as well as with the cadence timeline.
-            const allPlausible = pairs.every((pp) => plausible(pp.rate));
-            const mutuallyAgree = pairs.length === 1
-                || pairs.every((pp) => pp.rate / pairs[0].rate > 0.5
-                    && pp.rate / pairs[0].rate < 2);
-            const r = weighted(pairs);
-            if (allPlausible && mutuallyAgree && Number.isFinite(r)) {
-                realDt = r;
-                anchorPairsUsed = pairs.length;
-                epochAnchor = pairs[0].i;
-            } else {
-                anchorsInconsistent = true;
-                warnings.push(`The ${pairs.length === 1 ? "only pair" : "two pairs"} of `
-                    + `wall-clock stamps in this span `
-                    + `${pairs.length > 1 && !mutuallyAgree
-                        ? `disagree with each other (${pairs.map((pp) =>
-                            (1 / pp.rate).toFixed(3)).join(" Hz and ")} Hz)`
-                        : `imply ${(1 / pairs[0].rate).toFixed(4)} Hz, against `
-                          + `${(1 / cadenceDt).toFixed(3)} Hz from the cadence timeline`}`
-                    + ` — and with so few stamps there is nothing to check them against. `
-                    + `Neither the epoch nor the rate was taken from them.`);
-            }
-        } else {
-            // Anchors exist but no interval between them advances: duplicated
-            // or decreasing stamps.
-            anchorsInconsistent = true;
-        }
+    if (anchorFit.stepDetected) {
+        // A STEP COSTS THE EPOCH, NOT THE RATE. The surviving intervals prove a
+        // consistent STEP SIZE; they say nothing about which side of the jump
+        // carries the correct absolute offset, and picking one was an arbitrary
+        // choice presented as a measurement — shifting clipStartMs, and every
+        // celestial and satellite result, by the whole step. The rate is still
+        // measured; the absolute time is not recoverable and is not invented.
+        warnings.push(`The wall clock steps part-way through this span. The RATE is still `
+            + `measured from the ${anchorPairsUsed} intervals that agree, but which side of the `
+            + `step carries the correct absolute time cannot be known from the file — so this `
+            + `clip is reported with NO absolute time rather than one that may be out by the `
+            + `whole jump. Date-dependent results are unavailable for it.`);
     }
 
     if (Number.isFinite(realDt) && realDt > 0 && epochAnchor >= 0) {
@@ -1337,6 +1109,11 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
         clipStartS = kept[i0].t - i0 * realDt;
         epochBasis = `measured across ${anchors.length} wall-clock stamps `
             + `(${anchorPairsUsed} interval(s) used, projected from frame ${i0})`;
+    } else if (anchorFit.stepDetected) {
+        // Already warned above: the rate survived the step, the epoch cannot.
+        // This branch exists to stop the single-anchor fallback below from
+        // quietly reinstating anchors[0] — which is precisely the stamp on the
+        // far side of the jump.
     } else if (anchorsInconsistent) {
         // A CLOCK THAT CONTRADICTS ITSELF CANNOT VOUCH FOR ANY OF ITS STAMPS.
         // The fallback below trusts frame 0 unconditionally, which is right
@@ -1344,10 +1121,10 @@ export function ingestMISBRecords(misb, {label = "", geoid = true} = {}) {
         // cannot produce one agreeing interval are positive evidence the wall
         // clock is unreliable, so a stamp from it (frame zero's included) is
         // not a fact to build an epoch on. Better no time than a wrong one.
-        warnings.push("The wall-clock stamps in this span contradict each other — no interval "
-            + "between them is usable — so none of them can be trusted as an absolute time, "
-            + "frame zero's included. This clip is reported with NO absolute time; "
-            + "date-dependent results are unavailable for it.");
+        warnings.push(`The wall-clock stamps in this span contradict each other `
+            + `(${anchorFit.reason ?? "no interval between them is usable"}), so none of them `
+            + `can be trusted as an absolute time, frame zero's included. This clip is reported `
+            + `with NO absolute time; date-dependent results are unavailable for it.`);
     } else if (anchors.length >= 1) {
         // A single anchor, with nothing to contradict it.
         const i0 = anchors[0];
