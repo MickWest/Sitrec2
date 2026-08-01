@@ -33,9 +33,11 @@ import {
 import {WebSocket, WebSocketServer} from "ws";
 import {readFileSync} from "fs";
 import {spawn} from "child_process";
+import {randomBytes} from "crypto";
 import {fileURLToPath} from "url";
 import {dirname, join} from "path";
 import {createServer} from "http";
+import {parseIdleTimeout, rankTakeoverCandidates} from "./lifecycle.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -44,16 +46,22 @@ const WS_PORT = parseInt(process.env.SITREC_BRIDGE_PORT || "9780", 10);
 const WS_HOST = process.env.SITREC_BRIDGE_HOST || "127.0.0.1"; // Localhost only — avoids macOS firewall EPERM on 0.0.0.0; override with 0.0.0.0 in Docker
 const SITREC_CWD = process.cwd(); // Used to auto-match this MCP session to the correct Sitrec tab
 const STARTED_AT = Date.now();
+const CONTROL_STATUS_PATH = "/__sitrec_bridge/status";
+const CONTROL_SHUTDOWN_PATH = "/__sitrec_bridge/shutdown";
+const CONTROL_TOKEN = randomBytes(24).toString("hex");
 
 // Origin this server is paired to (e.g., "http://localhost:8081"). Set by
 // `wt sandbox` for sandbox containers; null for host fallback servers.
 const PAIRED_ORIGIN = process.env.SITREC_BRIDGE_PAIRED_ORIGIN || null;
+const IDLE_TIMEOUT_MS = PAIRED_ORIGIN
+    ? 0
+    : parseIdleTimeout(process.env.SITREC_BRIDGE_IDLE_TIMEOUT_MS);
 
 // Host-fallback port scan range. When PAIRED_ORIGIN is null, we scan this range
 // descending so that sandbox pairings (which claim low ports 9780+N) are never
 // stolen by a host Claude session.
-const FALLBACK_PORT_MIN = 9780;
-const FALLBACK_PORT_MAX = 9799;
+const FALLBACK_PORT_MIN = parseInt(process.env.SITREC_BRIDGE_FALLBACK_PORT_MIN || "9780", 10);
+const FALLBACK_PORT_MAX = parseInt(process.env.SITREC_BRIDGE_FALLBACK_PORT_MAX || "9799", 10);
 
 // Protocol version — bump when the wire format changes.
 const PROTOCOL_VERSION = 4;
@@ -82,8 +90,12 @@ function log(...args) {
 let wsServer = null;  // WebSocket server reference, set in startServer
 let httpServer = null; // HTTP server backing the WebSocket server
 const localComputeJobs = new Map(); // id -> {proc, ws, stderr, finalSent}
+let shuttingDown = false;
+let lastMcpActivityAt = STARTED_AT;
 
 function shutdownGracefully(reason) {
+    if (shuttingDown) return;
+    shuttingDown = true;
     log(`Shutting down: ${reason}`);
 
     if (wsServer) {
@@ -121,6 +133,9 @@ function shutdownGracefully(reason) {
 // Detect stdin close (Claude Code exited)
 process.stdin.on("end", () => shutdownGracefully("stdin closed (parent exited)"));
 process.stdin.on("close", () => shutdownGracefully("stdin closed (parent exited)"));
+process.stdout.on("error", (error) => {
+    if (error.code === "EPIPE") shutdownGracefully("stdout pipe closed (parent exited)");
+});
 
 // Handle signals
 process.on("SIGTERM", () => shutdownGracefully("SIGTERM"));
@@ -150,93 +165,166 @@ let requestCounter = 0;
 let keepaliveTimer = null;
 let boundPort = null;               // The port we successfully bound to
 
+function isBridgeBusy() {
+    return pendingRequests.size > 0 || localComputeJobs.size > 0;
+}
+
+if (IDLE_TIMEOUT_MS > 0) {
+    const idleCheckInterval = Math.min(
+        ORPHAN_CHECK_INTERVAL_MS,
+        Math.max(100, Math.floor(IDLE_TIMEOUT_MS / 4))
+    );
+    setInterval(() => {
+        if (!isBridgeBusy() && Date.now() - lastMcpActivityAt >= IDLE_TIMEOUT_MS) {
+            shutdownGracefully(`no MCP activity for ${IDLE_TIMEOUT_MS}ms`);
+        }
+    }, idleCheckInterval).unref();
+}
+
+function sendControlJson(res, statusCode, payload) {
+    const body = JSON.stringify(payload);
+    res.writeHead(statusCode, {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+        "Cache-Control": "no-store",
+    });
+    res.end(body);
+}
+
+function isLoopbackRequest(req) {
+    const address = req.socket.remoteAddress;
+    return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+
 function startServer(port) {
-    const server = createServer((req, res) => {
-        if (req.method === "OPTIONS") {
-            res.writeHead(204, {
+    return new Promise((resolve, reject) => {
+        const server = createServer((req, res) => {
+            if (req.method === "GET" && req.url === CONTROL_STATUS_PATH) {
+                if (!isLoopbackRequest(req)) {
+                    sendControlJson(res, 403, {error: "Forbidden"});
+                    return;
+                }
+                sendControlJson(res, 200, {
+                    service: "SitrecBridge",
+                    protocolVersion: PROTOCOL_VERSION,
+                    pid: process.pid,
+                    parentPid: process.ppid,
+                    startedAt: STARTED_AT,
+                    lastMcpActivityAt,
+                    pairedOrigin: PAIRED_ORIGIN,
+                    busy: isBridgeBusy(),
+                    boundPort,
+                    controlToken: CONTROL_TOKEN,
+                });
+                return;
+            }
+
+            if (req.method === "POST" && req.url === CONTROL_SHUTDOWN_PATH) {
+                if (!isLoopbackRequest(req) || req.headers["x-sitrec-bridge-token"] !== CONTROL_TOKEN) {
+                    sendControlJson(res, 403, {error: "Forbidden"});
+                    return;
+                }
+                sendControlJson(res, 202, {ok: true});
+                setImmediate(() => shutdownGracefully("superseded after fallback port exhaustion"));
+                return;
+            }
+
+            if (req.method === "OPTIONS") {
+                res.writeHead(204, {
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type",
+                    "Cache-Control": "no-store",
+                });
+                res.end();
+                return;
+            }
+
+            if (req.method === "GET" && (req.url === "/" || req.url === "/local-compute-probe")) {
+                res.writeHead(204, {
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "no-store",
+                });
+                res.end();
+                return;
+            }
+
+            res.writeHead(404, {
                 "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
                 "Cache-Control": "no-store",
             });
             res.end();
-            return;
-        }
-
-        if (req.method === "GET" && (req.url === "/" || req.url === "/local-compute-probe")) {
-            res.writeHead(204, {
-                "Access-Control-Allow-Origin": "*",
-                "Cache-Control": "no-store",
-            });
-            res.end();
-            return;
-        }
-
-        res.writeHead(404, {
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "no-store",
         });
-        res.end();
-    });
-    const wss = new WebSocketServer({ server });
-    wsServer = wss;
-    httpServer = server;
-    boundPort = port;
+        const wss = new WebSocketServer({ server });
+        wsServer = wss;
+        httpServer = server;
+        boundPort = port;
+        let listening = false;
 
-    server.on("listening", () => {
-        log(`Listening on ws://${WS_HOST}:${port}` +
-            (PAIRED_ORIGIN ? ` (paired to ${PAIRED_ORIGIN})` : ` (host fallback)`));
-    });
+        server.on("listening", () => {
+            listening = true;
+            boundPort = server.address()?.port ?? port;
+            log(`Listening on ws://${WS_HOST}:${boundPort}` +
+                (PAIRED_ORIGIN ? ` (paired to ${PAIRED_ORIGIN})` : ` (host fallback)`));
+            resolve();
+        });
 
-    server.on("error", (err) => {
-        log("HTTP/WebSocket server error:", err.message);
-    });
+        server.on("error", (err) => {
+            log("HTTP/WebSocket server error:", err.message);
+            if (!listening) {
+                if (wsServer === wss) wsServer = null;
+                if (httpServer === server) httpServer = null;
+                if (boundPort === port) boundPort = null;
+                reject(err);
+            }
+        });
 
-    wss.on("error", (err) => {
-        log("WebSocket server error:", err.message);
-    });
+        wss.on("error", (err) => {
+            log("WebSocket server error:", err.message);
+        });
 
-    wss.on("connection", (ws, req) => {
-        // Wait briefly for a force-extension marker; otherwise treat as a
-        // normal extension connection.
-        let identified = false;
+        wss.on("connection", (ws, req) => {
+            // Wait briefly for a force-extension marker; otherwise treat as a
+            // normal extension connection.
+            let identified = false;
 
-        const earlyHandler = (raw) => {
-            try {
-                const msg = JSON.parse(raw.toString());
-                if (msg.type === "force-extension") {
+            const earlyHandler = (raw) => {
+                try {
+                    const msg = JSON.parse(raw.toString());
+                    if (msg.type === "force-extension") {
+                        identified = true;
+                        ws.removeListener("message", earlyHandler);
+                        setupExtensionConnection(ws, true);
+                        return;
+                    }
+                    if (msg.type === "local-compute-client") {
+                        identified = true;
+                        ws.removeListener("message", earlyHandler);
+                        setupLocalComputeConnection(ws, msg, req);
+                        return;
+                    }
+                } catch {}
+                if (!identified) {
                     identified = true;
                     ws.removeListener("message", earlyHandler);
-                    setupExtensionConnection(ws, true);
-                    return;
+                    setupExtensionConnection(ws, false);
+                    handleExtensionMessage(raw);
                 }
-                if (msg.type === "local-compute-client") {
+            };
+
+            ws.on("message", earlyHandler);
+
+            setTimeout(() => {
+                if (!identified) {
                     identified = true;
                     ws.removeListener("message", earlyHandler);
-                    setupLocalComputeConnection(ws, msg, req);
-                    return;
+                    setupExtensionConnection(ws, false);
                 }
-            } catch {}
-            if (!identified) {
-                identified = true;
-                ws.removeListener("message", earlyHandler);
-                setupExtensionConnection(ws, false);
-                handleExtensionMessage(raw);
-            }
-        };
+            }, 500);
+        });
 
-        ws.on("message", earlyHandler);
-
-        setTimeout(() => {
-            if (!identified) {
-                identified = true;
-                ws.removeListener("message", earlyHandler);
-                setupExtensionConnection(ws, false);
-            }
-        }, 500);
+        server.listen(port, WS_HOST);
     });
-
-    server.listen(port, WS_HOST);
 }
 
 function sendLocalCompute(ws, payload) {
@@ -694,6 +782,66 @@ function tryBind(port) {
     });
 }
 
+function controlUrl(port, path) {
+    const host = WS_HOST === "0.0.0.0" || WS_HOST === "::" ? "127.0.0.1" : WS_HOST;
+    const urlHost = host.includes(":") ? `[${host}]` : host;
+    return `http://${urlHost}:${port}${path}`;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 500) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, {...options, signal: controller.signal});
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function getBridgeControlStatus(port) {
+    try {
+        const response = await fetchWithTimeout(controlUrl(port, CONTROL_STATUS_PATH));
+        if (!response.ok) return null;
+        const status = await response.json();
+        return {...status, port};
+    } catch {
+        return null;
+    }
+}
+
+async function requestBridgeShutdown(candidate) {
+    try {
+        const response = await fetchWithTimeout(controlUrl(candidate.port, CONTROL_SHUTDOWN_PATH), {
+            method: "POST",
+            headers: {"X-Sitrec-Bridge-Token": candidate.controlToken},
+        });
+        return response.status === 202;
+    } catch {
+        return false;
+    }
+}
+
+async function reclaimFallbackPort(occupiedPorts) {
+    const statuses = await Promise.all(occupiedPorts.map(getBridgeControlStatus));
+    const candidates = rankTakeoverCandidates(statuses, process.ppid);
+
+    for (const candidate of candidates) {
+        log(`Fallback ports full; reclaiming port ${candidate.port} from idle bridge ` +
+            `PID ${candidate.pid} (last MCP activity ${new Date(candidate.lastMcpActivityAt).toISOString()}).`);
+        if (!await requestBridgeShutdown(candidate)) continue;
+
+        const deadline = Date.now() + 2000;
+        while (Date.now() < deadline) {
+            const ok = await tryBind(candidate.port);
+            if (ok === true) return candidate.port;
+            if (ok?.error) throw ok.error;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+    }
+
+    return null;
+}
+
 async function start() {
     if (process.env.SITREC_BRIDGE_PEER) {
         log("Note: SITREC_BRIDGE_PEER is no longer supported — running standalone.");
@@ -703,7 +851,7 @@ async function start() {
         // Sandbox mode: bind exactly to SITREC_BRIDGE_PORT or fail.
         const ok = await tryBind(WS_PORT);
         if (ok === true) {
-            startServer(WS_PORT);
+            await startServer(WS_PORT);
         } else {
             log(`Could not bind paired port ${WS_PORT} (in use). ` +
                 `Each paired sandbox needs an exclusive MCP port. Aborting.`);
@@ -713,19 +861,33 @@ async function start() {
     }
 
     // Host fallback: scan high → low so sandbox-paired low ports stay free.
-    const startPort = WS_PORT && WS_PORT !== 9780 ? WS_PORT : FALLBACK_PORT_MAX;
+    const startPort = WS_PORT === 9780 ? FALLBACK_PORT_MAX : WS_PORT;
+    const occupiedPorts = [];
     for (let port = startPort; port >= FALLBACK_PORT_MIN; port--) {
         const ok = await tryBind(port);
         if (ok === true) {
-            startServer(port);
-            return;
+            try {
+                await startServer(port);
+                return;
+            } catch (error) {
+                if (error.code !== "EADDRINUSE") throw error;
+            }
         }
+        if (ok?.error) {
+            throw ok.error;
+        }
+        occupiedPorts.push(port);
     }
+
+    const reclaimedPort = await reclaimFallbackPort(occupiedPorts);
+    if (reclaimedPort !== null) {
+        await startServer(reclaimedPort);
+        return;
+    }
+
     log(`No free port in ${FALLBACK_PORT_MIN}-${FALLBACK_PORT_MAX} for host fallback MCP. Aborting.`);
     process.exit(1);
 }
-
-start();
 
 // ── MCP Tool Definitions ────────────────────────────────────────────────────
 
@@ -1030,6 +1192,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     protocolVersion: PROTOCOL_VERSION,
                     extensionConnected: connected,
                     pendingRequests: pendingRequests.size,
+                    lastMcpActivityAt,
+                    idleTimeoutMs: IDLE_TIMEOUT_MS,
                     cwd: SITREC_CWD,
                 }, null, 2),
             }],
@@ -1210,7 +1374,12 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 // ── Start ───────────────────────────────────────────────────────────────────
 
 async function main() {
+    await start();
     const transport = new StdioServerTransport();
+    transport.onmessage = () => {
+        lastMcpActivityAt = Date.now();
+    };
+    transport.onclose = () => shutdownGracefully("MCP stdio transport closed");
     await server.connect(transport);
     log("MCP server running (stdio transport)");
 }

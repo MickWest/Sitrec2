@@ -238,11 +238,14 @@ Most tools accept an optional `tab` parameter to target a specific Sitrec tab (b
 | `SITREC_BRIDGE_PORT` | `9780` (sandbox) / scan 9799→9780 (host fallback) | WebSocket server port |
 | `SITREC_BRIDGE_HOST` | `127.0.0.1` | Bind address (set to `0.0.0.0` inside Docker) |
 | `SITREC_BRIDGE_PAIRED_ORIGIN` | (unset) | If set (e.g. `http://localhost:8081`), this server is paired to that browser origin and the extension routes only matching tabs here. Unset = host fallback (catches any unmatched tab). |
+| `SITREC_BRIDGE_IDLE_TIMEOUT_MS` | `3600000` (one hour) | Exit after this long without an MCP message, unless Local Compute or an extension request is active. MCP hosts restart live bridges when needed. Set to `0` to disable. |
 | `SITREC_LOCAL_COMPUTE_PYTHON` | `python3` | Python executable used for Local Compute installs and jobs |
 | `SITREC_LOCAL_COMPUTE_GRAY_CACHE_MB` | `1024` | Local Compute Motion Analysis grayscale-frame cache memory budget |
 | `SITREC_LOCAL_COMPUTE_GRAY_CACHE_LIMIT` | (unset) | Optional hard frame-count cap for the grayscale cache; overrides the memory-budget cap |
 
 The Chrome extension scans ports 9780–9799 for MCP servers and opens a connection to each. Multi-sandbox isolation: `wt sandbox` pairs build port `8080+N` ↔ MCP port `9780+N`, advertising `pairedOrigin: http://localhost:80NN`. The extension routes commands by matching the originating server's `pairedOrigin` to the tab's URL origin.
+
+Host fallback bridges also clean themselves up after the idle timeout. If all fallback ports are nevertheless occupied, a newly launched bridge reclaims the least-recently-used non-busy fallback bridge instead of failing startup. Paired sandbox bridges and bridges with active work are never reclaimed.
 
 ## Troubleshooting
 

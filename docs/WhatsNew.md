@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.110.2 (2026-07-31)
+
+### New Features
+- **Ride camera** (Video → Scripting): a new *ride* script command puts the camera on board a moving object — a chosen height above it, optionally set back behind it — looking at a second object, a map point, or straight ahead along its direction of travel. It's the driver's-eye shot *follow* can't give you: move with one thing while watching another. A misspelled look-at name is reported, by name, instead of being silently ignored.
+- **Walking markers save with your sitch**: the moving markers a script or the assistant drops now survive saving and reloading, reappearing on their paths exactly as created — and one you deleted stays deleted.
+
+### Improvements
+- **Richer walking markers**: each waypoint can carry its own altitude, the timing between waypoints can be uneven (hover, then dash), and markers can glow, take a box shape with chosen width, depth and heading, and more. A mistyped request is now refused up front with the reason instead of half-destroying the existing marker, a marker can no longer overwrite or sweep away unrelated parts of the scene that share its name, and its path line no longer shows by default.
+- **Captions never clip or lose words** (Video → Scripting): long captions now word-wrap onto up to three lines and shrink to fit the frame; an unbroken run like a long web address is split mid-word rather than running off the edge, and a caption too long even at the smallest size stacks extra lines rather than dropping any.
+- The scripted camera's ground-clearance height now saves with your scripts, and no longer carries over from a previously loaded sitch.
+- **Star Tracker recovers better after losing the stars** (Video → Star Tracker): after a stretch where the stars can't be matched — blur, an obstruction — the analysis now weighs every recent good frame and resumes from the best overall match, instead of the first acceptable one it happens to try.
+
+### Bug Fixes
+- Fixed pinch-zoom and other multi-finger touch gestures toggling stars in and out of the analysis (Video → Star Tracker): only a clean single-finger tap or left-click on a star's circle toggles it now, and a drag that wanders and comes back no longer counts as a click.
+
 ## Version 2.110.1 (2026-07-31)
 
 ### Improvements
