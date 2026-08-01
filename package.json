@@ -2,7 +2,7 @@
   "name": "sitrec",
   "version": "1.0.0",
   "scripts": {
-    "test": "npx jest tests/",
+    "test": "npm --prefix tools/SitrecBridge test && npx jest tests/",
     "test-regression": "node scripts/run-regression-tests.js",
     "test-fast": "node tests_regression/fast-regression/run.mjs",
     "test-fast-update": "node tests_regression/fast-regression/run.mjs --update",
@@ -93,7 +93,8 @@
       "<rootDir>/tests_regression/",
       "<rootDir>/test_other/",
       "<rootDir>/dist-standalone/",
-      "<rootDir>/benchmarks/"
+      "<rootDir>/benchmarks/",
+      "<rootDir>/tools/SitrecBridge/"
     ],
     "roots": [
       "<rootDir>"

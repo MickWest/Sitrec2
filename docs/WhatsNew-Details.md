@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.110.3 (2026-07-31)
+
+Internal release-infrastructure fix only — no user-facing changes. (The 2.110.2 tag exists but was never deployed to production because of the CI failure fixed here; 2.110.2's user-facing changes reach production with this release.)
+
+### Bug Fixes
+- **Fixed CI failing on the SitrecBridge node:test suites** (working tree, `package.json` only). The 2.110.2 release added `tools/SitrecBridge/tests/*.test.js`, written for Node's built-in `node --test` runner. The root `test` script was `npx jest tests/` — but Jest's positional argument is a path *regex*, not a directory, so `tests/` also matched `tools/SitrecBridge/tests/` and Jest collected both suites. The `node:test` cases actually ran and passed inside Jest's process, but registered zero *Jest* tests, so each suite failed with "Your test suite must contain at least one test" and the 2.110.2 CI run went red (blocking deployment). Fix: `<rootDir>/tools/SitrecBridge/` is added to Jest's `testPathIgnorePatterns`, and the root `test` script becomes `npm --prefix tools/SitrecBridge test && npx jest tests/`, so root `npm test` — which is exactly what CI runs (`.github/workflows/ci.yml`) — still executes the bridge lifecycle suites first, under their intended `node --test` runner, before the Jest suite. Verified: bridge suites 7/7 under `node --test`; full Jest suite 150 suites / 2663 tests green with the new ignore pattern.
+
 ## Version 2.110.2 (2026-07-31)
 
 ### New Features
