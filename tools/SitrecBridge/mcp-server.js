@@ -1165,6 +1165,17 @@ const TOOLS = [
         inputSchema: { type: "object", properties: {}, required: [] },
     },
     {
+        name: "sitrec_reload_tab",
+        description:
+            "Reload a Sitrec page, so a new `npm run build` is actually running before you measure " +
+            "anything. Use this rather than evaluating location.reload(): a reload returned from " +
+            "sitrec_eval never executes (the page just keeps running, and the stale bundle then " +
+            "looks like a fix that did not work). Reloads via chrome.tabs.reload. Allow a few " +
+            "seconds for the sitch to load, and ~30s more for Google 3D tiles to stream, before " +
+            "measuring anything ground-related.",
+        inputSchema: { type: "object", properties: { ...TAB_PROPERTY }, required: [] },
+    },
+    {
         name: "sitrec_guide",
         description:
             "Get the Sitrec MCP Agent Guide — a comprehensive reference for the node system, " +

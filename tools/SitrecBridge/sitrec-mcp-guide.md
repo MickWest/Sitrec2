@@ -22,8 +22,30 @@ Some Codex sessions expose only a subset of SitrecBridge tools at first. If `sit
 Multiple Sitrec tabs at the *same* origin (e.g. two `localhost:8080` tabs) share one MCP server. Use `sitrec_list_tabs` to see all open Sitrec tabs with their IDs, URLs, and origins. Pass the `tab` parameter on any tool to target a specific tab:
 
 - **By URL substring:** `tab: "build2"` — matches the first tab whose URL contains "build2"
-- **By numeric tab ID:** `tab: 361294686` — targets an exact Chrome tab ID
+- **By numeric tab ID:** `tab: 361294686` — targets an exact Chrome tab ID (`tabId` is accepted as an alias)
 - **Omit `tab`:** defaults to the first matching tab for this server's `pairedOrigin`
+
+**Pass `tab` whenever more than one tab is open.** Omitting it picks the first match, which is
+not necessarily the one you have been reading — including, if a production `www.metabunk.org`
+tab is open, one that has none of your local changes. Chrome tab IDs also go stale: a tab that
+is closed and reopened gets a new ID, and an ID captured earlier in a long session may no
+longer exist. Targeting a dead ID returns an explicit "tab N no longer exists" error rather
+than falling back to another tab, so re-run `sitrec_list_tabs` when you see it. Any misspelled
+tab key (`tabID`, `tab_id`, `tabTarget`) is refused for the same reason — silently running
+against the default tab yields normal-looking results describing the wrong page.
+
+### Reloading a page after a build
+Use **`sitrec_reload_tab`**. Do *not* evaluate `location.reload()` — a reload returned from
+`sitrec_eval` never executes, the page keeps running its old bundle, and the stale build then
+looks like a fix that did not work. To confirm a reload really happened, check
+`performance.now()/1000` (seconds, not hundreds) and the running bundle:
+
+```js
+[...document.querySelectorAll("script")].map(s => s.src.split("/").pop()).filter(x => x.startsWith("index."))
+```
+
+Allow a few seconds for the sitch, and ~30s more for Google 3D tiles to stream, before
+measuring anything ground-related.
 
 ## Key Globals (accessible via `sitrec_eval`)
 
