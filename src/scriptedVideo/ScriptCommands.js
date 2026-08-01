@@ -43,6 +43,27 @@ function followPose(e, sf, fov, targetPos, makePose, localUp) {
     return makePose(camPos, lookAt, fov);
 }
 
+// The settled ride pose for the `ride` command at frame sf: camera ON the
+// moving target (height m up, back m behind its heading), looking at lookAt
+// (another target / "lat,lon,alt") or, with no lookAt, ahead along the motion.
+// Heading is sampled over a wide frame baseline like followPose, with the same
+// stopped-target fallback, so the "ahead" aim never degenerates.
+function ridePose(e, sf, fov, targetPos, makePose, localUp) {
+    const o = targetPos(e.target, sf);
+    if (!o) return null;
+    const up = localUp(o);
+    const BASE = 12;
+    const a = targetPos(e.target, sf + BASE), b = targetPos(e.target, sf - BASE);
+    let head = (a && b) ? a.clone().sub(b) : e._ride.fallbackDir.clone();
+    head.addScaledVector(up, -head.dot(up));
+    if (head.lengthSq() < 1e-6) head = e._ride.fallbackDir.clone();
+    head.normalize();
+    const camPos = o.clone().addScaledVector(up, e.height).addScaledVector(head, -(e.back || 0));
+    const lookP = e.lookAt ? targetPos(e.lookAt, sf) : null;
+    const lookAt = lookP || camPos.clone().addScaledVector(head, 500);
+    return makePose(camPos, lookAt, fov);
+}
+
 // map a friendly view name to {viewId, camId}
 // "video" is the witness-video panel (a 2D view, no scripted camera) — camera
 // beats that elapse while it's active still advance the unseen main camera so
@@ -235,6 +256,56 @@ export const COMMANDS = {
             const ideal = followPose(e, sf, sp.fov, targetPos, makePose, localUp);
             // ease OUT of the previous beat's pose into the follow over the first 35%
             const blend = smooth(clamp(localT / 0.35, 0, 1));
+            return makePose(
+                sp.position.clone().lerp(ideal.position, blend),
+                sp.lookTarget.clone().lerp(ideal.lookTarget, blend),
+                sp.fov);
+        },
+    },
+
+    // RIDE cam: sit ON a moving target (a car, a walker) <height> m up and
+    // <back> m behind its heading, looking at <lookAt> — another target or a
+    // "lat,lon,alt" — or straight ahead along the motion when lookAt is omitted.
+    // This is the driver-POV shot follow can't do: follow always looks at its
+    // own target; ride moves WITH one target while framing a different one
+    // (e.g. `ride car 4 sphere3` — drive south, stare west at the objects).
+    ride: {
+        cameraBeat: true,
+        color: "#4a90d0",
+        label: (e) => "ride " + e.target + (e.lookAt ? " @" + e.lookAt : ""),
+        args: [
+            {name: "target", type: "string", required: true, assumeLast: true},
+            {name: "secs", type: "number", default: 5, field: "dur", role: "dur"},
+            {name: "lookAt", type: "string", default: null},
+            {name: "height", type: "number", default: 1.6},
+            {name: "back", type: "number", default: 0, role: "dist"},
+        ],
+        prepare(e, {startPose, sfStart, sfEnd, targetPos, makePose, localUp, localNorth}) {
+            const o0 = targetPos(e.target, sfStart);
+            if (!o0) { e.invalid = true; return startPose; }
+            // a SUPPLIED lookAt that doesn't resolve is a typo, not a request to
+            // look ahead — mark the beat invalid so the mistake is visible, and
+            // say WHICH name failed (the warning would otherwise blame the valid
+            // ride target). sample()'s null fallback still covers transient misses.
+            if (e.lookAt && !targetPos(e.lookAt, sfStart)) {
+                e.invalid = true;
+                e.invalidReason = `lookAt "${e.lookAt}" did not resolve`;
+                return startPose;
+            }
+            const oE = targetPos(e.target, sfEnd) || o0;
+            const up = localUp(o0);
+            // deterministic fallback heading, same recipe as follow's
+            let fb = oE.clone().sub(o0); fb.addScaledVector(up, -fb.dot(up));
+            if (fb.lengthSq() < 1e-6) { fb = startPose.lookTarget.clone().sub(startPose.position); fb.addScaledVector(up, -fb.dot(up)); }
+            if (fb.lengthSq() < 1e-6) fb = localNorth(o0);
+            e._ride = {fallbackDir: fb.normalize()};
+            return ridePose(e, sfEnd, startPose.fov, targetPos, makePose, localUp);
+        },
+        sample(e, {sp, sf, localT, targetPos, makePose, localUp}) {
+            const ideal = ridePose(e, sf, sp.fov, targetPos, makePose, localUp);
+            if (!ideal) return sp;
+            // ease OUT of the previous beat's pose over the first 25%
+            const blend = smooth(clamp(localT / 0.25, 0, 1));
             return makePose(
                 sp.position.clone().lerp(ideal.position, blend),
                 sp.lookTarget.clone().lerp(ideal.lookTarget, blend),

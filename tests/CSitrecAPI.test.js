@@ -3,6 +3,10 @@
  */
 
 var mockNodeGet = jest.fn();
+var mockNodeExists = jest.fn(() => false);
+var mockNodeDispose = jest.fn();
+var mockNodeList;
+var mockTrackManager;
 var mockMarkSitchDirty = jest.fn();
 var mockSetNewSitchObject = jest.fn();
 var mockWithTestUser = jest.fn((url) => url);
@@ -51,10 +55,20 @@ jest.mock('../src/Globals', () => {
         Globals: mockGlobalsState,
         guiMenus: {},
         markSitchDirty: (...args) => mockMarkSitchDirty(...args),
-        NodeMan: {get: (...args) => mockNodeGet(...args)},
+        NodeMan: {
+            get: (...args) => mockNodeGet(...args),
+            exists: (...args) => mockNodeExists(...args),
+            disposeRemove: (...args) => mockNodeDispose(...args),
+            list: mockNodeList = {},
+        },
         Sit: mockSit,
         SitchMan: mockSitchMan,
-        TrackManager: {},
+        TrackManager: mockTrackManager = {
+            exists: jest.fn(() => false),
+            get: jest.fn(() => ({displayTrackID: null})),
+            disposeRemove: jest.fn(),
+            addSyntheticTrack: jest.fn(() => ({trackID: 'track_test'})),
+        },
         UndoManager: {},
         setNewSitchObject: (...args) => mockSetNewSitchObject(...args),
         withTestUser: (...args) => mockWithTestUser(...args),
@@ -77,6 +91,12 @@ jest.mock('../src/js/lil-gui.esm', () => {
 
 jest.mock('../src/nodes/CNode3DObject', () => ({
     ModelFiles: {},
+    // constructible stand-in so createWalker's success path can complete
+    CNode3DObject: jest.fn(function (v) {
+        this.props = v;
+        this.group = {quaternion: {setFromUnitVectors: jest.fn()}};
+        this.addController = jest.fn();
+    }),
 }));
 
 jest.mock('../src/par', () => ({
@@ -535,5 +555,221 @@ describe('CSitrecAPI B1 llmCallable gating', () => {
             {fn: 'setScriptedVideoScript', args: {script: 'from(object, 3)'}}
         );
         expect(result.error ?? result.result?.error ?? '').not.toMatch(/not callable from chat/i);
+    });
+});
+
+describe('createWalker input validation (before any destructive teardown)', () => {
+    // Every case here must fail BEFORE the existing-walker teardown/creation,
+    // so none of them need NodeMan/TrackManager beyond the mocks.
+    const walk = async (args) => {
+        const r = await sitrecAPI.call('createWalker', {
+            name: 'w', waypoints: [[45, -122], [45.01, -122.01]], ...args,
+        });
+        return r.result;
+    };
+
+    beforeEach(() => {
+        mockSit.frames = 900;
+        mockNodeGet.mockReturnValue(undefined);
+        Object.keys(mockNodeList).forEach((k) => delete mockNodeList[k]);
+        // LLAToECEF reads the earth model from Globals
+        mockGlobalsState.equatorRadius = 6378137;
+        mockGlobalsState.polarRadius = 6356752.314245;
+    });
+
+    test('fractions containing NaN are rejected', async () => {
+        const r = await walk({fractions: [0, NaN]});
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/fractions/i);
+    });
+
+    test('fractions must start at 0 (no backward extrapolation before the first knot)', async () => {
+        const r = await walk({fractions: [0.3, 1]});
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/starting at 0/i);
+    });
+
+    test('non-monotonic fractions are rejected', async () => {
+        const r = await walk({
+            waypoints: [[45, -122], [45.01, -122.01], [45.02, -122.02]],
+            fractions: [0, 0.8, 0.5],
+        });
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/non-decreasing/i);
+    });
+
+    test('non-numeric per-waypoint altitude is rejected (no string concat into LLAToECEF)', async () => {
+        const r = await walk({waypoints: [[45, -122, 'abc'], [45.01, -122.01, 100]]});
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/waypoint 0/i);
+    });
+
+    test('null/false/"" waypoint components are rejected, not treated as 0 (Null Island)', async () => {
+        for (const bad of [[null, -122], [45, false], [45, -122, '']]) {
+            const r = await walk({waypoints: [bad, [45.01, -122.01]]});
+            expect(r.success).toBe(false);
+            expect(r.error).toMatch(/waypoint 0/i);
+        }
+    });
+
+    test('numeric-string altitudes coerce to the SAME track knots as numbers', async () => {
+        const wpsNum = [[45, -122, 100], [45.01, -122.01, 110]];
+        const wpsStr = [[45, -122, '100'], [45.01, -122.01, '110']];
+        const a = await walk({name: 'wNum', waypoints: wpsNum});
+        const b = await walk({name: 'wStr', waypoints: wpsStr});
+        expect(a.success).toBe(true);
+        expect(b.success).toBe(true);
+        const calls = mockTrackManager.addSyntheticTrack.mock.calls;
+        expect(calls).toHaveLength(2);
+        const [ptsNum, ptsStr] = [calls[0][0].initialPoints, calls[1][0].initialPoints];
+        expect(ptsStr).toEqual(ptsNum);   // byte-identical knots — coerced, never concatenated
+        for (const p of ptsStr) for (const c of p) expect(Number.isFinite(c)).toBe(true);
+    });
+
+    test('knots are strictly increasing and complete AT endFrame', async () => {
+        const r = await walk({
+            waypoints: [[45, -122], [45.001, -122], [45.002, -122], [45.01, -122.01]],
+            fractions: [0, 0.001, 0.002, 1],   // first three round together → bump
+            startFrame: 0, endFrame: 800,
+        });
+        expect(r.success).toBe(true);
+        const pts = mockTrackManager.addSyntheticTrack.mock.calls[0][0].initialPoints;
+        const frames = pts.map((p) => p[0]);
+        for (let i = 1; i < frames.length; i++) expect(frames[i]).toBeGreaterThan(frames[i - 1]);
+        expect(frames[3]).toBe(800);          // last waypoint lands exactly on endFrame
+        expect(frames[4]).toBe(899);          // then the hold knot at the sitch end
+    });
+
+    test('unknown material is rejected up front', async () => {
+        const r = await walk({material: 'shiny'});
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/unknown material/i);
+    });
+
+    test('validation failure never tears down an existing walker', async () => {
+        mockNodeGet.mockReturnValue({_walkerTrackID: 't0'});
+        mockTrackManager.exists.mockReturnValue(true);
+        const r = await walk({material: 'shiny'});
+        expect(r.success).toBe(false);
+        expect(mockTrackManager.disposeRemove).not.toHaveBeenCalled();
+    });
+
+    test('collision overflow past endFrame is an error, not a silently late finish', async () => {
+        mockSit.frames = 900;
+        const wps = Array.from({length: 12}, (_, i) => [45 + i * 0.001, -122]);
+        const r = await walk({waypoints: wps, startFrame: 0, endFrame: 4});
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/past endFrame/i);
+    });
+
+    test('non-finite or reversed frame ranges are rejected before anything destructive', async () => {
+        mockNodeGet.mockReturnValue({_walkerTrackID: 't0'});
+        mockTrackManager.exists.mockReturnValue(true);
+        for (const range of [{startFrame: 'abc'}, {endFrame: null}, {startFrame: 100, endFrame: 50}]) {
+            const r = await walk(range);
+            expect(r.success).toBe(false);
+            expect(r.error).toMatch(/frame range/i);
+        }
+        expect(mockTrackManager.disposeRemove).not.toHaveBeenCalled();
+    });
+
+    test('fractions must end at 1 (endFrame = frame the last waypoint is reached)', async () => {
+        const r = await walk({fractions: [0, 0.5]});
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/ending at 1/i);
+    });
+
+    test('sparse fraction arrays are rejected (holes skip .some() but not the index loop)', async () => {
+        const fr = [0, , 1];   // eslint-disable-line no-sparse-arrays
+        const r = await walk({
+            waypoints: [[45, -122], [45.01, -122.01], [45.02, -122.02]],
+            fractions: fr,
+        });
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/fractions/i);
+    });
+
+    test('a successful create records a serializable walker spec (sitch persistence)', async () => {
+        const r = await walk({name: 'wSpec', waypoints: [[45, -122, '100'], [45.01, -122.01, 110]], material: 'lambert'});
+        expect(r.success).toBe(true);
+        const spec = mockGlobalsState.walkerSpecs.wSpec;
+        expect(spec).toBeDefined();
+        expect(spec.waypoints).toEqual([[45, -122, 100], [45.01, -122.01, 110]]);   // numeric, coerced
+        expect(spec.material).toBe('lambert');
+        expect(spec.trackID).toBe('track_test');
+        expect(JSON.parse(JSON.stringify(spec))).toEqual(spec);   // JSON-safe round trip
+    });
+
+    test('a non-array waypoint entry is rejected BEFORE any scene mutation', async () => {
+        const {CNode3DObject} = require('../src/nodes/CNode3DObject');
+        const r = await walk({waypoints: ['45,-122', [45.01, -122.01]]});
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/waypoint 0 must be an array/i);
+        expect(CNode3DObject).not.toHaveBeenCalled();
+        expect(mockTrackManager.addSyntheticTrack).not.toHaveBeenCalled();
+    });
+
+    test('non-finite numeric options are rejected (specs must stay JSON-clean)', async () => {
+        // note: emissiveIntensity:null can't be tested through handleAPICall — the
+        // shared _coerceArgs layer launders null to 0 for declared-float params
+        // before the function sees it (pre-existing API-wide behavior)
+        for (const bad of [{height: NaN}, {radius: Infinity}, {rotateY: 'abc'}, {width: NaN}]) {
+            const r = await walk(bad);
+            expect(r.success).toBe(false);
+            expect(r.error).toMatch(/finite/i);
+        }
+    });
+
+    test('refuses a first-time name whose prefix collides with existing node ids', async () => {
+        const {CNode3DObject} = require('../src/nodes/CNode3DObject');
+        mockNodeList['syntheticTrack_123'] = {};   // unrelated node the re-create sweep would erase
+        const r = await walk({name: 'syntheticTrack'});
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/collides/i);
+        expect(CNode3DObject).not.toHaveBeenCalled();
+        expect(mockTrackManager.addSyntheticTrack).not.toHaveBeenCalled();
+        expect(mockTrackManager.disposeRemove).not.toHaveBeenCalled();
+    });
+
+    test('refuses a name inside an existing walker\'s namespace (sibling protection)', async () => {
+        const {CNode3DObject} = require('../src/nodes/CNode3DObject');
+        // walker "car" exists; creating "car_dog" would be erased by car's next re-create
+        mockNodeGet.mockImplementation((id) => (id === 'car' ? {_walkerTrackID: 't_car'} : undefined));
+        const r = await walk({name: 'car_dog'});
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/namespace/i);
+        expect(CNode3DObject).not.toHaveBeenCalled();
+        expect(mockTrackManager.addSyntheticTrack).not.toHaveBeenCalled();
+        expect(mockTrackManager.disposeRemove).not.toHaveBeenCalled();
+    });
+
+    test('re-creating a walker sweeps only its OWN derived nodes, sparing interlopers', async () => {
+        // walker "car" exists with recorded ownership; "car_annex" was created
+        // later by another system (e.g. createSynthBuilding) inside the namespace
+        const carNode = {_walkerTrackID: 't_car', _walkerOwnedIds: ['car_size']};
+        mockNodeGet.mockImplementation((id) => (id === 'car' ? carNode : undefined));
+        mockNodeExists.mockImplementation((id) => ['car', 'car_size', 'car_annex'].includes(id));
+        mockTrackManager.exists.mockImplementation((id) => id === 't_car');
+        const r = await walk({name: 'car'});
+        expect(r.success).toBe(true);
+        const disposed = mockNodeDispose.mock.calls.map((c) => c[0]);
+        expect(disposed).toEqual(expect.arrayContaining(['car', 'car_size']));
+        expect(disposed).not.toContain('car_annex');
+    });
+
+    test('refuses to replace a non-walker node that owns the name (no core-node deletion)', async () => {
+        mockNodeGet.mockReturnValue({id: 'mainCamera'});   // exists, but no _walkerTrackID
+        const r = await walk({name: 'mainCamera'});
+        expect(r.success).toBe(false);
+        expect(r.error).toMatch(/non-walker/i);
+        expect(mockTrackManager.disposeRemove).not.toHaveBeenCalled();
+    });
+
+    test('reuseTrackID binds to an existing track instead of creating a duplicate', async () => {
+        mockTrackManager.exists.mockImplementation((id) => id === 'restored_track');
+        const r = await walk({name: 'wReuse', reuseTrackID: 'restored_track'});
+        expect(r.success).toBe(true);
+        expect(r.trackID).toBe('restored_track');
+        expect(mockTrackManager.addSyntheticTrack).not.toHaveBeenCalled();
     });
 });
