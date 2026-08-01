@@ -64,6 +64,7 @@ import {deserializeMotionAnalysis, serializeMotionAnalysis} from "./CMotionAnaly
 import {deserializeAutoTracking, serializeAutoTracking} from "./CObjectTracking";
 import {deserializeHorizonExtractor, serializeHorizonExtractor} from "./CHorizonExtractor";
 import {deserializeScriptedVideo, serializeScriptedVideo} from "./CScriptedVideo";
+import {sitrecAPI} from "./CSitrecAPI";
 import {ScenarioManager} from "./CScenarioManager";
 import {deserializeLongExposure, serializeLongExposure} from "./LongExposure";
 import {getCursorPositionFromTopView} from "./mouseMoveView";
@@ -563,6 +564,26 @@ export const serializeMethods = {
         // This must be done before mods, as the tracks need to be recreated
         // before mods are applied to their nodes
         out.syntheticTracks = TrackManager.serialize()
+
+        // Walker marker objects (createWalker): specs only — their synthetic
+        // tracks serialize above, and the deserialize pass recreates the
+        // objects and rebinds them to those tracks via reuseTrackID. Only
+        // specs whose object is still ALIVE are saved — a walker deleted via
+        // any path (track delete, node dispose) must stay deleted on reload.
+        out.walkers = null
+        if (Globals.walkerSpecs) {
+            const live = {}
+            for (const [wName, wSpec] of Object.entries(Globals.walkerSpecs)) {
+                // live = the node exists, IS a walker (not an unrelated node
+                // that reused the name), and its synthetic track still exists —
+                // deleting either half counts as deleting the walker
+                const node = NodeMan.get(wName, false)
+                if (node && node._walkerTrackID && TrackManager.exists(node._walkerTrackID)) {
+                    live[wName] = wSpec
+                }
+            }
+            if (Object.keys(live).length) out.walkers = live
+        }
 
         // Balloon tracks: compact generator params (the appFlight pattern) —
         // deserializeBalloons recreates identical node ids before the mods pass
@@ -1106,6 +1127,26 @@ export const serializeMethods = {
             // deterministic node ids, then the mods pass restores their state
             if (sitchData.balloonTracks) {
                 TrackManager.deserializeBalloons(sitchData.balloonTracks)
+            }
+
+            // Recreate walker marker objects (createWalker) from their saved
+            // specs — appFlight contract: deterministic ids, BEFORE the mods
+            // pass so mods can restore per-node state. reuseTrackID rebinds
+            // each walker to its synthetic track deserialized above instead of
+            // creating a duplicate. Reset first so specs from a previous sitch
+            // never leak into this one's next save.
+            Globals.walkerSpecs = {}
+            if (sitchData.walkers) {
+                for (const spec of Object.values(sitchData.walkers)) {
+                    // tolerate corrupt/hand-edited entries: skip junk, and never
+                    // let one bad walker abort the whole sitch deserialization
+                    if (!spec || typeof spec !== "object" || !spec.name) continue
+                    try {
+                        sitrecAPI.call("createWalker", {...spec, reuseTrackID: spec.trackID})
+                    } catch (e) {
+                        console.warn(`deserialize: walker "${spec.name}" failed to recreate: ${e?.message ?? e}`)
+                    }
+                }
             }
 
             // Regenerate the fromApp synthetic flight track from its saved params.
@@ -1671,6 +1712,11 @@ export const serializeMethods = {
 
         if (sitchData.scriptedVideoScript) {
             deserializeScriptedVideo(sitchData.scriptedVideoScript);
+        } else if (Globals.scriptedVideo) {
+            // scriptless save: the scripted-video manager is a singleton, so
+            // reset its per-sitch camera knob rather than inherit the previous
+            // sitch's value (deserializeScriptedVideo handles the with-script case)
+            Globals.scriptedVideo.groundClearance = 3;
         }
 
         if (sitchData.longExposure) {

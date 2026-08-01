@@ -577,15 +577,22 @@ class CSitrecAPI {
             },
 
             createWalker: {
-                doc: "Create a marker object that walks/moves through a list of lat/lon waypoints over a frame range — e.g. a viewer walking around to a vantage point. The object follows a linear track and holds at the last waypoint until the end. Address it later by name with show/hide/setMenuValue (e.g. hide it once the camera reaches it).",
+                doc: "Create a marker object that walks/moves through a list of lat/lon waypoints over a frame range — e.g. a viewer walking around to a vantage point, or a flying object. The object follows a linear track and holds at the last waypoint until the end. Address it later by name with show/hide/setMenuValue (e.g. hide it once the camera reaches it).",
                 params: {
                     name: "Object id/name (string)",
-                    waypoints: "Ordered array of [lat, lon] pairs the object walks through (array, >= 2)",
-                    alt: "Altitude in meters MSL for the whole path (float, optional, defaults to 0)",
+                    waypoints: "Ordered array of [lat, lon] or [lat, lon, alt] the object moves through (array, >= 2). A missing alt falls back to the 'alt' param",
+                    alt: "Default altitude in meters MSL for waypoints without their own (float, optional, defaults to 0)",
+                    fractions: "Per-waypoint time fractions 0..1 of [startFrame, endFrame], non-decreasing, starting at 0 and ending at 1, same length as waypoints — for uneven timing like hover-then-dash; hold early by duplicating a waypoint (array, optional, default = even spacing)",
                     geometry: "Geometry: cylinder, sphere, box, cone, capsule (string, optional, default 'cylinder')",
                     color: "Color as a hex number or '#rrggbb' string (optional, default 0xffd24a)",
+                    material: "Material type: basic, lambert, phong, physical, envmap (string, optional, default 'phong')",
+                    emissive: "Self-illuminated color as '#rrggbb' (string, optional — for glowing objects; lambert/phong/physical only)",
+                    emissiveIntensity: "Emissive intensity 0..1 (float, optional, default 1)",
                     height: "Object height in meters (float, optional, default 2)",
                     radius: "Object radius in meters (float, optional, default 0.5)",
+                    width: "Box width (across-track) in meters (float, optional, box geometry only)",
+                    depth: "Box depth (along-track) in meters (float, optional, box geometry only)",
+                    rotateY: "Yaw the geometry about its vertical axis in degrees (float, optional — e.g. align a box with a heading)",
                     startFrame: "Frame the walk starts (int, optional, default 0)",
                     endFrame: "Frame the last waypoint is reached (int, optional, default 1/4 of the sitch length)",
                     upright: "Orient the object's axis along local vertical (bool, optional, default true)"
@@ -597,22 +604,94 @@ class CSitrecAPI {
                         if (!Array.isArray(wps) || wps.length < 2) {
                             return { success: false, error: "createWalker needs a 'waypoints' array of at least 2 [lat, lon] pairs" };
                         }
+                        // strict numeric coercion: numbers and non-empty numeric strings
+                        // only — Number() alone would take null/false/"" as 0 and place
+                        // waypoints on Null Island or scramble the frame range
+                        const num = (x) => (typeof x === "number" || (typeof x === "string" && x.trim() !== "")) ? Number(x) : NaN;
                         const frames = Sit.frames || 1;
-                        const startFrame = Math.max(0, v.startFrame ?? 0);
-                        const endFrame = Math.min(frames - 1, v.endFrame ?? Math.round(frames * 0.25));
-                        const alt = v.alt ?? 0;
+                        const startFrame = Math.max(0, Math.round(num(v.startFrame ?? 0)));
+                        const endFrame = Math.min(frames - 1, Math.round(num(v.endFrame ?? frames * 0.25)));
+                        if (!isFinite(startFrame) || !isFinite(endFrame) || endFrame <= startFrame) {
+                            return { success: false, error: `bad frame range [${v.startFrame}, ${v.endFrame}] — needs finite frames with endFrame > startFrame` };
+                        }
+                        const alt = num(v.alt ?? 0);
                         const geometry = v.geometry || "cylinder";
+                        // validate the material BEFORE the destructive teardown below, so a
+                        // bad override can never destroy the existing walker and then fail
+                        // inside CNode3DObject (rebuildMaterial asserts on unknown types)
+                        const MATERIAL_TYPES = ["basic", "lambert", "phong", "physical", "envmap", "gradient", "checkerboard"];
+                        if (v.material !== undefined && !MATERIAL_TYPES.includes(String(v.material).toLowerCase())) {
+                            return { success: false, error: `unknown material "${v.material}" — use one of: ${MATERIAL_TYPES.join(", ")}` };
+                        }
                         const color = (typeof v.color === "string")
                             ? parseInt(v.color.replace("#", "0x")) : (v.color ?? 0xffd24a);
-                        const height = v.height ?? 2, radius = v.radius ?? 0.5;
-                        // waypoints -> [frame, x, y, z], spread evenly across [startFrame, endFrame]
-                        const pts = wps.map((w, i) => {
-                            const e = LLAToECEF(w[0], w[1], alt);
-                            const f = Math.round(startFrame + (endFrame - startFrame) * (i / (wps.length - 1)));
-                            return [f, e.x, e.y, e.z];
-                        });
+                        // numeric options must be finite — these end up in the
+                        // serialized walker spec, and JSON turns NaN/Infinity into
+                        // null, which would silently corrupt the sitch on reload
+                        const height = num(v.height ?? 2), radius = num(v.radius ?? 0.5);
+                        if (!isFinite(height) || !isFinite(radius)) {
+                            return { success: false, error: "'height' and 'radius' must be finite numbers" };
+                        }
+                        for (const k of ["width", "depth", "rotateY", "emissiveIntensity"]) {
+                            if (v[k] !== undefined && !isFinite(num(v[k]))) {
+                                return { success: false, error: `'${k}' must be a finite number` };
+                            }
+                        }
+                        // optional per-waypoint time fractions (0..1 of the frame range,
+                        // non-decreasing, 0 first and 1 last) — hover-then-dash etc.;
+                        // default = even spacing. The first fraction must be 0 (a later
+                        // first knot would make the track extrapolate backward before it)
+                        // and the last must be 1 (endFrame is documented as the frame the
+                        // final waypoint is reached — hold early by duplicating a waypoint).
+                        const fr = v.fractions;
+                        if (fr !== undefined) {
+                            // index loop, not .some(): sparse-array holes are skipped by
+                            // the iteration methods and would sail through as undefined
+                            let badFr = !Array.isArray(fr) || fr.length !== wps.length
+                                || fr[0] !== 0 || fr[fr.length - 1] !== 1;
+                            for (let i = 0; !badFr && i < fr.length; i++) {
+                                const f = fr[i];
+                                badFr = typeof f !== "number" || !isFinite(f) || f < 0 || f > 1 || (i > 0 && f < fr[i - 1]);
+                            }
+                            if (badFr) {
+                                return { success: false, error: "'fractions' must be a non-decreasing array of finite 0..1 numbers, one per waypoint, starting at 0 and ending at 1" };
+                            }
+                        }
+                        // waypoints ([lat, lon] or [lat, lon, alt]) -> [frame, x, y, z];
+                        // knots kept strictly increasing (close fractions could round
+                        // together) and never past the sitch end — an overflow means the
+                        // waypoints can't all be represented, which is an error, not a
+                        // silent truncation
+                        let prevF = -1;
+                        const pts = [];
+                        for (let i = 0; i < wps.length; i++) {
+                            const w = wps[i];
+                            // each entry must be a real [lat, lon(, alt)] ARRAY — a string
+                            // like "45,-122" would otherwise index as characters and pass,
+                            // or blow up in spec recording AFTER the scene was mutated
+                            if (!Array.isArray(w) || w.length < 2 || w.length > 3) {
+                                return { success: false, error: `waypoint ${i} must be an array: [lat, lon] or [lat, lon, alt]` };
+                            }
+                            const lat = num(w[0]), lon = num(w[1]);
+                            const wAlt = w[2] === undefined ? alt : num(w[2]);
+                            if (!isFinite(lat) || !isFinite(lon) || !isFinite(wAlt)) {
+                                return { success: false, error: `waypoint ${i} must be numeric [lat, lon] or [lat, lon, alt]` };
+                            }
+                            const e = LLAToECEF(lat, lon, wAlt);
+                            const frac = fr ? fr[i] : (i / (wps.length - 1));
+                            const f = Math.max(prevF + 1, Math.round(startFrame + (endFrame - startFrame) * frac));
+                            // collision bumps must not spill past endFrame — the path is
+                            // documented to COMPLETE at endFrame, so overflow is an error,
+                            // not a silently late finish
+                            if (f > endFrame) {
+                                return { success: false, error: `waypoint ${i} lands past endFrame (${endFrame}) — too many waypoints for the frame range` };
+                            }
+                            prevF = f;
+                            pts.push([f, e.x, e.y, e.z]);
+                        }
                         // hold at the last waypoint until the final frame
-                        if (endFrame < frames - 1) { const L = pts[pts.length - 1]; pts.push([frames - 1, L[1], L[2], L[3]]); }
+                        const last = pts[pts.length - 1];
+                        if (last[0] < frames - 1) pts.push([frames - 1, last[1], last[2], last[3]]);
                         // idempotent: fully tear down any existing walker with this id —
                         // its track, the object node, AND the derived sub-nodes the object
                         // creates (Viewer_size, Viewer_color_colorInput, Viewer_Controller…).
@@ -620,31 +699,117 @@ class CSitrecAPI {
                         // they double-add on re-create. Sever links first so disposeRemove
                         // doesn't assert on remaining inputs/outputs.
                         const existing = NodeMan.get(name, false);
+                        // only ever replace a node that IS a walker — a name collision
+                        // with any other node (e.g. hand-edited save data naming
+                        // "mainCamera") must refuse, not destroy core scene nodes
+                        if (existing && !existing._walkerTrackID) {
+                            return { success: false, error: `"${name}" is already a non-walker node — pick another name` };
+                        }
+                        if (!existing) {
+                            // first creation: the idempotent re-create path below sweeps
+                            // every `${name}_*` derived node, so refuse a name whose
+                            // prefix collides with existing unrelated node ids (e.g.
+                            // "syntheticTrack") — otherwise a later re-create would
+                            // erase those nodes. Once created, all `${name}_*` nodes
+                            // are the walker's own, so re-creates stay safe.
+                            const prefix = name + "_";
+                            const clash = Object.keys(NodeMan.list).find((id) => id.startsWith(prefix));
+                            if (clash) {
+                                return { success: false, error: `"${name}" collides with existing node ids ("${clash}") — pick another name` };
+                            }
+                            // ...and the mirror image: refuse a name INSIDE an existing
+                            // walker's namespace ("car_dog" after walker "car" would be
+                            // erased by car's next re-create sweep)
+                            for (let i = name.lastIndexOf("_"); i > 0; i = name.lastIndexOf("_", i - 1)) {
+                                const anc = NodeMan.get(name.slice(0, i), false);
+                                if (anc && anc._walkerTrackID) {
+                                    return { success: false, error: `"${name}" is inside walker "${name.slice(0, i)}"'s namespace — pick another name` };
+                                }
+                            }
+                        }
                         if (existing) {
                             const tid = existing._walkerTrackID;
                             if (tid && TrackManager.exists(tid)) TrackManager.disposeRemove(tid);
-                            const ids = Object.keys(NodeMan.list).filter((id) => id === name || id.startsWith(name + "_"));
+                            // sweep ONLY the derived nodes recorded at creation (plus the
+                            // walker itself) — never a blind `${name}_*` prefix sweep,
+                            // which would take unrelated nodes another system created
+                            // inside the namespace afterwards (e.g. a synth building
+                            // the user id'ed "car_annex" while walker "car" existed)
+                            const ids = [name, ...(existing._walkerOwnedIds ?? [])]
+                                .filter((id) => NodeMan.exists(id));
                             for (const id of ids) { const n = NodeMan.get(id, false); if (n) { n.outputs = []; n.inputs = {}; } }
                             for (const id of ids) { try { NodeMan.disposeRemove(id); } catch (e) { /* ignore */ } }
                         }
                         const start = new Vector3(pts[0][1], pts[0][2], pts[0][3]);
+                        // snapshot before construction: everything under `${name}_` that
+                        // appears between here and the ownership recording below is a
+                        // node THIS walker created — the only ids a re-create may sweep
+                        const preIds = new Set(Object.keys(NodeMan.list));
+                        // optional material overrides (glowing spheres etc.) — CNode3DObject
+                        // reads these prop keys when building the material's param set
+                        const matProps = {};
+                        if (v.material !== undefined) matProps.material = v.material;
+                        if (v.emissive !== undefined) matProps.emissive = v.emissive;
+                        if (v.emissiveIntensity !== undefined) matProps.emissiveIntensity = v.emissiveIntensity;
+                        if (v.width !== undefined) matProps.width = v.width;
+                        if (v.depth !== undefined) matProps.depth = v.depth;
+                        if (v.rotateY !== undefined) matProps.rotateY = v.rotateY;
                         const objectNode = new CNode3DObject({
                             id: name, geometry, radiusTop: radius, radiusBottom: radius, radius, height,
-                            color, material: "phong", position: start,
+                            color, material: "phong", position: start, ...matProps,
                         });
                         if (v.upright ?? true) {
                             // align the geometry's +Y axis with the local vertical so a
                             // cylinder/capsule stands up instead of lying along world-Y
                             objectNode.group.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), getLocalUpVector(start));
                         }
-                        const trackOb = TrackManager.addSyntheticTrack({
-                            name: name + " path", curveType: "linear", initialPoints: pts,
-                            color, editMode: false, startFrame,
-                        });
-                        objectNode.addController("TrackPosition", { sourceTrack: trackOb.trackID });
-                        objectNode._walkerTrackID = trackOb.trackID;   // for idempotent re-create
+                        // reuseTrackID (internal, used by sitch deserialize): bind to a
+                        // track that TrackManager.deserialize already restored instead of
+                        // creating a duplicate — same appFlight-style rebuild contract
+                        let trackID, displayTrackID = null;
+                        if (v.reuseTrackID && TrackManager.exists(v.reuseTrackID)) {
+                            trackID = v.reuseTrackID;
+                            displayTrackID = TrackManager.get(v.reuseTrackID)?.displayTrackID ?? null;
+                        } else {
+                            const newTrackOb = TrackManager.addSyntheticTrack({
+                                name: name + " path", curveType: "linear", initialPoints: pts,
+                                color, editMode: false, startFrame,
+                            });
+                            trackID = newTrackOb.trackID;
+                            displayTrackID = newTrackOb.displayTrackID ?? null;
+                        }
+                        // the walker's path line is authoring noise in a scripted shot —
+                        // hide its display node (re-showable from the track's GUI folder)
+                        if (displayTrackID) {
+                            const disp = NodeMan.get(displayTrackID, false);
+                            if (disp) {
+                                if (typeof disp.show === "function") disp.show(false);
+                                disp.visible = false;
+                                if (disp.group) disp.group.visible = false;
+                            }
+                        }
+                        objectNode.addController("TrackPosition", { sourceTrack: trackID });
+                        objectNode._walkerTrackID = trackID;   // for idempotent re-create
+                        // ownership record for the surgical re-create sweep (see teardown)
+                        objectNode._walkerOwnedIds = Object.keys(NodeMan.list)
+                            .filter((id) => id.startsWith(name + "_") && !preIds.has(id));
+                        // record the (sanitized) spec so the custom sitch can serialize
+                        // walkers and recreate them on load — objects don't otherwise persist
+                        Globals.walkerSpecs = Globals.walkerSpecs || {};
+                        Globals.walkerSpecs[name] = {
+                            name, waypoints: wps.map((w) => w.map(Number)), alt,
+                            ...(fr ? {fractions: [...fr]} : {}),
+                            geometry, color: v.color ?? 0xffd24a, height, radius,
+                            ...(v.material !== undefined ? {material: v.material} : {}),
+                            ...(v.emissive !== undefined ? {emissive: v.emissive} : {}),
+                            ...(v.emissiveIntensity !== undefined ? {emissiveIntensity: v.emissiveIntensity} : {}),
+                            ...(v.width !== undefined ? {width: v.width} : {}),
+                            ...(v.depth !== undefined ? {depth: v.depth} : {}),
+                            ...(v.rotateY !== undefined ? {rotateY: v.rotateY} : {}),
+                            startFrame, endFrame, upright: v.upright ?? true, trackID,
+                        };
                         markSitchDirty();
-                        return { success: true, name, trackID: trackOb.trackID, waypoints: pts.length, startFrame, endFrame };
+                        return { success: true, name, trackID, waypoints: pts.length, startFrame, endFrame };
                     } catch (e) {
                         return { success: false, error: e?.message ?? String(e) };
                     }
@@ -658,7 +823,7 @@ class CSitrecAPI {
                 // handleAPICall when the caller is the LLM, closing the indirect-prompt-injection
                 // ACE path (B1). Trusted UI/MCP callers are unaffected.
                 llmCallable: false,
-                doc: "Set the active Scripting tab's cinematic camera script and parse it (use previewScriptedVideo to play it). DSL: one command per line; plain/await lines are sequential, '&' lines run concurrently, '#' comments, quote multi-word captions. Camera: from(target,secs,bearing,dist,elev) place absolutely, zoom(target,secs,dist), orbit(target,secs,deg,rise), track, rise(target,secs,m), fov(deg,secs), flyto(look,secs), wait/linger(secs). Layout/caption: view(name|'photo'|{layout}), text(\"cap\",secs), fade(view,secs,to). Settings/objects: set/show/hide a menu control OR a scene-object id. Targets: object, witness, a node id, or 'lat,lon,alt'.",
+                doc: "Set the active Scripting tab's cinematic camera script and parse it (use previewScriptedVideo to play it). DSL: one command per line; plain/await lines are sequential, '&' lines run concurrently, '#' comments, quote multi-word captions. Camera: from(target,secs,bearing,dist,elev) place absolutely, zoom(target,secs,dist), orbit(target,secs,deg,rise), track, follow(target,secs,dist,height), ride(target,secs,lookAt,height,back) ride ON a moving target looking at another, rise(target,secs,m), fov(deg,secs), flyto(look,secs), wait/linger(secs). Layout/caption: view(name|'photo'|{layout}), text(\"cap\",secs), fade(view,secs,to). Settings/objects: set/show/hide a menu control OR a scene-object id. Targets: object, witness, a node id, or 'lat,lon,alt'.",
                 params: { script: "The full script text (string)" },
                 fn: (v) => {
                     const sv = Globals.scriptedVideo;

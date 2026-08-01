@@ -549,23 +549,64 @@ class CScriptedVideoManager {
             const alpha = forced ? 1 : clamp(Math.min(upRamp, dnRamp), 0, 1);
             if (alpha > 0) active.push({e, alpha});
         }
-        const px = Math.round(h * 0.055);
-        const lineH = px * 1.3;
-        active.forEach(({e, alpha}, idx) => {
+        // Long captions never clip: word-wrap to at most 3 lines at the base
+        // size, then shrink the font until the wrapped block fits the width.
+        const basePx = Math.round(h * 0.055);
+        const maxWidth = w * 0.92;
+        const laid = active.map(({e, alpha}) => {
+            const {lines, px} = this._layoutCaption(ctx, e.text, basePx, maxWidth);
+            return {lines, px, alpha, lineH: px * 1.3};
+        });
+        // stack upward from the bottom anchor — the LAST active caption's last
+        // line sits at 0.85h (same anchor as the old single-line behavior)
+        let anchor = h * 0.85;
+        for (let i = laid.length - 1; i >= 0; i--) {
+            const L = laid[i];
             ctx.save();
-            ctx.globalAlpha = alpha;
-            ctx.font = `bold ${px}px sans-serif`;
+            ctx.globalAlpha = L.alpha;
+            ctx.font = `bold ${L.px}px sans-serif`;
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
-            const x = w * 0.5, y = h * 0.85 - (active.length - 1 - idx) * lineH;
-            ctx.lineWidth = Math.max(2, px * 0.14);
+            ctx.lineWidth = Math.max(2, L.px * 0.14);
             ctx.strokeStyle = "rgba(0,0,0,0.85)";
             ctx.lineJoin = "round";
-            ctx.strokeText(e.text, x, y);
             ctx.fillStyle = "#ffffff";
-            ctx.fillText(e.text, x, y);
+            for (let j = L.lines.length - 1; j >= 0; j--) {
+                const y = anchor - (L.lines.length - 1 - j) * L.lineH;
+                ctx.strokeText(L.lines[j], w * 0.5, y);
+                ctx.fillText(L.lines[j], w * 0.5, y);
+            }
             ctx.restore();
-        });
+            anchor -= L.lines.length * L.lineH;
+        }
+    }
+
+    // Word-wrap `text` to fit maxWidth at basePx; if it needs more than 3 lines
+    // (or a single word overflows), step the size down until it fits. Hard floor
+    // at half the base size, hard cap at 3 lines — captions may shrink but can
+    // never clip at the frame edge.
+    _layoutCaption(ctx, text, basePx, maxWidth) {
+        const wrapAt = (px) => {
+            ctx.font = `bold ${px}px sans-serif`;
+            const words = String(text).split(/\s+/).filter(Boolean);
+            const lines = [];
+            let cur = "";
+            for (const word of words) {
+                const tryLine = cur ? cur + " " + word : word;
+                if (!cur || ctx.measureText(tryLine).width <= maxWidth) cur = tryLine;
+                else { lines.push(cur); cur = word; }
+            }
+            if (cur) lines.push(cur);
+            const widest = lines.reduce((m, l) => Math.max(m, ctx.measureText(l).width), 0);
+            return {lines, widest};
+        };
+        let px = basePx;
+        let fit = wrapAt(px);
+        while ((fit.lines.length > 3 || fit.widest > maxWidth) && px > basePx * 0.5) {
+            px = Math.max(basePx * 0.5, px * 0.92);
+            fit = wrapAt(px);
+        }
+        return {lines: fit.lines.slice(0, 3), px};
     }
 
     // -----------------------------------------------------------------------
@@ -995,7 +1036,11 @@ class CScriptedVideoManager {
     _computeWarnings() {
         const w = [];
         for (const e of this.cameraBeats) {
-            if (e.invalid && e.target) w.push(`line ${e.line}: target "${e.target}" did not resolve — beat holds still`);
+            if (!e.invalid) continue;
+            // a command can pin the blame precisely (e.g. ride's bad lookAt);
+            // otherwise the generic "target didn't resolve" message applies
+            if (e.invalidReason) w.push(`line ${e.line}: ${e.invalidReason} — beat holds still`);
+            else if (e.target) w.push(`line ${e.line}: target "${e.target}" did not resolve — beat holds still`);
         }
         const timed = this.cameraBeats.filter((b) => b.dur > 0).slice().sort((a, b) => a.start - b.start);
         for (let i = 0; i < timed.length; i++) {
@@ -1145,11 +1190,19 @@ export function serializeScriptedVideo() {
     const tabs = scriptedVideo.tabs;
     // nothing worth saving: a single tab still holding the unmodified demo script
     if (tabs.length === 1 && (!tabs[0].text || tabs[0].text === DEFAULT_SCRIPT)) return null;
-    return {tabs: tabs.map((t) => ({name: t.name, text: t.text})), activeTab: scriptedVideo.activeTab};
+    return {tabs: tabs.map((t) => ({name: t.name, text: t.text})), activeTab: scriptedVideo.activeTab,
+        groundClearance: scriptedVideo.groundClearance};
 }
 
 export function deserializeScriptedVideo(data) {
     if (!scriptedVideo || !data) return;
+    // camera ground-clearance travels with the scripts (a driver-POV sitch
+    // needs its low clearance back on load, not the 3 m default). The manager
+    // is a singleton, so a save WITHOUT the field must reset to the default
+    // rather than inherit whatever the previous sitch set.
+    scriptedVideo.groundClearance =
+        (typeof data.groundClearance === "number" && isFinite(data.groundClearance))
+            ? data.groundClearance : 3;
     // The editor is now lazily created (this.editor starts null — see ensureEditor()), so we must
     // route through ensureEditor() rather than touching scriptedVideo.editor directly. Reaching
     // into the null editor here threw during finishDeserialization, and because that call is not
