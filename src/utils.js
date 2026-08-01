@@ -385,14 +385,17 @@ export function localDate(d) {
 export const arrayColumn = (arr, n) => arr.map(row => row[n]);
 
 /* View in fullscreen */
+// Returns the requestFullscreen promise (where the browser provides one) so
+// callers can detect a DENIED request — denial fires no fullscreenchange
+// event, only a rejection.
 export function openFullscreen() {
     var elem = document.documentElement;
     if (elem.requestFullscreen) {
-        elem.requestFullscreen();
+        return elem.requestFullscreen();
     } else if (elem.webkitRequestFullscreen) { /* Safari */
-        elem.webkitRequestFullscreen();
+        return elem.webkitRequestFullscreen();
     } else if (elem.msRequestFullscreen) { /* IE11 */
-        elem.msRequestFullscreen();
+        return elem.msRequestFullscreen();
     }
 } /* Close fullscreen */
 export function isFullscreen() {

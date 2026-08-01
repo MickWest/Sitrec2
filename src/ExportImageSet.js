@@ -4,12 +4,19 @@ import {GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit} from "./Globals
 import {par} from "./par";
 import {ViewMan} from "./CViewManager";
 import {altitudeHAE, getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
-import {closeFullscreen, ExportProgressWidget, getExportPrefix, openFullscreen} from "./utils";
+import {closeFullscreen, ExportProgressWidget, getExportPrefix, isFullscreen, openFullscreen} from "./utils";
 import {radians} from "./mathUtils";
 import {targetSphere} from "./JetStuffVars";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
 import {forceShadowRefreshForExport} from "./nodes/CNodeView3D";
 import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
+import {saveFileToDirectory} from "./FileUtils";
+import {isAbortLikeError, supportsDirectoryPicker} from "./CFileManagerUtils";
+import {
+    createDesktopDirectoryHandle,
+    getDesktopFileSystemBridge,
+    isDesktopFileSystemAvailable,
+} from "./DesktopFileSystem";
 
 // Max output width for the Fullscreen variant. Inputs wider than this are
 // downscaled (preserving aspect) before PNG encoding.
@@ -101,6 +108,44 @@ function canvasToImageBlob(canvas, maxWidth, mimeType = "image/png", quality = 0
     return new Promise((resolve) => out.toBlob(resolve, mimeType, quality));
 }
 
+// Ask the user to pick the folder the image set will be written into.
+// Returns one of:
+//   FileSystemDirectoryHandle — write each image straight into this folder
+//   null  — no folder picker in this environment; fall back to collecting
+//           the images into a zip download (the legacy behavior)
+//   false — the user cancelled the picker; abort the export entirely
+// Desktop (Electron) builds route through the native chooseFolder dialog and
+// wrap the result in a directory-handle shim so the write path is identical.
+async function pickImageSetOutputFolder() {
+    if (isDesktopFileSystemAvailable()) {
+        const desktopFs = getDesktopFileSystemBridge();
+        if (typeof desktopFs.chooseFolder === "function") {
+            try {
+                const selection = await desktopFs.chooseFolder({});
+                if (!selection) return false;
+                return createDesktopDirectoryHandle(selection.path);
+            } catch (err) {
+                if (isAbortLikeError(err)) return false;
+                console.warn("Image set export: desktop folder picker failed, falling back to zip", err);
+                return null;
+            }
+        }
+    }
+    if (!supportsDirectoryPicker()) {
+        console.warn("Image set export: no folder picker in this browser, falling back to zip download");
+        return null;
+    }
+    try {
+        // id makes Chrome remember the last-used folder for this picker
+        // independently of the other pickers in the app.
+        return await window.showDirectoryPicker({mode: "readwrite", id: "orbit-image-set"});
+    } catch (err) {
+        if (isAbortLikeError(err)) return false;
+        console.warn("Image set export: folder picker failed, falling back to zip", err);
+        return null;
+    }
+}
+
 // Solve for the distance `d` along the unit ECEF direction `dir` (pointing from
 // `target` toward the camera) such that the camera's geodetic altitude (HAE)
 // equals `altMeters`. Positions are ECEF — the world/render frame, see
@@ -172,7 +217,7 @@ export class ImageSetExporter {
         }
 
         const folder = parentFolder.addFolder("Orbit Image Set").close()
-            .tooltip("Export a set of PNG images of the look view from az/el positions around the target, optionally stepping the sitch time forward between sweeps");
+            .tooltip("Export a set of images of the look view from az/el positions around the target into a folder you choose, optionally stepping the sitch time forward between sweeps");
         this.menuFolder = folder;
 
         // Track selector — options are rebuilt from targetTrackSwitch each time
@@ -350,7 +395,7 @@ export class ImageSetExporter {
         folder.add({
             run: () => this.exportImageSet(),
         }, "run").name("Export Image Set")
-            .tooltip("Render the look view at every (time, el, az) and download as a zip");
+            .tooltip("Ask for an output folder, then render the look view at every (time, el, az) and save each image into that folder");
         folder.add({
             runFs: () => this.exportImageSetFullscreen(),
         }, "runFs").name("Export Image Set (Fullscreen)")
@@ -846,10 +891,14 @@ export class ImageSetExporter {
     }
 
     // Run the orbit + capture loop. Optional opts:
-    //   maxWidth — if set, output PNGs are downscaled to at most this width.
-    //   filenameSuffix — extra string injected into each PNG name and the zip name.
+    //   maxWidth — if set, output images are downscaled to at most this width.
+    //   filenameSuffix — extra string injected into each image name (and the
+    //       zip name in the no-folder-picker fallback).
+    //   dirHandle — pre-picked output directory handle (the fullscreen variant
+    //       picks before entering fullscreen). undefined = ask here; null =
+    //       skip the picker and use the zip fallback.
     async exportImageSet(opts = {}) {
-        const {maxWidth, filenameSuffix = ""} = opts;
+        const {maxWidth, filenameSuffix = "", dirHandle: dirHandleOpt} = opts;
 
         // Preview drives the camera/time per-tick. If it's on when the user
         // clicks Export, exit it first so the export's own snapshot/restore
@@ -915,6 +964,16 @@ export class ImageSetExporter {
         // single shot. Shared with the orbit preview path.
         const {shots, numTimeSteps, timeStepMinutes} = this._buildShotList();
 
+        // Ask for the output folder up front — after validation (so a doomed
+        // export doesn't prompt) but before any camera/time state is touched,
+        // while the button click's user activation is still valid. A cancel
+        // aborts with nothing to restore.
+        let dirHandle = dirHandleOpt;
+        if (dirHandle === undefined) {
+            dirHandle = await pickImageSetOutputFolder();
+        }
+        if (dirHandle === false) return; // user cancelled the folder picker
+
         // Save everything we're about to clobber.
         const savedPos = camera.position.clone();
         const savedQuat = camera.quaternion.clone();
@@ -976,8 +1035,12 @@ export class ImageSetExporter {
         }
 
         const progress = new ExportProgressWidget("Exporting image set...", shots.length);
-        const {default: JSZip} = await import("jszip");
-        const zip = new JSZip();
+        // The zip is only the fallback for environments with no folder picker.
+        let zip = null;
+        if (!dirHandle) {
+            const {default: JSZip} = await import("jszip");
+            zip = new JSZip();
+        }
         const prefix = getExportPrefix();
 
         const fmtAz = (az) => String(Math.round(az)).padStart(3, "0");
@@ -1139,8 +1202,15 @@ export class ImageSetExporter {
                 if (blob) {
                     const tPart = numTimeSteps > 1 ? `_t${fmtT(t)}` : "";
                     const name = `${prefix}${filenameSuffix}${tPart}_el${fmtEl(el)}_az${fmtAz(az)}.${ext}`;
-                    const buf = await blob.arrayBuffer();
-                    zip.file(name, buf);
+                    if (dirHandle) {
+                        // Write each image straight into the chosen folder as
+                        // it is captured (overwriting any same-named file from
+                        // a previous run — shot names are deterministic).
+                        await saveFileToDirectory(blob, dirHandle, name);
+                    } else {
+                        const buf = await blob.arrayBuffer();
+                        zip.file(name, buf);
+                    }
                     savedCount++;
                 }
 
@@ -1155,14 +1225,20 @@ export class ImageSetExporter {
             }
 
             if (progress.shouldSave() && savedCount > 0) {
-                progress.setStatus("Building zip...");
-                const zipBlob = await zip.generateAsync(
-                    {type: "blob"},
-                    (meta) => progress.setStatus(`Zipping ${Math.round(meta.percent)}%`),
-                );
-                const ts = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
-                saveAs(zipBlob, `${prefix}_imageset${filenameSuffix}_${ts}.zip`);
-                console.log(`Image set export complete: ${savedCount} images`);
+                if (dirHandle) {
+                    // Images were written to the folder as they were captured;
+                    // nothing left to collate.
+                    console.log(`Image set export complete: ${savedCount} images written to "${dirHandle.name}"`);
+                } else {
+                    progress.setStatus("Building zip...");
+                    const zipBlob = await zip.generateAsync(
+                        {type: "blob"},
+                        (meta) => progress.setStatus(`Zipping ${Math.round(meta.percent)}%`),
+                    );
+                    const ts = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
+                    saveAs(zipBlob, `${prefix}_imageset${filenameSuffix}_${ts}.zip`);
+                    console.log(`Image set export complete: ${savedCount} images`);
+                }
             } else if (savedCount === 0) {
                 alert("No images were captured.");
             } else {
@@ -1208,6 +1284,14 @@ export class ImageSetExporter {
     }
 
     async exportImageSetFullscreen() {
+        // Pick the output folder before entering fullscreen: the picker is an
+        // OS-level dialog, and opening one from fullscreen kicks Chrome back
+        // out of fullscreen (capturing frames at the wrong size). Chromium
+        // re-grants user activation when the user confirms the picker, which
+        // is what lets the requestFullscreen call below still succeed.
+        const dirHandle = await pickImageSetOutputFolder();
+        if (dirHandle === false) return; // user cancelled the folder picker
+
         const {updateSize} = await import("./JetStuff");
         const {applyRenderPerformanceSettings} = await import("./CustomSupport");
 
@@ -1232,19 +1316,45 @@ export class ImageSetExporter {
                 Globals.menuBar.toggleVisiblity();
             }
 
-            // Same fullscreen-enter dance as VideoExporter.exportFullscreenViewportVideo.
-            openFullscreen();
-            enteredFullscreen = true;
-            await new Promise((resolve) => {
-                const handler = () => {
+            // Same fullscreen-enter dance as VideoExporter.exportFullscreenViewportVideo,
+            // hardened: requestFullscreen can be DENIED here, because transient
+            // user activation may not survive the folder picker above — notably
+            // in the desktop app, where the picker is an awaited Electron IPC
+            // call, not a Chromium picker confirmation (which re-grants
+            // activation). A denial fires no fullscreenchange event, only a
+            // promise rejection — so listen for the rejection and back it with
+            // a timeout, and carry on un-fullscreened at the current window
+            // size rather than waiting forever with the UI already hidden.
+            const fsRequest = openFullscreen();
+            enteredFullscreen = await new Promise((resolve) => {
+                let settled = false;
+                let timer = null;
+                const finish = (ok) => {
+                    if (settled) return;
+                    settled = true;
+                    if (timer) clearTimeout(timer);
                     document.removeEventListener("fullscreenchange", handler);
                     document.removeEventListener("webkitfullscreenchange", handler);
-                    updateSize(true);
-                    setTimeout(resolve, 100);
+                    if (ok) {
+                        updateSize(true);
+                        setTimeout(() => resolve(true), 100);
+                    } else {
+                        resolve(false);
+                    }
                 };
+                const handler = () => finish(true);
                 document.addEventListener("fullscreenchange", handler);
                 document.addEventListener("webkitfullscreenchange", handler);
+                if (fsRequest && typeof fsRequest.catch === "function") {
+                    fsRequest.catch(() => finish(false));
+                }
+                // Safety net for engines whose requestFullscreen returns no
+                // promise (older WebKit): settle from the actual state.
+                timer = setTimeout(() => finish(isFullscreen()), 3000);
             });
+            if (!enteredFullscreen) {
+                console.warn("Image set export: fullscreen request was denied; exporting at the current window size instead.");
+            }
 
             // Hide compass / clock overlays.
             if (compassLook && typeof compassLook.setVisible === "function") {
@@ -1282,6 +1392,7 @@ export class ImageSetExporter {
             await this.exportImageSet({
                 maxWidth: FULLSCREEN_MAX_WIDTH,
                 filenameSuffix: "_fs",
+                dirHandle,
             });
         } finally {
             // Restore overlays.
