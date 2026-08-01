@@ -842,6 +842,30 @@ export class CNodeFrameSlider extends CNode {
             }
             event.preventDefault();
         };
+
+        // Double-click on the bar outside the A-B range resets that limit:
+        // left of A puts A back to 0, right of B puts B at the last frame.
+        // Attached to sliderDiv (not sliderContainer) so double-clicks on the
+        // transport buttons to the left of the bar can never trigger it; both
+        // the range input and the canvas bubble up to sliderDiv.
+        this.sliderDiv.addEventListener('dblclick', (event) => {
+            if (this.draggingALimit || this.draggingBLimit) return;
+            const mousePos = getMousePos(event);
+            // The zone within grab distance of a limit line/handle belongs to
+            // dragging, not resetting — ignore double-clicks there.
+            if (getNearLimit(mousePos.x, mousePos.y)) return;
+            const clickFrame = pixelToFrame(mousePos.x);
+            if (clickFrame < Sit.aFrame) {
+                Sit.aFrame = 0;
+            } else if (clickFrame > Sit.bFrame) {
+                Sit.bFrame = Sit.frames - 1;
+            } else {
+                return; // inside the A-B range: nothing to reset
+            }
+            this.needsCanvasRedraw = true;
+            setRenderOne(true);
+            EventManager.dispatchEvent("abFrameChanged");
+        });
     }
 
     dispose() {
