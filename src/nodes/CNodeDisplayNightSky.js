@@ -163,6 +163,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         });
 
         this.firstRenderTLE = true;
+        this.fullBrightnessUpdate = false;
         EventManager.addEventListener("tleLoaded", () => {
             this.firstRenderTLE = true;
         });
@@ -1047,6 +1048,23 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
 
         if (this.satellites.showSatellites && this.satellites.TLEData) {
+            // A user/API time set (dragging any Time-menu slider, the ; / ' time
+            // nudge keys, a programmatic seek) bumps timeSetSerial on the dateTime
+            // node. Latch a
+            // full (non-staggered) brightness pass so no satellite keeps an
+            // Earth-shadow state from before the jump — the staggered update looks
+            // wrong while the terminator sweeps during a slider drag. Keyed off the
+            // serial rather than the time delta so high-speed playback (which
+            // legitimately advances many seconds per frame) keeps the cheap
+            // staggered update. Cleared only when a full brightness pass completes.
+            const timeSetSerial = this.in.startTime.timeSetSerial ?? 0;
+            if (this._lastTimeSetSerial !== timeSetSerial) {
+                if (this._lastTimeSetSerial !== undefined) {
+                    this.fullBrightnessUpdate = true;
+                }
+                this._lastTimeSetSerial = timeSetSerial;
+            }
+
             // Update satellites to correct position for nowDate
             const satResult = this.satellites.updateAllSatellites(nowDate, {
                 lookCameraPos: this.camera.position,
@@ -1057,7 +1075,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             if (satResult && this.satellites.TLEData.satData.length > 0) {
                 par.validPct = (satResult.validCount / satResult.visibleCount) * 100;
             }
-            
+
             this.updateSatelliteBrightness();
         }
 
@@ -1116,8 +1134,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
             assert(satData.ecef !== undefined, `satData.ecef is undefined, i= ${i}`);
 
-            // stagger updates unless it has an arrow or this is the first render after TLE load
-            if (!this.firstRenderTLE && (i - this.satStartTime) % this.satTimeStep !== 0 && !satData.hasSunArrow) {
+            // stagger updates unless it has an arrow, this is the first render after
+            // TLE load, or the time just jumped discontinuously (fullBrightnessUpdate)
+            if (!this.firstRenderTLE && !this.fullBrightnessUpdate && (i - this.satStartTime) % this.satTimeStep !== 0 && !satData.hasSunArrow) {
                 magnitudes[i] = satData.lastScale || 0;
                 continue;
             }
@@ -1192,6 +1211,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
         this.satellites.lightCloud.markBrightnessNeedUpdate();
         this.firstRenderTLE = false;
+        this.fullBrightnessUpdate = false;
     }
 
     updateSatelliteScales(view) {

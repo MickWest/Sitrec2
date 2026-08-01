@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.110.4 (2026-07-31)
+
+### Bug Fixes
+- Fixed satellites briefly keeping out-of-date sunlit or shadowed brightness after jumping to a new time (dragging the Time menu's date and time sliders, or any other time seek): every satellite's Earth-shadow illumination now refreshes immediately on the jump, instead of some satellites staying lit deep inside Earth's shadow — or dark in sunlight — for several frames while the display caught up.
+
 ## Version 2.110.2 (2026-07-31)
 
 ### New Features

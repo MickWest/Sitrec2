@@ -834,7 +834,20 @@ export class CNodeDateTime extends CNode {
 
     // get the start time from a string in ISO 8601 format
     // or from a Date object
+    // Serial bumped on every discrete time set — UI sliders (via updateDateTime →
+    // setNowDateTime), the setDateTime/API paths, track sync, EXIF, scenario setup.
+    // Consumers that stagger expensive per-frame work across frames (e.g. satellite
+    // Earth-shadow brightness) watch this to force a full refresh on the frame the
+    // time was set. Live Mode's per-frame clock sync is exempt (_liveTick) — that
+    // is continuous playback, not a seek.
+    _bumpTimeSetSerial() {
+        if (!this._liveTick) {
+            this.timeSetSerial = (this.timeSetSerial ?? 0) + 1;
+        }
+    }
+
     setStartDateTime(dateTime, skipLiveModeReset = false) {
+        this._bumpTimeSetSerial();
         this.dateStart = new Date(dateTime);
 
         if (typeof dateTime === 'string') {
@@ -847,6 +860,7 @@ export class CNodeDateTime extends CNode {
     }
 
     setNowDateTime(dateTime, skipLiveModeReset = false) {
+        this._bumpTimeSetSerial();
         this.dateNow = new Date(dateTime);
         this.dateStart = nowToStartDateTime(this.dateNow);
         this.populate(skipLiveModeReset);
@@ -1026,7 +1040,9 @@ export class CNodeDateTime extends CNode {
             // we lock the frame to the center of the slider
             par.frame = Math.floor(Sit.frames / 2);
             const currentTime = new Date();
+            this._liveTick = true;
             this.setNowDateTime(currentTime, true);
+            this._liveTick = false;
         }
 
         this.frame = frame
