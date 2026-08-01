@@ -12,6 +12,7 @@ import {forceShadowRefreshForExport} from "./nodes/CNodeView3D";
 import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {saveFileToDirectory} from "./FileUtils";
 import {isAbortLikeError, supportsDirectoryPicker} from "./CFileManagerUtils";
+import {showConfirm} from "./showError";
 import {
     createDesktopDirectoryHandle,
     getDesktopFileSystemBridge,
@@ -144,6 +145,29 @@ async function pickImageSetOutputFolder() {
         console.warn("Image set export: folder picker failed, falling back to zip", err);
         return null;
     }
+}
+
+// Count how many of the planned filenames already exist in the directory.
+// Web FileSystemDirectoryHandles support async iteration (keys()) — one
+// listing pass. The desktop shim doesn't, so probe each name individually
+// (getFileHandle without create throws NotFoundError for a free name).
+async function countExistingFiles(dirHandle, plannedNames) {
+    let count = 0;
+    if (typeof dirHandle.keys === "function") {
+        for await (const name of dirHandle.keys()) {
+            if (plannedNames.has(name)) count++;
+        }
+        return count;
+    }
+    for (const name of plannedNames) {
+        try {
+            await dirHandle.getFileHandle(name);
+            count++;
+        } catch (e) {
+            // NotFoundError — the name is free.
+        }
+    }
+    return count;
 }
 
 // Solve for the distance `d` along the unit ECEF direction `dir` (pointing from
@@ -632,6 +656,14 @@ export class ImageSetExporter {
             }
         }
 
+        // Suppress the custom sitch's camera→PTZ sync hook while preview drives
+        // the camera, exactly as the export does — with ptzAngles disabled it
+        // would write every preview pose into the PTZ sliders (and the nadir
+        // shot corrupts Roll with a degenerate heading). Restored on exit.
+        state.lookCameraNode = lookCameraNode;
+        state.savedPostApplyControllers = lookCameraNode ? lookCameraNode.postApplyControllers : undefined;
+        if (lookCameraNode) lookCameraNode.postApplyControllers = null;
+
         // preRenderFunction fires inside renderCanvas just before the camera
         // matrices are sampled — re-apply our orbit pose here so anything that
         // moved the camera during the node-update cascade (CNodeCamera.update's
@@ -856,8 +888,11 @@ export class ImageSetExporter {
             Sit.startTime = state.savedSitStartTime;
         }
 
-        // Restore look-camera controllers.
+        // Restore look-camera controllers and the camera→PTZ sync hook.
         for (const inp of state.disabledControllers) inp.enabled = true;
+        if (state.lookCameraNode) {
+            state.lookCameraNode.postApplyControllers = state.savedPostApplyControllers;
+        }
 
         // Restore render hooks and controls.
         const view = state.view;
@@ -974,6 +1009,35 @@ export class ImageSetExporter {
         }
         if (dirHandle === false) return; // user cancelled the folder picker
 
+        // Filename scheme — hoisted above the capture loop because the
+        // overwrite pre-check below needs the full planned name list.
+        const prefix = getExportPrefix();
+        const fmtAz = (az) => String(Math.round(az)).padStart(3, "0");
+        const fmtEl = (el) => (el >= 0 ? "p" : "n") + String(Math.abs(Math.round(el))).padStart(2, "0");
+        const tDigits = String(Math.max(1, numTimeSteps - 1)).length;
+        const fmtT = (t) => String(t).padStart(Math.max(2, tDigits), "0");
+        const mimeType = this.usePNGs ? "image/png" : "image/jpeg";
+        const ext = this.usePNGs ? "png" : "jpg";
+        const nameForShot = ({t, az, el}) => {
+            const tPart = numTimeSteps > 1 ? `_t${fmtT(t)}` : "";
+            return `${prefix}${filenameSuffix}${tPart}_el${fmtEl(el)}_az${fmtAz(az)}.${ext}`;
+        };
+
+        // Shot names are deterministic, so exporting into a folder holding a
+        // previous run of the same sitch replaces those files — warn first.
+        // Runs before any camera/time state is saved, so Cancel is a clean no-op.
+        if (dirHandle) {
+            const planned = new Set(shots.map(nameForShot));
+            const existing = await countExistingFiles(dirHandle, planned);
+            if (existing > 0) {
+                const ok = await showConfirm(
+                    `${existing} of the ${planned.size} image files this export will write `
+                    + `already exist in "${dirHandle.name}" and will be overwritten.`,
+                    {title: "Overwrite Existing Images?", yesLabel: "Continue", noLabel: "Cancel"});
+                if (!ok) return;
+            }
+        }
+
         // Save everything we're about to clobber.
         const savedPos = camera.position.clone();
         const savedQuat = camera.quaternion.clone();
@@ -1010,6 +1074,18 @@ export class ImageSetExporter {
             }
         }
 
+        // The custom sitch installs a postApplyControllers hook that syncs the
+        // PTZ az/el/roll sliders FROM the camera whenever ptzAngles is disabled
+        // (CustomManagerSetup, "keep PTZ warm while another source drives the
+        // camera"). We just disabled ptzAngles, so that hook would capture every
+        // orbit pose — and the el=90 nadir shot hits syncFromCamera's gimbal-lock
+        // branch, flipping the controller into satellite mode and dumping an
+        // arbitrary lookAt-degenerate heading into the Roll slider (seen as
+        // roll ≈ 176°), which then persists after the camera pose is restored.
+        // Suppress the hook for the duration; camera restore happens in finally.
+        const savedPostApply = lookCameraNode ? lookCameraNode.postApplyControllers : undefined;
+        if (lookCameraNode) lookCameraNode.postApplyControllers = null;
+
         // Neutralize anything that would overwrite the camera each render:
         //  - preRender/postRender hooks (jet sitches reposition the camera onto the ball)
         //  - the focusTrackName block in CNodeView3D.renderCanvas (calls camera.lookAt)
@@ -1041,12 +1117,6 @@ export class ImageSetExporter {
             const {default: JSZip} = await import("jszip");
             zip = new JSZip();
         }
-        const prefix = getExportPrefix();
-
-        const fmtAz = (az) => String(Math.round(az)).padStart(3, "0");
-        const fmtEl = (el) => (el >= 0 ? "p" : "n") + String(Math.abs(Math.round(el))).padStart(2, "0");
-        const tDigits = String(Math.max(1, numTimeSteps - 1)).length;
-        const fmtT = (t) => String(t).padStart(Math.max(2, tDigits), "0");
 
         // Per-time-step state: when t changes we advance the sitch start time
         // and re-resolve the target (the chosen track may move with time).
@@ -1193,15 +1263,12 @@ export class ImageSetExporter {
                     postSettleRenders: 2,
                 });
 
-                const mimeType = this.usePNGs ? "image/png" : "image/jpeg";
-                const ext = this.usePNGs ? "png" : "jpg";
                 // JPEG quality 0.9 — high enough that compression artifacts are
                 // hard to spot on terrain/sky-dominated shots, while still
                 // ~10-15x smaller than equivalent PNG.
                 const blob = await canvasToImageBlob(view.canvas, maxWidth, mimeType, 0.9);
                 if (blob) {
-                    const tPart = numTimeSteps > 1 ? `_t${fmtT(t)}` : "";
-                    const name = `${prefix}${filenameSuffix}${tPart}_el${fmtEl(el)}_az${fmtAz(az)}.${ext}`;
+                    const name = nameForShot(shots[i]);
                     if (dirHandle) {
                         // Write each image straight into the chosen folder as
                         // it is captured (overwriting any same-named file from
@@ -1252,6 +1319,7 @@ export class ImageSetExporter {
             view.postRenderFunction = savedPostRender;
             view.focusTrackName = savedFocus;
             for (const inp of disabledControllers) inp.enabled = true;
+            if (lookCameraNode) lookCameraNode.postApplyControllers = savedPostApply;
             camera.position.copy(savedPos);
             camera.quaternion.copy(savedQuat);
             camera.up.copy(savedUp);

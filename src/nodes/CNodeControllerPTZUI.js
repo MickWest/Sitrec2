@@ -394,7 +394,10 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
                         const cross = new Vector3().crossVectors(zeroRollUp, cameraUp);
                         const sinAngle = cross.dot(fwd);
                         const cosAngle = zeroRollUp.dot(cameraUp);
-                        this.roll = -Math.atan2(sinAngle, cosAngle) * 180 / Math.PI;
+                        let roll = -Math.atan2(sinAngle, cosAngle) * 180 / Math.PI;
+                        // Snap float noise to a hard zero (see syncFromCamera).
+                        if (Math.abs(roll) < 1e-6) roll = 0;
+                        this.roll = roll;
                     } else {
                         this.roll = 0;
                     }
@@ -501,7 +504,12 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
                     const cross = new Vector3().crossVectors(zeroRollUp, cameraUp);
                     const sinAngle = cross.dot(fwd);
                     const cosAngle = zeroRollUp.dot(cameraUp);
-                    this.roll = -Math.atan2(sinAngle, cosAngle) * 180 / Math.PI;
+                    let roll = -Math.atan2(sinAngle, cosAngle) * 180 / Math.PI;
+                    // atan2 of near-parallel vectors returns float noise
+                    // (~1e-13°) instead of 0, which then shows in — and saves
+                    // from — the Roll slider. Below a micro-degree IS zero.
+                    if (Math.abs(roll) < 1e-6) roll = 0;
+                    this.roll = roll;
                 }
             }
         }
