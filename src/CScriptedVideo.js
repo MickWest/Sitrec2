@@ -582,13 +582,27 @@ class CScriptedVideoManager {
     }
 
     // Word-wrap `text` to fit maxWidth at basePx; if it needs more than 3 lines
-    // (or a single word overflows), step the size down until it fits. Hard floor
-    // at half the base size, hard cap at 3 lines — captions may shrink but can
-    // never clip at the frame edge.
+    // (or is too wide), step the size down until it fits, floored at half the
+    // base size. A single token wider than maxWidth (a long URL) is hard-broken
+    // at character level, so no line can overflow; a caption that still needs
+    // more than 3 lines at the floor keeps them all — captions may shrink or
+    // stack higher, but never clip at the frame edge or drop words.
     _layoutCaption(ctx, text, basePx, maxWidth) {
+        // measured character chunks for a token no word-wrap can fit
+        const breakWord = (word) => {
+            const chunks = [];
+            let cur = "";
+            for (const ch of word) {
+                if (cur && ctx.measureText(cur + ch).width > maxWidth) { chunks.push(cur); cur = ch; }
+                else cur += ch;
+            }
+            if (cur) chunks.push(cur);
+            return chunks;
+        };
         const wrapAt = (px) => {
             ctx.font = `bold ${px}px sans-serif`;
-            const words = String(text).split(/\s+/).filter(Boolean);
+            const words = String(text).split(/\s+/).filter(Boolean)
+                .flatMap((w) => ctx.measureText(w).width > maxWidth ? breakWord(w) : [w]);
             const lines = [];
             let cur = "";
             for (const word of words) {
@@ -606,7 +620,7 @@ class CScriptedVideoManager {
             px = Math.max(basePx * 0.5, px * 0.92);
             fit = wrapAt(px);
         }
-        return {lines: fit.lines.slice(0, 3), px};
+        return {lines: fit.lines, px};
     }
 
     // -----------------------------------------------------------------------
