@@ -981,15 +981,32 @@ function ensureOverlay() {
     // per-sitch object - a new sitch builds a new one, which then needs its own hook.
     if (!view.div._starTrackClickHooked) {
         view.div._starTrackClickHooked = true;
-        let downAt = null;
+        // A toggle needs a genuine primary-button click: same pointer down and up, never
+        // cancelled, and never having strayed - a drag that RETURNS to its origin is still a
+        // drag. Right-clicks (context menu) and multi-touch gestures must not toggle.
+        let down = null;
         view.div.addEventListener("pointerdown", (e) => {
-            downAt = [e.clientX, e.clientY];
+            // Every touch contact reports button 0, so "primary button" alone does not mean
+            // "single pointer": a second finger arriving mid-press is a pinch, and it VOIDS the
+            // pending click rather than replacing it - neither finger's release may toggle.
+            // Only a primary pointer arms a new click, so the void cannot be re-armed by
+            // further fingers of the same gesture.
+            down = (e.isPrimary && e.button === 0 && down === null)
+                ? {id: e.pointerId, x: e.clientX, y: e.clientY, moved: false}
+                : null;
         }, true);
+        view.div.addEventListener("pointermove", (e) => {
+            if (down && e.pointerId === down.id
+                && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) {
+                down.moved = true;
+            }
+        }, true);
+        view.div.addEventListener("pointercancel", () => { down = null; }, true);
         view.div.addEventListener("pointerup", (e) => {
-            if (!downAt || !result || !overlay) return;
-            const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]);
-            downAt = null;
-            if (moved > 4) return;
+            const d = down;
+            down = null;
+            if (!d || d.moved || e.pointerId !== d.id || !result || !overlay) return;
+            if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
             const rect = overlay.getBoundingClientRect();
             const hit = starHitAt(e.clientX - rect.left, e.clientY - rect.top);
             if (hit) toggleStarEnabled(hit.index);
