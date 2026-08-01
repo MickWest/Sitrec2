@@ -14,6 +14,7 @@ import {
     MeshBasicMaterial,
     NearestFilter,
     Ray,
+    Raycaster,
     Sphere,
     SphereGeometry,
     SRGBColorSpace,
@@ -57,6 +58,32 @@ gl_FragColor = sRGBTransferEOTF(gl_FragColor);`
 
 Material.prototype.getMap = function() {
     return this.uniforms?.map?.value ?? this.map;
+};
+
+// Sitrec's orthographic view mode (CNodeCamera._installOrthographicOverride)
+// swaps an orthographic projection matrix onto a camera that still reports
+// isPerspectiveCamera === true (so .fov/.aspect readers keep working).
+// Raycaster.setFromCamera branches on that flag, so it would unproject cursor
+// coordinates through the ortho inverse as if perspective — collapsing every
+// screen ray toward the view-centre ray, which breaks all mouse picking
+// (orbit pivot, cursor, drag, context menus) while ortho is on. The override
+// stamps __sitrecOrthoMatrixActive on the camera whenever the installed
+// matrix is orthographic; only then do we build the correct parallel rays.
+// The m[15] check (1 only for an orthographic projection, 0 for perspective)
+// is a belt-and-braces guard so a stale flag can never divert a camera whose
+// matrix is actually perspective. NDC z = -1 puts the ray origin on the ortho
+// near plane; direction is the camera forward axis (all ortho rays are
+// parallel).
+const _perspSetFromCamera = Raycaster.prototype.setFromCamera;
+Raycaster.prototype.setFromCamera = function(coords, camera) {
+    if (camera.isPerspectiveCamera && camera.__sitrecOrthoMatrixActive
+        && camera.projectionMatrix.elements[15] === 1) {
+        this.ray.origin.set(coords.x, coords.y, -1).unproject(camera);
+        this.ray.direction.set(0, 0, -1).transformDirection(camera.matrixWorld);
+        this.camera = camera;
+        return;
+    }
+    return _perspSetFromCamera.call(this, coords, camera);
 };
 
 Mesh.prototype.getMap = function() {

@@ -271,8 +271,17 @@ export class CNodeCamera extends CNode3D {
         if (cam.__sitrecOrthoInstalled) return;
         const perspectiveUpdate = cam.updateProjectionMatrix.bind(cam);
         cam.updateProjectionMatrix = () => {
-            if (this.orthographic) this._updateOrthographicProjectionMatrix();
-            else perspectiveUpdate();
+            // __sitrecOrthoMatrixActive tells the Raycaster.setFromCamera patch
+            // (threeExt.js) that this camera's CURRENT matrix is orthographic,
+            // so screen rays must be built as parallel rays. Kept in lockstep
+            // with the matrix here — the only place either kind is installed.
+            if (this.orthographic) {
+                this._updateOrthographicProjectionMatrix();
+                cam.__sitrecOrthoMatrixActive = true;
+            } else {
+                cam.__sitrecOrthoMatrixActive = false;
+                perspectiveUpdate();
+            }
         };
         cam.__sitrecOrthoInstalled = true;
     }

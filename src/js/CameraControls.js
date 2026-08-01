@@ -1008,11 +1008,18 @@ class CameraMapControls {
 
 			case STATE.ROTATE: // Rotate the camera about a point on the ground,
 
+				// The classic rate (full view height of drag = 360°) was tuned for the
+				// default 30° main-view FOV. On a telephoto view (e.g. a saved zoomed-in
+				// main camera, or after leaving orthographic mode) a few pixels of drag
+				// would sweep the entire visible field, so scale the rate down with FOV.
+				// Wider-than-default views keep the classic rate (capped at 1).
+				const orbitFovScale = Math.min(1, (this.camera.fov ?? 30) / 30);
+
 				// use this.canvas.heightPx for both to keep it square
-				this.rotateLeft(2 * Math.PI * this.mouseDelta.x / this.view.heightPx);
+				this.rotateLeft(2 * Math.PI * this.mouseDelta.x / this.view.heightPx * orbitFovScale);
 
 				//				console.log("Rotating up by "+(2 * Math.PI * this.mouseDelta.y / this.view.heightPx))
-				this.rotateUp(2 * Math.PI * this.mouseDelta.y / this.view.heightPx);
+				this.rotateUp(2 * Math.PI * this.mouseDelta.y / this.view.heightPx * orbitFovScale);
 
 
 				this.camera.updateMatrix()
@@ -1143,20 +1150,19 @@ class CameraMapControls {
 				// the origin, and the start and end point
 
 				// calculate a vector perpendicular to the three
-				const rotationAxis = new Vector3().crossVectors(originToStart, originToEnd).normalize();
+				const rotationCross = new Vector3().crossVectors(originToStart, originToEnd);
+				const rotationCrossLength = rotationCross.length();
+				if (rotationCrossLength === 0) break; // identical rays — nothing to rotate
+				const rotationAxis = rotationCross.multiplyScalar(1 / rotationCrossLength);
 				// find the angle we need to rotate:
+				// atan2(|a×b|, a·b) rather than acos(a·b/(|a||b|)): these vectors are
+				// ~6.4e6 m long and one drag step in a close-up view separates their
+				// tips by centimetres, putting cos(angle) within double-precision
+				// epsilon of 1.0 — acos then collapses to exactly 0 on many steps, the
+				// rotation for those steps is lost, and a street-level view "barely
+				// drags". The cross-product form resolves such tiny angles smoothly.
 				const odot = originToStart.dot(originToEnd)
-				const lengthsMultiplied = (originToStart.length() * originToEnd.length())
-				const oCos = odot / lengthsMultiplied
-
-				let angle = -Math.acos(oCos);
-				if (isNaN(angle)) {
-					console.log("ToStart " + vdump(originToStart) + " ToEnd: " + vdump(originToEnd))
-					console.log("ots " + originToStart.length() + "," + originToEnd.length())
-					console.log("o: " + odot + "," + lengthsMultiplied + " / = " + oCos)
-					console.warn("NaN angle in Camera controls STATE.DRAG, patching to 0")
-					angle = 0;
-				};
+				const angle = -Math.atan2(rotationCrossLength, odot);
 
 				// const rotationAxis = V3(0,1,0)
 				// const angle = radians(1)

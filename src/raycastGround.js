@@ -41,20 +41,14 @@ export function raycastLocalGround(raycaster, camera = undefined) {
     let bestPoint = null;
     let bestDist = Infinity;
 
-    if (NodeMan.exists("TerrainModel")) {
-        const terrainNode = NodeMan.get("TerrainModel");
-        const hit = terrainNode.getClosestIntersect(raycaster);
-        if (hit) {
-            bestPoint = hit.point;
-            bestDist = hit.distance;
-        }
-    }
-
     // Google Photorealistic 3D buildings. The tile meshes are on the MAIN/LOOK
     // layers, so temporarily widen the raycaster's layer mask to the camera's
     // before intersecting the shared tiles group, then restore it. firstHitOnly
     // asks the tiles' BVH for just the nearest hit (also faster); it is ignored
     // for non-BVH meshes, where the sorted hits[0] is still the nearest.
+    // Tested BEFORE the terrain so a hidden basemap can be skipped entirely (see
+    // below) — when it is hidden this also saves the terrain mesh's ~1 ms
+    // BVH-less raycast on every query.
     if (camera && NodeMan.exists("buildings3DTiles")) {
         const group = NodeMan.get("buildings3DTiles").group;
         if (group && group.children.length > 0) {
@@ -65,9 +59,31 @@ export function raycastLocalGround(raycaster, camera = undefined) {
             const hits = raycaster.intersectObject(group, true);
             raycaster.layers.mask = savedMask;
             raycaster.firstHitOnly = savedFirstHit;
-            if (hits.length > 0 && hits[0].distance < bestDist) {
+            if (hits.length > 0) {
                 bestPoint = hits[0].point;
                 bestDist = hits[0].distance;
+            }
+        }
+    }
+
+    if (NodeMan.exists("TerrainModel")) {
+        const terrainNode = NodeMan.get("TerrainModel");
+        // Under Google Photorealistic 3D tiles the basemap is hidden — its group
+        // gets visible=false (CNodeTerrainUI.updateTerrainAndOceanVisibility ->
+        // setTerrainVisible) — but it stays in the scene, and Three.js's raycaster
+        // ignores .visible. The elevation surface can sit tens of metres ABOVE the
+        // tile geometry, so as the nearer hit it silently won every pick: the orbit
+        // pivot, drag anchor and C-key placement all landed on invisible ground far
+        // closer than what is on screen, which reads as "shift-drag rotates about
+        // the camera" and "dragging barely moves the world". Only fall back to the
+        // hidden terrain for rays that miss the tiles entirely (e.g. outside the
+        // 3D-tile coverage, or before they stream in).
+        const terrainHidden = terrainNode.group?.visible === false;
+        if (!terrainHidden || bestPoint === null) {
+            const hit = terrainNode.getClosestIntersect(raycaster);
+            if (hit && hit.distance < bestDist) {
+                bestPoint = hit.point;
+                bestDist = hit.distance;
             }
         }
     }
