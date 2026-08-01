@@ -38,6 +38,7 @@ import {fileURLToPath} from "url";
 import {dirname, join} from "path";
 import {createServer} from "http";
 import {parseIdleTimeout, rankTakeoverCandidates} from "./lifecycle.js";
+import {normalizeTabArgs} from "./tab-target.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -898,10 +899,17 @@ const TAB_PROPERTY = {
         type: ["string", "number"],
         description:
             "Target a specific Sitrec tab. Pass a URL substring (e.g. 'build2', '/sitrec') " +
-            "or a numeric Chrome tab ID. Omit to use the default (first) Sitrec tab. " +
-            "Use sitrec_list_tabs to see available tabs.",
+            "or a numeric Chrome tab ID (alias: tabId). Omit to use the default (first) Sitrec " +
+            "tab — which is ambiguous when several are open, so pass this whenever more than one " +
+            "tab exists. Use sitrec_list_tabs to see available tabs and their IDs.",
+    },
+    tabId: {
+        type: ["string", "number"],
+        description: "Alias for `tab`. Accepted because sitrec_list_tabs reports tabs under `id` " +
+            "and chrome calls it tabId; passing it no longer silently targets the default tab.",
     },
 };
+
 
 const TOOLS = [
     {
@@ -1178,7 +1186,14 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
+    const { name, arguments: rawArgs } = request.params;
+
+    let args;
+    try {
+        args = normalizeTabArgs(rawArgs);
+    } catch (e) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+    }
 
     // sitrec_status is handled locally — no extension needed
     if (name === "sitrec_status") {

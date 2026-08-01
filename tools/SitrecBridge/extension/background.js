@@ -317,23 +317,34 @@ async function findTabForRequest(port, tabTarget, cwd) {
 
     // Explicit target takes priority
     if (tabTarget != null) {
-        if (typeof tabTarget === "number") {
+        // A tab ID can arrive as a number or as a numeric string (JSON-RPC clients
+        // are free to send either, and the schema accepts both). Try the ID reading
+        // FIRST for anything all-digits: treating "78797930" as a URL substring
+        // silently matched nothing — or, worse, could match some unrelated tab whose
+        // URL happens to contain those digits — and the caller had no way to tell
+        // that its explicit target had been reinterpreted.
+        const asId = typeof tabTarget === "number" ? tabTarget
+            : (/^\d+$/.test(String(tabTarget).trim()) ? Number(String(tabTarget).trim()) : null);
+        if (asId !== null) {
             try {
-                const tab = await chrome.tabs.get(tabTarget);
+                const tab = await chrome.tabs.get(asId);
                 if (isSitrecUrl(tab.url)) {
                     rememberTab(tab.id, tab.url);
                     return tab.id;
                 }
             } catch {}
-            return null;
+            // Not a live Sitrec tab. A numeric STRING may still have been meant as a
+            // URL substring (sitch URLs contain digits, e.g. the user id in
+            // "?custom=99999999/..."), so fall through to substring matching for
+            // those. A real number was unambiguously an ID: give up so the caller
+            // gets the closed-tab error instead of a silent match elsewhere.
+            if (typeof tabTarget === "number") return null;
         }
-        if (typeof tabTarget === "string") {
-            const needle = tabTarget.toLowerCase();
-            for (const [tabId, info] of knownSitrecTabs) {
-                if (info.url && info.url.toLowerCase().includes(needle)) return tabId;
-            }
-            return null;
+        const needle = String(tabTarget).toLowerCase();
+        for (const [tabId, info] of knownSitrecTabs) {
+            if (info.url && info.url.toLowerCase().includes(needle)) return tabId;
         }
+        return null;
     }
 
     // Origin-paired routing
@@ -453,7 +464,7 @@ async function handleServerMessage(port, msg) {
         const tabId = await findTabForRequest(port, target, _cwd);
         trackCommandStart(action, params, _cwd, tabId, port);
         if (!tabId) {
-            sendToServer(port, { id, error: noTabError(port, target) });
+            sendToServer(port, { id, error: await noTabError(port, target) });
             trackCommandEnd(false);
             return;
         }
@@ -475,7 +486,7 @@ async function handleServerMessage(port, msg) {
         const tabId = await findTabForRequest(port, target, _cwd);
         trackCommandStart(action, params, _cwd, tabId, port);
         if (!tabId) {
-            sendToServer(port, { id, error: noTabError(port, target) });
+            sendToServer(port, { id, error: await noTabError(port, target) });
             trackCommandEnd(false);
             return;
         }
@@ -538,7 +549,7 @@ async function handleServerMessage(port, msg) {
     trackCommandStart(action, params, _cwd, tabId, port);
 
     if (!tabId) {
-        sendToServer(port, { id, error: noTabError(port, target) });
+        sendToServer(port, { id, error: await noTabError(port, target) });
         trackCommandEnd(false);
         return;
     }
@@ -560,10 +571,35 @@ async function handleServerMessage(port, msg) {
     }
 }
 
-function noTabError(port, target) {
+async function noTabError(port, target) {
     const conn = connections.get(port);
     const paired = conn?.pairedOrigin;
-    if (target) {
+    if (target !== undefined && target !== null && target !== "") {
+        // A numeric target that no longer resolves is almost always a tab that was
+        // closed: Chrome tab IDs are per-session and a caller holding one from
+        // earlier in a long session has no way to know it went stale. Say so
+        // explicitly — "no tab found matching 123" reads like a bad argument and
+        // sends the caller looking in the wrong place.
+        const numeric = typeof target === "number" ? target
+            : (/^\d+$/.test(String(target)) ? Number(target) : null);
+        if (numeric !== null) {
+            let closed = true;
+            let existingUrl = null;
+            try {
+                const tab = await chrome.tabs.get(numeric);
+                closed = false;
+                existingUrl = tab.url || "";
+            } catch {}
+            if (closed) {
+                return `Tab ${numeric} no longer exists — it was almost certainly closed. ` +
+                    `Chrome tab IDs are not stable across a session, so an ID captured earlier ` +
+                    `can go stale. Run sitrec_list_tabs for current IDs. ` +
+                    `(Refusing to fall back to another tab: that would answer from the wrong page.)`;
+            }
+            return `Tab ${numeric} exists but is not a Sitrec tab (url: ${existingUrl}), ` +
+                `and no Sitrec tab's URL contains "${target}" either. ` +
+                `Run sitrec_list_tabs to see the Sitrec tabs.`;
+        }
         return `No Sitrec tab found matching "${target}". Use sitrec_list_tabs to see available tabs.`;
     }
     if (paired) {

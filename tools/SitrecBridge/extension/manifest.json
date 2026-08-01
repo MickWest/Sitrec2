@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SitrecBridge",
-  "version": "1.0.56",
+  "version": "1.0.57",
   "description": "MCP bridge connecting AI assistants to a running Sitrec instance",
   "permissions": [
     "activeTab",
