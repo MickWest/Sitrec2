@@ -851,6 +851,14 @@ export function aboveGroundLevelAt(A) {
     return altitude;
 }
 
+// True when the terrain basemap is not being rendered because Google
+// Photorealistic 3D tiles are the visible ground (CNodeTerrainUI's
+// updateTerrainAndOceanVisibility hides the terrain group in that mode).
+function terrainBasemapHidden() {
+    if (!NodeMan.exists("TerrainModel")) return false;
+    return NodeMan.get("TerrainModel").group?.visible === false;
+}
+
 // given a point in ECEF, ensure it is at least "height" meters above the ground
 // accounting for terrain.
 export function clampAboveGround(point, height) {
@@ -861,11 +869,33 @@ export function clampAboveGround(point, height) {
     const out = {};
     const ground = getPointBelow(point, false, out);
     const pointAlt = out.altitudeHAE !== undefined ? out.altitudeHAE : calculateAltitude(point);
-    const aboveGround = pointAlt - calculateAltitude(ground);
-    if (aboveGround <= height) {
-        return pointAbove(ground, height);
+    const groundAlt = calculateAltitude(ground);
+    if (pointAlt - groundAlt > height) {
+        return point;
     }
-    return point;
+
+    // The elevation map says we're at/below the ground — but while Google
+    // Photorealistic 3D tiles are the rendered ground the elevation map is not
+    // what the user sees, and it commonly sits metres ABOVE the tile surface.
+    // Clamping to it then parks the camera/object in mid-air above the visible
+    // street and makes lower altitudes unreachable: the height stops responding
+    // while the AGL readout, measured against the tiles, bottoms out well above
+    // zero. Re-run the clamp against the tile surface instead. groundBelow()
+    // already rejects roofs and coarse-LOD tiles (returning null), in which case
+    // the elevation map remains the best available ground. Reached only when the
+    // clamp would actually fire, so the extra raycast stays off the common path.
+    if (terrainBasemapHidden()) {
+        const tileGround = getTilesPointBelow(point);
+        if (tileGround !== null) {
+            const tileAlt = calculateAltitude(tileGround);
+            if (tileAlt < groundAlt) {
+                if (pointAlt - tileAlt > height) return point;
+                return pointAbove(tileGround, height);
+            }
+        }
+    }
+
+    return pointAbove(ground, height);
 }
 
 // get the AGL altitude at a point speciifed by lat/lon
