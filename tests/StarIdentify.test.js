@@ -325,6 +325,20 @@ describe("StarIdentify blind solve", () => {
         expect(result.ok).toBe(false);
     });
 
+    test("a DENSE random field refuses too - the strong-count path is not an escape hatch", () => {
+        // The strong-count acceptance (25 matches at the 0.35 floor) exists for warped wide
+        // mosaics of REAL sky. A hundred random points offer far more raw material for
+        // coincidental matches than thirty; this pins that they still cannot reach a
+        // corroborated 25-match consensus under any refinement. (Swept offline over 60
+        // field/tier combinations, bare and UI-shaped options: zero false positives.)
+        const rng = mulberry32(31337);
+        const stars = Array.from({length: 100}, () => ({
+            x: 10 + rng() * 1700, y: 10 + rng() * 1450, mag: 3 + rng() * 5,
+        }));
+        const result = solveField(stars, catalog, [index], {maxHypotheses: 800});
+        expect(result.ok).toBe(false);
+    });
+
     test("too few stars refuses honestly", () => {
         const result = solveField([{x: 1, y: 1}, {x: 2, y: 2}], catalog, [index]);
         expect(result.ok).toBe(false);

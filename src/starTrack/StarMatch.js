@@ -817,25 +817,37 @@ function solveChainOnce(usable, O) {
     // interpretations: the fit that explains eight sources beats the one that explains six.
     const best = (m, alt) => (alt && (!m || alt.fit.inliers > m.fit.inliers) ? alt : m);
 
+    // Extent for measuring how far two candidate transforms disagree, in pixels at the frame
+    // corners. Used to tell a genuine CONTEST (two interpretations of the motion) from a
+    // same-interpretation refinement that merely picked up an extra inlier.
+    const extent = frameExtent(usable);
+
     for (let f = 1; f < n; f++) {
         const prev = usable[f - 1], cur = usable[f];
         let base = f - 1;
         const predicted = matchByPrediction(prev, cur, prediction, O);
-        let step = predicted;
-        step = best(step, matchByInvariants(prev, cur, O));
-        step = best(step, matchByOffsetVote(prev, cur, O));
+        const challenger = best(best(null, matchByInvariants(prev, cur, O)),
+            matchByOffsetVote(prev, cur, O));
+        let step = best(predicted, challenger);
 
         // Only recorded once the step it describes actually survives - a re-acquisition that is
         // later discarded for resting on a stale anchor must not leave the frame listed as both
         // failed and reacquired.
         let usedInvariants = step !== null && step !== predicted;
 
-        // When the winner DISPLACED a strong prediction fit, two corroborated interpretations
-        // disagreed about this frame. Majority arbitration is the best local answer, but it is
-        // an arbitration, not a certainty - the frame is reported weak so the contested
-        // registration is visible downstream instead of passing as uncontested.
-        const contested = usedInvariants && predicted !== null
-            && strong(predicted.fit, prev, cur);
+        // Two corroborated interpretations DISAGREED about this frame: a challenger matching or
+        // beating a strong prediction fit's support, with a materially different transform.
+        // Whichever way the arbitration goes - most inliers wins, ties keep the continuity of
+        // the prediction - it is an arbitration, not a certainty, and the frame is reported
+        // weak so the contested registration is visible downstream instead of passing as
+        // uncontested. (A challenger proposing essentially the SAME transform is agreement,
+        // not contest, however the inlier counts compare.)
+        const contested = predicted !== null && challenger !== null
+            && strong(predicted.fit, prev, cur)
+            && challenger.fit.inliers >= predicted.fit.inliers
+            && motionMagnitude(composeTransform(challenger.transform,
+                invertTransform(predicted.transform) || IDENTITY), extent.W, extent.H)
+                > 2 * O.inlierThreshold;
 
         // When the preceding frame was itself a failure, its cumulative transform is a HELD copy
         // of an older one - it asserts the camera did not move during the gap. Anything composed
@@ -856,7 +868,13 @@ function solveChainOnce(usable, O) {
                  k >= 0 && candidates.length < O.bridgeAnchorTries; k--) {
                 if (anchorPool[k] !== lastGood) candidates.push(anchorPool[k]);
             }
-            let bridged = null, bridgeBase = lastGood;
+            // Every candidate anchor is evaluated - no early exit on the first "strong" fit,
+            // because strength is relative to the anchor's OWN size: a 6-of-6 lock on a sparse
+            // degraded anchor clears its local gates while a 24-inlier recovery waits one
+            // anchor further down the list. Across anchors the comparison is absolute: a
+            // strong fit beats any weak one, and among fits of equal standing the one
+            // explaining the most sources wins.
+            let bridged = null, bridgeBase = lastGood, bridgedStrong = false;
             for (const a of candidates) {
                 if (usable[a].length < O.minPairs) continue;
                 // Same alternatives rule as the adjacent path: all matchers, most inliers wins.
@@ -866,15 +884,12 @@ function solveChainOnce(usable, O) {
                 m = best(m, matchByInvariants(usable[a], cur, O));
                 m = best(m, matchByOffsetVote(usable[a], cur, O));
                 if (!m) continue;
-                // The first STRONG re-acquisition wins outright. A weak one is only held as a
-                // fallback while the remaining anchors are tried: the anchor nearest the outage
-                // is often the most degraded, and letting its marginal 3-inlier fit preempt a
-                // 20-inlier re-acquisition from one frame further back - purely by search
-                // order - would compose the worst available answer into the chain.
-                if (strong(m.fit, usable[a], cur)) { bridged = m; bridgeBase = a; break; }
-                if (!bridged || m.fit.inliers > bridged.fit.inliers) {
+                const s = strong(m.fit, usable[a], cur);
+                if (!bridged || (s && !bridgedStrong)
+                    || (s === bridgedStrong && m.fit.inliers > bridged.fit.inliers)) {
                     bridged = m;
                     bridgeBase = a;
+                    bridgedStrong = s;
                 }
             }
             if (bridged) {
