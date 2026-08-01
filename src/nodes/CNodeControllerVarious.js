@@ -145,7 +145,11 @@ export class CNodeControllerTrackPosition extends CNodeController {
 
         if (objectNode.forceAboveSurface !== false) {
             const clampHeight = objectNode.cachedCenterToLowestPoint ?? (object.isCamera ? 0: 0.30); // 0.3m = about a foot, which is a reasonable default for the lowest point of a camera or object, but can be overridden by the node definition, or models
-            pos = clampAboveGround(pos, clampHeight);
+            // Clamp against the ground the user can see: under Google 3D tiles the
+            // elevation map is hidden and disagrees with the tile surface by metres,
+            // which otherwise floats this camera/object above the visible street (its
+            // altitude control stops responding) or buries it under one.
+            pos = clampAboveGround(pos, clampHeight, true);
         }
 
         if (object.isCamera) {

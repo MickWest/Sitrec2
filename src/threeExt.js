@@ -859,9 +859,24 @@ function terrainBasemapHidden() {
     return NodeMan.get("TerrainModel").group?.visible === false;
 }
 
+// How far above the elevation map a point can still be under a tile ground that
+// groundBelow() would accept. Zero when there are no tiles, so callers fall
+// straight through to the elevation map.
+function tilesGroundTolerance() {
+    if (!NodeMan.exists("buildings3DTiles")) return 0;
+    return NodeMan.get("buildings3DTiles").groundTolerance ?? 0;
+}
+
 // given a point in ECEF, ensure it is at least "height" meters above the ground
 // accounting for terrain.
-export function clampAboveGround(point, height) {
+// useVisibleGround opts in to clamping against the Google 3D-tile surface (see
+// below). It costs a tile intersection — 0.196 ms measured, vs ~0 for the
+// elevation-map lookup — so it is OFF by default: bulk callers like the
+// Moon-shadow overlay clamp ~1,500 points per frame, which at that price is
+// ~294 ms a frame against a 16.7 ms budget. Those callers sit on the ground by
+// construction and don't need the precision. Pass true where something the user
+// positions or flies is being placed (cameras, tracked objects).
+export function clampAboveGround(point, height, useVisibleGround = false) {
     // getPointBelow already converts `point` to LLA internally; reuse that
     // altitude instead of a second identical conversion (this runs per frame
     // in the camera track-position sweep). Falls back to computing it when
@@ -870,31 +885,34 @@ export function clampAboveGround(point, height) {
     const ground = getPointBelow(point, false, out);
     const pointAlt = out.altitudeHAE !== undefined ? out.altitudeHAE : calculateAltitude(point);
     const groundAlt = calculateAltitude(ground);
-    if (pointAlt - groundAlt > height) {
-        return point;
-    }
 
-    // The elevation map says we're at/below the ground — but while Google
-    // Photorealistic 3D tiles are the rendered ground the elevation map is not
-    // what the user sees, and it commonly sits metres ABOVE the tile surface.
-    // Clamping to it then parks the camera/object in mid-air above the visible
-    // street and makes lower altitudes unreachable: the height stops responding
-    // while the AGL readout, measured against the tiles, bottoms out well above
-    // zero. Re-run the clamp against the tile surface instead. groundBelow()
-    // already rejects roofs and coarse-LOD tiles (returning null), in which case
-    // the elevation map remains the best available ground. Reached only when the
-    // clamp would actually fire, so the extra raycast stays off the common path.
-    if (terrainBasemapHidden()) {
+    // While Google Photorealistic 3D tiles are the rendered ground the terrain
+    // basemap is hidden, and the elevation map is NOT the surface the user sees.
+    // It lands on either side of the tile ground (measured in one Athens block:
+    // ~12 m above it in most columns, up to ~6 m below it in a fifth of them), so
+    // clamping to it either parks the object in mid-air over the visible street —
+    // its height stops responding while the AGL readout bottoms out well above
+    // zero — or buries it under one. Clamp to the tile surface in BOTH directions
+    // instead; groundBelow() is the authority there and already rejects roofs and
+    // coarse-LOD tiles by returning null, in which case the elevation map is still
+    // the best ground available.
+    if (useVisibleGround && terrainBasemapHidden()) {
+        // Skipping the raycast is only sound while the point sits too high for any
+        // ACCEPTED tile ground to reach it — groundBelow() takes tile hits within
+        // its own tolerance of the elevation map, so that band is the safe margin.
+        if (pointAlt - groundAlt > height + tilesGroundTolerance()) {
+            return point;
+        }
         const tileGround = getTilesPointBelow(point);
         if (tileGround !== null) {
             const tileAlt = calculateAltitude(tileGround);
-            if (tileAlt < groundAlt) {
-                if (pointAlt - tileAlt > height) return point;
-                return pointAbove(tileGround, height);
-            }
+            return (pointAlt - tileAlt > height) ? point : pointAbove(tileGround, height);
         }
     }
 
+    if (pointAlt - groundAlt > height) {
+        return point;
+    }
     return pointAbove(ground, height);
 }
 

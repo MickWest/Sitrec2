@@ -720,6 +720,16 @@ export class CNodeBuildings3DTiles extends CNode {
     //
     // this.group recursively holds every loaded tile mesh for all per-view
     // TilesRenderers, so intersectObject(group, true) covers them all.
+    // How far a tile ground hit may deviate from the elevation map and still be
+    // accepted by groundBelow(). Exposed so callers can bound the search: a point
+    // more than this above the elevation ground cannot be below any tile ground we
+    // would accept, so they can skip the raycast. Read through the node rather than
+    // imported — this module already imports threeExt, so the reverse import would
+    // be a cycle.
+    get groundTolerance() {
+        return GROUND_TOLERANCE;
+    }
+
     groundBelow(worldPos) {
         if (!this.group || this.group.children.length === 0) return null;
         const up = getLocalUpVector(worldPos);

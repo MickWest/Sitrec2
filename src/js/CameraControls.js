@@ -1523,8 +1523,11 @@ class CameraMapControls {
 
 		this.camera.rotateOnWorldAxis(right, -angle) // rotate the camere as well, so target stays in same spot
 
-		// just don't let it go underground
-		this.camera.position.copy(clampAboveGround(this.camera.position,1));
+		// just don't let it go underground — against the VISIBLE ground, so orbiting
+		// near street level under Google 3D tiles neither sinks the camera through the
+		// rendered surface nor floats it above one. Once per mouse move, so the tile
+		// query it can cost is not on any bulk path.
+		this.camera.position.copy(clampAboveGround(this.camera.position, 1, true));
 
 
 	}
