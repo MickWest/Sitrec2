@@ -262,7 +262,7 @@ export function buildTracklets(perFrame, cumulative, opts = {}) {
  * "unmatched" as an explicit dummy column, which keeps maximum-cardinality-then-minimum-cost a
  * single objective instead of two passes that can disagree.
  */
-function assignMinCost(rows, nCol) {
+export function assignMinCost(rows, nCol) {
     const n = rows.length;
     const INF = Number.MAX_VALUE / 4;
     const u = new Float64Array(n + 1);

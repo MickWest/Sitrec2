@@ -20,6 +20,11 @@ import {STAR_DETECT_DEFAULTS, calibrateDetection, detectSources, rejectReason} f
 import {applyTransform, invertTransform, solveFrameChain} from "./StarMatch";
 import {STAR_SOLVE_DEFAULTS, solveStarField} from "./StarSolve";
 import {STAR_CLUSTER_DEFAULTS, groupMovingClusters} from "./StarCluster";
+import {calibrateLens} from "./StarCalibrate";
+import {
+    attachRays, classifyTracksSpherical, gnomonicChart, refineGlobalSpherical, statesFromChain2D,
+} from "./StarSolveSphere";
+import {lensFOV} from "../CameraLens";
 import {
     STAR_IDENTIFY_DEFAULTS,
     buildQuadIndex,
@@ -62,6 +67,13 @@ const params = {
     minObservations: STAR_SOLVE_DEFAULTS.minObservations,
     driftSignificance: STAR_SOLVE_DEFAULTS.driftSignificance,
     driftMinSigmas: STAR_SOLVE_DEFAULTS.driftMinSigmas,
+    // Lens. On a wide-angle clip the 2D similarity sky model is biased at the frame edges - a
+    // measured ~10-12 px on the reference clip, enough to report edge stars as movers. When this
+    // is on, the lens is fitted from the star field and the classification is redone on the
+    // sphere. The gate refuses to fit whenever the clip does not constrain a lens, so leaving it
+    // on costs nothing on the narrow-field footage that was always fine.
+    fitLens: true,
+    lensStatus: "not run",
     // Display
     showStars: true,
     showMoving: true,
@@ -611,8 +623,20 @@ export async function identifyStars() {
             : Math.min(25, Math.max(1, Math.ceil(0.15 * totalFrames)));
         // disabledStars holds the circles the user clicked off in the video view - their call,
         // no questions asked: a light they know is a planet, a plane, or a bad track.
+        // Identification runs on the 2D reference chart and on the star set THAT chart produced -
+        // `klass2D` when the lens fit has re-judged the classification, `klass` otherwise.
+        //
+        // Deliberately not the improved star set. Identify hashes quads with a planar-similarity
+        // code and verifies against a gnomonic field, and it is calibrated end to end against
+        // what the 2D chart yields; feeding it the ~60 additional EDGE stars the lens fit
+        // recovers loses its match consensus on the reference clip. Projecting the spherical map
+        // gnomonically instead was tried and did not fix it either - plausibly because the chart
+        // then spans the true ~87 deg rather than the ~21 deg the similarity chain compressed it
+        // to, which is a wider field than the identifier's tiers cover. Migrating Identify to the
+        // sphere is its own piece of work; until then the two features stay decoupled.
         const stars = myResult.solved.classified
-            .filter((c) => c.klass === "star" && c.position && Number.isFinite(c.magnitude)
+            .filter((c) => (c.klass2D ?? c.klass) === "star" && c.position
+                && Number.isFinite(c.magnitude)
                 && c.n >= minIdentifyObs
                 && !myResult.disabledStars?.has(c.index))
             .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index}));
@@ -923,6 +947,115 @@ export async function runStarTracker() {
             solved.transforms = Array.from({length: total}, () => T0);
         }
 
+        // Stage 3b: fit the LENS and re-judge the classification on the sphere.
+        //
+        // Everything above stays exactly as it was. The 2D solve still decides which detections
+        // belong to which track and still supplies the reference chart the overlay draws in -
+        // it is good at both, and its ~10 px edge error is nothing next to a 6-24 px circle.
+        // What it is not good enough for is deciding whether a star MOVED, because that same
+        // 10 px is the whole measurement. So the geometry is redone here and only the verdict
+        // is overwritten.
+        //
+        // Measured on the reference clip (a ~89 deg IR monocular, sky rotating about a pole just
+        // past the top-right corner): the 2D model explains 84 of 129 star correspondences with
+        // an 11.7 px worst case and reports ~70 real stars as moving; one rotation through the
+        // fitted lens explains all of them under 2.5 px.
+        let lensInfo = null;
+        if (!still && params.fitLens && solved.tracks.length) {
+            try {
+                const cal = calibrateLens(solved.tracks, solved.transforms.length, [videoW, videoH]);
+                if (cal.accepted) {
+                    const lens = cal.lens;
+                    const size = [videoW, videoH];
+                    const states = statesFromChain2D(solved.transforms, lens, size);
+                    attachRays(solved.tracks, states, lens, size);
+
+                    // CAMERA-FIXED ARTIFACTS ARE THE 2D PASS'S TO DECIDE, AND ITS ANSWER STANDS.
+                    // classifyTracksSpherical has no artifact test, and a hot pixel holds its
+                    // PIXEL position while the sky rotates - so on the sphere it sweeps, and
+                    // re-judging it here would turn dust and a reticle into confident movers.
+                    // They are also kept out of the fit: they are a large, perfectly coherent
+                    // contaminant, which is the kind robust trimming handles worst.
+                    const artifacts = new Set();
+                    for (const c of solved.classified) {
+                        if (c.klass === "cameraFixed") artifacts.add(c.index);
+                    }
+
+                    let refined = refineGlobalSpherical(solved.tracks, states, lens, size,
+                        {exclude: artifacts});
+                    const classifyOpts = {
+                        minObservations: ctx.minObservations,
+                        driftSignificance: ctx.driftSignificance,
+                        driftMinSigmas: ctx.driftMinSigmas,
+                    };
+                    let sph = classifyTracksSpherical(solved.tracks, refined.states, lens, size,
+                        {...classifyOpts, exclude: artifacts});
+
+                    // STAR-ONLY RE-SOLVE, as solveStarField does for the same reason: the first
+                    // pass necessarily includes the movers, and those pull on the very
+                    // orientations used to judge them. Re-solve on what looks like sky, then
+                    // re-classify everything against that.
+                    const notSky = new Set(artifacts);
+                    for (const s of sph) if (s.klass !== "star") notSky.add(s.index);
+                    const skyCount = solved.tracks.length - notSky.size;
+                    if (skyCount >= 8) {
+                        refined = refineGlobalSpherical(solved.tracks, refined.states, lens, size,
+                            {exclude: notSky});
+                        sph = classifyTracksSpherical(solved.tracks, refined.states, lens, size,
+                            {...classifyOpts, exclude: notSky});
+                    }
+
+                    // Overwrite only the VERDICT and the numbers behind it. position, magnitude,
+                    // rx/ry and everything the overlay and Identify read stay on the 2D chart.
+                    let changed = 0;
+                    for (const s of sph) {
+                        const c = solved.classified[s.index];
+                        if (!c) continue;
+                        if (c.klass === "cameraFixed") continue;   // the 2D pass owns this verdict
+                        if (c.klass !== s.klass) changed++;
+                        // Keep the 2D verdict. Star IDENTIFICATION still consumes the 2D
+                        // reference chart and is calibrated against the star set that chart
+                        // produced; handing it the ~60 extra edge stars this fix recovers breaks
+                        // its match consensus (measured on the reference clip: identify succeeded
+                        // before, failed after). Until Identify is migrated to the spherical map
+                        // it keeps the input it was tuned for. This decouples the two features
+                        // rather than trading one regression for another.
+                        c.klass2D = c.klass;
+                        c.klass = s.klass;
+                        c.totalDrift = s.totalDrift;
+                        c.significance = s.significance;
+                        c.sigma = s.sigma;
+                    }
+                    // A flat gnomonic chart of the settled map, for the star IDENTIFIER.
+                    //
+                    // Identify hashes quads with a planar-similarity-invariant code and verifies
+                    // against a gnomonic field, so it needs a chart where great circles are
+                    // straight. The 2D reference chart is not one - it carries the same edge warp
+                    // that made the classification wrong - and handing it 60-odd newly-recovered
+                    // EDGE stars, which is exactly what this feature does, pushed it past the
+                    // point where it could hold consensus. Measured: identify succeeded before
+                    // this change and failed after it, on the same clip.
+                    const chartOut = gnomonicChart(solved.tracks.map((t) => t.ref), lens.focalPx);
+                    const chart = chartOut.positions;
+
+                    const fov = lensFOV(lens, size);
+                    lensInfo = {lens, diagnostics: cal.diagnostics, changed, rms: refined.rms,
+                        chart, chartCentre: chartOut.centre, states: refined.states};
+                    params.lensStatus = `${lens.type}, ${fov.hfov.toFixed(0)} deg, rms ${refined.rms.toFixed(2)} px`
+                        + (changed ? `, ${changed} reclassified` : "");
+                } else {
+                    params.lensStatus = `not fitted: ${cal.reason}`;
+                }
+            } catch (e) {
+                // A calibration failure must never take the whole analysis down with it - the 2D
+                // result above is still a usable answer.
+                console.warn("Star Track lens calibration failed", e);
+                params.lensStatus = "failed (see console)";
+            }
+        } else if (!params.fitLens) {
+            params.lensStatus = "off";
+        }
+
         // Stage 4: the lights that move TOGETHER - an aircraft's flashing cluster - grouped into
         // objects that no individual track is good enough to establish. Meaningless for a
         // still: motion is the one thing a single exposure cannot show.
@@ -953,7 +1086,7 @@ export async function runStarTracker() {
         // the FOV keeps serving the old solve's zoom.
         detachStarTrackCamera();
         result = {frame0, frame1, generation, videoData, perFrame, chain, solved, clusters,
-            videoW, videoH, still, rejectCounts, rejectSamples};
+            videoW, videoH, still, rejectCounts, rejectSamples, lensInfo};
         // Published for inspection and for other tools, the way camera motion publishes its own
         // per-video data on Globals.
         Globals.starTrackerResult = result;
@@ -1330,6 +1463,12 @@ export function setupStarTrackerMenu() {
         .name("Measure/Analyze/Identify/Sync");
     folder.add(params, "status").name("Status").listen().disable();
 
+    folder.add(params, "fitLens").name("Fit lens from stars")
+        .tooltip("Fit the camera lens from the star field and judge motion on the sphere instead "
+            + "of with a flat 2D model. On a wide-angle clip the flat model is biased at the frame "
+            + "edges and reports edge stars as moving. Refuses to fit when the clip does not "
+            + "constrain a lens, so it is safe to leave on.");
+    folder.add(params, "lensStatus").name("Lens").listen().disable();
     folder.add(params, "showStars").name("Show stars").onChange(setRenderOne);
     folder.add(params, "showMoving").name("Show moving").onChange(setRenderOne);
     folder.add(params, "showClusters").name("Show light clusters").onChange(setRenderOne);
