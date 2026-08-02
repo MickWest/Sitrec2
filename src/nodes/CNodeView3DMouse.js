@@ -38,7 +38,7 @@ import {isKeyHeld} from "../KeyBoardHandler";
 import {glareSphere, targetSphere} from "../JetStuffVars";
 import {jetPitchFromFrame} from "../JetUtils";
 import {t} from "../i18n";
-import {raDec2Celestial} from "../CelestialMath";
+import {applyAnnualAberration, raDec2Celestial} from "../CelestialMath";
 import {applyRefractionECI, refractionUniforms, refractionOptsFromUniforms} from "../atmosphere/refraction";
 import {findRootTrack} from "../FindRootTrack";
 import {raycastLocalGround} from "../raycastGround";
@@ -765,7 +765,7 @@ export const mouseMethods = {
                 const dec = nightSkyNode.starField.getStarDEC(n);
                 const mag = nightSkyNode.starField.getStarMagnitude(n);
                 
-                const pos = raDec2Celestial(ra, dec, 100);
+                const pos = applyAnnualAberration(raDec2Celestial(ra, dec, 100), date);
                 if (refractApplies) {
                     applyRefractionECI(pos, refractionUniforms.uZenithECI.value, refractOpts);
                 }

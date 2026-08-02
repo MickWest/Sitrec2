@@ -1,9 +1,9 @@
 // Atmospheric refraction for celestial objects.
 //
 // Forward (geometric → apparent) Saemundsson formula with Stellarium's
-// horizon taper, expressed in the equatorial-inertial frame the celestial
-// sphere is built in (raDec2Celestial output, before the per-frame -GMST
-// rotation that lands the sphere in ECEF).
+// horizon taper, expressed in the EQJ (J2000/ICRS equatorial) frame the
+// celestial sphere is built in (raDec2Celestial output, before the per-frame
+// EQJ→ECEF rotation that lands the sphere on the ground).
 //
 // JS path: applyRefractionECI() — used for Sun/Moon/planets on the CPU.
 // GPU path: REFRACTION_VERTEX_GLSL + installRefractionOnMaterial() — used
@@ -23,13 +23,13 @@ export const REFRACTION_DEFAULTS = {
 // objects, so updating refractionUniforms.uZenithECI.value (etc.) once per
 // frame is visible on every shader without per-material work.
 //
-// uZenithECI is the local zenith expressed in the celestial-inertial frame
-// raDec2Celestial emits in (used for stars/grid/constellation lines whose
-// vertex positions are local to the celestialSphere group).
+// uZenithECI is the local zenith expressed in the EQJ frame raDec2Celestial
+// emits in (used for stars/grid/constellation lines whose vertex positions
+// are local to the celestialSphere group).
 //
-// uZenithECEF is the same zenith but in world space — i.e. *not* rotated
-// by GMST — used for Sun/Moon vertex shaders that work on world positions
-// (modelMatrix * position) and therefore need the world-space zenith.
+// uZenithECEF is the same zenith but in world space — i.e. *not* carried into
+// the sphere's frame — used for Sun/Moon vertex shaders that work on world
+// positions (modelMatrix * position) and therefore need the world-space zenith.
 export const refractionUniforms = {
     uRefractionEnabled: {value: REFRACTION_DEFAULTS.enabled ? 1.0 : 0.0},
     uZenithECI: {value: new Vector3(0, 0, 1)},
@@ -128,11 +128,64 @@ export function applyRefractionFromObserver(pos, observerECEF, opts = {}, target
     _obsDir.subVectors(pos, observerECEF);
     const dist = _obsDir.length();
     if (dist < 1) return out;
-    _obsZenith.copy(observerECEF).normalize();
+    // GEODETIC zenith, not the geocentric radial. Refraction is symmetric
+    // about the local vertical — perpendicular to the local horizon — and on
+    // an ellipsoid the two differ by up to 11.55' (11.5' at 45° latitude,
+    // 10.8' at Copenhagen). Using the radial tilted the bend axis by that
+    // much, which near the horizon is worth ~1.25' of satellite altitude at
+    // 0.5° and ~1' at 1°. The celestial path already used geodetic; this one
+    // had been left on the radial.
+    //
+    // Radii come from the caller because Sitrec's earth model is SELECTABLE
+    // (Sit.useEllipsoid, false for legacy sitches): with a spherical earth the
+    // observer ECEF is built on a sphere and the vertical IS the radial, so a
+    // hard-coded WGS84 inversion would reintroduce the same ~11.5' tilt in the
+    // opposite direction. Passing equal radii collapses this to the radial
+    // exactly, which is what a sphere wants.
+    zenithECEFFromPosition(observerECEF, _obsZenith, opts.equatorRadius, opts.polarRadius);
     // Bend the direction vector using the same routine as celestial bending.
     applyRefractionECI(_obsDir, _obsZenith, opts);
     out.copy(_obsDir).add(observerECEF);
     return out;
+}
+
+// Geodetic zenith (ellipsoid normal) at an ECEF position, at any altitude.
+// Bowring's closed-form inverse — good to well under a milliarcsecond, and
+// self-contained so this module keeps its "three only" dependency and its unit
+// tests stay free of the app's global graph.
+//
+// The radii are parameters, not constants, because Sitrec's earth model is
+// selectable: pass Globals.equatorRadius / Globals.polarRadius so this tracks
+// Sit.useEllipsoid. With equal radii (the spherical model) e2 collapses to 0
+// and the result is exactly the geocentric radial, which is the correct
+// vertical for that model. Defaults are WGS84.
+const WGS84_A = 6378137.0;
+const WGS84_B = WGS84_A * (1 - 1 / 298.257223563);
+
+export function zenithECEFFromPosition(posECEF, target = new Vector3(),
+                                       a = WGS84_A, b = WGS84_B) {
+    const {x, y, z} = posECEF;
+    const p = Math.hypot(x, y);
+    if (p < 1e-9) {
+        // On the spin axis: the normal is +/-Z and longitude is undefined.
+        return target.set(0, 0, z >= 0 ? 1 : -1);
+    }
+    const lonRad = Math.atan2(y, x);
+    const asqr = a * a, bsqr = b * b;
+    const e2 = (asqr - bsqr) / asqr;
+    if (e2 <= 0) {
+        // Spherical earth model — the vertical is the radial. Take it directly
+        // rather than through a latitude, so it is exact.
+        return target.copy(posECEF).normalize();
+    }
+    const ep2 = (asqr - bsqr) / bsqr;
+    const theta = Math.atan2(z * a, p * b);
+    const sinT = Math.sin(theta), cosT = Math.cos(theta);
+    const latRad = Math.atan2(
+        z + ep2 * b * sinT * sinT * sinT,
+        p - e2 * a * cosT * cosT * cosT,
+    );
+    return zenithECEFFromLatLon(latRad, lonRad, target);
 }
 
 // Geodetic local zenith in ECEF (X→Greenwich, Z→North) from observer
@@ -148,18 +201,17 @@ export function zenithECEFFromLatLon(latRad, lonRad, target = new Vector3()) {
     return target;
 }
 
-// Same vector but rotated by +GMST around Z so it lives in the celestial
-// sphere group's local (ECI / equatorial-inertial) frame.
-export function zenithECIFromLatLonGMST(latRad, lonRad, gmstDeg, target = new Vector3()) {
+// Same vector, carried into the celestial sphere group's local EQJ frame by
+// the caller-supplied ECEF→EQJ matrix (CelestialMath.getECEFToEQJMatrix).
+//
+// This must be the exact inverse of the matrix the celestialSphere is drawn
+// with. A bare Rz(+GAST) is NOT enough: it would leave the zenith off by the
+// precession since J2000 (22 arcmin in 2026), and refraction would then bend
+// every star, line and grid vertex about the wrong axis — reintroducing
+// several arcmin of altitude error into a pipeline that had just been fixed.
+export function zenithEQJFromLatLon(latRad, lonRad, ecefToEQJ, target = new Vector3()) {
     zenithECEFFromLatLon(latRad, lonRad, target);
-    const g = gmstDeg * DEG2RAD;
-    const cg = Math.cos(g);
-    const sg = Math.sin(g);
-    const x = target.x;
-    const y = target.y;
-    target.x = cg * x - sg * y;
-    target.y = sg * x + cg * y;
-    return target;
+    return target.applyMatrix4(ecefToEQJ);
 }
 
 // GLSL counterpart of applyRefractionECI. Drop into a vertex shader with

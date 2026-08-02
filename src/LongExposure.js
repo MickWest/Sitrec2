@@ -53,7 +53,7 @@ import {waitForExportFrameSettled} from "./ExportFrameSettler";
 import {Quaternion, Vector3} from "three";
 import {nudgeParams, defaultNudgeParams, nudgeQuaternion} from "./nodes/CNodeControllerCameraNudge";
 import {applyRefractionECI, refractionOptsFromUniforms, refractionUniforms} from "./atmosphere/refraction";
-import {raDec2Celestial} from "./CelestialMath";
+import {applyAnnualAberration, raDec2Celestial} from "./CelestialMath";
 import {CNode3DLight} from "./nodes/CNode3DLight";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
 import {degrees, radians} from "./mathUtils";
@@ -619,7 +619,12 @@ async function renderLongExposure(mgr) {
                 starDirsECI = new Float32Array(starCount * 3);
                 starFlux = new Float32Array(starCount);
                 for (let i = 0; i < starCount; i++) {
-                    const eq = raDec2Celestial(starField.BSC_RA[i], starField.BSC_DEC[i], 1);
+                    // Aberration at the exposure's start instant — the array is
+                    // built once and re-oriented per frame, and aberration moves
+                    // by only ~0.34"/day, so a single evaluation is exact enough.
+                    const eq = applyAnnualAberration(
+                        raDec2Celestial(starField.BSC_RA[i], starField.BSC_DEC[i], 1),
+                        GlobalDateTimeNode.dateNow);
                     starDirsECI[i * 3] = eq.x;
                     starDirsECI[i * 3 + 1] = eq.y;
                     starDirsECI[i * 3 + 2] = eq.z;

@@ -1,12 +1,14 @@
-import {Vector3} from 'three';
+import {Matrix4, Vector3} from 'three';
 import {
     refractionDeltaDeg,
     applyRefractionECI,
     applyRefractionFromObserver,
     zenithECEFFromLatLon,
-    zenithECIFromLatLonGMST,
+    zenithECEFFromPosition,
+    zenithEQJFromLatLon,
     REFRACTION_DEFAULTS,
 } from '../src/atmosphere/refraction';
+import {getECEFToEQJMatrix, getEQJToECEFMatrix} from '../src/CelestialMath';
 
 // Stellarium-style Saemundsson reference values at standard atmosphere
 // (P = 1010 hPa, T = 10 °C). Values were generated from the same formula
@@ -209,27 +211,168 @@ describe('zenithECEFFromLatLon', () => {
     });
 });
 
-describe('zenithECIFromLatLonGMST', () => {
-    test('lat=0, lon=0, GMST=0 → +X (vernal equinox)', () => {
-        const z = zenithECIFromLatLonGMST(0, 0, 0);
+describe('zenithECEFFromPosition (geodetic zenith from an ECEF point)', () => {
+    const A = 6378137.0, F = 1 / 298.257223563, E2 = F * (2 - F);
+    const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+
+    // Build an ECEF position from geodetic lat/lon/height, so the expected
+    // zenith is known exactly rather than assumed.
+    const fromGeodetic = (latDeg, lonDeg, h) => {
+        const la = latDeg * D2R, lo = lonDeg * D2R;
+        const N = A / Math.sqrt(1 - E2 * Math.sin(la) ** 2);
+        return new Vector3(
+            (N + h) * Math.cos(la) * Math.cos(lo),
+            (N + h) * Math.cos(la) * Math.sin(lo),
+            (N * (1 - E2) + h) * Math.sin(la),
+        );
+    };
+
+    test.each([
+        [0, 0, 0], [55.6405, 12.6533, 39.6], [45, -118, 0],
+        [-33.9, 151.2, 1200], [89.9, 10, 0], [60, 20, 400000],
+    ])('recovers the exact geodetic normal at lat %p lon %p h %p', (lat, lon, h) => {
+        const got = zenithECEFFromPosition(fromGeodetic(lat, lon, h));
+        const want = zenithECEFFromLatLon(lat * D2R, lon * D2R);
+        // Bowring is good to well under a milliarcsecond.
+        expect(Math.acos(Math.min(1, got.dot(want))) * R2D * 3600).toBeLessThan(0.001);
+    });
+
+    test('differs from the geocentric radial by the expected amount', () => {
+        // The bug this replaced: using observerECEF.normalize() as the zenith.
+        // Peak separation is ~11.55' near 45°, zero at pole and equator.
+        const sep = (latDeg) => {
+            const p = fromGeodetic(latDeg, 0, 0);
+            const geodetic = zenithECEFFromPosition(p);
+            const geocentric = p.clone().normalize();
+            return Math.acos(Math.min(1, geodetic.dot(geocentric))) * R2D * 60;
+        };
+        // Coincident at equator and pole. Bounded rather than toBeCloseTo(0):
+        // acos is ill-conditioned at dot≈1, so the floor here is arithmetic
+        // noise (~3 milliarcsec), not geometry.
+        expect(sep(0)).toBeLessThan(0.001);
+        expect(sep(90)).toBeLessThan(0.001);
+        expect(sep(45)).toBeGreaterThan(11.4);
+        expect(sep(45)).toBeLessThan(11.6);
+        expect(sep(55.6405)).toBeGreaterThan(10.6);   // Copenhagen
+        expect(sep(55.6405)).toBeLessThan(10.9);
+    });
+
+    // Sitrec's earth model is selectable (Sit.useEllipsoid, false by default for
+    // legacy sitches). With a sphere the observer ECEF sits on a sphere and the
+    // local vertical IS the radial, so a hard-coded WGS84 inversion would tilt
+    // the refraction axis by the same ~11.5' this change exists to remove.
+    test('collapses to the radial when given a spherical earth model', () => {
+        const R = A;
+        for (const latDeg of [0, 30, 45, 55.6405, 80]) {
+            const la = latDeg * D2R;
+            const p = new Vector3(R * Math.cos(la), 0, R * Math.sin(la));
+            const got = zenithECEFFromPosition(p, new Vector3(), R, R);
+            const radial = p.clone().normalize();
+            expect(got.dot(radial)).toBeCloseTo(1, 12);
+        }
+    });
+
+    test('ellipsoid and sphere models genuinely disagree, by the known amount', () => {
+        const la = 45 * D2R;
+        const N = A / Math.sqrt(1 - E2 * Math.sin(la) ** 2);
+        const p = new Vector3(N * Math.cos(la), 0, N * (1 - E2) * Math.sin(la));
+        const ell = zenithECEFFromPosition(p, new Vector3());               // WGS84 default
+        const sph = zenithECEFFromPosition(p, new Vector3(), A, A);         // sphere
+        const sep = Math.acos(Math.min(1, ell.dot(sph))) * R2D * 60;
+        expect(sep).toBeGreaterThan(11.4);
+        expect(sep).toBeLessThan(11.6);
+    });
+
+    test('is stable on the spin axis', () => {
+        expect(zenithECEFFromPosition(new Vector3(0, 0, 6356752)).z).toBeCloseTo(1, 9);
+        expect(zenithECEFFromPosition(new Vector3(0, 0, -6356752)).z).toBeCloseTo(-1, 9);
+    });
+});
+
+describe('satellite refraction bends about the geodetic vertical', () => {
+    const A = 6378137.0, F = 1 / 298.257223563, E2 = F * (2 - F);
+    const D2R = Math.PI / 180;
+    const fromGeodetic = (latDeg, lonDeg, h) => {
+        const la = latDeg * D2R, lo = lonDeg * D2R;
+        const N = A / Math.sqrt(1 - E2 * Math.sin(la) ** 2);
+        return new Vector3(
+            (N + h) * Math.cos(la) * Math.cos(lo),
+            (N + h) * Math.cos(la) * Math.sin(lo),
+            (N * (1 - E2) + h) * Math.sin(la),
+        );
+    };
+
+    test('a satellite low over a mid-latitude observer lifts along local up', () => {
+        const obs = fromGeodetic(45, 0, 0);
+        const up = zenithECEFFromPosition(obs);
+        // North-pointing horizontal direction in the local geodetic frame.
+        const north = new Vector3(0, 0, 1).sub(up.clone().multiplyScalar(up.z)).normalize();
+        // Satellite ~1° above the geodetic horizon, 1000 km away.
+        const dir = north.clone().multiplyScalar(Math.cos(1 * D2R))
+            .add(up.clone().multiplyScalar(Math.sin(1 * D2R))).normalize();
+        const sat = obs.clone().add(dir.clone().multiplyScalar(1e6));
+
+        const out = applyRefractionFromObserver(sat, obs, {enabled: true});
+        const outDir = out.clone().sub(obs).normalize();
+
+        const altBefore = Math.asin(dir.dot(up)) / D2R;
+        const altAfter = Math.asin(outDir.dot(up)) / D2R;
+        const lift = (altAfter - altBefore) * 60;
+
+        // Saemundsson at 1° is ~21.8'; bending about the geocentric radial
+        // instead would be off by ~1'.
+        expect(lift).toBeGreaterThan(20.5);
+        expect(lift).toBeLessThan(23.0);
+
+        // The lift must be purely vertical in the geodetic frame — refraction
+        // never changes azimuth.
+        const east = new Vector3().crossVectors(up, north).normalize();
+        expect(Math.abs(outDir.dot(east) - dir.dot(east))).toBeLessThan(1e-9);
+    });
+});
+
+describe('zenithEQJFromLatLon', () => {
+    const identity = new Matrix4();
+    const rotZ = (deg) => new Matrix4().makeRotationZ(deg * Math.PI / 180);
+
+    test('lat=0, lon=0, identity frame → +X', () => {
+        const z = zenithEQJFromLatLon(0, 0, identity);
         expect(z.x).toBeCloseTo(1, 6);
         expect(z.y).toBeCloseTo(0, 6);
         expect(z.z).toBeCloseTo(0, 6);
     });
 
-    test('lat=90 → +Z regardless of longitude or GMST', () => {
-        const z = zenithECIFromLatLonGMST(Math.PI / 2, 1.234, 200);
+    test('lat=90 → +Z regardless of longitude or frame rotation', () => {
+        const z = zenithEQJFromLatLon(Math.PI / 2, 1.234, rotZ(200));
         expect(z.z).toBeCloseTo(1, 6);
     });
 
-    test('GMST rotates equator point by +GMST around Z', () => {
-        const z = zenithECIFromLatLonGMST(0, 0, 90);
+    test('the supplied matrix rotates the equator point', () => {
+        const z = zenithEQJFromLatLon(0, 0, rotZ(90));
         expect(z.x).toBeCloseTo(0, 6);
         expect(z.y).toBeCloseTo(1, 6);
     });
 
     test('unit length', () => {
-        const z = zenithECIFromLatLonGMST(0.7, -2.1, 137);
+        const z = zenithEQJFromLatLon(0.7, -2.1, rotZ(137));
         expect(z.length()).toBeCloseTo(1, 6);
+    });
+
+    // The load-bearing property: refraction must bend about the observer's
+    // real zenith, so the matrix handed in has to be the exact inverse of the
+    // one the celestial sphere is drawn with. Round-tripping proves it, and
+    // guards against anyone "simplifying" this back to a bare sidereal spin.
+    test('round-trips through the celestial sphere matrix back to the ECEF zenith', () => {
+        const date = new Date('2026-08-01T20:06:45.000Z');
+        const lat = 55.640518563099654 * Math.PI / 180;
+        const lon = 12.653300416260622 * Math.PI / 180;
+
+        const eqj = zenithEQJFromLatLon(lat, lon, getECEFToEQJMatrix(date));
+        const backToECEF = eqj.clone().applyMatrix4(getEQJToECEFMatrix(date));
+        const direct = zenithECEFFromLatLon(lat, lon);
+
+        expect(backToECEF.x).toBeCloseTo(direct.x, 12);
+        expect(backToECEF.y).toBeCloseTo(direct.y, 12);
+        expect(backToECEF.z).toBeCloseTo(direct.z, 12);
     });
 });
