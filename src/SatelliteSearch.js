@@ -13,6 +13,7 @@
 // interactive night-sky version of the same propagation.
 
 import * as satellite from "satellite.js";
+import {isOMMCSV, parseOMMCSVLines} from "./TLEUtils";
 import {LLAToECEFRadians, ECEF2ENU_radii} from "./LLA-ECEF-ENU";
 import {getGeocentricBodyPositionECEF} from "./CelestialMath";
 import {SITREC_SERVER} from "./configUtils";
@@ -33,10 +34,20 @@ export function satelliteECEF(satrec, date) {
     return LLAToECEFRadians(gd.latitude, gd.longitude, altM);
 }
 
-// Parse a Space-Track "3le" catalogue (name / line1 / line2 triplets, the name
-// line prefixed "0 ") into [{name, satrec}], dropping any that fail to parse.
-function parse3LE(text) {
+// Parse a Space-Track catalogue into [{name, satrec}], dropping any that fail
+// to parse. Handles both the OMM CSV the proxy now requests and the legacy
+// "3le" (name / line1 / line2 triplets, name line prefixed "0 ") still held in
+// the cache for older dates.
+function parseCatalogue(text) {
     const lines = text.split("\n");
+    if (lines.length > 0 && isOMMCSV(lines[0])) {
+        const records = parseOMMCSVLines(lines);
+        if (records === null) return [];
+        return records
+            .filter(r => r.satrec && !r.satrec.error)
+            .map(r => ({name: r.name, satrec: r.satrec}));
+    }
+
     const out = [];
     for (let i = 0; i + 2 < lines.length; i++) {
         const l1 = lines[i + 1], l2 = lines[i + 2];
@@ -76,7 +87,7 @@ export async function loadLEOSatrecsForDate(date) {
         text = new TextDecoder().decode(buf);
     }
     if (/^\s*ERROR/i.test(text)) throw new Error(text.split("\n")[0].slice(0, 200));
-    return parse3LE(text);
+    return parseCatalogue(text);
 }
 
 /**

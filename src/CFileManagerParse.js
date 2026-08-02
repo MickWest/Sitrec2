@@ -68,7 +68,7 @@ import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {projectedBoundsToWGS84} from "./proj4Loader";
 import {isAudioOnlyFormat} from "./AudioFormats";
 import {EventManager} from "./CEventManager";
-import {CTLEData} from "./TLEUtils";
+import {CTLEData, isOMMCSV} from "./TLEUtils";
 import {extractFeaturesFromFile, isFeaturesCSV} from "./ParseFeaturesCSV";
 import {createImageFromArrayBuffer} from "./FileUtils";
 import {CNode3DObject, ModelFiles} from "./nodes/CNode3DObject";
@@ -1468,6 +1468,18 @@ export const parseMethods = {
                     if (sondeTrackFile) {
                         parsed = sondeTrackFile;
                         dataType = "trackfile";
+                        break;
+                    }
+
+                    // An OMM CSV is a satellite catalogue, not a track. This is
+                    // the format CelesTrak and Space-Track now publish the full
+                    // catalogue in, and what Sitrec exports, so a user can drop
+                    // one straight in. CTLEData parses the raw text.
+                    // (Read just the header, not a split of the whole file.)
+                    const firstNewline = text.indexOf("\n");
+                    if (isOMMCSV(firstNewline < 0 ? text : text.slice(0, firstNewline))) {
+                        parsed = text;
+                        dataType = "tle";
                         break;
                     }
 

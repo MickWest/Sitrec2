@@ -689,6 +689,19 @@ export class CSatellite {
     }
 
     /**
+     * Name for the exported satellite file, matching what it actually contains:
+     * OMM CSV for anything downloaded now, TLE for older/imported data.
+     *
+     * A "mixed" set (a .tle merged into a CSV catalogue, or the reverse) is
+     * named .tle deliberately: importing a .tle always routes to CTLEData,
+     * which reads the file block by block, whereas the .csv route first checks
+     * that line 1 is an OMM header — which a TLE-first mixed file fails.
+     */
+    satelliteExportFilename() {
+        return this.TLEData?.format === "omm-csv" ? "satellites.csv" : "satellites.tle";
+    }
+
+    /**
      * Replace/load TLE data
      */
     replaceTLE(tle) {
@@ -706,7 +719,7 @@ export class CSatellite {
             const obj = {
                 exportTLE: () => {
                     const tleText = tle;
-                    saveAs(new Blob([tleText]), "satellites.tle");
+                    saveAs(new Blob([tleText]), this.satelliteExportFilename());
                 }
             };
             this.exportTLEButton = guiMenus.file.add(obj, 'exportTLE').name(t("misc.exportTLE.label"));
@@ -742,7 +755,7 @@ export class CSatellite {
         const rawText = this.TLEData.rawText;
         const obj = {
             exportTLE: () => {
-                saveAs(new Blob([rawText]), "satellites.tle");
+                saveAs(new Blob([rawText]), this.satelliteExportFilename());
             }
         };
         this.exportTLEButton = guiMenus.file.add(obj, 'exportTLE').name(t("misc.exportTLE.label"));

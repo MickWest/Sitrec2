@@ -3,6 +3,7 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/curlGetRequest.php';
+require_once __DIR__ . '/gpData.php';
 
 // SECURITY: Rate limiting by IP - max 30 requests per minute
 $clientIP = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
@@ -33,8 +34,16 @@ if (getenv("CURRENT_STARLINK")) {
     );
 } else {        $request_url_map = array(
     // these are the defaults if you don't set something in shared.env
-    "CURRENT_STARLINK" => "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?FILE=starlink&FORMAT=tle",
-    "CURRENT_ACTIVE" => "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle",
+    //
+    // FORMAT=csv, not tle. The TLE format cannot express catalog numbers above
+    // 99999, and the catalog passed that limit on 2026-07-11 (CelesTrak added
+    // Saramago). CelesTrak omits those objects from TLE feeds entirely, so the
+    // TLE feed is now silently incomplete - as of 2026-08 it is missing ~128
+    // Starlinks. CSV carries the full CCSDS OMM keyword set, has no catalog
+    // number limit, keeps the full-precision epoch, and is marginally SMALLER
+    // on the wire than TLE. Sitrec parses both (see src/TLEUtils.ts).
+    "CURRENT_STARLINK" => "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?FILE=starlink&FORMAT=csv",
+    "CURRENT_ACTIVE" => "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=csv",
 );}
 
 $request = isset($_GET["request"]) ? $_GET["request"] : null;
@@ -62,15 +71,24 @@ $url_parts = parse_url($url);
 //}
 
 $path_parts = pathinfo($url);
-$ext = strtolower($path_parts['extension']);
+$ext = strtolower($path_parts['extension'] ?? '');
 
-// for hosts that don't have an extension, add the right one here.
-if (strcmp($url_parts['host'],"celestrak.org") === 0) {
+// CelesTrak serves everything from gp.php / sup-gp.php, so the path has no
+// meaningful extension - the FORMAT query parameter says what we actually get.
+if (strcmp($url_parts['host'], "celestrak.org") === 0) {
     $ext = "tle";
+    if (isset($url_parts['query'])) {
+        parse_str($url_parts['query'], $query_params);
+        $format = strtolower($query_params['FORMAT'] ?? '');
+        if ($format !== '') {
+            $ext = $format;
+        }
+    }
 }
 
 
-$allowed_extensions = ["txt", "tle", "2le", "3le"];
+// csv is the OMM format Sitrec now prefers; the *le formats are legacy TLE.
+$allowed_extensions = ["txt", "tle", "2le", "3le", "csv"];
 if (!in_array($ext, $allowed_extensions, true)) {
     exit("Illegal File Type " . $ext);
 }
@@ -80,24 +98,43 @@ $cachePath = $CACHE_PATH . $hash;
 $fileLocation = $CACHE_PATH;
 $cachedFile = $fileLocation . $hash;
 
-$lifetime = 60 * 60; // 1 hour
+// CelesTrak regenerates GP data every 2 hours, and answers a re-request made
+// before then with HTTP 403 and a "GP data has not updated since your last
+// successful download" body. Polling faster than the publication rate earns
+// nothing but rejections, so match the upstream cadence.
+$lifetime = 2 * 60 * 60; // 2 hours
 
-if (file_exists($cachedFile) && (time() - filemtime($cachedFile)) < $lifetime) {
-    header("Location: " . $cachePath);
-    exit();
-} else {
+// How long to wait before retrying after a failed refresh. Short, so a
+// transient upstream error doesn't pin us to stale data for a full lifetime.
+$retryAfterFailure = 10 * 60; // 10 minutes
+
+$haveCache = file_exists($cachedFile);
+$isFresh = $haveCache && (time() - filemtime($cachedFile)) < $lifetime;
+
+if (!$isFresh) {
     $result = curlGetRequest($url);
     $dataBlob = $result['data'];
+    $httpStatus = $result['http_status'];
 
-    if ($dataBlob === false || strlen($dataBlob) === 0) {
-        exit("Failed to fetch the URL");
+    if (isValidGPData($dataBlob, $httpStatus, $ext)) {
+        if (!writeGPCache($cachedFile, $dataBlob)) {
+            exit("ERROR: Failed to write cache file");
+        }
+    } else if ($haveCache) {
+        // Upstream had nothing new (or nothing valid) for us. Keep serving the
+        // copy we already have rather than caching an error page as if it were
+        // satellite data, but re-arm a refresh attempt reasonably soon.
+        @touch($cachedFile, time() - $lifetime + $retryAfterFailure);
+    } else {
+        // Nothing cached and nothing usable upstream - tell the client plainly.
+        // The "ERROR:" prefix is what src/TLEUtils.ts looks for to surface this.
+        exit("ERROR: Failed to fetch GP data (HTTP " . $httpStatus . "): "
+            . substr(trim((string)$dataBlob), 0, 200));
     }
-
-    if (file_put_contents($cachedFile, $dataBlob) === false) {
-        exit("Failed to write cache file");
-    }
-
-    header("Location: " . $cachePath);
-    exit();
 }
+
+// Serve pre-compressed when the client can take it, which cuts the
+// current-Starlink payload from ~1.7 MB to ~480 KB. Clients that don't
+// advertise gzip get the original redirect to the plain cached file.
+serveGPCached($cachedFile, $cachePath, $lifetime);
 ?>

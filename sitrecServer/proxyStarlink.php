@@ -3,6 +3,7 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/curlGetRequest.php';
+require_once __DIR__ . '/gpData.php';
 
 // SECURITY: Rate limiting by IP - max 20 requests per minute (Space-Track has strict limits)
 $clientIP = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
@@ -74,27 +75,27 @@ if (!in_array($type, $allowed_types, true)) {
 $nextDay = date('Y-m-d', strtotime($request . ' +2 days'));
 
 // the default STARLINK query
-$url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/orderby/NORAD_CAT_ID,EPOCH/format/3le/OBJECT_NAME/STARLINK~~";
+$url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/orderby/NORAD_CAT_ID,EPOCH/format/csv/OBJECT_NAME/STARLINK~~";
 
 // LEO is Low Earth object, but here filter for payloads only
 // decay_date/null-val filters out decayed objects per Space-Track recommendations
 if ($type == "LEO") {
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/OBJECT_TYPE/payload/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/3le";
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/OBJECT_TYPE/payload/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/csv";
 }
 
 // LEOALL is all the LEO objects, including payloads and debris
 if ($type == "LEOALL") {
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/decay_date/null-val/format/3le";
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/decay_date/null-val/format/csv";
 }
 
 if ($type == "SLOW") {
     // SLOW is for objects with a mean motion of less than 11.25 (using 11.26 to overlap with LEO a little)
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/<11.26/decay_date/null-val/format/3le";
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/<11.26/decay_date/null-val/format/csv";
 }
 
 // override for ALL query
 if ($type == "ALL") {
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/3le";
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/csv";
 }
 
 // CUSTOM TLE handling
@@ -146,31 +147,53 @@ if ($type == "CUSTOM" && !getenv('CACHE_CUSTOM_TLE')) {
     $caching = false;
 }
 
-// File naming setup
+// File naming setup.
+// New downloads are OMM CSV; anything already cached is TLE. Sitrec parses
+// both, so an existing .tle cache is still served rather than re-downloaded -
+// Space-Track rate limits hard and this archive is expensive to rebuild.
 $baseFileName = $request . $type;
+$cachedCSV = $starlink_cache . $baseFileName . ".csv";
 $cachedTLE = $starlink_cache . $baseFileName . ".tle";
 $cachedZIP = $starlink_cache . $baseFileName . ".tle.zip";
 
-if ($caching) {
-    if ($zipIt) {
-        if (file_exists($cachedZIP)) {
-            header("Location: " . $cachedZIP);
-            exit();
-        }
+// Historical element sets for a past date never change, so let clients hold
+// onto them.
+$cacheMaxAge = 30 * 24 * 60 * 60; // 30 days
 
-        if (file_exists($cachedTLE)) {
-            if (zipTLE($cachedTLE, $cachedZIP, $baseFileName . ".tle")) {
-                unlink($cachedTLE);
+// The catalog passed 99999 on 2026-07-11, and TLE-format feeds silently omit
+// every object above that. A .tle cached for a date on or after the cutover is
+// therefore incomplete: ignore it and re-fetch as CSV. TLE caches for earlier
+// dates are complete and are still used. (ISO dates compare as strings.)
+$TLE_COMPLETE_BEFORE = "2026-07-11";
+$legacyTLEIsComplete = ($request < $TLE_COMPLETE_BEFORE);
+
+if ($caching) {
+    // Prefer the CSV cache - it is the only format that can hold everything.
+    if (file_exists($cachedCSV)) {
+        serveGPCached($cachedCSV, $cachedCSV, $cacheMaxAge);
+    }
+
+    if ($legacyTLEIsComplete) {
+        if ($zipIt) {
+            if (file_exists($cachedZIP)) {
                 header("Location: " . $cachedZIP);
                 exit();
-            } else {
-                exit("Failed to create ZIP from existing TLE");
             }
-        }
-    } else {
-        if (file_exists($cachedTLE)) {
-            header("Location: " . $cachedTLE);
-            exit();
+
+            if (file_exists($cachedTLE)) {
+                if (zipTLE($cachedTLE, $cachedZIP, $baseFileName . ".tle")) {
+                    unlink($cachedTLE);
+                    header("Location: " . $cachedZIP);
+                    exit();
+                } else {
+                    exit("Failed to create ZIP from existing TLE");
+                }
+            }
+        } else {
+            if (file_exists($cachedTLE)) {
+                header("Location: " . $cachedTLE);
+                exit();
+            }
         }
     }
 }
@@ -267,47 +290,43 @@ if (stripos($trimmedData, '<!DOCTYPE') === 0 || stripos($trimmedData, '<html') =
 }
 
 
-// check that the first line contains "STARLINK" if the default type
-$lines = explode("\n", $data);
-if ($type == "" && strpos($lines[0], "STARLINK") === false) {
-    die('ERROR: Expected STARLINK data but got: ' . substr($lines[0], 0, 100) . '. Request: ' . $request);
+// The CUSTOM type points at a user-supplied URL that may legitimately serve
+// TLE, so only require OMM CSV structure for our own Space-Track queries.
+if ($type != "CUSTOM" && !isValidGPData($data, $http_status, "csv")) {
+    die('ERROR: Space-Track did not return OMM CSV data. Request: ' . $request
+        . ', Type: ' . ($type ?: 'STARLINK') . ', Response: ' . substr($data, 0, 500));
 }
 
+// check that the data contains "STARLINK" if the default type.
+// In CSV the first line is the OMM header, so look at the first data row.
+$lines = explode("\n", $data);
+$firstDataLine = $lines[1] ?? '';
+if ($type == "" && strpos($firstDataLine, "STARLINK") === false) {
+    die('ERROR: Expected STARLINK data but got: ' . substr($firstDataLine, 0, 100) . '. Request: ' . $request);
+}
+
+// Freshly downloaded data is OMM CSV, so it is cached as .csv alongside a
+// pre-built .gz. Note that TLE_ZIP_ENABLED no longer applies here: gzip
+// Content-Encoding compresses at least as well, is decompressed by the browser
+// itself, and so avoids pulling JSZip into the client just to read a catalogue.
+// The setting still governs the legacy .tle files already in the cache.
 if ($caching) {
-    if (file_put_contents($cachedTLE, $data) === false) {
-        exit("Failed to write TLE cache file");
+    if (!writeGPCache($cachedCSV, $data)) {
+        exit("ERROR: Failed to write GP cache file");
     }
-
-    if ($zipIt) {
-        if (!zipTLE($cachedTLE, $cachedZIP, $baseFileName . ".tle")) {
-            exit("Failed to create zip file");
-        }
-
-        unlink($cachedTLE);
-
-        header("Location: " . $cachedZIP);
-    } else {
-        header("Location: " . $cachedTLE);
-    }
+    serveGPCached($cachedCSV, $cachedCSV, $cacheMaxAge);
 } else {
-    if ($zipIt) {
-        $tempTLE = tempnam(sys_get_temp_dir(), 'tle_');
-        $tempZIP = $tempTLE . '.zip';
-        
-        file_put_contents($tempTLE, $data);
-        
-        if (zipTLE($tempTLE, $tempZIP, $baseFileName . ".tle")) {
-            unlink($tempTLE);
-            header('Content-Type: application/zip');
-            header('Content-Disposition: attachment; filename="' . $baseFileName . '.tle.zip"');
-            readfile($tempZIP);
-            unlink($tempZIP);
-        } else {
-            unlink($tempTLE);
-            exit('Failed to create zip file');
-        }
+    header('Vary: Accept-Encoding');
+    $acceptsGzip = stripos($_SERVER['HTTP_ACCEPT_ENCODING'] ?? '', 'gzip') !== false;
+    $gzData = $acceptsGzip ? gzencode($data, 6) : false;
+    if ($gzData !== false) {
+        @ini_set('zlib.output_compression', 'Off');
+        header('Content-Type: text/plain; charset=UTF-8');
+        header('Content-Encoding: gzip');
+        header('Content-Length: ' . strlen($gzData));
+        echo $gzData;
     } else {
-        header('Content-Type: text/plain');
+        header('Content-Type: text/plain; charset=UTF-8');
         echo $data;
     }
 }
