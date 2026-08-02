@@ -37,7 +37,7 @@ import {randomBytes} from "crypto";
 import {fileURLToPath} from "url";
 import {dirname, join} from "path";
 import {createServer} from "http";
-import {parseIdleTimeout, rankTakeoverCandidates} from "./lifecycle.js";
+import {idleTimeoutIsExplicit, parseIdleTimeout, rankTakeoverCandidates, shouldIdleExit} from "./lifecycle.js";
 import {normalizeTabArgs} from "./tab-target.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -57,6 +57,9 @@ const PAIRED_ORIGIN = process.env.SITREC_BRIDGE_PAIRED_ORIGIN || null;
 const IDLE_TIMEOUT_MS = PAIRED_ORIGIN
     ? 0
     : parseIdleTimeout(process.env.SITREC_BRIDGE_IDLE_TIMEOUT_MS);
+// A timeout the caller ASKED for is obeyed literally; the default one only reaps a bridge whose
+// parent has actually gone. See shouldIdleExit for why the distinction matters.
+const IDLE_TIMEOUT_EXPLICIT = idleTimeoutIsExplicit(process.env.SITREC_BRIDGE_IDLE_TIMEOUT_MS);
 
 // Host-fallback port scan range. When PAIRED_ORIGIN is null, we scan this range
 // descending so that sandbox pairings (which claim low ports 9780+N) are never
@@ -149,6 +152,28 @@ process.on("SIGINT", () => shutdownGracefully("SIGINT"));
 // 3. ppid change detection (most reliable on Unix: parent death reparents to init/launchd)
 const ORPHAN_CHECK_INTERVAL_MS = 10000;
 const originalPpid = process.ppid;
+
+/**
+ * Is the process that started us still running?
+ *
+ * signal 0 tests for existence without delivering anything. This is a stronger statement than the
+ * ppid-change check below - that one only notices a parent whose death REPARENTED us, and cannot
+ * fire at all if we were already a child of init - and it is what lets an idle-but-attended bridge
+ * tell itself apart from an abandoned one (see shouldIdleExit).
+ *
+ * A ppid of 1 means we have no identifiable parent to ask about, so it is reported as NOT alive:
+ * the conservative answer for a reaper, which would otherwise keep an orphan forever.
+ */
+function isParentAlive() {
+    if (!(originalPpid > 1)) return false;
+    try {
+        process.kill(originalPpid, 0);
+        return true;
+    } catch (e) {
+        // EPERM means it exists but belongs to another user - still alive.
+        return e?.code === "EPERM";
+    }
+}
 setInterval(() => {
     if (process.stdin.destroyed || process.stdin.readableEnded) {
         shutdownGracefully("stdin destroyed (orphan detected)");
@@ -176,7 +201,13 @@ if (IDLE_TIMEOUT_MS > 0) {
         Math.max(100, Math.floor(IDLE_TIMEOUT_MS / 4))
     );
     setInterval(() => {
-        if (!isBridgeBusy() && Date.now() - lastMcpActivityAt >= IDLE_TIMEOUT_MS) {
+        if (shouldIdleExit({
+            idleTimeoutMs: IDLE_TIMEOUT_MS,
+            explicit: IDLE_TIMEOUT_EXPLICIT,
+            busy: isBridgeBusy(),
+            msSinceActivity: Date.now() - lastMcpActivityAt,
+            parentAlive: isParentAlive(),
+        })) {
             shutdownGracefully(`no MCP activity for ${IDLE_TIMEOUT_MS}ms`);
         }
     }, idleCheckInterval).unref();
