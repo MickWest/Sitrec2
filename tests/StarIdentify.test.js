@@ -19,6 +19,7 @@ import {
     quadCode,
     buildQuadIndex,
     solveField,
+    fitSimilarityRobust,
 } from "../src/starTrack/StarIdentify";
 import {mulberry32} from "../src/starTrack/StarSynthetic";
 
@@ -163,6 +164,62 @@ describe("StarIdentify quad codes", () => {
     test("a quad whose inner stars fall outside the AB circle is rejected as unstable", () => {
         expect(quadCode([[0, 0], [10, 0], [5, 4.99], [5, -4.99]])).not.toBeNull();
         expect(quadCode([[0, 0], [10, 0], [5, 6], [5, -1]])).toBeNull();
+    });
+});
+
+describe("StarIdentify robust refit", () => {
+    /** A similarity applied to points, with `bad` of them sent somewhere else entirely. */
+    function contaminate(n, bad, seed) {
+        const rng = mulberry32(seed);
+        const T = {A: [0.004, 0.0015], B: [-2.1, 0.7]};        // scale ~0.0043, ~21 deg rotation
+        const P = [], Q = [];
+        for (let i = 0; i < n; i++) {
+            const p = [rng() * 1200, rng() * 700];
+            P.push(p);
+            const q = [T.A[0] * p[0] - T.A[1] * p[1] + T.B[0],
+                T.A[1] * p[0] + T.A[0] * p[1] + T.B[1]];
+            // The last `bad` correspondences are wrong pairings: right neighbourhood, wrong star.
+            Q.push(i >= n - bad ? [q[0] + (rng() - 0.5) * 2, q[1] + (rng() - 0.5) * 2] : q);
+        }
+        return {P, Q, T};
+    }
+
+    test("a minority of wrong pairings cannot drag the fitted transform", () => {
+        // The failure this exists for, measured on the reference clip's improved star set: a
+        // provisional match set of 58 contained enough chance pairings that plain least squares
+        // refit to a model which could then only find 16 of them, and the solve died reporting
+        // "refinement lost the match consensus" - with most of its correspondences correct.
+        const {P, Q, T} = contaminate(40, 8, 4242);
+        const robust = fitSimilarityRobust(P, Q);
+        expect(robust).toBeTruthy();
+        // The recovered transform must match truth on the CLEAN majority, to far better than the
+        // 2-unit contamination that was applied to the rest.
+        let worst = 0;
+        for (let i = 0; i < 32; i++) {
+            const e = [robust.A[0] * P[i][0] - robust.A[1] * P[i][1] + robust.B[0],
+                robust.A[1] * P[i][0] + robust.A[0] * P[i][1] + robust.B[1]];
+            worst = Math.max(worst, Math.hypot(e[0] - Q[i][0], e[1] - Q[i][1]));
+        }
+        expect(worst).toBeLessThan(0.05);
+        expect(Math.hypot(robust.A[0] - T.A[0], robust.A[1] - T.A[1])).toBeLessThan(1e-4);
+    });
+
+    test("a CLEAN set is left exactly where least squares put it", () => {
+        // The cut is a multiple of the median residual, so with no outliers nothing is trimmed
+        // and the answer is the ordinary least-squares one. A robust fit that quietly discards
+        // good data would be its own kind of bug.
+        const {P, Q, T} = contaminate(40, 0, 77);
+        const robust = fitSimilarityRobust(P, Q);
+        expect(Math.hypot(robust.A[0] - T.A[0], robust.A[1] - T.A[1])).toBeLessThan(1e-12);
+        expect(Math.hypot(robust.B[0] - T.B[0], robust.B[1] - T.B[1])).toBeLessThan(1e-9);
+    });
+
+    test("too few points to judge outliers are all kept", () => {
+        // Below the floor there is no majority to be robust ABOUT, and trimming would just be
+        // discarding evidence.
+        const {P, Q} = contaminate(5, 2, 9);
+        expect(fitSimilarityRobust(P, Q)).toBeTruthy();
+        expect(fitSimilarityRobust([[0, 0]], [[1, 1]])).toBeNull();
     });
 });
 
@@ -314,6 +371,40 @@ describe("StarIdentify blind solve", () => {
             const {right} = scoreSolve(result, stars);
             expect(right).toBeGreaterThanOrEqual(0.6 * result.matches.length);
         }
+    });
+
+    test("a field wider than 77 degrees solves - tangent units are not radians", () => {
+        // The guard in projectAndMatch bounds the implied field, and the quantity it bounds is
+        // GNOMONIC TANGENT UNITS per pixel, not radians: half a frame spans tan(fov/2). Treating
+        // them as interchangeable made `width * scale * 0.75 > 1.2` reject every centred
+        // gnomonic field wider than about 77 degrees, however accurate - which is inside the
+        // range real wide-angle clips occupy, and one part in a thousand from rejecting the
+        // reference clip's own solve (it cleared the old guard at 1.199).
+        //
+        // 100 degrees across: tan(50 deg) = 1.19, so width*scale*0.75 = 1.76, which the old
+        // guard refused outright and the arctangent puts at 1.05 rad - comfortably a camera.
+        // The WIDE tier, as for any field of this size: tier 1's quads span at most 22 degrees
+        // and its code tolerance cannot absorb the gnomonic shear across a field this large.
+        const field = {raDeg: 40, decDeg: 25, rollDeg: 15, pxPerDeg: 9.34, W: 1276, H: 957,
+            magLimit: 5.5};
+        const truth = projectField(field);
+        expect(truth.length).toBeGreaterThan(60);
+        const stars = degrade(truth, {seed: 17, W: field.W, H: field.H});
+
+        const wide = buildQuadIndex(catalog, STAR_IDENTIFY_DEFAULTS.tiers[2]);
+        const result = solveField(stars, catalog, [wide], {center: [field.W / 2, field.H / 2]});
+        expect(result.ok).toBe(true);
+        expect(Math.abs(result.centerDecDeg - field.decDeg)).toBeLessThan(2);
+        const {right} = scoreSolve(result, stars);
+        expect(right).toBeGreaterThanOrEqual(0.6 * result.matches.length);
+        // And the reported field is the ARCTANGENT of the tangent extent, so it is the field
+        // this camera actually has. (Measured against the STAR bounding box, which stops a few
+        // pixels short of the frame, so a couple of degrees under the nominal 100 is right; the
+        // linear reading of the same number would have claimed about 134 degrees.)
+        const spanTangent = field.W / (field.pxPerDeg * 180 / Math.PI);
+        const trueFovDeg = 2 * Math.atan(spanTangent / 2) * 180 / Math.PI;
+        expect(Math.abs(result.fovDeg - trueFovDeg)).toBeLessThan(3);
+        expect(spanTangent * 180 / Math.PI).toBeGreaterThan(130);   // the old, linear reading
     });
 
     test("points that are not a sky refuse to solve rather than inventing a field", () => {

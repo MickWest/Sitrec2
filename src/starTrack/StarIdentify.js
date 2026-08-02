@@ -85,7 +85,9 @@ export const STAR_IDENTIFY_DEFAULTS = {
 
     // When the caller KNOWS the plate scale - camera optics metadata gives the field of view
     // exactly - hypotheses whose implied scale strays beyond this relative tolerance are
-    // discarded before verification. Set `scalePrior` (radians per pixel) in the options.
+    // discarded before verification. Set `scalePrior` in the options, in GNOMONIC TANGENT UNITS
+    // per pixel - what scalePriorFromFov returns, and what the solver's own scale is measured in.
+    // (Not radians per pixel: the two agree only at the field centre.)
     scalePriorTolerance: 0.35,
 };
 
@@ -393,6 +395,39 @@ function lookupCode(index, code, tol) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A recorder for WHY a solve went the way it did: how many quads were built, how many code hits
+ * they drew, which guard threw each hypothesis away, and what the acceptance arithmetic actually
+ * was at the end. A failed blind solve reports one sentence ("no verified match", "refinement
+ * lost the match consensus") and those two sentences cover a dozen distinct causes; without this
+ * the only way to tell them apart is to edit the module.
+ *
+ * Module-scoped rather than threaded through six signatures: solveField is synchronous with no
+ * awaits, so exactly one solve is ever in flight. Null unless the caller passes `debug: true`,
+ * and NOTHING IN THE SOLVE EVER READS IT - counters go in and never come out - so a debug run
+ * takes bit-for-bit the same path as a normal one.
+ */
+let DIAG = null;
+
+function newDiag() {
+    return {counts: {}, max: {}, tiers: [], finalists: []};
+}
+
+/** Bump a named counter. `rej.*` keys are rejections, one per guard. */
+function diagCount(key, n = 1) {
+    if (DIAG) DIAG.counts[key] = (DIAG.counts[key] ?? 0) + n;
+}
+
+/** Record the largest value a quantity reached - the guards are all upper bounds, so the
+ * maximum is what says whether one of them was ever close to firing. */
+function diagMax(key, v) {
+    if (DIAG && Number.isFinite(v) && (!(key in DIAG.max) || v > DIAG.max[key])) DIAG.max[key] = v;
+}
+
+// ---------------------------------------------------------------------------------------------
 // The blind solve
 // ---------------------------------------------------------------------------------------------
 
@@ -425,6 +460,51 @@ function applySim(T, x, y) {
     return [T.A[0] * x - T.A[1] * y + T.B[0], T.A[1] * x + T.A[0] * y + T.B[1]];
 }
 
+/**
+ * The same similarity fit, but not at the mercy of its worst correspondences.
+ *
+ * A hypothesis arrives backed by a four-point transform, and the match set it collected under
+ * that transform is not clean - at a tolerance wide enough to admit the true pairings, some
+ * chance neighbours come too. Plain least squares gives every one of them an equal vote, and a
+ * handful of wrong pairs at the frame edge (where the lever arm is longest) tilt the model enough
+ * that the rematch then loses the GOOD pairs. Measured on the reference clip's improved star set:
+ * 58 provisional matches refit to a model that could only find 16.
+ *
+ * So: fit, measure, drop the tail, fit again. The cut is a multiple of the MEDIAN residual rather
+ * than a fixed pixel figure, because the right scale is the one this solve is actually achieving
+ * and that varies by orders of magnitude between a phone snapshot and a stacked astrophoto. The
+ * median survives a minority of arbitrarily bad pairs, which a mean or an rms does not - and it
+ * is a minority of bad pairs that this exists to handle.
+ *
+ * Never trims below `keepFloor` of the points: past that the "outliers" are more likely to be the
+ * model, and a fit that discards most of its evidence to look tidy is how a wrong solve survives.
+ */
+export function fitSimilarityRobust(P, Q, rounds = 2, keepFloor = 0.6) {
+    let T = fitSimilarityFree(P, Q);
+    if (!T || P.length < 6) return T;
+    const minKeep = Math.max(6, Math.ceil(keepFloor * P.length));
+    for (let round = 0; round < rounds; round++) {
+        const d2 = P.map((p, i) => {
+            const e = applySim(T, p[0], p[1]);
+            return (e[0] - Q[i][0]) ** 2 + (e[1] - Q[i][1]) ** 2;
+        });
+        const sorted = [...d2].sort((a, b) => a - b);
+        const median = sorted[sorted.length >> 1];
+        // A cut at 3x the median distance. With no real outliers this keeps everything, so a
+        // clean solve is left exactly as least squares had it.
+        const cut = Math.max(median * 9, sorted[minKeep - 1]);
+        const kp = [], kq = [];
+        for (let i = 0; i < P.length; i++) {
+            if (d2[i] <= cut) { kp.push(P[i]); kq.push(Q[i]); }
+        }
+        if (kp.length === P.length || kp.length < minKeep) break;
+        const next = fitSimilarityFree(kp, kq);
+        if (!next) break;
+        T = next;
+    }
+    return T;
+}
+
 function invertSim(T) {
     const d = T.A[0] * T.A[0] + T.A[1] * T.A[1];
     const ax = T.A[0] / d, ay = -T.A[1] / d;
@@ -440,10 +520,24 @@ function invertSim(T) {
  *   `mag` is the instrumental magnitude, used only to pick the brightest for quads)
  * @param {object} catalog - from {@link parseStarCatalog}
  * @param {Array} indexes - quad index tiers from {@link buildQuadIndex}, tried in order
+ * @param {object} [opts] - overrides of STAR_IDENTIFY_DEFAULTS. `debug: true` additionally
+ *   attaches a `diag` record of the solve's internals to the result (see newDiag).
  * @returns {{ok: boolean, reason?: string} | {ok: true, matches, centerRaDeg, centerDecDeg,
  *   fovDeg, rollDeg, pxPerDeg, mirrored, nImage, matchedFraction, rmsPx}}
  */
 export function solveField(imageStars, catalog, indexes, opts = {}) {
+    DIAG = opts.debug ? newDiag() : null;
+    try {
+        const out = solveFieldInner(imageStars, catalog, indexes, opts);
+        if (DIAG) out.diag = DIAG;
+        return out;
+    } finally {
+        // Cleared even when the solve throws, so a later run can never inherit a stale recorder.
+        DIAG = null;
+    }
+}
+
+function solveFieldInner(imageStars, catalog, indexes, opts) {
     const O = {...STAR_IDENTIFY_DEFAULTS, ...opts};
     const nImage = imageStars.length;
     if (nImage < 5) return {ok: false, reason: "too few stars to identify"};
@@ -536,17 +630,30 @@ export function solveField(imageStars, catalog, indexes, opts = {}) {
     // Large quads first: their codes are the least noise-sensitive.
     imageQuads.sort((p, q) => q.diam - p.diam);
 
+    if (DIAG) {
+        Object.assign(DIAG, {
+            nImage, nQuadStars: bpts.length, nImageQuads: imageQuads.length,
+            width, tolPx, centerPx, bounds, nDeep: deep.length,
+            scalePrior: O.scalePrior ?? null,
+        });
+    }
+
     const candidates = [];
     let tried = 0;
 
     for (const index of indexes) {
         const codeTol = index.tier?.codeTolerance ?? O.codeTolerance;
+        const tierDiag = DIAG && {codes: index.n, tier: index.tier, codeTol, hits: 0, tried: 0,
+            candidates: 0};
+        if (tierDiag) DIAG.tiers.push(tierDiag);
         for (const iq of imageQuads) {
             if (tried >= O.maxHypotheses) break;
             const hits = lookupCode(index, iq.code, codeTol);
+            if (tierDiag) tierDiag.hits += hits.length;
             for (const h of hits) {
                 if (tried >= O.maxHypotheses) break;
                 tried++;
+                if (tierDiag) tierDiag.tried++;
 
                 // Hypothesis: similarity from image px (in this parity) to the tangent plane
                 // about the catalog quad's anchor star.
@@ -563,17 +670,18 @@ export function solveField(imageStars, catalog, indexes, opts = {}) {
                     P.push(iq.mirrored ? [bpts[s][0], -bpts[s][1]] : bpts[s]);
                     Q.push(g);
                 }
-                if (degenerate) continue;
+                if (degenerate) { diagCount("rej.degenerateQuad"); continue; }
                 const T = fitSimilarityFree(P, Q);
-                if (!T) continue;
+                if (!T) { diagCount("rej.similarityFit"); continue; }
                 // The four points must actually agree with the fitted model before the
                 // expensive verification runs.
-                const scale = Math.hypot(T.A[0], T.A[1]);       // rad per px
+                const scale = Math.hypot(T.A[0], T.A[1]);       // tangent units per px
                 // A known plate scale is the strongest single prune there is: any hypothesis
                 // whose implied scale is not the camera's is wrong regardless of how well its
                 // four points agree.
                 if (O.scalePrior
                     && Math.abs(scale - O.scalePrior) > O.scalePriorTolerance * O.scalePrior) {
+                    diagCount("rej.scalePrior");
                     continue;
                 }
                 let quadRms = 0;
@@ -581,11 +689,15 @@ export function solveField(imageStars, catalog, indexes, opts = {}) {
                     const e = applySim(T, P[j][0], P[j][1]);
                     quadRms += (e[0] - Q[j][0]) ** 2 + (e[1] - Q[j][1]) ** 2;
                 }
-                if (Math.sqrt(quadRms / 4) > 2 * tolPx * scale) continue;
+                if (Math.sqrt(quadRms / 4) > 2 * tolPx * scale) {
+                    diagCount("rej.quadRms");
+                    continue;
+                }
 
                 const cand = verifyHypothesis(imageStars, iq.mirrored, T, c0, b0, P, catStars,
                     catalog, deep, deepVec, tolPx, width, centerPx, bounds, O);
                 if (!cand) continue;
+                if (tierDiag) tierDiag.candidates++;
                 candidates.push(cand);
                 if (cand.matches.length >= O.earlyExitFraction * nImage) break;
             }
@@ -597,6 +709,7 @@ export function solveField(imageStars, catalog, indexes, opts = {}) {
         if (candidates.length) break;   // verified solves from a coarser tier need no deeper one
     }
 
+    if (DIAG) { DIAG.tried = tried; DIAG.candidates = candidates.length; }
     if (!candidates.length) {
         return {ok: false, reason: `no verified match (${tried} hypotheses tried)`};
     }
@@ -627,9 +740,20 @@ export function solveField(imageStars, catalog, indexes, opts = {}) {
 function projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, width, centerPx,
     bounds, catalog, maxProjected) {
     const inv = invertSim(T);
-    const scale = Math.hypot(T.A[0], T.A[1]);              // rad per px
-    const fovRadiusRad = width * scale * 0.75;             // generous half-diagonal
-    if (fovRadiusRad > 1.2) return null;                   // >70 deg radius: not a camera field
+    // TANGENT UNITS per pixel, not radians. Half a frame spans tan(fov/2), so an angle is the
+    // ARCTANGENT of a tangent extent - the conversion scalePriorFromFov exists to get right at
+    // the other end of the same pipeline. Treating the two as interchangeable is 8% off at
+    // phone-lens widths and unbounded beyond, and because the next line is an UPPER BOUND the
+    // error was one-directional: `width * scale * 0.75 > 1.2` rejected every centred gnomonic
+    // field wider than about 77 degrees, however accurate, while claiming to allow 70 degrees
+    // of RADIUS. The reference clip's own solve cleared it at 1.199 against the 1.2 ceiling.
+    const scale = Math.hypot(T.A[0], T.A[1]);              // tangent units per px
+    const fovRadiusRad = Math.atan(width * scale * 0.75);  // generous half-diagonal
+    diagMax("fovRadiusRad", fovRadiusRad);
+    if (fovRadiusRad > 1.2) {                              // >70 deg radius: not a camera field
+        diagCount("rej.fovRadius");
+        return null;
+    }
     const minDot = Math.cos(Math.min(fovRadiusRad * 1.2, 1.4));
 
     // Where is the image centre on the sky, under this hypothesis?
@@ -654,7 +778,11 @@ function projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, 
         if (px < bx0 || px > bx1 || py < by0 || py > by1) continue;
         proj.push([px, py, deep[k]]);
     }
-    if (proj.length < 4) return null;
+    diagMax("nProjectedRaw", proj.length);
+    if (proj.length < 4) {
+        diagCount("rej.tooFewProjected");
+        return null;
+    }
     // Cap the projected catalog at the brightest `maxProjected` stars in the field: matching
     // evidence depends on the catalog being SPARSE relative to the tolerance, and an uncapped
     // deep pool would let chance neighbours accumulate.
@@ -700,6 +828,22 @@ function consensusMet(O, nImage, nMatches, nProjected) {
         && nMatches >= consensusNeeded(nImage, nProjected, O.strongMatchFraction);
 }
 
+/** The acceptance arithmetic, spelled out for diagnostics. Both gates are quoted whether they
+ * passed or not, because the interesting failure is the one that misses by a star or two - and
+ * the denominator (min of the image count and what the catalog could even show) is the term
+ * that moves when the caller changes the input star set. */
+function consensusDetail(O, nImage, nMatches, nProjected) {
+    const denom = Math.min(nImage, nProjected);
+    return {
+        nMatches, nImage, nProjected, denom,
+        fraction: denom ? nMatches / denom : 0,
+        needNarrow: consensusNeeded(nImage, nProjected, O.minMatchFraction),
+        needStrong: consensusNeeded(nImage, nProjected, O.strongMatchFraction),
+        strongCount: O.strongMatchCount,
+        met: consensusMet(O, nImage, nMatches, nProjected),
+    };
+}
+
 /**
  * Verify one hypothesis PROVISIONALLY: the detected stars must be where the catalog says stars
  * are, in numbers coincidence does not produce - at the modest bar a four-point transform can
@@ -721,18 +865,25 @@ function verifyHypothesis(imageStars, mirrored, T, c0, b0, P, catQ, catalog, dee
     const Q1 = [];
     for (const ci of catQ) {
         const g = gnomonic(raDecToVec(catalog.ra[ci], catalog.dec[ci]), c1, b1);
-        if (!g) return null;
+        if (!g) { diagCount("rej.recentreBehind"); return null; }
         Q1.push(g);
     }
     const T1 = fitSimilarityFree(P, Q1);
-    if (!T1) return null;
+    if (!T1) { diagCount("rej.recentreFit"); return null; }
 
     const pm = projectAndMatch(imageStars, mirrored, T1, c1, b1, deep, deepVec, tolPx, width, centerPx, bounds);
-    if (!pm) return null;
+    if (!pm) return null;                                  // projectAndMatch counted its own
     const {matches} = pm;
-    if (matches.length < O.minMatches) return null;
-    if (matches.length < consensusNeeded(imageStars.length, pm.nProjected, O.provisionalMatchFraction)) return null;
-    return {matches, mirrored, T: T1, c0: c1, b0: b1};
+    diagMax("provisionalMatches", matches.length);
+    if (matches.length < O.minMatches) { diagCount("rej.minMatches"); return null; }
+    if (matches.length < consensusNeeded(imageStars.length, pm.nProjected, O.provisionalMatchFraction)) {
+        diagCount("rej.provisionalFraction");
+        return null;
+    }
+    // nProjected travels WITH the matches. It is the denominator every consensus test divides
+    // by, so a match set and a projection count from different projections is a gate judging
+    // arithmetic that never happened.
+    return {matches, mirrored, T: T1, c0: c1, b0: b1, nProjected: pm.nProjected};
 }
 
 /**
@@ -764,14 +915,27 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
     const allIdx = Array.from(byMag);
     const allVec = allIdx.map((i) => raDecToVec(catalog.ra[i], catalog.dec[i]));
     const maxProjected = Math.max(3 * imageStars.length, 100);
-    let nProjected = Math.min(deep.length, maxProjected) || matches.length;
+    // The count that came WITH these matches, from the projection that produced them. It used to
+    // be `min(deep.length, maxProjected)` - the whole SKY's verification pool clipped by the cap,
+    // a number no projection ever produced. Since the final gate divides by it, and it is only
+    // reached when refinement rolled back, that stated a denominator far larger than the field
+    // really held and so demanded more matches than the evidence could ever supply: conservative,
+    // but conservative by accident, and it made the diagnostics quote a figure that was fiction.
+    let nProjected = best.nProjected ?? matches.length;
+
+    // One record per finalist: what refinement did to it, and the acceptance arithmetic it was
+    // finally judged on. "refinement lost the match consensus" is the same sentence whether the
+    // rematch collapsed, a round rolled back, or the match set never moved and the DENOMINATOR
+    // grew - and those want completely different fixes.
+    const fin = DIAG && {provisional: matches.length, rounds: [], nProjected};
+    if (fin) DIAG.finalists.push(fin);
 
     for (let round = 0; round < O.refineRounds; round++) {
         // The round either completes wholly or leaves no trace: a break after the refit would
         // pair the NEW transform with the OLD matches and residuals - the exact stale mixture
         // this loop exists to prevent - so every failure path restores the last triple that
         // was verified together.
-        const prev = {T, c0, b0, matches};
+        const prev = {T, c0, b0, matches, nProjected};
 
         // 1. Re-centre the tangent point on the image centre, under the current model.
         const cPlane = applySim(T, centerPx[0], mirrored ? -centerPx[1] : centerPx[1]);
@@ -787,9 +951,12 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
             const g = gnomonic(raDecToVec(catalog.ra[m.cat], catalog.dec[m.cat]), c0, b0);
             return g || [0, 0];
         });
-        const refit = fitSimilarityFree(P, Q);
+        // ROBUST here, plain least squares everywhere else: this is the one fit whose input is a
+        // whole match set collected at tolerance rather than four hand-picked quad stars.
+        const refit = fitSimilarityRobust(P, Q);
         if (!refit) {
-            ({T, c0, b0, matches} = prev);
+            if (fin) fin.rounds.push({round, rolledBack: "refitFailed"});
+            ({T, c0, b0, matches, nProjected} = prev);
             break;
         }
         T = refit;
@@ -803,8 +970,17 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
             width, centerPx, bounds, catalog, maxProjected);
         if (!pm || pm.matches.length < O.minMatches
             || !consensusMet(O, imageStars.length, pm.matches.length, pm.nProjected)) {
-            ({T, c0, b0, matches} = prev);
+            if (fin) {
+                fin.rounds.push({round, rolledBack: !pm ? "projectNull" : "rematchBelowGates",
+                    ...(pm ? consensusDetail(O, imageStars.length, pm.matches.length,
+                        pm.nProjected) : {})});
+            }
+            ({T, c0, b0, matches, nProjected} = prev);
             break;
+        }
+        if (fin) {
+            fin.rounds.push({round, committed: pm.matches.length,
+                ...consensusDetail(O, imageStars.length, pm.matches.length, pm.nProjected)});
         }
         matches = pm.matches;
         nProjected = pm.nProjected;
@@ -812,12 +988,16 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
 
     // Refinement only ever rematches with the verification gate, but hold the acceptance
     // criteria at the end regardless - a solve that degrades below them must not ship.
+    if (fin) {
+        Object.assign(fin, {final: matches.length, nProjected},
+            consensusDetail(O, imageStars.length, matches.length, nProjected));
+    }
     if (matches.length < O.minMatches
         || !consensusMet(O, imageStars.length, matches.length, nProjected)) {
         return {ok: false, reason: "refinement lost the match consensus"};
     }
 
-    const scale = Math.hypot(T.A[0], T.A[1]);              // rad per px
+    const scale = Math.hypot(T.A[0], T.A[1]);              // tangent units per px
     const cPlane = applySim(T, centerPx[0], mirrored ? -centerPx[1] : centerPx[1]);
     const centre = unGnomonic(cPlane[0], cPlane[1], c0, b0);
     const {ra, dec} = vecToRaDec(centre);
@@ -843,8 +1023,14 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
         })),
         centerRaDeg: ra * 180 / Math.PI,
         centerDecDeg: dec * 180 / Math.PI,
-        fovDeg: width * scale * 180 / Math.PI,
+        // The field the model implies IF the frame were rectilinear: half of it spans
+        // width*scale/2 TANGENT units, so the half-angle is that arctangent. (A real fisheye
+        // frame covers more sky than this over the same pixels - `scale` is the plate scale at
+        // the centre and this extrapolates it, it does not measure the lens.)
+        fovDeg: 2 * Math.atan(width * scale / 2) * 180 / Math.PI,
         rollDeg,
+        // Pixels per degree AT THE FIELD CENTRE, where d(tangent)/d(theta) is 1. Consumers that
+        // want a frame-wide angle must go back through the arctangent (starTrackVfovDeg does).
         pxPerDeg: (Math.PI / 180) / scale,
         mirrored,
         nImage: imageStars.length,
