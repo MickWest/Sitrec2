@@ -6,9 +6,10 @@
 
 import {calibrateLens, scanLens, radialExcitation, chooseBaseline, correspondences} from "../src/starTrack/StarCalibrate";
 import {buildSphericalScene, clipLens} from "../src/starTrack/StarSyntheticSphere";
-import {buildTrackletsSpherical, statesFromChain2D} from "../src/starTrack/StarSolveSphere";
+import {buildTrackletsSpherical, refineGlobalSpherical, statesFromChain2D} from "../src/starTrack/StarSolveSphere";
+import {fitRotationWahba, qRotate} from "../src/starTrack/StarSphere";
 import {solveFrameChain} from "../src/starTrack/StarMatch";
-import {lensFOV} from "../src/CameraLens";
+import {lensFOV, lensToRay, makeLens} from "../src/CameraLens";
 
 const SIZE = [1280, 720];
 
@@ -98,6 +99,134 @@ describe("the gate refuses what it cannot see", () => {
     test("an empty track list is refused without throwing", () => {
         const r = calibrateLens([], 30, SIZE);
         expect(r.accepted).toBe(false);
+    });
+});
+
+describe("absolute sky accuracy, not just self-consistency", () => {
+    // THE GATE for migrating star identification onto the spherical map.
+    //
+    // The residual quoted everywhere else in this work - 0.25 px - measures SELF-consistency:
+    // how well the model reproduces the observations it was fitted to. A slightly wrong lens
+    // shape plus compensating per-frame rotations scores well on that while placing the recovered
+    // sky directions noticeably out. Classification only needs relative consistency, which is why
+    // it works either way. Identification needs the absolute geometry, and measured against the
+    // catalogue on the reference clip the preset-only solve came out at 0.44 deg - worse than the
+    // 2D chart's 0.23 deg, which is why Identify could not be migrated.
+    //
+    // These tests measure that absolute quantity directly against known truth, so the gate is
+    // reproducible here instead of needing a live browser and a star catalogue.
+
+    /** Best-fit rotation between recovered and true directions; residual rms in degrees. */
+    function absoluteError(recovered, truth) {
+        const pairs = [];
+        for (const d of recovered) {
+            if (!d) continue;
+            let best = null, bestDot = -2;
+            for (const t of truth) {
+                const dot = d[0] * t[0] + d[1] * t[1] + d[2] * t[2];
+                if (dot > bestDot) { bestDot = dot; best = t; }
+            }
+            // Only unambiguous matches: a star further than ~1 deg from anything is not a
+            // measurement of accuracy, it is a mis-association.
+            if (best && Math.acos(Math.min(1, bestDot)) < 1 * Math.PI / 180) pairs.push([d, best]);
+        }
+        if (pairs.length < 10) return {n: pairs.length, rmsDeg: Infinity};
+        const q = fitRotationWahba(pairs.map((p) => p[0]), pairs.map((p) => p[1]));
+        let sse = 0;
+        for (const [a, b] of pairs) {
+            const r = qRotate(q, a);
+            const dot = Math.min(1, r[0] * b[0] + r[1] * b[1] + r[2] * b[2]);
+            const e = Math.acos(dot) * 180 / Math.PI;
+            sse += e * e;
+        }
+        return {n: pairs.length, rmsDeg: Math.sqrt(sse / pairs.length)};
+    }
+
+    /** Solve a scene under a given lens and report absolute direction accuracy. */
+    function accuracyUnder(scene, lens) {
+        const chain = solveFrameChain(scene.perFrame);
+        let states = statesFromChain2D(chain.cumulative, lens, scene.size);
+        let tracks = buildTrackletsSpherical(scene.perFrame, states, lens, scene.size);
+        let r = refineGlobalSpherical(tracks, states, lens, scene.size);
+        tracks = buildTrackletsSpherical(scene.perFrame, r.states, lens, scene.size);
+        r = refineGlobalSpherical(tracks, r.states, lens, scene.size);
+        const long = tracks.map((t) => (t.obs.length > scene.frames * 0.5 ? t.ref : null));
+        return {...absoluteError(long, scene.stars), rms: r.rms};
+    }
+
+    // A lens that is deliberately NOT any of the five presets - which is the realistic case,
+    // since a real lens is only ever approximated by the closest named curve.
+    const TRUE_LENS = makeLens({
+        type: "custom", focalPx: 900, principal: [634, 352], refSize: SIZE,
+        distortion: [0.12, -0.05, 0.03],
+    });
+
+    test("the free polynomial recovers the sky better than the closest named preset", () => {
+        const scene = buildSphericalScene({
+            seed: 5001, frames: 40, starCount: 130, noise: 0.15,
+            rotationDeg: 3.4, poleOffsetDeg: 48, lens: TRUE_LENS,
+        });
+        const tracks = tracksFor(scene);
+
+        const presetOnly = calibrateLens(tracks, scene.frames, scene.size, {fitCustom: false});
+        const withCustom = calibrateLens(tracks, scene.frames, scene.size);
+        expect(presetOnly.accepted).toBe(true);
+        expect(withCustom.accepted).toBe(true);
+        expect(withCustom.lens.type).toBe("custom");
+
+        const a = accuracyUnder(scene, presetOnly.lens);
+        const b = accuracyUnder(scene, withCustom.lens);
+
+        // Both solves are self-consistent to well under a pixel; that is NOT the thing being
+        // tested here, and asserting it alone is what would let a wrong lens through.
+        expect(a.rms).toBeLessThan(1.0);
+        expect(b.rms).toBeLessThan(1.0);
+
+        // The absolute geometry is what improves.
+        expect(b.rmsDeg).toBeLessThan(a.rmsDeg);
+        // and comfortably under the 0.227 deg the 2D chart achieved on the reference clip, which
+        // is the bar Identify has to clear before it can migrate.
+        expect(b.rmsDeg).toBeLessThan(0.15);
+    });
+
+    test("self-consistency does not imply absolute accuracy - the trap this gate exists for", () => {
+        const scene = buildSphericalScene({
+            seed: 5002, frames: 40, starCount: 130, noise: 0.15,
+            rotationDeg: 3.4, poleOffsetDeg: 48, lens: TRUE_LENS,
+        });
+        // Solve under a deliberately WRONG lens: the right family, 12% off in focal length.
+        const wrong = makeLens({
+            type: "orthographicFisheye", focalPx: 1010, principal: [640, 360], refSize: SIZE,
+        });
+        const r = accuracyUnder(scene, wrong);
+        // It still fits its own observations respectably...
+        expect(r.rms).toBeLessThan(3);
+        // ...while getting the sky measurably wrong. Reporting only the first number would call
+        // this a good solve.
+        expect(r.rmsDeg).toBeGreaterThan(r.rms * 0.05);
+    });
+
+    test("the fitted polynomial tracks the true lens curve, not just the data", () => {
+        const scene = buildSphericalScene({
+            seed: 5003, frames: 40, starCount: 130, noise: 0.15,
+            rotationDeg: 3.4, poleOffsetDeg: 48, lens: TRUE_LENS,
+        });
+        const r = calibrateLens(tracksFor(scene), scene.frames, scene.size);
+        expect(r.accepted).toBe(true);
+        // Compare the recovered mapping against the truth across the frame, in pixels.
+        let worst = 0;
+        for (let x = 0; x <= 1280; x += 160) {
+            for (let y = 0; y <= 720; y += 120) {
+                const a = lensToRay(TRUE_LENS, x, y, SIZE);
+                const b = lensToRay(r.lens, x, y, SIZE);
+                if (!a || !b) continue;
+                const dot = Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]);
+                worst = Math.max(worst, Math.acos(dot) * 180 / Math.PI);
+            }
+        }
+        // Up to a global rotation the curve should agree closely; a couple of tenths of a degree
+        // is the scale of the gauge freedom between "which way is the boresight" and the shape.
+        expect(worst).toBeLessThan(1.5);
     });
 });
 

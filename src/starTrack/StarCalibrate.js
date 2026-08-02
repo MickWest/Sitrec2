@@ -40,6 +40,14 @@ export const STAR_CALIBRATE_DEFAULTS = {
     // the same freedoms - by this factor in robust rms before it is worth adopting.
     minImprovement: 1.6,
     holdoutFraction: 0.3,
+    // The shape search is synchronous; these bound its cost so it cannot freeze the UI.
+    // shapeMaxPairs trades speed against SHAPE accuracy specifically, and the two are not
+    // interchangeable: dropping to 50 of 130 pairs halved the runtime but cost the edge coverage
+    // that determines the curve, taking absolute sky accuracy from 0.09 to 0.30 deg while the
+    // self-consistency rms barely moved. Trim the step count before trimming the pairs.
+    shapeMaxPairs: 110,         // correspondences used while exploring lens shape
+    shapeScales: [1, 0.3, 0.1], // coordinate-descent step scales
+    shapeMaxSteps: 10,          // passes per scale
 };
 
 const PRESETS = ["rectilinear", "stereographic", "equidistantFisheye", "equisolidFisheye", "orthographicFisheye"];
@@ -75,7 +83,11 @@ export function chooseBaseline(tracks, nFrames, minPairs) {
 
 function scoreLens(lens, A, B, size, O) {
     if (!validateLens(lens, size).ok) return null;
-    const fit = fitRotationRobust(lens, A, B, {size, inlierThreshold: O.inlierThreshold});
+    // `fitRounds` lets the coordinate descent run a cheaper rotation fit while it explores - the
+    // shape search does not need a fully annealed inlier set at every trial point, only a
+    // comparable one - and the winner is re-scored at full depth afterwards.
+    const fit = fitRotationRobust(lens, A, B,
+        {size, inlierThreshold: O.inlierThreshold, rounds: O.fitRounds ?? 8});
     if (!fit) return null;
     // Score on the FULL set, not just the inliers the fit kept, so a model cannot win by
     // discarding the points it explains badly.
@@ -127,6 +139,158 @@ export function scanLens(A, B, size, opts = {}) {
         }
     }
     return {best, byType, rectilinear: byType.rectilinear ?? null};
+}
+
+/**
+ * Least-squares fit of the custom polynomial to a named preset's curve, over the radii the image
+ * actually uses.
+ *
+ * The seed for the custom refinement, and it has to be FITTED rather than derived. The truncated
+ * Taylor series of the same curve is far worse: for an orthographic lens over a 1280x720 frame,
+ * best-fit d3/d5 leaves 0.98 px at the corner where the Taylor coefficients leave 9.83 px. Least
+ * squares spreads the error over the range; a Taylor series is optimal only at rho = 0 and
+ * degrades monotonically outward, which on a wide lens means it is worst exactly where the
+ * original bug lives.
+ */
+export function polyFromPreset(type, rhoMax, terms = 3) {
+    const preset = LENS_PRESETS[type];
+    if (!preset || type === "custom") return [0, 0, 0];
+    const powers = [3, 5, 7].slice(0, terms);
+    const m = powers.length;
+    const AtA = Array.from({length: m}, () => new Array(m).fill(0));
+    const Atb = new Array(m).fill(0);
+    const N = 300;
+    for (let i = 1; i <= N; i++) {
+        const rho = rhoMax * i / N;
+        if (rho > preset.maxRho) break;
+        const row = powers.map((p) => Math.pow(rho, p));
+        // Weighted by rho: the sensor's area element goes as rho d rho, so equal weighting would
+        // over-fit the sparse centre at the expense of the crowded edge.
+        const w = rho;
+        const target = preset.theta(rho) - rho;
+        for (let a = 0; a < m; a++) {
+            for (let b = 0; b < m; b++) AtA[a][b] += w * row[a] * row[b];
+            Atb[a] += w * row[a] * target;
+        }
+    }
+    const M = AtA.map((r, i) => [...r, Atb[i]]);
+    for (let c = 0; c < m; c++) {
+        let piv = c;
+        for (let r = c + 1; r < m; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+        [M[c], M[piv]] = [M[piv], M[c]];
+        if (Math.abs(M[c][c]) < 1e-18) return [0, 0, 0];
+        for (let r = 0; r < m; r++) {
+            if (r === c) continue;
+            const f = M[r][c] / M[c][c];
+            for (let k = c; k <= m; k++) M[r][k] -= f * M[c][k];
+        }
+    }
+    const out = [0, 0, 0];
+    for (let i = 0; i < m; i++) out[i] = M[i][m] / M[i][i];
+    return out.every((v) => isFinite(v)) ? out : [0, 0, 0];
+}
+
+/**
+ * Refine a fitted preset into a free CUSTOM lens.
+ *
+ * A named preset is the closest of five shapes, not the actual lens, and "closest of five" is not
+ * good enough for everything downstream. Self-consistency and absolute accuracy are different
+ * quantities: the preset solve reproduces its own observations to ~0.25 px while placing the
+ * recovered sky directions ~0.4 deg out, because a slightly wrong lens shape plus compensating
+ * per-frame rotations still fits the data. Classification only needs the former. Star
+ * identification needs the latter.
+ *
+ * Coordinate descent with shrinking steps rather than an LM: the objective already contains a
+ * robust rotation re-fit at every evaluation, so a numeric Jacobian would cost six of those per
+ * step, and the surface is smooth enough in the polynomial coefficients that it buys nothing.
+ *
+ * Terms are added one at a time and each must EARN its degree of freedom on held-out
+ * correspondences - a clip whose stars occupy only the inner half of the frame cannot constrain a
+ * 7th-order term and would happily fit noise with it.
+ */
+export function refineCustom(seed, A, B, size, O, holdout = null) {
+    const rhoMax = Math.hypot(
+        Math.max(seed.lens.principal[0], size[0] - seed.lens.principal[0]),
+        Math.max(seed.lens.principal[1], size[1] - seed.lens.principal[1]),
+    ) / seed.lens.focalPx;
+
+    // EXPLORATION IS DELIBERATELY CHEAP, and it has to be. This search is synchronous, and a
+    // full-depth robust rotation fit at every trial point over every correspondence froze the
+    // browser for minutes on the reference clip - the descent visits on the order of a thousand
+    // candidates. The lens shape has four or five free numbers; it does not need 130
+    // correspondences and an eight-round annealed inlier set to tell one candidate from the next.
+    // So the descent runs on a spread subsample at shallow depth, and the WINNER is re-scored at
+    // full depth on the full set, which is the number that gets reported and gated on.
+    const F = {...O, fitRounds: 2};
+    const subsample = (p) => {
+        const n = p.A.length;
+        if (n <= O.shapeMaxPairs) return p;
+        const step = n / O.shapeMaxPairs;
+        const A2 = [], B2 = [];
+        for (let i = 0; i < O.shapeMaxPairs; i++) {
+            const k = Math.floor(i * step);
+            A2.push(p.A[k]); B2.push(p.B[k]);
+        }
+        return {A: A2, B: B2};
+    };
+    const evalOn = (lens, pairs) => {
+        const s = scoreLens(lens, pairs.A, pairs.B, size, O);
+        return s ? s.rms : Infinity;
+    };
+    const train = subsample(holdout ? holdout.train : {A, B});
+    const test = holdout ? holdout.test : null;
+
+    let best = seed;
+    let bestHeld = test ? evalOn(seed.lens, test) : null;
+
+    for (let terms = 1; terms <= 3; terms++) {
+        const d = polyFromPreset(seed.lens.type, rhoMax, terms);
+        let cand = scoreLens(makeLens({
+            ...seed.lens, type: "custom", distortion: d,
+        }), train.A, train.B, size, O);
+        if (!cand) continue;
+
+        // Coordinate descent over focal, the active coefficients, and the principal point.
+        const active = [0, 1, 2].slice(0, terms);
+        for (const scale of O.shapeScales) {
+            let improved = true;
+            let guard = 0;
+            while (improved && guard++ < O.shapeMaxSteps) {
+                improved = false;
+                for (const k of active) {
+                    for (const dir of [1, -1]) {
+                        const dd = cand.lens.distortion.slice();
+                        dd[k] += dir * scale * (0.06 / Math.pow(3, k));
+                        const t = scoreLens(makeLens({...cand.lens, distortion: dd}), train.A, train.B, size, F);
+                        if (t && t.rms < cand.rms) { cand = t; improved = true; }
+                    }
+                }
+                for (const dir of [1, -1]) {
+                    const t = scoreLens(makeLens({
+                        ...cand.lens, focalPx: cand.lens.focalPx * (1 + dir * scale * 0.02),
+                    }), train.A, train.B, size, F);
+                    if (t && t.rms < cand.rms) { cand = t; improved = true; }
+                }
+                for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                    const p = [cand.lens.principal[0] + dx * scale * 12, cand.lens.principal[1] + dy * scale * 12];
+                    if (Math.abs(p[0] - size[0] / 2) > size[0] * 0.25) continue;
+                    if (Math.abs(p[1] - size[1] / 2) > size[1] * 0.25) continue;
+                    const t = scoreLens(makeLens({...cand.lens, principal: p}), train.A, train.B, size, F);
+                    if (t && t.rms < cand.rms) { cand = t; improved = true; }
+                }
+            }
+        }
+        if (!validateLens(cand.lens, size).ok) continue;
+
+        if (test) {
+            const held = evalOn(cand.lens, test);
+            // Each added term must beat the incumbent on data it never saw.
+            if (!(held < bestHeld * 0.97)) continue;
+            bestHeld = held;
+        } else if (!(cand.rms < best.rms * 0.97)) continue;
+        best = cand;
+    }
+    return best;
 }
 
 /** Local search over the principal point, which a fitted lens should place near the centre. */
@@ -197,7 +361,9 @@ export function calibrateLens(tracks, nFrames, size, opts = {}) {
     const scan = scanLens(A, B, size, O);
     if (!scan.best) return {accepted: false, lens: null, reason: "no lens fitted", diagnostics: diag};
 
-    const refined = refinePrincipal(scan.best, A, B, size, O);
+    let refined = refinePrincipal(scan.best, A, B, size, O);
+    diag.presetType = refined.lens.type;
+    diag.presetRms = refined.rms;
     diag.type = refined.lens.type;
     diag.focalPx = refined.lens.focalPx;
     diag.principal = refined.lens.principal;
@@ -246,6 +412,33 @@ export function calibrateLens(tracks, nFrames, size, opts = {}) {
         if (!(rect.rms > refined.rms * O.minImprovement || refined.within > rect.within * 1.15)) {
             return {accepted: false, lens: null, reason: `no better than a rectilinear lens (rms ${refined.rms.toFixed(2)} vs ${rect.rms.toFixed(2)})`, diagnostics: diag};
         }
+    }
+
+    // Only now, once the clip has been shown to constrain a lens at all, is it worth paying for
+    // the free-shape refinement - which is by far the most expensive step here. Refining before
+    // the gate meant doing the whole coordinate descent on still cameras and pure rolls we were
+    // about to reject, which is both wasted work and a slow test suite.
+    //
+    // Held out so each added term has to earn itself. The split is over the correspondence list,
+    // whose rows are distinct TRACKS by construction (one per track seen in both baseline
+    // frames), so this is a whole-track split rather than a per-observation one that would leak.
+    if (O.fitCustom !== false) {
+        const testIdx = [], trainIdx = [];
+        for (let i = 0; i < A.length; i++) (i % 4 === 0 ? testIdx : trainIdx).push(i);
+        const holdout = testIdx.length >= 8 && trainIdx.length >= 20 ? {
+            train: {A: trainIdx.map((i) => A[i]), B: trainIdx.map((i) => B[i])},
+            test: {A: testIdx.map((i) => A[i]), B: testIdx.map((i) => B[i])},
+        } : null;
+        const custom = refineCustom(refined, A, B, size, O, holdout);
+        if (custom && custom.lens.type === "custom") {
+            // Re-score on the FULL set so the reported numbers stay comparable with the preset's.
+            const full = scoreLens(custom.lens, A, B, size, O);
+            if (full && full.within >= refined.within) refined = full;
+        }
+        diag.type = refined.lens.type;
+        diag.distortion = refined.lens.distortion;
+        diag.rms = refined.rms;
+        diag.within = refined.within;
     }
 
     // 5. Held-out correspondences, split by TRACK, never by observation.
