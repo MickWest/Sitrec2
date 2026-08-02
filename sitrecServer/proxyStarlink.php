@@ -285,8 +285,10 @@ if ($http_status !== 200) {
 }
 
 // Check if response looks like an HTML error page instead of TLE data
-$trimmedData = trim($data);
-if (stripos($trimmedData, '<!DOCTYPE') === 0 || stripos($trimmedData, '<html') === 0) {
+// Test a bounded prefix: trim() on a 35 MB LEO response copies the whole
+// payload, which alone can exhaust the PHP memory_limit.
+$prefixData = ltrim(substr($data, 0, 65536));
+if (stripos($prefixData, '<!DOCTYPE') === 0 || stripos($prefixData, '<html') === 0) {
     die('ERROR: Space-Track returned HTML instead of TLE data (server error). Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', Response: ' . substr($data, 0, 500));
 }
 
@@ -300,8 +302,10 @@ if ($type != "CUSTOM" && !isValidGPData($data, $http_status, "csv")) {
 
 // check that the data contains "STARLINK" if the default type.
 // In CSV the first line is the OMM header, so look at the first data row.
-$lines = explode("\n", $data);
-$firstDataLine = $lines[1] ?? '';
+// getGPLine() reads just that row - explode()ing a 35 MB payload into a
+// 60,000-element array to look at line 2 is what previously ran the server
+// out of memory.
+$firstDataLine = getGPLine($data, 1);
 if ($type == "" && strpos($firstDataLine, "STARLINK") === false) {
     die('ERROR: Expected STARLINK data but got: ' . substr($firstDataLine, 0, 100) . '. Request: ' . $request);
 }
