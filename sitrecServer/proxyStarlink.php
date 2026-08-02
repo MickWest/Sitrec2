@@ -160,40 +160,41 @@ $cachedZIP = $starlink_cache . $baseFileName . ".tle.zip";
 // onto them.
 $cacheMaxAge = 30 * 24 * 60 * 60; // 30 days
 
-// The catalog passed 99999 on 2026-07-11, and TLE-format feeds silently omit
-// every object above that. A .tle cached for a date on or after the cutover is
-// therefore incomplete: ignore it and re-fetch as CSV. TLE caches for earlier
-// dates are complete and are still used. (ISO dates compare as strings.)
-$TLE_COMPLETE_BEFORE = "2026-07-11";
-$legacyTLEIsComplete = ($request < $TLE_COMPLETE_BEFORE);
-
+// Any cached copy is used, whatever format it is in, and we only go to
+// Space-Track when we have nothing. Historical element sets for a past date
+// never change, Space-Track rate limits hard, and this archive goes back to
+// 1977, so re-downloading what we already hold would be pure waste. Sitrec
+// parses TLE and OMM CSV alike, so the cached format does not matter.
+//
+// The one thing an old .tle cache cannot have is objects above catalog number
+// 99999 (the catalog passed that on 2026-07-11 and TLE cannot represent them).
+// Deleting the affected file is all it takes to pick those up on the next
+// request - it will come back as CSV.
 if ($caching) {
     // Prefer the CSV cache - it is the only format that can hold everything.
     if (file_exists($cachedCSV)) {
         serveGPCached($cachedCSV, $cachedCSV, $cacheMaxAge);
     }
 
-    if ($legacyTLEIsComplete) {
-        if ($zipIt) {
-            if (file_exists($cachedZIP)) {
+    if ($zipIt) {
+        if (file_exists($cachedZIP)) {
+            header("Location: " . $cachedZIP);
+            exit();
+        }
+
+        if (file_exists($cachedTLE)) {
+            if (zipTLE($cachedTLE, $cachedZIP, $baseFileName . ".tle")) {
+                unlink($cachedTLE);
                 header("Location: " . $cachedZIP);
                 exit();
+            } else {
+                exit("Failed to create ZIP from existing TLE");
             }
-
-            if (file_exists($cachedTLE)) {
-                if (zipTLE($cachedTLE, $cachedZIP, $baseFileName . ".tle")) {
-                    unlink($cachedTLE);
-                    header("Location: " . $cachedZIP);
-                    exit();
-                } else {
-                    exit("Failed to create ZIP from existing TLE");
-                }
-            }
-        } else {
-            if (file_exists($cachedTLE)) {
-                header("Location: " . $cachedTLE);
-                exit();
-            }
+        }
+    } else {
+        if (file_exists($cachedTLE)) {
+            header("Location: " . $cachedTLE);
+            exit();
         }
     }
 }

@@ -224,6 +224,57 @@ function isTLEElementLine(line: string): boolean {
 }
 
 /**
+ * Split one CSV row into fields, honouring RFC 4180 quoting.
+ *
+ * The two upstreams do NOT format their CSV the same way, and a plain
+ * split(",") only works for one of them:
+ *
+ *   CelesTrak    19 columns, nothing quoted.
+ *   Space-Track  40 columns, header unquoted but EVERY data field quoted,
+ *                including a free-text COMMENT column.
+ *
+ * Split naively, a Space-Track catalog number arrives as the 7-character
+ * string "44714" — quote marks and all — which Number() reads as NaN, so
+ * every row is rejected and the whole historical set loads as zero
+ * satellites. Doubled quotes ("") are the RFC's escape for a literal quote.
+ */
+export function splitCSVRow(line: string): string[] {
+    // Tolerate CRLF: the trailing \r would otherwise stick to the last field.
+    if (line.endsWith("\r")) {
+        line = line.slice(0, -1);
+    }
+
+    const fields: string[] = [];
+    let field = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (inQuotes) {
+            if (c === '"') {
+                if (line[i + 1] === '"') {   // "" -> a literal quote
+                    field += '"';
+                    i++;
+                } else {
+                    inQuotes = false;
+                }
+            } else {
+                field += c;
+            }
+        } else if (c === '"') {
+            inQuotes = true;
+        } else if (c === ",") {
+            fields.push(field);
+            field = "";
+        } else {
+            field += c;
+        }
+    }
+    fields.push(field);
+    return fields;
+}
+
+/**
  * Parse OMM CSV lines (header row first) into flat records.
  *
  * This is the only format that can carry the whole catalogue: the TLE format
@@ -234,7 +285,9 @@ function isTLEElementLine(line: string): boolean {
  * distinguish "not usable" from "no satellites in it".
  */
 export function parseOMMCSVLines(lines: string[]): { name: string, number: number, satrec: SatRec }[] | null {
-    const header = lines[0].trim().split(",");
+    // Resolve columns by NAME, never by position: CelesTrak sends 19 columns
+    // and Space-Track 40, in a different order, and both are valid OMM.
+    const header = splitCSVRow(lines[0]).map(h => h.trim());
 
     // Resolve the column index of each field we need, once.
     const col: Record<string, number> = {};
@@ -251,7 +304,7 @@ export function parseOMMCSVLines(lines: string[]): { name: string, number: numbe
     for (let i = 1; i < lines.length; i++) {
         const line = lines[i];
         if (line.trim() === "") continue;
-        const v = line.split(",");
+        const v = splitCSVRow(line);
         // A short row is a truncated download; skip it rather than
         // manufacturing a satellite from undefined fields.
         if (v.length < header.length) continue;
