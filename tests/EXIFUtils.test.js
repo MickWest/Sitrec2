@@ -264,16 +264,19 @@ describe('applyImportedImageMetadata', () => {
         expect(ptzAngles.el).toBe(-12.3);
         expect(ptzAngles.roll).toBeCloseTo(5.6, 5);
         expect(ptzAngles.fov).toBe(42.5);
-        expect(mockUpdateViewFromPreset).toHaveBeenCalledTimes(3);
-        expect(mockUpdateViewFromPreset).toHaveBeenNthCalledWith(1, 'mainView', expect.objectContaining({name: 'mainView'}));
-        expect(mockUpdateViewFromPreset).toHaveBeenNthCalledWith(2, 'lookView', expect.objectContaining({name: 'lookView'}));
-        expect(mockUpdateViewFromPreset).toHaveBeenNthCalledWith(3, 'video', expect.objectContaining({name: 'video'}));
+        // Importing an image does NOT reposition the views when a video view exists. Laying out
+        // views is the view-preset system's job - the same one a dropped video goes through -
+        // and it has already run by this point, from the videoLoaded event. This module used to
+        // impose its own hardcoded table on top, which is why a dropped image landed bottom-right
+        // while a dropped video landed top-right in the same sitch. Note the table was never read
+        // from the file: no JPEG ever asked for that layout.
+        expect(mockUpdateViewFromPreset).not.toHaveBeenCalled();
+        expect(applied.viewLayout).toBeUndefined();
         expect(mockForceUpdateUIText).toHaveBeenCalled();
         expect(lookCameraNode.snapshotCamera).toHaveBeenCalled();
         expect(mockSetRenderOne).toHaveBeenCalled();
         expect(applied).toEqual(expect.objectContaining({
             cameraPositionNode: 'fixedCameraPosition',
-            viewLayout: 'mainView, lookView, video',
             verticalFov: '42.50 deg',
             heading: '123.4 deg',
             pitch: '-12.3 deg',

@@ -537,6 +537,25 @@ function applyImportedImageViewLayout(filename = "", options = {}) {
         return null;
     }
 
+    // A sitch with a video view already chose its layout, from the shared view PRESETS, when the
+    // videoLoaded event fired - the same mechanism a dropped video goes through. Imposing this
+    // table on top of that is what made a dropped image and a dropped video land differently:
+    // the preset put the video top-right, and then this quietly moved it to the bottom-right
+    // slot below, for images only, because a .MOV never passes through the EXIF importer.
+    //
+    // The remaining entries are still worth having for view configurations the preset system
+    // does not cover (no video view at all), so this bails out rather than deleting the table.
+    if (views.videoView) {
+        // Still refresh the UI text: the import changed camera position, FOV and time even
+        // though it moved nothing, and that refresh used to ride along at the end of this
+        // function.
+        forceUpdateUIText();
+        if (logResult) {
+            console.log(`[EXIF] ${filename}: leaving layout to the view preset`);
+        }
+        return null;
+    }
+
     const layout = getImportedImageViewLayout(views);
 
     const successfulViews = [];
