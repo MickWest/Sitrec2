@@ -39,6 +39,25 @@ If you are not logged in, server saving is disabled until login.
 
 When needed, Sitrec rehosts dynamic/imported assets before saving so the sitch references stable server objects instead of temporary local drops.
 
+### Satellite data in a saved sitch
+
+Satellite data is stored with the sitch, so reopening it always shows exactly the
+satellites you saw, even years later.
+
+One case needs a little care. Orbital data is published a while after it applies, so a
+set loaded within a day or two of the date it covers is only partly filled in — see
+[Investigating Starlink Flares](Starlink.md#wait-a-few-days-before-analysing-a-very-recent-event).
+A sitch saved that soon after an event therefore stores an incomplete set.
+
+When you reopen a sitch **you** saved, Sitrec notices this and offers to fetch the rest.
+Choosing to refresh **adds** the missing satellites to what is already loaded rather than
+replacing anything, so if you had combined several sets yourself, all of them are kept.
+
+The refreshed data is only loaded, not stored, until you save: you can check the result
+first, and save later from the File menu if you prefer. The original stored data is never
+altered or deleted, so earlier versions of the sitch keep opening exactly as they always
+did.
+
 ## Saving to a Local Folder
 
 Local save is best when you want fast offline-like iteration and no server dependency.

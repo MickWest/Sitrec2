@@ -123,7 +123,8 @@ top-left to change your inputs):
   Defaults to **now**, interpreted in the **location's local time**.
 - **Advanced** — satellite data source only:
   - **Fetch current TLE** — download the live Starlink elements (for real-data accuracy near "now").
-  - **…or load your own .tle file** — use a TLE set you supply.
+  - **…or load your own .tle file** — use an element set you supply, in either CCSDS OMM CSV
+    or legacy TLE format.
 
   By default the app uses a **synthetic** Starlink-like constellation (instant, offline). The flare
   cone (5°), minimum elevation (0°), nadir model (geocentric), and look-ahead (1 day) are fixed
@@ -136,7 +137,11 @@ top-left to change your inputs):
   (instant, offline, no network; see `dummyTLE.js`). For real-data accuracy near "now",
   *Advanced › Fetch current TLE* downloads live elements via the server-cached, CORS-free Sitrec
   proxy (`sitrecServer/proxy.php?request=CURRENT_STARLINK`), falling back to
-  [Celestrak](https://celestrak.org/); you can also load your own `.tle` file. A fetched set is
+  [Celestrak](https://celestrak.org/); you can also load your own file. Both sources are
+  requested as **CCSDS OMM CSV** rather than the legacy TLE format: TLE cannot represent
+  catalog numbers above 99999, a limit the catalog passed on 2026-07-11, so TLE feeds now
+  silently omit the newest Starlinks — exactly the ones a current flare search cares about.
+  Legacy TLE files still load. A fetched set is
   cached (~1 day) so small date/time tweaks don't re-fetch. (The engine also drops any satellite a
   stale TLE propagates outside a LEO sanity band, so old elements can't conjure phantom flares.)
 - **Geocoding** — [OpenStreetMap Nominatim](https://nominatim.openstreetmap.org/).

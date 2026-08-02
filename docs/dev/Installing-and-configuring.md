@@ -141,7 +141,19 @@ The example below shows some commonly used settings. For the full list of availa
 #S3_SECRET_ACCESS_KEY=your_secret_here
 #S3_BUCKET=your-bucket
 #S3_REGION=us-west-2
+
+# === Satellite data (optional — defaults are correct; see note below) ===
+#CURRENT_STARLINK="https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?FILE=starlink&FORMAT=csv"
+#CURRENT_ACTIVE="https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=csv"
 ```
+
+> **Upgrading an existing install:** if you already set `CURRENT_STARLINK` or
+> `CURRENT_ACTIVE`, check they end in `FORMAT=csv` and not `FORMAT=tle`. The TLE
+> format cannot represent catalog numbers above 99999, a limit the satellite
+> catalog passed on 2026-07-11, so CelesTrak now leaves those objects out of TLE
+> feeds entirely — a `FORMAT=tle` URL returns a silently incomplete catalog that
+> is missing the newest satellites. These settings override the built-in
+> defaults, so an old value keeps taking effect until you change it.
 
 After editing `.env`, apply your changes with the management script — it safely recreates the container and your `.env` file is never modified:
 ```bash

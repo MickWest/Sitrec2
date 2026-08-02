@@ -84,7 +84,37 @@ The Starlink sitch will load the **current** satellites, but often we are invest
 
 Note the text in the top right of the main view; this shows the accuracy of the satellite data. If it does not say In Range 100% then you need to load the satellites. 
 
-You can also drag in your own TLE file, but it should never be necessary for a Starlink Horizon Flare situation
+You can also drag in your own satellite data file, but it should never be necessary for a Starlink Horizon Flare situation
+
+#### Wait a few days before analysing a very recent event
+
+Orbital data is not published the instant it applies. Space-Track works out where a
+satellite was and releases that a while afterwards, so a set downloaded for *today* or
+*yesterday* is only partly filled in. Loading data for a date that recent gets you a
+fraction of the satellites that will eventually be available for it:
+
+| Data loaded            | Satellites you get |
+| ---------------------- | ------------------ |
+| Same day as the event  | around a half      |
+| Next day               | most               |
+| Three or more days on  | all of them        |
+
+For a flare investigation this matters, because the satellite that made the flare may
+simply not be in the data yet. If you are looking at something that happened in the last
+day or two, load what you can to get started, then come back a few days later and load
+the date again — the missing satellites will be there by then.
+
+#### Reopening a saved sitch
+
+Saving a sitch stores a copy of the satellite data with it, so it always reopens showing
+exactly what you saw. If you saved a sitch soon after the event, that stored copy is one
+of the partly-filled sets described above.
+
+When you reopen your own sitch, Sitrec checks for this and offers to fetch the rest. It
+**adds** the missing satellites to what is already there rather than replacing anything,
+so any data you combined yourself is kept. Nothing changes on the server until you choose
+to save: you can look over the result first, and the sitch as you originally saved it
+still opens exactly as it did before.
 
 ### Step 3 - Set the camera location
 
