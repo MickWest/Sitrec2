@@ -79,14 +79,16 @@ define('GP_SETTLE_DAYS', 4);
  * @param string $requestDate The requested date, YYYY-MM-DD.
  */
 function gpCacheIsUsable($file, $requestDate) {
-    if (!file_exists($file)) {
+    // $file may name the uncompressed form while only the .gz is on disk.
+    $entry = gpCacheEntry($file);
+    if ($entry === null) {
         return false;
     }
     $settledTs = strtotime($requestDate . ' +' . GP_SETTLE_DAYS . ' days');
     if ($settledTs === false) {
         return true;    // unparseable date - don't throw away a good cache
     }
-    if (filemtime($file) < $settledTs && time() >= $settledTs) {
+    if (filemtime($entry) < $settledTs && time() >= $settledTs) {
         return false;   // provisional, and it is now worth replacing
     }
     return true;
@@ -130,58 +132,88 @@ function getGPLine($dataBlob, $skip = 0) {
  * @return bool true if the plain file was written.
  */
 function writeGPCache($plainFile, $dataBlob) {
-    if (file_put_contents($plainFile, $dataBlob) === false) {
+    $gzFile = $plainFile . ".gz";
+    $len = strlen($dataBlob);
+    if ($len === 0) {
         return false;
     }
 
-    $gzFile = $plainFile . ".gz";
-    $in = @fopen($plainFile, 'rb');
-    $out = @gzopen($gzFile, 'wb6');
-    if ($in === false || $out === false) {
-        // A missing .gz simply means callers fall back to the uncompressed path.
-        if ($in !== false) fclose($in);
-        if ($out !== false) gzclose($out);
-        @unlink($gzFile);
-        return true;
+    $ctx = deflate_init(ZLIB_ENCODING_GZIP, ['level' => 6]);
+    $out = @fopen($gzFile, 'wb');
+    if ($ctx === false || $out === false) {
+        if ($out !== false) fclose($out);
+        return false;
     }
 
+    // Compress straight from the response in 1 MB chunks. gzencode() would
+    // return the whole compressed payload as a second string, which on a 57 MB
+    // Space-Track LEO response exhausts the 128 MB memory_limit outright.
     $ok = true;
-    while (!feof($in)) {
-        $chunk = fread($in, 1024 * 1024);
-        if ($chunk === false) { $ok = false; break; }
-        if ($chunk !== '' && gzwrite($out, $chunk) === false) { $ok = false; break; }
+    $chunkSize = 1024 * 1024;
+    for ($offset = 0; $offset < $len; $offset += $chunkSize) {
+        $mode = ($offset + $chunkSize >= $len) ? ZLIB_FINISH : ZLIB_NO_FLUSH;
+        $encoded = deflate_add($ctx, substr($dataBlob, $offset, $chunkSize), $mode);
+        if ($encoded === false) { $ok = false; break; }
+        if ($encoded !== '' && fwrite($out, $encoded) === false) { $ok = false; break; }
     }
-    fclose($in);
-    gzclose($out);
+    fclose($out);
 
     if (!$ok) {
         @unlink($gzFile);
+        return false;
     }
+
+    // Only the .gz is kept. The uncompressed copy was pure duplication - it
+    // existed solely so a non-gzip client could be redirected at a static file,
+    // and serveGPCached() now inflates on the fly for that rare case instead.
+    // Storing both cost ~6x the disk for no benefit: a Space-Track LEO date is
+    // 57 MB plain against 9 MB compressed.
+    @unlink($plainFile);
     return true;
+}
+
+/**
+ * Which file actually represents this cache entry, or null if it is absent.
+ *
+ * Prefers the compressed copy. Plain files are still recognised so entries
+ * written before compression became the only stored form keep working.
+ */
+function gpCacheEntry($plainFile) {
+    if (file_exists($plainFile . ".gz")) {
+        return $plainFile . ".gz";
+    }
+    if (file_exists($plainFile)) {
+        return $plainFile;
+    }
+    return null;
 }
 
 /**
  * Serve a cached GP file, using the pre-compressed copy when the client accepts
  * gzip (every browser does), which cuts these payloads to roughly a third.
  *
- * Falls back to redirecting at $redirectUrl - the original behaviour - for
- * clients that don't advertise gzip or when no .gz has been built.
- * Does not return.
+ * Only the compressed form is stored, so a client that does not advertise gzip
+ * is served an inflated copy streamed from it. That path is vanishingly rare -
+ * every browser accepts gzip - and it is what lets us stop keeping a second,
+ * uncompressed copy of every payload on disk.
+ *
+ * Falls back to redirecting at $redirectUrl for legacy entries written before
+ * compression became the only stored form. Does not return.
  */
 function serveGPCached($plainFile, $redirectUrl, $maxAge) {
     $gzFile = $plainFile . ".gz";
-    $acceptsGzip = stripos($_SERVER['HTTP_ACCEPT_ENCODING'] ?? '', 'gzip') !== false;
 
-    if (!$acceptsGzip || !file_exists($gzFile)) {
+    // Legacy entry stored uncompressed only: redirect at it as before.
+    if (!file_exists($gzFile)) {
         header("Location: " . $redirectUrl);
         exit();
     }
 
+    $acceptsGzip = stripos($_SERVER['HTTP_ACCEPT_ENCODING'] ?? '', 'gzip') !== false;
     $lastModified = filemtime($gzFile);
-    $etag = '"' . md5($plainFile . $lastModified) . '"';
+    $etag = '"' . md5($plainFile . $lastModified) . ($acceptsGzip ? '"' : '-plain"');
 
     header("Content-Type: text/plain; charset=UTF-8");
-    header("Content-Encoding: gzip");
     header("Vary: Accept-Encoding");
     header("Cache-Control: public, max-age=" . $maxAge);
     header("Last-Modified: " . gmdate("D, d M Y H:i:s", $lastModified) . " GMT");
@@ -197,8 +229,25 @@ function serveGPCached($plainFile, $redirectUrl, $maxAge) {
 
     // PHP must not compress an already-compressed body.
     @ini_set('zlib.output_compression', 'Off');
-    header("Content-Length: " . filesize($gzFile));
-    readfile($gzFile);
+
+    if ($acceptsGzip) {
+        header("Content-Encoding: gzip");
+        header("Content-Length: " . filesize($gzFile));
+        readfile($gzFile);
+        exit();
+    }
+
+    // No gzip support: inflate on the fly, a chunk at a time. Content-Length is
+    // omitted because the uncompressed size is not known without reading it.
+    $in = @gzopen($gzFile, 'rb');
+    if ($in === false) {
+        header("Location: " . $redirectUrl);
+        exit();
+    }
+    while (!gzeof($in)) {
+        echo gzread($in, 1024 * 1024);
+    }
+    gzclose($in);
     exit();
 }
 ?>

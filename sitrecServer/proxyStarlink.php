@@ -379,15 +379,31 @@ if ($type == "" && strpos($firstDataLine, "STARLINK") === false) {
     gpFailSoft('ERROR: Expected STARLINK data but got: ' . substr($firstDataLine, 0, 100) . '. Request: ' . $request);
 }
 
-// Freshly downloaded data is OMM CSV, so it is cached as .csv alongside a
-// pre-built .gz. Note that TLE_ZIP_ENABLED no longer applies here: gzip
-// Content-Encoding compresses at least as well, is decompressed by the browser
-// itself, and so avoids pulling JSZip into the client just to read a catalogue.
-// The setting still governs the legacy .tle files already in the cache.
+// Freshly downloaded data is OMM CSV, cached as a single .csv.gz. Note that
+// TLE_ZIP_ENABLED no longer applies here: gzip Content-Encoding compresses at
+// least as well, is decompressed by the browser itself, and so avoids pulling
+// JSZip into the client just to read a catalogue. The setting still governs the
+// legacy .tle files already in the cache.
 if ($caching) {
     if (!writeGPCache($cachedCSV, $data)) {
         exit("ERROR: Failed to write GP cache file");
     }
+
+    // The CSV supersedes any legacy TLE copy of the same set - it is the same
+    // data plus everything the TLE format cannot represent. Keeping both would
+    // hold two copies of every repaired date forever. Only remove them once the
+    // replacement is verifiably on disk and non-empty.
+    $written = $cachedCSV . ".gz";
+    if (file_exists($written) && filesize($written) > 0) {
+        foreach ([$cachedZIP, $cachedTLE] as $superseded) {
+            if (file_exists($superseded)) {
+                @unlink($superseded);
+                error_log("proxyStarlink: replaced superseded " . basename($superseded)
+                    . " with " . basename($written));
+            }
+        }
+    }
+
     serveGPCached($cachedCSV, $cachedCSV, $cacheMaxAge);
 } else {
     header('Vary: Accept-Encoding');
