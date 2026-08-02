@@ -62,6 +62,21 @@ export const STAR_CALIBRATE_DEFAULTS = {
     // is generous, adjustable, and - the part that matters - REPORTED when the search ends up
     // pressed against it, because a clamped principal point is a fit that wanted to be elsewhere.
     principalMaxOffsetFrac: 0.45,
+
+    // When the centred scan explains fewer than this fraction of the correspondences, the frame
+    // centre is probably not where the optical axis is, and scanPrincipal takes a coarse global
+    // look before the local refinement starts. Measured on the two real clips: an uncropped one
+    // scores 0.99 here and never triggers it; a hard-cropped one scores 0.27 and cannot be solved
+    // without it.
+    principalSearchWithinFrac: 0.6,
+    principalScanSteps: 5,      // n x n grid across +-principalMaxOffsetFrac (odd: includes centre)
+    principalScanPairs: 40,     // correspondences subsampled for the grid - it only locates a basin
+    principalScanFocals: 9,     // coarse focal grid for the same reason
+    // Two shapes, not five: across the grid the principal point dominates the score, and these
+    // two bracket the family (a pinhole and the most compressive fisheye). The winning cell is
+    // re-scanned over every type at full resolution afterwards, so nothing is lost.
+    principalScanTypes: ["rectilinear", "orthographicFisheye"],
+    principalScanKeep: 3,       // grid cells re-scanned at full resolution before one is chosen
 };
 
 const PRESETS = ["rectilinear", "stereographic", "equidistantFisheye", "equisolidFisheye", "orthographicFisheye"];
@@ -78,21 +93,67 @@ export function correspondences(tracks, f0, f1) {
     return {A, B, index};
 }
 
-/** Pick the widest baseline that still shares plenty of tracks. */
-export function chooseBaseline(tracks, nFrames, minPairs) {
-    let best = null;
-    // Try the full span first, then walk inwards; the widest baseline has the most signal.
+/**
+ * Pick the baseline carrying the most lens signal: wide AND well populated.
+ *
+ * This used to return the FIRST baseline clearing minPairs, walking from widest inwards - "the
+ * widest baseline has the most signal". Width alone is not signal. On a cropped timelapse whose
+ * tracks are mostly short, that rule took a 127-frame baseline with 31 correspondences over a
+ * 40-frame one with 342, and 31 noisy pairs do not determine a lens: the fit came back rms 2.05
+ * with 21 of 31 inliers and a principal point 268 px from the truth, where the richer baseline
+ * gives rms 0.51 and lands within 7 px.
+ *
+ * So every candidate is scored, `pairs * span`, and the best wins. Both factors are real - span
+ * buys the rotation that makes a lens observable at all, pairs buy the statistics - and the
+ * separate gates below still check that the rotation and the radial excitation are sufficient, so
+ * this only has to choose between candidates, not judge them.
+ */
+export function chooseBaseline(tracks, nFrames, minPairs, opts = {}) {
+    const O = {...STAR_CALIBRATE_DEFAULTS, ...opts};
+    let fallback = null;
+    const cands = [];
     for (const frac of [1.0, 0.8, 0.6, 0.45, 0.3]) {
         const span = Math.max(1, Math.round((nFrames - 1) * frac));
         for (const f0 of [0, Math.floor((nFrames - 1 - span) / 2)]) {
             const f1 = f0 + span;
             if (f1 >= nFrames) continue;
             const c = correspondences(tracks, f0, f1);
-            if (c.A.length >= minPairs) return {f0, f1, ...c};
-            if (!best || c.A.length > best.A.length) best = {f0, f1, ...c};
+            // Kept so a clip that never reaches minPairs still reports its best effort, and the
+            // caller's own "only N correspondences; need M" refusal is what speaks.
+            if (!fallback || c.A.length > fallback.A.length) fallback = {f0, f1, ...c};
+            if (c.A.length < minPairs) continue;
+            cands.push({f0, f1, span, ...c});
         }
     }
-    return best;
+    if (!cands.length) return fallback;
+
+    // ROTATION IS A PREREQUISITE, NOT A TIEBREAK. `pairs * span` on its own will happily pick a
+    // dense NARROW baseline whose rotation is below minRotationDeg - and because the gate that
+    // catches that only ever sees the ONE chosen baseline, the whole clip is then refused while a
+    // wider, thinner, perfectly calibratable baseline sat unexamined. (Measured on a 1-degree
+    // synthetic scene: 0->12 with 150 pairs wins on score, rotates 0.31 deg and is refused, while
+    // 0->39 with 25 pairs rotates 0.99 deg and calibrates.) So candidates are screened for
+    // rotation FIRST, with a cheap nominal-lens fit, and only the survivors are ranked.
+    if (opts.size) {
+        const nominal = makeLens({type: "rectilinear", focalPx: opts.size[0] / 2,
+            refSize: opts.size});
+        for (const c of cands) {
+            const fit = fitRotationRobust(nominal, c.A, c.B,
+                {size: opts.size, inlierThreshold: O.inlierThreshold, rounds: 4});
+            c.rotationDeg = fit ? qAngle(fit.q) * 180 / Math.PI : 0;
+        }
+        // The estimate uses a stand-in lens, so leave margin rather than screening at the exact
+        // gate; the real gate still runs on the winner.
+        const viable = cands.filter((c) => c.rotationDeg >= 0.8 * O.minRotationDeg);
+        if (viable.length) cands.length = 0, cands.push(...viable);
+    }
+
+    let best = null, bestScore = -1;
+    for (const c of cands) {
+        const score = c.A.length * c.span;
+        if (score > bestScore) { bestScore = score; best = c; }
+    }
+    return best ?? fallback;
 }
 
 function scoreLens(lens, A, B, size, O) {
@@ -129,11 +190,15 @@ function scoreLens(lens, A, B, size, O) {
 export function scanLens(A, B, size, opts = {}) {
     const O = {...STAR_CALIBRATE_DEFAULTS, ...opts};
     const half = size[0] / 2;
-    const principal = [size[0] / 2, size[1] / 2];
+    // Defaults to the frame centre, which is where an UNCROPPED camera's axis is. A caller that
+    // has reason to believe otherwise - scanPrincipal, below - passes its own.
+    const principal = opts.principal ? [...opts.principal] : [size[0] / 2, size[1] / 2];
     const byType = {};
     let best = null;
 
-    for (const type of PRESETS) {
+    // Callers locating a BASIN rather than a final answer can restrict the shape family: at this
+    // stage the principal point dominates the score and the exact curve barely moves it.
+    for (const type of (opts.types ?? PRESETS)) {
         let bestOfType = null;
         for (let k = 0; k < O.focalSteps; k++) {
             // Geometric grid: focal length is a scale, so equal ratios matter, not equal steps.
@@ -166,6 +231,75 @@ export function scanLens(A, B, size, opts = {}) {
  * degrades monotonically outward, which on a wide lens means it is worst exactly where the
  * original bug lives.
  */
+/**
+ * Find roughly WHERE the optical axis is, when it is clearly not at the frame centre.
+ *
+ * refinePrincipal is a local descent, and on a hard crop the objective actively misleads it.
+ * Measured on a real cropped timelapse whose axis is at (953, 239) of a 1280x720 video - the
+ * video is a crop of a larger frame - the rms surface over the principal point runs:
+ *
+ *        x=400   520   640   760   880   953  1040
+ *   y=239  4.73  5.44  5.53  1.81  0.65  0.60  0.76
+ *   y=360  4.51  5.07  5.90  5.66  2.41  1.66  1.07
+ *
+ * The global minimum is 0.60 at the true axis, and from the frame centre (5.90) the STEEPEST
+ * improvement is leftward - away from it - into a broad shallow plateau. That surface is scanned
+ * with lens type and focal re-fitted at every cell, so it is not an artifact of holding those
+ * fixed: no local refinement of the principal point can solve this, however it is stepped. It
+ * needs a coarse global look.
+ *
+ * Gated, and deliberately so: an uncropped clip's centred scan already explains nearly every
+ * correspondence, so this never runs for it and costs it nothing. The grid is only paid for by
+ * the clips that would otherwise be refused outright.
+ *
+ * Cheap by construction - a subsample of the correspondences and a coarse focal grid. It only has
+ * to identify the right NEIGHBOURHOOD; the existing scan and refinePrincipal do the precision
+ * work from there.
+ */
+export function scanPrincipal(A, B, size, opts = {}) {
+    const O = {...STAR_CALIBRATE_DEFAULTS, ...opts};
+    // Subsample: locating a basin does not need every pair, and this runs synchronously.
+    const step = Math.max(1, Math.floor(A.length / O.principalScanPairs));
+    const a = [], b = [];
+    for (let i = 0; i < A.length; i += step) { a.push(A[i]); b.push(B[i]); }
+
+    const n = O.principalScanSteps;
+    const span = O.principalMaxOffsetFrac;
+    const cells = [];
+    for (let iy = 0; iy < n; iy++) {
+        for (let ix = 0; ix < n; ix++) {
+            // Spread across +-principalMaxOffsetFrac of the frame, centre included (n is odd).
+            const fx = n === 1 ? 0 : -span + (2 * span * ix) / (n - 1);
+            const fy = n === 1 ? 0 : -span + (2 * span * iy) / (n - 1);
+            const principal = [size[0] * (0.5 + fx), size[1] * (0.5 + fy)];
+            const s = scanLens(a, b, size, {...O, principal,
+                focalSteps: O.principalScanFocals, types: O.principalScanTypes});
+            if (!s.best) continue;
+            const c = {...s.best, principal,
+                atBoundary: ix === 0 || iy === 0 || ix === n - 1 || iy === n - 1};
+            // A MARGINAL inlier gain must not buy a much worse rms. scanLens ranks by inlier
+            // count with rms only as an exact-tie break, which is right when it is comparing
+            // focal lengths at one principal point - but across the grid, and at this scan's
+            // coarse focal resolution, a wrong cell can pick up a couple of extra inliers while
+            // fitting visibly worse. Measured on the 0->80 baseline: the boundary cell (1216,198)
+            // scored 97/153 at rms 3.267 and beat the near-truth cell (928,198) at 95/153 and rms
+            // 2.145 - two inliers, 52% more error - and the calibration went on to accept a
+            // principal point 77 px from the truth. At the full 34 focals the near-truth cell wins
+            // outright (144/153, rms 1.186), which is what makes this a RANKING fault rather than
+            // a resolution one. So counts within 10% of each other are separated by rms.
+            cells.push(c);
+        }
+    }
+    // Return the top few, not just the winner. At this scan's coarse focal resolution the ranking
+    // is not reliable enough to commit to: measured on the 0->80 baseline, the boundary cell
+    // (1216,198) out-scored the near-truth cell (928,198) on inlier count, and the calibration
+    // went on to accept a principal point 77 px from the truth - while at the full 34 focals the
+    // near-truth cell wins outright (144/153 at rms 1.186 against 97/153 at rms 3.121). So the
+    // grid nominates, and the caller re-scans the nominees properly before choosing.
+    cells.sort((x, y) => (y.within - x.within) || (x.rms - y.rms));
+    return cells.slice(0, O.principalScanKeep);
+}
+
 export function polyFromPreset(type, rhoMax, terms = 3) {
     const preset = LENS_PRESETS[type];
     if (!preset || type === "custom") return [0, 0, 0];
@@ -388,11 +522,15 @@ export function radialExcitation(A, B, principal) {
  *   `reason` says why, so the caller can keep the camera's existing lens and tell the user
  *   rather than silently adopting a fit of noise.
  */
-export function calibrateLens(tracks, nFrames, size, opts = {}) {
+export async function calibrateLens(tracks, nFrames, size, opts = {}) {
     const O = {...STAR_CALIBRATE_DEFAULTS, ...opts};
     const diag = {};
+    // This runs on the UI thread and the scans below take tens of seconds on a well-populated
+    // clip, so the caller can hand in a yield (StarTrackerUI passes yieldToBrowser) to keep the
+    // page answering between stages. Defaults to a no-op, which is what the tests want.
+    const breathe = O.onYield ?? (async () => {});
 
-    const base = chooseBaseline(tracks, nFrames, O.minPairs);
+    const base = chooseBaseline(tracks, nFrames, O.minPairs, {...O, size});
     if (!base || base.A.length < O.minPairs) {
         return {accepted: false, lens: null, reason: `only ${base ? base.A.length : 0} correspondences; need ${O.minPairs}`, diagnostics: diag};
     }
@@ -400,9 +538,47 @@ export function calibrateLens(tracks, nFrames, size, opts = {}) {
     diag.pairs = base.A.length;
 
     const {A, B} = base;
-    const scan = scanLens(A, B, size, O);
+    await breathe();
+    let scan = scanLens(A, B, size, O);
     if (!scan.best) return {accepted: false, lens: null, reason: "no lens fitted", diagnostics: diag};
 
+    // If a centred axis cannot explain most of the correspondences, the axis is probably not
+    // centred - which is ordinary for cropped footage - and a local refinement will not find it
+    // (see scanPrincipal for the measured surface). Look globally first, then carry on as normal.
+    // Of the INPUT correspondences, not of the rows this lens happened to be able to project:
+    // scoreLens skips pairs whose ray or reprojection is undefined and reports `n` for the rest,
+    // so within/n could read 0.75 for a lens that explained 15 of 100 pairs and evaluated 20.
+    diag.centredWithin = scan.best.within / Math.max(1, A.length);
+    if (diag.centredWithin < O.principalSearchWithinFrac) {
+        await breathe();
+        const seeds = scanPrincipal(A, B, size, O);
+        // Re-scan every nominee at FULL resolution and let those results choose. The grid's own
+        // ranking is not trustworthy enough to commit to (see scanPrincipal), and re-scanning only
+        // its winner is how a boundary cell got accepted 77 px from the truth.
+        let bestSeed = null, bestFull = null;
+        for (const seed of seeds) {
+            await breathe();
+            const full = scanLens(A, B, size, {...O, principal: seed.principal});
+            if (!full.best) continue;
+            if (!bestFull || full.best.within > bestFull.best.within
+                || (full.best.within === bestFull.best.within
+                    && full.best.rms < bestFull.best.rms)) {
+                bestFull = full; bestSeed = seed;
+            }
+        }
+        // Adopted only on strictly better evidence - more inliers AND no worse rms, the same
+        // ordering scanLens itself uses. A noisy CENTRED clip can trip the trigger, and "more
+        // inliers at any rms" would let it wander off-axis for nothing.
+        if (bestFull && bestFull.best.within > scan.best.within
+            && bestFull.best.rms <= scan.best.rms * 1.05) {
+            diag.principalSearched = [...bestSeed.principal];
+            diag.principalScanAtBoundary = !!bestSeed.atBoundary;
+            diag.principalSearchedWithin = bestFull.best.within / Math.max(1, A.length);
+            scan = bestFull;
+        }
+    }
+
+    await breathe();
     let refined = refinePrincipal(scan.best, A, B, size, O);
     diag.presetType = refined.lens.type;
     diag.presetRms = refined.rms;
@@ -453,6 +629,7 @@ export function calibrateLens(tracks, nFrames, size, opts = {}) {
     // 4. Beat a re-optimised RECTILINEAR model - today's behaviour with the same freedoms - by a
     //    clear margin. Comparing against "rectilinear at the sitch's current FOV" would be a
     //    straw man that almost anything beats.
+    await breathe();
     const rect = scan.rectilinear ? refinePrincipal(scan.rectilinear, A, B, size, O) : null;
     diag.rectilinearRms = rect ? rect.rms : null;
     diag.rectilinearWithin = rect ? rect.within : null;
@@ -470,6 +647,9 @@ export function calibrateLens(tracks, nFrames, size, opts = {}) {
     // Held out so each added term has to earn itself. The split is over the correspondence list,
     // whose rows are distinct TRACKS by construction (one per track seen in both baseline
     // frames), so this is a whole-track split rather than a per-observation one that would leak.
+    // The PRESET fit, kept so a free-shape refinement that fails to generalise can be undone
+    // rather than taking the whole calibration down with it (see gate 5).
+    const presetRefined = refined;
     if (O.fitCustom !== false) {
         const testIdx = [], trainIdx = [];
         for (let i = 0; i < A.length; i++) (i % 4 === 0 ? testIdx : trainIdx).push(i);
@@ -477,6 +657,7 @@ export function calibrateLens(tracks, nFrames, size, opts = {}) {
             train: {A: trainIdx.map((i) => A[i]), B: trainIdx.map((i) => B[i])},
             test: {A: testIdx.map((i) => A[i]), B: testIdx.map((i) => B[i])},
         } : null;
+        await breathe();
         const custom = refineCustom(refined, A, B, size, O, holdout);
         if (custom && custom.lens.type === "custom") {
             // Re-score on the FULL set so the reported numbers stay comparable with the preset's.
@@ -494,6 +675,7 @@ export function calibrateLens(tracks, nFrames, size, opts = {}) {
         // axis is the preset stage's, which on the cropped test scene was 170 px away from the
         // one actually returned - and it is the returned one the user is shown.
         diag.principal = refined.lens.principal;
+        diag.focalPx = refined.lens.focalPx;   // the shape search moves this too
         diag.principalOffset = [refined.lens.principal[0] - size[0] / 2,
             refined.lens.principal[1] - size[1] / 2];
         diag.principalClamped = diag.principalClamped || !!refined.principalClamped;
@@ -506,18 +688,54 @@ export function calibrateLens(tracks, nFrames, size, opts = {}) {
     for (let i = 0; i < n; i++) (i % Math.round(1 / O.holdoutFraction) === 0 ? testIdx : trainIdx).push(i);
     if (testIdx.length >= 5 && trainIdx.length >= O.minPairs / 2) {
         const trainA = trainIdx.map((i) => A[i]), trainB = trainIdx.map((i) => B[i]);
-        const s = scoreLens(refined.lens, trainA, trainB, size, O);
-        if (s) {
+        /** Fit on the training half, measure on the held-out half. */
+        const heldOut = (lens) => {
+            const s = scoreLens(lens, trainA, trainB, size, O);
+            if (!s) return null;
             let sse = 0, m = 0;
             for (const i of testIdx) {
-                const ray = lensToRay(refined.lens, A[i][0], A[i][1], size);
+                const ray = lensToRay(lens, A[i][0], A[i][1], size);
                 if (!ray) continue;
-                const p = refToFrame({q: s.fit.q, s: 1}, refined.lens, ray, size);
+                const p = refToFrame({q: s.fit.q, s: 1}, lens, ray, size);
                 if (!p) continue;
                 sse += Math.min(Math.hypot(p[0] - B[i][0], p[1] - B[i][1]), 20) ** 2; m++;
             }
-            diag.holdoutRms = m ? Math.sqrt(sse / m) : null;
-            if (diag.holdoutRms !== null && rect && diag.holdoutRms > rect.rms) {
+            return m ? Math.sqrt(sse / m) : null;
+        };
+        diag.holdoutRms = heldOut(refined.lens);
+        // Compared LIKE WITH LIKE: the rectilinear baseline is measured on the same held-out half,
+        // not on the full set it was fitted to. Held-out error is essentially always larger than
+        // in-sample error, so the old `holdoutRms > rect.rms` test compared out-of-sample against
+        // in-sample and refused a correct answer whenever the lens really was a pinhole - which is
+        // exactly what a cropped phone clip is. Measured on the cropped timelapse: held-out 0.66
+        // against an in-sample rectilinear 0.5, refused, no lens, frame-edge stars left red.
+        const rectHeld = rect ? heldOut(rect.lens) : null;
+        diag.holdoutRectRms = rectHeld;
+        if (diag.holdoutRms !== null && rectHeld !== null && diag.holdoutRms > rectHeld) {
+            // The free polynomial did not earn itself. That is a verdict on the POLYNOMIAL, not on
+            // the clip: the preset fit underneath it may be perfectly good, and on a clip whose
+            // lens really is a pinhole it usually is. Refusing outright here threw away a correct
+            // rectilinear answer and left the flat 2D model to call the frame-edge stars moving.
+            // So fall back to the preset and judge THAT on the same holdout; only if it fails too
+            // is there nothing worth keeping.
+            const presetHeld = refined.lens.type === "custom" ? heldOut(presetRefined.lens) : null;
+            if (presetHeld !== null && presetHeld <= rectHeld) {
+                refined = presetRefined;
+                diag.customRejected = {holdoutRms: diag.holdoutRms, fellBackTo: presetRefined.lens.type};
+                diag.holdoutRms = presetHeld;
+                diag.type = refined.lens.type;
+                diag.distortion = refined.lens.distortion;
+                diag.rms = refined.rms;
+                diag.within = refined.within;
+                diag.principal = refined.lens.principal;
+                diag.principalOffset = [refined.lens.principal[0] - size[0] / 2,
+                    refined.lens.principal[1] - size[1] / 2];
+                // The clamp flag described the CUSTOM fit that was just discarded. The preset now
+                // being returned has its own answer, and reporting the rejected fit's would tell
+                // the user a clean calibration was CLAMPED.
+                diag.principalClamped = !!presetRefined.principalClamped;
+                diag.focalPx = refined.lens.focalPx;
+            } else {
                 return {accepted: false, lens: null, reason: `does not generalise (held-out rms ${diag.holdoutRms.toFixed(2)})`, diagnostics: diag};
             }
         }

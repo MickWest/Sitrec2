@@ -1101,7 +1101,11 @@ export async function runStarTracker() {
         let lensInfo = null;
         if (!still && params.fitLens && solved.tracks.length) {
             try {
-                const cal = calibrateLens(solved.tracks, solved.transforms.length, [videoW, videoH]);
+                // Awaited, and handed a yield: the scans inside take tens of seconds on a
+                // well-populated clip and this is the UI thread. Without it the page stops
+                // answering for the duration - long enough that even tooling times out.
+                const cal = await calibrateLens(solved.tracks, solved.transforms.length,
+                    [videoW, videoH], {onYield: yieldToBrowser});
                 if (cal.accepted) {
                     const lens = cal.lens;
                     const size = [videoW, videoH];

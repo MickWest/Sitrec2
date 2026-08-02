@@ -241,15 +241,176 @@ measured above is pixel noise (0.14 deg × 13.98 px/deg ≈ 2.0 px, consistent w
 rms), not catalogue epoch. Regenerating the catalogue with PM columns is real work (22 → 30 byte
 records) and would buy the star tracker nothing measurable.
 
-## What to do next
+## Tried and RULED OUT: a residual-derived rematch tolerance
 
-1. **A residual-derived tolerance**, replacing `verifyPixelFraction * width` — for a gnomonic
-   chart the field-size term is simply wrong. The sweep above says this is where the edge labels
-   are won or lost.
-2. **Per-label refusal.** Nothing today withholds an individual name. The two signals that work
-   are a best-vs-second-nearest margin in the matcher (available for stills too) and mutual-nearest
-   assignment instead of greedy. Note the arbiter's own margin over correct labels goes down to
-   0.013 deg, so a margin test must be tuned against measured labels, not assumed.
+This was the previous "what to do next" item 1, and it does not work. Recorded so nobody spends
+the afternoon on it twice.
+
+The idea: replace refinement's `verifyPixelFraction * width` rematch gate with one derived from
+the converged model's own MEDIAN residual (median, not rms, because the set being measured is the
+contaminated one and an rms is inflated by exactly the pairs the gate should exclude). Implemented
+as `k * median`, clamped so it can only ever tighten. Swept k over {4, 3, 2.5, 2}:
+
+| k | OLD+2D tier 1 (ships) | NEW+gnomonic tier 3 |
+|---|---|---|
+| off | 72 matched / 66 right / 3 gross | 106 / 88 / 9 |
+| 4 | unchanged | unchanged |
+| 3 | 70 / 64 / 3 | unchanged |
+| 2.5 | 57 / 53 / 1 | unchanged |
+| 2 | 56 / 52 / 1 | 97 / 80 / 8 |
+
+At every safe strength it is a NO-OP on the configuration it was meant to help: the gnomonic
+solve's median residual is already large enough that `k * median` exceeds the field-size tolerance
+until k drops to about 2, and by then it has cut the shipping path from 72 matches to 56. The
+change was reverted rather than left as an option defaulting to off.
+
+**What this proves is more useful than the change would have been.** The `verifyPixelFraction`
+0.003 result is NOT about the final rematch gate. That constant also feeds hypothesis
+verification, the quad-rms prune (`2 * tolPx * scale`) and the provisional-acceptance gate — so
+tightening it changes WHICH HYPOTHESIS WINS, not how the winner's matches are filtered. That is
+exactly why the response is non-monotone: it is not trading coverage against accuracy, it is
+selecting a different solve.
+
+Which relocates the problem. Candidates are ranked by `matches.length` alone
+(`candidates.sort((a, b) => b.matches.length - a.matches.length)`), and on the improved star set
+many hypotheses clear the provisional gate, so the one with the most provisional matches need not
+be the most accurate. The promising direction is a selection criterion that weighs residual
+quality alongside count — measure the top-5 finalists' final accuracy against the arbiter before
+designing it, because the diagnostics already record them.
+
+## The cropped clip: why a local principal-point search cannot work
+
+Second real clip: `?custom=99999999/Cropped Starlink Timelapse/20260802_212450.js`, captured at
+`tests/fixtures/croppedStarlinkClip.json` (baseline correspondences at five frame pairs, plus each
+track's classification). It is a CROP of a larger frame, so its optical axis is at fraction
+(0.7446, 0.3324) of the video — **(953, 239) in the 1280x720 decode**, against a frame centre of
+(640, 360). That is the first clip with a KNOWN principal point rather than a fitted one.
+
+It arrived reporting 658 moving against 283 star — "half the stars are red" — because the lens fit
+REFUSED: *"no better than a rectilinear lens (rms 11.70 vs 11.97)"*. Both numbers are terrible;
+nothing fitted at all.
+
+The data was never the problem. Scoring candidate lenses directly:
+
+| principal point | best lens | robust rms | inliers < 4 px |
+|---|---|---|---|
+| frame centre (640, 360) | orthographicFisheye f=2100 | 6.82 px | 41/153 |
+| **true axis (953, 239)** | **rectilinear f=1150** | **0.53 px** | **153/153** |
+
+One rotation through a plain pinhole explains EVERY correspondence to half a pixel. The search
+simply never went there — and the reason is that it cannot, by local descent. The rms surface over
+the principal point, with lens type and focal re-fitted at every cell:
+
+```
+      y\x      400     520     640     760     880    [953]   1040    1160
+      120     5.04    5.55    3.11    1.49    0.93    1.04    1.20    1.39
+      239     4.73    5.44    5.53    1.81    0.65   [0.60]   0.76    1.08
+     [360]    4.51    5.07   [5.90]   5.66    2.41    1.66    1.07    1.02
+      480     4.64    5.07    5.65    6.11    5.76    5.07    2.71    1.70
+```
+
+From the frame centre the steepest improvement is LEFTWARD (5.90 -> 5.07), away from the global
+minimum at 0.60, into a broad shallow plateau. Because type and focal are re-fitted at every cell,
+this is not an artifact of holding them fixed while the axis moves: the joint objective genuinely
+misleads. No local refinement solves this however it is seeded or stepped.
+
+**Fix: `scanPrincipal`** — a coarse global grid over the principal point, seeding the existing
+scan and local refinement. Gated on the centred scan explaining fewer than
+`principalSearchWithinFrac` (0.6) of the correspondences, so a clip whose axis really is centred
+never pays for it (the reference clip scores 0.99 and skips it; this one scores 0.32–0.48).
+Deliberately cheap — 40 subsampled pairs, 9 focal steps, and only two shape types, because it has
+only to find the right NEIGHBOURHOOD; the winning cell is then re-scanned at full resolution.
+
+Recovered, against a truth the fit never saw:
+
+| baseline | pairs | fitted principal | truth | error | rms |
+|---|---|---|---|---|---|
+| 0->60 | 242 | (949, 246) | (953, 239) | **8 px** | 0.60 |
+| 0->40 | 342 | (955, 246) | (953, 239) | **7 px** | 0.51 |
+| 0->80 | 153 | (1029, 251) | (953, 239) | 77 px | 1.00 |
+
+An axis 313 px off-centre, recovered to 7–8 px on the two strong baselines. Note this also
+validates the `principalMaxOffsetFrac` widening done earlier: at 24.5% of frame the true axis was
+just inside the old hard-coded 25% bound — the fit would have been pressed against a clamp it
+could not report.
+
+COST. Measured on the 242-pair baseline: `scanPrincipal` adds ~1.1 s and the re-scan at the seed
+~2.9 s. Both are dwarfed by `refineCustom` at ~14 s, which is pre-existing and scales with
+correspondence count (this clip has 242–342 pairs against the reference clip's 130). If
+calibration ever needs to be faster, that is where the time is, not here. RESPONSIVENESS, partially addressed. `calibrateLens` is now ASYNC and takes an `onYield` hook
+(StarTrackerUI passes `yieldToBrowser`), awaited between the scan, the principal grid, each
+nominee re-scan, the local refinement, the rectilinear comparison and the shape search. That stops
+the whole calibration being one uninterruptible block. It does NOT make the page properly
+responsive: `refineCustom` alone is a single ~14 s coordinate descent with no yield inside it, and
+each `scanLens` is ~3 s. Verified after the change - the page still fails to answer during the
+run. Finishing this needs yields INSIDE refineCustom's descent loop (and ideally inside scanLens'
+focal loop), which is a change to the hot path and was not attempted here.
+
+### Reviewed, and what is still open
+
+Codex (gpt-5.6-sol) reviewed this and found more than the two the stop-gate caught. FIXED here:
+`chooseBaseline` now screens candidates for rotation with a cheap nominal-lens fit BEFORE ranking
+them (scoring `pairs * span` alone could pick a dense narrow baseline that then failed the
+rotation gate, refusing a clip whose wider baseline calibrates fine — measured on a 1 deg synthetic
+scene: 0->12 with 150 pairs scores highest, rotates 0.31 deg, refused; 0->39 with 25 pairs rotates
+0.99 deg and calibrates); the custom-to-preset fallback no longer reports the discarded custom
+fit's `principalClamped`; `diag.focalPx` is refreshed when the shape search moves it;
+`centredWithin` is now a fraction of the INPUT correspondences rather than of the rows the lens
+happened to be able to project (`within/n` could read 0.75 for a lens explaining 15 of 100); the
+seed is adopted only on more inliers AND no worse rms; and the grid reports
+`principalScanAtBoundary` when its winner sits on its own edge.
+
+STILL OPEN, and none of it should be taken as settled:
+
+- **Gate 5 is not an independent holdout.** `heldOut()` re-fits only the ROTATION on the training
+  half; focal, principal, type and distortion were all fitted on every row beforehand, and the
+  custom refinement's own inner split overlaps the outer one. For n=242 the outer test set is 81
+  rows, of which 60 were in custom's training set and the remaining 21 in its internal validation —
+  all 81 influenced the lens. A real test needs an outer split before `scanLens`/`refinePrincipal`/
+  `refineCustom`, with both pipelines refitted inside it.
+- **Held-out rms can be computed over DIFFERENT subsets for the two models**, since each silently
+  skips rows it cannot project and divides by its own count. Invalid predictions should take the
+  capped loss, or both models should be scored on a declared intersection.
+- **The claim that held-out error is "essentially always" larger than in-sample is too strong** and
+  is not reproduced by the current fixture (242 pairs: full rectilinear rms 0.6021, held-out
+  0.5208). The direction of the fix is right; that particular justification is not.
+- **`pairs * span` is still not an information objective.** For small rotation the Fisher
+  information goes roughly as `N * span^2`, which ranks the 60- and 80-frame baselines differently
+  from `N * span`. The rotation screen removes the refusal failure mode but not this.
+- **The coarse 9-focal grid picks the wrong basin on the 153-pair baseline**: cell (928,198) scores
+  95/153 at rms 2.145 while the boundary cell (1216,198) scores 97/153 at rms 3.267, and inlier
+  count is primary so the boundary wins. At the normal 34 focals (928,198) wins outright
+  (144/153, rms 1.186). So "the winning cell is re-scanned so nothing is lost" is FALSE — only the
+  already-wrong cell is re-scanned. Re-scanning the top few cells would fix it.
+- **A noisy CENTRED clip can still trigger the search**, since the trigger measures a poor centred
+  fit rather than off-centre optics.
+- `principalScanPairs: 40` is a stride, not a cap (153 -> 51 samples, 242 -> 41).
+
+## What to do next
+2. **Per-label refusal — MEASURED, and it works on the shipping path only.** Nothing today
+   withholds an individual name. The best-vs-second-nearest margin was measured in the solve's own
+   frame (via `refToSky`, so it needs no spherical map and would work for a single still), scored
+   against the arbiter:
+
+   | | right labels | wrong labels | grossly wrong |
+   |---|---|---|---|
+   | OLD + 2D, tier 1 *(ships)* | median **0.508 deg** | median **0.030 deg** | median 0.082 deg |
+   | NEW + gnomonic, tier 3 | median 0.417 deg | median 0.195 deg | median **0.306 deg** |
+
+   On the shipping path that is a 17x separation and a usable refusal signal: a 0.05 deg cut drops
+   3 of the 6 wrong labels (one of them gross) for the cost of 2 correct ones; 0.10 deg drops 4
+   wrong / 2 gross but costs 9 correct.
+
+   On the improved set it does NOT work, and the reason is the useful part: there the *grossly*
+   wrong labels have a LARGER median margin than wrong labels in general. A margin measures how
+   AMBIGUOUS a match is, not how WRONG THE MODEL is — when the model is off, the neighbouring star
+   really is nearest to where the model puts the detection, so the label is confidently wrong.
+   This is independent confirmation that the edge-star failure is model error, not ambiguity, and
+   that no per-label confidence test computed against the same model can rescue it.
+
+   Not shipped: the cut is a constant whose cost/benefit is measured on one clip, and the whole
+   argument against the `verifyPixelFraction` 0.003 tuning applies here too. Worth adopting for
+   the shipping path once a second clip agrees on the threshold.
 3. **A second and third real clip.** Every number in this document is n=1. Capture them the same
    way (see the fixture section of `tests/StarIdentifyRealClip.test.js`).
 4. **Catalogue-tied refinement** remains the principled endgame: the video-only calibration

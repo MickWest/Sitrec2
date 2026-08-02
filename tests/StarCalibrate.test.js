@@ -21,13 +21,13 @@ function tracksFor(scene) {
 }
 
 describe("calibration recovers a known lens", () => {
-    test("a wide fisheye clip with real rotation is calibrated close to truth", () => {
+    test("a wide fisheye clip with real rotation is calibrated close to truth", async () => {
         const scene = buildSphericalScene({
             seed: 1001, frames: 40, starCount: 120, noise: 0.15,
             rotationDeg: 3.28, poleOffsetDeg: 49,
         });
         const tracks = tracksFor(scene);
-        const r = calibrateLens(tracks, scene.frames, scene.size);
+        const r = await calibrateLens(tracks, scene.frames, scene.size);
         expect(r.accepted).toBe(true);
         // Truth is orthographic f=914. The recovered focal should be within a few percent, and
         // the field of view - which is what actually matters downstream - much closer still.
@@ -38,17 +38,17 @@ describe("calibration recovers a known lens", () => {
         expect(Math.abs(fov.hfov - truth.hfov)).toBeLessThan(8);
     });
 
-    test("the principal point lands near the image centre, as a real one does", () => {
+    test("the principal point lands near the image centre, as a real one does", async () => {
         const scene = buildSphericalScene({
             seed: 1002, frames: 40, starCount: 120, noise: 0.15, rotationDeg: 3.5, poleOffsetDeg: 45,
         });
-        const r = calibrateLens(tracksFor(scene), scene.frames, scene.size);
+        const r = await calibrateLens(tracksFor(scene), scene.frames, scene.size);
         expect(r.accepted).toBe(true);
         expect(Math.abs(r.lens.principal[0] - 640)).toBeLessThan(180);
         expect(Math.abs(r.lens.principal[1] - 360)).toBeLessThan(140);
     });
 
-    test("an UNEVENLY CROPPED clip keeps its optical axis off centre", () => {
+    test("an UNEVENLY CROPPED clip keeps its optical axis off centre", async () => {
         // Cropping is the ordinary reason a principal point is not at the frame centre, and it
         // is not exotic: a centred digital zoom is harmless (the crop keeps the axis at the new
         // centre, and focalPx is measured in the analysed pixels either way), but an uneven crop
@@ -66,7 +66,7 @@ describe("calibration recovers a known lens", () => {
             rotationDeg: 3.3, poleOffsetDeg: 47,
             lens: {...clipLens(SIZE), type: "equidistantFisheye", focalPx: 700, principal: truth},
         });
-        const r = calibrateLens(tracksFor(scene), scene.frames, scene.size);
+        const r = await calibrateLens(tracksFor(scene), scene.frames, scene.size);
         expect(r.accepted).toBe(true);
         expect(Math.hypot(r.lens.principal[0] - truth[0], r.lens.principal[1] - truth[1]))
             .toBeLessThan(130);
@@ -78,7 +78,7 @@ describe("calibration recovers a known lens", () => {
         expect(r.diagnostics.principalClamped).toBe(false);
     });
 
-    test("a crop too severe to fit is REFUSED, not fitted with a centred axis", () => {
+    test("a crop too severe to fit is REFUSED, not fitted with a centred axis", async () => {
         // Past what the geometry can support the honest answer is no lens at all - the caller
         // keeps the pinhole and says so. What must never happen is a confident fit that places
         // the axis near the centre of a frame whose axis is nowhere near it, because every
@@ -89,7 +89,7 @@ describe("calibration recovers a known lens", () => {
             rotationDeg: 3.3, poleOffsetDeg: 47,
             lens: {...clipLens(SIZE), type: "equidistantFisheye", focalPx: 700, principal: truth},
         });
-        const r = calibrateLens(tracksFor(scene), scene.frames, scene.size);
+        const r = await calibrateLens(tracksFor(scene), scene.frames, scene.size);
         if (r.accepted) {
             expect(Math.hypot(r.lens.principal[0] - truth[0], r.lens.principal[1] - truth[1]))
                 .toBeLessThan(200);
@@ -98,7 +98,7 @@ describe("calibration recovers a known lens", () => {
         }
     });
 
-    test("a narrow rectilinear clip is not dressed up as a fisheye", () => {
+    test("a narrow rectilinear clip is not dressed up as a fisheye", async () => {
         // A long lens: every model agrees, so the gate should either return rectilinear or
         // refuse. What it must NOT do is adopt a confident wide-angle lens.
         const scene = buildSphericalScene({
@@ -106,7 +106,7 @@ describe("calibration recovers a known lens", () => {
             rotationDeg: 1.2, poleOffsetDeg: 40,
             lens: {...clipLens(SIZE), type: "rectilinear", focalPx: 4200},
         });
-        const r = calibrateLens(tracksFor(scene), scene.frames, scene.size);
+        const r = await calibrateLens(tracksFor(scene), scene.frames, scene.size);
         if (r.accepted) {
             const fov = lensFOV(r.lens, SIZE);
             expect(fov.hfov).toBeLessThan(40);
@@ -117,7 +117,7 @@ describe("calibration recovers a known lens", () => {
 });
 
 describe("the gate refuses what it cannot see", () => {
-    test("a PURE ROLL is refused, however large and however clean", () => {
+    test("a PURE ROLL is refused, however large and however clean", async () => {
         // The case that a naive gate passes: the sky turns a long way, the stars cover the whole
         // frame, the fit is beautiful - and it carries no lens information at all, because every
         // radial lens maps a roll to the same rotation about the principal point.
@@ -125,29 +125,29 @@ describe("the gate refuses what it cannot see", () => {
             seed: 2001, frames: 40, starCount: 120, noise: 0.15,
             rotationDeg: 12, poleOffsetDeg: 0,          // axis ON the boresight
         });
-        const r = calibrateLens(tracksFor(scene), scene.frames, scene.size);
+        const r = await calibrateLens(tracksFor(scene), scene.frames, scene.size);
         expect(r.accepted).toBe(false);
         expect(r.reason).toMatch(/roll/i);
     });
 
-    test("a nearly still camera is refused", () => {
+    test("a nearly still camera is refused", async () => {
         const scene = buildSphericalScene({
             seed: 2002, frames: 30, starCount: 100, noise: 0.15, rotationDeg: 0.02,
         });
-        const r = calibrateLens(tracksFor(scene), scene.frames, scene.size);
+        const r = await calibrateLens(tracksFor(scene), scene.frames, scene.size);
         expect(r.accepted).toBe(false);
         expect(r.reason).toMatch(/rotation/i);
     });
 
-    test("too few correspondences is refused rather than fitted", () => {
+    test("too few correspondences is refused rather than fitted", async () => {
         const scene = buildSphericalScene({seed: 2003, frames: 12, starCount: 8, noise: 0.15});
-        const r = calibrateLens(tracksFor(scene), scene.frames, scene.size);
+        const r = await calibrateLens(tracksFor(scene), scene.frames, scene.size);
         expect(r.accepted).toBe(false);
         expect(r.reason).toMatch(/correspondence/i);
     });
 
-    test("an empty track list is refused without throwing", () => {
-        const r = calibrateLens([], 30, SIZE);
+    test("an empty track list is refused without throwing", async () => {
+        const r = await calibrateLens([], 30, SIZE);
         expect(r.accepted).toBe(false);
     });
 });
@@ -211,15 +211,15 @@ describe("absolute sky accuracy, not just self-consistency", () => {
         distortion: [0.12, -0.05, 0.03],
     });
 
-    test("the free polynomial recovers the sky better than the closest named preset", () => {
+    test("the free polynomial recovers the sky better than the closest named preset", async () => {
         const scene = buildSphericalScene({
             seed: 5001, frames: 40, starCount: 130, noise: 0.15,
             rotationDeg: 3.4, poleOffsetDeg: 48, lens: TRUE_LENS,
         });
         const tracks = tracksFor(scene);
 
-        const presetOnly = calibrateLens(tracks, scene.frames, scene.size, {fitCustom: false});
-        const withCustom = calibrateLens(tracks, scene.frames, scene.size);
+        const presetOnly = await calibrateLens(tracks, scene.frames, scene.size, {fitCustom: false});
+        const withCustom = await calibrateLens(tracks, scene.frames, scene.size);
         expect(presetOnly.accepted).toBe(true);
         expect(withCustom.accepted).toBe(true);
         expect(withCustom.lens.type).toBe("custom");
@@ -256,12 +256,12 @@ describe("absolute sky accuracy, not just self-consistency", () => {
         expect(r.rmsDeg).toBeGreaterThan(r.rms * 0.05);
     });
 
-    test("the fitted polynomial tracks the true lens curve, not just the data", () => {
+    test("the fitted polynomial tracks the true lens curve, not just the data", async () => {
         const scene = buildSphericalScene({
             seed: 5003, frames: 40, starCount: 130, noise: 0.15,
             rotationDeg: 3.4, poleOffsetDeg: 48, lens: TRUE_LENS,
         });
-        const r = calibrateLens(tracksFor(scene), scene.frames, scene.size);
+        const r = await calibrateLens(tracksFor(scene), scene.frames, scene.size);
         expect(r.accepted).toBe(true);
         // Compare the recovered mapping against the truth across the frame, in pixels.
         let worst = 0;
