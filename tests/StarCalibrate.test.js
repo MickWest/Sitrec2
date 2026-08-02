@@ -48,6 +48,56 @@ describe("calibration recovers a known lens", () => {
         expect(Math.abs(r.lens.principal[1] - 360)).toBeLessThan(140);
     });
 
+    test("an UNEVENLY CROPPED clip keeps its optical axis off centre", () => {
+        // Cropping is the ordinary reason a principal point is not at the frame centre, and it
+        // is not exotic: a centred digital zoom is harmless (the crop keeps the axis at the new
+        // centre, and focalPx is measured in the analysed pixels either way), but an uneven crop
+        // - a 16:9 window taken off one side of the sensor, a re-framed export, a stabilised
+        // sub-rectangle - moves the axis by however much was taken off that side.
+        //
+        // The search is bounded, because the principal point is weakly observable and an
+        // unbounded one wanders. The bound used to be a hard-coded 25% of frame with a comment
+        // calling an off-centre axis "a fitting artifact, not an optical property", which is
+        // exactly backwards for cropped footage: the fit would quietly pull the axis back toward
+        // a centre the footage does not have.
+        const truth = [360, 250];                       // 280 px left and 110 px up of centre
+        const scene = buildSphericalScene({
+            seed: 2001, frames: 40, starCount: 130, noise: 0.15,
+            rotationDeg: 3.3, poleOffsetDeg: 47,
+            lens: {...clipLens(SIZE), type: "equidistantFisheye", focalPx: 700, principal: truth},
+        });
+        const r = calibrateLens(tracksFor(scene), scene.frames, scene.size);
+        expect(r.accepted).toBe(true);
+        expect(Math.hypot(r.lens.principal[0] - truth[0], r.lens.principal[1] - truth[1]))
+            .toBeLessThan(130);
+        // And specifically NOT dragged back to the middle of the frame.
+        expect(Math.abs(r.lens.principal[0] - SIZE[0] / 2)).toBeGreaterThan(150);
+        // The offset is reported, so the UI can say "this looks cropped" rather than leaving the
+        // reader to subtract it themselves.
+        expect(r.diagnostics.principalOffset[0]).toBeLessThan(-150);
+        expect(r.diagnostics.principalClamped).toBe(false);
+    });
+
+    test("a crop too severe to fit is REFUSED, not fitted with a centred axis", () => {
+        // Past what the geometry can support the honest answer is no lens at all - the caller
+        // keeps the pinhole and says so. What must never happen is a confident fit that places
+        // the axis near the centre of a frame whose axis is nowhere near it, because every
+        // downstream angle would inherit that error while looking like an improvement.
+        const truth = [260, 200];
+        const scene = buildSphericalScene({
+            seed: 2001, frames: 40, starCount: 130, noise: 0.15,
+            rotationDeg: 3.3, poleOffsetDeg: 47,
+            lens: {...clipLens(SIZE), type: "equidistantFisheye", focalPx: 700, principal: truth},
+        });
+        const r = calibrateLens(tracksFor(scene), scene.frames, scene.size);
+        if (r.accepted) {
+            expect(Math.hypot(r.lens.principal[0] - truth[0], r.lens.principal[1] - truth[1]))
+                .toBeLessThan(200);
+        } else {
+            expect(r.reason).toBeTruthy();
+        }
+    });
+
     test("a narrow rectilinear clip is not dressed up as a fisheye", () => {
         // A long lens: every model agrees, so the gate should either return rectilinear or
         // refuse. What it must NOT do is adopt a confident wide-angle lens.

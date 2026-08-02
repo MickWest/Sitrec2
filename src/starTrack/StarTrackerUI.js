@@ -24,7 +24,7 @@ import {calibrateLens} from "./StarCalibrate";
 import {
     attachRays, classifyTracksSpherical, gnomonicChart, refineGlobalSpherical, statesFromChain2D,
 } from "./StarSolveSphere";
-import {lensFOV} from "../CameraLens";
+import {LENS_PRESETS, lensFOV, serializeLens} from "../CameraLens";
 import {
     STAR_IDENTIFY_DEFAULTS,
     buildQuadIndex,
@@ -522,6 +522,135 @@ function starTrackVfovDeg(solvedIdentify, videoH) {
     return 2 * Math.atan(tanPerPx * videoH / 2) * 180 / Math.PI;
 }
 
+// ---------------------------------------------------------------------------------------------
+// The Camera menu's Lens folder
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * What the star field measured about the LENS, shown in the Camera menu where a lens belongs.
+ *
+ * Field of view alone does not describe a camera: it says how much sky the frame covers, not how
+ * that sky is laid out across the pixels. Two cameras with the same 96-degree horizontal field
+ * put a star 40 degrees off axis in completely different places if one is a pinhole and the other
+ * a fisheye, and that difference is the whole reason the flat model called 70 real stars "moving".
+ * So once the calibration has measured a lens, the measurement is worth showing next to the FOV
+ * it qualifies - and it is the ONLY place in Sitrec where the pinhole assumption is ever lifted.
+ *
+ * Read-only by design. These are measurements, and a hand-edited focal length would silently
+ * disagree with the classification, the chart and the sync that were computed from the fitted one.
+ * (Letting the user assert a KNOWN lens and re-running the spherical pass under it is a real
+ * feature, but it is that - a feature - not an editable text field.)
+ */
+const lensParams = {
+    type: "-", focal: "-", principal: "-", offset: "-", distortion: "-",
+    hfov: "-", vfov: "-", dfov: "-", fit: "-",
+    copy: () => {
+        const lens = result?.lensInfo?.lens;
+        if (!lens) return;
+        const text = JSON.stringify(serializeLens(lens), null, 2);
+        // Reported on `status`, not `lensStatus`: lensStatus holds the fit summary for as long as
+        // the fit stands, and a transient "copied!" would eat it until the next analysis.
+        navigator.clipboard?.writeText(text)
+            .then(() => { params.status = "lens JSON copied to clipboard"; })
+            .catch(() => { console.log(text); params.status = "lens JSON logged to console"; });
+    },
+};
+let lensControllers = [];
+
+/**
+ * Fill in (and reveal) the Camera > Lens folder from a completed calibration, or empty it when
+ * there is no lens to describe.
+ *
+ * The folder is a permanent shell but its CONTROLS are not - menuBar.destroy(false) keeps the
+ * folder and takes everything in it - so an existing controller list proves nothing about what is
+ * on screen. The DOM is the authority, exactly as setupStarTrackerMenu treats its own folder.
+ */
+function updateCameraLensMenu(lensInfo, size) {
+    const folder = guiMenus.cameraLens;
+    if (!folder) return;
+
+    // Drop whatever is there. On a sitch teardown the menu bar has already destroyed these, so
+    // destroy() may be a second call on a dead controller - hence the guard.
+    const clear = () => {
+        for (const c of lensControllers) { try { c.destroy(); } catch { /* already gone */ } }
+        lensControllers = [];
+    };
+    // An existing list is only trustworthy while its controls are still ON SCREEN.
+    if (!lensControllers.length || !lensControllers[0].domElement?.isConnected) clear();
+
+    if (!lensInfo?.lens) {
+        clear();
+        folder.hide();
+        return;
+    }
+
+    const lens = lensInfo.lens;
+    const fov = lensFOV(lens, size);
+    const d3 = (v) => (v == null ? "-" : v.toFixed(3));
+    lensParams.type = LENS_PRESETS[lens.type]?.label ?? lens.type;
+    lensParams.focal = `${lens.focalPx.toFixed(1)} px`;
+    // Kept short: the lil-gui value column truncates, and a clipped number is worse than a
+    // slightly less precise one. The reference size it is measured in lives in the tooltip.
+    lensParams.principal = `${lens.principal[0].toFixed(1)}, ${lens.principal[1].toFixed(1)} px`;
+    // Where the optical axis sits RELATIVE to the frame centre, which is the number that says
+    // whether the footage has been cropped, and how. A centred digital zoom leaves this at zero;
+    // an uneven crop moves it by whatever was taken off one side, and a hard enough crop puts the
+    // axis outside the frame entirely - a real, ordinary thing for cropped video, and the case
+    // the fit's own bound cannot follow past.
+    const [w, h] = lens.refSize;
+    const ox = lens.principal[0] - w / 2, oy = lens.principal[1] - h / 2;
+    const offFrame = lens.principal[0] < 0 || lens.principal[0] > w
+        || lens.principal[1] < 0 || lens.principal[1] > h;
+    lensParams.offset = `${ox >= 0 ? "+" : ""}${ox.toFixed(1)}, `
+        + `${oy >= 0 ? "+" : ""}${oy.toFixed(1)} px `
+        + `(${(100 * Math.abs(ox) / w).toFixed(1)}%, ${(100 * Math.abs(oy) / h).toFixed(1)}%)`
+        + (offFrame ? " - OUTSIDE THE FRAME" : "")
+        + (lensInfo.diagnostics?.principalClamped ? " - CLAMPED, may be cropped further" : "");
+    // Only the custom curve has coefficients; for a named preset the shape IS the type.
+    lensParams.distortion = lens.type === "custom"
+        ? lens.distortion.map((v) => v.toFixed(3)).join(", ")
+        : "(none - preset curve)";
+    lensParams.hfov = fov ? `${d3(fov.hfov)} deg` : "-";
+    lensParams.vfov = fov ? `${d3(fov.vfov)} deg` : "-";
+    lensParams.dfov = fov ? `${d3(fov.dfov)} deg` : "-";
+    lensParams.fit = `${lensInfo.rms.toFixed(2)} px rms`
+        + (lensInfo.diagnostics?.holdoutRms != null
+            ? `, ${lensInfo.diagnostics.holdoutRms.toFixed(2)} px held out` : "");
+
+    if (!lensControllers.length) {
+        const ro = (prop, name, tip) => {
+            const c = folder.add(lensParams, prop).name(name).listen().disable();
+            if (tip) c.tooltip(tip);
+            lensControllers.push(c);
+        };
+        ro("type", "Type", "The curve mapping field angle to image radius. Fitted from the star "
+            + "field by Star Track; everything else in Sitrec assumes a pinhole.");
+        ro("focal", "Focal length", "In the pixels the analysis ran in, not the source video's - "
+            + "see the reference size beside the principal point.");
+        ro("principal", "Principal point", `Where the optical axis meets the image, in the pixels `
+            + `the analysis ran in (${lens.refSize[0]}x${lens.refSize[1]}). On uncropped footage a `
+            + `fitted one lands near the frame centre.`);
+        ro("offset", "Axis off centre", "The signature of CROPPING. A centred digital zoom leaves "
+            + "this near zero (the crop keeps the axis at the new centre, and the focal length is "
+            + "measured in the analysed pixels either way). An UNEVEN crop moves it by whatever "
+            + "was taken off one side, and a hard enough crop puts the axis outside the frame - "
+            + "which is ordinary for cropped video, not an error. \"CLAMPED\" means the fit wanted "
+            + "to move it further than the search is allowed to, so read the value as a floor.");
+        ro("distortion", "Distortion (d3, d5, d7)",
+            "theta = rho + d3 rho^3 + d5 rho^5 + d7 rho^7, with the linear term pinned to 1 so "
+            + "the focal length alone sets the paraxial scale.");
+        ro("hfov", "Horizontal FOV", "Measured across the full frame through the fitted curve, so "
+            + "an off-centre principal point is accounted for rather than assumed away.");
+        ro("vfov", "Vertical FOV");
+        ro("dfov", "Diagonal FOV");
+        ro("fit", "Fit residual", "How well one rotation through this lens explains the measured "
+            + "star motion. The held-out figure is scored on correspondences the fit never saw, "
+            + "which is the one that says whether it generalises.");
+        lensControllers.push(folder.add(lensParams, "copy").name("Copy lens JSON"));
+    }
+    folder.show();
+}
+
 /**
  * Register the star-field camera in the Camera menu's Heading (and FOV) source dropdowns and
  * switch to it. The user can switch back to Manual - or anything else - in the Camera menu;
@@ -651,8 +780,14 @@ export async function identifyStars() {
         const scalePrior = optics?.verticalFovDeg > 0 && myResult.videoH
             ? scalePriorFromFov(optics.verticalFovDeg, myResult.videoW, myResult.videoH)
             : undefined;
+        // The long axis' field, and the same tangent-vs-radian trap the solver's own guard fell
+        // into: scalePrior is TANGENT UNITS per pixel, so half the frame spans tan(fov/2) and the
+        // angle is the arctangent. Read linearly this crossed the 35 deg threshold at a true 34.0
+        // deg - a small error, but it decides which index tier is tried first.
         const fovWdeg = scalePrior
-            ? scalePrior * Math.max(myResult.videoW, myResult.videoH) * 180 / Math.PI : 0;
+            ? 2 * Math.atan(scalePrior * Math.max(myResult.videoW, myResult.videoH) / 2)
+                * 180 / Math.PI
+            : 0;
         const tierOrder = STAR_IDENTIFY_DEFAULTS.tiers.map((_, i) => i);
         if (fovWdeg > 35) tierOrder.reverse();
 
@@ -1090,6 +1225,10 @@ export async function runStarTracker() {
         // Published for inspection and for other tools, the way camera motion publishes its own
         // per-video data on Globals.
         Globals.starTrackerResult = result;
+        // The lens is a CAMERA property, so it is reported in the Camera menu too - and cleared
+        // there when this run did not fit one, rather than leaving the previous clip's optics on
+        // screen describing footage that is no longer loaded.
+        updateCameraLensMenu(lensInfo, [videoW, videoH]);
         const counts = {};
         for (const c of solved.classified) counts[c.klass] = (counts[c.klass] || 0) + 1;
         params.status = still
@@ -1382,6 +1521,9 @@ export function resetStarTracker() {
     Globals.starTrackerResult = undefined;
     overlayStarHits = [];
     params.status = "not run";
+    // The Camera menu's Lens folder described THAT solve's optics; with the solve gone it would
+    // be stating a measurement nothing in the app still holds.
+    updateCameraLensMenu(null);
     if (overlay && overlayCtx) overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
 }
 

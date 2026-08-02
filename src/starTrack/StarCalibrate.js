@@ -48,6 +48,20 @@ export const STAR_CALIBRATE_DEFAULTS = {
     shapeMaxPairs: 110,         // correspondences used while exploring lens shape
     shapeScales: [1, 0.3, 0.1], // coordinate-descent step scales
     shapeMaxSteps: 10,          // passes per scale
+
+    // How far the principal point may sit from the frame centre, as a fraction of each frame
+    // dimension. This is a BOUND ON A WEAKLY OBSERVABLE PARAMETER, not a statement about optics:
+    // over a small rotation the principal point trades against the lens curve, so an unbounded
+    // search wanders instead of converging.
+    //
+    // It is a real modelling assumption, and cropping is what breaks it. A centred digital zoom
+    // is harmless - the crop keeps the axis at the new centre, and focalPx is measured in the
+    // analysed pixels either way - but an UNEVEN crop moves the optical axis off the frame centre
+    // by however much was taken off one side, and a hard enough crop puts it outside the frame
+    // altogether. That is an ordinary property of cropped footage, not an artifact. So the bound
+    // is generous, adjustable, and - the part that matters - REPORTED when the search ends up
+    // pressed against it, because a clamped principal point is a fit that wanted to be elsewhere.
+    principalMaxOffsetFrac: 0.45,
 };
 
 const PRESETS = ["rectilinear", "stereographic", "equidistantFisheye", "equisolidFisheye", "orthographicFisheye"];
@@ -242,6 +256,9 @@ export function refineCustom(seed, A, B, size, O, holdout = null) {
 
     let best = seed;
     let bestHeld = test ? evalOn(seed.lens, test) : null;
+    // Whether the principal-point search ended up pressed against its bound; see the same idea
+    // in refinePrincipal. Reported so a cropped clip does not silently look like a centred one.
+    let clamped = false;
 
     for (let terms = 1; terms <= 3; terms++) {
         const d = polyFromPreset(seed.lens.type, rhoMax, terms);
@@ -273,10 +290,17 @@ export function refineCustom(seed, A, B, size, O, holdout = null) {
                 }
                 for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
                     const p = [cand.lens.principal[0] + dx * scale * 12, cand.lens.principal[1] + dy * scale * 12];
-                    if (Math.abs(p[0] - size[0] / 2) > size[0] * 0.25) continue;
-                    if (Math.abs(p[1] - size[1] / 2) > size[1] * 0.25) continue;
+                    // The same bound refinePrincipal uses, and from the same option - two
+                    // hard-coded 0.25s would drift apart, and this one would silently pull a
+                    // cropped clip's axis back toward the centre after the other let it out.
+                    const outside = Math.abs(p[0] - size[0] / 2) > size[0] * O.principalMaxOffsetFrac
+                        || Math.abs(p[1] - size[1] / 2) > size[1] * O.principalMaxOffsetFrac;
                     const t = scoreLens(makeLens({...cand.lens, principal: p}), train.A, train.B, size, F);
-                    if (t && t.rms < cand.rms) { cand = t; improved = true; }
+                    if (!(t && t.rms < cand.rms)) continue;
+                    // A move the score WANTED but the bound refused is the signal that the
+                    // footage may be cropped harder than the search may follow.
+                    if (outside) { clamped = true; continue; }
+                    cand = t; improved = true; clamped = false;
                 }
             }
         }
@@ -290,12 +314,23 @@ export function refineCustom(seed, A, B, size, O, holdout = null) {
         } else if (!(cand.rms < best.rms * 0.97)) continue;
         best = cand;
     }
-    return best;
+    return {...best, principalClamped: clamped};
 }
 
-/** Local search over the principal point, which a fitted lens should place near the centre. */
+/**
+ * Local search over the principal point - the optical axis, which on UNCROPPED footage sits near
+ * the frame centre and on cropped footage does not.
+ *
+ * The search is bounded (see principalMaxOffsetFrac). When a step is refused only because of that
+ * bound, `clampedBy` records it: the difference between "the fit chose this point" and "the fit
+ * was stopped here" is the difference between a measurement and an assumption, and only the first
+ * deserves to be shown as an optical property.
+ */
 function refinePrincipal(seed, A, B, size, O) {
     let best = seed;
+    const maxDx = size[0] * O.principalMaxOffsetFrac;
+    const maxDy = size[1] * O.principalMaxOffsetFrac;
+    let clampedBy = null;
     for (const step of [48, 16, 5]) {
         let improved = true;
         while (improved) {
@@ -305,18 +340,25 @@ function refinePrincipal(seed, A, B, size, O) {
                     ...best.lens,
                     principal: [best.lens.principal[0] + dx, best.lens.principal[1] + dy],
                 });
-                // Refuse to wander far from the centre; a principal point outside the frame is
-                // a fitting artifact, not an optical property.
-                if (Math.abs(lens.principal[0] - size[0] / 2) > size[0] * 0.25) continue;
-                if (Math.abs(lens.principal[1] - size[1] / 2) > size[1] * 0.25) continue;
+                if (Math.abs(lens.principal[0] - size[0] / 2) > maxDx
+                    || Math.abs(lens.principal[1] - size[1] / 2) > maxDy) {
+                    // Only a CLAMP if the move would otherwise have been taken; a step the score
+                    // rejects anyway says nothing about the bound.
+                    const s = scoreLens(lens, A, B, size, O);
+                    if (s && (s.within > best.within
+                        || (s.within === best.within && s.rms < best.rms))) {
+                        clampedBy = {step, dx, dy};
+                    }
+                    continue;
+                }
                 const s = scoreLens(lens, A, B, size, O);
                 if (s && (s.within > best.within || (s.within === best.within && s.rms < best.rms))) {
-                    best = s; improved = true;
+                    best = s; improved = true; clampedBy = null;
                 }
             }
         }
     }
-    return best;
+    return {...best, principalClamped: !!clampedBy};
 }
 
 /**
@@ -367,6 +409,12 @@ export function calibrateLens(tracks, nFrames, size, opts = {}) {
     diag.type = refined.lens.type;
     diag.focalPx = refined.lens.focalPx;
     diag.principal = refined.lens.principal;
+    // The optical axis' offset from the frame centre, and whether the search was STOPPED there
+    // rather than settling there. A large offset is the signature of an uneven crop; a clamped
+    // one says the footage may be cropped harder than the search is allowed to follow.
+    diag.principalOffset = [refined.lens.principal[0] - size[0] / 2,
+        refined.lens.principal[1] - size[1] / 2];
+    diag.principalClamped = !!refined.principalClamped;
     diag.rms = refined.rms;
     diag.within = refined.within;
     diag.of = refined.n;
@@ -433,12 +481,22 @@ export function calibrateLens(tracks, nFrames, size, opts = {}) {
         if (custom && custom.lens.type === "custom") {
             // Re-score on the FULL set so the reported numbers stay comparable with the preset's.
             const full = scoreLens(custom.lens, A, B, size, O);
-            if (full && full.within >= refined.within) refined = full;
+            if (full && full.within >= refined.within) {
+                refined = {...full, principalClamped: custom.principalClamped};
+            }
         }
         diag.type = refined.lens.type;
         diag.distortion = refined.lens.distortion;
         diag.rms = refined.rms;
         diag.within = refined.within;
+        // The shape refinement moves the PRINCIPAL POINT too, so the values recorded before it
+        // describe a lens that is no longer the answer. Re-read them here or the reported optical
+        // axis is the preset stage's, which on the cropped test scene was 170 px away from the
+        // one actually returned - and it is the returned one the user is shown.
+        diag.principal = refined.lens.principal;
+        diag.principalOffset = [refined.lens.principal[0] - size[0] / 2,
+            refined.lens.principal[1] - size[1] / 2];
+        diag.principalClamped = diag.principalClamped || !!refined.principalClamped;
     }
 
     // 5. Held-out correspondences, split by TRACK, never by observation.

@@ -1893,6 +1893,12 @@ async function initializeOnce() {
     addGUIFolder("cameraLocation", "Location", "camera").open();
     addGUIFolder("cameraHeading", "Heading", "camera").open();
     addGUIFolder("cameraFOV", "FOV (Zoom)", "camera").open();
+    // The LENS - what maps a field angle to a pixel radius, which FOV alone cannot say. Sitrec
+    // assumes a pinhole everywhere until something measures otherwise, and the only thing that
+    // does is Star Track's calibration, so this folder stays empty (and hidden) until a lens has
+    // actually been fitted. It is a permanent shell for the same reason its neighbours are:
+    // menuBar.destroy(false) keeps the folder and takes its contents.
+    addGUIFolder("cameraLens", "Lens", "camera");
 
     // Lift whatever is currently driving the camera FOV into a .fov.json of
     // keyframes, for loading into the FOV Editor (of this or another sitch).
@@ -2522,7 +2528,8 @@ async function setupFunctions() {
         hasContent ? f.show() : f.hide();
     };
     const updateCameraFolders = () =>
-        ["cameraLocation", "cameraHeading", "cameraFOV", "cameraTweaks"].forEach(showFolderIfPopulated);
+        ["cameraLocation", "cameraHeading", "cameraFOV", "cameraLens", "cameraTweaks"]
+            .forEach(showFolderIfPopulated);
     updateCameraFolders();
     setTimeout(updateCameraFolders, 0);
 
