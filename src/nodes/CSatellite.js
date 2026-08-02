@@ -1363,7 +1363,9 @@ export class CSatellite {
                 }
 
                 hideProgress();
-                this.processTLEData(id, buffer);
+                // Tag with the query that produced it: dateStr + satType is
+                // exactly what a later refresh needs to re-run the same request.
+                this.processTLEData(id, buffer, {date: dateStr, type: satType});
             })
             .catch(error => {
                 if (error.name === 'AbortError') {
@@ -1430,7 +1432,7 @@ export class CSatellite {
         return allChunks.buffer;
     }
 
-    processTLEData(id, buffer) {
+    processTLEData(id, buffer, tleSource = null) {
         // Use FileManager.parseResult to handle unzipping, parsing, and routing
         // The proxyStarlink returns zipped TLE data
         FileManager.remove(id);
@@ -1444,6 +1446,10 @@ export class CSatellite {
                         if (fileInfo) {
                             fileInfo.staticURL = null;
                             fileInfo.dynamicLink = true;
+                            // Remember which query produced this set, so a saved
+                            // sitch can later refresh it with the same request
+                            // rather than inferring one from the elements.
+                            if (tleSource) fileInfo.tleSource = tleSource;
                         }
                     });
                 }

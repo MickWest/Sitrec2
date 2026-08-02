@@ -25,6 +25,7 @@ import {
     Units,
     withTestUser
 } from "./Globals";
+import {checkAndOfferTLERefresh} from "./TLERefresh";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
@@ -330,6 +331,19 @@ export const serializeMethods = {
                     filesMetadata[id] = { dataType: file.dataType };
                 } else if (file.isTLE && file.tleMerged) {
                     filesMetadata[id] = { dataType: file.dataType, tleAction: "merge" };
+                }
+
+                // Which Space-Track query produced a satellite set. The baked
+                // file records the elements but not the request, and its name
+                // carries only the date — so without this a later refresh has
+                // to infer the type from the contents. Recording it makes the
+                // refresh reproduce the original query exactly.
+                if (file.isTLE && file.tleSource?.date) {
+                    if (!filesMetadata[id]) filesMetadata[id] = { dataType: file.dataType };
+                    filesMetadata[id].tleSource = {
+                        date: file.tleSource.date,
+                        type: file.tleSource.type ?? "",
+                    };
                 }
 
                 // PES timing sidecar reference for TS-extracted substreams.
@@ -1770,6 +1784,15 @@ export const serializeMethods = {
         Globals.deserializing = false;
         Globals.sitchDirty = false;
         setRenderOne(3);
+
+        // The sitch is fully loaded and interactive before this runs: the check
+        // is an offer, not part of loading, and it awaits a user decision. Fired
+        // without awaiting so a dialog left open never holds up the load, and
+        // guarded on the generation so a sitch the user has already navigated
+        // away from does not prompt about data that is no longer on screen.
+        if (Globals.loadGeneration === myGeneration) {
+            checkAndOfferTLERefresh().catch(e => console.warn("TLE refresh check:", e));
+        }
     },
 
 

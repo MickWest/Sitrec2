@@ -276,7 +276,12 @@ export const parseMethods = {
 
                     NodeMan.suspendRecalculate();
                     try {
-                        changesSerializedState = await this.handleParsedFile(parsedFilename, parsedFile) || changesSerializedState;
+                        // options.trackOptions lets a caller decide up front what
+                        // handleParsedFile would otherwise ask the user about — the
+                        // TLE refresh uses it to force a merge, since the user has
+                        // already answered that question in the refresh dialog.
+                        changesSerializedState = await this.handleParsedFile(
+                            parsedFilename, parsedFile, options.trackOptions || {}) || changesSerializedState;
                     } finally {
                         NodeMan.unsuspendRecalculate();
                     }

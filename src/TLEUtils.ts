@@ -14,7 +14,23 @@ interface SatData {
     number: number;
     visible: boolean;
     satrecs: SatRec[];
+    // PAYLOAD / ROCKET BODY / DEBRIS / TBA, from OMM CSV only. Undefined for
+    // TLE-format data, which has no such field.
+    objectType?: string;
 }
+
+// One row of an OMM CSV: the elements SGP4 needs, plus the two set-level
+// columns used to work out where the data came from and how complete it is.
+interface OMMRecord {
+    name: string;
+    number: number;
+    satrec: SatRec;
+    objectType?: string;
+    creationDate?: string;
+}
+
+/** Which proxyStarlink.php query a set of elements came from. */
+export type GPQueryType = "LEO" | "LEOALL" | "SLOW" | "STARLINK" | "UNKNOWN";
 
 // given an array of satrecs, return the one that best matches the date
 // ie the one that is closest to the date, but before it
@@ -209,12 +225,66 @@ const OMM_FIELDS = [
     "BSTAR", "MEAN_MOTION_DOT", "MEAN_MOTION_DDOT",
 ] as const;
 
+// Columns that are not orbital elements but say something about the SET rather
+// than the satellite: which Space-Track query produced it, and whether it had
+// finished publishing when we downloaded it. Only present in OMM CSV.
+const OMM_EXTRA_FIELDS = ["OBJECT_TYPE", "CREATION_DATE"] as const;
+
 // Is this an OMM CSV file (as opposed to TLE/2LE/3LE)? The first non-blank line
 // of an OMM CSV is a header naming the OMM keywords. NORAD_CAT_ID is mandatory
 // in every OMM, so its presence in a comma-separated first line is decisive —
 // no TLE line can contain it.
 export function isOMMCSV(firstLine: string): boolean {
     return firstLine.includes(",") && firstLine.includes("NORAD_CAT_ID");
+}
+
+/**
+ * Days a historical query spans: proxyStarlink.php asks for EPOCH in
+ * [D, D+2], so a complete set reaches almost exactly D+2.
+ */
+export const GP_QUERY_WINDOW_DAYS = 2;
+
+/**
+ * How far short of the window end a set may fall and still count as complete.
+ *
+ * Elements are dense near the end of the window - a LEO date carries tens of
+ * thousands across two days, so a complete set's newest epoch lands within
+ * seconds of the boundary (measured: 12 s). An hour is far beyond that, while
+ * still catching a set that was cut short.
+ */
+const GP_WINDOW_TOLERANCE_MS = 60 * 60 * 1000;
+
+/**
+ * Was this set downloaded before Space-Track had finished publishing for it?
+ *
+ * Detected from EPOCH COVERAGE, not from any timestamp. The query asks for
+ * epochs across [D, D+2]; download too early and the elements for the later
+ * part of that window have not been published yet, so the set is truncated and
+ * its newest epoch falls short of the window end. Measured on a real date, by
+ * reconstructing what a download at each moment would have contained:
+ *
+ *   download at D+0.2d ->   13 elements,  8.9% of the window
+ *   download at D+1.0d -> 33,129,        40.6%
+ *   download at D+2.0d -> 53,495,        96.8%
+ *   download at D+2.5d -> 73,204,       100.0%   (complete)
+ *
+ * Deliberately NOT based on CREATION_DATE. That is only a lower bound on when
+ * we downloaded: if it falls before the settle point, the set may have been
+ * caught mid-publication OR publication may simply have finished early - the
+ * two are indistinguishable, and the second is common enough to make it a
+ * false-positive machine. Coverage measures the truncation itself, needs no
+ * file timestamp (which copying and rehosting destroy), and works for
+ * TLE-format data too, which has no CREATION_DATE at all.
+ *
+ * @param tleData The loaded set.
+ * @param setDate The date the set was requested for (start of the window).
+ */
+export function isGPSetIncomplete(tleData: CTLEData, setDate: Date): boolean {
+    if (!tleData || tleData.satData.length === 0 || !(tleData.endDate instanceof Date)) {
+        return false;
+    }
+    const windowEnd = setDate.getTime() + GP_QUERY_WINDOW_DAYS * 86400000;
+    return tleData.endDate.getTime() < windowEnd - GP_WINDOW_TOLERANCE_MS;
 }
 
 // A TLE element line — "1 ..." or "2 ...". Used to spot where a TLE block
@@ -284,7 +354,7 @@ export function splitCSVRow(line: string): string[] {
  * Returns null if the header is missing the fields SGP4 needs, so callers can
  * distinguish "not usable" from "no satellites in it".
  */
-export function parseOMMCSVLines(lines: string[]): { name: string, number: number, satrec: SatRec }[] | null {
+export function parseOMMCSVLines(lines: string[]): OMMRecord[] | null {
     // Resolve columns by NAME, never by position: CelesTrak sends 19 columns
     // and Space-Track 40, in a different order, and both are valid OMM.
     const header = splitCSVRow(lines[0]).map(h => h.trim());
@@ -294,13 +364,16 @@ export function parseOMMCSVLines(lines: string[]): { name: string, number: numbe
     for (const f of OMM_FIELDS) {
         col[f] = header.indexOf(f);
     }
+    for (const f of OMM_EXTRA_FIELDS) {
+        col[f] = header.indexOf(f);
+    }
     if (col.NORAD_CAT_ID < 0 || col.EPOCH < 0 || col.MEAN_MOTION < 0) {
         console.warn("parseOMMCSVLines: OMM CSV is missing required columns " +
             "(NORAD_CAT_ID / EPOCH / MEAN_MOTION), header was: " + lines[0].slice(0, 200));
         return null;
     }
 
-    const out: { name: string, number: number, satrec: SatRec }[] = [];
+    const out: OMMRecord[] = [];
     for (let i = 1; i < lines.length; i++) {
         const line = lines[i];
         if (line.trim() === "") continue;
@@ -321,10 +394,17 @@ export function parseOMMCSVLines(lines: string[]): { name: string, number: numbe
         const number = parseInt(omm.NORAD_CAT_ID);
         if (!Number.isFinite(number)) continue;
 
+        const extra: Record<string, string> = {};
+        for (const f of OMM_EXTRA_FIELDS) {
+            if (col[f] >= 0) extra[f] = v[col[f]];
+        }
+
         out.push({
             name: (omm.OBJECT_NAME ?? "").trim() || ("NORAD " + omm.NORAD_CAT_ID),
             number: number,
             satrec: satellite.json2satrec(omm as never) as unknown as SatRec,
+            objectType: (extra.OBJECT_TYPE ?? "").trim() || undefined,
+            creationDate: (extra.CREATION_DATE ?? "").trim() || undefined,
         });
     }
     return out;
@@ -358,6 +438,11 @@ export class CTLEData {
     // file holding both formats, which merging an imported .tle into a
     // downloaded CSV catalogue produces.
     format: "omm-csv" | "tle" | "mixed";
+    // Newest CREATION_DATE seen, i.e. when Space-Track last published an
+    // element in this set. Undefined for TLE-format data, which omits it.
+    // Compare against the set's own date to tell whether it was captured
+    // before publication had finished - see isGPSetIncomplete().
+    latestCreationDate?: Date;
 
     // constructor is passed in a string that contains the TLE file as \n separated lines
     // extracts in into
@@ -466,7 +551,18 @@ export class CTLEData {
             return;
         }
 
-        for (const {name, number, satrec} of records) {
+        for (const {name, number, satrec, objectType, creationDate} of records) {
+            // The newest CREATION_DATE says when Space-Track last published
+            // anything in this set - which is how we later tell whether the set
+            // was downloaded before publication for its date had finished.
+            if (creationDate !== undefined) {
+                const d = new Date(creationDate.endsWith("Z") ? creationDate : creationDate + "Z");
+                if (!isNaN(d.getTime()) && (this.latestCreationDate === undefined
+                        || d > this.latestCreationDate)) {
+                    this.latestCreationDate = d;
+                }
+            }
+
             // Group by catalog number: one satellite can appear several times
             // in a historical set, once per epoch, and bestSat() picks between
             // them at playback time.
@@ -475,7 +571,8 @@ export class CTLEData {
                     name: name,
                     number: number,
                     visible: true,
-                    satrecs: [satrec]
+                    satrecs: [satrec],
+                    objectType: objectType,
                 };
             } else {
                 satDataByKey[number].satrecs.push(satrec);
@@ -758,6 +855,59 @@ export class CTLEData {
         return null
 
 
+    }
+
+    /**
+     * Work out which proxyStarlink.php query produced this set, from its
+     * contents alone.
+     *
+     * A saved sitch bakes in the elements but not the request that fetched
+     * them - the filename carries the date, never the type. Each query is
+     * defined by filters though, and those leave an exact signature (see the
+     * URLs in sitrecServer/proxyStarlink.php):
+     *
+     *   STARLINK  OBJECT_NAME/STARLINK~~        every name starts STARLINK
+     *   SLOW      MEAN_MOTION/<11.26            nothing orbits faster
+     *   LEO       MEAN_MOTION/>11.25 + payload  all fast, all PAYLOAD
+     *   LEOALL    MEAN_MOTION/>11.25            all fast, mixed object types
+     *
+     * LEO and LEOALL are only distinguishable when OBJECT_TYPE is present,
+     * which means OMM CSV. For a TLE-format set that pair is ambiguous, and
+     * the caller should prefer the narrower LEO: refreshing merges, so a
+     * narrower query can only under-repair, whereas a broader one would add
+     * debris the user never had.
+     */
+    inferQueryType(): GPQueryType {
+        if (this.satData.length === 0) {
+            return "UNKNOWN";
+        }
+
+        if (this.satData.every(s => s.name.toUpperCase().startsWith("STARLINK"))) {
+            return "STARLINK";
+        }
+
+        // satrec.no is radians/minute; the queries are in revolutions/day.
+        const REV_PER_DAY = (2 * Math.PI) / 1440;
+        const meanMotions = this.satData
+            .map(s => s.satrecs[0]?.no)
+            .filter((n): n is number => typeof n === "number" && Number.isFinite(n))
+            .map(n => n / REV_PER_DAY);
+        if (meanMotions.length === 0) {
+            return "UNKNOWN";
+        }
+
+        if (meanMotions.every(n => n < 11.26)) {
+            return "SLOW";
+        }
+        if (!meanMotions.every(n => n > 11.25)) {
+            return "UNKNOWN";      // spans both bands - not one of our queries
+        }
+
+        const typed = this.satData.filter(s => s.objectType !== undefined);
+        if (typed.length === 0) {
+            return "LEO";          // TLE-format: ambiguous, take the narrower
+        }
+        return typed.every(s => s.objectType!.toUpperCase() === "PAYLOAD") ? "LEO" : "LEOALL";
     }
 
     getRecordFromNORAD(norad: number): SatData | null {
