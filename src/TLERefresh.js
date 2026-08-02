@@ -21,7 +21,7 @@
 
 import {FileManager, NodeMan, Globals, getEffectiveUserID} from "./Globals";
 import {extractSitrecObjectKey} from "./SitrecObjectResolver";
-import {isGPSetIncomplete, GP_QUERY_WINDOW_DAYS} from "./TLEUtils";
+import {isGPSetIncomplete, isOMMCSV, GP_QUERY_WINDOW_DAYS} from "./TLEUtils";
 import {showChoice} from "./showError";
 import {SITREC_SERVER} from "./configUtils";
 
@@ -171,6 +171,20 @@ async function offerRefresh(tleData, setDate, found) {
     await performRefresh(setDate, found);
 }
 
+/**
+ * Extension matching what the proxy actually returned: "csv" for OMM CSV,
+ * "tle" for the legacy element format or a zip of one.
+ */
+function refreshedExtension(buffer) {
+    const bytes = new Uint8Array(buffer);
+    if (bytes.length > 1 && bytes[0] === 0x50 && bytes[1] === 0x4b) {
+        return "tle";   // "PK": a legacy zipped .tle from an old cache entry
+    }
+    const head = new TextDecoder().decode(bytes.subarray(0, 4096));
+    const firstLine = head.split("\n", 1)[0] ?? "";
+    return isOMMCSV(firstLine) ? "csv" : "tle";
+}
+
 async function performRefresh(setDate, found) {
     const dateStr = found.source.date;
     const url = SITREC_SERVER + "proxyStarlink.php?request=" + dateStr
@@ -192,10 +206,18 @@ async function performRefresh(setDate, found) {
         return;
     }
 
+    // Name it for what it actually holds. The proxy returns OMM CSV now, but a
+    // date whose cache predates that still comes back as TLE (or a legacy zip
+    // of one), so sniff rather than assume. CTLEData reads either regardless,
+    // but the rehosted file keeps this name in the saved sitch, and an
+    // extension that misdescribes its contents is a trap for anyone who
+    // downloads it later.
+    const extension = refreshedExtension(buffer);
+
     // A distinct id, so the refreshed set is added alongside the baked one
     // rather than replacing it in FileManager — the original stays available
     // and the saved sitch keeps working until the user chooses to re-save.
-    const refreshedId = `starLink_${dateStr}-refreshed.tle`;
+    const refreshedId = `starLink_${dateStr}-refreshed.${extension}`;
     FileManager.remove(refreshedId);
     await FileManager.parseResult(refreshedId, buffer, null, {trackOptions: {tleAction: "merge"}});
 
