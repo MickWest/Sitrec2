@@ -80,6 +80,42 @@ export function createFlareEngine(satellite) {
             .map((l) => l.replace(/\s+$/, ""))
             .filter((l) => l.length > 0);
 
+        // The file may hold OMM CSV, legacy TLE, or - if it was exported by
+        // Sitrec after merging a .tle into a downloaded CSV catalogue - both,
+        // one block after another. Read it block by block so nothing is lost.
+        // The TLE format cannot hold catalog numbers above 99999, which the
+        // catalogue passed on 2026-07-11, so CelesTrak leaves the newest
+        // Starlinks out of TLE feeds entirely: exactly the satellites a current
+        // flare search cares about.
+        const out = [];
+        let i = 0;
+        while (i < lines.length) {
+            if (looksLikeOMMCSV(lines[i])) {
+                // An OMM header, then its data rows. TLE element lines carry no
+                // commas, so a comma-free line ends the block.
+                const block = [lines[i]];
+                let j = i + 1;
+                while (j < lines.length && !looksLikeOMMCSV(lines[j])
+                       && !/^[12] /.test(lines[j]) && lines[j].includes(",")) {
+                    block.push(lines[j]);
+                    j++;
+                }
+                out.push(...parseOMMCSV(block));
+                i = j;
+            } else {
+                const block = [];
+                while (i < lines.length && !looksLikeOMMCSV(lines[i])) {
+                    block.push(lines[i]);
+                    i++;
+                }
+                out.push(...parseTLEBlock(block));
+            }
+        }
+        return out;
+    }
+
+    // The legacy fixed-width TLE / 3LE reader, for one same-format block.
+    function parseTLEBlock(lines) {
         const out = [];
         let pendingName = null;
 
@@ -107,6 +143,62 @@ export function createFlareEngine(satellite) {
                 pendingName = l1.trim();
             }
             // A stray "2 " line with no preceding "1 " is ignored.
+        }
+        return out;
+    }
+
+    // -----------------------------------------------------------------------
+    // OMM CSV support.
+    //
+    // CelesTrak and Space-Track publish the CCSDS Orbit Mean-Elements Message
+    // in CSV, XML, JSON and KVN. CSV is the one to use: it is the smallest of
+    // them (smaller than TLE, in fact), has no catalog-number limit, and keeps
+    // the full-precision epoch that the TLE format rounds.
+    // -----------------------------------------------------------------------
+
+    // The header row names the OMM keywords, and NORAD_CAT_ID is mandatory in
+    // every OMM — no TLE line can contain it, so this test is decisive.
+    function looksLikeOMMCSV(firstLine) {
+        return firstLine.includes(",") && firstLine.includes("NORAD_CAT_ID");
+    }
+
+    // Fields satellite.js's json2satrec reads, plus the display name.
+    const OMM_FIELDS = [
+        "OBJECT_NAME", "NORAD_CAT_ID", "EPOCH", "MEAN_MOTION", "ECCENTRICITY",
+        "INCLINATION", "RA_OF_ASC_NODE", "ARG_OF_PERICENTER", "MEAN_ANOMALY",
+        "BSTAR", "MEAN_MOTION_DOT", "MEAN_MOTION_DDOT",
+    ];
+
+    function parseOMMCSV(lines) {
+        const header = lines[0].trim().split(",");
+
+        // Resolve the column index of each field we need, once.
+        const col = {};
+        for (const f of OMM_FIELDS) col[f] = header.indexOf(f);
+        if (col.NORAD_CAT_ID < 0 || col.EPOCH < 0 || col.MEAN_MOTION < 0) return [];
+
+        const out = [];
+        for (let i = 1; i < lines.length; i++) {
+            const v = lines[i].split(",");
+            // A short row is a truncated download; a non-numeric catalog number
+            // is a second file's header row concatenated on. Skip both rather
+            // than building a satellite whose elements are all NaN.
+            if (v.length < header.length) continue;
+
+            const omm = {};
+            for (const f of OMM_FIELDS) if (col[f] >= 0) omm[f] = v[col[f]];
+
+            const noradId = parseInt(omm.NORAD_CAT_ID, 10);
+            if (!Number.isFinite(noradId)) continue;
+
+            const satrec = satellite.json2satrec(omm);
+            if (satrec && satrec.error === 0) {
+                out.push({
+                    name: (omm.OBJECT_NAME || "").trim() || "NORAD " + noradId,
+                    noradId,
+                    satrec,
+                });
+            }
         }
         return out;
     }

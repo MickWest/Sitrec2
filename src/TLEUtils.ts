@@ -200,20 +200,111 @@ export function satRecToDate(satrec: SatRec): Date {
     return tleEpochToDate(satrec.epochyr, satrec.epochdays);
 }
 
+// The OMM (CCSDS Orbit Mean-Elements Message) fields that satellite.js's
+// json2satrec actually reads, plus OBJECT_NAME for the display name.
+// CSV data from CelesTrak/Space-Track uses exactly these column names.
+const OMM_FIELDS = [
+    "OBJECT_NAME", "NORAD_CAT_ID", "EPOCH", "MEAN_MOTION", "ECCENTRICITY",
+    "INCLINATION", "RA_OF_ASC_NODE", "ARG_OF_PERICENTER", "MEAN_ANOMALY",
+    "BSTAR", "MEAN_MOTION_DOT", "MEAN_MOTION_DDOT",
+] as const;
+
+// Is this an OMM CSV file (as opposed to TLE/2LE/3LE)? The first non-blank line
+// of an OMM CSV is a header naming the OMM keywords. NORAD_CAT_ID is mandatory
+// in every OMM, so its presence in a comma-separated first line is decisive —
+// no TLE line can contain it.
+export function isOMMCSV(firstLine: string): boolean {
+    return firstLine.includes(",") && firstLine.includes("NORAD_CAT_ID");
+}
+
+// A TLE element line — "1 ..." or "2 ...". Used to spot where a TLE block
+// resumes after a CSV block in a file that concatenates both formats.
+function isTLEElementLine(line: string): boolean {
+    return /^[12] /.test(line);
+}
+
+/**
+ * Parse OMM CSV lines (header row first) into flat records.
+ *
+ * This is the only format that can carry the whole catalogue: the TLE format
+ * cannot express catalog numbers above 99999, which the catalogue passed on
+ * 2026-07-11. It also keeps the full-precision epoch that TLE rounds.
+ *
+ * Returns null if the header is missing the fields SGP4 needs, so callers can
+ * distinguish "not usable" from "no satellites in it".
+ */
+export function parseOMMCSVLines(lines: string[]): { name: string, number: number, satrec: SatRec }[] | null {
+    const header = lines[0].trim().split(",");
+
+    // Resolve the column index of each field we need, once.
+    const col: Record<string, number> = {};
+    for (const f of OMM_FIELDS) {
+        col[f] = header.indexOf(f);
+    }
+    if (col.NORAD_CAT_ID < 0 || col.EPOCH < 0 || col.MEAN_MOTION < 0) {
+        console.warn("parseOMMCSVLines: OMM CSV is missing required columns " +
+            "(NORAD_CAT_ID / EPOCH / MEAN_MOTION), header was: " + lines[0].slice(0, 200));
+        return null;
+    }
+
+    const out: { name: string, number: number, satrec: SatRec }[] = [];
+    for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.trim() === "") continue;
+        const v = line.split(",");
+        // A short row is a truncated download; skip it rather than
+        // manufacturing a satellite from undefined fields.
+        if (v.length < header.length) continue;
+
+        const omm: Record<string, string> = {};
+        for (const f of OMM_FIELDS) {
+            if (col[f] >= 0) omm[f] = v[col[f]];
+        }
+
+        // Guards the case where two CSV downloads have been concatenated (a
+        // merge of the current and historical catalogues): the second file's
+        // header row arrives here as data, and would otherwise become a
+        // satellite whose every element is NaN.
+        const number = parseInt(omm.NORAD_CAT_ID);
+        if (!Number.isFinite(number)) continue;
+
+        out.push({
+            name: (omm.OBJECT_NAME ?? "").trim() || ("NORAD " + omm.NORAD_CAT_ID),
+            number: number,
+            satrec: satellite.json2satrec(omm as never) as unknown as SatRec,
+        });
+    }
+    return out;
+}
+
 // this is the TLE data for the satellites
-// A CTLEData object is created from a TLE file and consists of just
-// a satData array, which is an array of objects
+// A CTLEData object is created from a TLE file OR an OMM CSV file and consists
+// of just a satData array, which is an array of objects
 // each object has a name, a visible flag, and an array of satrecs
 // the satrec is a satellite record created from a single line of a TLE file
 // there can be several satrecs with the same name, so we need to store them in an array
 // and pick the best one based on the playback date/time
+//
+// NOTE ON FORMATS: the TLE format cannot express catalog numbers above 99999,
+// and the catalog passed that limit on 2026-07-11. CelesTrak and Space-Track
+// therefore omit those objects from TLE feeds entirely — they are only
+// available in OMM (CSV/JSON/XML). We prefer CSV; TLE parsing is kept so that
+// old cached files, saved sitches, and user-supplied .tle files still load.
 export class CTLEData {
     satData: SatData[];
-    noradIndex: (SatData | undefined)[];
+    // Keyed by NORAD catalog number. A Map, not an array: catalog numbers are
+    // now up to 9 digits, and a sparse array indexed at ~8e8 would report a
+    // .length of 800 million.
+    noradIndex: Map<number, SatData>;
     startDate: Date;
     endDate: Date;
     loadError?: string;
     rawText: string;
+    // What this data was parsed from, used when exporting so the saved file
+    // gets an extension its own importer will route correctly. "mixed" is a
+    // file holding both formats, which merging an imported .tle into a
+    // downloaded CSV catalogue produces.
+    format: "omm-csv" | "tle" | "mixed";
 
     // constructor is passed in a string that contains the TLE file as \n separated lines
     // extracts in into
@@ -230,10 +321,11 @@ export class CTLEData {
         if (trimmedData.startsWith("ERROR:")) {
             showError("TLE Loading Error: " + trimmedData);
             this.satData = [];
-            this.noradIndex = [];
+            this.noradIndex = new Map();
             this.startDate = new Date("2100");
             this.endDate = new Date("1950");
             this.loadError = trimmedData;
+            this.format = "tle";
             console.error("CTLEData: Server returned error: " + trimmedData);
             return;
         }
@@ -250,6 +342,96 @@ export class CTLEData {
         }
 
         const satDataByKey: Record<string | number, SatData> = {};
+        this.parseSegments(lines, satDataByKey);
+        this.finish(satDataByKey, fileData);
+    }
+
+    /**
+     * Parse the file as a sequence of same-format blocks.
+     *
+     * Usually there is exactly one block and this is just "sniff the format".
+     * But mergeFrom() concatenates the raw text of the sets it merges, and a
+     * user can merge an imported .tle into a downloaded CSV catalogue (or the
+     * reverse), so an exported file can legitimately contain both formats. If
+     * we sniffed only the first line, one of the two blocks would be fed to the
+     * wrong parser — CSV rows to the TLE parser produce garbage, and TLE lines
+     * handed to the CSV parser are silently dropped. Either way the user loses
+     * satellites on reload. Reading block by block keeps every record.
+     */
+    private parseSegments(lines: string[], satDataByKey: Record<string | number, SatData>): void {
+        let sawCSV = false;
+        let sawTLE = false;
+        let i = 0;
+
+        while (i < lines.length) {
+            if (isOMMCSV(lines[i])) {
+                // An OMM header, then its data rows. TLE element lines carry no
+                // commas, so a comma-free line ends the block — as does another
+                // header, which starts a new one.
+                const block: string[] = [lines[i]];
+                let j = i + 1;
+                while (j < lines.length && !isOMMCSV(lines[j])
+                       && !isTLEElementLine(lines[j]) && lines[j].includes(",")) {
+                    block.push(lines[j]);
+                    j++;
+                }
+                this.parseOMMCSV(block, satDataByKey);
+                sawCSV = true;
+                i = j;
+            } else {
+                // Everything up to the next OMM header is TLE. Pass it as one
+                // block so the existing 2LE-vs-3LE detection still sees whole
+                // records rather than a line at a time.
+                const block: string[] = [];
+                while (i < lines.length && !isOMMCSV(lines[i])) {
+                    block.push(lines[i]);
+                    i++;
+                }
+                // Drop blank lines at the block edges: the 3LE-vs-2LE test
+                // reads lines[1] and lines[2], so a leading blank would make a
+                // named 3LE set look like an unnamed 2LE one and misparse it.
+                while (block.length > 0 && block[0].trim() === "") block.shift();
+                while (block.length > 0 && block[block.length - 1].trim() === "") block.pop();
+                if (block.length > 0) {
+                    this.parseTLELines(block, satDataByKey);
+                    sawTLE = true;
+                }
+            }
+        }
+
+        this.format = (sawCSV && sawTLE) ? "mixed" : (sawCSV ? "omm-csv" : "tle");
+    }
+
+    // Parse OMM data in CSV form (CelesTrak FORMAT=csv, Space-Track format/csv).
+    // Unlike TLE this carries the full-precision epoch and unrestricted catalog
+    // numbers, so it is the only format in which post-2026-07-11 objects appear.
+    private parseOMMCSV(lines: string[], satDataByKey: Record<string | number, SatData>): void {
+        // A null return is a parse failure, not a server error — finish()
+        // reports it via loadError, as it does for an unreadable TLE file.
+        const records = parseOMMCSVLines(lines);
+        if (records === null) {
+            return;
+        }
+
+        for (const {name, number, satrec} of records) {
+            // Group by catalog number: one satellite can appear several times
+            // in a historical set, once per epoch, and bestSat() picks between
+            // them at playback time.
+            if (satDataByKey[number] === undefined) {
+                satDataByKey[number] = {
+                    name: name,
+                    number: number,
+                    visible: true,
+                    satrecs: [satrec]
+                };
+            } else {
+                satDataByKey[number].satrecs.push(satrec);
+            }
+        }
+    }
+
+    // Parse the legacy fixed-width TLE / 2LE / 3LE formats.
+    private parseTLELines(lines: string[], satDataByKey: Record<string | number, SatData>): void {
         let satrecName: string | null = null;
         // determine if it's a two line element (no names, lines are labeled 1 and 2) or three (line 0 = name)
         if (lines.length < 3 || !lines[1].startsWith("1") || !lines[2].startsWith("2")) {
@@ -293,11 +475,14 @@ export class CTLEData {
                     const tleLine2 = fixTLELine(lines[i + 2], tleComboFieldEnds2);
 
                     const satrec = satellite.twoline2satrec(tleLine1, tleLine2) as unknown as SatRec;
-                    satrecName = lines[i]
+                    // The name line is padded to a fixed width in TLE files.
+                    // Trim it so names match those from the OMM CSV parser —
+                    // the two formats feed the same name lookups downstream.
+                    satrecName = lines[i].trim()
 
                     // if it starts with "0 ", then strip that off
                     if (satrecName.startsWith("0 ")) {
-                        satrecName = satrecName.substring(2)
+                        satrecName = satrecName.substring(2).trim()
                     }
 
                     const satrecNumber = parseInt(satrec.satnum);
@@ -328,6 +513,12 @@ export class CTLEData {
             }
         }
 
+    }
+
+    // Common post-processing for both formats: flatten the by-NORAD map into an
+    // iterable array, build the lookup index, and find the epoch range.
+    private finish(satDataByKey: Record<string | number, SatData>, fileData: string): void {
+
         // after building the arrays of multiple satrecs using the number as the key,
         // convert to an indexed array (i.e. just and array with no keys other than the position in the array, which is meaningless)
         // we do this so that we can iterate over the satData array easily
@@ -337,15 +528,12 @@ export class CTLEData {
         this.startDate = new Date("2100");
         this.endDate = new Date("1950");
 
-        // now create an array of the satData indexed by the NORAD number
-        // so we can quickly look up a satellite by its NORAD number
-        this.noradIndex = []
+        // now index the satData by NORAD number so we can look a satellite up quickly
+        this.noradIndex = new Map()
         for (let i = 0; i < this.satData.length; i++) {
 
             const satData = this.satData[i];
-            // add the satrec to the noradIndex array
-            // indexed by the NORAD number
-            this.noradIndex[satData.number] = satData;
+            this.noradIndex.set(satData.number, satData);
 
             // iterate over the satrecs in this satData entry
 
@@ -363,8 +551,8 @@ export class CTLEData {
 
         }
 
-        console.log("CTLEData: loaded " + this.satData.length + " satellites with max " +
-            this.noradIndex.length + " NORAD numbers, start date: " + this.startDate.toISOString() +
+        console.log("CTLEData: loaded " + this.satData.length + " satellites from " +
+            this.format + ", start date: " + this.startDate.toISOString() +
             ", end date: " + this.endDate.toISOString());
 
         // Warn if no satellites were loaded (possible parsing error or invalid data)
@@ -384,7 +572,7 @@ export class CTLEData {
         let merged = 0;
 
         for (const otherSat of other.satData) {
-            const existing = this.noradIndex[otherSat.number];
+            const existing = this.noradIndex.get(otherSat.number);
             if (existing) {
                 // Combine satrecs for the same satellite
                 existing.satrecs.push(...otherSat.satrecs);
@@ -398,7 +586,7 @@ export class CTLEData {
                     satrecs: [...otherSat.satrecs],
                 };
                 this.satData.push(newSat);
-                this.noradIndex[newSat.number] = newSat;
+                this.noradIndex.set(newSat.number, newSat);
                 added++;
             }
         }
@@ -414,8 +602,21 @@ export class CTLEData {
             }
         }
 
-        // Append raw text for export
-        this.rawText += "\n" + other.rawText;
+        // Append raw text for export. Two OMM CSVs are folded into ONE csv by
+        // dropping the second header — the columns are fixed by the OMM
+        // standard, so the first header describes both. Unlike formats are just
+        // concatenated; parseSegments() reads the result block by block, so the
+        // export still round-trips with every satellite intact.
+        if (this.format === "omm-csv" && other.format === "omm-csv") {
+            const otherLines = other.rawText.split("\n");
+            const body = isOMMCSV(otherLines[0] ?? "") ? otherLines.slice(1) : otherLines;
+            this.rawText = this.rawText.replace(/\n+$/, "") + "\n" + body.join("\n");
+        } else {
+            this.rawText = this.rawText.replace(/\n+$/, "") + "\n" + other.rawText;
+            if (this.format !== other.format) {
+                this.format = "mixed";
+            }
+        }
 
         console.log(`CTLEData.mergeFrom: added ${added} new satellites, merged satrecs for ${merged} existing. Total: ${this.satData.length}`);
     }
@@ -507,10 +708,7 @@ export class CTLEData {
     }
 
     getRecordFromNORAD(norad: number): SatData | null {
-        if (this.noradIndex[norad] === undefined) {
-            return null;
-        }
-        return this.noradIndex[norad]!;
+        return this.noradIndex.get(norad) ?? null;
     }
 
     getRecordFromName(name: string): SatData | null {

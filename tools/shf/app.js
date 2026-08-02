@@ -55,8 +55,10 @@ const els = {
 // Smallest signed difference a−b on a circle, in (−180, 180].
 function angDiff(a, b) { return ((a - b + 540) % 360) - 180; }
 
+// FORMAT=csv, not tle: the TLE format has no room for catalog numbers above
+// 99999, so CelesTrak omits every object above that from its TLE feeds.
 const CELESTRAK =
-  "https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle";
+  "https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=csv";
 
 // ---------------------------------------------------------------------------
 // Time-zone aware wall-clock <-> UTC helpers (per spec)
@@ -269,9 +271,16 @@ async function resolveBrowserLocation() {
 // ---------------------------------------------------------------------------
 // TLE acquisition
 // ---------------------------------------------------------------------------
+// True for either element-set format we accept: legacy TLE, or the OMM CSV that
+// CelesTrak and Space-Track now publish the full catalogue in. The TLE format
+// cannot express catalog numbers above 99999 — a limit the catalogue passed on
+// 2026-07-11 — so TLE feeds silently omit the newest Starlinks.
 function looksLikeTLE(text) {
-  return typeof text === "string" &&
-    /(^|\n)1 \d/.test(text) && /(^|\n)2 \d/.test(text);
+  if (typeof text !== "string") return false;
+  if (/(^|\n)1 \d/.test(text) && /(^|\n)2 \d/.test(text)) return true;
+  // OMM CSV: a header row naming the OMM keywords, NORAD_CAT_ID always present.
+  const firstLine = text.slice(0, text.indexOf("\n") + 1 || undefined);
+  return firstLine.includes(",") && firstLine.includes("NORAD_CAT_ID");
 }
 
 function readFileText(file) {
