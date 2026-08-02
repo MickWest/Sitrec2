@@ -257,6 +257,32 @@ describe('zenithECEFFromPosition (geodetic zenith from an ECEF point)', () => {
         expect(sep(55.6405)).toBeLessThan(10.9);
     });
 
+    // Sitrec's earth model is selectable (Sit.useEllipsoid, false by default for
+    // legacy sitches). With a sphere the observer ECEF sits on a sphere and the
+    // local vertical IS the radial, so a hard-coded WGS84 inversion would tilt
+    // the refraction axis by the same ~11.5' this change exists to remove.
+    test('collapses to the radial when given a spherical earth model', () => {
+        const R = A;
+        for (const latDeg of [0, 30, 45, 55.6405, 80]) {
+            const la = latDeg * D2R;
+            const p = new Vector3(R * Math.cos(la), 0, R * Math.sin(la));
+            const got = zenithECEFFromPosition(p, new Vector3(), R, R);
+            const radial = p.clone().normalize();
+            expect(got.dot(radial)).toBeCloseTo(1, 12);
+        }
+    });
+
+    test('ellipsoid and sphere models genuinely disagree, by the known amount', () => {
+        const la = 45 * D2R;
+        const N = A / Math.sqrt(1 - E2 * Math.sin(la) ** 2);
+        const p = new Vector3(N * Math.cos(la), 0, N * (1 - E2) * Math.sin(la));
+        const ell = zenithECEFFromPosition(p, new Vector3());               // WGS84 default
+        const sph = zenithECEFFromPosition(p, new Vector3(), A, A);         // sphere
+        const sep = Math.acos(Math.min(1, ell.dot(sph))) * R2D * 60;
+        expect(sep).toBeGreaterThan(11.4);
+        expect(sep).toBeLessThan(11.6);
+    });
+
     test('is stable on the spin axis', () => {
         expect(zenithECEFFromPosition(new Vector3(0, 0, 6356752)).z).toBeCloseTo(1, 9);
         expect(zenithECEFFromPosition(new Vector3(0, 0, -6356752)).z).toBeCloseTo(-1, 9);

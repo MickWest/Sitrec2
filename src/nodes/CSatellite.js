@@ -2,7 +2,7 @@ import {Color} from "three";
 import {V3} from "../threeUtils";
 import {LLAToECEFRadians} from "../LLA-ECEF-ENU";
 import {SITREC_SERVER} from "../configUtils";
-import {FileManager, GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
 import {EventManager} from "../CEventManager";
 import * as satellite from 'satellite.js';
@@ -1046,6 +1046,12 @@ export class CSatellite {
             enabled: refractionEnabled,
             pressureHPa: Sit.refractionPressure ?? REFRACTION_DEFAULTS.pressureHPa,
             tempC: Sit.refractionTemp ?? REFRACTION_DEFAULTS.tempC,
+            // Refraction bends about the local vertical, which depends on the
+            // active earth model (Sit.useEllipsoid). These track it, so a
+            // spherical-earth sitch bends about the radial and an ellipsoidal
+            // one about the true geodetic normal.
+            equatorRadius: Globals.equatorRadius,
+            polarRadius: Globals.polarRadius,
         };
 
         // When the camera is riding a satellite (e.g. ISS), hide that satellite

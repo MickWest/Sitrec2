@@ -129,43 +129,63 @@ export function applyRefractionFromObserver(pos, observerECEF, opts = {}, target
     const dist = _obsDir.length();
     if (dist < 1) return out;
     // GEODETIC zenith, not the geocentric radial. Refraction is symmetric
-    // about the local vertical — perpendicular to the WGS84 horizon — and the
-    // two differ by up to 11.55' (11.5' at 45° latitude, 10.8' at Copenhagen).
-    // Using the radial tilted the bend axis by that much, which near the
-    // horizon is worth ~1.25' of satellite altitude at 0.5° and ~1' at 1°.
-    // The celestial path already used geodetic (zenithECEFFromLatLon); this
-    // one had been left on the radial.
-    zenithECEFFromPosition(observerECEF, _obsZenith);
+    // about the local vertical — perpendicular to the local horizon — and on
+    // an ellipsoid the two differ by up to 11.55' (11.5' at 45° latitude,
+    // 10.8' at Copenhagen). Using the radial tilted the bend axis by that
+    // much, which near the horizon is worth ~1.25' of satellite altitude at
+    // 0.5° and ~1' at 1°. The celestial path already used geodetic; this one
+    // had been left on the radial.
+    //
+    // Radii come from the caller because Sitrec's earth model is SELECTABLE
+    // (Sit.useEllipsoid, false for legacy sitches): with a spherical earth the
+    // observer ECEF is built on a sphere and the vertical IS the radial, so a
+    // hard-coded WGS84 inversion would reintroduce the same ~11.5' tilt in the
+    // opposite direction. Passing equal radii collapses this to the radial
+    // exactly, which is what a sphere wants.
+    zenithECEFFromPosition(observerECEF, _obsZenith, opts.equatorRadius, opts.polarRadius);
     // Bend the direction vector using the same routine as celestial bending.
     applyRefractionECI(_obsDir, _obsZenith, opts);
     out.copy(_obsDir).add(observerECEF);
     return out;
 }
 
-// Geodetic zenith (WGS84 ellipsoid normal) at an ECEF position, at any
-// altitude. Bowring's closed-form inverse — good to well under a
-// milliarcsecond, and self-contained so this module keeps its "three only"
-// dependency and its unit tests stay free of the app's global graph.
+// Geodetic zenith (ellipsoid normal) at an ECEF position, at any altitude.
+// Bowring's closed-form inverse — good to well under a milliarcsecond, and
+// self-contained so this module keeps its "three only" dependency and its unit
+// tests stay free of the app's global graph.
+//
+// The radii are parameters, not constants, because Sitrec's earth model is
+// selectable: pass Globals.equatorRadius / Globals.polarRadius so this tracks
+// Sit.useEllipsoid. With equal radii (the spherical model) e2 collapses to 0
+// and the result is exactly the geocentric radial, which is the correct
+// vertical for that model. Defaults are WGS84.
 const WGS84_A = 6378137.0;
-const WGS84_F = 1 / 298.257223563;
-const WGS84_B = WGS84_A * (1 - WGS84_F);
-const WGS84_E2 = WGS84_F * (2 - WGS84_F);
-const WGS84_EP2 = (WGS84_A * WGS84_A - WGS84_B * WGS84_B) / (WGS84_B * WGS84_B);
+const WGS84_B = WGS84_A * (1 - 1 / 298.257223563);
 
-export function zenithECEFFromPosition(posECEF, target = new Vector3()) {
+export function zenithECEFFromPosition(posECEF, target = new Vector3(),
+                                       a = WGS84_A, b = WGS84_B) {
     const {x, y, z} = posECEF;
     const p = Math.hypot(x, y);
     if (p < 1e-9) {
         // On the spin axis: the normal is +/-Z and longitude is undefined.
         return target.set(0, 0, z >= 0 ? 1 : -1);
     }
-    const theta = Math.atan2(z * WGS84_A, p * WGS84_B);
+    const lonRad = Math.atan2(y, x);
+    const asqr = a * a, bsqr = b * b;
+    const e2 = (asqr - bsqr) / asqr;
+    if (e2 <= 0) {
+        // Spherical earth model — the vertical is the radial. Take it directly
+        // rather than through a latitude, so it is exact.
+        return target.copy(posECEF).normalize();
+    }
+    const ep2 = (asqr - bsqr) / bsqr;
+    const theta = Math.atan2(z * a, p * b);
     const sinT = Math.sin(theta), cosT = Math.cos(theta);
     const latRad = Math.atan2(
-        z + WGS84_EP2 * WGS84_B * sinT * sinT * sinT,
-        p - WGS84_E2 * WGS84_A * cosT * cosT * cosT,
+        z + ep2 * b * sinT * sinT * sinT,
+        p - e2 * a * cosT * cosT * cosT,
     );
-    return zenithECEFFromLatLon(latRad, Math.atan2(y, x), target);
+    return zenithECEFFromLatLon(latRad, lonRad, target);
 }
 
 // Geodetic local zenith in ECEF (X→Greenwich, Z→North) from observer
