@@ -52,7 +52,7 @@ import {SkyLanternModel} from "./SkyLanternModel";
 import {QuadcopterModel} from "./QuadcopterModel";
 import {classifyFixedWing, classifyQuadcopter} from "./VehicleModels";
 import {isLocal} from "./configUtils";
-import {getCelestialDirection, getCelestialDirectionFromRaDec, getGeocentricBodyDirectionECEF} from "./CelestialMath";
+import {getCelestialDirection, getGeocentricBodyDirectionECEF, getStarDirectionECEF} from "./CelestialMath";
 import {ECEF2ENU_radii} from "./LLA-ECEF-ENU";
 import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import * as Astronomy from "astronomy-engine";
@@ -581,7 +581,7 @@ function buildSceneCoupledHypotheses({dataset, originLat, originLon, sweep,
                 for (let i = 0; i < sf.BSC_NumStars; i++) {
                     if (!(sf.BSC_MAG[i] < starMagCut)) continue;
                     consider(sf.getStarName(i + 1) || ("HIP" + sf.BSC_HIP[i]),
-                        getCelestialDirectionFromRaDec(sf.BSC_RA[i], sf.BSC_DEC[i], date), sf.BSC_MAG[i]);
+                        getStarDirectionECEF(sf.BSC_RA[i], sf.BSC_DEC[i], date), sf.BSC_MAG[i]);
                 }
             }
             if (best) {

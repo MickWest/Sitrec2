@@ -8,7 +8,7 @@ import {adjustHeightAboveGround, clampAboveGround, DebugArrow} from "../threeExt
 import {CNodeController} from "./CNodeController";
 
 import {MISB} from "../MISBUtils";
-import {getCelestialDirection, getCelestialDirectionFromRaDec} from "../CelestialMath";
+import {getCelestialDirection, getCelestialDirectionFromRaDec, getStarDirectionECEF} from "../CelestialMath";
 import {Quaternion, Vector2, Vector3} from "three";
 import {assert} from "../assert";
 import {getCursorPositionFromTopView} from "../mouseMoveView";
@@ -678,7 +678,7 @@ export class CNodeControllerCelestial extends CNodeController {
         if (nightSky && nightSky.starField) {
             const star = nightSky.starField.findStarByName(name);
             if (star) {
-                return getCelestialDirectionFromRaDec(star.ra, star.dec, date);
+                return getStarDirectionECEF(star.ra, star.dec, date);
             }
         }
         return null;

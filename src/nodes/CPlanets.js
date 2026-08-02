@@ -32,10 +32,10 @@ import {
     Vector3
 } from "three";
 import {Sit} from "../Globals";
-import {raDec2Celestial, getSiderealTime} from "../CelestialMath";
+import {raDec2Celestial, getECEFToEQJMatrix} from "../CelestialMath";
 import {
     applyRefractionECI,
-    zenithECIFromLatLonGMST,
+    zenithEQJFromLatLon,
     refractionUniforms,
     REFRACTION_VERTEX_GLSL,
     REFRACTION_DEFAULTS,
@@ -73,6 +73,7 @@ export class CPlanets {
         this.planetSprites = {};
 
         this._zenithECI = new Vector3(0, 0, 1);
+        this._ecefToEQJ = new Matrix4();
         // Reused per call to avoid per-frame allocation.
         this._refractionOptsCache = {
             enabled: REFRACTION_DEFAULTS.enabled,
@@ -490,10 +491,10 @@ export class CPlanets {
     // the same sync pass.
     _refractionOpts(date, observer) {
         if (date && observer) {
-            zenithECIFromLatLonGMST(
+            zenithEQJFromLatLon(
                 radians(observer.latitude),
                 radians(observer.longitude),
-                getSiderealTime(date, 0),
+                getECEFToEQJMatrix(date, this._ecefToEQJ),
                 this._zenithECI,
             );
         }

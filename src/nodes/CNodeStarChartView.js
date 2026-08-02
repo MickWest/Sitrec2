@@ -15,9 +15,11 @@
 import {CNodeTabbedCanvasView} from "./CNodeTabbedCanvasView";
 import {FileManager, GlobalDateTimeNode, guiShowHide, NodeMan, setRenderOne} from "../Globals";
 import {par} from "../par";
-import {ECEFToLLAVD_radii, getLST, raDecToAzElRADIANS} from "../LLA-ECEF-ENU";
+import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {getAzElFromPositionAndForward} from "../SphericalMath";
 import {degrees, radians} from "../utils";
+import {applyAnnualAberration, getEQJToECEFMatrix} from "../CelestialMath";
+import {V3} from "../threeUtils";
 import * as Astronomy from "astronomy-engine";
 
 // Named color schemes for the chart. "Heavens-Above" mimics the pale blue
@@ -181,7 +183,7 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         if (R < 20) return;
 
         const latRad = radians(lla.x), lonRad = radians(lla.y);
-        const lst = getLST(date, lonRad);
+        const azEl = this._makeAzElProjector(date, latRad, lonRad);
 
         const ctx = this.ctx;
         ctx.save();
@@ -202,9 +204,9 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         ctx.arc(cx, cy, R - 0.5, 0, 2 * Math.PI);
         ctx.clip();
 
-        this._drawConstellations(ctx, cx, cy, R, latRad, lonRad, lst, scheme);
-        this._drawStars(ctx, cx, cy, R, latRad, lonRad, lst, scheme);
-        this._drawPlanets(ctx, cx, cy, R, latRad, lonRad, lst, lla, date, scheme);
+        this._drawConstellations(ctx, cx, cy, R, azEl, scheme);
+        this._drawStars(ctx, cx, cy, R, azEl, scheme);
+        this._drawPlanets(ctx, cx, cy, R, azEl, lla, date, scheme);
         if (satNode) this._drawSatelliteTrack(ctx, cx, cy, R, satNode, cameraPos, scheme);
 
         ctx.restore();
@@ -217,6 +219,33 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         ctx.stroke();
 
         ctx.restore();
+    }
+
+    // EQJ (J2000/ICRS) ra/dec in radians -> {az, el} in radians, routed through
+    // the SAME EQJ→ECEF matrix the 3D sky is drawn with. Going via ECEF rather
+    // than a local-sidereal-time hour angle is what keeps the chart and the sky
+    // from disagreeing: sidereal time alone omits precession, which is where the
+    // chart's old ~0.4° offset against the terrain came from.
+    // `aberrate` is opt-in per call: catalog stars and the constellation lines
+    // drawn between them need annual aberration, but the planet positions come
+    // from astronomy-engine with aberration already folded in.
+    _makeAzElProjector(date, latRad, lonRad) {
+        const m = getEQJToECEFMatrix(date);
+        const sLat = Math.sin(latRad), cLat = Math.cos(latRad);
+        const sLon = Math.sin(lonRad), cLon = Math.cos(lonRad);
+        const v = V3();
+        return (ra, dec, aberrate = false) => {
+            const cd = Math.cos(dec);
+            v.set(cd * Math.cos(ra), cd * Math.sin(ra), Math.sin(dec));
+            if (aberrate) applyAnnualAberration(v, date);
+            v.applyMatrix4(m);
+            const e = -sLon * v.x + cLon * v.y;
+            const n = -sLat * cLon * v.x - sLat * sLon * v.y + cLat * v.z;
+            const u = cLat * cLon * v.x + cLat * sLon * v.y + sLat * v.z;
+            let az = Math.atan2(e, n);
+            if (az < 0) az += 2 * Math.PI;
+            return {az, el: Math.asin(Math.max(-1, Math.min(1, u)))};
+        };
     }
 
     _drawAzimuthRing(ctx, cx, cy, R, scheme) {
@@ -267,7 +296,7 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         }
     }
 
-    _drawConstellations(ctx, cx, cy, R, latRad, lonRad, lst, scheme) {
+    _drawConstellations(ctx, cx, cy, R, azEl, scheme) {
         // same dataset choice as the 3D night sky's "constellation style" option
         const dataKey = this.nightSkyNode.constellationStyle === "astrometry"
             ? "constellationsLinesAstrometry" : "constellationsLines";
@@ -280,8 +309,7 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
                 for (const seg of feature.geometry.coordinates) {
                     let prev = null;
                     for (const p of seg) {
-                        const {az, el} = raDecToAzElRADIANS(
-                            radians(Number(p[0])), radians(Number(p[1])), latRad, lonRad, lst);
+                        const {az, el} = azEl(radians(Number(p[0])), radians(Number(p[1])), true);
                         const elDeg = degrees(el);
                         const [x, y] = this._project(cx, cy, R, az, elDeg);
                         // segments fully below the horizon are skipped rather
@@ -307,8 +335,7 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
                 const c = feature.geometry?.coordinates;
                 const name = feature.properties?.name;
                 if (!c || !name) continue;
-                const {az, el} = raDecToAzElRADIANS(
-                    radians(Number(c[0])), radians(Number(c[1])), latRad, lonRad, lst);
+                const {az, el} = azEl(radians(Number(c[0])), radians(Number(c[1])));
                 const elDeg = degrees(el);
                 if (elDeg < 2) continue;
                 const [x, y] = this._project(cx, cy, R, az, elDeg);
@@ -317,7 +344,7 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         }
     }
 
-    _drawStars(ctx, cx, cy, R, latRad, lonRad, lst, scheme) {
+    _drawStars(ctx, cx, cy, R, azEl, scheme) {
         const sf = this.nightSkyNode.starField;
         if (!sf || !sf.BSC_NumStars) return;
 
@@ -326,7 +353,7 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         for (let i = 0; i < sf.BSC_NumStars; i++) {
             const mag = sf.BSC_MAG[i];
             if (mag > this.magLimit) continue;
-            const {az, el} = raDecToAzElRADIANS(sf.BSC_RA[i], sf.BSC_DEC[i], latRad, lonRad, lst);
+            const {az, el} = azEl(sf.BSC_RA[i], sf.BSC_DEC[i], true);
             const elDeg = degrees(el);
             if (elDeg < -1) continue;
             const [x, y] = this._project(cx, cy, R, az, elDeg);
@@ -338,7 +365,7 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         }
     }
 
-    _drawPlanets(ctx, cx, cy, R, latRad, lonRad, lst, lla, date, scheme) {
+    _drawPlanets(ctx, cx, cy, R, azEl, lla, date, scheme) {
         const observer = new Astronomy.Observer(lla.x, lla.y, lla.z);
         const labelFont = Math.max(9, R * 0.030);
         ctx.font = `${labelFont}px Arial`;
@@ -348,14 +375,15 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         for (const body of chartBodies) {
             let eq;
             try {
-                // J2000 (ofdate=false), matching CPlanets and getCelestialDirection:
-                // the whole night-sky pipeline pairs J2000 coordinates with GST
-                // rotation, so the chart must too or planets shift ~0.4° off the stars
+                // J2000 (ofdate=false), matching CPlanets and getCelestialDirection.
+                // The precession to the equator of date lives in the EQJ→ECEF
+                // matrix the projector applies, so asking for of-date coordinates
+                // here as well would apply it twice.
                 eq = Astronomy.Equator(body, date, observer, false, true);
             } catch {
                 continue;
             }
-            const {az, el} = raDecToAzElRADIANS(eq.ra * Math.PI / 12, radians(eq.dec), latRad, lonRad, lst);
+            const {az, el} = azEl(eq.ra * Math.PI / 12, radians(eq.dec));
             const elDeg = degrees(el);
             if (elDeg < -0.5) continue;
             const [x, y] = this._project(cx, cy, R, az, elDeg);

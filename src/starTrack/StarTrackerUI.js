@@ -7,7 +7,7 @@
 // The menu lives under Video, alongside the other motion-analysis tools.
 
 import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, Sit, setRenderOne} from "../Globals";
-import {getCelestialDirectionFromRaDec} from "../CelestialMath";
+import {getStarDirectionECEF} from "../CelestialMath";
 import {CNodeController} from "../nodes/CNodeController";
 import {CNodeArray} from "../nodes/CNodeArray";
 import {SITREC_APP} from "../configUtils";
@@ -501,9 +501,12 @@ class CNodeControllerStarTrack extends CNodeController {
         const camera = objectNode.camera;
         const date = GlobalDateTimeNode.frameToDate(f);
         const D2R = Math.PI / 180;
-        const fwd = getCelestialDirectionFromRaDec(
+        // The solve maps pixels to CATALOG RA/Dec, so recovering where the
+        // camera was actually pointing needs the apparent (aberrated)
+        // direction — the same one the star field is drawn at.
+        const fwd = getStarDirectionECEF(
             pose.centre.raDeg * D2R, pose.centre.decDeg * D2R, date);
-        const aboveDir = getCelestialDirectionFromRaDec(
+        const aboveDir = getStarDirectionECEF(
             pose.above.raDeg * D2R, pose.above.decDeg * D2R, date);
         // Up = the above-centre direction, orthogonalised against the boresight.
         const up = aboveDir.clone().sub(fwd.clone().multiplyScalar(fwd.dot(aboveDir)));

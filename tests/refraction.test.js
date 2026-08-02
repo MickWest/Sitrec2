@@ -1,12 +1,13 @@
-import {Vector3} from 'three';
+import {Matrix4, Vector3} from 'three';
 import {
     refractionDeltaDeg,
     applyRefractionECI,
     applyRefractionFromObserver,
     zenithECEFFromLatLon,
-    zenithECIFromLatLonGMST,
+    zenithEQJFromLatLon,
     REFRACTION_DEFAULTS,
 } from '../src/atmosphere/refraction';
+import {getECEFToEQJMatrix, getEQJToECEFMatrix} from '../src/CelestialMath';
 
 // Stellarium-style Saemundsson reference values at standard atmosphere
 // (P = 1010 hPa, T = 10 °C). Values were generated from the same formula
@@ -209,27 +210,48 @@ describe('zenithECEFFromLatLon', () => {
     });
 });
 
-describe('zenithECIFromLatLonGMST', () => {
-    test('lat=0, lon=0, GMST=0 → +X (vernal equinox)', () => {
-        const z = zenithECIFromLatLonGMST(0, 0, 0);
+describe('zenithEQJFromLatLon', () => {
+    const identity = new Matrix4();
+    const rotZ = (deg) => new Matrix4().makeRotationZ(deg * Math.PI / 180);
+
+    test('lat=0, lon=0, identity frame → +X', () => {
+        const z = zenithEQJFromLatLon(0, 0, identity);
         expect(z.x).toBeCloseTo(1, 6);
         expect(z.y).toBeCloseTo(0, 6);
         expect(z.z).toBeCloseTo(0, 6);
     });
 
-    test('lat=90 → +Z regardless of longitude or GMST', () => {
-        const z = zenithECIFromLatLonGMST(Math.PI / 2, 1.234, 200);
+    test('lat=90 → +Z regardless of longitude or frame rotation', () => {
+        const z = zenithEQJFromLatLon(Math.PI / 2, 1.234, rotZ(200));
         expect(z.z).toBeCloseTo(1, 6);
     });
 
-    test('GMST rotates equator point by +GMST around Z', () => {
-        const z = zenithECIFromLatLonGMST(0, 0, 90);
+    test('the supplied matrix rotates the equator point', () => {
+        const z = zenithEQJFromLatLon(0, 0, rotZ(90));
         expect(z.x).toBeCloseTo(0, 6);
         expect(z.y).toBeCloseTo(1, 6);
     });
 
     test('unit length', () => {
-        const z = zenithECIFromLatLonGMST(0.7, -2.1, 137);
+        const z = zenithEQJFromLatLon(0.7, -2.1, rotZ(137));
         expect(z.length()).toBeCloseTo(1, 6);
+    });
+
+    // The load-bearing property: refraction must bend about the observer's
+    // real zenith, so the matrix handed in has to be the exact inverse of the
+    // one the celestial sphere is drawn with. Round-tripping proves it, and
+    // guards against anyone "simplifying" this back to a bare sidereal spin.
+    test('round-trips through the celestial sphere matrix back to the ECEF zenith', () => {
+        const date = new Date('2026-08-01T20:06:45.000Z');
+        const lat = 55.640518563099654 * Math.PI / 180;
+        const lon = 12.653300416260622 * Math.PI / 180;
+
+        const eqj = zenithEQJFromLatLon(lat, lon, getECEFToEQJMatrix(date));
+        const backToECEF = eqj.clone().applyMatrix4(getEQJToECEFMatrix(date));
+        const direct = zenithECEFFromLatLon(lat, lon);
+
+        expect(backToECEF.x).toBeCloseTo(direct.x, 12);
+        expect(backToECEF.y).toBeCloseTo(direct.y, 12);
+        expect(backToECEF.z).toBeCloseTo(direct.z, 12);
     });
 });

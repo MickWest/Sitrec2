@@ -7643,13 +7643,28 @@ See: https://www.iau.org/public/themes/naming_stars/
 
 Yale Bright Star Catalog (BSC5) 5th Revised - Public Domain
 http://tdc-www.harvard.edu/catalogs/bsc5.html
-(Bright Star Catalog, derived/repacked for Sitrec as data/nightsky/sitrec_bsc_lite.bin.)
+(Shipped as data/nightsky/BSC5.bin.)
 
 The Yale Bright Star Catalog (BSC5) is a public-domain stellar catalog
 originally compiled by Dorrit Hoffleit and Wayne H. Warren Jr. at Yale
 University Observatory and distributed via NASA ADC / Harvard CDS.
 The data are facts (stellar positions, magnitudes, etc.) and are not
 subject to copyright restrictions.
+
+---------------------------------------------------------
+
+Hipparcos Catalogue (ESA) - Public Domain
+https://www.cosmos.esa.int/web/hipparcos/catalogues
+(Repacked for Sitrec as data/nightsky/sitrec_bsc_lite.bin — 117,955 entries,
+ICRS positions at catalogue epoch J1991.25.)
+
+The Hipparcos and Tycho Catalogues were produced by the European Space
+Agency's Hipparcos astrometry mission and published as ESA SP-1200 (1997).
+The catalogue data are facts (stellar positions, parallaxes, magnitudes)
+and are not subject to copyright restrictions.
+
+Note: this is the star catalog the night sky actually renders from. It is
+NOT derived from the Yale BSC5 above, despite the "bsc" in the filename.
 
 ---------------------------------------------------------
 

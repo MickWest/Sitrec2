@@ -1,9 +1,9 @@
 // Atmospheric refraction for celestial objects.
 //
 // Forward (geometric → apparent) Saemundsson formula with Stellarium's
-// horizon taper, expressed in the equatorial-inertial frame the celestial
-// sphere is built in (raDec2Celestial output, before the per-frame -GMST
-// rotation that lands the sphere in ECEF).
+// horizon taper, expressed in the EQJ (J2000/ICRS equatorial) frame the
+// celestial sphere is built in (raDec2Celestial output, before the per-frame
+// EQJ→ECEF rotation that lands the sphere on the ground).
 //
 // JS path: applyRefractionECI() — used for Sun/Moon/planets on the CPU.
 // GPU path: REFRACTION_VERTEX_GLSL + installRefractionOnMaterial() — used
@@ -23,13 +23,13 @@ export const REFRACTION_DEFAULTS = {
 // objects, so updating refractionUniforms.uZenithECI.value (etc.) once per
 // frame is visible on every shader without per-material work.
 //
-// uZenithECI is the local zenith expressed in the celestial-inertial frame
-// raDec2Celestial emits in (used for stars/grid/constellation lines whose
-// vertex positions are local to the celestialSphere group).
+// uZenithECI is the local zenith expressed in the EQJ frame raDec2Celestial
+// emits in (used for stars/grid/constellation lines whose vertex positions
+// are local to the celestialSphere group).
 //
-// uZenithECEF is the same zenith but in world space — i.e. *not* rotated
-// by GMST — used for Sun/Moon vertex shaders that work on world positions
-// (modelMatrix * position) and therefore need the world-space zenith.
+// uZenithECEF is the same zenith but in world space — i.e. *not* carried into
+// the sphere's frame — used for Sun/Moon vertex shaders that work on world
+// positions (modelMatrix * position) and therefore need the world-space zenith.
 export const refractionUniforms = {
     uRefractionEnabled: {value: REFRACTION_DEFAULTS.enabled ? 1.0 : 0.0},
     uZenithECI: {value: new Vector3(0, 0, 1)},
@@ -148,18 +148,17 @@ export function zenithECEFFromLatLon(latRad, lonRad, target = new Vector3()) {
     return target;
 }
 
-// Same vector but rotated by +GMST around Z so it lives in the celestial
-// sphere group's local (ECI / equatorial-inertial) frame.
-export function zenithECIFromLatLonGMST(latRad, lonRad, gmstDeg, target = new Vector3()) {
+// Same vector, carried into the celestial sphere group's local EQJ frame by
+// the caller-supplied ECEF→EQJ matrix (CelestialMath.getECEFToEQJMatrix).
+//
+// This must be the exact inverse of the matrix the celestialSphere is drawn
+// with. A bare Rz(+GAST) is NOT enough: it would leave the zenith off by the
+// precession since J2000 (22 arcmin in 2026), and refraction would then bend
+// every star, line and grid vertex about the wrong axis — reintroducing
+// several arcmin of altitude error into a pipeline that had just been fixed.
+export function zenithEQJFromLatLon(latRad, lonRad, ecefToEQJ, target = new Vector3()) {
     zenithECEFFromLatLon(latRad, lonRad, target);
-    const g = gmstDeg * DEG2RAD;
-    const cg = Math.cos(g);
-    const sg = Math.sin(g);
-    const x = target.x;
-    const y = target.y;
-    target.x = cg * x - sg * y;
-    target.y = sg * x + cg * y;
-    return target;
+    return target.applyMatrix4(ecefToEQJ);
 }
 
 // GLSL counterpart of applyRefractionECI. Drop into a vertex shader with

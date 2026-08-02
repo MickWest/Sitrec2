@@ -73,6 +73,7 @@ import {CNode3D} from "./CNode3D";
 import {NodeMan} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {refractionUniforms, REFRACTION_VERTEX_GLSL} from "../atmosphere/refraction";
+import {aberrationUniforms, ABERRATION_VERTEX_GLSL} from "../CelestialMath";
 
 /**
  * GPU-accelerated point light cloud renderer for stars, satellites, and similar objects.
@@ -225,7 +226,7 @@ export class CPointLightCloud extends CNode3D {
             varying float vBrightness;
             ${this.useLogDepth ? 'varying float vDepth;' : ''}
 
-            ${useRefraction ? REFRACTION_VERTEX_GLSL : ''}
+            ${useRefraction ? ABERRATION_VERTEX_GLSL + REFRACTION_VERTEX_GLSL : ''}
 
             void main() {
                 if (brightness <= 0.0) {
@@ -238,7 +239,7 @@ export class CPointLightCloud extends CNode3D {
                 vBrightness = brightness;
 
                 ${useRefraction
-                    ? 'vec3 refractedPos = applyRefractionECI_chunk(position);'
+                    ? 'vec3 refractedPos = applyRefractionECI_chunk(applyAberration_chunk(position));'
                     : 'vec3 refractedPos = position;'}
                 vec4 mvPosition = modelViewMatrix * vec4(refractedPos, 1.0);
                 gl_Position = projectionMatrix * mvPosition;
@@ -295,6 +296,7 @@ export class CPointLightCloud extends CNode3D {
         };
 
         if (useRefraction) {
+            uniforms.uAberration = aberrationUniforms.uAberration;
             uniforms.uRefractionEnabled = refractionUniforms.uRefractionEnabled;
             uniforms.uZenithECI = refractionUniforms.uZenithECI;
             uniforms.uZenithECEF = refractionUniforms.uZenithECEF;

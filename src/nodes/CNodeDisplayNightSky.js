@@ -33,10 +33,12 @@ import {intersectSphere2, V3} from "../threeUtils";
 import {FLARE, flareRamp, penumbraFade} from "../../tools/shf/flarePhysics.js";
 import {
     getCelestialDirectionFromRaDec,
+    getECEFToEQJMatrix,
+    getEQJToECEFMatrix,
     getGeocentricBodyPositionECEF,
     getJulianDate,
-    getSiderealTime,
-    raDecToAltAz
+    raDecToAltAz,
+    updateAberrationUniforms
 } from "../CelestialMath";
 import {ViewMan} from "../CViewManager";
 import {CNodeLabeledArrow} from "./CNodeLabels3D";
@@ -60,7 +62,7 @@ import {
     refractionOptsFromUniforms,
     applyRefractionECI,
     zenithECEFFromLatLon,
-    zenithECIFromLatLonGMST,
+    zenithEQJFromLatLon,
     REFRACTION_DEFAULTS,
 } from "../atmosphere/refraction";
 import {CPlanets} from "./CPlanets";
@@ -943,7 +945,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         return new Astronomy.Observer(cameraLLA.x, cameraLLA.y, cameraLLA.z);
     }
 
-    _updateRefractionUniforms(observer, gmstDeg) {
+    _updateRefractionUniforms(observer, ecefToEQJ) {
         // Use geodetic zenith (perpendicular to the local WGS84 horizon),
         // not the geocentric direction from Earth centre — refraction is
         // symmetric about the local vertical, and the CPU bend in
@@ -953,7 +955,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         const latRad = radians(observer.latitude);
         const lonRad = radians(observer.longitude);
         zenithECEFFromLatLon(latRad, lonRad, refractionUniforms.uZenithECEF.value);
-        zenithECIFromLatLonGMST(latRad, lonRad, gmstDeg, refractionUniforms.uZenithECI.value);
+        zenithEQJFromLatLon(latRad, lonRad, ecefToEQJ, refractionUniforms.uZenithECI.value);
         const enabled = Sit.refractionEnabled !== undefined
             ? !!Sit.refractionEnabled
             : REFRACTION_DEFAULTS.enabled;
@@ -972,8 +974,14 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // gives each view its own zenith uniform — without this the look
         // camera's zenith would leak into main/VR views and bend objects in
         // the wrong direction near the horizon.
-        const gmstDeg = getSiderealTime(date, 0);
-        this._updateRefractionUniforms(observer, gmstDeg);
+        if (!this._ecefToEQJ) this._ecefToEQJ = new Matrix4();
+        getECEFToEQJMatrix(date, this._ecefToEQJ);
+        this._updateRefractionUniforms(observer, this._ecefToEQJ);
+
+        // Annual aberration for the star-field shader. Observer-independent
+        // (it's the Earth's orbital velocity), but it belongs here because
+        // this runs once per view per frame with the date already in hand.
+        updateAberrationUniforms(date);
 
         // Per-view re-syncs (storeState:false) only need to update Sun and Moon —
         // they are the only bodies where topocentric parallax is visually
@@ -1015,24 +1023,23 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             this.celestialDaySphere.updateMatrix()
         }
 
-        // The celestial sphere star data is in ECI (Earth-Centered Inertial) coordinates:
-        //   X = vernal equinox (RA=0), Y = RA=6h, Z = north celestial pole
-        // In ECEF, Z is also the north pole. The only difference is Earth's rotation:
-        // ECEF X (lon=0) points at RA = GMST on the celestial sphere.
-        // So we just rotate by -GMST around Z to convert ECI → ECEF.
-        // (The old EUS code also needed lat/lon tilts and a 180° Y flip
-        //  to convert from Z-up celestial to Y-up local tangent plane.)
+        // The celestial sphere's contents are in EQJ (J2000/ICRS equatorial):
+        //   X = J2000 vernal equinox, Y = RA=6h, Z = north celestial pole.
+        // Landing that on the rotating Earth takes precession+nutation into the
+        // equator of date and THEN the sidereal spin — not the spin alone. A
+        // bare Rz(-GMST) leaves the whole sky rotated against the terrain by the
+        // precession accumulated since J2000 (22 arcmin by 2026, ~50"/yr).
+        // See CelestialMath.getEQJToECEFMatrix.
 
         const nowDate = this.in.startTime.dateNow;
-        const GMST = getSiderealTime(nowDate, 0); // degrees
 
-        if (!this._rotMatZ) this._rotMatZ = new Matrix4();
-        this._rotMatZ.makeRotationZ(radians(-GMST));
+        if (!this._eqjToECEF) this._eqjToECEF = new Matrix4();
+        getEQJToECEFMatrix(nowDate, this._eqjToECEF);
 
-        this.celestialSphere.applyMatrix4(this._rotMatZ)
+        this.celestialSphere.applyMatrix4(this._eqjToECEF)
 
         if (this.celestialDaySphere) {
-            this.celestialDaySphere.applyMatrix4(this._rotMatZ)
+            this.celestialDaySphere.applyMatrix4(this._eqjToECEF)
         }
 
         // Keep the canonical ephemeris state tied to the look camera because the

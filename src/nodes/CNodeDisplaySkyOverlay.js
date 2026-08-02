@@ -2,7 +2,7 @@
 // and displays star names on an overlay
 import {CNodeViewUI} from "./CNodeViewUI";
 import {GlobalDateTimeNode, guiShowHide, NodeMan, setRenderOne, Sit} from "../Globals";
-import {getCelestialDirectionFromRaDec, raDec2Celestial} from "../CelestialMath";
+import {applyAnnualAberration, getStarDirectionECEF, raDec2Celestial} from "../CelestialMath";
 import {applyRefractionECI, refractionUniforms, refractionOptsFromUniforms} from "../atmosphere/refraction";
 import {wgs84} from "../LLA-ECEF-ENU";
 import {intersectSphere2, V3} from "../threeUtils";
@@ -165,7 +165,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 const ra = this.nightSky.starField.getStarRA(n)
                 const dec = this.nightSky.starField.getStarDEC(n)
 
-                const pos = raDec2Celestial(ra, dec, 100)
+                const pos = applyAnnualAberration(raDec2Celestial(ra, dec, 100), date)
                 if (refractApplies) {
                     applyRefractionECI(pos, refractionUniforms.uZenithECI.value, refractOpts);
                 }
@@ -175,7 +175,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 // its label suppressed while the rendered dot is visible.
                 const starDirection = refractApplies
                     ? pos.clone().applyMatrix4(this.nightSky.celestialSphere.matrix).normalize()
-                    : getCelestialDirectionFromRaDec(ra, dec, date)
+                    : getStarDirectionECEF(ra, dec, date)
 
                 const ray = new Ray(actualCameraPosition, starDirection)
                 const target0 = V3()

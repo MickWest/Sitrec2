@@ -6,6 +6,7 @@
 // Z Axis - Up through the North pole
 // Celestial and scene coordinates are both ECEF.
 // See: https://en.wikipedia.org/wiki/Equatorial_coordinate_system#Rectangular_coordinates
+import {Matrix4} from "three";
 import {V3} from "./threeUtils";
 import {ECEFToLLAVD_radii, wgs84} from "./LLA-ECEF-ENU";
 import {Sit} from "./Globals";
@@ -192,15 +193,134 @@ export function getCelestialDirection(body, date, pos) {
 }
 
 export function getCelestialDirectionFromRaDec(ra, dec, date) {
-    // Use getSiderealTime (same function the celestial sphere rotation uses)
-    // so the camera pointing and the rendered Moon position are perfectly consistent.
-    const gst = radians(getSiderealTime(date, 0));
-    const ecef = celestialToECEF(ra, dec, wgs84.RADIUS, gst)
+    // ra/dec are EQJ (J2000/ICRS equatorial) — the frame astronomy-engine
+    // returns with ofdate=false, and the frame the star catalog is in.
+    // getEQJToECEFMatrix is the same transform the celestial sphere is drawn
+    // with, so camera pointing and the rendered body stay locked together.
+    const dir = raDec2Celestial(ra, dec, 1);
     // ecef for the sun will give us a vector from the center to the earth towards the Sun (which, for our purposes
     // is considered to be infinitely far away
-
-    return ecef.normalize();
+    return dir.applyMatrix4(getEQJToECEFMatrix(date, _eqjMatrixOut)).normalize();
 }
+
+// Rotation from EQJ (J2000/ICRS equatorial) to ECEF for a given instant:
+//
+//     ECEF = Rz(-GAST) · PrecessionNutation(EQJ → EQD)
+//
+// Both halves are load-bearing. GAST (and GMST) measure Earth's rotation from
+// the equinox OF DATE, so pairing either with J2000 coordinates and no
+// precession leaves the whole sky rotated against the ground by the precession
+// accumulated since 2000 — ~50"/yr, which had reached 22 arcmin by 2026. That
+// was a real bug: it put the rendered Moon 0.37° (0.7 lunar diameters) off a
+// photograph, and it is why this matrix, not a bare Rz(-GMST), must be used
+// everywhere an EQJ direction becomes an Earth-fixed one.
+//
+// Memoised on the epoch: within a frame this is asked for once per view per
+// body, and Rotation_EQJ_EQD runs a full nutation series each time.
+let _eqjMatrixMs = null;
+const _eqjMatrixCached = new Matrix4();
+const _eqjMatrixScratch = new Matrix4();
+const _eqjMatrixOut = new Matrix4();
+
+export function getEQJToECEFMatrix(date, target = new Matrix4()) {
+    const ms = (date && typeof date.getTime === "function") ? date.getTime() : +date;
+    if (_eqjMatrixMs !== ms) {
+        const time = Astronomy.MakeTime(date);
+        const r = Astronomy.Rotation_EQJ_EQD(time).rot;
+        // astronomy-engine stores rot[i][j] as "component i of the source
+        // contributes to component j of the target" — the transpose of the
+        // row-major order Matrix4.set() expects.
+        _eqjMatrixCached.set(
+            r[0][0], r[1][0], r[2][0], 0,
+            r[0][1], r[1][1], r[2][1], 0,
+            r[0][2], r[1][2], r[2][2], 0,
+            0, 0, 0, 1,
+        );
+        // SiderealTime returns GAST in sidereal hours. GAST rather than GMST:
+        // the equation of the equinoxes is only ~17" but it is free here.
+        const gastRad = radians(15 * Astronomy.SiderealTime(time));
+        _eqjMatrixCached.premultiply(_eqjMatrixScratch.makeRotationZ(-gastRad));
+        _eqjMatrixMs = ms;
+    }
+    return target.copy(_eqjMatrixCached);
+}
+
+// Inverse of the above. A rotation's inverse is its transpose, so this is
+// exact and cheap. Used to express an Earth-fixed direction (the observer's
+// zenith, for refraction) in the celestial sphere's own EQJ frame.
+export function getECEFToEQJMatrix(date, target = new Matrix4()) {
+    return getEQJToECEFMatrix(date, target).transpose();
+}
+
+// Annual aberration: the Earth's ~29.8 km/s orbital motion tilts the apparent
+// direction of anything genuinely at rest by up to v/c ≈ 20.5". Applies to
+// catalog stars ONLY — astronomy-engine already folds aberration into the
+// Sun/planet positions it returns (aberration=true), so running this on those
+// would double-count it.
+//
+// Classical first-order form; the relativistic terms are ~0.001".
+//
+// Deliberately NOT applied to the 3D constellation lines or the equatorial
+// grid in CCelestialElements: the grid is a coordinate reference that should
+// stay unaberrated, and a 20" offset between a constellation line and its
+// stars is far below the width of the line at any field of view those lines
+// are drawn at. (The star chart aberrates its own lines because doing so
+// there was free.)
+let _aberrationMs = null;
+const _aberrationVOverC = V3();
+
+function getAberrationVOverC(date) {
+    const ms = (date && typeof date.getTime === "function") ? date.getTime() : +date;
+    if (_aberrationMs !== ms) {
+        const state = Astronomy.BaryState(Astronomy.Body.Earth, Astronomy.MakeTime(date));
+        // AU/day → km/s → fraction of c
+        const scale = Astronomy.KM_PER_AU / 86400 / 299792.458;
+        _aberrationVOverC.set(state.vx * scale, state.vy * scale, state.vz * scale);
+        _aberrationMs = ms;
+    }
+    return _aberrationVOverC;
+}
+
+// Length-preserving, so it can be applied to a sphere-radius position as well
+// as a unit direction.
+export function applyAnnualAberration(dirEQJ, date) {
+    const r = dirEQJ.length();
+    if (r < 1e-12) return dirEQJ;
+    return dirEQJ.divideScalar(r).add(getAberrationVOverC(date)).normalize().multiplyScalar(r);
+}
+
+// Catalog star RA/Dec (EQJ radians) → apparent unit direction in ECEF.
+// The one call every star-specific consumer should use, so the aberration
+// decision is made in exactly one place and can't drift between the CPU paths
+// and the star-field shader.
+export function getStarDirectionECEF(ra, dec, date) {
+    const dir = applyAnnualAberration(raDec2Celestial(ra, dec, 1), date);
+    return dir.applyMatrix4(getEQJToECEFMatrix(date, _eqjMatrixOut)).normalize();
+}
+
+// GPU counterpart of applyAnnualAberration, for the star-field vertex shader.
+// Shared uniform object on the same one-update-per-frame pattern as
+// refractionUniforms — the star cloud has ~118k points, so baking aberration
+// into the position buffer would mean re-uploading all of them on every time
+// change. Applied BEFORE refraction: aberration is an inertial-frame effect on
+// the incoming ray, refraction is what the atmosphere then does to it.
+export const aberrationUniforms = {
+    uAberration: {value: V3(0, 0, 0)},
+};
+
+export function updateAberrationUniforms(date) {
+    aberrationUniforms.uAberration.value.copy(getAberrationVOverC(date));
+}
+
+export const ABERRATION_VERTEX_GLSL = /* glsl */`
+uniform vec3 uAberration;
+
+vec3 applyAberration_chunk(vec3 pos) {
+    float r = length(pos);
+    if (r < 1e-6) return pos;
+    return normalize(pos / r + uAberration) * r;
+}
+`;
 
 // Geocentric body vector in ECEF (meters).
 // Uses astronomy-engine's geocentric EQJ vector, rotates to EQD (of-date),
