@@ -92,6 +92,46 @@ for (const [label, text] of [["TLE first", MIXED_TLE_FIRST], ["CSV first", MIXED
     ok(`${label}: no NaN elements`, sats.every((s) => Number.isFinite(s.satrec.no)));
 }
 
+console.log("== OMM CSV: Space-Track's quoted 40-column variant ==");
+
+// CelesTrak sends 19 unquoted columns; Space-Track sends 40, header unquoted
+// but EVERY data field quoted. Split naively, its catalog number reads as the
+// string "44714" with quote marks — NaN — and the whole set loads as zero
+// satellites. Verbatim from a live gp_history query for 2026-07-20.
+const ST_HEADER =
+    "CCSDS_OMM_VERS,COMMENT,CREATION_DATE,ORIGINATOR,OBJECT_NAME,OBJECT_ID,CENTER_NAME," +
+    "REF_FRAME,TIME_SYSTEM,MEAN_ELEMENT_THEORY,EPOCH,MEAN_MOTION,ECCENTRICITY,INCLINATION," +
+    "RA_OF_ASC_NODE,ARG_OF_PERICENTER,MEAN_ANOMALY,EPHEMERIS_TYPE,CLASSIFICATION_TYPE," +
+    "NORAD_CAT_ID,ELEMENT_SET_NO,REV_AT_EPOCH,BSTAR,MEAN_MOTION_DOT,MEAN_MOTION_DDOT," +
+    "SEMIMAJOR_AXIS,PERIOD,APOAPSIS,PERIAPSIS,OBJECT_TYPE,RCS_SIZE,COUNTRY_CODE," +
+    "LAUNCH_DATE,SITE,DECAY_DATE,FILE,GP_ID,TLE_LINE0,TLE_LINE1,TLE_LINE2";
+
+const ST_ROW =
+    '"3.0","GENERATED VIA SPACE-TRACK.ORG API","2026-07-20T11:07:09","18 SPCS",' +
+    '"STARLINK-1008","2019-074B","EARTH","TEME","UTC","SGP4","2026-07-20T05:07:43.800960",' +
+    '"15.54002605","0.00050927","53.1497","270.1063","339.2481","20.8322","0","U","44714",' +
+    '"999","36934","0.00060016118000","0.00039227","0.0000000000000","6783.190","92.664",' +
+    '"408.510","401.601","PAYLOAD","LARGE","US","2019-11-11","AFETR","","5298108","336611440",' +
+    '"0 STARLINK-1008",' +
+    '"1 44714U 19074B   26201.21370140  .00039227  00000-0  60016-3 0  9999",' +
+    '"2 44714  53.1497 270.1063 0005093 339.2481  20.8322 15.54002605369347"';
+
+const stSats = engine.parseTLE(`${ST_HEADER}\n${ST_ROW}\n`);
+ok("a fully quoted Space-Track row loads", stSats.length === 1, `n=${stSats.length}`);
+if (stSats.length) {
+    ok("name has no leftover quotes", stSats[0].name === "STARLINK-1008", `"${stSats[0].name}"`);
+    ok("catalog number decoded", stSats[0].noradId === 44714, String(stSats[0].noradId));
+    ok("mean motion is not NaN", Number.isFinite(stSats[0].satrec.no));
+}
+// TLE_LINE1/TLE_LINE2 hold "1 ..."/"2 ..." inside quoted fields; naive
+// splitting could mistake them for real element lines.
+ok("embedded TLE_LINE columns do not become extra satellites", stSats.length === 1);
+ok("an OBJECT_NAME containing a comma does not shift the fields",
+    (() => {
+        const s = engine.parseTLE(`${ST_HEADER}\n${ST_ROW.replace('"STARLINK-1008"', '"ODD, NAMED SAT"')}\n`);
+        return s.length === 1 && s[0].noradId === 44714 && s[0].name === "ODD, NAMED SAT";
+    })());
+
 console.log("== OMM CSV: malformed input ==");
 
 ok("a repeated header row does not become a NaN satellite",

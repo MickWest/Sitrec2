@@ -169,8 +169,34 @@ export function createFlareEngine(satellite) {
         "BSTAR", "MEAN_MOTION_DOT", "MEAN_MOTION_DDOT",
     ];
 
+    // Split one CSV row honouring RFC 4180 quoting. CelesTrak quotes nothing
+    // (19 columns); Space-Track quotes EVERY data field (40 columns, plus a
+    // free-text COMMENT). Split naively, a Space-Track catalog number arrives
+    // as the string "44714" with its quote marks, reads as NaN, and the whole
+    // set loads as zero satellites.
+    function splitCSVRow(line) {
+        if (line.endsWith("\r")) line = line.slice(0, -1);
+        const fields = [];
+        let field = "";
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+            const c = line[i];
+            if (inQuotes) {
+                if (c === '"') {
+                    if (line[i + 1] === '"') { field += '"'; i++; }  // "" -> literal quote
+                    else inQuotes = false;
+                } else field += c;
+            } else if (c === '"') inQuotes = true;
+            else if (c === ",") { fields.push(field); field = ""; }
+            else field += c;
+        }
+        fields.push(field);
+        return fields;
+    }
+
     function parseOMMCSV(lines) {
-        const header = lines[0].trim().split(",");
+        // Resolve columns by NAME, never position — the two upstreams differ.
+        const header = splitCSVRow(lines[0]).map((h) => h.trim());
 
         // Resolve the column index of each field we need, once.
         const col = {};
@@ -179,7 +205,7 @@ export function createFlareEngine(satellite) {
 
         const out = [];
         for (let i = 1; i < lines.length; i++) {
-            const v = lines[i].split(",");
+            const v = splitCSVRow(lines[i]);
             // A short row is a truncated download; a non-numeric catalog number
             // is a second file's header row concatenated on. Skip both rather
             // than building a satellite whose elements are all NaN.
