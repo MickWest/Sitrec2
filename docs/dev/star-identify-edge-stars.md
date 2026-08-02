@@ -198,6 +198,49 @@ Everything else is unchanged, and all 2804 tests pass. Unit coverage is in
 `tests/StarIdentify.test.js` ("StarIdentify robust refit"): a contaminated set must not drag the
 transform, a clean one must be untouched, and a set too small to have a majority is kept whole.
 
+## The celestial-frame fix (branch `moon`), and what it does NOT change
+
+Merged alongside this work. The night sky was drawn from J2000/ICRS coordinates but rotated onto
+the Earth by `Rz(-GMST)` alone, omitting precession — the whole sky sat ~22.3′ out against the
+terrain by mid-2026. It survived for years because the sky stayed *self-consistent*, so only
+sky-vs-TERRAIN alignment exposed it.
+
+**It does not touch the blind solve, and it must not.** `StarIdentify.js` maps pixels to CATALOGUE
+RA/Dec by quad hashing — a star-to-star process in the catalogue frame — and contains no reference
+to ECEF, GMST, GAST, `Sit` or `Globals` (verified by grep, and worth keeping that way). Applying
+precession or aberration there would be actively wrong: the quads must match the catalogue **as
+stored**. The only star-tracker change is `CNodeControllerStarTrack.apply()`, which now converts
+the solve's catalogue RA/Dec to APPARENT directions via `getStarDirectionECEF()` before pointing
+the camera.
+
+### Anything previously synced carries two independent errors, not one
+
+The frame error is ~22.3′. The identify fixes above move the solve as well, and by a comparable
+amount — measured on the reference clip, pre-fix capture against post-fix solve:
+
+| | pre-fix | post-fix | moved |
+|---|---|---|---|
+| boresight | RA 11.5023h Dec 37.5373 | RA 11.5053h Dec 37.6647 | **7.9′** |
+| roll | 57.925° | 57.647° | **16.7′** |
+| synced vertical FOV | 48.406° | 48.698° | **17.5′** |
+
+So a Sync Camera result published before both fixes is out by ~22′ of frame error PLUS ~8′ of
+pointing, and its ROLL and FOV are wrong too — which the frame fix alone does not address, because
+those come from the plate solve rather than the sky transform. Re-derive rather than patch.
+
+### Proper motion is not worth chasing here
+
+The shipped catalogue (`data/nightsky/sitrec_bsc_lite.bin`) is a Hipparcos/ICRS repack at epoch
+**J1991.25 with no proper-motion columns**, despite the `bsc` in its filename. The accumulated
+residual as of 2026 is median 1.17″, p90 5.09″, worst star 234″.
+
+Against this clip's per-star scatter of **11.8′**, the median proper-motion error is 0.0195′ —
+about 600 times smaller — and even the worst star in the sky (3.9′) sits inside the 6.4 px
+(0.46°) match tolerance. It is nowhere near the accuracy floor: the ~0.15 deg absolute accuracy
+measured above is pixel noise (0.14 deg × 13.98 px/deg ≈ 2.0 px, consistent with the solve's 2.7 px
+rms), not catalogue epoch. Regenerating the catalogue with PM columns is real work (22 → 30 byte
+records) and would buy the star tracker nothing measurable.
+
 ## What to do next
 
 1. **A residual-derived tolerance**, replacing `verifyPixelFraction * width` — for a gnomonic

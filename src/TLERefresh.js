@@ -105,6 +105,11 @@ function getLoadedTLEData() {
 export async function checkAndOfferTLERefresh() {
     try {
         if (Globals.validationMode) return;          // no user to ask
+        // Same reason, and one more: a visual-regression run must render the sitch EXACTLY as
+        // saved. The prompt's text carries a satellite count and a coverage percentage that move
+        // as Space-Track publishes, so a baseline captured with it showing would drift on its own
+        // and re-fail for reasons that have nothing to do with the code under test.
+        if (Globals.regression) return;
         if (!isOwnLoadedSitch()) return;             // not ours to re-save
 
         const tleData = getLoadedTLEData();
