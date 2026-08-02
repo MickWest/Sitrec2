@@ -233,6 +233,41 @@ if ($caching) {
     }
 }
 
+// We only reach here with a cached file present if that file was judged
+// provisional. Keep it as a fallback: refreshing it is an improvement, not a
+// requirement, and a Space-Track outage or an expired credential must not turn
+// a set that has been serving fine into a hard error. Without this, every
+// failure path below would fail a request that used to succeed.
+$provisionalFallback = null;
+$provisionalIsCSV = false;
+if ($caching) {
+    foreach ([[$cachedCSV, true], [$cachedZIP, false], [$cachedTLE, false]] as $candidate) {
+        if (file_exists($candidate[0])) {
+            $provisionalFallback = $candidate[0];
+            $provisionalIsCSV = $candidate[1];
+            break;
+        }
+    }
+}
+
+/**
+ * Report a failed refresh: serve the provisional cached copy if we have one,
+ * otherwise fail as before. Does not return.
+ */
+function gpFailSoft($message) {
+    global $provisionalFallback, $provisionalIsCSV, $cacheMaxAge;
+    if ($provisionalFallback !== null) {
+        error_log("proxyStarlink: refresh failed, serving provisional cached copy "
+            . $provisionalFallback . " - " . $message);
+        if ($provisionalIsCSV) {
+            serveGPCached($provisionalFallback, $provisionalFallback, $cacheMaxAge);
+        }
+        header("Location: " . $provisionalFallback);
+        exit();
+    }
+    die($message);
+}
+
 // For CUSTOM type, use simple GET request without Space-Track login
 if ($type == "CUSTOM") {
     $result = curlGetRequest($url);
@@ -251,7 +286,7 @@ if ($type == "CUSTOM") {
 
     // Check if credentials are configured
     if (empty($username) || empty($password)) {
-        die('ERROR: Space-Track credentials not configured. Set SPACEDATA_USERNAME and SPACEDATA_PASSWORD environment variables.');
+        gpFailSoft('ERROR: Space-Track credentials not configured. Set SPACEDATA_USERNAME and SPACEDATA_PASSWORD environment variables.');
     }
 
     // Initialize cURL session
@@ -277,13 +312,13 @@ if ($type == "CUSTOM") {
     // Check for cURL errors during login
     if ($response === false) {
         curl_close($ch);
-        die('ERROR: Space-Track login cURL failed: ' . $curl_error);
+        gpFailSoft('ERROR: Space-Track login cURL failed: ' . $curl_error);
     }
 
     // Check for login errors
     if ($http_status !== 200) {
         curl_close($ch);
-        die('ERROR: Space-Track login failed with HTTP ' . $http_status . '. Check credentials.');
+        gpFailSoft('ERROR: Space-Track login failed with HTTP ' . $http_status . '. Check credentials.');
     }
 
     // Set cURL options for data query
@@ -303,19 +338,19 @@ if ($type == "CUSTOM") {
 
     // Check for cURL errors during data query
     if ($data === false) {
-        die('ERROR: Space-Track data query failed. Please try again later.');
+        gpFailSoft('ERROR: Space-Track data query failed. Please try again later.');
     }
 }
 
 
 // Check for data query errors, and zero length data
 if ($data === false || empty($data)) {
-    die('ERROR: Space-Track query returned no data. Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', URL: ' . $url);
+    gpFailSoft('ERROR: Space-Track query returned no data. Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', URL: ' . $url);
 }
 
 // Check for HTTP errors (including 5xx server errors)
 if ($http_status !== 200) {
-    die('ERROR: Space-Track query failed with HTTP ' . $http_status . '. Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', Response: ' . substr($data, 0, 500));
+    gpFailSoft('ERROR: Space-Track query failed with HTTP ' . $http_status . '. Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', Response: ' . substr($data, 0, 500));
 }
 
 // Check if response looks like an HTML error page instead of TLE data
@@ -323,14 +358,14 @@ if ($http_status !== 200) {
 // payload, which alone can exhaust the PHP memory_limit.
 $prefixData = ltrim(substr($data, 0, 65536));
 if (stripos($prefixData, '<!DOCTYPE') === 0 || stripos($prefixData, '<html') === 0) {
-    die('ERROR: Space-Track returned HTML instead of TLE data (server error). Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', Response: ' . substr($data, 0, 500));
+    gpFailSoft('ERROR: Space-Track returned HTML instead of TLE data (server error). Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', Response: ' . substr($data, 0, 500));
 }
 
 
 // The CUSTOM type points at a user-supplied URL that may legitimately serve
 // TLE, so only require OMM CSV structure for our own Space-Track queries.
 if ($type != "CUSTOM" && !isValidGPData($data, $http_status, "csv")) {
-    die('ERROR: Space-Track did not return OMM CSV data. Request: ' . $request
+    gpFailSoft('ERROR: Space-Track did not return OMM CSV data. Request: ' . $request
         . ', Type: ' . ($type ?: 'STARLINK') . ', Response: ' . substr($data, 0, 500));
 }
 
@@ -341,7 +376,7 @@ if ($type != "CUSTOM" && !isValidGPData($data, $http_status, "csv")) {
 // out of memory.
 $firstDataLine = getGPLine($data, 1);
 if ($type == "" && strpos($firstDataLine, "STARLINK") === false) {
-    die('ERROR: Expected STARLINK data but got: ' . substr($firstDataLine, 0, 100) . '. Request: ' . $request);
+    gpFailSoft('ERROR: Expected STARLINK data but got: ' . substr($firstDataLine, 0, 100) . '. Request: ' . $request);
 }
 
 // Freshly downloaded data is OMM CSV, so it is cached as .csv alongside a
