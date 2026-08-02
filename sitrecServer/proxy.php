@@ -108,8 +108,13 @@ $lifetime = 2 * 60 * 60; // 2 hours
 // transient upstream error doesn't pin us to stale data for a full lifetime.
 $retryAfterFailure = 10 * 60; // 10 minutes
 
-$haveCache = file_exists($cachedFile);
-$isFresh = $haveCache && (time() - filemtime($cachedFile)) < $lifetime;
+// gpCacheEntry(), not file_exists($cachedFile): only the compressed copy is
+// stored now, so testing the uncompressed path would report "no cache" on every
+// request and re-fetch from CelesTrak each time - which is exactly what earns
+// its 403 "GP data has not updated" response.
+$cacheEntry = gpCacheEntry($cachedFile);
+$haveCache = ($cacheEntry !== null);
+$isFresh = $haveCache && (time() - filemtime($cacheEntry)) < $lifetime;
 
 if (!$isFresh) {
     $result = curlGetRequest($url);
@@ -124,7 +129,10 @@ if (!$isFresh) {
         // Upstream had nothing new (or nothing valid) for us. Keep serving the
         // copy we already have rather than caching an error page as if it were
         // satellite data, but re-arm a refresh attempt reasonably soon.
-        @touch($cachedFile, time() - $lifetime + $retryAfterFailure);
+        // Touch the file that actually holds the entry - touching the
+        // uncompressed path would just create an empty file and leave the
+        // backoff with no effect.
+        @touch($cacheEntry, time() - $lifetime + $retryAfterFailure);
     } else {
         // Nothing cached and nothing usable upstream - tell the client plainly.
         // The "ERROR:" prefix is what src/TLEUtils.ts looks for to surface this.

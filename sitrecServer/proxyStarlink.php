@@ -74,28 +74,58 @@ if (!in_array($type, $allowed_types, true)) {
 // calculate nextDay in the same form, and use 2 days later
 $nextDay = date('Y-m-d', strtotime($request . ' +2 days'));
 
+// Ask Space-Track for only the columns we actually use.
+//
+// Its default CSV is 40 columns, quoted, and carries TLE_LINE0/1/2 in addition
+// to the OMM elements they encode - a single LEO date runs to ~57 MB, several
+// times the equivalent 3LE. Most of that is duplication and bookkeeping.
+//
+// Beyond the twelve fields SGP4 needs, four are kept deliberately. The cache is
+// permanent and this archive is expensive to rebuild against a rate-limited
+// API, so dropping a column now would cost a full re-fetch to recover later:
+//
+//   OBJECT_TYPE    PAYLOAD / ROCKET BODY / DEBRIS. Bears on the flare
+//                  MECHANISM: the model assumes a nadir-pointing flat panel,
+//                  which is right for on-station Starlink and wrong for a
+//                  tumbling rocket body. The LEO query filters payloads
+//                  server-side, so without this the client cannot tell them
+//                  apart within a set.
+//   RCS_SIZE       SMALL / MEDIUM / LARGE. The only per-object size signal
+//                  available - the flare model currently has no per-satellite
+//                  area term at all. Radar, not optical, and coarsely bucketed,
+//                  so a weak prior for brightness rather than a photometric
+//                  input.
+//   CREATION_DATE  When Space-Track published the element, as opposed to when
+//                  it is valid (EPOCH). Makes a cached set self-describing
+//                  about its own completeness, instead of relying on file
+//                  mtime, which copying and backups destroy.
+//   OBJECT_ID      International designator, e.g. 2019-074B - groups a launch.
+$predicates = "/predicates/OBJECT_NAME,OBJECT_ID,NORAD_CAT_ID,EPOCH,CREATION_DATE,"
+    . "MEAN_MOTION,ECCENTRICITY,INCLINATION,RA_OF_ASC_NODE,ARG_OF_PERICENTER,MEAN_ANOMALY,"
+    . "BSTAR,MEAN_MOTION_DOT,MEAN_MOTION_DDOT,OBJECT_TYPE,RCS_SIZE";
+
 // the default STARLINK query
-$url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/orderby/NORAD_CAT_ID,EPOCH/format/csv/OBJECT_NAME/STARLINK~~";
+$url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/orderby/NORAD_CAT_ID,EPOCH/format/csv/OBJECT_NAME/STARLINK~~" . $predicates;
 
 // LEO is Low Earth object, but here filter for payloads only
 // decay_date/null-val filters out decayed objects per Space-Track recommendations
 if ($type == "LEO") {
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/OBJECT_TYPE/payload/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/csv";
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/OBJECT_TYPE/payload/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/csv" . $predicates;
 }
 
 // LEOALL is all the LEO objects, including payloads and debris
 if ($type == "LEOALL") {
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/decay_date/null-val/format/csv";
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/decay_date/null-val/format/csv" . $predicates;
 }
 
 if ($type == "SLOW") {
     // SLOW is for objects with a mean motion of less than 11.25 (using 11.26 to overlap with LEO a little)
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/<11.26/decay_date/null-val/format/csv";
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/<11.26/decay_date/null-val/format/csv" . $predicates;
 }
 
 // override for ALL query
 if ($type == "ALL") {
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/csv";
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/csv" . $predicates;
 }
 
 // CUSTOM TLE handling
@@ -170,19 +200,23 @@ $cacheMaxAge = 30 * 24 * 60 * 60; // 30 days
 // 99999 (the catalog passed that on 2026-07-11 and TLE cannot represent them).
 // Deleting the affected file is all it takes to pick those up on the next
 // request - it will come back as CSV.
+// gpCacheIsUsable() rather than file_exists(): a set captured within a few days
+// of its own date was fetched before Space-Track had finished publishing, and
+// is missing much of what exists now. Such an entry is re-fetched once, after
+// which its mtime puts it outside the settle window and it is trusted for good.
 if ($caching) {
     // Prefer the CSV cache - it is the only format that can hold everything.
-    if (file_exists($cachedCSV)) {
+    if (gpCacheIsUsable($cachedCSV, $request)) {
         serveGPCached($cachedCSV, $cachedCSV, $cacheMaxAge);
     }
 
     if ($zipIt) {
-        if (file_exists($cachedZIP)) {
+        if (gpCacheIsUsable($cachedZIP, $request)) {
             header("Location: " . $cachedZIP);
             exit();
         }
 
-        if (file_exists($cachedTLE)) {
+        if (gpCacheIsUsable($cachedTLE, $request)) {
             if (zipTLE($cachedTLE, $cachedZIP, $baseFileName . ".tle")) {
                 unlink($cachedTLE);
                 header("Location: " . $cachedZIP);
@@ -192,11 +226,46 @@ if ($caching) {
             }
         }
     } else {
-        if (file_exists($cachedTLE)) {
+        if (gpCacheIsUsable($cachedTLE, $request)) {
             header("Location: " . $cachedTLE);
             exit();
         }
     }
+}
+
+// We only reach here with a cached file present if that file was judged
+// provisional. Keep it as a fallback: refreshing it is an improvement, not a
+// requirement, and a Space-Track outage or an expired credential must not turn
+// a set that has been serving fine into a hard error. Without this, every
+// failure path below would fail a request that used to succeed.
+$provisionalFallback = null;
+$provisionalIsCSV = false;
+if ($caching) {
+    foreach ([[$cachedCSV, true], [$cachedZIP, false], [$cachedTLE, false]] as $candidate) {
+        if (file_exists($candidate[0])) {
+            $provisionalFallback = $candidate[0];
+            $provisionalIsCSV = $candidate[1];
+            break;
+        }
+    }
+}
+
+/**
+ * Report a failed refresh: serve the provisional cached copy if we have one,
+ * otherwise fail as before. Does not return.
+ */
+function gpFailSoft($message) {
+    global $provisionalFallback, $provisionalIsCSV, $cacheMaxAge;
+    if ($provisionalFallback !== null) {
+        error_log("proxyStarlink: refresh failed, serving provisional cached copy "
+            . $provisionalFallback . " - " . $message);
+        if ($provisionalIsCSV) {
+            serveGPCached($provisionalFallback, $provisionalFallback, $cacheMaxAge);
+        }
+        header("Location: " . $provisionalFallback);
+        exit();
+    }
+    die($message);
 }
 
 // For CUSTOM type, use simple GET request without Space-Track login
@@ -217,7 +286,7 @@ if ($type == "CUSTOM") {
 
     // Check if credentials are configured
     if (empty($username) || empty($password)) {
-        die('ERROR: Space-Track credentials not configured. Set SPACEDATA_USERNAME and SPACEDATA_PASSWORD environment variables.');
+        gpFailSoft('ERROR: Space-Track credentials not configured. Set SPACEDATA_USERNAME and SPACEDATA_PASSWORD environment variables.');
     }
 
     // Initialize cURL session
@@ -243,13 +312,13 @@ if ($type == "CUSTOM") {
     // Check for cURL errors during login
     if ($response === false) {
         curl_close($ch);
-        die('ERROR: Space-Track login cURL failed: ' . $curl_error);
+        gpFailSoft('ERROR: Space-Track login cURL failed: ' . $curl_error);
     }
 
     // Check for login errors
     if ($http_status !== 200) {
         curl_close($ch);
-        die('ERROR: Space-Track login failed with HTTP ' . $http_status . '. Check credentials.');
+        gpFailSoft('ERROR: Space-Track login failed with HTTP ' . $http_status . '. Check credentials.');
     }
 
     // Set cURL options for data query
@@ -269,52 +338,72 @@ if ($type == "CUSTOM") {
 
     // Check for cURL errors during data query
     if ($data === false) {
-        die('ERROR: Space-Track data query failed. Please try again later.');
+        gpFailSoft('ERROR: Space-Track data query failed. Please try again later.');
     }
 }
 
 
 // Check for data query errors, and zero length data
 if ($data === false || empty($data)) {
-    die('ERROR: Space-Track query returned no data. Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', URL: ' . $url);
+    gpFailSoft('ERROR: Space-Track query returned no data. Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', URL: ' . $url);
 }
 
 // Check for HTTP errors (including 5xx server errors)
 if ($http_status !== 200) {
-    die('ERROR: Space-Track query failed with HTTP ' . $http_status . '. Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', Response: ' . substr($data, 0, 500));
+    gpFailSoft('ERROR: Space-Track query failed with HTTP ' . $http_status . '. Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', Response: ' . substr($data, 0, 500));
 }
 
 // Check if response looks like an HTML error page instead of TLE data
-$trimmedData = trim($data);
-if (stripos($trimmedData, '<!DOCTYPE') === 0 || stripos($trimmedData, '<html') === 0) {
-    die('ERROR: Space-Track returned HTML instead of TLE data (server error). Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', Response: ' . substr($data, 0, 500));
+// Test a bounded prefix: trim() on a 35 MB LEO response copies the whole
+// payload, which alone can exhaust the PHP memory_limit.
+$prefixData = ltrim(substr($data, 0, 65536));
+if (stripos($prefixData, '<!DOCTYPE') === 0 || stripos($prefixData, '<html') === 0) {
+    gpFailSoft('ERROR: Space-Track returned HTML instead of TLE data (server error). Request: ' . $request . ', Type: ' . ($type ?: 'STARLINK') . ', Response: ' . substr($data, 0, 500));
 }
 
 
 // The CUSTOM type points at a user-supplied URL that may legitimately serve
 // TLE, so only require OMM CSV structure for our own Space-Track queries.
 if ($type != "CUSTOM" && !isValidGPData($data, $http_status, "csv")) {
-    die('ERROR: Space-Track did not return OMM CSV data. Request: ' . $request
+    gpFailSoft('ERROR: Space-Track did not return OMM CSV data. Request: ' . $request
         . ', Type: ' . ($type ?: 'STARLINK') . ', Response: ' . substr($data, 0, 500));
 }
 
 // check that the data contains "STARLINK" if the default type.
 // In CSV the first line is the OMM header, so look at the first data row.
-$lines = explode("\n", $data);
-$firstDataLine = $lines[1] ?? '';
+// getGPLine() reads just that row - explode()ing a 35 MB payload into a
+// 60,000-element array to look at line 2 is what previously ran the server
+// out of memory.
+$firstDataLine = getGPLine($data, 1);
 if ($type == "" && strpos($firstDataLine, "STARLINK") === false) {
-    die('ERROR: Expected STARLINK data but got: ' . substr($firstDataLine, 0, 100) . '. Request: ' . $request);
+    gpFailSoft('ERROR: Expected STARLINK data but got: ' . substr($firstDataLine, 0, 100) . '. Request: ' . $request);
 }
 
-// Freshly downloaded data is OMM CSV, so it is cached as .csv alongside a
-// pre-built .gz. Note that TLE_ZIP_ENABLED no longer applies here: gzip
-// Content-Encoding compresses at least as well, is decompressed by the browser
-// itself, and so avoids pulling JSZip into the client just to read a catalogue.
-// The setting still governs the legacy .tle files already in the cache.
+// Freshly downloaded data is OMM CSV, cached as a single .csv.gz. Note that
+// TLE_ZIP_ENABLED no longer applies here: gzip Content-Encoding compresses at
+// least as well, is decompressed by the browser itself, and so avoids pulling
+// JSZip into the client just to read a catalogue. The setting still governs the
+// legacy .tle files already in the cache.
 if ($caching) {
     if (!writeGPCache($cachedCSV, $data)) {
         exit("ERROR: Failed to write GP cache file");
     }
+
+    // The CSV supersedes any legacy TLE copy of the same set - it is the same
+    // data plus everything the TLE format cannot represent. Keeping both would
+    // hold two copies of every repaired date forever. Only remove them once the
+    // replacement is verifiably on disk and non-empty.
+    $written = $cachedCSV . ".gz";
+    if (file_exists($written) && filesize($written) > 0) {
+        foreach ([$cachedZIP, $cachedTLE] as $superseded) {
+            if (file_exists($superseded)) {
+                @unlink($superseded);
+                error_log("proxyStarlink: replaced superseded " . basename($superseded)
+                    . " with " . basename($written));
+            }
+        }
+    }
+
     serveGPCached($cachedCSV, $cachedCSV, $cacheMaxAge);
 } else {
     header('Vary: Accept-Encoding');
