@@ -128,11 +128,44 @@ export function applyRefractionFromObserver(pos, observerECEF, opts = {}, target
     _obsDir.subVectors(pos, observerECEF);
     const dist = _obsDir.length();
     if (dist < 1) return out;
-    _obsZenith.copy(observerECEF).normalize();
+    // GEODETIC zenith, not the geocentric radial. Refraction is symmetric
+    // about the local vertical — perpendicular to the WGS84 horizon — and the
+    // two differ by up to 11.55' (11.5' at 45° latitude, 10.8' at Copenhagen).
+    // Using the radial tilted the bend axis by that much, which near the
+    // horizon is worth ~1.25' of satellite altitude at 0.5° and ~1' at 1°.
+    // The celestial path already used geodetic (zenithECEFFromLatLon); this
+    // one had been left on the radial.
+    zenithECEFFromPosition(observerECEF, _obsZenith);
     // Bend the direction vector using the same routine as celestial bending.
     applyRefractionECI(_obsDir, _obsZenith, opts);
     out.copy(_obsDir).add(observerECEF);
     return out;
+}
+
+// Geodetic zenith (WGS84 ellipsoid normal) at an ECEF position, at any
+// altitude. Bowring's closed-form inverse — good to well under a
+// milliarcsecond, and self-contained so this module keeps its "three only"
+// dependency and its unit tests stay free of the app's global graph.
+const WGS84_A = 6378137.0;
+const WGS84_F = 1 / 298.257223563;
+const WGS84_B = WGS84_A * (1 - WGS84_F);
+const WGS84_E2 = WGS84_F * (2 - WGS84_F);
+const WGS84_EP2 = (WGS84_A * WGS84_A - WGS84_B * WGS84_B) / (WGS84_B * WGS84_B);
+
+export function zenithECEFFromPosition(posECEF, target = new Vector3()) {
+    const {x, y, z} = posECEF;
+    const p = Math.hypot(x, y);
+    if (p < 1e-9) {
+        // On the spin axis: the normal is +/-Z and longitude is undefined.
+        return target.set(0, 0, z >= 0 ? 1 : -1);
+    }
+    const theta = Math.atan2(z * WGS84_A, p * WGS84_B);
+    const sinT = Math.sin(theta), cosT = Math.cos(theta);
+    const latRad = Math.atan2(
+        z + WGS84_EP2 * WGS84_B * sinT * sinT * sinT,
+        p - WGS84_E2 * WGS84_A * cosT * cosT * cosT,
+    );
+    return zenithECEFFromLatLon(latRad, Math.atan2(y, x), target);
 }
 
 // Geodetic local zenith in ECEF (X→Greenwich, Z→North) from observer

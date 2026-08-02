@@ -4,6 +4,7 @@ import {
     applyRefractionECI,
     applyRefractionFromObserver,
     zenithECEFFromLatLon,
+    zenithECEFFromPosition,
     zenithEQJFromLatLon,
     REFRACTION_DEFAULTS,
 } from '../src/atmosphere/refraction';
@@ -207,6 +208,100 @@ describe('zenithECEFFromLatLon', () => {
     test('unit length', () => {
         const z = zenithECEFFromLatLon(0.7, -2.1);
         expect(z.length()).toBeCloseTo(1, 6);
+    });
+});
+
+describe('zenithECEFFromPosition (geodetic zenith from an ECEF point)', () => {
+    const A = 6378137.0, F = 1 / 298.257223563, E2 = F * (2 - F);
+    const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+
+    // Build an ECEF position from geodetic lat/lon/height, so the expected
+    // zenith is known exactly rather than assumed.
+    const fromGeodetic = (latDeg, lonDeg, h) => {
+        const la = latDeg * D2R, lo = lonDeg * D2R;
+        const N = A / Math.sqrt(1 - E2 * Math.sin(la) ** 2);
+        return new Vector3(
+            (N + h) * Math.cos(la) * Math.cos(lo),
+            (N + h) * Math.cos(la) * Math.sin(lo),
+            (N * (1 - E2) + h) * Math.sin(la),
+        );
+    };
+
+    test.each([
+        [0, 0, 0], [55.6405, 12.6533, 39.6], [45, -118, 0],
+        [-33.9, 151.2, 1200], [89.9, 10, 0], [60, 20, 400000],
+    ])('recovers the exact geodetic normal at lat %p lon %p h %p', (lat, lon, h) => {
+        const got = zenithECEFFromPosition(fromGeodetic(lat, lon, h));
+        const want = zenithECEFFromLatLon(lat * D2R, lon * D2R);
+        // Bowring is good to well under a milliarcsecond.
+        expect(Math.acos(Math.min(1, got.dot(want))) * R2D * 3600).toBeLessThan(0.001);
+    });
+
+    test('differs from the geocentric radial by the expected amount', () => {
+        // The bug this replaced: using observerECEF.normalize() as the zenith.
+        // Peak separation is ~11.55' near 45°, zero at pole and equator.
+        const sep = (latDeg) => {
+            const p = fromGeodetic(latDeg, 0, 0);
+            const geodetic = zenithECEFFromPosition(p);
+            const geocentric = p.clone().normalize();
+            return Math.acos(Math.min(1, geodetic.dot(geocentric))) * R2D * 60;
+        };
+        // Coincident at equator and pole. Bounded rather than toBeCloseTo(0):
+        // acos is ill-conditioned at dot≈1, so the floor here is arithmetic
+        // noise (~3 milliarcsec), not geometry.
+        expect(sep(0)).toBeLessThan(0.001);
+        expect(sep(90)).toBeLessThan(0.001);
+        expect(sep(45)).toBeGreaterThan(11.4);
+        expect(sep(45)).toBeLessThan(11.6);
+        expect(sep(55.6405)).toBeGreaterThan(10.6);   // Copenhagen
+        expect(sep(55.6405)).toBeLessThan(10.9);
+    });
+
+    test('is stable on the spin axis', () => {
+        expect(zenithECEFFromPosition(new Vector3(0, 0, 6356752)).z).toBeCloseTo(1, 9);
+        expect(zenithECEFFromPosition(new Vector3(0, 0, -6356752)).z).toBeCloseTo(-1, 9);
+    });
+});
+
+describe('satellite refraction bends about the geodetic vertical', () => {
+    const A = 6378137.0, F = 1 / 298.257223563, E2 = F * (2 - F);
+    const D2R = Math.PI / 180;
+    const fromGeodetic = (latDeg, lonDeg, h) => {
+        const la = latDeg * D2R, lo = lonDeg * D2R;
+        const N = A / Math.sqrt(1 - E2 * Math.sin(la) ** 2);
+        return new Vector3(
+            (N + h) * Math.cos(la) * Math.cos(lo),
+            (N + h) * Math.cos(la) * Math.sin(lo),
+            (N * (1 - E2) + h) * Math.sin(la),
+        );
+    };
+
+    test('a satellite low over a mid-latitude observer lifts along local up', () => {
+        const obs = fromGeodetic(45, 0, 0);
+        const up = zenithECEFFromPosition(obs);
+        // North-pointing horizontal direction in the local geodetic frame.
+        const north = new Vector3(0, 0, 1).sub(up.clone().multiplyScalar(up.z)).normalize();
+        // Satellite ~1° above the geodetic horizon, 1000 km away.
+        const dir = north.clone().multiplyScalar(Math.cos(1 * D2R))
+            .add(up.clone().multiplyScalar(Math.sin(1 * D2R))).normalize();
+        const sat = obs.clone().add(dir.clone().multiplyScalar(1e6));
+
+        const out = applyRefractionFromObserver(sat, obs, {enabled: true});
+        const outDir = out.clone().sub(obs).normalize();
+
+        const altBefore = Math.asin(dir.dot(up)) / D2R;
+        const altAfter = Math.asin(outDir.dot(up)) / D2R;
+        const lift = (altAfter - altBefore) * 60;
+
+        // Saemundsson at 1° is ~21.8'; bending about the geocentric radial
+        // instead would be off by ~1'.
+        expect(lift).toBeGreaterThan(20.5);
+        expect(lift).toBeLessThan(23.0);
+
+        // The lift must be purely vertical in the geodetic frame — refraction
+        // never changes azimuth.
+        const east = new Vector3().crossVectors(up, north).normalize();
+        expect(Math.abs(outDir.dot(east) - dir.dot(east))).toBeLessThan(1e-9);
     });
 });
 
