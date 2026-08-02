@@ -74,28 +74,58 @@ if (!in_array($type, $allowed_types, true)) {
 // calculate nextDay in the same form, and use 2 days later
 $nextDay = date('Y-m-d', strtotime($request . ' +2 days'));
 
+// Ask Space-Track for only the columns we actually use.
+//
+// Its default CSV is 40 columns, quoted, and carries TLE_LINE0/1/2 in addition
+// to the OMM elements they encode - a single LEO date runs to ~57 MB, several
+// times the equivalent 3LE. Most of that is duplication and bookkeeping.
+//
+// Beyond the twelve fields SGP4 needs, four are kept deliberately. The cache is
+// permanent and this archive is expensive to rebuild against a rate-limited
+// API, so dropping a column now would cost a full re-fetch to recover later:
+//
+//   OBJECT_TYPE    PAYLOAD / ROCKET BODY / DEBRIS. Bears on the flare
+//                  MECHANISM: the model assumes a nadir-pointing flat panel,
+//                  which is right for on-station Starlink and wrong for a
+//                  tumbling rocket body. The LEO query filters payloads
+//                  server-side, so without this the client cannot tell them
+//                  apart within a set.
+//   RCS_SIZE       SMALL / MEDIUM / LARGE. The only per-object size signal
+//                  available - the flare model currently has no per-satellite
+//                  area term at all. Radar, not optical, and coarsely bucketed,
+//                  so a weak prior for brightness rather than a photometric
+//                  input.
+//   CREATION_DATE  When Space-Track published the element, as opposed to when
+//                  it is valid (EPOCH). Makes a cached set self-describing
+//                  about its own completeness, instead of relying on file
+//                  mtime, which copying and backups destroy.
+//   OBJECT_ID      International designator, e.g. 2019-074B - groups a launch.
+$predicates = "/predicates/OBJECT_NAME,OBJECT_ID,NORAD_CAT_ID,EPOCH,CREATION_DATE,"
+    . "MEAN_MOTION,ECCENTRICITY,INCLINATION,RA_OF_ASC_NODE,ARG_OF_PERICENTER,MEAN_ANOMALY,"
+    . "BSTAR,MEAN_MOTION_DOT,MEAN_MOTION_DDOT,OBJECT_TYPE,RCS_SIZE";
+
 // the default STARLINK query
-$url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/orderby/NORAD_CAT_ID,EPOCH/format/csv/OBJECT_NAME/STARLINK~~";
+$url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/orderby/NORAD_CAT_ID,EPOCH/format/csv/OBJECT_NAME/STARLINK~~" . $predicates;
 
 // LEO is Low Earth object, but here filter for payloads only
 // decay_date/null-val filters out decayed objects per Space-Track recommendations
 if ($type == "LEO") {
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/OBJECT_TYPE/payload/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/csv";
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/OBJECT_TYPE/payload/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/csv" . $predicates;
 }
 
 // LEOALL is all the LEO objects, including payloads and debris
 if ($type == "LEOALL") {
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/decay_date/null-val/format/csv";
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/>11.25/ECCENTRICITY/<0.25/decay_date/null-val/format/csv" . $predicates;
 }
 
 if ($type == "SLOW") {
     // SLOW is for objects with a mean motion of less than 11.25 (using 11.26 to overlap with LEO a little)
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/<11.26/decay_date/null-val/format/csv";
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/MEAN_MOTION/<11.26/decay_date/null-val/format/csv" . $predicates;
 }
 
 // override for ALL query
 if ($type == "ALL") {
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/csv";
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/csv" . $predicates;
 }
 
 // CUSTOM TLE handling
@@ -170,19 +200,23 @@ $cacheMaxAge = 30 * 24 * 60 * 60; // 30 days
 // 99999 (the catalog passed that on 2026-07-11 and TLE cannot represent them).
 // Deleting the affected file is all it takes to pick those up on the next
 // request - it will come back as CSV.
+// gpCacheIsUsable() rather than file_exists(): a set captured within a few days
+// of its own date was fetched before Space-Track had finished publishing, and
+// is missing much of what exists now. Such an entry is re-fetched once, after
+// which its mtime puts it outside the settle window and it is trusted for good.
 if ($caching) {
     // Prefer the CSV cache - it is the only format that can hold everything.
-    if (file_exists($cachedCSV)) {
+    if (gpCacheIsUsable($cachedCSV, $request)) {
         serveGPCached($cachedCSV, $cachedCSV, $cacheMaxAge);
     }
 
     if ($zipIt) {
-        if (file_exists($cachedZIP)) {
+        if (gpCacheIsUsable($cachedZIP, $request)) {
             header("Location: " . $cachedZIP);
             exit();
         }
 
-        if (file_exists($cachedTLE)) {
+        if (gpCacheIsUsable($cachedTLE, $request)) {
             if (zipTLE($cachedTLE, $cachedZIP, $baseFileName . ".tle")) {
                 unlink($cachedTLE);
                 header("Location: " . $cachedZIP);
@@ -192,7 +226,7 @@ if ($caching) {
             }
         }
     } else {
-        if (file_exists($cachedTLE)) {
+        if (gpCacheIsUsable($cachedTLE, $request)) {
             header("Location: " . $cachedTLE);
             exit();
         }

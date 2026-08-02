@@ -53,6 +53,46 @@ function isValidGPData($dataBlob, $httpStatus, $ext) {
 }
 
 /**
+ * How many days after the requested date a historical query stops growing.
+ *
+ * Space-Track publishes an element set AFTER its epoch, and the queries span
+ * [D, D+2], so a set fetched too soon holds only what happened to be published
+ * by then. Measured over 59,608 real element sets, the publication lag
+ * (CREATION_DATE - EPOCH) is a median of 0.29 days, 1.04 at p99.9, with a thin
+ * tail to 9.7. A same-day fetch of 2025-10-29 LEO captured 10,230 element sets
+ * where 59,608 exist today - 17%, missing 3,251 satellites outright. The same
+ * query fetched 6 days out was already complete to within one element set.
+ * Four days clears the +2 day window plus the p99.9 lag.
+ */
+define('GP_SETTLE_DAYS', 4);
+
+/**
+ * Is this cached file trustworthy, or was it captured before the data settled?
+ *
+ * Returns false for a cache entry fetched inside the settle window, so the
+ * caller re-fetches it - but only once that window has actually passed, since
+ * before then a fresh request would be no more complete than what we hold.
+ * The re-fetched file's own mtime then falls outside the window, so this
+ * self-corrects exactly once per entry rather than re-fetching forever.
+ *
+ * @param string $file        Path to the cached file.
+ * @param string $requestDate The requested date, YYYY-MM-DD.
+ */
+function gpCacheIsUsable($file, $requestDate) {
+    if (!file_exists($file)) {
+        return false;
+    }
+    $settledTs = strtotime($requestDate . ' +' . GP_SETTLE_DAYS . ' days');
+    if ($settledTs === false) {
+        return true;    // unparseable date - don't throw away a good cache
+    }
+    if (filemtime($file) < $settledTs && time() >= $settledTs) {
+        return false;   // provisional, and it is now worth replacing
+    }
+    return true;
+}
+
+/**
  * First line of a payload, without copying the whole thing.
  * $skip lines are stepped over first, so getGPLine($data, 1) is the first data
  * row of a CSV (the header being line 0).
