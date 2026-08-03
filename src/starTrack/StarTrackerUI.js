@@ -42,6 +42,10 @@ let overlayCtx = null;
 let result = null;          // the last completed solve
 let running = false;
 let aborted = false;
+// "Enough": stop scanning frames and solve what has already been measured. Deliberately NOT
+// part of ctx.stale() - staleness means the run's answer is worthless and must be discarded,
+// whereas this run's answer is simply drawn from a shorter clip than was asked for.
+let enough = false;
 // Measured pixel-scale parameters from "Detect Star Size", applied to subsequent analyses.
 // Null means the hand-tuned defaults, which were measured on the reference footage.
 let calibration = null;
@@ -885,6 +889,7 @@ export async function runStarTracker() {
     if (!view || !view.videoData || running) return null;
     running = true;
     aborted = false;
+    enough = false;
 
     // Everything this run is tied to, captured once at the start.
     //
@@ -977,18 +982,23 @@ export async function runStarTracker() {
     const total = frame1 - frame0 + 1;
     const savedFrame = par.frame;
 
+    // A still image on a video timeline (CVideoImageData) has ONE real frame however many the
+    // timeline claims - detecting it hundreds of times over would be minutes of work for one
+    // answer, and with no motion there is nothing to solve or classify: every detected point
+    // is presumed a star, which is all a single exposure of the sky can honestly claim.
+    // Established before the progress UI, which offers "Enough" only for a real multi-frame pass.
+    const still = videoData instanceof CVideoImageData;
+
     initProgress({
         title: "Star Tracker",
         filename: `Analyzing frames ${frame0}-${frame1}`,
         showAbort: true,
         onAbort: () => { aborted = true; },
+        // Only worth offering when there is more than one frame to stop short of.
+        showEnough: !still && total > 1,
+        onEnough: () => { enough = true; },
+        enoughLabel: "Enough (solve what we have)",
     });
-
-    // A still image on a video timeline (CVideoImageData) has ONE real frame however many the
-    // timeline claims - detecting it hundreds of times over would be minutes of work for one
-    // answer, and with no motion there is nothing to solve or classify: every detected point
-    // is presumed a star, which is all a single exposure of the sky can honestly claim.
-    const still = videoData instanceof CVideoImageData;
 
     try {
         const perFrame = [];
@@ -996,10 +1006,22 @@ export async function runStarTracker() {
         const rejectCounts = {};
         const rejectSamples = [];
         const lastFrame = still ? frame0 : frame1;
+        // The frame the run actually reached. Reported as the result's frame1 so the overlay and
+        // the pose lookup, which both map a global frame to an index via frame0, describe the
+        // clip that was measured rather than the one that was requested.
+        let analysedLast = lastFrame;
         for (let f = frame0; f <= lastFrame; f++) {
             if (ctx.stale()) {
                 params.status = aborted ? "aborted" : "cancelled (video changed)";
                 return null;
+            }
+            // Tested at the TOP of the loop, and never on the first frame: it must also
+            // short-circuit the `continue` taken when a frame yields no pixels, and a solve
+            // needs at least one measured frame to have anything to say.
+            if (enough && f > frame0) {
+                analysedLast = f - 1;
+                console.log(`Star Tracker: stopped early at frame ${analysedLast} of ${lastFrame}`);
+                break;
             }
             const done = f - frame0 + 1;
             params.status = still ? "detecting (still image)" : `detecting ${done}/${total}`;
@@ -1271,8 +1293,9 @@ export async function runStarTracker() {
         // or the heading stays selected but inert (the fresh result has no identify yet) and
         // the FOV keeps serving the old solve's zoom.
         detachStarTrackCamera();
-        result = {frame0, frame1, generation, videoData, perFrame, chain, solved, clusters,
-            videoW, videoH, still, rejectCounts, rejectSamples, lensInfo};
+        result = {frame0, frame1: analysedLast, generation, videoData, perFrame, chain, solved,
+            clusters, videoW, videoH, still, rejectCounts, rejectSamples, lensInfo,
+            stoppedEarly: analysedLast < lastFrame};
         // Published for inspection and for other tools, the way camera motion publishes its own
         // per-video data on Globals.
         Globals.starTrackerResult = result;
@@ -1286,7 +1309,10 @@ export async function runStarTracker() {
             ? `${counts.star || 0} stars (still image)`
             : `${counts.star || 0} stars, ${counts.moving || 0} moving`
                 + (clusters.length ? `, ${clusters.length} light cluster${clusters.length > 1 ? "s" : ""}` : "")
-                + `, sigma ${solved.classified[0] ? solved.classified[0].sigma.toFixed(2) : "?"} px`;
+                + `, sigma ${solved.classified[0] ? solved.classified[0].sigma.toFixed(2) : "?"} px`
+                // Said out loud: these numbers came from part of the clip, and a reader comparing
+                // them with a full pass needs to know that without going back to the console.
+                + (result.stoppedEarly ? ` (stopped early, ${analysedLast - frame0 + 1}/${total} frames)` : "");
         ensureOverlay();
         return result;
     } finally {

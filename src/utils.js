@@ -817,9 +817,18 @@ export function enableAllInput() {
 }
 
 // Event handler to prevent default behavior
+// The input blocker's own controls. Everything else on the page is deliberately dead while
+// the blocker is up, but these buttons ARE the blocker's UI - swallowing their clicks makes
+// the overlay uninterruptible. Kept as a set because the list has grown past one: a button
+// added to the overlay but not listed here looks live and does nothing when clicked.
+const INPUT_BLOCKER_BUTTON_IDS = new Set([
+    'input-blocker-abort-button',
+    'input-blocker-enough-button',
+]);
+
 function preventDefaultHandler(e) {
-    // Allow clicks on the abort button in the input blocker overlay
-    if (e.target && e.target.id === 'input-blocker-abort-button') {
+    // Allow clicks on the input blocker's own buttons (Abort, Enough)
+    if (e.target && INPUT_BLOCKER_BUTTON_IDS.has(e.target.id)) {
         return;
     }
     e.preventDefault();

@@ -46,9 +46,9 @@ class CDragDropHandler {
         // drags from the OS or another window never do. Used to silently
         // ignore such drags instead of trying to import them as files/URLs.
         this.internalDragActive = false;
-        // Names already handed to a pasted image whose import has not registered
-        // with FileManager yet. See renameGenericPastedFile().
-        this.reservedPastedNames = new Set();
+        // Filenames claimed by an import that is under way but has not registered
+        // with FileManager yet. See reserveUniqueName() and resolveNameCollision().
+        this.reservedImportNames = new Set();
     }
 
     /**
@@ -261,26 +261,76 @@ class CDragDropHandler {
             return file;
         }
         const ext = (file.name?.split('.').pop() || file.type?.split('/').pop() || 'png').toLowerCase();
+        return new File([file], this.reserveUniqueName('pasted-image', ext), {type: file.type});
+    }
 
-        // FileManager.exists() alone is not enough to pick a free name: an import
-        // does not register until well after this returns (it awaits the sniffer,
-        // then the Video/Overlay dialog at human speed). So two images in one
-        // paste, or a second paste made before the first dialog is answered, would
-        // both see "pasted-image-1" as free and the later one would overwrite the
-        // earlier. Reserve each name as it is handed out.
-        //
-        // Reservations are never released, so a cancelled import leaves its number
-        // used and the next paste skips it. That is only cosmetic, and it is the
-        // safe direction to err in — a reservation can only push us to a higher
-        // number, never hand out one that is already in flight.
+    /**
+     * Pick a free "<base>-<n>.<ext>" and claim it.
+     *
+     * FileManager.exists() alone is not enough: an import does not register until
+     * well after a name is chosen (it awaits the type sniffer, then a dialog at
+     * human speed). So two images in one paste, or a second import started before
+     * the first dialog is answered, would both see "-1" as free and the later one
+     * would overwrite the earlier. The claim closes that window.
+     * @param {string} base - Name without the trailing "-<n>" or extension
+     * @param {string} ext - Extension without the dot; "" for none
+     * @returns {string} The claimed filename
+     */
+    reserveUniqueName(base, ext) {
+        const suffix = ext ? `.${ext}` : '';
         let n = 1;
-        let name = `pasted-image-${n}.${ext}`;
-        while (FileManager.exists(name) || this.reservedPastedNames.has(name)) {
+        while (FileManager.exists(`${base}-${n}${suffix}`) || this.reservedImportNames.has(`${base}-${n}${suffix}`)) {
             n++;
-            name = `pasted-image-${n}.${ext}`;
         }
-        this.reservedPastedNames.add(name);
-        return new File([file], name, {type: file.type});
+        const name = `${base}-${n}${suffix}`;
+        this.reservedImportNames.add(name);
+        return name;
+    }
+
+    /**
+     * FileManager.list is keyed by filename, so importing under a name that is
+     * already taken replaces the existing entry. Sometimes that is the intent
+     * (re-importing a corrected file), sometimes it is silent data loss, so ask.
+     *
+     * Called from the one entry point both dropping and pasting go through, so
+     * the two gestures resolve a collision identically and every downstream
+     * registration site sees the settled name.
+     * @param {File} file
+     * @returns {Promise<File|null>} The file to import, renamed if "Keep Both", or null if cancelled
+     */
+    async resolveNameCollision(file) {
+        if (!file.name) {
+            return file;
+        }
+
+        if (!FileManager.exists(file.name) && !this.reservedImportNames.has(file.name)) {
+            this.reservedImportNames.add(file.name);
+            return file;
+        }
+
+        const choice = await showChoice(`"${file.name}" has already been imported. What would you like to do?`, {
+            title: 'Name Already Used',
+            cancelValue: null,
+            options: [
+                {label: 'Replace', description: 'Overwrite the imported file with this one.', value: 'replace', primary: true, color: '#1976d2'},
+                {label: 'Keep Both', description: 'Import this one under a new name.', value: 'keepBoth', color: '#388e3c'},
+                {label: 'Cancel', description: "Don't import the file.", value: null, cancel: true},
+            ],
+        });
+
+        if (choice === null) {
+            return null;
+        }
+        if (choice === 'replace') {
+            return file;
+        }
+
+        // Split on the LAST dot so "my.track.kml" keeps "my.track" as its base, and
+        // a leading-dot name stays whole rather than becoming an empty base.
+        const dot = file.name.lastIndexOf('.');
+        const base = dot > 0 ? file.name.slice(0, dot) : file.name;
+        const ext = dot > 0 ? file.name.slice(dot + 1) : '';
+        return new File([file], this.reserveUniqueName(base, ext), {type: file.type});
     }
 
     onPaste(e) {
@@ -438,9 +488,32 @@ class CDragDropHandler {
     }
 
 
-    async uploadDroppedFile(file) {
+    async uploadDroppedFile(droppedFile) {
 
         EventManager.dispatchEvent("fileDropped", {})
+
+        const file = await this.resolveNameCollision(droppedFile);
+        if (file === null) {
+            console.log("Import cancelled, name already used: " + droppedFile.name);
+            return;
+        }
+
+        try {
+            return await this.importDroppedFile(file);
+        } finally {
+            // The claim only has to cover the window between settling on a name and
+            // the import registering under it. By the time we get here FileManager is
+            // authoritative for names that did register, and a name that did not
+            // (cancelled dialog, unsupported file) must not be left looking taken.
+            //
+            // Video and parseResult imports register after this returns, so their
+            // claim is dropped before they land — which leaves them behaving exactly
+            // as they did before name checking existed.
+            this.reservedImportNames.delete(file.name);
+        }
+    }
+
+    async importDroppedFile(file) {
 
         // Peek at the first few KB of the file to detect its real type from
         // contents rather than trusting the filename extension or browser MIME.

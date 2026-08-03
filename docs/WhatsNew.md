@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.112.0 (2026-08-03)
+
+### New Features
+- **Paste an image straight into Sitrec** (Ctrl-V / Cmd-V, anywhere outside a text box): copying an image in your browser and pasting it now imports it, and asks *Video Image* or *Ground Overlay* just as dragging the file in does. This works on images that dragging the link cannot import at all, because most sites do not allow other sites to read their files — copy and paste hands Sitrec the picture itself rather than a link to it. Pasted images arrive named *pasted-image-1*, *pasted-image-2* and so on, so a second paste no longer lands on top of the first. Pasting a copied file of any other kind, a KML say, works too.
+- **Enough — stop a long star analysis early and still get an answer** (Video → Star Tracker): a green *Enough (solve what we have)* button now sits above *Abort* while frames are being measured. *Abort* throws the run away; *Enough* keeps every frame measured so far and solves on those, then goes on to identify the stars and sync the camera exactly as a full run would. The *Status* line says how much of the clip the numbers came from, for example *(stopped early, 60/300 frames)*. Offered only when there is more than one frame to stop short of.
+
+### Bug Fixes
+- Fixed a dragged-in link being blamed on the file when Sitrec simply could not read it: dropping an image link from a site that does not allow other sites to read its files used to report that the link "did not resolve to a loadable video or file", when the file was there and perfectly good. It now says it could not read that URL, names the likely cause, and tells you what to do instead — save the image and drag the file in. A link that genuinely fails now reports what the server actually said.
+- Fixed importing a file whose name is already in use silently replacing the one already loaded. You are now asked, with the choice to *Replace* it, *Keep Both* (the new one comes in under a slightly different name), or cancel. This covers dragging files in, pasting, and File → Import File.
+
 ## Version 2.111.1 (2026-08-02)
 
 ### Improvements
