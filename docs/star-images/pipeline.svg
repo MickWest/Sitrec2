@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 470" font-family="-apple-system, system-ui, sans-serif" font-size="12">
+  <text x="430" y="24" text-anchor="middle" font-size="16" font-weight="700">Star Tracker pipeline</text>
+
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#456"/>
+    </marker>
+    <marker id="arrOpt" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#a76"/>
+    </marker>
+  </defs>
+
+  <!-- Stage 0: measure -->
+  <g transform="translate(30,52)">
+    <rect width="180" height="62" rx="6" fill="#eef4ee" stroke="#8a8" stroke-width="1"/>
+    <text x="90" y="22" text-anchor="middle" font-weight="700">0 · Measure</text>
+    <text x="90" y="39" text-anchor="middle" fill="#456">Detect Star Size</text>
+    <text x="90" y="54" text-anchor="middle" fill="#789" font-size="11">PSF radius on one frame</text>
+  </g>
+
+  <!-- Stage 1: detect -->
+  <g transform="translate(240,52)">
+    <rect width="180" height="62" rx="6" fill="#eef2fa" stroke="#88a" stroke-width="1"/>
+    <text x="90" y="22" text-anchor="middle" font-weight="700">1 · Detect</text>
+    <text x="90" y="39" text-anchor="middle" fill="#456">every frame in In/Out</text>
+    <text x="90" y="54" text-anchor="middle" fill="#789" font-size="11">blobs above local sky</text>
+  </g>
+
+  <!-- Stage 2: frame chain -->
+  <g transform="translate(450,52)">
+    <rect width="180" height="62" rx="6" fill="#eef2fa" stroke="#88a" stroke-width="1"/>
+    <text x="90" y="22" text-anchor="middle" font-weight="700">2 · Frame chain</text>
+    <text x="90" y="39" text-anchor="middle" fill="#456">frame N → frame N−1</text>
+    <text x="90" y="54" text-anchor="middle" fill="#789" font-size="11">2D rotation + shift per step</text>
+  </g>
+
+  <!-- Stage 3: star field -->
+  <g transform="translate(660,52)">
+    <rect width="180" height="62" rx="6" fill="#eef2fa" stroke="#88a" stroke-width="1"/>
+    <text x="90" y="22" text-anchor="middle" font-weight="700">3 · Star field</text>
+    <text x="90" y="39" text-anchor="middle" fill="#456">tracklets + refined map</text>
+    <text x="90" y="54" text-anchor="middle" fill="#789" font-size="11">then classify</text>
+  </g>
+
+  <line x1="210" y1="83" x2="234" y2="83" stroke="#456" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="420" y1="83" x2="444" y2="83" stroke="#456" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="630" y1="83" x2="654" y2="83" stroke="#456" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- optional lens branch -->
+  <g transform="translate(450,158)">
+    <rect width="390" height="86" rx="6" fill="#fdf6ec" stroke="#c9a465" stroke-width="1" stroke-dasharray="4 3"/>
+    <text x="195" y="21" text-anchor="middle" font-weight="700" fill="#7a5a20">Optional · Fit lens from stars</text>
+    <text x="195" y="39" text-anchor="middle" fill="#456">find focal length, optical axis and θ(ρ) curve</text>
+    <text x="195" y="55" text-anchor="middle" fill="#456">then re-solve each frame as a 3D orientation</text>
+    <text x="195" y="73" text-anchor="middle" fill="#a76" font-size="11">refuses when the clip does not constrain a lens</text>
+  </g>
+  <path d="M750 114 L750 152" stroke="#a76" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrOpt)" fill="none"/>
+
+  <!-- Stage 4 -->
+  <g transform="translate(240,278)">
+    <rect width="180" height="62" rx="6" fill="#eef2fa" stroke="#88a" stroke-width="1"/>
+    <text x="90" y="22" text-anchor="middle" font-weight="700">4 · Clusters</text>
+    <text x="90" y="39" text-anchor="middle" fill="#456">group movers that</text>
+    <text x="90" y="54" text-anchor="middle" fill="#789" font-size="11">share one motion</text>
+  </g>
+
+  <!-- identify -->
+  <g transform="translate(450,278)">
+    <rect width="180" height="62" rx="6" fill="#f3eefa" stroke="#a8b" stroke-width="1"/>
+    <text x="90" y="22" text-anchor="middle" font-weight="700">5 · Identify</text>
+    <text x="90" y="39" text-anchor="middle" fill="#456">quad match vs catalog</text>
+    <text x="90" y="54" text-anchor="middle" fill="#789" font-size="11">→ RA/Dec, FOV, roll</text>
+  </g>
+
+  <!-- sync -->
+  <g transform="translate(660,278)">
+    <rect width="180" height="62" rx="6" fill="#f3eefa" stroke="#a8b" stroke-width="1"/>
+    <text x="90" y="22" text-anchor="middle" font-weight="700">6 · Sync camera</text>
+    <text x="90" y="39" text-anchor="middle" fill="#456">point the Sitrec camera</text>
+    <text x="90" y="54" text-anchor="middle" fill="#789" font-size="11">at the measured sky</text>
+  </g>
+
+  <path d="M750 244 L750 258 L330 258 L330 272" stroke="#456" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <line x1="420" y1="309" x2="444" y2="309" stroke="#456" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="630" y1="309" x2="654" y2="309" stroke="#456" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- outputs -->
+  <g transform="translate(30,376)">
+    <rect width="810" height="66" rx="6" fill="#f7f7f9" stroke="#bbc" stroke-width="1"/>
+    <text x="16" y="22" font-weight="700" fill="#345">What comes out</text>
+    <text x="16" y="41" fill="#456">Green circles = fixed on the sky · Red = moving against it · Orange rings = light clusters · Named stars where the catalog matched</text>
+    <text x="16" y="57" fill="#789" font-size="11">"Show rejected" adds the tracks that were followed but did not qualify as stars — the scattered ones and the frame-fixed ones.</text>
+  </g>
+</svg>

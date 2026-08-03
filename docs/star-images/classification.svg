@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 440" font-family="-apple-system, system-ui, sans-serif" font-size="12">
+  <text x="420" y="24" text-anchor="middle" font-size="16" font-weight="700">How each track is classified</text>
+  <text x="420" y="43" text-anchor="middle" fill="#789">The thresholds that judge MOVEMENT are in sigmas of the clip's own noise, so one setting suits a clean clip and a noisy one alike.</text>
+
+  <!-- five cards -->
+  <g transform="translate(20,62)">
+    <rect width="152" height="190" rx="6" fill="#eefaef" stroke="#5a5"/>
+    <text x="76" y="24" text-anchor="middle" font-weight="700" fill="#262">star</text>
+    <rect x="16" y="36" width="120" height="86" fill="#101820"/>
+    <g fill="#8f8">
+      <circle cx="76" cy="79" r="2.4"/><circle cx="74" cy="77" r="1.6"/><circle cx="78" cy="81" r="1.6"/>
+      <circle cx="77" cy="76" r="1.4"/><circle cx="75" cy="82" r="1.4"/>
+    </g>
+    <circle cx="76" cy="79" r="14" fill="none" stroke="#5a5" stroke-dasharray="3 2"/>
+    <text x="76" y="140" text-anchor="middle" fill="#456">Lands on the same</text>
+    <text x="76" y="155" text-anchor="middle" fill="#456">spot every frame,</text>
+    <text x="76" y="170" text-anchor="middle" fill="#456">within the noise.</text>
+    <text x="76" y="185" text-anchor="middle" fill="#5a5" font-size="11">drawn green</text>
+  </g>
+
+  <g transform="translate(186,62)">
+    <rect width="152" height="190" rx="6" fill="#fdeeee" stroke="#c55"/>
+    <text x="76" y="24" text-anchor="middle" font-weight="700" fill="#822">moving</text>
+    <rect x="16" y="36" width="120" height="86" fill="#101820"/>
+    <g fill="#f88">
+      <circle cx="34" cy="96" r="1.8" opacity="0.5"/><circle cx="50" cy="88" r="2"/>
+      <circle cx="66" cy="80" r="2.2"/><circle cx="82" cy="72" r="2.4"/>
+      <circle cx="98" cy="64" r="2.6"/><circle cx="114" cy="56" r="2.8"/>
+    </g>
+    <path d="M34 96 L114 56" stroke="#f88" stroke-width="1.2"/>
+    <text x="76" y="140" text-anchor="middle" fill="#456">A coherent drift</text>
+    <text x="76" y="155" text-anchor="middle" fill="#456">against the sky, big</text>
+    <text x="76" y="170" text-anchor="middle" fill="#456">enough to be real.</text>
+    <text x="76" y="185" text-anchor="middle" fill="#c55" font-size="11">drawn red</text>
+  </g>
+
+  <g transform="translate(352,62)">
+    <rect width="152" height="190" rx="6" fill="#fff6e8" stroke="#c93"/>
+    <text x="76" y="24" text-anchor="middle" font-weight="700" fill="#852">cameraFixed</text>
+    <rect x="16" y="36" width="120" height="86" fill="#101820"/>
+    <!-- sky slides, dot stays -->
+    <g fill="#8f8" opacity="0.55">
+      <circle cx="40" cy="55" r="1.8"/><circle cx="62" cy="98" r="1.8"/><circle cx="104" cy="66" r="1.8"/>
+    </g>
+    <g stroke="#8f8" stroke-width="0.8" opacity="0.55" stroke-dasharray="2 2">
+      <line x1="40" y1="55" x2="70" y2="52"/><line x1="62" y1="98" x2="92" y2="95"/><line x1="104" y1="66" x2="134" y2="63"/>
+    </g>
+    <rect x="70" y="74" width="6" height="6" fill="#fc6"/>
+    <text x="76" y="140" text-anchor="middle" fill="#456">Fixed in the frame</text>
+    <text x="76" y="155" text-anchor="middle" fill="#456">while the sky slides</text>
+    <text x="76" y="170" text-anchor="middle" fill="#456">past it.</text>
+    <text x="76" y="185" text-anchor="middle" fill="#c93" font-size="11">dust, hot pixel, reticle</text>
+  </g>
+
+  <g transform="translate(518,62)">
+    <rect width="152" height="190" rx="6" fill="#f4f4f7" stroke="#99a"/>
+    <text x="76" y="24" text-anchor="middle" font-weight="700" fill="#556">incoherent</text>
+    <rect x="16" y="36" width="120" height="86" fill="#101820"/>
+    <g fill="#bbc">
+      <circle cx="48" cy="62" r="1.8"/><circle cx="96" cy="70" r="1.8"/><circle cx="62" cy="98" r="1.8"/>
+      <circle cx="104" cy="94" r="1.8"/><circle cx="80" cy="58" r="1.8"/><circle cx="70" cy="80" r="1.8"/>
+    </g>
+    <text x="76" y="140" text-anchor="middle" fill="#456">Detected again and</text>
+    <text x="76" y="155" text-anchor="middle" fill="#456">again, but scattered —</text>
+    <text x="76" y="170" text-anchor="middle" fill="#456">no settled position.</text>
+    <text x="76" y="185" text-anchor="middle" fill="#889" font-size="11">noise, or a blend</text>
+  </g>
+
+  <g transform="translate(684,62)">
+    <rect width="136" height="190" rx="6" fill="#f4f4f7" stroke="#99a"/>
+    <text x="68" y="24" text-anchor="middle" font-weight="700" fill="#556">short</text>
+    <rect x="12" y="36" width="112" height="86" fill="#101820"/>
+    <g fill="#bbc">
+      <circle cx="60" cy="76" r="2"/><circle cx="66" cy="80" r="2"/>
+    </g>
+    <text x="68" y="140" text-anchor="middle" fill="#456">Too few detections</text>
+    <text x="68" y="155" text-anchor="middle" fill="#456">to say anything</text>
+    <text x="68" y="170" text-anchor="middle" fill="#456">either way.</text>
+    <text x="68" y="185" text-anchor="middle" fill="#889" font-size="11">usually the majority</text>
+  </g>
+
+  <!-- noise estimation note -->
+  <g transform="translate(20,272)">
+    <rect width="800" height="150" rx="6" fill="#f7f7f9" stroke="#bbc"/>
+    <text x="16" y="24" font-weight="700" fill="#345">Where the noise figure (sigma) comes from — and why it is not measured from "the stars"</text>
+    <text x="16" y="46" fill="#456">The obvious approach is circular: you need to know which tracks are stars to measure the noise, and you</text>
+    <text x="16" y="63" fill="#456">need the noise to decide which tracks are stars. Classifying first and re-estimating from the survivors does</text>
+    <text x="16" y="80" fill="#456">not escape it — if sigma starts inflated, the cut that should have rejected the junk is inflated in the same</text>
+    <text x="16" y="97" fill="#456">proportion, so the junk is admitted and holds sigma up.</text>
+    <text x="16" y="120" fill="#456">Sitrec instead reads the low tail — the 25th percentile of per-track scatter. Well-measured sources live</text>
+    <text x="16" y="137" fill="#456">down there whether or not anything has classified them, so the estimator never has to ask.</text>
+  </g>
+</svg>

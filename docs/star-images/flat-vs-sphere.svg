@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 470" font-family="-apple-system, system-ui, sans-serif" font-size="12">
+  <text x="420" y="24" text-anchor="middle" font-size="16" font-weight="700">Why "Fit lens from stars" matters on a wide or cropped clip</text>
+
+  <!-- left: flat model -->
+  <g transform="translate(24,50)">
+    <text x="180" y="0" text-anchor="middle" font-weight="700" fill="#345">Flat 2D model — one rotation, one shift, no bending</text>
+    <rect x="0" y="12" width="360" height="200" fill="#101820" stroke="#456"/>
+
+    <!-- centre star: good -->
+    <circle cx="180" cy="112" r="2.5" fill="#fff"/>
+    <circle cx="180" cy="112" r="11" fill="none" stroke="#5a5" stroke-width="1.8"/>
+    <text x="180" y="140" text-anchor="middle" fill="#8f8" font-size="10">centre: lands right</text>
+
+    <!-- mid star: slight -->
+    <circle cx="285" cy="70" r="2.5" fill="#fff"/>
+    <circle cx="291" cy="66" r="11" fill="none" stroke="#dd5" stroke-width="1.8"/>
+
+    <!-- edge star: bad -->
+    <circle cx="52" cy="52" r="2.5" fill="#fff"/>
+    <circle cx="72" cy="40" r="11" fill="none" stroke="#e55" stroke-width="1.8"/>
+    <line x1="52" y1="52" x2="72" y2="40" stroke="#e55" stroke-width="1"/>
+    <text x="86" y="70" fill="#f88" font-size="10">edge: misses by a</text>
+    <text x="86" y="83" fill="#f88" font-size="10">full circle width</text>
+
+    <!-- edge star 2 -->
+    <circle cx="60" cy="170" r="2.5" fill="#fff"/>
+    <circle cx="80" cy="180" r="11" fill="none" stroke="#e55" stroke-width="1.8"/>
+    <line x1="60" y1="170" x2="80" y2="180" stroke="#e55" stroke-width="1"/>
+
+    <text x="180" y="232" text-anchor="middle" fill="#456">The whole field of circles moves rigidly.</text>
+    <text x="180" y="249" text-anchor="middle" fill="#789" font-size="11">It is rigid across the whole image, so it can</text>
+    <text x="180" y="263" text-anchor="middle" fill="#789" font-size="11">only be right at one distance from the axis.</text>
+    <text x="180" y="284" text-anchor="middle" fill="#c55" font-size="11">A star that never moved is reported as moving.</text>
+  </g>
+
+  <!-- right: sphere -->
+  <g transform="translate(456,50)">
+    <text x="180" y="0" text-anchor="middle" font-weight="700" fill="#345">With a fitted lens — a real 3D orientation per frame</text>
+    <rect x="0" y="12" width="360" height="200" fill="#101820" stroke="#456"/>
+
+    <circle cx="180" cy="112" r="2.5" fill="#fff"/>
+    <circle cx="180" cy="112" r="11" fill="none" stroke="#5a5" stroke-width="1.8"/>
+    <circle cx="285" cy="70" r="2.5" fill="#fff"/>
+    <circle cx="285" cy="70" r="11" fill="none" stroke="#5a5" stroke-width="1.8"/>
+    <circle cx="52" cy="52" r="2.5" fill="#fff"/>
+    <circle cx="52" cy="52" r="11" fill="none" stroke="#5a5" stroke-width="1.8"/>
+    <circle cx="60" cy="170" r="2.5" fill="#fff"/>
+    <circle cx="60" cy="170" r="11" fill="none" stroke="#5a5" stroke-width="1.8"/>
+
+    <text x="180" y="232" text-anchor="middle" fill="#456">Each star is placed from its own direction</text>
+    <text x="180" y="249" text-anchor="middle" fill="#456">on the sky, through the measured lens curve.</text>
+    <text x="180" y="270" text-anchor="middle" fill="#2a2" font-size="11">Edge stars stop being reported as movers.</text>
+  </g>
+
+  <!-- measured numbers -->
+  <g transform="translate(24,346)">
+    <rect width="792" height="106" rx="6" fill="#f7f7f9" stroke="#bbc"/>
+    <text x="16" y="23" font-weight="700" fill="#345">Measured on the reference clip — median circle error, by distance from the optical axis</text>
+
+    <g font-size="11">
+      <text x="16" y="47" fill="#789">distance from axis</text>
+      <text x="180" y="47" fill="#789">0–200 px</text>
+      <text x="272" y="47" fill="#789">200–400</text>
+      <text x="360" y="47" fill="#789">400–600</text>
+      <text x="448" y="47" fill="#789">600–800</text>
+      <text x="536" y="47" fill="#789">800–1000</text>
+      <text x="640" y="47" fill="#789">worst case</text>
+
+      <text x="16" y="68" fill="#c55">flat 2D model</text>
+      <text x="180" y="68" fill="#456">0.30 px</text>
+      <text x="272" y="68" fill="#456">0.39</text>
+      <text x="360" y="68" fill="#c55" font-weight="700">3.10</text>
+      <text x="448" y="68" fill="#c55" font-weight="700">7.42</text>
+      <text x="536" y="68" fill="#c55" font-weight="700">11.35</text>
+      <text x="640" y="68" fill="#c55" font-weight="700">23.7 px</text>
+
+      <text x="16" y="88" fill="#2a2">fitted lens</text>
+      <text x="180" y="88" fill="#456">0.17 px</text>
+      <text x="272" y="88" fill="#456">0.19</text>
+      <text x="360" y="88" fill="#456">0.23</text>
+      <text x="448" y="88" fill="#456">0.17</text>
+      <text x="536" y="88" fill="#456">0.33</text>
+      <text x="640" y="88" fill="#2a2" font-weight="700">0.89 px</text>
+    </g>
+  </g>
+</svg>

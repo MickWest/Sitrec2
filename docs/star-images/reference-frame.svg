@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 420" font-family="-apple-system, system-ui, sans-serif" font-size="12">
+  <text x="410" y="24" text-anchor="middle" font-size="16" font-weight="700">Stages 2–3 — undo the camera, then judge what is left</text>
+
+  <defs>
+    <marker id="r-arr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#456"/>
+    </marker>
+  </defs>
+
+  <!-- left: raw pixels -->
+  <g transform="translate(24,50)">
+    <text x="170" y="0" text-anchor="middle" font-weight="700" fill="#345">In raw pixels, everything moves</text>
+    <rect x="0" y="12" width="340" height="180" fill="#101820" stroke="#456"/>
+
+    <!-- three frames of the same two stars + one mover, panning right -->
+    <g opacity="0.35">
+      <circle cx="70" cy="60" r="3" fill="#8f8"/><circle cx="120" cy="140" r="3" fill="#8f8"/>
+      <circle cx="95" cy="100" r="3" fill="#f88"/>
+    </g>
+    <g opacity="0.6">
+      <circle cx="150" cy="62" r="3" fill="#8f8"/><circle cx="200" cy="142" r="3" fill="#8f8"/>
+      <circle cx="183" cy="98" r="3" fill="#f88"/>
+    </g>
+    <g>
+      <circle cx="230" cy="64" r="3.5" fill="#8f8"/><circle cx="280" cy="144" r="3.5" fill="#8f8"/>
+      <circle cx="271" cy="96" r="3.5" fill="#f88"/>
+    </g>
+    <path d="M70 60 L230 64" stroke="#8f8" stroke-width="1" stroke-dasharray="3 3" opacity="0.8"/>
+    <path d="M120 140 L280 144" stroke="#8f8" stroke-width="1" stroke-dasharray="3 3" opacity="0.8"/>
+    <path d="M95 100 L271 96" stroke="#f88" stroke-width="1" stroke-dasharray="3 3" opacity="0.8"/>
+
+    <text x="170" y="212" text-anchor="middle" fill="#456">A pan drags stars and mover alike.</text>
+    <text x="170" y="229" text-anchor="middle" fill="#789" font-size="11">Nothing here separates "the camera moved"</text>
+    <text x="170" y="243" text-anchor="middle" fill="#789" font-size="11">from "the object moved".</text>
+  </g>
+
+  <line x1="390" y1="140" x2="424" y2="140" stroke="#456" stroke-width="1.6" marker-end="url(#r-arr)"/>
+  <text x="407" y="130" text-anchor="middle" fill="#456" font-size="11">apply the</text>
+  <text x="407" y="163" text-anchor="middle" fill="#456" font-size="11">frame chain</text>
+
+  <!-- right: reference frame -->
+  <g transform="translate(456,50)">
+    <text x="170" y="0" text-anchor="middle" font-weight="700" fill="#345">In reference coordinates, only the mover moves</text>
+    <rect x="0" y="12" width="340" height="180" fill="#101820" stroke="#456"/>
+
+    <g>
+      <circle cx="120" cy="62" r="3.5" fill="#8f8"/>
+      <circle cx="170" cy="142" r="3.5" fill="#8f8"/>
+      <circle cx="240" cy="70" r="3.5" fill="#8f8"/>
+      <circle cx="80" cy="120" r="3.5" fill="#8f8"/>
+      <circle cx="285" cy="132" r="3.5" fill="#8f8"/>
+    </g>
+    <!-- mover trail -->
+    <g fill="#f88">
+      <circle cx="140" cy="105" r="2.6" opacity="0.4"/>
+      <circle cx="170" cy="103" r="2.9" opacity="0.65"/>
+      <circle cx="200" cy="101" r="3.4"/>
+    </g>
+    <path d="M140 105 L200 101" stroke="#f88" stroke-width="1.2"/>
+    <text x="215" y="97" fill="#f88" font-size="11">drift</text>
+
+    <text x="170" y="212" text-anchor="middle" fill="#456">Stars land on the same spot every frame.</text>
+    <text x="170" y="229" text-anchor="middle" fill="#789" font-size="11">A track's leftover residual against the map</text>
+    <text x="170" y="243" text-anchor="middle" fill="#789" font-size="11">is its motion relative to the sky.</text>
+  </g>
+
+  <g transform="translate(24,318)">
+    <rect width="772" height="88" rx="6" fill="#f7f7f9" stroke="#bbc"/>
+    <text x="16" y="22" font-weight="700" fill="#345">Two consequences worth knowing</text>
+    <text x="16" y="41" fill="#456">• Detections are linked into tracks in reference coordinates, so the matching radius can be tight without</text>
+    <text x="28" y="56" fill="#456">losing anything — which is what stops neighbouring stars being confused during a fast pan.</text>
+    <text x="16" y="76" fill="#456">• The map is solved twice: once with everything in it, then again using only the confirmed stars, because</text>
+    <text x="28" y="91" fill="#456">a mover in the first pass pulls on the very transforms used to judge it.</text>
+  </g>
+</svg>
