@@ -255,6 +255,39 @@ class CViewManager extends CManager {
             }
             this.setFullscreenView(null);
         }
+        // Repair saves written with the flag cleared but the fullscreen GEOMETRY left behind.
+        //
+        // A view could serialize as doubled:false while still holding 1x1 (see the guard in
+        // CNodeView.modSerialize, now fixed). Such a view is stuck: undouble() bails on
+        // `doubled`, and no fullscreen owner exists to release it, so it fills the window
+        // forever underneath the rest of the layout. The visible symptom is a video view
+        // showing only the quadrant no other view happens to cover.
+        //
+        // Deliberately narrow, because a view legitimately CAN fill the window when it is the
+        // only thing on screen. Repair only when it is covering something: another independent
+        // view is visible, so a full-window tile contradicts the layout around it.
+        const full = (v) => Math.abs(v.left) < 1e-6 && Math.abs(v.top) < 1e-6
+            && Math.abs(v.width - 1) < 1e-6 && Math.abs(v.height - 1) < 1e-6;
+        let othersVisible = 0;
+        this.iterate((key, view) => {
+            if (view.visible && !view.in?.relativeTo && !view.overlayView && !full(view)) {
+                othersVisible++;
+            }
+        });
+        if (othersVisible > 0) {
+            this.iterate((key, view) => {
+                if (view.doubled || !view.doubleClickFullScreen || !view.visible) return;
+                if (!full(view)) return;
+                if (!(view.preDoubledWidth > 0) || full({
+                    left: view.preDoubledLeft, top: view.preDoubledTop,
+                    width: view.preDoubledWidth, height: view.preDoubledHeight,
+                })) return;
+                console.warn(`restoreFullscreenFromMods: "${view.id}" was saved full-window but `
+                    + `not fullscreen — restoring its pre-fullscreen rect`);
+                undouble(view);
+            });
+        }
+
         // doubledViews.length === 0: no fullscreen, nothing to do
     }
 

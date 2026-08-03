@@ -538,6 +538,18 @@ class CNodeView extends CNode {
         // and the last one wins — hiding the others.
         if (result.doubled && this.doubleClickFullScreen && ViewMan.fullscreenView !== this) {
             result.doubled = false;
+            // Rewind the GEOMETRY as well as the flag. Clearing the flag alone writes a state
+            // that cannot exist and cannot be recovered from: a view that is not fullscreen yet
+            // fills the whole window. Nothing un-doubles it on load either, because undouble()
+            // is gated on `doubled` — the flag just cleared — so the view stays at 1x1 for the
+            // life of the sitch, drawn underneath whatever else the layout puts on top of it.
+            // Observed as a video view showing only the top-right quarter of the frame.
+            if (this.preDoubledWidth > 0) {
+                result.left = this.preDoubledLeft;
+                result.top = this.preDoubledTop;
+                result.width = this.preDoubledWidth;
+                result.height = this.preDoubledHeight;
+            }
         }
         return result;
     }
