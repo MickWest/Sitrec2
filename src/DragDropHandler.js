@@ -230,7 +230,7 @@ class CDragDropHandler {
      * Pull any files off a paste. Browsers normally populate clipboardData.files,
      * but some paths only fill clipboardData.items, so check both.
      * @param {DataTransfer|null} clipboardData
-     * @returns {File[]} The pasted files, with generic clipboard names replaced
+     * @returns {File[]} The pasted files, exactly as the clipboard gave them
      */
     getPastedFiles(clipboardData) {
         if (!clipboardData) {
@@ -245,23 +245,11 @@ class CDragDropHandler {
                 .filter(file => file !== null);
         }
 
-        return files.map(file => this.renameGenericPastedFile(file));
-    }
-
-    /**
-     * A pasted image is handed to us as "image.<ext>" — uninformative in the file
-     * list, and a collision in FileManager.list (keyed by filename) the moment a
-     * second one is pasted, which would silently replace the first. Give those a
-     * unique name; anything with a real name (a file copied in Finder, say) keeps it.
-     * @param {File} file
-     * @returns {File} The original file, or a renamed copy
-     */
-    renameGenericPastedFile(file) {
-        if (file.name && !/^image\.[a-z0-9]+$/i.test(file.name)) {
-            return file;
-        }
-        const ext = (file.name?.split('.').pop() || file.type?.split('/').pop() || 'png').toLowerCase();
-        return new File([file], this.reserveUniqueName('pasted-image', ext), {type: file.type});
+        // Deliberately NOT renamed here. Naming belongs to resolveNameCollision(), which every
+        // import goes through - renaming in both places had the paste path claim a name and the
+        // collision check then report a clash against that very claim, so a first paste into an
+        // empty sitch asked whether to replace a file nobody had imported.
+        return files;
     }
 
     /**
@@ -299,8 +287,13 @@ class CDragDropHandler {
      * @returns {Promise<File|null>} The file to import, renamed if "Keep Both", or null if cancelled
      */
     async resolveNameCollision(file) {
-        if (!file.name) {
-            return file;
+        // A clipboard image is handed over as "image.<ext>" whatever it is a picture of. That
+        // name carries no information, so there is nothing for the user to decide: rename it
+        // silently to a free "pasted-image-N" instead of asking. Prompting here would be asking
+        // about a clash between two things that merely share the browser's placeholder name.
+        if (!file.name || /^image\.[a-z0-9]+$/i.test(file.name)) {
+            const ext = (file.name?.split('.').pop() || file.type?.split('/').pop() || 'png').toLowerCase();
+            return new File([file], this.reserveUniqueName('pasted-image', ext), {type: file.type});
         }
 
         if (!FileManager.exists(file.name) && !this.reservedImportNames.has(file.name)) {
