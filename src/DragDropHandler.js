@@ -729,9 +729,17 @@ class CDragDropHandler {
         // The full technical detail is already logged to the console by the caller.
         // Rather than surfacing a raw error, offer to stash the URL in the notes so
         // the user can keep a reference to a link we can't load (e.g. a Facebook reel).
+        //
+        // The default wording only fits the "there is no file behind this link" case.
+        // Failures that know better (a blocked fetch, an HTTP error) attach their own
+        // title and explanation, so we don't tell someone their perfectly good JPEG
+        // isn't a loadable file when the real problem is that we can't read it.
+        const title = error?.dropErrorTitle ?? "Unsupported URL";
+        const reason = error?.dropErrorReason
+            ?? `URL did not resolve to a loadable video or file:\n\n${droppedURL}`;
         showConfirm(
-            `URL did not resolve to a loadable video or file:\n\n${droppedURL}\n\nDo you want to add it to the notes?`,
-            {title: "Unsupported URL", yesLabel: "Yes", noLabel: "No"}
+            `${reason}\n\nDo you want to add it to the notes?`,
+            {title, yesLabel: "Yes", noLabel: "No"}
         ).then((addToNotes) => {
             if (addToNotes) {
                 this.addURLToNotes(droppedURL);
@@ -921,10 +929,32 @@ class CDragDropHandler {
 
             updateProgress({status: "Loading...", percent: 45, filename: fetchUrl});
 
-            const response = await quickFetch(fetchUrl, {showLoading: true, loadingCategory: "File"});
+            let response;
+            try {
+                response = await quickFetch(fetchUrl, {showLoading: true, loadingCategory: "File"});
+            } catch (fetchError) {
+                // fetch() rejects with a TypeError when the request never completes, so
+                // there's no status to report. The usual cause for a dropped link is CORS:
+                // the file is really there and the browser will happily *render* it (an
+                // <img> tag loads it fine), but with no Access-Control-Allow-Origin header
+                // it won't let script read the bytes — and importing needs the bytes.
+                const err = new Error(`Could not fetch ${fetchUrl}: ${fetchError.message}`);
+                err.dropErrorTitle = "Cannot Read That URL";
+                err.dropErrorReason =
+                    `Sitrec could not read this URL:\n\n${originalURL}\n\n`
+                    + `Most likely that site does not allow other sites to read its files `
+                    + `(no CORS header). It could also be offline or unreachable.\n\n`
+                    + `If it is an image or video you can view in your browser, save it to `
+                    + `your computer and drag the file in instead.`;
+                throw err;
+            }
 
             if (!response.ok) {
-                throw new Error(`Network response was not ok (${response.status} ${response.statusText})`);
+                const err = new Error(`Network response was not ok (${response.status} ${response.statusText})`);
+                err.dropErrorTitle = "URL Not Available";
+                err.dropErrorReason =
+                    `The server returned ${response.status} ${response.statusText} for:\n\n${originalURL}`;
+                throw err;
             }
 
             updateProgress({status: "Loading...", percent: 70, filename: fetchUrl});
