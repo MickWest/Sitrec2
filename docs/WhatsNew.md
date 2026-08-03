@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.111.1 (2026-08-02)
+
+### Improvements
+- **Star Tracker analysis is far faster and no longer freezes the page** (Video → Star Tracker): solving the sky's rotation — much the slowest part of a run on a rich star field — drops from about two minutes to ten seconds, because it now runs across several processor cores in the background instead of locking up the whole page, which Chrome had been repeatedly offering to kill. On the dense Milky Way timelapse this was measured against, a full analysis that took about six minutes now takes a little over a minute. The progress bar also names the stage it is genuinely in — fitting the camera lens, solving the sky rotation, re-solving on stars only — where it used to sit at 96% reading *Building star map* for five and a half minutes, and the Abort button now works during those stages, which it could not before. The results are identical, down to the last decimal place.
+- **Dense star fields are readable again** (Video → Star Tracker): a rich Milky Way frame can circle several hundred stars, and at full strength the overlay became a wall of green covering the footage it was annotating. The hundred brightest now draw as before and every fainter star as a thin, faint ring — still there to see, quiet enough to see through. Because the cutoff is a fixed brightness rather than the brightest hundred in each frame, a star keeps the same weight from frame to frame; a star you have toggled out of the analysis still clearly reads as switched off either way; and moving objects are unaffected.
+
+### Bug Fixes
+- Fixed Star Tracker giving up on cropped footage and then calling most of its stars moving (Video → Star Tracker): a clip cut out of a larger frame has its optical axis away from the centre of the picture, and the lens fit could not find it, so it declined to measure a lens at all and the flat fallback was left to judge what moved. On the reference cropped timelapse that meant 283 stars against 658 "moving" objects, with the *Lens* line reporting a refusal; it is now 889 stars and 44 moving, with a measured 57-degree lens whose optical axis lands within about 16 pixels of an independently measured truth 336 pixels off centre.
+- Fixed the green circles drifting off their stars toward one side of a wide or cropped frame (Video → Star Tracker): out at the frame edge they missed by a full circle width, and lopsidedly on cropped footage, because the circles were still being placed by the flat model that the lens fit exists to replace. They now follow the fitted lens — on the reference clip the typical error falls from about 11 pixels at the frame edge to a fifth of a pixel everywhere — and a star the lens says is out of shot in a given frame is no longer circled where it cannot be.
+
 ## Version 2.111.0 (2026-08-02)
 
 ### New Features
