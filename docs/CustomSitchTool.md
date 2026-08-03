@@ -212,13 +212,13 @@ Here we still have a start distance of 1NM, and with the constraint that the alt
 
 ## Adding satellites
 
-Many sitches involve satellites — Starlink flares are the most common satellite-related UAP report. Satellites are loaded from orbital data (TLE — "Two-Line Element" sets), not from a file you usually provide:
+Many sitches involve satellites — Starlink flares are the most common satellite-related UAP report. Satellites are loaded from published orbital data, not from a file you usually provide:
 
 - In the **Satellite** menu, click **Load LEO Satellites For Date** to download the low-Earth-orbit satellites for the simulation's current date/time — use this for past events. **Load ACTIVE Satellites** loads current, real-time positions instead.
-- You can also **drag in your own TLE file** if you have specific orbital data.
+- You can also **drag in your own orbital data file** if you have specific data — either CCSDS OMM in CSV, or a legacy TLE file.
 - **Show Satellites (Global)** toggles satellite display on and off.
 
-Because TLE accuracy degrades over time, always load the data for the date you're investigating. For the full Starlink-flare workflow, see [Investigating Starlink Flares](Starlink.md).
+Because orbital predictions drift over time, always load the data for the date you're investigating. And if the event was only a day or two ago, note that the data for it is still being published and will be incomplete — see [Investigating Starlink Flares](Starlink.md#wait-a-few-days-before-analysing-a-very-recent-event) for the full Starlink-flare workflow.
 
 ## Where to go next
 

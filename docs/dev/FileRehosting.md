@@ -4,7 +4,9 @@
 
 In Sitrec two type of files are rehosted
 
-1. *Dynamic Links* - Specifically links to satellite TLE data. Current data is rehosted so it does not go out of date. Eventually historical data will also be rehosted to avoid having to rely on an external data source
+1. *Dynamic Links* - Specifically links to satellite orbital data (OMM CSV, or legacy TLE). Both current and historical sets are rehosted on save, so a sitch reopens with exactly the elements it was saved with rather than depending on an external data source.
+
+   One consequence is worth knowing: orbital data is published a while *after* it applies, so a set downloaded within a couple of days of the date it covers is only partly filled in, and rehosting freezes it in that state. On reopening a sitch they own, users are offered a merge of the now-complete data — see `src/TLERefresh.js`, and [Saving and Loading](../SavingAndLoading.md#satellite-data-in-a-saved-sitch) for the user-facing description. The original rehosted file is never modified or deleted, so older versions of a sitch keep resolving.
 2. *User files* - The user can drag-and-drop file, or open a local sitch folder, or manually uploaded a file for rehosting
 
 Sitrec has a JavaScript client (95% of the code) and a PHP backend. The Metabunk implementation also makes some use of the Xenforo forum software for user authentication. 

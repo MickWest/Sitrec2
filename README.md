@@ -53,7 +53,7 @@ Here's the [famous Aguadilla video](https://www.metabunk.org/sitrec/?sitch=agua)
 Sitrec uses or ingests a variety of data sources
 
 - ADS-B files in KML format from ADSB Exchange, FlightAware, Planefinder, and others
-- TLE files in Two or Three Line Element format (for satellites, mostly Starlink)
+- Satellite orbital data (mostly Starlink) as CCSDS OMM in CSV, or as legacy Two/Three Line Element (TLE) files
 - Star catalogs (BSC, etc.)
 - Video (mp4, mov, H.264, H.265 )
 - DJI Drone tracks from Airdata as .csv
