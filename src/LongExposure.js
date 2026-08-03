@@ -53,6 +53,11 @@ import {waitForExportFrameSettled} from "./ExportFrameSettler";
 import {Quaternion, Vector3} from "three";
 import {nudgeParams, defaultNudgeParams, nudgeQuaternion} from "./nodes/CNodeControllerCameraNudge";
 import {applyRefractionECI, refractionOptsFromUniforms, refractionUniforms} from "./atmosphere/refraction";
+import {
+    installTerrestrialRefractionOnMaterial,
+    terrestrialOptsFrom,
+    updateTerrestrialRefractionUniforms,
+} from "./atmosphere/terrestrialRefraction";
 import {applyAnnualAberration, raDec2Celestial} from "./CelestialMath";
 import {CNode3DLight} from "./nodes/CNode3DLight";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
@@ -816,6 +821,12 @@ async function renderLongExposure(mgr) {
         if (!renderer || !GlobalScene) return null;
         const rt = new WebGLRenderTarget(W, H);
         const override = new MeshBasicMaterial({color: 0xffffff});
+        // The mask decides which stars and satellites are hidden behind terrain,
+        // so its silhouette has to sit where the visible render draws it. With
+        // terrestrial refraction on, the solid scene is lofted by up to a few
+        // arcminutes; an unpatched override material would leave the mask edge
+        // at the geometric position and let sources in that band leak through.
+        installTerrestrialRefractionOnMaterial(override);
         const savedQuat = camera.quaternion.clone();
         const savedClearColor = new Color();
         renderer.getClearColor(savedClearColor);
@@ -826,6 +837,10 @@ async function renderLongExposure(mgr) {
             camera.quaternion.copy(qBase);
             camera.updateMatrix();
             camera.updateMatrixWorld(true);
+            // Re-point the shared uniforms at THIS pose — the bend is about the
+            // observer's zenith expressed in view space, and qBase is not the
+            // orientation the live view was last rendered with.
+            updateTerrestrialRefractionUniforms(camera, terrestrialOptsFrom(Sit, Globals));
             GlobalScene.overrideMaterial = override;
             renderer.setRenderTarget(rt);
             renderer.setClearColor(0x000000, 1);

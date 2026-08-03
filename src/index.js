@@ -1805,6 +1805,14 @@ async function initializeOnce() {
         .tooltip(t("menus.view.tooltip"));
     setupHUDColor(guiMenus.view);
 
+    // Both refraction models live together here: the celestial one (whole
+    // atmosphere, Saemundsson, for Sun/Moon/planets/stars) added by
+    // CNodeDisplayNightSky, and the terrestrial one (range-dependent, for
+    // terrain/buildings/sea) added by CNodeTerrainUI. Permanent shell created
+    // once at init — the contents are non-permanent and get rebuilt per sitch.
+    addGUIFolder("refraction", "Atmospheric Refraction", "view")
+        .tooltip("How much the atmosphere bends light on its way to the camera — separately for celestial objects and for the solid scene.");
+
     // Reset Layout: snap the open views back into a clean default grid (Main on the left, the
     // rest stacked on the right), ignoring their current positions — recovery for a layout that
     // got messy. Views are free rectangles; shared edges become draggable seams automatically

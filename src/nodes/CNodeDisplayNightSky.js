@@ -65,6 +65,7 @@ import {
     zenithEQJFromLatLon,
     REFRACTION_DEFAULTS,
 } from "../atmosphere/refraction";
+import {setupRefractionGUI} from "../atmosphere/refractionSettings";
 import {CPlanets} from "./CPlanets";
 import {CSatellite} from "./CSatellite";
 import {EventManager} from "../CEventManager";
@@ -531,19 +532,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         guiMenus.view.add(Sit, "lockStarPlanetBrightness").name(t("nightSky.lockStarPlanetBrightness.label")).listen()
             .tooltip(t("nightSky.lockStarPlanetBrightness.tooltip"))
 
-        if (Sit.refractionEnabled === undefined) Sit.refractionEnabled = REFRACTION_DEFAULTS.enabled;
-        if (Sit.refractionPressure === undefined) Sit.refractionPressure = REFRACTION_DEFAULTS.pressureHPa;
-        if (Sit.refractionTemp === undefined) Sit.refractionTemp = REFRACTION_DEFAULTS.tempC;
-
-        guiMenus.view.add(Sit, "refractionEnabled").name("Atmospheric Refraction").listen()
-            .tooltip("Bend Sun/Moon/planet/star apparent positions toward zenith via Saemundsson's formula")
-            .onChange(() => setRenderOne(true));
-        guiMenus.view.add(Sit, "refractionPressure", 800, 1100, 1).name("Refraction Pressure (hPa)").listen()
-            .tooltip("Atmospheric pressure used for refraction. Stellarium default: 1010 hPa")
-            .onChange(() => setRenderOne(true));
-        guiMenus.view.add(Sit, "refractionTemp", -40, 50, 1).name("Refraction Temperature (°C)").listen()
-            .tooltip("Air temperature used for refraction. Stellarium default: 10 °C")
-            .onChange(() => setRenderOne(true));
+        // View > Atmospheric Refraction — master switch plus both halves. Built
+        // in one place because either owning node can be absent; see
+        // atmosphere/refractionSettings.js.
+        setupRefractionGUI();
 
         satGUI.add(Sit, "satScale", 0, 50, 0.01).name(t("nightSky.satBrightness.label")).listen()
             .tooltip(t("nightSky.satBrightness.tooltip"))
