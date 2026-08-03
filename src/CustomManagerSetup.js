@@ -67,6 +67,7 @@ import {CNodeControllerCelestial, CNodeControllerHorizonFlareRegion} from "./nod
 import {CNodeControllerTrackingWobble} from "./nodes/CNodeControllerTrackingWobble";
 import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
 import {CNodeAnnotateOverlay} from "./nodes/CNodeAnnotateOverlay";
+import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";
 import {CNodeLensGhost} from "./nodes/CNodeLensGhost";
 import {makeBespoke3DView} from "./BespokeView";
 import {DebugArrow} from "./threeExt";
@@ -287,6 +288,23 @@ export const setupMethods = {
         if (Sit.isCustom && NodeMan.exists("video") && !NodeMan.exists("annotateOverlay")) {
             new CNodeAnnotateOverlay({
                 id: "annotateOverlay",
+                overlayView: "video",
+            });
+        }
+
+        // The video exclusion mask, on the same terms as the annotate overlay above: created
+        // unconditionally, hidden until used, so an older save gets one on reload and its
+        // painted pixels restore through modDeserialize.
+        //
+        // Created HERE rather than lazily by whoever wants a mask, for two reasons. A node that
+        // does not exist when the mods are applied never receives its saved state at all, so a
+        // lazily-built mask cannot reliably reload. And the mask is shared - motion analysis,
+        // the pano exporters and the star tracker all read it - so no one system should own its
+        // lifetime. It began owned by Motion Analysis, which is why using a mask anywhere else
+        // meant instantiating a whole analyser to hold one.
+        if (Sit.isCustom && NodeMan.exists("video") && !NodeMan.exists("videoMask")) {
+            new CNodeMaskOverlay({
+                id: "videoMask",
                 overlayView: "video",
             });
         }

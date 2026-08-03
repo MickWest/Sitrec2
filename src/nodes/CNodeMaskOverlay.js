@@ -6,6 +6,32 @@ import {isKeyCodeHeld} from "../KeyBoardHandler";
 import {getFlowAlignRotation} from "../FlowAlignment";
 import {par} from "../par";
 
+/**
+ * The video exclusion mask, shared by every system that needs to ignore part of the frame:
+ * motion analysis, the pano exporters, and the star tracker.
+ *
+ * FOUR INVARIANTS. These were implicit while the mask belonged to Motion Analysis, and each one
+ * had somewhere it was assumed differently, so they are stated here rather than rediscovered.
+ *
+ * 1. POLARITY - a pixel is masked when its ALPHA exceeds 128, and masked means EXCLUDED from
+ *    processing (isPointMasked below; motion analysis skips such points; the pano exporters
+ *    write them transparent). Note this is the opposite of the "keep" masks OpenCV usually
+ *    wants, and the opposite of CameraMotionFromVideo's own buildMask, where 255 means USABLE.
+ *    Anything handing this mask to OpenCV must invert it, not pass it through.
+ *
+ * 2. COORDINATE SPACE - the canvas is in VIDEO pixels, sized to the view's current decoded
+ *    frame. It is NOT canvas/display space, and it is not necessarily the size an analysis ran
+ *    at: the star tracker may decode at a capped resolution, so a consumer holding detections in
+ *    its own analysed space must rescale into this canvas before asking isPointMasked.
+ *
+ * 3. VIDEO IDENTITY - one view can switch between video sources while keeping this one canvas.
+ *    A mask therefore belongs to whatever video was loaded when it was painted, and consumers
+ *    that outlive a video swap must re-check rather than assume it still describes the frame.
+ *
+ * 4. COMPOSITION - automatic mask operations ADD to what is already there. A hand-painted mask,
+ *    an OSD auto-mask and a detected ground region coexist; nothing silently replaces the
+ *    user's own work.
+ */
 export class CNodeMaskOverlay extends CNodeActiveOverlay {
     constructor(v) {
         super(v);
@@ -13,7 +39,12 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         this.separateVisibility = true;
         
         this.brushSize = v.brushSize ?? 20;
-        this.onMaskChange = v.onMaskChange ?? null;
+        // Several systems read this mask - motion analysis, the pano exporters, the star
+        // tracker - so change notification is a LIST, not the single callback it began as.
+        // A single slot silently made whoever constructed the node its owner, which is what
+        // tied masking to Motion Analysis in the first place.
+        this.maskListeners = new Set();
+        if (typeof v.onMaskChange === "function") this.maskListeners.add(v.onMaskChange);
         this.maskData = null;
         this.maskCanvas = null;
         this.maskCtx = null;
@@ -54,15 +85,21 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         return {
             ...super.modSerialize(),
             maskData: this.maskData,
+            // Saved WITH the mask, because it is the mask's setting. It used to be written by
+            // the mask editor but read back off the motion analyser, so an edited brush size was
+            // never actually restored - the two had drifted apart precisely because the mask was
+            // owned by one system and configured through another.
+            brushSize: this.brushSize,
         };
     }
-    
+
     modDeserialize(v) {
         super.modDeserialize(v);
         if (v.maskData !== undefined) {
             this.maskData = v.maskData;
             this.loadMask();
         }
+        if (Number.isFinite(v.brushSize)) this.brushSize = v.brushSize;
     }
     
     setEditing(editing) {
@@ -89,9 +126,25 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         }
     }
     
+    /**
+     * Subscribe to mask edits. Returns an unsubscribe function.
+     *
+     * Subscribers are independent: one throwing must not stop the others being told, or a
+     * stale listener from a torn-down system would silently freeze everyone else's cache.
+     */
+    addMaskListener(fn) {
+        if (typeof fn !== "function") return () => {};
+        this.maskListeners.add(fn);
+        return () => this.maskListeners.delete(fn);
+    }
+
     notifyMaskChange() {
-        if (typeof this.onMaskChange === 'function') {
-            this.onMaskChange();
+        for (const fn of this.maskListeners) {
+            try {
+                fn();
+            } catch (e) {
+                console.warn("mask listener failed", e);
+            }
         }
     }
     

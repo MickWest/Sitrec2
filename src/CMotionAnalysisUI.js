@@ -2382,9 +2382,13 @@ export function addMotionAnalysisMenu() {
         .tooltip(mt("menu.panorama.optimizeFeature.tooltip")).perm();
 
     // Masking is a persistent folder, available as soon as a video is loaded — it
-    // does NOT require Start Analysis. Its controls route through ensureMaskingAnalyzer()
-    // so the analyzer + mask overlay are spun up lazily on first use.
-    createMaskingFolder(motionFolder);
+    // does NOT require Start Analysis.
+    //
+    // Built as a SIBLING of Motion Analysis rather than inside it, because the mask is shared:
+    // motion analysis, the pano exporters and the star tracker all read the same pixels. It sat
+    // inside this menu only because Motion Analysis happened to own the mask node, which it no
+    // longer does - see the "videoMask" node built in CustomManagerSetup.
+    createMaskingFolder(guiMenus.video);
 }
 
 // Build the persistent "Masking" folder. Every control reads through to the

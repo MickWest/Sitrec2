@@ -1136,10 +1136,17 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         return trackingOverlay.draggable.some(d => d.dragging);
     }
 
-    // Check if the motion-analysis mask overlay is currently in paint-edit mode
+    // Check if the video mask overlay is currently in paint-edit mode.
+    //
+    // Both ids are checked because the mask used to belong to Motion Analysis and was named for
+    // it. "videoMask" is the shared one built for every custom sitch; "motionMaskOverlay" is
+    // still built for sitches that have no shared node, and appears in older saves.
     _isMaskEditing() {
-        const maskOverlay = NodeMan.get("motionMaskOverlay", false);
-        return maskOverlay !== undefined && maskOverlay.editing === true;
+        for (const id of ["videoMask", "motionMaskOverlay"]) {
+            const maskOverlay = NodeMan.get(id, false);
+            if (maskOverlay !== undefined && maskOverlay.editing === true) return true;
+        }
+        return false;
     }
 
     // Check if the annotation overlay is in edit mode — left-drag is then

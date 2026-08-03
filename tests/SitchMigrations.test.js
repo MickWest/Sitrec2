@@ -7,6 +7,7 @@ import {
     migrateFovSwitchLabel,
     migrateCameraMenuFolders,
     objHasNestedChoice,
+    migrateMaskOverlayId,
 } from "../src/SitchMigrations";
 
 // A minimal saved-custom shape with the OLD nested two-switch camera-heading model.
@@ -282,5 +283,42 @@ describe("migrateCameraMenuFolders", () => {
     test("does not throw on null / empty input", () => {
         expect(() => migrateCameraMenuFolders(null)).not.toThrow();
         expect(() => migrateCameraMenuFolders({})).not.toThrow();
+    });
+});
+
+describe("migrateMaskOverlayId", () => {
+    // The mask node was renamed when it stopped belonging to Motion Analysis. Its mod has to
+    // move with it: the old node is no longer created for custom sitches, so a mod left under
+    // the old key is dropped when mods are applied, and the user's painted mask disappears.
+    test("moves an old motionMaskOverlay mod onto videoMask", () => {
+        const obj = {mods: {motionMaskOverlay: {maskData: "data:image/png;base64,AAAA", visible: false}}};
+        migrateMaskOverlayId(obj);
+        expect(obj.mods.videoMask).toEqual({maskData: "data:image/png;base64,AAAA", visible: false});
+        expect(obj.mods.motionMaskOverlay).toBeUndefined();
+    });
+
+    test("does not overwrite a mod already saved under the new id", () => {
+        const obj = {mods: {
+            motionMaskOverlay: {maskData: "OLD"},
+            videoMask: {maskData: "NEW"},
+        }};
+        migrateMaskOverlayId(obj);
+        expect(obj.mods.videoMask.maskData).toBe("NEW");
+        // The stale entry still goes, so it cannot be re-applied to a node that no longer exists.
+        expect(obj.mods.motionMaskOverlay).toBeUndefined();
+    });
+
+    test("is idempotent", () => {
+        const obj = {mods: {motionMaskOverlay: {maskData: "X"}}};
+        migrateMaskOverlayId(obj);
+        const once = JSON.parse(JSON.stringify(obj));
+        migrateMaskOverlayId(obj);
+        expect(obj).toEqual(once);
+    });
+
+    test("does not throw on null / empty / mod-less input", () => {
+        expect(() => migrateMaskOverlayId(null)).not.toThrow();
+        expect(() => migrateMaskOverlayId({})).not.toThrow();
+        expect(() => migrateMaskOverlayId({mods: {}})).not.toThrow();
     });
 });

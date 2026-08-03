@@ -4,7 +4,8 @@ import {parseJavascriptObject} from "./Serialize";
 import {checkForModding} from "./utils";
 import {showError} from "./showError";
 import {isServerless} from "./configUtils";
-import {migrateCameraHeadingReorg, migrateFovSwitchLabel, migrateCameraMenuFolders} from "./SitchMigrations";
+import {migrateCameraHeadingReorg, migrateFovSwitchLabel, migrateCameraMenuFolders,
+    migrateMaskOverlayId} from "./SitchMigrations";
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Note. This failed once due to what seemed to be a circular dependency
@@ -126,6 +127,8 @@ export function textSitchToObject(text, canMod = true) {
         migrateFovSwitchLabel(obj);
         // Route old saves' camera controls into the new Location/Heading/FOV folders.
         migrateCameraMenuFolders(obj);
+        // Carry a mask painted when the mask belonged to Motion Analysis onto the shared node.
+        migrateMaskOverlayId(obj);
         if (canMod) {
             return checkForModding(obj);
         } else {

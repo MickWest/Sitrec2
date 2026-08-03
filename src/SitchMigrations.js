@@ -177,6 +177,33 @@ export function migrateFovSwitchLabel(obj) {
  *
  * @param {Object} obj - parsed sitch object
  */
+/**
+ * Carry an old save's painted mask onto the shared mask node.
+ *
+ * The mask used to be created by Motion Analysis under the id "motionMaskOverlay", named for the
+ * one system that happened to own it. It is now "videoMask", built for every custom sitch with a
+ * video (CustomManagerSetup) because several systems read it and because a node that does not
+ * exist when mods are applied never receives its saved state at all.
+ *
+ * Renaming the key is enough: the payload shape is unchanged, and the old node is no longer
+ * created for custom sitches, so its mod would otherwise be dropped on the floor and the user's
+ * painted mask would silently vanish on reload.
+ *
+ * Idempotent, and non-destructive: a save that already carries a "videoMask" mod keeps it, and
+ * the old entry is only moved when there is nothing to overwrite.
+ *
+ * @param {Object} obj - parsed sitch object
+ */
+export function migrateMaskOverlayId(obj) {
+    if (!obj || typeof obj !== "object") return;
+    const mods = obj.mods;
+    if (!mods || typeof mods !== "object") return;
+    const old = mods.motionMaskOverlay;
+    if (!old || typeof old !== "object") return;
+    if (mods.videoMask === undefined) mods.videoMask = old;
+    delete mods.motionMaskOverlay;
+}
+
 export function migrateCameraMenuFolders(obj) {
     if (!obj || typeof obj !== "object") return;
     const reGui = (node, newGui) => {

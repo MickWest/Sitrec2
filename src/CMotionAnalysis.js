@@ -1094,6 +1094,20 @@ export class MotionAnalyzer {
     // persistent Masking menu is first touched). Idempotent.
     ensureMaskOverlay() {
         if (this.maskOverlayNode) return this.maskOverlayNode;
+
+        // Adopt the shared mask when there is one (CustomManagerSetup builds it for every
+        // custom sitch with a video), and SUBSCRIBE rather than own it: other systems read the
+        // same mask, and a single owner is what previously forced anything wanting a mask to
+        // instantiate a whole analyser. Falls back to building a private one for sitches that
+        // have no shared node - non-custom sitches, and any path that runs before setup.
+        const shared = NodeMan.get("videoMask", false);
+        if (shared) {
+            this.maskOverlayNode = shared;
+            this.removeMaskListener?.();
+            this.removeMaskListener = shared.addMaskListener(() => this.onMaskChange());
+            return shared;
+        }
+
         this.maskOverlayNode = new CNodeMaskOverlay({
             id: "motionMaskOverlay",
             overlayView: this.videoView,
